@@ -27,6 +27,7 @@ type sqsMessage struct {
 	Attributes      map[string]string
 	ReceiptHandle   string
 	VisibleAt       time.Time
+	SentAt          time.Time
 }
 
 // queueData holds the internal state of a single SQS queue.
@@ -35,10 +36,11 @@ type queueData struct {
 	messages []*sqsMessage
 	mu       sync.Mutex
 
-	delaySeconds      int
-	visibilityTimeout int
-	maxMessageSize    int
-	messageRetention  int
+	delaySeconds       int
+	visibilityTimeout  int
+	maxMessageSize     int
+	messageRetention   int
+	deduplicationIndex map[string]time.Time
 }
 
 // Mock is an in-memory mock implementation of the AWS SQS service.
@@ -92,12 +94,13 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 	}
 
 	qd := &queueData{
-		info:              info,
-		messages:          make([]*sqsMessage, 0),
-		delaySeconds:      cfg.DelaySeconds,
-		visibilityTimeout: visibilityTimeout,
-		maxMessageSize:    cfg.MaxMessageSize,
-		messageRetention:  cfg.MessageRetention,
+		info:               info,
+		messages:           make([]*sqsMessage, 0),
+		delaySeconds:       cfg.DelaySeconds,
+		visibilityTimeout:  visibilityTimeout,
+		maxMessageSize:     cfg.MaxMessageSize,
+		messageRetention:   cfg.MessageRetention,
+		deduplicationIndex: make(map[string]time.Time),
 	}
 
 	m.queues.Set(url, qd)
@@ -175,6 +178,22 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		}
 	}
 
+	now := m.opts.Clock.Now()
+
+	// FIFO deduplication: check if same DeduplicationID was sent within 5-min window.
+	if qd.info.FIFO && input.DeduplicationID != "" {
+		if sentAt, ok := qd.deduplicationIndex[input.DeduplicationID]; ok {
+			if now.Sub(sentAt) < 5*time.Minute {
+				// Return existing message ID for the duplicate.
+				for _, existing := range qd.messages {
+					if existing.DeduplicationID == input.DeduplicationID {
+						return &driver.SendMessageOutput{MessageID: existing.ID}, nil
+					}
+				}
+			}
+		}
+	}
+
 	msgID := idgen.GenerateID("msg-")
 
 	attrs := make(map[string]string, len(input.Attributes))
@@ -187,7 +206,6 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		delaySeconds = qd.delaySeconds
 	}
 
-	now := m.opts.Clock.Now()
 	visibleAt := now.Add(time.Duration(delaySeconds) * time.Second)
 
 	msg := &sqsMessage{
@@ -197,9 +215,14 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		DeduplicationID: input.DeduplicationID,
 		Attributes:      attrs,
 		VisibleAt:       visibleAt,
+		SentAt:          now,
 	}
 
 	qd.messages = append(qd.messages, msg)
+
+	if qd.info.FIFO && input.DeduplicationID != "" {
+		qd.deduplicationIndex[input.DeduplicationID] = now
+	}
 
 	return &driver.SendMessageOutput{
 		MessageID: msgID,
