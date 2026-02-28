@@ -2,6 +2,7 @@ package cloudemu
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -11,7 +12,9 @@ import (
 	"github.com/NitinKumar004/cloudemu/database/driver"
 	dnsdriver "github.com/NitinKumar004/cloudemu/dns/driver"
 	cerrors "github.com/NitinKumar004/cloudemu/errors"
+	iamdriver "github.com/NitinKumar004/cloudemu/iam/driver"
 	"github.com/NitinKumar004/cloudemu/inject"
+	mqdriver "github.com/NitinKumar004/cloudemu/messagequeue/driver"
 	"github.com/NitinKumar004/cloudemu/metrics"
 	mondriver "github.com/NitinKumar004/cloudemu/monitoring/driver"
 	netdriver "github.com/NitinKumar004/cloudemu/networking/driver"
@@ -753,5 +756,380 @@ func TestRealWorldGCP_InfraSetup(t *testing.T) {
 	vpcs, _ = gcp.VPC.DescribeVPCs(ctx, []string{vpc.ID})
 	if len(vpcs) != 1 {
 		t.Errorf("VPC should still exist")
+	}
+}
+
+// ==============================================================================
+// New Tests: Fixing 6 gaps to make CloudEmu behave like real cloud
+// ==============================================================================
+
+func TestScanMissingOperators(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+		Name: "products", PartitionKey: "pk", SortKey: "sk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items := []map[string]interface{}{
+		{"pk": "cat1", "sk": "item1", "price": 5, "name": "alpha-one"},
+		{"pk": "cat1", "sk": "item2", "price": 10, "name": "alpha-two"},
+		{"pk": "cat1", "sk": "item3", "price": 15, "name": "beta-one"},
+		{"pk": "cat1", "sk": "item4", "price": 20, "name": "beta-two"},
+	}
+	for _, item := range items {
+		if err := p.DynamoDB.PutItem(ctx, "products", item); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Test <= operator
+	result, err := p.DynamoDB.Scan(ctx, driver.ScanInput{
+		Table:   "products",
+		Filters: []driver.ScanFilter{{Field: "price", Op: "<=", Value: 10}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 2 {
+		t.Errorf("<= filter: expected 2 items, got %d", result.Count)
+	}
+
+	// Test >= operator
+	result, err = p.DynamoDB.Scan(ctx, driver.ScanInput{
+		Table:   "products",
+		Filters: []driver.ScanFilter{{Field: "price", Op: ">=", Value: 15}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 2 {
+		t.Errorf(">= filter: expected 2 items, got %d", result.Count)
+	}
+
+	// Test BEGINS_WITH operator
+	result, err = p.DynamoDB.Scan(ctx, driver.ScanInput{
+		Table:   "products",
+		Filters: []driver.ScanFilter{{Field: "name", Op: "BEGINS_WITH", Value: "alpha"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 2 {
+		t.Errorf("BEGINS_WITH filter: expected 2 items, got %d", result.Count)
+	}
+}
+
+func TestNumericComparison(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+		Name: "numbers", PartitionKey: "pk", SortKey: "sk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert items with numeric values that would sort wrong as strings
+	// String sort: "10" < "9" (wrong), Numeric sort: 10 > 9 (correct)
+	items := []map[string]interface{}{
+		{"pk": "g1", "sk": "a", "val": 1},
+		{"pk": "g1", "sk": "b", "val": 5},
+		{"pk": "g1", "sk": "c", "val": 9},
+		{"pk": "g1", "sk": "d", "val": 10},
+		{"pk": "g1", "sk": "e", "val": 20},
+	}
+	for _, item := range items {
+		if err := p.DynamoDB.PutItem(ctx, "numbers", item); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Scan: val > 9 should return items with val=10 and val=20
+	result, err := p.DynamoDB.Scan(ctx, driver.ScanInput{
+		Table:   "numbers",
+		Filters: []driver.ScanFilter{{Field: "val", Op: ">", Value: 9}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 2 {
+		t.Errorf("numeric > filter: expected 2 items (10, 20), got %d", result.Count)
+	}
+
+	// Scan: val < 10 should return items with val=1, 5, 9
+	result, err = p.DynamoDB.Scan(ctx, driver.ScanInput{
+		Table:   "numbers",
+		Filters: []driver.ScanFilter{{Field: "val", Op: "<", Value: 10}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 3 {
+		t.Errorf("numeric < filter: expected 3 items (1, 5, 9), got %d", result.Count)
+	}
+}
+
+func TestFIFODeduplication(t *testing.T) {
+	ctx := context.Background()
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := NewAWS(config.WithClock(clock))
+
+	// Create FIFO queue
+	qInfo, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{
+		Name: "test-queue.fifo",
+		FIFO: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Send first message
+	out1, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
+		QueueURL:        qInfo.URL,
+		Body:            "hello",
+		GroupID:         "group1",
+		DeduplicationID: "dedup-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Send duplicate within 5-min window — should return same message ID
+	out2, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
+		QueueURL:        qInfo.URL,
+		Body:            "hello again",
+		GroupID:         "group1",
+		DeduplicationID: "dedup-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out1.MessageID != out2.MessageID {
+		t.Errorf("duplicate within 5 min should return same MessageID: got %s and %s", out1.MessageID, out2.MessageID)
+	}
+
+	// Verify only 1 message in queue
+	info, _ := p.SQS.GetQueueInfo(ctx, qInfo.URL)
+	if info.ApproxMessageCount != 1 {
+		t.Errorf("expected 1 message in queue, got %d", info.ApproxMessageCount)
+	}
+
+	// Advance clock past 5-minute window
+	clock.Advance(6 * time.Minute)
+
+	// Send same dedup ID again — should be accepted as new message
+	out3, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
+		QueueURL:        qInfo.URL,
+		Body:            "hello after window",
+		GroupID:         "group1",
+		DeduplicationID: "dedup-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out3.MessageID == out1.MessageID {
+		t.Error("message after 5 min window should have new MessageID")
+	}
+}
+
+func TestIAMCheckPermission(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Create user
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No policies attached — should deny
+	allowed, err := p.IAM.CheckPermission(ctx, "alice", "s3:GetObject", "arn:aws:s3:::my-bucket/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Error("expected deny with no policies attached")
+	}
+
+	// Create Allow policy for s3:*
+	allowPolicy, err := p.IAM.CreatePolicy(ctx, iamdriver.PolicyConfig{
+		Name: "s3-allow",
+		PolicyDocument: `{
+			"Version": "2012-10-17",
+			"Statement": [
+				{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}
+			]
+		}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Attach and check
+	if err := p.IAM.AttachUserPolicy(ctx, "alice", allowPolicy.ARN); err != nil {
+		t.Fatal(err)
+	}
+
+	allowed, err = p.IAM.CheckPermission(ctx, "alice", "s3:GetObject", "arn:aws:s3:::my-bucket/key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed {
+		t.Error("expected allow with s3:* policy")
+	}
+
+	// Non-matching action should deny
+	allowed, err = p.IAM.CheckPermission(ctx, "alice", "ec2:DescribeInstances", "arn:aws:ec2:::*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Error("expected deny for ec2 action with only s3 policy")
+	}
+
+	// Create explicit Deny policy for s3:DeleteObject
+	denyPolicy, err := p.IAM.CreatePolicy(ctx, iamdriver.PolicyConfig{
+		Name: "s3-deny-delete",
+		PolicyDocument: `{
+			"Version": "2012-10-17",
+			"Statement": [
+				{"Effect": "Deny", "Action": "s3:DeleteObject", "Resource": "*"}
+			]
+		}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.IAM.AttachUserPolicy(ctx, "alice", denyPolicy.ARN); err != nil {
+		t.Fatal(err)
+	}
+
+	// Explicit Deny should win even though Allow s3:* is also attached
+	allowed, err = p.IAM.CheckPermission(ctx, "alice", "s3:DeleteObject", "arn:aws:s3:::my-bucket/key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Error("expected deny: explicit Deny should override Allow")
+	}
+}
+
+func TestAlarmAutoEvaluation(t *testing.T) {
+	ctx := context.Background()
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	p := NewAWS(config.WithClock(clock))
+
+	// Create alarm: trigger if Average CPU > 80
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "high-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 80,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify initial state is INSUFFICIENT_DATA
+	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"high-cpu"})
+	if alarms[0].State != "INSUFFICIENT_DATA" {
+		t.Errorf("expected INSUFFICIENT_DATA, got %s", alarms[0].State)
+	}
+
+	// Push metric data below threshold
+	now := clock.Now()
+	if err := p.CloudWatch.PutMetricData(ctx, []mondriver.MetricDatum{
+		{Namespace: "AWS/EC2", MetricName: "CPUUtilization", Value: 50, Timestamp: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Alarm should transition to OK
+	alarms, _ = p.CloudWatch.DescribeAlarms(ctx, []string{"high-cpu"})
+	if alarms[0].State != "OK" {
+		t.Errorf("expected OK after below-threshold data, got %s", alarms[0].State)
+	}
+
+	// Advance clock past the evaluation window so the old data point falls out
+	clock.Advance(10 * time.Minute)
+	now = clock.Now()
+
+	// Push metric data above threshold
+	if err := p.CloudWatch.PutMetricData(ctx, []mondriver.MetricDatum{
+		{Namespace: "AWS/EC2", MetricName: "CPUUtilization", Value: 95, Timestamp: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Alarm should transition to ALARM
+	alarms, _ = p.CloudWatch.DescribeAlarms(ctx, []string{"high-cpu"})
+	if alarms[0].State != "ALARM" {
+		t.Errorf("expected ALARM after above-threshold data, got %s", alarms[0].State)
+	}
+}
+
+func TestAutoMetricGeneration(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Launch an instance
+	_, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify auto-generated metrics exist in CloudWatch
+	metricNames, err := p.CloudWatch.ListMetrics(ctx, "AWS/EC2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{"CPUUtilization", "DiskReadOps", "DiskWriteOps", "NetworkIn", "NetworkOut"}
+	sort.Strings(metricNames)
+	if len(metricNames) != len(expected) {
+		t.Fatalf("expected %d metrics, got %d: %v", len(expected), len(metricNames), metricNames)
+	}
+	for i, name := range expected {
+		if metricNames[i] != name {
+			t.Errorf("expected metric %q, got %q", name, metricNames[i])
+		}
+	}
+}
+
+func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
+	ctx := context.Background()
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	p := NewAWS(config.WithClock(clock))
+
+	// Create alarm: CPU > 0 (any CPU should trigger since auto-metrics emit 25.0)
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "any-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
+		Period: 600, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify initial state
+	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"any-cpu"})
+	if alarms[0].State != "INSUFFICIENT_DATA" {
+		t.Errorf("expected INSUFFICIENT_DATA, got %s", alarms[0].State)
+	}
+
+	// Launch instance — auto-metrics should trigger alarm evaluation
+	_, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Alarm should now be in ALARM state (CPU 25.0 > 0)
+	alarms, _ = p.CloudWatch.DescribeAlarms(ctx, []string{"any-cpu"})
+	if alarms[0].State != "ALARM" {
+		t.Errorf("expected ALARM after auto-metrics (CPU=25 > 0), got %s", alarms[0].State)
 	}
 }

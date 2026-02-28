@@ -4,6 +4,7 @@ package firestore
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -220,22 +221,44 @@ func (m *Mock) BatchGetItems(_ context.Context, table string, keys []map[string]
 	return results, nil
 }
 
+func compareValues(a, b string) int {
+	fa, errA := strconv.ParseFloat(a, 64)
+	fb, errB := strconv.ParseFloat(b, 64)
+	if errA == nil && errB == nil {
+		if fa < fb {
+			return -1
+		}
+		if fa > fb {
+			return 1
+		}
+		return 0
+	}
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
 func applySortCondition(itemVal, op, condVal string, condValEnd interface{}) bool {
 	switch op {
 	case "=":
 		return itemVal == condVal
 	case "<":
-		return itemVal < condVal
+		return compareValues(itemVal, condVal) < 0
 	case ">":
-		return itemVal > condVal
+		return compareValues(itemVal, condVal) > 0
 	case "<=":
-		return itemVal <= condVal
+		return compareValues(itemVal, condVal) <= 0
 	case ">=":
-		return itemVal >= condVal
+		return compareValues(itemVal, condVal) >= 0
 	case "BEGINS_WITH":
 		return strings.HasPrefix(itemVal, condVal)
 	case "BETWEEN":
-		return itemVal >= condVal && itemVal <= fmt.Sprintf("%v", condValEnd)
+		endVal := fmt.Sprintf("%v", condValEnd)
+		return compareValues(itemVal, condVal) >= 0 && compareValues(itemVal, endVal) <= 0
 	default:
 		return false
 	}
@@ -255,15 +278,27 @@ func matchesFilters(item map[string]interface{}, filters []driver.ScanFilter) bo
 				return false
 			}
 		case "<":
-			if val >= condVal {
+			if compareValues(val, condVal) >= 0 {
 				return false
 			}
 		case ">":
-			if val <= condVal {
+			if compareValues(val, condVal) <= 0 {
+				return false
+			}
+		case "<=":
+			if compareValues(val, condVal) > 0 {
+				return false
+			}
+		case ">=":
+			if compareValues(val, condVal) < 0 {
 				return false
 			}
 		case "CONTAINS":
 			if !strings.Contains(val, condVal) {
+				return false
+			}
+		case "BEGINS_WITH":
+			if !strings.HasPrefix(val, condVal) {
 				return false
 			}
 		default:

@@ -3,7 +3,9 @@ package gcpiam
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/NitinKumar004/cloudemu/config"
@@ -376,23 +378,120 @@ func (m *Mock) ListAttachedRolePolicies(ctx context.Context, roleName string) ([
 	return result, nil
 }
 
-// CheckPermission checks if a principal has any attached policy (simplified check).
-// Returns true if the principal (service account or role name) has at least one attached policy.
+type policyDoc struct {
+	Version   string            `json:"Version"`
+	Statement []policyStatement `json:"Statement"`
+}
+
+type policyStatement struct {
+	Effect   string      `json:"Effect"`
+	Action   interface{} `json:"Action"`
+	Resource interface{} `json:"Resource"`
+}
+
+func wildcardMatch(pattern, value string) bool {
+	if pattern == "*" {
+		return true
+	}
+	pParts := strings.Split(pattern, "*")
+	if len(pParts) == 1 {
+		return pattern == value
+	}
+	if !strings.HasPrefix(value, pParts[0]) {
+		return false
+	}
+	remaining := value[len(pParts[0]):]
+	for i := 1; i < len(pParts); i++ {
+		idx := strings.Index(remaining, pParts[i])
+		if idx < 0 {
+			return false
+		}
+		remaining = remaining[idx+len(pParts[i]):]
+	}
+	return true
+}
+
+func toStringSlice(v interface{}) []string {
+	switch val := v.(type) {
+	case string:
+		return []string{val}
+	case []interface{}:
+		out := make([]string, 0, len(val))
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func evaluatePolicy(doc string, action, resource string) (allow, deny bool) {
+	var pd policyDoc
+	if err := json.Unmarshal([]byte(doc), &pd); err != nil {
+		return false, false
+	}
+	for _, stmt := range pd.Statement {
+		actions := toStringSlice(stmt.Action)
+		resources := toStringSlice(stmt.Resource)
+		actionMatch := false
+		for _, a := range actions {
+			if wildcardMatch(a, action) {
+				actionMatch = true
+				break
+			}
+		}
+		if !actionMatch {
+			continue
+		}
+		resourceMatch := false
+		for _, r := range resources {
+			if wildcardMatch(r, resource) {
+				resourceMatch = true
+				break
+			}
+		}
+		if !resourceMatch {
+			continue
+		}
+		if strings.EqualFold(stmt.Effect, "Deny") {
+			deny = true
+		} else if strings.EqualFold(stmt.Effect, "Allow") {
+			allow = true
+		}
+	}
+	return allow, deny
+}
+
+// CheckPermission evaluates attached policies to determine if a principal is allowed
+// to perform the given action on the given resource. Explicit Deny wins over Allow.
 func (m *Mock) CheckPermission(ctx context.Context, principal, action, resource string) (bool, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	// Check service account (user) policies.
-	if policies, ok := m.userPolicies[principal]; ok && len(policies) > 0 {
-		return true, nil
+	policyARNs := make(map[string]bool)
+	for arn := range m.userPolicies[principal] {
+		policyARNs[arn] = true
 	}
-
-	// Check role policies.
-	if policies, ok := m.rolePolicies[principal]; ok && len(policies) > 0 {
-		return true, nil
+	for arn := range m.rolePolicies[principal] {
+		policyARNs[arn] = true
 	}
+	m.mu.RUnlock()
 
-	return false, nil
+	hasAllow := false
+	for arn := range policyARNs {
+		p, ok := m.policies.Get(arn)
+		if !ok || p.PolicyDocument == "" {
+			continue
+		}
+		allow, deny := evaluatePolicy(p.PolicyDocument, action, resource)
+		if deny {
+			return false, nil
+		}
+		if allow {
+			hasAllow = true
+		}
+	}
+	return hasAllow, nil
 }
 
 // copyTags creates a shallow copy of a tags map.
