@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/NitinKumar004/cloudemu/compute"
 	"github.com/NitinKumar004/cloudemu/compute/driver"
@@ -12,6 +13,7 @@ import (
 	cerrors "github.com/NitinKumar004/cloudemu/errors"
 	"github.com/NitinKumar004/cloudemu/internal/idgen"
 	"github.com/NitinKumar004/cloudemu/internal/memstore"
+	mondriver "github.com/NitinKumar004/cloudemu/monitoring/driver"
 	"github.com/NitinKumar004/cloudemu/statemachine"
 )
 
@@ -34,10 +36,43 @@ type instanceData struct {
 
 // Mock is an in-memory mock implementation of the Azure Virtual Machines service.
 type Mock struct {
-	instances *memstore.Store[*instanceData]
-	sm        *statemachine.Machine
-	opts      *config.Options
-	ipCounter atomic.Int64
+	instances  *memstore.Store[*instanceData]
+	sm         *statemachine.Machine
+	opts       *config.Options
+	ipCounter  atomic.Int64
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime string) {
+	if m.monitoring == nil {
+		return
+	}
+	lt, err := time.Parse("2006-01-02T15:04:05Z", launchTime)
+	if err != nil {
+		lt = m.opts.Clock.Now()
+	}
+	metrics := []string{"Percentage CPU", "Network In Total", "Network Out Total", "Disk Read Operations/Sec", "Disk Write Operations/Sec"}
+	values := []float64{25.0, 1024.0, 512.0, 100.0, 50.0}
+	var data []mondriver.MetricDatum
+	for i, metricName := range metrics {
+		for j := 0; j < 5; j++ {
+			ts := lt.Add(time.Duration(j) * time.Minute)
+			data = append(data, mondriver.MetricDatum{
+				Namespace:  "Microsoft.Compute/virtualMachines",
+				MetricName: metricName,
+				Value:      values[i],
+				Unit:       "None",
+				Dimensions: map[string]string{"resourceId": instanceID},
+				Timestamp:  ts,
+			})
+		}
+	}
+	_ = m.monitoring.PutMetricData(ctx, data)
 }
 
 // New creates a new Azure Virtual Machines mock.
@@ -69,7 +104,7 @@ func toInstance(d *instanceData) driver.Instance {
 }
 
 // RunInstances creates and starts the specified number of virtual machine instances.
-func (m *Mock) RunInstances(_ context.Context, cfg driver.InstanceConfig, count int) ([]driver.Instance, error) {
+func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, count int) ([]driver.Instance, error) {
 	if count <= 0 {
 		return nil, cerrors.New(cerrors.InvalidArgument, "count must be greater than 0")
 	}
@@ -93,6 +128,7 @@ func (m *Mock) RunInstances(_ context.Context, cfg driver.InstanceConfig, count 
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
 		results = append(results, toInstance(inst))
+		m.emitInstanceMetrics(ctx, id, inst.LaunchTime)
 	}
 	return results, nil
 }

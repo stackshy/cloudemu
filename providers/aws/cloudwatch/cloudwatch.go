@@ -25,10 +25,10 @@ type metricKey struct {
 
 // Mock is an in-memory mock implementation of the AWS CloudWatch service.
 type Mock struct {
-	mu       sync.RWMutex
-	metrics  map[metricKey][]driver.MetricDatum
-	alarms   *memstore.Store[*alarmData]
-	opts     *config.Options
+	mu      sync.RWMutex
+	metrics map[metricKey][]driver.MetricDatum
+	alarms  *memstore.Store[*alarmData]
+	opts    *config.Options
 }
 
 type alarmData struct {
@@ -54,15 +54,13 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
-// PutMetricData stores metric data points.
+// PutMetricData stores metric data points and evaluates any matching alarms.
 func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) error {
 	if len(data) == 0 {
 		return errors.Newf(errors.InvalidArgument, "metric data is required")
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	for _, d := range data {
 		key := metricKey{
 			Namespace:  d.Namespace,
@@ -70,8 +68,85 @@ func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) err
 		}
 		m.metrics[key] = append(m.metrics[key], d)
 	}
+	m.mu.Unlock()
+
+	// Evaluate alarms for each unique namespace/metric pair that was updated.
+	seen := make(map[metricKey]bool)
+	for _, d := range data {
+		mk := metricKey{Namespace: d.Namespace, MetricName: d.MetricName}
+		if !seen[mk] {
+			seen[mk] = true
+			m.evaluateAlarms(d.Namespace, d.MetricName)
+		}
+	}
 
 	return nil
+}
+
+func evaluateComparison(value float64, operator string, threshold float64) bool {
+	switch operator {
+	case "GreaterThanThreshold":
+		return value > threshold
+	case "GreaterThanOrEqualToThreshold":
+		return value >= threshold
+	case "LessThanThreshold":
+		return value < threshold
+	case "LessThanOrEqualToThreshold":
+		return value <= threshold
+	default:
+		return false
+	}
+}
+
+func (m *Mock) evaluateAlarms(namespace, metricName string) {
+	allAlarms := m.alarms.All()
+	for _, alarm := range allAlarms {
+		if alarm.Namespace != namespace || alarm.MetricName != metricName {
+			continue
+		}
+
+		period := alarm.Period
+		if period <= 0 {
+			period = 60
+		}
+		evalPeriods := alarm.EvaluationPeriods
+		if evalPeriods <= 0 {
+			evalPeriods = 1
+		}
+
+		now := m.opts.Clock.Now()
+		windowDur := time.Duration(period*evalPeriods) * time.Second
+		windowStart := now.Add(-windowDur)
+
+		m.mu.RLock()
+		key := metricKey{Namespace: namespace, MetricName: metricName}
+		dataPoints := m.metrics[key]
+
+		var filtered []float64
+		for _, d := range dataPoints {
+			if d.Timestamp.Before(windowStart) || d.Timestamp.After(now) {
+				continue
+			}
+			if !matchDimensions(d.Dimensions, alarm.Dimensions) {
+				continue
+			}
+			filtered = append(filtered, d.Value)
+		}
+		m.mu.RUnlock()
+
+		if len(filtered) == 0 {
+			continue
+		}
+
+		stat := computeStat(filtered, alarm.Stat)
+		if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
+			alarm.State = "ALARM"
+			alarm.StateReason = "Threshold crossed"
+		} else {
+			alarm.State = "OK"
+			alarm.StateReason = "Threshold not crossed"
+		}
+	}
 }
 
 // GetMetricData retrieves metric data for the given query, filtering by time range and

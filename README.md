@@ -1,14 +1,14 @@
-# cloudmock
+# cloudemu
 
-**Zero-cost, in-memory mock implementations of AWS, Azure, and GCP cloud services for Go testing.**
+**Zero-cost, in-memory cloud emulation of AWS, Azure, and GCP services for Go.**
 
-Stop paying for cloud infrastructure in your test suite. `cloudmock` gives you lightweight, thread-safe, fully in-memory mocks for 10 cloud services across all three major providers — tests run in ~10ms at zero cost.
+Stop paying for cloud infrastructure in your test suite. `cloudemu` gives you lightweight, thread-safe, fully in-memory emulations of 10 cloud services across all three major providers — tests run in ~10ms at zero cost.
 
 ```go
 import "github.com/NitinKumar004/cloudemu"
 
 func TestMyApp(t *testing.T) {
-    aws := cloudmock.NewAWS()
+    aws := cloudemu.NewAWS()
 
     aws.S3.CreateBucket(ctx, "my-bucket")
     aws.S3.PutObject(ctx, "my-bucket", "key", []byte("hello"), "text/plain", nil)
@@ -22,7 +22,7 @@ func TestMyApp(t *testing.T) {
 
 ## Table of Contents
 
-- [Why cloudmock?](#why-cloudmock)
+- [Why cloudemu?](#why-cloudemu)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
@@ -39,6 +39,12 @@ func TestMyApp(t *testing.T) {
   - [DNS (Route53 / Azure DNS / Cloud DNS)](#dns)
   - [Load Balancer (ELB / Azure LB / GCP LB)](#load-balancer)
   - [Message Queue (SQS / Service Bus / Pub/Sub)](#message-queue)
+- [Realistic Cloud Behaviors](#realistic-cloud-behaviors)
+  - [Auto-Metric Generation](#auto-metric-generation)
+  - [Alarm Auto-Evaluation](#alarm-auto-evaluation)
+  - [IAM Policy Evaluation](#iam-policy-evaluation)
+  - [FIFO Deduplication](#fifo-deduplication)
+  - [Numeric-Aware Comparisons](#numeric-aware-comparisons)
 - [Cross-Cutting Features](#cross-cutting-features)
   - [Call Recording (VCR Pattern)](#call-recording)
   - [Error Injection](#error-injection)
@@ -54,18 +60,19 @@ func TestMyApp(t *testing.T) {
 
 ---
 
-## Why cloudmock?
+## Why cloudemu?
 
 | Approach | Cost | Speed | Fidelity | Offline |
 |----------|------|-------|----------|---------|
 | Real cloud (AWS/Azure/GCP) | $$$ | Slow (seconds) | Perfect | No |
 | LocalStack / Emulators | $ | Medium (100ms+) | Good | Yes |
-| **cloudmock** | **Free** | **Fast (~10ms)** | **Good** | **Yes** |
+| **cloudemu** | **Free** | **Fast (~10ms)** | **Good** | **Yes** |
 
 - **Zero cost** — no cloud accounts, no Docker containers, no network calls
 - **Fast** — pure in-memory Go, no I/O
 - **Thread-safe** — all stores use `sync.RWMutex`, safe for parallel tests
 - **Deterministic** — fake clock, error injection, rate limiting — full control over test conditions
+- **Realistic** — VMs auto-generate metrics, alarms auto-evaluate, IAM checks real policy documents, FIFO queues deduplicate
 - **Three providers** — same interface, same patterns, write once test everywhere
 - **10 services each** — Storage, Compute, Database, Serverless, Networking, Monitoring, IAM, DNS, Load Balancer, Message Queue
 
@@ -77,7 +84,7 @@ func TestMyApp(t *testing.T) {
 go get github.com/NitinKumar004/cloudemu
 ```
 
-Requires Go 1.21+.
+Requires Go 1.25.0+.
 
 ---
 
@@ -98,7 +105,7 @@ import (
 
 func TestUploadFile(t *testing.T) {
     ctx := context.Background()
-    aws := cloudmock.NewAWS()
+    aws := cloudemu.NewAWS()
 
     // Create bucket and upload
     aws.S3.CreateBucket(ctx, "uploads")
@@ -126,9 +133,9 @@ func TestUploadFile(t *testing.T) {
 ```go
 func TestVMLifecycle(t *testing.T) {
     ctx := context.Background()
-    aws := cloudmock.NewAWS()
+    aws := cloudemu.NewAWS()
 
-    // Launch instance
+    // Launch instance — auto-generates CloudWatch metrics (CPU, Network, Disk)
     instances, _ := aws.EC2.RunInstances(ctx, computedriver.InstanceConfig{
         ImageID: "ami-123", InstanceType: "t2.micro",
         Tags: map[string]string{"env": "test"},
@@ -164,9 +171,9 @@ func TestCrossCloud(t *testing.T) {
         name    string
         storage storagedriver.Bucket
     }{
-        {"aws", cloudmock.NewAWS().S3},
-        {"azure", cloudmock.NewAzure().BlobStorage},
-        {"gcp", cloudmock.NewGCP().GCS},
+        {"aws", cloudemu.NewAWS().S3},
+        {"azure", cloudemu.NewAzure().BlobStorage},
+        {"gcp", cloudemu.NewGCP().GCS},
     }
 
     for _, p := range providers {
@@ -186,11 +193,11 @@ func TestCrossCloud(t *testing.T) {
 
 ## Architecture
 
-cloudmock uses a **three-layer design** inspired by [Go CDK](https://gocloud.dev):
+cloudemu uses a **three-layer design** inspired by [Go CDK](https://gocloud.dev):
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Your Test Code                              │
+│              Your Application / Test Code                │
 ├─────────────────────────────────────────────────────────┤
 │                                                          │
 │   Layer 1: Portable API                                  │
@@ -289,17 +296,17 @@ var _ driver.Bucket = (*Mock)(nil)  // compile-time guarantee
 
 ```go
 // Quick — default configuration
-aws := cloudmock.NewAWS()
-azure := cloudmock.NewAzure()
-gcp := cloudmock.NewGCP()
+aws := cloudemu.NewAWS()
+azure := cloudemu.NewAzure()
+gcp := cloudemu.NewGCP()
 
 // With options
-aws := cloudmock.NewAWS(
+aws := cloudemu.NewAWS(
     config.WithRegion("eu-west-1"),
     config.WithAccountID("999888777666"),
 )
 
-gcp := cloudmock.NewGCP(
+gcp := cloudemu.NewGCP(
     config.WithProjectID("my-gcp-project"),
     config.WithClock(config.NewFakeClock(time.Now())),
 )
@@ -311,7 +318,7 @@ All three providers implement the same `storage/driver.Bucket` interface.
 
 ```go
 ctx := context.Background()
-s3 := cloudmock.NewAWS().S3
+s3 := cloudemu.NewAWS().S3
 
 // Bucket operations
 s3.CreateBucket(ctx, "my-bucket")
@@ -355,12 +362,12 @@ page2, _ := s3.ListObjects(ctx, "bucket", driver.ListOptions{
 
 ### Compute
 
-VM lifecycle with enforced state machine transitions.
+VM lifecycle with enforced state machine transitions. Creating a VM automatically generates monitoring metrics (CPU, Network, Disk).
 
 ```go
-ec2 := cloudmock.NewAWS().EC2
+ec2 := cloudemu.NewAWS().EC2
 
-// Launch instances
+// Launch instances — auto-generates CloudWatch metrics
 instances, _ := ec2.RunInstances(ctx, computedriver.InstanceConfig{
     ImageID:      "ami-12345",
     InstanceType: "t2.micro",
@@ -401,12 +408,24 @@ stopped → shutting-down → terminated
 
 Illegal transitions return a `FailedPrecondition` error — you can't stop a terminated instance.
 
+**Auto-generated metrics per instance (AWS example):**
+
+| Metric | Namespace | Value |
+|--------|-----------|-------|
+| CPUUtilization | AWS/EC2 | 25.0 |
+| NetworkIn | AWS/EC2 | 1024.0 |
+| NetworkOut | AWS/EC2 | 512.0 |
+| DiskReadOps | AWS/EC2 | 100.0 |
+| DiskWriteOps | AWS/EC2 | 50.0 |
+
+Each metric gets 5 backfill datapoints at 1-minute intervals from launch time.
+
 ### Database
 
-DynamoDB-style key-value with queries, scans, and batch operations.
+DynamoDB-style key-value with queries, scans, and batch operations. Supports numeric-aware comparisons and full operator set.
 
 ```go
-db := cloudmock.NewAWS().DynamoDB
+db := cloudemu.NewAWS().DynamoDB
 
 // Create table with sort key and GSI
 db.CreateTable(ctx, dbdriver.TableConfig{
@@ -423,7 +442,7 @@ db.PutItem(ctx, "orders", map[string]interface{}{
     "customer_id": "cust-1",
     "order_date":  "2024-01-15",
     "status":      "shipped",
-    "total":       99.99,
+    "total":       "99.99",
 })
 
 // Get by key
@@ -453,11 +472,11 @@ result, _ = db.Query(ctx, dbdriver.QueryInput{
     },
 })
 
-// Scan with filter
+// Scan with filter — supports full operator set
 result, _ = db.Scan(ctx, dbdriver.ScanInput{
     Table: "orders",
     Filters: []dbdriver.ScanFilter{
-        {Field: "status", Op: "=", Value: "shipped"},
+        {Field: "total", Op: ">=", Value: "50"},  // numeric-aware: 99.99 >= 50
     },
     Limit: 10,
 })
@@ -468,12 +487,15 @@ db.BatchGetItems(ctx, "orders", keys)
 ```
 
 **Supported sort key operators:** `=`, `<`, `>`, `<=`, `>=`, `BEGINS_WITH`, `BETWEEN`
-**Supported scan filter operators:** `=`, `!=`, `<`, `>`, `CONTAINS`
+
+**Supported scan filter operators:** `=`, `!=`, `<`, `>`, `<=`, `>=`, `CONTAINS`, `BEGINS_WITH`
+
+**Numeric-aware comparisons:** When both values can be parsed as numbers, comparison uses numeric ordering. `"10" > "9"` correctly returns `true` (not string-compared as `"10" < "9"`).
 
 ### Serverless
 
 ```go
-lambda := cloudmock.NewAWS().Lambda
+lambda := cloudemu.NewAWS().Lambda
 
 // Register a handler BEFORE or AFTER creating the function
 lambda.RegisterHandler("my-func", func(ctx context.Context, payload []byte) ([]byte, error) {
@@ -498,7 +520,7 @@ output, _ := lambda.Invoke(ctx, sdriver.InvokeInput{
 ### Networking
 
 ```go
-vpc := cloudmock.NewAWS().VPC
+vpc := cloudemu.NewAWS().VPC
 
 // Create VPC
 vpcInfo, _ := vpc.CreateVPC(ctx, netdriver.VPCConfig{
@@ -524,8 +546,10 @@ vpc.AddIngressRule(ctx, sg.ID, netdriver.SecurityRule{
 
 ### Monitoring
 
+Alarms auto-evaluate when metric data is pushed — they transition to `"ALARM"` or `"OK"` automatically.
+
 ```go
-cw := cloudmock.NewAWS().CloudWatch
+cw := cloudemu.NewAWS().CloudWatch
 
 // Put metric data
 cw.PutMetricData(ctx, []mondriver.MetricDatum{
@@ -540,38 +564,106 @@ result, _ := cw.GetMetricData(ctx, mondriver.GetMetricInput{
     Period: 300, Stat: "Sum",
 })
 
-// Alarms
+// List available metric names
+names, _ := cw.ListMetrics(ctx, "MyApp")
+
+// Alarms — auto-evaluate when metric data arrives
 cw.CreateAlarm(ctx, mondriver.AlarmConfig{
     Name: "HighErrors", Namespace: "MyApp", MetricName: "ErrorCount",
     ComparisonOperator: "GreaterThanThreshold", Threshold: 100,
+    Period: 300, EvaluationPeriods: 1, Stat: "Average",
 })
-cw.SetAlarmState(ctx, "HighErrors", "ALARM", "Errors exceeded threshold")
+
+// Push data above threshold — alarm auto-transitions to "ALARM"
+cw.PutMetricData(ctx, []mondriver.MetricDatum{
+    {Namespace: "MyApp", MetricName: "ErrorCount", Value: 150, Timestamp: time.Now()},
+})
+
+alarms, _ := cw.DescribeAlarms(ctx, []string{"HighErrors"})
+// alarms[0].State == "ALARM"
+
+// Push data below threshold — alarm auto-transitions to "OK"
+cw.PutMetricData(ctx, []mondriver.MetricDatum{
+    {Namespace: "MyApp", MetricName: "ErrorCount", Value: 50, Timestamp: time.Now()},
+})
+
+alarms, _ = cw.DescribeAlarms(ctx, []string{"HighErrors"})
+// alarms[0].State == "OK"
+
+// You can also set alarm state manually
+cw.SetAlarmState(ctx, "HighErrors", "ALARM", "Manual override")
 ```
+
+**Supported comparison operators:** `GreaterThanThreshold`, `LessThanThreshold`, `GreaterThanOrEqualToThreshold`, `LessThanOrEqualToThreshold`
+
+**Supported statistics:** `Average`, `Sum`, `Minimum`, `Maximum`, `SampleCount`
 
 ### IAM
 
+IAM evaluates real JSON policy documents with wildcard matching. Explicit `Deny` always overrides `Allow`.
+
 ```go
-iam := cloudmock.NewAWS().IAM
+iam := cloudemu.NewAWS().IAM
 
 // Create user, role, policy
 user, _ := iam.CreateUser(ctx, iamdriver.UserConfig{Name: "alice"})
 role, _ := iam.CreateRole(ctx, iamdriver.RoleConfig{Name: "admin-role"})
+
+// Create policy with JSON document
 policy, _ := iam.CreatePolicy(ctx, iamdriver.PolicyConfig{
-    Name: "admin-policy", PolicyDocument: `{"Statement": [...]}`,
+    Name: "s3-read-policy",
+    PolicyDocument: `{
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": ["s3:GetObject", "s3:ListBucket"],
+                "Resource": "*"
+            }
+        ]
+    }`,
 })
 
 // Attach policies
 iam.AttachUserPolicy(ctx, "alice", policy.ARN)
 iam.AttachRolePolicy(ctx, "admin-role", policy.ARN)
 
-// Check permissions (simplified — returns true if any policy attached)
-allowed, _ := iam.CheckPermission(ctx, "alice", "s3:GetObject", "*")
+// Check permissions — evaluates JSON policy with wildcard matching
+allowed, _ := iam.CheckPermission(ctx, "alice", "s3:GetObject", "arn:aws:s3:::my-bucket/file.txt")
+// allowed == true (matches "s3:GetObject" with Resource "*")
+
+allowed, _ = iam.CheckPermission(ctx, "alice", "ec2:RunInstances", "*")
+// allowed == false (not in policy)
+
+// Wildcard actions
+adminPolicy, _ := iam.CreatePolicy(ctx, iamdriver.PolicyConfig{
+    Name: "admin-policy",
+    PolicyDocument: `{
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Allow", "Action": "s3:*", "Resource": "*"}]
+    }`,
+})
+iam.AttachUserPolicy(ctx, "alice", adminPolicy.ARN)
+allowed, _ = iam.CheckPermission(ctx, "alice", "s3:PutObject", "*")
+// allowed == true (wildcard "s3:*" matches "s3:PutObject")
+
+// Explicit Deny overrides Allow
+denyPolicy, _ := iam.CreatePolicy(ctx, iamdriver.PolicyConfig{
+    Name: "deny-delete",
+    PolicyDocument: `{
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Deny", "Action": "s3:DeleteObject", "Resource": "*"}]
+    }`,
+})
+iam.AttachUserPolicy(ctx, "alice", denyPolicy.ARN)
+allowed, _ = iam.CheckPermission(ctx, "alice", "s3:DeleteObject", "*")
+// allowed == false (explicit Deny wins over any Allow)
 ```
 
 ### DNS
 
 ```go
-dns := cloudmock.NewAWS().Route53
+dns := cloudemu.NewAWS().Route53
 
 zone, _ := dns.CreateZone(ctx, dnsdriver.ZoneConfig{Name: "example.com"})
 dns.CreateRecord(ctx, dnsdriver.RecordConfig{
@@ -595,7 +687,7 @@ dns.CreateRecord(ctx, dnsdriver.RecordConfig{
 ### Load Balancer
 
 ```go
-elb := cloudmock.NewAWS().ELB
+elb := cloudemu.NewAWS().ELB
 
 lb, _ := elb.CreateLoadBalancer(ctx, lbdriver.LBConfig{
     Name: "web-lb", Type: "application", Scheme: "internet-facing",
@@ -618,8 +710,10 @@ health, _ := elb.DescribeTargetHealth(ctx, tg.ARN)
 
 ### Message Queue
 
+FIFO queues automatically deduplicate messages with the same `DeduplicationID` within a 5-minute window.
+
 ```go
-sqs := cloudmock.NewAWS().SQS
+sqs := cloudemu.NewAWS().SQS
 
 queue, _ := sqs.CreateQueue(ctx, mqdriver.QueueConfig{
     Name: "orders", VisibilityTimeout: 30,
@@ -640,15 +734,107 @@ msgs, _ := sqs.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
 // Delete after processing
 sqs.DeleteMessage(ctx, queue.URL, msgs[0].ReceiptHandle)
 
-// FIFO queues
+// FIFO queues with deduplication
 fifo, _ := sqs.CreateQueue(ctx, mqdriver.QueueConfig{
     Name: "orders.fifo", FIFO: true,
 })
-sqs.SendMessage(ctx, mqdriver.SendMessageInput{
-    QueueURL: fifo.URL, Body: "msg",
-    GroupID: "group-1", DeduplicationID: "dedup-1",
+
+out1, _ := sqs.SendMessage(ctx, mqdriver.SendMessageInput{
+    QueueURL: fifo.URL, Body: "order-123",
+    GroupID: "group-1", DeduplicationID: "dedup-abc",
 })
+
+// Same DeduplicationID within 5 minutes — returns same MessageID, no duplicate
+out2, _ := sqs.SendMessage(ctx, mqdriver.SendMessageInput{
+    QueueURL: fifo.URL, Body: "order-123",
+    GroupID: "group-1", DeduplicationID: "dedup-abc",
+})
+// out1.MessageID == out2.MessageID — only 1 message in queue
+
+// After 5 minutes, same DeduplicationID is accepted as a new message
 ```
+
+---
+
+## Realistic Cloud Behaviors
+
+cloudemu goes beyond basic CRUD mocks. These behaviors make it behave like real cloud services.
+
+### Auto-Metric Generation
+
+When you launch a VM, monitoring metrics are automatically generated — just like real AWS/Azure/GCP.
+
+```go
+aws := cloudemu.NewAWS()
+aws.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+    ImageID: "ami-123", InstanceType: "t2.micro",
+}, 1)
+
+// Metrics are immediately available — no manual PutMetricData needed
+names, _ := aws.CloudWatch.ListMetrics(ctx, "AWS/EC2")
+// names == ["CPUUtilization", "DiskReadOps", "DiskWriteOps", "NetworkIn", "NetworkOut"]
+```
+
+**Metrics generated per provider:**
+
+| Provider | Namespace | Metrics |
+|----------|-----------|---------|
+| AWS | `AWS/EC2` | CPUUtilization, NetworkIn, NetworkOut, DiskReadOps, DiskWriteOps |
+| Azure | `Microsoft.Compute/virtualMachines` | Percentage CPU, Network In Total, Network Out Total, Disk Read Operations/Sec, Disk Write Operations/Sec |
+| GCP | `compute.googleapis.com` | instance/cpu/utilization, instance/network/received_bytes_count, instance/network/sent_bytes_count, instance/disk/read_ops_count, instance/disk/write_ops_count |
+
+### Alarm Auto-Evaluation
+
+Alarms automatically evaluate against incoming metric data. No need to manually call `SetAlarmState`.
+
+```go
+cw := cloudemu.NewAWS().CloudWatch
+
+// Create alarm
+cw.CreateAlarm(ctx, mondriver.AlarmConfig{
+    Name: "high-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+    ComparisonOperator: "GreaterThanThreshold", Threshold: 80,
+    Period: 300, EvaluationPeriods: 1, Stat: "Average",
+})
+
+// Push metric above threshold
+cw.PutMetricData(ctx, []mondriver.MetricDatum{
+    {Namespace: "AWS/EC2", MetricName: "CPUUtilization", Value: 95, Timestamp: time.Now()},
+})
+
+// Alarm automatically transitions to "ALARM"
+alarms, _ := cw.DescribeAlarms(ctx, []string{"high-cpu"})
+// alarms[0].State == "ALARM"
+```
+
+This also works with auto-generated VM metrics — create an alarm on CPU, launch a VM, and the alarm evaluates automatically.
+
+### IAM Policy Evaluation
+
+`CheckPermission` parses real JSON policy documents and evaluates them with wildcard matching.
+
+- **Allow/Deny evaluation:** Each attached policy's `Statement` array is checked
+- **Wildcard matching:** `"s3:*"` matches `"s3:GetObject"`, `"s3:PutObject"`, etc.
+- **Explicit Deny wins:** If any policy has `"Effect": "Deny"` matching the action/resource, the result is always `false`
+- **Default deny:** If no Allow statement matches, permission is denied
+
+### FIFO Deduplication
+
+FIFO queues (SQS, Service Bus, Pub/Sub) enforce a 5-minute deduplication window based on `DeduplicationID`:
+
+- Same `DeduplicationID` within 5 minutes → returns existing `MessageID`, no duplicate created
+- After 5 minutes → accepted as a new message
+
+### Numeric-Aware Comparisons
+
+Database scan filters and query conditions compare values numerically when both sides are valid numbers:
+
+```go
+// "10" > "9" → true (numeric comparison)
+// Without this, string comparison would give "10" < "9" (wrong)
+```
+
+This applies to all comparison operators (`<`, `>`, `<=`, `>=`, `BETWEEN`) in DynamoDB, CosmosDB, and Firestore mocks.
 
 ---
 
@@ -792,7 +978,7 @@ Control time in tests for TTL, expiry, and ordering scenarios.
 ```go
 clock := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-aws := cloudmock.NewAWS(config.WithClock(clock))
+aws := cloudemu.NewAWS(config.WithClock(clock))
 
 // All timestamps use fake clock
 aws.S3.CreateBucket(ctx, "b")
@@ -803,7 +989,8 @@ obj, _ := aws.S3.GetObject(ctx, "b", "k")
 // Advance time
 clock.Advance(24 * time.Hour)
 
-// SQS visibility timeouts, CloudWatch time ranges, etc. all respect the clock
+// SQS visibility timeouts, CloudWatch time ranges, alarm evaluation windows,
+// FIFO deduplication windows — all respect the clock
 ```
 
 ### Latency Simulation
@@ -858,21 +1045,21 @@ func (s *FileService) Upload(ctx context.Context, bucket, key string, data []byt
 
 // Test with AWS
 func TestWithAWS(t *testing.T) {
-    aws := cloudmock.NewAWS()
+    aws := cloudemu.NewAWS()
     svc := &FileService{storage: storage.NewBucket(aws.S3)}
     // ...
 }
 
 // Test with GCP
 func TestWithGCP(t *testing.T) {
-    gcp := cloudmock.NewGCP()
+    gcp := cloudemu.NewGCP()
     svc := &FileService{storage: storage.NewBucket(gcp.GCS)}
     // ...
 }
 
 // Or use the factory
 func TestWithFactory(t *testing.T) {
-    bucket := cloudmock.NewStorage("aws") // or "azure" or "gcp"
+    bucket := cloudemu.NewStorage("aws") // or "azure" or "gcp"
     svc := &FileService{storage: bucket}
     // ...
 }
@@ -939,7 +1126,7 @@ func TestWithSuite(t *testing.T) {
 
 ## Error Handling
 
-All mock operations return errors using canonical error codes:
+All operations return errors using canonical error codes:
 
 ```go
 import cerrors "github.com/NitinKumar004/cloudemu/errors"
@@ -970,7 +1157,7 @@ cerrors.Internal           // unexpected internal error
 
 ```
 github.com/NitinKumar004/cloudemu
-├── cloudmock.go           # NewAWS(), NewAzure(), NewGCP(), NewStorage()
+├── cloudemu.go            # NewAWS(), NewAzure(), NewGCP()
 ├── errors/                # Canonical error codes and helpers
 ├── config/                # Options, Clock, FakeClock
 ├── recorder/              # Call recording + fluent assertions

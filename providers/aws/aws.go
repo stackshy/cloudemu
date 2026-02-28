@@ -32,7 +32,7 @@ type Provider struct {
 // New creates a new AWS provider with all mock services.
 func New(opts ...config.Option) *Provider {
 	o := config.NewOptions(opts...)
-	return &Provider{
+	p := &Provider{
 		S3:         s3.New(o),
 		EC2:        ec2.New(o),
 		DynamoDB:   dynamodb.New(o),
@@ -44,4 +44,6 @@ func New(opts ...config.Option) *Provider {
 		ELB:        elb.New(o),
 		SQS:        sqs.New(o),
 	}
+	p.EC2.SetMonitoring(p.CloudWatch)
+	return p
 }

@@ -6,12 +6,12 @@ import (
 	"github.com/NitinKumar004/cloudemu/providers/gcp/clouddns"
 	"github.com/NitinKumar004/cloudemu/providers/gcp/cloudfunctions"
 	"github.com/NitinKumar004/cloudemu/providers/gcp/cloudmonitoring"
+	"github.com/NitinKumar004/cloudemu/providers/gcp/firestore"
 	"github.com/NitinKumar004/cloudemu/providers/gcp/gce"
 	"github.com/NitinKumar004/cloudemu/providers/gcp/gcpiam"
 	"github.com/NitinKumar004/cloudemu/providers/gcp/gcplb"
 	"github.com/NitinKumar004/cloudemu/providers/gcp/gcpvpc"
 	"github.com/NitinKumar004/cloudemu/providers/gcp/gcs"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/firestore"
 	"github.com/NitinKumar004/cloudemu/providers/gcp/pubsub"
 )
 
@@ -32,7 +32,7 @@ type Provider struct {
 // New creates a new GCP provider with all mock services.
 func New(opts ...config.Option) *Provider {
 	o := config.NewOptions(opts...)
-	return &Provider{
+	p := &Provider{
 		GCS:             gcs.New(o),
 		GCE:             gce.New(o),
 		Firestore:       firestore.New(o),
@@ -44,4 +44,6 @@ func New(opts ...config.Option) *Provider {
 		LB:              gcplb.New(o),
 		PubSub:          pubsub.New(o),
 	}
+	p.GCE.SetMonitoring(p.CloudMonitoring)
+	return p
 }

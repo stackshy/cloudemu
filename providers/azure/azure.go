@@ -32,7 +32,7 @@ type Provider struct {
 // New creates a new Azure provider with all mock services.
 func New(opts ...config.Option) *Provider {
 	o := config.NewOptions(opts...)
-	return &Provider{
+	p := &Provider{
 		BlobStorage:     blobstorage.New(o),
 		VirtualMachines: virtualmachines.New(o),
 		CosmosDB:        cosmosdb.New(o),
@@ -44,4 +44,6 @@ func New(opts ...config.Option) *Provider {
 		LB:              azurelb.New(o),
 		ServiceBus:      servicebus.New(o),
 	}
+	p.VirtualMachines.SetMonitoring(p.Monitor)
+	return p
 }
