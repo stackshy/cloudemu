@@ -1133,3 +1133,91 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 		t.Errorf("expected ALARM after auto-metrics (CPU=25 > 0), got %s", alarms[0].State)
 	}
 }
+
+func TestLifecycleStopEmitsZeroMetrics(t *testing.T) {
+	ctx := context.Background()
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	p := NewAWS(config.WithClock(clock))
+
+	// Create alarm: CPU < 1 (LessThanThreshold)
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "low-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		ComparisonOperator: "LessThanThreshold", Threshold: 1,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// RunInstances → CPU=25 → alarm stays OK (25 is not < 1)
+	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := instances[0].ID
+
+	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"low-cpu"})
+	if alarms[0].State != "OK" {
+		t.Errorf("expected OK after RunInstances (CPU=25, not < 1), got %s", alarms[0].State)
+	}
+
+	// Advance clock past evaluation window so old datapoints fall out
+	clock.Advance(11 * time.Minute)
+
+	// StopInstances → CPU=0 → alarm fires ALARM (0 < 1)
+	if err := p.EC2.StopInstances(ctx, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+
+	alarms, _ = p.CloudWatch.DescribeAlarms(ctx, []string{"low-cpu"})
+	if alarms[0].State != "ALARM" {
+		t.Errorf("expected ALARM after StopInstances (CPU=0 < 1), got %s", alarms[0].State)
+	}
+}
+
+func TestLifecycleStartEmitsRunningMetrics(t *testing.T) {
+	ctx := context.Background()
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	p := NewAWS(config.WithClock(clock))
+
+	// Create alarm: CPU > 0
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "any-cpu-start", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 0,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// RunInstances → stop → advance clock → start
+	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := instances[0].ID
+
+	if err := p.EC2.StopInstances(ctx, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Advance clock past evaluation window so old datapoints fall out
+	clock.Advance(11 * time.Minute)
+
+	// Stop emitted zeros, so after window expiry only zeros remain → alarm should be OK
+	// But we need fresh data, so push a zero to re-evaluate
+	// Actually, StopInstances already pushed zeros at t0+0. After advancing 11min,
+	// those zeros are outside the 5min window. We need StartInstances to push new running data.
+
+	// StartInstances → CPU=25 → alarm fires (25 > 0)
+	if err := p.EC2.StartInstances(ctx, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+
+	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"any-cpu-start"})
+	if alarms[0].State != "ALARM" {
+		t.Errorf("expected ALARM after StartInstances (CPU=25 > 0), got %s", alarms[0].State)
+	}
+}
