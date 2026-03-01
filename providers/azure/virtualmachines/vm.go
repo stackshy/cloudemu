@@ -20,6 +20,11 @@ import (
 // Compile-time check that Mock implements driver.Compute.
 var _ driver.Compute = (*Mock)(nil)
 
+var (
+	runningMetricValues = []float64{25.0, 1024.0, 512.0, 100.0, 50.0}
+	zeroMetricValues    = []float64{0.0, 0.0, 0.0, 0.0, 0.0}
+)
+
 type instanceData struct {
 	ID             string
 	ImageID        string
@@ -70,6 +75,26 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime s
 				Dimensions: map[string]string{"resourceId": instanceID},
 				Timestamp:  ts,
 			})
+		}
+	}
+	_ = m.monitoring.PutMetricData(ctx, data)
+}
+
+func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, values []float64) {
+	if m.monitoring == nil {
+		return
+	}
+	metrics := []string{"Percentage CPU", "Network In Total", "Network Out Total", "Disk Read Operations/Sec", "Disk Write Operations/Sec"}
+	now := m.opts.Clock.Now()
+	data := make([]mondriver.MetricDatum, len(metrics))
+	for i, metricName := range metrics {
+		data[i] = mondriver.MetricDatum{
+			Namespace:  "Microsoft.Compute/virtualMachines",
+			MetricName: metricName,
+			Value:      values[i],
+			Unit:       "None",
+			Dimensions: map[string]string{"resourceId": instanceID},
+			Timestamp:  now,
 		}
 	}
 	_ = m.monitoring.PutMetricData(ctx, data)
@@ -134,7 +159,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 }
 
 // StartInstances starts the specified stopped virtual machine instances.
-func (m *Mock) StartInstances(_ context.Context, instanceIDs []string) error {
+func (m *Mock) StartInstances(ctx context.Context, instanceIDs []string) error {
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
@@ -146,12 +171,13 @@ func (m *Mock) StartInstances(_ context.Context, instanceIDs []string) error {
 		inst.State = compute.StatePending
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
+		m.emitLifecycleMetrics(ctx, id, runningMetricValues)
 	}
 	return nil
 }
 
 // StopInstances stops the specified running virtual machine instances.
-func (m *Mock) StopInstances(_ context.Context, instanceIDs []string) error {
+func (m *Mock) StopInstances(ctx context.Context, instanceIDs []string) error {
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
@@ -163,12 +189,13 @@ func (m *Mock) StopInstances(_ context.Context, instanceIDs []string) error {
 		inst.State = compute.StateStopping
 		_ = m.sm.Transition(id, compute.StateStopped)
 		inst.State = compute.StateStopped
+		m.emitLifecycleMetrics(ctx, id, zeroMetricValues)
 	}
 	return nil
 }
 
 // RebootInstances reboots the specified running virtual machine instances.
-func (m *Mock) RebootInstances(_ context.Context, instanceIDs []string) error {
+func (m *Mock) RebootInstances(ctx context.Context, instanceIDs []string) error {
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
@@ -180,12 +207,13 @@ func (m *Mock) RebootInstances(_ context.Context, instanceIDs []string) error {
 		inst.State = compute.StateRestarting
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
+		m.emitLifecycleMetrics(ctx, id, runningMetricValues)
 	}
 	return nil
 }
 
 // TerminateInstances terminates the specified virtual machine instances.
-func (m *Mock) TerminateInstances(_ context.Context, instanceIDs []string) error {
+func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) error {
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
@@ -197,6 +225,7 @@ func (m *Mock) TerminateInstances(_ context.Context, instanceIDs []string) error
 		inst.State = compute.StateShuttingDown
 		_ = m.sm.Transition(id, compute.StateTerminated)
 		inst.State = compute.StateTerminated
+		m.emitLifecycleMetrics(ctx, id, zeroMetricValues)
 	}
 	return nil
 }
