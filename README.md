@@ -1,6 +1,6 @@
 # cloudemu
 
-**Zero-cost, in-memory cloud emulation of AWS, Azure, and GCP services for Go.**
+**Zero-cost, in-memory cloud emulation of AWS, Azure, and GCP services for Go .**
 
 Stop paying for cloud infrastructure in your test suite. `cloudemu` gives you lightweight, thread-safe, fully in-memory emulations of 10 cloud services across all three major providers — tests run in ~10ms at zero cost.
 
