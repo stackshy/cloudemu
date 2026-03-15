@@ -12,6 +12,13 @@ type QueueConfig struct {
 	MaxMessageSize      int
 	MessageRetention    int // seconds
 	Tags                map[string]string
+	DeadLetterQueue     *DeadLetterConfig
+}
+
+// DeadLetterConfig configures a dead-letter queue for failed messages.
+type DeadLetterConfig struct {
+	TargetQueueURL  string
+	MaxReceiveCount int // move to DLQ after this many receives
 }
 
 // QueueInfo describes a message queue.
