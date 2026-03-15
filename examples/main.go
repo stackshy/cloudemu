@@ -141,7 +141,7 @@ func main() {
 	cpuResult, _ := aws.CloudWatch.GetMetricData(ctx, mondriver.GetMetricInput{
 		Namespace: "App/Web", MetricName: "CPUUtilization",
 		Dimensions: map[string]string{"InstanceId": instances[1].ID},
-		StartTime: now.Add(-time.Minute), EndTime: now.Add(time.Minute),
+		StartTime:  now.Add(-time.Minute), EndTime: now.Add(time.Minute),
 		Period: 60, Stat: "Average",
 	})
 	fmt.Printf("  CPU for %s: %.1f%%\n", instances[1].ID, cpuResult.Values[0])

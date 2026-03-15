@@ -4,11 +4,11 @@ import "time"
 
 // Options holds configuration for cloudemu services.
 type Options struct {
-	Clock      Clock
-	Region     string
-	Latency    time.Duration
-	AccountID  string
-	ProjectID  string
+	Clock     Clock
+	Region    string
+	Latency   time.Duration
+	AccountID string
+	ProjectID string
 }
 
 // Option is a functional option for configuring cloudemu services.

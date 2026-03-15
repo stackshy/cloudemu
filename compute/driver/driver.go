@@ -5,28 +5,28 @@ import "context"
 
 // InstanceConfig describes a virtual machine instance to create.
 type InstanceConfig struct {
-	ImageID      string
-	InstanceType string
-	Tags         map[string]string
-	SubnetID     string
+	ImageID        string
+	InstanceType   string
+	Tags           map[string]string
+	SubnetID       string
 	SecurityGroups []string
-	KeyName      string
-	UserData     string
+	KeyName        string
+	UserData       string
 }
 
 // Instance describes a running virtual machine.
 type Instance struct {
-	ID            string
-	ImageID       string
-	InstanceType  string
-	State         string
-	PrivateIP     string
-	PublicIP      string
-	SubnetID      string
-	VPCID         string
+	ID             string
+	ImageID        string
+	InstanceType   string
+	State          string
+	PrivateIP      string
+	PublicIP       string
+	SubnetID       string
+	VPCID          string
 	SecurityGroups []string
-	Tags          map[string]string
-	LaunchTime    string
+	Tags           map[string]string
+	LaunchTime     string
 }
 
 // ModifyInstanceInput holds modifiable instance attributes.

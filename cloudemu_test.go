@@ -3,12 +3,14 @@ package cloudemu
 import (
 	"context"
 	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/NitinKumar004/cloudemu/compute"
 	computedriver "github.com/NitinKumar004/cloudemu/compute/driver"
 	"github.com/NitinKumar004/cloudemu/config"
+	"github.com/NitinKumar004/cloudemu/cost"
 	"github.com/NitinKumar004/cloudemu/database/driver"
 	dnsdriver "github.com/NitinKumar004/cloudemu/dns/driver"
 	cerrors "github.com/NitinKumar004/cloudemu/errors"
@@ -20,6 +22,7 @@ import (
 	netdriver "github.com/NitinKumar004/cloudemu/networking/driver"
 	"github.com/NitinKumar004/cloudemu/ratelimit"
 	"github.com/NitinKumar004/cloudemu/recorder"
+	serverlessdriver "github.com/NitinKumar004/cloudemu/serverless/driver"
 	"github.com/NitinKumar004/cloudemu/storage"
 	storagedriver "github.com/NitinKumar004/cloudemu/storage/driver"
 )
@@ -1219,5 +1222,383 @@ func TestLifecycleStartEmitsRunningMetrics(t *testing.T) {
 	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"any-cpu-start"})
 	if alarms[0].State != "ALARM" {
 		t.Errorf("expected ALARM after StartInstances (CPU=25 > 0), got %s", alarms[0].State)
+	}
+}
+
+// ==============================================================================
+// Feature: Dead-Letter Queue Tests
+// ==============================================================================
+
+func TestDeadLetterQueue(t *testing.T) {
+	ctx := context.Background()
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := NewAWS(config.WithClock(clock))
+
+	// 1. Create the DLQ first
+	dlq, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{
+		Name: "my-queue-dlq",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Create main queue with DLQ configured (maxReceiveCount=2)
+	mainQ, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{
+		Name:              "my-queue",
+		VisibilityTimeout: 1,
+		DeadLetterQueue: &mqdriver.DeadLetterConfig{
+			TargetQueueURL:  dlq.URL,
+			MaxReceiveCount: 2,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Send a message
+	_, err = p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
+		QueueURL: mainQ.URL,
+		Body:     "process me",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 4. Receive the message twice (simulating failed processing — not deleting it)
+	for i := 0; i < 2; i++ {
+		msgs, err := p.SQS.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
+			QueueURL: mainQ.URL,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(msgs) != 1 {
+			t.Fatalf("receive %d: expected 1 message, got %d", i+1, len(msgs))
+		}
+		// Don't delete — simulating failure. Make it visible again.
+		clock.Advance(2 * time.Second)
+	}
+
+	// 5. Third receive should trigger DLQ move (receiveCount exceeds maxReceiveCount=2)
+	msgs, err := p.SQS.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
+		QueueURL: mainQ.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages in main queue after DLQ move, got %d", len(msgs))
+	}
+
+	// 6. Verify message is now in the DLQ
+	dlqInfo, err := p.SQS.GetQueueInfo(ctx, dlq.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dlqInfo.ApproxMessageCount != 1 {
+		t.Errorf("expected 1 message in DLQ, got %d", dlqInfo.ApproxMessageCount)
+	}
+
+	// 7. Receive from DLQ to verify message body
+	dlqMsgs, err := p.SQS.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
+		QueueURL: dlq.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dlqMsgs) != 1 {
+		t.Fatalf("expected 1 DLQ message, got %d", len(dlqMsgs))
+	}
+	if dlqMsgs[0].Body != "process me" {
+		t.Errorf("expected DLQ message body 'process me', got %q", dlqMsgs[0].Body)
+	}
+}
+
+func TestDeadLetterQueueAzure(t *testing.T) {
+	ctx := context.Background()
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := NewAzure(config.WithClock(clock))
+
+	dlq, err := p.ServiceBus.CreateQueue(ctx, mqdriver.QueueConfig{Name: "sb-dlq"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mainQ, err := p.ServiceBus.CreateQueue(ctx, mqdriver.QueueConfig{
+		Name:              "sb-main",
+		VisibilityTimeout: 1,
+		DeadLetterQueue:   &mqdriver.DeadLetterConfig{TargetQueueURL: dlq.URL, MaxReceiveCount: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p.ServiceBus.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: mainQ.URL, Body: "hello"})
+
+	// First receive succeeds
+	msgs, _ := p.ServiceBus.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: mainQ.URL})
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+
+	clock.Advance(2 * time.Second)
+
+	// Second receive moves to DLQ (receiveCount=2 > maxReceiveCount=1)
+	msgs, _ = p.ServiceBus.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: mainQ.URL})
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages after DLQ move, got %d", len(msgs))
+	}
+
+	dlqMsgs, _ := p.ServiceBus.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: dlq.URL})
+	if len(dlqMsgs) != 1 || dlqMsgs[0].Body != "hello" {
+		t.Errorf("expected DLQ message with body 'hello', got %v", dlqMsgs)
+	}
+}
+
+func TestDeadLetterQueueGCP(t *testing.T) {
+	ctx := context.Background()
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := NewGCP(config.WithClock(clock))
+
+	dlq, err := p.PubSub.CreateQueue(ctx, mqdriver.QueueConfig{Name: "ps-dlq"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mainQ, err := p.PubSub.CreateQueue(ctx, mqdriver.QueueConfig{
+		Name:              "ps-main",
+		VisibilityTimeout: 1,
+		DeadLetterQueue:   &mqdriver.DeadLetterConfig{TargetQueueURL: dlq.URL, MaxReceiveCount: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p.PubSub.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: mainQ.URL, Body: "gcp-msg"})
+
+	msgs, _ := p.PubSub.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: mainQ.URL})
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+
+	clock.Advance(2 * time.Second)
+
+	msgs, _ = p.PubSub.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: mainQ.URL})
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages after DLQ move, got %d", len(msgs))
+	}
+
+	dlqMsgs, _ := p.PubSub.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: dlq.URL})
+	if len(dlqMsgs) != 1 || dlqMsgs[0].Body != "gcp-msg" {
+		t.Errorf("expected DLQ message with body 'gcp-msg', got %v", dlqMsgs)
+	}
+}
+
+// ==============================================================================
+// Feature: Cost Simulation Tests
+// ==============================================================================
+
+func TestCostTracker(t *testing.T) {
+	tracker := cost.New()
+
+	// Simulate some cloud operations
+	tracker.Record("compute", "RunInstances", 3)
+	tracker.Record("storage", "PutObject", 100)
+	tracker.Record("storage", "GetObject", 500)
+	tracker.Record("database", "PutItem", 1000)
+	tracker.Record("serverless", "Invoke", 10000)
+	tracker.Record("messagequeue", "SendMessage", 5000)
+
+	// Verify total cost is > 0
+	total := tracker.TotalCost()
+	if total <= 0 {
+		t.Errorf("expected total cost > 0, got %f", total)
+	}
+
+	// Verify cost by service
+	byService := tracker.CostByService()
+	if byService["compute"] <= 0 {
+		t.Error("expected compute cost > 0")
+	}
+	if byService["storage"] <= 0 {
+		t.Error("expected storage cost > 0")
+	}
+	if byService["database"] <= 0 {
+		t.Error("expected database cost > 0")
+	}
+
+	// Verify cost by operation
+	byOp := tracker.CostByOperation()
+	if byOp["compute:RunInstances"] <= 0 {
+		t.Error("expected RunInstances cost > 0")
+	}
+
+	// Verify all costs recorded
+	allCosts := tracker.AllCosts()
+	if len(allCosts) != 6 {
+		t.Errorf("expected 6 cost records, got %d", len(allCosts))
+	}
+}
+
+func TestCostTrackerCustomRates(t *testing.T) {
+	tracker := cost.New()
+
+	// Set custom rate
+	tracker.SetRate("compute", "RunInstances", 0.50)
+
+	tracker.Record("compute", "RunInstances", 10)
+
+	total := tracker.TotalCost()
+	expected := 5.0 // 0.50 * 10
+	if total != expected {
+		t.Errorf("expected cost %f, got %f", expected, total)
+	}
+}
+
+func TestCostTrackerReset(t *testing.T) {
+	tracker := cost.New()
+
+	tracker.Record("compute", "RunInstances", 5)
+	if tracker.TotalCost() <= 0 {
+		t.Error("expected cost > 0 before reset")
+	}
+
+	tracker.Reset()
+	if tracker.TotalCost() != 0 {
+		t.Errorf("expected 0 cost after reset, got %f", tracker.TotalCost())
+	}
+}
+
+// ==============================================================================
+// Feature: Lambda-SQS Trigger Tests
+// ==============================================================================
+
+func TestLambdaSQSTrigger(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// 1. Create a Lambda function
+	p.Lambda.RegisterHandler("processor", func(_ context.Context, payload []byte) ([]byte, error) {
+		return []byte("processed: " + string(payload)), nil
+	})
+	_, err := p.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+		Name: "processor", Runtime: "go1.x", Handler: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Create SQS queue
+	q, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "trigger-queue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Wire the trigger: SQS → Lambda
+	var triggerCount int64
+	p.SQS.SetTrigger(q.URL, func(queueURL string, msg mqdriver.Message) {
+		// Invoke lambda with the message body
+		_, invokeErr := p.Lambda.Invoke(ctx, serverlessdriver.InvokeInput{
+			FunctionName: "processor",
+			Payload:      []byte(msg.Body),
+		})
+		if invokeErr != nil {
+			t.Errorf("trigger invoke failed: %v", invokeErr)
+		}
+		atomic.AddInt64(&triggerCount, 1)
+	})
+
+	// 4. Send messages — Lambda should be triggered automatically
+	for i := 0; i < 5; i++ {
+		_, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
+			QueueURL: q.URL,
+			Body:     "message-body",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 5. Verify Lambda was triggered 5 times
+	if atomic.LoadInt64(&triggerCount) != 5 {
+		t.Errorf("expected 5 trigger invocations, got %d", triggerCount)
+	}
+}
+
+func TestLambdaSQSTriggerRemove(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	q, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "removable-trigger"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var triggerCount int64
+	p.SQS.SetTrigger(q.URL, func(_ string, _ mqdriver.Message) {
+		atomic.AddInt64(&triggerCount, 1)
+	})
+
+	// Send one message — trigger fires
+	p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "first"})
+	if atomic.LoadInt64(&triggerCount) != 1 {
+		t.Errorf("expected 1 trigger, got %d", triggerCount)
+	}
+
+	// Remove trigger
+	p.SQS.RemoveTrigger(q.URL)
+
+	// Send another message — trigger should NOT fire
+	p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "second"})
+	if atomic.LoadInt64(&triggerCount) != 1 {
+		t.Errorf("expected still 1 trigger after removal, got %d", triggerCount)
+	}
+}
+
+func TestAzureFunctionServiceBusTrigger(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	q, err := p.ServiceBus.CreateQueue(ctx, mqdriver.QueueConfig{Name: "az-trigger-queue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received []string
+	p.ServiceBus.SetTrigger(q.URL, func(_ string, msg mqdriver.Message) {
+		received = append(received, msg.Body)
+	})
+
+	p.ServiceBus.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "azure-msg-1"})
+	p.ServiceBus.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "azure-msg-2"})
+
+	if len(received) != 2 {
+		t.Errorf("expected 2 triggered messages, got %d", len(received))
+	}
+	if received[0] != "azure-msg-1" || received[1] != "azure-msg-2" {
+		t.Errorf("unexpected messages: %v", received)
+	}
+}
+
+func TestGCPCloudFunctionPubSubTrigger(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	q, err := p.PubSub.CreateQueue(ctx, mqdriver.QueueConfig{Name: "gcp-trigger-topic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received []string
+	p.PubSub.SetTrigger(q.URL, func(_ string, msg mqdriver.Message) {
+		received = append(received, msg.Body)
+	})
+
+	p.PubSub.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "gcp-event-1"})
+	p.PubSub.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "gcp-event-2"})
+	p.PubSub.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "gcp-event-3"})
+
+	if len(received) != 3 {
+		t.Errorf("expected 3 triggered messages, got %d", len(received))
 	}
 }
