@@ -22,20 +22,20 @@ type UserInfo struct {
 
 // RoleConfig describes a role to create.
 type RoleConfig struct {
-	Name                 string
-	Path                 string
-	AssumeRolePolicyDoc  string
-	Tags                 map[string]string
+	Name                string
+	Path                string
+	AssumeRolePolicyDoc string
+	Tags                map[string]string
 }
 
 // RoleInfo describes an IAM role.
 type RoleInfo struct {
-	Name                 string
-	ID                   string
-	ARN                  string
-	Path                 string
-	AssumeRolePolicyDoc  string
-	Tags                 map[string]string
+	Name                string
+	ID                  string
+	ARN                 string
+	Path                string
+	AssumeRolePolicyDoc string
+	Tags                map[string]string
 }
 
 // PolicyConfig describes a policy to create.

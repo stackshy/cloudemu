@@ -32,7 +32,7 @@ func NewNetworking(d driver.Networking, opts ...Option) *Networking {
 
 type Option func(*Networking)
 
-func WithRecorder(r *recorder.Recorder) Option    { return func(n *Networking) { n.recorder = r } }
+func WithRecorder(r *recorder.Recorder) Option     { return func(n *Networking) { n.recorder = r } }
 func WithMetrics(m *metrics.Collector) Option      { return func(n *Networking) { n.metrics = m } }
 func WithRateLimiter(l *ratelimit.Limiter) Option  { return func(n *Networking) { n.limiter = l } }
 func WithErrorInjection(i *inject.Injector) Option { return func(n *Networking) { n.injector = i } }
@@ -77,7 +77,9 @@ func (n *Networking) record(op string, input, output interface{}, err error, dur
 
 func (n *Networking) CreateVPC(ctx context.Context, config driver.VPCConfig) (*driver.VPCInfo, error) {
 	out, err := n.do(ctx, "CreateVPC", config, func() (interface{}, error) { return n.driver.CreateVPC(ctx, config) })
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return out.(*driver.VPCInfo), nil
 }
 func (n *Networking) DeleteVPC(ctx context.Context, id string) error {
@@ -86,12 +88,16 @@ func (n *Networking) DeleteVPC(ctx context.Context, id string) error {
 }
 func (n *Networking) DescribeVPCs(ctx context.Context, ids []string) ([]driver.VPCInfo, error) {
 	out, err := n.do(ctx, "DescribeVPCs", ids, func() (interface{}, error) { return n.driver.DescribeVPCs(ctx, ids) })
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return out.([]driver.VPCInfo), nil
 }
 func (n *Networking) CreateSubnet(ctx context.Context, config driver.SubnetConfig) (*driver.SubnetInfo, error) {
 	out, err := n.do(ctx, "CreateSubnet", config, func() (interface{}, error) { return n.driver.CreateSubnet(ctx, config) })
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return out.(*driver.SubnetInfo), nil
 }
 func (n *Networking) DeleteSubnet(ctx context.Context, id string) error {
@@ -100,12 +106,16 @@ func (n *Networking) DeleteSubnet(ctx context.Context, id string) error {
 }
 func (n *Networking) DescribeSubnets(ctx context.Context, ids []string) ([]driver.SubnetInfo, error) {
 	out, err := n.do(ctx, "DescribeSubnets", ids, func() (interface{}, error) { return n.driver.DescribeSubnets(ctx, ids) })
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return out.([]driver.SubnetInfo), nil
 }
 func (n *Networking) CreateSecurityGroup(ctx context.Context, config driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
 	out, err := n.do(ctx, "CreateSecurityGroup", config, func() (interface{}, error) { return n.driver.CreateSecurityGroup(ctx, config) })
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return out.(*driver.SecurityGroupInfo), nil
 }
 func (n *Networking) DeleteSecurityGroup(ctx context.Context, id string) error {
@@ -114,7 +124,9 @@ func (n *Networking) DeleteSecurityGroup(ctx context.Context, id string) error {
 }
 func (n *Networking) DescribeSecurityGroups(ctx context.Context, ids []string) ([]driver.SecurityGroupInfo, error) {
 	out, err := n.do(ctx, "DescribeSecurityGroups", ids, func() (interface{}, error) { return n.driver.DescribeSecurityGroups(ctx, ids) })
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return out.([]driver.SecurityGroupInfo), nil
 }
 func (n *Networking) AddIngressRule(ctx context.Context, groupID string, rule driver.SecurityRule) error {
