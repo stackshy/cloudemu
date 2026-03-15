@@ -36,10 +36,10 @@ type ListOptions struct {
 
 // ListResult is the result of a list operation.
 type ListResult struct {
-	Objects       []ObjectInfo
+	Objects        []ObjectInfo
 	CommonPrefixes []string
-	NextPageToken string
-	IsTruncated   bool
+	NextPageToken  string
+	IsTruncated    bool
 }
 
 // CopySource identifies the source for a copy operation.

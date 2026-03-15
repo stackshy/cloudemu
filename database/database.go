@@ -34,9 +34,9 @@ func NewDatabase(d driver.Database, opts ...Option) *Database {
 // Option configures a portable Database.
 type Option func(*Database)
 
-func WithRecorder(r *recorder.Recorder) Option   { return func(d *Database) { d.recorder = r } }
-func WithMetrics(m *metrics.Collector) Option     { return func(d *Database) { d.metrics = m } }
-func WithRateLimiter(l *ratelimit.Limiter) Option { return func(d *Database) { d.limiter = l } }
+func WithRecorder(r *recorder.Recorder) Option     { return func(d *Database) { d.recorder = r } }
+func WithMetrics(m *metrics.Collector) Option      { return func(d *Database) { d.metrics = m } }
+func WithRateLimiter(l *ratelimit.Limiter) Option  { return func(d *Database) { d.limiter = l } }
 func WithErrorInjection(i *inject.Injector) Option { return func(d *Database) { d.injector = i } }
 func WithLatency(dur time.Duration) Option         { return func(d *Database) { d.latency = dur } }
 

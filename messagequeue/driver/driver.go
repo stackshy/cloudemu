@@ -5,14 +5,14 @@ import "context"
 
 // QueueConfig describes a message queue to create.
 type QueueConfig struct {
-	Name                string
-	FIFO                bool
-	DelaySeconds        int
-	VisibilityTimeout   int // seconds
-	MaxMessageSize      int
-	MessageRetention    int // seconds
-	Tags                map[string]string
-	DeadLetterQueue     *DeadLetterConfig
+	Name              string
+	FIFO              bool
+	DelaySeconds      int
+	VisibilityTimeout int // seconds
+	MaxMessageSize    int
+	MessageRetention  int // seconds
+	Tags              map[string]string
+	DeadLetterQueue   *DeadLetterConfig
 }
 
 // DeadLetterConfig configures a dead-letter queue for failed messages.
@@ -23,22 +23,22 @@ type DeadLetterConfig struct {
 
 // QueueInfo describes a message queue.
 type QueueInfo struct {
-	URL               string
-	ARN               string
-	Name              string
-	FIFO              bool
+	URL                string
+	ARN                string
+	Name               string
+	FIFO               bool
 	ApproxMessageCount int
-	Tags              map[string]string
+	Tags               map[string]string
 }
 
 // SendMessageInput configures a message send operation.
 type SendMessageInput struct {
-	QueueURL       string
-	Body           string
-	DelaySeconds   int
-	GroupID        string // FIFO only
+	QueueURL        string
+	Body            string
+	DelaySeconds    int
+	GroupID         string // FIFO only
 	DeduplicationID string // FIFO only
-	Attributes     map[string]string
+	Attributes      map[string]string
 }
 
 // SendMessageOutput is the result of sending a message.
@@ -48,10 +48,10 @@ type SendMessageOutput struct {
 
 // ReceiveMessageInput configures a message receive operation.
 type ReceiveMessageInput struct {
-	QueueURL            string
-	MaxMessages         int
-	WaitTimeSeconds     int
-	VisibilityTimeout   int
+	QueueURL          string
+	MaxMessages       int
+	WaitTimeSeconds   int
+	VisibilityTimeout int
 }
 
 // Message is a received message.

@@ -33,7 +33,7 @@ func NewServerless(d driver.Serverless, opts ...Option) *Serverless {
 
 type Option func(*Serverless)
 
-func WithRecorder(r *recorder.Recorder) Option    { return func(s *Serverless) { s.recorder = r } }
+func WithRecorder(r *recorder.Recorder) Option     { return func(s *Serverless) { s.recorder = r } }
 func WithMetrics(m *metrics.Collector) Option      { return func(s *Serverless) { s.metrics = m } }
 func WithRateLimiter(l *ratelimit.Limiter) Option  { return func(s *Serverless) { s.limiter = l } }
 func WithErrorInjection(i *inject.Injector) Option { return func(s *Serverless) { s.injector = i } }

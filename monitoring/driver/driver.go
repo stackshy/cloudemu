@@ -23,7 +23,7 @@ type GetMetricInput struct {
 	Dimensions map[string]string
 	StartTime  time.Time
 	EndTime    time.Time
-	Period     int // seconds
+	Period     int    // seconds
 	Stat       string // "Average", "Sum", "Minimum", "Maximum", "SampleCount"
 }
 

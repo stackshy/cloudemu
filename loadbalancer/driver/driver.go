@@ -5,11 +5,11 @@ import "context"
 
 // LBConfig describes a load balancer to create.
 type LBConfig struct {
-	Name      string
-	Type      string // "application", "network"
-	Scheme    string // "internet-facing", "internal"
-	Subnets   []string
-	Tags      map[string]string
+	Name    string
+	Type    string // "application", "network"
+	Scheme  string // "internet-facing", "internal"
+	Subnets []string
+	Tags    map[string]string
 }
 
 // LBInfo describes a load balancer.

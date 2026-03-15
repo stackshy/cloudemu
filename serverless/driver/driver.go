@@ -16,15 +16,15 @@ type FunctionConfig struct {
 
 // FunctionInfo describes a serverless function.
 type FunctionInfo struct {
-	Name        string
-	ARN         string
-	Runtime     string
-	Handler     string
-	Memory      int
-	Timeout     int
-	State       string
-	Environment map[string]string
-	Tags        map[string]string
+	Name         string
+	ARN          string
+	Runtime      string
+	Handler      string
+	Memory       int
+	Timeout      int
+	State        string
+	Environment  map[string]string
+	Tags         map[string]string
 	LastModified string
 }
 
