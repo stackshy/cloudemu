@@ -45,6 +45,9 @@ func TestMyApp(t *testing.T) {
   - [IAM Policy Evaluation](#iam-policy-evaluation)
   - [FIFO Deduplication](#fifo-deduplication)
   - [Numeric-Aware Comparisons](#numeric-aware-comparisons)
+  - [Dead-Letter Queues](#dead-letter-queues)
+  - [Serverless Triggers (SQS → Lambda)](#serverless-triggers)
+- [Cost Simulation](#cost-simulation)
 - [Cross-Cutting Features](#cross-cutting-features)
   - [Call Recording (VCR Pattern)](#call-recording)
   - [Error Injection](#error-injection)
@@ -72,7 +75,8 @@ func TestMyApp(t *testing.T) {
 - **Fast** — pure in-memory Go, no I/O
 - **Thread-safe** — all stores use `sync.RWMutex`, safe for parallel tests
 - **Deterministic** — fake clock, error injection, rate limiting — full control over test conditions
-- **Realistic** — VMs auto-generate metrics, alarms auto-evaluate, IAM checks real policy documents, FIFO queues deduplicate
+- **Realistic** — VMs auto-generate metrics, alarms auto-evaluate, IAM checks real policy documents, FIFO queues deduplicate, dead-letter queues, serverless triggers
+- **Cost tracking** — simulate cloud billing with per-operation cost estimation
 - **Three providers** — same interface, same patterns, write once test everywhere
 - **10 services each** — Storage, Compute, Database, Serverless, Networking, Monitoring, IAM, DNS, Load Balancer, Message Queue
 
@@ -752,6 +756,25 @@ out2, _ := sqs.SendMessage(ctx, mqdriver.SendMessageInput{
 // out1.MessageID == out2.MessageID — only 1 message in queue
 
 // After 5 minutes, same DeduplicationID is accepted as a new message
+
+// Dead-letter queue — messages that fail processing are moved automatically
+dlq, _ := sqs.CreateQueue(ctx, mqdriver.QueueConfig{Name: "orders-dlq"})
+mainQ, _ := sqs.CreateQueue(ctx, mqdriver.QueueConfig{
+    Name: "orders-main",
+    DeadLetterQueue: &mqdriver.DeadLetterConfig{
+        TargetQueueURL:  dlq.URL,
+        MaxReceiveCount: 3, // move to DLQ after 3 failed receives
+    },
+})
+
+// Serverless trigger — automatically invoke Lambda when message arrives
+aws.SQS.SetTrigger(mainQ.URL, func(queueURL string, msg mqdriver.Message) {
+    aws.Lambda.Invoke(ctx, sdriver.InvokeInput{
+        FunctionName: "order-processor",
+        Payload:      []byte(msg.Body),
+    })
+})
+// Now every SendMessage automatically invokes "order-processor"
 ```
 
 ---
@@ -835,6 +858,138 @@ Database scan filters and query conditions compare values numerically when both 
 ```
 
 This applies to all comparison operators (`<`, `>`, `<=`, `>=`, `BETWEEN`) in DynamoDB, CosmosDB, and Firestore mocks.
+
+### Dead-Letter Queues
+
+Messages that fail processing too many times are automatically moved to a dead-letter queue — just like real AWS SQS, Azure Service Bus, and GCP Pub/Sub.
+
+```go
+sqs := cloudemu.NewAWS().SQS
+
+// Create DLQ
+dlq, _ := sqs.CreateQueue(ctx, mqdriver.QueueConfig{Name: "my-dlq"})
+
+// Create main queue with DLQ configured
+mainQ, _ := sqs.CreateQueue(ctx, mqdriver.QueueConfig{
+    Name: "my-queue",
+    DeadLetterQueue: &mqdriver.DeadLetterConfig{
+        TargetQueueURL:  dlq.URL,
+        MaxReceiveCount: 3, // move to DLQ after 3 receives without deletion
+    },
+})
+
+// Send a message
+sqs.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: mainQ.URL, Body: "process me"})
+
+// Simulate failed processing — receive 3 times without deleting
+for i := 0; i < 3; i++ {
+    msgs, _ := sqs.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: mainQ.URL})
+    // Don't delete — simulating failure
+    // Wait for visibility timeout to expire...
+}
+
+// On next receive, message is gone from main queue — moved to DLQ
+msgs, _ := sqs.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: mainQ.URL})
+// len(msgs) == 0
+
+// Message is now in the DLQ
+dlqMsgs, _ := sqs.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: dlq.URL})
+// dlqMsgs[0].Body == "process me"
+```
+
+Works identically across all three providers (SQS, Service Bus, Pub/Sub).
+
+### Serverless Triggers
+
+Register a trigger on a message queue — when a message is sent, a serverless function is automatically invoked. This emulates real event source mappings (AWS SQS → Lambda, Azure Service Bus → Functions, GCP Pub/Sub → Cloud Functions).
+
+```go
+aws := cloudemu.NewAWS()
+
+// Register Lambda handler
+aws.Lambda.RegisterHandler("processor", func(ctx context.Context, payload []byte) ([]byte, error) {
+    // Process the message
+    return []byte("done"), nil
+})
+aws.Lambda.CreateFunction(ctx, sdriver.FunctionConfig{Name: "processor", Runtime: "go1.x", Handler: "main"})
+
+// Create queue
+q, _ := aws.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "events"})
+
+// Wire trigger: SQS → Lambda
+aws.SQS.SetTrigger(q.URL, func(queueURL string, msg mqdriver.Message) {
+    aws.Lambda.Invoke(ctx, sdriver.InvokeInput{
+        FunctionName: "processor",
+        Payload:      []byte(msg.Body),
+    })
+})
+
+// Now every SendMessage automatically invokes the Lambda function
+aws.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "event-data"})
+// Lambda "processor" is invoked with payload "event-data"
+
+// Remove trigger when no longer needed
+aws.SQS.RemoveTrigger(q.URL)
+```
+
+Works across all three providers:
+- **AWS:** `SQS.SetTrigger()` → invokes Lambda
+- **Azure:** `ServiceBus.SetTrigger()` → invokes Azure Functions
+- **GCP:** `PubSub.SetTrigger()` → invokes Cloud Functions
+
+---
+
+## Cost Simulation
+
+Track simulated cloud costs across all operations with the `cost.Tracker`. No other mock library offers this.
+
+```go
+import "github.com/NitinKumar004/cloudemu/cost"
+
+tracker := cost.New()
+
+// Record costs as you use services
+tracker.Record("compute", "RunInstances", 3)      // 3 instances
+tracker.Record("storage", "PutObject", 1000)       // 1000 uploads
+tracker.Record("database", "PutItem", 5000)        // 5000 writes
+tracker.Record("serverless", "Invoke", 100000)     // 100K invocations
+tracker.Record("messagequeue", "SendMessage", 10000) // 10K messages
+
+// Get total estimated cost
+total := tracker.TotalCost()
+
+// Breakdown by service
+byService := tracker.CostByService()
+// byService["compute"] == 0.0348
+// byService["storage"] == 0.005
+// byService["serverless"] == 0.02
+
+// Breakdown by operation
+byOp := tracker.CostByOperation()
+// byOp["compute:RunInstances"] == 0.0348
+
+// Custom pricing — override any rate
+tracker.SetRate("compute", "RunInstances", 0.50) // custom instance price
+
+// Reset between tests
+tracker.Reset()
+```
+
+**Default rates (per unit):**
+
+| Service | Operation | Rate |
+|---------|-----------|------|
+| Compute | RunInstances | $0.0116/instance |
+| Storage | PutObject | $0.000005/op |
+| Storage | GetObject | $0.0000004/op |
+| Database | PutItem | $0.00000125/op |
+| Database | GetItem | $0.00000025/op |
+| Serverless | Invoke | $0.0000002/invocation |
+| Message Queue | SendMessage | $0.0000004/op |
+| Monitoring | PutMetricData | $0.00001/metric |
+| Load Balancer | CreateLoadBalancer | $0.0225/hour |
+
+All rates are customizable via `SetRate()`.
 
 ---
 
@@ -1160,6 +1315,7 @@ github.com/NitinKumar004/cloudemu
 ├── cloudemu.go            # NewAWS(), NewAzure(), NewGCP()
 ├── errors/                # Canonical error codes and helpers
 ├── config/                # Options, Clock, FakeClock
+├── cost/                  # Simulated cloud cost tracking
 ├── recorder/              # Call recording + fluent assertions
 ├── inject/                # Error injection + policies
 ├── ratelimit/             # Token bucket rate limiter
