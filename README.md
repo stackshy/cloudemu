@@ -1,6 +1,20 @@
-# cloudemu
+<p align="center">
+  <h1 align="center">cloudemu</h1>
+  <p align="center"><b>Zero-Cost In-Memory Cloud Emulation for Go</b></p>
+</p>
 
-**Zero-cost, in-memory cloud emulation of AWS, Azure, and GCP for Go.**
+<p align="center">
+  <a href="https://pkg.go.dev/github.com/NitinKumar004/cloudemu"><img src="https://pkg.go.dev/badge/github.com/NitinKumar004/cloudemu.svg" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/NitinKumar004/cloudemu"><img src="https://goreportcard.com/badge/github.com/NitinKumar004/cloudemu" alt="Go Report Card"></a>
+  <a href="https://github.com/NitinKumar004/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://github.com/NitinKumar004/cloudemu/actions"><img src="https://img.shields.io/github/actions/workflow/status/NitinKumar004/cloudemu/go.yml?branch=development&label=tests" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go Version">
+  <img src="https://img.shields.io/badge/services-30_mocks-green" alt="30 Mocks">
+  <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP-orange" alt="Providers">
+  <img src="https://img.shields.io/badge/cost-$0-brightgreen" alt="Zero Cost">
+</p>
+
+---
 
 cloudemu is a lightweight Go library that provides mock implementations of 30 cloud services (10 each for AWS, Azure, and GCP). It runs entirely in memory — no real cloud accounts, no Docker containers, no network calls needed. Just import the package and start testing your cloud-dependent code instantly.
 
