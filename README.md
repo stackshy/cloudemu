@@ -2,13 +2,15 @@
 
 **Zero-cost, in-memory cloud emulation of AWS, Azure, and GCP for Go.**
 
+cloudemu is a lightweight Go library that provides mock implementations of 30 cloud services (10 each for AWS, Azure, and GCP). It runs entirely in memory — no real cloud accounts, no Docker containers, no network calls needed. Just import the package and start testing your cloud-dependent code instantly.
+
 ```go
 aws := cloudemu.NewAWS()
 azure := cloudemu.NewAzure()
 gcp := cloudemu.NewGCP()
 ```
 
-No cloud accounts. No Docker. No network calls. Just import and test.
+**Note:** This project is actively under development. We are expanding support for more cloud services and resources across all three providers. Contributions and feedback are welcome!
 
 ## Installation
 
@@ -20,13 +22,17 @@ Requires Go 1.25.0+.
 
 ## Why cloudemu?
 
+Testing cloud-dependent code is painful. You either pay for real cloud accounts, wrestle with heavy emulators like LocalStack that need Docker, or write incomplete mocks from scratch. cloudemu solves all of this — it gives you realistic, thread-safe cloud mocks that run in milliseconds with zero setup.
+
 | Approach | Cost | Speed | Offline |
 |----------|------|-------|---------|
-| Real cloud | $$$ | Slow | No |
-| LocalStack / Emulators | $ | Medium | Yes |
-| **cloudemu** | **Free** | **~10ms** | **Yes** |
+| Real cloud (AWS/Azure/GCP) | $$$ | Slow (seconds) | No |
+| LocalStack / Emulators | $ | Medium (100ms+) | Yes |
+| **cloudemu** | **Free** | **Fast (~10ms)** | **Yes** |
 
-## Supported Services (10 per provider)
+## Supported Services
+
+cloudemu covers 10 cloud services across all three major providers, giving you 30 mock implementations in total.
 
 | Service | AWS | Azure | GCP |
 |---------|-----|-------|-----|
@@ -45,15 +51,20 @@ Requires Go 1.25.0+.
 
 ### Storage
 
+Create buckets, upload objects, list with prefix filtering, and paginate results — all in memory. Works the same way across S3, Azure Blob Storage, and GCS.
+
 ```go
 aws := cloudemu.NewAWS()
 aws.S3.CreateBucket(ctx, "my-bucket")
 aws.S3.PutObject(ctx, "my-bucket", "key", []byte("hello"), "text/plain", nil)
+
 obj, _ := aws.S3.GetObject(ctx, "my-bucket", "key")
 // obj.Data == []byte("hello")
 ```
 
-### Compute (with auto-generated metrics)
+### Compute
+
+Launch virtual machines with a real lifecycle state machine. Instances transition through `pending -> running -> stopping -> stopped -> terminated`, and illegal transitions (like stopping a terminated instance) return errors — just like real cloud. Launching a VM also auto-generates monitoring metrics (CPU, Network, Disk).
 
 ```go
 instances, _ := aws.EC2.RunInstances(ctx, computedriver.InstanceConfig{
@@ -67,6 +78,8 @@ aws.EC2.TerminateInstances(ctx, []string{instances[0].ID})
 ```
 
 ### Database
+
+Create tables with partition and sort keys, put and get items, run queries with key conditions, and scan with filters. Supports all comparison operators (`=`, `!=`, `<`, `>`, `<=`, `>=`, `CONTAINS`, `BEGINS_WITH`) with numeric-aware comparisons — so `"10" > "9"` works correctly.
 
 ```go
 aws.DynamoDB.CreateTable(ctx, dbdriver.TableConfig{
@@ -82,6 +95,8 @@ item, _ := aws.DynamoDB.GetItem(ctx, "users", map[string]interface{}{
 
 ### Message Queue with Dead-Letter Queue
 
+Send and receive messages with visibility timeouts, FIFO ordering, and 5-minute deduplication windows. Configure a dead-letter queue so that messages which fail processing too many times are automatically moved out of the main queue — exactly how real SQS, Service Bus, and Pub/Sub work.
+
 ```go
 dlq, _ := aws.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "my-dlq"})
 mainQ, _ := aws.SQS.CreateQueue(ctx, mqdriver.QueueConfig{
@@ -94,21 +109,29 @@ mainQ, _ := aws.SQS.CreateQueue(ctx, mqdriver.QueueConfig{
 aws.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: mainQ.URL, Body: "hello"})
 ```
 
-### Serverless Triggers (SQS -> Lambda)
+### Serverless Triggers
+
+Wire message queues to serverless functions so that every incoming message automatically triggers a function invocation. This emulates real event source mappings like AWS SQS -> Lambda, Azure Service Bus -> Functions, and GCP Pub/Sub -> Cloud Functions.
 
 ```go
 aws.Lambda.RegisterHandler("processor", func(ctx context.Context, payload []byte) ([]byte, error) {
     return []byte("done"), nil
 })
-aws.Lambda.CreateFunction(ctx, sdriver.FunctionConfig{Name: "processor", Runtime: "go1.x", Handler: "main"})
+aws.Lambda.CreateFunction(ctx, sdriver.FunctionConfig{
+    Name: "processor", Runtime: "go1.x", Handler: "main",
+})
 
 // Wire: every message sent to queue auto-invokes Lambda
 aws.SQS.SetTrigger(queue.URL, func(queueURL string, msg mqdriver.Message) {
-    aws.Lambda.Invoke(ctx, sdriver.InvokeInput{FunctionName: "processor", Payload: []byte(msg.Body)})
+    aws.Lambda.Invoke(ctx, sdriver.InvokeInput{
+        FunctionName: "processor", Payload: []byte(msg.Body),
+    })
 })
 ```
 
 ### Cost Simulation
+
+Track estimated cloud costs across all your operations. cloudemu ships with default pricing rates for every service, and you can override them with custom rates. This is useful for budget testing, cost-aware CI pipelines, or just understanding what your test workload would cost on real cloud.
 
 ```go
 tracker := cost.New()
@@ -123,30 +146,24 @@ tracker.SetRate("compute", "RunInstances", 0.50) // custom pricing
 
 ## Realistic Cloud Behaviors
 
-These aren't just dummy mocks — they behave like real cloud:
+cloudemu goes beyond basic CRUD mocks. These behaviors make it behave like real cloud services, so your tests catch real issues:
 
-- **VM State Machine** — `pending -> running -> stopped -> terminated` with enforced transitions
-- **Auto-Metric Generation** — launching a VM auto-generates CPU, Network, Disk metrics in monitoring
-- **Lifecycle Metrics** — start/stop/reboot/terminate emit metric values (running or zero)
-- **Alarm Auto-Evaluation** — push metric data and alarms transition between `INSUFFICIENT_DATA`, `OK`, `ALARM` automatically
-- **IAM Policy Evaluation** — parses real JSON policy documents with wildcard matching, explicit Deny overrides Allow
-- **FIFO Deduplication** — 5-minute dedup window on FIFO queues (SQS, Service Bus, Pub/Sub)
-- **Dead-Letter Queues** — messages exceeding max receive count auto-move to DLQ
-- **Serverless Triggers** — SQS->Lambda, ServiceBus->Functions, PubSub->CloudFunctions event source mappings
-- **Numeric-Aware DB Comparisons** — `"10" > "9"` compares numerically, not as strings
-- **Cost Simulation** — track estimated cloud costs per operation with customizable rates
+- **VM State Machine** — `pending -> running -> stopped -> terminated` with enforced transitions. Illegal moves return errors.
+- **Auto-Metric Generation** — Launching a VM automatically pushes 5 metrics (CPU, Network In/Out, Disk Read/Write) to the monitoring service with backfilled datapoints.
+- **Lifecycle Metrics** — Start, stop, reboot, and terminate operations emit appropriate metric values so alarms can detect state changes.
+- **Alarm Auto-Evaluation** — Push metric data and alarms automatically transition between `INSUFFICIENT_DATA`, `OK`, and `ALARM` based on threshold comparison.
+- **IAM Policy Evaluation** — Parses real JSON policy documents with wildcard matching (`s3:*` matches `s3:GetObject`). Explicit `Deny` always overrides `Allow`.
+- **FIFO Deduplication** — FIFO queues enforce a 5-minute deduplication window. Same `DeduplicationID` within the window returns the existing message ID.
+- **Dead-Letter Queues** — Messages that exceed the max receive count are automatically moved to the configured DLQ. Works across SQS, Service Bus, and Pub/Sub.
+- **Serverless Triggers** — Register event source mappings so messages automatically invoke Lambda, Azure Functions, or Cloud Functions.
+- **Numeric-Aware DB Comparisons** — Database filters compare values numerically when both sides are valid numbers, avoiding string-sorting bugs.
+- **Cost Simulation** — Track estimated cloud costs per operation with default or custom pricing rates.
 
 ## Cross-Cutting Features
 
-Wrap any provider mock with the portable API to get:
+The portable API layer wraps any provider mock with cross-cutting concerns. Every API call passes through a pipeline of recording, error injection, rate limiting, latency simulation, and metrics collection — giving you full control over test conditions.
 
 ```go
-rec := recorder.New()
-mc := metrics.NewCollector()
-inj := inject.NewInjector()
-clock := config.NewFakeClock(time.Now())
-limiter := ratelimit.New(10, 10, clock)
-
 bucket := storage.NewBucket(aws.S3,
     storage.WithRecorder(rec),       // record every API call
     storage.WithMetrics(mc),         // track call counts & durations
@@ -158,14 +175,16 @@ bucket := storage.NewBucket(aws.S3,
 
 | Feature | Description |
 |---------|-------------|
-| **Call Recording** | Record every call for assertions — VCR pattern |
-| **Error Injection** | Always, NthCall, Probabilistic, Countdown policies |
-| **Rate Limiting** | Token bucket with burst — returns `Throttled` error |
-| **Metrics Collection** | calls_total, call_duration, errors_total per operation |
-| **Fake Clock** | Deterministic time for TTL, dedup windows, alarm evaluation |
-| **Latency Simulation** | Add realistic delays to test timeout handling |
+| **Call Recording** | Capture every API call with inputs, outputs, errors, and timing for later assertions |
+| **Error Injection** | Simulate cloud failures with policies: Always, every Nth call, probabilistic, or first N calls |
+| **Rate Limiting** | Token bucket rate limiter that returns `Throttled` errors when the burst is exhausted |
+| **Metrics Collection** | Track `calls_total`, `call_duration`, and `errors_total` per service and operation |
+| **Fake Clock** | Control time deterministically for testing dedup windows, alarm evaluation, TTL, and timeouts |
+| **Latency Simulation** | Add realistic delays to test timeout handling and async patterns |
 
 ## Configuration
+
+All providers accept functional options to customize region, account ID, clock, and latency.
 
 ```go
 aws := cloudemu.NewAWS(
@@ -178,27 +197,21 @@ aws := cloudemu.NewAWS(
 
 ## Error Handling
 
+All operations return errors using canonical error codes. Use helper functions to check the error type without string matching.
+
 ```go
 import cerrors "github.com/NitinKumar004/cloudemu/errors"
 
 _, err := s3.GetObject(ctx, "bucket", "missing-key")
 if cerrors.IsNotFound(err) { /* handle */ }
 
-// Codes: NotFound, AlreadyExists, InvalidArgument,
-//        FailedPrecondition, PermissionDenied, Throttled
-```
-
-## Running Tests
-
-```bash
-go build ./...   # compile
-go vet ./...     # lint
-go test -v ./... # 32 tests, all passing
+// Available codes: NotFound, AlreadyExists, InvalidArgument,
+//                  FailedPrecondition, PermissionDenied, Throttled
 ```
 
 ## Architecture
 
-Three-layer design:
+cloudemu follows a three-layer design inspired by Go CDK. The portable API layer adds cross-cutting concerns on top of minimal driver interfaces, which are implemented by in-memory provider backends. All 30 mocks are backed by a single generic, thread-safe `memstore.Store[V]`.
 
 ```
 Portable API     →  recording, metrics, rate limiting, error injection
@@ -206,7 +219,13 @@ Driver Interface →  minimal Go interfaces per service
 Provider Mocks   →  in-memory backends (AWS/Azure/GCP) using generic memstore
 ```
 
-All 30 mocks backed by a single generic thread-safe `memstore.Store[V]`.
+## Running Tests
+
+```bash
+go build ./...   # compile all packages
+go vet ./...     # static analysis
+go test -v ./... # run all 32 tests
+```
 
 ## License
 
