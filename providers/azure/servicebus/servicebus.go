@@ -28,6 +28,7 @@ type sbMessage struct {
 	ReceiptHandle   string
 	VisibleAt       time.Time
 	SentAt          time.Time
+	ReceiveCount    int
 }
 
 // queueData holds the internal state of a single Service Bus queue.
@@ -41,20 +42,43 @@ type queueData struct {
 	maxMessageSize     int
 	messageRetention   int
 	deduplicationIndex map[string]time.Time
+	dlqConfig          *driver.DeadLetterConfig
 }
+
+// FunctionTrigger is a function that gets called when a message is sent to a queue.
+type FunctionTrigger func(queueURL string, message driver.Message)
 
 // Mock is an in-memory mock implementation of the Azure Service Bus service.
 type Mock struct {
-	queues *memstore.Store[*queueData]
-	opts   *config.Options
+	queues   *memstore.Store[*queueData]
+	opts     *config.Options
+	mu       sync.RWMutex
+	triggers map[string]FunctionTrigger // queueURL → trigger
 }
 
 // New creates a new Service Bus mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		queues: memstore.New[*queueData](),
-		opts:   opts,
+		queues:   memstore.New[*queueData](),
+		opts:     opts,
+		triggers: make(map[string]FunctionTrigger),
 	}
+}
+
+// SetTrigger registers an Azure Function trigger for a queue.
+func (m *Mock) SetTrigger(queueURL string, fn FunctionTrigger) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.triggers[queueURL] = fn
+}
+
+// RemoveTrigger removes a Function trigger from a queue.
+func (m *Mock) RemoveTrigger(queueURL string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.triggers, queueURL)
 }
 
 // CreateQueue creates a new Service Bus queue.
@@ -101,6 +125,7 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		maxMessageSize:     cfg.MaxMessageSize,
 		messageRetention:   cfg.MessageRetention,
 		deduplicationIndex: make(map[string]time.Time),
+		dlqConfig:          cfg.DeadLetterQueue,
 	}
 
 	m.queues.Set(url, qd)
@@ -223,6 +248,21 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		qd.deduplicationIndex[input.DeduplicationID] = now
 	}
 
+	// Fire Function trigger if registered.
+	m.mu.RLock()
+	trigger := m.triggers[input.QueueURL]
+	m.mu.RUnlock()
+
+	if trigger != nil {
+		triggerMsg := driver.Message{
+			MessageID:  msgID,
+			Body:       input.Body,
+			Attributes: attrs,
+			GroupID:    input.GroupID,
+		}
+		trigger(input.QueueURL, triggerMsg)
+	}
+
 	return &driver.SendMessageOutput{
 		MessageID: msgID,
 	}, nil
@@ -255,12 +295,24 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	now := m.opts.Clock.Now()
 	var results []driver.Message
 
-	for _, msg := range qd.messages {
+	var toRemove []int
+
+	for i, msg := range qd.messages {
 		if len(results) >= maxMessages {
 			break
 		}
 
 		if msg.VisibleAt.After(now) {
+			continue
+		}
+
+		msg.ReceiveCount++
+
+		// Check if message exceeded max receive count — move to DLQ.
+		if qd.dlqConfig != nil && qd.dlqConfig.MaxReceiveCount > 0 && msg.ReceiveCount > qd.dlqConfig.MaxReceiveCount {
+			m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
+			toRemove = append(toRemove, i)
+
 			continue
 		}
 
@@ -283,11 +335,39 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 		})
 	}
 
+	// Remove DLQ-moved messages in reverse order.
+	for i := len(toRemove) - 1; i >= 0; i-- {
+		idx := toRemove[i]
+		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
+	}
+
 	if results == nil {
 		results = []driver.Message{}
 	}
 
 	return results, nil
+}
+
+// moveToDLQ moves a message to the dead-letter queue.
+func (m *Mock) moveToDLQ(dlqURL string, msg *sbMessage) {
+	dlq, ok := m.queues.Get(dlqURL)
+	if !ok {
+		return
+	}
+
+	dlq.mu.Lock()
+	defer dlq.mu.Unlock()
+
+	dlqMsg := &sbMessage{
+		ID:         msg.ID,
+		Body:       msg.Body,
+		GroupID:    msg.GroupID,
+		Attributes: msg.Attributes,
+		VisibleAt:  m.opts.Clock.Now(),
+		SentAt:     m.opts.Clock.Now(),
+	}
+
+	dlq.messages = append(dlq.messages, dlqMsg)
 }
 
 // DeleteMessage deletes (completes) a message from the specified queue using its receipt handle (lock token).
