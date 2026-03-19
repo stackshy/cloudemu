@@ -1,3 +1,3 @@
-module github.com/NitinKumar004/cloudemu
+module github.com/stackshy/cloudemu
 
 go 1.25.0

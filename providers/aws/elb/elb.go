@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/internal/idgen"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
-	"github.com/NitinKumar004/cloudemu/loadbalancer/driver"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/loadbalancer/driver"
 )
 
 // Compile-time check that Mock implements driver.LoadBalancer.

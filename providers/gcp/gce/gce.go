@@ -7,14 +7,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/compute"
-	"github.com/NitinKumar004/cloudemu/compute/driver"
-	"github.com/NitinKumar004/cloudemu/config"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/internal/idgen"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
-	mondriver "github.com/NitinKumar004/cloudemu/monitoring/driver"
-	"github.com/NitinKumar004/cloudemu/statemachine"
+	"github.com/stackshy/cloudemu/compute"
+	"github.com/stackshy/cloudemu/compute/driver"
+	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	"github.com/stackshy/cloudemu/statemachine"
 )
 
 // Compile-time check that Mock implements driver.Compute.

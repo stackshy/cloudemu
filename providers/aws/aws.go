@@ -2,17 +2,17 @@
 package aws
 
 import (
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/providers/aws/awsiam"
-	"github.com/NitinKumar004/cloudemu/providers/aws/cloudwatch"
-	"github.com/NitinKumar004/cloudemu/providers/aws/dynamodb"
-	"github.com/NitinKumar004/cloudemu/providers/aws/ec2"
-	"github.com/NitinKumar004/cloudemu/providers/aws/elb"
-	"github.com/NitinKumar004/cloudemu/providers/aws/lambda"
-	"github.com/NitinKumar004/cloudemu/providers/aws/route53"
-	"github.com/NitinKumar004/cloudemu/providers/aws/s3"
-	"github.com/NitinKumar004/cloudemu/providers/aws/sqs"
-	"github.com/NitinKumar004/cloudemu/providers/aws/vpc"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/providers/aws/awsiam"
+	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
+	"github.com/stackshy/cloudemu/providers/aws/dynamodb"
+	"github.com/stackshy/cloudemu/providers/aws/ec2"
+	"github.com/stackshy/cloudemu/providers/aws/elb"
+	"github.com/stackshy/cloudemu/providers/aws/lambda"
+	"github.com/stackshy/cloudemu/providers/aws/route53"
+	"github.com/stackshy/cloudemu/providers/aws/s3"
+	"github.com/stackshy/cloudemu/providers/aws/sqs"
+	"github.com/stackshy/cloudemu/providers/aws/vpc"
 )
 
 // Provider holds all AWS mock services.

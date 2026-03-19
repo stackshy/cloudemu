@@ -5,11 +5,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/inject"
-	"github.com/NitinKumar004/cloudemu/metrics"
-	"github.com/NitinKumar004/cloudemu/ratelimit"
-	"github.com/NitinKumar004/cloudemu/recorder"
-	"github.com/NitinKumar004/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/inject"
+	"github.com/stackshy/cloudemu/metrics"
+	"github.com/stackshy/cloudemu/ratelimit"
+	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/storage/driver"
 )
 
 // Bucket is the portable storage type wrapping a driver with cross-cutting concerns.

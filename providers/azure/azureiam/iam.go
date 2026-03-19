@@ -7,11 +7,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/iam/driver"
-	"github.com/NitinKumar004/cloudemu/internal/idgen"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/iam/driver"
+	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/internal/memstore"
 )
 
 // Compile-time check that Mock implements driver.IAM.
