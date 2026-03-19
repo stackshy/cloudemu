@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 )
 
+//nolint:gochecknoglobals // counter must be a package-level variable for atomic operations across all ID generators
 var counter uint64
 
 // next returns a monotonically increasing number.

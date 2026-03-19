@@ -20,6 +20,7 @@ func NewCollector() *Collector {
 func (c *Collector) Counter(name string, value float64, labels map[string]string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.metrics = append(c.metrics, Metric{
 		Name:      name,
 		Type:      CounterType,
@@ -33,6 +34,7 @@ func (c *Collector) Counter(name string, value float64, labels map[string]string
 func (c *Collector) Gauge(name string, value float64, labels map[string]string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.metrics = append(c.metrics, Metric{
 		Name:      name,
 		Type:      GaugeType,
@@ -46,6 +48,7 @@ func (c *Collector) Gauge(name string, value float64, labels map[string]string) 
 func (c *Collector) Histogram(name string, duration time.Duration, labels map[string]string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.metrics = append(c.metrics, Metric{
 		Name:      name,
 		Type:      HistogramType,
@@ -59,8 +62,10 @@ func (c *Collector) Histogram(name string, duration time.Duration, labels map[st
 func (c *Collector) All() []Metric {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
 	result := make([]Metric, len(c.metrics))
 	copy(result, c.metrics)
+
 	return result
 }
 
@@ -68,5 +73,6 @@ func (c *Collector) All() []Metric {
 func (c *Collector) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.metrics = nil
 }

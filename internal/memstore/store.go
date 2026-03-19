@@ -18,7 +18,9 @@ func New[V any]() *Store[V] {
 func (s *Store[V]) Get(key string) (V, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	v, ok := s.items[key]
+
 	return v, ok
 }
 
@@ -26,6 +28,7 @@ func (s *Store[V]) Get(key string) (V, bool) {
 func (s *Store[V]) Set(key string, value V) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.items[key] = value
 }
 
@@ -33,10 +36,12 @@ func (s *Store[V]) Set(key string, value V) {
 func (s *Store[V]) Delete(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	_, ok := s.items[key]
 	if ok {
 		delete(s.items, key)
 	}
+
 	return ok
 }
 
@@ -44,7 +49,9 @@ func (s *Store[V]) Delete(key string) bool {
 func (s *Store[V]) Has(key string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	_, ok := s.items[key]
+
 	return ok
 }
 
@@ -52,6 +59,7 @@ func (s *Store[V]) Has(key string) bool {
 func (s *Store[V]) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return len(s.items)
 }
 
@@ -59,10 +67,13 @@ func (s *Store[V]) Len() int {
 func (s *Store[V]) Keys() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	keys := make([]string, 0, len(s.items))
+
 	for k := range s.items {
 		keys = append(keys, k)
 	}
+
 	return keys
 }
 
@@ -70,10 +81,13 @@ func (s *Store[V]) Keys() []string {
 func (s *Store[V]) All() map[string]V {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	result := make(map[string]V, len(s.items))
+
 	for k, v := range s.items {
 		result[k] = v
 	}
+
 	return result
 }
 
@@ -81,11 +95,14 @@ func (s *Store[V]) All() map[string]V {
 func (s *Store[V]) Update(key string, fn func(V) V) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	v, ok := s.items[key]
 	if !ok {
 		return false
 	}
+
 	s.items[key] = fn(v)
+
 	return true
 }
 
@@ -93,10 +110,13 @@ func (s *Store[V]) Update(key string, fn func(V) V) bool {
 func (s *Store[V]) SetIfAbsent(key string, value V) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if _, ok := s.items[key]; ok {
 		return false
 	}
+
 	s.items[key] = value
+
 	return true
 }
 
@@ -104,6 +124,7 @@ func (s *Store[V]) SetIfAbsent(key string, value V) bool {
 func (s *Store[V]) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.items = make(map[string]V)
 }
 
@@ -111,11 +132,14 @@ func (s *Store[V]) Clear() {
 func (s *Store[V]) Filter(fn func(key string, value V) bool) map[string]V {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	result := make(map[string]V)
+
 	for k, v := range s.items {
 		if fn(k, v) {
 			result[k] = v
 		}
 	}
+
 	return result
 }

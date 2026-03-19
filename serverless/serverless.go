@@ -28,6 +28,7 @@ func NewServerless(d driver.Serverless, opts ...Option) *Serverless {
 	for _, opt := range opts {
 		opt(s)
 	}
+
 	return s
 }
 
@@ -39,85 +40,100 @@ func WithRateLimiter(l *ratelimit.Limiter) Option  { return func(s *Serverless) 
 func WithErrorInjection(i *inject.Injector) Option { return func(s *Serverless) { s.injector = i } }
 func WithLatency(d time.Duration) Option           { return func(s *Serverless) { s.latency = d } }
 
-func (s *Serverless) do(ctx context.Context, op string, input interface{}, fn func() (interface{}, error)) (interface{}, error) {
+func (s *Serverless) do(_ context.Context, op string, input any, fn func() (any, error)) (any, error) {
 	start := time.Now()
+
 	if s.injector != nil {
 		if err := s.injector.Check("serverless", op); err != nil {
 			s.record(op, input, nil, err, time.Since(start))
 			return nil, err
 		}
 	}
+
 	if s.limiter != nil {
 		if err := s.limiter.Allow(); err != nil {
 			s.record(op, input, nil, err, time.Since(start))
 			return nil, err
 		}
 	}
+
 	if s.latency > 0 {
 		time.Sleep(s.latency)
 	}
+
 	out, err := fn()
 	dur := time.Since(start)
+
 	if s.metrics != nil {
 		labels := map[string]string{"service": "serverless", "operation": op}
 		s.metrics.Counter("calls_total", 1, labels)
 		s.metrics.Histogram("call_duration", dur, labels)
+
 		if err != nil {
 			s.metrics.Counter("errors_total", 1, labels)
 		}
 	}
+
 	s.record(op, input, out, err, dur)
+
 	return out, err
 }
 
-func (s *Serverless) record(op string, input, output interface{}, err error, dur time.Duration) {
+func (s *Serverless) record(op string, input, output any, err error, dur time.Duration) {
 	if s.recorder != nil {
 		s.recorder.Record("serverless", op, input, output, err, dur)
 	}
 }
 
+//nolint:gocritic // config passed by value to match driver.Serverless interface pattern
 func (s *Serverless) CreateFunction(ctx context.Context, config driver.FunctionConfig) (*driver.FunctionInfo, error) {
-	out, err := s.do(ctx, "CreateFunction", config, func() (interface{}, error) { return s.driver.CreateFunction(ctx, config) })
+	out, err := s.do(ctx, "CreateFunction", config, func() (any, error) { return s.driver.CreateFunction(ctx, config) })
 	if err != nil {
 		return nil, err
 	}
+
 	return out.(*driver.FunctionInfo), nil
 }
 
 func (s *Serverless) DeleteFunction(ctx context.Context, name string) error {
-	_, err := s.do(ctx, "DeleteFunction", name, func() (interface{}, error) { return nil, s.driver.DeleteFunction(ctx, name) })
+	_, err := s.do(ctx, "DeleteFunction", name, func() (any, error) { return nil, s.driver.DeleteFunction(ctx, name) })
 	return err
 }
 
 func (s *Serverless) GetFunction(ctx context.Context, name string) (*driver.FunctionInfo, error) {
-	out, err := s.do(ctx, "GetFunction", name, func() (interface{}, error) { return s.driver.GetFunction(ctx, name) })
+	out, err := s.do(ctx, "GetFunction", name, func() (any, error) { return s.driver.GetFunction(ctx, name) })
 	if err != nil {
 		return nil, err
 	}
+
 	return out.(*driver.FunctionInfo), nil
 }
 
 func (s *Serverless) ListFunctions(ctx context.Context) ([]driver.FunctionInfo, error) {
-	out, err := s.do(ctx, "ListFunctions", nil, func() (interface{}, error) { return s.driver.ListFunctions(ctx) })
+	out, err := s.do(ctx, "ListFunctions", nil, func() (any, error) { return s.driver.ListFunctions(ctx) })
 	if err != nil {
 		return nil, err
 	}
+
 	return out.([]driver.FunctionInfo), nil
 }
 
+//nolint:gocritic // config passed by value to match driver.Serverless interface pattern
 func (s *Serverless) UpdateFunction(ctx context.Context, name string, config driver.FunctionConfig) (*driver.FunctionInfo, error) {
-	out, err := s.do(ctx, "UpdateFunction", config, func() (interface{}, error) { return s.driver.UpdateFunction(ctx, name, config) })
+	out, err := s.do(ctx, "UpdateFunction", config, func() (any, error) { return s.driver.UpdateFunction(ctx, name, config) })
 	if err != nil {
 		return nil, err
 	}
+
 	return out.(*driver.FunctionInfo), nil
 }
 
 func (s *Serverless) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.InvokeOutput, error) {
-	out, err := s.do(ctx, "Invoke", input, func() (interface{}, error) { return s.driver.Invoke(ctx, input) })
+	out, err := s.do(ctx, "Invoke", input, func() (any, error) { return s.driver.Invoke(ctx, input) })
 	if err != nil {
 		return nil, err
 	}
+
 	return out.(*driver.InvokeOutput), nil
 }
 

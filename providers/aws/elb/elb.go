@@ -39,6 +39,8 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateLoadBalancer creates a new load balancer.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "load balancer name is required")
@@ -71,6 +73,7 @@ func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driv
 	m.lbs.Set(arn, lb)
 
 	result := lb
+
 	return &result, nil
 }
 
@@ -94,28 +97,12 @@ func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
 // DescribeLoadBalancers returns load balancers matching the given ARNs.
 // If arns is empty, all load balancers are returned.
 func (m *Mock) DescribeLoadBalancers(_ context.Context, arns []string) ([]driver.LBInfo, error) {
-	if len(arns) == 0 {
-		all := m.lbs.All()
-		results := make([]driver.LBInfo, 0, len(all))
-		for _, lb := range all {
-			results = append(results, lb)
-		}
-		return results, nil
-	}
-
-	results := make([]driver.LBInfo, 0, len(arns))
-	for _, arn := range arns {
-		lb, ok := m.lbs.Get(arn)
-		if !ok {
-			continue
-		}
-		results = append(results, lb)
-	}
-
-	return results, nil
+	return describeResources(m.lbs, arns), nil
 }
 
 // CreateTargetGroup creates a new target group.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig) (*driver.TargetGroupInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "target group name is required")
@@ -148,6 +135,7 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 	m.healthMu.Unlock()
 
 	result := tg
+
 	return &result, nil
 }
 
@@ -168,25 +156,34 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 // DescribeTargetGroups returns target groups matching the given ARNs.
 // If arns is empty, all target groups are returned.
 func (m *Mock) DescribeTargetGroups(_ context.Context, arns []string) ([]driver.TargetGroupInfo, error) {
-	if len(arns) == 0 {
-		all := m.tgs.All()
-		results := make([]driver.TargetGroupInfo, 0, len(all))
-		for _, tg := range all {
-			results = append(results, tg)
+	return describeResources(m.tgs, arns), nil
+}
+
+// describeResources is a generic helper for Describe* methods that list or filter by keys.
+func describeResources[T any](store *memstore.Store[T], keys []string) []T {
+	if len(keys) == 0 {
+		all := store.All()
+		results := make([]T, 0, len(all))
+
+		for _, item := range all {
+			results = append(results, item)
 		}
-		return results, nil
+
+		return results
 	}
 
-	results := make([]driver.TargetGroupInfo, 0, len(arns))
-	for _, arn := range arns {
-		tg, ok := m.tgs.Get(arn)
+	results := make([]T, 0, len(keys))
+
+	for _, key := range keys {
+		item, ok := store.Get(key)
 		if !ok {
 			continue
 		}
-		results = append(results, tg)
+
+		results = append(results, item)
 	}
 
-	return results, nil
+	return results
 }
 
 // CreateListener creates a new listener on a load balancer.
@@ -209,6 +206,7 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 	m.listeners.Set(arn, li)
 
 	result := li
+
 	return &result, nil
 }
 
@@ -312,7 +310,7 @@ func (m *Mock) DescribeTargetHealth(_ context.Context, targetGroupARN string) ([
 }
 
 // SetTargetHealth sets the health state of a specific target in a target group.
-func (m *Mock) SetTargetHealth(_ context.Context, targetGroupARN string, targetID string, state string) error {
+func (m *Mock) SetTargetHealth(_ context.Context, targetGroupARN, targetID, state string) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
 		return errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
 	}

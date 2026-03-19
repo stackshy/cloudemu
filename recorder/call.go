@@ -7,8 +7,8 @@ import "time"
 type Call struct {
 	Service   string
 	Operation string
-	Input     interface{}
-	Output    interface{}
+	Input     any
+	Output    any
 	Error     error
 	Timestamp time.Time
 	Duration  time.Duration

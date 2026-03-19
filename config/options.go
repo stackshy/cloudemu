@@ -25,6 +25,7 @@ func NewOptions(opts ...Option) *Options {
 	for _, opt := range opts {
 		opt(o)
 	}
+
 	return o
 }
 

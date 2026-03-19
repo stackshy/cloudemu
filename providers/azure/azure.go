@@ -45,5 +45,6 @@ func New(opts ...config.Option) *Provider {
 		ServiceBus:      servicebus.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
+
 	return p
 }

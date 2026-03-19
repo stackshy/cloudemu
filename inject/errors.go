@@ -28,6 +28,7 @@ func key(service, operation string) string {
 func (inj *Injector) Set(service, operation string, err error, policy Policy) {
 	inj.mu.Lock()
 	defer inj.mu.Unlock()
+
 	inj.rules[key(service, operation)] = &Rule{Error: err, Policy: policy}
 }
 
@@ -35,6 +36,7 @@ func (inj *Injector) Set(service, operation string, err error, policy Policy) {
 func (inj *Injector) Remove(service, operation string) {
 	inj.mu.Lock()
 	defer inj.mu.Unlock()
+
 	delete(inj.rules, key(service, operation))
 }
 
@@ -42,13 +44,16 @@ func (inj *Injector) Remove(service, operation string) {
 func (inj *Injector) Check(service, operation string) error {
 	inj.mu.RLock()
 	defer inj.mu.RUnlock()
+
 	rule, ok := inj.rules[key(service, operation)]
 	if !ok {
 		return nil
 	}
+
 	if rule.Policy.ShouldInject() {
 		return rule.Error
 	}
+
 	return nil
 }
 
@@ -56,5 +61,6 @@ func (inj *Injector) Check(service, operation string) error {
 func (inj *Injector) Reset() {
 	inj.mu.Lock()
 	defer inj.mu.Unlock()
+
 	inj.rules = make(map[string]*Rule)
 }

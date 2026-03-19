@@ -58,6 +58,33 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
+// describeResources is a generic helper for Describe* methods that list or filter by IDs.
+func describeResources[T any, R any](store *memstore.Store[T], ids []string, toInfo func(T) R) []R {
+	if len(ids) == 0 {
+		all := store.All()
+		result := make([]R, 0, len(all))
+
+		for _, item := range all {
+			result = append(result, toInfo(item))
+		}
+
+		return result
+	}
+
+	result := make([]R, 0, len(ids))
+
+	for _, id := range ids {
+		item, ok := store.Get(id)
+		if !ok {
+			continue
+		}
+
+		result = append(result, toInfo(item))
+	}
+
+	return result
+}
+
 // CreateVPC creates a new virtual network with the given configuration.
 func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCInfo, error) {
 	if cfg.CIDRBlock == "" {
@@ -77,6 +104,7 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 	m.vpcs.Set(id, v)
 
 	info := toVPCInfo(v)
+
 	return &info, nil
 }
 
@@ -85,29 +113,13 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 	if !m.vpcs.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "vnet %q not found", id)
 	}
+
 	return nil
 }
 
 // DescribeVPCs returns virtual networks matching the given IDs, or all if ids is empty.
 func (m *Mock) DescribeVPCs(_ context.Context, ids []string) ([]driver.VPCInfo, error) {
-	if len(ids) == 0 {
-		all := m.vpcs.All()
-		result := make([]driver.VPCInfo, 0, len(all))
-		for _, v := range all {
-			result = append(result, toVPCInfo(v))
-		}
-		return result, nil
-	}
-
-	result := make([]driver.VPCInfo, 0, len(ids))
-	for _, id := range ids {
-		v, ok := m.vpcs.Get(id)
-		if !ok {
-			continue
-		}
-		result = append(result, toVPCInfo(v))
-	}
-	return result, nil
+	return describeResources(m.vpcs, ids, toVPCInfo), nil
 }
 
 // CreateSubnet creates a new subnet within a virtual network.
@@ -115,9 +127,11 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VNet ID is required")
 	}
+
 	if cfg.CIDRBlock == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "CIDR block is required")
 	}
+
 	if !m.vpcs.Has(cfg.VPCID) {
 		return nil, cerrors.Newf(cerrors.NotFound, "vnet %q not found", cfg.VPCID)
 	}
@@ -135,8 +149,8 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 		Tags:             tags,
 	}
 	m.subnets.Set(id, s)
-
 	info := toSubnetInfo(s)
+
 	return &info, nil
 }
 
@@ -145,29 +159,13 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 	if !m.subnets.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
 	}
+
 	return nil
 }
 
 // DescribeSubnets returns subnets matching the given IDs, or all if ids is empty.
 func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.SubnetInfo, error) {
-	if len(ids) == 0 {
-		all := m.subnets.All()
-		result := make([]driver.SubnetInfo, 0, len(all))
-		for _, s := range all {
-			result = append(result, toSubnetInfo(s))
-		}
-		return result, nil
-	}
-
-	result := make([]driver.SubnetInfo, 0, len(ids))
-	for _, id := range ids {
-		s, ok := m.subnets.Get(id)
-		if !ok {
-			continue
-		}
-		result = append(result, toSubnetInfo(s))
-	}
-	return result, nil
+	return describeResources(m.subnets, ids, toSubnetInfo), nil
 }
 
 // CreateSecurityGroup creates a new network security group.
@@ -175,9 +173,11 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "security group name is required")
 	}
+
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VNet ID is required")
 	}
+
 	if !m.vpcs.Has(cfg.VPCID) {
 		return nil, cerrors.Newf(cerrors.NotFound, "vnet %q not found", cfg.VPCID)
 	}
@@ -198,6 +198,7 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 	m.securityGroups.Set(id, sg)
 
 	info := toSGInfo(sg)
+
 	return &info, nil
 }
 
@@ -206,29 +207,13 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 	if !m.securityGroups.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
 	}
+
 	return nil
 }
 
 // DescribeSecurityGroups returns security groups matching the given IDs, or all if ids is empty.
 func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver.SecurityGroupInfo, error) {
-	if len(ids) == 0 {
-		all := m.securityGroups.All()
-		result := make([]driver.SecurityGroupInfo, 0, len(all))
-		for _, sg := range all {
-			result = append(result, toSGInfo(sg))
-		}
-		return result, nil
-	}
-
-	result := make([]driver.SecurityGroupInfo, 0, len(ids))
-	for _, id := range ids {
-		sg, ok := m.securityGroups.Get(id)
-		if !ok {
-			continue
-		}
-		result = append(result, toSGInfo(sg))
-	}
-	return result, nil
+	return describeResources(m.securityGroups, ids, toSGInfo), nil
 }
 
 // AddIngressRule adds an inbound security rule to the specified network security group.
@@ -239,6 +224,7 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 	}
 
 	sg.IngressRules = append(sg.IngressRules, rule)
+
 	return nil
 }
 
@@ -250,6 +236,7 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 	}
 
 	sg.EgressRules = append(sg.EgressRules, rule)
+
 	return nil
 }
 
@@ -292,10 +279,13 @@ func copyTags(tags map[string]string) map[string]string {
 	if tags == nil {
 		return make(map[string]string)
 	}
+
 	out := make(map[string]string, len(tags))
+
 	for k, v := range tags {
 		out[k] = v
 	}
+
 	return out
 }
 

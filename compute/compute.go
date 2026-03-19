@@ -27,6 +27,7 @@ func NewCompute(d driver.Compute, opts ...Option) *Compute {
 	for _, opt := range opts {
 		opt(c)
 	}
+
 	return c
 }
 
@@ -48,7 +49,7 @@ func WithErrorInjection(i *inject.Injector) Option { return func(c *Compute) { c
 // WithLatency sets simulated latency.
 func WithLatency(d time.Duration) Option { return func(c *Compute) { c.latency = d } }
 
-func (c *Compute) do(ctx context.Context, op string, input interface{}, fn func() (interface{}, error)) (interface{}, error) {
+func (c *Compute) do(_ context.Context, op string, input any, fn func() (any, error)) (any, error) {
 	start := time.Now()
 
 	if c.injector != nil {
@@ -57,95 +58,111 @@ func (c *Compute) do(ctx context.Context, op string, input interface{}, fn func(
 			return nil, err
 		}
 	}
+
 	if c.limiter != nil {
 		if err := c.limiter.Allow(); err != nil {
 			c.record(op, input, nil, err, time.Since(start))
 			return nil, err
 		}
 	}
+
 	if c.latency > 0 {
 		time.Sleep(c.latency)
 	}
 
 	out, err := fn()
-
 	dur := time.Since(start)
+
 	if c.metrics != nil {
 		labels := map[string]string{"service": "compute", "operation": op}
 		c.metrics.Counter("calls_total", 1, labels)
 		c.metrics.Histogram("call_duration", dur, labels)
+
 		if err != nil {
 			c.metrics.Counter("errors_total", 1, labels)
 		}
 	}
+
 	c.record(op, input, out, err, dur)
+
 	return out, err
 }
 
-func (c *Compute) record(op string, input, output interface{}, err error, dur time.Duration) {
+func (c *Compute) record(op string, input, output any, err error, dur time.Duration) {
 	if c.recorder != nil {
 		c.recorder.Record("compute", op, input, output, err, dur)
 	}
 }
 
 // RunInstances creates new VM instances.
+//
+//nolint:gocritic // config passed by value to match driver.Compute interface pattern
 func (c *Compute) RunInstances(ctx context.Context, config driver.InstanceConfig, count int) ([]driver.Instance, error) {
-	out, err := c.do(ctx, "RunInstances", config, func() (interface{}, error) {
+	out, err := c.do(ctx, "RunInstances", config, func() (any, error) {
 		return c.driver.RunInstances(ctx, config, count)
 	})
+
 	if err != nil {
 		return nil, err
 	}
+
 	return out.([]driver.Instance), nil
 }
 
 // StartInstances starts stopped instances.
 func (c *Compute) StartInstances(ctx context.Context, instanceIDs []string) error {
-	_, err := c.do(ctx, "StartInstances", instanceIDs, func() (interface{}, error) {
+	_, err := c.do(ctx, "StartInstances", instanceIDs, func() (any, error) {
 		return nil, c.driver.StartInstances(ctx, instanceIDs)
 	})
+
 	return err
 }
 
 // StopInstances stops running instances.
 func (c *Compute) StopInstances(ctx context.Context, instanceIDs []string) error {
-	_, err := c.do(ctx, "StopInstances", instanceIDs, func() (interface{}, error) {
+	_, err := c.do(ctx, "StopInstances", instanceIDs, func() (any, error) {
 		return nil, c.driver.StopInstances(ctx, instanceIDs)
 	})
+
 	return err
 }
 
 // RebootInstances reboots running instances.
 func (c *Compute) RebootInstances(ctx context.Context, instanceIDs []string) error {
-	_, err := c.do(ctx, "RebootInstances", instanceIDs, func() (interface{}, error) {
+	_, err := c.do(ctx, "RebootInstances", instanceIDs, func() (any, error) {
 		return nil, c.driver.RebootInstances(ctx, instanceIDs)
 	})
+
 	return err
 }
 
 // TerminateInstances terminates instances.
 func (c *Compute) TerminateInstances(ctx context.Context, instanceIDs []string) error {
-	_, err := c.do(ctx, "TerminateInstances", instanceIDs, func() (interface{}, error) {
+	_, err := c.do(ctx, "TerminateInstances", instanceIDs, func() (any, error) {
 		return nil, c.driver.TerminateInstances(ctx, instanceIDs)
 	})
+
 	return err
 }
 
 // DescribeInstances describes instances.
 func (c *Compute) DescribeInstances(ctx context.Context, instanceIDs []string, filters []driver.DescribeFilter) ([]driver.Instance, error) {
-	out, err := c.do(ctx, "DescribeInstances", instanceIDs, func() (interface{}, error) {
+	out, err := c.do(ctx, "DescribeInstances", instanceIDs, func() (any, error) {
 		return c.driver.DescribeInstances(ctx, instanceIDs, filters)
 	})
+
 	if err != nil {
 		return nil, err
 	}
+
 	return out.([]driver.Instance), nil
 }
 
 // ModifyInstance modifies an instance.
 func (c *Compute) ModifyInstance(ctx context.Context, instanceID string, input driver.ModifyInstanceInput) error {
-	_, err := c.do(ctx, "ModifyInstance", input, func() (interface{}, error) {
+	_, err := c.do(ctx, "ModifyInstance", input, func() (any, error) {
 		return nil, c.driver.ModifyInstance(ctx, instanceID, input)
 	})
+
 	return err
 }

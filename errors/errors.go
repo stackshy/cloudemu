@@ -1,7 +1,10 @@
 // Package errors provides canonical error codes for cloudemu services.
 package errors
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Code represents a canonical error code.
 type Code int
@@ -20,25 +23,29 @@ const (
 	Unavailable
 )
 
-var codeNames = map[Code]string{
-	OK:                 "OK",
-	NotFound:           "NotFound",
-	AlreadyExists:      "AlreadyExists",
-	InvalidArgument:    "InvalidArgument",
-	FailedPrecondition: "FailedPrecondition",
-	PermissionDenied:   "PermissionDenied",
-	Throttled:          "Throttled",
-	Internal:           "Internal",
-	Unimplemented:      "Unimplemented",
-	ResourceExhausted:  "ResourceExhausted",
-	Unavailable:        "Unavailable",
+// codeNames returns the mapping of error codes to their string names.
+func codeNames() map[Code]string {
+	return map[Code]string{
+		OK:                 "OK",
+		NotFound:           "NotFound",
+		AlreadyExists:      "AlreadyExists",
+		InvalidArgument:    "InvalidArgument",
+		FailedPrecondition: "FailedPrecondition",
+		PermissionDenied:   "PermissionDenied",
+		Throttled:          "Throttled",
+		Internal:           "Internal",
+		Unimplemented:      "Unimplemented",
+		ResourceExhausted:  "ResourceExhausted",
+		Unavailable:        "Unavailable",
+	}
 }
 
 // String returns the string representation of the error code.
 func (c Code) String() string {
-	if s, ok := codeNames[c]; ok {
+	if s, ok := codeNames()[c]; ok {
 		return s
 	}
+
 	return fmt.Sprintf("Code(%d)", int(c))
 }
 
@@ -59,7 +66,7 @@ func New(code Code, msg string) *Error {
 }
 
 // Newf creates a new Error with the given code and formatted message.
-func Newf(code Code, format string, args ...interface{}) *Error {
+func Newf(code Code, format string, args ...any) *Error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
@@ -69,9 +76,12 @@ func GetCode(err error) Code {
 	if err == nil {
 		return OK
 	}
-	if e, ok := err.(*Error); ok {
+
+	var e *Error
+	if errors.As(err, &e) {
 		return e.Code
 	}
+
 	return Internal
 }
 

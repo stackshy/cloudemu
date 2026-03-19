@@ -76,6 +76,7 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 	m.vpcs.Set(id, v)
 
 	info := toVPCInfo(v)
+
 	return &info, nil
 }
 
@@ -84,29 +85,13 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 	if !m.vpcs.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "VPC %q not found", id)
 	}
+
 	return nil
 }
 
 // DescribeVPCs returns VPCs matching the given IDs, or all VPCs if ids is empty.
 func (m *Mock) DescribeVPCs(_ context.Context, ids []string) ([]driver.VPCInfo, error) {
-	if len(ids) == 0 {
-		all := m.vpcs.All()
-		result := make([]driver.VPCInfo, 0, len(all))
-		for _, v := range all {
-			result = append(result, toVPCInfo(v))
-		}
-		return result, nil
-	}
-
-	result := make([]driver.VPCInfo, 0, len(ids))
-	for _, id := range ids {
-		v, ok := m.vpcs.Get(id)
-		if !ok {
-			continue
-		}
-		result = append(result, toVPCInfo(v))
-	}
-	return result, nil
+	return describeResources(m.vpcs, ids, toVPCInfo), nil
 }
 
 // CreateSubnet creates a new subnetwork.
@@ -114,9 +99,11 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VPC ID is required")
 	}
+
 	if cfg.CIDRBlock == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "CIDR block is required")
 	}
+
 	if !m.vpcs.Has(cfg.VPCID) {
 		return nil, cerrors.Newf(cerrors.NotFound, "VPC %q not found", cfg.VPCID)
 	}
@@ -135,6 +122,7 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 	m.subnets.Set(id, s)
 
 	info := toSubnetInfo(s)
+
 	return &info, nil
 }
 
@@ -143,29 +131,13 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 	if !m.subnets.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
 	}
+
 	return nil
 }
 
 // DescribeSubnets returns subnets matching the given IDs, or all subnets if ids is empty.
 func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.SubnetInfo, error) {
-	if len(ids) == 0 {
-		all := m.subnets.All()
-		result := make([]driver.SubnetInfo, 0, len(all))
-		for _, s := range all {
-			result = append(result, toSubnetInfo(s))
-		}
-		return result, nil
-	}
-
-	result := make([]driver.SubnetInfo, 0, len(ids))
-	for _, id := range ids {
-		s, ok := m.subnets.Get(id)
-		if !ok {
-			continue
-		}
-		result = append(result, toSubnetInfo(s))
-	}
-	return result, nil
+	return describeResources(m.subnets, ids, toSubnetInfo), nil
 }
 
 // CreateSecurityGroup creates a new firewall rule group.
@@ -173,9 +145,11 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "firewall rule name is required")
 	}
+
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VPC ID is required")
 	}
+
 	if !m.vpcs.Has(cfg.VPCID) {
 		return nil, cerrors.Newf(cerrors.NotFound, "VPC %q not found", cfg.VPCID)
 	}
@@ -195,6 +169,7 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 	m.securityGroups.Set(id, sg)
 
 	info := toSGInfo(sg)
+
 	return &info, nil
 }
 
@@ -203,29 +178,40 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 	if !m.securityGroups.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", id)
 	}
+
 	return nil
 }
 
 // DescribeSecurityGroups returns firewall rule groups matching the given IDs, or all if ids is empty.
 func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver.SecurityGroupInfo, error) {
+	return describeResources(m.securityGroups, ids, toSGInfo), nil
+}
+
+// describeResources is a generic helper for Describe* methods that list or filter by IDs.
+func describeResources[T any, R any](store *memstore.Store[T], ids []string, toInfo func(T) R) []R {
 	if len(ids) == 0 {
-		all := m.securityGroups.All()
-		result := make([]driver.SecurityGroupInfo, 0, len(all))
-		for _, sg := range all {
-			result = append(result, toSGInfo(sg))
+		all := store.All()
+		result := make([]R, 0, len(all))
+
+		for _, item := range all {
+			result = append(result, toInfo(item))
 		}
-		return result, nil
+
+		return result
 	}
 
-	result := make([]driver.SecurityGroupInfo, 0, len(ids))
+	result := make([]R, 0, len(ids))
+
 	for _, id := range ids {
-		sg, ok := m.securityGroups.Get(id)
+		item, ok := store.Get(id)
 		if !ok {
 			continue
 		}
-		result = append(result, toSGInfo(sg))
+
+		result = append(result, toInfo(item))
 	}
-	return result, nil
+
+	return result
 }
 
 // AddIngressRule adds an ingress rule to the specified firewall rule group.
@@ -234,7 +220,9 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", groupID)
 	}
+
 	sg.IngressRules = append(sg.IngressRules, rule)
+
 	return nil
 }
 
@@ -244,7 +232,9 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", groupID)
 	}
+
 	sg.EgressRules = append(sg.EgressRules, rule)
+
 	return nil
 }
 
@@ -254,12 +244,15 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", groupID)
 	}
+
 	for i, r := range sg.IngressRules {
 		if r == rule {
 			sg.IngressRules = append(sg.IngressRules[:i], sg.IngressRules[i+1:]...)
+
 			return nil
 		}
 	}
+
 	return cerrors.Newf(cerrors.NotFound, "ingress rule not found in firewall rule %q", groupID)
 }
 
@@ -269,12 +262,15 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", groupID)
 	}
+
 	for i, r := range sg.EgressRules {
 		if r == rule {
 			sg.EgressRules = append(sg.EgressRules[:i], sg.EgressRules[i+1:]...)
+
 			return nil
 		}
 	}
+
 	return cerrors.Newf(cerrors.NotFound, "egress rule not found in firewall rule %q", groupID)
 }
 
@@ -283,10 +279,12 @@ func copyTags(tags map[string]string) map[string]string {
 	if tags == nil {
 		return make(map[string]string)
 	}
+
 	out := make(map[string]string, len(tags))
 	for k, v := range tags {
 		out[k] = v
 	}
+
 	return out
 }
 

@@ -39,10 +39,13 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateFunction creates a new Azure Function.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateFunction(_ context.Context, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
 	if _, ok := m.funcs.Get(cfg.Name); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
 	}
+
 	resourceID := idgen.AzureID(m.opts.AccountID, "cloudemu-rg", "Microsoft.Web", "sites", cfg.Name)
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: resourceID, Runtime: cfg.Runtime, Handler: cfg.Handler,
@@ -50,11 +53,14 @@ func (m *Mock) CreateFunction(_ context.Context, cfg driver.FunctionConfig) (*dr
 		Environment: cfg.Environment, Tags: cfg.Tags,
 		LastModified: time.Now().UTC().Format(time.RFC3339),
 	}
+
 	m.handlersMu.RLock()
 	h := m.handlers[cfg.Name]
 	m.handlersMu.RUnlock()
+
 	m.funcs.Set(cfg.Name, funcData{info: info, handler: h})
 	result := info
+
 	return &result, nil
 }
 
@@ -63,7 +69,9 @@ func (m *Mock) DeleteFunction(_ context.Context, name string) error {
 	if !m.funcs.Has(name) {
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
+
 	m.funcs.Delete(name)
+
 	return nil
 }
 
@@ -73,7 +81,9 @@ func (m *Mock) GetFunction(_ context.Context, name string) (*driver.FunctionInfo
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
+
 	info := fd.info
+
 	return &info, nil
 }
 
@@ -81,40 +91,53 @@ func (m *Mock) GetFunction(_ context.Context, name string) (*driver.FunctionInfo
 func (m *Mock) ListFunctions(_ context.Context) ([]driver.FunctionInfo, error) {
 	all := m.funcs.All()
 	infos := make([]driver.FunctionInfo, 0, len(all))
-	for _, fd := range all {
-		infos = append(infos, fd.info)
+
+	for i := range all {
+		infos = append(infos, all[i].info)
 	}
+
 	return infos, nil
 }
 
 // UpdateFunction updates an existing Azure Function's configuration.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateFunction(_ context.Context, name string, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
 	fd, ok := m.funcs.Get(name)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
+
 	info := fd.info
+
 	if cfg.Runtime != "" {
 		info.Runtime = cfg.Runtime
 	}
+
 	if cfg.Handler != "" {
 		info.Handler = cfg.Handler
 	}
+
 	if cfg.Memory != 0 {
 		info.Memory = cfg.Memory
 	}
+
 	if cfg.Timeout != 0 {
 		info.Timeout = cfg.Timeout
 	}
+
 	if cfg.Environment != nil {
 		info.Environment = cfg.Environment
 	}
+
 	if cfg.Tags != nil {
 		info.Tags = cfg.Tags
 	}
+
 	info.LastModified = time.Now().UTC().Format(time.RFC3339)
 	m.funcs.Set(name, funcData{info: info, handler: fd.handler})
 	result := info
+
 	return &result, nil
 }
 
@@ -124,19 +147,23 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", input.FunctionName)
 	}
+
 	h := fd.handler
 	if h == nil {
 		m.handlersMu.RLock()
 		h = m.handlers[input.FunctionName]
 		m.handlersMu.RUnlock()
 	}
+
 	if h == nil {
 		return &driver.InvokeOutput{StatusCode: 500, Error: "no handler registered"}, nil
 	}
+
 	payload, err := h(ctx, input.Payload)
 	if err != nil {
 		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error()}, nil
 	}
+
 	return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
 }
 
@@ -145,6 +172,7 @@ func (m *Mock) RegisterHandler(name string, handler driver.HandlerFunc) {
 	m.handlersMu.Lock()
 	m.handlers[name] = handler
 	m.handlersMu.Unlock()
+
 	if fd, ok := m.funcs.Get(name); ok {
 		fd.handler = handler
 		m.funcs.Set(name, fd)
