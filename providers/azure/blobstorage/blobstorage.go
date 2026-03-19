@@ -3,7 +3,7 @@ package blobstorage
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -53,15 +53,18 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 	if name == "" {
 		return cerrors.New(cerrors.InvalidArgument, "container name cannot be empty")
 	}
+
 	if m.containers.Has(name) {
 		return cerrors.Newf(cerrors.AlreadyExists, "container %q already exists", name)
 	}
+
 	m.containers.Set(name, &containerMeta{
 		Name:      name,
 		Region:    m.opts.Region,
 		CreatedAt: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		objects:   memstore.New[*blobObject](),
 	})
+
 	return nil
 }
 
@@ -71,10 +74,13 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", name)
 	}
+
 	if ctr.objects.Len() > 0 {
 		return cerrors.Newf(cerrors.FailedPrecondition, "container %q is not empty", name)
 	}
+
 	m.containers.Delete(name)
+
 	return nil
 }
 
@@ -82,18 +88,22 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	keys := m.containers.Keys()
 	sort.Strings(keys)
+
 	result := make([]driver.BucketInfo, 0, len(keys))
+
 	for _, k := range keys {
 		ctr, ok := m.containers.Get(k)
 		if !ok {
 			continue
 		}
+
 		result = append(result, driver.BucketInfo{
 			Name:      ctr.Name,
 			Region:    ctr.Region,
 			CreatedAt: ctr.CreatedAt,
 		})
 	}
+
 	return result, nil
 }
 
@@ -103,16 +113,19 @@ func (m *Mock) PutObject(_ context.Context, bucket, key string, data []byte, con
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
+
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
+
 	ctr.objects.Set(key, &blobObject{
 		Key:          key,
 		Data:         dataCopy,
 		ContentType:  contentType,
-		ETag:         fmt.Sprintf("%x", md5.Sum(data)),
+		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Metadata:     metadata,
 	})
+
 	return nil
 }
 
@@ -122,12 +135,15 @@ func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object,
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
+
 	obj, ok := ctr.objects.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
+
 	dataCopy := make([]byte, len(obj.Data))
 	copy(dataCopy, obj.Data)
+
 	return &driver.Object{
 		Info: driver.ObjectInfo{
 			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
@@ -143,10 +159,13 @@ func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
+
 	if !ctr.objects.Has(key) {
 		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
+
 	ctr.objects.Delete(key)
+
 	return nil
 }
 
@@ -156,10 +175,12 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
+
 	obj, ok := ctr.objects.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
+
 	return &driver.ObjectInfo{
 		Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
@@ -172,28 +193,34 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
+
 	allKeys := ctr.objects.Keys()
 	sort.Strings(allKeys)
 
 	var matchedObjects []driver.ObjectInfo
+
 	commonPrefixSet := make(map[string]struct{})
 
 	for _, k := range allKeys {
 		if opts.Prefix != "" && !strings.HasPrefix(k, opts.Prefix) {
 			continue
 		}
+
 		if opts.Delimiter != "" {
 			rest := k[len(opts.Prefix):]
+
 			idx := strings.Index(rest, opts.Delimiter)
 			if idx >= 0 {
 				commonPrefixSet[opts.Prefix+rest[:idx+len(opts.Delimiter)]] = struct{}{}
 				continue
 			}
 		}
+
 		obj, objOk := ctr.objects.Get(k)
 		if !objOk {
 			continue
 		}
+
 		matchedObjects = append(matchedObjects, driver.ObjectInfo{
 			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
@@ -204,6 +231,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	for p := range commonPrefixSet {
 		commonPrefixes = append(commonPrefixes, p)
 	}
+
 	sort.Strings(commonPrefixes)
 
 	maxKeys := opts.MaxKeys
@@ -212,6 +240,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	}
 
 	page, _ := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+
 	return &driver.ListResult{
 		Objects:        page.Items,
 		CommonPrefixes: commonPrefixes,
@@ -226,24 +255,30 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "source container %q not found", src.Bucket)
 	}
+
 	srcObj, ok := srcCtr.objects.Get(src.Key)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "source blob %q not found", src.Key)
 	}
+
 	dstCtr, ok := m.containers.Get(dstBucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "destination container %q not found", dstBucket)
 	}
+
 	dataCopy := make([]byte, len(srcObj.Data))
 	copy(dataCopy, srcObj.Data)
+
 	meta := make(map[string]string, len(srcObj.Metadata))
 	for k, v := range srcObj.Metadata {
 		meta[k] = v
 	}
+
 	dstCtr.objects.Set(dstKey, &blobObject{
 		Key: dstKey, Data: dataCopy, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Metadata: meta,
 	})
+
 	return nil
 }

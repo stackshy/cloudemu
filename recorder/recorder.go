@@ -17,9 +17,10 @@ func New() *Recorder {
 }
 
 // Record records a call.
-func (r *Recorder) Record(service, operation string, input, output interface{}, err error, duration time.Duration) {
+func (r *Recorder) Record(service, operation string, input, output any, err error, duration time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.calls = append(r.calls, Call{
 		Service:   service,
 		Operation: operation,
@@ -35,8 +36,10 @@ func (r *Recorder) Record(service, operation string, input, output interface{}, 
 func (r *Recorder) Calls() []Call {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	result := make([]Call, len(r.calls))
 	copy(result, r.calls)
+
 	return result
 }
 
@@ -44,6 +47,7 @@ func (r *Recorder) Calls() []Call {
 func (r *Recorder) CallCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	return len(r.calls)
 }
 
@@ -51,12 +55,15 @@ func (r *Recorder) CallCount() int {
 func (r *Recorder) CallsFor(service, operation string) []Call {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	var result []Call
+
 	for _, c := range r.calls {
 		if c.Service == service && c.Operation == operation {
 			result = append(result, c)
 		}
 	}
+
 	return result
 }
 
@@ -69,6 +76,7 @@ func (r *Recorder) CallCountFor(service, operation string) int {
 func (r *Recorder) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.calls = nil
 }
 
@@ -76,9 +84,12 @@ func (r *Recorder) Reset() {
 func (r *Recorder) LastCall() *Call {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	if len(r.calls) == 0 {
 		return nil
 	}
+
 	c := r.calls[len(r.calls)-1]
+
 	return &c
 }

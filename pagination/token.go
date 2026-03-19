@@ -15,6 +15,7 @@ type PageToken struct {
 func EncodeToken(offset int) string {
 	t := PageToken{Offset: offset}
 	data, _ := json.Marshal(t)
+
 	return base64.StdEncoding.EncodeToString(data)
 }
 
@@ -24,13 +25,16 @@ func DecodeToken(token string) (PageToken, error) {
 	if token == "" {
 		return PageToken{Offset: 0}, nil
 	}
+
 	data, err := base64.StdEncoding.DecodeString(token)
 	if err != nil {
 		return PageToken{}, err
 	}
+
 	var t PageToken
 	if err := json.Unmarshal(data, &t); err != nil {
 		return PageToken{}, err
 	}
+
 	return t, nil
 }

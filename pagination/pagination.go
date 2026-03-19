@@ -25,6 +25,7 @@ func Paginate[T any](items []T, pageToken string, maxResults int) (Page[T], erro
 
 	end := offset + maxResults
 	hasMore := false
+
 	if end >= len(items) {
 		end = len(items)
 	} else {

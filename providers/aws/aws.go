@@ -45,5 +45,6 @@ func New(opts ...config.Option) *Provider {
 		SQS:        sqs.New(o),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
+
 	return p
 }

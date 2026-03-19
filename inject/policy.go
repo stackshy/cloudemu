@@ -2,7 +2,9 @@
 package inject
 
 import (
-	"math/rand"
+	"crypto/rand"
+	"encoding/binary"
+	"math"
 	"sync/atomic"
 )
 
@@ -44,9 +46,24 @@ func NewProbabilistic(p float64) *Probabilistic {
 	return &Probabilistic{Probability: p}
 }
 
+// float64MantissaBits is the number of bits in a float64 mantissa (IEEE 754).
+const float64MantissaBits = 53
+
+// float64ShiftBits is the number of bits to discard from a uint64 to get 53 bits.
+const float64ShiftBits = 64 - float64MantissaBits
+
+// cryptoRandFloat64 returns a cryptographically secure random float64 in [0.0, 1.0).
+func cryptoRandFloat64() float64 {
+	var b [8]byte
+
+	_, _ = rand.Read(b[:])
+
+	return float64(binary.LittleEndian.Uint64(b[:])>>float64ShiftBits) / math.Exp2(float64MantissaBits)
+}
+
 // ShouldInject returns true with the configured probability.
 func (p *Probabilistic) ShouldInject() bool {
-	return rand.Float64() < p.Probability
+	return cryptoRandFloat64() < p.Probability
 }
 
 // Countdown injects errors for the first N calls, then stops.

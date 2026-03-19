@@ -99,10 +99,10 @@ Create tables with partition and sort keys, put and get items, run queries with 
 aws.DynamoDB.CreateTable(ctx, dbdriver.TableConfig{
     Name: "users", PartitionKey: "pk", SortKey: "sk",
 })
-aws.DynamoDB.PutItem(ctx, "users", map[string]interface{}{
+aws.DynamoDB.PutItem(ctx, "users", map[string]any{
     "pk": "user1", "sk": "profile", "name": "Alice",
 })
-item, _ := aws.DynamoDB.GetItem(ctx, "users", map[string]interface{}{
+item, _ := aws.DynamoDB.GetItem(ctx, "users", map[string]any{
     "pk": "user1", "sk": "profile",
 })
 ```
@@ -238,7 +238,7 @@ Provider Mocks   →  in-memory backends (AWS/Azure/GCP) using generic memstore
 ```bash
 go build ./...   # compile all packages
 go vet ./...     # static analysis
-go test -v ./... # run all 32 tests
+go test -v ./... # run all tests across 42 packages
 ```
 
 ## License

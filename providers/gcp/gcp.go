@@ -45,5 +45,6 @@ func New(opts ...config.Option) *Provider {
 		PubSub:          pubsub.New(o),
 	}
 	p.GCE.SetMonitoring(p.CloudMonitoring)
+
 	return p
 }
