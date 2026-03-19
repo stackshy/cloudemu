@@ -48,3 +48,6 @@ tmp/
 
 # Debug
 __debug_bin*
+
+# Claude Code local config
+CLAUDE.md
