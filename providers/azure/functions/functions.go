@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/internal/idgen"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
-	"github.com/NitinKumar004/cloudemu/serverless/driver"
+	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/serverless/driver"
 )
 
 // Compile-time check that Mock implements driver.Serverless.

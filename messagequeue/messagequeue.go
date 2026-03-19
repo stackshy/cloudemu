@@ -5,11 +5,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/inject"
-	"github.com/NitinKumar004/cloudemu/messagequeue/driver"
-	"github.com/NitinKumar004/cloudemu/metrics"
-	"github.com/NitinKumar004/cloudemu/ratelimit"
-	"github.com/NitinKumar004/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/inject"
+	"github.com/stackshy/cloudemu/messagequeue/driver"
+	"github.com/stackshy/cloudemu/metrics"
+	"github.com/stackshy/cloudemu/ratelimit"
+	"github.com/stackshy/cloudemu/recorder"
 )
 
 type MQ struct {

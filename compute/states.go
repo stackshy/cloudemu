@@ -1,7 +1,7 @@
 // Package compute provides a portable compute API with cross-cutting concerns.
 package compute
 
-import "github.com/NitinKumar004/cloudemu/statemachine"
+import "github.com/stackshy/cloudemu/statemachine"
 
 // VM states.
 const (

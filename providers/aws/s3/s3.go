@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
-	"github.com/NitinKumar004/cloudemu/pagination"
-	"github.com/NitinKumar004/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/pagination"
+	"github.com/stackshy/cloudemu/storage/driver"
 )
 
 var _ driver.Bucket = (*Mock)(nil)

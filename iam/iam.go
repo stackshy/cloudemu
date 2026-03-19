@@ -5,11 +5,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/iam/driver"
-	"github.com/NitinKumar004/cloudemu/inject"
-	"github.com/NitinKumar004/cloudemu/metrics"
-	"github.com/NitinKumar004/cloudemu/ratelimit"
-	"github.com/NitinKumar004/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/iam/driver"
+	"github.com/stackshy/cloudemu/inject"
+	"github.com/stackshy/cloudemu/metrics"
+	"github.com/stackshy/cloudemu/ratelimit"
+	"github.com/stackshy/cloudemu/recorder"
 )
 
 // IAM is the portable IAM type wrapping a driver.

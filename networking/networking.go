@@ -5,11 +5,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/inject"
-	"github.com/NitinKumar004/cloudemu/metrics"
-	"github.com/NitinKumar004/cloudemu/networking/driver"
-	"github.com/NitinKumar004/cloudemu/ratelimit"
-	"github.com/NitinKumar004/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/inject"
+	"github.com/stackshy/cloudemu/metrics"
+	"github.com/stackshy/cloudemu/networking/driver"
+	"github.com/stackshy/cloudemu/ratelimit"
+	"github.com/stackshy/cloudemu/recorder"
 )
 
 // Networking is the portable networking type wrapping a driver.

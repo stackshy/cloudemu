@@ -7,11 +7,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/database/driver"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
-	"github.com/NitinKumar004/cloudemu/pagination"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/database/driver"
+	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/pagination"
 )
 
 var _ driver.Database = (*Mock)(nil)

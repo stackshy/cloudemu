@@ -2,13 +2,13 @@
 package testhelper
 
 import (
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/inject"
-	"github.com/NitinKumar004/cloudemu/metrics"
-	"github.com/NitinKumar004/cloudemu/providers/aws"
-	"github.com/NitinKumar004/cloudemu/providers/azure"
-	"github.com/NitinKumar004/cloudemu/providers/gcp"
-	"github.com/NitinKumar004/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/inject"
+	"github.com/stackshy/cloudemu/metrics"
+	"github.com/stackshy/cloudemu/providers/aws"
+	"github.com/stackshy/cloudemu/providers/azure"
+	"github.com/stackshy/cloudemu/providers/gcp"
+	"github.com/stackshy/cloudemu/recorder"
 )
 
 // Suite holds shared test infrastructure.
