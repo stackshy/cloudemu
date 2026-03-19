@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/providers/aws/route53"
 	"github.com/stackshy/cloudemu/providers/aws/s3"
+	"github.com/stackshy/cloudemu/providers/aws/secretsmanager"
 	"github.com/stackshy/cloudemu/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/providers/aws/vpc"
 )
@@ -25,8 +26,9 @@ type Provider struct {
 	CloudWatch *cloudwatch.Mock
 	IAM        *awsiam.Mock
 	Route53    *route53.Mock
-	ELB        *elb.Mock
-	SQS        *sqs.Mock
+	ELB            *elb.Mock
+	SQS            *sqs.Mock
+	SecretsManager *secretsmanager.Mock
 }
 
 // New creates a new AWS provider with all mock services.
@@ -41,8 +43,9 @@ func New(opts ...config.Option) *Provider {
 		CloudWatch: cloudwatch.New(o),
 		IAM:        awsiam.New(o),
 		Route53:    route53.New(o),
-		ELB:        elb.New(o),
-		SQS:        sqs.New(o),
+		ELB:            elb.New(o),
+		SQS:            sqs.New(o),
+		SecretsManager: secretsmanager.New(o),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
 

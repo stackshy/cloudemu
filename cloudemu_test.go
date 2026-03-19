@@ -22,6 +22,7 @@ import (
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/ratelimit"
 	"github.com/stackshy/cloudemu/recorder"
+	smdriver "github.com/stackshy/cloudemu/secretmanager/driver"
 	serverlessdriver "github.com/stackshy/cloudemu/serverless/driver"
 	"github.com/stackshy/cloudemu/storage"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -1600,5 +1601,559 @@ func TestGCPCloudFunctionPubSubTrigger(t *testing.T) {
 
 	if len(received) != 3 {
 		t.Errorf("expected 3 triggered messages, got %d", len(received))
+	}
+}
+
+func TestAWSSecretsManagerOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Create a secret
+	info, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:        "db-password",
+		Value:       "hunter2",
+		Description: "Database password",
+		Tags:        map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+	if info.Name != "db-password" {
+		t.Errorf("expected name 'db-password', got %q", info.Name)
+	}
+	if info.Version != 1 {
+		t.Errorf("expected version 1, got %d", info.Version)
+	}
+	if info.Description != "Database password" {
+		t.Errorf("expected description 'Database password', got %q", info.Description)
+	}
+	if info.Tags["env"] != "test" {
+		t.Errorf("expected tag env=test, got %q", info.Tags["env"])
+	}
+	if info.ARN == "" {
+		t.Error("expected non-empty ARN")
+	}
+
+	// Get secret
+	val, err := p.SecretsManager.GetSecret(ctx, "db-password")
+	if err != nil {
+		t.Fatalf("GetSecret: %v", err)
+	}
+	if val.Value != "hunter2" {
+		t.Errorf("expected value 'hunter2', got %q", val.Value)
+	}
+	if val.Version != 1 {
+		t.Errorf("expected version 1, got %d", val.Version)
+	}
+
+	// Update secret — version should auto-increment
+	updated, err := p.SecretsManager.UpdateSecret(ctx, "db-password", "new-password-123")
+	if err != nil {
+		t.Fatalf("UpdateSecret: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("expected version 2, got %d", updated.Version)
+	}
+
+	// Get should return latest version
+	val, err = p.SecretsManager.GetSecret(ctx, "db-password")
+	if err != nil {
+		t.Fatalf("GetSecret after update: %v", err)
+	}
+	if val.Value != "new-password-123" {
+		t.Errorf("expected 'new-password-123', got %q", val.Value)
+	}
+
+	// Get specific version — version 1
+	val, err = p.SecretsManager.GetSecretVersion(ctx, "db-password", 1)
+	if err != nil {
+		t.Fatalf("GetSecretVersion(1): %v", err)
+	}
+	if val.Value != "hunter2" {
+		t.Errorf("expected 'hunter2' for version 1, got %q", val.Value)
+	}
+
+	// Get specific version — version 2
+	val, err = p.SecretsManager.GetSecretVersion(ctx, "db-password", 2)
+	if err != nil {
+		t.Fatalf("GetSecretVersion(2): %v", err)
+	}
+	if val.Value != "new-password-123" {
+		t.Errorf("expected 'new-password-123' for version 2, got %q", val.Value)
+	}
+
+	// Get non-existent version
+	_, err = p.SecretsManager.GetSecretVersion(ctx, "db-password", 99)
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for version 99, got %v", err)
+	}
+
+	// List secrets
+	secrets, err := p.SecretsManager.ListSecrets(ctx)
+	if err != nil {
+		t.Fatalf("ListSecrets: %v", err)
+	}
+	if len(secrets) != 1 {
+		t.Errorf("expected 1 secret, got %d", len(secrets))
+	}
+
+	// Delete secret (scheduled deletion)
+	if err := p.SecretsManager.DeleteSecret(ctx, "db-password"); err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
+	}
+
+	// Get after delete should return FailedPrecondition (scheduled for deletion)
+	_, err = p.SecretsManager.GetSecret(ctx, "db-password")
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("expected FailedPrecondition after delete, got %v", err)
+	}
+
+	// List should exclude deleted secrets
+	secrets, err = p.SecretsManager.ListSecrets(ctx)
+	if err != nil {
+		t.Fatalf("ListSecrets after delete: %v", err)
+	}
+	if len(secrets) != 0 {
+		t.Errorf("expected 0 secrets after delete, got %d", len(secrets))
+	}
+}
+
+func TestAWSSecretsManagerDuplicateName(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{Name: "my-secret", Value: "v1"})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	_, err = p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{Name: "my-secret", Value: "v2"})
+	if !cerrors.IsAlreadyExists(err) {
+		t.Errorf("expected AlreadyExists for duplicate name, got %v", err)
+	}
+}
+
+func TestAWSSecretsManagerNotFound(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.GetSecret(ctx, "non-existent")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+
+	_, err = p.SecretsManager.UpdateSecret(ctx, "non-existent", "value")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for update, got %v", err)
+	}
+
+	err = p.SecretsManager.DeleteSecret(ctx, "non-existent")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for delete, got %v", err)
+	}
+
+	_, err = p.SecretsManager.GetSecretVersion(ctx, "non-existent", 1)
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for GetSecretVersion, got %v", err)
+	}
+}
+
+func TestAWSSecretsManagerRotation(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:  "api-key",
+		Value: "original-key",
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Rotate secret with callback
+	rotated, err := p.SecretsManager.RotateSecret(ctx, "api-key", func(current string) (string, error) {
+		if current != "original-key" {
+			t.Errorf("rotation callback received %q, expected 'original-key'", current)
+		}
+		return "rotated-key-abc", nil
+	})
+	if err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+	if rotated.Version != 2 {
+		t.Errorf("expected version 2 after rotation, got %d", rotated.Version)
+	}
+
+	// Verify current value is rotated
+	val, err := p.SecretsManager.GetSecret(ctx, "api-key")
+	if err != nil {
+		t.Fatalf("GetSecret after rotation: %v", err)
+	}
+	if val.Value != "rotated-key-abc" {
+		t.Errorf("expected 'rotated-key-abc', got %q", val.Value)
+	}
+
+	// Old version should still be accessible
+	val, err = p.SecretsManager.GetSecretVersion(ctx, "api-key", 1)
+	if err != nil {
+		t.Fatalf("GetSecretVersion(1) after rotation: %v", err)
+	}
+	if val.Value != "original-key" {
+		t.Errorf("expected 'original-key' for version 1, got %q", val.Value)
+	}
+
+	// Rotate again
+	_, err = p.SecretsManager.RotateSecret(ctx, "api-key", func(_ string) (string, error) {
+		return "rotated-key-xyz", nil
+	})
+	if err != nil {
+		t.Fatalf("RotateSecret (2nd): %v", err)
+	}
+
+	val, err = p.SecretsManager.GetSecret(ctx, "api-key")
+	if err != nil {
+		t.Fatalf("GetSecret after 2nd rotation: %v", err)
+	}
+	if val.Value != "rotated-key-xyz" {
+		t.Errorf("expected 'rotated-key-xyz', got %q", val.Value)
+	}
+	if val.Version != 3 {
+		t.Errorf("expected version 3, got %d", val.Version)
+	}
+}
+
+func TestAWSSecretsManagerRotationCallbackError(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:  "fail-secret",
+		Value: "original",
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Rotation with failing callback
+	_, err = p.SecretsManager.RotateSecret(ctx, "fail-secret", func(_ string) (string, error) {
+		return "", cerrors.New(cerrors.Internal, "rotation failed")
+	})
+	if err == nil {
+		t.Error("expected error from failing rotation callback")
+	}
+
+	// Value should remain unchanged
+	val, err := p.SecretsManager.GetSecret(ctx, "fail-secret")
+	if err != nil {
+		t.Fatalf("GetSecret after failed rotation: %v", err)
+	}
+	if val.Value != "original" {
+		t.Errorf("expected 'original' after failed rotation, got %q", val.Value)
+	}
+	if val.Version != 1 {
+		t.Errorf("expected version 1 after failed rotation, got %d", val.Version)
+	}
+}
+
+func TestAWSSecretsManagerEmptyName(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{Name: "", Value: "v"})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for empty name, got %v", err)
+	}
+}
+
+func TestAWSSecretsManagerDescribeSecret(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:        "describe-me",
+		Value:       "secret-val",
+		Description: "A test secret",
+		Tags:        map[string]string{"team": "backend"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Update to get version 2
+	_, err = p.SecretsManager.UpdateSecret(ctx, "describe-me", "updated-val")
+	if err != nil {
+		t.Fatalf("UpdateSecret: %v", err)
+	}
+
+	info, err := p.SecretsManager.DescribeSecret(ctx, "describe-me")
+	if err != nil {
+		t.Fatalf("DescribeSecret: %v", err)
+	}
+	if info.Name != "describe-me" {
+		t.Errorf("expected name 'describe-me', got %q", info.Name)
+	}
+	if info.Description != "A test secret" {
+		t.Errorf("expected description 'A test secret', got %q", info.Description)
+	}
+	if info.Version != 2 {
+		t.Errorf("expected version 2, got %d", info.Version)
+	}
+	if info.Tags["team"] != "backend" {
+		t.Errorf("expected tag team=backend, got %q", info.Tags["team"])
+	}
+	if info.DeletedAt != "" {
+		t.Errorf("expected empty DeletedAt, got %q", info.DeletedAt)
+	}
+
+	// DescribeSecret on non-existent
+	_, err = p.SecretsManager.DescribeSecret(ctx, "no-such-secret")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+
+	// DescribeSecret on deleted secret should still work (shows DeletedAt)
+	if err := p.SecretsManager.DeleteSecret(ctx, "describe-me"); err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
+	}
+
+	info, err = p.SecretsManager.DescribeSecret(ctx, "describe-me")
+	if err != nil {
+		t.Fatalf("DescribeSecret after delete: %v", err)
+	}
+	if info.DeletedAt == "" {
+		t.Error("expected non-empty DeletedAt after deletion")
+	}
+}
+
+func TestAWSSecretsManagerTagResource(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:  "tag-test",
+		Value: "v",
+		Tags:  map[string]string{"env": "dev"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Add new tags and update existing
+	err = p.SecretsManager.TagResource(ctx, "tag-test", map[string]string{"env": "prod", "team": "infra"})
+	if err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	info, err := p.SecretsManager.DescribeSecret(ctx, "tag-test")
+	if err != nil {
+		t.Fatalf("DescribeSecret: %v", err)
+	}
+	if info.Tags["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %q", info.Tags["env"])
+	}
+	if info.Tags["team"] != "infra" {
+		t.Errorf("expected tag team=infra, got %q", info.Tags["team"])
+	}
+
+	// TagResource on non-existent secret
+	err = p.SecretsManager.TagResource(ctx, "no-such", map[string]string{"a": "b"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+func TestAWSSecretsManagerUntagResource(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:  "untag-test",
+		Value: "v",
+		Tags:  map[string]string{"env": "dev", "team": "infra", "cost": "free"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Remove two tags
+	err = p.SecretsManager.UntagResource(ctx, "untag-test", []string{"env", "cost"})
+	if err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	info, err := p.SecretsManager.DescribeSecret(ctx, "untag-test")
+	if err != nil {
+		t.Fatalf("DescribeSecret: %v", err)
+	}
+	if _, ok := info.Tags["env"]; ok {
+		t.Error("expected tag 'env' to be removed")
+	}
+	if _, ok := info.Tags["cost"]; ok {
+		t.Error("expected tag 'cost' to be removed")
+	}
+	if info.Tags["team"] != "infra" {
+		t.Errorf("expected tag team=infra to remain, got %q", info.Tags["team"])
+	}
+
+	// UntagResource on non-existent secret
+	err = p.SecretsManager.UntagResource(ctx, "no-such", []string{"a"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+func TestAWSSecretsManagerRestoreSecret(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:  "restore-me",
+		Value: "important-data",
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Delete (schedule for deletion)
+	if err := p.SecretsManager.DeleteSecret(ctx, "restore-me"); err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
+	}
+
+	// Verify it's inaccessible
+	_, err = p.SecretsManager.GetSecret(ctx, "restore-me")
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("expected FailedPrecondition, got %v", err)
+	}
+
+	// Restore it
+	info, err := p.SecretsManager.RestoreSecret(ctx, "restore-me")
+	if err != nil {
+		t.Fatalf("RestoreSecret: %v", err)
+	}
+	if info.DeletedAt != "" {
+		t.Errorf("expected empty DeletedAt after restore, got %q", info.DeletedAt)
+	}
+
+	// Should be accessible again
+	val, err := p.SecretsManager.GetSecret(ctx, "restore-me")
+	if err != nil {
+		t.Fatalf("GetSecret after restore: %v", err)
+	}
+	if val.Value != "important-data" {
+		t.Errorf("expected 'important-data', got %q", val.Value)
+	}
+
+	// Restore on non-deleted secret should fail
+	_, err = p.SecretsManager.RestoreSecret(ctx, "restore-me")
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("expected FailedPrecondition for non-deleted secret, got %v", err)
+	}
+
+	// Restore on non-existent secret
+	_, err = p.SecretsManager.RestoreSecret(ctx, "no-such")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+func TestAWSSecretsManagerListVersions(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:  "versioned",
+		Value: "v1",
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Add more versions
+	_, err = p.SecretsManager.UpdateSecret(ctx, "versioned", "v2")
+	if err != nil {
+		t.Fatalf("UpdateSecret: %v", err)
+	}
+	_, err = p.SecretsManager.UpdateSecret(ctx, "versioned", "v3")
+	if err != nil {
+		t.Fatalf("UpdateSecret: %v", err)
+	}
+
+	versions, err := p.SecretsManager.ListSecretVersions(ctx, "versioned")
+	if err != nil {
+		t.Fatalf("ListSecretVersions: %v", err)
+	}
+	if len(versions) != 3 {
+		t.Fatalf("expected 3 versions, got %d", len(versions))
+	}
+	for i, v := range versions {
+		if v.Version != i+1 {
+			t.Errorf("version[%d]: expected version %d, got %d", i, i+1, v.Version)
+		}
+		if v.CreatedAt == "" {
+			t.Errorf("version[%d]: expected non-empty CreatedAt", i)
+		}
+	}
+
+	// ListSecretVersions on non-existent
+	_, err = p.SecretsManager.ListSecretVersions(ctx, "no-such")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+func TestAWSSecretsManagerScheduledDeletionBlocks(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.SecretsManager.CreateSecret(ctx, smdriver.SecretConfig{
+		Name:  "blocked",
+		Value: "val",
+		Tags:  map[string]string{"a": "1"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	if err := p.SecretsManager.DeleteSecret(ctx, "blocked"); err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
+	}
+
+	// All mutating/reading operations should fail on deleted secret
+	_, err = p.SecretsManager.GetSecret(ctx, "blocked")
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("GetSecret: expected FailedPrecondition, got %v", err)
+	}
+
+	_, err = p.SecretsManager.UpdateSecret(ctx, "blocked", "new")
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("UpdateSecret: expected FailedPrecondition, got %v", err)
+	}
+
+	_, err = p.SecretsManager.GetSecretVersion(ctx, "blocked", 1)
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("GetSecretVersion: expected FailedPrecondition, got %v", err)
+	}
+
+	_, err = p.SecretsManager.RotateSecret(ctx, "blocked", func(v string) (string, error) {
+		return v, nil
+	})
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("RotateSecret: expected FailedPrecondition, got %v", err)
+	}
+
+	err = p.SecretsManager.TagResource(ctx, "blocked", map[string]string{"b": "2"})
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("TagResource: expected FailedPrecondition, got %v", err)
+	}
+
+	err = p.SecretsManager.UntagResource(ctx, "blocked", []string{"a"})
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("UntagResource: expected FailedPrecondition, got %v", err)
+	}
+
+	// Double-delete should also fail
+	err = p.SecretsManager.DeleteSecret(ctx, "blocked")
+	if !cerrors.IsFailedPrecondition(err) {
+		t.Errorf("double DeleteSecret: expected FailedPrecondition, got %v", err)
 	}
 }
