@@ -13,9 +13,11 @@ type TransitionMap map[string][]string
 // NewTransitionMap creates a TransitionMap from a list of transitions.
 func NewTransitionMap(transitions []Transition) TransitionMap {
 	tm := make(TransitionMap)
+
 	for _, t := range transitions {
 		tm[t.From] = append(tm[t.From], t.To)
 	}
+
 	return tm
 }
 
@@ -25,10 +27,12 @@ func (tm TransitionMap) IsAllowed(from, to string) bool {
 	if !ok {
 		return false
 	}
+
 	for _, s := range allowed {
 		if s == to {
 			return true
 		}
 	}
+
 	return false
 }

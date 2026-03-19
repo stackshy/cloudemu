@@ -1,10 +1,10 @@
 package cloudemu
 
 import (
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/providers/aws"
-	"github.com/NitinKumar004/cloudemu/providers/azure"
-	"github.com/NitinKumar004/cloudemu/providers/gcp"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/providers/aws"
+	"github.com/stackshy/cloudemu/providers/azure"
+	"github.com/stackshy/cloudemu/providers/gcp"
 )
 
 // NewAWS creates a new AWS mock provider.

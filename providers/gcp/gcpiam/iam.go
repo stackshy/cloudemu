@@ -8,11 +8,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/iam/driver"
-	"github.com/NitinKumar004/cloudemu/internal/idgen"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/iam/driver"
+	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/internal/memstore"
 )
 
 // Compile-time check that Mock implements driver.IAM.
@@ -71,7 +71,7 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateUser creates a new IAM service account (user).
-func (m *Mock) CreateUser(ctx context.Context, cfg driver.UserConfig) (*driver.UserInfo, error) {
+func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.UserInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "service account name is required")
 	}
@@ -102,11 +102,12 @@ func (m *Mock) CreateUser(ctx context.Context, cfg driver.UserConfig) (*driver.U
 	m.users.Set(cfg.Name, u)
 
 	info := toUserInfo(u)
+
 	return &info, nil
 }
 
 // DeleteUser deletes the IAM service account with the given name.
-func (m *Mock) DeleteUser(ctx context.Context, name string) error {
+func (m *Mock) DeleteUser(_ context.Context, name string) error {
 	if !m.users.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound, "service account %q not found", name)
 	}
@@ -119,28 +120,31 @@ func (m *Mock) DeleteUser(ctx context.Context, name string) error {
 }
 
 // GetUser returns the IAM service account with the given name.
-func (m *Mock) GetUser(ctx context.Context, name string) (*driver.UserInfo, error) {
+func (m *Mock) GetUser(_ context.Context, name string) (*driver.UserInfo, error) {
 	u, ok := m.users.Get(name)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "service account %q not found", name)
 	}
 
 	info := toUserInfo(u)
+
 	return &info, nil
 }
 
 // ListUsers returns all IAM service accounts.
-func (m *Mock) ListUsers(ctx context.Context) ([]driver.UserInfo, error) {
+func (m *Mock) ListUsers(_ context.Context) ([]driver.UserInfo, error) {
 	all := m.users.All()
 	result := make([]driver.UserInfo, 0, len(all))
+
 	for _, u := range all {
 		result = append(result, toUserInfo(u))
 	}
+
 	return result, nil
 }
 
 // CreateRole creates a new IAM custom role.
-func (m *Mock) CreateRole(ctx context.Context, cfg driver.RoleConfig) (*driver.RoleInfo, error) {
+func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.RoleInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "role name is required")
 	}
@@ -170,11 +174,12 @@ func (m *Mock) CreateRole(ctx context.Context, cfg driver.RoleConfig) (*driver.R
 	m.roles.Set(cfg.Name, r)
 
 	info := toRoleInfo(r)
+
 	return &info, nil
 }
 
 // DeleteRole deletes the IAM custom role with the given name.
-func (m *Mock) DeleteRole(ctx context.Context, name string) error {
+func (m *Mock) DeleteRole(_ context.Context, name string) error {
 	if !m.roles.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound, "role %q not found", name)
 	}
@@ -187,28 +192,31 @@ func (m *Mock) DeleteRole(ctx context.Context, name string) error {
 }
 
 // GetRole returns the IAM custom role with the given name.
-func (m *Mock) GetRole(ctx context.Context, name string) (*driver.RoleInfo, error) {
+func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error) {
 	r, ok := m.roles.Get(name)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "role %q not found", name)
 	}
 
 	info := toRoleInfo(r)
+
 	return &info, nil
 }
 
 // ListRoles returns all IAM custom roles.
-func (m *Mock) ListRoles(ctx context.Context) ([]driver.RoleInfo, error) {
+func (m *Mock) ListRoles(_ context.Context) ([]driver.RoleInfo, error) {
 	all := m.roles.All()
 	result := make([]driver.RoleInfo, 0, len(all))
+
 	for _, r := range all {
 		result = append(result, toRoleInfo(r))
 	}
+
 	return result, nil
 }
 
 // CreatePolicy creates a new IAM policy binding.
-func (m *Mock) CreatePolicy(ctx context.Context, cfg driver.PolicyConfig) (*driver.PolicyInfo, error) {
+func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver.PolicyInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "policy name is required")
 	}
@@ -236,43 +244,53 @@ func (m *Mock) CreatePolicy(ctx context.Context, cfg driver.PolicyConfig) (*driv
 	m.policies.Set(arn, p)
 
 	info := toPolicyInfo(p)
+
 	return &info, nil
 }
 
 // DeletePolicy deletes the IAM policy with the given resource name (ARN).
-func (m *Mock) DeletePolicy(ctx context.Context, arn string) error {
+func (m *Mock) DeletePolicy(_ context.Context, arn string) error {
 	if !m.policies.Delete(arn) {
 		return cerrors.Newf(cerrors.NotFound, "policy %q not found", arn)
 	}
+
 	return nil
 }
 
 // GetPolicy returns the IAM policy with the given resource name (ARN).
-func (m *Mock) GetPolicy(ctx context.Context, arn string) (*driver.PolicyInfo, error) {
+func (m *Mock) GetPolicy(_ context.Context, arn string) (*driver.PolicyInfo, error) {
 	p, ok := m.policies.Get(arn)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "policy %q not found", arn)
 	}
 
 	info := toPolicyInfo(p)
+
 	return &info, nil
 }
 
 // ListPolicies returns all IAM policies.
-func (m *Mock) ListPolicies(ctx context.Context) ([]driver.PolicyInfo, error) {
+func (m *Mock) ListPolicies(_ context.Context) ([]driver.PolicyInfo, error) {
 	all := m.policies.All()
 	result := make([]driver.PolicyInfo, 0, len(all))
+
 	for _, p := range all {
 		result = append(result, toPolicyInfo(p))
 	}
+
 	return result, nil
 }
 
-// AttachUserPolicy binds a policy to a service account (user).
-func (m *Mock) AttachUserPolicy(ctx context.Context, userName, policyARN string) error {
-	if !m.users.Has(userName) {
-		return cerrors.Newf(cerrors.NotFound, "service account %q not found", userName)
+func (m *Mock) attachPolicy(
+	principalStore interface{ Has(string) bool },
+	principalName, policyARN string,
+	policyMap map[string]map[string]bool,
+	entityType string,
+) error {
+	if !principalStore.Has(principalName) {
+		return cerrors.Newf(cerrors.NotFound, "%s %q not found", entityType, principalName)
 	}
+
 	if !m.policies.Has(policyARN) {
 		return cerrors.Newf(cerrors.NotFound, "policy %q not found", policyARN)
 	}
@@ -280,16 +298,22 @@ func (m *Mock) AttachUserPolicy(ctx context.Context, userName, policyARN string)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.userPolicies[userName] == nil {
-		m.userPolicies[userName] = make(map[string]bool)
+	if policyMap[principalName] == nil {
+		policyMap[principalName] = make(map[string]bool)
 	}
-	m.userPolicies[userName][policyARN] = true
+
+	policyMap[principalName][policyARN] = true
 
 	return nil
 }
 
+// AttachUserPolicy binds a policy to a service account (user).
+func (m *Mock) AttachUserPolicy(_ context.Context, userName, policyARN string) error {
+	return m.attachPolicy(m.users, userName, policyARN, m.userPolicies, "service account")
+}
+
 // DetachUserPolicy removes a policy binding from a service account (user).
-func (m *Mock) DetachUserPolicy(ctx context.Context, userName, policyARN string) error {
+func (m *Mock) DetachUserPolicy(_ context.Context, userName, policyARN string) error {
 	if !m.users.Has(userName) {
 		return cerrors.Newf(cerrors.NotFound, "service account %q not found", userName)
 	}
@@ -303,31 +327,17 @@ func (m *Mock) DetachUserPolicy(ctx context.Context, userName, policyARN string)
 	}
 
 	delete(policies, policyARN)
+
 	return nil
 }
 
 // AttachRolePolicy binds a policy to a custom role.
-func (m *Mock) AttachRolePolicy(ctx context.Context, roleName, policyARN string) error {
-	if !m.roles.Has(roleName) {
-		return cerrors.Newf(cerrors.NotFound, "role %q not found", roleName)
-	}
-	if !m.policies.Has(policyARN) {
-		return cerrors.Newf(cerrors.NotFound, "policy %q not found", policyARN)
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.rolePolicies[roleName] == nil {
-		m.rolePolicies[roleName] = make(map[string]bool)
-	}
-	m.rolePolicies[roleName][policyARN] = true
-
-	return nil
+func (m *Mock) AttachRolePolicy(_ context.Context, roleName, policyARN string) error {
+	return m.attachPolicy(m.roles, roleName, policyARN, m.rolePolicies, "role")
 }
 
 // DetachRolePolicy removes a policy binding from a custom role.
-func (m *Mock) DetachRolePolicy(ctx context.Context, roleName, policyARN string) error {
+func (m *Mock) DetachRolePolicy(_ context.Context, roleName, policyARN string) error {
 	if !m.roles.Has(roleName) {
 		return cerrors.Newf(cerrors.NotFound, "role %q not found", roleName)
 	}
@@ -341,11 +351,12 @@ func (m *Mock) DetachRolePolicy(ctx context.Context, roleName, policyARN string)
 	}
 
 	delete(policies, policyARN)
+
 	return nil
 }
 
 // ListAttachedUserPolicies returns the resource names of policies attached to the given service account.
-func (m *Mock) ListAttachedUserPolicies(ctx context.Context, userName string) ([]string, error) {
+func (m *Mock) ListAttachedUserPolicies(_ context.Context, userName string) ([]string, error) {
 	if !m.users.Has(userName) {
 		return nil, cerrors.Newf(cerrors.NotFound, "service account %q not found", userName)
 	}
@@ -355,14 +366,16 @@ func (m *Mock) ListAttachedUserPolicies(ctx context.Context, userName string) ([
 
 	policies := m.userPolicies[userName]
 	result := make([]string, 0, len(policies))
+
 	for arn := range policies {
 		result = append(result, arn)
 	}
+
 	return result, nil
 }
 
 // ListAttachedRolePolicies returns the resource names of policies attached to the given role.
-func (m *Mock) ListAttachedRolePolicies(ctx context.Context, roleName string) ([]string, error) {
+func (m *Mock) ListAttachedRolePolicies(_ context.Context, roleName string) ([]string, error) {
 	if !m.roles.Has(roleName) {
 		return nil, cerrors.Newf(cerrors.NotFound, "role %q not found", roleName)
 	}
@@ -372,9 +385,11 @@ func (m *Mock) ListAttachedRolePolicies(ctx context.Context, roleName string) ([
 
 	policies := m.rolePolicies[roleName]
 	result := make([]string, 0, len(policies))
+
 	for arn := range policies {
 		result = append(result, arn)
 	}
+
 	return result, nil
 }
 
@@ -384,113 +399,148 @@ type policyDoc struct {
 }
 
 type policyStatement struct {
-	Effect   string      `json:"Effect"`
-	Action   interface{} `json:"Action"`
-	Resource interface{} `json:"Resource"`
+	Effect   string `json:"Effect"`
+	Action   any    `json:"Action"`
+	Resource any    `json:"Resource"`
 }
 
 func wildcardMatch(pattern, value string) bool {
 	if pattern == "*" {
 		return true
 	}
+
 	pParts := strings.Split(pattern, "*")
+
 	if len(pParts) == 1 {
 		return pattern == value
 	}
+
 	if !strings.HasPrefix(value, pParts[0]) {
 		return false
 	}
+
 	remaining := value[len(pParts[0]):]
+
 	for i := 1; i < len(pParts); i++ {
 		idx := strings.Index(remaining, pParts[i])
 		if idx < 0 {
 			return false
 		}
+
 		remaining = remaining[idx+len(pParts[i]):]
 	}
+
 	return true
 }
 
-func toStringSlice(v interface{}) []string {
+func toStringSlice(v any) []string {
 	switch val := v.(type) {
 	case string:
 		return []string{val}
-	case []interface{}:
+	case []any:
 		out := make([]string, 0, len(val))
+
 		for _, item := range val {
 			if s, ok := item.(string); ok {
 				out = append(out, s)
 			}
 		}
+
 		return out
 	}
+
 	return nil
 }
 
-func evaluatePolicy(doc string, action, resource string) (allow, deny bool) {
+func matchesAction(actions []string, action string) bool {
+	for _, a := range actions {
+		if wildcardMatch(a, action) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func matchesResource(resources []string, resource string) bool {
+	for _, r := range resources {
+		if wildcardMatch(r, resource) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func evaluatePolicy(doc, action, resource string) (allow, deny bool) {
 	var pd policyDoc
 	if err := json.Unmarshal([]byte(doc), &pd); err != nil {
 		return false, false
 	}
+
 	for _, stmt := range pd.Statement {
 		actions := toStringSlice(stmt.Action)
 		resources := toStringSlice(stmt.Resource)
-		actionMatch := false
-		for _, a := range actions {
-			if wildcardMatch(a, action) {
-				actionMatch = true
-				break
-			}
-		}
-		if !actionMatch {
+
+		if !matchesAction(actions, action) {
 			continue
 		}
-		resourceMatch := false
-		for _, r := range resources {
-			if wildcardMatch(r, resource) {
-				resourceMatch = true
-				break
-			}
-		}
-		if !resourceMatch {
+
+		if !matchesResource(resources, resource) {
 			continue
 		}
+
 		if strings.EqualFold(stmt.Effect, "Deny") {
 			deny = true
 		} else if strings.EqualFold(stmt.Effect, "Allow") {
 			allow = true
 		}
 	}
+
 	return allow, deny
+}
+
+func (m *Mock) collectPolicyARNs(principal string) map[string]bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	policyARNs := make(map[string]bool)
+
+	for arn := range m.userPolicies[principal] {
+		policyARNs[arn] = true
+	}
+
+	for arn := range m.rolePolicies[principal] {
+		policyARNs[arn] = true
+	}
+
+	return policyARNs
 }
 
 // CheckPermission evaluates attached policies to determine if a principal is allowed
 // to perform the given action on the given resource. Explicit Deny wins over Allow.
-func (m *Mock) CheckPermission(ctx context.Context, principal, action, resource string) (bool, error) {
-	m.mu.RLock()
-	policyARNs := make(map[string]bool)
-	for arn := range m.userPolicies[principal] {
-		policyARNs[arn] = true
-	}
-	for arn := range m.rolePolicies[principal] {
-		policyARNs[arn] = true
-	}
-	m.mu.RUnlock()
+func (m *Mock) CheckPermission(_ context.Context, principal, action, resource string) (bool, error) {
+	policyARNs := m.collectPolicyARNs(principal)
 
 	hasAllow := false
+
 	for arn := range policyARNs {
 		p, ok := m.policies.Get(arn)
 		if !ok || p.PolicyDocument == "" {
 			continue
 		}
+
 		allow, deny := evaluatePolicy(p.PolicyDocument, action, resource)
+
 		if deny {
 			return false, nil
 		}
+
 		if allow {
 			hasAllow = true
 		}
 	}
+
 	return hasAllow, nil
 }
 
@@ -499,10 +549,12 @@ func copyTags(tags map[string]string) map[string]string {
 	if tags == nil {
 		return make(map[string]string)
 	}
+
 	out := make(map[string]string, len(tags))
 	for k, v := range tags {
 		out[k] = v
 	}
+
 	return out
 }
 

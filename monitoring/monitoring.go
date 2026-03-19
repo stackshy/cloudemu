@@ -5,11 +5,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/inject"
-	"github.com/NitinKumar004/cloudemu/metrics"
-	"github.com/NitinKumar004/cloudemu/monitoring/driver"
-	"github.com/NitinKumar004/cloudemu/ratelimit"
-	"github.com/NitinKumar004/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/inject"
+	"github.com/stackshy/cloudemu/metrics"
+	"github.com/stackshy/cloudemu/monitoring/driver"
+	"github.com/stackshy/cloudemu/ratelimit"
+	"github.com/stackshy/cloudemu/recorder"
 )
 
 // Monitoring is the portable monitoring type wrapping a driver.
@@ -27,6 +27,7 @@ func NewMonitoring(d driver.Monitoring, opts ...Option) *Monitoring {
 	for _, opt := range opts {
 		opt(m)
 	}
+
 	return m
 }
 
@@ -38,77 +39,96 @@ func WithRateLimiter(l *ratelimit.Limiter) Option  { return func(m *Monitoring) 
 func WithErrorInjection(i *inject.Injector) Option { return func(m *Monitoring) { m.injector = i } }
 func WithLatency(d time.Duration) Option           { return func(m *Monitoring) { m.latency = d } }
 
-func (m *Monitoring) do(ctx context.Context, op string, input interface{}, fn func() (interface{}, error)) (interface{}, error) {
+func (m *Monitoring) do(_ context.Context, op string, input any, fn func() (any, error)) (any, error) {
 	start := time.Now()
+
 	if m.injector != nil {
 		if err := m.injector.Check("monitoring", op); err != nil {
 			m.rec(op, input, nil, err, time.Since(start))
 			return nil, err
 		}
 	}
+
 	if m.limiter != nil {
 		if err := m.limiter.Allow(); err != nil {
 			m.rec(op, input, nil, err, time.Since(start))
 			return nil, err
 		}
 	}
+
 	if m.latency > 0 {
 		time.Sleep(m.latency)
 	}
+
 	out, err := fn()
 	dur := time.Since(start)
+
 	if m.metrics != nil {
 		labels := map[string]string{"service": "monitoring", "operation": op}
 		m.metrics.Counter("calls_total", 1, labels)
 		m.metrics.Histogram("call_duration", dur, labels)
+
 		if err != nil {
 			m.metrics.Counter("errors_total", 1, labels)
 		}
 	}
+
 	m.rec(op, input, out, err, dur)
+
 	return out, err
 }
 
-func (m *Monitoring) rec(op string, input, output interface{}, err error, dur time.Duration) {
+func (m *Monitoring) rec(op string, input, output any, err error, dur time.Duration) {
 	if m.recorder != nil {
 		m.recorder.Record("monitoring", op, input, output, err, dur)
 	}
 }
 
 func (m *Monitoring) PutMetricData(ctx context.Context, data []driver.MetricDatum) error {
-	_, err := m.do(ctx, "PutMetricData", data, func() (interface{}, error) { return nil, m.driver.PutMetricData(ctx, data) })
+	_, err := m.do(ctx, "PutMetricData", data, func() (any, error) { return nil, m.driver.PutMetricData(ctx, data) })
 	return err
 }
+
+//nolint:gocritic // input passed by value to match driver.Monitoring interface pattern
 func (m *Monitoring) GetMetricData(ctx context.Context, input driver.GetMetricInput) (*driver.MetricDataResult, error) {
-	out, err := m.do(ctx, "GetMetricData", input, func() (interface{}, error) { return m.driver.GetMetricData(ctx, input) })
+	out, err := m.do(ctx, "GetMetricData", input, func() (any, error) { return m.driver.GetMetricData(ctx, input) })
 	if err != nil {
 		return nil, err
 	}
+
 	return out.(*driver.MetricDataResult), nil
 }
+
 func (m *Monitoring) ListMetrics(ctx context.Context, namespace string) ([]string, error) {
-	out, err := m.do(ctx, "ListMetrics", namespace, func() (interface{}, error) { return m.driver.ListMetrics(ctx, namespace) })
+	out, err := m.do(ctx, "ListMetrics", namespace, func() (any, error) { return m.driver.ListMetrics(ctx, namespace) })
 	if err != nil {
 		return nil, err
 	}
+
 	return out.([]string), nil
 }
+
+//nolint:gocritic // config passed by value to match driver.Monitoring interface pattern
 func (m *Monitoring) CreateAlarm(ctx context.Context, config driver.AlarmConfig) error {
-	_, err := m.do(ctx, "CreateAlarm", config, func() (interface{}, error) { return nil, m.driver.CreateAlarm(ctx, config) })
+	_, err := m.do(ctx, "CreateAlarm", config, func() (any, error) { return nil, m.driver.CreateAlarm(ctx, config) })
 	return err
 }
+
 func (m *Monitoring) DeleteAlarm(ctx context.Context, name string) error {
-	_, err := m.do(ctx, "DeleteAlarm", name, func() (interface{}, error) { return nil, m.driver.DeleteAlarm(ctx, name) })
+	_, err := m.do(ctx, "DeleteAlarm", name, func() (any, error) { return nil, m.driver.DeleteAlarm(ctx, name) })
 	return err
 }
+
 func (m *Monitoring) DescribeAlarms(ctx context.Context, names []string) ([]driver.AlarmInfo, error) {
-	out, err := m.do(ctx, "DescribeAlarms", names, func() (interface{}, error) { return m.driver.DescribeAlarms(ctx, names) })
+	out, err := m.do(ctx, "DescribeAlarms", names, func() (any, error) { return m.driver.DescribeAlarms(ctx, names) })
 	if err != nil {
 		return nil, err
 	}
+
 	return out.([]driver.AlarmInfo), nil
 }
+
 func (m *Monitoring) SetAlarmState(ctx context.Context, name, state, reason string) error {
-	_, err := m.do(ctx, "SetAlarmState", name, func() (interface{}, error) { return nil, m.driver.SetAlarmState(ctx, name, state, reason) })
+	_, err := m.do(ctx, "SetAlarmState", name, func() (any, error) { return nil, m.driver.SetAlarmState(ctx, name, state, reason) })
 	return err
 }

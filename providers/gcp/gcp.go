@@ -2,17 +2,17 @@
 package gcp
 
 import (
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/clouddns"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/cloudfunctions"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/cloudmonitoring"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/firestore"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/gce"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/gcpiam"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/gcplb"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/gcpvpc"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/gcs"
-	"github.com/NitinKumar004/cloudemu/providers/gcp/pubsub"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/providers/gcp/clouddns"
+	"github.com/stackshy/cloudemu/providers/gcp/cloudfunctions"
+	"github.com/stackshy/cloudemu/providers/gcp/cloudmonitoring"
+	"github.com/stackshy/cloudemu/providers/gcp/firestore"
+	"github.com/stackshy/cloudemu/providers/gcp/gce"
+	"github.com/stackshy/cloudemu/providers/gcp/gcpiam"
+	"github.com/stackshy/cloudemu/providers/gcp/gcplb"
+	"github.com/stackshy/cloudemu/providers/gcp/gcpvpc"
+	"github.com/stackshy/cloudemu/providers/gcp/gcs"
+	"github.com/stackshy/cloudemu/providers/gcp/pubsub"
 )
 
 // Provider holds all GCP mock services.
@@ -45,5 +45,6 @@ func New(opts ...config.Option) *Provider {
 		PubSub:          pubsub.New(o),
 	}
 	p.GCE.SetMonitoring(p.CloudMonitoring)
+
 	return p
 }

@@ -87,6 +87,7 @@ func (t *Tracker) Record(service, operation string, quantity int) {
 	defer t.mu.Unlock()
 
 	key := service + ":" + operation
+
 	rate, ok := t.rates[key]
 	if !ok {
 		rate = 0.0
@@ -117,6 +118,7 @@ func (t *Tracker) TotalCost() float64 {
 	defer t.mu.RUnlock()
 
 	var total float64
+
 	for _, c := range t.costs {
 		total += c.Total
 	}
@@ -130,6 +132,7 @@ func (t *Tracker) CostByService() map[string]float64 {
 	defer t.mu.RUnlock()
 
 	result := make(map[string]float64)
+
 	for _, c := range t.costs {
 		result[c.Service] += c.Total
 	}
@@ -143,6 +146,7 @@ func (t *Tracker) CostByOperation() map[string]float64 {
 	defer t.mu.RUnlock()
 
 	result := make(map[string]float64)
+
 	for _, c := range t.costs {
 		key := c.Service + ":" + c.Operation
 		result[key] += c.Total

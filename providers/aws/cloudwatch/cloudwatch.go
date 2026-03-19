@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
-	"github.com/NitinKumar004/cloudemu/monitoring/driver"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.Monitoring.
@@ -55,7 +55,7 @@ func New(opts *config.Options) *Mock {
 }
 
 // PutMetricData stores metric data points and evaluates any matching alarms.
-func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) error {
+func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error {
 	if len(data) == 0 {
 		return errors.Newf(errors.InvalidArgument, "metric data is required")
 	}
@@ -72,10 +72,12 @@ func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) err
 
 	// Evaluate alarms for each unique namespace/metric pair that was updated.
 	seen := make(map[metricKey]bool)
+
 	for _, d := range data {
 		mk := metricKey{Namespace: d.Namespace, MetricName: d.MetricName}
 		if !seen[mk] {
 			seen[mk] = true
+
 			m.evaluateAlarms(d.Namespace, d.MetricName)
 		}
 	}
@@ -100,58 +102,76 @@ func evaluateComparison(value float64, operator string, threshold float64) bool 
 
 func (m *Mock) evaluateAlarms(namespace, metricName string) {
 	allAlarms := m.alarms.All()
+
 	for _, alarm := range allAlarms {
 		if alarm.Namespace != namespace || alarm.MetricName != metricName {
 			continue
 		}
 
-		period := alarm.Period
-		if period <= 0 {
-			period = 60
-		}
-		evalPeriods := alarm.EvaluationPeriods
-		if evalPeriods <= 0 {
-			evalPeriods = 1
-		}
+		m.evaluateSingleAlarm(alarm, namespace, metricName)
+	}
+}
 
-		now := m.opts.Clock.Now()
-		windowDur := time.Duration(period*evalPeriods) * time.Second
-		windowStart := now.Add(-windowDur)
+func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName string) {
+	period := alarm.Period
+	if period <= 0 {
+		period = 60
+	}
 
-		m.mu.RLock()
-		key := metricKey{Namespace: namespace, MetricName: metricName}
-		dataPoints := m.metrics[key]
+	evalPeriods := alarm.EvaluationPeriods
+	if evalPeriods <= 0 {
+		evalPeriods = 1
+	}
 
-		var filtered []float64
-		for _, d := range dataPoints {
-			if d.Timestamp.Before(windowStart) || d.Timestamp.After(now) {
-				continue
-			}
-			if !matchDimensions(d.Dimensions, alarm.Dimensions) {
-				continue
-			}
-			filtered = append(filtered, d.Value)
-		}
-		m.mu.RUnlock()
+	now := m.opts.Clock.Now()
+	windowDur := time.Duration(period*evalPeriods) * time.Second
+	windowStart := now.Add(-windowDur)
 
-		if len(filtered) == 0 {
+	filtered := m.collectFilteredValues(namespace, metricName, alarm.Dimensions, windowStart, now)
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	stat := computeStat(filtered, alarm.Stat)
+	if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
+		alarm.State = "ALARM"
+		alarm.StateReason = "Threshold crossed"
+	} else {
+		alarm.State = "OK"
+		alarm.StateReason = "Threshold not crossed"
+	}
+}
+
+func (m *Mock) collectFilteredValues(namespace, metricName string, dims map[string]string, windowStart, now time.Time) []float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	key := metricKey{Namespace: namespace, MetricName: metricName}
+	dataPoints := m.metrics[key]
+
+	var filtered []float64
+
+	for _, d := range dataPoints {
+		if d.Timestamp.Before(windowStart) || d.Timestamp.After(now) {
 			continue
 		}
 
-		stat := computeStat(filtered, alarm.Stat)
-		if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
-			alarm.State = "ALARM"
-			alarm.StateReason = "Threshold crossed"
-		} else {
-			alarm.State = "OK"
-			alarm.StateReason = "Threshold not crossed"
+		if !matchDimensions(d.Dimensions, dims) {
+			continue
 		}
+
+		filtered = append(filtered, d.Value)
 	}
+
+	return filtered
 }
 
 // GetMetricData retrieves metric data for the given query, filtering by time range and
 // computing the requested statistic.
-func (m *Mock) GetMetricData(ctx context.Context, input driver.GetMetricInput) (*driver.MetricDataResult, error) {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*driver.MetricDataResult, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -161,56 +181,64 @@ func (m *Mock) GetMetricData(ctx context.Context, input driver.GetMetricInput) (
 	}
 
 	dataPoints := m.metrics[key]
-
-	// Filter by time range and dimensions.
-	var filtered []driver.MetricDatum
-	for _, d := range dataPoints {
-		if d.Timestamp.Before(input.StartTime) || !d.Timestamp.Before(input.EndTime) {
-			continue
-		}
-		if !matchDimensions(d.Dimensions, input.Dimensions) {
-			continue
-		}
-		filtered = append(filtered, d)
-	}
+	filtered := filterByTimeAndDimensions(dataPoints, input.StartTime, input.EndTime, input.Dimensions)
 
 	// Sort by timestamp.
 	sort.Slice(filtered, func(i, j int) bool {
 		return filtered[i].Timestamp.Before(filtered[j].Timestamp)
 	})
 
-	// Group by period and compute stat.
-	if input.Period <= 0 {
-		input.Period = 60
+	period := input.Period
+	if period <= 0 {
+		period = 60
 	}
 
-	periodDur := time.Duration(input.Period) * time.Second
+	return buildMetricResult(filtered, input.StartTime, input.EndTime, period, input.Stat), nil
+}
+
+func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string) []driver.MetricDatum {
+	var filtered []driver.MetricDatum
+
+	for _, d := range dataPoints {
+		if d.Timestamp.Before(startTime) || !d.Timestamp.Before(endTime) {
+			continue
+		}
+
+		if !matchDimensions(d.Dimensions, dims) {
+			continue
+		}
+
+		filtered = append(filtered, d)
+	}
+
+	return filtered
+}
+
+func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Time, period int, stat string) *driver.MetricDataResult {
 	result := &driver.MetricDataResult{}
 
 	if len(filtered) == 0 {
 		result.Timestamps = []time.Time{}
 		result.Values = []float64{}
-		return result, nil
+
+		return result
 	}
 
-	// Walk through periods from StartTime to EndTime.
-	for periodStart := input.StartTime; periodStart.Before(input.EndTime); periodStart = periodStart.Add(periodDur) {
-		periodEnd := periodStart.Add(periodDur)
+	periodDur := time.Duration(period) * time.Second
 
-		var periodValues []float64
-		for _, d := range filtered {
-			if !d.Timestamp.Before(periodStart) && d.Timestamp.Before(periodEnd) {
-				periodValues = append(periodValues, d.Value)
-			}
-		}
+	// Walk through periods from StartTime to EndTime.
+	for periodStart := startTime; periodStart.Before(endTime); periodStart = periodStart.Add(periodDur) {
+		periodEnd := periodStart.Add(periodDur)
+		periodValues := collectPeriodValues(filtered, periodStart, periodEnd)
 
 		if len(periodValues) == 0 {
 			continue
 		}
 
-		stat := computeStat(periodValues, input.Stat)
+		s := computeStat(periodValues, stat)
+
 		result.Timestamps = append(result.Timestamps, periodStart)
-		result.Values = append(result.Values, stat)
+		result.Values = append(result.Values, s)
 	}
 
 	if result.Timestamps == nil {
@@ -218,15 +246,28 @@ func (m *Mock) GetMetricData(ctx context.Context, input driver.GetMetricInput) (
 		result.Values = []float64{}
 	}
 
-	return result, nil
+	return result
+}
+
+func collectPeriodValues(filtered []driver.MetricDatum, periodStart, periodEnd time.Time) []float64 {
+	var values []float64
+
+	for _, d := range filtered {
+		if !d.Timestamp.Before(periodStart) && d.Timestamp.Before(periodEnd) {
+			values = append(values, d.Value)
+		}
+	}
+
+	return values
 }
 
 // ListMetrics returns unique metric names for the given namespace.
-func (m *Mock) ListMetrics(ctx context.Context, namespace string) ([]string, error) {
+func (m *Mock) ListMetrics(_ context.Context, namespace string) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	seen := make(map[string]bool)
+
 	for key := range m.metrics {
 		if key.Namespace == namespace {
 			seen[key.MetricName] = true
@@ -239,11 +280,14 @@ func (m *Mock) ListMetrics(ctx context.Context, namespace string) ([]string, err
 	}
 
 	sort.Strings(names)
+
 	return names, nil
 }
 
 // CreateAlarm creates or updates an alarm with the given configuration.
-func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 	if cfg.Name == "" {
 		return errors.Newf(errors.InvalidArgument, "alarm name is required")
 	}
@@ -267,41 +311,48 @@ func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
 	}
 
 	m.alarms.Set(cfg.Name, alarm)
+
 	return nil
 }
 
 // DeleteAlarm deletes the alarm with the given name.
-func (m *Mock) DeleteAlarm(ctx context.Context, name string) error {
+func (m *Mock) DeleteAlarm(_ context.Context, name string) error {
 	if !m.alarms.Delete(name) {
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
 	}
+
 	return nil
 }
 
 // DescribeAlarms returns alarms matching the given names, or all alarms if names is empty.
-func (m *Mock) DescribeAlarms(ctx context.Context, names []string) ([]driver.AlarmInfo, error) {
+func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.AlarmInfo, error) {
 	if len(names) == 0 {
 		all := m.alarms.All()
 		result := make([]driver.AlarmInfo, 0, len(all))
+
 		for _, a := range all {
 			result = append(result, toAlarmInfo(a))
 		}
+
 		return result, nil
 	}
 
 	result := make([]driver.AlarmInfo, 0, len(names))
+
 	for _, name := range names {
 		a, ok := m.alarms.Get(name)
 		if !ok {
 			continue
 		}
+
 		result = append(result, toAlarmInfo(a))
 	}
+
 	return result, nil
 }
 
 // SetAlarmState manually sets the state of an alarm.
-func (m *Mock) SetAlarmState(ctx context.Context, name, state, reason string) error {
+func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) error {
 	a, ok := m.alarms.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
@@ -309,6 +360,7 @@ func (m *Mock) SetAlarmState(ctx context.Context, name, state, reason string) er
 
 	a.State = state
 	a.StateReason = reason
+
 	return nil
 }
 
@@ -320,6 +372,7 @@ func matchDimensions(dataDims, filterDims map[string]string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -331,36 +384,50 @@ func computeStat(values []float64, stat string) float64 {
 
 	switch stat {
 	case "Sum":
-		sum := 0.0
-		for _, v := range values {
-			sum += v
-		}
-		return sum
+		return sumValues(values)
 	case "Min", "Minimum":
-		min := math.MaxFloat64
-		for _, v := range values {
-			if v < min {
-				min = v
-			}
-		}
-		return min
+		return minValue(values)
 	case "Max", "Maximum":
-		max := -math.MaxFloat64
-		for _, v := range values {
-			if v > max {
-				max = v
-			}
-		}
-		return max
+		return maxValue(values)
 	case "SampleCount":
 		return float64(len(values))
 	default: // "Average" or unspecified
-		sum := 0.0
-		for _, v := range values {
-			sum += v
-		}
-		return sum / float64(len(values))
+		return sumValues(values) / float64(len(values))
 	}
+}
+
+func sumValues(values []float64) float64 {
+	sum := 0.0
+
+	for _, v := range values {
+		sum += v
+	}
+
+	return sum
+}
+
+func minValue(values []float64) float64 {
+	result := math.MaxFloat64
+
+	for _, v := range values {
+		if v < result {
+			result = v
+		}
+	}
+
+	return result
+}
+
+func maxValue(values []float64) float64 {
+	result := -math.MaxFloat64
+
+	for _, v := range values {
+		if v > result {
+			result = v
+		}
+	}
+
+	return result
 }
 
 func toAlarmInfo(a *alarmData) driver.AlarmInfo {

@@ -1,7 +1,7 @@
 // Package compute provides a portable compute API with cross-cutting concerns.
 package compute
 
-import "github.com/NitinKumar004/cloudemu/statemachine"
+import "github.com/stackshy/cloudemu/statemachine"
 
 // VM states.
 const (
@@ -14,15 +14,17 @@ const (
 	StateRestarting   = "restarting"
 )
 
-// VMTransitions defines the legal VM state transitions.
-var VMTransitions = []statemachine.Transition{
-	{From: StatePending, To: StateRunning},
-	{From: StateRunning, To: StateStopping},
-	{From: StateRunning, To: StateShuttingDown},
-	{From: StateRunning, To: StateRestarting},
-	{From: StateStopping, To: StateStopped},
-	{From: StateStopped, To: StatePending},
-	{From: StateStopped, To: StateShuttingDown},
-	{From: StateShuttingDown, To: StateTerminated},
-	{From: StateRestarting, To: StateRunning},
+// VMTransitions returns the legal VM state transitions.
+func VMTransitions() []statemachine.Transition {
+	return []statemachine.Transition{
+		{From: StatePending, To: StateRunning},
+		{From: StateRunning, To: StateStopping},
+		{From: StateRunning, To: StateShuttingDown},
+		{From: StateRunning, To: StateRestarting},
+		{From: StateStopping, To: StateStopped},
+		{From: StateStopped, To: StatePending},
+		{From: StateStopped, To: StateShuttingDown},
+		{From: StateShuttingDown, To: StateTerminated},
+		{From: StateRestarting, To: StateRunning},
+	}
 }

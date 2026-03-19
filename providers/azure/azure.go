@@ -2,17 +2,17 @@
 package azure
 
 import (
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/providers/azure/azuredns"
-	"github.com/NitinKumar004/cloudemu/providers/azure/azureiam"
-	"github.com/NitinKumar004/cloudemu/providers/azure/azurelb"
-	"github.com/NitinKumar004/cloudemu/providers/azure/azuremonitor"
-	"github.com/NitinKumar004/cloudemu/providers/azure/blobstorage"
-	"github.com/NitinKumar004/cloudemu/providers/azure/cosmosdb"
-	"github.com/NitinKumar004/cloudemu/providers/azure/functions"
-	"github.com/NitinKumar004/cloudemu/providers/azure/servicebus"
-	"github.com/NitinKumar004/cloudemu/providers/azure/virtualmachines"
-	"github.com/NitinKumar004/cloudemu/providers/azure/vnet"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/providers/azure/azuredns"
+	"github.com/stackshy/cloudemu/providers/azure/azureiam"
+	"github.com/stackshy/cloudemu/providers/azure/azurelb"
+	"github.com/stackshy/cloudemu/providers/azure/azuremonitor"
+	"github.com/stackshy/cloudemu/providers/azure/blobstorage"
+	"github.com/stackshy/cloudemu/providers/azure/cosmosdb"
+	"github.com/stackshy/cloudemu/providers/azure/functions"
+	"github.com/stackshy/cloudemu/providers/azure/servicebus"
+	"github.com/stackshy/cloudemu/providers/azure/virtualmachines"
+	"github.com/stackshy/cloudemu/providers/azure/vnet"
 )
 
 // Provider holds all Azure mock services.
@@ -45,5 +45,6 @@ func New(opts ...config.Option) *Provider {
 		ServiceBus:      servicebus.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
+
 	return p
 }

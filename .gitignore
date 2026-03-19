@@ -1,0 +1,50 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.*
+*.env
+configs/.local.env
+credentials.json
+serviceaccount.json
+*.pem
+*.key
+
+# Build output
+bin/
+dist/
+tmp/
+
+# Vendor (if not committed)
+# vendor/
+
+# Debug
+__debug_bin*

@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
+	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
 )
 
 // Limiter implements a token bucket rate limiter.
@@ -24,6 +24,7 @@ func New(rate float64, burst int, clock config.Clock) *Limiter {
 	if clock == nil {
 		clock = config.RealClock{}
 	}
+
 	return &Limiter{
 		rate:       rate,
 		burst:      burst,
@@ -40,10 +41,12 @@ func (l *Limiter) Allow() error {
 
 	now := l.clock.Now()
 	elapsed := now.Sub(l.lastRefill).Seconds()
+
 	l.tokens += elapsed * l.rate
 	if l.tokens > float64(l.burst) {
 		l.tokens = float64(l.burst)
 	}
+
 	l.lastRefill = now
 
 	if l.tokens < 1 {
@@ -51,5 +54,6 @@ func (l *Limiter) Allow() error {
 	}
 
 	l.tokens--
+
 	return nil
 }

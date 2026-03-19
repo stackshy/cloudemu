@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/errors"
 )
 
 // Callback is called when a state transition occurs.
@@ -30,6 +30,7 @@ func New(transitions []Transition) *Machine {
 func (m *Machine) OnTransition(cb Callback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.callbacks = append(m.callbacks, cb)
 }
 
@@ -37,6 +38,7 @@ func (m *Machine) OnTransition(cb Callback) {
 func (m *Machine) SetState(resourceID, state string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.states[resourceID] = state
 }
 
@@ -44,26 +46,31 @@ func (m *Machine) SetState(resourceID, state string) {
 func (m *Machine) GetState(resourceID string) (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	state, ok := m.states[resourceID]
 	if !ok {
 		return "", cerrors.Newf(cerrors.NotFound, "resource %s not found", resourceID)
 	}
+
 	return state, nil
 }
 
 // Transition attempts to transition a resource to a new state.
 func (m *Machine) Transition(resourceID, to string) error {
 	m.mu.Lock()
+
 	from, ok := m.states[resourceID]
 	if !ok {
 		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "resource %s not found", resourceID)
 	}
+
 	if !m.transitions.IsAllowed(from, to) {
 		m.mu.Unlock()
 		return cerrors.Newf(cerrors.FailedPrecondition,
 			"transition from %s to %s not allowed for resource %s", from, to, resourceID)
 	}
+
 	m.states[resourceID] = to
 	callbacks := make([]Callback, len(m.callbacks))
 	copy(callbacks, m.callbacks)
@@ -72,6 +79,7 @@ func (m *Machine) Transition(resourceID, to string) error {
 	for _, cb := range callbacks {
 		cb(resourceID, from, to)
 	}
+
 	return nil
 }
 
@@ -79,6 +87,7 @@ func (m *Machine) Transition(resourceID, to string) error {
 func (m *Machine) Remove(resourceID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	delete(m.states, resourceID)
 }
 
@@ -86,10 +95,12 @@ func (m *Machine) Remove(resourceID string) {
 func (m *Machine) Resources() map[string]string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	result := make(map[string]string, len(m.states))
 	for k, v := range m.states {
 		result[k] = v
 	}
+
 	return result
 }
 
@@ -97,9 +108,11 @@ func (m *Machine) Resources() map[string]string {
 func (m *Machine) String(resourceID string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	state, ok := m.states[resourceID]
 	if !ok {
 		return fmt.Sprintf("%s: <not found>", resourceID)
 	}
+
 	return fmt.Sprintf("%s: %s", resourceID, state)
 }

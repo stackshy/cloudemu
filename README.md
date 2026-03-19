@@ -4,10 +4,10 @@
 </p>
 
 <p align="center">
-  <a href="https://pkg.go.dev/github.com/NitinKumar004/cloudemu"><img src="https://pkg.go.dev/badge/github.com/NitinKumar004/cloudemu.svg" alt="Go Reference"></a>
-  <a href="https://goreportcard.com/report/github.com/NitinKumar004/cloudemu"><img src="https://goreportcard.com/badge/github.com/NitinKumar004/cloudemu" alt="Go Report Card"></a>
-  <a href="https://github.com/NitinKumar004/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <a href="https://github.com/NitinKumar004/cloudemu/actions"><img src="https://img.shields.io/github/actions/workflow/status/NitinKumar004/cloudemu/go.yml?branch=development&label=tests" alt="Tests"></a>
+  <a href="https://pkg.go.dev/github.com/stackshy/cloudemu"><img src="https://pkg.go.dev/badge/github.com/stackshy/cloudemu.svg" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/stackshy/cloudemu"><img src="https://goreportcard.com/badge/github.com/stackshy/cloudemu" alt="Go Report Card"></a>
+  <a href="https://github.com/stackshy/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://github.com/stackshy/cloudemu/actions"><img src="https://img.shields.io/github/actions/workflow/status/stackshy/cloudemu/go.yml?branch=development&label=tests" alt="Tests"></a>
   <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go Version">
   <img src="https://img.shields.io/badge/services-30_mocks-green" alt="30 Mocks">
   <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP-orange" alt="Providers">
@@ -29,7 +29,7 @@ gcp := cloudemu.NewGCP()
 ## Installation
 
 ```bash
-go get github.com/NitinKumar004/cloudemu
+go get github.com/stackshy/cloudemu
 ```
 
 Requires Go 1.25.0+.
@@ -99,10 +99,10 @@ Create tables with partition and sort keys, put and get items, run queries with 
 aws.DynamoDB.CreateTable(ctx, dbdriver.TableConfig{
     Name: "users", PartitionKey: "pk", SortKey: "sk",
 })
-aws.DynamoDB.PutItem(ctx, "users", map[string]interface{}{
+aws.DynamoDB.PutItem(ctx, "users", map[string]any{
     "pk": "user1", "sk": "profile", "name": "Alice",
 })
-item, _ := aws.DynamoDB.GetItem(ctx, "users", map[string]interface{}{
+item, _ := aws.DynamoDB.GetItem(ctx, "users", map[string]any{
     "pk": "user1", "sk": "profile",
 })
 ```
@@ -214,7 +214,7 @@ aws := cloudemu.NewAWS(
 All operations return errors using canonical error codes. Use helper functions to check the error type without string matching.
 
 ```go
-import cerrors "github.com/NitinKumar004/cloudemu/errors"
+import cerrors "github.com/stackshy/cloudemu/errors"
 
 _, err := s3.GetObject(ctx, "bucket", "missing-key")
 if cerrors.IsNotFound(err) { /* handle */ }
@@ -238,7 +238,7 @@ Provider Mocks   →  in-memory backends (AWS/Azure/GCP) using generic memstore
 ```bash
 go build ./...   # compile all packages
 go vet ./...     # static analysis
-go test -v ./... # run all 32 tests
+go test -v ./... # run all tests across 42 packages
 ```
 
 ## License

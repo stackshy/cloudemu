@@ -8,15 +8,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/internal/idgen"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
-	"github.com/NitinKumar004/cloudemu/messagequeue/driver"
+	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/messagequeue/driver"
 )
 
 // Compile-time check that Mock implements driver.MessageQueue.
 var _ driver.MessageQueue = (*Mock)(nil)
+
+const (
+	defaultVisibilityTimeout = 30
+	maxReceiveMessages       = 10
+	deduplicationWindow      = 5 * time.Minute
+)
 
 // sbMessage represents an internal message stored in a queue.
 type sbMessage struct {
@@ -53,7 +59,7 @@ type Mock struct {
 	queues   *memstore.Store[*queueData]
 	opts     *config.Options
 	mu       sync.RWMutex
-	triggers map[string]FunctionTrigger // queueURL → trigger
+	triggers map[string]FunctionTrigger // queueURL -> trigger
 }
 
 // New creates a new Service Bus mock with the given configuration options.
@@ -105,7 +111,7 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 
 	visibilityTimeout := cfg.VisibilityTimeout
 	if visibilityTimeout == 0 {
-		visibilityTimeout = 30 // default 30 seconds
+		visibilityTimeout = defaultVisibilityTimeout
 	}
 
 	info := driver.QueueInfo{
@@ -131,6 +137,7 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 	m.queues.Set(url, qd)
 
 	result := info
+
 	return &result, nil
 }
 
@@ -156,6 +163,7 @@ func (m *Mock) GetQueueInfo(_ context.Context, url string) (*driver.QueueInfo, e
 	// Count visible messages for the approximate message count.
 	now := m.opts.Clock.Now()
 	count := 0
+
 	for _, msg := range qd.messages {
 		if !msg.VisibleAt.After(now) {
 			count++
@@ -174,6 +182,7 @@ func (m *Mock) ListQueues(_ context.Context, prefix string) ([]driver.QueueInfo,
 	all := m.queues.All()
 
 	results := make([]driver.QueueInfo, 0, len(all))
+
 	for _, qd := range all {
 		if prefix == "" || strings.HasPrefix(qd.info.Name, prefix) {
 			results = append(results, qd.info)
@@ -184,6 +193,8 @@ func (m *Mock) ListQueues(_ context.Context, prefix string) ([]driver.QueueInfo,
 }
 
 // SendMessage sends a message to the specified Service Bus queue.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
 	qd, ok := m.queues.Get(input.QueueURL)
 	if !ok {
@@ -193,29 +204,15 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	// Enforce FIFO requirements (session-enabled queues).
-	if qd.info.FIFO {
-		if input.GroupID == "" {
-			return nil, cerrors.New(cerrors.InvalidArgument, "GroupID is required for FIFO queues")
-		}
-		if input.DeduplicationID == "" {
-			return nil, cerrors.New(cerrors.InvalidArgument, "DeduplicationID is required for FIFO queues")
-		}
+	if err := validateFIFORequirements(qd, &input); err != nil {
+		return nil, err
 	}
 
 	now := m.opts.Clock.Now()
 
 	// FIFO deduplication: check if same DeduplicationID was sent within 5-min window.
-	if qd.info.FIFO && input.DeduplicationID != "" {
-		if sentAt, ok := qd.deduplicationIndex[input.DeduplicationID]; ok {
-			if now.Sub(sentAt) < 5*time.Minute {
-				for _, existing := range qd.messages {
-					if existing.DeduplicationID == input.DeduplicationID {
-						return &driver.SendMessageOutput{MessageID: existing.ID}, nil
-					}
-				}
-			}
-		}
+	if existingID, found := findDuplicate(qd, &input, now); found {
+		return &driver.SendMessageOutput{MessageID: existingID}, nil
 	}
 
 	msgID := idgen.GenerateID("sb-msg-")
@@ -260,12 +257,52 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 			Attributes: attrs,
 			GroupID:    input.GroupID,
 		}
+
 		trigger(input.QueueURL, triggerMsg)
 	}
 
 	return &driver.SendMessageOutput{
 		MessageID: msgID,
 	}, nil
+}
+
+func validateFIFORequirements(qd *queueData, input *driver.SendMessageInput) error {
+	if !qd.info.FIFO {
+		return nil
+	}
+
+	if input.GroupID == "" {
+		return cerrors.New(cerrors.InvalidArgument, "GroupID is required for FIFO queues")
+	}
+
+	if input.DeduplicationID == "" {
+		return cerrors.New(cerrors.InvalidArgument, "DeduplicationID is required for FIFO queues")
+	}
+
+	return nil
+}
+
+func findDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time) (string, bool) {
+	if !qd.info.FIFO || input.DeduplicationID == "" {
+		return "", false
+	}
+
+	sentAt, ok := qd.deduplicationIndex[input.DeduplicationID]
+	if !ok {
+		return "", false
+	}
+
+	if now.Sub(sentAt) >= deduplicationWindow {
+		return "", false
+	}
+
+	for _, existing := range qd.messages {
+		if existing.DeduplicationID == input.DeduplicationID {
+			return existing.ID, true
+		}
+	}
+
+	return "", false
 }
 
 // ReceiveMessages receives messages from the specified Service Bus queue.
@@ -279,13 +316,7 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	maxMessages := input.MaxMessages
-	if maxMessages <= 0 {
-		maxMessages = 1
-	}
-	if maxMessages > 10 {
-		maxMessages = 10
-	}
+	maxMsgs := clampMaxMessages(input.MaxMessages)
 
 	visibilityTimeout := input.VisibilityTimeout
 	if visibilityTimeout == 0 {
@@ -293,6 +324,36 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	}
 
 	now := m.opts.Clock.Now()
+	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visibilityTimeout, now)
+
+	// Remove DLQ-moved messages in reverse order.
+	for i := len(toRemove) - 1; i >= 0; i-- {
+		idx := toRemove[i]
+		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
+	}
+
+	if results == nil {
+		results = []driver.Message{}
+	}
+
+	return results, nil
+}
+
+func clampMaxMessages(maxMessages int) int {
+	if maxMessages <= 0 {
+		return 1
+	}
+
+	if maxMessages > maxReceiveMessages {
+		return maxReceiveMessages
+	}
+
+	return maxMessages
+}
+
+func (m *Mock) collectVisibleMessages(
+	qd *queueData, maxMessages, visibilityTimeout int, now time.Time,
+) (messages []driver.Message, dlqIndices []int) {
 	var results []driver.Message
 
 	var toRemove []int
@@ -308,44 +369,39 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 
 		msg.ReceiveCount++
 
-		// Check if message exceeded max receive count — move to DLQ.
+		// Check if message exceeded max receive count -- move to DLQ.
 		if qd.dlqConfig != nil && qd.dlqConfig.MaxReceiveCount > 0 && msg.ReceiveCount > qd.dlqConfig.MaxReceiveCount {
 			m.moveToDLQ(qd.dlqConfig.TargetQueueURL, msg)
+
 			toRemove = append(toRemove, i)
 
 			continue
 		}
 
-		// Generate a new receipt handle (lock token) for this receive.
-		receiptHandle := idgen.GenerateID("sb-lock-")
-		msg.ReceiptHandle = receiptHandle
-		msg.VisibleAt = now.Add(time.Duration(visibilityTimeout) * time.Second)
-
-		attrs := make(map[string]string, len(msg.Attributes))
-		for k, v := range msg.Attributes {
-			attrs[k] = v
-		}
-
-		results = append(results, driver.Message{
-			MessageID:     msg.ID,
-			ReceiptHandle: receiptHandle,
-			Body:          msg.Body,
-			Attributes:    attrs,
-			GroupID:       msg.GroupID,
-		})
+		results = append(results, buildReceivedMessage(msg, visibilityTimeout, now))
 	}
 
-	// Remove DLQ-moved messages in reverse order.
-	for i := len(toRemove) - 1; i >= 0; i-- {
-		idx := toRemove[i]
-		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
+	return results, toRemove
+}
+
+func buildReceivedMessage(msg *sbMessage, visibilityTimeout int, now time.Time) driver.Message {
+	// Generate a new receipt handle (lock token) for this receive.
+	receiptHandle := idgen.GenerateID("sb-lock-")
+	msg.ReceiptHandle = receiptHandle
+	msg.VisibleAt = now.Add(time.Duration(visibilityTimeout) * time.Second)
+
+	attrs := make(map[string]string, len(msg.Attributes))
+	for k, v := range msg.Attributes {
+		attrs[k] = v
 	}
 
-	if results == nil {
-		results = []driver.Message{}
+	return driver.Message{
+		MessageID:     msg.ID,
+		ReceiptHandle: receiptHandle,
+		Body:          msg.Body,
+		Attributes:    attrs,
+		GroupID:       msg.GroupID,
 	}
-
-	return results, nil
 }
 
 // moveToDLQ moves a message to the dead-letter queue.

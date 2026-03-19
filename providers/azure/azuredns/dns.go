@@ -5,11 +5,11 @@ import (
 	"context"
 	"strings"
 
-	"github.com/NitinKumar004/cloudemu/config"
-	"github.com/NitinKumar004/cloudemu/dns/driver"
-	cerrors "github.com/NitinKumar004/cloudemu/errors"
-	"github.com/NitinKumar004/cloudemu/internal/idgen"
-	"github.com/NitinKumar004/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/dns/driver"
+	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/internal/memstore"
 )
 
 // Compile-time check that Mock implements driver.DNS.
@@ -38,6 +38,7 @@ func recordKey(zoneID, name, recordType, setID string) string {
 	if setID != "" {
 		key += ":" + setID
 	}
+
 	return key
 }
 
@@ -63,8 +64,8 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	}
 
 	m.zones.Set(id, zone)
-
 	result := zone
+
 	return &result, nil
 }
 
@@ -93,6 +94,7 @@ func (m *Mock) GetZone(_ context.Context, id string) (*driver.ZoneInfo, error) {
 	}
 
 	result := zone
+
 	return &result, nil
 }
 
@@ -109,6 +111,8 @@ func (m *Mock) ListZones(_ context.Context) ([]driver.ZoneInfo, error) {
 }
 
 // CreateRecord creates a new DNS record set in the specified zone.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver.RecordInfo, error) {
 	if _, ok := m.zones.Get(cfg.ZoneID); !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "zone %q not found", cfg.ZoneID)
@@ -131,11 +135,7 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	values := make([]string, len(cfg.Values))
 	copy(values, cfg.Values)
 
-	var weight *int
-	if cfg.Weight != nil {
-		w := *cfg.Weight
-		weight = &w
-	}
+	weight := copyWeight(cfg.Weight)
 
 	rec := driver.RecordInfo{
 		ZoneID: cfg.ZoneID,
@@ -156,6 +156,7 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	})
 
 	result := rec
+
 	return &result, nil
 }
 
@@ -173,6 +174,7 @@ func (m *Mock) DeleteRecord(_ context.Context, zoneID, name, recordType string) 
 			z.RecordCount--
 			return z
 		})
+
 		return nil
 	}
 
@@ -180,9 +182,11 @@ func (m *Mock) DeleteRecord(_ context.Context, zoneID, name, recordType string) 
 	prefix := zoneID + ":" + name + ":" + recordType + ":"
 	all := m.records.All()
 	deleted := 0
+
 	for k := range all {
 		if strings.HasPrefix(k, prefix) {
 			m.records.Delete(k)
+
 			deleted++
 		}
 	}
@@ -215,6 +219,7 @@ func (m *Mock) GetRecord(_ context.Context, zoneID, name, recordType string) (*d
 
 	// Search for weighted records with a set ID.
 	prefix := zoneID + ":" + name + ":" + recordType + ":"
+
 	all := m.records.All()
 	for k, r := range all {
 		if strings.HasPrefix(k, prefix) {
@@ -245,6 +250,8 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 }
 
 // UpdateRecord updates an existing DNS record set in the specified zone.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver.RecordInfo, error) {
 	if _, ok := m.zones.Get(cfg.ZoneID); !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "zone %q not found", cfg.ZoneID)
@@ -259,11 +266,7 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	values := make([]string, len(cfg.Values))
 	copy(values, cfg.Values)
 
-	var weight *int
-	if cfg.Weight != nil {
-		w := *cfg.Weight
-		weight = &w
-	}
+	weight := copyWeight(cfg.Weight)
 
 	rec := driver.RecordInfo{
 		ZoneID: cfg.ZoneID,
@@ -276,7 +279,18 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	}
 
 	m.records.Set(key, rec)
-
 	result := rec
+
 	return &result, nil
+}
+
+// copyWeight returns a deep copy of a weight pointer.
+func copyWeight(w *int) *int {
+	if w == nil {
+		return nil
+	}
+
+	v := *w
+
+	return &v
 }

@@ -21,17 +21,17 @@ type GSIConfig struct {
 // KeyCondition defines a key condition for queries.
 type KeyCondition struct {
 	PartitionKey string
-	PartitionVal interface{}
+	PartitionVal any
 	SortOp       string // "=", "<", ">", "<=", ">=", "BETWEEN", "BEGINS_WITH"
-	SortVal      interface{}
-	SortValEnd   interface{} // for BETWEEN
+	SortVal      any
+	SortValEnd   any // for BETWEEN
 }
 
 // ScanFilter defines a scan filter.
 type ScanFilter struct {
 	Field string
 	Op    string // "=", "!=", "<", ">", "<=", ">=", "CONTAINS", "BEGINS_WITH"
-	Value interface{}
+	Value any
 }
 
 // QueryInput configures a query operation.
@@ -54,7 +54,7 @@ type ScanInput struct {
 
 // QueryResult is the result of a query or scan.
 type QueryResult struct {
-	Items         []map[string]interface{}
+	Items         []map[string]any
 	Count         int
 	NextPageToken string
 }
@@ -66,12 +66,12 @@ type Database interface {
 	DescribeTable(ctx context.Context, name string) (*TableConfig, error)
 	ListTables(ctx context.Context) ([]string, error)
 
-	PutItem(ctx context.Context, table string, item map[string]interface{}) error
-	GetItem(ctx context.Context, table string, key map[string]interface{}) (map[string]interface{}, error)
-	DeleteItem(ctx context.Context, table string, key map[string]interface{}) error
+	PutItem(ctx context.Context, table string, item map[string]any) error
+	GetItem(ctx context.Context, table string, key map[string]any) (map[string]any, error)
+	DeleteItem(ctx context.Context, table string, key map[string]any) error
 	Query(ctx context.Context, input QueryInput) (*QueryResult, error)
 	Scan(ctx context.Context, input ScanInput) (*QueryResult, error)
 
-	BatchPutItems(ctx context.Context, table string, items []map[string]interface{}) error
-	BatchGetItems(ctx context.Context, table string, keys []map[string]interface{}) ([]map[string]interface{}, error)
+	BatchPutItems(ctx context.Context, table string, items []map[string]any) error
+	BatchGetItems(ctx context.Context, table string, keys []map[string]any) ([]map[string]any, error)
 }

@@ -40,6 +40,7 @@ func NewFakeClock(t time.Time) *FakeClock {
 func (c *FakeClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return c.now
 }
 
@@ -47,15 +48,18 @@ func (c *FakeClock) Now() time.Time {
 func (c *FakeClock) Since(t time.Time) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	return c.now.Sub(t)
 }
 
 // After returns a channel that receives the fake time immediately.
 func (c *FakeClock) After(_ time.Duration) <-chan time.Time {
 	ch := make(chan time.Time, 1)
+
 	c.mu.Lock()
 	ch <- c.now
 	c.mu.Unlock()
+
 	return ch
 }
 
@@ -63,6 +67,7 @@ func (c *FakeClock) After(_ time.Duration) <-chan time.Time {
 func (c *FakeClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.now = c.now.Add(d)
 }
 
@@ -70,5 +75,6 @@ func (c *FakeClock) Advance(d time.Duration) {
 func (c *FakeClock) Set(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.now = t
 }
