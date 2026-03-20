@@ -9,14 +9,14 @@
   <a href="https://github.com/stackshy/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <a href="https://github.com/stackshy/cloudemu/actions"><img src="https://img.shields.io/github/actions/workflow/status/stackshy/cloudemu/go.yml?branch=development&label=tests" alt="Tests"></a>
   <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go Version">
-  <img src="https://img.shields.io/badge/services-30_mocks-green" alt="30 Mocks">
+  <img src="https://img.shields.io/badge/services-42_mocks-green" alt="42 Mocks">
   <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP-orange" alt="Providers">
   <img src="https://img.shields.io/badge/cost-$0-brightgreen" alt="Zero Cost">
 </p>
 
 ---
 
-cloudemu is a lightweight Go library that provides mock implementations of 30 cloud services (10 each for AWS, Azure, and GCP). It runs entirely in memory — no real cloud accounts, no Docker containers, no network calls needed. Just import the package and start testing your cloud-dependent code instantly.
+cloudemu is a lightweight Go library that provides mock implementations of 42 cloud services (14 each for AWS, Azure, and GCP). It runs entirely in memory — no real cloud accounts, no Docker containers, no network calls needed. Just import the package and start testing your cloud-dependent code instantly.
 
 ```go
 aws := cloudemu.NewAWS()
@@ -46,7 +46,7 @@ Testing cloud-dependent code is painful. You either pay for real cloud accounts,
 
 ## Supported Services
 
-cloudemu covers 10 cloud services across all three major providers, giving you 30 mock implementations in total.
+cloudemu covers 14 cloud services across all three major providers, giving you 42 mock implementations in total.
 
 | Service | AWS | Azure | GCP |
 |---------|-----|-------|-----|
@@ -60,6 +60,10 @@ cloudemu covers 10 cloud services across all three major providers, giving you 3
 | DNS | Route53 | Azure DNS | Cloud DNS |
 | Load Balancer | ELB | Azure LB | GCP LB |
 | Message Queue | SQS | Service Bus | Pub/Sub |
+| Cache | ElastiCache | Azure Cache for Redis | Memorystore |
+| Secret Management | Secrets Manager | Key Vault | Secret Manager |
+| Logging | CloudWatch Logs | Log Analytics | Cloud Logging |
+| Notifications | SNS | Notification Hubs | FCM |
 
 ## Quick Start
 
@@ -123,6 +127,79 @@ mainQ, _ := aws.SQS.CreateQueue(ctx, mqdriver.QueueConfig{
 aws.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: mainQ.URL, Body: "hello"})
 ```
 
+### Cache
+
+Store and retrieve values with TTL-based expiry, key pattern matching, and flush support. Works the same way across ElastiCache, Azure Cache for Redis, and Memorystore. Expired keys are lazily cleaned up on access.
+
+```go
+aws.ElastiCache.CreateCache(ctx, cachedriver.CacheConfig{Name: "session-store", Engine: "redis"})
+aws.ElastiCache.Set(ctx, "session-store", "sess:abc", []byte("user-data"), 30*time.Minute)
+
+item, _ := aws.ElastiCache.Get(ctx, "session-store", "sess:abc")
+// item.Value == []byte("user-data"), item.TTL shows remaining time
+
+keys, _ := aws.ElastiCache.Keys(ctx, "session-store", "sess:*")
+aws.ElastiCache.FlushAll(ctx, "session-store")
+```
+
+### Secret Management
+
+Create secrets with versioned values, rotate them by pushing new versions, and retrieve any version by ID. The latest version is always accessible with an empty version ID. Works across Secrets Manager, Key Vault, and GCP Secret Manager.
+
+```go
+aws.SecretsManager.CreateSecret(ctx, secretsdriver.SecretConfig{
+    Name: "db-password", Description: "Production DB credentials",
+}, []byte("s3cret-v1"))
+
+aws.SecretsManager.PutSecretValue(ctx, "db-password", []byte("s3cret-v2"))
+
+ver, _ := aws.SecretsManager.GetSecretValue(ctx, "db-password", "")
+// ver.Value == []byte("s3cret-v2"), ver.Current == true
+
+versions, _ := aws.SecretsManager.ListSecretVersions(ctx, "db-password")
+// versions[0].Current == false, versions[1].Current == true
+```
+
+### Logging
+
+Create log groups and streams, write log events, and query them by time range, stream, or text pattern. Works across CloudWatch Logs, Azure Log Analytics, and GCP Cloud Logging.
+
+```go
+aws.CloudWatchLogs.CreateLogGroup(ctx, logdriver.LogGroupConfig{
+    Name: "/app/web", RetentionDays: 14,
+})
+aws.CloudWatchLogs.CreateLogStream(ctx, "/app/web", "instance-1")
+aws.CloudWatchLogs.PutLogEvents(ctx, "/app/web", "instance-1", []logdriver.LogEvent{
+    {Timestamp: time.Now(), Message: "server started on :8080"},
+    {Timestamp: time.Now(), Message: "error: connection refused"},
+})
+
+events, _ := aws.CloudWatchLogs.GetLogEvents(ctx, logdriver.LogQueryInput{
+    LogGroup: "/app/web", Pattern: "error",
+})
+// events contains only the "error: connection refused" entry
+```
+
+### Notifications
+
+Create topics, subscribe endpoints, and publish fan-out messages. Works across SNS, Azure Notification Hubs, and Firebase Cloud Messaging.
+
+```go
+topic, _ := aws.SNS.CreateTopic(ctx, notifdriver.TopicConfig{Name: "order-events"})
+
+aws.SNS.Subscribe(ctx, notifdriver.SubscriptionConfig{
+    TopicID: topic.ARN, Protocol: "email", Endpoint: "team@example.com",
+})
+aws.SNS.Subscribe(ctx, notifdriver.SubscriptionConfig{
+    TopicID: topic.ARN, Protocol: "sqs", Endpoint: "arn:aws:sqs:us-east-1:123:orders",
+})
+
+out, _ := aws.SNS.Publish(ctx, notifdriver.PublishInput{
+    TopicID: topic.ARN, Subject: "New Order", Message: "Order #123 placed",
+})
+// out.MessageID is the unique message identifier
+```
+
 ### Serverless Triggers
 
 Wire message queues to serverless functions so that every incoming message automatically triggers a function invocation. This emulates real event source mappings like AWS SQS -> Lambda, Azure Service Bus -> Functions, and GCP Pub/Sub -> Cloud Functions.
@@ -172,6 +249,9 @@ cloudemu goes beyond basic CRUD mocks. These behaviors make it behave like real 
 - **Serverless Triggers** — Register event source mappings so messages automatically invoke Lambda, Azure Functions, or Cloud Functions.
 - **Numeric-Aware DB Comparisons** — Database filters compare values numerically when both sides are valid numbers, avoiding string-sorting bugs.
 - **Cost Simulation** — Track estimated cloud costs per operation with default or custom pricing rates.
+- **TTL Expiry** — Cached items automatically expire after their TTL elapses. Expired keys are lazily cleaned up on access, matching real Redis behavior.
+- **Secret Versioning** — Secrets maintain a full version history. Pushing a new value creates a new version and marks it current; previous versions remain accessible by ID.
+- **Log Filtering** — Query logs by time range, stream, and text pattern. Stored bytes are tracked per log group for realistic quota simulation.
 
 ## Cross-Cutting Features
 
@@ -225,7 +305,7 @@ if cerrors.IsNotFound(err) { /* handle */ }
 
 ## Architecture
 
-cloudemu follows a three-layer design inspired by Go CDK. The portable API layer adds cross-cutting concerns on top of minimal driver interfaces, which are implemented by in-memory provider backends. All 30 mocks are backed by a single generic, thread-safe `memstore.Store[V]`.
+cloudemu follows a three-layer design inspired by Go CDK. The portable API layer adds cross-cutting concerns on top of minimal driver interfaces, which are implemented by in-memory provider backends. All 42 mocks are backed by a single generic, thread-safe `memstore.Store[V]`.
 
 ```
 Portable API     →  recording, metrics, rate limiting, error injection
