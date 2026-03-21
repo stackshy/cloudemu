@@ -605,6 +605,13 @@ func (m *Mock) ReceiveMessagesWithOptions(
 		results = []driver.Message{}
 	}
 
+	dims := map[string]string{"QueueName": qd.info.Name}
+	if len(results) > 0 {
+		m.emitMetric("NumberOfMessagesReceived", float64(len(results)), "Count", dims)
+	} else {
+		m.emitMetric("NumberOfEmptyReceives", 1.0, "Count", dims)
+	}
+
 	return results, nil
 }
 

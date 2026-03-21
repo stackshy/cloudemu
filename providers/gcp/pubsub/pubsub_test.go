@@ -531,6 +531,27 @@ func TestPubSubMetricsEmission(t *testing.T) {
 	})
 }
 
+func TestReceiveMessagesWithOptionsMetrics(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(clk), config.WithProjectID("test-project"))
+
+	mon := &pubsubMonMock{data: make(map[string][]mondriver.MetricDatum)}
+	m := New(opts)
+	m.SetMonitoring(mon)
+
+	info, err := m.CreateQueue(ctx, driver.QueueConfig{Name: "rwopt-queue"})
+	require.NoError(t, err)
+
+	_, err = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: info.URL, Body: "hello"})
+	require.NoError(t, err)
+
+	_, err = m.ReceiveMessagesWithOptions(ctx, info.URL, driver.ReceiveOptions{MaxMessages: 10})
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, mon.data["pubsub.googleapis.com/subscription/pull_message_operation_count"])
+}
+
 type pubsubMonMock struct {
 	data map[string][]mondriver.MetricDatum
 }

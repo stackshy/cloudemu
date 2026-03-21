@@ -585,6 +585,35 @@ func TestLambdaTrigger(t *testing.T) {
 	assertEqual(t, false, triggered)
 }
 
+func TestReceiveMessagesWithOptionsMetrics(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"), config.WithAccountID("123456789012"))
+	cw := cloudwatch.New(opts)
+	m := New(opts)
+	m.SetMonitoring(cw)
+
+	ctx := context.Background()
+	q := createSQSQueue(m, "rwopt-queue")
+
+	_, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "hello"})
+	requireNoError(t, err)
+
+	_, err = m.ReceiveMessagesWithOptions(ctx, q.URL, driver.ReceiveOptions{MaxMessages: 10})
+	requireNoError(t, err)
+
+	result, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+		Namespace:  "AWS/SQS",
+		MetricName: "NumberOfMessagesReceived",
+		Dimensions: map[string]string{"QueueName": "rwopt-queue"},
+		StartTime:  fc.Now().Add(-time.Minute),
+		EndTime:    fc.Now().Add(time.Minute),
+		Period:     60,
+		Stat:       "Sum",
+	})
+	requireNoError(t, err)
+	assertGreaterThan(t, len(result.Values), 0)
+}
+
 // --- test helpers ---
 
 func requireNoError(t *testing.T, err error) {

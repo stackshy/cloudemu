@@ -594,6 +594,27 @@ func TestServiceBusMetricsEmission(t *testing.T) {
 	})
 }
 
+func TestReceiveMessagesWithOptionsMetrics(t *testing.T) {
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(clk), config.WithAccountID("test-ns"))
+	m := New(opts)
+
+	mon := &sbMetricsCollector{}
+	m.SetMonitoring(mon)
+
+	ctx := context.Background()
+	info, err := m.CreateQueue(ctx, driver.QueueConfig{Name: "rwopt-queue"})
+	require.NoError(t, err)
+
+	_, err = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: info.URL, Body: "hello"})
+	require.NoError(t, err)
+
+	mon.reset()
+	_, err = m.ReceiveMessagesWithOptions(ctx, info.URL, driver.ReceiveOptions{MaxMessages: 10})
+	require.NoError(t, err)
+	assert.True(t, mon.hasMetric("Microsoft.ServiceBus/namespaces", "OutgoingMessages"))
+}
+
 type sbMetricsCollector struct {
 	data []mondriver.MetricDatum
 }

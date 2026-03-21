@@ -608,6 +608,10 @@ func (m *Mock) ReceiveMessagesWithOptions(
 		results = []driver.Message{}
 	}
 
+	dims := map[string]string{"subscription_id": qd.info.Name}
+	m.emitMetric(context.Background(), "subscription/pull_message_operation_count", 1, dims)
+	m.emitMetric(context.Background(), "subscription/delivered_message_count", float64(len(results)), dims)
+
 	return results, nil
 }
 

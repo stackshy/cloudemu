@@ -614,6 +614,11 @@ func (m *Mock) ReceiveMessagesWithOptions(
 		results = []driver.Message{}
 	}
 
+	remaining := len(qd.messages)
+	m.emitMetric(qd.info.Name, map[string]float64{
+		"OutgoingMessages": float64(len(results)), "ActiveMessages": float64(remaining),
+	})
+
 	return results, nil
 }
 
