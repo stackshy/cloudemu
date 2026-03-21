@@ -12,42 +12,9 @@ import (
 	"github.com/stackshy/cloudemu/metrics"
 	"github.com/stackshy/cloudemu/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func requireNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertError(t *testing.T, err error, expectErr bool) {
-	t.Helper()
-
-	switch {
-	case expectErr && err == nil:
-		t.Fatal("expected error but got nil")
-	case !expectErr && err != nil:
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertEqual(t *testing.T, expected, actual any) {
-	t.Helper()
-
-	if expected != actual {
-		t.Errorf("expected %v, got %v", expected, actual)
-	}
-}
-
-func assertNotEmpty(t *testing.T, s string) {
-	t.Helper()
-
-	if s == "" {
-		t.Error("expected non-empty string")
-	}
-}
 
 func newTestDriver() (driver.Cache, *config.FakeClock) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -80,13 +47,8 @@ func setupCacheWithItem(t *testing.T, c *Cache) {
 func TestNewCache(t *testing.T) {
 	c, _ := newTestCache()
 
-	if c == nil {
-		t.Fatal("expected non-nil cache")
-	}
-
-	if c.driver == nil {
-		t.Fatal("expected non-nil driver")
-	}
+	require.NotNil(t, c)
+	require.NotNil(t, c.driver)
 }
 
 func TestCreateCachePortable(t *testing.T) {
@@ -95,14 +57,14 @@ func TestCreateCachePortable(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		info, err := c.CreateCache(ctx, driver.CacheConfig{Name: "my-cache"})
-		requireNoError(t, err)
-		assertEqual(t, "my-cache", info.Name)
-		assertNotEmpty(t, info.Endpoint)
+		require.NoError(t, err)
+		assert.Equal(t, "my-cache", info.Name)
+		assert.NotEmpty(t, info.Endpoint)
 	})
 
 	t.Run("empty name error", func(t *testing.T) {
 		_, err := c.CreateCache(ctx, driver.CacheConfig{})
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -111,16 +73,16 @@ func TestDeleteCachePortable(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "del-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		delErr := c.DeleteCache(ctx, "del-cache")
-		requireNoError(t, delErr)
+		require.NoError(t, delErr)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		delErr := c.DeleteCache(ctx, "nonexistent")
-		assertError(t, delErr, true)
+		require.Error(t, delErr)
 	})
 }
 
@@ -129,17 +91,17 @@ func TestGetCachePortable(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "get-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		info, getErr := c.GetCache(ctx, "get-cache")
-		requireNoError(t, getErr)
-		assertEqual(t, "get-cache", info.Name)
+		require.NoError(t, getErr)
+		assert.Equal(t, "get-cache", info.Name)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		_, getErr := c.GetCache(ctx, "nonexistent")
-		assertError(t, getErr, true)
+		require.Error(t, getErr)
 	})
 }
 
@@ -148,18 +110,18 @@ func TestListCachesPortable(t *testing.T) {
 	ctx := context.Background()
 
 	caches, err := c.ListCaches(ctx)
-	requireNoError(t, err)
-	assertEqual(t, 0, len(caches))
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(caches))
 
 	_, err = c.CreateCache(ctx, driver.CacheConfig{Name: "a"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = c.CreateCache(ctx, driver.CacheConfig{Name: "b"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	caches, err = c.ListCaches(ctx)
-	requireNoError(t, err)
-	assertEqual(t, 2, len(caches))
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(caches))
 }
 
 func TestSetGetDeletePortable(t *testing.T) {
@@ -170,17 +132,17 @@ func TestSetGetDeletePortable(t *testing.T) {
 
 	t.Run("get existing key", func(t *testing.T) {
 		item, err := c.Get(ctx, "test-cache", "key1")
-		requireNoError(t, err)
-		assertEqual(t, "key1", item.Key)
-		assertEqual(t, string([]byte("value1")), string(item.Value))
+		require.NoError(t, err)
+		assert.Equal(t, "key1", item.Key)
+		assert.Equal(t, string([]byte("value1")), string(item.Value))
 	})
 
 	t.Run("delete key", func(t *testing.T) {
 		err := c.Delete(ctx, "test-cache", "key1")
-		requireNoError(t, err)
+		require.NoError(t, err)
 
 		_, getErr := c.Get(ctx, "test-cache", "key1")
-		assertError(t, getErr, true)
+		require.Error(t, getErr)
 	})
 }
 
@@ -189,17 +151,17 @@ func TestKeysPortable(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "keys-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = c.Set(ctx, "keys-cache", "user:1", []byte("a"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = c.Set(ctx, "keys-cache", "user:2", []byte("b"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	keys, err := c.Keys(ctx, "keys-cache", "user:*")
-	requireNoError(t, err)
-	assertEqual(t, 2, len(keys))
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(keys))
 }
 
 func TestFlushAllPortable(t *testing.T) {
@@ -207,17 +169,17 @@ func TestFlushAllPortable(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "flush-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = c.Set(ctx, "flush-cache", "k1", []byte("v1"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = c.FlushAll(ctx, "flush-cache")
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	keys, err := c.Keys(ctx, "flush-cache", "*")
-	requireNoError(t, err)
-	assertEqual(t, 0, len(keys))
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(keys))
 }
 
 func TestWithRecorder(t *testing.T) {
@@ -226,27 +188,25 @@ func TestWithRecorder(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "rec-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = c.Set(ctx, "rec-cache", "k", []byte("v"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = c.Get(ctx, "rec-cache", "k")
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	totalCalls := rec.CallCount()
-	if totalCalls < 3 {
-		t.Errorf("expected at least 3 recorded calls, got %d", totalCalls)
-	}
+	assert.GreaterOrEqual(t, totalCalls, 3)
 
 	createCalls := rec.CallCountFor("cache", "CreateCache")
-	assertEqual(t, 1, createCalls)
+	assert.Equal(t, 1, createCalls)
 
 	setCalls := rec.CallCountFor("cache", "Set")
-	assertEqual(t, 1, setCalls)
+	assert.Equal(t, 1, setCalls)
 
 	getCalls := rec.CallCountFor("cache", "Get")
-	assertEqual(t, 1, getCalls)
+	assert.Equal(t, 1, getCalls)
 }
 
 func TestWithRecorderOnError(t *testing.T) {
@@ -258,16 +218,11 @@ func TestWithRecorderOnError(t *testing.T) {
 	_, _ = c.GetCache(ctx, "nonexistent")
 
 	totalCalls := rec.CallCount()
-	assertEqual(t, 1, totalCalls)
+	assert.Equal(t, 1, totalCalls)
 
 	last := rec.LastCall()
-	if last == nil {
-		t.Fatal("expected a recorded call")
-	}
-
-	if last.Error == nil {
-		t.Error("expected recorded call to have an error")
-	}
+	require.NotNil(t, last, "expected a recorded call")
+	assert.NotNil(t, last.Error, "expected recorded call to have an error")
 }
 
 func TestWithMetrics(t *testing.T) {
@@ -276,25 +231,21 @@ func TestWithMetrics(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "met-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = c.Set(ctx, "met-cache", "k", []byte("v"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = c.Get(ctx, "met-cache", "k")
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	q := metrics.NewQuery(mc)
 
 	callsCount := q.ByName("calls_total").Count()
-	if callsCount < 3 {
-		t.Errorf("expected at least 3 calls_total metrics, got %d", callsCount)
-	}
+	assert.GreaterOrEqual(t, callsCount, 3)
 
 	durCount := q.ByName("call_duration").Count()
-	if durCount < 3 {
-		t.Errorf("expected at least 3 call_duration metrics, got %d", durCount)
-	}
+	assert.GreaterOrEqual(t, durCount, 3)
 }
 
 func TestWithMetricsOnError(t *testing.T) {
@@ -308,7 +259,7 @@ func TestWithMetricsOnError(t *testing.T) {
 	q := metrics.NewQuery(mc)
 
 	errCount := q.ByName("errors_total").Count()
-	assertEqual(t, 1, errCount)
+	assert.Equal(t, 1, errCount)
 }
 
 func TestWithErrorInjection(t *testing.T) {
@@ -320,11 +271,8 @@ func TestWithErrorInjection(t *testing.T) {
 	inj.Set("cache", "CreateCache", injectedErr, inject.Always{})
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "fail-cache"})
-	assertError(t, err, true)
-
-	if err != injectedErr {
-		t.Errorf("expected injected error, got %v", err)
-	}
+	require.Error(t, err)
+	assert.Equal(t, injectedErr, err)
 }
 
 func TestWithErrorInjectionRecorded(t *testing.T) {
@@ -338,19 +286,16 @@ func TestWithErrorInjectionRecorded(t *testing.T) {
 
 	// CreateCache should work since injection is only on Set.
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "inj-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	// Set should fail due to injection.
 	err = c.Set(ctx, "inj-cache", "k", []byte("v"), 0)
-	assertError(t, err, true)
+	require.Error(t, err)
 
 	// Verify the error was recorded.
 	setCalls := rec.CallsFor("cache", "Set")
-	assertEqual(t, 1, len(setCalls))
-
-	if setCalls[0].Error == nil {
-		t.Error("expected recorded Set call to have an error")
-	}
+	assert.Equal(t, 1, len(setCalls))
+	assert.NotNil(t, setCalls[0].Error, "expected recorded Set call to have an error")
 }
 
 func TestWithErrorInjectionRemoved(t *testing.T) {
@@ -362,13 +307,13 @@ func TestWithErrorInjectionRemoved(t *testing.T) {
 	inj.Set("cache", "CreateCache", injectedErr, inject.Always{})
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "test"})
-	assertError(t, err, true)
+	require.Error(t, err)
 
 	// Remove the injection rule.
 	inj.Remove("cache", "CreateCache")
 
 	_, err = c.CreateCache(ctx, driver.CacheConfig{Name: "test"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestWithLatency(t *testing.T) {
@@ -378,14 +323,14 @@ func TestWithLatency(t *testing.T) {
 
 	// Just verify it does not break normal operation.
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "lat-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = c.Set(ctx, "lat-cache", "k", []byte("v"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	item, err := c.Get(ctx, "lat-cache", "k")
-	requireNoError(t, err)
-	assertEqual(t, "k", item.Key)
+	require.NoError(t, err)
+	assert.Equal(t, "k", item.Key)
 }
 
 func TestAllOptionsComposed(t *testing.T) {
@@ -403,17 +348,17 @@ func TestAllOptionsComposed(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "all-opts"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = c.Set(ctx, "all-opts", "k", []byte("v"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	// Verify recorder captured calls.
-	assertEqual(t, 2, rec.CallCount())
+	assert.Equal(t, 2, rec.CallCount())
 
 	// Verify metrics captured calls.
 	q := metrics.NewQuery(mc)
-	assertEqual(t, 2, q.ByName("calls_total").Count())
+	assert.Equal(t, 2, q.ByName("calls_total").Count())
 }
 
 func TestPortableDeleteCacheError(t *testing.T) {
@@ -421,7 +366,7 @@ func TestPortableDeleteCacheError(t *testing.T) {
 	ctx := context.Background()
 
 	err := c.Delete(ctx, "no-cache", "k")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestPortableKeysError(t *testing.T) {
@@ -429,7 +374,7 @@ func TestPortableKeysError(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.Keys(ctx, "no-cache", "*")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestPortableFlushAllError(t *testing.T) {
@@ -437,7 +382,7 @@ func TestPortableFlushAllError(t *testing.T) {
 	ctx := context.Background()
 
 	err := c.FlushAll(ctx, "no-cache")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestPortableSetError(t *testing.T) {
@@ -445,7 +390,7 @@ func TestPortableSetError(t *testing.T) {
 	ctx := context.Background()
 
 	err := c.Set(ctx, "no-cache", "k", []byte("v"), 0)
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestPortableGetError(t *testing.T) {
@@ -453,5 +398,5 @@ func TestPortableGetError(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.Get(ctx, "no-cache", "k")
-	assertError(t, err, true)
+	require.Error(t, err)
 }

@@ -4,7 +4,7 @@ package azurecache
 import (
 	"context"
 	"fmt"
-	"strings"
+	"path"
 	"time"
 
 	"github.com/stackshy/cloudemu/cache/driver"
@@ -12,6 +12,8 @@ import (
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/memstore"
 )
+
+const defaultRedisSSLPort = 6380
 
 // Compile-time check that Mock implements driver.Cache.
 var _ driver.Cache = (*Mock)(nil)
@@ -61,7 +63,7 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		nodeType = "Standard_C1"
 	}
 
-	endpoint := fmt.Sprintf("%s.redis.cache.windows.net:6380", cfg.Name)
+	endpoint := fmt.Sprintf("%s.redis.cache.windows.net:%d", cfg.Name, defaultRedisSSLPort)
 
 	info := driver.CacheInfo{
 		Name:      cfg.Name,
@@ -236,18 +238,17 @@ func (m *Mock) FlushAll(_ context.Context, cacheName string) error {
 	return nil
 }
 
+// matchPattern matches a key against a glob-like pattern.
+// Supports full glob syntax including middle wildcards like "user:*:session".
 func matchPattern(pattern, key string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
 	}
 
-	if strings.HasSuffix(pattern, "*") && !strings.Contains(pattern[:len(pattern)-1], "*") {
-		return strings.HasPrefix(key, pattern[:len(pattern)-1])
+	matched, err := path.Match(pattern, key)
+	if err != nil {
+		return false
 	}
 
-	if strings.HasPrefix(pattern, "*") && !strings.Contains(pattern[1:], "*") {
-		return strings.HasSuffix(key, pattern[1:])
-	}
-
-	return key == pattern
+	return matched
 }

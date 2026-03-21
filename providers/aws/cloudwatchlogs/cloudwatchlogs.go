@@ -14,6 +14,11 @@ import (
 	"github.com/stackshy/cloudemu/logging/driver"
 )
 
+const (
+	defaultRetentionDays = 30
+	defaultLogLimit      = 100
+)
+
 // Compile-time check that Mock implements driver.Logging.
 var _ driver.Logging = (*Mock)(nil)
 
@@ -54,7 +59,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 
 	retentionDays := cfg.RetentionDays
 	if retentionDays == 0 {
-		retentionDays = 30
+		retentionDays = defaultRetentionDays
 	}
 
 	arn := idgen.AWSARN("logs", m.opts.Region, m.opts.AccountID, "log-group:"+cfg.Name)
@@ -66,7 +71,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 
 	info := driver.LogGroupInfo{
 		Name:          cfg.Name,
-		ARN:           arn,
+		ResourceID:    arn,
 		RetentionDays: retentionDays,
 		CreatedAt:     m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		StoredBytes:   0,
@@ -233,18 +238,20 @@ func (m *Mock) GetLogEvents(_ context.Context, input driver.LogQueryInput) ([]dr
 
 	limit := input.Limit
 	if limit <= 0 {
-		limit = 100
+		limit = defaultLogLimit
 	}
+
+	retentionCutoff := m.opts.Clock.Now().AddDate(0, 0, -g.info.RetentionDays)
 
 	var results []driver.LogEvent
 
 	if input.LogStream != "" {
-		events := m.getStreamEvents(g, input.LogStream, &input)
+		events := m.getStreamEvents(g, input.LogStream, &input, retentionCutoff)
 		results = append(results, events...)
 	} else {
 		all := g.streams.All()
 		for _, s := range all {
-			events := m.filterEvents(s, &input)
+			events := m.filterEvents(s, &input, retentionCutoff)
 			results = append(results, events...)
 		}
 	}
@@ -260,22 +267,26 @@ func (m *Mock) GetLogEvents(_ context.Context, input driver.LogQueryInput) ([]dr
 	return results, nil
 }
 
-func (m *Mock) getStreamEvents(g *logGroup, streamName string, input *driver.LogQueryInput) []driver.LogEvent {
+func (m *Mock) getStreamEvents(g *logGroup, streamName string, input *driver.LogQueryInput, retentionCutoff time.Time) []driver.LogEvent {
 	s, ok := g.streams.Get(streamName)
 	if !ok {
 		return nil
 	}
 
-	return m.filterEvents(s, input)
+	return m.filterEvents(s, input, retentionCutoff)
 }
 
-func (*Mock) filterEvents(s *logStream, input *driver.LogQueryInput) []driver.LogEvent {
+func (*Mock) filterEvents(s *logStream, input *driver.LogQueryInput, retentionCutoff time.Time) []driver.LogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var results []driver.LogEvent
 
 	for _, e := range s.events {
+		if !retentionCutoff.IsZero() && e.Timestamp.Before(retentionCutoff) {
+			continue
+		}
+
 		if !input.StartTime.IsZero() && e.Timestamp.Before(input.StartTime) {
 			continue
 		}

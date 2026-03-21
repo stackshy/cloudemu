@@ -16,7 +16,7 @@ type LogGroupConfig struct {
 // LogGroupInfo describes a log group.
 type LogGroupInfo struct {
 	Name          string
-	ARN           string
+	ResourceID    string
 	RetentionDays int
 	CreatedAt     string
 	StoredBytes   int64

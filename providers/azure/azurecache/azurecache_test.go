@@ -7,42 +7,9 @@ import (
 
 	"github.com/stackshy/cloudemu/cache/driver"
 	"github.com/stackshy/cloudemu/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func requireNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertError(t *testing.T, err error, expectErr bool) {
-	t.Helper()
-
-	switch {
-	case expectErr && err == nil:
-		t.Fatal("expected error but got nil")
-	case !expectErr && err != nil:
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertEqual(t *testing.T, expected, actual any) {
-	t.Helper()
-
-	if expected != actual {
-		t.Errorf("expected %v, got %v", expected, actual)
-	}
-}
-
-func assertNotEmpty(t *testing.T, s string) {
-	t.Helper()
-
-	if s == "" {
-		t.Error("expected non-empty string")
-	}
-}
 
 func newTestMock() (*Mock, *config.FakeClock) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -92,16 +59,17 @@ func TestCreateCache(t *testing.T) {
 			}
 
 			info, err := m.CreateCache(context.Background(), tc.cfg)
-			assertError(t, err, tc.expectErr)
-
 			if tc.expectErr {
+				require.Error(t, err)
 				return
 			}
 
-			assertEqual(t, tc.cfg.Name, info.Name)
-			assertEqual(t, "Running", info.Status)
-			assertNotEmpty(t, info.Endpoint)
-			assertNotEmpty(t, info.CreatedAt)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.cfg.Name, info.Name)
+			assert.Equal(t, "Running", info.Status)
+			assert.NotEmpty(t, info.Endpoint)
+			assert.NotEmpty(t, info.CreatedAt)
 		})
 	}
 }
@@ -111,10 +79,10 @@ func TestCreateCacheDefaults(t *testing.T) {
 	ctx := context.Background()
 
 	info, err := m.CreateCache(ctx, driver.CacheConfig{Name: "default-cache"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, "redis", info.Engine)
-	assertEqual(t, "Standard_C1", info.NodeType)
+	assert.Equal(t, "redis", info.Engine)
+	assert.Equal(t, "Standard_C1", info.NodeType)
 }
 
 func TestCreateCacheCustomValues(t *testing.T) {
@@ -126,10 +94,10 @@ func TestCreateCacheCustomValues(t *testing.T) {
 		Engine:   "memcached",
 		NodeType: "Premium_P1",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, "memcached", info.Engine)
-	assertEqual(t, "Premium_P1", info.NodeType)
+	assert.Equal(t, "memcached", info.Engine)
+	assert.Equal(t, "Premium_P1", info.NodeType)
 }
 
 func TestDeleteCache(t *testing.T) {
@@ -140,12 +108,12 @@ func TestDeleteCache(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		err := m.DeleteCache(ctx, "to-delete")
-		requireNoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		err := m.DeleteCache(ctx, "nonexistent")
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -157,14 +125,14 @@ func TestGetCache(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		info, err := m.GetCache(ctx, "my-cache")
-		requireNoError(t, err)
-		assertEqual(t, "my-cache", info.Name)
-		assertEqual(t, "Running", info.Status)
+		require.NoError(t, err)
+		assert.Equal(t, "my-cache", info.Name)
+		assert.Equal(t, "Running", info.Status)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		_, err := m.GetCache(ctx, "nonexistent")
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -174,8 +142,8 @@ func TestListCaches(t *testing.T) {
 
 	t.Run("empty list", func(t *testing.T) {
 		caches, err := m.ListCaches(ctx)
-		requireNoError(t, err)
-		assertEqual(t, 0, len(caches))
+		require.NoError(t, err)
+		assert.Equal(t, 0, len(caches))
 	})
 
 	createTestCache(t, m, "cache-a")
@@ -183,8 +151,8 @@ func TestListCaches(t *testing.T) {
 
 	t.Run("two caches", func(t *testing.T) {
 		caches, err := m.ListCaches(ctx)
-		requireNoError(t, err)
-		assertEqual(t, 2, len(caches))
+		require.NoError(t, err)
+		assert.Equal(t, 2, len(caches))
 	})
 }
 
@@ -196,18 +164,18 @@ func TestSet(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		err := m.Set(ctx, "my-cache", "key1", []byte("value1"), 0)
-		requireNoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("with TTL", func(t *testing.T) {
 		ttl := 5 * time.Minute
 		err := m.Set(ctx, "my-cache", "key-ttl", []byte("val"), ttl)
-		requireNoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("nonexistent cache", func(t *testing.T) {
 		err := m.Set(ctx, "no-cache", "key1", []byte("val"), 0)
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -218,50 +186,47 @@ func TestGet(t *testing.T) {
 	createTestCache(t, m, "my-cache")
 
 	err := m.Set(ctx, "my-cache", "key1", []byte("value1"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		item, getErr := m.Get(ctx, "my-cache", "key1")
-		requireNoError(t, getErr)
-		assertEqual(t, "key1", item.Key)
-		assertEqual(t, string([]byte("value1")), string(item.Value))
+		require.NoError(t, getErr)
+		assert.Equal(t, "key1", item.Key)
+		assert.Equal(t, string([]byte("value1")), string(item.Value))
 	})
 
 	t.Run("nonexistent cache", func(t *testing.T) {
 		_, getErr := m.Get(ctx, "no-cache", "key1")
-		assertError(t, getErr, true)
+		require.Error(t, getErr)
 	})
 
 	t.Run("nonexistent key", func(t *testing.T) {
 		_, getErr := m.Get(ctx, "my-cache", "missing")
-		assertError(t, getErr, true)
+		require.Error(t, getErr)
 	})
 
 	t.Run("expired key", func(t *testing.T) {
 		ttl := 10 * time.Second
 		setErr := m.Set(ctx, "my-cache", "expiring", []byte("temp"), ttl)
-		requireNoError(t, setErr)
+		require.NoError(t, setErr)
 
 		fc.Advance(20 * time.Second)
 
 		_, getErr := m.Get(ctx, "my-cache", "expiring")
-		assertError(t, getErr, true)
+		require.Error(t, getErr)
 	})
 
 	t.Run("not yet expired key", func(t *testing.T) {
 		ttl := 30 * time.Minute
 		setErr := m.Set(ctx, "my-cache", "long-lived", []byte("still-here"), ttl)
-		requireNoError(t, setErr)
+		require.NoError(t, setErr)
 
 		fc.Advance(10 * time.Minute)
 
 		item, getErr := m.Get(ctx, "my-cache", "long-lived")
-		requireNoError(t, getErr)
-		assertEqual(t, "long-lived", item.Key)
-
-		if item.TTL <= 0 {
-			t.Error("expected positive TTL for non-expired key")
-		}
+		require.NoError(t, getErr)
+		assert.Equal(t, "long-lived", item.Key)
+		assert.Greater(t, item.TTL, time.Duration(0))
 	})
 }
 
@@ -272,21 +237,21 @@ func TestDelete(t *testing.T) {
 	createTestCache(t, m, "my-cache")
 
 	err := m.Set(ctx, "my-cache", "key1", []byte("val"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		delErr := m.Delete(ctx, "my-cache", "key1")
-		requireNoError(t, delErr)
+		require.NoError(t, delErr)
 	})
 
 	t.Run("nonexistent key", func(t *testing.T) {
 		delErr := m.Delete(ctx, "my-cache", "missing")
-		assertError(t, delErr, true)
+		require.Error(t, delErr)
 	})
 
 	t.Run("nonexistent cache", func(t *testing.T) {
 		delErr := m.Delete(ctx, "no-cache", "key1")
-		assertError(t, delErr, true)
+		require.Error(t, delErr)
 	})
 }
 
@@ -297,65 +262,65 @@ func TestKeys(t *testing.T) {
 	createTestCache(t, m, "my-cache")
 
 	err := m.Set(ctx, "my-cache", "user:1", []byte("a"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = m.Set(ctx, "my-cache", "user:2", []byte("b"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = m.Set(ctx, "my-cache", "session:abc", []byte("c"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	t.Run("wildcard all", func(t *testing.T) {
 		keys, keysErr := m.Keys(ctx, "my-cache", "*")
-		requireNoError(t, keysErr)
-		assertEqual(t, 3, len(keys))
+		require.NoError(t, keysErr)
+		assert.Equal(t, 3, len(keys))
 	})
 
 	t.Run("prefix match", func(t *testing.T) {
 		keys, keysErr := m.Keys(ctx, "my-cache", "user:*")
-		requireNoError(t, keysErr)
-		assertEqual(t, 2, len(keys))
+		require.NoError(t, keysErr)
+		assert.Equal(t, 2, len(keys))
 	})
 
 	t.Run("suffix match", func(t *testing.T) {
 		keys, keysErr := m.Keys(ctx, "my-cache", "*abc")
-		requireNoError(t, keysErr)
-		assertEqual(t, 1, len(keys))
+		require.NoError(t, keysErr)
+		assert.Equal(t, 1, len(keys))
 	})
 
 	t.Run("exact match", func(t *testing.T) {
 		keys, keysErr := m.Keys(ctx, "my-cache", "user:1")
-		requireNoError(t, keysErr)
-		assertEqual(t, 1, len(keys))
+		require.NoError(t, keysErr)
+		assert.Equal(t, 1, len(keys))
 	})
 
 	t.Run("empty pattern returns all", func(t *testing.T) {
 		keys, keysErr := m.Keys(ctx, "my-cache", "")
-		requireNoError(t, keysErr)
-		assertEqual(t, 3, len(keys))
+		require.NoError(t, keysErr)
+		assert.Equal(t, 3, len(keys))
 	})
 
 	t.Run("no match", func(t *testing.T) {
 		keys, keysErr := m.Keys(ctx, "my-cache", "orders:*")
-		requireNoError(t, keysErr)
-		assertEqual(t, 0, len(keys))
+		require.NoError(t, keysErr)
+		assert.Equal(t, 0, len(keys))
 	})
 
 	t.Run("nonexistent cache", func(t *testing.T) {
 		_, keysErr := m.Keys(ctx, "no-cache", "*")
-		assertError(t, keysErr, true)
+		require.Error(t, keysErr)
 	})
 
 	t.Run("expired keys filtered out", func(t *testing.T) {
 		ttl := 5 * time.Second
 		setErr := m.Set(ctx, "my-cache", "temp:1", []byte("x"), ttl)
-		requireNoError(t, setErr)
+		require.NoError(t, setErr)
 
 		fc.Advance(10 * time.Second)
 
 		keys, keysErr := m.Keys(ctx, "my-cache", "temp:*")
-		requireNoError(t, keysErr)
-		assertEqual(t, 0, len(keys))
+		require.NoError(t, keysErr)
+		assert.Equal(t, 0, len(keys))
 	})
 }
 
@@ -366,23 +331,23 @@ func TestFlushAll(t *testing.T) {
 	createTestCache(t, m, "my-cache")
 
 	err := m.Set(ctx, "my-cache", "k1", []byte("v1"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = m.Set(ctx, "my-cache", "k2", []byte("v2"), 0)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		flushErr := m.FlushAll(ctx, "my-cache")
-		requireNoError(t, flushErr)
+		require.NoError(t, flushErr)
 
 		keys, keysErr := m.Keys(ctx, "my-cache", "*")
-		requireNoError(t, keysErr)
-		assertEqual(t, 0, len(keys))
+		require.NoError(t, keysErr)
+		assert.Equal(t, 0, len(keys))
 	})
 
 	t.Run("nonexistent cache", func(t *testing.T) {
 		flushErr := m.FlushAll(ctx, "no-cache")
-		assertError(t, flushErr, true)
+		require.Error(t, flushErr)
 	})
 }
 
@@ -406,7 +371,7 @@ func TestMatchPattern(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := matchPattern(tc.pattern, tc.key)
-			assertEqual(t, tc.want, got)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

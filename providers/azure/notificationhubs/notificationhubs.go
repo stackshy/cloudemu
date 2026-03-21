@@ -4,6 +4,7 @@ package notificationhubs
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/errors"
@@ -15,9 +16,19 @@ import (
 // Compile-time check that Mock implements driver.Notification.
 var _ driver.Notification = (*Mock)(nil)
 
+type publishedMessage struct {
+	ID         string
+	TopicID    string
+	Subject    string
+	Message    string
+	Attributes map[string]string
+}
+
 type topicData struct {
 	info          driver.TopicInfo
 	subscriptions *memstore.Store[driver.SubscriptionInfo]
+	messages      []publishedMessage
+	mu            sync.RWMutex
 }
 
 // Mock is an in-memory mock implementation of Azure Notification Hubs.
@@ -54,7 +65,7 @@ func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	info := driver.TopicInfo{
 		ID:                idgen.GenerateID("topic-"),
 		Name:              cfg.Name,
-		ARN:               resourceID,
+		ResourceID:        resourceID,
 		DisplayName:       cfg.DisplayName,
 		SubscriptionCount: 0,
 		Tags:              tags,
@@ -125,7 +136,7 @@ func (m *Mock) Subscribe(_ context.Context, cfg driver.SubscriptionConfig) (*dri
 	}
 
 	subID := idgen.GenerateID("sub-")
-	resourceID := fmt.Sprintf("%s/subscriptions/%s", td.info.ARN, subID)
+	resourceID := fmt.Sprintf("%s/subscriptions/%s", td.info.ResourceID, subID)
 
 	sub := driver.SubscriptionInfo{
 		ID:       resourceID,
@@ -174,7 +185,8 @@ func (m *Mock) ListSubscriptions(_ context.Context, topicID string) ([]driver.Su
 
 // Publish publishes a message to a notification hub.
 func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
-	if _, ok := m.topics.Get(input.TopicID); !ok {
+	td, ok := m.topics.Get(input.TopicID)
+	if !ok {
 		return nil, errors.Newf(errors.NotFound, "topic %q not found", input.TopicID)
 	}
 
@@ -183,6 +195,21 @@ func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.Pu
 	}
 
 	msgID := idgen.GenerateID("msg-")
+
+	attrs := make(map[string]string, len(input.Attributes))
+	for k, v := range input.Attributes {
+		attrs[k] = v
+	}
+
+	td.mu.Lock()
+	td.messages = append(td.messages, publishedMessage{
+		ID:         msgID,
+		TopicID:    input.TopicID,
+		Subject:    input.Subject,
+		Message:    input.Message,
+		Attributes: attrs,
+	})
+	td.mu.Unlock()
 
 	return &driver.PublishOutput{MessageID: msgID}, nil
 }

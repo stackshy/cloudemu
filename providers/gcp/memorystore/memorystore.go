@@ -4,7 +4,7 @@ package memorystore
 import (
 	"context"
 	"fmt"
-	"strings"
+	"path"
 	"time"
 
 	"github.com/stackshy/cloudemu/cache/driver"
@@ -13,6 +13,8 @@ import (
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
 )
+
+const defaultRedisPort = 6379
 
 // Compile-time check that Mock implements driver.Cache.
 var _ driver.Cache = (*Mock)(nil)
@@ -63,7 +65,7 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 	}
 
 	selfLink := idgen.GCPID(m.opts.ProjectID, "instances", cfg.Name)
-	endpoint := fmt.Sprintf("%s.redis.%s.gcp.cloud:6379", cfg.Name, m.opts.Region)
+	endpoint := fmt.Sprintf("%s.redis.%s.gcp.cloud:%d", cfg.Name, m.opts.Region, defaultRedisPort)
 
 	info := driver.CacheInfo{
 		Name:      selfLink,
@@ -238,18 +240,17 @@ func (m *Mock) FlushAll(_ context.Context, cacheName string) error {
 	return nil
 }
 
+// matchPattern matches a key against a glob-like pattern.
+// Supports full glob syntax including middle wildcards like "user:*:session".
 func matchPattern(pattern, key string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
 	}
 
-	if strings.HasSuffix(pattern, "*") && !strings.Contains(pattern[:len(pattern)-1], "*") {
-		return strings.HasPrefix(key, pattern[:len(pattern)-1])
+	matched, err := path.Match(pattern, key)
+	if err != nil {
+		return false
 	}
 
-	if strings.HasPrefix(pattern, "*") && !strings.Contains(pattern[1:], "*") {
-		return strings.HasSuffix(key, pattern[1:])
-	}
-
-	return key == pattern
+	return matched
 }

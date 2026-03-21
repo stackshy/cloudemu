@@ -12,42 +12,9 @@ import (
 	"github.com/stackshy/cloudemu/notification/driver"
 	"github.com/stackshy/cloudemu/providers/aws/sns"
 	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func requireNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertError(t *testing.T, err error, expectErr bool) {
-	t.Helper()
-
-	switch {
-	case expectErr && err == nil:
-		t.Fatal("expected error but got nil")
-	case !expectErr && err != nil:
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertEqual(t *testing.T, expected, actual any) {
-	t.Helper()
-
-	if expected != actual {
-		t.Errorf("expected %v, got %v", expected, actual)
-	}
-}
-
-func assertNotEmpty(t *testing.T, s string) {
-	t.Helper()
-
-	if s == "" {
-		t.Error("expected non-empty string")
-	}
-}
 
 func newTestNotification(opts ...Option) *Notification {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -60,7 +27,7 @@ func createTopicVia(t *testing.T, n *Notification, name string) *driver.TopicInf
 	t.Helper()
 
 	info, err := n.CreateTopic(context.Background(), driver.TopicConfig{Name: name})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	return info
 }
@@ -70,12 +37,12 @@ func TestCreateTopicPortable(t *testing.T) {
 	ctx := context.Background()
 
 	info, err := n.CreateTopic(ctx, driver.TopicConfig{Name: "test-topic", DisplayName: "Test"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertNotEmpty(t, info.ID)
-	assertNotEmpty(t, info.ARN)
-	assertEqual(t, "test-topic", info.Name)
-	assertEqual(t, "Test", info.DisplayName)
+	assert.NotEmpty(t, info.ID)
+	assert.NotEmpty(t, info.ResourceID)
+	assert.Equal(t, "test-topic", info.Name)
+	assert.Equal(t, "Test", info.DisplayName)
 }
 
 func TestCreateTopicPortableError(t *testing.T) {
@@ -83,7 +50,7 @@ func TestCreateTopicPortableError(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := n.CreateTopic(ctx, driver.TopicConfig{})
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestDeleteTopicPortable(t *testing.T) {
@@ -92,15 +59,15 @@ func TestDeleteTopicPortable(t *testing.T) {
 
 	info := createTopicVia(t, n, "del-topic")
 
-	err := n.DeleteTopic(ctx, info.ARN)
-	requireNoError(t, err)
+	err := n.DeleteTopic(ctx, info.Name)
+	require.NoError(t, err)
 }
 
 func TestDeleteTopicPortableNotFound(t *testing.T) {
 	n := newTestNotification()
 
 	err := n.DeleteTopic(context.Background(), "arn:aws:sns:us-east-1:123456789012:nope")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestGetTopicPortable(t *testing.T) {
@@ -109,16 +76,16 @@ func TestGetTopicPortable(t *testing.T) {
 
 	created := createTopicVia(t, n, "get-topic")
 
-	info, err := n.GetTopic(ctx, created.ARN)
-	requireNoError(t, err)
-	assertEqual(t, "get-topic", info.Name)
+	info, err := n.GetTopic(ctx, created.Name)
+	require.NoError(t, err)
+	assert.Equal(t, "get-topic", info.Name)
 }
 
 func TestGetTopicPortableNotFound(t *testing.T) {
 	n := newTestNotification()
 
 	_, err := n.GetTopic(context.Background(), "arn:aws:sns:us-east-1:123456789012:nope")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestListTopicsPortable(t *testing.T) {
@@ -126,15 +93,15 @@ func TestListTopicsPortable(t *testing.T) {
 	ctx := context.Background()
 
 	topics, err := n.ListTopics(ctx)
-	requireNoError(t, err)
-	assertEqual(t, 0, len(topics))
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(topics))
 
 	createTopicVia(t, n, "t1")
 	createTopicVia(t, n, "t2")
 
 	topics, err = n.ListTopics(ctx)
-	requireNoError(t, err)
-	assertEqual(t, 2, len(topics))
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(topics))
 }
 
 func TestSubscribePortable(t *testing.T) {
@@ -144,13 +111,13 @@ func TestSubscribePortable(t *testing.T) {
 	topic := createTopicVia(t, n, "sub-topic")
 
 	sub, err := n.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "email", Endpoint: "a@b.com",
+		TopicID: topic.Name, Protocol: "email", Endpoint: "a@b.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertNotEmpty(t, sub.ID)
-	assertEqual(t, "email", sub.Protocol)
-	assertEqual(t, "confirmed", sub.Status)
+	assert.NotEmpty(t, sub.ID)
+	assert.Equal(t, "email", sub.Protocol)
+	assert.Equal(t, "confirmed", sub.Status)
 }
 
 func TestSubscribePortableError(t *testing.T) {
@@ -159,7 +126,7 @@ func TestSubscribePortableError(t *testing.T) {
 	_, err := n.Subscribe(context.Background(), driver.SubscriptionConfig{
 		TopicID: "arn:aws:sns:us-east-1:123456789012:nope", Protocol: "email", Endpoint: "a@b.com",
 	})
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestUnsubscribePortable(t *testing.T) {
@@ -169,19 +136,19 @@ func TestUnsubscribePortable(t *testing.T) {
 	topic := createTopicVia(t, n, "unsub-topic")
 
 	sub, err := n.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "email", Endpoint: "a@b.com",
+		TopicID: topic.Name, Protocol: "email", Endpoint: "a@b.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = n.Unsubscribe(ctx, sub.ID)
-	requireNoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestUnsubscribePortableNotFound(t *testing.T) {
 	n := newTestNotification()
 
 	err := n.Unsubscribe(context.Background(), "nonexistent-sub")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestListSubscriptionsPortable(t *testing.T) {
@@ -191,20 +158,20 @@ func TestListSubscriptionsPortable(t *testing.T) {
 	topic := createTopicVia(t, n, "list-subs")
 
 	_, err := n.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "email", Endpoint: "x@y.com",
+		TopicID: topic.Name, Protocol: "email", Endpoint: "x@y.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	subs, err := n.ListSubscriptions(ctx, topic.ARN)
-	requireNoError(t, err)
-	assertEqual(t, 1, len(subs))
+	subs, err := n.ListSubscriptions(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(subs))
 }
 
 func TestListSubscriptionsPortableNotFound(t *testing.T) {
 	n := newTestNotification()
 
 	_, err := n.ListSubscriptions(context.Background(), "arn:aws:sns:us-east-1:123456789012:nope")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestPublishPortable(t *testing.T) {
@@ -214,11 +181,11 @@ func TestPublishPortable(t *testing.T) {
 	topic := createTopicVia(t, n, "pub-topic")
 
 	out, err := n.Publish(ctx, driver.PublishInput{
-		TopicID: topic.ARN,
+		TopicID: topic.Name,
 		Message: "hello",
 	})
-	requireNoError(t, err)
-	assertNotEmpty(t, out.MessageID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, out.MessageID)
 }
 
 func TestPublishPortableError(t *testing.T) {
@@ -228,7 +195,7 @@ func TestPublishPortableError(t *testing.T) {
 		TopicID: "arn:aws:sns:us-east-1:123456789012:nope",
 		Message: "hello",
 	})
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestWithRecorder(t *testing.T) {
@@ -238,12 +205,12 @@ func TestWithRecorder(t *testing.T) {
 
 	_, _ = n.CreateTopic(ctx, driver.TopicConfig{Name: "rec-topic"})
 
-	assertEqual(t, 1, rec.CallCount())
+	assert.Equal(t, 1, rec.CallCount())
 
 	calls := rec.CallsFor("notification", "CreateTopic")
-	assertEqual(t, 1, len(calls))
-	assertEqual(t, "notification", calls[0].Service)
-	assertEqual(t, "CreateTopic", calls[0].Operation)
+	assert.Equal(t, 1, len(calls))
+	assert.Equal(t, "notification", calls[0].Service)
+	assert.Equal(t, "CreateTopic", calls[0].Operation)
 }
 
 func TestWithRecorderMultipleOps(t *testing.T) {
@@ -252,17 +219,17 @@ func TestWithRecorderMultipleOps(t *testing.T) {
 	ctx := context.Background()
 
 	topic, err := n.CreateTopic(ctx, driver.TopicConfig{Name: "rec-multi"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	_, _ = n.GetTopic(ctx, topic.ARN)
+	_, _ = n.GetTopic(ctx, topic.Name)
 	_, _ = n.ListTopics(ctx)
-	_ = n.DeleteTopic(ctx, topic.ARN)
+	_ = n.DeleteTopic(ctx, topic.Name)
 
-	assertEqual(t, 4, rec.CallCount())
-	assertEqual(t, 1, rec.CallCountFor("notification", "CreateTopic"))
-	assertEqual(t, 1, rec.CallCountFor("notification", "GetTopic"))
-	assertEqual(t, 1, rec.CallCountFor("notification", "ListTopics"))
-	assertEqual(t, 1, rec.CallCountFor("notification", "DeleteTopic"))
+	assert.Equal(t, 4, rec.CallCount())
+	assert.Equal(t, 1, rec.CallCountFor("notification", "CreateTopic"))
+	assert.Equal(t, 1, rec.CallCountFor("notification", "GetTopic"))
+	assert.Equal(t, 1, rec.CallCountFor("notification", "ListTopics"))
+	assert.Equal(t, 1, rec.CallCountFor("notification", "DeleteTopic"))
 }
 
 func TestWithRecorderRecordsErrors(t *testing.T) {
@@ -272,11 +239,8 @@ func TestWithRecorderRecordsErrors(t *testing.T) {
 	_, _ = n.CreateTopic(context.Background(), driver.TopicConfig{})
 
 	calls := rec.CallsFor("notification", "CreateTopic")
-	assertEqual(t, 1, len(calls))
-
-	if calls[0].Error == nil {
-		t.Error("expected recorded error to be non-nil")
-	}
+	assert.Equal(t, 1, len(calls))
+	assert.NotNil(t, calls[0].Error)
 }
 
 func TestWithMetrics(t *testing.T) {
@@ -292,13 +256,13 @@ func TestWithMetrics(t *testing.T) {
 		ByLabel("service", "notification").
 		ByLabel("operation", "CreateTopic").
 		Count()
-	assertEqual(t, 1, callsCount)
+	assert.Equal(t, 1, callsCount)
 
 	durCount := q.ByName("call_duration").
 		ByLabel("service", "notification").
 		ByLabel("operation", "CreateTopic").
 		Count()
-	assertEqual(t, 1, durCount)
+	assert.Equal(t, 1, durCount)
 }
 
 func TestWithMetricsRecordsErrors(t *testing.T) {
@@ -313,7 +277,7 @@ func TestWithMetricsRecordsErrors(t *testing.T) {
 		ByLabel("service", "notification").
 		ByLabel("operation", "CreateTopic").
 		Count()
-	assertEqual(t, 1, errCount)
+	assert.Equal(t, 1, errCount)
 }
 
 func TestWithMetricsNoErrorMetricOnSuccess(t *testing.T) {
@@ -328,7 +292,7 @@ func TestWithMetricsNoErrorMetricOnSuccess(t *testing.T) {
 		ByLabel("service", "notification").
 		ByLabel("operation", "CreateTopic").
 		Count()
-	assertEqual(t, 0, errCount)
+	assert.Equal(t, 0, errCount)
 }
 
 func TestWithErrorInjection(t *testing.T) {
@@ -339,8 +303,8 @@ func TestWithErrorInjection(t *testing.T) {
 	n := newTestNotification(WithErrorInjection(inj))
 
 	_, err := n.CreateTopic(context.Background(), driver.TopicConfig{Name: "inj-topic"})
-	assertError(t, err, true)
-	assertEqual(t, injectedErr.Error(), err.Error())
+	require.Error(t, err)
+	assert.Equal(t, injectedErr.Error(), err.Error())
 }
 
 func TestWithErrorInjectionSelectiveOps(t *testing.T) {
@@ -353,15 +317,15 @@ func TestWithErrorInjectionSelectiveOps(t *testing.T) {
 
 	// CreateTopic should succeed (not injected).
 	topic, err := n.CreateTopic(ctx, driver.TopicConfig{Name: "sel-topic"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	// Publish should fail (injected).
 	_, err = n.Publish(ctx, driver.PublishInput{
-		TopicID: topic.ARN,
+		TopicID: topic.Name,
 		Message: "hello",
 	})
-	assertError(t, err, true)
-	assertEqual(t, injectedErr.Error(), err.Error())
+	require.Error(t, err)
+	assert.Equal(t, injectedErr.Error(), err.Error())
 }
 
 func TestWithErrorInjectionRecorded(t *testing.T) {
@@ -375,11 +339,8 @@ func TestWithErrorInjectionRecorded(t *testing.T) {
 	_, _ = n.GetTopic(context.Background(), "any-id")
 
 	calls := rec.CallsFor("notification", "GetTopic")
-	assertEqual(t, 1, len(calls))
-
-	if calls[0].Error == nil {
-		t.Error("expected recorded error to be non-nil")
-	}
+	assert.Equal(t, 1, len(calls))
+	assert.NotNil(t, calls[0].Error)
 }
 
 func TestWithErrorInjectionAndMetrics(t *testing.T) {
@@ -400,7 +361,7 @@ func TestWithErrorInjectionAndMetrics(t *testing.T) {
 		ByLabel("service", "notification").
 		ByLabel("operation", "DeleteTopic").
 		Count()
-	assertEqual(t, 0, callsCount)
+	assert.Equal(t, 0, callsCount)
 }
 
 func TestWithLatency(t *testing.T) {
@@ -413,9 +374,7 @@ func TestWithLatency(t *testing.T) {
 
 	elapsed := time.Since(start)
 
-	if elapsed < 1*time.Millisecond {
-		t.Errorf("expected at least 1ms latency, got %v", elapsed)
-	}
+	assert.GreaterOrEqual(t, elapsed, 1*time.Millisecond)
 }
 
 func TestAllOptionsComposed(t *testing.T) {
@@ -431,17 +390,17 @@ func TestAllOptionsComposed(t *testing.T) {
 	ctx := context.Background()
 
 	topic, err := n.CreateTopic(ctx, driver.TopicConfig{Name: "composed"})
-	requireNoError(t, err)
-	assertNotEmpty(t, topic.ID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, topic.ID)
 
-	assertEqual(t, 1, rec.CallCount())
+	assert.Equal(t, 1, rec.CallCount())
 
 	q := metrics.NewQuery(mc)
 
 	callsCount := q.ByName("calls_total").
 		ByLabel("service", "notification").
 		Count()
-	assertEqual(t, 1, callsCount)
+	assert.Equal(t, 1, callsCount)
 }
 
 func TestSubscribeViaPortableAllPaths(t *testing.T) {
@@ -452,27 +411,27 @@ func TestSubscribeViaPortableAllPaths(t *testing.T) {
 	topic := createTopicVia(t, n, "full-flow")
 
 	sub, err := n.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "email", Endpoint: "u@e.com",
+		TopicID: topic.Name, Protocol: "email", Endpoint: "u@e.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	subs, err := n.ListSubscriptions(ctx, topic.ARN)
-	requireNoError(t, err)
-	assertEqual(t, 1, len(subs))
+	subs, err := n.ListSubscriptions(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(subs))
 
 	err = n.Unsubscribe(ctx, sub.ID)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	out, err := n.Publish(ctx, driver.PublishInput{
-		TopicID: topic.ARN, Message: "test msg",
+		TopicID: topic.Name, Message: "test msg",
 	})
-	requireNoError(t, err)
-	assertNotEmpty(t, out.MessageID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, out.MessageID)
 
 	// Verify all operations were recorded.
-	assertEqual(t, 5, rec.CallCount())
-	assertEqual(t, 1, rec.CallCountFor("notification", "Subscribe"))
-	assertEqual(t, 1, rec.CallCountFor("notification", "ListSubscriptions"))
-	assertEqual(t, 1, rec.CallCountFor("notification", "Unsubscribe"))
-	assertEqual(t, 1, rec.CallCountFor("notification", "Publish"))
+	assert.Equal(t, 5, rec.CallCount())
+	assert.Equal(t, 1, rec.CallCountFor("notification", "Subscribe"))
+	assert.Equal(t, 1, rec.CallCountFor("notification", "ListSubscriptions"))
+	assert.Equal(t, 1, rec.CallCountFor("notification", "Unsubscribe"))
+	assert.Equal(t, 1, rec.CallCountFor("notification", "Publish"))
 }

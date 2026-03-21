@@ -16,10 +16,13 @@ import (
 // Compile-time check that Mock implements driver.Secrets.
 var _ driver.Secrets = (*Mock)(nil)
 
+const defaultRecoveryDays = 30
+
 type secretData struct {
-	info     driver.SecretInfo
-	versions []driver.SecretVersion
-	mu       sync.RWMutex
+	info      driver.SecretInfo
+	versions  []driver.SecretVersion
+	deletedAt time.Time
+	mu        sync.RWMutex
 }
 
 // Mock is an in-memory mock implementation of the AWS Secrets Manager service.
@@ -57,7 +60,7 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 	info := driver.SecretInfo{
 		ID:          idgen.GenerateID("secret-"),
 		Name:        cfg.Name,
-		ARN:         arn,
+		ResourceID:  arn,
 		Description: cfg.Description,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -87,11 +90,21 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 	return &result, nil
 }
 
-// DeleteSecret deletes a secret by name.
+// DeleteSecret soft-deletes a secret by name, scheduling it for deletion after a recovery window.
 func (m *Mock) DeleteSecret(_ context.Context, name string) error {
-	if !m.secrets.Delete(name) {
+	sd, ok := m.secrets.Get(name)
+	if !ok {
 		return errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
+
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	if !sd.deletedAt.IsZero() {
+		return errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+	}
+
+	sd.deletedAt = m.opts.Clock.Now().UTC()
 
 	return nil
 }
@@ -106,12 +119,16 @@ func (m *Mock) GetSecret(_ context.Context, name string) (*driver.SecretInfo, er
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
+	if !sd.deletedAt.IsZero() {
+		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+	}
+
 	result := sd.info
 
 	return &result, nil
 }
 
-// ListSecrets lists all secrets.
+// ListSecrets lists all secrets, excluding soft-deleted ones.
 func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
 	all := m.secrets.All()
 
@@ -119,7 +136,9 @@ func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
 
 	for _, sd := range all {
 		sd.mu.RLock()
-		secrets = append(secrets, sd.info)
+		if sd.deletedAt.IsZero() {
+			secrets = append(secrets, sd.info)
+		}
 		sd.mu.RUnlock()
 	}
 
@@ -135,6 +154,10 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
+
+	if !sd.deletedAt.IsZero() {
+		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+	}
 
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
 
@@ -172,6 +195,10 @@ func (m *Mock) GetSecretValue(_ context.Context, name, versionID string) (*drive
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
+	if !sd.deletedAt.IsZero() {
+		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+	}
+
 	for _, v := range sd.versions {
 		if versionID == "" && v.Current {
 			result := v
@@ -206,6 +233,10 @@ func (m *Mock) ListSecretVersions(_ context.Context, name string) ([]driver.Secr
 
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
+
+	if !sd.deletedAt.IsZero() {
+		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+	}
 
 	versions := make([]driver.SecretVersion, len(sd.versions))
 	for i, v := range sd.versions {

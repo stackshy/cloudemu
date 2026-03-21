@@ -75,7 +75,7 @@ func TestCreateLogGroup(t *testing.T) {
 		requireNoError(t, err)
 
 		assertEqual(t, "my-workspace", info.Name)
-		assertNotEmpty(t, info.ARN)
+		assertNotEmpty(t, info.ResourceID)
 		assertNotEmpty(t, info.CreatedAt)
 		assertEqual(t, int64(0), info.StoredBytes)
 	})

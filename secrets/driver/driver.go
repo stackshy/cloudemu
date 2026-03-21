@@ -14,7 +14,7 @@ type SecretConfig struct {
 type SecretInfo struct {
 	ID          string
 	Name        string
-	ARN         string
+	ResourceID  string
 	Description string
 	CreatedAt   string
 	UpdatedAt   string

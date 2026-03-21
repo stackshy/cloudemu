@@ -7,42 +7,9 @@ import (
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/notification/driver"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func requireNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertError(t *testing.T, err error, expectErr bool) {
-	t.Helper()
-
-	switch {
-	case expectErr && err == nil:
-		t.Fatal("expected error but got nil")
-	case !expectErr && err != nil:
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertEqual(t *testing.T, expected, actual any) {
-	t.Helper()
-
-	if expected != actual {
-		t.Errorf("expected %v, got %v", expected, actual)
-	}
-}
-
-func assertNotEmpty(t *testing.T, s string) {
-	t.Helper()
-
-	if s == "" {
-		t.Error("expected non-empty string")
-	}
-}
 
 func newTestMock() *Mock {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -55,7 +22,7 @@ func createTestTopic(t *testing.T, m *Mock, name string) *driver.TopicInfo {
 	t.Helper()
 
 	info, err := m.CreateTopic(context.Background(), driver.TopicConfig{Name: name})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	return info
 }
@@ -105,17 +72,18 @@ func TestCreateTopic(t *testing.T) {
 			}
 
 			info, err := m.CreateTopic(context.Background(), tc.cfg)
-			assertError(t, err, tc.expectErr)
-
 			if tc.expectErr {
+				require.Error(t, err)
 				return
 			}
 
-			assertNotEmpty(t, info.ID)
-			assertNotEmpty(t, info.ARN)
-			assertEqual(t, tc.cfg.Name, info.Name)
-			assertEqual(t, tc.cfg.DisplayName, info.DisplayName)
-			assertEqual(t, 0, info.SubscriptionCount)
+			require.NoError(t, err)
+
+			assert.NotEmpty(t, info.ID)
+			assert.NotEmpty(t, info.ResourceID)
+			assert.Equal(t, tc.cfg.Name, info.Name)
+			assert.Equal(t, tc.cfg.DisplayName, info.DisplayName)
+			assert.Equal(t, 0, info.SubscriptionCount)
 		})
 	}
 }
@@ -128,14 +96,14 @@ func TestCreateTopicWithTags(t *testing.T) {
 		Name: "tagged",
 		Tags: tags,
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, "staging", info.Tags["env"])
-	assertEqual(t, "notifications", info.Tags["service"])
+	assert.Equal(t, "staging", info.Tags["env"])
+	assert.Equal(t, "notifications", info.Tags["service"])
 
 	// Verify tags are copied and not shared.
 	tags["env"] = "production"
-	assertEqual(t, "staging", info.Tags["env"])
+	assert.Equal(t, "staging", info.Tags["env"])
 }
 
 func TestDeleteTopic(t *testing.T) {
@@ -149,7 +117,7 @@ func TestDeleteTopic(t *testing.T) {
 			name: "success",
 			setup: func(m *Mock) string {
 				info, _ := m.CreateTopic(context.Background(), driver.TopicConfig{Name: "del"})
-				return info.ARN
+				return info.Name
 			},
 		},
 		{
@@ -169,7 +137,12 @@ func TestDeleteTopic(t *testing.T) {
 			}
 
 			err := m.DeleteTopic(context.Background(), id)
-			assertError(t, err, tc.expectErr)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
 		})
 	}
 }
@@ -180,12 +153,12 @@ func TestDeleteTopicRemovesFromList(t *testing.T) {
 
 	info := createTestTopic(t, m, "to-delete")
 
-	err := m.DeleteTopic(ctx, info.ARN)
-	requireNoError(t, err)
+	err := m.DeleteTopic(ctx, info.Name)
+	require.NoError(t, err)
 
 	topics, err := m.ListTopics(ctx)
-	requireNoError(t, err)
-	assertEqual(t, 0, len(topics))
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(topics))
 }
 
 func TestGetTopic(t *testing.T) {
@@ -202,7 +175,7 @@ func TestGetTopic(t *testing.T) {
 					Name:        "get-me",
 					DisplayName: "Get Me",
 				})
-				return info.ARN
+				return info.Name
 			},
 		},
 		{
@@ -222,14 +195,15 @@ func TestGetTopic(t *testing.T) {
 			}
 
 			info, err := m.GetTopic(context.Background(), id)
-			assertError(t, err, tc.expectErr)
-
 			if tc.expectErr {
+				require.Error(t, err)
 				return
 			}
 
-			assertEqual(t, "get-me", info.Name)
-			assertEqual(t, "Get Me", info.DisplayName)
+			require.NoError(t, err)
+
+			assert.Equal(t, "get-me", info.Name)
+			assert.Equal(t, "Get Me", info.DisplayName)
 		})
 	}
 }
@@ -240,27 +214,27 @@ func TestGetTopicSubscriptionCount(t *testing.T) {
 
 	topic := createTestTopic(t, m, "sub-count")
 
-	info, err := m.GetTopic(ctx, topic.ARN)
-	requireNoError(t, err)
-	assertEqual(t, 0, info.SubscriptionCount)
+	info, err := m.GetTopic(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Equal(t, 0, info.SubscriptionCount)
 
 	_, err = m.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID:  topic.ARN,
+		TopicID:  topic.Name,
 		Protocol: "email",
 		Endpoint: "a@b.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = m.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID:  topic.ARN,
+		TopicID:  topic.Name,
 		Protocol: "sms",
 		Endpoint: "+1234567890",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	info, err = m.GetTopic(ctx, topic.ARN)
-	requireNoError(t, err)
-	assertEqual(t, 2, info.SubscriptionCount)
+	info, err = m.GetTopic(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Equal(t, 2, info.SubscriptionCount)
 }
 
 func TestListTopics(t *testing.T) {
@@ -268,16 +242,16 @@ func TestListTopics(t *testing.T) {
 	ctx := context.Background()
 
 	topics, err := m.ListTopics(ctx)
-	requireNoError(t, err)
-	assertEqual(t, 0, len(topics))
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(topics))
 
 	createTestTopic(t, m, "topic-1")
 	createTestTopic(t, m, "topic-2")
 	createTestTopic(t, m, "topic-3")
 
 	topics, err = m.ListTopics(ctx)
-	requireNoError(t, err)
-	assertEqual(t, 3, len(topics))
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(topics))
 }
 
 func TestSubscribe(t *testing.T) {
@@ -292,7 +266,7 @@ func TestSubscribe(t *testing.T) {
 			setup: func(m *Mock) driver.SubscriptionConfig {
 				info := createTopicHelper(m, "sub-topic")
 				return driver.SubscriptionConfig{
-					TopicID: info.ARN, Protocol: "email", Endpoint: "user@example.com",
+					TopicID: info.Name, Protocol: "email", Endpoint: "user@example.com",
 				}
 			},
 		},
@@ -301,7 +275,7 @@ func TestSubscribe(t *testing.T) {
 			setup: func(m *Mock) driver.SubscriptionConfig {
 				info := createTopicHelper(m, "sms-topic")
 				return driver.SubscriptionConfig{
-					TopicID: info.ARN, Protocol: "sms", Endpoint: "+1234567890",
+					TopicID: info.Name, Protocol: "sms", Endpoint: "+1234567890",
 				}
 			},
 		},
@@ -317,7 +291,7 @@ func TestSubscribe(t *testing.T) {
 			setup: func(m *Mock) driver.SubscriptionConfig {
 				info := createTopicHelper(m, "no-proto")
 				return driver.SubscriptionConfig{
-					TopicID: info.ARN, Protocol: "", Endpoint: "a@b.com",
+					TopicID: info.Name, Protocol: "", Endpoint: "a@b.com",
 				}
 			},
 			expectErr: true,
@@ -327,7 +301,7 @@ func TestSubscribe(t *testing.T) {
 			setup: func(m *Mock) driver.SubscriptionConfig {
 				info := createTopicHelper(m, "no-endpoint")
 				return driver.SubscriptionConfig{
-					TopicID: info.ARN, Protocol: "email", Endpoint: "",
+					TopicID: info.Name, Protocol: "email", Endpoint: "",
 				}
 			},
 			expectErr: true,
@@ -344,16 +318,17 @@ func TestSubscribe(t *testing.T) {
 			}
 
 			sub, err := m.Subscribe(context.Background(), cfg)
-			assertError(t, err, tc.expectErr)
-
 			if tc.expectErr {
+				require.Error(t, err)
 				return
 			}
 
-			assertNotEmpty(t, sub.ID)
-			assertEqual(t, cfg.Protocol, sub.Protocol)
-			assertEqual(t, cfg.Endpoint, sub.Endpoint)
-			assertEqual(t, "confirmed", sub.Status)
+			require.NoError(t, err)
+
+			assert.NotEmpty(t, sub.ID)
+			assert.Equal(t, cfg.Protocol, sub.Protocol)
+			assert.Equal(t, cfg.Endpoint, sub.Endpoint)
+			assert.Equal(t, "confirmed", sub.Status)
 		})
 	}
 }
@@ -370,23 +345,23 @@ func TestMultipleSubscriptionsSameTopic(t *testing.T) {
 	topic := createTestTopic(t, m, "multi-sub")
 
 	_, err := m.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "email", Endpoint: "a@b.com",
+		TopicID: topic.Name, Protocol: "email", Endpoint: "a@b.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = m.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "sms", Endpoint: "+111",
+		TopicID: topic.Name, Protocol: "sms", Endpoint: "+111",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = m.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "https", Endpoint: "https://hook.example.com",
+		TopicID: topic.Name, Protocol: "https", Endpoint: "https://hook.example.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	subs, err := m.ListSubscriptions(ctx, topic.ARN)
-	requireNoError(t, err)
-	assertEqual(t, 3, len(subs))
+	subs, err := m.ListSubscriptions(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(subs))
 }
 
 func TestUnsubscribe(t *testing.T) {
@@ -396,22 +371,22 @@ func TestUnsubscribe(t *testing.T) {
 	topic := createTestTopic(t, m, "unsub-topic")
 
 	sub, err := m.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "email", Endpoint: "a@b.com",
+		TopicID: topic.Name, Protocol: "email", Endpoint: "a@b.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		err := m.Unsubscribe(ctx, sub.ID)
-		requireNoError(t, err)
+		require.NoError(t, err)
 
-		subs, err := m.ListSubscriptions(ctx, topic.ARN)
-		requireNoError(t, err)
-		assertEqual(t, 0, len(subs))
+		subs, err := m.ListSubscriptions(ctx, topic.Name)
+		require.NoError(t, err)
+		assert.Equal(t, 0, len(subs))
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		err := m.Unsubscribe(ctx, "arn:aws:sns:us-east-1:123456789012:subscription/nonexistent")
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -421,18 +396,18 @@ func TestListSubscriptions(t *testing.T) {
 
 	topic := createTestTopic(t, m, "list-subs")
 
-	subs, err := m.ListSubscriptions(ctx, topic.ARN)
-	requireNoError(t, err)
-	assertEqual(t, 0, len(subs))
+	subs, err := m.ListSubscriptions(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(subs))
 
 	_, err = m.Subscribe(ctx, driver.SubscriptionConfig{
-		TopicID: topic.ARN, Protocol: "email", Endpoint: "x@y.com",
+		TopicID: topic.Name, Protocol: "email", Endpoint: "x@y.com",
 	})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	subs, err = m.ListSubscriptions(ctx, topic.ARN)
-	requireNoError(t, err)
-	assertEqual(t, 1, len(subs))
+	subs, err = m.ListSubscriptions(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(subs))
 }
 
 func TestListSubscriptionsNonexistentTopic(t *testing.T) {
@@ -442,7 +417,7 @@ func TestListSubscriptionsNonexistentTopic(t *testing.T) {
 		context.Background(),
 		"arn:aws:sns:us-east-1:123456789012:nonexistent",
 	)
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestPublish(t *testing.T) {
@@ -457,7 +432,7 @@ func TestPublish(t *testing.T) {
 			setup: func(m *Mock) driver.PublishInput {
 				info := createTopicHelper(m, "pub-topic")
 				return driver.PublishInput{
-					TopicID: info.ARN,
+					TopicID: info.Name,
 					Message: "hello world",
 					Subject: "greetings",
 				}
@@ -468,7 +443,7 @@ func TestPublish(t *testing.T) {
 			setup: func(m *Mock) driver.PublishInput {
 				info := createTopicHelper(m, "attr-topic")
 				return driver.PublishInput{
-					TopicID:    info.ARN,
+					TopicID:    info.Name,
 					Message:    "test",
 					Attributes: map[string]string{"key": "value"},
 				}
@@ -486,7 +461,7 @@ func TestPublish(t *testing.T) {
 			name: "empty message",
 			setup: func(m *Mock) driver.PublishInput {
 				info := createTopicHelper(m, "empty-msg")
-				return driver.PublishInput{TopicID: info.ARN, Message: ""}
+				return driver.PublishInput{TopicID: info.Name, Message: ""}
 			},
 			expectErr: true,
 		},
@@ -502,13 +477,14 @@ func TestPublish(t *testing.T) {
 			}
 
 			out, err := m.Publish(context.Background(), input)
-			assertError(t, err, tc.expectErr)
-
 			if tc.expectErr {
+				require.Error(t, err)
 				return
 			}
 
-			assertNotEmpty(t, out.MessageID)
+			require.NoError(t, err)
+
+			assert.NotEmpty(t, out.MessageID)
 		})
 	}
 }
@@ -519,13 +495,11 @@ func TestPublishReturnsUniqueMessageIDs(t *testing.T) {
 
 	topic := createTestTopic(t, m, "unique-ids")
 
-	out1, err := m.Publish(ctx, driver.PublishInput{TopicID: topic.ARN, Message: "msg1"})
-	requireNoError(t, err)
+	out1, err := m.Publish(ctx, driver.PublishInput{TopicID: topic.Name, Message: "msg1"})
+	require.NoError(t, err)
 
-	out2, err := m.Publish(ctx, driver.PublishInput{TopicID: topic.ARN, Message: "msg2"})
-	requireNoError(t, err)
+	out2, err := m.Publish(ctx, driver.PublishInput{TopicID: topic.Name, Message: "msg2"})
+	require.NoError(t, err)
 
-	if out1.MessageID == out2.MessageID {
-		t.Error("expected unique message IDs")
-	}
+	assert.NotEqual(t, out1.MessageID, out2.MessageID)
 }

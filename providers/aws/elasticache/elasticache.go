@@ -4,7 +4,7 @@ package elasticache
 import (
 	"context"
 	"fmt"
-	"strings"
+	"path"
 	"time"
 
 	"github.com/stackshy/cloudemu/cache/driver"
@@ -12,6 +12,8 @@ import (
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/memstore"
 )
+
+const defaultRedisPort = 6379
 
 // Compile-time check that Mock implements driver.Cache.
 var _ driver.Cache = (*Mock)(nil)
@@ -61,7 +63,7 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		nodeType = "cache.t3.micro"
 	}
 
-	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:6379", cfg.Name, m.opts.Region)
+	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
 
 	info := driver.CacheInfo{
 		Name:      cfg.Name,
@@ -242,22 +244,16 @@ func (m *Mock) FlushAll(_ context.Context, cacheName string) error {
 }
 
 // matchPattern matches a key against a glob-like pattern.
-// Supports "*" as a wildcard matching any sequence of characters.
+// Supports full glob syntax including middle wildcards like "user:*:session".
 func matchPattern(pattern, key string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
 	}
 
-	// Simple prefix match for "prefix*" patterns.
-	if strings.HasSuffix(pattern, "*") && !strings.Contains(pattern[:len(pattern)-1], "*") {
-		return strings.HasPrefix(key, pattern[:len(pattern)-1])
+	matched, err := path.Match(pattern, key)
+	if err != nil {
+		return false
 	}
 
-	// Simple suffix match for "*suffix" patterns.
-	if strings.HasPrefix(pattern, "*") && !strings.Contains(pattern[1:], "*") {
-		return strings.HasSuffix(key, pattern[1:])
-	}
-
-	// Exact match as fallback.
-	return key == pattern
+	return matched
 }

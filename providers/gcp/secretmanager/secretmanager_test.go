@@ -7,42 +7,9 @@ import (
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/secrets/driver"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func requireNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertError(t *testing.T, err error, expectErr bool) {
-	t.Helper()
-
-	switch {
-	case expectErr && err == nil:
-		t.Fatal("expected error but got nil")
-	case !expectErr && err != nil:
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertEqual(t *testing.T, expected, actual any) {
-	t.Helper()
-
-	if expected != actual {
-		t.Errorf("expected %v, got %v", expected, actual)
-	}
-}
-
-func assertNotEmpty(t *testing.T, s string) {
-	t.Helper()
-
-	if s == "" {
-		t.Error("expected non-empty string")
-	}
-}
 
 func newTestMock() *Mock {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -57,7 +24,7 @@ func createTestSecret(t *testing.T, m *Mock, name, value string) *driver.SecretI
 	cfg := driver.SecretConfig{Name: name, Description: "test secret"}
 
 	info, err := m.CreateSecret(context.Background(), cfg, []byte(value))
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	return info
 }
@@ -88,16 +55,19 @@ func TestCreateSecret(t *testing.T) {
 			m := newTestMock()
 
 			info, err := m.CreateSecret(context.Background(), tc.cfg, tc.value)
-			assertError(t, err, tc.expectErr)
-
-			if !tc.expectErr {
-				assertNotEmpty(t, info.ID)
-				assertEqual(t, tc.cfg.Name, info.Name)
-				assertEqual(t, tc.cfg.Description, info.Description)
-				assertNotEmpty(t, info.ARN)
-				assertNotEmpty(t, info.CreatedAt)
-				assertNotEmpty(t, info.UpdatedAt)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			} else {
+				require.NoError(t, err)
 			}
+
+			assert.NotEmpty(t, info.ID)
+			assert.Equal(t, tc.cfg.Name, info.Name)
+			assert.Equal(t, tc.cfg.Description, info.Description)
+			assert.NotEmpty(t, info.ResourceID)
+			assert.NotEmpty(t, info.CreatedAt)
+			assert.NotEmpty(t, info.UpdatedAt)
 		})
 	}
 }
@@ -110,7 +80,7 @@ func TestCreateSecretDuplicate(t *testing.T) {
 	cfg := driver.SecretConfig{Name: "dup-secret"}
 	_, err := m.CreateSecret(context.Background(), cfg, []byte("val2"))
 
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestCreateSecretWithTags(t *testing.T) {
@@ -123,10 +93,10 @@ func TestCreateSecretWithTags(t *testing.T) {
 	}
 
 	info, err := m.CreateSecret(context.Background(), cfg, []byte("val"))
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, "prod", info.Tags["env"])
-	assertEqual(t, "platform", info.Tags["team"])
+	assert.Equal(t, "prod", info.Tags["env"])
+	assert.Equal(t, "platform", info.Tags["team"])
 }
 
 func TestCreateSecretGCPSelfLink(t *testing.T) {
@@ -134,7 +104,7 @@ func TestCreateSecretGCPSelfLink(t *testing.T) {
 
 	info := createTestSecret(t, m, "link-secret", "val")
 
-	assertNotEmpty(t, info.ARN)
+	assert.NotEmpty(t, info.ResourceID)
 }
 
 func TestDeleteSecret(t *testing.T) {
@@ -167,7 +137,12 @@ func TestDeleteSecret(t *testing.T) {
 			}
 
 			err := m.DeleteSecret(context.Background(), tc.secretNm)
-			assertError(t, err, tc.expectErr)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			} else {
+				require.NoError(t, err)
+			}
 		})
 	}
 }
@@ -202,12 +177,15 @@ func TestGetSecret(t *testing.T) {
 			}
 
 			info, err := m.GetSecret(context.Background(), tc.secretNm)
-			assertError(t, err, tc.expectErr)
-
-			if !tc.expectErr {
-				assertEqual(t, tc.secretNm, info.Name)
-				assertNotEmpty(t, info.ID)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			} else {
+				require.NoError(t, err)
 			}
+
+			assert.Equal(t, tc.secretNm, info.Name)
+			assert.NotEmpty(t, info.ID)
 		})
 	}
 }
@@ -216,16 +194,16 @@ func TestListSecrets(t *testing.T) {
 	m := newTestMock()
 
 	list, err := m.ListSecrets(context.Background())
-	requireNoError(t, err)
-	assertEqual(t, 0, len(list))
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(list))
 
 	createTestSecret(t, m, "s1", "v1")
 	createTestSecret(t, m, "s2", "v2")
 	createTestSecret(t, m, "s3", "v3")
 
 	list, err = m.ListSecrets(context.Background())
-	requireNoError(t, err)
-	assertEqual(t, 3, len(list))
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(list))
 }
 
 func TestPutSecretValue(t *testing.T) {
@@ -234,11 +212,11 @@ func TestPutSecretValue(t *testing.T) {
 	createTestSecret(t, m, "put-secret", "initial")
 
 	ver, err := m.PutSecretValue(context.Background(), "put-secret", []byte("updated"))
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertNotEmpty(t, ver.VersionID)
-	assertEqual(t, true, ver.Current)
-	assertEqual(t, "updated", string(ver.Value))
+	assert.NotEmpty(t, ver.VersionID)
+	assert.Equal(t, true, ver.Current)
+	assert.Equal(t, "updated", string(ver.Value))
 }
 
 func TestPutSecretValueNotFound(t *testing.T) {
@@ -246,7 +224,7 @@ func TestPutSecretValueNotFound(t *testing.T) {
 
 	_, err := m.PutSecretValue(context.Background(), "no-such-secret", []byte("val"))
 
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestPutSecretValueMarksOldNotCurrent(t *testing.T) {
@@ -255,11 +233,11 @@ func TestPutSecretValueMarksOldNotCurrent(t *testing.T) {
 	createTestSecret(t, m, "ver-secret", "v1")
 
 	_, err := m.PutSecretValue(context.Background(), "ver-secret", []byte("v2"))
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	versions, err := m.ListSecretVersions(context.Background(), "ver-secret")
-	requireNoError(t, err)
-	assertEqual(t, 2, len(versions))
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(versions))
 
 	currentCount := 0
 
@@ -269,7 +247,7 @@ func TestPutSecretValueMarksOldNotCurrent(t *testing.T) {
 		}
 	}
 
-	assertEqual(t, 1, currentCount)
+	assert.Equal(t, 1, currentCount)
 }
 
 func TestGetSecretValueEmptyVersionID(t *testing.T) {
@@ -278,10 +256,10 @@ func TestGetSecretValueEmptyVersionID(t *testing.T) {
 	createTestSecret(t, m, "gv-secret", "my-value")
 
 	ver, err := m.GetSecretValue(context.Background(), "gv-secret", "")
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, true, ver.Current)
-	assertEqual(t, "my-value", string(ver.Value))
+	assert.Equal(t, true, ver.Current)
+	assert.Equal(t, "my-value", string(ver.Value))
 }
 
 func TestGetSecretValueSpecificVersion(t *testing.T) {
@@ -290,13 +268,13 @@ func TestGetSecretValueSpecificVersion(t *testing.T) {
 	createTestSecret(t, m, "sv-secret", "v1")
 
 	v2, err := m.PutSecretValue(context.Background(), "sv-secret", []byte("v2"))
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	got, err := m.GetSecretValue(context.Background(), "sv-secret", v2.VersionID)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, v2.VersionID, got.VersionID)
-	assertEqual(t, "v2", string(got.Value))
+	assert.Equal(t, v2.VersionID, got.VersionID)
+	assert.Equal(t, "v2", string(got.Value))
 }
 
 func TestGetSecretValueNonexistentVersion(t *testing.T) {
@@ -306,7 +284,7 @@ func TestGetSecretValueNonexistentVersion(t *testing.T) {
 
 	_, err := m.GetSecretValue(context.Background(), "nv-secret", "bad-version-id")
 
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestGetSecretValueNonexistentSecret(t *testing.T) {
@@ -314,7 +292,7 @@ func TestGetSecretValueNonexistentSecret(t *testing.T) {
 
 	_, err := m.GetSecretValue(context.Background(), "no-secret", "")
 
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestListSecretVersions(t *testing.T) {
@@ -323,14 +301,14 @@ func TestListSecretVersions(t *testing.T) {
 	createTestSecret(t, m, "lv-secret", "v1")
 
 	_, err := m.PutSecretValue(context.Background(), "lv-secret", []byte("v2"))
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = m.PutSecretValue(context.Background(), "lv-secret", []byte("v3"))
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	versions, err := m.ListSecretVersions(context.Background(), "lv-secret")
-	requireNoError(t, err)
-	assertEqual(t, 3, len(versions))
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(versions))
 }
 
 func TestListSecretVersionsNotFound(t *testing.T) {
@@ -338,7 +316,7 @@ func TestListSecretVersionsNotFound(t *testing.T) {
 
 	_, err := m.ListSecretVersions(context.Background(), "missing")
 
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestListSecretVersionsPrivacy(t *testing.T) {
@@ -347,13 +325,11 @@ func TestListSecretVersionsPrivacy(t *testing.T) {
 	createTestSecret(t, m, "priv-secret", "sensitive")
 
 	versions, err := m.ListSecretVersions(context.Background(), "priv-secret")
-	requireNoError(t, err)
-	assertEqual(t, 1, len(versions))
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(versions))
 
 	for _, v := range versions {
-		if len(v.Value) != 0 {
-			t.Error("expected empty Value in listed versions for privacy")
-		}
+		assert.Empty(t, v.Value, "expected empty Value in listed versions for privacy")
 	}
 }
 
@@ -364,12 +340,12 @@ func TestMultipleVersionsOnlyLatestCurrent(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		_, err := m.PutSecretValue(context.Background(), "multi-secret", []byte("update"))
-		requireNoError(t, err)
+		require.NoError(t, err)
 	}
 
 	versions, err := m.ListSecretVersions(context.Background(), "multi-secret")
-	requireNoError(t, err)
-	assertEqual(t, 6, len(versions))
+	require.NoError(t, err)
+	assert.Equal(t, 6, len(versions))
 
 	currentCount := 0
 
@@ -379,7 +355,7 @@ func TestMultipleVersionsOnlyLatestCurrent(t *testing.T) {
 		}
 	}
 
-	assertEqual(t, 1, currentCount)
+	assert.Equal(t, 1, currentCount)
 }
 
 func TestDeleteThenGetReturnsError(t *testing.T) {
@@ -388,10 +364,10 @@ func TestDeleteThenGetReturnsError(t *testing.T) {
 	createTestSecret(t, m, "dtg-secret", "val")
 
 	err := m.DeleteSecret(context.Background(), "dtg-secret")
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = m.GetSecret(context.Background(), "dtg-secret")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestCreateSecretTagsCopied(t *testing.T) {
@@ -401,9 +377,9 @@ func TestCreateSecretTagsCopied(t *testing.T) {
 	cfg := driver.SecretConfig{Name: "tag-copy", Tags: tags}
 
 	info, err := m.CreateSecret(context.Background(), cfg, []byte("val"))
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	tags["key"] = "mutated"
 
-	assertEqual(t, "original", info.Tags["key"])
+	assert.Equal(t, "original", info.Tags["key"])
 }

@@ -14,7 +14,7 @@ type TopicConfig struct {
 type TopicInfo struct {
 	ID                string
 	Name              string
-	ARN               string
+	ResourceID        string
 	DisplayName       string
 	SubscriptionCount int
 	Tags              map[string]string

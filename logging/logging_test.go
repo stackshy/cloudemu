@@ -79,7 +79,7 @@ func TestCreateLogGroup(t *testing.T) {
 		requireNoError(t, err)
 
 		assertEqual(t, "grp", info.Name)
-		assertNotEmpty(t, info.ARN)
+		assertNotEmpty(t, info.ResourceID)
 	})
 
 	t.Run("empty name error", func(t *testing.T) {
