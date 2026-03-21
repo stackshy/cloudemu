@@ -3,12 +3,20 @@ package vnet
 
 import (
 	"context"
+	"time"
 
 	"github.com/stackshy/cloudemu/config"
 	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
 	"github.com/stackshy/cloudemu/networking/driver"
+)
+
+// Time format and mock constants.
+const (
+	timeFormat                = time.RFC3339
+	maxOctetValue             = 256
+	defaultFlowLogRecordLimit = 10
 )
 
 // Compile-time check that Mock implements driver.Networking.
@@ -45,6 +53,11 @@ type Mock struct {
 	vpcs           *memstore.Store[*vpcData]
 	subnets        *memstore.Store[*subnetData]
 	securityGroups *memstore.Store[*sgData]
+	peerings       *memstore.Store[*peeringData]
+	natGateways    *memstore.Store[*natGatewayData]
+	flowLogs       *memstore.Store[*flowLogData]
+	routeTables    *memstore.Store[*routeTableData]
+	networkACLs    *memstore.Store[*networkACLData]
 	opts           *config.Options
 }
 
@@ -54,6 +67,11 @@ func New(opts *config.Options) *Mock {
 		vpcs:           memstore.New[*vpcData](),
 		subnets:        memstore.New[*subnetData](),
 		securityGroups: memstore.New[*sgData](),
+		peerings:       memstore.New[*peeringData](),
+		natGateways:    memstore.New[*natGatewayData](),
+		flowLogs:       memstore.New[*flowLogData](),
+		routeTables:    memstore.New[*routeTableData](),
+		networkACLs:    memstore.New[*networkACLData](),
 		opts:           opts,
 	}
 }
