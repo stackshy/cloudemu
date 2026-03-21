@@ -65,6 +65,11 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
 
+	tags := make(map[string]string, len(cfg.Tags))
+	for k, v := range cfg.Tags {
+		tags[k] = v
+	}
+
 	info := driver.CacheInfo{
 		Name:      cfg.Name,
 		NodeType:  nodeType,
@@ -72,6 +77,7 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		Status:    "available",
 		Endpoint:  endpoint,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:      tags,
 	}
 
 	cd := &cacheData{

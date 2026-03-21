@@ -172,9 +172,7 @@ func (l *Logging) PutLogEvents(ctx context.Context, logGroup, streamName string,
 }
 
 // GetLogEvents retrieves log events matching the query.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (l *Logging) GetLogEvents(ctx context.Context, input driver.LogQueryInput) ([]driver.LogEvent, error) {
+func (l *Logging) GetLogEvents(ctx context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
 	out, err := l.do(ctx, "GetLogEvents", input, func() (any, error) { return l.driver.GetLogEvents(ctx, input) })
 	if err != nil {
 		return nil, err

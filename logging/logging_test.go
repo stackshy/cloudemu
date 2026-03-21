@@ -206,7 +206,7 @@ func TestGetLogEvents(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		events, err := l.GetLogEvents(ctx, driver.LogQueryInput{
+		events, err := l.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup: "test-group",
 		})
 		require.NoError(t, err)
@@ -217,7 +217,7 @@ func TestGetLogEvents(t *testing.T) {
 	t.Run("nonexistent group error", func(t *testing.T) {
 		l := newTestLogging()
 
-		_, err := l.GetLogEvents(ctx, driver.LogQueryInput{
+		_, err := l.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup: "nope",
 		})
 		require.Error(t, err)
@@ -408,7 +408,7 @@ func TestAllOperationsRecorded(t *testing.T) {
 		{Timestamp: baseTime, Message: "test"},
 	})
 
-	_, _ = l.GetLogEvents(ctx, driver.LogQueryInput{LogGroup: "grp"})
+	_, _ = l.GetLogEvents(ctx, &driver.LogQueryInput{LogGroup: "grp"})
 	_ = l.DeleteLogStream(ctx, "grp", "s1")
 	_ = l.DeleteLogGroup(ctx, "grp")
 
@@ -492,7 +492,7 @@ func TestAllOperationsMetrics(t *testing.T) {
 		{Timestamp: baseTime, Message: "test"},
 	})
 
-	_, _ = l.GetLogEvents(ctx, driver.LogQueryInput{LogGroup: "grp"})
+	_, _ = l.GetLogEvents(ctx, &driver.LogQueryInput{LogGroup: "grp"})
 	_ = l.DeleteLogStream(ctx, "grp", "s1")
 	_ = l.DeleteLogGroup(ctx, "grp")
 

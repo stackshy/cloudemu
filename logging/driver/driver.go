@@ -58,5 +58,5 @@ type Logging interface {
 	ListLogStreams(ctx context.Context, logGroup string) ([]LogStreamInfo, error)
 
 	PutLogEvents(ctx context.Context, logGroup, streamName string, events []LogEvent) error
-	GetLogEvents(ctx context.Context, input LogQueryInput) ([]LogEvent, error)
+	GetLogEvents(ctx context.Context, input *LogQueryInput) ([]LogEvent, error)
 }

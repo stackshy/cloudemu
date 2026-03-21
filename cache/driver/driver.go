@@ -22,6 +22,7 @@ type CacheInfo struct {
 	Status    string
 	Endpoint  string
 	CreatedAt string
+	Tags      map[string]string
 }
 
 // CacheConfig describes a cache instance to create.

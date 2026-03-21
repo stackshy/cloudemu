@@ -374,7 +374,7 @@ func TestGetLogEvents(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		events, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		events, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup: "test-group",
 		})
 		require.NoError(t, err)
@@ -399,7 +399,7 @@ func TestGetLogEvents(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		events, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		events, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup:  "test-group",
 			LogStream: "test-stream",
 		})
@@ -420,7 +420,7 @@ func TestGetLogEvents(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		events, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		events, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup: "test-group",
 			Pattern:  "ERROR",
 		})
@@ -440,7 +440,7 @@ func TestGetLogEvents(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		events, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		events, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup:  "test-group",
 			StartTime: baseTime.Add(30 * time.Minute),
 			EndTime:   baseTime.Add(90 * time.Minute),
@@ -466,7 +466,7 @@ func TestGetLogEvents(t *testing.T) {
 		err := m.PutLogEvents(ctx, "test-group", "test-stream", events)
 		require.NoError(t, err)
 
-		result, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		result, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup: "test-group",
 			Limit:    3,
 		})
@@ -478,7 +478,7 @@ func TestGetLogEvents(t *testing.T) {
 	t.Run("nonexistent group error", func(t *testing.T) {
 		m := newTestMock()
 
-		_, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		_, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup: "no-group",
 		})
 		require.Error(t, err)
@@ -490,7 +490,7 @@ func TestGetLogEvents(t *testing.T) {
 		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
 		require.NoError(t, err)
 
-		events, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		events, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup:  "grp",
 			LogStream: "no-stream",
 		})
@@ -514,7 +514,7 @@ func TestGetLogEvents(t *testing.T) {
 		err := m.PutLogEvents(ctx, "test-group", "test-stream", events)
 		require.NoError(t, err)
 
-		result, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		result, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup: "test-group",
 		})
 		require.NoError(t, err)
@@ -528,7 +528,7 @@ func TestGetLogEvents(t *testing.T) {
 		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "empty-grp"})
 		require.NoError(t, err)
 
-		events, err := m.GetLogEvents(ctx, driver.LogQueryInput{
+		events, err := m.GetLogEvents(ctx, &driver.LogQueryInput{
 			LogGroup: "empty-grp",
 		})
 		require.NoError(t, err)

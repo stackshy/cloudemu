@@ -67,6 +67,11 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 	selfLink := idgen.GCPID(m.opts.ProjectID, "instances", cfg.Name)
 	endpoint := fmt.Sprintf("%s.redis.%s.gcp.cloud:%d", cfg.Name, m.opts.Region, defaultRedisPort)
 
+	tags := make(map[string]string, len(cfg.Tags))
+	for k, v := range cfg.Tags {
+		tags[k] = v
+	}
+
 	info := driver.CacheInfo{
 		Name:      selfLink,
 		NodeType:  nodeType,
@@ -74,6 +79,7 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		Status:    "READY",
 		Endpoint:  endpoint,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:      tags,
 	}
 
 	cd := &cacheData{
