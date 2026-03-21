@@ -305,7 +305,7 @@ func (m *Mock) ListObjects(ctx context.Context, bucket string, opts driver.ListO
 	}, nil
 }
 
-func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src driver.CopySource) error {
+func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
 	srcBkt, ok := m.buckets.Get(src.Bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "source bucket %q not found", src.Bucket)
@@ -335,9 +335,14 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 		Metadata: meta,
 	})
 
+	dims := map[string]string{"bucket_name": dstBucket}
+	m.emitMetric(ctx, "api/request_count", 1, dims)
+
 	return nil
 }
 
+// GeneratePresignedURL generates a mock presigned URL.
+// Note: expiry is tracked in the URL but not enforced on use — this is a mock limitation.
 func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRequest) (*driver.PresignedURL, error) {
 	if req.Method != http.MethodGet && req.Method != http.MethodPut {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "method must be GET or PUT, got %q", req.Method)
@@ -503,7 +508,7 @@ func (m *Mock) UploadPart(
 }
 
 func (m *Mock) CompleteMultipartUpload(
-	_ context.Context, bucket, key, uploadID string, _ []driver.UploadPart,
+	ctx context.Context, bucket, key, uploadID string, parts []driver.UploadPart,
 ) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
@@ -515,7 +520,13 @@ func (m *Mock) CompleteMultipartUpload(
 		return cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
 	}
 
-	data := assembleGCSParts(mp.parts)
+	for _, p := range parts {
+		if _, exists := mp.parts[p.PartNumber]; !exists {
+			return cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
+		}
+	}
+
+	data := assembleGCSPartsInOrder(mp.parts, parts)
 
 	bkt.objects.Set(key, &gcsObject{
 		Key:          key,
@@ -528,20 +539,17 @@ func (m *Mock) CompleteMultipartUpload(
 
 	bkt.multiparts.Delete(uploadID)
 
+	dims := map[string]string{"bucket_name": bucket}
+	m.emitMetric(ctx, "api/request_count", 1, dims)
+	m.emitMetric(ctx, "network/received_bytes_count", float64(len(data)), dims)
+
 	return nil
 }
 
-func assembleGCSParts(parts map[int][]byte) []byte {
-	keys := make([]int, 0, len(parts))
-	for k := range parts {
-		keys = append(keys, k)
-	}
-
-	sort.Ints(keys)
-
+func assembleGCSPartsInOrder(allParts map[int][]byte, parts []driver.UploadPart) []byte {
 	var data []byte
-	for _, k := range keys {
-		data = append(data, parts[k]...)
+	for _, p := range parts {
+		data = append(data, allParts[p.PartNumber]...)
 	}
 
 	return data
@@ -587,6 +595,8 @@ func (m *Mock) ListMultipartUploads(_ context.Context, bucket string) ([]driver.
 	return result, nil
 }
 
+// SetBucketVersioning enables or disables versioning on a bucket.
+// Note: this sets the flag but does not maintain object version history — mock limitation.
 func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled bool) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {

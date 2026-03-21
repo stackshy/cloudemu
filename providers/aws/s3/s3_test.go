@@ -670,6 +670,88 @@ func monitoringGetInput(metricName, bucket string, fc *config.FakeClock) mondriv
 	}
 }
 
+func TestCompleteMultipartUploadPartsValidation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("only part 1 yields part 1 data", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "bkt", "file1.bin", "application/octet-stream")
+		requireNoError(t, err)
+
+		part1, err := m.UploadPart(ctx, "bkt", "file1.bin", mp.UploadID, 1, []byte("AAAA"))
+		requireNoError(t, err)
+		_, err = m.UploadPart(ctx, "bkt", "file1.bin", mp.UploadID, 2, []byte("BBBB"))
+		requireNoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "bkt", "file1.bin", mp.UploadID, []driver.UploadPart{*part1})
+		requireNoError(t, err)
+
+		obj, err := m.GetObject(ctx, "bkt", "file1.bin")
+		requireNoError(t, err)
+		assertEqual(t, "AAAA", string(obj.Data))
+	})
+
+	t.Run("reversed order yields part2+part1 data", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "bkt", "file2.bin", "application/octet-stream")
+		requireNoError(t, err)
+
+		part1, err := m.UploadPart(ctx, "bkt", "file2.bin", mp.UploadID, 1, []byte("AAAA"))
+		requireNoError(t, err)
+		part2, err := m.UploadPart(ctx, "bkt", "file2.bin", mp.UploadID, 2, []byte("BBBB"))
+		requireNoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "bkt", "file2.bin", mp.UploadID, []driver.UploadPart{*part2, *part1})
+		requireNoError(t, err)
+
+		obj, err := m.GetObject(ctx, "bkt", "file2.bin")
+		requireNoError(t, err)
+		assertEqual(t, "BBBBAAAA", string(obj.Data))
+	})
+
+	t.Run("non-existent part 99 returns error", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "bkt", "file3.bin", "application/octet-stream")
+		requireNoError(t, err)
+
+		_, err = m.UploadPart(ctx, "bkt", "file3.bin", mp.UploadID, 1, []byte("AAAA"))
+		requireNoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "bkt", "file3.bin", mp.UploadID, []driver.UploadPart{
+			{PartNumber: 99, ETag: "fake"},
+		})
+		assertError(t, err, true)
+	})
+}
+
+func TestCopyObjectMetrics(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
+	m := New(opts)
+	ctx := context.Background()
+
+	cw := cloudwatch.New(opts)
+	m.SetMonitoring(cw)
+
+	_ = m.CreateBucket(ctx, "src-bkt")
+	_ = m.CreateBucket(ctx, "dst-bkt")
+	_ = m.PutObject(ctx, "src-bkt", "file.txt", []byte("data"), "text/plain", nil)
+
+	err := m.CopyObject(ctx, "dst-bkt", "copy.txt", driver.CopySource{Bucket: "src-bkt", Key: "file.txt"})
+	requireNoError(t, err)
+
+	result, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+		Namespace:  "AWS/S3",
+		MetricName: "AllRequests",
+		Dimensions: map[string]string{"BucketName": "dst-bkt"},
+		StartTime:  fc.Now().Add(-1 * time.Hour),
+		EndTime:    fc.Now().Add(1 * time.Hour),
+		Period:     60,
+		Stat:       "Sum",
+	})
+	requireNoError(t, err)
+	assertEqual(t, true, len(result.Values) > 0)
+}
+
 // --- test helpers (no if/else, use t.Fatal/t.Errorf) ---
 
 func requireNoError(t *testing.T, err error) {

@@ -553,6 +553,91 @@ func TestMetricsEmission(t *testing.T) {
 	})
 }
 
+func TestCompleteMultipartUploadPartsValidation(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	require.NoError(t, m.CreateBucket(ctx, "mp-val"))
+
+	t.Run("only part 1 yields part 1 data", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "mp-val", "file1.bin", "application/octet-stream")
+		require.NoError(t, err)
+
+		part1, err := m.UploadPart(ctx, "mp-val", "file1.bin", mp.UploadID, 1, []byte("AAAA"))
+		require.NoError(t, err)
+		_, err = m.UploadPart(ctx, "mp-val", "file1.bin", mp.UploadID, 2, []byte("BBBB"))
+		require.NoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "mp-val", "file1.bin", mp.UploadID, []driver.UploadPart{*part1})
+		require.NoError(t, err)
+
+		obj, err := m.GetObject(ctx, "mp-val", "file1.bin")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("AAAA"), obj.Data)
+	})
+
+	t.Run("reversed order yields part2+part1 data", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "mp-val", "file2.bin", "application/octet-stream")
+		require.NoError(t, err)
+
+		part1, err := m.UploadPart(ctx, "mp-val", "file2.bin", mp.UploadID, 1, []byte("AAAA"))
+		require.NoError(t, err)
+		part2, err := m.UploadPart(ctx, "mp-val", "file2.bin", mp.UploadID, 2, []byte("BBBB"))
+		require.NoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "mp-val", "file2.bin", mp.UploadID, []driver.UploadPart{*part2, *part1})
+		require.NoError(t, err)
+
+		obj, err := m.GetObject(ctx, "mp-val", "file2.bin")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("BBBBAAAA"), obj.Data)
+	})
+
+	t.Run("non-existent part 99 returns error", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "mp-val", "file3.bin", "application/octet-stream")
+		require.NoError(t, err)
+
+		_, err = m.UploadPart(ctx, "mp-val", "file3.bin", mp.UploadID, 1, []byte("AAAA"))
+		require.NoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "mp-val", "file3.bin", mp.UploadID, []driver.UploadPart{
+			{PartNumber: 99, ETag: "fake"},
+		})
+		require.Error(t, err)
+	})
+}
+
+func TestCopyObjectMetrics(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(clk), config.WithRegion("us-central1"), config.WithProjectID("test-project"))
+
+	monOpts := config.NewOptions(config.WithClock(clk))
+	mon := newMonitoringMock(monOpts)
+
+	m := New(opts)
+	m.SetMonitoring(mon)
+
+	require.NoError(t, m.CreateBucket(ctx, "src"))
+	require.NoError(t, m.CreateBucket(ctx, "dst"))
+	require.NoError(t, m.PutObject(ctx, "src", "file.txt", []byte("data"), "text/plain", nil))
+
+	err := m.CopyObject(ctx, "dst", "copy.txt", driver.CopySource{Bucket: "src", Key: "file.txt"})
+	require.NoError(t, err)
+
+	result, getErr := mon.GetMetricData(ctx, mondriver.GetMetricInput{
+		Namespace:  "storage.googleapis.com",
+		MetricName: "api/request_count",
+		Dimensions: map[string]string{"bucket_name": "dst"},
+		StartTime:  clk.Now().Add(-time.Minute),
+		EndTime:    clk.Now().Add(time.Minute),
+		Period:     60,
+		Stat:       "Sum",
+	})
+	require.NoError(t, getErr)
+	assert.NotEmpty(t, result.Values)
+}
+
 // newMonitoringMock creates a Cloud Monitoring mock for testing metric emission.
 func newMonitoringMock(opts *config.Options) *monitoringMock {
 	return &monitoringMock{

@@ -571,6 +571,78 @@ func TestMetricsEmission(t *testing.T) {
 	})
 }
 
+func TestCompleteMultipartUploadPartsValidation(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	require.NoError(t, m.CreateBucket(ctx, "mp-val"))
+
+	t.Run("only part 1 yields part 1 data", func(t *testing.T) {
+		upload, err := m.CreateMultipartUpload(ctx, "mp-val", "file1.bin", "application/octet-stream")
+		require.NoError(t, err)
+
+		part1, err := m.UploadPart(ctx, "mp-val", "file1.bin", upload.UploadID, 1, []byte("AAAA"))
+		require.NoError(t, err)
+		_, err = m.UploadPart(ctx, "mp-val", "file1.bin", upload.UploadID, 2, []byte("BBBB"))
+		require.NoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "mp-val", "file1.bin", upload.UploadID, []driver.UploadPart{*part1})
+		require.NoError(t, err)
+
+		obj, err := m.GetObject(ctx, "mp-val", "file1.bin")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("AAAA"), obj.Data)
+	})
+
+	t.Run("reversed order yields part2+part1 data", func(t *testing.T) {
+		upload, err := m.CreateMultipartUpload(ctx, "mp-val", "file2.bin", "application/octet-stream")
+		require.NoError(t, err)
+
+		part1, err := m.UploadPart(ctx, "mp-val", "file2.bin", upload.UploadID, 1, []byte("AAAA"))
+		require.NoError(t, err)
+		part2, err := m.UploadPart(ctx, "mp-val", "file2.bin", upload.UploadID, 2, []byte("BBBB"))
+		require.NoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "mp-val", "file2.bin", upload.UploadID, []driver.UploadPart{*part2, *part1})
+		require.NoError(t, err)
+
+		obj, err := m.GetObject(ctx, "mp-val", "file2.bin")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("BBBBAAAA"), obj.Data)
+	})
+
+	t.Run("non-existent part 99 returns error", func(t *testing.T) {
+		upload, err := m.CreateMultipartUpload(ctx, "mp-val", "file3.bin", "application/octet-stream")
+		require.NoError(t, err)
+
+		_, err = m.UploadPart(ctx, "mp-val", "file3.bin", upload.UploadID, 1, []byte("AAAA"))
+		require.NoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "mp-val", "file3.bin", upload.UploadID, []driver.UploadPart{
+			{PartNumber: 99, ETag: "fake"},
+		})
+		require.Error(t, err)
+	})
+}
+
+func TestCopyObjectMetrics(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(clk), config.WithRegion("eastus"))
+	m := New(opts)
+
+	mon := &metricsCollector{}
+	m.SetMonitoring(mon)
+
+	require.NoError(t, m.CreateBucket(ctx, "src-bucket"))
+	require.NoError(t, m.CreateBucket(ctx, "dst-bucket"))
+	require.NoError(t, m.PutObject(ctx, "src-bucket", "file.txt", []byte("data"), "text/plain", nil))
+
+	mon.reset()
+	err := m.CopyObject(ctx, "dst-bucket", "copy.txt", driver.CopySource{Bucket: "src-bucket", Key: "file.txt"})
+	require.NoError(t, err)
+	assert.True(t, mon.hasMetric("Microsoft.Storage/storageAccounts", "Transactions"))
+}
+
 // metricsCollector is a simple monitoring stub that records emitted metrics.
 type metricsCollector struct {
 	data []mondriver.MetricDatum

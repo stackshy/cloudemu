@@ -340,9 +340,13 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 		Metadata: meta,
 	})
 
+	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})
+
 	return nil
 }
 
+// GeneratePresignedURL generates a mock presigned URL.
+// Note: expiry is tracked in the URL but not enforced on use — this is a mock limitation.
 func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRequest) (*driver.PresignedURL, error) {
 	if req.Method != http.MethodGet && req.Method != http.MethodPut {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "method must be GET or PUT, got %q", req.Method)
@@ -509,7 +513,7 @@ func (m *Mock) UploadPart(
 }
 
 func (m *Mock) CompleteMultipartUpload(
-	_ context.Context, bucket, key, uploadID string, _ []driver.UploadPart,
+	_ context.Context, bucket, key, uploadID string, parts []driver.UploadPart,
 ) error {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {
@@ -521,7 +525,13 @@ func (m *Mock) CompleteMultipartUpload(
 		return cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
 	}
 
-	data := assembleBlobParts(mp.parts)
+	for _, p := range parts {
+		if _, exists := mp.parts[p.PartNumber]; !exists {
+			return cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
+		}
+	}
+
+	data := assembleBlobPartsInOrder(mp.parts, parts)
 
 	ctr.objects.Set(key, &blobObject{
 		Key:          key,
@@ -534,20 +544,15 @@ func (m *Mock) CompleteMultipartUpload(
 
 	ctr.multiparts.Delete(uploadID)
 
+	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(len(data))})
+
 	return nil
 }
 
-func assembleBlobParts(parts map[int][]byte) []byte {
-	keys := make([]int, 0, len(parts))
-	for k := range parts {
-		keys = append(keys, k)
-	}
-
-	sort.Ints(keys)
-
+func assembleBlobPartsInOrder(allParts map[int][]byte, parts []driver.UploadPart) []byte {
 	var data []byte
-	for _, k := range keys {
-		data = append(data, parts[k]...)
+	for _, p := range parts {
+		data = append(data, allParts[p.PartNumber]...)
 	}
 
 	return data
@@ -593,6 +598,8 @@ func (m *Mock) ListMultipartUploads(_ context.Context, bucket string) ([]driver.
 	return result, nil
 }
 
+// SetBucketVersioning enables or disables versioning on a bucket.
+// Note: this sets the flag but does not maintain object version history — mock limitation.
 func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled bool) error {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {
