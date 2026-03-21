@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
 	"github.com/stackshy/cloudemu/logging/driver"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
 const (
@@ -35,8 +36,31 @@ type logGroup struct {
 
 // Mock is an in-memory mock implementation of GCP Cloud Logging.
 type Mock struct {
-	groups *memstore.Store[*logGroup]
-	opts   *config.Options
+	groups     *memstore.Store[*logGroup]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(ctx, []mondriver.MetricDatum{
+		{
+			Namespace:  "logging.googleapis.com",
+			MetricName: metricName,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: dims,
+			Timestamp:  m.opts.Clock.Now(),
+		},
+	})
 }
 
 // New creates a new Cloud Logging mock with the given configuration options.
@@ -190,7 +214,7 @@ func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogS
 }
 
 // PutLogEvents writes log events to a stream.
-func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, events []driver.LogEvent) error {
+func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, events []driver.LogEvent) error {
 	g, ok := m.groups.Get(groupName)
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", groupName)
@@ -222,6 +246,10 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 		lg.info.StoredBytes += totalBytes
 		return lg
 	})
+
+	dims := map[string]string{"log_group": groupName}
+	m.emitMetric(ctx, "api/request_count", 1, dims)
+	m.emitMetric(ctx, "byte_count", float64(totalBytes), dims)
 
 	return nil
 }

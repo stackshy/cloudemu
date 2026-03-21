@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
 	"github.com/stackshy/cloudemu/logging/driver"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
 const (
@@ -35,8 +36,25 @@ type logGroup struct {
 
 // Mock is an in-memory mock implementation of the AWS CloudWatch Logs service.
 type Mock struct {
-	groups *memstore.Store[*logGroup]
-	opts   *config.Options
+	groups     *memstore.Store[*logGroup]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(metricName string, value float64, unit string, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
+		Namespace: "AWS/Logs", MetricName: metricName, Value: value, Unit: unit,
+		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+	}})
 }
 
 // New creates a new CloudWatch Logs mock with the given configuration options.
@@ -223,6 +241,10 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 		lg.info.StoredBytes += totalBytes
 		return lg
 	})
+
+	dims := map[string]string{"LogGroupName": groupName}
+	m.emitMetric("IncomingLogEvents", float64(len(events)), "Count", dims)
+	m.emitMetric("IncomingBytes", float64(totalBytes), "Bytes", dims)
 
 	return nil
 }

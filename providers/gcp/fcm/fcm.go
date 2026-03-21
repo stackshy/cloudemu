@@ -9,6 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	"github.com/stackshy/cloudemu/notification/driver"
 )
 
@@ -32,8 +33,31 @@ type topicData struct {
 
 // Mock is an in-memory mock implementation of GCP Firebase Cloud Messaging.
 type Mock struct {
-	topics *memstore.Store[*topicData]
-	opts   *config.Options
+	topics     *memstore.Store[*topicData]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(ctx, []mondriver.MetricDatum{
+		{
+			Namespace:  "fcm.googleapis.com",
+			MetricName: metricName,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: dims,
+			Timestamp:  m.opts.Clock.Now(),
+		},
+	})
 }
 
 // New creates a new FCM mock with the given configuration options.
@@ -183,7 +207,7 @@ func (m *Mock) ListSubscriptions(_ context.Context, topicID string) ([]driver.Su
 }
 
 // Publish publishes a message to an FCM topic.
-func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
+func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
 	td, ok := m.topics.Get(input.TopicID)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "topic %q not found", input.TopicID)
@@ -209,6 +233,8 @@ func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.Pu
 		Attributes: attrs,
 	})
 	td.mu.Unlock()
+
+	m.emitMetric(ctx, "message_count", 1, map[string]string{"topic_name": input.TopicID})
 
 	return &driver.PublishOutput{MessageID: msgID}, nil
 }
