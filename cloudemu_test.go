@@ -27,6 +27,8 @@ import (
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 
 	cachedriver "github.com/stackshy/cloudemu/cache/driver"
+	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
+	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
 	loggingdriver "github.com/stackshy/cloudemu/logging/driver"
 	notifdriver "github.com/stackshy/cloudemu/notification/driver"
 	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
@@ -2399,4 +2401,3172 @@ func TestLogQueryInputPointer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Container Registry Tests
+// ---------------------------------------------------------------------------
+
+func TestContainerRegistryOperations(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    crdriver.ContainerRegistry
+	}{
+		{"AWS", awsP.ECR},
+		{"Azure", azureP.ACR},
+		{"GCP", gcpP.ArtifactRegistry},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			// CreateRepository
+			repo, err := p.d.CreateRepository(ctx, crdriver.RepositoryConfig{
+				Name:               "my-app",
+				Tags:               map[string]string{"env": "test"},
+				ImageTagMutability: "MUTABLE",
+			})
+			if err != nil {
+				t.Fatalf("CreateRepository: %v", err)
+			}
+			if repo == nil {
+				t.Fatalf("expected non-nil repo")
+			}
+
+			// GetRepository
+			got, err := p.d.GetRepository(ctx, "my-app")
+			if err != nil {
+				t.Fatalf("GetRepository: %v", err)
+			}
+			if got == nil {
+				t.Fatalf("expected non-nil repo from Get")
+			}
+
+			// ListRepositories
+			repos, err := p.d.ListRepositories(ctx)
+			if err != nil {
+				t.Fatalf("ListRepositories: %v", err)
+			}
+			if len(repos) != 1 {
+				t.Errorf("expected 1 repo, got %d", len(repos))
+			}
+
+			// PutImage
+			img, err := p.d.PutImage(ctx, &crdriver.ImageManifest{
+				Repository: "my-app",
+				Tag:        "v1.0",
+				Digest:     "sha256:abc123",
+				MediaType:  "application/vnd.docker.distribution.manifest.v2+json",
+				SizeBytes:  1024,
+			})
+			if err != nil {
+				t.Fatalf("PutImage: %v", err)
+			}
+			if len(img.Tags) == 0 {
+				t.Errorf("expected at least one tag on image")
+			}
+
+			// GetImage
+			imgDetail, err := p.d.GetImage(ctx, "my-app", "v1.0")
+			if err != nil {
+				t.Fatalf("GetImage: %v", err)
+			}
+			if imgDetail.Digest != "sha256:abc123" {
+				t.Errorf("expected digest sha256:abc123, got %s", imgDetail.Digest)
+			}
+
+			// ListImages
+			images, err := p.d.ListImages(ctx, "my-app")
+			if err != nil {
+				t.Fatalf("ListImages: %v", err)
+			}
+			if len(images) != 1 {
+				t.Errorf("expected 1 image, got %d", len(images))
+			}
+
+			// TagImage
+			err = p.d.TagImage(ctx, "my-app", "v1.0", "latest")
+			if err != nil {
+				t.Fatalf("TagImage: %v", err)
+			}
+			imgDetail2, err := p.d.GetImage(ctx, "my-app", "latest")
+			if err != nil {
+				t.Fatalf("GetImage after TagImage: %v", err)
+			}
+			if imgDetail2.Digest != "sha256:abc123" {
+				t.Errorf("expected same digest after tagging, got %s", imgDetail2.Digest)
+			}
+
+			// DeleteImage
+			err = p.d.DeleteImage(ctx, "my-app", "v1.0")
+			if err != nil {
+				t.Fatalf("DeleteImage: %v", err)
+			}
+
+			// DeleteRepository
+			err = p.d.DeleteRepository(ctx, "my-app", true)
+			if err != nil {
+				t.Fatalf("DeleteRepository: %v", err)
+			}
+			_, err = p.d.GetRepository(ctx, "my-app")
+			if err == nil {
+				t.Errorf("expected error after deleting repo, got nil")
+			}
+		})
+	}
+}
+
+func TestContainerRegistryImmutableTags(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    crdriver.ContainerRegistry
+	}{
+		{"AWS", awsP.ECR},
+		{"Azure", azureP.ACR},
+		{"GCP", gcpP.ArtifactRegistry},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			_, err := p.d.CreateRepository(ctx, crdriver.RepositoryConfig{
+				Name:               "immutable-repo",
+				ImageTagMutability: "IMMUTABLE",
+			})
+			if err != nil {
+				t.Fatalf("CreateRepository: %v", err)
+			}
+
+			_, err = p.d.PutImage(ctx, &crdriver.ImageManifest{
+				Repository: "immutable-repo",
+				Tag:        "v1.0",
+				Digest:     "sha256:first",
+				SizeBytes:  512,
+			})
+			if err != nil {
+				t.Fatalf("PutImage first: %v", err)
+			}
+
+			// Push duplicate tag should fail on IMMUTABLE
+			_, err = p.d.PutImage(ctx, &crdriver.ImageManifest{
+				Repository: "immutable-repo",
+				Tag:        "v1.0",
+				Digest:     "sha256:second",
+				SizeBytes:  512,
+			})
+			if err == nil {
+				t.Errorf("expected error pushing duplicate tag to immutable repo, got nil")
+			}
+		})
+	}
+}
+
+func TestContainerRegistryLifecyclePolicy(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    crdriver.ContainerRegistry
+	}{
+		{"AWS", awsP.ECR},
+		{"Azure", azureP.ACR},
+		{"GCP", gcpP.ArtifactRegistry},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			_, err := p.d.CreateRepository(ctx, crdriver.RepositoryConfig{
+				Name:               "lifecycle-repo",
+				ImageTagMutability: "MUTABLE",
+			})
+			if err != nil {
+				t.Fatalf("CreateRepository: %v", err)
+			}
+
+			policy := crdriver.LifecyclePolicy{
+				Rules: []crdriver.LifecycleRule{
+					{
+						Priority:    1,
+						Description: "expire untagged",
+						TagStatus:   "untagged",
+						CountType:   "imageCountMoreThan",
+						CountValue:  5,
+						Action:      "expire",
+					},
+				},
+			}
+			err = p.d.PutLifecyclePolicy(ctx, "lifecycle-repo", policy)
+			if err != nil {
+				t.Fatalf("PutLifecyclePolicy: %v", err)
+			}
+
+			got, err := p.d.GetLifecyclePolicy(ctx, "lifecycle-repo")
+			if err != nil {
+				t.Fatalf("GetLifecyclePolicy: %v", err)
+			}
+			if len(got.Rules) != 1 {
+				t.Errorf("expected 1 lifecycle rule, got %d", len(got.Rules))
+			}
+
+			_, err = p.d.EvaluateLifecyclePolicy(ctx, "lifecycle-repo")
+			if err != nil {
+				t.Fatalf("EvaluateLifecyclePolicy: %v", err)
+			}
+		})
+	}
+}
+
+func TestContainerRegistryImageScan(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    crdriver.ContainerRegistry
+	}{
+		{"AWS", awsP.ECR},
+		{"Azure", azureP.ACR},
+		{"GCP", gcpP.ArtifactRegistry},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			_, err := p.d.CreateRepository(ctx, crdriver.RepositoryConfig{
+				Name:               "scan-repo",
+				ImageTagMutability: "MUTABLE",
+				ImageScanOnPush:    true,
+			})
+			if err != nil {
+				t.Fatalf("CreateRepository: %v", err)
+			}
+
+			_, err = p.d.PutImage(ctx, &crdriver.ImageManifest{
+				Repository: "scan-repo",
+				Tag:        "latest",
+				Digest:     "sha256:scanme",
+				SizeBytes:  2048,
+			})
+			if err != nil {
+				t.Fatalf("PutImage: %v", err)
+			}
+
+			scanResult, err := p.d.StartImageScan(ctx, "scan-repo", "latest")
+			if err != nil {
+				t.Fatalf("StartImageScan: %v", err)
+			}
+			if scanResult.Status == "" {
+				t.Errorf("expected scan status, got empty")
+			}
+
+			results, err := p.d.GetImageScanResults(ctx, "scan-repo", "latest")
+			if err != nil {
+				t.Fatalf("GetImageScanResults: %v", err)
+			}
+			if results.Repository != "scan-repo" {
+				t.Errorf("expected repository scan-repo, got %s", results.Repository)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Event Bus Tests
+// ---------------------------------------------------------------------------
+
+func TestEventBusOperations(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    ebdriver.EventBus
+	}{
+		{"AWS", awsP.EventBridge},
+		{"Azure", azureP.EventGrid},
+		{"GCP", gcpP.Eventarc},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			// CreateEventBus
+			bus, err := p.d.CreateEventBus(ctx, ebdriver.EventBusConfig{
+				Name: "test-bus",
+				Tags: map[string]string{"env": "test"},
+			})
+			if err != nil {
+				t.Fatalf("CreateEventBus: %v", err)
+			}
+			if bus.Name != "test-bus" {
+				t.Errorf("expected bus name test-bus, got %s", bus.Name)
+			}
+
+			// GetEventBus
+			gotBus, err := p.d.GetEventBus(ctx, "test-bus")
+			if err != nil {
+				t.Fatalf("GetEventBus: %v", err)
+			}
+			if gotBus.Name != "test-bus" {
+				t.Errorf("expected test-bus, got %s", gotBus.Name)
+			}
+
+			// ListEventBuses
+			buses, err := p.d.ListEventBuses(ctx)
+			if err != nil {
+				t.Fatalf("ListEventBuses: %v", err)
+			}
+			if len(buses) < 1 {
+				t.Errorf("expected at least 1 bus, got %d", len(buses))
+			}
+
+			// PutRule
+			rule, err := p.d.PutRule(ctx, &ebdriver.RuleConfig{
+				Name:         "test-rule",
+				EventBus:     "test-bus",
+				Description:  "test rule",
+				EventPattern: `{"source":["my.app"]}`,
+				State:        "ENABLED",
+			})
+			if err != nil {
+				t.Fatalf("PutRule: %v", err)
+			}
+			if rule.Name != "test-rule" {
+				t.Errorf("expected rule name test-rule, got %s", rule.Name)
+			}
+
+			// GetRule
+			gotRule, err := p.d.GetRule(ctx, "test-bus", "test-rule")
+			if err != nil {
+				t.Fatalf("GetRule: %v", err)
+			}
+			if gotRule.State != "ENABLED" {
+				t.Errorf("expected ENABLED, got %s", gotRule.State)
+			}
+
+			// ListRules
+			rules, err := p.d.ListRules(ctx, "test-bus")
+			if err != nil {
+				t.Fatalf("ListRules: %v", err)
+			}
+			if len(rules) != 1 {
+				t.Errorf("expected 1 rule, got %d", len(rules))
+			}
+
+			// DisableRule
+			err = p.d.DisableRule(ctx, "test-bus", "test-rule")
+			if err != nil {
+				t.Fatalf("DisableRule: %v", err)
+			}
+			gotRule, err = p.d.GetRule(ctx, "test-bus", "test-rule")
+			if err != nil {
+				t.Fatalf("GetRule after disable: %v", err)
+			}
+			if gotRule.State != "DISABLED" {
+				t.Errorf("expected DISABLED, got %s", gotRule.State)
+			}
+
+			// EnableRule
+			err = p.d.EnableRule(ctx, "test-bus", "test-rule")
+			if err != nil {
+				t.Fatalf("EnableRule: %v", err)
+			}
+
+			// PutTargets
+			err = p.d.PutTargets(ctx, "test-bus", "test-rule", []ebdriver.Target{
+				{ID: "target-1", ARN: "arn:aws:lambda:us-east-1:123456:function:my-func"},
+			})
+			if err != nil {
+				t.Fatalf("PutTargets: %v", err)
+			}
+
+			// ListTargets
+			targets, err := p.d.ListTargets(ctx, "test-bus", "test-rule")
+			if err != nil {
+				t.Fatalf("ListTargets: %v", err)
+			}
+			if len(targets) != 1 {
+				t.Errorf("expected 1 target, got %d", len(targets))
+			}
+
+			// RemoveTargets
+			err = p.d.RemoveTargets(ctx, "test-bus", "test-rule", []string{"target-1"})
+			if err != nil {
+				t.Fatalf("RemoveTargets: %v", err)
+			}
+			targets, err = p.d.ListTargets(ctx, "test-bus", "test-rule")
+			if err != nil {
+				t.Fatalf("ListTargets after remove: %v", err)
+			}
+			if len(targets) != 0 {
+				t.Errorf("expected 0 targets after remove, got %d", len(targets))
+			}
+
+			// DeleteRule
+			err = p.d.DeleteRule(ctx, "test-bus", "test-rule")
+			if err != nil {
+				t.Fatalf("DeleteRule: %v", err)
+			}
+
+			// DeleteEventBus
+			err = p.d.DeleteEventBus(ctx, "test-bus")
+			if err != nil {
+				t.Fatalf("DeleteEventBus: %v", err)
+			}
+			_, err = p.d.GetEventBus(ctx, "test-bus")
+			if err == nil {
+				t.Errorf("expected error after deleting bus, got nil")
+			}
+		})
+	}
+}
+
+func TestEventPatternMatching(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    ebdriver.EventBus
+	}{
+		{"AWS", awsP.EventBridge},
+		{"Azure", azureP.EventGrid},
+		{"GCP", gcpP.Eventarc},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			_, err := p.d.CreateEventBus(ctx, ebdriver.EventBusConfig{Name: "pattern-bus"})
+			if err != nil {
+				t.Fatalf("CreateEventBus: %v", err)
+			}
+
+			_, err = p.d.PutRule(ctx, &ebdriver.RuleConfig{
+				Name:         "pattern-rule",
+				EventBus:     "pattern-bus",
+				EventPattern: `{"source":["my.app"]}`,
+				State:        "ENABLED",
+			})
+			if err != nil {
+				t.Fatalf("PutRule: %v", err)
+			}
+
+			result, err := p.d.PutEvents(ctx, []ebdriver.Event{
+				{
+					Source:     "my.app",
+					DetailType: "OrderCreated",
+					Detail:     `{"orderId":"123"}`,
+					EventBus:   "pattern-bus",
+				},
+			})
+			if err != nil {
+				t.Fatalf("PutEvents: %v", err)
+			}
+			if result.SuccessCount != 1 {
+				t.Errorf("expected 1 success, got %d", result.SuccessCount)
+			}
+
+			history, err := p.d.GetEventHistory(ctx, "pattern-bus", 10)
+			if err != nil {
+				t.Fatalf("GetEventHistory: %v", err)
+			}
+			if len(history) < 1 {
+				t.Errorf("expected at least 1 event in history, got %d", len(history))
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Storage Enhancement Tests
+// ---------------------------------------------------------------------------
+
+func TestPresignedURLs(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    storagedriver.Bucket
+	}{
+		{"AWS", awsP.S3},
+		{"Azure", azureP.BlobStorage},
+		{"GCP", gcpP.GCS},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.d.CreateBucket(ctx, "presign-bucket")
+			if err != nil {
+				t.Fatalf("CreateBucket: %v", err)
+			}
+			err = p.d.PutObject(ctx, "presign-bucket", "test.txt", []byte("hello"), "text/plain", nil)
+			if err != nil {
+				t.Fatalf("PutObject: %v", err)
+			}
+
+			// GET presigned URL
+			getURL, err := p.d.GeneratePresignedURL(ctx, storagedriver.PresignedURLRequest{
+				Bucket:    "presign-bucket",
+				Key:       "test.txt",
+				Method:    "GET",
+				ExpiresIn: 15 * time.Minute,
+			})
+			if err != nil {
+				t.Fatalf("GeneratePresignedURL GET: %v", err)
+			}
+			if getURL.URL == "" {
+				t.Errorf("expected non-empty presigned URL")
+			}
+			if getURL.Method != "GET" {
+				t.Errorf("expected method GET, got %s", getURL.Method)
+			}
+
+			// PUT presigned URL
+			putURL, err := p.d.GeneratePresignedURL(ctx, storagedriver.PresignedURLRequest{
+				Bucket:    "presign-bucket",
+				Key:       "upload.txt",
+				Method:    "PUT",
+				ExpiresIn: 30 * time.Minute,
+			})
+			if err != nil {
+				t.Fatalf("GeneratePresignedURL PUT: %v", err)
+			}
+			if putURL.URL == "" {
+				t.Errorf("expected non-empty presigned URL")
+			}
+			if putURL.Method != "PUT" {
+				t.Errorf("expected method PUT, got %s", putURL.Method)
+			}
+		})
+	}
+}
+
+func TestBucketLifecycle(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	awsP := NewAWS(config.WithClock(clk))
+	azureP := NewAzure(config.WithClock(clk))
+	gcpP := NewGCP(config.WithClock(clk))
+
+	providers := []struct {
+		name string
+		d    storagedriver.Bucket
+	}{
+		{"AWS", awsP.S3},
+		{"Azure", azureP.BlobStorage},
+		{"GCP", gcpP.GCS},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.d.CreateBucket(ctx, "lc-bucket")
+			if err != nil {
+				t.Fatalf("CreateBucket: %v", err)
+			}
+
+			// Put objects
+			err = p.d.PutObject(ctx, "lc-bucket", "old-file.txt", []byte("old"), "text/plain", nil)
+			if err != nil {
+				t.Fatalf("PutObject: %v", err)
+			}
+
+			// Set lifecycle with 1-day expiration
+			err = p.d.PutLifecycleConfig(ctx, "lc-bucket", storagedriver.LifecycleConfig{
+				Rules: []storagedriver.LifecycleRule{
+					{
+						ID:             "expire-old",
+						Enabled:        true,
+						Prefix:         "",
+						ExpirationDays: 1,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("PutLifecycleConfig: %v", err)
+			}
+
+			gotLC, err := p.d.GetLifecycleConfig(ctx, "lc-bucket")
+			if err != nil {
+				t.Fatalf("GetLifecycleConfig: %v", err)
+			}
+			if len(gotLC.Rules) != 1 {
+				t.Errorf("expected 1 lifecycle rule, got %d", len(gotLC.Rules))
+			}
+
+			// Advance time past expiration
+			clk.Advance(48 * time.Hour)
+
+			expired, err := p.d.EvaluateLifecycle(ctx, "lc-bucket")
+			if err != nil {
+				t.Fatalf("EvaluateLifecycle: %v", err)
+			}
+			if len(expired) < 1 {
+				t.Errorf("expected at least 1 expired object, got %d", len(expired))
+			}
+		})
+	}
+}
+
+func TestMultipartUpload(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    storagedriver.Bucket
+	}{
+		{"AWS", awsP.S3},
+		{"Azure", azureP.BlobStorage},
+		{"GCP", gcpP.GCS},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.d.CreateBucket(ctx, "mp-bucket")
+			if err != nil {
+				t.Fatalf("CreateBucket: %v", err)
+			}
+
+			// Create multipart upload
+			upload, err := p.d.CreateMultipartUpload(ctx, "mp-bucket", "big-file.bin", "application/octet-stream")
+			if err != nil {
+				t.Fatalf("CreateMultipartUpload: %v", err)
+			}
+			if upload.UploadID == "" {
+				t.Fatalf("expected non-empty upload ID")
+			}
+
+			// Upload parts
+			part1, err := p.d.UploadPart(ctx, "mp-bucket", "big-file.bin", upload.UploadID, 1, []byte("part-one-"))
+			if err != nil {
+				t.Fatalf("UploadPart 1: %v", err)
+			}
+			part2, err := p.d.UploadPart(ctx, "mp-bucket", "big-file.bin", upload.UploadID, 2, []byte("part-two"))
+			if err != nil {
+				t.Fatalf("UploadPart 2: %v", err)
+			}
+
+			// List multipart uploads
+			uploads, err := p.d.ListMultipartUploads(ctx, "mp-bucket")
+			if err != nil {
+				t.Fatalf("ListMultipartUploads: %v", err)
+			}
+			if len(uploads) < 1 {
+				t.Errorf("expected at least 1 upload, got %d", len(uploads))
+			}
+
+			// Complete
+			err = p.d.CompleteMultipartUpload(ctx, "mp-bucket", "big-file.bin", upload.UploadID, []storagedriver.UploadPart{*part1, *part2})
+			if err != nil {
+				t.Fatalf("CompleteMultipartUpload: %v", err)
+			}
+
+			// Verify final object
+			obj, err := p.d.GetObject(ctx, "mp-bucket", "big-file.bin")
+			if err != nil {
+				t.Fatalf("GetObject after multipart: %v", err)
+			}
+			if string(obj.Data) != "part-one-part-two" {
+				t.Errorf("expected 'part-one-part-two', got '%s'", string(obj.Data))
+			}
+		})
+	}
+}
+
+func TestMultipartUploadAbort(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    storagedriver.Bucket
+	}{
+		{"AWS", awsP.S3},
+		{"Azure", azureP.BlobStorage},
+		{"GCP", gcpP.GCS},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.d.CreateBucket(ctx, "abort-bucket")
+			if err != nil {
+				t.Fatalf("CreateBucket: %v", err)
+			}
+
+			upload, err := p.d.CreateMultipartUpload(ctx, "abort-bucket", "aborted.bin", "application/octet-stream")
+			if err != nil {
+				t.Fatalf("CreateMultipartUpload: %v", err)
+			}
+
+			_, err = p.d.UploadPart(ctx, "abort-bucket", "aborted.bin", upload.UploadID, 1, []byte("data"))
+			if err != nil {
+				t.Fatalf("UploadPart: %v", err)
+			}
+
+			err = p.d.AbortMultipartUpload(ctx, "abort-bucket", "aborted.bin", upload.UploadID)
+			if err != nil {
+				t.Fatalf("AbortMultipartUpload: %v", err)
+			}
+
+			// Object should not exist
+			_, err = p.d.GetObject(ctx, "abort-bucket", "aborted.bin")
+			if err == nil {
+				t.Errorf("expected error getting object after abort, got nil")
+			}
+		})
+	}
+}
+
+func TestBucketVersioning(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    storagedriver.Bucket
+	}{
+		{"AWS", awsP.S3},
+		{"Azure", azureP.BlobStorage},
+		{"GCP", gcpP.GCS},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.d.CreateBucket(ctx, "ver-bucket")
+			if err != nil {
+				t.Fatalf("CreateBucket: %v", err)
+			}
+
+			// Default should be disabled
+			enabled, err := p.d.GetBucketVersioning(ctx, "ver-bucket")
+			if err != nil {
+				t.Fatalf("GetBucketVersioning: %v", err)
+			}
+			if enabled {
+				t.Errorf("expected versioning disabled by default")
+			}
+
+			// Enable
+			err = p.d.SetBucketVersioning(ctx, "ver-bucket", true)
+			if err != nil {
+				t.Fatalf("SetBucketVersioning enable: %v", err)
+			}
+
+			enabled, err = p.d.GetBucketVersioning(ctx, "ver-bucket")
+			if err != nil {
+				t.Fatalf("GetBucketVersioning after enable: %v", err)
+			}
+			if !enabled {
+				t.Errorf("expected versioning enabled")
+			}
+
+			// Disable
+			err = p.d.SetBucketVersioning(ctx, "ver-bucket", false)
+			if err != nil {
+				t.Fatalf("SetBucketVersioning disable: %v", err)
+			}
+			enabled, err = p.d.GetBucketVersioning(ctx, "ver-bucket")
+			if err != nil {
+				t.Fatalf("GetBucketVersioning after disable: %v", err)
+			}
+			if enabled {
+				t.Errorf("expected versioning disabled")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Database Enhancement Tests
+// ---------------------------------------------------------------------------
+
+func TestDatabaseTTL(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	awsP := NewAWS(config.WithClock(clk))
+	azureP := NewAzure(config.WithClock(clk))
+	gcpP := NewGCP(config.WithClock(clk))
+
+	providers := []struct {
+		name string
+		d    driver.Database
+		pk   string
+	}{
+		{"AWS", awsP.DynamoDB, "pk"},
+		{"Azure", azureP.CosmosDB, "pk"},
+		{"GCP", gcpP.Firestore, "pk"},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.d.CreateTable(ctx, driver.TableConfig{
+				Name:         "ttl-table",
+				PartitionKey: p.pk,
+			})
+			if err != nil {
+				t.Fatalf("CreateTable: %v", err)
+			}
+
+			// Enable TTL
+			err = p.d.UpdateTTL(ctx, "ttl-table", driver.TTLConfig{
+				Enabled:       true,
+				AttributeName: "expiresAt",
+			})
+			if err != nil {
+				t.Fatalf("UpdateTTL: %v", err)
+			}
+
+			ttlConfig, err := p.d.DescribeTTL(ctx, "ttl-table")
+			if err != nil {
+				t.Fatalf("DescribeTTL: %v", err)
+			}
+			if !ttlConfig.Enabled {
+				t.Errorf("expected TTL enabled")
+			}
+			if ttlConfig.AttributeName != "expiresAt" {
+				t.Errorf("expected TTL attribute expiresAt, got %s", ttlConfig.AttributeName)
+			}
+
+			// Put items with TTL (epoch seconds)
+			ttlTime := clk.Now().Add(1 * time.Hour).Unix()
+			err = p.d.PutItem(ctx, "ttl-table", map[string]any{
+				p.pk:        "item-1",
+				"expiresAt": ttlTime,
+				"data":      "should expire",
+			})
+			if err != nil {
+				t.Fatalf("PutItem: %v", err)
+			}
+
+			// Item should be visible before TTL
+			item, err := p.d.GetItem(ctx, "ttl-table", map[string]any{p.pk: "item-1"})
+			if err != nil {
+				t.Fatalf("GetItem before TTL: %v", err)
+			}
+			if item == nil {
+				t.Fatalf("expected item before TTL expiry")
+			}
+
+			// Advance past TTL
+			clk.Advance(2 * time.Hour)
+
+			_, err = p.d.GetItem(ctx, "ttl-table", map[string]any{p.pk: "item-1"})
+			if err == nil {
+				t.Errorf("expected error or nil for expired item")
+			}
+		})
+	}
+}
+
+func TestDatabaseStreams(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    driver.Database
+		pk   string
+	}{
+		{"AWS", awsP.DynamoDB, "pk"},
+		{"Azure", azureP.CosmosDB, "pk"},
+		{"GCP", gcpP.Firestore, "pk"},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.d.CreateTable(ctx, driver.TableConfig{
+				Name:         "stream-table",
+				PartitionKey: p.pk,
+			})
+			if err != nil {
+				t.Fatalf("CreateTable: %v", err)
+			}
+
+			// Enable streams
+			err = p.d.UpdateStreamConfig(ctx, "stream-table", driver.StreamConfig{
+				Enabled:  true,
+				ViewType: "NEW_AND_OLD_IMAGES",
+			})
+			if err != nil {
+				t.Fatalf("UpdateStreamConfig: %v", err)
+			}
+
+			// Put item -> INSERT
+			err = p.d.PutItem(ctx, "stream-table", map[string]any{
+				p.pk:   "stream-1",
+				"data": "initial",
+			})
+			if err != nil {
+				t.Fatalf("PutItem: %v", err)
+			}
+
+			// Modify item -> MODIFY
+			err = p.d.PutItem(ctx, "stream-table", map[string]any{
+				p.pk:   "stream-1",
+				"data": "modified",
+			})
+			if err != nil {
+				t.Fatalf("PutItem modify: %v", err)
+			}
+
+			// Delete item -> REMOVE
+			err = p.d.DeleteItem(ctx, "stream-table", map[string]any{p.pk: "stream-1"})
+			if err != nil {
+				t.Fatalf("DeleteItem: %v", err)
+			}
+
+			// Get stream records
+			iter, err := p.d.GetStreamRecords(ctx, "stream-table", 10, "")
+			if err != nil {
+				t.Fatalf("GetStreamRecords: %v", err)
+			}
+			if len(iter.Records) < 3 {
+				t.Errorf("expected at least 3 stream records (INSERT/MODIFY/REMOVE), got %d", len(iter.Records))
+			}
+
+			// Verify event types
+			eventTypes := make(map[string]bool)
+			for _, r := range iter.Records {
+				eventTypes[r.EventType] = true
+			}
+			for _, expected := range []string{"INSERT", "MODIFY", "REMOVE"} {
+				if !eventTypes[expected] {
+					t.Errorf("expected event type %s in stream records", expected)
+				}
+			}
+
+			// Verify sequence numbers are ordered
+			for i := 1; i < len(iter.Records); i++ {
+				if iter.Records[i].SequenceNumber <= iter.Records[i-1].SequenceNumber {
+					t.Errorf("expected increasing sequence numbers, got %s <= %s",
+						iter.Records[i].SequenceNumber, iter.Records[i-1].SequenceNumber)
+				}
+			}
+		})
+	}
+}
+
+func TestTransactWriteItems(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    driver.Database
+		pk   string
+	}{
+		{"AWS", awsP.DynamoDB, "pk"},
+		{"Azure", azureP.CosmosDB, "pk"},
+		{"GCP", gcpP.Firestore, "pk"},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			err := p.d.CreateTable(ctx, driver.TableConfig{
+				Name:         "txn-table",
+				PartitionKey: p.pk,
+			})
+			if err != nil {
+				t.Fatalf("CreateTable: %v", err)
+			}
+
+			// Seed an item to delete
+			err = p.d.PutItem(ctx, "txn-table", map[string]any{
+				p.pk:   "to-delete",
+				"data": "will be removed",
+			})
+			if err != nil {
+				t.Fatalf("PutItem seed: %v", err)
+			}
+
+			// Transact: put 2 items and delete 1
+			err = p.d.TransactWriteItems(ctx, "txn-table",
+				[]map[string]any{
+					{p.pk: "txn-1", "data": "first"},
+					{p.pk: "txn-2", "data": "second"},
+				},
+				[]map[string]any{
+					{p.pk: "to-delete"},
+				},
+			)
+			if err != nil {
+				t.Fatalf("TransactWriteItems: %v", err)
+			}
+
+			// Verify puts
+			item1, err := p.d.GetItem(ctx, "txn-table", map[string]any{p.pk: "txn-1"})
+			if err != nil {
+				t.Fatalf("GetItem txn-1: %v", err)
+			}
+			if item1["data"] != "first" {
+				t.Errorf("expected data=first, got %v", item1["data"])
+			}
+
+			item2, err := p.d.GetItem(ctx, "txn-table", map[string]any{p.pk: "txn-2"})
+			if err != nil {
+				t.Fatalf("GetItem txn-2: %v", err)
+			}
+			if item2["data"] != "second" {
+				t.Errorf("expected data=second, got %v", item2["data"])
+			}
+
+			// Verify delete
+			_, err = p.d.GetItem(ctx, "txn-table", map[string]any{p.pk: "to-delete"})
+			if err == nil {
+				t.Errorf("expected error for deleted item, got nil")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Compute Enhancement Tests
+// ---------------------------------------------------------------------------
+
+func TestAutoScalingGroup(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    computedriver.Compute
+	}{
+		{"AWS", awsP.EC2},
+		{"Azure", azureP.VirtualMachines},
+		{"GCP", gcpP.GCE},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			asg, err := p.d.CreateAutoScalingGroup(ctx, computedriver.AutoScalingGroupConfig{
+				Name:            "test-asg",
+				MinSize:         1,
+				MaxSize:         5,
+				DesiredCapacity: 2,
+				InstanceConfig: computedriver.InstanceConfig{
+					ImageID:      "ami-test",
+					InstanceType: "t2.micro",
+				},
+				Tags: map[string]string{"env": "test"},
+			})
+			if err != nil {
+				t.Fatalf("CreateAutoScalingGroup: %v", err)
+			}
+			if asg.Name != "test-asg" {
+				t.Errorf("expected ASG name test-asg, got %s", asg.Name)
+			}
+			if asg.DesiredCapacity != 2 {
+				t.Errorf("expected desired capacity 2, got %d", asg.DesiredCapacity)
+			}
+
+			// Verify instances launched
+			got, err := p.d.GetAutoScalingGroup(ctx, "test-asg")
+			if err != nil {
+				t.Fatalf("GetAutoScalingGroup: %v", err)
+			}
+			if len(got.InstanceIDs) != 2 {
+				t.Errorf("expected 2 instances, got %d", len(got.InstanceIDs))
+			}
+
+			// Scale up
+			err = p.d.SetDesiredCapacity(ctx, "test-asg", 4)
+			if err != nil {
+				t.Fatalf("SetDesiredCapacity up: %v", err)
+			}
+			got, err = p.d.GetAutoScalingGroup(ctx, "test-asg")
+			if err != nil {
+				t.Fatalf("GetAutoScalingGroup after scale up: %v", err)
+			}
+			if len(got.InstanceIDs) != 4 {
+				t.Errorf("expected 4 instances after scale up, got %d", len(got.InstanceIDs))
+			}
+
+			// Scale down
+			err = p.d.SetDesiredCapacity(ctx, "test-asg", 1)
+			if err != nil {
+				t.Fatalf("SetDesiredCapacity down: %v", err)
+			}
+			got, err = p.d.GetAutoScalingGroup(ctx, "test-asg")
+			if err != nil {
+				t.Fatalf("GetAutoScalingGroup after scale down: %v", err)
+			}
+			if len(got.InstanceIDs) != 1 {
+				t.Errorf("expected 1 instance after scale down, got %d", len(got.InstanceIDs))
+			}
+
+			// List
+			asgs, err := p.d.ListAutoScalingGroups(ctx)
+			if err != nil {
+				t.Fatalf("ListAutoScalingGroups: %v", err)
+			}
+			if len(asgs) != 1 {
+				t.Errorf("expected 1 ASG, got %d", len(asgs))
+			}
+
+			// Delete
+			err = p.d.DeleteAutoScalingGroup(ctx, "test-asg", true)
+			if err != nil {
+				t.Fatalf("DeleteAutoScalingGroup: %v", err)
+			}
+			_, err = p.d.GetAutoScalingGroup(ctx, "test-asg")
+			if err == nil {
+				t.Errorf("expected error after deleting ASG, got nil")
+			}
+		})
+	}
+}
+
+func TestScalingPolicy(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    computedriver.Compute
+	}{
+		{"AWS", awsP.EC2},
+		{"Azure", azureP.VirtualMachines},
+		{"GCP", gcpP.GCE},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			_, err := p.d.CreateAutoScalingGroup(ctx, computedriver.AutoScalingGroupConfig{
+				Name:            "policy-asg",
+				MinSize:         1,
+				MaxSize:         10,
+				DesiredCapacity: 2,
+				InstanceConfig: computedriver.InstanceConfig{
+					ImageID:      "ami-test",
+					InstanceType: "t2.micro",
+				},
+			})
+			if err != nil {
+				t.Fatalf("CreateAutoScalingGroup: %v", err)
+			}
+
+			err = p.d.PutScalingPolicy(ctx, computedriver.ScalingPolicy{
+				Name:              "scale-out",
+				AutoScalingGroup:  "policy-asg",
+				PolicyType:        "SimpleScaling",
+				AdjustmentType:    "ChangeInCapacity",
+				ScalingAdjustment: 2,
+				Cooldown:          60,
+			})
+			if err != nil {
+				t.Fatalf("PutScalingPolicy: %v", err)
+			}
+
+			// Execute policy
+			err = p.d.ExecuteScalingPolicy(ctx, "policy-asg", "scale-out")
+			if err != nil {
+				t.Fatalf("ExecuteScalingPolicy: %v", err)
+			}
+
+			asg, err := p.d.GetAutoScalingGroup(ctx, "policy-asg")
+			if err != nil {
+				t.Fatalf("GetAutoScalingGroup after execute: %v", err)
+			}
+			if asg.DesiredCapacity != 4 {
+				t.Errorf("expected desired capacity 4, got %d", asg.DesiredCapacity)
+			}
+
+			// Delete policy
+			err = p.d.DeleteScalingPolicy(ctx, "policy-asg", "scale-out")
+			if err != nil {
+				t.Fatalf("DeleteScalingPolicy: %v", err)
+			}
+		})
+	}
+}
+
+func TestSpotInstances(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    computedriver.Compute
+	}{
+		{"AWS", awsP.EC2},
+		{"Azure", azureP.VirtualMachines},
+		{"GCP", gcpP.GCE},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			reqs, err := p.d.RequestSpotInstances(ctx, computedriver.SpotRequestConfig{
+				InstanceConfig: computedriver.InstanceConfig{
+					ImageID:      "ami-spot",
+					InstanceType: "m4.large",
+				},
+				MaxPrice: 0.5,
+				Count:    2,
+				Type:     "one-time",
+			})
+			if err != nil {
+				t.Fatalf("RequestSpotInstances: %v", err)
+			}
+			if len(reqs) != 2 {
+				t.Fatalf("expected 2 spot requests, got %d", len(reqs))
+			}
+
+			// Describe spot requests
+			ids := make([]string, len(reqs))
+			for i, r := range reqs {
+				ids[i] = r.ID
+			}
+			described, err := p.d.DescribeSpotRequests(ctx, ids)
+			if err != nil {
+				t.Fatalf("DescribeSpotRequests: %v", err)
+			}
+			if len(described) != 2 {
+				t.Errorf("expected 2 described requests, got %d", len(described))
+			}
+
+			// Cancel
+			err = p.d.CancelSpotRequests(ctx, ids)
+			if err != nil {
+				t.Fatalf("CancelSpotRequests: %v", err)
+			}
+
+			described, err = p.d.DescribeSpotRequests(ctx, ids)
+			if err != nil {
+				t.Fatalf("DescribeSpotRequests after cancel: %v", err)
+			}
+			for _, d := range described {
+				if d.Status != "canceled" && d.Status != "cancelled" {
+					t.Errorf("expected canceled status, got %s", d.Status)
+				}
+			}
+		})
+	}
+}
+
+func TestLaunchTemplates(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    computedriver.Compute
+	}{
+		{"AWS", awsP.EC2},
+		{"Azure", azureP.VirtualMachines},
+		{"GCP", gcpP.GCE},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			lt, err := p.d.CreateLaunchTemplate(ctx, computedriver.LaunchTemplateConfig{
+				Name: "test-template",
+				InstanceConfig: computedriver.InstanceConfig{
+					ImageID:      "ami-template",
+					InstanceType: "t2.micro",
+				},
+			})
+			if err != nil {
+				t.Fatalf("CreateLaunchTemplate: %v", err)
+			}
+			if lt.Name != "test-template" {
+				t.Errorf("expected name test-template, got %s", lt.Name)
+			}
+			if lt.Version != 1 {
+				t.Errorf("expected version 1, got %d", lt.Version)
+			}
+
+			// Get
+			got, err := p.d.GetLaunchTemplate(ctx, "test-template")
+			if err != nil {
+				t.Fatalf("GetLaunchTemplate: %v", err)
+			}
+			if got.Name != "test-template" {
+				t.Errorf("expected test-template, got %s", got.Name)
+			}
+
+			// List
+			templates, err := p.d.ListLaunchTemplates(ctx)
+			if err != nil {
+				t.Fatalf("ListLaunchTemplates: %v", err)
+			}
+			if len(templates) != 1 {
+				t.Errorf("expected 1 template, got %d", len(templates))
+			}
+
+			// Delete
+			err = p.d.DeleteLaunchTemplate(ctx, "test-template")
+			if err != nil {
+				t.Fatalf("DeleteLaunchTemplate: %v", err)
+			}
+			_, err = p.d.GetLaunchTemplate(ctx, "test-template")
+			if err == nil {
+				t.Errorf("expected error after deleting template, got nil")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Serverless Enhancement Tests
+// ---------------------------------------------------------------------------
+
+func TestFunctionVersions(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    serverlessdriver.Serverless
+	}{
+		{"AWS", awsP.Lambda},
+		{"Azure", azureP.Functions},
+		{"GCP", gcpP.CloudFunctions},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			_, err := p.d.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+				Name:    "version-func",
+				Runtime: "go1.x",
+				Handler: "main",
+				Memory:  128,
+				Timeout: 30,
+			})
+			if err != nil {
+				t.Fatalf("CreateFunction: %v", err)
+			}
+
+			// Publish version
+			v1, err := p.d.PublishVersion(ctx, "version-func", "first version")
+			if err != nil {
+				t.Fatalf("PublishVersion: %v", err)
+			}
+			if v1.Version != "1" {
+				t.Errorf("expected version 1, got %s", v1.Version)
+			}
+
+			// Publish another
+			v2, err := p.d.PublishVersion(ctx, "version-func", "second version")
+			if err != nil {
+				t.Fatalf("PublishVersion 2: %v", err)
+			}
+			if v2.Version != "2" {
+				t.Errorf("expected version 2, got %s", v2.Version)
+			}
+
+			// List versions
+			versions, err := p.d.ListVersions(ctx, "version-func")
+			if err != nil {
+				t.Fatalf("ListVersions: %v", err)
+			}
+			if len(versions) < 2 {
+				t.Errorf("expected at least 2 versions, got %d", len(versions))
+			}
+		})
+	}
+}
+
+func TestFunctionAliases(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    serverlessdriver.Serverless
+	}{
+		{"AWS", awsP.Lambda},
+		{"Azure", azureP.Functions},
+		{"GCP", gcpP.CloudFunctions},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			_, err := p.d.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+				Name:    "alias-func",
+				Runtime: "go1.x",
+				Handler: "main",
+				Memory:  128,
+				Timeout: 30,
+			})
+			if err != nil {
+				t.Fatalf("CreateFunction: %v", err)
+			}
+
+			v1, err := p.d.PublishVersion(ctx, "alias-func", "v1")
+			if err != nil {
+				t.Fatalf("PublishVersion: %v", err)
+			}
+
+			// Create alias
+			alias, err := p.d.CreateAlias(ctx, serverlessdriver.AliasConfig{
+				FunctionName:    "alias-func",
+				Name:            "prod",
+				FunctionVersion: v1.Version,
+				Description:     "production alias",
+			})
+			if err != nil {
+				t.Fatalf("CreateAlias: %v", err)
+			}
+			if alias.Name != "prod" {
+				t.Errorf("expected alias name prod, got %s", alias.Name)
+			}
+
+			// Get alias
+			gotAlias, err := p.d.GetAlias(ctx, "alias-func", "prod")
+			if err != nil {
+				t.Fatalf("GetAlias: %v", err)
+			}
+			if gotAlias.FunctionVersion != v1.Version {
+				t.Errorf("expected version %s, got %s", v1.Version, gotAlias.FunctionVersion)
+			}
+
+			// Update alias
+			v2, err := p.d.PublishVersion(ctx, "alias-func", "v2")
+			if err != nil {
+				t.Fatalf("PublishVersion v2: %v", err)
+			}
+			_, err = p.d.UpdateAlias(ctx, serverlessdriver.AliasConfig{
+				FunctionName:    "alias-func",
+				Name:            "prod",
+				FunctionVersion: v2.Version,
+			})
+			if err != nil {
+				t.Fatalf("UpdateAlias: %v", err)
+			}
+
+			gotAlias, err = p.d.GetAlias(ctx, "alias-func", "prod")
+			if err != nil {
+				t.Fatalf("GetAlias after update: %v", err)
+			}
+			if gotAlias.FunctionVersion != v2.Version {
+				t.Errorf("expected updated version %s, got %s", v2.Version, gotAlias.FunctionVersion)
+			}
+
+			// List aliases
+			aliases, err := p.d.ListAliases(ctx, "alias-func")
+			if err != nil {
+				t.Fatalf("ListAliases: %v", err)
+			}
+			if len(aliases) != 1 {
+				t.Errorf("expected 1 alias, got %d", len(aliases))
+			}
+
+			// Delete alias
+			err = p.d.DeleteAlias(ctx, "alias-func", "prod")
+			if err != nil {
+				t.Fatalf("DeleteAlias: %v", err)
+			}
+			_, err = p.d.GetAlias(ctx, "alias-func", "prod")
+			if err == nil {
+				t.Errorf("expected error after deleting alias, got nil")
+			}
+		})
+	}
+}
+
+func TestLayers(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    serverlessdriver.Serverless
+	}{
+		{"AWS", awsP.Lambda},
+		{"Azure", azureP.Functions},
+		{"GCP", gcpP.CloudFunctions},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			// Publish layer version 1
+			lv1, err := p.d.PublishLayerVersion(ctx, serverlessdriver.LayerConfig{
+				Name:               "my-layer",
+				Description:        "first version",
+				Content:            []byte("layer-content-v1"),
+				CompatibleRuntimes: []string{"go1.x", "python3.9"},
+			})
+			if err != nil {
+				t.Fatalf("PublishLayerVersion: %v", err)
+			}
+			if lv1.Version != 1 {
+				t.Errorf("expected layer version 1, got %d", lv1.Version)
+			}
+
+			// Publish version 2
+			lv2, err := p.d.PublishLayerVersion(ctx, serverlessdriver.LayerConfig{
+				Name:               "my-layer",
+				Description:        "second version",
+				Content:            []byte("layer-content-v2"),
+				CompatibleRuntimes: []string{"go1.x"},
+			})
+			if err != nil {
+				t.Fatalf("PublishLayerVersion 2: %v", err)
+			}
+			if lv2.Version != 2 {
+				t.Errorf("expected layer version 2, got %d", lv2.Version)
+			}
+
+			// Get layer version
+			got, err := p.d.GetLayerVersion(ctx, "my-layer", 1)
+			if err != nil {
+				t.Fatalf("GetLayerVersion: %v", err)
+			}
+			if got.Description != "first version" {
+				t.Errorf("expected description 'first version', got '%s'", got.Description)
+			}
+
+			// List layer versions
+			versions, err := p.d.ListLayerVersions(ctx, "my-layer")
+			if err != nil {
+				t.Fatalf("ListLayerVersions: %v", err)
+			}
+			if len(versions) != 2 {
+				t.Errorf("expected 2 layer versions, got %d", len(versions))
+			}
+
+			// List layers
+			layers, err := p.d.ListLayers(ctx)
+			if err != nil {
+				t.Fatalf("ListLayers: %v", err)
+			}
+			if len(layers) < 1 {
+				t.Errorf("expected at least 1 layer, got %d", len(layers))
+			}
+
+			// Delete layer version
+			err = p.d.DeleteLayerVersion(ctx, "my-layer", 1)
+			if err != nil {
+				t.Fatalf("DeleteLayerVersion: %v", err)
+			}
+			_, err = p.d.GetLayerVersion(ctx, "my-layer", 1)
+			if err == nil {
+				t.Errorf("expected error after deleting layer version, got nil")
+			}
+		})
+	}
+}
+
+func TestFunctionConcurrency(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    serverlessdriver.Serverless
+	}{
+		{"AWS", awsP.Lambda},
+		{"Azure", azureP.Functions},
+		{"GCP", gcpP.CloudFunctions},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			_, err := p.d.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+				Name:    "conc-func",
+				Runtime: "go1.x",
+				Handler: "main",
+				Memory:  128,
+				Timeout: 30,
+			})
+			if err != nil {
+				t.Fatalf("CreateFunction: %v", err)
+			}
+
+			// Put concurrency
+			err = p.d.PutFunctionConcurrency(ctx, serverlessdriver.ConcurrencyConfig{
+				FunctionName:                 "conc-func",
+				ReservedConcurrentExecutions: 10,
+			})
+			if err != nil {
+				t.Fatalf("PutFunctionConcurrency: %v", err)
+			}
+
+			// Get concurrency
+			conc, err := p.d.GetFunctionConcurrency(ctx, "conc-func")
+			if err != nil {
+				t.Fatalf("GetFunctionConcurrency: %v", err)
+			}
+			if conc.ReservedConcurrentExecutions != 10 {
+				t.Errorf("expected 10 reserved concurrency, got %d", conc.ReservedConcurrentExecutions)
+			}
+
+			// Delete concurrency
+			err = p.d.DeleteFunctionConcurrency(ctx, "conc-func")
+			if err != nil {
+				t.Fatalf("DeleteFunctionConcurrency: %v", err)
+			}
+
+			conc, err = p.d.GetFunctionConcurrency(ctx, "conc-func")
+			if err != nil {
+				// NotFound after delete is acceptable
+				return
+			}
+			if conc.ReservedConcurrentExecutions != 0 {
+				t.Errorf("expected 0 after delete, got %d", conc.ReservedConcurrentExecutions)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Message Queue Enhancement Tests
+// ---------------------------------------------------------------------------
+
+func TestBatchSendMessages(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    mqdriver.MessageQueue
+	}{
+		{"AWS", awsP.SQS},
+		{"Azure", azureP.ServiceBus},
+		{"GCP", gcpP.PubSub},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			q, err := p.d.CreateQueue(ctx, mqdriver.QueueConfig{Name: "batch-send-q"})
+			if err != nil {
+				t.Fatalf("CreateQueue: %v", err)
+			}
+
+			result, err := p.d.SendMessageBatch(ctx, q.URL, []mqdriver.BatchSendEntry{
+				{ID: "1", Body: "message one"},
+				{ID: "2", Body: "message two"},
+				{ID: "3", Body: "message three"},
+			})
+			if err != nil {
+				t.Fatalf("SendMessageBatch: %v", err)
+			}
+			if len(result.Successful) != 3 {
+				t.Errorf("expected 3 successful, got %d", len(result.Successful))
+			}
+
+			// Receive all messages
+			var received []mqdriver.Message
+			msgs, err := p.d.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
+				QueueURL:    q.URL,
+				MaxMessages: 10,
+			})
+			if err != nil {
+				t.Fatalf("ReceiveMessages: %v", err)
+			}
+			received = append(received, msgs...)
+			if len(received) < 3 {
+				t.Errorf("expected at least 3 messages, got %d", len(received))
+			}
+		})
+	}
+}
+
+func TestBatchDeleteMessages(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    mqdriver.MessageQueue
+	}{
+		{"AWS", awsP.SQS},
+		{"Azure", azureP.ServiceBus},
+		{"GCP", gcpP.PubSub},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			q, err := p.d.CreateQueue(ctx, mqdriver.QueueConfig{Name: "batch-del-q"})
+			if err != nil {
+				t.Fatalf("CreateQueue: %v", err)
+			}
+
+			// Send messages
+			for i := 0; i < 3; i++ {
+				_, err = p.d.SendMessage(ctx, mqdriver.SendMessageInput{
+					QueueURL: q.URL,
+					Body:     "msg",
+				})
+				if err != nil {
+					t.Fatalf("SendMessage %d: %v", i, err)
+				}
+			}
+
+			// Receive
+			msgs, err := p.d.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
+				QueueURL:    q.URL,
+				MaxMessages: 10,
+			})
+			if err != nil {
+				t.Fatalf("ReceiveMessages: %v", err)
+			}
+
+			entries := make([]mqdriver.BatchDeleteEntry, len(msgs))
+			for i, m := range msgs {
+				entries[i] = mqdriver.BatchDeleteEntry{
+					ID:            m.MessageID,
+					ReceiptHandle: m.ReceiptHandle,
+				}
+			}
+
+			delResult, err := p.d.DeleteMessageBatch(ctx, q.URL, entries)
+			if err != nil {
+				t.Fatalf("DeleteMessageBatch: %v", err)
+			}
+			if len(delResult.Successful) != len(msgs) {
+				t.Errorf("expected %d successful deletes, got %d", len(msgs), len(delResult.Successful))
+			}
+
+			// Verify empty
+			remaining, err := p.d.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
+				QueueURL:    q.URL,
+				MaxMessages: 10,
+			})
+			if err != nil {
+				t.Fatalf("ReceiveMessages after delete: %v", err)
+			}
+			if len(remaining) != 0 {
+				t.Errorf("expected 0 messages after batch delete, got %d", len(remaining))
+			}
+		})
+	}
+}
+
+func TestQueueAttributes(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    mqdriver.MessageQueue
+	}{
+		{"AWS", awsP.SQS},
+		{"Azure", azureP.ServiceBus},
+		{"GCP", gcpP.PubSub},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			q, err := p.d.CreateQueue(ctx, mqdriver.QueueConfig{
+				Name:              "attr-q",
+				VisibilityTimeout: 30,
+			})
+			if err != nil {
+				t.Fatalf("CreateQueue: %v", err)
+			}
+
+			attrs, err := p.d.GetQueueAttributes(ctx, q.URL)
+			if err != nil {
+				t.Fatalf("GetQueueAttributes: %v", err)
+			}
+			if attrs.VisibilityTimeout != 30 {
+				t.Errorf("expected visibility timeout 30, got %d", attrs.VisibilityTimeout)
+			}
+
+			// Set attributes
+			err = p.d.SetQueueAttributes(ctx, q.URL, map[string]int{
+				"VisibilityTimeout": 60,
+			})
+			if err != nil {
+				t.Fatalf("SetQueueAttributes: %v", err)
+			}
+
+			attrs, err = p.d.GetQueueAttributes(ctx, q.URL)
+			if err != nil {
+				t.Fatalf("GetQueueAttributes after set: %v", err)
+			}
+			if attrs.VisibilityTimeout != 60 {
+				t.Errorf("expected visibility timeout 60, got %d", attrs.VisibilityTimeout)
+			}
+		})
+	}
+}
+
+func TestPurgeQueue(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    mqdriver.MessageQueue
+	}{
+		{"AWS", awsP.SQS},
+		{"Azure", azureP.ServiceBus},
+		{"GCP", gcpP.PubSub},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			q, err := p.d.CreateQueue(ctx, mqdriver.QueueConfig{Name: "purge-q"})
+			if err != nil {
+				t.Fatalf("CreateQueue: %v", err)
+			}
+
+			// Send messages
+			for i := 0; i < 5; i++ {
+				_, err = p.d.SendMessage(ctx, mqdriver.SendMessageInput{
+					QueueURL: q.URL,
+					Body:     "to-purge",
+				})
+				if err != nil {
+					t.Fatalf("SendMessage: %v", err)
+				}
+			}
+
+			// Purge
+			err = p.d.PurgeQueue(ctx, q.URL)
+			if err != nil {
+				t.Fatalf("PurgeQueue: %v", err)
+			}
+
+			// Verify empty
+			msgs, err := p.d.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
+				QueueURL:    q.URL,
+				MaxMessages: 10,
+			})
+			if err != nil {
+				t.Fatalf("ReceiveMessages after purge: %v", err)
+			}
+			if len(msgs) != 0 {
+				t.Errorf("expected 0 messages after purge, got %d", len(msgs))
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Networking Enhancement Tests
+// ---------------------------------------------------------------------------
+
+func TestVPCPeering(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    netdriver.Networking
+	}{
+		{"AWS", awsP.VPC},
+		{"Azure", azureP.VNet},
+		{"GCP", gcpP.VPC},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			vpc1, err := p.d.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+			if err != nil {
+				t.Fatalf("CreateVPC 1: %v", err)
+			}
+			vpc2, err := p.d.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.1.0.0/16"})
+			if err != nil {
+				t.Fatalf("CreateVPC 2: %v", err)
+			}
+
+			// Create peering
+			peering, err := p.d.CreatePeeringConnection(ctx, netdriver.PeeringConfig{
+				RequesterVPC: vpc1.ID,
+				AccepterVPC:  vpc2.ID,
+				Tags:         map[string]string{"env": "test"},
+			})
+			if err != nil {
+				t.Fatalf("CreatePeeringConnection: %v", err)
+			}
+			if peering.Status != "pending-acceptance" {
+				t.Errorf("expected pending-acceptance, got %s", peering.Status)
+			}
+
+			// Accept
+			err = p.d.AcceptPeeringConnection(ctx, peering.ID)
+			if err != nil {
+				t.Fatalf("AcceptPeeringConnection: %v", err)
+			}
+
+			// Describe
+			peers, err := p.d.DescribePeeringConnections(ctx, []string{peering.ID})
+			if err != nil {
+				t.Fatalf("DescribePeeringConnections: %v", err)
+			}
+			if len(peers) != 1 {
+				t.Fatalf("expected 1 peering, got %d", len(peers))
+			}
+			if peers[0].Status != "active" {
+				t.Errorf("expected active, got %s", peers[0].Status)
+			}
+
+			// Delete
+			err = p.d.DeletePeeringConnection(ctx, peering.ID)
+			if err != nil {
+				t.Fatalf("DeletePeeringConnection: %v", err)
+			}
+		})
+	}
+}
+
+func TestNATGateway(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    netdriver.Networking
+	}{
+		{"AWS", awsP.VPC},
+		{"Azure", azureP.VNet},
+		{"GCP", gcpP.VPC},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			vpcInfo, err := p.d.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+			if err != nil {
+				t.Fatalf("CreateVPC: %v", err)
+			}
+
+			subnet, err := p.d.CreateSubnet(ctx, netdriver.SubnetConfig{
+				VPCID:     vpcInfo.ID,
+				CIDRBlock: "10.0.1.0/24",
+			})
+			if err != nil {
+				t.Fatalf("CreateSubnet: %v", err)
+			}
+
+			nat, err := p.d.CreateNATGateway(ctx, netdriver.NATGatewayConfig{
+				SubnetID: subnet.ID,
+				Tags:     map[string]string{"env": "test"},
+			})
+			if err != nil {
+				t.Fatalf("CreateNATGateway: %v", err)
+			}
+			if nat.SubnetID != subnet.ID {
+				t.Errorf("expected subnet %s, got %s", subnet.ID, nat.SubnetID)
+			}
+
+			// Describe
+			nats, err := p.d.DescribeNATGateways(ctx, []string{nat.ID})
+			if err != nil {
+				t.Fatalf("DescribeNATGateways: %v", err)
+			}
+			if len(nats) != 1 {
+				t.Fatalf("expected 1 NAT gateway, got %d", len(nats))
+			}
+
+			// Delete
+			err = p.d.DeleteNATGateway(ctx, nat.ID)
+			if err != nil {
+				t.Fatalf("DeleteNATGateway: %v", err)
+			}
+		})
+	}
+}
+
+func TestFlowLogs(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    netdriver.Networking
+	}{
+		{"AWS", awsP.VPC},
+		{"Azure", azureP.VNet},
+		{"GCP", gcpP.VPC},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			vpcInfo, err := p.d.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+			if err != nil {
+				t.Fatalf("CreateVPC: %v", err)
+			}
+
+			fl, err := p.d.CreateFlowLog(ctx, netdriver.FlowLogConfig{
+				ResourceID:   vpcInfo.ID,
+				ResourceType: "VPC",
+				TrafficType:  "ALL",
+				Tags:         map[string]string{"env": "test"},
+			})
+			if err != nil {
+				t.Fatalf("CreateFlowLog: %v", err)
+			}
+			if fl.Status != "ACTIVE" {
+				t.Errorf("expected ACTIVE, got %s", fl.Status)
+			}
+
+			// Describe
+			fls, err := p.d.DescribeFlowLogs(ctx, []string{fl.ID})
+			if err != nil {
+				t.Fatalf("DescribeFlowLogs: %v", err)
+			}
+			if len(fls) != 1 {
+				t.Fatalf("expected 1 flow log, got %d", len(fls))
+			}
+
+			// GetFlowLogRecords
+			records, err := p.d.GetFlowLogRecords(ctx, fl.ID, 10)
+			if err != nil {
+				t.Fatalf("GetFlowLogRecords: %v", err)
+			}
+			// May be empty initially, that's ok
+			_ = records
+
+			// Delete
+			err = p.d.DeleteFlowLog(ctx, fl.ID)
+			if err != nil {
+				t.Fatalf("DeleteFlowLog: %v", err)
+			}
+		})
+	}
+}
+
+func TestRouteTables(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    netdriver.Networking
+	}{
+		{"AWS", awsP.VPC},
+		{"Azure", azureP.VNet},
+		{"GCP", gcpP.VPC},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			vpcInfo, err := p.d.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+			if err != nil {
+				t.Fatalf("CreateVPC: %v", err)
+			}
+
+			rt, err := p.d.CreateRouteTable(ctx, netdriver.RouteTableConfig{
+				VPCID: vpcInfo.ID,
+				Tags:  map[string]string{"env": "test"},
+			})
+			if err != nil {
+				t.Fatalf("CreateRouteTable: %v", err)
+			}
+			if rt.VPCID != vpcInfo.ID {
+				t.Errorf("expected VPC %s, got %s", vpcInfo.ID, rt.VPCID)
+			}
+
+			// Create route
+			err = p.d.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-12345", "gateway")
+			if err != nil {
+				t.Fatalf("CreateRoute: %v", err)
+			}
+
+			// Describe
+			rts, err := p.d.DescribeRouteTables(ctx, []string{rt.ID})
+			if err != nil {
+				t.Fatalf("DescribeRouteTables: %v", err)
+			}
+			if len(rts) != 1 {
+				t.Fatalf("expected 1 route table, got %d", len(rts))
+			}
+			if len(rts[0].Routes) < 1 {
+				t.Errorf("expected at least 1 route, got %d", len(rts[0].Routes))
+			}
+
+			// Delete route
+			err = p.d.DeleteRoute(ctx, rt.ID, "0.0.0.0/0")
+			if err != nil {
+				t.Fatalf("DeleteRoute: %v", err)
+			}
+
+			// Delete route table
+			err = p.d.DeleteRouteTable(ctx, rt.ID)
+			if err != nil {
+				t.Fatalf("DeleteRouteTable: %v", err)
+			}
+		})
+	}
+}
+
+func TestNetworkACLs(t *testing.T) {
+	ctx := context.Background()
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	providers := []struct {
+		name string
+		d    netdriver.Networking
+	}{
+		{"AWS", awsP.VPC},
+		{"Azure", azureP.VNet},
+		{"GCP", gcpP.VPC},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			vpcInfo, err := p.d.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+			if err != nil {
+				t.Fatalf("CreateVPC: %v", err)
+			}
+
+			acl, err := p.d.CreateNetworkACL(ctx, vpcInfo.ID, map[string]string{"env": "test"})
+			if err != nil {
+				t.Fatalf("CreateNetworkACL: %v", err)
+			}
+			if acl.VPCID != vpcInfo.ID {
+				t.Errorf("expected VPC %s, got %s", vpcInfo.ID, acl.VPCID)
+			}
+
+			// Add rule
+			err = p.d.AddNetworkACLRule(ctx, acl.ID, &netdriver.NetworkACLRule{
+				RuleNumber: 100,
+				Protocol:   "tcp",
+				Action:     "allow",
+				CIDR:       "0.0.0.0/0",
+				FromPort:   80,
+				ToPort:     80,
+				Egress:     false,
+			})
+			if err != nil {
+				t.Fatalf("AddNetworkACLRule: %v", err)
+			}
+
+			// Describe
+			acls, err := p.d.DescribeNetworkACLs(ctx, []string{acl.ID})
+			if err != nil {
+				t.Fatalf("DescribeNetworkACLs: %v", err)
+			}
+			if len(acls) != 1 {
+				t.Fatalf("expected 1 ACL, got %d", len(acls))
+			}
+			if len(acls[0].Rules) < 1 {
+				t.Errorf("expected at least 1 rule, got %d", len(acls[0].Rules))
+			}
+
+			// Remove rule
+			err = p.d.RemoveNetworkACLRule(ctx, acl.ID, 100, false)
+			if err != nil {
+				t.Fatalf("RemoveNetworkACLRule: %v", err)
+			}
+
+			// Delete ACL
+			err = p.d.DeleteNetworkACL(ctx, acl.ID)
+			if err != nil {
+				t.Fatalf("DeleteNetworkACL: %v", err)
+			}
+		})
+	}
+}
+
+// helperGetMetric is a test helper that queries a monitoring service for a single metric.
+func helperGetMetric(
+	t *testing.T,
+	ctx context.Context,
+	mon mondriver.Monitoring,
+	clk *config.FakeClock,
+	namespace, metricName string,
+	dims map[string]string,
+) float64 {
+	t.Helper()
+
+	result, err := mon.GetMetricData(ctx, mondriver.GetMetricInput{
+		Namespace:  namespace,
+		MetricName: metricName,
+		Dimensions: dims,
+		StartTime:  clk.Now().Add(-time.Minute),
+		EndTime:    clk.Now().Add(time.Minute),
+		Period:     60,
+		Stat:       "Sum",
+	})
+	if err != nil {
+		t.Fatalf("GetMetricData(%s/%s): %v", namespace, metricName, err)
+	}
+
+	if len(result.Values) == 0 {
+		t.Fatalf("expected metric %s/%s to have values, got none", namespace, metricName)
+	}
+
+	return result.Values[0]
+}
+
+func TestAWSMetricsEmission(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Now())
+	p := NewAWS(config.WithClock(clk))
+	mon := p.CloudWatch
+
+	t.Run("S3", func(t *testing.T) {
+		if err := p.S3.CreateBucket(ctx, "m-bucket"); err != nil {
+			t.Fatalf("CreateBucket: %v", err)
+		}
+
+		if err := p.S3.PutObject(ctx, "m-bucket", "f.txt", []byte("hello"), "text/plain", nil); err != nil {
+			t.Fatalf("PutObject: %v", err)
+		}
+
+		dims := map[string]string{"BucketName": "m-bucket"}
+		ns := "AWS/S3"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "PutRequests", dims)
+		if v != 1.0 {
+			t.Errorf("PutRequests: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "BytesUploaded", dims)
+		if v != 5.0 {
+			t.Errorf("BytesUploaded: expected 5, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "AllRequests", dims)
+		if v != 1.0 {
+			t.Errorf("AllRequests: expected 1, got %v", v)
+		}
+
+		_, err := p.S3.GetObject(ctx, "m-bucket", "f.txt")
+		if err != nil {
+			t.Fatalf("GetObject: %v", err)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "GetRequests", dims)
+		if v != 1.0 {
+			t.Errorf("GetRequests: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "BytesDownloaded", dims)
+		if v != 5.0 {
+			t.Errorf("BytesDownloaded: expected 5, got %v", v)
+		}
+	})
+
+	t.Run("DynamoDB", func(t *testing.T) {
+		if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+			Name: "m-tbl", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatalf("CreateTable: %v", err)
+		}
+
+		if err := p.DynamoDB.PutItem(ctx, "m-tbl", map[string]any{"pk": "k1", "val": "v1"}); err != nil {
+			t.Fatalf("PutItem: %v", err)
+		}
+
+		dims := map[string]string{"TableName": "m-tbl"}
+		ns := "AWS/DynamoDB"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "ConsumedWriteCapacityUnits", dims)
+		if v != 1.0 {
+			t.Errorf("ConsumedWriteCapacityUnits: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "SuccessfulRequestCount", dims)
+		if v < 1.0 {
+			t.Errorf("SuccessfulRequestCount: expected >=1, got %v", v)
+		}
+
+		_, err := p.DynamoDB.GetItem(ctx, "m-tbl", map[string]any{"pk": "k1"})
+		if err != nil {
+			t.Fatalf("GetItem: %v", err)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "ConsumedReadCapacityUnits", dims)
+		if v != 1.0 {
+			t.Errorf("ConsumedReadCapacityUnits: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("Lambda", func(t *testing.T) {
+		_, err := p.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+			Name: "m-fn", Runtime: "go1.x", Handler: "main",
+		})
+		if err != nil {
+			t.Fatalf("CreateFunction: %v", err)
+		}
+
+		p.Lambda.RegisterHandler("m-fn", func(_ context.Context, payload []byte) ([]byte, error) {
+			return []byte("ok"), nil
+		})
+
+		_, err = p.Lambda.Invoke(ctx, serverlessdriver.InvokeInput{
+			FunctionName: "m-fn", Payload: []byte("{}"),
+		})
+		if err != nil {
+			t.Fatalf("Invoke: %v", err)
+		}
+
+		dims := map[string]string{"FunctionName": "m-fn"}
+		ns := "AWS/Lambda"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "Invocations", dims)
+		if v != 1.0 {
+			t.Errorf("Invocations: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "Duration", dims)
+		if v != 1.0 {
+			t.Errorf("Duration: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "ConcurrentExecutions", dims)
+		if v != 1.0 {
+			t.Errorf("ConcurrentExecutions: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("SQS", func(t *testing.T) {
+		qi, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "m-q"})
+		if err != nil {
+			t.Fatalf("CreateQueue: %v", err)
+		}
+
+		_, err = p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
+			QueueURL: qi.URL, Body: "hello-sqs",
+		})
+		if err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+
+		dims := map[string]string{"QueueName": "m-q"}
+		ns := "AWS/SQS"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "NumberOfMessagesSent", dims)
+		if v != 1.0 {
+			t.Errorf("NumberOfMessagesSent: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "SentMessageSize", dims)
+		if v != 9.0 {
+			t.Errorf("SentMessageSize: expected 9, got %v", v)
+		}
+	})
+
+	t.Run("ElastiCache", func(t *testing.T) {
+		_, err := p.ElastiCache.CreateCache(ctx, cachedriver.CacheConfig{
+			Name: "m-cache", Engine: "redis", NodeType: "cache.t2.micro",
+		})
+		if err != nil {
+			t.Fatalf("CreateCache: %v", err)
+		}
+
+		if err := p.ElastiCache.Set(ctx, "m-cache", "key1", []byte("val1"), 0); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+
+		_, err = p.ElastiCache.Get(ctx, "m-cache", "key1")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		dims := map[string]string{"CacheClusterId": "m-cache"}
+		ns := "AWS/ElastiCache"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "SetCommands", dims)
+		if v != 1.0 {
+			t.Errorf("SetCommands: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "CacheHits", dims)
+		if v != 1.0 {
+			t.Errorf("CacheHits: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "GetCommands", dims)
+		if v != 1.0 {
+			t.Errorf("GetCommands: expected 1, got %v", v)
+		}
+
+		// Get a missing key to trigger CacheMisses
+		_, _ = p.ElastiCache.Get(ctx, "m-cache", "no-key")
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "CacheMisses", dims)
+		if v < 1.0 {
+			t.Errorf("CacheMisses: expected >=1, got %v", v)
+		}
+	})
+
+	t.Run("CloudWatchLogs", func(t *testing.T) {
+		_, err := p.CloudWatchLogs.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{Name: "m-lg"})
+		if err != nil {
+			t.Fatalf("CreateLogGroup: %v", err)
+		}
+
+		_, err = p.CloudWatchLogs.CreateLogStream(ctx, "m-lg", "m-stream")
+		if err != nil {
+			t.Fatalf("CreateLogStream: %v", err)
+		}
+
+		err = p.CloudWatchLogs.PutLogEvents(ctx, "m-lg", "m-stream", []loggingdriver.LogEvent{
+			{Timestamp: clk.Now(), Message: "test log message"},
+		})
+		if err != nil {
+			t.Fatalf("PutLogEvents: %v", err)
+		}
+
+		dims := map[string]string{"LogGroupName": "m-lg"}
+		ns := "AWS/Logs"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "IncomingLogEvents", dims)
+		if v != 1.0 {
+			t.Errorf("IncomingLogEvents: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "IncomingBytes", dims)
+		if v != 16.0 {
+			t.Errorf("IncomingBytes: expected 16, got %v", v)
+		}
+	})
+
+	t.Run("SNS", func(t *testing.T) {
+		_, err := p.SNS.CreateTopic(ctx, notifdriver.TopicConfig{Name: "m-topic"})
+		if err != nil {
+			t.Fatalf("CreateTopic: %v", err)
+		}
+
+		_, err = p.SNS.Publish(ctx, notifdriver.PublishInput{
+			TopicID: "m-topic", Message: "hello-sns",
+		})
+		if err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+
+		dims := map[string]string{"TopicName": "m-topic"}
+		ns := "AWS/SNS"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "NumberOfMessagesPublished", dims)
+		if v != 1.0 {
+			t.Errorf("NumberOfMessagesPublished: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "PublishSize", dims)
+		if v != 9.0 {
+			t.Errorf("PublishSize: expected 9, got %v", v)
+		}
+	})
+
+	t.Run("ECR", func(t *testing.T) {
+		_, err := p.ECR.CreateRepository(ctx, crdriver.RepositoryConfig{Name: "m-repo"})
+		if err != nil {
+			t.Fatalf("CreateRepository: %v", err)
+		}
+
+		_, err = p.ECR.PutImage(ctx, &crdriver.ImageManifest{
+			Repository: "m-repo", Tag: "latest", Digest: "sha256:abc123",
+			MediaType: "application/vnd.docker.distribution.manifest.v2+json",
+			SizeBytes: 1024,
+		})
+		if err != nil {
+			t.Fatalf("PutImage: %v", err)
+		}
+
+		_, err = p.ECR.GetImage(ctx, "m-repo", "latest")
+		if err != nil {
+			t.Fatalf("GetImage: %v", err)
+		}
+
+		dims := map[string]string{"RepositoryName": "m-repo"}
+		ns := "AWS/ECR"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "ImagePushCount", dims)
+		if v != 1.0 {
+			t.Errorf("ImagePushCount: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "ImagePullCount", dims)
+		if v != 1.0 {
+			t.Errorf("ImagePullCount: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("EventBridge", func(t *testing.T) {
+		_, err := p.EventBridge.CreateEventBus(ctx, ebdriver.EventBusConfig{Name: "m-bus"})
+		if err != nil {
+			t.Fatalf("CreateEventBus: %v", err)
+		}
+
+		_, err = p.EventBridge.PutRule(ctx, &ebdriver.RuleConfig{
+			Name:         "m-rule",
+			EventBus:     "m-bus",
+			EventPattern: `{"source":["my.app"]}`,
+			State:        "ENABLED",
+		})
+		if err != nil {
+			t.Fatalf("PutRule: %v", err)
+		}
+
+		_, err = p.EventBridge.PutEvents(ctx, []ebdriver.Event{
+			{Source: "my.app", DetailType: "test", Detail: `{"key":"val"}`, EventBus: "m-bus"},
+		})
+		if err != nil {
+			t.Fatalf("PutEvents: %v", err)
+		}
+
+		dims := map[string]string{"EventBusName": "m-bus"}
+		ns := "AWS/Events"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "PutEventsRequestCount", dims)
+		if v != 1.0 {
+			t.Errorf("PutEventsRequestCount: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "MatchedEvents", dims)
+		if v != 1.0 {
+			t.Errorf("MatchedEvents: expected 1, got %v", v)
+		}
+	})
+}
+
+func TestAzureMetricsEmission(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Now())
+	p := NewAzure(config.WithClock(clk))
+	mon := p.Monitor
+
+	t.Run("BlobStorage", func(t *testing.T) {
+		if err := p.BlobStorage.CreateBucket(ctx, "m-container"); err != nil {
+			t.Fatalf("CreateBucket: %v", err)
+		}
+
+		if err := p.BlobStorage.PutObject(ctx, "m-container", "f.txt", []byte("hello"), "text/plain", nil); err != nil {
+			t.Fatalf("PutObject: %v", err)
+		}
+
+		dims := map[string]string{"containerName": "m-container"}
+		ns := "Microsoft.Storage/storageAccounts"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "Transactions", dims)
+		if v != 1.0 {
+			t.Errorf("Transactions: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "Ingress", dims)
+		if v != 5.0 {
+			t.Errorf("Ingress: expected 5, got %v", v)
+		}
+
+		_, err := p.BlobStorage.GetObject(ctx, "m-container", "f.txt")
+		if err != nil {
+			t.Fatalf("GetObject: %v", err)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "Egress", dims)
+		if v != 5.0 {
+			t.Errorf("Egress: expected 5, got %v", v)
+		}
+	})
+
+	t.Run("CosmosDB", func(t *testing.T) {
+		if err := p.CosmosDB.CreateTable(ctx, driver.TableConfig{
+			Name: "m-coll", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatalf("CreateTable: %v", err)
+		}
+
+		if err := p.CosmosDB.PutItem(ctx, "m-coll", map[string]any{"pk": "k1", "val": "v1"}); err != nil {
+			t.Fatalf("PutItem: %v", err)
+		}
+
+		dims := map[string]string{"containerName": "m-coll"}
+		ns := "Microsoft.DocumentDB/databaseAccounts"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "TotalRequests", dims)
+		if v < 1.0 {
+			t.Errorf("TotalRequests: expected >=1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "TotalRequestUnits", dims)
+		if v < 1.0 {
+			t.Errorf("TotalRequestUnits: expected >=1, got %v", v)
+		}
+	})
+
+	t.Run("Functions", func(t *testing.T) {
+		_, err := p.Functions.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+			Name: "m-fn", Runtime: "dotnet6", Handler: "main",
+		})
+		if err != nil {
+			t.Fatalf("CreateFunction: %v", err)
+		}
+
+		p.Functions.RegisterHandler("m-fn", func(_ context.Context, payload []byte) ([]byte, error) {
+			return []byte("ok"), nil
+		})
+
+		_, err = p.Functions.Invoke(ctx, serverlessdriver.InvokeInput{
+			FunctionName: "m-fn", Payload: []byte("{}"),
+		})
+		if err != nil {
+			t.Fatalf("Invoke: %v", err)
+		}
+
+		dims := map[string]string{"functionName": "m-fn"}
+		ns := "Microsoft.Web/sites"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "FunctionExecutionCount", dims)
+		if v != 1.0 {
+			t.Errorf("FunctionExecutionCount: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "FunctionExecutionUnits", dims)
+		if v != 1.0 {
+			t.Errorf("FunctionExecutionUnits: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("ServiceBus", func(t *testing.T) {
+		qi, err := p.ServiceBus.CreateQueue(ctx, mqdriver.QueueConfig{Name: "m-q"})
+		if err != nil {
+			t.Fatalf("CreateQueue: %v", err)
+		}
+
+		_, err = p.ServiceBus.SendMessage(ctx, mqdriver.SendMessageInput{
+			QueueURL: qi.URL, Body: "hello-bus",
+		})
+		if err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+
+		dims := map[string]string{"queueName": "m-q"}
+		ns := "Microsoft.ServiceBus/namespaces"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "IncomingMessages", dims)
+		if v != 1.0 {
+			t.Errorf("IncomingMessages: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "Size", dims)
+		if v != 9.0 {
+			t.Errorf("Size: expected 9, got %v", v)
+		}
+	})
+
+	t.Run("AzureCache", func(t *testing.T) {
+		_, err := p.Cache.CreateCache(ctx, cachedriver.CacheConfig{
+			Name: "m-cache", Engine: "redis", NodeType: "Standard_C1",
+		})
+		if err != nil {
+			t.Fatalf("CreateCache: %v", err)
+		}
+
+		if err := p.Cache.Set(ctx, "m-cache", "key1", []byte("val1"), 0); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+
+		_, err = p.Cache.Get(ctx, "m-cache", "key1")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		dims := map[string]string{"cacheName": "m-cache"}
+		ns := "Microsoft.Cache/redis"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "SetCommands", dims)
+		if v != 1.0 {
+			t.Errorf("SetCommands: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "CacheHits", dims)
+		if v != 1.0 {
+			t.Errorf("CacheHits: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "TotalCommandsProcessed", dims)
+		if v >= 2.0 {
+			// Set + Get should yield at least 2
+		} else {
+			t.Errorf("TotalCommandsProcessed: expected >=2, got %v", v)
+		}
+
+		_, _ = p.Cache.Get(ctx, "m-cache", "no-key")
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "CacheMisses", dims)
+		if v < 1.0 {
+			t.Errorf("CacheMisses: expected >=1, got %v", v)
+		}
+	})
+
+	t.Run("LogAnalytics", func(t *testing.T) {
+		_, err := p.LogAnalytics.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{Name: "m-lg"})
+		if err != nil {
+			t.Fatalf("CreateLogGroup: %v", err)
+		}
+
+		_, err = p.LogAnalytics.CreateLogStream(ctx, "m-lg", "m-stream")
+		if err != nil {
+			t.Fatalf("CreateLogStream: %v", err)
+		}
+
+		err = p.LogAnalytics.PutLogEvents(ctx, "m-lg", "m-stream", []loggingdriver.LogEvent{
+			{Timestamp: clk.Now(), Message: "azure log msg"},
+		})
+		if err != nil {
+			t.Fatalf("PutLogEvents: %v", err)
+		}
+
+		dims := map[string]string{"logGroupName": "m-lg"}
+		ns := "Microsoft.OperationalInsights/workspaces"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "IngestedEvents", dims)
+		if v != 1.0 {
+			t.Errorf("IngestedEvents: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "IngestedBytes", dims)
+		if v != 13.0 {
+			t.Errorf("IngestedBytes: expected 13, got %v", v)
+		}
+	})
+
+	t.Run("NotificationHubs", func(t *testing.T) {
+		_, err := p.NotificationHubs.CreateTopic(ctx, notifdriver.TopicConfig{Name: "m-topic"})
+		if err != nil {
+			t.Fatalf("CreateTopic: %v", err)
+		}
+
+		_, err = p.NotificationHubs.Publish(ctx, notifdriver.PublishInput{
+			TopicID: "m-topic", Message: "hello-nh",
+		})
+		if err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+
+		dims := map[string]string{"topicName": "m-topic"}
+		ns := "Microsoft.NotificationHubs/namespaces"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "OutgoingNotifications", dims)
+		if v != 1.0 {
+			t.Errorf("OutgoingNotifications: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("ACR", func(t *testing.T) {
+		_, err := p.ACR.CreateRepository(ctx, crdriver.RepositoryConfig{Name: "m-repo"})
+		if err != nil {
+			t.Fatalf("CreateRepository: %v", err)
+		}
+
+		_, err = p.ACR.PutImage(ctx, &crdriver.ImageManifest{
+			Repository: "m-repo", Tag: "latest", Digest: "sha256:def456",
+			MediaType: "application/vnd.docker.distribution.manifest.v2+json",
+			SizeBytes: 2048,
+		})
+		if err != nil {
+			t.Fatalf("PutImage: %v", err)
+		}
+
+		_, err = p.ACR.GetImage(ctx, "m-repo", "latest")
+		if err != nil {
+			t.Fatalf("GetImage: %v", err)
+		}
+
+		dims := map[string]string{"repositoryName": "m-repo"}
+		ns := "Microsoft.ContainerRegistry/registries"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "ImagePushCount", dims)
+		if v != 1.0 {
+			t.Errorf("ImagePushCount: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "ImagePullCount", dims)
+		if v != 1.0 {
+			t.Errorf("ImagePullCount: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("EventGrid", func(t *testing.T) {
+		_, err := p.EventGrid.CreateEventBus(ctx, ebdriver.EventBusConfig{Name: "m-topic"})
+		if err != nil {
+			t.Fatalf("CreateEventBus: %v", err)
+		}
+
+		_, err = p.EventGrid.PutRule(ctx, &ebdriver.RuleConfig{
+			Name:         "m-rule",
+			EventBus:     "m-topic",
+			EventPattern: `{"source":["my.app"]}`,
+			State:        "ENABLED",
+		})
+		if err != nil {
+			t.Fatalf("PutRule: %v", err)
+		}
+
+		_, err = p.EventGrid.PutEvents(ctx, []ebdriver.Event{
+			{Source: "my.app", DetailType: "test", Detail: `{"k":"v"}`, EventBus: "m-topic"},
+		})
+		if err != nil {
+			t.Fatalf("PutEvents: %v", err)
+		}
+
+		dims := map[string]string{"topicName": "m-topic"}
+		ns := "Microsoft.EventGrid/topics"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "PublishedEvents", dims)
+		if v != 1.0 {
+			t.Errorf("PublishedEvents: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "MatchedEvents", dims)
+		if v != 1.0 {
+			t.Errorf("MatchedEvents: expected 1, got %v", v)
+		}
+	})
+}
+
+func TestGCPMetricsEmission(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Now())
+	p := NewGCP(config.WithClock(clk))
+	mon := p.CloudMonitoring
+
+	t.Run("GCS", func(t *testing.T) {
+		if err := p.GCS.CreateBucket(ctx, "m-bucket"); err != nil {
+			t.Fatalf("CreateBucket: %v", err)
+		}
+
+		if err := p.GCS.PutObject(ctx, "m-bucket", "f.txt", []byte("hello"), "text/plain", nil); err != nil {
+			t.Fatalf("PutObject: %v", err)
+		}
+
+		dims := map[string]string{"bucket_name": "m-bucket"}
+		ns := "storage.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "api/request_count", dims)
+		if v != 1.0 {
+			t.Errorf("api/request_count: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "network/received_bytes_count", dims)
+		if v != 5.0 {
+			t.Errorf("network/received_bytes_count: expected 5, got %v", v)
+		}
+
+		_, err := p.GCS.GetObject(ctx, "m-bucket", "f.txt")
+		if err != nil {
+			t.Fatalf("GetObject: %v", err)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "network/sent_bytes_count", dims)
+		if v != 5.0 {
+			t.Errorf("network/sent_bytes_count: expected 5, got %v", v)
+		}
+	})
+
+	t.Run("Firestore", func(t *testing.T) {
+		if err := p.Firestore.CreateTable(ctx, driver.TableConfig{
+			Name: "m-coll", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatalf("CreateTable: %v", err)
+		}
+
+		if err := p.Firestore.PutItem(ctx, "m-coll", map[string]any{"pk": "k1", "val": "v1"}); err != nil {
+			t.Fatalf("PutItem: %v", err)
+		}
+
+		dims := map[string]string{"collection_id": "m-coll"}
+		ns := "firestore.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "document/write_count", dims)
+		if v != 1.0 {
+			t.Errorf("document/write_count: expected 1, got %v", v)
+		}
+
+		_, err := p.Firestore.GetItem(ctx, "m-coll", map[string]any{"pk": "k1"})
+		if err != nil {
+			t.Fatalf("GetItem: %v", err)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "document/read_count", dims)
+		if v != 1.0 {
+			t.Errorf("document/read_count: expected 1, got %v", v)
+		}
+
+		if err := p.Firestore.DeleteItem(ctx, "m-coll", map[string]any{"pk": "k1"}); err != nil {
+			t.Fatalf("DeleteItem: %v", err)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "document/delete_count", dims)
+		if v != 1.0 {
+			t.Errorf("document/delete_count: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("CloudFunctions", func(t *testing.T) {
+		_, err := p.CloudFunctions.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+			Name: "m-fn", Runtime: "go121", Handler: "main",
+		})
+		if err != nil {
+			t.Fatalf("CreateFunction: %v", err)
+		}
+
+		p.CloudFunctions.RegisterHandler("m-fn", func(_ context.Context, payload []byte) ([]byte, error) {
+			return []byte("ok"), nil
+		})
+
+		_, err = p.CloudFunctions.Invoke(ctx, serverlessdriver.InvokeInput{
+			FunctionName: "m-fn", Payload: []byte("{}"),
+		})
+		if err != nil {
+			t.Fatalf("Invoke: %v", err)
+		}
+
+		dims := map[string]string{"function_name": "m-fn"}
+		ns := "cloudfunctions.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "function/execution_count", dims)
+		if v != 1.0 {
+			t.Errorf("function/execution_count: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "function/execution_times", dims)
+		if v != 1.0 {
+			t.Errorf("function/execution_times: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("PubSub", func(t *testing.T) {
+		qi, err := p.PubSub.CreateQueue(ctx, mqdriver.QueueConfig{Name: "m-q"})
+		if err != nil {
+			t.Fatalf("CreateQueue: %v", err)
+		}
+
+		_, err = p.PubSub.SendMessage(ctx, mqdriver.SendMessageInput{
+			QueueURL: qi.URL, Body: "hello-pub",
+		})
+		if err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+
+		dims := map[string]string{"topic_id": "m-q"}
+		ns := "pubsub.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "topic/send_message_operation_count", dims)
+		if v != 1.0 {
+			t.Errorf("topic/send_message_operation_count: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "topic/byte_cost", dims)
+		if v != 9.0 {
+			t.Errorf("topic/byte_cost: expected 9, got %v", v)
+		}
+	})
+
+	t.Run("Memorystore", func(t *testing.T) {
+		_, err := p.Memorystore.CreateCache(ctx, cachedriver.CacheConfig{
+			Name: "m-cache", Engine: "redis", NodeType: "BASIC",
+		})
+		if err != nil {
+			t.Fatalf("CreateCache: %v", err)
+		}
+
+		if err := p.Memorystore.Set(ctx, "m-cache", "key1", []byte("val1"), 0); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+
+		_, err = p.Memorystore.Get(ctx, "m-cache", "key1")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+
+		dims := map[string]string{"instance_id": "m-cache"}
+		ns := "redis.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "commands/set", dims)
+		if v != 1.0 {
+			t.Errorf("commands/set: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "stats/cache_hit_count", dims)
+		if v != 1.0 {
+			t.Errorf("stats/cache_hit_count: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "commands/get", dims)
+		if v != 1.0 {
+			t.Errorf("commands/get: expected 1, got %v", v)
+		}
+
+		_, _ = p.Memorystore.Get(ctx, "m-cache", "no-key")
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "stats/cache_miss_count", dims)
+		if v < 1.0 {
+			t.Errorf("stats/cache_miss_count: expected >=1, got %v", v)
+		}
+	})
+
+	t.Run("CloudLogging", func(t *testing.T) {
+		_, err := p.CloudLogging.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{Name: "m-lg"})
+		if err != nil {
+			t.Fatalf("CreateLogGroup: %v", err)
+		}
+
+		_, err = p.CloudLogging.CreateLogStream(ctx, "m-lg", "m-stream")
+		if err != nil {
+			t.Fatalf("CreateLogStream: %v", err)
+		}
+
+		err = p.CloudLogging.PutLogEvents(ctx, "m-lg", "m-stream", []loggingdriver.LogEvent{
+			{Timestamp: clk.Now(), Message: "gcp log msg"},
+		})
+		if err != nil {
+			t.Fatalf("PutLogEvents: %v", err)
+		}
+
+		dims := map[string]string{"log_group": "m-lg"}
+		ns := "logging.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "api/request_count", dims)
+		if v != 1.0 {
+			t.Errorf("api/request_count: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "byte_count", dims)
+		if v != 11.0 {
+			t.Errorf("byte_count: expected 11, got %v", v)
+		}
+	})
+
+	t.Run("FCM", func(t *testing.T) {
+		_, err := p.FCM.CreateTopic(ctx, notifdriver.TopicConfig{Name: "m-topic"})
+		if err != nil {
+			t.Fatalf("CreateTopic: %v", err)
+		}
+
+		_, err = p.FCM.Publish(ctx, notifdriver.PublishInput{
+			TopicID: "m-topic", Message: "hello-fcm",
+		})
+		if err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+
+		dims := map[string]string{"topic_name": "m-topic"}
+		ns := "fcm.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "message_count", dims)
+		if v != 1.0 {
+			t.Errorf("message_count: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("ArtifactRegistry", func(t *testing.T) {
+		_, err := p.ArtifactRegistry.CreateRepository(ctx, crdriver.RepositoryConfig{Name: "m-repo"})
+		if err != nil {
+			t.Fatalf("CreateRepository: %v", err)
+		}
+
+		_, err = p.ArtifactRegistry.PutImage(ctx, &crdriver.ImageManifest{
+			Repository: "m-repo", Tag: "latest", Digest: "sha256:ghi789",
+			MediaType: "application/vnd.docker.distribution.manifest.v2+json",
+			SizeBytes: 4096,
+		})
+		if err != nil {
+			t.Fatalf("PutImage: %v", err)
+		}
+
+		_, err = p.ArtifactRegistry.GetImage(ctx, "m-repo", "latest")
+		if err != nil {
+			t.Fatalf("GetImage: %v", err)
+		}
+
+		dims := map[string]string{"repository_name": "m-repo"}
+		ns := "artifactregistry.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "push_request_count", dims)
+		if v != 1.0 {
+			t.Errorf("push_request_count: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "pull_request_count", dims)
+		if v != 1.0 {
+			t.Errorf("pull_request_count: expected 1, got %v", v)
+		}
+	})
+
+	t.Run("Eventarc", func(t *testing.T) {
+		_, err := p.Eventarc.CreateEventBus(ctx, ebdriver.EventBusConfig{Name: "m-channel"})
+		if err != nil {
+			t.Fatalf("CreateEventBus: %v", err)
+		}
+
+		_, err = p.Eventarc.PutRule(ctx, &ebdriver.RuleConfig{
+			Name:         "m-rule",
+			EventBus:     "m-channel",
+			EventPattern: `{"source":["my.app"]}`,
+			State:        "ENABLED",
+		})
+		if err != nil {
+			t.Fatalf("PutRule: %v", err)
+		}
+
+		_, err = p.Eventarc.PutEvents(ctx, []ebdriver.Event{
+			{Source: "my.app", DetailType: "test", Detail: `{"k":"v"}`, EventBus: "m-channel"},
+		})
+		if err != nil {
+			t.Fatalf("PutEvents: %v", err)
+		}
+
+		dims := map[string]string{"channel_name": "m-channel"}
+		ns := "eventarc.googleapis.com"
+
+		v := helperGetMetric(t, ctx, mon, clk, ns, "event_count", dims)
+		if v != 1.0 {
+			t.Errorf("event_count: expected 1, got %v", v)
+		}
+
+		v = helperGetMetric(t, ctx, mon, clk, ns, "matched_event_count", dims)
+		if v != 1.0 {
+			t.Errorf("matched_event_count: expected 1, got %v", v)
+		}
+	})
 }
