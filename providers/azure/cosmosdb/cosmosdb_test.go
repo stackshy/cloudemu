@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/database/driver"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -381,4 +382,308 @@ func TestBatchOperations(t *testing.T) {
 		_, err := m.BatchGetItems(ctx, "missing", []map[string]any{{"pk": "x"}})
 		require.Error(t, err)
 	})
+}
+
+func TestUpdateTTL(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	createTestTable(t, m)
+
+	tests := []struct {
+		name    string
+		table   string
+		cfg     driver.TTLConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:  "enable TTL",
+			table: "users",
+			cfg:   driver.TTLConfig{Enabled: true, AttributeName: "expiry"},
+		},
+		{
+			name:  "disable TTL",
+			table: "users",
+			cfg:   driver.TTLConfig{Enabled: false, AttributeName: "expiry"},
+		},
+		{
+			name:    "table not found",
+			table:   "missing",
+			cfg:     driver.TTLConfig{Enabled: true, AttributeName: "expiry"},
+			wantErr: true, errMsg: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := m.UpdateTTL(ctx, tt.table, tt.cfg)
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+
+				got, err := m.DescribeTTL(ctx, tt.table)
+				require.NoError(t, err)
+				assert.Equal(t, tt.cfg.Enabled, got.Enabled)
+				assert.Equal(t, tt.cfg.AttributeName, got.AttributeName)
+			}
+		})
+	}
+}
+
+func TestTTLExpiry(t *testing.T) {
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(clk))
+	m := New(opts)
+
+	ctx := context.Background()
+
+	err := m.CreateTable(ctx, driver.TableConfig{Name: "ttl-table", PartitionKey: "pk", SortKey: "sk"})
+	require.NoError(t, err)
+
+	require.NoError(t, m.UpdateTTL(ctx, "ttl-table", driver.TTLConfig{Enabled: true, AttributeName: "expiry"}))
+
+	pastExpiry := clk.Now().Unix() - 100
+	futureExpiry := clk.Now().Unix() + 3600
+
+	require.NoError(t, m.PutItem(ctx, "ttl-table", map[string]any{
+		"pk": "u1", "sk": "s1", "expiry": pastExpiry,
+	}))
+	require.NoError(t, m.PutItem(ctx, "ttl-table", map[string]any{
+		"pk": "u2", "sk": "s2", "expiry": futureExpiry,
+	}))
+
+	t.Run("expired item not returned by GetItem", func(t *testing.T) {
+		_, err := m.GetItem(ctx, "ttl-table", map[string]any{"pk": "u1", "sk": "s1"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("non-expired item returned", func(t *testing.T) {
+		item, err := m.GetItem(ctx, "ttl-table", map[string]any{"pk": "u2", "sk": "s2"})
+		require.NoError(t, err)
+		assert.Equal(t, "u2", item["pk"])
+	})
+
+	t.Run("expired items excluded from Scan", func(t *testing.T) {
+		result, err := m.Scan(ctx, driver.ScanInput{Table: "ttl-table"})
+		require.NoError(t, err)
+		assert.Equal(t, 1, result.Count)
+	})
+}
+
+func TestStreamConfig(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	createTestTable(t, m)
+
+	tests := []struct {
+		name    string
+		table   string
+		cfg     driver.StreamConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:  "enable change feed",
+			table: "users",
+			cfg:   driver.StreamConfig{Enabled: true, ViewType: "NEW_AND_OLD_IMAGES"},
+		},
+		{
+			name:    "table not found",
+			table:   "missing",
+			cfg:     driver.StreamConfig{Enabled: true, ViewType: "NEW_IMAGE"},
+			wantErr: true, errMsg: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := m.UpdateStreamConfig(ctx, tt.table, tt.cfg)
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestStreamRecords(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	createTestTable(t, m)
+
+	t.Run("stream not enabled returns error", func(t *testing.T) {
+		_, err := m.GetStreamRecords(ctx, "users", 10, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not enabled")
+	})
+
+	require.NoError(t, m.UpdateStreamConfig(ctx, "users", driver.StreamConfig{
+		Enabled: true, ViewType: "NEW_AND_OLD_IMAGES",
+	}))
+
+	t.Run("INSERT event recorded", func(t *testing.T) {
+		require.NoError(t, m.PutItem(ctx, "users", map[string]any{"pk": "u1", "sk": "s1", "name": "Alice"}))
+
+		iter, err := m.GetStreamRecords(ctx, "users", 10, "")
+		require.NoError(t, err)
+		require.NotEmpty(t, iter.Records)
+		assert.Equal(t, "INSERT", iter.Records[0].EventType)
+		assert.NotNil(t, iter.Records[0].NewImage)
+	})
+
+	t.Run("MODIFY event recorded", func(t *testing.T) {
+		require.NoError(t, m.PutItem(ctx, "users", map[string]any{"pk": "u1", "sk": "s1", "name": "Bob"}))
+
+		iter, err := m.GetStreamRecords(ctx, "users", 10, "")
+		require.NoError(t, err)
+		require.Len(t, iter.Records, 2)
+		assert.Equal(t, "MODIFY", iter.Records[1].EventType)
+	})
+
+	t.Run("REMOVE event recorded", func(t *testing.T) {
+		require.NoError(t, m.DeleteItem(ctx, "users", map[string]any{"pk": "u1", "sk": "s1"}))
+
+		iter, err := m.GetStreamRecords(ctx, "users", 10, "")
+		require.NoError(t, err)
+		require.Len(t, iter.Records, 3)
+		assert.Equal(t, "REMOVE", iter.Records[2].EventType)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		_, err := m.GetStreamRecords(ctx, "missing", 10, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestTransactWriteItems(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	createTestTable(t, m)
+
+	t.Run("puts and deletes atomically", func(t *testing.T) {
+		// Seed an item to delete
+		require.NoError(t, m.PutItem(ctx, "users", map[string]any{"pk": "del1", "sk": "s1", "val": "old"}))
+
+		puts := []map[string]any{
+			{"pk": "new1", "sk": "s1", "val": "v1"},
+			{"pk": "new2", "sk": "s2", "val": "v2"},
+		}
+		deletes := []map[string]any{
+			{"pk": "del1", "sk": "s1"},
+		}
+
+		err := m.TransactWriteItems(ctx, "users", puts, deletes)
+		require.NoError(t, err)
+
+		// Verify puts
+		item, err := m.GetItem(ctx, "users", map[string]any{"pk": "new1", "sk": "s1"})
+		require.NoError(t, err)
+		assert.Equal(t, "v1", item["val"])
+
+		item, err = m.GetItem(ctx, "users", map[string]any{"pk": "new2", "sk": "s2"})
+		require.NoError(t, err)
+		assert.Equal(t, "v2", item["val"])
+
+		// Verify delete
+		_, err = m.GetItem(ctx, "users", map[string]any{"pk": "del1", "sk": "s1"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		err := m.TransactWriteItems(ctx, "missing", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestCosmosDBMetricsEmission(t *testing.T) {
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(clk))
+	m := New(opts)
+
+	mon := &cosmosMetricsCollector{}
+	m.SetMonitoring(mon)
+
+	ctx := context.Background()
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "metrics-table", PartitionKey: "pk", SortKey: "sk"}))
+
+	t.Run("PutItem emits metrics", func(t *testing.T) {
+		mon.reset()
+		require.NoError(t, m.PutItem(ctx, "metrics-table", map[string]any{"pk": "u1", "sk": "s1"}))
+		assert.True(t, mon.hasMetric("Microsoft.DocumentDB/databaseAccounts", "TotalRequests"))
+	})
+
+	t.Run("GetItem emits metrics", func(t *testing.T) {
+		mon.reset()
+		_, err := m.GetItem(ctx, "metrics-table", map[string]any{"pk": "u1", "sk": "s1"})
+		require.NoError(t, err)
+		assert.True(t, mon.hasMetric("Microsoft.DocumentDB/databaseAccounts", "TotalRequests"))
+	})
+
+	t.Run("Query emits metrics", func(t *testing.T) {
+		mon.reset()
+		_, err := m.Query(ctx, driver.QueryInput{
+			Table:        "metrics-table",
+			KeyCondition: driver.KeyCondition{PartitionKey: "pk", PartitionVal: "u1"},
+		})
+		require.NoError(t, err)
+		assert.True(t, mon.hasMetric("Microsoft.DocumentDB/databaseAccounts", "TotalRequests"))
+	})
+}
+
+type cosmosMetricsCollector struct {
+	data []mondriver.MetricDatum
+}
+
+func (c *cosmosMetricsCollector) PutMetricData(_ context.Context, data []mondriver.MetricDatum) error {
+	c.data = append(c.data, data...)
+	return nil
+}
+
+func (c *cosmosMetricsCollector) GetMetricData(_ context.Context, _ mondriver.GetMetricInput) (*mondriver.MetricDataResult, error) {
+	return &mondriver.MetricDataResult{}, nil
+}
+
+func (c *cosmosMetricsCollector) CreateAlarm(_ context.Context, _ mondriver.AlarmConfig) error {
+	return nil
+}
+
+func (c *cosmosMetricsCollector) DeleteAlarm(_ context.Context, _ string) error {
+	return nil
+}
+
+func (c *cosmosMetricsCollector) DescribeAlarms(_ context.Context, _ []string) ([]mondriver.AlarmInfo, error) {
+	return nil, nil
+}
+
+func (c *cosmosMetricsCollector) SetAlarmState(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+func (c *cosmosMetricsCollector) ListMetrics(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
+func (c *cosmosMetricsCollector) reset() {
+	c.data = nil
+}
+
+func (c *cosmosMetricsCollector) hasMetric(namespace, metricName string) bool {
+	for _, d := range c.data {
+		if d.Namespace == namespace && d.MetricName == metricName {
+			return true
+		}
+	}
+	return false
 }

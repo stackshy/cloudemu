@@ -187,3 +187,134 @@ func (b *Bucket) CopyObject(ctx context.Context, dstBucket, dstKey string, src d
 
 	return err
 }
+
+// GeneratePresignedURL generates a presigned URL for an object.
+func (b *Bucket) GeneratePresignedURL(ctx context.Context, req driver.PresignedURLRequest) (*driver.PresignedURL, error) {
+	out, err := b.do(ctx, "GeneratePresignedURL", req, func() (any, error) {
+		return b.driver.GeneratePresignedURL(ctx, req)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.PresignedURL), nil
+}
+
+// PutLifecycleConfig sets a lifecycle configuration on a bucket.
+func (b *Bucket) PutLifecycleConfig(ctx context.Context, bucket string, config driver.LifecycleConfig) error {
+	_, err := b.do(ctx, "PutLifecycleConfig", map[string]any{"bucket": bucket}, func() (any, error) {
+		return nil, b.driver.PutLifecycleConfig(ctx, bucket, config)
+	})
+
+	return err
+}
+
+// GetLifecycleConfig retrieves the lifecycle configuration for a bucket.
+func (b *Bucket) GetLifecycleConfig(ctx context.Context, bucket string) (*driver.LifecycleConfig, error) {
+	out, err := b.do(ctx, "GetLifecycleConfig", bucket, func() (any, error) {
+		return b.driver.GetLifecycleConfig(ctx, bucket)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.LifecycleConfig), nil
+}
+
+// EvaluateLifecycle evaluates lifecycle rules and returns keys eligible for expiration.
+func (b *Bucket) EvaluateLifecycle(ctx context.Context, bucket string) ([]string, error) {
+	out, err := b.do(ctx, "EvaluateLifecycle", bucket, func() (any, error) {
+		return b.driver.EvaluateLifecycle(ctx, bucket)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]string), nil
+}
+
+// CreateMultipartUpload initiates a multipart upload.
+func (b *Bucket) CreateMultipartUpload(
+	ctx context.Context, bucket, key, contentType string,
+) (*driver.MultipartUpload, error) {
+	out, err := b.do(ctx, "CreateMultipartUpload", map[string]string{"bucket": bucket, "key": key}, func() (any, error) {
+		return b.driver.CreateMultipartUpload(ctx, bucket, key, contentType)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.MultipartUpload), nil
+}
+
+// UploadPart uploads a part of a multipart upload.
+func (b *Bucket) UploadPart(
+	ctx context.Context, bucket, key, uploadID string, partNumber int, data []byte,
+) (*driver.UploadPart, error) {
+	input := map[string]any{"bucket": bucket, "key": key, "uploadID": uploadID, "partNumber": partNumber}
+
+	out, err := b.do(ctx, "UploadPart", input, func() (any, error) {
+		return b.driver.UploadPart(ctx, bucket, key, uploadID, partNumber, data)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.UploadPart), nil
+}
+
+// CompleteMultipartUpload completes a multipart upload by assembling all parts.
+func (b *Bucket) CompleteMultipartUpload(
+	ctx context.Context, bucket, key, uploadID string, parts []driver.UploadPart,
+) error {
+	input := map[string]any{"bucket": bucket, "key": key, "uploadID": uploadID}
+	_, err := b.do(ctx, "CompleteMultipartUpload", input, func() (any, error) {
+		return nil, b.driver.CompleteMultipartUpload(ctx, bucket, key, uploadID, parts)
+	})
+
+	return err
+}
+
+// AbortMultipartUpload aborts a multipart upload and removes all uploaded parts.
+func (b *Bucket) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	input := map[string]any{"bucket": bucket, "key": key, "uploadID": uploadID}
+	_, err := b.do(ctx, "AbortMultipartUpload", input, func() (any, error) {
+		return nil, b.driver.AbortMultipartUpload(ctx, bucket, key, uploadID)
+	})
+
+	return err
+}
+
+// ListMultipartUploads lists active multipart uploads for a bucket.
+func (b *Bucket) ListMultipartUploads(ctx context.Context, bucket string) ([]driver.MultipartUpload, error) {
+	out, err := b.do(ctx, "ListMultipartUploads", bucket, func() (any, error) {
+		return b.driver.ListMultipartUploads(ctx, bucket)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.MultipartUpload), nil
+}
+
+// SetBucketVersioning enables or disables versioning on a bucket.
+func (b *Bucket) SetBucketVersioning(ctx context.Context, bucket string, enabled bool) error {
+	input := map[string]any{"bucket": bucket, "enabled": enabled}
+	_, err := b.do(ctx, "SetBucketVersioning", input, func() (any, error) {
+		return nil, b.driver.SetBucketVersioning(ctx, bucket, enabled)
+	})
+
+	return err
+}
+
+// GetBucketVersioning returns whether versioning is enabled on a bucket.
+func (b *Bucket) GetBucketVersioning(ctx context.Context, bucket string) (bool, error) {
+	out, err := b.do(ctx, "GetBucketVersioning", bucket, func() (any, error) {
+		return b.driver.GetBucketVersioning(ctx, bucket)
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return out.(bool), nil
+}

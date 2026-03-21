@@ -388,3 +388,635 @@ func TestAddSecurityGroupRules(t *testing.T) {
 		assert.Contains(t, err.Error(), "not found")
 	})
 }
+
+func TestCreatePeeringConnection(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc1, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+	vpc2, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "172.16.0.0/16"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		cfg     driver.PeeringConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "success",
+			cfg:  driver.PeeringConfig{RequesterVPC: vpc1.ID, AccepterVPC: vpc2.ID, Tags: map[string]string{"env": "test"}},
+		},
+		{
+			name:    "missing requester",
+			cfg:     driver.PeeringConfig{AccepterVPC: vpc2.ID},
+			wantErr: true, errMsg: "both requester and accepter",
+		},
+		{
+			name:    "requester not found",
+			cfg:     driver.PeeringConfig{RequesterVPC: "vnet-missing", AccepterVPC: vpc2.ID},
+			wantErr: true, errMsg: "not found",
+		},
+		{
+			name:    "accepter not found",
+			cfg:     driver.PeeringConfig{RequesterVPC: vpc1.ID, AccepterVPC: "vnet-missing"},
+			wantErr: true, errMsg: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			peering, err := m.CreatePeeringConnection(ctx, tt.cfg)
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+				assert.NotEmpty(t, peering.ID)
+				assert.Equal(t, "pending-acceptance", peering.Status)
+				assert.Equal(t, vpc1.ID, peering.RequesterVPC)
+				assert.Equal(t, vpc2.ID, peering.AccepterVPC)
+			}
+		})
+	}
+}
+
+func TestAcceptPeeringConnection(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc1, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	vpc2, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "172.16.0.0/16"})
+
+	peering, err := m.CreatePeeringConnection(ctx, driver.PeeringConfig{
+		RequesterVPC: vpc1.ID, AccepterVPC: vpc2.ID,
+	})
+	require.NoError(t, err)
+
+	t.Run("accept pending peering", func(t *testing.T) {
+		err := m.AcceptPeeringConnection(ctx, peering.ID)
+		require.NoError(t, err)
+
+		peers, _ := m.DescribePeeringConnections(ctx, []string{peering.ID})
+		require.Len(t, peers, 1)
+		assert.Equal(t, "active", peers[0].Status)
+	})
+
+	t.Run("accept already active peering fails", func(t *testing.T) {
+		err := m.AcceptPeeringConnection(ctx, peering.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected")
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := m.AcceptPeeringConnection(ctx, "peering-missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestCreateNATGateway(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpcID, CIDRBlock: "10.0.1.0/24"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		cfg     driver.NATGatewayConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "success",
+			cfg:  driver.NATGatewayConfig{SubnetID: subnet.ID, Tags: map[string]string{"env": "test"}},
+		},
+		{
+			name:    "empty subnet",
+			cfg:     driver.NATGatewayConfig{},
+			wantErr: true, errMsg: "subnet ID is required",
+		},
+		{
+			name:    "subnet not found",
+			cfg:     driver.NATGatewayConfig{SubnetID: "subnet-missing"},
+			wantErr: true, errMsg: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nat, err := m.CreateNATGateway(ctx, tt.cfg)
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+				assert.NotEmpty(t, nat.ID)
+				assert.Equal(t, subnet.ID, nat.SubnetID)
+				assert.Equal(t, vpcID, nat.VPCID)
+				assert.Equal(t, "available", nat.State)
+				assert.NotEmpty(t, nat.PublicIP)
+			}
+		})
+	}
+}
+
+func TestCreateFlowLog(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	tests := []struct {
+		name    string
+		cfg     driver.FlowLogConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "VPC flow log",
+			cfg:  driver.FlowLogConfig{ResourceID: vpcID, ResourceType: "VPC", TrafficType: "ALL"},
+		},
+		{
+			name:    "empty resource ID",
+			cfg:     driver.FlowLogConfig{ResourceType: "VPC"},
+			wantErr: true, errMsg: "resource ID is required",
+		},
+		{
+			name:    "VPC not found",
+			cfg:     driver.FlowLogConfig{ResourceID: "vnet-missing", ResourceType: "VPC"},
+			wantErr: true, errMsg: "not found",
+		},
+		{
+			name:    "unsupported resource type",
+			cfg:     driver.FlowLogConfig{ResourceID: vpcID, ResourceType: "Unknown"},
+			wantErr: true, errMsg: "unsupported resource type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fl, err := m.CreateFlowLog(ctx, tt.cfg)
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+				assert.NotEmpty(t, fl.ID)
+				assert.Equal(t, vpcID, fl.ResourceID)
+				assert.Equal(t, "ACTIVE", fl.Status)
+
+				// Get records
+				records, err := m.GetFlowLogRecords(ctx, fl.ID, 5)
+				require.NoError(t, err)
+				assert.Len(t, records, 5)
+				assert.Equal(t, fl.ID, records[0].FlowLogID)
+			}
+		})
+	}
+}
+
+func TestCreateRouteTable(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	tests := []struct {
+		name    string
+		cfg     driver.RouteTableConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "success",
+			cfg:  driver.RouteTableConfig{VPCID: vpcID, Tags: map[string]string{"env": "test"}},
+		},
+		{
+			name:    "empty VPC ID",
+			cfg:     driver.RouteTableConfig{},
+			wantErr: true, errMsg: "VNet ID is required",
+		},
+		{
+			name:    "VPC not found",
+			cfg:     driver.RouteTableConfig{VPCID: "vnet-missing"},
+			wantErr: true, errMsg: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt, err := m.CreateRouteTable(ctx, tt.cfg)
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+				assert.NotEmpty(t, rt.ID)
+				assert.Equal(t, vpcID, rt.VPCID)
+				// Should have a local route by default
+				require.Len(t, rt.Routes, 1)
+				assert.Equal(t, "local", rt.Routes[0].TargetType)
+			}
+		})
+	}
+}
+
+func TestCreateRoute(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	rt, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: vpcID})
+	require.NoError(t, err)
+
+	t.Run("add route", func(t *testing.T) {
+		err := m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-123", "gateway")
+		require.NoError(t, err)
+
+		tables, _ := m.DescribeRouteTables(ctx, []string{rt.ID})
+		require.Len(t, tables, 1)
+		assert.Len(t, tables[0].Routes, 2) // local + new route
+	})
+
+	t.Run("duplicate route", func(t *testing.T) {
+		err := m.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-456", "gateway")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "already exists")
+	})
+
+	t.Run("delete route", func(t *testing.T) {
+		err := m.DeleteRoute(ctx, rt.ID, "0.0.0.0/0")
+		require.NoError(t, err)
+
+		tables, _ := m.DescribeRouteTables(ctx, []string{rt.ID})
+		require.Len(t, tables, 1)
+		assert.Len(t, tables[0].Routes, 1) // only local route
+	})
+
+	t.Run("route table not found", func(t *testing.T) {
+		err := m.CreateRoute(ctx, "rt-missing", "0.0.0.0/0", "igw", "gateway")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestCreateNetworkACL(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	tests := []struct {
+		name    string
+		vpcID   string
+		wantErr bool
+		errMsg  string
+	}{
+		{name: "success", vpcID: vpcID},
+		{name: "empty VPC ID", vpcID: "", wantErr: true, errMsg: "VNet ID is required"},
+		{name: "VPC not found", vpcID: "vnet-missing", wantErr: true, errMsg: "not found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			acl, err := m.CreateNetworkACL(ctx, tt.vpcID, map[string]string{"env": "test"})
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+				assert.NotEmpty(t, acl.ID)
+				assert.Equal(t, vpcID, acl.VPCID)
+				// Should have default allow-all rules
+				assert.GreaterOrEqual(t, len(acl.Rules), 2)
+			}
+		})
+	}
+}
+
+func TestAddNetworkACLRule(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	acl, err := m.CreateNetworkACL(ctx, vpcID, nil)
+	require.NoError(t, err)
+
+	t.Run("add ingress rule", func(t *testing.T) {
+		rule := &driver.NetworkACLRule{
+			RuleNumber: 50, Protocol: "tcp", Action: "allow",
+			CIDR: "10.0.0.0/8", FromPort: 80, ToPort: 80, Egress: false,
+		}
+		err := m.AddNetworkACLRule(ctx, acl.ID, rule)
+		require.NoError(t, err)
+
+		acls, _ := m.DescribeNetworkACLs(ctx, []string{acl.ID})
+		require.Len(t, acls, 1)
+		// Should have default rules + new rule, sorted by rule number
+		assert.GreaterOrEqual(t, len(acls[0].Rules), 3)
+		assert.Equal(t, 50, acls[0].Rules[0].RuleNumber) // sorted first
+	})
+
+	t.Run("add egress rule", func(t *testing.T) {
+		rule := &driver.NetworkACLRule{
+			RuleNumber: 200, Protocol: "tcp", Action: "deny",
+			CIDR: "0.0.0.0/0", FromPort: 443, ToPort: 443, Egress: true,
+		}
+		err := m.AddNetworkACLRule(ctx, acl.ID, rule)
+		require.NoError(t, err)
+	})
+
+	t.Run("remove rule", func(t *testing.T) {
+		err := m.RemoveNetworkACLRule(ctx, acl.ID, 50, false)
+		require.NoError(t, err)
+	})
+
+	t.Run("ACL not found", func(t *testing.T) {
+		err := m.AddNetworkACLRule(ctx, "acl-missing", &driver.NetworkACLRule{RuleNumber: 1})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("remove nonexistent rule", func(t *testing.T) {
+		err := m.RemoveNetworkACLRule(ctx, acl.ID, 999, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestDeletePeeringConnection(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc1, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	vpc2, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "172.16.0.0/16"})
+
+	peering, err := m.CreatePeeringConnection(ctx, driver.PeeringConfig{
+		RequesterVPC: vpc1.ID, AccepterVPC: vpc2.ID,
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		peeringID string
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "success", peeringID: peering.ID},
+		{name: "already deleted", peeringID: peering.ID, wantErr: true, errSubstr: "not found"},
+		{name: "not found", peeringID: "peering-missing", wantErr: true, errSubstr: "not found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := m.DeletePeeringConnection(ctx, tt.peeringID)
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errSubstr)
+			default:
+				require.NoError(t, err)
+				// After deletion it should no longer appear
+				peers, _ := m.DescribePeeringConnections(ctx, []string{tt.peeringID})
+				assert.Empty(t, peers)
+			}
+		})
+	}
+}
+
+func TestRejectPeeringConnection(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc1, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	vpc2, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "172.16.0.0/16"})
+
+	peering, err := m.CreatePeeringConnection(ctx, driver.PeeringConfig{
+		RequesterVPC: vpc1.ID, AccepterVPC: vpc2.ID,
+	})
+	require.NoError(t, err)
+
+	t.Run("reject pending peering", func(t *testing.T) {
+		err := m.RejectPeeringConnection(ctx, peering.ID)
+		require.NoError(t, err)
+
+		peers, _ := m.DescribePeeringConnections(ctx, []string{peering.ID})
+		require.Len(t, peers, 1)
+		assert.Equal(t, "rejected", peers[0].Status)
+	})
+
+	t.Run("reject already rejected fails", func(t *testing.T) {
+		err := m.RejectPeeringConnection(ctx, peering.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected")
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := m.RejectPeeringConnection(ctx, "peering-missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestDescribePeeringConnectionsWithIDs(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc1, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	vpc2, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "172.16.0.0/16"})
+	vpc3, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "192.168.0.0/16"})
+
+	p1, _ := m.CreatePeeringConnection(ctx, driver.PeeringConfig{RequesterVPC: vpc1.ID, AccepterVPC: vpc2.ID})
+	p2, _ := m.CreatePeeringConnection(ctx, driver.PeeringConfig{RequesterVPC: vpc1.ID, AccepterVPC: vpc3.ID})
+
+	tests := []struct {
+		name      string
+		ids       []string
+		wantCount int
+	}{
+		{name: "all peerings", ids: nil, wantCount: 2},
+		{name: "by single ID", ids: []string{p1.ID}, wantCount: 1},
+		{name: "by multiple IDs", ids: []string{p1.ID, p2.ID}, wantCount: 2},
+		{name: "nonexistent ID", ids: []string{"peering-missing"}, wantCount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			peers, err := m.DescribePeeringConnections(ctx, tt.ids)
+			require.NoError(t, err)
+			assert.Len(t, peers, tt.wantCount)
+		})
+	}
+}
+
+func TestDeleteNATGatewayNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	err := m.DeleteNATGateway(ctx, "natgw-missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestDescribeNATGatewaysWithIDs(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	s1, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpcID, CIDRBlock: "10.0.1.0/24"})
+	require.NoError(t, err)
+	s2, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpcID, CIDRBlock: "10.0.2.0/24"})
+	require.NoError(t, err)
+
+	nat1, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s1.ID})
+	require.NoError(t, err)
+	nat2, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: s2.ID})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		ids       []string
+		wantCount int
+	}{
+		{name: "all NAT gateways", ids: nil, wantCount: 2},
+		{name: "by single ID", ids: []string{nat1.ID}, wantCount: 1},
+		{name: "by multiple IDs", ids: []string{nat1.ID, nat2.ID}, wantCount: 2},
+		{name: "nonexistent ID", ids: []string{"natgw-missing"}, wantCount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nats, err := m.DescribeNATGateways(ctx, tt.ids)
+			require.NoError(t, err)
+			assert.Len(t, nats, tt.wantCount)
+		})
+	}
+}
+
+func TestDeleteFlowLogNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	err := m.DeleteFlowLog(ctx, "fl-missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestDescribeFlowLogsWithIDs(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	fl1, err := m.CreateFlowLog(ctx, driver.FlowLogConfig{ResourceID: vpcID, ResourceType: "VPC", TrafficType: "ALL"})
+	require.NoError(t, err)
+	fl2, err := m.CreateFlowLog(ctx, driver.FlowLogConfig{ResourceID: vpcID, ResourceType: "VPC", TrafficType: "ACCEPT"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		ids       []string
+		wantCount int
+	}{
+		{name: "all flow logs", ids: nil, wantCount: 2},
+		{name: "by single ID", ids: []string{fl1.ID}, wantCount: 1},
+		{name: "by multiple IDs", ids: []string{fl1.ID, fl2.ID}, wantCount: 2},
+		{name: "nonexistent ID", ids: []string{"fl-missing"}, wantCount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fls, err := m.DescribeFlowLogs(ctx, tt.ids)
+			require.NoError(t, err)
+			assert.Len(t, fls, tt.wantCount)
+		})
+	}
+}
+
+func TestDeleteRouteTableNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	err := m.DeleteRouteTable(ctx, "rt-missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestDescribeRouteTablesWithIDs(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	rt1, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: vpcID})
+	require.NoError(t, err)
+	rt2, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: vpcID})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		ids       []string
+		wantCount int
+	}{
+		{name: "all route tables", ids: nil, wantCount: 2},
+		{name: "by single ID", ids: []string{rt1.ID}, wantCount: 1},
+		{name: "by multiple IDs", ids: []string{rt1.ID, rt2.ID}, wantCount: 2},
+		{name: "nonexistent ID", ids: []string{"rt-missing"}, wantCount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rts, err := m.DescribeRouteTables(ctx, tt.ids)
+			require.NoError(t, err)
+			assert.Len(t, rts, tt.wantCount)
+		})
+	}
+}
+
+func TestDeleteNetworkACLNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	err := m.DeleteNetworkACL(ctx, "acl-missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestDescribeNetworkACLsWithIDs(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	acl1, err := m.CreateNetworkACL(ctx, vpcID, map[string]string{"name": "acl1"})
+	require.NoError(t, err)
+	acl2, err := m.CreateNetworkACL(ctx, vpcID, map[string]string{"name": "acl2"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		ids       []string
+		wantCount int
+	}{
+		{name: "all ACLs", ids: nil, wantCount: 2},
+		{name: "by single ID", ids: []string{acl1.ID}, wantCount: 1},
+		{name: "by multiple IDs", ids: []string{acl1.ID, acl2.ID}, wantCount: 2},
+		{name: "nonexistent ID", ids: []string{"acl-missing"}, wantCount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			acls, err := m.DescribeNetworkACLs(ctx, tt.ids)
+			require.NoError(t, err)
+			assert.Len(t, acls, tt.wantCount)
+		})
+	}
+}

@@ -7,6 +7,8 @@ import (
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/database/driver"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
 )
 
 func newTestMock() *Mock {
@@ -366,6 +368,320 @@ func TestQueryWithGSI(t *testing.T) {
 	})
 }
 
+func TestUpdateTTL(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	t.Run("enable TTL", func(t *testing.T) {
+		err := m.UpdateTTL(ctx, "tbl", driver.TTLConfig{Enabled: true, AttributeName: "expiresAt"})
+		requireNoError(t, err)
+
+		cfg, err := m.DescribeTTL(ctx, "tbl")
+		requireNoError(t, err)
+		assertEqual(t, true, cfg.Enabled)
+		assertEqual(t, "expiresAt", cfg.AttributeName)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		err := m.UpdateTTL(ctx, "nope", driver.TTLConfig{Enabled: true, AttributeName: "ttl"})
+		assertError(t, err, true)
+	})
+
+	t.Run("describe TTL table not found", func(t *testing.T) {
+		_, err := m.DescribeTTL(ctx, "nope")
+		assertError(t, err, true)
+	})
+}
+
+func TestTTLExpiry(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc))
+	m := New(opts)
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	// Enable TTL
+	err := m.UpdateTTL(ctx, "tbl", driver.TTLConfig{Enabled: true, AttributeName: "expiresAt"})
+	requireNoError(t, err)
+
+	// Put item with TTL 1 hour from now
+	ttlTime := fc.Now().Add(1 * time.Hour).Unix()
+	err = m.PutItem(ctx, "tbl", map[string]any{
+		"pk": "user1", "sk": "info", "name": "Alice", "expiresAt": ttlTime,
+	})
+	requireNoError(t, err)
+
+	// Item should be accessible before TTL
+	item, err := m.GetItem(ctx, "tbl", map[string]any{"pk": "user1", "sk": "info"})
+	requireNoError(t, err)
+	assertEqual(t, "Alice", item["name"])
+
+	// Advance clock past TTL
+	fc.Advance(2 * time.Hour)
+
+	// Item should now be expired
+	_, err = m.GetItem(ctx, "tbl", map[string]any{"pk": "user1", "sk": "info"})
+	assertError(t, err, true)
+}
+
+func TestTTLFilterInScan(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc))
+	m := New(opts)
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	err := m.UpdateTTL(ctx, "tbl", driver.TTLConfig{Enabled: true, AttributeName: "ttl"})
+	requireNoError(t, err)
+
+	// One item expires in 1 hour, one in 3 hours
+	_ = m.PutItem(ctx, "tbl", map[string]any{
+		"pk": "1", "sk": "a", "ttl": fc.Now().Add(1 * time.Hour).Unix(),
+	})
+	_ = m.PutItem(ctx, "tbl", map[string]any{
+		"pk": "2", "sk": "b", "ttl": fc.Now().Add(3 * time.Hour).Unix(),
+	})
+	_ = m.PutItem(ctx, "tbl", map[string]any{
+		"pk": "3", "sk": "c", // no TTL attribute - never expires
+	})
+
+	// Before any expiry - all 3 visible
+	result, err := m.Scan(ctx, driver.ScanInput{Table: "tbl"})
+	requireNoError(t, err)
+	assertEqual(t, 3, result.Count)
+
+	// Advance 2 hours - item 1 expired
+	fc.Advance(2 * time.Hour)
+
+	result, err = m.Scan(ctx, driver.ScanInput{Table: "tbl"})
+	requireNoError(t, err)
+	assertEqual(t, 2, result.Count)
+
+	// Advance 2 more hours - item 2 also expired
+	fc.Advance(2 * time.Hour)
+
+	result, err = m.Scan(ctx, driver.ScanInput{Table: "tbl"})
+	requireNoError(t, err)
+	assertEqual(t, 1, result.Count)
+}
+
+func TestTTLFilterInQuery(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc))
+	m := New(opts)
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	err := m.UpdateTTL(ctx, "tbl", driver.TTLConfig{Enabled: true, AttributeName: "ttl"})
+	requireNoError(t, err)
+
+	_ = m.PutItem(ctx, "tbl", map[string]any{
+		"pk": "user1", "sk": "a", "ttl": fc.Now().Add(1 * time.Hour).Unix(),
+	})
+	_ = m.PutItem(ctx, "tbl", map[string]any{
+		"pk": "user1", "sk": "b", "ttl": fc.Now().Add(3 * time.Hour).Unix(),
+	})
+
+	// Both items visible
+	result, err := m.Query(ctx, driver.QueryInput{
+		Table:        "tbl",
+		KeyCondition: driver.KeyCondition{PartitionKey: "pk", PartitionVal: "user1"},
+	})
+	requireNoError(t, err)
+	assertEqual(t, 2, result.Count)
+
+	// Expire one
+	fc.Advance(2 * time.Hour)
+
+	result, err = m.Query(ctx, driver.QueryInput{
+		Table:        "tbl",
+		KeyCondition: driver.KeyCondition{PartitionKey: "pk", PartitionVal: "user1"},
+	})
+	requireNoError(t, err)
+	assertEqual(t, 1, result.Count)
+}
+
+func TestStreamConfig(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	t.Run("enable streams", func(t *testing.T) {
+		err := m.UpdateStreamConfig(ctx, "tbl", driver.StreamConfig{
+			Enabled:  true,
+			ViewType: "NEW_AND_OLD_IMAGES",
+		})
+		requireNoError(t, err)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		err := m.UpdateStreamConfig(ctx, "nope", driver.StreamConfig{Enabled: true})
+		assertError(t, err, true)
+	})
+
+	t.Run("streams not enabled returns error", func(t *testing.T) {
+		createTestTable(m, "no-stream")
+		_, err := m.GetStreamRecords(ctx, "no-stream", 10, "")
+		assertError(t, err, true)
+	})
+}
+
+func TestStreamRecords(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	err := m.UpdateStreamConfig(ctx, "tbl", driver.StreamConfig{
+		Enabled:  true,
+		ViewType: "NEW_AND_OLD_IMAGES",
+	})
+	requireNoError(t, err)
+
+	// INSERT event
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "user1", "sk": "info", "name": "Alice"})
+
+	// MODIFY event
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "user1", "sk": "info", "name": "Alice Updated"})
+
+	// DELETE (REMOVE event)
+	_ = m.DeleteItem(ctx, "tbl", map[string]any{"pk": "user1", "sk": "info"})
+
+	iter, err := m.GetStreamRecords(ctx, "tbl", 100, "")
+	requireNoError(t, err)
+	assertEqual(t, 3, len(iter.Records))
+	assertEqual(t, "INSERT", iter.Records[0].EventType)
+	assertEqual(t, "MODIFY", iter.Records[1].EventType)
+	assertEqual(t, "REMOVE", iter.Records[2].EventType)
+
+	// Verify NEW_AND_OLD_IMAGES view type
+	assertEqual(t, "Alice", iter.Records[1].OldImage["name"])
+	assertEqual(t, "Alice Updated", iter.Records[1].NewImage["name"])
+}
+
+func TestStreamPagination(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	err := m.UpdateStreamConfig(ctx, "tbl", driver.StreamConfig{
+		Enabled:  true,
+		ViewType: "KEYS_ONLY",
+	})
+	requireNoError(t, err)
+
+	// Insert 5 items to generate 5 stream records
+	for i := 0; i < 5; i++ {
+		_ = m.PutItem(ctx, "tbl", map[string]any{
+			"pk": "user", "sk": string(rune('a' + i)),
+		})
+	}
+
+	// Get first page of 2
+	iter, err := m.GetStreamRecords(ctx, "tbl", 2, "")
+	requireNoError(t, err)
+	assertEqual(t, 2, len(iter.Records))
+	assertNotEmpty(t, iter.NextToken)
+
+	// Get next page using token
+	iter2, err := m.GetStreamRecords(ctx, "tbl", 2, iter.NextToken)
+	requireNoError(t, err)
+	assertEqual(t, 2, len(iter2.Records))
+	assertNotEmpty(t, iter2.NextToken)
+
+	// Last page
+	iter3, err := m.GetStreamRecords(ctx, "tbl", 2, iter2.NextToken)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(iter3.Records))
+	assertEqual(t, "", iter3.NextToken)
+}
+
+func TestTransactWriteItems(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	t.Run("atomic puts and deletes", func(t *testing.T) {
+		// Pre-insert an item to delete
+		_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "old", "sk": "item", "val": "delete-me"})
+
+		puts := []map[string]any{
+			{"pk": "new1", "sk": "a", "val": "x"},
+			{"pk": "new2", "sk": "b", "val": "y"},
+		}
+		deletes := []map[string]any{
+			{"pk": "old", "sk": "item"},
+		}
+
+		err := m.TransactWriteItems(ctx, "tbl", puts, deletes)
+		requireNoError(t, err)
+
+		// Verify puts succeeded
+		item, err := m.GetItem(ctx, "tbl", map[string]any{"pk": "new1", "sk": "a"})
+		requireNoError(t, err)
+		assertEqual(t, "x", item["val"])
+
+		item, err = m.GetItem(ctx, "tbl", map[string]any{"pk": "new2", "sk": "b"})
+		requireNoError(t, err)
+		assertEqual(t, "y", item["val"])
+
+		// Verify delete succeeded
+		_, err = m.GetItem(ctx, "tbl", map[string]any{"pk": "old", "sk": "item"})
+		assertError(t, err, true)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		err := m.TransactWriteItems(ctx, "nope", nil, nil)
+		assertError(t, err, true)
+	})
+}
+
+func TestDynamoDBMetricsEmission(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc))
+	m := New(opts)
+	ctx := context.Background()
+
+	cw := cloudwatch.New(opts)
+	m.SetMonitoring(cw)
+
+	createTestTable(m, "tbl")
+
+	t.Run("PutItem emits metrics", func(t *testing.T) {
+		err := m.PutItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "a"})
+		requireNoError(t, err)
+
+		result, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace:  "AWS/DynamoDB",
+			MetricName: "ConsumedWriteCapacityUnits",
+			Dimensions: map[string]string{"TableName": "tbl"},
+			StartTime:  fc.Now().Add(-1 * time.Hour),
+			EndTime:    fc.Now().Add(1 * time.Hour),
+			Period:     60,
+			Stat:       "Sum",
+		})
+		requireNoError(t, err)
+		assertEqual(t, true, len(result.Values) > 0)
+	})
+
+	t.Run("GetItem emits metrics", func(t *testing.T) {
+		_, err := m.GetItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "a"})
+		requireNoError(t, err)
+
+		result, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace:  "AWS/DynamoDB",
+			MetricName: "ConsumedReadCapacityUnits",
+			Dimensions: map[string]string{"TableName": "tbl"},
+			StartTime:  fc.Now().Add(-1 * time.Hour),
+			EndTime:    fc.Now().Add(1 * time.Hour),
+			Period:     60,
+			Stat:       "Sum",
+		})
+		requireNoError(t, err)
+		assertEqual(t, true, len(result.Values) > 0)
+	})
+}
+
 // --- test helpers ---
 
 func requireNoError(t *testing.T, err error) {
@@ -389,5 +705,12 @@ func assertEqual(t *testing.T, expected, actual any) {
 	t.Helper()
 	if expected != actual {
 		t.Errorf("expected %v, got %v", expected, actual)
+	}
+}
+
+func assertNotEmpty(t *testing.T, s string) {
+	t.Helper()
+	if s == "" {
+		t.Error("expected non-empty string")
 	}
 }

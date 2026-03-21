@@ -7,11 +7,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/database/driver"
 	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	"github.com/stackshy/cloudemu/pagination"
 )
 
@@ -28,19 +30,61 @@ const (
 	OpBetween      = "BETWEEN"
 )
 
+// Change feed and TTL constants.
+const (
+	ViewNewImage     = "NEW_IMAGE"
+	ViewOldImage     = "OLD_IMAGE"
+	ViewNewAndOld    = "NEW_AND_OLD_IMAGES"
+	ViewKeysOnly     = "KEYS_ONLY"
+	maxFeedRecords   = 1000
+	defaultFeedLimit = 100
+)
+
 // Compile-time check that Mock implements driver.Database.
 var _ driver.Database = (*Mock)(nil)
 
 type tableData struct {
-	config driver.TableConfig
-	items  *memstore.Store[map[string]any]
+	config        driver.TableConfig
+	items         *memstore.Store[map[string]any]
+	ttlConfig     driver.TTLConfig
+	streamConfig  driver.StreamConfig
+	streamRecords []driver.StreamRecord
+	seqCounter    atomic.Int64
 }
 
 // Mock is an in-memory mock implementation of Azure Cosmos DB.
 type Mock struct {
-	mu     sync.RWMutex
-	tables map[string]*tableData
-	opts   *config.Options
+	mu         sync.RWMutex
+	tables     map[string]*tableData
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(container string, metrics map[string]float64) {
+	if m.monitoring == nil {
+		return
+	}
+
+	now := m.opts.Clock.Now()
+	data := make([]mondriver.MetricDatum, 0, len(metrics))
+
+	for name, value := range metrics {
+		data = append(data, mondriver.MetricDatum{
+			Namespace:  "Microsoft.DocumentDB/databaseAccounts",
+			MetricName: name,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: map[string]string{"containerName": container},
+			Timestamp:  now,
+		})
+	}
+
+	_ = m.monitoring.PutMetricData(context.Background(), data)
 }
 
 // New creates a new Cosmos DB mock.
@@ -116,15 +160,21 @@ func (m *Mock) ListTables(_ context.Context) ([]string, error) {
 
 // PutItem stores an item in a container.
 func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) error {
-	m.mu.RLock()
-	td, exists := m.tables[table]
-	m.mu.RUnlock()
+	m.mu.Lock()
 
+	td, exists := m.tables[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
 	}
 
-	td.items.Set(itemKey(td.config, item), item)
+	key := itemKey(td.config, item)
+	oldItem, hadOld := td.items.Get(key)
+	td.items.Set(key, item)
+	m.recordStreamEvent(td, oldItem, item, hadOld)
+	m.mu.Unlock()
+
+	m.emitMetric(table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": 1})
 
 	return nil
 }
@@ -139,25 +189,44 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 		return nil, cerrors.Newf(cerrors.NotFound, "container %s not found", table)
 	}
 
-	item, ok := td.items.Get(itemKey(td.config, key))
+	k := itemKey(td.config, key)
+	item, ok := td.items.Get(k)
+
 	if !ok {
 		return nil, cerrors.New(cerrors.NotFound, "item not found")
 	}
+
+	if m.isItemExpired(td, item) {
+		td.items.Delete(k)
+		return nil, cerrors.New(cerrors.NotFound, "item not found")
+	}
+
+	m.emitMetric(table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": 1})
 
 	return item, nil
 }
 
 // DeleteItem deletes an item from a container by key.
 func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) error {
-	m.mu.RLock()
-	td, exists := m.tables[table]
-	m.mu.RUnlock()
+	m.mu.Lock()
 
+	td, exists := m.tables[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
 	}
 
-	td.items.Delete(itemKey(td.config, key))
+	k := itemKey(td.config, key)
+	oldItem, hadOld := td.items.Get(k)
+	td.items.Delete(k)
+
+	if hadOld {
+		m.recordStreamRemove(td, oldItem)
+	}
+
+	m.mu.Unlock()
+
+	m.emitMetric(table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": 1})
 
 	return nil
 }
@@ -179,27 +248,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		return nil, err
 	}
 
-	allItems := td.items.All()
-
-	var matched []map[string]any
-
-	for _, item := range allItems {
-		pkVal := fmt.Sprintf("%v", item[pkField])
-		if pkVal != fmt.Sprintf("%v", input.KeyCondition.PartitionVal) {
-			continue
-		}
-
-		if input.KeyCondition.SortOp != "" && skField != "" {
-			skVal := fmt.Sprintf("%v", item[skField])
-			condSK := fmt.Sprintf("%v", input.KeyCondition.SortVal)
-
-			if !applySortCondition(skVal, input.KeyCondition.SortOp, condSK, input.KeyCondition.SortValEnd) {
-				continue
-			}
-		}
-
-		matched = append(matched, item)
-	}
+	matched := m.matchQueryItems(td, pkField, skField, &input)
 
 	limit := input.Limit
 	if limit <= 0 {
@@ -207,6 +256,8 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 	}
 
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+
+	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(page.Items))})
 
 	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
 }
@@ -243,6 +294,10 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 	var matched []map[string]any
 
 	for _, item := range allItems {
+		if m.isItemExpired(td, item) {
+			continue
+		}
+
 		if matchesFilters(item, input.Filters) {
 			matched = append(matched, item)
 		}
@@ -255,22 +310,29 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
 
+	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(page.Items))})
+
 	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
 }
 
 // BatchPutItems stores multiple items in a container.
 func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string]any) error {
-	m.mu.RLock()
-	td, exists := m.tables[table]
-	m.mu.RUnlock()
+	m.mu.Lock()
 
+	td, exists := m.tables[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
 	}
 
 	for _, item := range items {
-		td.items.Set(itemKey(td.config, item), item)
+		key := itemKey(td.config, item)
+		oldItem, hadOld := td.items.Get(key)
+		td.items.Set(key, item)
+		m.recordStreamEvent(td, oldItem, item, hadOld)
 	}
+
+	m.mu.Unlock()
 
 	return nil
 }
@@ -379,4 +441,306 @@ func matchesSingleScanFilter(item map[string]any, f driver.ScanFilter) bool {
 	default:
 		return false
 	}
+}
+
+func (m *Mock) matchQueryItems(
+	td *tableData, pkField, skField string, input *driver.QueryInput,
+) []map[string]any {
+	allItems := td.items.All()
+
+	var matched []map[string]any
+
+	for _, item := range allItems {
+		if m.isItemExpired(td, item) {
+			continue
+		}
+
+		pkVal := fmt.Sprintf("%v", item[pkField])
+		if pkVal != fmt.Sprintf("%v", input.KeyCondition.PartitionVal) {
+			continue
+		}
+
+		if input.KeyCondition.SortOp != "" && skField != "" {
+			skVal := fmt.Sprintf("%v", item[skField])
+			condSK := fmt.Sprintf("%v", input.KeyCondition.SortVal)
+
+			if !applySortCondition(skVal, input.KeyCondition.SortOp, condSK, input.KeyCondition.SortValEnd) {
+				continue
+			}
+		}
+
+		matched = append(matched, item)
+	}
+
+	return matched
+}
+
+// UpdateTTL configures TTL for a container.
+func (m *Mock) UpdateTTL(_ context.Context, table string, cfg driver.TTLConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
+	}
+
+	td.ttlConfig = cfg
+
+	return nil
+}
+
+// DescribeTTL returns the TTL configuration for a container.
+func (m *Mock) DescribeTTL(_ context.Context, table string) (*driver.TTLConfig, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %s not found", table)
+	}
+
+	cfg := td.ttlConfig
+
+	return &cfg, nil
+}
+
+// UpdateStreamConfig configures the change feed for a container.
+func (m *Mock) UpdateStreamConfig(_ context.Context, table string, cfg driver.StreamConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
+	}
+
+	td.streamConfig = cfg
+
+	return nil
+}
+
+// GetStreamRecords returns change feed records after the given token.
+func (m *Mock) GetStreamRecords(
+	_ context.Context, table string, limit int, token string,
+) (*driver.StreamIterator, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %s not found", table)
+	}
+
+	if !td.streamConfig.Enabled {
+		return nil, cerrors.New(cerrors.FailedPrecondition, "change feed not enabled")
+	}
+
+	return filterFeedRecords(td.streamRecords, limit, token), nil
+}
+
+func filterFeedRecords(records []driver.StreamRecord, limit int, token string) *driver.StreamIterator {
+	if limit <= 0 {
+		limit = defaultFeedLimit
+	}
+
+	startIdx := 0
+
+	if token != "" {
+		for i, r := range records {
+			if r.SequenceNumber == token {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
+	end := startIdx + limit
+	if end > len(records) {
+		end = len(records)
+	}
+
+	result := records[startIdx:end]
+	nextToken := ""
+
+	if end < len(records) {
+		nextToken = result[len(result)-1].SequenceNumber
+	}
+
+	return &driver.StreamIterator{
+		ShardID:   "lease-000",
+		Records:   result,
+		NextToken: nextToken,
+	}
+}
+
+// TransactWriteItems executes puts and deletes atomically.
+func (m *Mock) TransactWriteItems(
+	_ context.Context, table string, puts []map[string]any, deletes []map[string]any,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
+	}
+
+	m.applyTransactPuts(td, puts)
+	m.applyTransactDeletes(td, deletes)
+
+	return nil
+}
+
+func (m *Mock) applyTransactPuts(td *tableData, puts []map[string]any) {
+	for _, item := range puts {
+		key := itemKey(td.config, item)
+		oldItem, hadOld := td.items.Get(key)
+		td.items.Set(key, item)
+		m.recordStreamEvent(td, oldItem, item, hadOld)
+	}
+}
+
+func (m *Mock) applyTransactDeletes(td *tableData, deletes []map[string]any) {
+	for _, key := range deletes {
+		k := itemKey(td.config, key)
+		oldItem, hadOld := td.items.Get(k)
+		td.items.Delete(k)
+
+		if hadOld {
+			m.recordStreamRemove(td, oldItem)
+		}
+	}
+}
+
+// isItemExpired checks if an item has expired based on TTL config.
+// CosmosDB uses TTL in seconds relative to a _ts field or creation time.
+func (m *Mock) isItemExpired(td *tableData, item map[string]any) bool {
+	if !td.ttlConfig.Enabled {
+		return false
+	}
+
+	ttlVal, ok := item[td.ttlConfig.AttributeName]
+	if !ok {
+		return false
+	}
+
+	ttlUnix := toUnixTimestamp(ttlVal)
+	if ttlUnix <= 0 {
+		return false
+	}
+
+	return m.opts.Clock.Now().Unix() > ttlUnix
+}
+
+func toUnixTimestamp(val any) int64 {
+	switch v := val.(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	default:
+		parsed, err := strconv.ParseFloat(fmt.Sprintf("%v", v), 64)
+		if err != nil {
+			return 0
+		}
+
+		return int64(parsed)
+	}
+}
+
+// recordStreamEvent records an INSERT or MODIFY change feed event. Caller must hold m.mu.
+func (m *Mock) recordStreamEvent(td *tableData, oldItem, newItem map[string]any, hadOld bool) {
+	if !td.streamConfig.Enabled {
+		return
+	}
+
+	eventType := "INSERT"
+	if hadOld {
+		eventType = "MODIFY"
+	}
+
+	rec := m.buildStreamRecord(td, eventType, oldItem, newItem)
+	td.streamRecords = appendFeedRecord(td.streamRecords, &rec)
+}
+
+// recordStreamRemove records a REMOVE change feed event. Caller must hold m.mu.
+func (m *Mock) recordStreamRemove(td *tableData, oldItem map[string]any) {
+	if !td.streamConfig.Enabled {
+		return
+	}
+
+	rec := m.buildStreamRecord(td, "REMOVE", oldItem, nil)
+	td.streamRecords = appendFeedRecord(td.streamRecords, &rec)
+}
+
+func (m *Mock) buildStreamRecord(
+	td *tableData, eventType string, oldItem, newItem map[string]any,
+) driver.StreamRecord {
+	seq := td.seqCounter.Add(1)
+	keys := extractKeys(td.config, oldItem, newItem)
+
+	rec := driver.StreamRecord{
+		EventID:        fmt.Sprintf("event-%d", seq),
+		EventType:      eventType,
+		Table:          td.config.Name,
+		Keys:           keys,
+		Timestamp:      m.opts.Clock.Now(),
+		SequenceNumber: fmt.Sprintf("%d", seq),
+	}
+
+	applyViewType(&rec, td.streamConfig.ViewType, oldItem, newItem)
+
+	return rec
+}
+
+func extractKeys(cfg driver.TableConfig, oldItem, newItem map[string]any) map[string]any {
+	src := newItem
+	if src == nil {
+		src = oldItem
+	}
+
+	keys := map[string]any{cfg.PartitionKey: src[cfg.PartitionKey]}
+	if cfg.SortKey != "" {
+		keys[cfg.SortKey] = src[cfg.SortKey]
+	}
+
+	return keys
+}
+
+func applyViewType(rec *driver.StreamRecord, viewType string, oldItem, newItem map[string]any) {
+	switch viewType {
+	case ViewNewImage:
+		rec.NewImage = copyItem(newItem)
+	case ViewOldImage:
+		rec.OldImage = copyItem(oldItem)
+	case ViewNewAndOld:
+		rec.NewImage = copyItem(newItem)
+		rec.OldImage = copyItem(oldItem)
+	case ViewKeysOnly:
+	}
+}
+
+func copyItem(item map[string]any) map[string]any {
+	if item == nil {
+		return nil
+	}
+
+	cp := make(map[string]any, len(item))
+	for k, v := range item {
+		cp[k] = v
+	}
+
+	return cp
+}
+
+func appendFeedRecord(records []driver.StreamRecord, rec *driver.StreamRecord) []driver.StreamRecord {
+	records = append(records, *rec)
+	if len(records) > maxFeedRecords {
+		records = records[len(records)-maxFeedRecords:]
+	}
+
+	return records
 }

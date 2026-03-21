@@ -146,3 +146,73 @@ func (mq *MQ) ChangeVisibility(ctx context.Context, queueURL, receiptHandle stri
 
 	return err
 }
+
+func (mq *MQ) SendMessageBatch(
+	ctx context.Context, queue string, entries []driver.BatchSendEntry,
+) (*driver.BatchSendResult, error) {
+	out, err := mq.do(ctx, "SendMessageBatch", queue, func() (any, error) {
+		return mq.driver.SendMessageBatch(ctx, queue, entries)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.BatchSendResult), nil
+}
+
+func (mq *MQ) DeleteMessageBatch(
+	ctx context.Context, queue string, entries []driver.BatchDeleteEntry,
+) (*driver.BatchDeleteResult, error) {
+	out, err := mq.do(ctx, "DeleteMessageBatch", queue, func() (any, error) {
+		return mq.driver.DeleteMessageBatch(ctx, queue, entries)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.BatchDeleteResult), nil
+}
+
+func (mq *MQ) ReceiveMessagesWithOptions(
+	ctx context.Context, queue string, opts driver.ReceiveOptions,
+) ([]driver.Message, error) {
+	out, err := mq.do(ctx, "ReceiveMessagesWithOptions", queue, func() (any, error) {
+		return mq.driver.ReceiveMessagesWithOptions(ctx, queue, opts)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.Message), nil
+}
+
+func (mq *MQ) GetQueueAttributes(
+	ctx context.Context, queue string,
+) (*driver.QueueAttributes, error) {
+	out, err := mq.do(ctx, "GetQueueAttributes", queue, func() (any, error) {
+		return mq.driver.GetQueueAttributes(ctx, queue)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.QueueAttributes), nil
+}
+
+func (mq *MQ) SetQueueAttributes(
+	ctx context.Context, queue string, attrs map[string]int,
+) error {
+	_, err := mq.do(ctx, "SetQueueAttributes", queue, func() (any, error) {
+		return nil, mq.driver.SetQueueAttributes(ctx, queue, attrs)
+	})
+
+	return err
+}
+
+func (mq *MQ) PurgeQueue(ctx context.Context, queue string) error {
+	_, err := mq.do(ctx, "PurgeQueue", queue, func() (any, error) {
+		return nil, mq.driver.PurgeQueue(ctx, queue)
+	})
+
+	return err
+}

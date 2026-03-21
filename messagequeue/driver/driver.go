@@ -1,7 +1,13 @@
 // Package driver defines the interface for message queue service implementations.
 package driver
 
-import "context"
+import (
+	"context"
+	"time"
+)
+
+// MaxBatchSize is the maximum number of entries allowed in a batch operation.
+const MaxBatchSize = 10
 
 // QueueConfig describes a message queue to create.
 type QueueConfig struct {
@@ -63,6 +69,69 @@ type Message struct {
 	GroupID       string
 }
 
+// BatchSendEntry represents a single message in a batch send.
+type BatchSendEntry struct {
+	ID              string
+	Body            string
+	DelaySeconds    int
+	GroupID         string
+	DeduplicationID string
+	Attributes      map[string]string
+}
+
+// BatchSendResult is the result of a batch send.
+type BatchSendResult struct {
+	Successful []BatchSendResultEntry
+	Failed     []BatchSendFailEntry
+}
+
+// BatchSendResultEntry is a successful batch entry.
+type BatchSendResultEntry struct {
+	ID        string
+	MessageID string
+}
+
+// BatchSendFailEntry is a failed batch entry.
+type BatchSendFailEntry struct {
+	ID      string
+	Code    string
+	Message string
+}
+
+// BatchDeleteEntry represents a message to delete in batch.
+type BatchDeleteEntry struct {
+	ID            string
+	ReceiptHandle string
+}
+
+// BatchDeleteResult is the result of a batch delete.
+type BatchDeleteResult struct {
+	Successful []string // entry IDs
+	Failed     []BatchSendFailEntry
+}
+
+// ReceiveOptions configures a receive operation.
+type ReceiveOptions struct {
+	MaxMessages       int
+	WaitTimeSeconds   int // long polling: 0 = short poll, >0 = check once
+	VisibilityTimeout int // override queue default
+}
+
+// QueueAttributes describes queue attributes.
+type QueueAttributes struct {
+	DelaySeconds               int
+	MaximumMessageSize         int
+	MessageRetentionPeriod     int // seconds
+	VisibilityTimeout          int // seconds
+	ApproximateMessageCount    int
+	ApproximateNotVisibleCount int
+	CreatedAt                  time.Time
+	LastModifiedAt             time.Time
+	FifoQueue                  bool
+	ContentBasedDeduplication  bool
+	RedrivePolicy              string // JSON string pointing to DLQ
+}
+
 // MessageQueue is the interface that message queue provider implementations must satisfy.
 type MessageQueue interface {
 	CreateQueue(ctx context.Context, config QueueConfig) (*QueueInfo, error)
@@ -74,4 +143,18 @@ type MessageQueue interface {
 	ReceiveMessages(ctx context.Context, input ReceiveMessageInput) ([]Message, error)
 	DeleteMessage(ctx context.Context, queueURL, receiptHandle string) error
 	ChangeVisibility(ctx context.Context, queueURL, receiptHandle string, timeout int) error
+
+	// Batch operations
+	SendMessageBatch(ctx context.Context, queue string, entries []BatchSendEntry) (*BatchSendResult, error)
+	DeleteMessageBatch(ctx context.Context, queue string, entries []BatchDeleteEntry) (*BatchDeleteResult, error)
+
+	// Enhanced receive with options
+	ReceiveMessagesWithOptions(ctx context.Context, queue string, opts ReceiveOptions) ([]Message, error)
+
+	// Queue attributes
+	GetQueueAttributes(ctx context.Context, queue string) (*QueueAttributes, error)
+	SetQueueAttributes(ctx context.Context, queue string, attrs map[string]int) error
+
+	// Purge
+	PurgeQueue(ctx context.Context, queue string) error
 }
