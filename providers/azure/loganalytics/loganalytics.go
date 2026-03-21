@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
 	"github.com/stackshy/cloudemu/logging/driver"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
 const (
@@ -35,8 +36,36 @@ type logGroup struct {
 
 // Mock is an in-memory mock implementation of Azure Log Analytics.
 type Mock struct {
-	groups *memstore.Store[*logGroup]
-	opts   *config.Options
+	groups     *memstore.Store[*logGroup]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(logGroupName string, metrics map[string]float64) {
+	if m.monitoring == nil {
+		return
+	}
+
+	now := m.opts.Clock.Now()
+	data := make([]mondriver.MetricDatum, 0, len(metrics))
+
+	for name, value := range metrics {
+		data = append(data, mondriver.MetricDatum{
+			Namespace:  "Microsoft.OperationalInsights/workspaces",
+			MetricName: name,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: map[string]string{"logGroupName": logGroupName},
+			Timestamp:  now,
+		})
+	}
+
+	_ = m.monitoring.PutMetricData(context.Background(), data)
 }
 
 // New creates a new Log Analytics mock with the given configuration options.
@@ -221,6 +250,10 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 	m.groups.Update(groupName, func(lg *logGroup) *logGroup {
 		lg.info.StoredBytes += totalBytes
 		return lg
+	})
+
+	m.emitMetric(groupName, map[string]float64{
+		"IngestedEvents": float64(len(events)), "IngestedBytes": float64(totalBytes),
 	})
 
 	return nil

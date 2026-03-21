@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
 const defaultRedisPort = 6379
@@ -32,8 +33,32 @@ type cacheData struct {
 
 // Mock is an in-memory mock implementation of GCP Memorystore.
 type Mock struct {
-	caches *memstore.Store[*cacheData]
-	opts   *config.Options
+	caches     *memstore.Store[*cacheData]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+//nolint:unparam // value kept as parameter for API consistency with other service emitMetric helpers.
+func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(ctx, []mondriver.MetricDatum{
+		{
+			Namespace:  "redis.googleapis.com",
+			MetricName: metricName,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: dims,
+			Timestamp:  m.opts.Clock.Now(),
+		},
+	})
 }
 
 // New creates a new Memorystore mock with the given configuration options.
@@ -128,7 +153,7 @@ func (m *Mock) ListCaches(_ context.Context) ([]driver.CacheInfo, error) {
 }
 
 // Set stores a value in the cache with an optional TTL.
-func (m *Mock) Set(_ context.Context, cacheName, key string, value []byte, ttl time.Duration) error {
+func (m *Mock) Set(ctx context.Context, cacheName, key string, value []byte, ttl time.Duration) error {
 	cd, ok := m.caches.Get(cacheName)
 	if !ok {
 		return errors.Newf(errors.NotFound, "cache %q not found", cacheName)
@@ -146,11 +171,15 @@ func (m *Mock) Set(_ context.Context, cacheName, key string, value []byte, ttl t
 
 	cd.items.Set(key, item)
 
+	dims := map[string]string{"instance_id": cacheName}
+	m.emitMetric(ctx, "commands/set", 1, dims)
+	m.emitMetric(ctx, "commands/total", 1, dims)
+
 	return nil
 }
 
 // Get retrieves a value from the cache.
-func (m *Mock) Get(_ context.Context, cacheName, key string) (*driver.Item, error) {
+func (m *Mock) Get(ctx context.Context, cacheName, key string) (*driver.Item, error) {
 	cd, ok := m.caches.Get(cacheName)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "cache %q not found", cacheName)
@@ -158,12 +187,22 @@ func (m *Mock) Get(_ context.Context, cacheName, key string) (*driver.Item, erro
 
 	item, ok := cd.items.Get(key)
 	if !ok {
+		dims := map[string]string{"instance_id": cacheName}
+		m.emitMetric(ctx, "stats/cache_miss_count", 1, dims)
+		m.emitMetric(ctx, "commands/get", 1, dims)
+		m.emitMetric(ctx, "commands/total", 1, dims)
+
 		return nil, errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
 
 	now := m.opts.Clock.Now()
 	if item.HasTTL && now.After(item.ExpiresAt) {
 		cd.items.Delete(key)
+
+		dims := map[string]string{"instance_id": cacheName}
+		m.emitMetric(ctx, "stats/cache_miss_count", 1, dims)
+		m.emitMetric(ctx, "commands/get", 1, dims)
+		m.emitMetric(ctx, "commands/total", 1, dims)
 
 		return nil, errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
@@ -181,11 +220,16 @@ func (m *Mock) Get(_ context.Context, cacheName, key string) (*driver.Item, erro
 		result.ExpiresAt = item.ExpiresAt
 	}
 
+	dims := map[string]string{"instance_id": cacheName}
+	m.emitMetric(ctx, "stats/cache_hit_count", 1, dims)
+	m.emitMetric(ctx, "commands/get", 1, dims)
+	m.emitMetric(ctx, "commands/total", 1, dims)
+
 	return result, nil
 }
 
 // Delete removes a value from the cache.
-func (m *Mock) Delete(_ context.Context, cacheName, key string) error {
+func (m *Mock) Delete(ctx context.Context, cacheName, key string) error {
 	cd, ok := m.caches.Get(cacheName)
 	if !ok {
 		return errors.Newf(errors.NotFound, "cache %q not found", cacheName)
@@ -194,6 +238,8 @@ func (m *Mock) Delete(_ context.Context, cacheName, key string) error {
 	if !cd.items.Delete(key) {
 		return errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
+
+	m.emitMetric(ctx, "commands/total", 1, map[string]string{"instance_id": cacheName})
 
 	return nil
 }

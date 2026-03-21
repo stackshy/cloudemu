@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
 const defaultRedisSSLPort = 6380
@@ -31,8 +32,36 @@ type cacheData struct {
 
 // Mock is an in-memory mock implementation of Azure Cache for Redis.
 type Mock struct {
-	caches *memstore.Store[*cacheData]
-	opts   *config.Options
+	caches     *memstore.Store[*cacheData]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(cacheName string, metrics map[string]float64) {
+	if m.monitoring == nil {
+		return
+	}
+
+	now := m.opts.Clock.Now()
+	data := make([]mondriver.MetricDatum, 0, len(metrics))
+
+	for name, value := range metrics {
+		data = append(data, mondriver.MetricDatum{
+			Namespace:  "Microsoft.Cache/redis",
+			MetricName: name,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: map[string]string{"cacheName": cacheName},
+			Timestamp:  now,
+		})
+	}
+
+	_ = m.monitoring.PutMetricData(context.Background(), data)
 }
 
 // New creates a new Azure Cache mock with the given configuration options.
@@ -144,6 +173,8 @@ func (m *Mock) Set(_ context.Context, cacheName, key string, value []byte, ttl t
 
 	cd.items.Set(key, item)
 
+	m.emitMetric(cacheName, map[string]float64{"SetCommands": 1, "TotalCommandsProcessed": 1})
+
 	return nil
 }
 
@@ -156,12 +187,20 @@ func (m *Mock) Get(_ context.Context, cacheName, key string) (*driver.Item, erro
 
 	item, ok := cd.items.Get(key)
 	if !ok {
+		m.emitMetric(cacheName, map[string]float64{
+			"CacheMisses": 1, "GetCommands": 1, "TotalCommandsProcessed": 1,
+		})
+
 		return nil, errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
 
 	now := m.opts.Clock.Now()
 	if item.HasTTL && now.After(item.ExpiresAt) {
 		cd.items.Delete(key)
+
+		m.emitMetric(cacheName, map[string]float64{
+			"CacheMisses": 1, "GetCommands": 1, "TotalCommandsProcessed": 1,
+		})
 
 		return nil, errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
@@ -179,6 +218,10 @@ func (m *Mock) Get(_ context.Context, cacheName, key string) (*driver.Item, erro
 		result.ExpiresAt = item.ExpiresAt
 	}
 
+	m.emitMetric(cacheName, map[string]float64{
+		"CacheHits": 1, "GetCommands": 1, "TotalCommandsProcessed": 1,
+	})
+
 	return result, nil
 }
 
@@ -192,6 +235,8 @@ func (m *Mock) Delete(_ context.Context, cacheName, key string) error {
 	if !cd.items.Delete(key) {
 		return errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
+
+	m.emitMetric(cacheName, map[string]float64{"TotalCommandsProcessed": 1})
 
 	return nil
 }

@@ -6,11 +6,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/database/driver"
 	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	"github.com/stackshy/cloudemu/pagination"
 )
 
@@ -27,18 +29,49 @@ const (
 	OpBetween      = "BETWEEN"
 )
 
+// Stream view type constants.
+const (
+	ViewNewImage       = "NEW_IMAGE"
+	ViewOldImage       = "OLD_IMAGE"
+	ViewNewAndOld      = "NEW_AND_OLD_IMAGES"
+	ViewKeysOnly       = "KEYS_ONLY"
+	maxStreamRecords   = 1000
+	defaultStreamLimit = 100
+)
+
 var _ driver.Database = (*Mock)(nil)
 
 type tableData struct {
-	config driver.TableConfig
-	items  *memstore.Store[map[string]any]
+	config        driver.TableConfig
+	items         *memstore.Store[map[string]any]
+	ttlConfig     driver.TTLConfig
+	streamConfig  driver.StreamConfig
+	streamRecords []driver.StreamRecord
+	seqCounter    atomic.Int64
 }
 
 // Mock is an in-memory mock implementation of DynamoDB.
 type Mock struct {
-	mu     sync.RWMutex
-	tables map[string]*tableData
-	opts   *config.Options
+	mu         sync.RWMutex
+	tables     map[string]*tableData
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
+		Namespace: "AWS/DynamoDB", MetricName: metricName, Value: value, Unit: "Count",
+		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+	}})
 }
 
 // New creates a new DynamoDB mock.
@@ -108,15 +141,23 @@ func (m *Mock) ListTables(_ context.Context) ([]string, error) {
 }
 
 func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) error {
-	m.mu.RLock()
-	td, exists := m.tables[table]
-	m.mu.RUnlock()
+	m.mu.Lock()
 
+	td, exists := m.tables[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
-	td.items.Set(itemKey(td.config, item), item)
+	key := itemKey(td.config, item)
+	oldItem, hadOld := td.items.Get(key)
+	td.items.Set(key, item)
+	m.recordStreamEvent(td, oldItem, item, hadOld)
+	m.mu.Unlock()
+
+	dims := map[string]string{"TableName": table}
+	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
+	m.emitMetric("SuccessfulRequestCount", 1, dims)
 
 	return nil
 }
@@ -130,24 +171,47 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
-	item, ok := td.items.Get(itemKey(td.config, key))
+	k := itemKey(td.config, key)
+	item, ok := td.items.Get(k)
+
 	if !ok {
 		return nil, cerrors.New(cerrors.NotFound, "item not found")
 	}
+
+	if m.isItemExpired(td, item) {
+		td.items.Delete(k)
+		return nil, cerrors.New(cerrors.NotFound, "item not found")
+	}
+
+	dims := map[string]string{"TableName": table}
+	m.emitMetric("ConsumedReadCapacityUnits", 1, dims)
+	m.emitMetric("SuccessfulRequestCount", 1, dims)
 
 	return item, nil
 }
 
 func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) error {
-	m.mu.RLock()
-	td, exists := m.tables[table]
-	m.mu.RUnlock()
+	m.mu.Lock()
 
+	td, exists := m.tables[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
-	td.items.Delete(itemKey(td.config, key))
+	k := itemKey(td.config, key)
+	oldItem, hadOld := td.items.Get(k)
+	td.items.Delete(k)
+
+	if hadOld {
+		m.recordStreamRemove(td, oldItem)
+	}
+
+	m.mu.Unlock()
+
+	dims := map[string]string{"TableName": table}
+	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
+	m.emitMetric("SuccessfulRequestCount", 1, dims)
 
 	return nil
 }
@@ -167,7 +231,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		return nil, err
 	}
 
-	matched := matchQueryItems(td, pkField, skField, &input)
+	matched := m.matchQueryItems(td, pkField, skField, &input)
 
 	limit := input.Limit
 	if limit <= 0 {
@@ -175,6 +239,10 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 	}
 
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+
+	dims := map[string]string{"TableName": input.Table}
+	m.emitMetric("ConsumedReadCapacityUnits", float64(len(page.Items)), dims)
+	m.emitMetric("SuccessfulRequestCount", 1, dims)
 
 	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
 }
@@ -196,12 +264,18 @@ func resolveKeyFields(td *tableData, indexName string) (pkField, skField string,
 	return "", "", cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
 }
 
-func matchQueryItems(td *tableData, pkField, skField string, input *driver.QueryInput) []map[string]any {
+func (m *Mock) matchQueryItems(
+	td *tableData, pkField, skField string, input *driver.QueryInput,
+) []map[string]any {
 	allItems := td.items.All()
 
 	var matched []map[string]any
 
 	for _, item := range allItems {
+		if m.isItemExpired(td, item) {
+			continue
+		}
+
 		pkVal := fmt.Sprintf("%v", item[pkField])
 		if pkVal != fmt.Sprintf("%v", input.KeyCondition.PartitionVal) {
 			continue
@@ -236,6 +310,10 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 	var matched []map[string]any
 
 	for _, item := range allItems {
+		if m.isItemExpired(td, item) {
+			continue
+		}
+
 		if matchesFilters(item, input.Filters) {
 			matched = append(matched, item)
 		}
@@ -248,21 +326,31 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
 
+	dims := map[string]string{"TableName": input.Table}
+	m.emitMetric("ConsumedReadCapacityUnits", float64(len(page.Items)), dims)
+	m.emitMetric("SuccessfulRequestCount", 1, dims)
+
 	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
 }
 
 func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string]any) error {
-	m.mu.RLock()
-	td, exists := m.tables[table]
-	m.mu.RUnlock()
+	m.mu.Lock()
 
+	td, exists := m.tables[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
 	for _, item := range items {
-		td.items.Set(itemKey(td.config, item), item)
+		key := itemKey(td.config, item)
+		oldItem, hadOld := td.items.Get(key)
+		td.items.Set(key, item)
+
+		m.recordStreamEvent(td, oldItem, item, hadOld)
 	}
+
+	m.mu.Unlock()
 
 	return nil
 }
@@ -370,4 +458,273 @@ func matchesSingleScanFilter(item map[string]any, f driver.ScanFilter) bool {
 	default:
 		return false
 	}
+}
+
+// UpdateTTL configures TTL for a table.
+func (m *Mock) UpdateTTL(_ context.Context, table string, cfg driver.TTLConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	td.ttlConfig = cfg
+
+	return nil
+}
+
+// DescribeTTL returns the TTL configuration for a table.
+func (m *Mock) DescribeTTL(_ context.Context, table string) (*driver.TTLConfig, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	cfg := td.ttlConfig
+
+	return &cfg, nil
+}
+
+// UpdateStreamConfig configures streams for a table.
+func (m *Mock) UpdateStreamConfig(_ context.Context, table string, cfg driver.StreamConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	td.streamConfig = cfg
+
+	return nil
+}
+
+// GetStreamRecords returns stream records after the given token.
+func (m *Mock) GetStreamRecords(
+	_ context.Context, table string, limit int, token string,
+) (*driver.StreamIterator, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	if !td.streamConfig.Enabled {
+		return nil, cerrors.New(cerrors.FailedPrecondition, "streams not enabled")
+	}
+
+	return filterStreamRecords(td.streamRecords, limit, token), nil
+}
+
+func filterStreamRecords(records []driver.StreamRecord, limit int, token string) *driver.StreamIterator {
+	if limit <= 0 {
+		limit = defaultStreamLimit
+	}
+
+	startIdx := 0
+
+	if token != "" {
+		for i, r := range records {
+			if r.SequenceNumber == token {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
+	end := startIdx + limit
+	if end > len(records) {
+		end = len(records)
+	}
+
+	result := records[startIdx:end]
+	nextToken := ""
+
+	if end < len(records) {
+		nextToken = result[len(result)-1].SequenceNumber
+	}
+
+	return &driver.StreamIterator{
+		ShardID:   "shard-000",
+		Records:   result,
+		NextToken: nextToken,
+	}
+}
+
+// TransactWriteItems executes puts and deletes atomically.
+func (m *Mock) TransactWriteItems(
+	_ context.Context, table string, puts []map[string]any, deletes []map[string]any,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	m.applyTransactPuts(td, puts)
+	m.applyTransactDeletes(td, deletes)
+
+	return nil
+}
+
+func (m *Mock) applyTransactPuts(td *tableData, puts []map[string]any) {
+	for _, item := range puts {
+		key := itemKey(td.config, item)
+		oldItem, hadOld := td.items.Get(key)
+		td.items.Set(key, item)
+		m.recordStreamEvent(td, oldItem, item, hadOld)
+	}
+}
+
+func (m *Mock) applyTransactDeletes(td *tableData, deletes []map[string]any) {
+	for _, key := range deletes {
+		k := itemKey(td.config, key)
+		oldItem, hadOld := td.items.Get(k)
+		td.items.Delete(k)
+
+		if hadOld {
+			m.recordStreamRemove(td, oldItem)
+		}
+	}
+}
+
+// isItemExpired checks if an item has expired based on TTL config.
+func (m *Mock) isItemExpired(td *tableData, item map[string]any) bool {
+	if !td.ttlConfig.Enabled {
+		return false
+	}
+
+	ttlVal, ok := item[td.ttlConfig.AttributeName]
+	if !ok {
+		return false
+	}
+
+	ttlUnix := toUnixTimestamp(ttlVal)
+	if ttlUnix <= 0 {
+		return false
+	}
+
+	return m.opts.Clock.Now().Unix() > ttlUnix
+}
+
+func toUnixTimestamp(val any) int64 {
+	switch v := val.(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	default:
+		parsed, err := strconv.ParseFloat(fmt.Sprintf("%v", v), 64)
+		if err != nil {
+			return 0
+		}
+
+		return int64(parsed)
+	}
+}
+
+// recordStreamEvent records an INSERT or MODIFY stream event. Caller must hold m.mu.
+func (m *Mock) recordStreamEvent(td *tableData, oldItem, newItem map[string]any, hadOld bool) {
+	if !td.streamConfig.Enabled {
+		return
+	}
+
+	eventType := "INSERT"
+	if hadOld {
+		eventType = "MODIFY"
+	}
+
+	rec := m.buildStreamRecord(td, eventType, oldItem, newItem)
+	td.streamRecords = appendStreamRecord(td.streamRecords, &rec)
+}
+
+// recordStreamRemove records a REMOVE stream event. Caller must hold m.mu.
+func (m *Mock) recordStreamRemove(td *tableData, oldItem map[string]any) {
+	if !td.streamConfig.Enabled {
+		return
+	}
+
+	rec := m.buildStreamRecord(td, "REMOVE", oldItem, nil)
+	td.streamRecords = appendStreamRecord(td.streamRecords, &rec)
+}
+
+func (m *Mock) buildStreamRecord(
+	td *tableData, eventType string, oldItem, newItem map[string]any,
+) driver.StreamRecord {
+	seq := td.seqCounter.Add(1)
+	keys := extractKeys(td.config, oldItem, newItem)
+
+	rec := driver.StreamRecord{
+		EventID:        fmt.Sprintf("event-%d", seq),
+		EventType:      eventType,
+		Table:          td.config.Name,
+		Keys:           keys,
+		Timestamp:      m.opts.Clock.Now(),
+		SequenceNumber: fmt.Sprintf("%d", seq),
+	}
+
+	applyViewType(&rec, td.streamConfig.ViewType, oldItem, newItem)
+
+	return rec
+}
+
+func extractKeys(cfg driver.TableConfig, oldItem, newItem map[string]any) map[string]any {
+	src := newItem
+	if src == nil {
+		src = oldItem
+	}
+
+	keys := map[string]any{cfg.PartitionKey: src[cfg.PartitionKey]}
+	if cfg.SortKey != "" {
+		keys[cfg.SortKey] = src[cfg.SortKey]
+	}
+
+	return keys
+}
+
+func applyViewType(rec *driver.StreamRecord, viewType string, oldItem, newItem map[string]any) {
+	switch viewType {
+	case ViewNewImage:
+		rec.NewImage = copyItem(newItem)
+	case ViewOldImage:
+		rec.OldImage = copyItem(oldItem)
+	case ViewNewAndOld:
+		rec.NewImage = copyItem(newItem)
+		rec.OldImage = copyItem(oldItem)
+	case ViewKeysOnly:
+	}
+}
+
+func copyItem(item map[string]any) map[string]any {
+	if item == nil {
+		return nil
+	}
+
+	cp := make(map[string]any, len(item))
+	for k, v := range item {
+		cp[k] = v
+	}
+
+	return cp
+}
+
+func appendStreamRecord(records []driver.StreamRecord, rec *driver.StreamRecord) []driver.StreamRecord {
+	records = append(records, *rec)
+	if len(records) > maxStreamRecords {
+		records = records[len(records)-maxStreamRecords:]
+	}
+
+	return records
 }

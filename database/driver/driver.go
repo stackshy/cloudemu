@@ -1,7 +1,41 @@
 // Package driver defines the interface for database service implementations.
 package driver
 
-import "context"
+import (
+	"context"
+	"time"
+)
+
+// TTLConfig configures TTL for a table.
+type TTLConfig struct {
+	Enabled       bool
+	AttributeName string // the field containing the TTL timestamp
+}
+
+// StreamRecord represents a change event in a stream.
+type StreamRecord struct {
+	EventID        string
+	EventType      string // "INSERT", "MODIFY", "REMOVE"
+	Table          string
+	Keys           map[string]any
+	NewImage       map[string]any
+	OldImage       map[string]any
+	Timestamp      time.Time
+	SequenceNumber string
+}
+
+// StreamConfig configures streams for a table.
+type StreamConfig struct {
+	Enabled  bool
+	ViewType string // "NEW_IMAGE", "OLD_IMAGE", "NEW_AND_OLD_IMAGES", "KEYS_ONLY"
+}
+
+// StreamIterator allows reading stream records.
+type StreamIterator struct {
+	ShardID   string
+	Records   []StreamRecord
+	NextToken string
+}
 
 // TableConfig describes a table to create.
 type TableConfig struct {
@@ -74,4 +108,15 @@ type Database interface {
 
 	BatchPutItems(ctx context.Context, table string, items []map[string]any) error
 	BatchGetItems(ctx context.Context, table string, keys []map[string]any) ([]map[string]any, error)
+
+	// TTL
+	UpdateTTL(ctx context.Context, table string, config TTLConfig) error
+	DescribeTTL(ctx context.Context, table string) (*TTLConfig, error)
+
+	// Streams / Change Feed
+	UpdateStreamConfig(ctx context.Context, table string, config StreamConfig) error
+	GetStreamRecords(ctx context.Context, table string, limit int, token string) (*StreamIterator, error)
+
+	// Transactional writes
+	TransactWriteItems(ctx context.Context, table string, puts []map[string]any, deletes []map[string]any) error
 }

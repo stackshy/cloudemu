@@ -3,6 +3,74 @@ package driver
 
 import "context"
 
+// FunctionVersion represents a published version of a function.
+type FunctionVersion struct {
+	FunctionName string
+	Version      string // "1", "2", etc. or "$LATEST"
+	Description  string
+	CodeSHA256   string
+	CreatedAt    string
+}
+
+// AliasConfig configures a function alias.
+type AliasConfig struct {
+	FunctionName    string
+	Name            string
+	FunctionVersion string
+	Description     string
+	RoutingConfig   *AliasRoutingConfig // for weighted aliases
+}
+
+// AliasRoutingConfig defines weighted routing between versions.
+type AliasRoutingConfig struct {
+	AdditionalVersion string
+	Weight            float64 // 0.0-1.0, traffic percentage to additional version
+}
+
+// Alias represents a function alias.
+type Alias struct {
+	FunctionName    string
+	Name            string
+	FunctionVersion string
+	Description     string
+	RoutingConfig   *AliasRoutingConfig
+	AliasARN        string
+	CreatedAt       string
+}
+
+// LayerConfig configures a new layer version.
+type LayerConfig struct {
+	Name               string
+	Description        string
+	Content            []byte
+	CompatibleRuntimes []string
+}
+
+// LayerVersion represents a published layer version.
+type LayerVersion struct {
+	Name               string
+	Version            int
+	Description        string
+	ContentSHA256      string
+	ContentSize        int64
+	CompatibleRuntimes []string
+	CreatedAt          string
+	ARN                string
+}
+
+// ConcurrencyConfig configures function concurrency.
+type ConcurrencyConfig struct {
+	FunctionName                 string
+	ReservedConcurrentExecutions int
+}
+
+// ProvisionedConcurrencyConfig configures provisioned concurrency.
+type ProvisionedConcurrencyConfig struct {
+	FunctionName string
+	Qualifier    string // version or alias
+	Provisioned  int
+}
+
 // FunctionConfig describes a serverless function to create.
 type FunctionConfig struct {
 	Name        string
@@ -54,4 +122,27 @@ type Serverless interface {
 	UpdateFunction(ctx context.Context, name string, config FunctionConfig) (*FunctionInfo, error)
 	Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput, error)
 	RegisterHandler(name string, handler HandlerFunc)
+
+	// Versions
+	PublishVersion(ctx context.Context, functionName, description string) (*FunctionVersion, error)
+	ListVersions(ctx context.Context, functionName string) ([]FunctionVersion, error)
+
+	// Aliases
+	CreateAlias(ctx context.Context, config AliasConfig) (*Alias, error)
+	UpdateAlias(ctx context.Context, config AliasConfig) (*Alias, error)
+	DeleteAlias(ctx context.Context, functionName, aliasName string) error
+	GetAlias(ctx context.Context, functionName, aliasName string) (*Alias, error)
+	ListAliases(ctx context.Context, functionName string) ([]Alias, error)
+
+	// Layers
+	PublishLayerVersion(ctx context.Context, config LayerConfig) (*LayerVersion, error)
+	GetLayerVersion(ctx context.Context, name string, version int) (*LayerVersion, error)
+	ListLayerVersions(ctx context.Context, name string) ([]LayerVersion, error)
+	DeleteLayerVersion(ctx context.Context, name string, version int) error
+	ListLayers(ctx context.Context) ([]LayerVersion, error)
+
+	// Concurrency
+	PutFunctionConcurrency(ctx context.Context, config ConcurrencyConfig) error
+	GetFunctionConcurrency(ctx context.Context, functionName string) (*ConcurrencyConfig, error)
+	DeleteFunctionConcurrency(ctx context.Context, functionName string) error
 }

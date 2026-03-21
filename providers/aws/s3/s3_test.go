@@ -2,10 +2,14 @@ package s3
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stackshy/cloudemu/config"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/storage/driver"
 )
 
@@ -351,6 +355,401 @@ func TestHeadObject(t *testing.T) {
 
 	_, err = m.HeadObject(ctx, "nope", "file.txt")
 	assertError(t, err, true)
+}
+
+func TestGeneratePresignedURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		req       driver.PresignedURLRequest
+		setup     func(m *Mock)
+		expectErr bool
+		checkURL  func(t *testing.T, url *driver.PresignedURL)
+	}{
+		{
+			name: "GET presigned URL",
+			req:  driver.PresignedURLRequest{Bucket: "bkt", Key: "file.txt", Method: http.MethodGet},
+			setup: func(m *Mock) {
+				_ = m.CreateBucket(context.Background(), "bkt")
+			},
+			checkURL: func(t *testing.T, url *driver.PresignedURL) {
+				t.Helper()
+				assertEqual(t, http.MethodGet, url.Method)
+				assertEqual(t, true, strings.Contains(url.URL, "bkt"))
+				assertEqual(t, true, strings.Contains(url.URL, "file.txt"))
+				assertEqual(t, true, strings.Contains(url.URL, "X-Amz-Signature"))
+				assertEqual(t, true, strings.Contains(url.URL, "X-Amz-Expires"))
+			},
+		},
+		{
+			name: "PUT presigned URL",
+			req:  driver.PresignedURLRequest{Bucket: "bkt", Key: "upload.bin", Method: http.MethodPut},
+			setup: func(m *Mock) {
+				_ = m.CreateBucket(context.Background(), "bkt")
+			},
+			checkURL: func(t *testing.T, url *driver.PresignedURL) {
+				t.Helper()
+				assertEqual(t, http.MethodPut, url.Method)
+				assertEqual(t, true, strings.Contains(url.URL, "upload.bin"))
+			},
+		},
+		{
+			name: "custom expiry",
+			req:  driver.PresignedURLRequest{Bucket: "bkt", Key: "k", Method: http.MethodGet, ExpiresIn: 30 * time.Minute},
+			setup: func(m *Mock) {
+				_ = m.CreateBucket(context.Background(), "bkt")
+			},
+			checkURL: func(t *testing.T, url *driver.PresignedURL) {
+				t.Helper()
+				assertEqual(t, true, strings.Contains(url.URL, "1800"))
+			},
+		},
+		{
+			name:      "bucket not found",
+			req:       driver.PresignedURLRequest{Bucket: "nope", Key: "k", Method: http.MethodGet},
+			expectErr: true,
+		},
+		{
+			name: "invalid method",
+			req:  driver.PresignedURLRequest{Bucket: "bkt", Key: "k", Method: http.MethodPost},
+			setup: func(m *Mock) {
+				_ = m.CreateBucket(context.Background(), "bkt")
+			},
+			expectErr: true,
+		},
+		{
+			name: "expiry exceeds maximum",
+			req:  driver.PresignedURLRequest{Bucket: "bkt", Key: "k", Method: http.MethodGet, ExpiresIn: 8 * 24 * time.Hour},
+			setup: func(m *Mock) {
+				_ = m.CreateBucket(context.Background(), "bkt")
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestMock()
+			if tc.setup != nil {
+				tc.setup(m)
+			}
+			url, err := m.GeneratePresignedURL(context.Background(), tc.req)
+			assertError(t, err, tc.expectErr)
+
+			if tc.expectErr {
+				return
+			}
+
+			tc.checkURL(t, url)
+		})
+	}
+}
+
+func TestBucketLifecycleConfig(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
+	m := New(opts)
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("put and get lifecycle config", func(t *testing.T) {
+		cfg := driver.LifecycleConfig{
+			Rules: []driver.LifecycleRule{
+				{ID: "expire-logs", Enabled: true, Prefix: "logs/", ExpirationDays: 30},
+				{ID: "disabled-rule", Enabled: false, Prefix: "tmp/", ExpirationDays: 7},
+			},
+		}
+
+		err := m.PutLifecycleConfig(ctx, "bkt", cfg)
+		requireNoError(t, err)
+
+		got, err := m.GetLifecycleConfig(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 2, len(got.Rules))
+		assertEqual(t, "expire-logs", got.Rules[0].ID)
+		assertEqual(t, 30, got.Rules[0].ExpirationDays)
+	})
+
+	t.Run("get lifecycle no config", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "empty-bkt")
+		_, err := m.GetLifecycleConfig(ctx, "empty-bkt")
+		assertError(t, err, true)
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutLifecycleConfig(ctx, "nope", driver.LifecycleConfig{})
+		assertError(t, err, true)
+	})
+
+	t.Run("evaluate lifecycle with FakeClock", func(t *testing.T) {
+		_ = m.PutObject(ctx, "bkt", "logs/old.txt", []byte("old"), "", nil)
+		_ = m.PutObject(ctx, "bkt", "logs/new.txt", []byte("new"), "", nil)
+		_ = m.PutObject(ctx, "bkt", "data/keep.txt", []byte("keep"), "", nil)
+
+		// Before expiry: no expired keys
+		expired, err := m.EvaluateLifecycle(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 0, len(expired))
+
+		// Advance clock past 30 days
+		fc.Advance(31 * 24 * time.Hour)
+
+		expired, err = m.EvaluateLifecycle(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 2, len(expired))
+		assertEqual(t, "logs/new.txt", expired[0])
+		assertEqual(t, "logs/old.txt", expired[1])
+	})
+}
+
+func TestMultipartUpload(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("create upload parts and complete", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "bkt", "big-file.bin", "application/octet-stream")
+		requireNoError(t, err)
+		assertEqual(t, "bkt", mp.Bucket)
+		assertEqual(t, "big-file.bin", mp.Key)
+
+		part1, err := m.UploadPart(ctx, "bkt", "big-file.bin", mp.UploadID, 1, []byte("part1-"))
+		requireNoError(t, err)
+		assertEqual(t, 1, part1.PartNumber)
+
+		part2, err := m.UploadPart(ctx, "bkt", "big-file.bin", mp.UploadID, 2, []byte("part2"))
+		requireNoError(t, err)
+		assertEqual(t, 2, part2.PartNumber)
+
+		err = m.CompleteMultipartUpload(ctx, "bkt", "big-file.bin", mp.UploadID, []driver.UploadPart{*part1, *part2})
+		requireNoError(t, err)
+
+		obj, err := m.GetObject(ctx, "bkt", "big-file.bin")
+		requireNoError(t, err)
+		assertEqual(t, "part1-part2", string(obj.Data))
+	})
+
+	t.Run("bucket not found for create", func(t *testing.T) {
+		_, err := m.CreateMultipartUpload(ctx, "nope", "k", "")
+		assertError(t, err, true)
+	})
+
+	t.Run("upload not found for upload part", func(t *testing.T) {
+		_, err := m.UploadPart(ctx, "bkt", "k", "bad-upload-id", 1, []byte("x"))
+		assertError(t, err, true)
+	})
+}
+
+func TestAbortMultipartUpload(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	mp, err := m.CreateMultipartUpload(ctx, "bkt", "file.bin", "")
+	requireNoError(t, err)
+
+	_, err = m.UploadPart(ctx, "bkt", "file.bin", mp.UploadID, 1, []byte("data"))
+	requireNoError(t, err)
+
+	err = m.AbortMultipartUpload(ctx, "bkt", "file.bin", mp.UploadID)
+	requireNoError(t, err)
+
+	// Verify upload is gone
+	uploads, err := m.ListMultipartUploads(ctx, "bkt")
+	requireNoError(t, err)
+	assertEqual(t, 0, len(uploads))
+
+	// Object should not exist
+	_, err = m.GetObject(ctx, "bkt", "file.bin")
+	assertError(t, err, true)
+}
+
+func TestListMultipartUploads(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("empty list", func(t *testing.T) {
+		uploads, err := m.ListMultipartUploads(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 0, len(uploads))
+	})
+
+	t.Run("multiple uploads", func(t *testing.T) {
+		_, err := m.CreateMultipartUpload(ctx, "bkt", "file1.bin", "")
+		requireNoError(t, err)
+		_, err = m.CreateMultipartUpload(ctx, "bkt", "file2.bin", "")
+		requireNoError(t, err)
+
+		uploads, err := m.ListMultipartUploads(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 2, len(uploads))
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		_, err := m.ListMultipartUploads(ctx, "nope")
+		assertError(t, err, true)
+	})
+}
+
+func TestBucketVersioning(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("default disabled", func(t *testing.T) {
+		enabled, err := m.GetBucketVersioning(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, false, enabled)
+	})
+
+	t.Run("enable versioning", func(t *testing.T) {
+		err := m.SetBucketVersioning(ctx, "bkt", true)
+		requireNoError(t, err)
+
+		enabled, err := m.GetBucketVersioning(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, true, enabled)
+	})
+
+	t.Run("disable versioning", func(t *testing.T) {
+		err := m.SetBucketVersioning(ctx, "bkt", false)
+		requireNoError(t, err)
+
+		enabled, err := m.GetBucketVersioning(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, false, enabled)
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.SetBucketVersioning(ctx, "nope", true)
+		assertError(t, err, true)
+
+		_, err = m.GetBucketVersioning(ctx, "nope")
+		assertError(t, err, true)
+	})
+}
+
+func TestS3MetricsEmission(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
+	m := New(opts)
+	ctx := context.Background()
+
+	cw := cloudwatch.New(opts)
+	m.SetMonitoring(cw)
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("PutObject emits metrics", func(t *testing.T) {
+		err := m.PutObject(ctx, "bkt", "key", []byte("hello"), "text/plain", nil)
+		requireNoError(t, err)
+
+		result, err := cw.GetMetricData(ctx, monitoringGetInput("PutRequests", "bkt", fc))
+		requireNoError(t, err)
+		assertEqual(t, true, len(result.Values) > 0)
+	})
+
+	t.Run("GetObject emits metrics", func(t *testing.T) {
+		_, err := m.GetObject(ctx, "bkt", "key")
+		requireNoError(t, err)
+
+		result, err := cw.GetMetricData(ctx, monitoringGetInput("GetRequests", "bkt", fc))
+		requireNoError(t, err)
+		assertEqual(t, true, len(result.Values) > 0)
+	})
+}
+
+func monitoringGetInput(metricName, bucket string, fc *config.FakeClock) mondriver.GetMetricInput {
+	return mondriver.GetMetricInput{
+		Namespace:  "AWS/S3",
+		MetricName: metricName,
+		Dimensions: map[string]string{"BucketName": bucket},
+		StartTime:  fc.Now().Add(-1 * time.Hour),
+		EndTime:    fc.Now().Add(1 * time.Hour),
+		Period:     60,
+		Stat:       "Sum",
+	}
+}
+
+func TestCompleteMultipartUploadPartsValidation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("only part 1 yields part 1 data", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "bkt", "file1.bin", "application/octet-stream")
+		requireNoError(t, err)
+
+		part1, err := m.UploadPart(ctx, "bkt", "file1.bin", mp.UploadID, 1, []byte("AAAA"))
+		requireNoError(t, err)
+		_, err = m.UploadPart(ctx, "bkt", "file1.bin", mp.UploadID, 2, []byte("BBBB"))
+		requireNoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "bkt", "file1.bin", mp.UploadID, []driver.UploadPart{*part1})
+		requireNoError(t, err)
+
+		obj, err := m.GetObject(ctx, "bkt", "file1.bin")
+		requireNoError(t, err)
+		assertEqual(t, "AAAA", string(obj.Data))
+	})
+
+	t.Run("reversed order yields part2+part1 data", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "bkt", "file2.bin", "application/octet-stream")
+		requireNoError(t, err)
+
+		part1, err := m.UploadPart(ctx, "bkt", "file2.bin", mp.UploadID, 1, []byte("AAAA"))
+		requireNoError(t, err)
+		part2, err := m.UploadPart(ctx, "bkt", "file2.bin", mp.UploadID, 2, []byte("BBBB"))
+		requireNoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "bkt", "file2.bin", mp.UploadID, []driver.UploadPart{*part2, *part1})
+		requireNoError(t, err)
+
+		obj, err := m.GetObject(ctx, "bkt", "file2.bin")
+		requireNoError(t, err)
+		assertEqual(t, "BBBBAAAA", string(obj.Data))
+	})
+
+	t.Run("non-existent part 99 returns error", func(t *testing.T) {
+		mp, err := m.CreateMultipartUpload(ctx, "bkt", "file3.bin", "application/octet-stream")
+		requireNoError(t, err)
+
+		_, err = m.UploadPart(ctx, "bkt", "file3.bin", mp.UploadID, 1, []byte("AAAA"))
+		requireNoError(t, err)
+
+		err = m.CompleteMultipartUpload(ctx, "bkt", "file3.bin", mp.UploadID, []driver.UploadPart{
+			{PartNumber: 99, ETag: "fake"},
+		})
+		assertError(t, err, true)
+	})
+}
+
+func TestCopyObjectMetrics(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
+	m := New(opts)
+	ctx := context.Background()
+
+	cw := cloudwatch.New(opts)
+	m.SetMonitoring(cw)
+
+	_ = m.CreateBucket(ctx, "src-bkt")
+	_ = m.CreateBucket(ctx, "dst-bkt")
+	_ = m.PutObject(ctx, "src-bkt", "file.txt", []byte("data"), "text/plain", nil)
+
+	err := m.CopyObject(ctx, "dst-bkt", "copy.txt", driver.CopySource{Bucket: "src-bkt", Key: "file.txt"})
+	requireNoError(t, err)
+
+	result, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+		Namespace:  "AWS/S3",
+		MetricName: "AllRequests",
+		Dimensions: map[string]string{"BucketName": "dst-bkt"},
+		StartTime:  fc.Now().Add(-1 * time.Hour),
+		EndTime:    fc.Now().Add(1 * time.Hour),
+		Period:     60,
+		Stat:       "Sum",
+	})
+	requireNoError(t, err)
+	assertEqual(t, true, len(result.Values) > 0)
 }
 
 // --- test helpers (no if/else, use t.Fatal/t.Errorf) ---

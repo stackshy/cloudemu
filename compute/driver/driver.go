@@ -41,6 +41,80 @@ type DescribeFilter struct {
 	Values []string
 }
 
+// AutoScalingGroupConfig configures an auto-scaling group.
+type AutoScalingGroupConfig struct {
+	Name              string
+	MinSize           int
+	MaxSize           int
+	DesiredCapacity   int
+	InstanceConfig    InstanceConfig
+	HealthCheckType   string // "EC2", "ELB"
+	HealthCheckGrace  int    // seconds
+	Tags              map[string]string
+	AvailabilityZones []string
+}
+
+// AutoScalingGroup describes an auto-scaling group.
+type AutoScalingGroup struct {
+	Name              string
+	MinSize           int
+	MaxSize           int
+	DesiredCapacity   int
+	CurrentSize       int
+	InstanceIDs       []string
+	Status            string
+	HealthCheckType   string
+	CreatedAt         string
+	Tags              map[string]string
+	AvailabilityZones []string
+}
+
+// ScalingPolicy defines when to scale.
+type ScalingPolicy struct {
+	Name              string
+	AutoScalingGroup  string
+	PolicyType        string // "SimpleScaling", "TargetTracking", "StepScaling"
+	AdjustmentType    string // "ChangeInCapacity", "ExactCapacity", "PercentChangeInCapacity"
+	ScalingAdjustment int
+	Cooldown          int     // seconds
+	TargetValue       float64 // for TargetTracking
+	MetricName        string  // for TargetTracking
+}
+
+// SpotInstanceRequest describes a spot/preemptible instance request.
+type SpotInstanceRequest struct {
+	ID             string
+	InstanceConfig InstanceConfig
+	MaxPrice       float64
+	Status         string // "open", "active", "closed", "canceled"
+	InstanceID     string
+	CreatedAt      string
+	Type           string // "one-time", "persistent"
+}
+
+// SpotRequestConfig configures a spot instance request.
+type SpotRequestConfig struct {
+	InstanceConfig InstanceConfig
+	MaxPrice       float64
+	Count          int
+	Type           string // "one-time", "persistent"
+}
+
+// LaunchTemplate describes a launch template.
+type LaunchTemplate struct {
+	ID             string
+	Name           string
+	Version        int
+	InstanceConfig InstanceConfig
+	CreatedAt      string
+}
+
+// LaunchTemplateConfig configures a launch template.
+type LaunchTemplateConfig struct {
+	Name           string
+	InstanceConfig InstanceConfig
+}
+
 // Compute is the interface that compute provider implementations must satisfy.
 type Compute interface {
 	RunInstances(ctx context.Context, config InstanceConfig, count int) ([]Instance, error)
@@ -50,4 +124,28 @@ type Compute interface {
 	TerminateInstances(ctx context.Context, instanceIDs []string) error
 	DescribeInstances(ctx context.Context, instanceIDs []string, filters []DescribeFilter) ([]Instance, error)
 	ModifyInstance(ctx context.Context, instanceID string, input ModifyInstanceInput) error
+
+	// Auto-Scaling Groups
+	CreateAutoScalingGroup(ctx context.Context, config AutoScalingGroupConfig) (*AutoScalingGroup, error)
+	DeleteAutoScalingGroup(ctx context.Context, name string, forceDelete bool) error
+	GetAutoScalingGroup(ctx context.Context, name string) (*AutoScalingGroup, error)
+	ListAutoScalingGroups(ctx context.Context) ([]AutoScalingGroup, error)
+	UpdateAutoScalingGroup(ctx context.Context, name string, desired, minSize, maxSize int) error
+	SetDesiredCapacity(ctx context.Context, name string, desired int) error
+
+	// Scaling Policies
+	PutScalingPolicy(ctx context.Context, policy ScalingPolicy) error
+	DeleteScalingPolicy(ctx context.Context, asgName, policyName string) error
+	ExecuteScalingPolicy(ctx context.Context, asgName, policyName string) error
+
+	// Spot/Preemptible Instances
+	RequestSpotInstances(ctx context.Context, config SpotRequestConfig) ([]SpotInstanceRequest, error)
+	CancelSpotRequests(ctx context.Context, requestIDs []string) error
+	DescribeSpotRequests(ctx context.Context, requestIDs []string) ([]SpotInstanceRequest, error)
+
+	// Launch Templates
+	CreateLaunchTemplate(ctx context.Context, config LaunchTemplateConfig) (*LaunchTemplate, error)
+	DeleteLaunchTemplate(ctx context.Context, name string) error
+	GetLaunchTemplate(ctx context.Context, name string) (*LaunchTemplate, error)
+	ListLaunchTemplates(ctx context.Context) ([]LaunchTemplate, error)
 }

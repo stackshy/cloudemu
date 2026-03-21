@@ -9,6 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	"github.com/stackshy/cloudemu/notification/driver"
 )
 
@@ -32,8 +33,25 @@ type topicData struct {
 
 // Mock is an in-memory mock implementation of the AWS SNS service.
 type Mock struct {
-	topics *memstore.Store[*topicData]
-	opts   *config.Options
+	topics     *memstore.Store[*topicData]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(metricName string, value float64, unit string, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
+		Namespace: "AWS/SNS", MetricName: metricName, Value: value, Unit: unit,
+		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+	}})
 }
 
 // New creates a new SNS mock with the given configuration options.
@@ -209,6 +227,10 @@ func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.Pu
 		Attributes: attrs,
 	})
 	td.mu.Unlock()
+
+	dims := map[string]string{"TopicName": input.TopicID}
+	m.emitMetric("NumberOfMessagesPublished", 1, "Count", dims)
+	m.emitMetric("PublishSize", float64(len(input.Message)), "Bytes", dims)
 
 	return &driver.PublishOutput{MessageID: msgID}, nil
 }

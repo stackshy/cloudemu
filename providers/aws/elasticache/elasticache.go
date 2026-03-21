@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
 const defaultRedisPort = 6379
@@ -31,8 +32,26 @@ type cacheData struct {
 
 // Mock is an in-memory mock implementation of the AWS ElastiCache service.
 type Mock struct {
-	caches *memstore.Store[*cacheData]
-	opts   *config.Options
+	caches     *memstore.Store[*cacheData]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+//nolint:unparam // value is always 1 today but kept for future metrics like evictions or replication lag.
+func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
+		Namespace: "AWS/ElastiCache", MetricName: metricName, Value: value, Unit: "Count",
+		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+	}})
 }
 
 // New creates a new ElastiCache mock with the given configuration options.
@@ -146,6 +165,8 @@ func (m *Mock) Set(_ context.Context, cacheName, key string, value []byte, ttl t
 
 	cd.items.Set(key, item)
 
+	m.emitMetric("SetCommands", 1, map[string]string{"CacheClusterId": cacheName})
+
 	return nil
 }
 
@@ -156,8 +177,13 @@ func (m *Mock) Get(_ context.Context, cacheName, key string) (*driver.Item, erro
 		return nil, errors.Newf(errors.NotFound, "cache %q not found", cacheName)
 	}
 
+	dims := map[string]string{"CacheClusterId": cacheName}
+
 	item, ok := cd.items.Get(key)
 	if !ok {
+		m.emitMetric("CacheMisses", 1, dims)
+		m.emitMetric("GetCommands", 1, dims)
+
 		return nil, errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
 
@@ -165,9 +191,14 @@ func (m *Mock) Get(_ context.Context, cacheName, key string) (*driver.Item, erro
 	now := m.opts.Clock.Now()
 	if item.HasTTL && now.After(item.ExpiresAt) {
 		cd.items.Delete(key)
+		m.emitMetric("CacheMisses", 1, dims)
+		m.emitMetric("GetCommands", 1, dims)
 
 		return nil, errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
+
+	m.emitMetric("CacheHits", 1, dims)
+	m.emitMetric("GetCommands", 1, dims)
 
 	data := make([]byte, len(item.Value))
 	copy(data, item.Value)
@@ -195,6 +226,8 @@ func (m *Mock) Delete(_ context.Context, cacheName, key string) error {
 	if !cd.items.Delete(key) {
 		return errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
 	}
+
+	m.emitMetric("DeleteCommands", 1, map[string]string{"CacheClusterId": cacheName})
 
 	return nil
 }

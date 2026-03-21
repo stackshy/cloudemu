@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	"github.com/stackshy/cloudemu/notification/driver"
 )
 
@@ -33,8 +34,36 @@ type topicData struct {
 
 // Mock is an in-memory mock implementation of Azure Notification Hubs.
 type Mock struct {
-	topics *memstore.Store[*topicData]
-	opts   *config.Options
+	topics     *memstore.Store[*topicData]
+	opts       *config.Options
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(topicName string, metrics map[string]float64) {
+	if m.monitoring == nil {
+		return
+	}
+
+	now := m.opts.Clock.Now()
+	data := make([]mondriver.MetricDatum, 0, len(metrics))
+
+	for name, value := range metrics {
+		data = append(data, mondriver.MetricDatum{
+			Namespace:  "Microsoft.NotificationHubs/namespaces",
+			MetricName: name,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: map[string]string{"topicName": topicName},
+			Timestamp:  now,
+		})
+	}
+
+	_ = m.monitoring.PutMetricData(context.Background(), data)
 }
 
 // New creates a new Notification Hubs mock with the given configuration options.
@@ -210,6 +239,8 @@ func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.Pu
 		Attributes: attrs,
 	})
 	td.mu.Unlock()
+
+	m.emitMetric(input.TopicID, map[string]float64{"OutgoingNotifications": 1})
 
 	return &driver.PublishOutput{MessageID: msgID}, nil
 }
