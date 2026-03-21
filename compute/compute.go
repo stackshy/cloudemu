@@ -166,3 +166,195 @@ func (c *Compute) ModifyInstance(ctx context.Context, instanceID string, input d
 
 	return err
 }
+
+// CreateAutoScalingGroup creates an auto-scaling group.
+//
+//nolint:gocritic // hugeParam: config passed by value to match driver.Compute interface pattern
+func (c *Compute) CreateAutoScalingGroup(
+	ctx context.Context, config driver.AutoScalingGroupConfig,
+) (*driver.AutoScalingGroup, error) {
+	out, err := c.do(ctx, "CreateAutoScalingGroup", config, func() (any, error) {
+		return c.driver.CreateAutoScalingGroup(ctx, config)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.AutoScalingGroup), nil
+}
+
+// DeleteAutoScalingGroup deletes an auto-scaling group.
+func (c *Compute) DeleteAutoScalingGroup(ctx context.Context, name string, forceDelete bool) error {
+	_, err := c.do(ctx, "DeleteAutoScalingGroup", name, func() (any, error) {
+		return nil, c.driver.DeleteAutoScalingGroup(ctx, name, forceDelete)
+	})
+
+	return err
+}
+
+// GetAutoScalingGroup returns an auto-scaling group.
+func (c *Compute) GetAutoScalingGroup(ctx context.Context, name string) (*driver.AutoScalingGroup, error) {
+	out, err := c.do(ctx, "GetAutoScalingGroup", name, func() (any, error) {
+		return c.driver.GetAutoScalingGroup(ctx, name)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.AutoScalingGroup), nil
+}
+
+// ListAutoScalingGroups lists all auto-scaling groups.
+func (c *Compute) ListAutoScalingGroups(ctx context.Context) ([]driver.AutoScalingGroup, error) {
+	out, err := c.do(ctx, "ListAutoScalingGroups", nil, func() (any, error) {
+		return c.driver.ListAutoScalingGroups(ctx)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.AutoScalingGroup), nil
+}
+
+// UpdateAutoScalingGroup updates an auto-scaling group.
+func (c *Compute) UpdateAutoScalingGroup(ctx context.Context, name string, desired, minSize, maxSize int) error {
+	_, err := c.do(ctx, "UpdateAutoScalingGroup", name, func() (any, error) {
+		return nil, c.driver.UpdateAutoScalingGroup(ctx, name, desired, minSize, maxSize)
+	})
+
+	return err
+}
+
+// SetDesiredCapacity sets the desired capacity of an auto-scaling group.
+func (c *Compute) SetDesiredCapacity(ctx context.Context, name string, desired int) error {
+	_, err := c.do(ctx, "SetDesiredCapacity", name, func() (any, error) {
+		return nil, c.driver.SetDesiredCapacity(ctx, name, desired)
+	})
+
+	return err
+}
+
+// PutScalingPolicy attaches a scaling policy to an auto-scaling group.
+//
+//nolint:gocritic // hugeParam: policy passed by value to match driver.Compute interface pattern
+func (c *Compute) PutScalingPolicy(ctx context.Context, policy driver.ScalingPolicy) error {
+	_, err := c.do(ctx, "PutScalingPolicy", policy, func() (any, error) {
+		return nil, c.driver.PutScalingPolicy(ctx, policy)
+	})
+
+	return err
+}
+
+// DeleteScalingPolicy removes a scaling policy.
+func (c *Compute) DeleteScalingPolicy(ctx context.Context, asgName, policyName string) error {
+	_, err := c.do(ctx, "DeleteScalingPolicy", asgName, func() (any, error) {
+		return nil, c.driver.DeleteScalingPolicy(ctx, asgName, policyName)
+	})
+
+	return err
+}
+
+// ExecuteScalingPolicy executes a scaling policy.
+func (c *Compute) ExecuteScalingPolicy(ctx context.Context, asgName, policyName string) error {
+	_, err := c.do(ctx, "ExecuteScalingPolicy", asgName, func() (any, error) {
+		return nil, c.driver.ExecuteScalingPolicy(ctx, asgName, policyName)
+	})
+
+	return err
+}
+
+// RequestSpotInstances creates spot/preemptible instance requests.
+//
+//nolint:gocritic // hugeParam: config passed by value to match driver.Compute interface pattern
+func (c *Compute) RequestSpotInstances(
+	ctx context.Context, config driver.SpotRequestConfig,
+) ([]driver.SpotInstanceRequest, error) {
+	out, err := c.do(ctx, "RequestSpotInstances", config, func() (any, error) {
+		return c.driver.RequestSpotInstances(ctx, config)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.SpotInstanceRequest), nil
+}
+
+// CancelSpotRequests cancels spot/preemptible instance requests.
+func (c *Compute) CancelSpotRequests(ctx context.Context, requestIDs []string) error {
+	_, err := c.do(ctx, "CancelSpotRequests", requestIDs, func() (any, error) {
+		return nil, c.driver.CancelSpotRequests(ctx, requestIDs)
+	})
+
+	return err
+}
+
+// DescribeSpotRequests describes spot/preemptible instance requests.
+func (c *Compute) DescribeSpotRequests(
+	ctx context.Context, requestIDs []string,
+) ([]driver.SpotInstanceRequest, error) {
+	out, err := c.do(ctx, "DescribeSpotRequests", requestIDs, func() (any, error) {
+		return c.driver.DescribeSpotRequests(ctx, requestIDs)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.SpotInstanceRequest), nil
+}
+
+// CreateLaunchTemplate creates a launch template.
+//
+//nolint:gocritic // hugeParam: config passed by value to match driver.Compute interface pattern
+func (c *Compute) CreateLaunchTemplate(
+	ctx context.Context, config driver.LaunchTemplateConfig,
+) (*driver.LaunchTemplate, error) {
+	out, err := c.do(ctx, "CreateLaunchTemplate", config, func() (any, error) {
+		return c.driver.CreateLaunchTemplate(ctx, config)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.LaunchTemplate), nil
+}
+
+// DeleteLaunchTemplate deletes a launch template.
+func (c *Compute) DeleteLaunchTemplate(ctx context.Context, name string) error {
+	_, err := c.do(ctx, "DeleteLaunchTemplate", name, func() (any, error) {
+		return nil, c.driver.DeleteLaunchTemplate(ctx, name)
+	})
+
+	return err
+}
+
+// GetLaunchTemplate returns a launch template.
+func (c *Compute) GetLaunchTemplate(ctx context.Context, name string) (*driver.LaunchTemplate, error) {
+	out, err := c.do(ctx, "GetLaunchTemplate", name, func() (any, error) {
+		return c.driver.GetLaunchTemplate(ctx, name)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.LaunchTemplate), nil
+}
+
+// ListLaunchTemplates lists all launch templates.
+func (c *Compute) ListLaunchTemplates(ctx context.Context) ([]driver.LaunchTemplate, error) {
+	out, err := c.do(ctx, "ListLaunchTemplates", nil, func() (any, error) {
+		return c.driver.ListLaunchTemplates(ctx)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.LaunchTemplate), nil
+}

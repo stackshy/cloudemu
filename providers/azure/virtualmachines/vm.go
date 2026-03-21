@@ -73,13 +73,21 @@ type instanceData struct {
 	LaunchTime     string
 }
 
+type asgData struct {
+	config   driver.AutoScalingGroup
+	policies *memstore.Store[driver.ScalingPolicy]
+}
+
 // Mock is an in-memory mock implementation of the Azure Virtual Machines service.
 type Mock struct {
-	instances  *memstore.Store[*instanceData]
-	sm         *statemachine.Machine
-	opts       *config.Options
-	ipCounter  atomic.Int64
-	monitoring mondriver.Monitoring
+	instances    *memstore.Store[*instanceData]
+	asgs         *memstore.Store[*asgData]
+	spotRequests *memstore.Store[*driver.SpotInstanceRequest]
+	templates    *memstore.Store[*driver.LaunchTemplate]
+	sm           *statemachine.Machine
+	opts         *config.Options
+	ipCounter    atomic.Int64
+	monitoring   mondriver.Monitoring
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -145,9 +153,12 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, valu
 // New creates a new Azure Virtual Machines mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances: memstore.New[*instanceData](),
-		sm:        statemachine.New(compute.VMTransitions()),
-		opts:      opts,
+		instances:    memstore.New[*instanceData](),
+		asgs:         memstore.New[*asgData](),
+		spotRequests: memstore.New[*driver.SpotInstanceRequest](),
+		templates:    memstore.New[*driver.LaunchTemplate](),
+		sm:           statemachine.New(compute.VMTransitions()),
+		opts:         opts,
 	}
 }
 
