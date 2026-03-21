@@ -363,6 +363,39 @@ func TestTagImage(t *testing.T) {
 	})
 }
 
+func TestTagImageUpdatesImageCount(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "count-repo")
+	pushTestImage(t, m, "count-repo", "v1")
+	pushTestImage(t, m, "count-repo", "v2")
+
+	repo, err := m.GetRepository(ctx, "count-repo")
+	require.NoError(t, err)
+	assert.Equal(t, 2, repo.ImageCount)
+
+	// Tag image v1 with a new tag - should not change image count
+	err = m.TagImage(ctx, "count-repo", "v1", "latest")
+	require.NoError(t, err)
+
+	repo, err = m.GetRepository(ctx, "count-repo")
+	require.NoError(t, err)
+	assert.Equal(t, 2, repo.ImageCount)
+}
+
+func TestTagImageEmptyTagRejected(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "empty-tag-repo")
+	pushTestImage(t, m, "empty-tag-repo", "v1")
+
+	err := m.TagImage(ctx, "empty-tag-repo", "v1", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty")
+}
+
 func TestImageTagMutability(t *testing.T) {
 	ctx := context.Background()
 

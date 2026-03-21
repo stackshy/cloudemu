@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/config"
@@ -44,6 +45,7 @@ type repoData struct {
 
 // Mock is an in-memory mock implementation of the GCP Artifact Registry service.
 type Mock struct {
+	mu         sync.Mutex
 	repos      *memstore.Store[*repoData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
@@ -166,6 +168,11 @@ func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) 
 
 // PutImage pushes an image manifest to an Artifact Registry repository.
 func (m *Mock) PutImage(ctx context.Context, manifest *driver.ImageManifest) (*driver.ImageDetail, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Allow empty tag for untagged images (digest-only)
+
 	rd, ok := m.repos.Get(manifest.Repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", manifest.Repository)
@@ -247,6 +254,9 @@ func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageD
 
 // DeleteImage deletes an image from an Artifact Registry repository by reference.
 func (m *Mock) DeleteImage(_ context.Context, repository, reference string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -266,6 +276,13 @@ func (m *Mock) DeleteImage(_ context.Context, repository, reference string) erro
 
 // TagImage adds a new tag to an existing image in an Artifact Registry repository.
 func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag string) error {
+	if targetTag == "" {
+		return errors.New(errors.InvalidArgument, "target tag cannot be empty")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -281,6 +298,7 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 	}
 
 	updateTagIndex(rd, img.detail.Digest, targetTag)
+	rd.info.ImageCount = rd.images.Len()
 
 	return nil
 }
