@@ -1900,7 +1900,7 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 	}
 
 	// Get all events
-	allEvents, err := d.GetLogEvents(ctx, loggingdriver.LogQueryInput{
+	allEvents, err := d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 		LogGroup: "app-logs",
 	})
 	if err != nil {
@@ -1911,7 +1911,7 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 	}
 
 	// Get events from specific stream
-	streamEvents, err := d.GetLogEvents(ctx, loggingdriver.LogQueryInput{
+	streamEvents, err := d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 		LogGroup:  "app-logs",
 		LogStream: "web-server",
 	})
@@ -1923,7 +1923,7 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 	}
 
 	// Filter by pattern
-	errorEvents, err := d.GetLogEvents(ctx, loggingdriver.LogQueryInput{
+	errorEvents, err := d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 		LogGroup: "app-logs",
 		Pattern:  "Error",
 	})
@@ -1935,7 +1935,7 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 	}
 
 	// Filter by time range
-	recentEvents, err := d.GetLogEvents(ctx, loggingdriver.LogQueryInput{
+	recentEvents, err := d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 		LogGroup:  "app-logs",
 		StartTime: now.Add(-90 * time.Minute),
 		EndTime:   now.Add(time.Minute),
@@ -2150,7 +2150,7 @@ func TestCrossProviderNewServices(t *testing.T) {
 		})
 	}
 
-	// Test caches across providers
+	// Test caches across providers (including tags)
 	cacheProviders := []struct {
 		name string
 		d    cachedriver.Cache
@@ -2162,12 +2162,35 @@ func TestCrossProviderNewServices(t *testing.T) {
 
 	for _, cp := range cacheProviders {
 		t.Run("cache/"+cp.name, func(t *testing.T) {
-			_, err := cp.d.CreateCache(ctx, cachedriver.CacheConfig{Name: "test-cache"})
+			info, err := cp.d.CreateCache(ctx, cachedriver.CacheConfig{
+				Name: "test-cache",
+				Tags: map[string]string{"env": "staging", "team": "backend"},
+			})
 			if err != nil {
 				t.Fatalf("CreateCache: %v", err)
 			}
 
-			cp.d.Set(ctx, "test-cache", "key", []byte("value"), 0)
+			// Verify tags are persisted in CacheInfo
+			if info.Tags["env"] != "staging" {
+				t.Errorf("expected tag env=staging, got %q", info.Tags["env"])
+			}
+			if info.Tags["team"] != "backend" {
+				t.Errorf("expected tag team=backend, got %q", info.Tags["team"])
+			}
+
+			// Verify tags survive GetCache
+			got, err := cp.d.GetCache(ctx, "test-cache")
+			if err != nil {
+				t.Fatalf("GetCache: %v", err)
+			}
+			if got.Tags["env"] != "staging" {
+				t.Errorf("GetCache: expected tag env=staging, got %q", got.Tags["env"])
+			}
+
+			err = cp.d.Set(ctx, "test-cache", "key", []byte("value"), 0)
+			if err != nil {
+				t.Fatalf("Set: %v", err)
+			}
 			item, _ := cp.d.Get(ctx, "test-cache", "key")
 			if string(item.Value) != "value" {
 				t.Errorf("expected 'value', got %q", string(item.Value))
@@ -2202,6 +2225,177 @@ func TestCrossProviderNewServices(t *testing.T) {
 			}
 			if got.Name != "alerts" {
 				t.Errorf("expected 'alerts', got %q", got.Name)
+			}
+		})
+	}
+}
+
+// ==============================================================================
+// Integration Tests: CacheInfo Tags Persistence
+// ==============================================================================
+
+func TestCacheTagsPersistence(t *testing.T) {
+	ctx := context.Background()
+
+	providers := []struct {
+		name string
+		d    cachedriver.Cache
+	}{
+		{"aws/elasticache", NewAWS().ElastiCache},
+		{"azure/cache", NewAzure().Cache},
+		{"gcp/memorystore", NewGCP().Memorystore},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			tags := map[string]string{"env": "production", "team": "platform", "cost-center": "eng-42"}
+
+			info, err := p.d.CreateCache(ctx, cachedriver.CacheConfig{
+				Name:   "tagged-cache",
+				Engine: "redis",
+				Tags:   tags,
+			})
+			if err != nil {
+				t.Fatalf("CreateCache: %v", err)
+			}
+
+			// Verify all tags are present in the returned CacheInfo
+			for k, v := range tags {
+				if info.Tags[k] != v {
+					t.Errorf("CreateCache: expected tag %s=%s, got %q", k, v, info.Tags[k])
+				}
+			}
+
+			// Verify tags survive GetCache round-trip
+			got, err := p.d.GetCache(ctx, "tagged-cache")
+			if err != nil {
+				t.Fatalf("GetCache: %v", err)
+			}
+			for k, v := range tags {
+				if got.Tags[k] != v {
+					t.Errorf("GetCache: expected tag %s=%s, got %q", k, v, got.Tags[k])
+				}
+			}
+
+			// Verify tags appear in ListCaches
+			caches, err := p.d.ListCaches(ctx)
+			if err != nil {
+				t.Fatalf("ListCaches: %v", err)
+			}
+			if len(caches) != 1 {
+				t.Fatalf("expected 1 cache, got %d", len(caches))
+			}
+			for k, v := range tags {
+				if caches[0].Tags[k] != v {
+					t.Errorf("ListCaches: expected tag %s=%s, got %q", k, v, caches[0].Tags[k])
+				}
+			}
+
+			// Verify tag isolation (modifying original map doesn't affect stored tags)
+			tags["env"] = "modified"
+			got2, _ := p.d.GetCache(ctx, "tagged-cache")
+			if got2.Tags["env"] != "production" {
+				t.Error("tag isolation broken: modifying input map affected stored tags")
+			}
+
+			// Verify empty tags work fine
+			info2, err := p.d.CreateCache(ctx, cachedriver.CacheConfig{Name: "no-tags-cache"})
+			if err != nil {
+				t.Fatalf("CreateCache (no tags): %v", err)
+			}
+			if info2.Tags == nil {
+				t.Error("expected non-nil empty tags map")
+			}
+			if len(info2.Tags) != 0 {
+				t.Errorf("expected 0 tags, got %d", len(info2.Tags))
+			}
+		})
+	}
+}
+
+// ==============================================================================
+// Integration Tests: LogQueryInput Pointer Interface
+// ==============================================================================
+
+func TestLogQueryInputPointer(t *testing.T) {
+	ctx := context.Background()
+
+	providers := []struct {
+		name string
+		d    loggingdriver.Logging
+	}{
+		{"aws/cloudwatchlogs", NewAWS().CloudWatchLogs},
+		{"azure/loganalytics", NewAzure().LogAnalytics},
+		{"gcp/cloudlogging", NewGCP().CloudLogging},
+	}
+
+	for _, p := range providers {
+		t.Run(p.name, func(t *testing.T) {
+			// Setup: create log group and stream
+			_, err := p.d.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{Name: "ptr-test-group"})
+			if err != nil {
+				t.Fatalf("CreateLogGroup: %v", err)
+			}
+			_, err = p.d.CreateLogStream(ctx, "ptr-test-group", "stream-1")
+			if err != nil {
+				t.Fatalf("CreateLogStream: %v", err)
+			}
+
+			now := time.Now().UTC()
+			events := []loggingdriver.LogEvent{
+				{Timestamp: now.Add(-2 * time.Minute), Message: "info: starting up"},
+				{Timestamp: now.Add(-1 * time.Minute), Message: "error: connection failed"},
+				{Timestamp: now, Message: "info: recovered"},
+			}
+			if err := p.d.PutLogEvents(ctx, "ptr-test-group", "stream-1", events); err != nil {
+				t.Fatalf("PutLogEvents: %v", err)
+			}
+
+			// Query with pointer — basic query
+			results, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
+				LogGroup: "ptr-test-group",
+			})
+			if err != nil {
+				t.Fatalf("GetLogEvents (all): %v", err)
+			}
+			if len(results) != 3 {
+				t.Errorf("expected 3 events, got %d", len(results))
+			}
+
+			// Query with pointer — pattern filter
+			filtered, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
+				LogGroup: "ptr-test-group",
+				Pattern:  "error",
+			})
+			if err != nil {
+				t.Fatalf("GetLogEvents (pattern): %v", err)
+			}
+			if len(filtered) != 1 {
+				t.Errorf("expected 1 error event, got %d", len(filtered))
+			}
+
+			// Query with pointer — specific stream
+			streamResults, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
+				LogGroup:  "ptr-test-group",
+				LogStream: "stream-1",
+			})
+			if err != nil {
+				t.Fatalf("GetLogEvents (stream): %v", err)
+			}
+			if len(streamResults) != 3 {
+				t.Errorf("expected 3 events from stream-1, got %d", len(streamResults))
+			}
+
+			// Query with pointer — limit
+			limited, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
+				LogGroup: "ptr-test-group",
+				Limit:    1,
+			})
+			if err != nil {
+				t.Fatalf("GetLogEvents (limit): %v", err)
+			}
+			if len(limited) != 1 {
+				t.Errorf("expected 1 event with limit=1, got %d", len(limited))
 			}
 		})
 	}

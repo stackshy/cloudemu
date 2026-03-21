@@ -228,9 +228,7 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 }
 
 // GetLogEvents retrieves log events matching the query.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) GetLogEvents(_ context.Context, input driver.LogQueryInput) ([]driver.LogEvent, error) {
+func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
 	g, ok := m.groups.Get(input.LogGroup)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", input.LogGroup)
@@ -246,12 +244,12 @@ func (m *Mock) GetLogEvents(_ context.Context, input driver.LogQueryInput) ([]dr
 	var results []driver.LogEvent
 
 	if input.LogStream != "" {
-		events := m.getStreamEvents(g, input.LogStream, &input, retentionCutoff)
+		events := m.getStreamEvents(g, input.LogStream, input, retentionCutoff)
 		results = append(results, events...)
 	} else {
 		all := g.streams.All()
 		for _, s := range all {
-			events := m.filterEvents(s, &input, retentionCutoff)
+			events := m.filterEvents(s, input, retentionCutoff)
 			results = append(results, events...)
 		}
 	}
