@@ -16,8 +16,6 @@ import (
 // Compile-time check that Mock implements driver.Secrets.
 var _ driver.Secrets = (*Mock)(nil)
 
-const defaultRecoveryDays = 30
-
 type secretData struct {
 	info      driver.SecretInfo
 	versions  []driver.SecretVersion

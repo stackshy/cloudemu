@@ -13,42 +13,9 @@ import (
 	"github.com/stackshy/cloudemu/providers/aws/cloudwatchlogs"
 	"github.com/stackshy/cloudemu/ratelimit"
 	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func requireNoError(t *testing.T, err error) {
-	t.Helper()
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertError(t *testing.T, err error, expectErr bool) {
-	t.Helper()
-
-	switch {
-	case expectErr && err == nil:
-		t.Fatal("expected error but got nil")
-	case !expectErr && err != nil:
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func assertEqual(t *testing.T, expected, actual any) {
-	t.Helper()
-
-	if expected != actual {
-		t.Errorf("expected %v, got %v", expected, actual)
-	}
-}
-
-func assertNotEmpty(t *testing.T, s string) {
-	t.Helper()
-
-	if s == "" {
-		t.Error("expected non-empty string")
-	}
-}
 
 func newTestLogging(opts ...Option) *Logging {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -63,10 +30,10 @@ func setupTestGroupAndStream(t *testing.T, l *Logging) {
 	ctx := context.Background()
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "test-group"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = l.CreateLogStream(ctx, "test-group", "test-stream")
-	requireNoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestCreateLogGroup(t *testing.T) {
@@ -76,17 +43,17 @@ func TestCreateLogGroup(t *testing.T) {
 		l := newTestLogging()
 
 		info, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
-		requireNoError(t, err)
+		require.NoError(t, err)
 
-		assertEqual(t, "grp", info.Name)
-		assertNotEmpty(t, info.ResourceID)
+		assert.Equal(t, "grp", info.Name)
+		assert.NotEmpty(t, info.ResourceID)
 	})
 
 	t.Run("empty name error", func(t *testing.T) {
 		l := newTestLogging()
 
 		_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: ""})
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -97,17 +64,17 @@ func TestDeleteLogGroup(t *testing.T) {
 		l := newTestLogging()
 
 		_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "del"})
-		requireNoError(t, err)
+		require.NoError(t, err)
 
 		err = l.DeleteLogGroup(ctx, "del")
-		requireNoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("not found error", func(t *testing.T) {
 		l := newTestLogging()
 
 		err := l.DeleteLogGroup(ctx, "nope")
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -118,19 +85,19 @@ func TestGetLogGroup(t *testing.T) {
 		l := newTestLogging()
 
 		_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "g1"})
-		requireNoError(t, err)
+		require.NoError(t, err)
 
 		info, err := l.GetLogGroup(ctx, "g1")
-		requireNoError(t, err)
+		require.NoError(t, err)
 
-		assertEqual(t, "g1", info.Name)
+		assert.Equal(t, "g1", info.Name)
 	})
 
 	t.Run("not found error", func(t *testing.T) {
 		l := newTestLogging()
 
 		_, err := l.GetLogGroup(ctx, "missing")
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -139,15 +106,15 @@ func TestListLogGroups(t *testing.T) {
 	l := newTestLogging()
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "a"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "b"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	groups, err := l.ListLogGroups(ctx)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, 2, len(groups))
+	assert.Equal(t, 2, len(groups))
 }
 
 func TestCreateLogStream(t *testing.T) {
@@ -157,19 +124,19 @@ func TestCreateLogStream(t *testing.T) {
 		l := newTestLogging()
 
 		_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
-		requireNoError(t, err)
+		require.NoError(t, err)
 
 		info, err := l.CreateLogStream(ctx, "grp", "s1")
-		requireNoError(t, err)
+		require.NoError(t, err)
 
-		assertEqual(t, "s1", info.Name)
+		assert.Equal(t, "s1", info.Name)
 	})
 
 	t.Run("nonexistent group error", func(t *testing.T) {
 		l := newTestLogging()
 
 		_, err := l.CreateLogStream(ctx, "nope", "s1")
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -181,14 +148,14 @@ func TestDeleteLogStream(t *testing.T) {
 		setupTestGroupAndStream(t, l)
 
 		err := l.DeleteLogStream(ctx, "test-group", "test-stream")
-		requireNoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("not found error", func(t *testing.T) {
 		l := newTestLogging()
 
 		err := l.DeleteLogStream(ctx, "nope", "nope")
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -198,9 +165,9 @@ func TestListLogStreams(t *testing.T) {
 	setupTestGroupAndStream(t, l)
 
 	streams, err := l.ListLogStreams(ctx, "test-group")
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, 1, len(streams))
+	assert.Equal(t, 1, len(streams))
 }
 
 func TestPutLogEvents(t *testing.T) {
@@ -214,14 +181,14 @@ func TestPutLogEvents(t *testing.T) {
 		err := l.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
 			{Timestamp: baseTime, Message: "hello"},
 		})
-		requireNoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("nonexistent stream error", func(t *testing.T) {
 		l := newTestLogging()
 
 		err := l.PutLogEvents(ctx, "nope", "nope", nil)
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -237,14 +204,14 @@ func TestGetLogEvents(t *testing.T) {
 			{Timestamp: baseTime, Message: "msg1"},
 			{Timestamp: baseTime.Add(time.Second), Message: "msg2"},
 		})
-		requireNoError(t, err)
+		require.NoError(t, err)
 
 		events, err := l.GetLogEvents(ctx, driver.LogQueryInput{
 			LogGroup: "test-group",
 		})
-		requireNoError(t, err)
+		require.NoError(t, err)
 
-		assertEqual(t, 2, len(events))
+		assert.Equal(t, 2, len(events))
 	})
 
 	t.Run("nonexistent group error", func(t *testing.T) {
@@ -253,7 +220,7 @@ func TestGetLogEvents(t *testing.T) {
 		_, err := l.GetLogEvents(ctx, driver.LogQueryInput{
 			LogGroup: "nope",
 		})
-		assertError(t, err, true)
+		require.Error(t, err)
 	})
 }
 
@@ -263,19 +230,16 @@ func TestWithRecorder(t *testing.T) {
 	l := newTestLogging(WithRecorder(rec))
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "rec-grp"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, 1, rec.CallCount())
+	assert.Equal(t, 1, rec.CallCount())
 
 	calls := rec.CallsFor("logging", "CreateLogGroup")
-	assertEqual(t, 1, len(calls))
+	assert.Equal(t, 1, len(calls))
 
-	assertEqual(t, "logging", calls[0].Service)
-	assertEqual(t, "CreateLogGroup", calls[0].Operation)
-
-	if calls[0].Error != nil {
-		t.Errorf("expected nil error in recorded call, got %v", calls[0].Error)
-	}
+	assert.Equal(t, "logging", calls[0].Service)
+	assert.Equal(t, "CreateLogGroup", calls[0].Operation)
+	assert.Nil(t, calls[0].Error)
 }
 
 func TestWithRecorderRecordsErrors(t *testing.T) {
@@ -284,14 +248,11 @@ func TestWithRecorderRecordsErrors(t *testing.T) {
 	l := newTestLogging(WithRecorder(rec))
 
 	_, err := l.GetLogGroup(ctx, "nonexistent")
-	assertError(t, err, true)
+	require.Error(t, err)
 
 	calls := rec.CallsFor("logging", "GetLogGroup")
-	assertEqual(t, 1, len(calls))
-
-	if calls[0].Error == nil {
-		t.Error("expected error in recorded call, got nil")
-	}
+	assert.Equal(t, 1, len(calls))
+	assert.NotNil(t, calls[0].Error)
 }
 
 func TestWithRecorderMultipleOps(t *testing.T) {
@@ -300,17 +261,17 @@ func TestWithRecorderMultipleOps(t *testing.T) {
 	l := newTestLogging(WithRecorder(rec))
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = l.CreateLogStream(ctx, "grp", "s1")
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_ = l.DeleteLogGroup(ctx, "grp")
 
-	assertEqual(t, 3, rec.CallCount())
-	assertEqual(t, 1, rec.CallCountFor("logging", "CreateLogGroup"))
-	assertEqual(t, 1, rec.CallCountFor("logging", "CreateLogStream"))
-	assertEqual(t, 1, rec.CallCountFor("logging", "DeleteLogGroup"))
+	assert.Equal(t, 3, rec.CallCount())
+	assert.Equal(t, 1, rec.CallCountFor("logging", "CreateLogGroup"))
+	assert.Equal(t, 1, rec.CallCountFor("logging", "CreateLogStream"))
+	assert.Equal(t, 1, rec.CallCountFor("logging", "DeleteLogGroup"))
 }
 
 func TestWithMetrics(t *testing.T) {
@@ -319,7 +280,7 @@ func TestWithMetrics(t *testing.T) {
 	l := newTestLogging(WithMetrics(mc))
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "m-grp"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	q := metrics.NewQuery(mc)
 
@@ -327,13 +288,13 @@ func TestWithMetrics(t *testing.T) {
 		ByLabel("service", "logging").
 		ByLabel("operation", "CreateLogGroup").
 		Count()
-	assertEqual(t, 1, callsCount)
+	assert.Equal(t, 1, callsCount)
 
 	durCount := q.ByName("call_duration").
 		ByLabel("service", "logging").
 		ByLabel("operation", "CreateLogGroup").
 		Count()
-	assertEqual(t, 1, durCount)
+	assert.Equal(t, 1, durCount)
 }
 
 func TestWithMetricsRecordsErrors(t *testing.T) {
@@ -349,7 +310,7 @@ func TestWithMetricsRecordsErrors(t *testing.T) {
 		ByLabel("service", "logging").
 		ByLabel("operation", "DeleteLogGroup").
 		Count()
-	assertEqual(t, 1, errCount)
+	assert.Equal(t, 1, errCount)
 }
 
 func TestWithErrorInjection(t *testing.T) {
@@ -361,9 +322,9 @@ func TestWithErrorInjection(t *testing.T) {
 	inj.Set("logging", "CreateLogGroup", injectedErr, inject.Always{})
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "fail"})
-	assertError(t, err, true)
+	require.Error(t, err)
 
-	assertEqual(t, injectedErr.Error(), err.Error())
+	assert.Equal(t, injectedErr.Error(), err.Error())
 }
 
 func TestWithErrorInjectionSelectiveOp(t *testing.T) {
@@ -375,10 +336,10 @@ func TestWithErrorInjectionSelectiveOp(t *testing.T) {
 	inj.Set("logging", "DeleteLogGroup", injectedErr, inject.Always{})
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "ok-grp"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	err = l.DeleteLogGroup(ctx, "ok-grp")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestWithErrorInjectionCountdown(t *testing.T) {
@@ -390,12 +351,12 @@ func TestWithErrorInjectionCountdown(t *testing.T) {
 	inj.Set("logging", "ListLogGroups", injectedErr, inject.NewCountdown(1))
 
 	_, err := l.ListLogGroups(ctx)
-	assertError(t, err, true)
+	require.Error(t, err)
 
 	groups, err := l.ListLogGroups(ctx)
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, 0, len(groups))
+	assert.Equal(t, 0, len(groups))
 }
 
 func TestWithErrorInjectionRecorded(t *testing.T) {
@@ -410,11 +371,8 @@ func TestWithErrorInjectionRecorded(t *testing.T) {
 	_, _ = l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "fail"})
 
 	calls := rec.CallsFor("logging", "CreateLogGroup")
-	assertEqual(t, 1, len(calls))
-
-	if calls[0].Error == nil {
-		t.Error("expected error in recorded call, got nil")
-	}
+	assert.Equal(t, 1, len(calls))
+	assert.NotNil(t, calls[0].Error)
 }
 
 func TestWithMetricsAndRecorderCombined(t *testing.T) {
@@ -424,14 +382,14 @@ func TestWithMetricsAndRecorderCombined(t *testing.T) {
 	l := newTestLogging(WithRecorder(rec), WithMetrics(mc))
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "combo"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
-	assertEqual(t, 1, rec.CallCount())
+	assert.Equal(t, 1, rec.CallCount())
 
 	q := metrics.NewQuery(mc)
 
 	callsCount := q.ByName("calls_total").Count()
-	assertEqual(t, 1, callsCount)
+	assert.Equal(t, 1, callsCount)
 }
 
 func TestAllOperationsRecorded(t *testing.T) {
@@ -454,7 +412,7 @@ func TestAllOperationsRecorded(t *testing.T) {
 	_ = l.DeleteLogStream(ctx, "grp", "s1")
 	_ = l.DeleteLogGroup(ctx, "grp")
 
-	assertEqual(t, 9, rec.CallCount())
+	assert.Equal(t, 9, rec.CallCount())
 
 	ops := []string{
 		"CreateLogGroup", "GetLogGroup", "ListLogGroups",
@@ -465,9 +423,7 @@ func TestAllOperationsRecorded(t *testing.T) {
 
 	for _, op := range ops {
 		count := rec.CallCountFor("logging", op)
-		if count != 1 {
-			t.Errorf("expected 1 call for %s, got %d", op, count)
-		}
+		assert.Equal(t, 1, count, "expected 1 call for %s", op)
 	}
 }
 
@@ -478,10 +434,10 @@ func TestWithRateLimiter(t *testing.T) {
 	l := newTestLogging(WithRateLimiter(limiter))
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp1"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	_, err = l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp2"})
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestWithRateLimiterRecorded(t *testing.T) {
@@ -495,11 +451,8 @@ func TestWithRateLimiterRecorded(t *testing.T) {
 	_, _ = l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp2"})
 
 	calls := rec.CallsFor("logging", "CreateLogGroup")
-	assertEqual(t, 2, len(calls))
-
-	if calls[1].Error == nil {
-		t.Error("expected rate limit error in second call")
-	}
+	assert.Equal(t, 2, len(calls))
+	assert.NotNil(t, calls[1].Error)
 }
 
 func TestWithLatency(t *testing.T) {
@@ -509,13 +462,10 @@ func TestWithLatency(t *testing.T) {
 	start := time.Now()
 
 	_, err := l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "lat-grp"})
-	requireNoError(t, err)
+	require.NoError(t, err)
 
 	elapsed := time.Since(start)
-
-	if elapsed < time.Millisecond {
-		t.Errorf("expected at least 1ms latency, got %v", elapsed)
-	}
+	assert.GreaterOrEqual(t, elapsed, time.Millisecond)
 }
 
 func TestListLogStreamsError(t *testing.T) {
@@ -523,7 +473,7 @@ func TestListLogStreamsError(t *testing.T) {
 	l := newTestLogging()
 
 	_, err := l.ListLogStreams(ctx, "nonexistent")
-	assertError(t, err, true)
+	require.Error(t, err)
 }
 
 func TestAllOperationsMetrics(t *testing.T) {
@@ -549,8 +499,8 @@ func TestAllOperationsMetrics(t *testing.T) {
 	q := metrics.NewQuery(mc)
 
 	totalCalls := q.ByName("calls_total").ByLabel("service", "logging").Count()
-	assertEqual(t, 9, totalCalls)
+	assert.Equal(t, 9, totalCalls)
 
 	totalDur := q.ByName("call_duration").ByLabel("service", "logging").Count()
-	assertEqual(t, 9, totalDur)
+	assert.Equal(t, 9, totalDur)
 }

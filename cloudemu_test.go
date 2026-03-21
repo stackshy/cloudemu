@@ -25,6 +25,11 @@ import (
 	serverlessdriver "github.com/stackshy/cloudemu/serverless/driver"
 	"github.com/stackshy/cloudemu/storage"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+
+	cachedriver "github.com/stackshy/cloudemu/cache/driver"
+	loggingdriver "github.com/stackshy/cloudemu/logging/driver"
+	notifdriver "github.com/stackshy/cloudemu/notification/driver"
+	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
 )
 
 func TestStorageLifecycle(t *testing.T) {
@@ -1600,5 +1605,604 @@ func TestGCPCloudFunctionPubSubTrigger(t *testing.T) {
 
 	if len(received) != 3 {
 		t.Errorf("expected 3 triggered messages, got %d", len(received))
+	}
+}
+
+// ==============================================================================
+// Integration Tests: Secrets (AWS SecretsManager, Azure KeyVault, GCP SecretManager)
+// ==============================================================================
+
+func TestAWSSecretsManagerOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testSecretsWithDriver(t, ctx, p.SecretsManager)
+}
+
+func TestAzureKeyVaultOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testSecretsWithDriver(t, ctx, p.KeyVault)
+}
+
+func TestGCPSecretManagerOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testSecretsWithDriver(t, ctx, p.SecretManager)
+}
+
+func testSecretsWithDriver(t *testing.T, ctx context.Context, d secretsdriver.Secrets) {
+	t.Helper()
+
+	// Create secret
+	info, err := d.CreateSecret(ctx, secretsdriver.SecretConfig{
+		Name:        "db-password",
+		Description: "Database password",
+		Tags:        map[string]string{"env": "production"},
+	}, []byte("s3cret-v1"))
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+	if info.Name != "db-password" {
+		t.Errorf("expected name 'db-password', got %q", info.Name)
+	}
+	if info.ResourceID == "" {
+		t.Error("expected non-empty ResourceID")
+	}
+
+	// Get secret
+	got, err := d.GetSecret(ctx, "db-password")
+	if err != nil {
+		t.Fatalf("GetSecret: %v", err)
+	}
+	if got.Name != "db-password" {
+		t.Errorf("expected 'db-password', got %q", got.Name)
+	}
+
+	// Get secret value
+	ver, err := d.GetSecretValue(ctx, "db-password", "")
+	if err != nil {
+		t.Fatalf("GetSecretValue: %v", err)
+	}
+	if string(ver.Value) != "s3cret-v1" {
+		t.Errorf("expected 's3cret-v1', got %q", string(ver.Value))
+	}
+
+	// Put new version
+	ver2, err := d.PutSecretValue(ctx, "db-password", []byte("s3cret-v2"))
+	if err != nil {
+		t.Fatalf("PutSecretValue: %v", err)
+	}
+	if !ver2.Current {
+		t.Error("expected new version to be current")
+	}
+
+	// Verify new version is returned as current
+	latest, err := d.GetSecretValue(ctx, "db-password", "")
+	if err != nil {
+		t.Fatalf("GetSecretValue (latest): %v", err)
+	}
+	if string(latest.Value) != "s3cret-v2" {
+		t.Errorf("expected 's3cret-v2', got %q", string(latest.Value))
+	}
+
+	// List versions
+	versions, err := d.ListSecretVersions(ctx, "db-password")
+	if err != nil {
+		t.Fatalf("ListSecretVersions: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Errorf("expected 2 versions, got %d", len(versions))
+	}
+
+	// List secrets
+	secrets, err := d.ListSecrets(ctx)
+	if err != nil {
+		t.Fatalf("ListSecrets: %v", err)
+	}
+	if len(secrets) != 1 {
+		t.Errorf("expected 1 secret, got %d", len(secrets))
+	}
+
+	// Delete secret (soft-delete)
+	if err := d.DeleteSecret(ctx, "db-password"); err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
+	}
+
+	// Verify deleted secret is not accessible
+	_, err = d.GetSecret(ctx, "db-password")
+	if err == nil {
+		t.Error("expected error getting deleted secret")
+	}
+
+	// Verify not found for non-existent
+	_, err = d.GetSecret(ctx, "does-not-exist")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+// ==============================================================================
+// Integration Tests: Cache (AWS ElastiCache, Azure Cache, GCP Memorystore)
+// ==============================================================================
+
+func TestAWSElastiCacheOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testCacheWithDriver(t, ctx, p.ElastiCache)
+}
+
+func TestAzureCacheOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testCacheWithDriver(t, ctx, p.Cache)
+}
+
+func TestGCPMemorystoreOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testCacheWithDriver(t, ctx, p.Memorystore)
+}
+
+func testCacheWithDriver(t *testing.T, ctx context.Context, d cachedriver.Cache) {
+	t.Helper()
+
+	// Create cache
+	info, err := d.CreateCache(ctx, cachedriver.CacheConfig{
+		Name:   "session-cache",
+		Engine: "redis",
+	})
+	if err != nil {
+		t.Fatalf("CreateCache: %v", err)
+	}
+	if info.Name == "" {
+		t.Error("expected non-empty cache name")
+	}
+	if info.Endpoint == "" {
+		t.Error("expected non-empty endpoint")
+	}
+
+	// Set values
+	if err := d.Set(ctx, "session-cache", "user:1:session", []byte("token-abc"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := d.Set(ctx, "session-cache", "user:2:session", []byte("token-def"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := d.Set(ctx, "session-cache", "config:app", []byte("settings"), 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// Get value
+	item, err := d.Get(ctx, "session-cache", "user:1:session")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(item.Value) != "token-abc" {
+		t.Errorf("expected 'token-abc', got %q", string(item.Value))
+	}
+
+	// Keys with glob pattern (middle wildcard)
+	keys, err := d.Keys(ctx, "session-cache", "user:*:session")
+	if err != nil {
+		t.Fatalf("Keys: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Errorf("expected 2 keys matching 'user:*:session', got %d: %v", len(keys), keys)
+	}
+
+	// Keys with prefix pattern
+	allKeys, err := d.Keys(ctx, "session-cache", "*")
+	if err != nil {
+		t.Fatalf("Keys(*): %v", err)
+	}
+	if len(allKeys) != 3 {
+		t.Errorf("expected 3 total keys, got %d", len(allKeys))
+	}
+
+	// Delete key
+	if err := d.Delete(ctx, "session-cache", "user:1:session"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	_, err = d.Get(ctx, "session-cache", "user:1:session")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+
+	// FlushAll
+	if err := d.FlushAll(ctx, "session-cache"); err != nil {
+		t.Fatalf("FlushAll: %v", err)
+	}
+	remainingKeys, _ := d.Keys(ctx, "session-cache", "*")
+	if len(remainingKeys) != 0 {
+		t.Errorf("expected 0 keys after flush, got %d", len(remainingKeys))
+	}
+
+	// List caches
+	caches, err := d.ListCaches(ctx)
+	if err != nil {
+		t.Fatalf("ListCaches: %v", err)
+	}
+	if len(caches) != 1 {
+		t.Errorf("expected 1 cache, got %d", len(caches))
+	}
+
+	// Delete cache
+	if err := d.DeleteCache(ctx, "session-cache"); err != nil {
+		t.Fatalf("DeleteCache: %v", err)
+	}
+	_, err = d.GetCache(ctx, "session-cache")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+// ==============================================================================
+// Integration Tests: Logging (AWS CloudWatch Logs, Azure Log Analytics, GCP Cloud Logging)
+// ==============================================================================
+
+func TestAWSCloudWatchLogsOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testLoggingWithDriver(t, ctx, p.CloudWatchLogs)
+}
+
+func TestAzureLogAnalyticsOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testLoggingWithDriver(t, ctx, p.LogAnalytics)
+}
+
+func TestGCPCloudLoggingOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testLoggingWithDriver(t, ctx, p.CloudLogging)
+}
+
+func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Logging) {
+	t.Helper()
+
+	// Create log group
+	groupInfo, err := d.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{
+		Name:          "app-logs",
+		RetentionDays: 7,
+	})
+	if err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+	if groupInfo.Name != "app-logs" {
+		t.Errorf("expected name 'app-logs', got %q", groupInfo.Name)
+	}
+	if groupInfo.ResourceID == "" {
+		t.Error("expected non-empty ResourceID")
+	}
+	if groupInfo.RetentionDays != 7 {
+		t.Errorf("expected retention 7, got %d", groupInfo.RetentionDays)
+	}
+
+	// Create log stream
+	streamInfo, err := d.CreateLogStream(ctx, "app-logs", "web-server")
+	if err != nil {
+		t.Fatalf("CreateLogStream: %v", err)
+	}
+	if streamInfo.Name != "web-server" {
+		t.Errorf("expected 'web-server', got %q", streamInfo.Name)
+	}
+
+	// Put log events
+	now := time.Now()
+	events := []loggingdriver.LogEvent{
+		{Timestamp: now.Add(-2 * time.Hour), Message: "Starting server"},
+		{Timestamp: now.Add(-time.Hour), Message: "Request received: GET /api/health"},
+		{Timestamp: now, Message: "Error: connection timeout"},
+	}
+	if err := d.PutLogEvents(ctx, "app-logs", "web-server", events); err != nil {
+		t.Fatalf("PutLogEvents: %v", err)
+	}
+
+	// Get all events
+	allEvents, err := d.GetLogEvents(ctx, loggingdriver.LogQueryInput{
+		LogGroup: "app-logs",
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents (all): %v", err)
+	}
+	if len(allEvents) != 3 {
+		t.Errorf("expected 3 events, got %d", len(allEvents))
+	}
+
+	// Get events from specific stream
+	streamEvents, err := d.GetLogEvents(ctx, loggingdriver.LogQueryInput{
+		LogGroup:  "app-logs",
+		LogStream: "web-server",
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents (stream): %v", err)
+	}
+	if len(streamEvents) != 3 {
+		t.Errorf("expected 3 events from stream, got %d", len(streamEvents))
+	}
+
+	// Filter by pattern
+	errorEvents, err := d.GetLogEvents(ctx, loggingdriver.LogQueryInput{
+		LogGroup: "app-logs",
+		Pattern:  "Error",
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents (pattern): %v", err)
+	}
+	if len(errorEvents) != 1 {
+		t.Errorf("expected 1 error event, got %d", len(errorEvents))
+	}
+
+	// Filter by time range
+	recentEvents, err := d.GetLogEvents(ctx, loggingdriver.LogQueryInput{
+		LogGroup:  "app-logs",
+		StartTime: now.Add(-90 * time.Minute),
+		EndTime:   now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents (time range): %v", err)
+	}
+	if len(recentEvents) != 2 {
+		t.Errorf("expected 2 recent events, got %d", len(recentEvents))
+	}
+
+	// List log streams
+	streams, err := d.ListLogStreams(ctx, "app-logs")
+	if err != nil {
+		t.Fatalf("ListLogStreams: %v", err)
+	}
+	if len(streams) != 1 {
+		t.Errorf("expected 1 stream, got %d", len(streams))
+	}
+
+	// List log groups
+	groups, err := d.ListLogGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListLogGroups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(groups))
+	}
+
+	// Delete stream
+	if err := d.DeleteLogStream(ctx, "app-logs", "web-server"); err != nil {
+		t.Fatalf("DeleteLogStream: %v", err)
+	}
+
+	// Delete group
+	if err := d.DeleteLogGroup(ctx, "app-logs"); err != nil {
+		t.Fatalf("DeleteLogGroup: %v", err)
+	}
+	_, err = d.GetLogGroup(ctx, "app-logs")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+// ==============================================================================
+// Integration Tests: Notification (AWS SNS, Azure Notification Hubs, GCP FCM)
+// ==============================================================================
+
+func TestAWSSNSOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testNotificationWithDriver(t, ctx, p.SNS)
+}
+
+func TestAzureNotificationHubsOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testNotificationWithDriver(t, ctx, p.NotificationHubs)
+}
+
+func TestGCPFCMOperations(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testNotificationWithDriver(t, ctx, p.FCM)
+}
+
+func testNotificationWithDriver(t *testing.T, ctx context.Context, d notifdriver.Notification) {
+	t.Helper()
+
+	// Create topic
+	topic, err := d.CreateTopic(ctx, notifdriver.TopicConfig{
+		Name:        "order-events",
+		DisplayName: "Order Events",
+		Tags:        map[string]string{"team": "commerce"},
+	})
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+	if topic.Name != "order-events" {
+		t.Errorf("expected 'order-events', got %q", topic.Name)
+	}
+	if topic.ResourceID == "" {
+		t.Error("expected non-empty ResourceID")
+	}
+
+	// Get topic
+	got, err := d.GetTopic(ctx, "order-events")
+	if err != nil {
+		t.Fatalf("GetTopic: %v", err)
+	}
+	if got.Name != "order-events" {
+		t.Errorf("expected 'order-events', got %q", got.Name)
+	}
+
+	// Subscribe
+	sub, err := d.Subscribe(ctx, notifdriver.SubscriptionConfig{
+		TopicID:  "order-events",
+		Protocol: "email",
+		Endpoint: "admin@example.com",
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if sub.ID == "" {
+		t.Error("expected non-empty subscription ID")
+	}
+	if sub.Status != "confirmed" {
+		t.Errorf("expected 'confirmed', got %q", sub.Status)
+	}
+
+	// Subscribe another
+	sub2, err := d.Subscribe(ctx, notifdriver.SubscriptionConfig{
+		TopicID:  "order-events",
+		Protocol: "https",
+		Endpoint: "https://webhook.example.com/orders",
+	})
+	if err != nil {
+		t.Fatalf("Subscribe (2): %v", err)
+	}
+
+	// List subscriptions
+	subs, err := d.ListSubscriptions(ctx, "order-events")
+	if err != nil {
+		t.Fatalf("ListSubscriptions: %v", err)
+	}
+	if len(subs) != 2 {
+		t.Errorf("expected 2 subscriptions, got %d", len(subs))
+	}
+
+	// Verify topic subscription count
+	topicInfo, _ := d.GetTopic(ctx, "order-events")
+	if topicInfo.SubscriptionCount != 2 {
+		t.Errorf("expected subscription count 2, got %d", topicInfo.SubscriptionCount)
+	}
+
+	// Publish message
+	pubOut, err := d.Publish(ctx, notifdriver.PublishInput{
+		TopicID: "order-events",
+		Subject: "New Order",
+		Message: `{"orderId": "12345", "total": 99.99}`,
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if pubOut.MessageID == "" {
+		t.Error("expected non-empty message ID")
+	}
+
+	// Unsubscribe
+	if err := d.Unsubscribe(ctx, sub2.ID); err != nil {
+		t.Fatalf("Unsubscribe: %v", err)
+	}
+	subs, _ = d.ListSubscriptions(ctx, "order-events")
+	if len(subs) != 1 {
+		t.Errorf("expected 1 subscription after unsubscribe, got %d", len(subs))
+	}
+
+	// List topics
+	topics, err := d.ListTopics(ctx)
+	if err != nil {
+		t.Fatalf("ListTopics: %v", err)
+	}
+	if len(topics) != 1 {
+		t.Errorf("expected 1 topic, got %d", len(topics))
+	}
+
+	// Delete topic
+	if err := d.DeleteTopic(ctx, "order-events"); err != nil {
+		t.Fatalf("DeleteTopic: %v", err)
+	}
+	_, err = d.GetTopic(ctx, "order-events")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+// ==============================================================================
+// Cross-Provider Integration: All 4 new services work consistently
+// ==============================================================================
+
+func TestCrossProviderNewServices(t *testing.T) {
+	ctx := context.Background()
+
+	awsP := NewAWS()
+	azureP := NewAzure()
+	gcpP := NewGCP()
+
+	// Test secrets across providers
+	secretsProviders := []struct {
+		name string
+		d    secretsdriver.Secrets
+	}{
+		{"aws", awsP.SecretsManager},
+		{"azure", azureP.KeyVault},
+		{"gcp", gcpP.SecretManager},
+	}
+
+	for _, sp := range secretsProviders {
+		t.Run("secrets/"+sp.name, func(t *testing.T) {
+			info, err := sp.d.CreateSecret(ctx, secretsdriver.SecretConfig{Name: "api-key"}, []byte("key-123"))
+			if err != nil {
+				t.Fatalf("CreateSecret: %v", err)
+			}
+			if info.ResourceID == "" {
+				t.Error("expected non-empty ResourceID")
+			}
+
+			ver, _ := sp.d.GetSecretValue(ctx, "api-key", "")
+			if string(ver.Value) != "key-123" {
+				t.Errorf("expected 'key-123', got %q", string(ver.Value))
+			}
+		})
+	}
+
+	// Test caches across providers
+	cacheProviders := []struct {
+		name string
+		d    cachedriver.Cache
+	}{
+		{"aws", awsP.ElastiCache},
+		{"azure", azureP.Cache},
+		{"gcp", gcpP.Memorystore},
+	}
+
+	for _, cp := range cacheProviders {
+		t.Run("cache/"+cp.name, func(t *testing.T) {
+			_, err := cp.d.CreateCache(ctx, cachedriver.CacheConfig{Name: "test-cache"})
+			if err != nil {
+				t.Fatalf("CreateCache: %v", err)
+			}
+
+			cp.d.Set(ctx, "test-cache", "key", []byte("value"), 0)
+			item, _ := cp.d.Get(ctx, "test-cache", "key")
+			if string(item.Value) != "value" {
+				t.Errorf("expected 'value', got %q", string(item.Value))
+			}
+		})
+	}
+
+	// Test notification across providers — all use name-based topic lookup
+	notifProviders := []struct {
+		name string
+		d    notifdriver.Notification
+	}{
+		{"aws", awsP.SNS},
+		{"azure", azureP.NotificationHubs},
+		{"gcp", gcpP.FCM},
+	}
+
+	for _, np := range notifProviders {
+		t.Run("notification/"+np.name, func(t *testing.T) {
+			topic, err := np.d.CreateTopic(ctx, notifdriver.TopicConfig{Name: "alerts"})
+			if err != nil {
+				t.Fatalf("CreateTopic: %v", err)
+			}
+			if topic.ResourceID == "" {
+				t.Error("expected non-empty ResourceID")
+			}
+
+			// All providers use name as key — portable API contract
+			got, err := np.d.GetTopic(ctx, "alerts")
+			if err != nil {
+				t.Fatalf("GetTopic by name: %v", err)
+			}
+			if got.Name != "alerts" {
+				t.Errorf("expected 'alerts', got %q", got.Name)
+			}
+		})
 	}
 }
