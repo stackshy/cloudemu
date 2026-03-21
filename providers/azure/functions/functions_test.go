@@ -3,6 +3,7 @@ package functions
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -921,4 +922,66 @@ func TestDeleteFunctionConcurrency(t *testing.T) {
 		err = m.DeleteFunctionConcurrency(ctx, "fn-del-cc2")
 		require.NoError(t, err)
 	})
+}
+
+func TestPublishVersionConcurrent(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateFunction(ctx, driver.FunctionConfig{Name: "fn-conc", Runtime: "dotnet6"})
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			_, _ = m.PublishVersion(ctx, "fn-conc", "concurrent")
+		}()
+	}
+
+	wg.Wait()
+
+	versions, err := m.ListVersions(ctx, "fn-conc")
+	require.NoError(t, err)
+	require.Len(t, versions, 11) // $LATEST + 10 published
+
+	seen := make(map[string]bool)
+	for _, v := range versions {
+		assert.False(t, seen[v.Version], "duplicate version: %s", v.Version)
+		seen[v.Version] = true
+	}
+}
+
+func TestAliasRoutingConfigDeepCopy(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateFunction(ctx, driver.FunctionConfig{Name: "fn-dc", Runtime: "dotnet6"})
+	require.NoError(t, err)
+	_, err = m.PublishVersion(ctx, "fn-dc", "v1")
+	require.NoError(t, err)
+
+	rc := &driver.AliasRoutingConfig{
+		AdditionalVersion: "1",
+		Weight:            0.5,
+	}
+
+	_, err = m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName:    "fn-dc",
+		Name:            "deep-copy",
+		FunctionVersion: "$LATEST",
+		RoutingConfig:   rc,
+	})
+	require.NoError(t, err)
+
+	// Mutate the original config
+	rc.Weight = 0.9
+
+	alias, err := m.GetAlias(ctx, "fn-dc", "deep-copy")
+	require.NoError(t, err)
+	require.NotNil(t, alias.RoutingConfig)
+	assert.InDelta(t, 0.5, alias.RoutingConfig.Weight, 0.001)
 }

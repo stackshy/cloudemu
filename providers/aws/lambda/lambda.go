@@ -53,6 +53,7 @@ type Mock struct {
 	handlersMu sync.RWMutex
 	handlers   map[string]driver.HandlerFunc
 	monitoring mondriver.Monitoring
+	mu         sync.Mutex // guards PublishVersion read-modify-write on funcData
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.

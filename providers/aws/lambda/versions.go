@@ -14,6 +14,9 @@ const latestVersion = "$LATEST"
 
 // PublishVersion snapshots the current function state as an immutable version.
 func (m *Mock) PublishVersion(_ context.Context, functionName, description string) (*driver.FunctionVersion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)

@@ -3,6 +3,7 @@ package lambda
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -660,6 +661,62 @@ func TestLambdaMetricsEmission(t *testing.T) {
 		requireNoError(t, err)
 		assertEqual(t, true, len(result.Values) > 0)
 	})
+}
+
+func TestPublishVersionConcurrent(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			_, _ = m.PublishVersion(ctx, "my-func", "concurrent")
+		}()
+	}
+
+	wg.Wait()
+
+	versions, err := m.ListVersions(ctx, "my-func")
+	requireNoError(t, err)
+	assertEqual(t, 11, len(versions)) // $LATEST + 10 published
+
+	seen := make(map[string]bool)
+	for _, v := range versions {
+		assertEqual(t, false, seen[v.Version])
+		seen[v.Version] = true
+	}
+}
+
+func TestAliasRoutingConfigDeepCopy(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+
+	rc := &driver.AliasRoutingConfig{
+		AdditionalVersion: "1",
+		Weight:            0.5,
+	}
+
+	_, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName:    "my-func",
+		Name:            "deep-copy",
+		FunctionVersion: "$LATEST",
+		RoutingConfig:   rc,
+	})
+	requireNoError(t, err)
+
+	// Mutate the original config
+	rc.Weight = 0.9
+
+	alias, err := m.GetAlias(ctx, "my-func", "deep-copy")
+	requireNoError(t, err)
+	assertEqual(t, 0.5, alias.RoutingConfig.Weight)
 }
 
 // --- test helpers ---

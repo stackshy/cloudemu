@@ -34,7 +34,7 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		Name:            cfg.Name,
 		FunctionVersion: cfg.FunctionVersion,
 		Description:     cfg.Description,
-		RoutingConfig:   cfg.RoutingConfig,
+		RoutingConfig:   copyRoutingConfig(cfg.RoutingConfig),
 		AliasARN:        aliasARN,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	}
@@ -71,7 +71,7 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	}
 
 	if cfg.RoutingConfig != nil {
-		ad.alias.RoutingConfig = cfg.RoutingConfig
+		ad.alias.RoutingConfig = copyRoutingConfig(cfg.RoutingConfig)
 	}
 
 	fd.aliases.Set(cfg.Name, ad)
@@ -129,6 +129,16 @@ func (m *Mock) ListAliases(_ context.Context, functionName string) ([]driver.Ali
 	}
 
 	return aliases, nil
+}
+
+func copyRoutingConfig(rc *driver.AliasRoutingConfig) *driver.AliasRoutingConfig {
+	if rc == nil {
+		return nil
+	}
+
+	cp := *rc
+
+	return &cp
 }
 
 // versionExists checks whether a version string exists for the given function.
