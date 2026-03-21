@@ -3,6 +3,7 @@ package azure
 
 import (
 	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/providers/azure/acr"
 	"github.com/stackshy/cloudemu/providers/azure/azurecache"
 	"github.com/stackshy/cloudemu/providers/azure/azuredns"
 	"github.com/stackshy/cloudemu/providers/azure/azureiam"
@@ -10,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/azure/azuremonitor"
 	"github.com/stackshy/cloudemu/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/providers/azure/cosmosdb"
+	"github.com/stackshy/cloudemu/providers/azure/eventgrid"
 	"github.com/stackshy/cloudemu/providers/azure/functions"
 	"github.com/stackshy/cloudemu/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/providers/azure/loganalytics"
@@ -35,6 +37,8 @@ type Provider struct {
 	KeyVault         *keyvault.Mock
 	LogAnalytics     *loganalytics.Mock
 	NotificationHubs *notificationhubs.Mock
+	ACR              *acr.Mock
+	EventGrid        *eventgrid.Mock
 }
 
 // New creates a new Azure provider with all mock services.
@@ -55,8 +59,19 @@ func New(opts ...config.Option) *Provider {
 		KeyVault:         keyvault.New(o),
 		LogAnalytics:     loganalytics.New(o),
 		NotificationHubs: notificationhubs.New(o),
+		ACR:              acr.New(o),
+		EventGrid:        eventgrid.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
+	p.BlobStorage.SetMonitoring(p.Monitor)
+	p.CosmosDB.SetMonitoring(p.Monitor)
+	p.Functions.SetMonitoring(p.Monitor)
+	p.ServiceBus.SetMonitoring(p.Monitor)
+	p.Cache.SetMonitoring(p.Monitor)
+	p.LogAnalytics.SetMonitoring(p.Monitor)
+	p.NotificationHubs.SetMonitoring(p.Monitor)
+	p.ACR.SetMonitoring(p.Monitor)
+	p.EventGrid.SetMonitoring(p.Monitor)
 
 	return p
 }

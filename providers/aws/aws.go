@@ -8,8 +8,10 @@ import (
 	"github.com/stackshy/cloudemu/providers/aws/cloudwatchlogs"
 	"github.com/stackshy/cloudemu/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/providers/aws/ec2"
+	"github.com/stackshy/cloudemu/providers/aws/ecr"
 	"github.com/stackshy/cloudemu/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/providers/aws/elb"
+	"github.com/stackshy/cloudemu/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/providers/aws/route53"
 	"github.com/stackshy/cloudemu/providers/aws/s3"
@@ -35,6 +37,8 @@ type Provider struct {
 	SecretsManager *secretsmanager.Mock
 	CloudWatchLogs *cloudwatchlogs.Mock
 	SNS            *sns.Mock
+	ECR            *ecr.Mock
+	EventBridge    *eventbridge.Mock
 }
 
 // New creates a new AWS provider with all mock services.
@@ -55,8 +59,19 @@ func New(opts ...config.Option) *Provider {
 		SecretsManager: secretsmanager.New(o),
 		CloudWatchLogs: cloudwatchlogs.New(o),
 		SNS:            sns.New(o),
+		ECR:            ecr.New(o),
+		EventBridge:    eventbridge.New(o),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
+	p.S3.SetMonitoring(p.CloudWatch)
+	p.DynamoDB.SetMonitoring(p.CloudWatch)
+	p.Lambda.SetMonitoring(p.CloudWatch)
+	p.SQS.SetMonitoring(p.CloudWatch)
+	p.ElastiCache.SetMonitoring(p.CloudWatch)
+	p.CloudWatchLogs.SetMonitoring(p.CloudWatch)
+	p.SNS.SetMonitoring(p.CloudWatch)
+	p.ECR.SetMonitoring(p.CloudWatch)
+	p.EventBridge.SetMonitoring(p.CloudWatch)
 
 	return p
 }
