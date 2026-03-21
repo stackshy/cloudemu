@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/messagequeue/driver"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -380,4 +381,261 @@ func TestTrigger(t *testing.T) {
 	_, err = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: "no-trigger"})
 	require.NoError(t, err)
 	assert.False(t, triggered)
+}
+
+func TestSendMessageBatch(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+	url := createStdQueue(t, m)
+
+	t.Run("successful batch", func(t *testing.T) {
+		entries := []driver.BatchSendEntry{
+			{ID: "e1", Body: "msg1"},
+			{ID: "e2", Body: "msg2"},
+			{ID: "e3", Body: "msg3"},
+		}
+
+		result, err := m.SendMessageBatch(ctx, url, entries)
+		require.NoError(t, err)
+		assert.Len(t, result.Successful, 3)
+		assert.Empty(t, result.Failed)
+
+		for _, entry := range result.Successful {
+			assert.NotEmpty(t, entry.MessageID)
+		}
+	})
+
+	t.Run("batch exceeds max size", func(t *testing.T) {
+		entries := make([]driver.BatchSendEntry, 11)
+		for i := range entries {
+			entries[i] = driver.BatchSendEntry{ID: "e", Body: "m"}
+		}
+
+		_, err := m.SendMessageBatch(ctx, url, entries)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeds max")
+	})
+
+	t.Run("batch with invalid queue", func(t *testing.T) {
+		entries := []driver.BatchSendEntry{{ID: "e1", Body: "msg1"}}
+
+		result, err := m.SendMessageBatch(ctx, "bad-url", entries)
+		require.NoError(t, err)
+		assert.Len(t, result.Failed, 1)
+		assert.Equal(t, "e1", result.Failed[0].ID)
+	})
+}
+
+func TestDeleteMessageBatch(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+	url := createStdQueue(t, m)
+
+	// Send messages
+	_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: "m1"})
+	_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: "m2"})
+
+	// Receive messages
+	msgs, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: url, MaxMessages: 10})
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+
+	t.Run("successful batch delete", func(t *testing.T) {
+		entries := []driver.BatchDeleteEntry{
+			{ID: "d1", ReceiptHandle: msgs[0].ReceiptHandle},
+			{ID: "d2", ReceiptHandle: msgs[1].ReceiptHandle},
+		}
+
+		result, err := m.DeleteMessageBatch(ctx, url, entries)
+		require.NoError(t, err)
+		assert.Len(t, result.Successful, 2)
+		assert.Empty(t, result.Failed)
+	})
+
+	t.Run("batch with invalid handles", func(t *testing.T) {
+		entries := []driver.BatchDeleteEntry{
+			{ID: "d1", ReceiptHandle: "bad-handle"},
+		}
+
+		result, err := m.DeleteMessageBatch(ctx, url, entries)
+		require.NoError(t, err)
+		assert.Len(t, result.Failed, 1)
+	})
+
+	t.Run("batch exceeds max size", func(t *testing.T) {
+		entries := make([]driver.BatchDeleteEntry, 11)
+		for i := range entries {
+			entries[i] = driver.BatchDeleteEntry{ID: "d", ReceiptHandle: "h"}
+		}
+
+		_, err := m.DeleteMessageBatch(ctx, url, entries)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeds max")
+	})
+}
+
+func TestGetQueueAttributes(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+	url := createStdQueue(t, m)
+
+	t.Run("success", func(t *testing.T) {
+		attrs, err := m.GetQueueAttributes(ctx, url)
+		require.NoError(t, err)
+		assert.Equal(t, defaultVisibilityTimeout, attrs.VisibilityTimeout)
+		assert.Equal(t, 0, attrs.ApproximateMessageCount)
+		assert.False(t, attrs.FifoQueue)
+		assert.False(t, attrs.CreatedAt.IsZero())
+	})
+
+	t.Run("with messages", func(t *testing.T) {
+		_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: "m1"})
+		_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: "m2"})
+
+		attrs, err := m.GetQueueAttributes(ctx, url)
+		require.NoError(t, err)
+		assert.Equal(t, 2, attrs.ApproximateMessageCount)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := m.GetQueueAttributes(ctx, "bad-url")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestSetQueueAttributes(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+	url := createStdQueue(t, m)
+
+	t.Run("update attributes", func(t *testing.T) {
+		err := m.SetQueueAttributes(ctx, url, map[string]int{
+			"DelaySeconds":      5,
+			"VisibilityTimeout": 60,
+			"MaximumMessageSize": 1024,
+		})
+		require.NoError(t, err)
+
+		attrs, err := m.GetQueueAttributes(ctx, url)
+		require.NoError(t, err)
+		assert.Equal(t, 5, attrs.DelaySeconds)
+		assert.Equal(t, 60, attrs.VisibilityTimeout)
+		assert.Equal(t, 1024, attrs.MaximumMessageSize)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := m.SetQueueAttributes(ctx, "bad-url", map[string]int{"DelaySeconds": 1})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestPurgeQueue(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+	url := createStdQueue(t, m)
+
+	_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: "m1"})
+	_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: "m2"})
+
+	t.Run("purge removes all messages", func(t *testing.T) {
+		err := m.PurgeQueue(ctx, url)
+		require.NoError(t, err)
+
+		info, err := m.GetQueueInfo(ctx, url)
+		require.NoError(t, err)
+		assert.Equal(t, 0, info.ApproxMessageCount)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := m.PurgeQueue(ctx, "bad-url")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestServiceBusMetricsEmission(t *testing.T) {
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(clk), config.WithAccountID("test-ns"))
+	m := New(opts)
+
+	mon := &sbMetricsCollector{}
+	m.SetMonitoring(mon)
+
+	ctx := context.Background()
+	info, err := m.CreateQueue(ctx, driver.QueueConfig{Name: "metric-queue"})
+	require.NoError(t, err)
+
+	t.Run("SendMessage emits metrics", func(t *testing.T) {
+		mon.reset()
+		_, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: info.URL, Body: "hello"})
+		require.NoError(t, err)
+		assert.True(t, mon.hasMetric("Microsoft.ServiceBus/namespaces", "IncomingMessages"))
+		assert.True(t, mon.hasMetric("Microsoft.ServiceBus/namespaces", "Size"))
+	})
+
+	t.Run("ReceiveMessages emits metrics", func(t *testing.T) {
+		mon.reset()
+		_, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: info.URL, MaxMessages: 10})
+		require.NoError(t, err)
+		assert.True(t, mon.hasMetric("Microsoft.ServiceBus/namespaces", "OutgoingMessages"))
+	})
+
+	t.Run("DeleteMessage emits metrics", func(t *testing.T) {
+		_, _ = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: info.URL, Body: "to-delete"})
+		msgs, _ := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: info.URL, MaxMessages: 1})
+		require.NotEmpty(t, msgs)
+
+		mon.reset()
+		err := m.DeleteMessage(ctx, info.URL, msgs[0].ReceiptHandle)
+		require.NoError(t, err)
+		assert.True(t, mon.hasMetric("Microsoft.ServiceBus/namespaces", "CompletedMessages"))
+	})
+}
+
+type sbMetricsCollector struct {
+	data []mondriver.MetricDatum
+}
+
+func (c *sbMetricsCollector) PutMetricData(_ context.Context, data []mondriver.MetricDatum) error {
+	c.data = append(c.data, data...)
+	return nil
+}
+
+func (c *sbMetricsCollector) GetMetricData(_ context.Context, _ mondriver.GetMetricInput) (*mondriver.MetricDataResult, error) {
+	return &mondriver.MetricDataResult{}, nil
+}
+
+func (c *sbMetricsCollector) CreateAlarm(_ context.Context, _ mondriver.AlarmConfig) error {
+	return nil
+}
+
+func (c *sbMetricsCollector) DeleteAlarm(_ context.Context, _ string) error {
+	return nil
+}
+
+func (c *sbMetricsCollector) DescribeAlarms(_ context.Context, _ []string) ([]mondriver.AlarmInfo, error) {
+	return nil, nil
+}
+
+func (c *sbMetricsCollector) SetAlarmState(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+func (c *sbMetricsCollector) ListMetrics(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
+func (c *sbMetricsCollector) reset() {
+	c.data = nil
+}
+
+func (c *sbMetricsCollector) hasMetric(namespace, metricName string) bool {
+	for _, d := range c.data {
+		if d.Namespace == namespace && d.MetricName == metricName {
+			return true
+		}
+	}
+	return false
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
 	"github.com/stackshy/cloudemu/messagequeue/driver"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.MessageQueue.
@@ -47,6 +48,8 @@ type queueData struct {
 	visibilityTimeout  int
 	maxMessageSize     int
 	messageRetention   int
+	createdAt          time.Time
+	lastModifiedAt     time.Time
 	deduplicationIndex map[string]time.Time
 	dlqConfig          *driver.DeadLetterConfig
 }
@@ -56,10 +59,33 @@ type FunctionTrigger func(queueURL string, message driver.Message)
 
 // Mock is an in-memory mock implementation of the GCP Pub/Sub service.
 type Mock struct {
-	queues   *memstore.Store[*queueData]
-	opts     *config.Options
-	mu       sync.RWMutex
-	triggers map[string]FunctionTrigger // subscriptionURL -> trigger
+	queues     *memstore.Store[*queueData]
+	opts       *config.Options
+	mu         sync.RWMutex
+	triggers   map[string]FunctionTrigger // subscriptionURL -> trigger
+	monitoring mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(ctx, []mondriver.MetricDatum{
+		{
+			Namespace:  "pubsub.googleapis.com",
+			MetricName: metricName,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: dims,
+			Timestamp:  m.opts.Clock.Now(),
+		},
+	})
 }
 
 // New creates a new Pub/Sub mock with the given configuration options.
@@ -123,6 +149,8 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		Tags:               tags,
 	}
 
+	now := m.opts.Clock.Now()
+
 	qd := &queueData{
 		info:               info,
 		messages:           make([]*pubsubMessage, 0),
@@ -130,6 +158,8 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		visibilityTimeout:  visibilityTimeout,
 		maxMessageSize:     cfg.MaxMessageSize,
 		messageRetention:   cfg.MessageRetention,
+		createdAt:          now,
+		lastModifiedAt:     now,
 		deduplicationIndex: make(map[string]time.Time),
 		dlqConfig:          cfg.DeadLetterQueue,
 	}
@@ -195,7 +225,7 @@ func (m *Mock) ListQueues(_ context.Context, prefix string) ([]driver.QueueInfo,
 // SendMessage publishes a message to the specified Pub/Sub topic.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
+func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
 	qd, ok := m.queues.Get(input.QueueURL)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "topic %q not found", input.QueueURL)
@@ -261,6 +291,10 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 		trigger(input.QueueURL, triggerMsg)
 	}
 
+	dims := map[string]string{"topic_id": qd.info.Name}
+	m.emitMetric(ctx, "topic/send_message_operation_count", 1, dims)
+	m.emitMetric(ctx, "topic/byte_cost", float64(len(input.Body)), dims)
+
 	return &driver.SendMessageOutput{
 		MessageID: msgID,
 	}, nil
@@ -307,7 +341,7 @@ func findDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time)
 
 // ReceiveMessages pulls messages from the specified Pub/Sub subscription.
 // Returns messages where VisibleAt <= now, and sets a new VisibleAt based on the ack deadline (visibility timeout).
-func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInput) ([]driver.Message, error) {
+func (m *Mock) ReceiveMessages(ctx context.Context, input driver.ReceiveMessageInput) ([]driver.Message, error) {
 	qd, ok := m.queues.Get(input.QueueURL)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "topic %q not found", input.QueueURL)
@@ -335,6 +369,10 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	if results == nil {
 		results = []driver.Message{}
 	}
+
+	dims := map[string]string{"subscription_id": qd.info.Name}
+	m.emitMetric(ctx, "subscription/pull_message_operation_count", 1, dims)
+	m.emitMetric(ctx, "subscription/delivered_message_count", float64(len(results)), dims)
 
 	return results, nil
 }
@@ -427,7 +465,7 @@ func (m *Mock) moveToDLQ(dlqURL string, msg *pubsubMessage) {
 }
 
 // DeleteMessage acknowledges and removes a message from the subscription using its ack ID (receipt handle).
-func (m *Mock) DeleteMessage(_ context.Context, queueURL, receiptHandle string) error {
+func (m *Mock) DeleteMessage(ctx context.Context, queueURL, receiptHandle string) error {
 	qd, ok := m.queues.Get(queueURL)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "topic %q not found", queueURL)
@@ -439,6 +477,9 @@ func (m *Mock) DeleteMessage(_ context.Context, queueURL, receiptHandle string) 
 	for i, msg := range qd.messages {
 		if msg.ReceiptHandle == receiptHandle {
 			qd.messages = append(qd.messages[:i], qd.messages[i+1:]...)
+
+			m.emitMetric(ctx, "subscription/ack_message_operation_count", 1, map[string]string{"subscription_id": qd.info.Name})
+
 			return nil
 		}
 	}
@@ -466,4 +507,205 @@ func (m *Mock) ChangeVisibility(_ context.Context, queueURL, receiptHandle strin
 	}
 
 	return cerrors.Newf(cerrors.NotFound, "message with ack ID %q not found", receiptHandle)
+}
+
+// SendMessageBatch publishes up to 10 messages to the specified Pub/Sub topic.
+func (m *Mock) SendMessageBatch(
+	ctx context.Context, queue string, entries []driver.BatchSendEntry,
+) (*driver.BatchSendResult, error) {
+	if len(entries) > driver.MaxBatchSize {
+		return nil, cerrors.Newf(
+			cerrors.InvalidArgument, "batch size %d exceeds max %d", len(entries), driver.MaxBatchSize,
+		)
+	}
+
+	result := &driver.BatchSendResult{}
+
+	for _, entry := range entries {
+		input := batchEntryToSendInput(queue, &entry)
+
+		out, err := m.SendMessage(ctx, input)
+		if err != nil {
+			result.Failed = append(result.Failed, driver.BatchSendFailEntry{
+				ID: entry.ID, Code: "SendFailure", Message: err.Error(),
+			})
+
+			continue
+		}
+
+		result.Successful = append(result.Successful, driver.BatchSendResultEntry{
+			ID: entry.ID, MessageID: out.MessageID,
+		})
+	}
+
+	return result, nil
+}
+
+func batchEntryToSendInput(queue string, entry *driver.BatchSendEntry) driver.SendMessageInput {
+	return driver.SendMessageInput{
+		QueueURL:        queue,
+		Body:            entry.Body,
+		DelaySeconds:    entry.DelaySeconds,
+		GroupID:         entry.GroupID,
+		DeduplicationID: entry.DeduplicationID,
+		Attributes:      entry.Attributes,
+	}
+}
+
+// DeleteMessageBatch deletes up to 10 messages from the specified Pub/Sub subscription.
+func (m *Mock) DeleteMessageBatch(
+	ctx context.Context, queue string, entries []driver.BatchDeleteEntry,
+) (*driver.BatchDeleteResult, error) {
+	if len(entries) > driver.MaxBatchSize {
+		return nil, cerrors.Newf(
+			cerrors.InvalidArgument, "batch size %d exceeds max %d", len(entries), driver.MaxBatchSize,
+		)
+	}
+
+	result := &driver.BatchDeleteResult{}
+
+	for _, entry := range entries {
+		err := m.DeleteMessage(ctx, queue, entry.ReceiptHandle)
+		if err != nil {
+			result.Failed = append(result.Failed, driver.BatchSendFailEntry{
+				ID: entry.ID, Code: "DeleteFailure", Message: err.Error(),
+			})
+
+			continue
+		}
+
+		result.Successful = append(result.Successful, entry.ID)
+	}
+
+	return result, nil
+}
+
+// ReceiveMessagesWithOptions pulls messages with configurable options.
+func (m *Mock) ReceiveMessagesWithOptions(
+	_ context.Context, queue string, opts driver.ReceiveOptions,
+) ([]driver.Message, error) {
+	qd, ok := m.queues.Get(queue)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "topic %q not found", queue)
+	}
+
+	qd.mu.Lock()
+	defer qd.mu.Unlock()
+
+	maxMsgs := clampMaxMessages(opts.MaxMessages)
+
+	visTimeout := opts.VisibilityTimeout
+	if visTimeout == 0 {
+		visTimeout = qd.visibilityTimeout
+	}
+
+	now := m.opts.Clock.Now()
+	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now)
+
+	removeByIndices(qd, toRemove)
+
+	if results == nil {
+		results = []driver.Message{}
+	}
+
+	return results, nil
+}
+
+// GetQueueAttributes returns detailed attributes of the specified topic/subscription.
+func (m *Mock) GetQueueAttributes(
+	_ context.Context, queue string,
+) (*driver.QueueAttributes, error) {
+	qd, ok := m.queues.Get(queue)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "topic %q not found", queue)
+	}
+
+	qd.mu.Lock()
+	defer qd.mu.Unlock()
+
+	now := m.opts.Clock.Now()
+	visible, notVisible := countMessages(qd, now)
+
+	return &driver.QueueAttributes{
+		DelaySeconds:               qd.delaySeconds,
+		MaximumMessageSize:         qd.maxMessageSize,
+		MessageRetentionPeriod:     qd.messageRetention,
+		VisibilityTimeout:          qd.visibilityTimeout,
+		ApproximateMessageCount:    visible,
+		ApproximateNotVisibleCount: notVisible,
+		CreatedAt:                  qd.createdAt,
+		LastModifiedAt:             qd.lastModifiedAt,
+		FifoQueue:                  qd.info.FIFO,
+	}, nil
+}
+
+// SetQueueAttributes updates the attributes of the specified topic/subscription.
+func (m *Mock) SetQueueAttributes(
+	_ context.Context, queue string, attrs map[string]int,
+) error {
+	qd, ok := m.queues.Get(queue)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "topic %q not found", queue)
+	}
+
+	qd.mu.Lock()
+	defer qd.mu.Unlock()
+
+	applyQueueAttributes(qd, attrs)
+	qd.lastModifiedAt = m.opts.Clock.Now()
+
+	return nil
+}
+
+func applyQueueAttributes(qd *queueData, attrs map[string]int) {
+	if v, ok := attrs["DelaySeconds"]; ok {
+		qd.delaySeconds = v
+	}
+
+	if v, ok := attrs["VisibilityTimeout"]; ok {
+		qd.visibilityTimeout = v
+	}
+
+	if v, ok := attrs["MaximumMessageSize"]; ok {
+		qd.maxMessageSize = v
+	}
+
+	if v, ok := attrs["MessageRetentionPeriod"]; ok {
+		qd.messageRetention = v
+	}
+}
+
+// PurgeQueue removes all messages from the specified topic/subscription.
+func (m *Mock) PurgeQueue(_ context.Context, queue string) error {
+	qd, ok := m.queues.Get(queue)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "topic %q not found", queue)
+	}
+
+	qd.mu.Lock()
+	defer qd.mu.Unlock()
+
+	qd.messages = make([]*pubsubMessage, 0)
+	qd.lastModifiedAt = m.opts.Clock.Now()
+
+	return nil
+}
+
+func countMessages(qd *queueData, now time.Time) (visible, notVisible int) {
+	for _, msg := range qd.messages {
+		if msg.VisibleAt.After(now) {
+			notVisible++
+		} else {
+			visible++
+		}
+	}
+
+	return visible, notVisible
+}
+
+func removeByIndices(qd *queueData, indices []int) {
+	for i := len(indices) - 1; i >= 0; i-- {
+		idx := indices[i]
+		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
+	}
 }
