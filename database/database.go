@@ -181,3 +181,55 @@ func (db *Database) BatchGetItems(ctx context.Context, table string, keys []map[
 
 	return out.([]map[string]any), nil
 }
+
+func (db *Database) UpdateTTL(ctx context.Context, table string, cfg driver.TTLConfig) error {
+	_, err := db.do(ctx, "UpdateTTL", map[string]any{"table": table}, func() (any, error) {
+		return nil, db.driver.UpdateTTL(ctx, table, cfg)
+	})
+
+	return err
+}
+
+func (db *Database) DescribeTTL(ctx context.Context, table string) (*driver.TTLConfig, error) {
+	out, err := db.do(ctx, "DescribeTTL", table, func() (any, error) {
+		return db.driver.DescribeTTL(ctx, table)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.TTLConfig), nil
+}
+
+func (db *Database) UpdateStreamConfig(ctx context.Context, table string, cfg driver.StreamConfig) error {
+	_, err := db.do(ctx, "UpdateStreamConfig", map[string]any{"table": table}, func() (any, error) {
+		return nil, db.driver.UpdateStreamConfig(ctx, table, cfg)
+	})
+
+	return err
+}
+
+func (db *Database) GetStreamRecords(
+	ctx context.Context, table string, limit int, token string,
+) (*driver.StreamIterator, error) {
+	out, err := db.do(ctx, "GetStreamRecords", map[string]any{"table": table}, func() (any, error) {
+		return db.driver.GetStreamRecords(ctx, table, limit, token)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.StreamIterator), nil
+}
+
+func (db *Database) TransactWriteItems(
+	ctx context.Context, table string, puts []map[string]any, deletes []map[string]any,
+) error {
+	_, err := db.do(ctx, "TransactWriteItems", map[string]any{"table": table}, func() (any, error) {
+		return nil, db.driver.TransactWriteItems(ctx, table, puts, deletes)
+	})
+
+	return err
+}

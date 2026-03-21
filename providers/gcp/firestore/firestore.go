@@ -7,11 +7,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/database/driver"
 	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	"github.com/stackshy/cloudemu/pagination"
 )
 
@@ -28,12 +30,26 @@ const (
 	OpBetween      = "BETWEEN"
 )
 
+// Snapshot and TTL constants.
+const (
+	ViewNewImage       = "NEW_IMAGE"
+	ViewOldImage       = "OLD_IMAGE"
+	ViewNewAndOld      = "NEW_AND_OLD_IMAGES"
+	ViewKeysOnly       = "KEYS_ONLY"
+	maxSnapshotRecords = 1000
+	defaultSnapLimit   = 100
+)
+
 // Compile-time check that Mock implements driver.Database.
 var _ driver.Database = (*Mock)(nil)
 
 type collectionData struct {
-	config driver.TableConfig
-	items  *memstore.Store[map[string]any]
+	config        driver.TableConfig
+	items         *memstore.Store[map[string]any]
+	ttlConfig     driver.TTLConfig
+	streamConfig  driver.StreamConfig
+	streamRecords []driver.StreamRecord
+	seqCounter    atomic.Int64
 }
 
 // Mock is an in-memory mock implementation of Google Cloud Firestore.
@@ -41,6 +57,29 @@ type Mock struct {
 	mu          sync.RWMutex
 	collections map[string]*collectionData
 	opts        *config.Options
+	monitoring  mondriver.Monitoring
+}
+
+// SetMonitoring sets the monitoring backend for auto-metric generation.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
+	m.monitoring = mon
+}
+
+func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64, dims map[string]string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	_ = m.monitoring.PutMetricData(ctx, []mondriver.MetricDatum{
+		{
+			Namespace:  "firestore.googleapis.com",
+			MetricName: metricName,
+			Value:      value,
+			Unit:       "None",
+			Dimensions: dims,
+			Timestamp:  m.opts.Clock.Now(),
+		},
+	})
 }
 
 // New creates a new Firestore mock.
@@ -109,21 +148,27 @@ func (m *Mock) ListTables(_ context.Context) ([]string, error) {
 	return names, nil
 }
 
-func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) error {
-	m.mu.RLock()
-	cd, exists := m.collections[table]
-	m.mu.RUnlock()
+func (m *Mock) PutItem(ctx context.Context, table string, item map[string]any) error {
+	m.mu.Lock()
 
+	cd, exists := m.collections[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
 	}
 
-	cd.items.Set(docKey(cd.config, item), item)
+	key := docKey(cd.config, item)
+	oldItem, hadOld := cd.items.Get(key)
+	cd.items.Set(key, item)
+	m.recordStreamEvent(cd, oldItem, item, hadOld)
+	m.mu.Unlock()
+
+	m.emitMetric(ctx, "document/write_count", 1, map[string]string{"collection_id": table})
 
 	return nil
 }
 
-func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map[string]any, error) {
+func (m *Mock) GetItem(ctx context.Context, table string, key map[string]any) (map[string]any, error) {
 	m.mu.RLock()
 	cd, exists := m.collections[table]
 	m.mu.RUnlock()
@@ -132,30 +177,49 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 		return nil, cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
 	}
 
-	item, ok := cd.items.Get(docKey(cd.config, key))
+	k := docKey(cd.config, key)
+	item, ok := cd.items.Get(k)
+
 	if !ok {
 		return nil, cerrors.New(cerrors.NotFound, "document not found")
 	}
 
+	if m.isItemExpired(cd, item) {
+		cd.items.Delete(k)
+		return nil, cerrors.New(cerrors.NotFound, "document not found")
+	}
+
+	m.emitMetric(ctx, "document/read_count", 1, map[string]string{"collection_id": table})
+
 	return item, nil
 }
 
-func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) error {
-	m.mu.RLock()
-	cd, exists := m.collections[table]
-	m.mu.RUnlock()
+func (m *Mock) DeleteItem(ctx context.Context, table string, key map[string]any) error {
+	m.mu.Lock()
 
+	cd, exists := m.collections[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
 	}
 
-	cd.items.Delete(docKey(cd.config, key))
+	k := docKey(cd.config, key)
+	oldItem, hadOld := cd.items.Get(k)
+	cd.items.Delete(k)
+
+	if hadOld {
+		m.recordStreamRemove(cd, oldItem)
+	}
+
+	m.mu.Unlock()
+
+	m.emitMetric(ctx, "document/delete_count", 1, map[string]string{"collection_id": table})
 
 	return nil
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryResult, error) {
+func (m *Mock) Query(ctx context.Context, input driver.QueryInput) (*driver.QueryResult, error) {
 	m.mu.RLock()
 	cd, exists := m.collections[input.Table]
 	m.mu.RUnlock()
@@ -169,7 +233,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		return nil, err
 	}
 
-	matched := matchQueryItems(cd, pkField, skField, &input)
+	matched := m.matchQueryItems(cd, pkField, skField, &input)
 
 	limit := input.Limit
 	if limit <= 0 {
@@ -177,6 +241,8 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 	}
 
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+
+	m.emitMetric(ctx, "document/read_count", float64(len(page.Items)), map[string]string{"collection_id": input.Table})
 
 	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
 }
@@ -198,12 +264,18 @@ func resolveKeyFields(cd *collectionData, indexName string) (pkField, skField st
 	return "", "", cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
 }
 
-func matchQueryItems(cd *collectionData, pkField, skField string, input *driver.QueryInput) []map[string]any {
+func (m *Mock) matchQueryItems(
+	cd *collectionData, pkField, skField string, input *driver.QueryInput,
+) []map[string]any {
 	allItems := cd.items.All()
 
 	var matched []map[string]any
 
 	for _, item := range allItems {
+		if m.isItemExpired(cd, item) {
+			continue
+		}
+
 		pkVal := fmt.Sprintf("%v", item[pkField])
 		if pkVal != fmt.Sprintf("%v", input.KeyCondition.PartitionVal) {
 			continue
@@ -224,7 +296,7 @@ func matchQueryItems(cd *collectionData, pkField, skField string, input *driver.
 	return matched
 }
 
-func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
+func (m *Mock) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
 	m.mu.RLock()
 	cd, exists := m.collections[input.Table]
 	m.mu.RUnlock()
@@ -238,6 +310,10 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 	var matched []map[string]any
 
 	for _, item := range allItems {
+		if m.isItemExpired(cd, item) {
+			continue
+		}
+
 		if matchesFilters(item, input.Filters) {
 			matched = append(matched, item)
 		}
@@ -250,21 +326,28 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
 
+	m.emitMetric(ctx, "document/read_count", float64(len(page.Items)), map[string]string{"collection_id": input.Table})
+
 	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
 }
 
 func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string]any) error {
-	m.mu.RLock()
-	cd, exists := m.collections[table]
-	m.mu.RUnlock()
+	m.mu.Lock()
 
+	cd, exists := m.collections[table]
 	if !exists {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
 	}
 
 	for _, item := range items {
-		cd.items.Set(docKey(cd.config, item), item)
+		key := docKey(cd.config, item)
+		oldItem, hadOld := cd.items.Get(key)
+		cd.items.Set(key, item)
+		m.recordStreamEvent(cd, oldItem, item, hadOld)
 	}
+
+	m.mu.Unlock()
 
 	return nil
 }
@@ -372,4 +455,273 @@ func matchesSingleScanFilter(item map[string]any, f driver.ScanFilter) bool {
 	default:
 		return false
 	}
+}
+
+// UpdateTTL configures TTL for a collection.
+func (m *Mock) UpdateTTL(_ context.Context, table string, cfg driver.TTLConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	cd.ttlConfig = cfg
+
+	return nil
+}
+
+// DescribeTTL returns the TTL configuration for a collection.
+func (m *Mock) DescribeTTL(_ context.Context, table string) (*driver.TTLConfig, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	cfg := cd.ttlConfig
+
+	return &cfg, nil
+}
+
+// UpdateStreamConfig configures real-time listeners for a collection.
+func (m *Mock) UpdateStreamConfig(_ context.Context, table string, cfg driver.StreamConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	cd.streamConfig = cfg
+
+	return nil
+}
+
+// GetStreamRecords returns snapshot records after the given token.
+func (m *Mock) GetStreamRecords(
+	_ context.Context, table string, limit int, token string,
+) (*driver.StreamIterator, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	if !cd.streamConfig.Enabled {
+		return nil, cerrors.New(cerrors.FailedPrecondition, "listeners not enabled")
+	}
+
+	return filterSnapRecords(cd.streamRecords, limit, token), nil
+}
+
+func filterSnapRecords(records []driver.StreamRecord, limit int, token string) *driver.StreamIterator {
+	if limit <= 0 {
+		limit = defaultSnapLimit
+	}
+
+	startIdx := 0
+
+	if token != "" {
+		for i, r := range records {
+			if r.SequenceNumber == token {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
+	end := startIdx + limit
+	if end > len(records) {
+		end = len(records)
+	}
+
+	result := records[startIdx:end]
+	nextToken := ""
+
+	if end < len(records) {
+		nextToken = result[len(result)-1].SequenceNumber
+	}
+
+	return &driver.StreamIterator{
+		ShardID:   "snapshot-000",
+		Records:   result,
+		NextToken: nextToken,
+	}
+}
+
+// TransactWriteItems executes puts and deletes atomically.
+func (m *Mock) TransactWriteItems(
+	_ context.Context, table string, puts []map[string]any, deletes []map[string]any,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	m.applyTransactPuts(cd, puts)
+	m.applyTransactDeletes(cd, deletes)
+
+	return nil
+}
+
+func (m *Mock) applyTransactPuts(cd *collectionData, puts []map[string]any) {
+	for _, item := range puts {
+		key := docKey(cd.config, item)
+		oldItem, hadOld := cd.items.Get(key)
+		cd.items.Set(key, item)
+		m.recordStreamEvent(cd, oldItem, item, hadOld)
+	}
+}
+
+func (m *Mock) applyTransactDeletes(cd *collectionData, deletes []map[string]any) {
+	for _, key := range deletes {
+		k := docKey(cd.config, key)
+		oldItem, hadOld := cd.items.Get(k)
+		cd.items.Delete(k)
+
+		if hadOld {
+			m.recordStreamRemove(cd, oldItem)
+		}
+	}
+}
+
+// isItemExpired checks if a document has expired based on TTL config.
+func (m *Mock) isItemExpired(cd *collectionData, item map[string]any) bool {
+	if !cd.ttlConfig.Enabled {
+		return false
+	}
+
+	ttlVal, ok := item[cd.ttlConfig.AttributeName]
+	if !ok {
+		return false
+	}
+
+	ttlUnix := toUnixTimestamp(ttlVal)
+	if ttlUnix <= 0 {
+		return false
+	}
+
+	return m.opts.Clock.Now().Unix() > ttlUnix
+}
+
+func toUnixTimestamp(val any) int64 {
+	switch v := val.(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	default:
+		parsed, err := strconv.ParseFloat(fmt.Sprintf("%v", v), 64)
+		if err != nil {
+			return 0
+		}
+
+		return int64(parsed)
+	}
+}
+
+// recordStreamEvent records an INSERT or MODIFY snapshot event. Caller must hold m.mu.
+func (m *Mock) recordStreamEvent(cd *collectionData, oldItem, newItem map[string]any, hadOld bool) {
+	if !cd.streamConfig.Enabled {
+		return
+	}
+
+	eventType := "INSERT"
+	if hadOld {
+		eventType = "MODIFY"
+	}
+
+	rec := m.buildStreamRecord(cd, eventType, oldItem, newItem)
+	cd.streamRecords = appendSnapRecord(cd.streamRecords, &rec)
+}
+
+// recordStreamRemove records a REMOVE snapshot event. Caller must hold m.mu.
+func (m *Mock) recordStreamRemove(cd *collectionData, oldItem map[string]any) {
+	if !cd.streamConfig.Enabled {
+		return
+	}
+
+	rec := m.buildStreamRecord(cd, "REMOVE", oldItem, nil)
+	cd.streamRecords = appendSnapRecord(cd.streamRecords, &rec)
+}
+
+func (m *Mock) buildStreamRecord(
+	cd *collectionData, eventType string, oldItem, newItem map[string]any,
+) driver.StreamRecord {
+	seq := cd.seqCounter.Add(1)
+	keys := extractKeys(cd.config, oldItem, newItem)
+
+	rec := driver.StreamRecord{
+		EventID:        fmt.Sprintf("event-%d", seq),
+		EventType:      eventType,
+		Table:          cd.config.Name,
+		Keys:           keys,
+		Timestamp:      m.opts.Clock.Now(),
+		SequenceNumber: fmt.Sprintf("%d", seq),
+	}
+
+	applyViewType(&rec, cd.streamConfig.ViewType, oldItem, newItem)
+
+	return rec
+}
+
+func extractKeys(cfg driver.TableConfig, oldItem, newItem map[string]any) map[string]any {
+	src := newItem
+	if src == nil {
+		src = oldItem
+	}
+
+	keys := map[string]any{cfg.PartitionKey: src[cfg.PartitionKey]}
+	if cfg.SortKey != "" {
+		keys[cfg.SortKey] = src[cfg.SortKey]
+	}
+
+	return keys
+}
+
+func applyViewType(rec *driver.StreamRecord, viewType string, oldItem, newItem map[string]any) {
+	switch viewType {
+	case ViewNewImage:
+		rec.NewImage = copyItem(newItem)
+	case ViewOldImage:
+		rec.OldImage = copyItem(oldItem)
+	case ViewNewAndOld:
+		rec.NewImage = copyItem(newItem)
+		rec.OldImage = copyItem(oldItem)
+	case ViewKeysOnly:
+	}
+}
+
+func copyItem(item map[string]any) map[string]any {
+	if item == nil {
+		return nil
+	}
+
+	cp := make(map[string]any, len(item))
+	for k, v := range item {
+		cp[k] = v
+	}
+
+	return cp
+}
+
+func appendSnapRecord(records []driver.StreamRecord, rec *driver.StreamRecord) []driver.StreamRecord {
+	records = append(records, *rec)
+	if len(records) > maxSnapshotRecords {
+		records = records[len(records)-maxSnapshotRecords:]
+	}
+
+	return records
 }
