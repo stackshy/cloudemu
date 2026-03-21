@@ -43,8 +43,6 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateCache creates a new Memorystore instance.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "cache name is required")

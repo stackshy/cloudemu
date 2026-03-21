@@ -96,8 +96,6 @@ func (s *Secrets) rec(op string, input, output any, err error, dur time.Duration
 }
 
 // CreateSecret creates a new secret with an initial value.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (s *Secrets) CreateSecret(ctx context.Context, config driver.SecretConfig, value []byte) (*driver.SecretInfo, error) {
 	out, err := s.do(ctx, "CreateSecret", config, func() (any, error) { return s.driver.CreateSecret(ctx, config, value) })
 	if err != nil {

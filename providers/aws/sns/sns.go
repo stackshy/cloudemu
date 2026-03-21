@@ -34,8 +34,6 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateTopic creates a new SNS topic.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.TopicInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "topic name is required")
@@ -100,6 +98,7 @@ func (m *Mock) ListTopics(_ context.Context) ([]driver.TopicInfo, error) {
 	all := m.topics.All()
 
 	topics := make([]driver.TopicInfo, 0, len(all))
+
 	for _, td := range all {
 		info := td.info
 		info.SubscriptionCount = td.subscriptions.Len()
@@ -110,8 +109,6 @@ func (m *Mock) ListTopics(_ context.Context) ([]driver.TopicInfo, error) {
 }
 
 // Subscribe creates a subscription to an SNS topic.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Subscribe(_ context.Context, cfg driver.SubscriptionConfig) (*driver.SubscriptionInfo, error) {
 	td, ok := m.topics.Get(cfg.TopicID)
 	if !ok {
@@ -175,8 +172,6 @@ func (m *Mock) ListSubscriptions(_ context.Context, topicID string) ([]driver.Su
 }
 
 // Publish publishes a message to an SNS topic.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
 	if _, ok := m.topics.Get(input.TopicID); !ok {
 		return nil, errors.Newf(errors.NotFound, "topic %q not found", input.TopicID)

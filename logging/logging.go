@@ -96,8 +96,6 @@ func (l *Logging) rec(op string, input, output any, err error, dur time.Duration
 }
 
 // CreateLogGroup creates a new log group.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (l *Logging) CreateLogGroup(ctx context.Context, config driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
 	out, err := l.do(ctx, "CreateLogGroup", config, func() (any, error) { return l.driver.CreateLogGroup(ctx, config) })
 	if err != nil {

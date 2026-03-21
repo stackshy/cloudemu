@@ -96,8 +96,6 @@ func (n *Notification) rec(op string, input, output any, err error, dur time.Dur
 }
 
 // CreateTopic creates a new notification topic.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (n *Notification) CreateTopic(ctx context.Context, config driver.TopicConfig) (*driver.TopicInfo, error) {
 	out, err := n.do(ctx, "CreateTopic", config, func() (any, error) { return n.driver.CreateTopic(ctx, config) })
 	if err != nil {
@@ -134,8 +132,6 @@ func (n *Notification) ListTopics(ctx context.Context) ([]driver.TopicInfo, erro
 }
 
 // Subscribe creates a subscription to a topic.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (n *Notification) Subscribe(ctx context.Context, config driver.SubscriptionConfig) (*driver.SubscriptionInfo, error) {
 	out, err := n.do(ctx, "Subscribe", config, func() (any, error) { return n.driver.Subscribe(ctx, config) })
 	if err != nil {
@@ -162,8 +158,6 @@ func (n *Notification) ListSubscriptions(ctx context.Context, topicID string) ([
 }
 
 // Publish publishes a message to a topic.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (n *Notification) Publish(ctx context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
 	out, err := n.do(ctx, "Publish", input, func() (any, error) { return n.driver.Publish(ctx, input) })
 	if err != nil {

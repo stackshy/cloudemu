@@ -43,8 +43,6 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateLogGroup creates a new Cloud Logging log bucket.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "log group name is required")
@@ -176,6 +174,7 @@ func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogS
 	all := g.streams.All()
 
 	streams := make([]driver.LogStreamInfo, 0, len(all))
+
 	for _, s := range all {
 		s.mu.RLock()
 		streams = append(streams, s.info)
@@ -239,12 +238,12 @@ func (m *Mock) GetLogEvents(_ context.Context, input driver.LogQueryInput) ([]dr
 	var results []driver.LogEvent
 
 	if input.LogStream != "" {
-		events := m.getStreamEvents(g, input.LogStream, input)
+		events := m.getStreamEvents(g, input.LogStream, &input)
 		results = append(results, events...)
 	} else {
 		all := g.streams.All()
 		for _, s := range all {
-			events := m.filterEvents(s, input)
+			events := m.filterEvents(s, &input)
 			results = append(results, events...)
 		}
 	}
@@ -260,7 +259,7 @@ func (m *Mock) GetLogEvents(_ context.Context, input driver.LogQueryInput) ([]dr
 	return results, nil
 }
 
-func (m *Mock) getStreamEvents(g *logGroup, streamName string, input driver.LogQueryInput) []driver.LogEvent {
+func (m *Mock) getStreamEvents(g *logGroup, streamName string, input *driver.LogQueryInput) []driver.LogEvent {
 	s, ok := g.streams.Get(streamName)
 	if !ok {
 		return nil
@@ -269,7 +268,7 @@ func (m *Mock) getStreamEvents(g *logGroup, streamName string, input driver.LogQ
 	return m.filterEvents(s, input)
 }
 
-func (m *Mock) filterEvents(s *logStream, input driver.LogQueryInput) []driver.LogEvent {
+func (*Mock) filterEvents(s *logStream, input *driver.LogQueryInput) []driver.LogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

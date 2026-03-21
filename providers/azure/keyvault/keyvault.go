@@ -38,8 +38,6 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateSecret creates a new secret with an initial value.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []byte) (*driver.SecretInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "secret name is required")
@@ -119,6 +117,7 @@ func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
 	all := m.secrets.All()
 
 	secrets := make([]driver.SecretInfo, 0, len(all))
+
 	for _, sd := range all {
 		sd.mu.RLock()
 		secrets = append(secrets, sd.info)

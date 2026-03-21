@@ -96,8 +96,6 @@ func (c *Cache) rec(op string, input, output any, err error, dur time.Duration) 
 }
 
 // CreateCache creates a new cache instance.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (c *Cache) CreateCache(ctx context.Context, config driver.CacheConfig) (*driver.CacheInfo, error) {
 	out, err := c.do(ctx, "CreateCache", config, func() (any, error) { return c.driver.CreateCache(ctx, config) })
 	if err != nil {
