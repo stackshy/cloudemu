@@ -1,0 +1,59 @@
+---
+title: Introduction
+description: cloudemu is a Go library that emulates cloud services entirely in memory
+---
+
+# Welcome to cloudemu
+
+**cloudemu** is a Go library that emulates AWS, Azure, and GCP cloud services entirely in memory. No real cloud accounts, no Docker, no network calls — just import the package, create a provider, and test your cloud code instantly.
+
+## Why cloudemu?
+
+Testing cloud-dependent code is painful. You either pay for real accounts, wrestle with heavy emulators that need Docker, or write incomplete mocks from scratch.
+
+| Approach | Cost | Speed | Offline |
+|----------|------|-------|---------|
+| Real cloud (AWS/Azure/GCP) | $$$ | Slow (seconds) | No |
+| LocalStack / Emulators | $ | Medium (100ms+) | Yes |
+| **cloudemu** | **Free** | **Fast (~10ms)** | **Yes** |
+
+## Quick Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/stackshy/cloudemu"
+    "github.com/stackshy/cloudemu/compute/driver"
+)
+
+func main() {
+    ctx := context.Background()
+    aws := cloudemu.NewAWS()
+
+    instances, _ := aws.EC2.RunInstances(ctx, driver.InstanceConfig{
+        ImageID:      "ami-0abcdef1234567890",
+        InstanceType: "t2.micro",
+    }, 2)
+
+    fmt.Println(instances[0].State) // "running"
+    fmt.Println(instances[0].ID)    // "i-00000001"
+}
+```
+
+This works identically across all three providers. Replace `aws.EC2` with `azure.VirtualMachines` or `gcp.GCE`.
+
+## What's Included
+
+- **16 service categories** across 3 cloud providers (48 total implementations)
+- **Realistic behaviors**: state machines, auto-metrics, alarm evaluation, FIFO dedup, DLQs, TTL expiry
+- **Cross-cutting features**: call recording, metrics collection, error injection, rate limiting, fake clock, latency simulation
+- **Zero external dependencies** (only `testify` for tests)
+
+## Next Steps
+
+- [Prerequisites](/docs/prerequisites) — what you need before starting
+- [Installation](/docs/installation) — add cloudemu to your project
+- [Quick Start](/docs/quick-start) — build something in 5 minutes

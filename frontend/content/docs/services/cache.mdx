@@ -1,0 +1,44 @@
+---
+title: Cache
+description: In-memory cache with TTL support
+---
+
+# Cache
+
+Emulates cache services: **ElastiCache** (AWS), **Cache** (Azure), **Memorystore** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | ElastiCache | `aws.ElastiCache` |
+| Azure | Cache for Redis | `azure.Cache` |
+| GCP | Memorystore | `gcp.Memorystore` |
+
+## Key Operations
+
+### Basic Operations
+
+```go
+import cachedriver "github.com/stackshy/cloudemu/cache/driver"
+
+// Create a cache instance
+aws.ElastiCache.CreateCacheInstance(ctx, cachedriver.CacheConfig{
+    Name:     "session-cache",
+    NodeType: "cache.t3.micro",
+})
+
+// Set a value with TTL
+aws.ElastiCache.Set(ctx, "session-cache", "user:123", []byte("session-data"), 30*time.Minute)
+
+// Get a value
+data, _ := aws.ElastiCache.Get(ctx, "session-cache", "user:123")
+
+// Delete
+aws.ElastiCache.Delete(ctx, "session-cache", "user:123")
+```
+
+## Realistic Behaviors
+
+- **TTL expiry**: cached items are automatically expired after their TTL, with lazy cleanup on read
+- **Thread-safe**: all cache operations are safe for concurrent access

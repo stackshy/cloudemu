@@ -1,0 +1,91 @@
+---
+title: Architecture
+description: Three-layer design inspired by Go CDK
+---
+
+# Architecture
+
+cloudemu follows a three-layer architecture inspired by [Go CDK](https://gocloud.dev/):
+
+```
+Portable API     →  recording, metrics, rate limiting, error injection
+Driver Interface →  minimal Go interfaces per service
+Provider Mocks   →  in-memory backends (AWS/Azure/GCP) using generic memstore
+```
+
+## Layer 1: Provider Mocks
+
+The bottom layer contains the actual in-memory implementations for each cloud provider. Each provider (AWS, Azure, GCP) implements all 16 service interfaces.
+
+```go
+// providers/aws/aws.go
+type Provider struct {
+    S3             *s3.Mock
+    EC2            *ec2.Mock
+    DynamoDB       *dynamodb.Mock
+    Lambda         *lambda.Mock
+    CloudWatch     *cloudwatch.Mock
+    // ... 16 services total
+}
+```
+
+All mocks are backed by a generic, thread-safe `memstore.Store[V]` — a simple in-memory key-value store with `Get`, `Set`, `Delete`, `Filter`, and more.
+
+Services are wired together at initialization. For example, EC2 is connected to CloudWatch so that launching instances automatically emits CPU, Network, and Disk metrics.
+
+## Layer 2: Driver Interfaces
+
+Each service category defines a minimal Go interface that all providers must implement:
+
+```go
+// compute/driver/driver.go
+type Compute interface {
+    RunInstances(ctx context.Context, config InstanceConfig, count int) ([]Instance, error)
+    StopInstances(ctx context.Context, instanceIDs []string) error
+    TerminateInstances(ctx context.Context, instanceIDs []string) error
+    DescribeInstances(ctx context.Context, ids []string, filters []DescribeFilter) ([]Instance, error)
+    // ...
+}
+```
+
+The driver layer ensures that AWS S3, Azure Blob Storage, and GCP GCS all satisfy the same `driver.Bucket` interface. Your code can work with any of them interchangeably.
+
+## Layer 3: Portable API
+
+The top layer wraps driver implementations with cross-cutting concerns:
+
+```go
+bucket := storage.NewBucket(aws.S3,
+    storage.WithRecorder(rec),              // record every API call
+    storage.WithMetrics(mc),                // track call counts and durations
+    storage.WithErrorInjection(inj),        // simulate cloud failures
+    storage.WithRateLimiter(limiter),       // simulate API throttling
+    storage.WithLatency(5*time.Millisecond),// simulate network delay
+)
+```
+
+The portable API intercepts every call and applies the configured concerns in order:
+1. **Error injection** — check if this call should fail
+2. **Rate limiting** — check if rate limit is exceeded
+3. **Latency** — sleep for configured duration
+4. **Execute** — call the underlying driver
+5. **Metrics** — record call count, duration, errors
+6. **Recording** — log the call details
+
+## Key Design Decisions
+
+### Generic memstore
+
+All providers share the same `memstore.Store[V]` for storage. This ensures consistent thread-safety and behavior across providers.
+
+### Monitoring auto-wiring
+
+When a provider is created, services that produce metrics (like EC2) are automatically connected to the monitoring service (like CloudWatch). You can query these metrics the same way you would in production.
+
+### State machines
+
+Services with lifecycle states (compute, serverless) use formal state machines that enforce valid transitions. Invalid transitions return `FailedPrecondition` errors.
+
+### Zero dependencies
+
+cloudemu has no external dependencies beyond the Go standard library. The only test dependency is `testify`.

@@ -1,0 +1,56 @@
+---
+title: Event Bus
+description: Event routing with rules and targets
+---
+
+# Event Bus
+
+Emulates event routing: **EventBridge** (AWS), **EventGrid** (Azure), **Eventarc** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | EventBridge | `aws.EventBridge` |
+| Azure | Event Grid | `azure.EventGrid` |
+| GCP | Eventarc | `gcp.Eventarc` |
+
+## Key Operations
+
+### Event Buses
+
+```go
+import ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
+
+bus, _ := aws.EventBridge.CreateEventBus(ctx, ebdriver.EventBusConfig{
+    Name: "app-events",
+})
+```
+
+### Rules and Targets
+
+```go
+aws.EventBridge.CreateRule(ctx, ebdriver.RuleConfig{
+    EventBusID: bus.ID,
+    Name:       "order-rule",
+    Pattern:    `{"source": ["orders"]}`,
+})
+
+aws.EventBridge.AddTarget(ctx, ebdriver.TargetConfig{
+    RuleID: "order-rule",
+    TargetID: "process-order",
+})
+```
+
+### Publishing Events
+
+```go
+aws.EventBridge.PutEvents(ctx, []ebdriver.Event{
+    {
+        Source:     "orders",
+        DetailType: "OrderCreated",
+        Detail:     `{"orderId": "123"}`,
+        EventBusID: bus.ID,
+    },
+})
+```

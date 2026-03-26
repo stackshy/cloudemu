@@ -1,0 +1,51 @@
+---
+title: Container Registry
+description: Container image storage, lifecycle policies, and scanning
+---
+
+# Container Registry
+
+Emulates container registries: **ECR** (AWS), **ACR** (Azure), **ArtifactRegistry** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | ECR | `aws.ECR` |
+| Azure | ACR | `azure.ACR` |
+| GCP | Artifact Registry | `gcp.ArtifactRegistry` |
+
+## Key Operations
+
+### Repositories
+
+```go
+import crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
+
+aws.ECR.CreateRepository(ctx, crdriver.RepositoryConfig{
+    Name: "my-app",
+    Tags: map[string]string{"team": "platform"},
+})
+
+repos, _ := aws.ECR.ListRepositories(ctx)
+```
+
+### Image Management
+
+```go
+aws.ECR.PushImage(ctx, crdriver.PushImageInput{
+    Repository: "my-app",
+    Tag:        "v1.0.0",
+    Digest:     "sha256:abc123...",
+})
+
+images, _ := aws.ECR.ListImages(ctx, "my-app")
+```
+
+### Lifecycle Policies
+
+Configure policies to automatically clean up old or untagged images.
+
+### Image Scanning
+
+Trigger vulnerability scans on pushed images.

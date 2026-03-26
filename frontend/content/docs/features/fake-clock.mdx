@@ -1,0 +1,86 @@
+---
+title: Fake Clock
+description: Deterministic time control for TTL, dedup, and alarms
+---
+
+# Fake Clock
+
+Control time programmatically for deterministic testing.
+
+## Setup
+
+```go
+import "github.com/stackshy/cloudemu/config"
+
+clock := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+aws := cloudemu.NewAWS(
+    config.WithClock(clock),
+)
+```
+
+## Manipulating Time
+
+```go
+// Move forward by a duration
+clock.Advance(5 * time.Minute)
+
+// Jump to a specific time
+clock.Set(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
+
+// Check current fake time
+now := clock.Now()
+```
+
+## Use Cases
+
+### TTL Expiry
+
+```go
+clock := config.NewFakeClock(time.Now())
+aws := cloudemu.NewAWS(config.WithClock(clock))
+
+// Set item with TTL
+aws.DynamoDB.PutItem(ctx, "sessions", map[string]any{
+    "id": "s-1", "expiresAt": clock.Now().Add(1 * time.Hour).Unix(),
+})
+
+// Item exists now
+item, _ := aws.DynamoDB.GetItem(ctx, "sessions", map[string]any{"id": "s-1"})
+// item != nil
+
+// Advance past TTL
+clock.Advance(2 * time.Hour)
+
+// Item is now expired
+item, _ = aws.DynamoDB.GetItem(ctx, "sessions", map[string]any{"id": "s-1"})
+// item == nil
+```
+
+### FIFO Deduplication
+
+```go
+// Send a message
+aws.SQS.SendMessage(ctx, "queue.fifo", mqdriver.SendMessageInput{
+    Body: "order-1", MessageDeduplicationId: "dedup-1",
+})
+
+// Same dedup ID within 5 minutes — deduplicated
+aws.SQS.SendMessage(ctx, "queue.fifo", mqdriver.SendMessageInput{
+    Body: "order-1", MessageDeduplicationId: "dedup-1",
+})
+// Only 1 message in queue
+
+// Advance past dedup window
+clock.Advance(6 * time.Minute)
+
+// Now the same ID can be used again
+aws.SQS.SendMessage(ctx, "queue.fifo", mqdriver.SendMessageInput{
+    Body: "order-1", MessageDeduplicationId: "dedup-1",
+})
+// 2 messages in queue
+```
+
+## Thread Safety
+
+`FakeClock` is thread-safe — it uses a mutex internally. You can safely share one clock across multiple goroutines and providers.

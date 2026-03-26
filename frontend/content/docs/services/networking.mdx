@@ -1,0 +1,91 @@
+---
+title: Networking
+description: Virtual networks, subnets, security groups, and peering
+---
+
+# Networking
+
+Emulates virtual networking: **VPC** (AWS), **VNet** (Azure), **VPC** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | VPC | `aws.VPC` |
+| Azure | VNet | `azure.VNet` |
+| GCP | VPC | `gcp.VPC` |
+
+## Key Operations
+
+### VPCs / Virtual Networks
+
+```go
+import netdriver "github.com/stackshy/cloudemu/networking/driver"
+
+vpc, _ := aws.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+    CIDRBlock: "10.0.0.0/16",
+    Tags:      map[string]string{"env": "production"},
+})
+```
+
+### Subnets
+
+```go
+subnet, _ := aws.VPC.CreateSubnet(ctx, netdriver.SubnetConfig{
+    VPCID:            vpc.ID,
+    CIDRBlock:        "10.0.1.0/24",
+    AvailabilityZone: "us-east-1a",
+})
+```
+
+### Security Groups
+
+```go
+sg, _ := aws.VPC.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+    Name: "web-sg", Description: "Web traffic", VPCID: vpc.ID,
+})
+
+// Add ingress rule
+aws.VPC.AddIngressRule(ctx, sg.ID, netdriver.SecurityRule{
+    Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "0.0.0.0/0",
+})
+
+// Add egress rule
+aws.VPC.AddEgressRule(ctx, sg.ID, netdriver.SecurityRule{
+    Protocol: "tcp", FromPort: 0, ToPort: 65535, CIDR: "0.0.0.0/0",
+})
+```
+
+### VPC Peering
+
+```go
+peering, _ := aws.VPC.CreatePeeringConnection(ctx, netdriver.PeeringConfig{
+    RequesterVPCID: vpc1.ID, AccepterVPCID: vpc2.ID,
+})
+aws.VPC.AcceptPeeringConnection(ctx, peering.ID)
+```
+
+### NAT Gateways
+
+```go
+nat, _ := aws.VPC.CreateNATGateway(ctx, netdriver.NATGatewayConfig{
+    SubnetID: subnet.ID,
+})
+```
+
+### Route Tables
+
+```go
+rt, _ := aws.VPC.CreateRouteTable(ctx, netdriver.RouteTableConfig{
+    VPCID: vpc.ID,
+})
+aws.VPC.AssociateRouteTable(ctx, rt.ID, subnet.ID)
+```
+
+### Flow Logs
+
+```go
+aws.VPC.CreateFlowLog(ctx, netdriver.FlowLogConfig{
+    ResourceID: vpc.ID, TrafficType: "ALL",
+})
+```

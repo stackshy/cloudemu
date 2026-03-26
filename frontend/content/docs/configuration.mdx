@@ -1,0 +1,109 @@
+---
+title: Configuration
+description: Configure cloudemu providers with regions, clocks, latency, and more
+---
+
+# Configuration
+
+All three providers accept the same functional options from the `config` package.
+
+```go
+import "github.com/stackshy/cloudemu/config"
+```
+
+## Available Options
+
+### WithRegion
+
+Set the cloud region. Defaults to `"us-east-1"`.
+
+```go
+aws := cloudemu.NewAWS(
+    config.WithRegion("eu-west-1"),
+)
+```
+
+### WithAccountID
+
+Set the cloud account ID. Defaults to `"123456789012"`.
+
+```go
+aws := cloudemu.NewAWS(
+    config.WithAccountID("999888777666"),
+)
+```
+
+### WithProjectID
+
+Set the GCP project ID. Defaults to `"mock-project"`.
+
+```go
+gcp := cloudemu.NewGCP(
+    config.WithProjectID("my-project-123"),
+)
+```
+
+### WithLatency
+
+Add simulated network latency to all operations.
+
+```go
+aws := cloudemu.NewAWS(
+    config.WithLatency(50 * time.Millisecond),
+)
+```
+
+### WithClock
+
+Control time for deterministic testing. By default, cloudemu uses `RealClock` (system time).
+
+```go
+// Create a fake clock starting at a specific time
+clock := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+aws := cloudemu.NewAWS(
+    config.WithClock(clock),
+)
+
+// Advance time programmatically
+clock.Advance(5 * time.Minute)
+
+// Or set to a specific time
+clock.Set(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
+```
+
+The fake clock is thread-safe and useful for testing:
+- TTL expiry in databases and caches
+- FIFO deduplication windows in message queues
+- Alarm evaluation in monitoring
+- Lifecycle policy evaluation in storage
+
+## Combining Options
+
+Pass multiple options to any provider:
+
+```go
+clock := config.NewFakeClock(time.Now())
+
+aws := cloudemu.NewAWS(
+    config.WithRegion("eu-west-1"),
+    config.WithAccountID("999888777666"),
+    config.WithClock(clock),
+    config.WithLatency(5 * time.Millisecond),
+)
+
+azure := cloudemu.NewAzure(
+    config.WithRegion("westeurope"),
+    config.WithClock(clock), // share the same clock across providers
+)
+```
+
+## Defaults
+
+| Option | Default Value |
+|--------|--------------|
+| Region | `"us-east-1"` |
+| AccountID | `"123456789012"` |
+| ProjectID | `"mock-project"` |
+| Clock | `RealClock{}` (system time) |
+| Latency | `0` (no delay) |

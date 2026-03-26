@@ -1,0 +1,50 @@
+---
+title: Latency Simulation
+description: Add delays to test timeout handling and performance
+---
+
+# Latency Simulation
+
+Add artificial latency to simulate real-world network conditions.
+
+## Provider-Level Latency
+
+Add latency to all operations on a provider:
+
+```go
+aws := cloudemu.NewAWS(
+    config.WithLatency(50 * time.Millisecond),
+)
+```
+
+## Service-Level Latency
+
+Add latency to specific services using the portable API:
+
+```go
+bucket := storage.NewBucket(aws.S3,
+    storage.WithLatency(100 * time.Millisecond),
+)
+```
+
+## Use Cases
+
+- Test timeout handling — verify your code handles slow responses correctly
+- Test context cancellation — ensure operations respect `context.WithTimeout`
+- Performance testing — measure how your code behaves under various latency conditions
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+defer cancel()
+
+// This will succeed (100ms < 200ms timeout)
+bucket.PutObject(ctx, "bucket", "key", data, "text/plain", nil)
+
+// With higher latency, it would timeout
+slowBucket := storage.NewBucket(aws.S3,
+    storage.WithLatency(500 * time.Millisecond),
+)
+
+err := slowBucket.PutObject(ctx, "bucket", "key2", data, "text/plain", nil)
+// err == context.DeadlineExceeded
+```

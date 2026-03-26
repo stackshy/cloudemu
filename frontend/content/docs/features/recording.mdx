@@ -1,0 +1,65 @@
+---
+title: Call Recording
+description: Capture every API call with inputs, outputs, errors, and timing
+---
+
+# Call Recording
+
+Record every API call made to a service for test assertions.
+
+## Setup
+
+```go
+import "github.com/stackshy/cloudemu/recorder"
+
+rec := &recorder.Recorder{}
+
+bucket := storage.NewBucket(aws.S3,
+    storage.WithRecorder(rec),
+)
+```
+
+## Inspecting Calls
+
+After running your code, inspect all recorded calls:
+
+```go
+calls := rec.Calls()
+for _, call := range calls {
+    fmt.Printf("%s.%s — duration: %v, error: %v\n",
+        call.Service, call.Operation, call.Duration, call.Error)
+}
+```
+
+Each `Call` contains:
+- `Service` — e.g., "storage", "compute"
+- `Operation` — e.g., "PutObject", "RunInstances"
+- `Input` — the operation input
+- `Output` — the operation output
+- `Error` — any error returned
+- `Timestamp` — when the call was made
+- `Duration` — how long it took
+
+## Fluent Assertions
+
+Use the `Matcher` for expressive test assertions:
+
+```go
+// Count calls to a specific operation
+count := rec.Matcher().Service("storage").Operation("PutObject").Count()
+assert.Equal(t, 3, count)
+
+// Check that no errors occurred
+rec.Matcher().Service("storage").AssertNoErrors(t)
+
+// Filter by service
+storageCalls := rec.Matcher().Service("storage").Calls()
+```
+
+## Reset
+
+Clear all recorded calls between tests:
+
+```go
+rec.Reset()
+```

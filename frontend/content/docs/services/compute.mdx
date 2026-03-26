@@ -1,0 +1,104 @@
+---
+title: Compute
+description: Virtual machine instances with lifecycle state machines
+---
+
+# Compute
+
+Emulates virtual machine services: **EC2** (AWS), **VirtualMachines** (Azure), **GCE** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | EC2 | `aws.EC2` |
+| Azure | Virtual Machines | `azure.VirtualMachines` |
+| GCP | GCE | `gcp.GCE` |
+
+## Key Operations
+
+### Instance Lifecycle
+
+```go
+// Launch instances
+instances, _ := aws.EC2.RunInstances(ctx, driver.InstanceConfig{
+    ImageID:      "ami-0abcdef1234",
+    InstanceType: "t3.large",
+    SubnetID:     "subnet-123",
+    Tags:         map[string]string{"env": "prod"},
+}, 3)
+
+// Stop, start, reboot
+aws.EC2.StopInstances(ctx, []string{"i-00000001"})
+aws.EC2.StartInstances(ctx, []string{"i-00000001"})
+aws.EC2.RebootInstances(ctx, []string{"i-00000001"})
+
+// Modify while stopped
+aws.EC2.ModifyInstance(ctx, "i-00000001", driver.ModifyInstanceInput{
+    InstanceType: "t3.xlarge",
+})
+
+// Terminate
+aws.EC2.TerminateInstances(ctx, []string{"i-00000001"})
+```
+
+### Describe and Filter
+
+```go
+// Get specific instances
+instances, _ := aws.EC2.DescribeInstances(ctx, []string{"i-00000001"}, nil)
+
+// Filter by state
+running, _ := aws.EC2.DescribeInstances(ctx, nil, []driver.DescribeFilter{
+    {Name: "instance-state-name", Values: []string{"running"}},
+})
+```
+
+### Auto-Scaling Groups
+
+```go
+asg, _ := aws.EC2.CreateAutoScalingGroup(ctx, driver.AutoScalingGroupConfig{
+    Name: "web-asg", MinSize: 1, MaxSize: 10, DesiredCapacity: 3,
+    InstanceConfig: driver.InstanceConfig{ImageID: "ami-123", InstanceType: "t3.micro"},
+})
+
+aws.EC2.SetDesiredCapacity(ctx, "web-asg", 5)
+```
+
+### Spot Instances
+
+```go
+requests, _ := aws.EC2.RequestSpotInstances(ctx, driver.SpotRequestConfig{
+    InstanceConfig: driver.InstanceConfig{ImageID: "ami-123", InstanceType: "t3.micro"},
+    MaxPrice: 0.05, Count: 2, Type: "one-time",
+})
+```
+
+### Launch Templates
+
+```go
+template, _ := aws.EC2.CreateLaunchTemplate(ctx, driver.LaunchTemplateConfig{
+    Name: "web-template",
+    InstanceConfig: driver.InstanceConfig{ImageID: "ami-123", InstanceType: "t3.large"},
+})
+```
+
+## State Machine
+
+Instances follow a strict state machine:
+
+```
+pending → running → stopping → stopped → starting → running
+                  → shutting-down → terminated
+```
+
+Invalid transitions return `FailedPrecondition` errors. For example, you cannot stop a terminated instance.
+
+## Auto-Metrics
+
+When instances are launched, cloudemu automatically pushes metrics to the monitoring service:
+- `CPUUtilization` — per instance
+- `NetworkIn` / `NetworkOut` — per instance
+- `DiskReadOps` / `DiskWriteOps` — per instance
+
+These metrics are queryable through `CloudWatch.GetMetricData()`.

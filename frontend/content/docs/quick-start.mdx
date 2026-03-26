@@ -1,0 +1,151 @@
+---
+title: Quick Start
+description: Build a complete cloud simulation in 5 minutes
+---
+
+# Quick Start
+
+Let's build a realistic cloud infrastructure simulation — VPC, compute instances, storage, DNS, and monitoring — all in memory.
+
+## Create an AWS Provider
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/stackshy/cloudemu"
+    computedriver "github.com/stackshy/cloudemu/compute/driver"
+    netdriver "github.com/stackshy/cloudemu/networking/driver"
+    storagedriver "github.com/stackshy/cloudemu/storage/driver"
+)
+
+func main() {
+    ctx := context.Background()
+    aws := cloudemu.NewAWS()
+```
+
+## Set Up Networking
+
+Create a VPC, subnet, and security group:
+
+```go
+    // Create a VPC
+    vpc, _ := aws.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+        CIDRBlock: "10.0.0.0/16",
+        Tags:      map[string]string{"env": "production"},
+    })
+
+    // Add a subnet
+    subnet, _ := aws.VPC.CreateSubnet(ctx, netdriver.SubnetConfig{
+        VPCID:            vpc.ID,
+        CIDRBlock:        "10.0.1.0/24",
+        AvailabilityZone: "us-east-1a",
+    })
+
+    // Create a security group with HTTPS access
+    sg, _ := aws.VPC.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+        Name: "web-sg", Description: "Web traffic", VPCID: vpc.ID,
+    })
+    aws.VPC.AddIngressRule(ctx, sg.ID, netdriver.SecurityRule{
+        Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "0.0.0.0/0",
+    })
+```
+
+## Launch Compute Instances
+
+```go
+    // Launch 3 instances — they start in "pending" and transition to "running"
+    instances, _ := aws.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+        ImageID:        "ami-0abcdef1234",
+        InstanceType:   "t3.large",
+        SubnetID:       subnet.ID,
+        SecurityGroups: []string{sg.ID},
+        Tags:           map[string]string{"app": "web-server"},
+    }, 3)
+
+    for _, inst := range instances {
+        fmt.Printf("Instance %s: state=%s ip=%s\n",
+            inst.ID, inst.State, inst.PrivateIP)
+    }
+    // Instance i-00000001: state=running ip=10.0.0.1
+    // Instance i-00000002: state=running ip=10.0.0.2
+    // Instance i-00000003: state=running ip=10.0.0.3
+```
+
+## Store Objects
+
+```go
+    // Create a bucket and upload files
+    aws.S3.CreateBucket(ctx, "app-deployments")
+    aws.S3.PutObject(ctx, "app-deployments", "v1.0/app.jar",
+        []byte("binary-data"), "application/java-archive", nil)
+    aws.S3.PutObject(ctx, "app-deployments", "v1.0/config.yaml",
+        []byte("db: rds-prod\nport: 8080"), "text/yaml", nil)
+
+    // List objects by prefix
+    result, _ := aws.S3.ListObjects(ctx, "app-deployments",
+        storagedriver.ListOptions{Prefix: "v1.0/"})
+    fmt.Printf("Objects in v1.0/: %d\n", len(result.Objects))
+
+    // Retrieve an object
+    obj, _ := aws.S3.GetObject(ctx, "app-deployments", "v1.0/config.yaml")
+    fmt.Printf("Config: %s\n", string(obj.Data))
+```
+
+## Instance Lifecycle
+
+```go
+    // Stop an instance — state machine enforces valid transitions
+    aws.EC2.StopInstances(ctx, []string{instances[0].ID})
+
+    // Modify while stopped (resize)
+    aws.EC2.ModifyInstance(ctx, instances[0].ID, computedriver.ModifyInstanceInput{
+        InstanceType: "t3.xlarge",
+    })
+
+    // Start it back
+    aws.EC2.StartInstances(ctx, []string{instances[0].ID})
+
+    // Terminate all
+    for _, inst := range instances {
+        aws.EC2.TerminateInstances(ctx, []string{inst.ID})
+    }
+
+    // Trying to stop a terminated instance returns an error
+    err := aws.EC2.StopInstances(ctx, []string{instances[0].ID})
+    fmt.Println(err) // "cannot stop instance: invalid transition"
+}
+```
+
+## Run It
+
+```bash
+go run main.go
+```
+
+Everything runs in memory. No cloud account needed. No Docker. Zero cost.
+
+## Try Other Providers
+
+The same code works with Azure and GCP — just change the provider:
+
+```go
+// Azure
+azure := cloudemu.NewAzure()
+azure.VirtualMachines.RunInstances(ctx, config, 3)
+azure.BlobStorage.CreateBucket(ctx, "my-bucket")
+
+// GCP
+gcp := cloudemu.NewGCP()
+gcp.GCE.RunInstances(ctx, config, 3)
+gcp.GCS.CreateBucket(ctx, "my-bucket")
+```
+
+## Next Steps
+
+- [Configuration](/docs/configuration) — customize regions, clocks, and more
+- [Services](/docs/services) — explore all 16 service categories
+- [Cross-Cutting Features](/docs/features) — add recording, metrics, and error injection

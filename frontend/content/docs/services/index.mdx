@@ -1,0 +1,55 @@
+---
+title: Services Overview
+description: All 16 service categories across AWS, Azure, and GCP
+---
+
+# Services Overview
+
+cloudemu provides **16 service categories**, each implemented for all three cloud providers — **48 total implementations**.
+
+## Service Mapping
+
+| Category | AWS | Azure | GCP |
+|----------|-----|-------|-----|
+| [Compute](/docs/services/compute) | EC2 | VirtualMachines | GCE |
+| [Storage](/docs/services/storage) | S3 | BlobStorage | GCS |
+| [Database](/docs/services/database) | DynamoDB | CosmosDB | Firestore |
+| [Serverless](/docs/services/serverless) | Lambda | Functions | CloudFunctions |
+| [Networking](/docs/services/networking) | VPC | VNet | VPC |
+| [Monitoring](/docs/services/monitoring) | CloudWatch | Monitor | CloudMonitoring |
+| [IAM](/docs/services/iam) | IAM | IAM | IAM |
+| [DNS](/docs/services/dns) | Route53 | DNS | CloudDNS |
+| [Load Balancer](/docs/services/loadbalancer) | ELB | LB | LB |
+| [Message Queue](/docs/services/messagequeue) | SQS | ServiceBus | PubSub |
+| [Notification](/docs/services/notification) | SNS | NotificationHubs | FCM |
+| [Event Bus](/docs/services/eventbus) | EventBridge | EventGrid | Eventarc |
+| [Container Registry](/docs/services/containerregistry) | ECR | ACR | ArtifactRegistry |
+| [Cache](/docs/services/cache) | ElastiCache | Cache | Memorystore |
+| [Secrets](/docs/services/secrets) | SecretsManager | KeyVault | SecretManager |
+| [Logging](/docs/services/logging) | CloudWatchLogs | LogAnalytics | CloudLogging |
+
+## Accessing Services
+
+Each provider exposes services as typed fields:
+
+```go
+aws := cloudemu.NewAWS()
+aws.EC2           // Compute
+aws.S3            // Storage
+aws.DynamoDB      // Database
+aws.Lambda        // Serverless
+aws.VPC           // Networking
+aws.CloudWatch    // Monitoring
+
+azure := cloudemu.NewAzure()
+azure.VirtualMachines  // Compute
+azure.BlobStorage      // Storage
+azure.CosmosDB         // Database
+
+gcp := cloudemu.NewGCP()
+gcp.GCE               // Compute
+gcp.GCS               // Storage
+gcp.Firestore          // Database
+```
+
+All providers implement the same driver interfaces, so the operations and behaviors are consistent across clouds.

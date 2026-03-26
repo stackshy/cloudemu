@@ -1,0 +1,49 @@
+---
+title: Logging
+description: Log groups and log streams
+---
+
+# Logging
+
+Emulates logging services: **CloudWatch Logs** (AWS), **Log Analytics** (Azure), **Cloud Logging** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | CloudWatch Logs | `aws.CloudWatchLogs` |
+| Azure | Log Analytics | `azure.LogAnalytics` |
+| GCP | Cloud Logging | `gcp.CloudLogging` |
+
+## Key Operations
+
+### Log Groups and Streams
+
+```go
+import logdriver "github.com/stackshy/cloudemu/logging/driver"
+
+// Create a log group
+aws.CloudWatchLogs.CreateLogGroup(ctx, logdriver.LogGroupConfig{
+    Name:           "/app/web",
+    RetentionDays:  30,
+})
+
+// Create a log stream
+aws.CloudWatchLogs.CreateLogStream(ctx, "/app/web", "instance-001")
+
+// Put log events
+aws.CloudWatchLogs.PutLogEvents(ctx, "/app/web", "instance-001", []logdriver.LogEvent{
+    {Timestamp: time.Now(), Message: "Server started on port 8080"},
+    {Timestamp: time.Now(), Message: "Handling request GET /api/users"},
+})
+```
+
+### Querying Logs
+
+```go
+events, _ := aws.CloudWatchLogs.GetLogEvents(ctx, "/app/web", "instance-001",
+    logdriver.GetLogEventsInput{
+        StartTime: time.Now().Add(-1 * time.Hour),
+        Limit:     100,
+    })
+```

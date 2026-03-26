@@ -1,0 +1,44 @@
+---
+title: Notification
+description: Topics, subscriptions, and push notifications
+---
+
+# Notification
+
+Emulates notification services: **SNS** (AWS), **NotificationHubs** (Azure), **FCM** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | SNS | `aws.SNS` |
+| Azure | Notification Hubs | `azure.NotificationHubs` |
+| GCP | FCM | `gcp.FCM` |
+
+## Key Operations
+
+### Topics and Subscriptions
+
+```go
+import notifdriver "github.com/stackshy/cloudemu/notification/driver"
+
+topic, _ := aws.SNS.CreateTopic(ctx, notifdriver.TopicConfig{
+    Name: "order-events",
+})
+
+sub, _ := aws.SNS.Subscribe(ctx, notifdriver.SubscriptionConfig{
+    TopicID:  topic.ID,
+    Protocol: "email",
+    Endpoint: "team@example.com",
+})
+```
+
+### Publishing
+
+```go
+aws.SNS.Publish(ctx, notifdriver.PublishInput{
+    TopicID: topic.ID,
+    Message: "New order received",
+    Attributes: map[string]string{"orderType": "express"},
+})
+```

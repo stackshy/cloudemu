@@ -1,0 +1,69 @@
+---
+title: Prerequisites
+description: What you need before using cloudemu
+---
+
+# Prerequisites
+
+Before you start using cloudemu, make sure you have the following set up on your machine.
+
+## Required
+
+### Go 1.25+
+
+cloudemu requires **Go 1.25.0 or later**. Check your version:
+
+```bash
+go version
+```
+
+If you need to install or upgrade Go, visit [go.dev/dl](https://go.dev/dl/).
+
+### A Go Module
+
+Your project should be using Go modules. If you're starting fresh:
+
+```bash
+mkdir my-project && cd my-project
+go mod init github.com/yourname/my-project
+```
+
+## Recommended Knowledge
+
+### Go Fundamentals
+
+You should be comfortable with:
+
+- Writing and running Go programs
+- Using `context.Context` for API calls
+- Go interfaces and structs
+- Error handling patterns (`if err != nil`)
+- Go modules and dependency management
+
+### Cloud Concepts
+
+While cloudemu handles everything in memory, familiarity with these cloud concepts will help:
+
+- **Compute**: Virtual machines, instance types, lifecycle states
+- **Storage**: Buckets, objects, keys, content types
+- **Database**: NoSQL key-value stores, partition keys, queries
+- **Networking**: VPCs, subnets, security groups, CIDR blocks
+- **Monitoring**: Metrics, alarms, thresholds
+- **IAM**: Users, roles, policies, permissions
+
+You do **not** need:
+- A cloud account (AWS, Azure, or GCP)
+- Docker or any container runtime
+- Network access or internet connection
+- Any cloud CLI tools or SDKs
+
+## Verify Your Setup
+
+Run this to confirm Go is ready:
+
+```bash
+go version    # Should show go1.25.0 or later
+go env GOPATH # Should show a valid path
+```
+
+Once confirmed, proceed to [Installation](/docs/installation).

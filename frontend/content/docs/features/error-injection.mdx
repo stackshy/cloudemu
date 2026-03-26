@@ -1,0 +1,71 @@
+---
+title: Error Injection
+description: Simulate cloud failures deterministically
+---
+
+# Error Injection
+
+Simulate various failure modes to test your error handling and resilience.
+
+## Setup
+
+```go
+import "github.com/stackshy/cloudemu/inject"
+
+inj := inject.NewInjector()
+
+bucket := storage.NewBucket(aws.S3,
+    storage.WithErrorInjection(inj),
+)
+```
+
+## Failure Policies
+
+### Always Fail
+
+```go
+inj.SetPolicy("storage", "PutObject", inject.AlwaysFail(
+    cerrors.New(cerrors.Unavailable, "service unavailable"),
+))
+```
+
+### Every Nth Call
+
+```go
+// Fail every 3rd call
+inj.SetPolicy("storage", "PutObject", inject.EveryN(3,
+    cerrors.New(cerrors.Internal, "intermittent failure"),
+))
+```
+
+### Probabilistic
+
+```go
+// 10% chance of failure
+inj.SetPolicy("storage", "PutObject", inject.Probabilistic(0.1,
+    cerrors.New(cerrors.Internal, "random failure"),
+))
+```
+
+### First N Calls
+
+```go
+// First 2 calls fail, rest succeed
+inj.SetPolicy("storage", "PutObject", inject.FirstN(2,
+    cerrors.New(cerrors.Unavailable, "warming up"),
+))
+```
+
+## Clear Policies
+
+```go
+inj.ClearPolicy("storage", "PutObject")
+inj.ClearAll()
+```
+
+## Use Cases
+
+- Test retry logic with intermittent failures
+- Verify timeout handling when services are unavailable
+- Simulate cold start failures
+- Test circuit breaker patterns

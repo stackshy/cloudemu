@@ -1,0 +1,22 @@
+{
+  "title": "Services",
+  "pages": [
+    "index",
+    "compute",
+    "storage",
+    "database",
+    "serverless",
+    "networking",
+    "monitoring",
+    "iam",
+    "dns",
+    "loadbalancer",
+    "messagequeue",
+    "notification",
+    "eventbus",
+    "containerregistry",
+    "cache",
+    "secrets",
+    "logging"
+  ]
+}

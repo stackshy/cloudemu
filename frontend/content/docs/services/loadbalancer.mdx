@@ -1,0 +1,57 @@
+---
+title: Load Balancer
+description: Load balancers, target groups, listeners, and health checks
+---
+
+# Load Balancer
+
+Emulates load balancing: **ELB** (AWS), **LB** (Azure), **LB** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | ELB | `aws.ELB` |
+| Azure | LB | `azure.LB` |
+| GCP | LB | `gcp.LB` |
+
+## Key Operations
+
+### Load Balancers
+
+```go
+import lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+
+lb, _ := aws.ELB.CreateLoadBalancer(ctx, lbdriver.LoadBalancerConfig{
+    Name:   "web-lb",
+    Type:   "application",
+    Scheme: "internet-facing",
+})
+```
+
+### Target Groups
+
+```go
+tg, _ := aws.ELB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+    Name:     "web-targets",
+    Port:     8080,
+    Protocol: "HTTP",
+})
+
+aws.ELB.RegisterTargets(ctx, tg.ID, []string{"i-00000001", "i-00000002"})
+```
+
+### Listeners
+
+```go
+aws.ELB.CreateListener(ctx, lbdriver.ListenerConfig{
+    LoadBalancerID: lb.ID,
+    Port:           443,
+    Protocol:       "HTTPS",
+    TargetGroupID:  tg.ID,
+})
+```
+
+### Health Checks
+
+Target groups include health check configuration that determines target health status.

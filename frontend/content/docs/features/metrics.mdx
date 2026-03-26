@@ -1,0 +1,54 @@
+---
+title: Metrics Collection
+description: Track call counts, durations, and errors per operation
+---
+
+# Metrics Collection
+
+Collect metrics about API calls for monitoring and assertions.
+
+## Setup
+
+```go
+import "github.com/stackshy/cloudemu/metrics"
+
+mc := &metrics.Collector{}
+
+bucket := storage.NewBucket(aws.S3,
+    storage.WithMetrics(mc),
+)
+```
+
+## Automatic Metrics
+
+Every operation automatically records:
+- `calls_total` — counter incremented on each call
+- `call_duration` — histogram of call durations
+- `errors_total` — counter incremented on errors
+
+All metrics include labels: `service` and `operation`.
+
+## Querying Metrics
+
+```go
+// Get all counters
+counters := mc.Query(metrics.Query{
+    Type: metrics.CounterType,
+    Name: "calls_total",
+})
+
+// Filter by labels
+storagePuts := mc.Query(metrics.Query{
+    Type:   metrics.CounterType,
+    Name:   "calls_total",
+    Labels: map[string]string{"operation": "PutObject"},
+})
+```
+
+## Metric Types
+
+| Type | Description |
+|------|-------------|
+| `CounterType` | Monotonically increasing counter |
+| `GaugeType` | Value that can go up and down |
+| `HistogramType` | Distribution of values (durations) |

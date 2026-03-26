@@ -1,0 +1,74 @@
+---
+title: Message Queue
+description: Queues with FIFO deduplication and dead-letter queues
+---
+
+# Message Queue
+
+Emulates message queues: **SQS** (AWS), **ServiceBus** (Azure), **PubSub** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | SQS | `aws.SQS` |
+| Azure | Service Bus | `azure.ServiceBus` |
+| GCP | Pub/Sub | `gcp.PubSub` |
+
+## Key Operations
+
+### Queue Management
+
+```go
+import mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
+
+aws.SQS.CreateQueue(ctx, mqdriver.QueueConfig{
+    Name: "orders",
+    Attributes: map[string]string{
+        "VisibilityTimeout": "30",
+    },
+})
+
+// FIFO queue
+aws.SQS.CreateQueue(ctx, mqdriver.QueueConfig{
+    Name:     "orders.fifo",
+    FIFOQueue: true,
+})
+```
+
+### Send and Receive Messages
+
+```go
+// Send
+aws.SQS.SendMessage(ctx, "orders", mqdriver.SendMessageInput{
+    Body: "order-123",
+    Attributes: map[string]string{"priority": "high"},
+})
+
+// Receive
+messages, _ := aws.SQS.ReceiveMessages(ctx, "orders", mqdriver.ReceiveInput{
+    MaxMessages:     10,
+    WaitTimeSeconds: 0,
+})
+
+// Delete after processing
+aws.SQS.DeleteMessage(ctx, "orders", messages[0].ReceiptHandle)
+```
+
+### Batch Operations
+
+```go
+aws.SQS.SendMessageBatch(ctx, "orders", []mqdriver.SendMessageInput{
+    {Body: "order-1"}, {Body: "order-2"}, {Body: "order-3"},
+})
+```
+
+### Dead-Letter Queues
+
+Configure a DLQ and messages exceeding the max receive count automatically move there.
+
+## Realistic Behaviors
+
+- **FIFO deduplication**: FIFO queues enforce 5-minute deduplication windows using `MessageDeduplicationId`
+- **Visibility timeout**: received messages are invisible to other consumers until timeout expires or message is deleted
+- **Dead-letter queues**: messages exceeding max receive count are automatically moved to the DLQ

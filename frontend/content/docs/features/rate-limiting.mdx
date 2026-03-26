@@ -1,0 +1,39 @@
+---
+title: Rate Limiting
+description: Token bucket rate limiter that returns Throttled errors
+---
+
+# Rate Limiting
+
+Simulate API rate limits using a token bucket algorithm.
+
+## Setup
+
+```go
+import "github.com/stackshy/cloudemu/ratelimit"
+
+limiter := ratelimit.NewLimiter(100) // 100 requests per second
+
+bucket := storage.NewBucket(aws.S3,
+    storage.WithRateLimiter(limiter),
+)
+```
+
+## Behavior
+
+When the rate limit is exceeded, operations return a `Throttled` error:
+
+```go
+import cerrors "github.com/stackshy/cloudemu/errors"
+
+err := bucket.PutObject(ctx, "bucket", "key", data, "text/plain", nil)
+if cerrors.IsThrottled(err) {
+    // Rate limit exceeded — back off and retry
+}
+```
+
+## Use Cases
+
+- Test that your retry logic handles rate limiting correctly
+- Verify circuit breaker behavior under sustained throttling
+- Simulate cloud provider API quotas

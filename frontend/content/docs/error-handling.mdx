@@ -1,0 +1,91 @@
+---
+title: Error Handling
+description: Canonical error codes and helper functions in cloudemu
+---
+
+# Error Handling
+
+All cloudemu operations return errors with canonical codes. Import the errors package:
+
+```go
+import cerrors "github.com/stackshy/cloudemu/errors"
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `OK` | No error |
+| `NotFound` | Resource does not exist |
+| `AlreadyExists` | Resource already exists |
+| `InvalidArgument` | Invalid input parameter |
+| `FailedPrecondition` | Operation rejected due to current state (e.g., invalid state transition) |
+| `PermissionDenied` | IAM policy denies the action |
+| `Throttled` | Rate limit exceeded |
+| `Internal` | Internal error |
+| `Unimplemented` | Operation not implemented |
+| `ResourceExhausted` | Resource quota exceeded |
+| `Unavailable` | Service temporarily unavailable |
+
+## Checking Error Types
+
+Use the helper functions to check specific error types:
+
+```go
+_, err := aws.S3.GetObject(ctx, "bucket", "missing-key")
+if cerrors.IsNotFound(err) {
+    // Handle missing resource
+}
+
+err = aws.S3.CreateBucket(ctx, "existing-bucket")
+if cerrors.IsAlreadyExists(err) {
+    // Bucket already exists
+}
+```
+
+### Available Helpers
+
+```go
+cerrors.IsNotFound(err) bool
+cerrors.IsAlreadyExists(err) bool
+cerrors.IsThrottled(err) bool
+cerrors.IsInvalidArgument(err) bool
+cerrors.IsFailedPrecondition(err) bool
+cerrors.IsPermissionDenied(err) bool
+```
+
+## Extracting Error Codes
+
+For error codes without dedicated helpers, use `GetCode`:
+
+```go
+code := cerrors.GetCode(err)
+
+switch code {
+case cerrors.NotFound:
+    // handle not found
+case cerrors.Throttled:
+    // handle rate limiting
+case cerrors.ResourceExhausted:
+    // handle quota exceeded
+default:
+    // handle other errors
+}
+```
+
+`GetCode` returns:
+- `OK` for `nil` errors
+- The cloudemu error code for `*cerrors.Error` values
+- `Internal` for any other error type
+
+## Error Format
+
+Error messages follow the pattern `"Code: message"`:
+
+```go
+err := cerrors.New(cerrors.NotFound, "bucket 'my-bucket' not found")
+fmt.Println(err) // "NotFound: bucket 'my-bucket' not found"
+
+err = cerrors.Newf(cerrors.InvalidArgument, "key %q is empty", "")
+fmt.Println(err) // "InvalidArgument: key \"\" is empty"
+```

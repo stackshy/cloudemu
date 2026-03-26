@@ -1,0 +1,116 @@
+---
+title: Database
+description: NoSQL database with queries, TTL, and change streams
+---
+
+# Database
+
+Emulates NoSQL databases: **DynamoDB** (AWS), **CosmosDB** (Azure), **Firestore** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | DynamoDB | `aws.DynamoDB` |
+| Azure | CosmosDB | `azure.CosmosDB` |
+| GCP | Firestore | `gcp.Firestore` |
+
+## Key Operations
+
+### Table Management
+
+```go
+aws.DynamoDB.CreateTable(ctx, driver.TableConfig{
+    Name:         "users",
+    PartitionKey: "userId",
+    SortKey:      "email",
+})
+
+tables, _ := aws.DynamoDB.ListTables(ctx)
+```
+
+### Item Operations
+
+```go
+// Put
+aws.DynamoDB.PutItem(ctx, "users", map[string]any{
+    "userId": "u-001", "email": "alice@example.com", "name": "Alice", "age": 30,
+})
+
+// Get
+item, _ := aws.DynamoDB.GetItem(ctx, "users", map[string]any{
+    "userId": "u-001", "email": "alice@example.com",
+})
+
+// Delete
+aws.DynamoDB.DeleteItem(ctx, "users", map[string]any{
+    "userId": "u-001", "email": "alice@example.com",
+})
+
+// Batch operations
+aws.DynamoDB.BatchPutItems(ctx, "users", []map[string]any{item1, item2, item3})
+items, _ := aws.DynamoDB.BatchGetItems(ctx, "users", []map[string]any{key1, key2})
+```
+
+### Query and Scan
+
+```go
+// Query by key condition
+result, _ := aws.DynamoDB.Query(ctx, driver.QueryInput{
+    Table: "users",
+    KeyCondition: driver.KeyCondition{
+        PartitionKey: "userId", PartitionVal: "u-001",
+        SortOp: "BEGINS_WITH", SortVal: "a",
+    },
+    Limit: 10,
+})
+
+// Scan with filters
+result, _ = aws.DynamoDB.Scan(ctx, driver.ScanInput{
+    Table: "users",
+    Filters: []driver.ScanFilter{
+        {Field: "age", Op: ">", Value: 25},
+    },
+})
+```
+
+### TTL
+
+```go
+aws.DynamoDB.UpdateTTL(ctx, "sessions", driver.TTLConfig{
+    Enabled:       true,
+    AttributeName: "expiresAt",
+})
+```
+
+Items with an `expiresAt` timestamp in the past are automatically cleaned up on read.
+
+### Streams / Change Feed
+
+```go
+aws.DynamoDB.UpdateStreamConfig(ctx, "users", driver.StreamConfig{
+    Enabled:  true,
+    ViewType: "NEW_AND_OLD_IMAGES",
+})
+
+// After mutations, read the stream
+iter, _ := aws.DynamoDB.GetStreamRecords(ctx, "users", 100, "")
+for _, record := range iter.Records {
+    fmt.Println(record.EventType) // "INSERT", "MODIFY", or "REMOVE"
+}
+```
+
+### Transactions
+
+```go
+aws.DynamoDB.TransactWriteItems(ctx, "users",
+    []map[string]any{newItem1, newItem2}, // puts
+    []map[string]any{deleteKey1},         // deletes
+)
+```
+
+## Realistic Behaviors
+
+- **Numeric-aware comparisons**: filters compare `"10" > "9"` correctly
+- **TTL lazy cleanup**: expired items are removed on read, not in the background
+- **Stream records**: every mutation (INSERT/MODIFY/REMOVE) produces a stream record with old and new images

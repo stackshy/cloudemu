@@ -1,0 +1,90 @@
+---
+title: Monitoring
+description: Metrics, alarms, and metric queries
+---
+
+# Monitoring
+
+Emulates monitoring services: **CloudWatch** (AWS), **Monitor** (Azure), **CloudMonitoring** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | CloudWatch | `aws.CloudWatch` |
+| Azure | Monitor | `azure.Monitor` |
+| GCP | Cloud Monitoring | `gcp.CloudMonitoring` |
+
+## Key Operations
+
+### Push Metrics
+
+```go
+import mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+
+aws.CloudWatch.PutMetricData(ctx, []mondriver.MetricDatum{
+    {
+        Namespace:  "App/Web",
+        MetricName: "CPUUtilization",
+        Value:      72.8,
+        Timestamp:  time.Now(),
+        Dimensions: map[string]string{"InstanceId": "i-00000001"},
+    },
+    {
+        Namespace:  "App/Web",
+        MetricName: "RequestCount",
+        Value:      15230,
+        Timestamp:  time.Now(),
+    },
+})
+```
+
+### Query Metrics
+
+```go
+result, _ := aws.CloudWatch.GetMetricData(ctx, mondriver.GetMetricInput{
+    Namespace:  "App/Web",
+    MetricName: "CPUUtilization",
+    Dimensions: map[string]string{"InstanceId": "i-00000001"},
+    StartTime:  time.Now().Add(-5 * time.Minute),
+    EndTime:    time.Now(),
+    Period:     60,
+    Stat:       "Average", // also: "Sum", "Minimum", "Maximum", "SampleCount"
+})
+
+fmt.Printf("CPU: %.1f%%\n", result.Values[0])
+```
+
+### List Metrics
+
+```go
+metrics, _ := aws.CloudWatch.ListMetrics(ctx, "App/Web")
+// ["CPUUtilization", "RequestCount"]
+```
+
+### Alarms
+
+```go
+// Create an alarm
+aws.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+    Name:               "high-cpu",
+    Namespace:          "App/Web",
+    MetricName:         "CPUUtilization",
+    ComparisonOperator: "GreaterThanThreshold",
+    Threshold:          80,
+    Period:             300,
+    EvaluationPeriods:  2,
+    Stat:               "Average",
+})
+
+// List alarms
+alarms, _ := aws.CloudWatch.DescribeAlarms(ctx, nil)
+```
+
+## Auto-Metrics
+
+Services like EC2 automatically push metrics to the monitoring service when instances are launched, stopped, or terminated. You can query these exactly as you would in production.
+
+## Alarm Evaluation
+
+Alarms automatically evaluate when new metric data is pushed. They transition between `OK` and `ALARM` states based on threshold comparison.

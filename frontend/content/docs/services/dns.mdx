@@ -1,0 +1,48 @@
+---
+title: DNS
+description: DNS zones and records with weighted routing
+---
+
+# DNS
+
+Emulates DNS services: **Route53** (AWS), **DNS** (Azure), **CloudDNS** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | Route53 | `aws.Route53` |
+| Azure | DNS | `azure.DNS` |
+| GCP | Cloud DNS | `gcp.CloudDNS` |
+
+## Key Operations
+
+### Zones
+
+```go
+import dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+
+zone, _ := aws.Route53.CreateZone(ctx, dnsdriver.ZoneConfig{
+    Name: "example.com",
+})
+
+zones, _ := aws.Route53.ListZones(ctx)
+```
+
+### Records
+
+```go
+aws.Route53.CreateRecord(ctx, dnsdriver.RecordConfig{
+    ZoneID: zone.ID,
+    Name:   "api.example.com",
+    Type:   "A",
+    TTL:    300,
+    Values: []string{"10.0.0.1", "10.0.0.2"},
+})
+
+records, _ := aws.Route53.ListRecords(ctx, zone.ID)
+```
+
+### Weighted Routing
+
+DNS records support weighted routing for load distribution across multiple endpoints.

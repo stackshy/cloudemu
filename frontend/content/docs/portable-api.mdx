@@ -1,0 +1,92 @@
+---
+title: Portable API
+description: Wrap any driver with recording, metrics, rate limiting, and error injection
+---
+
+# Portable API
+
+The portable API layer wraps driver implementations with test-oriented cross-cutting concerns. Every service category has its own portable wrapper.
+
+## Basic Usage
+
+```go
+import (
+    "github.com/stackshy/cloudemu/storage"
+    "github.com/stackshy/cloudemu/recorder"
+    "github.com/stackshy/cloudemu/metrics"
+    "github.com/stackshy/cloudemu/inject"
+    "github.com/stackshy/cloudemu/ratelimit"
+)
+
+rec := &recorder.Recorder{}
+mc := &metrics.Collector{}
+inj := inject.NewInjector()
+limiter := ratelimit.NewLimiter(100) // 100 requests/sec
+
+bucket := storage.NewBucket(aws.S3,
+    storage.WithRecorder(rec),
+    storage.WithMetrics(mc),
+    storage.WithErrorInjection(inj),
+    storage.WithRateLimiter(limiter),
+    storage.WithLatency(5 * time.Millisecond),
+)
+
+// Use bucket exactly like aws.S3 — same interface
+bucket.CreateBucket(ctx, "my-bucket")
+bucket.PutObject(ctx, "my-bucket", "key", data, "text/plain", nil)
+```
+
+## How It Works
+
+Every operation passes through a middleware chain:
+
+1. **Error Injection** — if configured, checks whether the call should fail
+2. **Rate Limiting** — if configured, checks the token bucket
+3. **Latency** — if configured, sleeps for the specified duration
+4. **Driver Call** — executes the actual operation
+5. **Metrics** — records `calls_total`, `call_duration`, `errors_total`
+6. **Recording** — logs service, operation, input, output, error, duration
+
+## Available Wrappers
+
+Each service has its own portable type:
+
+| Service | Portable Type | Import |
+|---------|--------------|--------|
+| Storage | `storage.Bucket` | `cloudemu/storage` |
+| Compute | `compute.Compute` | `cloudemu/compute` |
+| Database | `database.Database` | `cloudemu/database` |
+| Serverless | `serverless.Serverless` | `cloudemu/serverless` |
+| Monitoring | `monitoring.Monitoring` | `cloudemu/monitoring` |
+| Message Queue | `messagequeue.MessageQueue` | `cloudemu/messagequeue` |
+| And more... | | |
+
+All wrappers support the same set of `With*` options.
+
+## Cross-Provider Testing
+
+The portable API enables true cross-provider testing:
+
+```go
+func testStorage(t *testing.T, bucket *storage.Bucket) {
+    ctx := context.Background()
+    bucket.CreateBucket(ctx, "test")
+    bucket.PutObject(ctx, "test", "key", []byte("value"), "text/plain", nil)
+
+    obj, err := bucket.GetObject(ctx, "test", "key")
+    assert.NoError(t, err)
+    assert.Equal(t, []byte("value"), obj.Data)
+}
+
+func TestAWS(t *testing.T) {
+    testStorage(t, storage.NewBucket(cloudemu.NewAWS().S3))
+}
+
+func TestAzure(t *testing.T) {
+    testStorage(t, storage.NewBucket(cloudemu.NewAzure().BlobStorage))
+}
+
+func TestGCP(t *testing.T) {
+    testStorage(t, storage.NewBucket(cloudemu.NewGCP().GCS))
+}
+```

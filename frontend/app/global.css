@@ -1,0 +1,9 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+@theme {
+  --color-aws: #FF9900;
+  --color-azure: #0078D4;
+  --color-gcp: #4285F4;
+}

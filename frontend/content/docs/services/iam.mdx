@@ -1,0 +1,71 @@
+---
+title: IAM
+description: Identity, roles, and policy evaluation with wildcard matching
+---
+
+# IAM
+
+Emulates identity and access management across all three providers.
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | IAM | `aws.IAM` |
+| Azure | IAM | `azure.IAM` |
+| GCP | IAM | `gcp.IAM` |
+
+## Key Operations
+
+### Users and Roles
+
+```go
+import iamdriver "github.com/stackshy/cloudemu/iam/driver"
+
+// Create a user
+aws.IAM.CreateUser(ctx, iamdriver.UserConfig{
+    Name: "alice", Tags: map[string]string{"team": "backend"},
+})
+
+// Create a role
+aws.IAM.CreateRole(ctx, iamdriver.RoleConfig{
+    Name:             "s3-reader",
+    AssumeRolePolicy: `{"Version":"2012-10-17","Statement":[...]}`,
+})
+```
+
+### Policies
+
+```go
+// Attach a policy
+aws.IAM.AttachPolicy(ctx, iamdriver.AttachPolicyInput{
+    TargetType: "user",
+    TargetName: "alice",
+    PolicyDocument: `{
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::my-bucket/*"
+        }]
+    }`,
+})
+```
+
+### Permission Checking
+
+```go
+allowed, _ := aws.IAM.CheckPermission(ctx, iamdriver.PermissionCheck{
+    Principal: "alice",
+    Action:    "s3:GetObject",
+    Resource:  "arn:aws:s3:::my-bucket/file.txt",
+})
+// allowed == true
+```
+
+## Policy Evaluation
+
+cloudemu parses JSON policy documents with full support for:
+- **Wildcard matching** in actions and resources (`s3:*`, `arn:aws:s3:::*`)
+- **Explicit Deny overrides Allow** — matching real IAM behavior
+- **Multiple statements** with different effects

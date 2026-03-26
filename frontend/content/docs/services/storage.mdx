@@ -1,0 +1,108 @@
+---
+title: Storage
+description: Object storage with buckets, versioning, and multipart upload
+---
+
+# Storage
+
+Emulates object storage: **S3** (AWS), **BlobStorage** (Azure), **GCS** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | S3 | `aws.S3` |
+| Azure | Blob Storage | `azure.BlobStorage` |
+| GCP | GCS | `gcp.GCS` |
+
+## Key Operations
+
+### Bucket Management
+
+```go
+aws.S3.CreateBucket(ctx, "my-bucket")
+
+buckets, _ := aws.S3.ListBuckets(ctx)
+
+aws.S3.DeleteBucket(ctx, "my-bucket")
+```
+
+### Object Operations
+
+```go
+// Upload
+aws.S3.PutObject(ctx, "my-bucket", "path/to/file.txt",
+    []byte("content"), "text/plain", map[string]string{"author": "me"})
+
+// Download
+obj, _ := aws.S3.GetObject(ctx, "my-bucket", "path/to/file.txt")
+fmt.Println(string(obj.Data)) // "content"
+
+// Head (metadata only)
+info, _ := aws.S3.HeadObject(ctx, "my-bucket", "path/to/file.txt")
+fmt.Println(info.ContentType) // "text/plain"
+
+// Delete
+aws.S3.DeleteObject(ctx, "my-bucket", "path/to/file.txt")
+
+// Copy
+aws.S3.CopyObject(ctx, "dst-bucket", "copy.txt", driver.CopySource{
+    Bucket: "my-bucket", Key: "path/to/file.txt",
+})
+```
+
+### List with Prefix and Delimiter
+
+```go
+// List all objects with a prefix
+result, _ := aws.S3.ListObjects(ctx, "my-bucket", driver.ListOptions{
+    Prefix: "v1.0/",
+})
+
+// Folder-like listing with delimiter
+result, _ = aws.S3.ListObjects(ctx, "my-bucket", driver.ListOptions{
+    Delimiter: "/",
+})
+// result.CommonPrefixes contains folder-like prefixes
+```
+
+### Multipart Upload
+
+```go
+upload, _ := aws.S3.CreateMultipartUpload(ctx, "bucket", "large-file.bin", "application/octet-stream")
+
+part1, _ := aws.S3.UploadPart(ctx, "bucket", "large-file.bin", upload.UploadID, 1, data1)
+part2, _ := aws.S3.UploadPart(ctx, "bucket", "large-file.bin", upload.UploadID, 2, data2)
+
+aws.S3.CompleteMultipartUpload(ctx, "bucket", "large-file.bin", upload.UploadID,
+    []driver.UploadPart{*part1, *part2})
+```
+
+### Versioning
+
+```go
+aws.S3.SetBucketVersioning(ctx, "my-bucket", true)
+
+enabled, _ := aws.S3.GetBucketVersioning(ctx, "my-bucket")
+```
+
+### Presigned URLs
+
+```go
+url, _ := aws.S3.GeneratePresignedURL(ctx, driver.PresignedURLRequest{
+    Bucket: "my-bucket", Key: "file.txt", Method: "GET",
+    Expiry: 15 * time.Minute,
+})
+```
+
+### Lifecycle Policies
+
+```go
+aws.S3.PutLifecycleConfig(ctx, "my-bucket", driver.LifecycleConfig{
+    Rules: []driver.LifecycleRule{
+        {Prefix: "logs/", ExpirationDays: 30, Enabled: true},
+    },
+})
+
+expired, _ := aws.S3.EvaluateLifecycle(ctx, "my-bucket")
+```

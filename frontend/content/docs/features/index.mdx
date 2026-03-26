@@ -1,0 +1,29 @@
+---
+title: Cross-Cutting Features
+description: Recording, metrics, rate limiting, error injection, and more
+---
+
+# Cross-Cutting Features
+
+Every cloudemu service can be wrapped with a portable API layer that adds test-oriented features. These features compose together and work identically across all providers.
+
+```go
+bucket := storage.NewBucket(aws.S3,
+    storage.WithRecorder(rec),              // record every API call
+    storage.WithMetrics(mc),                // track call counts and durations
+    storage.WithErrorInjection(inj),        // simulate cloud failures
+    storage.WithRateLimiter(limiter),       // simulate API throttling
+    storage.WithLatency(5*time.Millisecond),// simulate network delay
+)
+```
+
+## Available Features
+
+| Feature | What It Does |
+|---------|-------------|
+| [Call Recording](/docs/features/recording) | Capture every API call with inputs, outputs, errors, and timing |
+| [Metrics](/docs/features/metrics) | Track `calls_total`, `call_duration`, `errors_total` per operation |
+| [Rate Limiting](/docs/features/rate-limiting) | Token bucket limiter that returns `Throttled` errors when exhausted |
+| [Error Injection](/docs/features/error-injection) | Simulate failures: always, every Nth call, probabilistic, or first N calls |
+| [Fake Clock](/docs/features/fake-clock) | Control time for deterministic testing of TTL, dedup, alarms |
+| [Latency Simulation](/docs/features/latency-simulation) | Add delays to test timeout handling |

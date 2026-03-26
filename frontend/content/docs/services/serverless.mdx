@@ -1,0 +1,75 @@
+---
+title: Serverless
+description: Function-as-a-service with versions, aliases, and layers
+---
+
+# Serverless
+
+Emulates serverless functions: **Lambda** (AWS), **Functions** (Azure), **CloudFunctions** (GCP).
+
+## Provider Mapping
+
+| Provider | Service | Access |
+|----------|---------|--------|
+| AWS | Lambda | `aws.Lambda` |
+| Azure | Functions | `azure.Functions` |
+| GCP | Cloud Functions | `gcp.CloudFunctions` |
+
+## Key Operations
+
+### Function Lifecycle
+
+```go
+import sdriver "github.com/stackshy/cloudemu/serverless/driver"
+
+// Create a function
+aws.Lambda.CreateFunction(ctx, sdriver.FunctionConfig{
+    Name:    "my-handler",
+    Runtime: "go1.x",
+    Handler: "main",
+    Memory:  128,
+    Timeout: 30,
+    Tags:    map[string]string{"team": "backend"},
+})
+
+// Register a Go handler
+aws.Lambda.RegisterHandler(ctx, "my-handler", func(ctx context.Context, payload []byte) ([]byte, error) {
+    return []byte(`{"status": "ok"}`), nil
+})
+
+// Invoke
+result, _ := aws.Lambda.InvokeFunction(ctx, "my-handler", []byte(`{"key": "value"}`))
+```
+
+### Versions and Aliases
+
+```go
+// Publish a version
+version, _ := aws.Lambda.PublishVersion(ctx, "my-handler", "v1 release")
+
+// Create an alias pointing to a version
+aws.Lambda.CreateAlias(ctx, sdriver.AliasConfig{
+    FunctionName: "my-handler", Name: "prod", FunctionVersion: "1",
+})
+
+// Weighted routing between versions
+aws.Lambda.UpdateAlias(ctx, "my-handler", "prod", sdriver.AliasUpdate{
+    FunctionVersion:          "2",
+    AdditionalVersionWeights: map[string]float64{"1": 0.1}, // 10% to v1
+})
+```
+
+### Layers
+
+```go
+layer, _ := aws.Lambda.PublishLayerVersion(ctx, sdriver.LayerConfig{
+    Name: "common-libs", Description: "Shared libraries",
+})
+```
+
+### Concurrency
+
+```go
+aws.Lambda.PutFunctionConcurrency(ctx, "my-handler", 100) // reserve 100 concurrent executions
+conc, _ := aws.Lambda.GetFunctionConcurrency(ctx, "my-handler")
+```

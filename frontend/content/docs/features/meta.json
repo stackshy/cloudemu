@@ -1,0 +1,12 @@
+{
+  "title": "Cross-Cutting Features",
+  "pages": [
+    "index",
+    "recording",
+    "metrics",
+    "rate-limiting",
+    "error-injection",
+    "fake-clock",
+    "latency-simulation"
+  ]
+}

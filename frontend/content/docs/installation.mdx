@@ -1,0 +1,81 @@
+---
+title: Installation
+description: How to install cloudemu in your Go project
+---
+
+# Installation
+
+## Install the Package
+
+Add cloudemu to your Go module:
+
+```bash
+go get github.com/stackshy/cloudemu
+```
+
+This installs the library and all service packages. There are no external dependencies beyond the Go standard library.
+
+## Verify Installation
+
+Create a simple test file to verify everything works:
+
+```go title="main_test.go"
+package main
+
+import (
+    "context"
+    "testing"
+
+    "github.com/stackshy/cloudemu"
+)
+
+func TestCloudemu(t *testing.T) {
+    ctx := context.Background()
+    aws := cloudemu.NewAWS()
+
+    err := aws.S3.CreateBucket(ctx, "test-bucket")
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    buckets, err := aws.S3.ListBuckets(ctx)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    if len(buckets) != 1 {
+        t.Fatalf("expected 1 bucket, got %d", len(buckets))
+    }
+}
+```
+
+Run it:
+
+```bash
+go test -v ./...
+```
+
+If you see `PASS`, cloudemu is ready to use.
+
+## Import Paths
+
+The main package and common sub-packages:
+
+```go
+import (
+    "github.com/stackshy/cloudemu"                    // NewAWS, NewAzure, NewGCP
+    "github.com/stackshy/cloudemu/config"              // WithRegion, WithClock, etc.
+    cerrors "github.com/stackshy/cloudemu/errors"      // Error codes and helpers
+    "github.com/stackshy/cloudemu/compute/driver"      // Compute types
+    "github.com/stackshy/cloudemu/storage/driver"      // Storage types
+    "github.com/stackshy/cloudemu/database/driver"     // Database types
+    "github.com/stackshy/cloudemu/monitoring/driver"   // Monitoring types
+)
+```
+
+Each service has its own `driver` sub-package containing the types and interfaces you need.
+
+## Next Steps
+
+- [Quick Start](/docs/quick-start) — build a complete example
+- [Configuration](/docs/configuration) — customize your providers
