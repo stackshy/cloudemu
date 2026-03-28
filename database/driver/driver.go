@@ -52,6 +52,20 @@ type GSIConfig struct {
 	SortKey      string
 }
 
+// UpdateAction represents a single field-level update action.
+type UpdateAction struct {
+	Action string // "SET" or "REMOVE"
+	Field  string
+	Value  any // ignored for REMOVE
+}
+
+// UpdateItemInput describes an update operation on an existing item.
+type UpdateItemInput struct {
+	Table   string
+	Key     map[string]any
+	Actions []UpdateAction
+}
+
 // KeyCondition defines a key condition for queries.
 type KeyCondition struct {
 	PartitionKey string
@@ -102,6 +116,7 @@ type Database interface {
 
 	PutItem(ctx context.Context, table string, item map[string]any) error
 	GetItem(ctx context.Context, table string, key map[string]any) (map[string]any, error)
+	UpdateItem(ctx context.Context, input UpdateItemInput) (map[string]any, error)
 	DeleteItem(ctx context.Context, table string, key map[string]any) error
 	Query(ctx context.Context, input QueryInput) (*QueryResult, error)
 	Scan(ctx context.Context, input ScanInput) (*QueryResult, error)
