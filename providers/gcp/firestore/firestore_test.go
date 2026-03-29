@@ -954,3 +954,192 @@ func TestScanUnsupportedFilter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.Count)
 }
+
+func TestUpdateItemSetFields(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "col", PartitionKey: "pk", SortKey: "sk"}))
+	require.NoError(t, m.PutItem(ctx, "col", map[string]any{
+		"pk": "u1", "sk": "info", "name": "Alice", "age": 30,
+	}))
+
+	updated, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "col",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Alice Smith"},
+			{Action: "SET", Field: "email", Value: "alice@test.com"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Alice Smith", updated["name"])
+	assert.Equal(t, "alice@test.com", updated["email"])
+	assert.Equal(t, 30, updated["age"])
+}
+
+func TestUpdateItemRemoveFields(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "col", PartitionKey: "pk", SortKey: "sk"}))
+	require.NoError(t, m.PutItem(ctx, "col", map[string]any{
+		"pk": "u1", "sk": "info", "name": "Alice", "city": "NYC",
+	}))
+
+	updated, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "col",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "REMOVE", Field: "city"},
+		},
+	})
+	require.NoError(t, err)
+	_, hasCityField := updated["city"]
+	assert.False(t, hasCityField, "expected city to be removed")
+	assert.Equal(t, "Alice", updated["name"])
+}
+
+func TestUpdateItemSetAndRemoveCombined(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "col", PartitionKey: "pk", SortKey: "sk"}))
+	require.NoError(t, m.PutItem(ctx, "col", map[string]any{
+		"pk": "u1", "sk": "info", "name": "Alice", "old_field": "remove_me",
+	}))
+
+	updated, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "col",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Bob"},
+			{Action: "REMOVE", Field: "old_field"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Bob", updated["name"])
+	_, hasOld := updated["old_field"]
+	assert.False(t, hasOld, "expected old_field to be removed")
+}
+
+func TestUpdateItemPersistsChanges(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "col", PartitionKey: "pk", SortKey: "sk"}))
+	require.NoError(t, m.PutItem(ctx, "col", map[string]any{
+		"pk": "u1", "sk": "info", "v": "old",
+	}))
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "col",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "v", Value: "new"},
+		},
+	})
+	require.NoError(t, err)
+
+	got, err := m.GetItem(ctx, "col", map[string]any{"pk": "u1", "sk": "info"})
+	require.NoError(t, err)
+	assert.Equal(t, "new", got["v"])
+}
+
+func TestUpdateItemCollectionNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "nonexistent",
+		Key:     map[string]any{"pk": "x"},
+		Actions: []driver.UpdateAction{{Action: "SET", Field: "v", Value: 1}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestUpdateItemDocumentNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "col", PartitionKey: "pk", SortKey: "sk"}))
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "col",
+		Key:     map[string]any{"pk": "missing", "sk": "missing"},
+		Actions: []driver.UpdateAction{{Action: "SET", Field: "v", Value: 1}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestUpdateItemInvalidAction(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "col", PartitionKey: "pk", SortKey: "sk"}))
+	require.NoError(t, m.PutItem(ctx, "col", map[string]any{"pk": "u1", "sk": "info", "v": 1}))
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "col",
+		Key:     map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{{Action: "ADD", Field: "v", Value: 1}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported")
+}
+
+func TestUpdateItemEmitsStreamRecord(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "col", PartitionKey: "pk", SortKey: "sk"}))
+	require.NoError(t, m.UpdateStreamConfig(ctx, "col", driver.StreamConfig{
+		Enabled: true, ViewType: "NEW_AND_OLD_IMAGES",
+	}))
+
+	require.NoError(t, m.PutItem(ctx, "col", map[string]any{"pk": "u1", "sk": "info", "val": "old"}))
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "col",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "val", Value: "new"},
+		},
+	})
+	require.NoError(t, err)
+
+	iter, err := m.GetStreamRecords(ctx, "col", 10, "")
+	require.NoError(t, err)
+	require.Len(t, iter.Records, 2)
+	assert.Equal(t, "MODIFY", iter.Records[1].EventType)
+	assert.Equal(t, "old", iter.Records[1].OldImage["val"])
+	assert.Equal(t, "new", iter.Records[1].NewImage["val"])
+}
+
+func TestUpdateItemEmitsMetrics(t *testing.T) {
+	ctx := context.Background()
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(clk), config.WithProjectID("test-project"))
+
+	mon := &firestoreMonMock{data: make(map[string][]mondriver.MetricDatum)}
+	m := New(opts)
+	m.SetMonitoring(mon)
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "col", PartitionKey: "pk", SortKey: "sk"}))
+	require.NoError(t, m.PutItem(ctx, "col", map[string]any{"pk": "u1", "sk": "info"}))
+
+	// Clear metrics from PutItem
+	mon.data = make(map[string][]mondriver.MetricDatum)
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "col",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "v", Value: "x"},
+		},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, mon.data["firestore.googleapis.com/document/write_count"])
+}

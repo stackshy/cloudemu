@@ -5570,3 +5570,401 @@ func TestGCPMetricsEmission(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdateItemAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+		Name: "users", PartitionKey: "pk", SortKey: "sk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Put initial item
+	if err := p.DynamoDB.PutItem(ctx, "users", map[string]any{
+		"pk": "user1", "sk": "profile", "name": "Alice", "age": 30, "city": "NYC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SET: update name and add new field
+	updated, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Alice Smith"},
+			{Action: "SET", Field: "email", Value: "alice@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if updated["name"] != "Alice Smith" {
+		t.Errorf("expected 'Alice Smith', got %v", updated["name"])
+	}
+
+	if updated["email"] != "alice@example.com" {
+		t.Errorf("expected 'alice@example.com', got %v", updated["email"])
+	}
+
+	if updated["age"] != 30 {
+		t.Errorf("expected age 30 preserved, got %v", updated["age"])
+	}
+
+	// REMOVE: remove city field
+	updated, err = p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "REMOVE", Field: "city"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, hasCityField := updated["city"]; hasCityField {
+		t.Error("expected city field to be removed")
+	}
+
+	if updated["name"] != "Alice Smith" {
+		t.Errorf("expected name preserved as 'Alice Smith', got %v", updated["name"])
+	}
+
+	// Verify via GetItem
+	got, err := p.DynamoDB.GetItem(ctx, "users", map[string]any{"pk": "user1", "sk": "profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got["name"] != "Alice Smith" {
+		t.Errorf("GetItem: expected 'Alice Smith', got %v", got["name"])
+	}
+
+	if got["email"] != "alice@example.com" {
+		t.Errorf("GetItem: expected 'alice@example.com', got %v", got["email"])
+	}
+
+	if _, hasCityField := got["city"]; hasCityField {
+		t.Error("GetItem: expected city field to be removed")
+	}
+}
+
+func TestUpdateItemAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	if err := p.CosmosDB.CreateTable(ctx, driver.TableConfig{
+		Name: "users", PartitionKey: "pk", SortKey: "sk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CosmosDB.PutItem(ctx, "users", map[string]any{
+		"pk": "user1", "sk": "profile", "name": "Alice", "age": 30, "city": "NYC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SET fields
+	updated, err := p.CosmosDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Alice Smith"},
+			{Action: "SET", Field: "email", Value: "alice@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if updated["name"] != "Alice Smith" {
+		t.Errorf("expected 'Alice Smith', got %v", updated["name"])
+	}
+
+	if updated["email"] != "alice@example.com" {
+		t.Errorf("expected 'alice@example.com', got %v", updated["email"])
+	}
+
+	if updated["age"] != 30 {
+		t.Errorf("expected age 30 preserved, got %v", updated["age"])
+	}
+
+	// REMOVE field
+	updated, err = p.CosmosDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "REMOVE", Field: "city"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, hasCityField := updated["city"]; hasCityField {
+		t.Error("expected city field to be removed")
+	}
+
+	// Verify via GetItem
+	got, err := p.CosmosDB.GetItem(ctx, "users", map[string]any{"pk": "user1", "sk": "profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got["name"] != "Alice Smith" {
+		t.Errorf("GetItem: expected 'Alice Smith', got %v", got["name"])
+	}
+}
+
+func TestUpdateItemGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	if err := p.Firestore.CreateTable(ctx, driver.TableConfig{
+		Name: "users", PartitionKey: "pk", SortKey: "sk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Firestore.PutItem(ctx, "users", map[string]any{
+		"pk": "user1", "sk": "profile", "name": "Alice", "age": 30, "city": "NYC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SET fields
+	updated, err := p.Firestore.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Alice Smith"},
+			{Action: "SET", Field: "email", Value: "alice@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if updated["name"] != "Alice Smith" {
+		t.Errorf("expected 'Alice Smith', got %v", updated["name"])
+	}
+
+	if updated["email"] != "alice@example.com" {
+		t.Errorf("expected 'alice@example.com', got %v", updated["email"])
+	}
+
+	if updated["age"] != 30 {
+		t.Errorf("expected age 30 preserved, got %v", updated["age"])
+	}
+
+	// REMOVE field
+	updated, err = p.Firestore.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "REMOVE", Field: "city"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, hasCityField := updated["city"]; hasCityField {
+		t.Error("expected city field to be removed")
+	}
+
+	// Verify via GetItem
+	got, err := p.Firestore.GetItem(ctx, "users", map[string]any{"pk": "user1", "sk": "profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got["name"] != "Alice Smith" {
+		t.Errorf("GetItem: expected 'Alice Smith', got %v", got["name"])
+	}
+}
+
+func TestUpdateItemNotFound(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("AWS", func(t *testing.T) {
+		p := NewAWS()
+
+		if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+			Name: "t1", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "t1",
+			Key:     map[string]any{"pk": "missing"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("Azure", func(t *testing.T) {
+		p := NewAzure()
+
+		if err := p.CosmosDB.CreateTable(ctx, driver.TableConfig{
+			Name: "t1", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := p.CosmosDB.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "t1",
+			Key:     map[string]any{"pk": "missing"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("GCP", func(t *testing.T) {
+		p := NewGCP()
+
+		if err := p.Firestore.CreateTable(ctx, driver.TableConfig{
+			Name: "t1", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := p.Firestore.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "t1",
+			Key:     map[string]any{"pk": "missing"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+}
+
+func TestUpdateItemTableNotFound(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("AWS", func(t *testing.T) {
+		p := NewAWS()
+
+		_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "nonexistent",
+			Key:     map[string]any{"pk": "x"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("Azure", func(t *testing.T) {
+		p := NewAzure()
+
+		_, err := p.CosmosDB.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "nonexistent",
+			Key:     map[string]any{"pk": "x"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("GCP", func(t *testing.T) {
+		p := NewGCP()
+
+		_, err := p.Firestore.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "nonexistent",
+			Key:     map[string]any{"pk": "x"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+}
+
+func TestUpdateItemInvalidAction(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+		Name: "t1", PartitionKey: "pk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.DynamoDB.PutItem(ctx, "t1", map[string]any{"pk": "k1", "v": 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "t1",
+		Key:     map[string]any{"pk": "k1"},
+		Actions: []driver.UpdateAction{{Action: "INVALID", Field: "v", Value: 2}},
+	})
+	if err == nil {
+		t.Error("expected error for invalid action, got nil")
+	}
+}
+
+func TestUpdateItemWithStreams(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+		Name: "t1", PartitionKey: "pk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.DynamoDB.UpdateStreamConfig(ctx, "t1", driver.StreamConfig{
+		Enabled: true, ViewType: "NEW_AND_OLD_IMAGES",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.DynamoDB.PutItem(ctx, "t1", map[string]any{"pk": "k1", "val": "old"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "t1",
+		Key:     map[string]any{"pk": "k1"},
+		Actions: []driver.UpdateAction{{Action: "SET", Field: "val", Value: "new"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	iter, err := p.DynamoDB.GetStreamRecords(ctx, "t1", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have INSERT (from PutItem) + MODIFY (from UpdateItem)
+	if len(iter.Records) != 2 {
+		t.Fatalf("expected 2 stream records, got %d", len(iter.Records))
+	}
+
+	modifyRec := iter.Records[1]
+	if modifyRec.EventType != "MODIFY" {
+		t.Errorf("expected MODIFY event, got %s", modifyRec.EventType)
+	}
+
+	if modifyRec.OldImage["val"] != "old" {
+		t.Errorf("expected old image val='old', got %v", modifyRec.OldImage["val"])
+	}
+
+	if modifyRec.NewImage["val"] != "new" {
+		t.Errorf("expected new image val='new', got %v", modifyRec.NewImage["val"])
+	}
+}

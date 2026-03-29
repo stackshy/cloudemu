@@ -206,6 +206,48 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 	return item, nil
 }
 
+// UpdateItem applies partial updates to an existing document in a container.
+func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[string]any, error) {
+	m.mu.Lock()
+
+	td, exists := m.tables[input.Table]
+	if !exists {
+		m.mu.Unlock()
+		return nil, cerrors.Newf(cerrors.NotFound, "container %s not found", input.Table)
+	}
+
+	k := itemKey(td.config, input.Key)
+	item, ok := td.items.Get(k)
+
+	if !ok {
+		m.mu.Unlock()
+		return nil, cerrors.New(cerrors.NotFound, "item not found")
+	}
+
+	oldItem := copyItem(item)
+	updated := copyItem(item)
+
+	for _, action := range input.Actions {
+		switch action.Action {
+		case "SET":
+			updated[action.Field] = action.Value
+		case "REMOVE":
+			delete(updated, action.Field)
+		default:
+			m.mu.Unlock()
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "unsupported action: %s", action.Action)
+		}
+	}
+
+	td.items.Set(k, updated)
+	m.recordStreamEvent(td, oldItem, updated, true)
+	m.mu.Unlock()
+
+	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": 1})
+
+	return updated, nil
+}
+
 // DeleteItem deletes an item from a container by key.
 func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) error {
 	m.mu.Lock()

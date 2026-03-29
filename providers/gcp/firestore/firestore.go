@@ -194,6 +194,48 @@ func (m *Mock) GetItem(ctx context.Context, table string, key map[string]any) (m
 	return item, nil
 }
 
+// UpdateItem applies partial updates to an existing document in a collection.
+func (m *Mock) UpdateItem(ctx context.Context, input driver.UpdateItemInput) (map[string]any, error) {
+	m.mu.Lock()
+
+	cd, exists := m.collections[input.Table]
+	if !exists {
+		m.mu.Unlock()
+		return nil, cerrors.Newf(cerrors.NotFound, "collection %s not found", input.Table)
+	}
+
+	k := docKey(cd.config, input.Key)
+	item, ok := cd.items.Get(k)
+
+	if !ok {
+		m.mu.Unlock()
+		return nil, cerrors.New(cerrors.NotFound, "document not found")
+	}
+
+	oldItem := copyItem(item)
+	updated := copyItem(item)
+
+	for _, action := range input.Actions {
+		switch action.Action {
+		case "SET":
+			updated[action.Field] = action.Value
+		case "REMOVE":
+			delete(updated, action.Field)
+		default:
+			m.mu.Unlock()
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "unsupported action: %s", action.Action)
+		}
+	}
+
+	cd.items.Set(k, updated)
+	m.recordStreamEvent(cd, oldItem, updated, true)
+	m.mu.Unlock()
+
+	m.emitMetric(ctx, "document/write_count", 1, map[string]string{"collection_id": input.Table})
+
+	return updated, nil
+}
+
 func (m *Mock) DeleteItem(ctx context.Context, table string, key map[string]any) error {
 	m.mu.Lock()
 

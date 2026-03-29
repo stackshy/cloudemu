@@ -714,3 +714,193 @@ func assertNotEmpty(t *testing.T, s string) {
 		t.Error("expected non-empty string")
 	}
 }
+
+func TestUpdateItemSetFields(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "info", "name": "Alice", "age": 30})
+
+	updated, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "tbl",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Alice Smith"},
+			{Action: "SET", Field: "email", Value: "alice@test.com"},
+		},
+	})
+	requireNoError(t, err)
+	assertEqual(t, "Alice Smith", updated["name"])
+	assertEqual(t, "alice@test.com", updated["email"])
+	assertEqual(t, 30, updated["age"])
+}
+
+func TestUpdateItemRemoveFields(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "info", "name": "Alice", "city": "NYC"})
+
+	updated, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "tbl",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "REMOVE", Field: "city"},
+		},
+	})
+	requireNoError(t, err)
+
+	if _, has := updated["city"]; has {
+		t.Error("expected city to be removed")
+	}
+
+	assertEqual(t, "Alice", updated["name"])
+}
+
+func TestUpdateItemSetAndRemoveCombined(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "info", "name": "Alice", "old_field": "remove_me"})
+
+	updated, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "tbl",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Bob"},
+			{Action: "REMOVE", Field: "old_field"},
+		},
+	})
+	requireNoError(t, err)
+	assertEqual(t, "Bob", updated["name"])
+
+	if _, has := updated["old_field"]; has {
+		t.Error("expected old_field to be removed")
+	}
+}
+
+func TestUpdateItemPersistsChanges(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "info", "v": "old"})
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "tbl",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "v", Value: "new"},
+		},
+	})
+	requireNoError(t, err)
+
+	got, err := m.GetItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "info"})
+	requireNoError(t, err)
+	assertEqual(t, "new", got["v"])
+}
+
+func TestUpdateItemTableNotFound(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "nonexistent",
+		Key:     map[string]any{"pk": "x"},
+		Actions: []driver.UpdateAction{{Action: "SET", Field: "v", Value: 1}},
+	})
+	assertError(t, err, true)
+}
+
+func TestUpdateItemItemNotFound(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "tbl",
+		Key:     map[string]any{"pk": "missing", "sk": "missing"},
+		Actions: []driver.UpdateAction{{Action: "SET", Field: "v", Value: 1}},
+	})
+	assertError(t, err, true)
+}
+
+func TestUpdateItemInvalidAction(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "info", "v": 1})
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "tbl",
+		Key:     map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{{Action: "ADD", Field: "v", Value: 1}},
+	})
+	assertError(t, err, true)
+}
+
+func TestUpdateItemEmitsStreamRecord(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	createTestTable(m, "tbl")
+
+	_ = m.UpdateStreamConfig(ctx, "tbl", driver.StreamConfig{
+		Enabled: true, ViewType: "NEW_AND_OLD_IMAGES",
+	})
+
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "info", "val": "old"})
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "tbl",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "val", Value: "new"},
+		},
+	})
+	requireNoError(t, err)
+
+	iter, err := m.GetStreamRecords(ctx, "tbl", 10, "")
+	requireNoError(t, err)
+	assertEqual(t, 2, len(iter.Records))
+	assertEqual(t, "MODIFY", iter.Records[1].EventType)
+	assertEqual(t, "old", iter.Records[1].OldImage["val"])
+	assertEqual(t, "new", iter.Records[1].NewImage["val"])
+}
+
+func TestUpdateItemEmitsMetrics(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc))
+	m := New(opts)
+	ctx := context.Background()
+
+	cw := cloudwatch.New(opts)
+	m.SetMonitoring(cw)
+	createTestTable(m, "tbl")
+
+	_ = m.PutItem(ctx, "tbl", map[string]any{"pk": "u1", "sk": "info"})
+
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "tbl",
+		Key:   map[string]any{"pk": "u1", "sk": "info"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "v", Value: "x"},
+		},
+	})
+	requireNoError(t, err)
+
+	result, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+		Namespace:  "AWS/DynamoDB",
+		MetricName: "ConsumedWriteCapacityUnits",
+		Dimensions: map[string]string{"TableName": "tbl"},
+		StartTime:  fc.Now().Add(-1 * time.Hour),
+		EndTime:    fc.Now().Add(1 * time.Hour),
+		Period:     60,
+		Stat:       "Sum",
+	})
+	requireNoError(t, err)
+	assertEqual(t, true, len(result.Values) > 0)
+}
