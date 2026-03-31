@@ -26,6 +26,8 @@ import (
 	"github.com/stackshy/cloudemu/storage"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+
 	cachedriver "github.com/stackshy/cloudemu/cache/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
@@ -5569,4 +5571,1215 @@ func TestGCPMetricsEmission(t *testing.T) {
 			t.Errorf("matched_event_count: expected 1, got %v", v)
 		}
 	})
+}
+
+func TestUpdateItemAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+		Name: "users", PartitionKey: "pk", SortKey: "sk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Put initial item
+	if err := p.DynamoDB.PutItem(ctx, "users", map[string]any{
+		"pk": "user1", "sk": "profile", "name": "Alice", "age": 30, "city": "NYC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SET: update name and add new field
+	updated, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Alice Smith"},
+			{Action: "SET", Field: "email", Value: "alice@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if updated["name"] != "Alice Smith" {
+		t.Errorf("expected 'Alice Smith', got %v", updated["name"])
+	}
+
+	if updated["email"] != "alice@example.com" {
+		t.Errorf("expected 'alice@example.com', got %v", updated["email"])
+	}
+
+	if updated["age"] != 30 {
+		t.Errorf("expected age 30 preserved, got %v", updated["age"])
+	}
+
+	// REMOVE: remove city field
+	updated, err = p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "REMOVE", Field: "city"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, hasCityField := updated["city"]; hasCityField {
+		t.Error("expected city field to be removed")
+	}
+
+	if updated["name"] != "Alice Smith" {
+		t.Errorf("expected name preserved as 'Alice Smith', got %v", updated["name"])
+	}
+
+	// Verify via GetItem
+	got, err := p.DynamoDB.GetItem(ctx, "users", map[string]any{"pk": "user1", "sk": "profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got["name"] != "Alice Smith" {
+		t.Errorf("GetItem: expected 'Alice Smith', got %v", got["name"])
+	}
+
+	if got["email"] != "alice@example.com" {
+		t.Errorf("GetItem: expected 'alice@example.com', got %v", got["email"])
+	}
+
+	if _, hasCityField := got["city"]; hasCityField {
+		t.Error("GetItem: expected city field to be removed")
+	}
+}
+
+func TestUpdateItemAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	if err := p.CosmosDB.CreateTable(ctx, driver.TableConfig{
+		Name: "users", PartitionKey: "pk", SortKey: "sk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CosmosDB.PutItem(ctx, "users", map[string]any{
+		"pk": "user1", "sk": "profile", "name": "Alice", "age": 30, "city": "NYC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SET fields
+	updated, err := p.CosmosDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Alice Smith"},
+			{Action: "SET", Field: "email", Value: "alice@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if updated["name"] != "Alice Smith" {
+		t.Errorf("expected 'Alice Smith', got %v", updated["name"])
+	}
+
+	if updated["email"] != "alice@example.com" {
+		t.Errorf("expected 'alice@example.com', got %v", updated["email"])
+	}
+
+	if updated["age"] != 30 {
+		t.Errorf("expected age 30 preserved, got %v", updated["age"])
+	}
+
+	// REMOVE field
+	updated, err = p.CosmosDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "REMOVE", Field: "city"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, hasCityField := updated["city"]; hasCityField {
+		t.Error("expected city field to be removed")
+	}
+
+	// Verify via GetItem
+	got, err := p.CosmosDB.GetItem(ctx, "users", map[string]any{"pk": "user1", "sk": "profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got["name"] != "Alice Smith" {
+		t.Errorf("GetItem: expected 'Alice Smith', got %v", got["name"])
+	}
+}
+
+func TestUpdateItemGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	if err := p.Firestore.CreateTable(ctx, driver.TableConfig{
+		Name: "users", PartitionKey: "pk", SortKey: "sk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Firestore.PutItem(ctx, "users", map[string]any{
+		"pk": "user1", "sk": "profile", "name": "Alice", "age": 30, "city": "NYC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SET fields
+	updated, err := p.Firestore.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "SET", Field: "name", Value: "Alice Smith"},
+			{Action: "SET", Field: "email", Value: "alice@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if updated["name"] != "Alice Smith" {
+		t.Errorf("expected 'Alice Smith', got %v", updated["name"])
+	}
+
+	if updated["email"] != "alice@example.com" {
+		t.Errorf("expected 'alice@example.com', got %v", updated["email"])
+	}
+
+	if updated["age"] != 30 {
+		t.Errorf("expected age 30 preserved, got %v", updated["age"])
+	}
+
+	// REMOVE field
+	updated, err = p.Firestore.UpdateItem(ctx, driver.UpdateItemInput{
+		Table: "users",
+		Key:   map[string]any{"pk": "user1", "sk": "profile"},
+		Actions: []driver.UpdateAction{
+			{Action: "REMOVE", Field: "city"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, hasCityField := updated["city"]; hasCityField {
+		t.Error("expected city field to be removed")
+	}
+
+	// Verify via GetItem
+	got, err := p.Firestore.GetItem(ctx, "users", map[string]any{"pk": "user1", "sk": "profile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got["name"] != "Alice Smith" {
+		t.Errorf("GetItem: expected 'Alice Smith', got %v", got["name"])
+	}
+}
+
+func TestUpdateItemNotFound(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("AWS", func(t *testing.T) {
+		p := NewAWS()
+
+		if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+			Name: "t1", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "t1",
+			Key:     map[string]any{"pk": "missing"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("Azure", func(t *testing.T) {
+		p := NewAzure()
+
+		if err := p.CosmosDB.CreateTable(ctx, driver.TableConfig{
+			Name: "t1", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := p.CosmosDB.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "t1",
+			Key:     map[string]any{"pk": "missing"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("GCP", func(t *testing.T) {
+		p := NewGCP()
+
+		if err := p.Firestore.CreateTable(ctx, driver.TableConfig{
+			Name: "t1", PartitionKey: "pk",
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := p.Firestore.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "t1",
+			Key:     map[string]any{"pk": "missing"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+}
+
+func TestUpdateItemTableNotFound(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("AWS", func(t *testing.T) {
+		p := NewAWS()
+
+		_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "nonexistent",
+			Key:     map[string]any{"pk": "x"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("Azure", func(t *testing.T) {
+		p := NewAzure()
+
+		_, err := p.CosmosDB.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "nonexistent",
+			Key:     map[string]any{"pk": "x"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+
+	t.Run("GCP", func(t *testing.T) {
+		p := NewGCP()
+
+		_, err := p.Firestore.UpdateItem(ctx, driver.UpdateItemInput{
+			Table:   "nonexistent",
+			Key:     map[string]any{"pk": "x"},
+			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
+		})
+		if !cerrors.IsNotFound(err) {
+			t.Errorf("expected NotFound, got %v", err)
+		}
+	})
+}
+
+func TestUpdateItemInvalidAction(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+		Name: "t1", PartitionKey: "pk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.DynamoDB.PutItem(ctx, "t1", map[string]any{"pk": "k1", "v": 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "t1",
+		Key:     map[string]any{"pk": "k1"},
+		Actions: []driver.UpdateAction{{Action: "INVALID", Field: "v", Value: 2}},
+	})
+	if err == nil {
+		t.Error("expected error for invalid action, got nil")
+	}
+}
+
+func TestUpdateItemWithStreams(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.DynamoDB.CreateTable(ctx, driver.TableConfig{
+		Name: "t1", PartitionKey: "pk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.DynamoDB.UpdateStreamConfig(ctx, "t1", driver.StreamConfig{
+		Enabled: true, ViewType: "NEW_AND_OLD_IMAGES",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.DynamoDB.PutItem(ctx, "t1", map[string]any{"pk": "k1", "val": "old"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:   "t1",
+		Key:     map[string]any{"pk": "k1"},
+		Actions: []driver.UpdateAction{{Action: "SET", Field: "val", Value: "new"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	iter, err := p.DynamoDB.GetStreamRecords(ctx, "t1", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have INSERT (from PutItem) + MODIFY (from UpdateItem)
+	if len(iter.Records) != 2 {
+		t.Fatalf("expected 2 stream records, got %d", len(iter.Records))
+	}
+
+	modifyRec := iter.Records[1]
+	if modifyRec.EventType != "MODIFY" {
+		t.Errorf("expected MODIFY event, got %s", modifyRec.EventType)
+	}
+
+	if modifyRec.OldImage["val"] != "old" {
+		t.Errorf("expected old image val='old', got %v", modifyRec.OldImage["val"])
+	}
+
+	if modifyRec.NewImage["val"] != "new" {
+		t.Errorf("expected new image val='new', got %v", modifyRec.NewImage["val"])
+	}
+}
+
+func TestCacheExpireAndPersistAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.ElastiCache.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.ElastiCache.Set(ctx, "c1", "k1", []byte("val"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err := p.ElastiCache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl != -1 {
+		t.Errorf("expected TTL -1, got %v", ttl)
+	}
+
+	if err := p.ElastiCache.Expire(ctx, "c1", "k1", 1*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err = p.ElastiCache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl <= 0 {
+		t.Errorf("expected positive TTL, got %v", ttl)
+	}
+
+	if err := p.ElastiCache.Persist(ctx, "c1", "k1"); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err = p.ElastiCache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl != -1 {
+		t.Errorf("expected TTL -1 after Persist, got %v", ttl)
+	}
+}
+
+func TestCacheExpireAndPersistAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	_, err := p.Cache.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Cache.Set(ctx, "c1", "k1", []byte("val"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Cache.Expire(ctx, "c1", "k1", 1*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err := p.Cache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl <= 0 {
+		t.Errorf("expected positive TTL, got %v", ttl)
+	}
+
+	if err := p.Cache.Persist(ctx, "c1", "k1"); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err = p.Cache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl != -1 {
+		t.Errorf("expected TTL -1 after Persist, got %v", ttl)
+	}
+}
+
+func TestCacheExpireAndPersistGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	_, err := p.Memorystore.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Memorystore.Set(ctx, "c1", "k1", []byte("val"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Memorystore.Expire(ctx, "c1", "k1", 1*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err := p.Memorystore.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl <= 0 {
+		t.Errorf("expected positive TTL, got %v", ttl)
+	}
+
+	if err := p.Memorystore.Persist(ctx, "c1", "k1"); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err = p.Memorystore.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl != -1 {
+		t.Errorf("expected TTL -1 after Persist, got %v", ttl)
+	}
+}
+
+func TestCacheIncrDecrAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.ElastiCache.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := p.ElastiCache.Incr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 1 {
+		t.Errorf("expected 1, got %d", val)
+	}
+
+	val, err = p.ElastiCache.IncrBy(ctx, "c1", "counter", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 10 {
+		t.Errorf("expected 10, got %d", val)
+	}
+
+	val, err = p.ElastiCache.Decr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 9 {
+		t.Errorf("expected 9, got %d", val)
+	}
+
+	val, err = p.ElastiCache.DecrBy(ctx, "c1", "counter", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 5 {
+		t.Errorf("expected 5, got %d", val)
+	}
+
+	item, err := p.ElastiCache.Get(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(item.Value) != "5" {
+		t.Errorf("expected '5', got %q", string(item.Value))
+	}
+}
+
+func TestCacheIncrDecrAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	_, err := p.Cache.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := p.Cache.Incr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 1 {
+		t.Errorf("expected 1, got %d", val)
+	}
+
+	val, err = p.Cache.IncrBy(ctx, "c1", "counter", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 10 {
+		t.Errorf("expected 10, got %d", val)
+	}
+
+	val, err = p.Cache.Decr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 9 {
+		t.Errorf("expected 9, got %d", val)
+	}
+
+	val, err = p.Cache.DecrBy(ctx, "c1", "counter", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 5 {
+		t.Errorf("expected 5, got %d", val)
+	}
+}
+
+func TestCacheIncrDecrGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	_, err := p.Memorystore.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := p.Memorystore.Incr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 1 {
+		t.Errorf("expected 1, got %d", val)
+	}
+
+	val, err = p.Memorystore.IncrBy(ctx, "c1", "counter", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 10 {
+		t.Errorf("expected 10, got %d", val)
+	}
+
+	val, err = p.Memorystore.Decr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 9 {
+		t.Errorf("expected 9, got %d", val)
+	}
+
+	val, err = p.Memorystore.DecrBy(ctx, "c1", "counter", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 5 {
+		t.Errorf("expected 5, got %d", val)
+	}
+}
+
+func TestBucketPolicyAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.S3.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := storagedriver.BucketPolicy{
+		Version: "2012-10-17",
+		Statements: []storagedriver.PolicyStatement{
+			{Effect: "Allow", Principal: "*", Actions: []string{"s3:GetObject"}, Resources: []string{"arn:aws:s3:::b1/*"}},
+		},
+	}
+
+	if err := p.S3.PutBucketPolicy(ctx, "b1", policy); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.S3.GetBucketPolicy(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Version != "2012-10-17" {
+		t.Errorf("expected version '2012-10-17', got %q", got.Version)
+	}
+
+	if len(got.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(got.Statements))
+	}
+
+	if got.Statements[0].Effect != "Allow" {
+		t.Errorf("expected effect 'Allow', got %q", got.Statements[0].Effect)
+	}
+
+	if err := p.S3.DeleteBucketPolicy(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.S3.GetBucketPolicy(ctx, "b1")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+}
+
+func TestBucketPolicyAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	if err := p.BlobStorage.CreateBucket(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := storagedriver.BucketPolicy{
+		Version: "1.0",
+		Statements: []storagedriver.PolicyStatement{
+			{Effect: "Allow", Principal: "*", Actions: []string{"read"}, Resources: []string{"c1/*"}},
+		},
+	}
+
+	if err := p.BlobStorage.PutBucketPolicy(ctx, "c1", policy); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.BlobStorage.GetBucketPolicy(ctx, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(got.Statements))
+	}
+}
+
+func TestBucketPolicyGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	if err := p.GCS.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := storagedriver.BucketPolicy{
+		Version: "1",
+		Statements: []storagedriver.PolicyStatement{
+			{Effect: "Allow", Principal: "allUsers", Actions: []string{"storage.objects.get"}, Resources: []string{"b1/*"}},
+		},
+	}
+
+	if err := p.GCS.PutBucketPolicy(ctx, "b1", policy); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.GCS.GetBucketPolicy(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(got.Statements))
+	}
+}
+
+func TestCORSConfigAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.S3.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	cors := storagedriver.CORSConfig{
+		Rules: []storagedriver.CORSRule{
+			{
+				AllowedOrigins: []string{"https://example.com"},
+				AllowedMethods: []string{"GET", "PUT"},
+				AllowedHeaders: []string{"*"},
+				MaxAgeSeconds:  3600,
+			},
+		},
+	}
+
+	if err := p.S3.PutCORSConfig(ctx, "b1", cors); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.S3.GetCORSConfig(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Rules) != 1 {
+		t.Fatalf("expected 1 CORS rule, got %d", len(got.Rules))
+	}
+
+	if got.Rules[0].AllowedOrigins[0] != "https://example.com" {
+		t.Errorf("expected origin 'https://example.com', got %q", got.Rules[0].AllowedOrigins[0])
+	}
+
+	if err := p.S3.DeleteCORSConfig(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.S3.GetCORSConfig(ctx, "b1")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+}
+
+func TestEncryptionConfigAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.S3.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	enc := storagedriver.EncryptionConfig{
+		Enabled:   true,
+		Algorithm: "AES256",
+	}
+
+	if err := p.S3.PutEncryptionConfig(ctx, "b1", enc); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.S3.GetEncryptionConfig(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Enabled {
+		t.Error("expected encryption enabled")
+	}
+
+	if got.Algorithm != "AES256" {
+		t.Errorf("expected algorithm 'AES256', got %q", got.Algorithm)
+	}
+}
+
+func TestEncryptionConfigAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	if err := p.BlobStorage.CreateBucket(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+
+	enc := storagedriver.EncryptionConfig{
+		Enabled:   true,
+		Algorithm: "AES256",
+	}
+
+	if err := p.BlobStorage.PutEncryptionConfig(ctx, "c1", enc); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.BlobStorage.GetEncryptionConfig(ctx, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Enabled {
+		t.Error("expected encryption enabled")
+	}
+}
+
+func TestEncryptionConfigGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	if err := p.GCS.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	enc := storagedriver.EncryptionConfig{
+		Enabled:   true,
+		Algorithm: "AES256",
+	}
+
+	if err := p.GCS.PutEncryptionConfig(ctx, "b1", enc); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.GCS.GetEncryptionConfig(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Enabled {
+		t.Error("expected encryption enabled")
+	}
+}
+
+func TestListenerRulesAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	lb, err := p.ELB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := p.ELB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: "vpc-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	li, err := p.ELB.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create rules with path conditions
+	rule1, err := p.ELB.CreateRule(ctx, lbdriver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    10,
+		Conditions:  []lbdriver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+		Actions:     []lbdriver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rule1.ARN == "" {
+		t.Error("expected non-empty rule ARN")
+	}
+
+	if rule1.Priority != 10 {
+		t.Errorf("expected priority 10, got %d", rule1.Priority)
+	}
+
+	_, err = p.ELB.CreateRule(ctx, lbdriver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    20,
+		Conditions:  []lbdriver.RuleCondition{{Field: "host-header", Values: []string{"example.com"}}},
+		Actions:     []lbdriver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Describe rules
+	rules, err := p.ELB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 2 {
+		t.Errorf("expected 2 rules, got %d", len(rules))
+	}
+
+	// Delete a rule
+	if err := p.ELB.DeleteRule(ctx, rule1.ARN); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err = p.ELB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule after deletion, got %d", len(rules))
+	}
+}
+
+func TestModifyListenerAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	lb, err := p.ELB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := p.ELB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: "vpc-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	li, err := p.ELB.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify port
+	if err := p.ELB.ModifyListener(ctx, lbdriver.ModifyListenerInput{
+		ListenerARN: li.ARN, Port: 8080,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	listeners, err := p.ELB.DescribeListeners(ctx, lb.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(listeners) != 1 {
+		t.Fatalf("expected 1 listener, got %d", len(listeners))
+	}
+
+	if listeners[0].Port != 8080 {
+		t.Errorf("expected port 8080, got %d", listeners[0].Port)
+	}
+}
+
+func TestLBAttributesAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	lb, err := p.ELB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get default attributes
+	attrs, err := p.ELB.GetLBAttributes(ctx, lb.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if attrs.IdleTimeout != 60 {
+		t.Errorf("expected default idle timeout 60, got %d", attrs.IdleTimeout)
+	}
+
+	// Put custom attributes
+	if err := p.ELB.PutLBAttributes(ctx, lb.ARN, lbdriver.LBAttributes{
+		IdleTimeout:        120,
+		DeletionProtection: true,
+		AccessLogsEnabled:  true,
+		AccessLogsBucket:   "my-access-logs",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	attrs, err = p.ELB.GetLBAttributes(ctx, lb.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if attrs.IdleTimeout != 120 {
+		t.Errorf("expected idle timeout 120, got %d", attrs.IdleTimeout)
+	}
+
+	if !attrs.DeletionProtection {
+		t.Error("expected deletion protection enabled")
+	}
+
+	if !attrs.AccessLogsEnabled {
+		t.Error("expected access logs enabled")
+	}
+
+	if attrs.AccessLogsBucket != "my-access-logs" {
+		t.Errorf("expected bucket 'my-access-logs', got %q", attrs.AccessLogsBucket)
+	}
+}
+
+func TestListenerRulesAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	lb, err := p.LB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := p.LB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: "vnet-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	li, err := p.LB.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rule, err := p.LB.CreateRule(ctx, lbdriver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    10,
+		Conditions:  []lbdriver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+		Actions:     []lbdriver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rule.ARN == "" {
+		t.Error("expected non-empty rule ARN")
+	}
+
+	rules, err := p.LB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule, got %d", len(rules))
+	}
+
+	if err := p.LB.DeleteRule(ctx, rule.ARN); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err = p.LB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules after deletion, got %d", len(rules))
+	}
+}
+
+func TestListenerRulesGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	lb, err := p.LB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := p.LB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: "vpc-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	li, err := p.LB.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rule, err := p.LB.CreateRule(ctx, lbdriver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    10,
+		Conditions:  []lbdriver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+		Actions:     []lbdriver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rule.ARN == "" {
+		t.Error("expected non-empty rule ARN")
+	}
+
+	rules, err := p.LB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule, got %d", len(rules))
+	}
+
+	if err := p.LB.DeleteRule(ctx, rule.ARN); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err = p.LB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules after deletion, got %d", len(rules))
+	}
 }

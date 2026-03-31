@@ -55,6 +55,9 @@ type containerMeta struct {
 	lifecycle  *driver.LifecycleConfig
 	multiparts *memstore.Store[*blobMultipartUpload]
 	versioning bool
+	policy     *driver.BucketPolicy
+	corsConfig *driver.CORSConfig
+	encryption *driver.EncryptionConfig
 }
 
 // Mock is an in-memory mock implementation of Azure Blob Storage.
@@ -618,4 +621,107 @@ func (m *Mock) GetBucketVersioning(_ context.Context, bucket string) (bool, erro
 	}
 
 	return ctr.versioning, nil
+}
+
+func (m *Mock) PutBucketPolicy(_ context.Context, bucket string, policy driver.BucketPolicy) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	p := policy
+	ctr.policy = &p
+
+	return nil
+}
+
+func (m *Mock) GetBucketPolicy(_ context.Context, bucket string) (*driver.BucketPolicy, error) {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	if ctr.policy == nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "no policy set for container %q", bucket)
+	}
+
+	p := *ctr.policy
+
+	return &p, nil
+}
+
+func (m *Mock) DeleteBucketPolicy(_ context.Context, bucket string) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	ctr.policy = nil
+
+	return nil
+}
+
+func (m *Mock) PutCORSConfig(_ context.Context, bucket string, cfg driver.CORSConfig) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	c := cfg
+	ctr.corsConfig = &c
+
+	return nil
+}
+
+func (m *Mock) GetCORSConfig(_ context.Context, bucket string) (*driver.CORSConfig, error) {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	if ctr.corsConfig == nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "no CORS config set for container %q", bucket)
+	}
+
+	c := *ctr.corsConfig
+
+	return &c, nil
+}
+
+func (m *Mock) DeleteCORSConfig(_ context.Context, bucket string) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	ctr.corsConfig = nil
+
+	return nil
+}
+
+func (m *Mock) PutEncryptionConfig(_ context.Context, bucket string, cfg driver.EncryptionConfig) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	e := cfg
+	ctr.encryption = &e
+
+	return nil
+}
+
+func (m *Mock) GetEncryptionConfig(_ context.Context, bucket string) (*driver.EncryptionConfig, error) {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	if ctr.encryption == nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "no encryption config set for container %q", bucket)
+	}
+
+	e := *ctr.encryption
+
+	return &e, nil
 }

@@ -19,7 +19,9 @@ type mockDriver struct {
 	lbs          map[string]*driver.LBInfo
 	targetGroups map[string]*driver.TargetGroupInfo
 	listeners    map[string]*driver.ListenerInfo
+	rules        map[string]*driver.RuleInfo
 	targets      map[string][]driver.TargetHealth
+	attrs        map[string]driver.LBAttributes
 	seq          int
 }
 
@@ -28,7 +30,9 @@ func newMockDriver() *mockDriver {
 		lbs:          make(map[string]*driver.LBInfo),
 		targetGroups: make(map[string]*driver.TargetGroupInfo),
 		listeners:    make(map[string]*driver.ListenerInfo),
+		rules:        make(map[string]*driver.RuleInfo),
 		targets:      make(map[string][]driver.TargetHealth),
+		attrs:        make(map[string]driver.LBAttributes),
 	}
 }
 
@@ -199,6 +203,83 @@ func (m *mockDriver) SetTargetHealth(_ context.Context, tgARN, targetID, state s
 	}
 
 	return fmt.Errorf("target not found")
+}
+
+func (m *mockDriver) CreateRule(_ context.Context, config driver.RuleConfig) (*driver.RuleInfo, error) {
+	if _, ok := m.listeners[config.ListenerARN]; !ok {
+		return nil, fmt.Errorf("listener not found")
+	}
+
+	arn := "arn:rule/" + m.nextID("rule")
+	info := &driver.RuleInfo{
+		ARN: arn, ListenerARN: config.ListenerARN, Priority: config.Priority,
+		Conditions: config.Conditions, Actions: config.Actions,
+	}
+	m.rules[arn] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteRule(_ context.Context, ruleARN string) error {
+	if _, ok := m.rules[ruleARN]; !ok {
+		return fmt.Errorf("rule not found")
+	}
+
+	delete(m.rules, ruleARN)
+
+	return nil
+}
+
+func (m *mockDriver) DescribeRules(_ context.Context, listenerARN string) ([]driver.RuleInfo, error) {
+	var result []driver.RuleInfo
+
+	for _, r := range m.rules {
+		if r.ListenerARN == listenerARN {
+			result = append(result, *r)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) ModifyListener(_ context.Context, input driver.ModifyListenerInput) error {
+	li, ok := m.listeners[input.ListenerARN]
+	if !ok {
+		return fmt.Errorf("listener not found")
+	}
+
+	if input.Port != 0 {
+		li.Port = input.Port
+	}
+
+	if input.Protocol != "" {
+		li.Protocol = input.Protocol
+	}
+
+	return nil
+}
+
+func (m *mockDriver) GetLBAttributes(_ context.Context, lbARN string) (*driver.LBAttributes, error) {
+	if _, ok := m.lbs[lbARN]; !ok {
+		return nil, fmt.Errorf("lb not found")
+	}
+
+	attrs, ok := m.attrs[lbARN]
+	if !ok {
+		attrs = driver.LBAttributes{IdleTimeout: 60}
+	}
+
+	return &attrs, nil
+}
+
+func (m *mockDriver) PutLBAttributes(_ context.Context, lbARN string, attrs driver.LBAttributes) error {
+	if _, ok := m.lbs[lbARN]; !ok {
+		return fmt.Errorf("lb not found")
+	}
+
+	m.attrs[lbARN] = attrs
+
+	return nil
 }
 
 func newTestLB(opts ...Option) *LB {

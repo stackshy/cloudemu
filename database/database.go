@@ -135,6 +135,22 @@ func (db *Database) GetItem(ctx context.Context, table string, key map[string]an
 	return out.(map[string]any), nil
 }
 
+func (db *Database) UpdateItem(ctx context.Context, input driver.UpdateItemInput) (map[string]any, error) {
+	out, err := db.do(ctx, "UpdateItem", map[string]any{"table": input.Table}, func() (any, error) {
+		return db.driver.UpdateItem(ctx, input)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if out == nil {
+		return nil, nil
+	}
+
+	return out.(map[string]any), nil
+}
+
 func (db *Database) DeleteItem(ctx context.Context, table string, key map[string]any) error {
 	_, err := db.do(ctx, "DeleteItem", map[string]any{"table": table}, func() (any, error) {
 		return nil, db.driver.DeleteItem(ctx, table, key)

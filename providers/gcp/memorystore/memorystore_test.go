@@ -390,3 +390,123 @@ func TestMatchPattern(t *testing.T) {
 		})
 	}
 }
+
+func TestExpire(t *testing.T) {
+	m, fc := newTestMock()
+	ctx := context.Background()
+	createTestCache(t, m, "c1")
+
+	require.NoError(t, m.Set(ctx, "c1", "k1", []byte("val"), 0))
+
+	ttl, err := m.GetTTL(ctx, "c1", "k1")
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(-1), ttl)
+
+	require.NoError(t, m.Expire(ctx, "c1", "k1", 1*time.Hour))
+
+	ttl, err = m.GetTTL(ctx, "c1", "k1")
+	require.NoError(t, err)
+	assert.True(t, ttl > 0 && ttl <= 1*time.Hour)
+
+	fc.Advance(2 * time.Hour)
+
+	_, err = m.Get(ctx, "c1", "k1")
+	require.Error(t, err)
+}
+
+func TestPersist(t *testing.T) {
+	m, fc := newTestMock()
+	ctx := context.Background()
+	createTestCache(t, m, "c1")
+
+	require.NoError(t, m.Set(ctx, "c1", "k1", []byte("val"), 1*time.Hour))
+	require.NoError(t, m.Persist(ctx, "c1", "k1"))
+
+	ttl, err := m.GetTTL(ctx, "c1", "k1")
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(-1), ttl)
+
+	fc.Advance(2 * time.Hour)
+
+	item, err := m.Get(ctx, "c1", "k1")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("val"), item.Value)
+}
+
+func TestIncr(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestCache(t, m, "c1")
+
+	val, err := m.Incr(ctx, "c1", "counter")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), val)
+
+	val, err = m.Incr(ctx, "c1", "counter")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), val)
+}
+
+func TestIncrBy(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestCache(t, m, "c1")
+
+	require.NoError(t, m.Set(ctx, "c1", "counter", []byte("10"), 0))
+
+	val, err := m.IncrBy(ctx, "c1", "counter", 5)
+	require.NoError(t, err)
+	assert.Equal(t, int64(15), val)
+}
+
+func TestDecr(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestCache(t, m, "c1")
+
+	require.NoError(t, m.Set(ctx, "c1", "counter", []byte("10"), 0))
+
+	val, err := m.Decr(ctx, "c1", "counter")
+	require.NoError(t, err)
+	assert.Equal(t, int64(9), val)
+}
+
+func TestDecrBy(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestCache(t, m, "c1")
+
+	require.NoError(t, m.Set(ctx, "c1", "counter", []byte("20"), 0))
+
+	val, err := m.DecrBy(ctx, "c1", "counter", 7)
+	require.NoError(t, err)
+	assert.Equal(t, int64(13), val)
+}
+
+func TestIncrNonInteger(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestCache(t, m, "c1")
+
+	require.NoError(t, m.Set(ctx, "c1", "k1", []byte("not-a-number"), 0))
+
+	_, err := m.Incr(ctx, "c1", "k1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not an integer")
+}
+
+func TestIncrPreservesTTL(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	createTestCache(t, m, "c1")
+
+	require.NoError(t, m.Set(ctx, "c1", "counter", []byte("5"), 1*time.Hour))
+
+	val, err := m.IncrBy(ctx, "c1", "counter", 3)
+	require.NoError(t, err)
+	assert.Equal(t, int64(8), val)
+
+	ttl, err := m.GetTTL(ctx, "c1", "counter")
+	require.NoError(t, err)
+	assert.True(t, ttl > 0)
+}
