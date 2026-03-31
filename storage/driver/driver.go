@@ -98,6 +98,41 @@ type UploadPart struct {
 	Size       int64
 }
 
+// BucketPolicy represents a bucket access policy.
+type BucketPolicy struct {
+	Version    string
+	Statements []PolicyStatement
+}
+
+// PolicyStatement represents a single statement in a bucket policy.
+type PolicyStatement struct {
+	Effect    string   // "Allow" or "Deny"
+	Principal string   // "*" or specific principal
+	Actions   []string // e.g., "s3:GetObject"
+	Resources []string // e.g., "arn:aws:s3:::bucket/*"
+}
+
+// CORSRule defines a CORS rule for a bucket.
+type CORSRule struct {
+	AllowedOrigins []string
+	AllowedMethods []string
+	AllowedHeaders []string
+	ExposeHeaders  []string
+	MaxAgeSeconds  int
+}
+
+// CORSConfig is a set of CORS rules for a bucket.
+type CORSConfig struct {
+	Rules []CORSRule
+}
+
+// EncryptionConfig describes the default encryption for a bucket.
+type EncryptionConfig struct {
+	Enabled   bool
+	Algorithm string // "AES256" or "aws:kms"
+	KeyID     string // KMS key ID (optional)
+}
+
 // Bucket is the interface that storage provider implementations must satisfy.
 type Bucket interface {
 	CreateBucket(ctx context.Context, name string) error
@@ -129,4 +164,18 @@ type Bucket interface {
 	// Versioning
 	SetBucketVersioning(ctx context.Context, bucket string, enabled bool) error
 	GetBucketVersioning(ctx context.Context, bucket string) (bool, error)
+
+	// Bucket Policy
+	PutBucketPolicy(ctx context.Context, bucket string, policy BucketPolicy) error
+	GetBucketPolicy(ctx context.Context, bucket string) (*BucketPolicy, error)
+	DeleteBucketPolicy(ctx context.Context, bucket string) error
+
+	// CORS
+	PutCORSConfig(ctx context.Context, bucket string, config CORSConfig) error
+	GetCORSConfig(ctx context.Context, bucket string) (*CORSConfig, error)
+	DeleteCORSConfig(ctx context.Context, bucket string) error
+
+	// Encryption
+	PutEncryptionConfig(ctx context.Context, bucket string, config EncryptionConfig) error
+	GetEncryptionConfig(ctx context.Context, bucket string) (*EncryptionConfig, error)
 }

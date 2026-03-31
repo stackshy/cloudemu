@@ -6244,3 +6244,238 @@ func TestCacheIncrDecrGCP(t *testing.T) {
 		t.Errorf("expected 5, got %d", val)
 	}
 }
+
+func TestBucketPolicyAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.S3.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := storagedriver.BucketPolicy{
+		Version: "2012-10-17",
+		Statements: []storagedriver.PolicyStatement{
+			{Effect: "Allow", Principal: "*", Actions: []string{"s3:GetObject"}, Resources: []string{"arn:aws:s3:::b1/*"}},
+		},
+	}
+
+	if err := p.S3.PutBucketPolicy(ctx, "b1", policy); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.S3.GetBucketPolicy(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Version != "2012-10-17" {
+		t.Errorf("expected version '2012-10-17', got %q", got.Version)
+	}
+
+	if len(got.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(got.Statements))
+	}
+
+	if got.Statements[0].Effect != "Allow" {
+		t.Errorf("expected effect 'Allow', got %q", got.Statements[0].Effect)
+	}
+
+	if err := p.S3.DeleteBucketPolicy(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.S3.GetBucketPolicy(ctx, "b1")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+}
+
+func TestBucketPolicyAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	if err := p.BlobStorage.CreateBucket(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := storagedriver.BucketPolicy{
+		Version: "1.0",
+		Statements: []storagedriver.PolicyStatement{
+			{Effect: "Allow", Principal: "*", Actions: []string{"read"}, Resources: []string{"c1/*"}},
+		},
+	}
+
+	if err := p.BlobStorage.PutBucketPolicy(ctx, "c1", policy); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.BlobStorage.GetBucketPolicy(ctx, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(got.Statements))
+	}
+}
+
+func TestBucketPolicyGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	if err := p.GCS.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := storagedriver.BucketPolicy{
+		Version: "1",
+		Statements: []storagedriver.PolicyStatement{
+			{Effect: "Allow", Principal: "allUsers", Actions: []string{"storage.objects.get"}, Resources: []string{"b1/*"}},
+		},
+	}
+
+	if err := p.GCS.PutBucketPolicy(ctx, "b1", policy); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.GCS.GetBucketPolicy(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(got.Statements))
+	}
+}
+
+func TestCORSConfigAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.S3.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	cors := storagedriver.CORSConfig{
+		Rules: []storagedriver.CORSRule{
+			{
+				AllowedOrigins: []string{"https://example.com"},
+				AllowedMethods: []string{"GET", "PUT"},
+				AllowedHeaders: []string{"*"},
+				MaxAgeSeconds:  3600,
+			},
+		},
+	}
+
+	if err := p.S3.PutCORSConfig(ctx, "b1", cors); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.S3.GetCORSConfig(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Rules) != 1 {
+		t.Fatalf("expected 1 CORS rule, got %d", len(got.Rules))
+	}
+
+	if got.Rules[0].AllowedOrigins[0] != "https://example.com" {
+		t.Errorf("expected origin 'https://example.com', got %q", got.Rules[0].AllowedOrigins[0])
+	}
+
+	if err := p.S3.DeleteCORSConfig(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.S3.GetCORSConfig(ctx, "b1")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+}
+
+func TestEncryptionConfigAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	if err := p.S3.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	enc := storagedriver.EncryptionConfig{
+		Enabled:   true,
+		Algorithm: "AES256",
+	}
+
+	if err := p.S3.PutEncryptionConfig(ctx, "b1", enc); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.S3.GetEncryptionConfig(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Enabled {
+		t.Error("expected encryption enabled")
+	}
+
+	if got.Algorithm != "AES256" {
+		t.Errorf("expected algorithm 'AES256', got %q", got.Algorithm)
+	}
+}
+
+func TestEncryptionConfigAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	if err := p.BlobStorage.CreateBucket(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+
+	enc := storagedriver.EncryptionConfig{
+		Enabled:   true,
+		Algorithm: "AES256",
+	}
+
+	if err := p.BlobStorage.PutEncryptionConfig(ctx, "c1", enc); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.BlobStorage.GetEncryptionConfig(ctx, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Enabled {
+		t.Error("expected encryption enabled")
+	}
+}
+
+func TestEncryptionConfigGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	if err := p.GCS.CreateBucket(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+
+	enc := storagedriver.EncryptionConfig{
+		Enabled:   true,
+		Algorithm: "AES256",
+	}
+
+	if err := p.GCS.PutEncryptionConfig(ctx, "b1", enc); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.GCS.GetEncryptionConfig(ctx, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Enabled {
+		t.Error("expected encryption enabled")
+	}
+}
