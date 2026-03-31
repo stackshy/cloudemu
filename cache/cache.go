@@ -178,3 +178,81 @@ func (c *Cache) FlushAll(ctx context.Context, cacheName string) error {
 	_, err := c.do(ctx, "FlushAll", cacheName, func() (any, error) { return nil, c.driver.FlushAll(ctx, cacheName) })
 	return err
 }
+
+// Expire sets a TTL on an existing key.
+func (c *Cache) Expire(ctx context.Context, cacheName, key string, ttl time.Duration) error {
+	_, err := c.do(ctx, "Expire", map[string]string{"cache": cacheName, "key": key}, func() (any, error) {
+		return nil, c.driver.Expire(ctx, cacheName, key, ttl)
+	})
+
+	return err
+}
+
+// GetTTL returns the remaining TTL for a key. Returns -1 if the key has no TTL.
+func (c *Cache) GetTTL(ctx context.Context, cacheName, key string) (time.Duration, error) {
+	out, err := c.do(ctx, "GetTTL", map[string]string{"cache": cacheName, "key": key}, func() (any, error) {
+		return c.driver.GetTTL(ctx, cacheName, key)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(time.Duration), nil
+}
+
+// Persist removes the TTL from a key, making it persistent.
+func (c *Cache) Persist(ctx context.Context, cacheName, key string) error {
+	_, err := c.do(ctx, "Persist", map[string]string{"cache": cacheName, "key": key}, func() (any, error) {
+		return nil, c.driver.Persist(ctx, cacheName, key)
+	})
+
+	return err
+}
+
+// Incr atomically increments the integer value of a key by 1.
+func (c *Cache) Incr(ctx context.Context, cacheName, key string) (int64, error) {
+	out, err := c.do(ctx, "Incr", map[string]string{"cache": cacheName, "key": key}, func() (any, error) {
+		return c.driver.Incr(ctx, cacheName, key)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int64), nil
+}
+
+// IncrBy atomically increments the integer value of a key by delta.
+func (c *Cache) IncrBy(ctx context.Context, cacheName, key string, delta int64) (int64, error) {
+	out, err := c.do(ctx, "IncrBy", map[string]string{"cache": cacheName, "key": key}, func() (any, error) {
+		return c.driver.IncrBy(ctx, cacheName, key, delta)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int64), nil
+}
+
+// Decr atomically decrements the integer value of a key by 1.
+func (c *Cache) Decr(ctx context.Context, cacheName, key string) (int64, error) {
+	out, err := c.do(ctx, "Decr", map[string]string{"cache": cacheName, "key": key}, func() (any, error) {
+		return c.driver.Decr(ctx, cacheName, key)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int64), nil
+}
+
+// DecrBy atomically decrements the integer value of a key by delta.
+func (c *Cache) DecrBy(ctx context.Context, cacheName, key string, delta int64) (int64, error) {
+	out, err := c.do(ctx, "DecrBy", map[string]string{"cache": cacheName, "key": key}, func() (any, error) {
+		return c.driver.DecrBy(ctx, cacheName, key, delta)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int64), nil
+}
