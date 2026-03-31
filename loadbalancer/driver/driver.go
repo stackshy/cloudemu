@@ -64,6 +64,52 @@ type ListenerInfo struct {
 	TargetGroupARN string
 }
 
+// RuleCondition describes a condition for a listener rule (e.g., path-pattern or host-header).
+type RuleCondition struct {
+	Field  string // "path-pattern" or "host-header"
+	Values []string
+}
+
+// RuleAction describes an action for a listener rule (e.g., forward to a target group).
+type RuleAction struct {
+	Type           string // "forward"
+	TargetGroupARN string
+}
+
+// RuleConfig describes a listener rule to create.
+type RuleConfig struct {
+	ListenerARN string
+	Priority    int
+	Conditions  []RuleCondition
+	Actions     []RuleAction
+}
+
+// RuleInfo describes a listener rule.
+type RuleInfo struct {
+	ARN         string
+	ListenerARN string
+	Priority    int
+	Conditions  []RuleCondition
+	Actions     []RuleAction
+	IsDefault   bool
+}
+
+// ModifyListenerInput describes modifications to apply to a listener.
+type ModifyListenerInput struct {
+	ListenerARN    string
+	Port           int
+	Protocol       string
+	DefaultActions []RuleAction
+}
+
+// LBAttributes describes configurable attributes of a load balancer.
+type LBAttributes struct {
+	IdleTimeout        int
+	DeletionProtection bool
+	AccessLogsEnabled  bool
+	AccessLogsBucket   string
+}
+
 // Target identifies a target (e.g., instance) in a target group.
 type Target struct {
 	ID   string
@@ -90,6 +136,15 @@ type LoadBalancer interface {
 	CreateListener(ctx context.Context, config ListenerConfig) (*ListenerInfo, error)
 	DeleteListener(ctx context.Context, arn string) error
 	DescribeListeners(ctx context.Context, lbARN string) ([]ListenerInfo, error)
+
+	CreateRule(ctx context.Context, config RuleConfig) (*RuleInfo, error)
+	DeleteRule(ctx context.Context, ruleARN string) error
+	DescribeRules(ctx context.Context, listenerARN string) ([]RuleInfo, error)
+
+	ModifyListener(ctx context.Context, input ModifyListenerInput) error
+
+	GetLBAttributes(ctx context.Context, lbARN string) (*LBAttributes, error)
+	PutLBAttributes(ctx context.Context, lbARN string, attrs LBAttributes) error
 
 	RegisterTargets(ctx context.Context, targetGroupARN string, targets []Target) error
 	DeregisterTargets(ctx context.Context, targetGroupARN string, targets []Target) error

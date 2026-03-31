@@ -154,6 +154,48 @@ func (lb *LB) DescribeListeners(ctx context.Context, lbARN string) ([]driver.Lis
 	return out.([]driver.ListenerInfo), nil
 }
 
+func (lb *LB) CreateRule(ctx context.Context, config driver.RuleConfig) (*driver.RuleInfo, error) {
+	out, err := lb.do(ctx, "CreateRule", config, func() (any, error) { return lb.driver.CreateRule(ctx, config) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.RuleInfo), nil
+}
+
+func (lb *LB) DeleteRule(ctx context.Context, ruleARN string) error {
+	_, err := lb.do(ctx, "DeleteRule", ruleARN, func() (any, error) { return nil, lb.driver.DeleteRule(ctx, ruleARN) })
+	return err
+}
+
+func (lb *LB) DescribeRules(ctx context.Context, listenerARN string) ([]driver.RuleInfo, error) {
+	out, err := lb.do(ctx, "DescribeRules", listenerARN, func() (any, error) { return lb.driver.DescribeRules(ctx, listenerARN) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.RuleInfo), nil
+}
+
+func (lb *LB) ModifyListener(ctx context.Context, input driver.ModifyListenerInput) error {
+	_, err := lb.do(ctx, "ModifyListener", input, func() (any, error) { return nil, lb.driver.ModifyListener(ctx, input) })
+	return err
+}
+
+func (lb *LB) GetLBAttributes(ctx context.Context, lbARN string) (*driver.LBAttributes, error) {
+	out, err := lb.do(ctx, "GetLBAttributes", lbARN, func() (any, error) { return lb.driver.GetLBAttributes(ctx, lbARN) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.LBAttributes), nil
+}
+
+func (lb *LB) PutLBAttributes(ctx context.Context, lbARN string, attrs driver.LBAttributes) error {
+	_, err := lb.do(ctx, "PutLBAttributes", lbARN, func() (any, error) { return nil, lb.driver.PutLBAttributes(ctx, lbARN, attrs) })
+	return err
+}
+
 func (lb *LB) RegisterTargets(ctx context.Context, tgARN string, targets []driver.Target) error {
 	_, err := lb.do(ctx, "RegisterTargets", tgARN, func() (any, error) { return nil, lb.driver.RegisterTargets(ctx, tgARN, targets) })
 	return err

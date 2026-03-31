@@ -16,15 +16,22 @@ import (
 // Compile-time check that Mock implements driver.LoadBalancer.
 var _ driver.LoadBalancer = (*Mock)(nil)
 
+// defaultIdleTimeoutSec is the default idle timeout for load balancers in seconds.
+const defaultIdleTimeoutSec = 60
+
 // Mock is an in-memory mock implementation of the GCP Cloud Load Balancing service.
 type Mock struct {
 	lbs       *memstore.Store[driver.LBInfo]
 	tgs       *memstore.Store[driver.TargetGroupInfo]
 	listeners *memstore.Store[driver.ListenerInfo]
+	rules     *memstore.Store[driver.RuleInfo]
 	opts      *config.Options
 
 	healthMu sync.RWMutex
 	health   map[string]map[string]*driver.TargetHealth // tgARN -> targetID -> health
+
+	attrsMu sync.RWMutex
+	attrs   map[string]driver.LBAttributes // lbARN -> attributes
 }
 
 // New creates a new Cloud Load Balancing mock with the given configuration options.
@@ -33,8 +40,10 @@ func New(opts *config.Options) *Mock {
 		lbs:       memstore.New[driver.LBInfo](),
 		tgs:       memstore.New[driver.TargetGroupInfo](),
 		listeners: memstore.New[driver.ListenerInfo](),
+		rules:     memstore.New[driver.RuleInfo](),
 		opts:      opts,
 		health:    make(map[string]map[string]*driver.TargetHealth),
+		attrs:     make(map[string]driver.LBAttributes),
 	}
 }
 
@@ -186,6 +195,18 @@ func describeResources[T any](store *memstore.Store[T], keys []string) []T {
 	return results
 }
 
+// filterToSlice returns a slice of values from the store that match the predicate.
+func filterToSlice[T any](store *memstore.Store[T], pred func(string, T) bool) []T {
+	filtered := store.Filter(pred)
+
+	results := make([]T, 0, len(filtered))
+	for _, item := range filtered {
+		results = append(results, item)
+	}
+
+	return results
+}
+
 // CreateListener creates a new URL map / listener on a load balancer.
 func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*driver.ListenerInfo, error) {
 	if _, ok := m.lbs.Get(cfg.LBARN); !ok {
@@ -225,16 +246,113 @@ func (m *Mock) DescribeListeners(_ context.Context, lbARN string) ([]driver.List
 		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", lbARN)
 	}
 
-	filtered := m.listeners.Filter(func(_ string, li driver.ListenerInfo) bool {
+	return filterToSlice(m.listeners, func(_ string, li driver.ListenerInfo) bool {
 		return li.LBARN == lbARN
-	})
+	}), nil
+}
 
-	results := make([]driver.ListenerInfo, 0, len(filtered))
-	for _, li := range filtered {
-		results = append(results, li)
+// CreateRule creates a new URL map path rule for a listener.
+func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.RuleInfo, error) {
+	if _, ok := m.listeners.Get(cfg.ListenerARN); !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "listener %q not found", cfg.ListenerARN)
 	}
 
-	return results, nil
+	arn := idgen.GCPID(m.opts.ProjectID, "pathRules", idgen.GenerateID("rule-"))
+
+	conditions := make([]driver.RuleCondition, len(cfg.Conditions))
+	copy(conditions, cfg.Conditions)
+
+	actions := make([]driver.RuleAction, len(cfg.Actions))
+	copy(actions, cfg.Actions)
+
+	rule := driver.RuleInfo{
+		ARN:         arn,
+		ListenerARN: cfg.ListenerARN,
+		Priority:    cfg.Priority,
+		Conditions:  conditions,
+		Actions:     actions,
+		IsDefault:   false,
+	}
+
+	m.rules.Set(arn, rule)
+
+	result := rule
+
+	return &result, nil
+}
+
+// DeleteRule deletes a URL map path rule by resource name (ARN).
+func (m *Mock) DeleteRule(_ context.Context, ruleARN string) error {
+	if !m.rules.Delete(ruleARN) {
+		return cerrors.Newf(cerrors.NotFound, "rule %q not found", ruleARN)
+	}
+
+	return nil
+}
+
+// DescribeRules returns all path rules for the specified listener.
+func (m *Mock) DescribeRules(_ context.Context, listenerARN string) ([]driver.RuleInfo, error) {
+	if _, ok := m.listeners.Get(listenerARN); !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "listener %q not found", listenerARN)
+	}
+
+	return filterToSlice(m.rules, func(_ string, r driver.RuleInfo) bool {
+		return r.ListenerARN == listenerARN
+	}), nil
+}
+
+// ModifyListener modifies an existing URL map listener's port, protocol, or default actions.
+func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInput) error {
+	li, ok := m.listeners.Get(input.ListenerARN)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "listener %q not found", input.ListenerARN)
+	}
+
+	if input.Port != 0 {
+		li.Port = input.Port
+	}
+
+	if input.Protocol != "" {
+		li.Protocol = input.Protocol
+	}
+
+	if len(input.DefaultActions) > 0 {
+		li.TargetGroupARN = input.DefaultActions[0].TargetGroupARN
+	}
+
+	m.listeners.Set(input.ListenerARN, li)
+
+	return nil
+}
+
+// GetLBAttributes returns the attributes for a load balancer.
+func (m *Mock) GetLBAttributes(_ context.Context, lbARN string) (*driver.LBAttributes, error) {
+	if _, ok := m.lbs.Get(lbARN); !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", lbARN)
+	}
+
+	m.attrsMu.RLock()
+	defer m.attrsMu.RUnlock()
+
+	attrs, ok := m.attrs[lbARN]
+	if !ok {
+		attrs = driver.LBAttributes{IdleTimeout: defaultIdleTimeoutSec}
+	}
+
+	return &attrs, nil
+}
+
+// PutLBAttributes sets the attributes for a load balancer.
+func (m *Mock) PutLBAttributes(_ context.Context, lbARN string, attrs driver.LBAttributes) error {
+	if _, ok := m.lbs.Get(lbARN); !ok {
+		return cerrors.Newf(cerrors.NotFound, "load balancer %q not found", lbARN)
+	}
+
+	m.attrsMu.Lock()
+	m.attrs[lbARN] = attrs
+	m.attrsMu.Unlock()
+
+	return nil
 }
 
 // RegisterTargets adds instances to a backend service (target group).
