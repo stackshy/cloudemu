@@ -45,4 +45,15 @@ type Cache interface {
 	Delete(ctx context.Context, cacheName, key string) error
 	Keys(ctx context.Context, cacheName, pattern string) ([]string, error)
 	FlushAll(ctx context.Context, cacheName string) error
+
+	// TTL management
+	Expire(ctx context.Context, cacheName, key string, ttl time.Duration) error
+	GetTTL(ctx context.Context, cacheName, key string) (time.Duration, error)
+	Persist(ctx context.Context, cacheName, key string) error
+
+	// Atomic counters
+	Incr(ctx context.Context, cacheName, key string) (int64, error)
+	IncrBy(ctx context.Context, cacheName, key string, delta int64) (int64, error)
+	Decr(ctx context.Context, cacheName, key string) (int64, error)
+	DecrBy(ctx context.Context, cacheName, key string, delta int64) (int64, error)
 }

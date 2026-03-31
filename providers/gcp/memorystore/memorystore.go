@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/stackshy/cloudemu/cache/driver"
@@ -290,6 +291,136 @@ func (m *Mock) FlushAll(_ context.Context, cacheName string) error {
 	cd.items.Clear()
 
 	return nil
+}
+
+// Expire sets a TTL on an existing key.
+func (m *Mock) Expire(_ context.Context, cacheName, key string, ttl time.Duration) error {
+	cd, ok := m.caches.Get(cacheName)
+	if !ok {
+		return errors.Newf(errors.NotFound, "cache %q not found", cacheName)
+	}
+
+	item, ok := cd.items.Get(key)
+	if !ok || (item.HasTTL && m.opts.Clock.Now().After(item.ExpiresAt)) {
+		return errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
+	}
+
+	item.HasTTL = true
+	item.ExpiresAt = m.opts.Clock.Now().Add(ttl)
+	cd.items.Set(key, item)
+
+	return nil
+}
+
+// GetTTL returns the remaining TTL for a key. Returns -1 if the key has no TTL.
+func (m *Mock) GetTTL(_ context.Context, cacheName, key string) (time.Duration, error) {
+	cd, ok := m.caches.Get(cacheName)
+	if !ok {
+		return 0, errors.Newf(errors.NotFound, "cache %q not found", cacheName)
+	}
+
+	item, ok := cd.items.Get(key)
+	if !ok || (item.HasTTL && m.opts.Clock.Now().After(item.ExpiresAt)) {
+		return 0, errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
+	}
+
+	if !item.HasTTL {
+		return -1, nil
+	}
+
+	return item.ExpiresAt.Sub(m.opts.Clock.Now()), nil
+}
+
+// Persist removes the TTL from a key, making it persistent.
+func (m *Mock) Persist(_ context.Context, cacheName, key string) error {
+	cd, ok := m.caches.Get(cacheName)
+	if !ok {
+		return errors.Newf(errors.NotFound, "cache %q not found", cacheName)
+	}
+
+	item, ok := cd.items.Get(key)
+	if !ok || (item.HasTTL && m.opts.Clock.Now().After(item.ExpiresAt)) {
+		return errors.Newf(errors.NotFound, "key %q not found in cache %q", key, cacheName)
+	}
+
+	item.HasTTL = false
+	item.ExpiresAt = time.Time{}
+	cd.items.Set(key, item)
+
+	return nil
+}
+
+// Incr atomically increments the integer value of a key by 1.
+func (m *Mock) Incr(ctx context.Context, cacheName, key string) (int64, error) {
+	return m.IncrBy(ctx, cacheName, key, 1)
+}
+
+// IncrBy atomically increments the integer value of a key by delta.
+func (m *Mock) IncrBy(ctx context.Context, cacheName, key string, delta int64) (int64, error) {
+	cd, ok := m.caches.Get(cacheName)
+	if !ok {
+		return 0, errors.Newf(errors.NotFound, "cache %q not found", cacheName)
+	}
+
+	newVal, err := applyDelta(cd, key, delta, m.opts.Clock.Now())
+	if err != nil {
+		return 0, err
+	}
+
+	m.emitMetric(ctx, "commands/total", 1, map[string]string{"instance_id": cacheName})
+
+	return newVal, nil
+}
+
+// Decr atomically decrements the integer value of a key by 1.
+func (m *Mock) Decr(ctx context.Context, cacheName, key string) (int64, error) {
+	return m.DecrBy(ctx, cacheName, key, 1)
+}
+
+// DecrBy atomically decrements the integer value of a key by delta.
+func (m *Mock) DecrBy(ctx context.Context, cacheName, key string, delta int64) (int64, error) {
+	cd, ok := m.caches.Get(cacheName)
+	if !ok {
+		return 0, errors.Newf(errors.NotFound, "cache %q not found", cacheName)
+	}
+
+	newVal, err := applyDelta(cd, key, -delta, m.opts.Clock.Now())
+	if err != nil {
+		return 0, err
+	}
+
+	m.emitMetric(ctx, "commands/total", 1, map[string]string{"instance_id": cacheName})
+
+	return newVal, nil
+}
+
+func applyDelta(cd *cacheData, key string, delta int64, now time.Time) (int64, error) {
+	item, ok := cd.items.Get(key)
+
+	var current int64
+
+	if ok && (!item.HasTTL || !now.After(item.ExpiresAt)) {
+		val, err := strconv.ParseInt(string(item.Value), 10, 64)
+		if err != nil {
+			return 0, errors.New(errors.InvalidArgument, "value is not an integer")
+		}
+
+		current = val
+	}
+
+	newVal := current + delta
+	newItem := cacheItem{
+		Value: []byte(strconv.FormatInt(newVal, 10)),
+	}
+
+	if ok && item.HasTTL && !now.After(item.ExpiresAt) {
+		newItem.HasTTL = true
+		newItem.ExpiresAt = item.ExpiresAt
+	}
+
+	cd.items.Set(key, newItem)
+
+	return newVal, nil
 }
 
 // matchPattern matches a key against a glob-like pattern.

@@ -5968,3 +5968,279 @@ func TestUpdateItemWithStreams(t *testing.T) {
 		t.Errorf("expected new image val='new', got %v", modifyRec.NewImage["val"])
 	}
 }
+
+func TestCacheExpireAndPersistAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.ElastiCache.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.ElastiCache.Set(ctx, "c1", "k1", []byte("val"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err := p.ElastiCache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl != -1 {
+		t.Errorf("expected TTL -1, got %v", ttl)
+	}
+
+	if err := p.ElastiCache.Expire(ctx, "c1", "k1", 1*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err = p.ElastiCache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl <= 0 {
+		t.Errorf("expected positive TTL, got %v", ttl)
+	}
+
+	if err := p.ElastiCache.Persist(ctx, "c1", "k1"); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err = p.ElastiCache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl != -1 {
+		t.Errorf("expected TTL -1 after Persist, got %v", ttl)
+	}
+}
+
+func TestCacheExpireAndPersistAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	_, err := p.Cache.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Cache.Set(ctx, "c1", "k1", []byte("val"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Cache.Expire(ctx, "c1", "k1", 1*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err := p.Cache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl <= 0 {
+		t.Errorf("expected positive TTL, got %v", ttl)
+	}
+
+	if err := p.Cache.Persist(ctx, "c1", "k1"); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err = p.Cache.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl != -1 {
+		t.Errorf("expected TTL -1 after Persist, got %v", ttl)
+	}
+}
+
+func TestCacheExpireAndPersistGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	_, err := p.Memorystore.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Memorystore.Set(ctx, "c1", "k1", []byte("val"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Memorystore.Expire(ctx, "c1", "k1", 1*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err := p.Memorystore.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl <= 0 {
+		t.Errorf("expected positive TTL, got %v", ttl)
+	}
+
+	if err := p.Memorystore.Persist(ctx, "c1", "k1"); err != nil {
+		t.Fatal(err)
+	}
+
+	ttl, err = p.Memorystore.GetTTL(ctx, "c1", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ttl != -1 {
+		t.Errorf("expected TTL -1 after Persist, got %v", ttl)
+	}
+}
+
+func TestCacheIncrDecrAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.ElastiCache.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := p.ElastiCache.Incr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 1 {
+		t.Errorf("expected 1, got %d", val)
+	}
+
+	val, err = p.ElastiCache.IncrBy(ctx, "c1", "counter", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 10 {
+		t.Errorf("expected 10, got %d", val)
+	}
+
+	val, err = p.ElastiCache.Decr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 9 {
+		t.Errorf("expected 9, got %d", val)
+	}
+
+	val, err = p.ElastiCache.DecrBy(ctx, "c1", "counter", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 5 {
+		t.Errorf("expected 5, got %d", val)
+	}
+
+	item, err := p.ElastiCache.Get(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(item.Value) != "5" {
+		t.Errorf("expected '5', got %q", string(item.Value))
+	}
+}
+
+func TestCacheIncrDecrAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	_, err := p.Cache.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := p.Cache.Incr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 1 {
+		t.Errorf("expected 1, got %d", val)
+	}
+
+	val, err = p.Cache.IncrBy(ctx, "c1", "counter", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 10 {
+		t.Errorf("expected 10, got %d", val)
+	}
+
+	val, err = p.Cache.Decr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 9 {
+		t.Errorf("expected 9, got %d", val)
+	}
+
+	val, err = p.Cache.DecrBy(ctx, "c1", "counter", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 5 {
+		t.Errorf("expected 5, got %d", val)
+	}
+}
+
+func TestCacheIncrDecrGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	_, err := p.Memorystore.CreateCache(ctx, cachedriver.CacheConfig{Name: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := p.Memorystore.Incr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 1 {
+		t.Errorf("expected 1, got %d", val)
+	}
+
+	val, err = p.Memorystore.IncrBy(ctx, "c1", "counter", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 10 {
+		t.Errorf("expected 10, got %d", val)
+	}
+
+	val, err = p.Memorystore.Decr(ctx, "c1", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 9 {
+		t.Errorf("expected 9, got %d", val)
+	}
+
+	val, err = p.Memorystore.DecrBy(ctx, "c1", "counter", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if val != 5 {
+		t.Errorf("expected 5, got %d", val)
+	}
+}
