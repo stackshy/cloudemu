@@ -18,7 +18,11 @@ import (
 
 var _ driver.Compute = (*Mock)(nil)
 
-const ipSegmentSize = 256
+const (
+	ipSegmentSize  = 256
+	stateAvailable = "available"
+	stateInUse     = "in-use"
+)
 
 type lifecycleTransition struct {
 	intermediateState string
@@ -82,9 +86,15 @@ type Mock struct {
 	asgs         *memstore.Store[*asgData]
 	spotRequests *memstore.Store[*driver.SpotInstanceRequest]
 	templates    *memstore.Store[*driver.LaunchTemplate]
+	volumes      *memstore.Store[*driver.VolumeInfo]
+	snapshots    *memstore.Store[*driver.SnapshotInfo]
+	images       *memstore.Store[*driver.ImageInfo]
 	sm           *statemachine.Machine
 	opts         *config.Options
 	ipCounter    atomic.Int64
+	volCounter   atomic.Int64
+	snapCounter  atomic.Int64
+	amiCounter   atomic.Int64
 	monitoring   mondriver.Monitoring
 }
 
@@ -155,6 +165,9 @@ func New(opts *config.Options) *Mock {
 		asgs:         memstore.New[*asgData](),
 		spotRequests: memstore.New[*driver.SpotInstanceRequest](),
 		templates:    memstore.New[*driver.LaunchTemplate](),
+		volumes:      memstore.New[*driver.VolumeInfo](),
+		snapshots:    memstore.New[*driver.SnapshotInfo](),
+		images:       memstore.New[*driver.ImageInfo](),
 		sm:           statemachine.New(compute.VMTransitions()),
 		opts:         opts,
 	}
@@ -349,4 +362,197 @@ func (m *Mock) ModifyInstance(_ context.Context, instanceID string, input driver
 	}
 
 	return nil
+}
+
+// CreateVolume creates a new EBS volume.
+func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
+	id := fmt.Sprintf("vol-%012d", m.volCounter.Add(1))
+
+	volType := cfg.VolumeType
+	if volType == "" {
+		volType = "gp3"
+	}
+
+	az := cfg.AvailabilityZone
+	if az == "" {
+		az = m.opts.Region + "a"
+	}
+
+	vol := &driver.VolumeInfo{
+		ID:               id,
+		Size:             cfg.Size,
+		VolumeType:       volType,
+		State:            stateAvailable,
+		AvailabilityZone: az,
+		CreatedAt:        m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:             copyTags(cfg.Tags),
+	}
+
+	m.volumes.Set(id, vol)
+
+	result := *vol
+
+	return &result, nil
+}
+
+// DeleteVolume deletes an EBS volume.
+func (m *Mock) DeleteVolume(_ context.Context, id string) error {
+	vol, ok := m.volumes.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "volume %q not found", id)
+	}
+
+	if vol.State == stateInUse {
+		return cerrors.Newf(cerrors.FailedPrecondition, "volume %q is attached", id)
+	}
+
+	m.volumes.Delete(id)
+
+	return nil
+}
+
+// DescribeVolumes returns volumes matching the given IDs.
+func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.VolumeInfo, error) {
+	return describeResources(m.volumes, ids), nil
+}
+
+// AttachVolume attaches a volume to an instance.
+func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
+	vol, ok := m.volumes.Get(volumeID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "volume %q not found", volumeID)
+	}
+
+	if vol.State == stateInUse {
+		return cerrors.Newf(cerrors.FailedPrecondition, "volume %q already attached", volumeID)
+	}
+
+	if _, ok := m.instances.Get(instanceID); !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	vol.State = stateInUse
+	vol.AttachedTo = instanceID
+	vol.Device = device
+
+	return nil
+}
+
+// DetachVolume detaches a volume from an instance.
+func (m *Mock) DetachVolume(_ context.Context, volumeID string) error {
+	vol, ok := m.volumes.Get(volumeID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "volume %q not found", volumeID)
+	}
+
+	if vol.State != "in-use" {
+		return cerrors.Newf(cerrors.FailedPrecondition, "volume %q is not attached", volumeID)
+	}
+
+	vol.State = stateAvailable
+	vol.AttachedTo = ""
+	vol.Device = ""
+
+	return nil
+}
+
+// CreateSnapshot creates a snapshot from a volume.
+func (m *Mock) CreateSnapshot(_ context.Context, cfg driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
+	vol, ok := m.volumes.Get(cfg.VolumeID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "volume %q not found", cfg.VolumeID)
+	}
+
+	id := fmt.Sprintf("snap-%012d", m.snapCounter.Add(1))
+
+	snap := &driver.SnapshotInfo{
+		ID:          id,
+		VolumeID:    cfg.VolumeID,
+		State:       "completed",
+		Description: cfg.Description,
+		Size:        vol.Size,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:        copyTags(cfg.Tags),
+	}
+
+	m.snapshots.Set(id, snap)
+
+	result := *snap
+
+	return &result, nil
+}
+
+// DeleteSnapshot deletes a snapshot.
+func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
+	if !m.snapshots.Delete(id) {
+		return cerrors.Newf(cerrors.NotFound, "snapshot %q not found", id)
+	}
+
+	return nil
+}
+
+// DescribeSnapshots returns snapshots matching the given IDs.
+func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.SnapshotInfo, error) {
+	return describeResources(m.snapshots, ids), nil
+}
+
+// CreateImage creates a machine image from an instance.
+func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
+	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", cfg.InstanceID)
+	}
+
+	id := fmt.Sprintf("ami-%012d", m.amiCounter.Add(1))
+
+	img := &driver.ImageInfo{
+		ID:          id,
+		Name:        cfg.Name,
+		State:       "available",
+		Description: cfg.Description,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:        copyTags(cfg.Tags),
+	}
+
+	m.images.Set(id, img)
+
+	result := *img
+
+	return &result, nil
+}
+
+// DeregisterImage deregisters a machine image.
+func (m *Mock) DeregisterImage(_ context.Context, id string) error {
+	if !m.images.Delete(id) {
+		return cerrors.Newf(cerrors.NotFound, "image %q not found", id)
+	}
+
+	return nil
+}
+
+// DescribeImages returns images matching the given IDs.
+func (m *Mock) DescribeImages(_ context.Context, ids []string) ([]driver.ImageInfo, error) {
+	return describeResources(m.images, ids), nil
+}
+
+func describeResources[T any](store *memstore.Store[*T], ids []string) []T {
+	if len(ids) == 0 {
+		all := store.All()
+		result := make([]T, 0, len(all))
+
+		for _, v := range all {
+			result = append(result, *v)
+		}
+
+		return result
+	}
+
+	var result []T
+
+	for _, id := range ids {
+		if v, ok := store.Get(id); ok {
+			result = append(result, *v)
+		}
+	}
+
+	return result
 }

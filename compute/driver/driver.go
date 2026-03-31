@@ -115,6 +115,63 @@ type LaunchTemplateConfig struct {
 	InstanceConfig InstanceConfig
 }
 
+// VolumeConfig describes a volume to create.
+type VolumeConfig struct {
+	Size             int
+	VolumeType       string
+	AvailabilityZone string
+	Tags             map[string]string
+}
+
+// VolumeInfo describes a block storage volume.
+type VolumeInfo struct {
+	ID               string
+	Size             int
+	VolumeType       string
+	State            string // "available", "in-use"
+	AvailabilityZone string
+	AttachedTo       string
+	Device           string
+	CreatedAt        string
+	Tags             map[string]string
+}
+
+// SnapshotConfig describes a snapshot to create.
+type SnapshotConfig struct {
+	VolumeID    string
+	Description string
+	Tags        map[string]string
+}
+
+// SnapshotInfo describes a volume snapshot.
+type SnapshotInfo struct {
+	ID          string
+	VolumeID    string
+	State       string // "completed", "pending"
+	Description string
+	Size        int
+	CreatedAt   string
+	Tags        map[string]string
+}
+
+// ImageConfig describes a machine image to create.
+type ImageConfig struct {
+	InstanceID  string
+	Name        string
+	Description string
+	Tags        map[string]string
+}
+
+// ImageInfo describes a machine image.
+type ImageInfo struct {
+	ID          string
+	Name        string
+	State       string // "available", "deregistered"
+	Description string
+	CreatedAt   string
+	Tags        map[string]string
+}
+
 // Compute is the interface that compute provider implementations must satisfy.
 type Compute interface {
 	RunInstances(ctx context.Context, config InstanceConfig, count int) ([]Instance, error)
@@ -148,4 +205,21 @@ type Compute interface {
 	DeleteLaunchTemplate(ctx context.Context, name string) error
 	GetLaunchTemplate(ctx context.Context, name string) (*LaunchTemplate, error)
 	ListLaunchTemplates(ctx context.Context) ([]LaunchTemplate, error)
+
+	// Volumes
+	CreateVolume(ctx context.Context, config VolumeConfig) (*VolumeInfo, error)
+	DeleteVolume(ctx context.Context, id string) error
+	DescribeVolumes(ctx context.Context, ids []string) ([]VolumeInfo, error)
+	AttachVolume(ctx context.Context, volumeID, instanceID, device string) error
+	DetachVolume(ctx context.Context, volumeID string) error
+
+	// Snapshots
+	CreateSnapshot(ctx context.Context, config SnapshotConfig) (*SnapshotInfo, error)
+	DeleteSnapshot(ctx context.Context, id string) error
+	DescribeSnapshots(ctx context.Context, ids []string) ([]SnapshotInfo, error)
+
+	// Images
+	CreateImage(ctx context.Context, config ImageConfig) (*ImageInfo, error)
+	DeregisterImage(ctx context.Context, id string) error
+	DescribeImages(ctx context.Context, ids []string) ([]ImageInfo, error)
 }
