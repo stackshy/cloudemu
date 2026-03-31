@@ -58,6 +58,9 @@ type Mock struct {
 	flowLogs       *memstore.Store[*flowLogData]
 	routeTables    *memstore.Store[*routeTableData]
 	networkACLs    *memstore.Store[*networkACLData]
+	igws           *memstore.Store[*igwData]
+	eips           *memstore.Store[*eipData]
+	rtAssocs       *memstore.Store[*rtAssocData]
 	opts           *config.Options
 }
 
@@ -72,6 +75,9 @@ func New(opts *config.Options) *Mock {
 		flowLogs:       memstore.New[*flowLogData](),
 		routeTables:    memstore.New[*routeTableData](),
 		networkACLs:    memstore.New[*networkACLData](),
+		igws:           memstore.New[*igwData](),
+		eips:           memstore.New[*eipData](),
+		rtAssocs:       memstore.New[*rtAssocData](),
 		opts:           opts,
 	}
 }
