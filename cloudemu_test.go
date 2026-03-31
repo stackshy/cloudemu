@@ -1985,6 +1985,281 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 }
 
 // ==============================================================================
+// Integration Tests: FilterLogEvents and MetricFilters
+// ==============================================================================
+
+func TestFilterLogEventsAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testFilterLogEvents(t, ctx, p.CloudWatchLogs)
+}
+
+func TestFilterLogEventsAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testFilterLogEvents(t, ctx, p.LogAnalytics)
+}
+
+func TestFilterLogEventsGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testFilterLogEvents(t, ctx, p.CloudLogging)
+}
+
+func testFilterLogEvents(
+	t *testing.T,
+	ctx context.Context,
+	d loggingdriver.Logging,
+) {
+	t.Helper()
+
+	_, err := d.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{
+		Name: "filter-test",
+	})
+	if err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	_, err = d.CreateLogStream(ctx, "filter-test", "stream-a")
+	if err != nil {
+		t.Fatalf("CreateLogStream (a): %v", err)
+	}
+
+	_, err = d.CreateLogStream(ctx, "filter-test", "stream-b")
+	if err != nil {
+		t.Fatalf("CreateLogStream (b): %v", err)
+	}
+
+	now := time.Now().UTC()
+
+	eventsA := []loggingdriver.LogEvent{
+		{Timestamp: now.Add(-3 * time.Minute), Message: "INFO starting"},
+		{Timestamp: now.Add(-2 * time.Minute), Message: "ERROR disk full"},
+		{Timestamp: now.Add(-time.Minute), Message: "INFO recovered"},
+	}
+
+	eventsB := []loggingdriver.LogEvent{
+		{Timestamp: now.Add(-2 * time.Minute), Message: "ERROR timeout"},
+		{Timestamp: now, Message: "INFO healthy"},
+	}
+
+	err = d.PutLogEvents(ctx, "filter-test", "stream-a", eventsA)
+	if err != nil {
+		t.Fatalf("PutLogEvents (a): %v", err)
+	}
+
+	err = d.PutLogEvents(ctx, "filter-test", "stream-b", eventsB)
+	if err != nil {
+		t.Fatalf("PutLogEvents (b): %v", err)
+	}
+
+	// Filter by pattern across all streams.
+	results, err := d.FilterLogEvents(ctx, &loggingdriver.FilterLogEventsInput{
+		LogGroup:      "filter-test",
+		FilterPattern: "ERROR",
+	})
+	if err != nil {
+		t.Fatalf("FilterLogEvents (ERROR): %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("expected 2 ERROR events, got %d", len(results))
+	}
+
+	for _, r := range results {
+		if r.LogStream == "" {
+			t.Error("expected non-empty LogStream on filtered event")
+		}
+	}
+
+	// Filter by specific stream.
+	streamResults, err := d.FilterLogEvents(
+		ctx, &loggingdriver.FilterLogEventsInput{
+			LogGroup:      "filter-test",
+			LogStream:     "stream-a",
+			FilterPattern: "ERROR",
+		},
+	)
+	if err != nil {
+		t.Fatalf("FilterLogEvents (stream-a ERROR): %v", err)
+	}
+
+	if len(streamResults) != 1 {
+		t.Errorf("expected 1 event from stream-a, got %d", len(streamResults))
+	}
+
+	// Filter by time range (-2.5min to -0.5min captures 3 events).
+	timeResults, err := d.FilterLogEvents(
+		ctx, &loggingdriver.FilterLogEventsInput{
+			LogGroup:  "filter-test",
+			StartTime: now.Add(-150 * time.Second),
+			EndTime:   now.Add(-30 * time.Second),
+		},
+	)
+	if err != nil {
+		t.Fatalf("FilterLogEvents (time range): %v", err)
+	}
+
+	if len(timeResults) != 3 {
+		t.Errorf("expected 3 events in time range, got %d", len(timeResults))
+	}
+
+	// Filter with limit.
+	limitResults, err := d.FilterLogEvents(
+		ctx, &loggingdriver.FilterLogEventsInput{
+			LogGroup: "filter-test",
+			Limit:    2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("FilterLogEvents (limit): %v", err)
+	}
+
+	if len(limitResults) > 2 {
+		t.Errorf("expected at most 2 events, got %d", len(limitResults))
+	}
+
+	// Empty result for non-matching pattern.
+	emptyResults, err := d.FilterLogEvents(
+		ctx, &loggingdriver.FilterLogEventsInput{
+			LogGroup:      "filter-test",
+			FilterPattern: "CRITICAL",
+		},
+	)
+	if err != nil {
+		t.Fatalf("FilterLogEvents (no match): %v", err)
+	}
+
+	if len(emptyResults) != 0 {
+		t.Errorf("expected 0 events, got %d", len(emptyResults))
+	}
+
+	// Not found log group.
+	_, err = d.FilterLogEvents(ctx, &loggingdriver.FilterLogEventsInput{
+		LogGroup: "nonexistent",
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+func TestMetricFiltersAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	d := p.CloudWatchLogs
+
+	_, err := d.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{
+		Name: "mf-test",
+	})
+	if err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	// Put a metric filter.
+	err = d.PutMetricFilter(ctx, &loggingdriver.MetricFilterConfig{
+		Name:            "error-count",
+		LogGroup:        "mf-test",
+		FilterPattern:   "ERROR",
+		MetricName:      "ErrorCount",
+		MetricNamespace: "App/Errors",
+		MetricValue:     "1",
+	})
+	if err != nil {
+		t.Fatalf("PutMetricFilter: %v", err)
+	}
+
+	// Describe metric filters.
+	filters, err := d.DescribeMetricFilters(ctx, "mf-test")
+	if err != nil {
+		t.Fatalf("DescribeMetricFilters: %v", err)
+	}
+
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 filter, got %d", len(filters))
+	}
+
+	f := filters[0]
+	if f.Name != "error-count" {
+		t.Errorf("expected name 'error-count', got %q", f.Name)
+	}
+
+	if f.FilterPattern != "ERROR" {
+		t.Errorf("expected pattern 'ERROR', got %q", f.FilterPattern)
+	}
+
+	if f.MetricName != "ErrorCount" {
+		t.Errorf("expected metric 'ErrorCount', got %q", f.MetricName)
+	}
+
+	if f.MetricNamespace != "App/Errors" {
+		t.Errorf(
+			"expected namespace 'App/Errors', got %q",
+			f.MetricNamespace,
+		)
+	}
+
+	if f.CreatedAt.IsZero() {
+		t.Error("expected non-zero CreatedAt")
+	}
+
+	// Update existing filter by name.
+	err = d.PutMetricFilter(ctx, &loggingdriver.MetricFilterConfig{
+		Name:            "error-count",
+		LogGroup:        "mf-test",
+		FilterPattern:   "FATAL",
+		MetricName:      "FatalCount",
+		MetricNamespace: "App/Errors",
+		MetricValue:     "1",
+	})
+	if err != nil {
+		t.Fatalf("PutMetricFilter (update): %v", err)
+	}
+
+	filters, err = d.DescribeMetricFilters(ctx, "mf-test")
+	if err != nil {
+		t.Fatalf("DescribeMetricFilters after update: %v", err)
+	}
+
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 filter after update, got %d", len(filters))
+	}
+
+	if filters[0].FilterPattern != "FATAL" {
+		t.Errorf(
+			"expected updated pattern 'FATAL', got %q",
+			filters[0].FilterPattern,
+		)
+	}
+
+	// Delete metric filter.
+	err = d.DeleteMetricFilter(ctx, "mf-test", "error-count")
+	if err != nil {
+		t.Fatalf("DeleteMetricFilter: %v", err)
+	}
+
+	filters, err = d.DescribeMetricFilters(ctx, "mf-test")
+	if err != nil {
+		t.Fatalf("DescribeMetricFilters after delete: %v", err)
+	}
+
+	if len(filters) != 0 {
+		t.Errorf("expected 0 filters after delete, got %d", len(filters))
+	}
+
+	// Delete non-existent filter.
+	err = d.DeleteMetricFilter(ctx, "mf-test", "nonexistent")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+
+	// Describe on non-existent group.
+	_, err = d.DescribeMetricFilters(ctx, "no-such-group")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+// ==============================================================================
 // Integration Tests: Notification (AWS SNS, Azure Notification Hubs, GCP FCM)
 // ==============================================================================
 
