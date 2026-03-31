@@ -4,6 +4,7 @@ package awsiam
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -14,18 +15,23 @@ import (
 	"github.com/stackshy/cloudemu/internal/memstore"
 )
 
+const timeFormat = "2006-01-02T15:04:05Z"
+
 // Compile-time check that Mock implements driver.IAM.
 var _ driver.IAM = (*Mock)(nil)
 
 // Mock is an in-memory mock implementation of the AWS IAM service.
 type Mock struct {
-	users    *memstore.Store[*userData]
-	roles    *memstore.Store[*roleData]
-	policies *memstore.Store[*policyData]
+	users      *memstore.Store[*userData]
+	roles      *memstore.Store[*roleData]
+	policies   *memstore.Store[*policyData]
+	groups     *memstore.Store[*groupData]
+	accessKeys *memstore.Store[*accessKeyData]
 
 	mu           sync.RWMutex
 	userPolicies map[string]map[string]bool // userName -> set of policy ARNs
 	rolePolicies map[string]map[string]bool // roleName -> set of policy ARNs
+	groupUsers   map[string]map[string]bool // groupName -> set of userNames
 
 	opts *config.Options
 }
@@ -57,14 +63,32 @@ type policyData struct {
 	Description    string
 }
 
+type groupData struct {
+	Name      string
+	ARN       string
+	Path      string
+	CreatedAt string
+}
+
+type accessKeyData struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	UserName        string
+	Status          string
+	CreatedAt       string
+}
+
 // New creates a new IAM mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		users:        memstore.New[*userData](),
 		roles:        memstore.New[*roleData](),
 		policies:     memstore.New[*policyData](),
+		groups:       memstore.New[*groupData](),
+		accessKeys:   memstore.New[*accessKeyData](),
 		userPolicies: make(map[string]map[string]bool),
 		rolePolicies: make(map[string]map[string]bool),
+		groupUsers:   make(map[string]map[string]bool),
 		opts:         opts,
 	}
 }
@@ -94,7 +118,7 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 		ARN:       arn,
 		Path:      path,
 		Tags:      tags,
-		CreatedAt: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		CreatedAt: m.opts.Clock.Now().UTC().Format(timeFormat),
 	}
 	m.users.Set(cfg.Name, u)
 
@@ -540,6 +564,256 @@ func (m *Mock) CheckPermission(_ context.Context, principal, action, resource st
 	return hasAllow, nil
 }
 
+// CreateGroup creates a new IAM group.
+func (m *Mock) CreateGroup(
+	_ context.Context, cfg driver.GroupConfig,
+) (*driver.GroupInfo, error) {
+	if cfg.Name == "" {
+		return nil, errors.Newf(
+			errors.InvalidArgument, "group name is required",
+		)
+	}
+
+	if m.groups.Has(cfg.Name) {
+		return nil, errors.Newf(
+			errors.AlreadyExists, "group %q already exists", cfg.Name,
+		)
+	}
+
+	path := cfg.Path
+	if path == "" {
+		path = "/"
+	}
+
+	arn := idgen.AWSARN(
+		"iam", "", m.opts.AccountID, "group/"+cfg.Name,
+	)
+
+	g := &groupData{
+		Name:      cfg.Name,
+		ARN:       arn,
+		Path:      path,
+		CreatedAt: m.opts.Clock.Now().UTC().Format(timeFormat),
+	}
+	m.groups.Set(cfg.Name, g)
+
+	info := toGroupInfo(g)
+
+	return &info, nil
+}
+
+// DeleteGroup deletes the IAM group with the given name.
+func (m *Mock) DeleteGroup(_ context.Context, name string) error {
+	if !m.groups.Delete(name) {
+		return errors.Newf(
+			errors.NotFound, "group %q not found", name,
+		)
+	}
+
+	m.mu.Lock()
+	delete(m.groupUsers, name)
+	m.mu.Unlock()
+
+	return nil
+}
+
+// GetGroup returns the IAM group with the given name.
+func (m *Mock) GetGroup(
+	_ context.Context, name string,
+) (*driver.GroupInfo, error) {
+	g, ok := m.groups.Get(name)
+	if !ok {
+		return nil, errors.Newf(
+			errors.NotFound, "group %q not found", name,
+		)
+	}
+
+	info := toGroupInfo(g)
+
+	return &info, nil
+}
+
+// ListGroups returns all IAM groups.
+func (m *Mock) ListGroups(
+	_ context.Context,
+) ([]driver.GroupInfo, error) {
+	all := m.groups.All()
+	result := make([]driver.GroupInfo, 0, len(all))
+
+	for _, g := range all {
+		result = append(result, toGroupInfo(g))
+	}
+
+	return result, nil
+}
+
+// AddUserToGroup adds a user to a group.
+func (m *Mock) AddUserToGroup(
+	_ context.Context, userName, groupName string,
+) error {
+	if !m.users.Has(userName) {
+		return errors.Newf(
+			errors.NotFound, "user %q not found", userName,
+		)
+	}
+
+	if !m.groups.Has(groupName) {
+		return errors.Newf(
+			errors.NotFound, "group %q not found", groupName,
+		)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.groupUsers[groupName] == nil {
+		m.groupUsers[groupName] = make(map[string]bool)
+	}
+
+	m.groupUsers[groupName][userName] = true
+
+	return nil
+}
+
+// RemoveUserFromGroup removes a user from a group.
+func (m *Mock) RemoveUserFromGroup(
+	_ context.Context, userName, groupName string,
+) error {
+	if !m.groups.Has(groupName) {
+		return errors.Newf(
+			errors.NotFound, "group %q not found", groupName,
+		)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	members, ok := m.groupUsers[groupName]
+	if !ok || !members[userName] {
+		return errors.Newf(
+			errors.NotFound,
+			"user %q is not a member of group %q",
+			userName, groupName,
+		)
+	}
+
+	delete(members, userName)
+
+	return nil
+}
+
+// ListGroupsForUser returns all groups a user belongs to.
+func (m *Mock) ListGroupsForUser(
+	_ context.Context, userName string,
+) ([]driver.GroupInfo, error) {
+	if !m.users.Has(userName) {
+		return nil, errors.Newf(
+			errors.NotFound, "user %q not found", userName,
+		)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []driver.GroupInfo
+
+	for groupName, members := range m.groupUsers {
+		if !members[userName] {
+			continue
+		}
+
+		g, ok := m.groups.Get(groupName)
+		if !ok {
+			continue
+		}
+
+		result = append(result, toGroupInfo(g))
+	}
+
+	return result, nil
+}
+
+// CreateAccessKey creates a new access key for the given user.
+func (m *Mock) CreateAccessKey(
+	_ context.Context, cfg driver.AccessKeyConfig,
+) (*driver.AccessKeyInfo, error) {
+	if cfg.UserName == "" {
+		return nil, errors.Newf(
+			errors.InvalidArgument, "user name is required",
+		)
+	}
+
+	if !m.users.Has(cfg.UserName) {
+		return nil, errors.Newf(
+			errors.NotFound, "user %q not found", cfg.UserName,
+		)
+	}
+
+	keyID := fmt.Sprintf("AKIA%s", idgen.GenerateID(""))
+	secret := fmt.Sprintf("secret-%s", idgen.GenerateID(""))
+
+	ak := &accessKeyData{
+		AccessKeyID:     keyID,
+		SecretAccessKey: secret,
+		UserName:        cfg.UserName,
+		Status:          "Active",
+		CreatedAt:       m.opts.Clock.Now().UTC().Format(timeFormat),
+	}
+	m.accessKeys.Set(keyID, ak)
+
+	info := toAccessKeyInfo(ak)
+
+	return &info, nil
+}
+
+// DeleteAccessKey deletes an access key.
+func (m *Mock) DeleteAccessKey(
+	_ context.Context, userName, accessKeyID string,
+) error {
+	ak, ok := m.accessKeys.Get(accessKeyID)
+	if !ok {
+		return errors.Newf(
+			errors.NotFound,
+			"access key %q not found", accessKeyID,
+		)
+	}
+
+	if ak.UserName != userName {
+		return errors.Newf(
+			errors.NotFound,
+			"access key %q not found for user %q",
+			accessKeyID, userName,
+		)
+	}
+
+	m.accessKeys.Delete(accessKeyID)
+
+	return nil
+}
+
+// ListAccessKeys returns all access keys for the given user.
+func (m *Mock) ListAccessKeys(
+	_ context.Context, userName string,
+) ([]driver.AccessKeyInfo, error) {
+	if !m.users.Has(userName) {
+		return nil, errors.Newf(
+			errors.NotFound, "user %q not found", userName,
+		)
+	}
+
+	all := m.accessKeys.All()
+
+	var result []driver.AccessKeyInfo
+
+	for _, ak := range all {
+		if ak.UserName == userName {
+			result = append(result, toAccessKeyInfo(ak))
+		}
+	}
+
+	return result, nil
+}
+
 // copyTags creates a shallow copy of a tags map.
 func copyTags(tags map[string]string) map[string]string {
 	if tags == nil {
@@ -584,5 +858,24 @@ func toPolicyInfo(p *policyData) driver.PolicyInfo {
 		Path:           p.Path,
 		PolicyDocument: p.PolicyDocument,
 		Description:    p.Description,
+	}
+}
+
+func toGroupInfo(g *groupData) driver.GroupInfo {
+	return driver.GroupInfo{
+		Name:      g.Name,
+		Path:      g.Path,
+		ARN:       g.ARN,
+		CreatedAt: g.CreatedAt,
+	}
+}
+
+func toAccessKeyInfo(ak *accessKeyData) driver.AccessKeyInfo {
+	return driver.AccessKeyInfo{
+		AccessKeyID:     ak.AccessKeyID,
+		SecretAccessKey: ak.SecretAccessKey,
+		UserName:        ak.UserName,
+		Status:          ak.Status,
+		CreatedAt:       ak.CreatedAt,
 	}
 }

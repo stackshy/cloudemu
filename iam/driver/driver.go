@@ -56,6 +56,34 @@ type PolicyInfo struct {
 	Description    string
 }
 
+// GroupConfig describes a group to create.
+type GroupConfig struct {
+	Name string
+	Path string
+}
+
+// GroupInfo describes an IAM group.
+type GroupInfo struct {
+	Name      string
+	Path      string
+	ARN       string
+	CreatedAt string
+}
+
+// AccessKeyConfig describes an access key to create.
+type AccessKeyConfig struct {
+	UserName string
+}
+
+// AccessKeyInfo describes an IAM access key.
+type AccessKeyInfo struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	UserName        string
+	Status          string
+	CreatedAt       string
+}
+
 // IAM is the interface that IAM provider implementations must satisfy.
 type IAM interface {
 	CreateUser(ctx context.Context, config UserConfig) (*UserInfo, error)
@@ -82,4 +110,17 @@ type IAM interface {
 	ListAttachedRolePolicies(ctx context.Context, roleName string) ([]string, error)
 
 	CheckPermission(ctx context.Context, principal, action, resource string) (bool, error)
+
+	CreateGroup(ctx context.Context, config GroupConfig) (*GroupInfo, error)
+	DeleteGroup(ctx context.Context, name string) error
+	GetGroup(ctx context.Context, name string) (*GroupInfo, error)
+	ListGroups(ctx context.Context) ([]GroupInfo, error)
+
+	AddUserToGroup(ctx context.Context, userName, groupName string) error
+	RemoveUserFromGroup(ctx context.Context, userName, groupName string) error
+	ListGroupsForUser(ctx context.Context, userName string) ([]GroupInfo, error)
+
+	CreateAccessKey(ctx context.Context, config AccessKeyConfig) (*AccessKeyInfo, error)
+	DeleteAccessKey(ctx context.Context, userName, accessKeyID string) error
+	ListAccessKeys(ctx context.Context, userName string) ([]AccessKeyInfo, error)
 }

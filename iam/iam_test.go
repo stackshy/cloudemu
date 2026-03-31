@@ -19,8 +19,11 @@ type mockDriver struct {
 	users          map[string]*driver.UserInfo
 	roles          map[string]*driver.RoleInfo
 	policies       map[string]*driver.PolicyInfo
+	groups         map[string]*driver.GroupInfo
+	accessKeys     map[string]*driver.AccessKeyInfo
 	userPolicies   map[string][]string // userName -> []policyARN
 	rolePolicies   map[string][]string // roleName -> []policyARN
+	groupUsers     map[string]map[string]bool
 	seq            int
 }
 
@@ -29,8 +32,11 @@ func newMockDriver() *mockDriver {
 		users:        make(map[string]*driver.UserInfo),
 		roles:        make(map[string]*driver.RoleInfo),
 		policies:     make(map[string]*driver.PolicyInfo),
+		groups:       make(map[string]*driver.GroupInfo),
+		accessKeys:   make(map[string]*driver.AccessKeyInfo),
 		userPolicies: make(map[string][]string),
 		rolePolicies: make(map[string][]string),
+		groupUsers:   make(map[string]map[string]bool),
 	}
 }
 
@@ -251,6 +257,153 @@ func (m *mockDriver) CheckPermission(_ context.Context, principal, _, _ string) 
 	}
 
 	return true, nil
+}
+
+func (m *mockDriver) CreateGroup(_ context.Context, cfg driver.GroupConfig) (*driver.GroupInfo, error) {
+	if cfg.Name == "" {
+		return nil, fmt.Errorf("name required")
+	}
+
+	if _, ok := m.groups[cfg.Name]; ok {
+		return nil, fmt.Errorf("already exists")
+	}
+
+	info := &driver.GroupInfo{
+		Name: cfg.Name,
+		Path: cfg.Path,
+		ARN:  "arn:aws:iam::123456789012:group/" + cfg.Name,
+	}
+	m.groups[cfg.Name] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteGroup(_ context.Context, name string) error {
+	if _, ok := m.groups[name]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.groups, name)
+	delete(m.groupUsers, name)
+
+	return nil
+}
+
+func (m *mockDriver) GetGroup(_ context.Context, name string) (*driver.GroupInfo, error) {
+	info, ok := m.groups[name]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+
+	return info, nil
+}
+
+func (m *mockDriver) ListGroups(_ context.Context) ([]driver.GroupInfo, error) {
+	result := make([]driver.GroupInfo, 0, len(m.groups))
+	for _, g := range m.groups {
+		result = append(result, *g)
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) AddUserToGroup(_ context.Context, userName, groupName string) error {
+	if _, ok := m.users[userName]; !ok {
+		return fmt.Errorf("user not found")
+	}
+
+	if _, ok := m.groups[groupName]; !ok {
+		return fmt.Errorf("group not found")
+	}
+
+	if m.groupUsers[groupName] == nil {
+		m.groupUsers[groupName] = make(map[string]bool)
+	}
+
+	m.groupUsers[groupName][userName] = true
+
+	return nil
+}
+
+func (m *mockDriver) RemoveUserFromGroup(_ context.Context, userName, groupName string) error {
+	if _, ok := m.groups[groupName]; !ok {
+		return fmt.Errorf("group not found")
+	}
+
+	members := m.groupUsers[groupName]
+	if !members[userName] {
+		return fmt.Errorf("not a member")
+	}
+
+	delete(members, userName)
+
+	return nil
+}
+
+func (m *mockDriver) ListGroupsForUser(_ context.Context, userName string) ([]driver.GroupInfo, error) {
+	if _, ok := m.users[userName]; !ok {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	var result []driver.GroupInfo
+
+	for gn, members := range m.groupUsers {
+		if members[userName] {
+			if g, ok := m.groups[gn]; ok {
+				result = append(result, *g)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) CreateAccessKey(_ context.Context, cfg driver.AccessKeyConfig) (*driver.AccessKeyInfo, error) {
+	if cfg.UserName == "" {
+		return nil, fmt.Errorf("user name required")
+	}
+
+	if _, ok := m.users[cfg.UserName]; !ok {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	keyID := m.nextID("AKIA")
+	info := &driver.AccessKeyInfo{
+		AccessKeyID:     keyID,
+		SecretAccessKey: "secret",
+		UserName:        cfg.UserName,
+		Status:          "Active",
+	}
+	m.accessKeys[keyID] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteAccessKey(_ context.Context, userName, accessKeyID string) error {
+	ak, ok := m.accessKeys[accessKeyID]
+	if !ok || ak.UserName != userName {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.accessKeys, accessKeyID)
+
+	return nil
+}
+
+func (m *mockDriver) ListAccessKeys(_ context.Context, userName string) ([]driver.AccessKeyInfo, error) {
+	if _, ok := m.users[userName]; !ok {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	var result []driver.AccessKeyInfo
+
+	for _, ak := range m.accessKeys {
+		if ak.UserName == userName {
+			result = append(result, *ak)
+		}
+	}
+
+	return result, nil
 }
 
 func newTestIAM(opts ...Option) *IAM {

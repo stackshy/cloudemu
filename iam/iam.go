@@ -244,3 +244,101 @@ func (i *IAM) CheckPermission(ctx context.Context, principal, action, resource s
 
 	return out.(bool), nil
 }
+
+func (i *IAM) CreateGroup(ctx context.Context, config driver.GroupConfig) (*driver.GroupInfo, error) {
+	out, err := i.do(ctx, "CreateGroup", config, func() (any, error) {
+		return i.driver.CreateGroup(ctx, config)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.GroupInfo), nil
+}
+
+func (i *IAM) DeleteGroup(ctx context.Context, name string) error {
+	_, err := i.do(ctx, "DeleteGroup", name, func() (any, error) {
+		return nil, i.driver.DeleteGroup(ctx, name)
+	})
+
+	return err
+}
+
+func (i *IAM) GetGroup(ctx context.Context, name string) (*driver.GroupInfo, error) {
+	out, err := i.do(ctx, "GetGroup", name, func() (any, error) {
+		return i.driver.GetGroup(ctx, name)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.GroupInfo), nil
+}
+
+func (i *IAM) ListGroups(ctx context.Context) ([]driver.GroupInfo, error) {
+	out, err := i.do(ctx, "ListGroups", nil, func() (any, error) {
+		return i.driver.ListGroups(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.GroupInfo), nil
+}
+
+func (i *IAM) AddUserToGroup(ctx context.Context, userName, groupName string) error {
+	_, err := i.do(ctx, "AddUserToGroup", userName, func() (any, error) {
+		return nil, i.driver.AddUserToGroup(ctx, userName, groupName)
+	})
+
+	return err
+}
+
+func (i *IAM) RemoveUserFromGroup(ctx context.Context, userName, groupName string) error {
+	_, err := i.do(ctx, "RemoveUserFromGroup", userName, func() (any, error) {
+		return nil, i.driver.RemoveUserFromGroup(ctx, userName, groupName)
+	})
+
+	return err
+}
+
+func (i *IAM) ListGroupsForUser(ctx context.Context, userName string) ([]driver.GroupInfo, error) {
+	out, err := i.do(ctx, "ListGroupsForUser", userName, func() (any, error) {
+		return i.driver.ListGroupsForUser(ctx, userName)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.GroupInfo), nil
+}
+
+func (i *IAM) CreateAccessKey(ctx context.Context, config driver.AccessKeyConfig) (*driver.AccessKeyInfo, error) {
+	out, err := i.do(ctx, "CreateAccessKey", config, func() (any, error) {
+		return i.driver.CreateAccessKey(ctx, config)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.AccessKeyInfo), nil
+}
+
+func (i *IAM) DeleteAccessKey(ctx context.Context, userName, accessKeyID string) error {
+	_, err := i.do(ctx, "DeleteAccessKey", userName, func() (any, error) {
+		return nil, i.driver.DeleteAccessKey(ctx, userName, accessKeyID)
+	})
+
+	return err
+}
+
+func (i *IAM) ListAccessKeys(ctx context.Context, userName string) ([]driver.AccessKeyInfo, error) {
+	out, err := i.do(ctx, "ListAccessKeys", userName, func() (any, error) {
+		return i.driver.ListAccessKeys(ctx, userName)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.AccessKeyInfo), nil
+}
