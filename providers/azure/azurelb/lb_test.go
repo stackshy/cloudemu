@@ -409,6 +409,163 @@ func TestDescribeTargetHealthNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestCreateRule(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	lbARN := createTestLB(t, m)
+	tgARN := createTestTargetGroup(t, m)
+
+	li, err := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lbARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tgARN,
+	})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		rule, ruleErr := m.CreateRule(ctx, driver.RuleConfig{
+			ListenerARN: li.ARN,
+			Priority:    10,
+			Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+			Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: tgARN}},
+		})
+		require.NoError(t, ruleErr)
+		assert.NotEmpty(t, rule.ARN)
+		assert.Equal(t, li.ARN, rule.ListenerARN)
+		assert.Equal(t, 10, rule.Priority)
+		assert.False(t, rule.IsDefault)
+	})
+
+	t.Run("listener not found", func(t *testing.T) {
+		_, ruleErr := m.CreateRule(ctx, driver.RuleConfig{ListenerARN: "missing"})
+		require.Error(t, ruleErr)
+		assert.Contains(t, ruleErr.Error(), "not found")
+	})
+}
+
+func TestDeleteRule(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	lbARN := createTestLB(t, m)
+
+	li, err := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lbARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	rule, err := m.CreateRule(ctx, driver.RuleConfig{ListenerARN: li.ARN, Priority: 10})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		require.NoError(t, m.DeleteRule(ctx, rule.ARN))
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := m.DeleteRule(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestDescribeRules(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	lbARN := createTestLB(t, m)
+	tgARN := createTestTargetGroup(t, m)
+
+	li, err := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lbARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tgARN,
+	})
+	require.NoError(t, err)
+
+	_, _ = m.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: li.ARN, Priority: 10,
+		Conditions: []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+		Actions:    []driver.RuleAction{{Type: "forward", TargetGroupARN: tgARN}},
+	})
+	_, _ = m.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: li.ARN, Priority: 20,
+		Conditions: []driver.RuleCondition{{Field: "host-header", Values: []string{"example.com"}}},
+		Actions:    []driver.RuleAction{{Type: "forward", TargetGroupARN: tgARN}},
+	})
+
+	t.Run("success", func(t *testing.T) {
+		rules, descErr := m.DescribeRules(ctx, li.ARN)
+		require.NoError(t, descErr)
+		assert.Len(t, rules, 2)
+	})
+
+	t.Run("listener not found", func(t *testing.T) {
+		_, descErr := m.DescribeRules(ctx, "missing")
+		require.Error(t, descErr)
+		assert.Contains(t, descErr.Error(), "not found")
+	})
+}
+
+func TestModifyListener(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	lbARN := createTestLB(t, m)
+	tgARN := createTestTargetGroup(t, m)
+
+	li, err := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lbARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tgARN,
+	})
+	require.NoError(t, err)
+
+	t.Run("modify port", func(t *testing.T) {
+		require.NoError(t, m.ModifyListener(ctx, driver.ModifyListenerInput{
+			ListenerARN: li.ARN, Port: 8080,
+		}))
+
+		listeners, _ := m.DescribeListeners(ctx, lbARN)
+		assert.Equal(t, 8080, listeners[0].Port)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := m.ModifyListener(ctx, driver.ModifyListenerInput{ListenerARN: "missing", Port: 80})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestLBAttributes(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	lbARN := createTestLB(t, m)
+
+	t.Run("default attributes", func(t *testing.T) {
+		attrs, err := m.GetLBAttributes(ctx, lbARN)
+		require.NoError(t, err)
+		assert.Equal(t, 60, attrs.IdleTimeout)
+		assert.False(t, attrs.DeletionProtection)
+	})
+
+	t.Run("put and get", func(t *testing.T) {
+		require.NoError(t, m.PutLBAttributes(ctx, lbARN, driver.LBAttributes{
+			IdleTimeout:        120,
+			DeletionProtection: true,
+			AccessLogsEnabled:  true,
+			AccessLogsBucket:   "my-logs",
+		}))
+
+		attrs, err := m.GetLBAttributes(ctx, lbARN)
+		require.NoError(t, err)
+		assert.Equal(t, 120, attrs.IdleTimeout)
+		assert.True(t, attrs.DeletionProtection)
+		assert.True(t, attrs.AccessLogsEnabled)
+		assert.Equal(t, "my-logs", attrs.AccessLogsBucket)
+	})
+
+	t.Run("LB not found get", func(t *testing.T) {
+		_, err := m.GetLBAttributes(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("LB not found put", func(t *testing.T) {
+		err := m.PutLBAttributes(ctx, "missing", driver.LBAttributes{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
 func TestDeleteLBCascadesListeners(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

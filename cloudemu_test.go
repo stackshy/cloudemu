@@ -26,6 +26,8 @@ import (
 	"github.com/stackshy/cloudemu/storage"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+
 	cachedriver "github.com/stackshy/cloudemu/cache/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
@@ -6477,5 +6479,307 @@ func TestEncryptionConfigGCP(t *testing.T) {
 
 	if !got.Enabled {
 		t.Error("expected encryption enabled")
+	}
+}
+
+func TestListenerRulesAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	lb, err := p.ELB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := p.ELB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: "vpc-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	li, err := p.ELB.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create rules with path conditions
+	rule1, err := p.ELB.CreateRule(ctx, lbdriver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    10,
+		Conditions:  []lbdriver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+		Actions:     []lbdriver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rule1.ARN == "" {
+		t.Error("expected non-empty rule ARN")
+	}
+
+	if rule1.Priority != 10 {
+		t.Errorf("expected priority 10, got %d", rule1.Priority)
+	}
+
+	_, err = p.ELB.CreateRule(ctx, lbdriver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    20,
+		Conditions:  []lbdriver.RuleCondition{{Field: "host-header", Values: []string{"example.com"}}},
+		Actions:     []lbdriver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Describe rules
+	rules, err := p.ELB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 2 {
+		t.Errorf("expected 2 rules, got %d", len(rules))
+	}
+
+	// Delete a rule
+	if err := p.ELB.DeleteRule(ctx, rule1.ARN); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err = p.ELB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule after deletion, got %d", len(rules))
+	}
+}
+
+func TestModifyListenerAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	lb, err := p.ELB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := p.ELB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: "vpc-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	li, err := p.ELB.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify port
+	if err := p.ELB.ModifyListener(ctx, lbdriver.ModifyListenerInput{
+		ListenerARN: li.ARN, Port: 8080,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	listeners, err := p.ELB.DescribeListeners(ctx, lb.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(listeners) != 1 {
+		t.Fatalf("expected 1 listener, got %d", len(listeners))
+	}
+
+	if listeners[0].Port != 8080 {
+		t.Errorf("expected port 8080, got %d", listeners[0].Port)
+	}
+}
+
+func TestLBAttributesAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	lb, err := p.ELB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get default attributes
+	attrs, err := p.ELB.GetLBAttributes(ctx, lb.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if attrs.IdleTimeout != 60 {
+		t.Errorf("expected default idle timeout 60, got %d", attrs.IdleTimeout)
+	}
+
+	// Put custom attributes
+	if err := p.ELB.PutLBAttributes(ctx, lb.ARN, lbdriver.LBAttributes{
+		IdleTimeout:        120,
+		DeletionProtection: true,
+		AccessLogsEnabled:  true,
+		AccessLogsBucket:   "my-access-logs",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	attrs, err = p.ELB.GetLBAttributes(ctx, lb.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if attrs.IdleTimeout != 120 {
+		t.Errorf("expected idle timeout 120, got %d", attrs.IdleTimeout)
+	}
+
+	if !attrs.DeletionProtection {
+		t.Error("expected deletion protection enabled")
+	}
+
+	if !attrs.AccessLogsEnabled {
+		t.Error("expected access logs enabled")
+	}
+
+	if attrs.AccessLogsBucket != "my-access-logs" {
+		t.Errorf("expected bucket 'my-access-logs', got %q", attrs.AccessLogsBucket)
+	}
+}
+
+func TestListenerRulesAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	lb, err := p.LB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := p.LB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: "vnet-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	li, err := p.LB.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rule, err := p.LB.CreateRule(ctx, lbdriver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    10,
+		Conditions:  []lbdriver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+		Actions:     []lbdriver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rule.ARN == "" {
+		t.Error("expected non-empty rule ARN")
+	}
+
+	rules, err := p.LB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule, got %d", len(rules))
+	}
+
+	if err := p.LB.DeleteRule(ctx, rule.ARN); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err = p.LB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules after deletion, got %d", len(rules))
+	}
+}
+
+func TestListenerRulesGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	lb, err := p.LB.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internet-facing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tg, err := p.LB.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: "vpc-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	li, err := p.LB.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rule, err := p.LB.CreateRule(ctx, lbdriver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    10,
+		Conditions:  []lbdriver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+		Actions:     []lbdriver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rule.ARN == "" {
+		t.Error("expected non-empty rule ARN")
+	}
+
+	rules, err := p.LB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule, got %d", len(rules))
+	}
+
+	if err := p.LB.DeleteRule(ctx, rule.ARN); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err = p.LB.DescribeRules(ctx, li.ARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules after deletion, got %d", len(rules))
 	}
 }

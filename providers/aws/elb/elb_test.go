@@ -323,6 +323,157 @@ func TestSetTargetHealth(t *testing.T) {
 	})
 }
 
+func TestCreateRule(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+	tg := createTestTG(m)
+	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+
+	t.Run("success", func(t *testing.T) {
+		rule, err := m.CreateRule(ctx, driver.RuleConfig{
+			ListenerARN: li.ARN,
+			Priority:    10,
+			Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+			Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+		})
+		requireNoError(t, err)
+		assertNotEmpty(t, rule.ARN)
+		assertEqual(t, li.ARN, rule.ListenerARN)
+		assertEqual(t, 10, rule.Priority)
+		assertEqual(t, false, rule.IsDefault)
+	})
+
+	t.Run("listener not found", func(t *testing.T) {
+		_, err := m.CreateRule(ctx, driver.RuleConfig{ListenerARN: "arn:nope"})
+		assertError(t, err, true)
+	})
+}
+
+func TestDeleteRule(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
+	})
+	rule, _ := m.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: li.ARN, Priority: 10,
+	})
+
+	requireNoError(t, m.DeleteRule(ctx, rule.ARN))
+	assertError(t, m.DeleteRule(ctx, "arn:nope"), true)
+}
+
+func TestDescribeRules(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+	tg := createTestTG(m)
+	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+
+	_, _ = m.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: li.ARN, Priority: 10,
+		Conditions: []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+		Actions:    []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+	_, _ = m.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: li.ARN, Priority: 20,
+		Conditions: []driver.RuleCondition{{Field: "host-header", Values: []string{"example.com"}}},
+		Actions:    []driver.RuleAction{{Type: "forward", TargetGroupARN: tg.ARN}},
+	})
+
+	t.Run("success", func(t *testing.T) {
+		rules, err := m.DescribeRules(ctx, li.ARN)
+		requireNoError(t, err)
+		assertEqual(t, 2, len(rules))
+	})
+
+	t.Run("listener not found", func(t *testing.T) {
+		_, err := m.DescribeRules(ctx, "arn:nope")
+		assertError(t, err, true)
+	})
+}
+
+func TestModifyListener(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+	tg := createTestTG(m)
+	li, _ := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+
+	t.Run("modify port", func(t *testing.T) {
+		err := m.ModifyListener(ctx, driver.ModifyListenerInput{
+			ListenerARN: li.ARN, Port: 8080,
+		})
+		requireNoError(t, err)
+
+		listeners, _ := m.DescribeListeners(ctx, lb.ARN)
+		assertEqual(t, 8080, listeners[0].Port)
+	})
+
+	t.Run("modify protocol", func(t *testing.T) {
+		err := m.ModifyListener(ctx, driver.ModifyListenerInput{
+			ListenerARN: li.ARN, Protocol: "HTTPS",
+		})
+		requireNoError(t, err)
+
+		listeners, _ := m.DescribeListeners(ctx, lb.ARN)
+		assertEqual(t, "HTTPS", listeners[0].Protocol)
+	})
+
+	t.Run("listener not found", func(t *testing.T) {
+		err := m.ModifyListener(ctx, driver.ModifyListenerInput{ListenerARN: "arn:nope", Port: 80})
+		assertError(t, err, true)
+	})
+}
+
+func TestLBAttributes(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	lb := createTestLB(m)
+
+	t.Run("default attributes", func(t *testing.T) {
+		attrs, err := m.GetLBAttributes(ctx, lb.ARN)
+		requireNoError(t, err)
+		assertEqual(t, 60, attrs.IdleTimeout)
+		assertEqual(t, false, attrs.DeletionProtection)
+	})
+
+	t.Run("put and get", func(t *testing.T) {
+		err := m.PutLBAttributes(ctx, lb.ARN, driver.LBAttributes{
+			IdleTimeout:        120,
+			DeletionProtection: true,
+			AccessLogsEnabled:  true,
+			AccessLogsBucket:   "my-logs",
+		})
+		requireNoError(t, err)
+
+		attrs, err := m.GetLBAttributes(ctx, lb.ARN)
+		requireNoError(t, err)
+		assertEqual(t, 120, attrs.IdleTimeout)
+		assertEqual(t, true, attrs.DeletionProtection)
+		assertEqual(t, true, attrs.AccessLogsEnabled)
+		assertEqual(t, "my-logs", attrs.AccessLogsBucket)
+	})
+
+	t.Run("LB not found get", func(t *testing.T) {
+		_, err := m.GetLBAttributes(ctx, "arn:nope")
+		assertError(t, err, true)
+	})
+
+	t.Run("LB not found put", func(t *testing.T) {
+		err := m.PutLBAttributes(ctx, "arn:nope", driver.LBAttributes{})
+		assertError(t, err, true)
+	})
+}
+
 // --- test helpers ---
 
 func requireNoError(t *testing.T, err error) {
