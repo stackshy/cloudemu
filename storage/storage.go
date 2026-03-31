@@ -318,3 +318,84 @@ func (b *Bucket) GetBucketVersioning(ctx context.Context, bucket string) (bool, 
 
 	return out.(bool), nil
 }
+
+// PutBucketPolicy sets the bucket policy.
+func (b *Bucket) PutBucketPolicy(ctx context.Context, bucket string, policy driver.BucketPolicy) error {
+	_, err := b.do(ctx, "PutBucketPolicy", bucket, func() (any, error) {
+		return nil, b.driver.PutBucketPolicy(ctx, bucket, policy)
+	})
+
+	return err
+}
+
+// GetBucketPolicy returns the bucket policy.
+func (b *Bucket) GetBucketPolicy(ctx context.Context, bucket string) (*driver.BucketPolicy, error) {
+	out, err := b.do(ctx, "GetBucketPolicy", bucket, func() (any, error) {
+		return b.driver.GetBucketPolicy(ctx, bucket)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.BucketPolicy), nil
+}
+
+// DeleteBucketPolicy removes the bucket policy.
+func (b *Bucket) DeleteBucketPolicy(ctx context.Context, bucket string) error {
+	_, err := b.do(ctx, "DeleteBucketPolicy", bucket, func() (any, error) {
+		return nil, b.driver.DeleteBucketPolicy(ctx, bucket)
+	})
+
+	return err
+}
+
+// PutCORSConfig sets the CORS configuration for a bucket.
+func (b *Bucket) PutCORSConfig(ctx context.Context, bucket string, cfg driver.CORSConfig) error {
+	_, err := b.do(ctx, "PutCORSConfig", bucket, func() (any, error) {
+		return nil, b.driver.PutCORSConfig(ctx, bucket, cfg)
+	})
+
+	return err
+}
+
+// GetCORSConfig returns the CORS configuration for a bucket.
+func (b *Bucket) GetCORSConfig(ctx context.Context, bucket string) (*driver.CORSConfig, error) {
+	out, err := b.do(ctx, "GetCORSConfig", bucket, func() (any, error) {
+		return b.driver.GetCORSConfig(ctx, bucket)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.CORSConfig), nil
+}
+
+// DeleteCORSConfig removes the CORS configuration for a bucket.
+func (b *Bucket) DeleteCORSConfig(ctx context.Context, bucket string) error {
+	_, err := b.do(ctx, "DeleteCORSConfig", bucket, func() (any, error) {
+		return nil, b.driver.DeleteCORSConfig(ctx, bucket)
+	})
+
+	return err
+}
+
+// PutEncryptionConfig sets the default encryption for a bucket.
+func (b *Bucket) PutEncryptionConfig(ctx context.Context, bucket string, cfg driver.EncryptionConfig) error {
+	_, err := b.do(ctx, "PutEncryptionConfig", bucket, func() (any, error) {
+		return nil, b.driver.PutEncryptionConfig(ctx, bucket, cfg)
+	})
+
+	return err
+}
+
+// GetEncryptionConfig returns the default encryption for a bucket.
+func (b *Bucket) GetEncryptionConfig(ctx context.Context, bucket string) (*driver.EncryptionConfig, error) {
+	out, err := b.do(ctx, "GetEncryptionConfig", bucket, func() (any, error) {
+		return b.driver.GetEncryptionConfig(ctx, bucket)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.EncryptionConfig), nil
+}
