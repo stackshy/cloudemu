@@ -171,7 +171,43 @@ type NetworkACLRule struct {
 	Egress     bool
 }
 
-// Networking is the interface that networking provider implementations must satisfy.
+// InternetGatewayConfig configures an internet gateway.
+type InternetGatewayConfig struct {
+	Tags map[string]string
+}
+
+// InternetGateway represents an internet gateway.
+type InternetGateway struct {
+	ID    string
+	VpcID string
+	State string // "detached", "attached"
+	Tags  map[string]string
+}
+
+// ElasticIPConfig configures an elastic IP allocation.
+type ElasticIPConfig struct {
+	Tags map[string]string
+}
+
+// ElasticIP represents an elastic IP address.
+type ElasticIP struct {
+	AllocationID  string
+	PublicIP      string
+	AssociationID string
+	InstanceID    string
+	Tags          map[string]string
+}
+
+// RouteTableAssociation represents an association between
+// a route table and a subnet.
+type RouteTableAssociation struct {
+	ID           string
+	RouteTableID string
+	SubnetID     string
+}
+
+// Networking is the interface that networking provider
+// implementations must satisfy.
 type Networking interface {
 	CreateVPC(ctx context.Context, config VPCConfig) (*VPCInfo, error)
 	DeleteVPC(ctx context.Context, id string) error
@@ -221,4 +257,22 @@ type Networking interface {
 	DescribeNetworkACLs(ctx context.Context, ids []string) ([]NetworkACL, error)
 	AddNetworkACLRule(ctx context.Context, aclID string, rule *NetworkACLRule) error
 	RemoveNetworkACLRule(ctx context.Context, aclID string, ruleNumber int, egress bool) error
+
+	// Internet Gateways
+	CreateInternetGateway(ctx context.Context, cfg InternetGatewayConfig) (*InternetGateway, error)
+	DeleteInternetGateway(ctx context.Context, id string) error
+	DescribeInternetGateways(ctx context.Context, ids []string) ([]InternetGateway, error)
+	AttachInternetGateway(ctx context.Context, igwID, vpcID string) error
+	DetachInternetGateway(ctx context.Context, igwID, vpcID string) error
+
+	// Elastic IPs
+	AllocateAddress(ctx context.Context, cfg ElasticIPConfig) (*ElasticIP, error)
+	ReleaseAddress(ctx context.Context, allocationID string) error
+	DescribeAddresses(ctx context.Context, ids []string) ([]ElasticIP, error)
+	AssociateAddress(ctx context.Context, allocationID, instanceID string) (string, error)
+	DisassociateAddress(ctx context.Context, associationID string) error
+
+	// Route Table Associations
+	AssociateRouteTable(ctx context.Context, routeTableID, subnetID string) (*RouteTableAssociation, error)
+	DisassociateRouteTable(ctx context.Context, associationID string) error
 }

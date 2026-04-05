@@ -450,3 +450,154 @@ func (n *Networking) RemoveNetworkACLRule(
 
 	return err
 }
+
+// CreateInternetGateway creates an internet gateway.
+func (n *Networking) CreateInternetGateway(
+	ctx context.Context, cfg driver.InternetGatewayConfig,
+) (*driver.InternetGateway, error) {
+	out, err := n.do(ctx, "CreateInternetGateway", cfg, func() (any, error) {
+		return n.driver.CreateInternetGateway(ctx, cfg)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.InternetGateway), nil
+}
+
+// DeleteInternetGateway deletes an internet gateway.
+func (n *Networking) DeleteInternetGateway(
+	ctx context.Context, id string,
+) error {
+	_, err := n.do(ctx, "DeleteInternetGateway", id, func() (any, error) {
+		return nil, n.driver.DeleteInternetGateway(ctx, id)
+	})
+
+	return err
+}
+
+// DescribeInternetGateways returns internet gateways
+// matching the given IDs.
+func (n *Networking) DescribeInternetGateways(
+	ctx context.Context, ids []string,
+) ([]driver.InternetGateway, error) {
+	out, err := n.do(ctx, "DescribeInternetGateways", ids, func() (any, error) {
+		return n.driver.DescribeInternetGateways(ctx, ids)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.InternetGateway), nil
+}
+
+// AttachInternetGateway attaches an internet gateway to a VPC.
+func (n *Networking) AttachInternetGateway(
+	ctx context.Context, igwID, vpcID string,
+) error {
+	_, err := n.do(ctx, "AttachInternetGateway", igwID, func() (any, error) {
+		return nil, n.driver.AttachInternetGateway(ctx, igwID, vpcID)
+	})
+
+	return err
+}
+
+// DetachInternetGateway detaches an internet gateway from a VPC.
+func (n *Networking) DetachInternetGateway(
+	ctx context.Context, igwID, vpcID string,
+) error {
+	_, err := n.do(ctx, "DetachInternetGateway", igwID, func() (any, error) {
+		return nil, n.driver.DetachInternetGateway(ctx, igwID, vpcID)
+	})
+
+	return err
+}
+
+// AllocateAddress allocates a new elastic IP address.
+func (n *Networking) AllocateAddress(
+	ctx context.Context, cfg driver.ElasticIPConfig,
+) (*driver.ElasticIP, error) {
+	out, err := n.do(ctx, "AllocateAddress", cfg, func() (any, error) {
+		return n.driver.AllocateAddress(ctx, cfg)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ElasticIP), nil
+}
+
+// ReleaseAddress releases an elastic IP address.
+func (n *Networking) ReleaseAddress(
+	ctx context.Context, allocationID string,
+) error {
+	_, err := n.do(ctx, "ReleaseAddress", allocationID, func() (any, error) {
+		return nil, n.driver.ReleaseAddress(ctx, allocationID)
+	})
+
+	return err
+}
+
+// DescribeAddresses returns elastic IPs matching the given IDs.
+func (n *Networking) DescribeAddresses(
+	ctx context.Context, ids []string,
+) ([]driver.ElasticIP, error) {
+	out, err := n.do(ctx, "DescribeAddresses", ids, func() (any, error) {
+		return n.driver.DescribeAddresses(ctx, ids)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.ElasticIP), nil
+}
+
+// AssociateAddress associates an elastic IP with an instance.
+func (n *Networking) AssociateAddress(
+	ctx context.Context, allocationID, instanceID string,
+) (string, error) {
+	out, err := n.do(ctx, "AssociateAddress", allocationID, func() (any, error) {
+		return n.driver.AssociateAddress(ctx, allocationID, instanceID)
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return out.(string), nil
+}
+
+// DisassociateAddress removes an elastic IP association.
+func (n *Networking) DisassociateAddress(
+	ctx context.Context, associationID string,
+) error {
+	_, err := n.do(ctx, "DisassociateAddress", associationID, func() (any, error) {
+		return nil, n.driver.DisassociateAddress(ctx, associationID)
+	})
+
+	return err
+}
+
+// AssociateRouteTable associates a route table with a subnet.
+func (n *Networking) AssociateRouteTable(
+	ctx context.Context, routeTableID, subnetID string,
+) (*driver.RouteTableAssociation, error) {
+	out, err := n.do(ctx, "AssociateRouteTable", routeTableID, func() (any, error) {
+		return n.driver.AssociateRouteTable(ctx, routeTableID, subnetID)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.RouteTableAssociation), nil
+}
+
+// DisassociateRouteTable removes a route table association.
+func (n *Networking) DisassociateRouteTable(
+	ctx context.Context, associationID string,
+) error {
+	_, err := n.do(ctx, "DisassociateRouteTable", associationID, func() (any, error) {
+		return nil, n.driver.DisassociateRouteTable(ctx, associationID)
+	})
+
+	return err
+}

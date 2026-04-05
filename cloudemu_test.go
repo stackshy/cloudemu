@@ -7490,3 +7490,278 @@ func TestAccessKeysAWS(t *testing.T) {
 		t.Error("expected error creating key for nonexistent user")
 	}
 }
+
+func TestInternetGatewayAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Create VPC first.
+	vpc, err := p.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create internet gateway.
+	igw, err := p.VPC.CreateInternetGateway(ctx, netdriver.InternetGatewayConfig{
+		Tags: map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if igw.State != "detached" {
+		t.Errorf("expected detached, got %s", igw.State)
+	}
+
+	// Attach to VPC.
+	if err := p.VPC.AttachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Describe and verify attached state.
+	igws, err := p.VPC.DescribeInternetGateways(ctx, []string{igw.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(igws) != 1 {
+		t.Fatalf("expected 1 igw, got %d", len(igws))
+	}
+
+	if igws[0].State != "attached" {
+		t.Errorf("expected attached, got %s", igws[0].State)
+	}
+
+	if igws[0].VpcID != vpc.ID {
+		t.Errorf("expected vpc %s, got %s", vpc.ID, igws[0].VpcID)
+	}
+
+	// Cannot delete while attached.
+	err = p.VPC.DeleteInternetGateway(ctx, igw.ID)
+	if err == nil {
+		t.Error("expected error deleting attached igw")
+	}
+
+	// Detach then delete.
+	if err := p.VPC.DetachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VPC.DeleteInternetGateway(ctx, igw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify gone.
+	igws, err = p.VPC.DescribeInternetGateways(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(igws) != 0 {
+		t.Errorf("expected 0 igws, got %d", len(igws))
+	}
+}
+
+func TestElasticIPAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Allocate EIP.
+	eip, err := p.VPC.AllocateAddress(ctx, netdriver.ElasticIPConfig{
+		Tags: map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if eip.PublicIP == "" {
+		t.Error("expected public IP")
+	}
+
+	if eip.AllocationID == "" {
+		t.Error("expected allocation ID")
+	}
+
+	// Associate with instance.
+	assocID, err := p.VPC.AssociateAddress(
+		ctx, eip.AllocationID, "i-12345",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if assocID == "" {
+		t.Error("expected association ID")
+	}
+
+	// Describe and verify association.
+	eips, err := p.VPC.DescribeAddresses(
+		ctx, []string{eip.AllocationID},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eips) != 1 {
+		t.Fatalf("expected 1 eip, got %d", len(eips))
+	}
+
+	if eips[0].InstanceID != "i-12345" {
+		t.Errorf("expected i-12345, got %s", eips[0].InstanceID)
+	}
+
+	// Cannot release while associated.
+	err = p.VPC.ReleaseAddress(ctx, eip.AllocationID)
+	if err == nil {
+		t.Error("expected error releasing associated eip")
+	}
+
+	// Disassociate then release.
+	if err := p.VPC.DisassociateAddress(ctx, assocID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VPC.ReleaseAddress(ctx, eip.AllocationID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify gone.
+	eips, err = p.VPC.DescribeAddresses(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eips) != 0 {
+		t.Errorf("expected 0 eips, got %d", len(eips))
+	}
+}
+
+func TestRouteTableAssociationAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Create VPC, subnet, route table.
+	vpc, err := p.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subnet, err := p.VPC.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID:     vpc.ID,
+		CIDRBlock: "10.0.1.0/24",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := p.VPC.CreateRouteTable(ctx, netdriver.RouteTableConfig{
+		VPCID: vpc.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Associate route table with subnet.
+	assoc, err := p.VPC.AssociateRouteTable(
+		ctx, rt.ID, subnet.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if assoc.RouteTableID != rt.ID {
+		t.Errorf("expected rt %s, got %s", rt.ID, assoc.RouteTableID)
+	}
+
+	if assoc.SubnetID != subnet.ID {
+		t.Errorf(
+			"expected subnet %s, got %s",
+			subnet.ID, assoc.SubnetID,
+		)
+	}
+
+	// Disassociate.
+	if err := p.VPC.DisassociateRouteTable(ctx, assoc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Disassociate again should fail.
+	err = p.VPC.DisassociateRouteTable(ctx, assoc.ID)
+	if err == nil {
+		t.Error("expected error on double disassociate")
+	}
+}
+
+func TestInternetGatewayAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	vpc, err := p.VNet.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	igw, err := p.VNet.CreateInternetGateway(
+		ctx, netdriver.InternetGatewayConfig{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if igw.State != "detached" {
+		t.Errorf("expected detached, got %s", igw.State)
+	}
+
+	if err := p.VNet.AttachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VNet.DetachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VNet.DeleteInternetGateway(ctx, igw.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInternetGatewayGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	vpc, err := p.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	igw, err := p.VPC.CreateInternetGateway(
+		ctx, netdriver.InternetGatewayConfig{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if igw.State != "detached" {
+		t.Errorf("expected detached, got %s", igw.State)
+	}
+
+	if err := p.VPC.AttachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VPC.DetachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VPC.DeleteInternetGateway(ctx, igw.ID); err != nil {
+		t.Fatal(err)
+	}
+}
