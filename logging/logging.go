@@ -172,11 +172,81 @@ func (l *Logging) PutLogEvents(ctx context.Context, logGroup, streamName string,
 }
 
 // GetLogEvents retrieves log events matching the query.
-func (l *Logging) GetLogEvents(ctx context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
-	out, err := l.do(ctx, "GetLogEvents", input, func() (any, error) { return l.driver.GetLogEvents(ctx, input) })
+func (l *Logging) GetLogEvents(
+	ctx context.Context,
+	input *driver.LogQueryInput,
+) ([]driver.LogEvent, error) {
+	out, err := l.do(ctx, "GetLogEvents", input, func() (any, error) {
+		return l.driver.GetLogEvents(ctx, input)
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	return out.([]driver.LogEvent), nil
+}
+
+// FilterLogEvents filters log events across streams using a pattern.
+func (l *Logging) FilterLogEvents(
+	ctx context.Context,
+	input *driver.FilterLogEventsInput,
+) ([]driver.FilteredLogEvent, error) {
+	out, err := l.do(ctx, "FilterLogEvents", input, func() (any, error) {
+		return l.driver.FilterLogEvents(ctx, input)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.FilteredLogEvent), nil
+}
+
+// PutMetricFilter creates or updates a metric filter for a log group.
+func (l *Logging) PutMetricFilter(
+	ctx context.Context,
+	cfg *driver.MetricFilterConfig,
+) error {
+	_, err := l.do(ctx, "PutMetricFilter", cfg, func() (any, error) {
+		return nil, l.driver.PutMetricFilter(ctx, cfg)
+	})
+
+	return err
+}
+
+// DeleteMetricFilter deletes a metric filter from a log group.
+func (l *Logging) DeleteMetricFilter(
+	ctx context.Context,
+	logGroup, filterName string,
+) error {
+	_, err := l.do(
+		ctx, "DeleteMetricFilter",
+		map[string]string{
+			"logGroup": logGroup, "filterName": filterName,
+		},
+		func() (any, error) {
+			return nil, l.driver.DeleteMetricFilter(
+				ctx, logGroup, filterName,
+			)
+		},
+	)
+
+	return err
+}
+
+// DescribeMetricFilters lists all metric filters for a log group.
+func (l *Logging) DescribeMetricFilters(
+	ctx context.Context,
+	logGroup string,
+) ([]driver.MetricFilterInfo, error) {
+	out, err := l.do(
+		ctx, "DescribeMetricFilters", logGroup,
+		func() (any, error) {
+			return l.driver.DescribeMetricFilters(ctx, logGroup)
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.MetricFilterInfo), nil
 }
