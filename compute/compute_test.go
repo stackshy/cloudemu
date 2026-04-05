@@ -517,3 +517,37 @@ func TestPortableTerminateInstancesError(t *testing.T) {
 	err := c.TerminateInstances(ctx, []string{"i-nonexistent"})
 	require.Error(t, err)
 }
+
+//nolint:dupl // test mock stubs are intentionally repetitive
+func (mc *mockCompute) CreateVolume(_ context.Context, _ driver.VolumeConfig) (*driver.VolumeInfo, error) {
+	return nil, nil
+}
+
+func (mc *mockCompute) DeleteVolume(_ context.Context, _ string) error { return nil }
+
+func (mc *mockCompute) DescribeVolumes(_ context.Context, _ []string) ([]driver.VolumeInfo, error) {
+	return nil, nil
+}
+
+func (mc *mockCompute) AttachVolume(_ context.Context, _, _, _ string) error { return nil }
+func (mc *mockCompute) DetachVolume(_ context.Context, _ string) error       { return nil }
+
+func (mc *mockCompute) CreateSnapshot(_ context.Context, _ driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
+	return nil, nil
+}
+
+func (mc *mockCompute) DeleteSnapshot(_ context.Context, _ string) error { return nil }
+
+func (mc *mockCompute) DescribeSnapshots(_ context.Context, _ []string) ([]driver.SnapshotInfo, error) {
+	return nil, nil
+}
+
+func (mc *mockCompute) CreateImage(_ context.Context, _ driver.ImageConfig) (*driver.ImageInfo, error) {
+	return nil, nil
+}
+
+func (mc *mockCompute) DeregisterImage(_ context.Context, _ string) error { return nil }
+
+func (mc *mockCompute) DescribeImages(_ context.Context, _ []string) ([]driver.ImageInfo, error) {
+	return nil, nil
+}

@@ -30,8 +30,9 @@ type logStream struct {
 }
 
 type logGroup struct {
-	info    driver.LogGroupInfo
-	streams *memstore.Store[*logStream]
+	info          driver.LogGroupInfo
+	streams       *memstore.Store[*logStream]
+	metricFilters *memstore.Store[*driver.MetricFilterInfo]
 }
 
 // Mock is an in-memory mock implementation of Azure Log Analytics.
@@ -108,8 +109,9 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 	}
 
 	g := &logGroup{
-		info:    info,
-		streams: memstore.New[*logStream](),
+		info:          info,
+		streams:       memstore.New[*logStream](),
+		metricFilters: memstore.New[*driver.MetricFilterInfo](),
 	}
 
 	m.groups.Set(cfg.Name, g)
@@ -306,7 +308,11 @@ func (m *Mock) getStreamEvents(g *logGroup, streamName string, input *driver.Log
 	return m.filterEvents(s, input, retentionCutoff)
 }
 
-func (*Mock) filterEvents(s *logStream, input *driver.LogQueryInput, retentionCutoff time.Time) []driver.LogEvent {
+func (*Mock) filterEvents(
+	s *logStream,
+	input *driver.LogQueryInput,
+	retentionCutoff time.Time,
+) []driver.LogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -333,4 +339,168 @@ func (*Mock) filterEvents(s *logStream, input *driver.LogQueryInput, retentionCu
 	}
 
 	return results
+}
+
+// FilterLogEvents filters log events across streams using a pattern.
+func (m *Mock) FilterLogEvents(
+	_ context.Context,
+	input *driver.FilterLogEventsInput,
+) ([]driver.FilteredLogEvent, error) {
+	g, ok := m.groups.Get(input.LogGroup)
+	if !ok {
+		return nil, errors.Newf(
+			errors.NotFound, "log group %q not found", input.LogGroup,
+		)
+	}
+
+	limit := input.Limit
+	if limit <= 0 {
+		limit = defaultLogLimit
+	}
+
+	var results []driver.FilteredLogEvent
+
+	if input.LogStream != "" {
+		results = m.filterStreamEvents(g, input.LogStream, input)
+	} else {
+		for name, s := range g.streams.All() {
+			events := m.matchEvents(s, name, input)
+			results = append(results, events...)
+		}
+	}
+
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	if results == nil {
+		results = []driver.FilteredLogEvent{}
+	}
+
+	return results, nil
+}
+
+func (m *Mock) filterStreamEvents(
+	g *logGroup,
+	streamName string,
+	input *driver.FilterLogEventsInput,
+) []driver.FilteredLogEvent {
+	s, ok := g.streams.Get(streamName)
+	if !ok {
+		return nil
+	}
+
+	return m.matchEvents(s, streamName, input)
+}
+
+func (*Mock) matchEvents(
+	s *logStream,
+	streamName string,
+	input *driver.FilterLogEventsInput,
+) []driver.FilteredLogEvent {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var results []driver.FilteredLogEvent
+
+	for _, e := range s.events {
+		if !input.StartTime.IsZero() && e.Timestamp.Before(input.StartTime) {
+			continue
+		}
+
+		if !input.EndTime.IsZero() && e.Timestamp.After(input.EndTime) {
+			continue
+		}
+
+		if input.FilterPattern != "" &&
+			!strings.Contains(e.Message, input.FilterPattern) {
+			continue
+		}
+
+		results = append(results, driver.FilteredLogEvent{
+			LogStream: streamName,
+			Timestamp: e.Timestamp,
+			Message:   e.Message,
+		})
+	}
+
+	return results
+}
+
+// PutMetricFilter creates or updates a metric filter for a log group.
+func (m *Mock) PutMetricFilter(
+	_ context.Context,
+	cfg *driver.MetricFilterConfig,
+) error {
+	g, ok := m.groups.Get(cfg.LogGroup)
+	if !ok {
+		return errors.Newf(
+			errors.NotFound, "log group %q not found", cfg.LogGroup,
+		)
+	}
+
+	if cfg.Name == "" {
+		return errors.New(
+			errors.InvalidArgument, "metric filter name is required",
+		)
+	}
+
+	info := &driver.MetricFilterInfo{
+		Name:            cfg.Name,
+		LogGroup:        cfg.LogGroup,
+		FilterPattern:   cfg.FilterPattern,
+		MetricName:      cfg.MetricName,
+		MetricNamespace: cfg.MetricNamespace,
+		MetricValue:     cfg.MetricValue,
+		CreatedAt:       m.opts.Clock.Now().UTC(),
+	}
+
+	g.metricFilters.Set(cfg.Name, info)
+
+	return nil
+}
+
+// DeleteMetricFilter deletes a metric filter from a log group.
+func (m *Mock) DeleteMetricFilter(
+	_ context.Context,
+	logGroup, filterName string,
+) error {
+	g, ok := m.groups.Get(logGroup)
+	if !ok {
+		return errors.Newf(
+			errors.NotFound, "log group %q not found", logGroup,
+		)
+	}
+
+	if !g.metricFilters.Delete(filterName) {
+		return errors.Newf(
+			errors.NotFound,
+			"metric filter %q not found in group %q",
+			filterName, logGroup,
+		)
+	}
+
+	return nil
+}
+
+// DescribeMetricFilters lists all metric filters for a log group.
+func (m *Mock) DescribeMetricFilters(
+	_ context.Context,
+	logGroup string,
+) ([]driver.MetricFilterInfo, error) {
+	g, ok := m.groups.Get(logGroup)
+	if !ok {
+		return nil, errors.Newf(
+			errors.NotFound, "log group %q not found", logGroup,
+		)
+	}
+
+	all := g.metricFilters.All()
+	results := make([]driver.MetricFilterInfo, 0, len(all))
+
+	for _, mf := range all {
+		results = append(results, *mf)
+	}
+
+	return results, nil
 }

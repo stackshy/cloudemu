@@ -46,6 +46,44 @@ type LogQueryInput struct {
 	Limit     int
 }
 
+// FilterLogEventsInput configures a filter log events operation.
+type FilterLogEventsInput struct {
+	LogGroup      string
+	LogStream     string
+	FilterPattern string
+	StartTime     time.Time
+	EndTime       time.Time
+	Limit         int
+}
+
+// FilteredLogEvent represents a log event returned by FilterLogEvents.
+type FilteredLogEvent struct {
+	LogStream string
+	Timestamp time.Time
+	Message   string
+}
+
+// MetricFilterConfig describes a metric filter to create.
+type MetricFilterConfig struct {
+	Name            string
+	LogGroup        string
+	FilterPattern   string
+	MetricName      string
+	MetricNamespace string
+	MetricValue     string
+}
+
+// MetricFilterInfo describes a metric filter.
+type MetricFilterInfo struct {
+	Name            string
+	LogGroup        string
+	FilterPattern   string
+	MetricName      string
+	MetricNamespace string
+	MetricValue     string
+	CreatedAt       time.Time
+}
+
 // Logging is the interface that logging provider implementations must satisfy.
 type Logging interface {
 	CreateLogGroup(ctx context.Context, config LogGroupConfig) (*LogGroupInfo, error)
@@ -59,4 +97,9 @@ type Logging interface {
 
 	PutLogEvents(ctx context.Context, logGroup, streamName string, events []LogEvent) error
 	GetLogEvents(ctx context.Context, input *LogQueryInput) ([]LogEvent, error)
+
+	FilterLogEvents(ctx context.Context, input *FilterLogEventsInput) ([]FilteredLogEvent, error)
+	PutMetricFilter(ctx context.Context, config *MetricFilterConfig) error
+	DeleteMetricFilter(ctx context.Context, logGroup, filterName string) error
+	DescribeMetricFilters(ctx context.Context, logGroup string) ([]MetricFilterInfo, error)
 }

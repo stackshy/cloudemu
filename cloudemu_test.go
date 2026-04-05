@@ -1985,6 +1985,281 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 }
 
 // ==============================================================================
+// Integration Tests: FilterLogEvents and MetricFilters
+// ==============================================================================
+
+func TestFilterLogEventsAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testFilterLogEvents(t, ctx, p.CloudWatchLogs)
+}
+
+func TestFilterLogEventsAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testFilterLogEvents(t, ctx, p.LogAnalytics)
+}
+
+func TestFilterLogEventsGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testFilterLogEvents(t, ctx, p.CloudLogging)
+}
+
+func testFilterLogEvents(
+	t *testing.T,
+	ctx context.Context,
+	d loggingdriver.Logging,
+) {
+	t.Helper()
+
+	_, err := d.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{
+		Name: "filter-test",
+	})
+	if err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	_, err = d.CreateLogStream(ctx, "filter-test", "stream-a")
+	if err != nil {
+		t.Fatalf("CreateLogStream (a): %v", err)
+	}
+
+	_, err = d.CreateLogStream(ctx, "filter-test", "stream-b")
+	if err != nil {
+		t.Fatalf("CreateLogStream (b): %v", err)
+	}
+
+	now := time.Now().UTC()
+
+	eventsA := []loggingdriver.LogEvent{
+		{Timestamp: now.Add(-3 * time.Minute), Message: "INFO starting"},
+		{Timestamp: now.Add(-2 * time.Minute), Message: "ERROR disk full"},
+		{Timestamp: now.Add(-time.Minute), Message: "INFO recovered"},
+	}
+
+	eventsB := []loggingdriver.LogEvent{
+		{Timestamp: now.Add(-2 * time.Minute), Message: "ERROR timeout"},
+		{Timestamp: now, Message: "INFO healthy"},
+	}
+
+	err = d.PutLogEvents(ctx, "filter-test", "stream-a", eventsA)
+	if err != nil {
+		t.Fatalf("PutLogEvents (a): %v", err)
+	}
+
+	err = d.PutLogEvents(ctx, "filter-test", "stream-b", eventsB)
+	if err != nil {
+		t.Fatalf("PutLogEvents (b): %v", err)
+	}
+
+	// Filter by pattern across all streams.
+	results, err := d.FilterLogEvents(ctx, &loggingdriver.FilterLogEventsInput{
+		LogGroup:      "filter-test",
+		FilterPattern: "ERROR",
+	})
+	if err != nil {
+		t.Fatalf("FilterLogEvents (ERROR): %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("expected 2 ERROR events, got %d", len(results))
+	}
+
+	for _, r := range results {
+		if r.LogStream == "" {
+			t.Error("expected non-empty LogStream on filtered event")
+		}
+	}
+
+	// Filter by specific stream.
+	streamResults, err := d.FilterLogEvents(
+		ctx, &loggingdriver.FilterLogEventsInput{
+			LogGroup:      "filter-test",
+			LogStream:     "stream-a",
+			FilterPattern: "ERROR",
+		},
+	)
+	if err != nil {
+		t.Fatalf("FilterLogEvents (stream-a ERROR): %v", err)
+	}
+
+	if len(streamResults) != 1 {
+		t.Errorf("expected 1 event from stream-a, got %d", len(streamResults))
+	}
+
+	// Filter by time range (-2.5min to -0.5min captures 3 events).
+	timeResults, err := d.FilterLogEvents(
+		ctx, &loggingdriver.FilterLogEventsInput{
+			LogGroup:  "filter-test",
+			StartTime: now.Add(-150 * time.Second),
+			EndTime:   now.Add(-30 * time.Second),
+		},
+	)
+	if err != nil {
+		t.Fatalf("FilterLogEvents (time range): %v", err)
+	}
+
+	if len(timeResults) != 3 {
+		t.Errorf("expected 3 events in time range, got %d", len(timeResults))
+	}
+
+	// Filter with limit.
+	limitResults, err := d.FilterLogEvents(
+		ctx, &loggingdriver.FilterLogEventsInput{
+			LogGroup: "filter-test",
+			Limit:    2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("FilterLogEvents (limit): %v", err)
+	}
+
+	if len(limitResults) > 2 {
+		t.Errorf("expected at most 2 events, got %d", len(limitResults))
+	}
+
+	// Empty result for non-matching pattern.
+	emptyResults, err := d.FilterLogEvents(
+		ctx, &loggingdriver.FilterLogEventsInput{
+			LogGroup:      "filter-test",
+			FilterPattern: "CRITICAL",
+		},
+	)
+	if err != nil {
+		t.Fatalf("FilterLogEvents (no match): %v", err)
+	}
+
+	if len(emptyResults) != 0 {
+		t.Errorf("expected 0 events, got %d", len(emptyResults))
+	}
+
+	// Not found log group.
+	_, err = d.FilterLogEvents(ctx, &loggingdriver.FilterLogEventsInput{
+		LogGroup: "nonexistent",
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+func TestMetricFiltersAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	d := p.CloudWatchLogs
+
+	_, err := d.CreateLogGroup(ctx, loggingdriver.LogGroupConfig{
+		Name: "mf-test",
+	})
+	if err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	// Put a metric filter.
+	err = d.PutMetricFilter(ctx, &loggingdriver.MetricFilterConfig{
+		Name:            "error-count",
+		LogGroup:        "mf-test",
+		FilterPattern:   "ERROR",
+		MetricName:      "ErrorCount",
+		MetricNamespace: "App/Errors",
+		MetricValue:     "1",
+	})
+	if err != nil {
+		t.Fatalf("PutMetricFilter: %v", err)
+	}
+
+	// Describe metric filters.
+	filters, err := d.DescribeMetricFilters(ctx, "mf-test")
+	if err != nil {
+		t.Fatalf("DescribeMetricFilters: %v", err)
+	}
+
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 filter, got %d", len(filters))
+	}
+
+	f := filters[0]
+	if f.Name != "error-count" {
+		t.Errorf("expected name 'error-count', got %q", f.Name)
+	}
+
+	if f.FilterPattern != "ERROR" {
+		t.Errorf("expected pattern 'ERROR', got %q", f.FilterPattern)
+	}
+
+	if f.MetricName != "ErrorCount" {
+		t.Errorf("expected metric 'ErrorCount', got %q", f.MetricName)
+	}
+
+	if f.MetricNamespace != "App/Errors" {
+		t.Errorf(
+			"expected namespace 'App/Errors', got %q",
+			f.MetricNamespace,
+		)
+	}
+
+	if f.CreatedAt.IsZero() {
+		t.Error("expected non-zero CreatedAt")
+	}
+
+	// Update existing filter by name.
+	err = d.PutMetricFilter(ctx, &loggingdriver.MetricFilterConfig{
+		Name:            "error-count",
+		LogGroup:        "mf-test",
+		FilterPattern:   "FATAL",
+		MetricName:      "FatalCount",
+		MetricNamespace: "App/Errors",
+		MetricValue:     "1",
+	})
+	if err != nil {
+		t.Fatalf("PutMetricFilter (update): %v", err)
+	}
+
+	filters, err = d.DescribeMetricFilters(ctx, "mf-test")
+	if err != nil {
+		t.Fatalf("DescribeMetricFilters after update: %v", err)
+	}
+
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 filter after update, got %d", len(filters))
+	}
+
+	if filters[0].FilterPattern != "FATAL" {
+		t.Errorf(
+			"expected updated pattern 'FATAL', got %q",
+			filters[0].FilterPattern,
+		)
+	}
+
+	// Delete metric filter.
+	err = d.DeleteMetricFilter(ctx, "mf-test", "error-count")
+	if err != nil {
+		t.Fatalf("DeleteMetricFilter: %v", err)
+	}
+
+	filters, err = d.DescribeMetricFilters(ctx, "mf-test")
+	if err != nil {
+		t.Fatalf("DescribeMetricFilters after delete: %v", err)
+	}
+
+	if len(filters) != 0 {
+		t.Errorf("expected 0 filters after delete, got %d", len(filters))
+	}
+
+	// Delete non-existent filter.
+	err = d.DeleteMetricFilter(ctx, "mf-test", "nonexistent")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+
+	// Describe on non-existent group.
+	_, err = d.DescribeMetricFilters(ctx, "no-such-group")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+
+// ==============================================================================
 // Integration Tests: Notification (AWS SNS, Azure Notification Hubs, GCP FCM)
 // ==============================================================================
 
@@ -6781,5 +7056,712 @@ func TestListenerRulesGCP(t *testing.T) {
 
 	if len(rules) != 0 {
 		t.Errorf("expected 0 rules after deletion, got %d", len(rules))
+	}
+}
+
+func TestVolumeLifecycleAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	vol, err := p.EC2.CreateVolume(ctx, computedriver.VolumeConfig{Size: 100, VolumeType: "gp3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vol.State != "available" {
+		t.Errorf("expected state 'available', got %q", vol.State)
+	}
+
+	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t3.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.EC2.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf"); err != nil {
+		t.Fatal(err)
+	}
+
+	vols, err := p.EC2.DescribeVolumes(ctx, []string{vol.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vols[0].State != "in-use" {
+		t.Errorf("expected state 'in-use', got %q", vols[0].State)
+	}
+
+	if err := p.EC2.DetachVolume(ctx, vol.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.EC2.DeleteVolume(ctx, vol.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	vols, err = p.EC2.DescribeVolumes(ctx, []string{vol.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(vols) != 0 {
+		t.Errorf("expected 0 volumes after delete, got %d", len(vols))
+	}
+}
+
+func TestVolumeLifecycleAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	vol, err := p.VirtualMachines.CreateVolume(ctx, computedriver.VolumeConfig{Size: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vol.State != "available" {
+		t.Errorf("expected 'available', got %q", vol.State)
+	}
+
+	if err := p.VirtualMachines.DeleteVolume(ctx, vol.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVolumeLifecycleGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	vol, err := p.GCE.CreateVolume(ctx, computedriver.VolumeConfig{Size: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vol.State != "available" {
+		t.Errorf("expected 'available', got %q", vol.State)
+	}
+
+	if err := p.GCE.DeleteVolume(ctx, vol.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	vol, err := p.EC2.CreateVolume(ctx, computedriver.VolumeConfig{Size: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := p.EC2.CreateSnapshot(ctx, computedriver.SnapshotConfig{
+		VolumeID: vol.ID, Description: "test snapshot",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.VolumeID != vol.ID {
+		t.Errorf("expected VolumeID %q, got %q", vol.ID, snap.VolumeID)
+	}
+
+	if snap.Size != 100 {
+		t.Errorf("expected size 100, got %d", snap.Size)
+	}
+
+	snaps, err := p.EC2.DescribeSnapshots(ctx, []string{snap.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(snaps) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snaps))
+	}
+
+	if err := p.EC2.DeleteSnapshot(ctx, snap.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestImageAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t3.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	img, err := p.EC2.CreateImage(ctx, computedriver.ImageConfig{
+		InstanceID: instances[0].ID, Name: "my-image", Description: "test image",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if img.Name != "my-image" {
+		t.Errorf("expected name 'my-image', got %q", img.Name)
+	}
+
+	if img.State != "available" {
+		t.Errorf("expected state 'available', got %q", img.State)
+	}
+
+	imgs, err := p.EC2.DescribeImages(ctx, []string{img.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(imgs) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(imgs))
+	}
+
+	if err := p.EC2.DeregisterImage(ctx, img.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIAMGroupsAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Create user and group
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grp, err := p.IAM.CreateGroup(ctx, iamdriver.GroupConfig{
+		Name: "developers",
+		Path: "/eng/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if grp.Name != "developers" {
+		t.Errorf("expected group name developers, got %s", grp.Name)
+	}
+
+	if grp.ARN == "" {
+		t.Error("expected non-empty ARN")
+	}
+
+	// Duplicate group should fail
+	_, err = p.IAM.CreateGroup(ctx, iamdriver.GroupConfig{
+		Name: "developers",
+	})
+	if err == nil {
+		t.Error("expected error for duplicate group")
+	}
+
+	// Get group
+	got, err := p.IAM.GetGroup(ctx, "developers")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Path != "/eng/" {
+		t.Errorf("expected path /eng/, got %s", got.Path)
+	}
+
+	// List groups
+	groups, err := p.IAM.ListGroups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(groups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(groups))
+	}
+
+	// Add user to group
+	if err := p.IAM.AddUserToGroup(ctx, "alice", "developers"); err != nil {
+		t.Fatal(err)
+	}
+
+	// List groups for user
+	userGroups, err := p.IAM.ListGroupsForUser(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(userGroups) != 1 {
+		t.Errorf("expected 1 group for user, got %d", len(userGroups))
+	}
+
+	// Remove user from group
+	if err := p.IAM.RemoveUserFromGroup(ctx, "alice", "developers"); err != nil {
+		t.Fatal(err)
+	}
+
+	userGroups, err = p.IAM.ListGroupsForUser(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(userGroups) != 0 {
+		t.Errorf("expected 0 groups after removal, got %d", len(userGroups))
+	}
+
+	// Delete group
+	if err := p.IAM.DeleteGroup(ctx, "developers"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.IAM.GetGroup(ctx, "developers")
+	if err == nil {
+		t.Error("expected error after deleting group")
+	}
+}
+
+func TestIAMGroupsAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grp, err := p.IAM.CreateGroup(ctx, iamdriver.GroupConfig{
+		Name: "admins",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if grp.Name != "admins" {
+		t.Errorf("expected group name admins, got %s", grp.Name)
+	}
+
+	if err := p.IAM.AddUserToGroup(ctx, "bob", "admins"); err != nil {
+		t.Fatal(err)
+	}
+
+	userGroups, err := p.IAM.ListGroupsForUser(ctx, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(userGroups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(userGroups))
+	}
+
+	if err := p.IAM.RemoveUserFromGroup(ctx, "bob", "admins"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.IAM.DeleteGroup(ctx, "admins"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIAMGroupsGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "carol"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grp, err := p.IAM.CreateGroup(ctx, iamdriver.GroupConfig{
+		Name: "viewers",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if grp.Name != "viewers" {
+		t.Errorf("expected group name viewers, got %s", grp.Name)
+	}
+
+	if err := p.IAM.AddUserToGroup(ctx, "carol", "viewers"); err != nil {
+		t.Fatal(err)
+	}
+
+	userGroups, err := p.IAM.ListGroupsForUser(ctx, "carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(userGroups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(userGroups))
+	}
+
+	if err := p.IAM.RemoveUserFromGroup(ctx, "carol", "viewers"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.IAM.DeleteGroup(ctx, "viewers"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAccessKeysAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "dave"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create access key
+	ak, err := p.IAM.CreateAccessKey(ctx, iamdriver.AccessKeyConfig{
+		UserName: "dave",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ak.AccessKeyID == "" {
+		t.Error("expected non-empty access key ID")
+	}
+
+	if ak.SecretAccessKey == "" {
+		t.Error("expected non-empty secret access key")
+	}
+
+	if ak.UserName != "dave" {
+		t.Errorf("expected user dave, got %s", ak.UserName)
+	}
+
+	if ak.Status != "Active" {
+		t.Errorf("expected Active status, got %s", ak.Status)
+	}
+
+	// List access keys
+	keys, err := p.IAM.ListAccessKeys(ctx, "dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(keys) != 1 {
+		t.Errorf("expected 1 key, got %d", len(keys))
+	}
+
+	// Create another key
+	ak2, err := p.IAM.CreateAccessKey(ctx, iamdriver.AccessKeyConfig{
+		UserName: "dave",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keys, err = p.IAM.ListAccessKeys(ctx, "dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(keys) != 2 {
+		t.Errorf("expected 2 keys, got %d", len(keys))
+	}
+
+	// Delete access key
+	if err := p.IAM.DeleteAccessKey(ctx, "dave", ak.AccessKeyID); err != nil {
+		t.Fatal(err)
+	}
+
+	keys, err = p.IAM.ListAccessKeys(ctx, "dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(keys) != 1 {
+		t.Errorf("expected 1 key after delete, got %d", len(keys))
+	}
+
+	// Delete wrong user should fail
+	err = p.IAM.DeleteAccessKey(ctx, "nobody", ak2.AccessKeyID)
+	if err == nil {
+		t.Error("expected error deleting key with wrong user")
+	}
+
+	// Create key for nonexistent user should fail
+	_, err = p.IAM.CreateAccessKey(ctx, iamdriver.AccessKeyConfig{
+		UserName: "nonexistent",
+	})
+	if err == nil {
+		t.Error("expected error creating key for nonexistent user")
+	}
+}
+
+func TestInternetGatewayAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Create VPC first.
+	vpc, err := p.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create internet gateway.
+	igw, err := p.VPC.CreateInternetGateway(ctx, netdriver.InternetGatewayConfig{
+		Tags: map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if igw.State != "detached" {
+		t.Errorf("expected detached, got %s", igw.State)
+	}
+
+	// Attach to VPC.
+	if err := p.VPC.AttachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Describe and verify attached state.
+	igws, err := p.VPC.DescribeInternetGateways(ctx, []string{igw.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(igws) != 1 {
+		t.Fatalf("expected 1 igw, got %d", len(igws))
+	}
+
+	if igws[0].State != "attached" {
+		t.Errorf("expected attached, got %s", igws[0].State)
+	}
+
+	if igws[0].VpcID != vpc.ID {
+		t.Errorf("expected vpc %s, got %s", vpc.ID, igws[0].VpcID)
+	}
+
+	// Cannot delete while attached.
+	err = p.VPC.DeleteInternetGateway(ctx, igw.ID)
+	if err == nil {
+		t.Error("expected error deleting attached igw")
+	}
+
+	// Detach then delete.
+	if err := p.VPC.DetachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VPC.DeleteInternetGateway(ctx, igw.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify gone.
+	igws, err = p.VPC.DescribeInternetGateways(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(igws) != 0 {
+		t.Errorf("expected 0 igws, got %d", len(igws))
+	}
+}
+
+func TestElasticIPAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Allocate EIP.
+	eip, err := p.VPC.AllocateAddress(ctx, netdriver.ElasticIPConfig{
+		Tags: map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if eip.PublicIP == "" {
+		t.Error("expected public IP")
+	}
+
+	if eip.AllocationID == "" {
+		t.Error("expected allocation ID")
+	}
+
+	// Associate with instance.
+	assocID, err := p.VPC.AssociateAddress(
+		ctx, eip.AllocationID, "i-12345",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if assocID == "" {
+		t.Error("expected association ID")
+	}
+
+	// Describe and verify association.
+	eips, err := p.VPC.DescribeAddresses(
+		ctx, []string{eip.AllocationID},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eips) != 1 {
+		t.Fatalf("expected 1 eip, got %d", len(eips))
+	}
+
+	if eips[0].InstanceID != "i-12345" {
+		t.Errorf("expected i-12345, got %s", eips[0].InstanceID)
+	}
+
+	// Cannot release while associated.
+	err = p.VPC.ReleaseAddress(ctx, eip.AllocationID)
+	if err == nil {
+		t.Error("expected error releasing associated eip")
+	}
+
+	// Disassociate then release.
+	if err := p.VPC.DisassociateAddress(ctx, assocID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VPC.ReleaseAddress(ctx, eip.AllocationID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify gone.
+	eips, err = p.VPC.DescribeAddresses(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eips) != 0 {
+		t.Errorf("expected 0 eips, got %d", len(eips))
+	}
+}
+
+func TestRouteTableAssociationAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Create VPC, subnet, route table.
+	vpc, err := p.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	subnet, err := p.VPC.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID:     vpc.ID,
+		CIDRBlock: "10.0.1.0/24",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := p.VPC.CreateRouteTable(ctx, netdriver.RouteTableConfig{
+		VPCID: vpc.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Associate route table with subnet.
+	assoc, err := p.VPC.AssociateRouteTable(
+		ctx, rt.ID, subnet.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if assoc.RouteTableID != rt.ID {
+		t.Errorf("expected rt %s, got %s", rt.ID, assoc.RouteTableID)
+	}
+
+	if assoc.SubnetID != subnet.ID {
+		t.Errorf(
+			"expected subnet %s, got %s",
+			subnet.ID, assoc.SubnetID,
+		)
+	}
+
+	// Disassociate.
+	if err := p.VPC.DisassociateRouteTable(ctx, assoc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Disassociate again should fail.
+	err = p.VPC.DisassociateRouteTable(ctx, assoc.ID)
+	if err == nil {
+		t.Error("expected error on double disassociate")
+	}
+}
+
+func TestInternetGatewayAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	vpc, err := p.VNet.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	igw, err := p.VNet.CreateInternetGateway(
+		ctx, netdriver.InternetGatewayConfig{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if igw.State != "detached" {
+		t.Errorf("expected detached, got %s", igw.State)
+	}
+
+	if err := p.VNet.AttachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VNet.DetachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VNet.DeleteInternetGateway(ctx, igw.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInternetGatewayGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	vpc, err := p.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	igw, err := p.VPC.CreateInternetGateway(
+		ctx, netdriver.InternetGatewayConfig{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if igw.State != "detached" {
+		t.Errorf("expected detached, got %s", igw.State)
+	}
+
+	if err := p.VPC.AttachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VPC.DetachInternetGateway(ctx, igw.ID, vpc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.VPC.DeleteInternetGateway(ctx, igw.ID); err != nil {
+		t.Fatal(err)
 	}
 }

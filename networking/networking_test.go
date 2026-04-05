@@ -14,7 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockDriver implements driver.Networking for testing the portable wrapper.
+// mockDriver implements driver.Networking for testing
+// the portable wrapper.
 type mockDriver struct {
 	vpcs           map[string]*driver.VPCInfo
 	subnets        map[string]*driver.SubnetInfo
@@ -24,6 +25,9 @@ type mockDriver struct {
 	flowLogs       map[string]*driver.FlowLog
 	routeTables    map[string]*driver.RouteTable
 	networkACLs    map[string]*driver.NetworkACL
+	igws           map[string]*driver.InternetGateway
+	eips           map[string]*driver.ElasticIP
+	rtAssocs       map[string]*driver.RouteTableAssociation
 	seq            int
 }
 
@@ -37,6 +41,9 @@ func newMockDriver() *mockDriver {
 		flowLogs:       make(map[string]*driver.FlowLog),
 		routeTables:    make(map[string]*driver.RouteTable),
 		networkACLs:    make(map[string]*driver.NetworkACL),
+		igws:           make(map[string]*driver.InternetGateway),
+		eips:           make(map[string]*driver.ElasticIP),
+		rtAssocs:       make(map[string]*driver.RouteTableAssociation),
 	}
 }
 
@@ -470,6 +477,190 @@ func (m *mockDriver) RemoveNetworkACLRule(_ context.Context, aclID string, _ int
 	if _, ok := m.networkACLs[aclID]; !ok {
 		return fmt.Errorf("not found")
 	}
+
+	return nil
+}
+
+func (m *mockDriver) CreateInternetGateway(
+	_ context.Context, cfg driver.InternetGatewayConfig,
+) (*driver.InternetGateway, error) {
+	id := m.nextID("igw")
+	igw := &driver.InternetGateway{
+		ID: id, State: "detached", Tags: cfg.Tags,
+	}
+	m.igws[id] = igw
+
+	return igw, nil
+}
+
+func (m *mockDriver) DeleteInternetGateway(
+	_ context.Context, id string,
+) error {
+	if _, ok := m.igws[id]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.igws, id)
+
+	return nil
+}
+
+func (m *mockDriver) DescribeInternetGateways(
+	_ context.Context, ids []string,
+) ([]driver.InternetGateway, error) {
+	if len(ids) == 0 {
+		result := make([]driver.InternetGateway, 0, len(m.igws))
+		for _, igw := range m.igws {
+			result = append(result, *igw)
+		}
+
+		return result, nil
+	}
+
+	var result []driver.InternetGateway
+
+	for _, id := range ids {
+		if igw, ok := m.igws[id]; ok {
+			result = append(result, *igw)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) AttachInternetGateway(
+	_ context.Context, igwID, vpcID string,
+) error {
+	igw, ok := m.igws[igwID]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+
+	igw.VpcID = vpcID
+	igw.State = "attached"
+
+	return nil
+}
+
+func (m *mockDriver) DetachInternetGateway(
+	_ context.Context, igwID, _ string,
+) error {
+	igw, ok := m.igws[igwID]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+
+	igw.VpcID = ""
+	igw.State = "detached"
+
+	return nil
+}
+
+func (m *mockDriver) AllocateAddress(
+	_ context.Context, cfg driver.ElasticIPConfig,
+) (*driver.ElasticIP, error) {
+	id := m.nextID("eipalloc")
+	eip := &driver.ElasticIP{
+		AllocationID: id,
+		PublicIP:     "10.0.0.1",
+		Tags:         cfg.Tags,
+	}
+	m.eips[id] = eip
+
+	return eip, nil
+}
+
+func (m *mockDriver) ReleaseAddress(
+	_ context.Context, allocationID string,
+) error {
+	if _, ok := m.eips[allocationID]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.eips, allocationID)
+
+	return nil
+}
+
+func (m *mockDriver) DescribeAddresses(
+	_ context.Context, ids []string,
+) ([]driver.ElasticIP, error) {
+	if len(ids) == 0 {
+		result := make([]driver.ElasticIP, 0, len(m.eips))
+		for _, eip := range m.eips {
+			result = append(result, *eip)
+		}
+
+		return result, nil
+	}
+
+	var result []driver.ElasticIP
+
+	for _, id := range ids {
+		if eip, ok := m.eips[id]; ok {
+			result = append(result, *eip)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) AssociateAddress(
+	_ context.Context, allocationID, instanceID string,
+) (string, error) {
+	eip, ok := m.eips[allocationID]
+	if !ok {
+		return "", fmt.Errorf("not found")
+	}
+
+	assocID := m.nextID("eipassoc")
+	eip.AssociationID = assocID
+	eip.InstanceID = instanceID
+
+	return assocID, nil
+}
+
+func (m *mockDriver) DisassociateAddress(
+	_ context.Context, associationID string,
+) error {
+	for _, eip := range m.eips {
+		if eip.AssociationID == associationID {
+			eip.AssociationID = ""
+			eip.InstanceID = ""
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("not found")
+}
+
+func (m *mockDriver) AssociateRouteTable(
+	_ context.Context, routeTableID, subnetID string,
+) (*driver.RouteTableAssociation, error) {
+	if _, ok := m.routeTables[routeTableID]; !ok {
+		return nil, fmt.Errorf("not found")
+	}
+
+	id := m.nextID("rtbassoc")
+	assoc := &driver.RouteTableAssociation{
+		ID:           id,
+		RouteTableID: routeTableID,
+		SubnetID:     subnetID,
+	}
+	m.rtAssocs[id] = assoc
+
+	return assoc, nil
+}
+
+func (m *mockDriver) DisassociateRouteTable(
+	_ context.Context, associationID string,
+) error {
+	if _, ok := m.rtAssocs[associationID]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.rtAssocs, associationID)
 
 	return nil
 }
