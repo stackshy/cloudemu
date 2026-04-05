@@ -7223,3 +7223,270 @@ func TestImageAWS(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIAMGroupsAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	// Create user and group
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grp, err := p.IAM.CreateGroup(ctx, iamdriver.GroupConfig{
+		Name: "developers",
+		Path: "/eng/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if grp.Name != "developers" {
+		t.Errorf("expected group name developers, got %s", grp.Name)
+	}
+
+	if grp.ARN == "" {
+		t.Error("expected non-empty ARN")
+	}
+
+	// Duplicate group should fail
+	_, err = p.IAM.CreateGroup(ctx, iamdriver.GroupConfig{
+		Name: "developers",
+	})
+	if err == nil {
+		t.Error("expected error for duplicate group")
+	}
+
+	// Get group
+	got, err := p.IAM.GetGroup(ctx, "developers")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Path != "/eng/" {
+		t.Errorf("expected path /eng/, got %s", got.Path)
+	}
+
+	// List groups
+	groups, err := p.IAM.ListGroups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(groups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(groups))
+	}
+
+	// Add user to group
+	if err := p.IAM.AddUserToGroup(ctx, "alice", "developers"); err != nil {
+		t.Fatal(err)
+	}
+
+	// List groups for user
+	userGroups, err := p.IAM.ListGroupsForUser(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(userGroups) != 1 {
+		t.Errorf("expected 1 group for user, got %d", len(userGroups))
+	}
+
+	// Remove user from group
+	if err := p.IAM.RemoveUserFromGroup(ctx, "alice", "developers"); err != nil {
+		t.Fatal(err)
+	}
+
+	userGroups, err = p.IAM.ListGroupsForUser(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(userGroups) != 0 {
+		t.Errorf("expected 0 groups after removal, got %d", len(userGroups))
+	}
+
+	// Delete group
+	if err := p.IAM.DeleteGroup(ctx, "developers"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.IAM.GetGroup(ctx, "developers")
+	if err == nil {
+		t.Error("expected error after deleting group")
+	}
+}
+
+func TestIAMGroupsAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grp, err := p.IAM.CreateGroup(ctx, iamdriver.GroupConfig{
+		Name: "admins",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if grp.Name != "admins" {
+		t.Errorf("expected group name admins, got %s", grp.Name)
+	}
+
+	if err := p.IAM.AddUserToGroup(ctx, "bob", "admins"); err != nil {
+		t.Fatal(err)
+	}
+
+	userGroups, err := p.IAM.ListGroupsForUser(ctx, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(userGroups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(userGroups))
+	}
+
+	if err := p.IAM.RemoveUserFromGroup(ctx, "bob", "admins"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.IAM.DeleteGroup(ctx, "admins"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIAMGroupsGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "carol"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grp, err := p.IAM.CreateGroup(ctx, iamdriver.GroupConfig{
+		Name: "viewers",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if grp.Name != "viewers" {
+		t.Errorf("expected group name viewers, got %s", grp.Name)
+	}
+
+	if err := p.IAM.AddUserToGroup(ctx, "carol", "viewers"); err != nil {
+		t.Fatal(err)
+	}
+
+	userGroups, err := p.IAM.ListGroupsForUser(ctx, "carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(userGroups) != 1 {
+		t.Errorf("expected 1 group, got %d", len(userGroups))
+	}
+
+	if err := p.IAM.RemoveUserFromGroup(ctx, "carol", "viewers"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.IAM.DeleteGroup(ctx, "viewers"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAccessKeysAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	_, err := p.IAM.CreateUser(ctx, iamdriver.UserConfig{Name: "dave"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create access key
+	ak, err := p.IAM.CreateAccessKey(ctx, iamdriver.AccessKeyConfig{
+		UserName: "dave",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ak.AccessKeyID == "" {
+		t.Error("expected non-empty access key ID")
+	}
+
+	if ak.SecretAccessKey == "" {
+		t.Error("expected non-empty secret access key")
+	}
+
+	if ak.UserName != "dave" {
+		t.Errorf("expected user dave, got %s", ak.UserName)
+	}
+
+	if ak.Status != "Active" {
+		t.Errorf("expected Active status, got %s", ak.Status)
+	}
+
+	// List access keys
+	keys, err := p.IAM.ListAccessKeys(ctx, "dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(keys) != 1 {
+		t.Errorf("expected 1 key, got %d", len(keys))
+	}
+
+	// Create another key
+	ak2, err := p.IAM.CreateAccessKey(ctx, iamdriver.AccessKeyConfig{
+		UserName: "dave",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keys, err = p.IAM.ListAccessKeys(ctx, "dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(keys) != 2 {
+		t.Errorf("expected 2 keys, got %d", len(keys))
+	}
+
+	// Delete access key
+	if err := p.IAM.DeleteAccessKey(ctx, "dave", ak.AccessKeyID); err != nil {
+		t.Fatal(err)
+	}
+
+	keys, err = p.IAM.ListAccessKeys(ctx, "dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(keys) != 1 {
+		t.Errorf("expected 1 key after delete, got %d", len(keys))
+	}
+
+	// Delete wrong user should fail
+	err = p.IAM.DeleteAccessKey(ctx, "nobody", ak2.AccessKeyID)
+	if err == nil {
+		t.Error("expected error deleting key with wrong user")
+	}
+
+	// Create key for nonexistent user should fail
+	_, err = p.IAM.CreateAccessKey(ctx, iamdriver.AccessKeyConfig{
+		UserName: "nonexistent",
+	})
+	if err == nil {
+		t.Error("expected error creating key for nonexistent user")
+	}
+}
