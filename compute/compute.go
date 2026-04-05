@@ -358,3 +358,96 @@ func (c *Compute) ListLaunchTemplates(ctx context.Context) ([]driver.LaunchTempl
 
 	return out.([]driver.LaunchTemplate), nil
 }
+
+// CreateVolume creates a new block storage volume.
+func (c *Compute) CreateVolume(ctx context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
+	out, err := c.do(ctx, "CreateVolume", cfg, func() (any, error) { return c.driver.CreateVolume(ctx, cfg) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.VolumeInfo), nil
+}
+
+// DeleteVolume deletes a volume.
+func (c *Compute) DeleteVolume(ctx context.Context, id string) error {
+	_, err := c.do(ctx, "DeleteVolume", id, func() (any, error) { return nil, c.driver.DeleteVolume(ctx, id) })
+	return err
+}
+
+// DescribeVolumes returns volumes matching the given IDs.
+func (c *Compute) DescribeVolumes(ctx context.Context, ids []string) ([]driver.VolumeInfo, error) {
+	out, err := c.do(ctx, "DescribeVolumes", ids, func() (any, error) { return c.driver.DescribeVolumes(ctx, ids) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.VolumeInfo), nil
+}
+
+// AttachVolume attaches a volume to an instance.
+func (c *Compute) AttachVolume(ctx context.Context, volumeID, instanceID, device string) error {
+	_, err := c.do(ctx, "AttachVolume", volumeID, func() (any, error) {
+		return nil, c.driver.AttachVolume(ctx, volumeID, instanceID, device)
+	})
+
+	return err
+}
+
+// DetachVolume detaches a volume.
+func (c *Compute) DetachVolume(ctx context.Context, volumeID string) error {
+	_, err := c.do(ctx, "DetachVolume", volumeID, func() (any, error) { return nil, c.driver.DetachVolume(ctx, volumeID) })
+	return err
+}
+
+// CreateSnapshot creates a volume snapshot.
+func (c *Compute) CreateSnapshot(ctx context.Context, cfg driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
+	out, err := c.do(ctx, "CreateSnapshot", cfg, func() (any, error) { return c.driver.CreateSnapshot(ctx, cfg) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.SnapshotInfo), nil
+}
+
+// DeleteSnapshot deletes a snapshot.
+func (c *Compute) DeleteSnapshot(ctx context.Context, id string) error {
+	_, err := c.do(ctx, "DeleteSnapshot", id, func() (any, error) { return nil, c.driver.DeleteSnapshot(ctx, id) })
+	return err
+}
+
+// DescribeSnapshots returns snapshots matching the given IDs.
+func (c *Compute) DescribeSnapshots(ctx context.Context, ids []string) ([]driver.SnapshotInfo, error) {
+	out, err := c.do(ctx, "DescribeSnapshots", ids, func() (any, error) { return c.driver.DescribeSnapshots(ctx, ids) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.SnapshotInfo), nil
+}
+
+// CreateImage creates a machine image from an instance.
+func (c *Compute) CreateImage(ctx context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
+	out, err := c.do(ctx, "CreateImage", cfg, func() (any, error) { return c.driver.CreateImage(ctx, cfg) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ImageInfo), nil
+}
+
+// DeregisterImage deregisters a machine image.
+func (c *Compute) DeregisterImage(ctx context.Context, id string) error {
+	_, err := c.do(ctx, "DeregisterImage", id, func() (any, error) { return nil, c.driver.DeregisterImage(ctx, id) })
+	return err
+}
+
+// DescribeImages returns images matching the given IDs.
+func (c *Compute) DescribeImages(ctx context.Context, ids []string) ([]driver.ImageInfo, error) {
+	out, err := c.do(ctx, "DescribeImages", ids, func() (any, error) { return c.driver.DescribeImages(ctx, ids) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.ImageInfo), nil
+}

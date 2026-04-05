@@ -6783,3 +6783,168 @@ func TestListenerRulesGCP(t *testing.T) {
 		t.Errorf("expected 0 rules after deletion, got %d", len(rules))
 	}
 }
+
+func TestVolumeLifecycleAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	vol, err := p.EC2.CreateVolume(ctx, computedriver.VolumeConfig{Size: 100, VolumeType: "gp3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vol.State != "available" {
+		t.Errorf("expected state 'available', got %q", vol.State)
+	}
+
+	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t3.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.EC2.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf"); err != nil {
+		t.Fatal(err)
+	}
+
+	vols, err := p.EC2.DescribeVolumes(ctx, []string{vol.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vols[0].State != "in-use" {
+		t.Errorf("expected state 'in-use', got %q", vols[0].State)
+	}
+
+	if err := p.EC2.DetachVolume(ctx, vol.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.EC2.DeleteVolume(ctx, vol.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	vols, err = p.EC2.DescribeVolumes(ctx, []string{vol.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(vols) != 0 {
+		t.Errorf("expected 0 volumes after delete, got %d", len(vols))
+	}
+}
+
+func TestVolumeLifecycleAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+
+	vol, err := p.VirtualMachines.CreateVolume(ctx, computedriver.VolumeConfig{Size: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vol.State != "available" {
+		t.Errorf("expected 'available', got %q", vol.State)
+	}
+
+	if err := p.VirtualMachines.DeleteVolume(ctx, vol.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVolumeLifecycleGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+
+	vol, err := p.GCE.CreateVolume(ctx, computedriver.VolumeConfig{Size: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vol.State != "available" {
+		t.Errorf("expected 'available', got %q", vol.State)
+	}
+
+	if err := p.GCE.DeleteVolume(ctx, vol.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	vol, err := p.EC2.CreateVolume(ctx, computedriver.VolumeConfig{Size: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := p.EC2.CreateSnapshot(ctx, computedriver.SnapshotConfig{
+		VolumeID: vol.ID, Description: "test snapshot",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snap.VolumeID != vol.ID {
+		t.Errorf("expected VolumeID %q, got %q", vol.ID, snap.VolumeID)
+	}
+
+	if snap.Size != 100 {
+		t.Errorf("expected size 100, got %d", snap.Size)
+	}
+
+	snaps, err := p.EC2.DescribeSnapshots(ctx, []string{snap.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(snaps) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snaps))
+	}
+
+	if err := p.EC2.DeleteSnapshot(ctx, snap.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestImageAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t3.micro",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	img, err := p.EC2.CreateImage(ctx, computedriver.ImageConfig{
+		InstanceID: instances[0].ID, Name: "my-image", Description: "test image",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if img.Name != "my-image" {
+		t.Errorf("expected name 'my-image', got %q", img.Name)
+	}
+
+	if img.State != "available" {
+		t.Errorf("expected state 'available', got %q", img.State)
+	}
+
+	imgs, err := p.EC2.DescribeImages(ctx, []string{img.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(imgs) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(imgs))
+	}
+
+	if err := p.EC2.DeregisterImage(ctx, img.ID); err != nil {
+		t.Fatal(err)
+	}
+}
