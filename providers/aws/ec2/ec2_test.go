@@ -286,6 +286,393 @@ func TestLifecycleStateMachine(t *testing.T) {
 	assertEqual(t, compute.StateTerminated, desc[0].State)
 }
 
+// =====================================================================
+// Volume Tests
+// =====================================================================
+
+func TestCreateVolume(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       driver.VolumeConfig
+		expectErr bool
+	}{
+		{
+			name:      "success",
+			cfg:       driver.VolumeConfig{Size: 100, VolumeType: "gp3", Tags: map[string]string{"env": "test"}},
+			expectErr: false,
+		},
+		{
+			name:      "default volume type",
+			cfg:       driver.VolumeConfig{Size: 50},
+			expectErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestMock()
+			ctx := context.Background()
+
+			vol, err := m.CreateVolume(ctx, tc.cfg)
+			assertError(t, err, tc.expectErr)
+
+			if tc.expectErr {
+				return
+			}
+
+			assertNotEmpty(t, vol.ID)
+			assertEqual(t, tc.cfg.Size, vol.Size)
+			assertEqual(t, "available", vol.State)
+			assertNotEmpty(t, vol.CreatedAt)
+		})
+	}
+}
+
+func TestDeleteVolume(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+		requireNoError(t, err)
+
+		err = m.DeleteVolume(ctx, vol.ID)
+		requireNoError(t, err)
+
+		// Should be gone
+		vols, err := m.DescribeVolumes(ctx, []string{vol.ID})
+		requireNoError(t, err)
+		assertEqual(t, 0, len(vols))
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		err := m.DeleteVolume(ctx, "vol-nonexistent")
+		assertError(t, err, true)
+	})
+}
+
+func TestDescribeVolumes(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	vol1, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+	requireNoError(t, err)
+
+	vol2, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 20})
+	requireNoError(t, err)
+
+	t.Run("describe all", func(t *testing.T) {
+		vols, err := m.DescribeVolumes(ctx, nil)
+		requireNoError(t, err)
+		assertEqual(t, 2, len(vols))
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		vols, err := m.DescribeVolumes(ctx, []string{vol1.ID})
+		requireNoError(t, err)
+		assertEqual(t, 1, len(vols))
+		assertEqual(t, vol1.ID, vols[0].ID)
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		fresh := newTestMock()
+		vols, err := fresh.DescribeVolumes(ctx, nil)
+		requireNoError(t, err)
+		assertEqual(t, 0, len(vols))
+	})
+
+	// Keep vol2 referenced to avoid unused variable
+	assertNotEmpty(t, vol2.ID)
+}
+
+func TestAttachVolume(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		instances, err := m.RunInstances(ctx, defaultConfig(), 1)
+		requireNoError(t, err)
+
+		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+		requireNoError(t, err)
+
+		err = m.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf")
+		requireNoError(t, err)
+
+		// Verify state changed to in-use
+		vols, err := m.DescribeVolumes(ctx, []string{vol.ID})
+		requireNoError(t, err)
+		assertEqual(t, 1, len(vols))
+		assertEqual(t, "in-use", vols[0].State)
+		assertEqual(t, instances[0].ID, vols[0].AttachedTo)
+	})
+
+	t.Run("nonexistent instance", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+		requireNoError(t, err)
+
+		err = m.AttachVolume(ctx, vol.ID, "i-nonexistent", "/dev/sdf")
+		assertError(t, err, true)
+	})
+
+	t.Run("nonexistent volume", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		instances, err := m.RunInstances(ctx, defaultConfig(), 1)
+		requireNoError(t, err)
+
+		err = m.AttachVolume(ctx, "vol-nonexistent", instances[0].ID, "/dev/sdf")
+		assertError(t, err, true)
+	})
+}
+
+func TestDetachVolume(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		instances, err := m.RunInstances(ctx, defaultConfig(), 1)
+		requireNoError(t, err)
+
+		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+		requireNoError(t, err)
+
+		err = m.AttachVolume(ctx, vol.ID, instances[0].ID, "/dev/sdf")
+		requireNoError(t, err)
+
+		err = m.DetachVolume(ctx, vol.ID)
+		requireNoError(t, err)
+
+		// Verify state changed back to available
+		vols, err := m.DescribeVolumes(ctx, []string{vol.ID})
+		requireNoError(t, err)
+		assertEqual(t, 1, len(vols))
+		assertEqual(t, "available", vols[0].State)
+	})
+
+	t.Run("detach unattached volume", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+		requireNoError(t, err)
+
+		err = m.DetachVolume(ctx, vol.ID)
+		assertError(t, err, true)
+	})
+}
+
+// =====================================================================
+// Snapshot Tests
+// =====================================================================
+
+func TestCreateSnapshot(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 50})
+		requireNoError(t, err)
+
+		snap, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{
+			VolumeID:    vol.ID,
+			Description: "test snapshot",
+			Tags:        map[string]string{"env": "test"},
+		})
+		requireNoError(t, err)
+
+		assertNotEmpty(t, snap.ID)
+		assertEqual(t, vol.ID, snap.VolumeID)
+		assertEqual(t, "completed", snap.State)
+		assertEqual(t, "test snapshot", snap.Description)
+		assertEqual(t, 50, snap.Size)
+		assertNotEmpty(t, snap.CreatedAt)
+	})
+
+	t.Run("nonexistent volume", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		_, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{
+			VolumeID: "vol-nonexistent",
+		})
+		assertError(t, err, true)
+	})
+}
+
+func TestDeleteSnapshot(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+		requireNoError(t, err)
+
+		snap, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{VolumeID: vol.ID})
+		requireNoError(t, err)
+
+		err = m.DeleteSnapshot(ctx, snap.ID)
+		requireNoError(t, err)
+
+		// Should be gone
+		snaps, err := m.DescribeSnapshots(ctx, []string{snap.ID})
+		requireNoError(t, err)
+		assertEqual(t, 0, len(snaps))
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		err := m.DeleteSnapshot(ctx, "snap-nonexistent")
+		assertError(t, err, true)
+	})
+}
+
+func TestDescribeSnapshots(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 10})
+	requireNoError(t, err)
+
+	snap1, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{VolumeID: vol.ID})
+	requireNoError(t, err)
+
+	snap2, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{VolumeID: vol.ID})
+	requireNoError(t, err)
+
+	t.Run("describe all", func(t *testing.T) {
+		snaps, err := m.DescribeSnapshots(ctx, nil)
+		requireNoError(t, err)
+		assertEqual(t, 2, len(snaps))
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		snaps, err := m.DescribeSnapshots(ctx, []string{snap1.ID})
+		requireNoError(t, err)
+		assertEqual(t, 1, len(snaps))
+		assertEqual(t, snap1.ID, snaps[0].ID)
+	})
+
+	// Keep snap2 referenced
+	assertNotEmpty(t, snap2.ID)
+}
+
+// =====================================================================
+// Image Tests
+// =====================================================================
+
+func TestCreateImage(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		instances, err := m.RunInstances(ctx, defaultConfig(), 1)
+		requireNoError(t, err)
+
+		img, err := m.CreateImage(ctx, driver.ImageConfig{
+			InstanceID:  instances[0].ID,
+			Name:        "my-image",
+			Description: "test image",
+			Tags:        map[string]string{"env": "test"},
+		})
+		requireNoError(t, err)
+
+		assertNotEmpty(t, img.ID)
+		assertEqual(t, "my-image", img.Name)
+		assertEqual(t, "available", img.State)
+		assertEqual(t, "test image", img.Description)
+		assertNotEmpty(t, img.CreatedAt)
+	})
+
+	t.Run("nonexistent instance", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		_, err := m.CreateImage(ctx, driver.ImageConfig{
+			InstanceID: "i-nonexistent",
+			Name:       "bad-image",
+		})
+		assertError(t, err, true)
+	})
+}
+
+func TestDeregisterImage(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		instances, err := m.RunInstances(ctx, defaultConfig(), 1)
+		requireNoError(t, err)
+
+		img, err := m.CreateImage(ctx, driver.ImageConfig{
+			InstanceID: instances[0].ID,
+			Name:       "del-image",
+		})
+		requireNoError(t, err)
+
+		err = m.DeregisterImage(ctx, img.ID)
+		requireNoError(t, err)
+
+		// Should be gone
+		imgs, err := m.DescribeImages(ctx, []string{img.ID})
+		requireNoError(t, err)
+		assertEqual(t, 0, len(imgs))
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		m := newTestMock()
+		ctx := context.Background()
+
+		err := m.DeregisterImage(ctx, "ami-nonexistent")
+		assertError(t, err, true)
+	})
+}
+
+func TestDescribeImages(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	instances, err := m.RunInstances(ctx, defaultConfig(), 1)
+	requireNoError(t, err)
+
+	img1, err := m.CreateImage(ctx, driver.ImageConfig{
+		InstanceID: instances[0].ID,
+		Name:       "image-1",
+	})
+	requireNoError(t, err)
+
+	img2, err := m.CreateImage(ctx, driver.ImageConfig{
+		InstanceID: instances[0].ID,
+		Name:       "image-2",
+	})
+	requireNoError(t, err)
+
+	t.Run("describe all", func(t *testing.T) {
+		imgs, err := m.DescribeImages(ctx, nil)
+		requireNoError(t, err)
+		assertEqual(t, 2, len(imgs))
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		imgs, err := m.DescribeImages(ctx, []string{img1.ID})
+		requireNoError(t, err)
+		assertEqual(t, 1, len(imgs))
+		assertEqual(t, img1.ID, imgs[0].ID)
+	})
+
+	// Keep img2 referenced
+	assertNotEmpty(t, img2.ID)
+}
+
 // --- test helpers ---
 
 func requireNoError(t *testing.T, err error) {
