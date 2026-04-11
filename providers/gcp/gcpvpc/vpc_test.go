@@ -1214,3 +1214,233 @@ func TestFlowLogRejectTrafficType(t *testing.T) {
 		assert.Equal(t, "REJECT", rec.Action)
 	}
 }
+
+// --- Internet Gateway tests ---
+
+func TestInternetGateway(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	t.Run("create IGW", func(t *testing.T) {
+		igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{
+			Tags: map[string]string{"env": "test"},
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, igw.ID)
+		assert.Equal(t, "detached", igw.State)
+	})
+
+	t.Run("describe all IGWs", func(t *testing.T) {
+		igws, err := m.DescribeInternetGateways(ctx, nil)
+		require.NoError(t, err)
+		assert.Len(t, igws, 1)
+		assert.Equal(t, "detached", igws[0].State)
+	})
+
+	t.Run("attach IGW to VPC", func(t *testing.T) {
+		igws, _ := m.DescribeInternetGateways(ctx, nil)
+		err := m.AttachInternetGateway(ctx, igws[0].ID, vpc.ID)
+		require.NoError(t, err)
+
+		igws, _ = m.DescribeInternetGateways(ctx, []string{igws[0].ID})
+		require.Len(t, igws, 1)
+		assert.Equal(t, "attached", igws[0].State)
+		assert.Equal(t, vpc.ID, igws[0].VpcID)
+	})
+
+	t.Run("detach IGW", func(t *testing.T) {
+		igws, _ := m.DescribeInternetGateways(ctx, nil)
+		err := m.DetachInternetGateway(ctx, igws[0].ID, vpc.ID)
+		require.NoError(t, err)
+
+		igws, _ = m.DescribeInternetGateways(ctx, []string{igws[0].ID})
+		require.Len(t, igws, 1)
+		assert.Equal(t, "detached", igws[0].State)
+	})
+
+	t.Run("delete IGW", func(t *testing.T) {
+		igws, _ := m.DescribeInternetGateways(ctx, nil)
+		err := m.DeleteInternetGateway(ctx, igws[0].ID)
+		require.NoError(t, err)
+
+		igws, _ = m.DescribeInternetGateways(ctx, nil)
+		assert.Empty(t, igws)
+	})
+
+	t.Run("delete nonexistent IGW", func(t *testing.T) {
+		err := m.DeleteInternetGateway(ctx, "igw-missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("attach to nonexistent VPC", func(t *testing.T) {
+		igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+		require.NoError(t, err)
+
+		err = m.AttachInternetGateway(ctx, igw.ID, "vpc-missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("attach nonexistent IGW", func(t *testing.T) {
+		err := m.AttachInternetGateway(ctx, "igw-missing", vpc.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("detach nonexistent IGW", func(t *testing.T) {
+		err := m.DetachInternetGateway(ctx, "igw-missing", vpc.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+		require.NoError(t, err)
+
+		igws, err := m.DescribeInternetGateways(ctx, []string{igw.ID})
+		require.NoError(t, err)
+		require.Len(t, igws, 1)
+		assert.Equal(t, igw.ID, igws[0].ID)
+	})
+
+	t.Run("describe nonexistent ID", func(t *testing.T) {
+		igws, err := m.DescribeInternetGateways(ctx, []string{"igw-missing"})
+		require.NoError(t, err)
+		assert.Empty(t, igws)
+	})
+}
+
+// --- Elastic IP tests ---
+
+func TestElasticIP(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	t.Run("allocate address", func(t *testing.T) {
+		eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{
+			Tags: map[string]string{"env": "test"},
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, eip.AllocationID)
+		assert.NotEmpty(t, eip.PublicIP)
+	})
+
+	t.Run("describe addresses", func(t *testing.T) {
+		eips, err := m.DescribeAddresses(ctx, nil)
+		require.NoError(t, err)
+		assert.Len(t, eips, 1)
+	})
+
+	t.Run("associate address", func(t *testing.T) {
+		eips, _ := m.DescribeAddresses(ctx, nil)
+		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, "i-12345")
+		require.NoError(t, err)
+		assert.NotEmpty(t, assocID)
+
+		eips, _ = m.DescribeAddresses(ctx, []string{eips[0].AllocationID})
+		require.Len(t, eips, 1)
+		assert.Equal(t, assocID, eips[0].AssociationID)
+		assert.Equal(t, "i-12345", eips[0].InstanceID)
+	})
+
+	t.Run("disassociate address", func(t *testing.T) {
+		eips, _ := m.DescribeAddresses(ctx, nil)
+		err := m.DisassociateAddress(ctx, eips[0].AssociationID)
+		require.NoError(t, err)
+
+		eips, _ = m.DescribeAddresses(ctx, nil)
+		assert.Equal(t, "", eips[0].AssociationID)
+		assert.Equal(t, "", eips[0].InstanceID)
+	})
+
+	t.Run("release address", func(t *testing.T) {
+		eips, _ := m.DescribeAddresses(ctx, nil)
+		err := m.ReleaseAddress(ctx, eips[0].AllocationID)
+		require.NoError(t, err)
+
+		eips, _ = m.DescribeAddresses(ctx, nil)
+		assert.Empty(t, eips)
+	})
+
+	t.Run("release nonexistent", func(t *testing.T) {
+		err := m.ReleaseAddress(ctx, "eipalloc-missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("associate nonexistent allocation", func(t *testing.T) {
+		_, err := m.AssociateAddress(ctx, "eipalloc-missing", "i-12345")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("disassociate nonexistent", func(t *testing.T) {
+		err := m.DisassociateAddress(ctx, "eipassoc-missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		require.NoError(t, err)
+
+		eips, err := m.DescribeAddresses(ctx, []string{eip.AllocationID})
+		require.NoError(t, err)
+		require.Len(t, eips, 1)
+		assert.Equal(t, eip.AllocationID, eips[0].AllocationID)
+	})
+
+	t.Run("describe nonexistent ID", func(t *testing.T) {
+		eips, err := m.DescribeAddresses(ctx, []string{"eipalloc-missing"})
+		require.NoError(t, err)
+		assert.Empty(t, eips)
+	})
+}
+
+// --- Route Table Association tests ---
+
+func TestRouteTableAssociation(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpc.ID, CIDRBlock: "10.0.1.0/24"})
+	require.NoError(t, err)
+
+	rt, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: vpc.ID})
+	require.NoError(t, err)
+
+	t.Run("associate route table", func(t *testing.T) {
+		assoc, err := m.AssociateRouteTable(ctx, rt.ID, subnet.ID)
+		require.NoError(t, err)
+		assert.NotEmpty(t, assoc.ID)
+		assert.Equal(t, rt.ID, assoc.RouteTableID)
+		assert.Equal(t, subnet.ID, assoc.SubnetID)
+	})
+
+	t.Run("disassociate route table", func(t *testing.T) {
+		assoc, err := m.AssociateRouteTable(ctx, rt.ID, subnet.ID)
+		require.NoError(t, err)
+
+		err = m.DisassociateRouteTable(ctx, assoc.ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("associate nonexistent route table", func(t *testing.T) {
+		_, err := m.AssociateRouteTable(ctx, "rt-missing", subnet.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("disassociate nonexistent", func(t *testing.T) {
+		err := m.DisassociateRouteTable(ctx, "rtbassoc-missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
