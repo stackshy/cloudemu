@@ -51,8 +51,3 @@ __debug_bin*
 
 # Claude Code local config
 CLAUDE.md
-
-# Local research paper files
-CloudEmu_Research_Paper.docx
-_paper_imgs/
-generate_paper.py
