@@ -37,6 +37,7 @@ type blobObject struct {
 	ETag         string
 	LastModified string
 	Metadata     map[string]string
+	Tags         map[string]string
 }
 
 type blobMultipartUpload struct {
@@ -58,6 +59,7 @@ type containerMeta struct {
 	policy     *driver.BucketPolicy
 	corsConfig *driver.CORSConfig
 	encryption *driver.EncryptionConfig
+	tags       map[string]string
 }
 
 // Mock is an in-memory mock implementation of Azure Blob Storage.
@@ -724,4 +726,115 @@ func (m *Mock) GetEncryptionConfig(_ context.Context, bucket string) (*driver.En
 	e := *ctr.encryption
 
 	return &e, nil
+}
+
+// PutObjectTagging sets tags on a blob.
+func (m *Mock) PutObjectTagging(_ context.Context, bucket, key string, tags map[string]string) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	obj, ok := ctr.objects.Get(key)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
+	}
+
+	copied := make(map[string]string, len(tags))
+	for k, v := range tags {
+		copied[k] = v
+	}
+
+	obj.Tags = copied
+
+	return nil
+}
+
+// GetObjectTagging returns tags for a blob.
+func (m *Mock) GetObjectTagging(_ context.Context, bucket, key string) (map[string]string, error) {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	obj, ok := ctr.objects.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
+	}
+
+	if obj.Tags == nil {
+		return map[string]string{}, nil
+	}
+
+	copied := make(map[string]string, len(obj.Tags))
+	for k, v := range obj.Tags {
+		copied[k] = v
+	}
+
+	return copied, nil
+}
+
+// DeleteObjectTagging removes all tags from a blob.
+func (m *Mock) DeleteObjectTagging(_ context.Context, bucket, key string) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	obj, ok := ctr.objects.Get(key)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
+	}
+
+	obj.Tags = nil
+
+	return nil
+}
+
+// PutBucketTagging sets tags on a container.
+func (m *Mock) PutBucketTagging(_ context.Context, bucket string, tags map[string]string) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	copied := make(map[string]string, len(tags))
+	for k, v := range tags {
+		copied[k] = v
+	}
+
+	ctr.tags = copied
+
+	return nil
+}
+
+// GetBucketTagging returns tags for a container.
+func (m *Mock) GetBucketTagging(_ context.Context, bucket string) (map[string]string, error) {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	if ctr.tags == nil {
+		return map[string]string{}, nil
+	}
+
+	copied := make(map[string]string, len(ctr.tags))
+	for k, v := range ctr.tags {
+		copied[k] = v
+	}
+
+	return copied, nil
+}
+
+// DeleteBucketTagging removes all tags from a container.
+func (m *Mock) DeleteBucketTagging(_ context.Context, bucket string) error {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	ctr.tags = nil
+
+	return nil
 }

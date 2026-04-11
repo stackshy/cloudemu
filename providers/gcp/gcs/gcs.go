@@ -37,6 +37,7 @@ type gcsObject struct {
 	ETag         string
 	LastModified string
 	Metadata     map[string]string
+	Tags         map[string]string
 }
 
 type gcsMultipartUpload struct {
@@ -58,6 +59,7 @@ type bucketMeta struct {
 	policy     *driver.BucketPolicy
 	corsConfig *driver.CORSConfig
 	encryption *driver.EncryptionConfig
+	tags       map[string]string
 }
 
 // Mock is an in-memory mock implementation of Google Cloud Storage.
@@ -721,4 +723,115 @@ func (m *Mock) GetEncryptionConfig(_ context.Context, bucket string) (*driver.En
 	e := *bkt.encryption
 
 	return &e, nil
+}
+
+// PutObjectTagging sets labels on an object.
+func (m *Mock) PutObjectTagging(_ context.Context, bucket, key string, tags map[string]string) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	obj, ok := bkt.objects.Get(key)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+	}
+
+	copied := make(map[string]string, len(tags))
+	for k, v := range tags {
+		copied[k] = v
+	}
+
+	obj.Tags = copied
+
+	return nil
+}
+
+// GetObjectTagging returns labels for an object.
+func (m *Mock) GetObjectTagging(_ context.Context, bucket, key string) (map[string]string, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	obj, ok := bkt.objects.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+	}
+
+	if obj.Tags == nil {
+		return map[string]string{}, nil
+	}
+
+	copied := make(map[string]string, len(obj.Tags))
+	for k, v := range obj.Tags {
+		copied[k] = v
+	}
+
+	return copied, nil
+}
+
+// DeleteObjectTagging removes all labels from an object.
+func (m *Mock) DeleteObjectTagging(_ context.Context, bucket, key string) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	obj, ok := bkt.objects.Get(key)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+	}
+
+	obj.Tags = nil
+
+	return nil
+}
+
+// PutBucketTagging sets labels on a bucket.
+func (m *Mock) PutBucketTagging(_ context.Context, bucket string, tags map[string]string) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	copied := make(map[string]string, len(tags))
+	for k, v := range tags {
+		copied[k] = v
+	}
+
+	bkt.tags = copied
+
+	return nil
+}
+
+// GetBucketTagging returns labels for a bucket.
+func (m *Mock) GetBucketTagging(_ context.Context, bucket string) (map[string]string, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	if bkt.tags == nil {
+		return map[string]string{}, nil
+	}
+
+	copied := make(map[string]string, len(bkt.tags))
+	for k, v := range bkt.tags {
+		copied[k] = v
+	}
+
+	return copied, nil
+}
+
+// DeleteBucketTagging removes all labels from a bucket.
+func (m *Mock) DeleteBucketTagging(_ context.Context, bucket string) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.tags = nil
+
+	return nil
 }

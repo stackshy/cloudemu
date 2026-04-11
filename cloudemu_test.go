@@ -7765,3 +7765,193 @@ func TestInternetGatewayGCP(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ─── Object & Bucket Tagging ────────────────────────────────────────────
+
+func TestObjectTaggingAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testObjectTagging(t, ctx, p.S3)
+}
+
+func TestObjectTaggingAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testObjectTagging(t, ctx, p.BlobStorage)
+}
+
+func TestObjectTaggingGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testObjectTagging(t, ctx, p.GCS)
+}
+
+func testObjectTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket) {
+	t.Helper()
+
+	// Setup: create bucket and object.
+	if err := d.CreateBucket(ctx, "tag-bucket"); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	if err := d.PutObject(ctx, "tag-bucket", "file.txt", []byte("data"), "text/plain", nil); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Initially no tags.
+	tags, err := d.GetObjectTagging(ctx, "tag-bucket", "file.txt")
+	if err != nil {
+		t.Fatalf("GetObjectTagging (empty): %v", err)
+	}
+
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags initially, got %d", len(tags))
+	}
+
+	// Put tags.
+	err = d.PutObjectTagging(ctx, "tag-bucket", "file.txt", map[string]string{
+		"env": "prod", "team": "platform",
+	})
+	if err != nil {
+		t.Fatalf("PutObjectTagging: %v", err)
+	}
+
+	// Get tags.
+	tags, err = d.GetObjectTagging(ctx, "tag-bucket", "file.txt")
+	if err != nil {
+		t.Fatalf("GetObjectTagging: %v", err)
+	}
+
+	if len(tags) != 2 {
+		t.Errorf("expected 2 tags, got %d", len(tags))
+	}
+
+	if tags["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %q", tags["env"])
+	}
+
+	if tags["team"] != "platform" {
+		t.Errorf("expected tag team=platform, got %q", tags["team"])
+	}
+
+	// Replace tags (PutObjectTagging replaces all).
+	err = d.PutObjectTagging(ctx, "tag-bucket", "file.txt", map[string]string{"version": "v2"})
+	if err != nil {
+		t.Fatalf("PutObjectTagging (replace): %v", err)
+	}
+
+	tags, err = d.GetObjectTagging(ctx, "tag-bucket", "file.txt")
+	if err != nil {
+		t.Fatalf("GetObjectTagging (after replace): %v", err)
+	}
+
+	if len(tags) != 1 || tags["version"] != "v2" {
+		t.Errorf("expected {version: v2}, got %v", tags)
+	}
+
+	// Delete tags.
+	err = d.DeleteObjectTagging(ctx, "tag-bucket", "file.txt")
+	if err != nil {
+		t.Fatalf("DeleteObjectTagging: %v", err)
+	}
+
+	tags, err = d.GetObjectTagging(ctx, "tag-bucket", "file.txt")
+	if err != nil {
+		t.Fatalf("GetObjectTagging (after delete): %v", err)
+	}
+
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags after delete, got %d", len(tags))
+	}
+
+	// Error: tag nonexistent object.
+	err = d.PutObjectTagging(ctx, "tag-bucket", "missing.txt", map[string]string{"a": "b"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing object, got %v", err)
+	}
+
+	// Error: tag in nonexistent bucket.
+	err = d.PutObjectTagging(ctx, "no-bucket", "file.txt", map[string]string{"a": "b"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing bucket, got %v", err)
+	}
+}
+
+func TestBucketTaggingAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testBucketTagging(t, ctx, p.S3)
+}
+
+func TestBucketTaggingAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testBucketTagging(t, ctx, p.BlobStorage)
+}
+
+func TestBucketTaggingGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testBucketTagging(t, ctx, p.GCS)
+}
+
+func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket) {
+	t.Helper()
+
+	if err := d.CreateBucket(ctx, "tagged-bucket"); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	// Initially no tags.
+	tags, err := d.GetBucketTagging(ctx, "tagged-bucket")
+	if err != nil {
+		t.Fatalf("GetBucketTagging (empty): %v", err)
+	}
+
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags initially, got %d", len(tags))
+	}
+
+	// Put bucket tags.
+	err = d.PutBucketTagging(ctx, "tagged-bucket", map[string]string{
+		"project": "cloudemu", "cost-center": "engineering",
+	})
+	if err != nil {
+		t.Fatalf("PutBucketTagging: %v", err)
+	}
+
+	// Get bucket tags.
+	tags, err = d.GetBucketTagging(ctx, "tagged-bucket")
+	if err != nil {
+		t.Fatalf("GetBucketTagging: %v", err)
+	}
+
+	if len(tags) != 2 {
+		t.Errorf("expected 2 tags, got %d", len(tags))
+	}
+
+	if tags["project"] != "cloudemu" {
+		t.Errorf("expected tag project=cloudemu, got %q", tags["project"])
+	}
+
+	// Delete bucket tags.
+	err = d.DeleteBucketTagging(ctx, "tagged-bucket")
+	if err != nil {
+		t.Fatalf("DeleteBucketTagging: %v", err)
+	}
+
+	tags, err = d.GetBucketTagging(ctx, "tagged-bucket")
+	if err != nil {
+		t.Fatalf("GetBucketTagging (after delete): %v", err)
+	}
+
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags after delete, got %d", len(tags))
+	}
+
+	// Error: nonexistent bucket.
+	err = d.PutBucketTagging(ctx, "no-bucket", map[string]string{"a": "b"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing bucket, got %v", err)
+	}
+}
