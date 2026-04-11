@@ -7955,3 +7955,217 @@ func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket
 		t.Errorf("expected NotFound for missing bucket, got %v", err)
 	}
 }
+
+func testAlarmActions(
+	t *testing.T,
+	label string,
+	createChannel func(ctx context.Context, cfg mondriver.NotificationChannelConfig) (*mondriver.NotificationChannelInfo, error),
+	deleteChannel func(ctx context.Context, id string) error,
+	getChannel func(ctx context.Context, id string) (*mondriver.NotificationChannelInfo, error),
+	listChannels func(ctx context.Context) ([]mondriver.NotificationChannelInfo, error),
+	createAlarm func(ctx context.Context, cfg mondriver.AlarmConfig) error,
+	describeAlarms func(ctx context.Context, names []string) ([]mondriver.AlarmInfo, error),
+	putMetricData func(ctx context.Context, data []mondriver.MetricDatum) error,
+	getHistory func(ctx context.Context, alarmName string, limit int) ([]mondriver.AlarmHistoryEntry, error),
+	clock *config.FakeClock,
+) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	// 1. Create notification channel.
+	ch, err := createChannel(ctx, mondriver.NotificationChannelConfig{
+		Name: "ops-email", Type: "email", Endpoint: "ops@example.com",
+		Tags: map[string]string{"team": "ops"},
+	})
+	if err != nil {
+		t.Fatalf("[%s] CreateNotificationChannel: %v", label, err)
+	}
+
+	if ch.Name != "ops-email" {
+		t.Errorf("[%s] expected channel name 'ops-email', got %q", label, ch.Name)
+	}
+
+	if ch.Type != "email" {
+		t.Errorf("[%s] expected channel type 'email', got %q", label, ch.Type)
+	}
+
+	if ch.Endpoint != "ops@example.com" {
+		t.Errorf("[%s] expected endpoint 'ops@example.com', got %q", label, ch.Endpoint)
+	}
+
+	if ch.ID == "" {
+		t.Fatalf("[%s] expected non-empty channel ID", label)
+	}
+
+	// 2. Get notification channel.
+	got, err := getChannel(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("[%s] GetNotificationChannel: %v", label, err)
+	}
+
+	if got.Name != "ops-email" {
+		t.Errorf("[%s] get channel name mismatch: got %q", label, got.Name)
+	}
+
+	// 3. List notification channels.
+	channels, err := listChannels(ctx)
+	if err != nil {
+		t.Fatalf("[%s] ListNotificationChannels: %v", label, err)
+	}
+
+	if len(channels) != 1 {
+		t.Errorf("[%s] expected 1 channel, got %d", label, len(channels))
+	}
+
+	// 4. Create alarm with actions referencing the channel.
+	if err := createAlarm(ctx, mondriver.AlarmConfig{
+		Name: "high-cpu-actions", Namespace: "TestNS", MetricName: "CPU",
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 80,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+		AlarmActions: []string{ch.ID},
+		OKActions:    []string{ch.ID},
+	}); err != nil {
+		t.Fatalf("[%s] CreateAlarm: %v", label, err)
+	}
+
+	// 5. Verify initial state.
+	alarms, err := describeAlarms(ctx, []string{"high-cpu-actions"})
+	if err != nil {
+		t.Fatalf("[%s] DescribeAlarms: %v", label, err)
+	}
+
+	if len(alarms) != 1 {
+		t.Fatalf("[%s] expected 1 alarm, got %d", label, len(alarms))
+	}
+
+	if alarms[0].State != "INSUFFICIENT_DATA" {
+		t.Errorf("[%s] expected INSUFFICIENT_DATA, got %s", label, alarms[0].State)
+	}
+
+	// 6. Push metric below threshold -> state transitions to OK.
+	now := clock.Now()
+	if err := putMetricData(ctx, []mondriver.MetricDatum{
+		{Namespace: "TestNS", MetricName: "CPU", Value: 50, Timestamp: now},
+	}); err != nil {
+		t.Fatalf("[%s] PutMetricData: %v", label, err)
+	}
+
+	alarms, _ = describeAlarms(ctx, []string{"high-cpu-actions"})
+	if alarms[0].State != "OK" {
+		t.Errorf("[%s] expected OK, got %s", label, alarms[0].State)
+	}
+
+	// 7. Advance clock and push metric above threshold -> state transitions to ALARM.
+	clock.Advance(10 * time.Minute)
+	now = clock.Now()
+
+	if err := putMetricData(ctx, []mondriver.MetricDatum{
+		{Namespace: "TestNS", MetricName: "CPU", Value: 95, Timestamp: now},
+	}); err != nil {
+		t.Fatalf("[%s] PutMetricData: %v", label, err)
+	}
+
+	alarms, _ = describeAlarms(ctx, []string{"high-cpu-actions"})
+	if alarms[0].State != "ALARM" {
+		t.Errorf("[%s] expected ALARM, got %s", label, alarms[0].State)
+	}
+
+	// 8. Verify alarm history has entries.
+	history, err := getHistory(ctx, "high-cpu-actions", 10)
+	if err != nil {
+		t.Fatalf("[%s] GetAlarmHistory: %v", label, err)
+	}
+
+	// Two transitions: INSUFFICIENT_DATA->OK, OK->ALARM.
+	if len(history) != 2 {
+		t.Fatalf("[%s] expected 2 history entries, got %d", label, len(history))
+	}
+
+	if history[0].OldState != "INSUFFICIENT_DATA" || history[0].NewState != "OK" {
+		t.Errorf("[%s] history[0]: expected INSUFFICIENT_DATA->OK, got %s->%s", label, history[0].OldState, history[0].NewState)
+	}
+
+	if history[1].OldState != "OK" || history[1].NewState != "ALARM" {
+		t.Errorf("[%s] history[1]: expected OK->ALARM, got %s->%s", label, history[1].OldState, history[1].NewState)
+	}
+
+	// 9. Verify history limit works.
+	limited, err := getHistory(ctx, "high-cpu-actions", 1)
+	if err != nil {
+		t.Fatalf("[%s] GetAlarmHistory (limited): %v", label, err)
+	}
+
+	if len(limited) != 1 {
+		t.Errorf("[%s] expected 1 limited history entry, got %d", label, len(limited))
+	}
+
+	// 10. Delete notification channel.
+	if err := deleteChannel(ctx, ch.ID); err != nil {
+		t.Fatalf("[%s] DeleteNotificationChannel: %v", label, err)
+	}
+
+	// 11. Get deleted channel should fail.
+	_, err = getChannel(ctx, ch.ID)
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("[%s] expected NotFound after delete, got %v", label, err)
+	}
+
+	// 12. List should be empty.
+	channels, err = listChannels(ctx)
+	if err != nil {
+		t.Fatalf("[%s] ListNotificationChannels after delete: %v", label, err)
+	}
+
+	if len(channels) != 0 {
+		t.Errorf("[%s] expected 0 channels after delete, got %d", label, len(channels))
+	}
+}
+
+func TestAlarmActionsAWS(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	p := NewAWS(config.WithClock(clock))
+	testAlarmActions(t, "AWS",
+		p.CloudWatch.CreateNotificationChannel,
+		p.CloudWatch.DeleteNotificationChannel,
+		p.CloudWatch.GetNotificationChannel,
+		p.CloudWatch.ListNotificationChannels,
+		p.CloudWatch.CreateAlarm,
+		p.CloudWatch.DescribeAlarms,
+		p.CloudWatch.PutMetricData,
+		p.CloudWatch.GetAlarmHistory,
+		clock,
+	)
+}
+
+func TestAlarmActionsAzure(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	p := NewAzure(config.WithClock(clock))
+	testAlarmActions(t, "Azure",
+		p.Monitor.CreateNotificationChannel,
+		p.Monitor.DeleteNotificationChannel,
+		p.Monitor.GetNotificationChannel,
+		p.Monitor.ListNotificationChannels,
+		p.Monitor.CreateAlarm,
+		p.Monitor.DescribeAlarms,
+		p.Monitor.PutMetricData,
+		p.Monitor.GetAlarmHistory,
+		clock,
+	)
+}
+
+func TestAlarmActionsGCP(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC))
+	p := NewGCP(config.WithClock(clock))
+	testAlarmActions(t, "GCP",
+		p.CloudMonitoring.CreateNotificationChannel,
+		p.CloudMonitoring.DeleteNotificationChannel,
+		p.CloudMonitoring.GetNotificationChannel,
+		p.CloudMonitoring.ListNotificationChannels,
+		p.CloudMonitoring.CreateAlarm,
+		p.CloudMonitoring.DescribeAlarms,
+		p.CloudMonitoring.PutMetricData,
+		p.CloudMonitoring.GetAlarmHistory,
+		clock,
+	)
+}

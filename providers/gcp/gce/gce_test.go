@@ -69,6 +69,26 @@ func (mon *gceMonMock) SetAlarmState(_ context.Context, _, _, _ string) error {
 	return nil
 }
 
+func (mon *gceMonMock) CreateNotificationChannel(_ context.Context, _ mondriver.NotificationChannelConfig) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (mon *gceMonMock) DeleteNotificationChannel(_ context.Context, _ string) error {
+	return nil
+}
+
+func (mon *gceMonMock) GetNotificationChannel(_ context.Context, _ string) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (mon *gceMonMock) ListNotificationChannels(_ context.Context) ([]mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (mon *gceMonMock) GetAlarmHistory(_ context.Context, _ string, _ int) ([]mondriver.AlarmHistoryEntry, error) {
+	return nil, nil
+}
+
 func TestRunInstances(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
