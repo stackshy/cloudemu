@@ -752,6 +752,336 @@ func TestCopyObjectMetrics(t *testing.T) {
 	assertEqual(t, true, len(result.Values) > 0)
 }
 
+func TestBucketPolicy(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("put and get policy", func(t *testing.T) {
+		policy := driver.BucketPolicy{
+			Version: "2012-10-17",
+			Statements: []driver.PolicyStatement{
+				{
+					Effect:    "Allow",
+					Principal: "*",
+					Actions:   []string{"s3:GetObject"},
+					Resources: []string{"arn:aws:s3:::bkt/*"},
+				},
+			},
+		}
+
+		err := m.PutBucketPolicy(ctx, "bkt", policy)
+		requireNoError(t, err)
+
+		got, err := m.GetBucketPolicy(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, "2012-10-17", got.Version)
+		assertEqual(t, 1, len(got.Statements))
+		assertEqual(t, "Allow", got.Statements[0].Effect)
+		assertEqual(t, "*", got.Statements[0].Principal)
+		assertEqual(t, 1, len(got.Statements[0].Actions))
+		assertEqual(t, "s3:GetObject", got.Statements[0].Actions[0])
+		assertEqual(t, 1, len(got.Statements[0].Resources))
+		assertEqual(t, "arn:aws:s3:::bkt/*", got.Statements[0].Resources[0])
+	})
+
+	t.Run("get without policy", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "no-policy-bkt")
+		_, err := m.GetBucketPolicy(ctx, "no-policy-bkt")
+		assertError(t, err, true)
+	})
+
+	t.Run("delete policy", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "del-policy-bkt")
+		policy := driver.BucketPolicy{
+			Version: "2012-10-17",
+			Statements: []driver.PolicyStatement{
+				{
+					Effect:    "Allow",
+					Principal: "*",
+					Actions:   []string{"s3:PutObject"},
+					Resources: []string{"arn:aws:s3:::del-policy-bkt/*"},
+				},
+			},
+		}
+		err := m.PutBucketPolicy(ctx, "del-policy-bkt", policy)
+		requireNoError(t, err)
+
+		err = m.DeleteBucketPolicy(ctx, "del-policy-bkt")
+		requireNoError(t, err)
+
+		_, err = m.GetBucketPolicy(ctx, "del-policy-bkt")
+		assertError(t, err, true)
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutBucketPolicy(ctx, "nonexistent", driver.BucketPolicy{})
+		assertError(t, err, true)
+
+		_, err = m.GetBucketPolicy(ctx, "nonexistent")
+		assertError(t, err, true)
+
+		err = m.DeleteBucketPolicy(ctx, "nonexistent")
+		assertError(t, err, true)
+	})
+}
+
+func TestObjectTagging(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+	_ = m.PutObject(ctx, "bkt", "obj.txt", []byte("data"), "text/plain", nil)
+
+	t.Run("put and get tags", func(t *testing.T) {
+		tags := map[string]string{"env": "prod", "team": "platform"}
+		err := m.PutObjectTagging(ctx, "bkt", "obj.txt", tags)
+		requireNoError(t, err)
+
+		got, err := m.GetObjectTagging(ctx, "bkt", "obj.txt")
+		requireNoError(t, err)
+		assertEqual(t, 2, len(got))
+		assertEqual(t, "prod", got["env"])
+		assertEqual(t, "platform", got["team"])
+	})
+
+	t.Run("replace tags", func(t *testing.T) {
+		oldTags := map[string]string{"env": "prod", "team": "platform"}
+		err := m.PutObjectTagging(ctx, "bkt", "obj.txt", oldTags)
+		requireNoError(t, err)
+
+		newTags := map[string]string{"env": "staging", "version": "v2"}
+		err = m.PutObjectTagging(ctx, "bkt", "obj.txt", newTags)
+		requireNoError(t, err)
+
+		got, err := m.GetObjectTagging(ctx, "bkt", "obj.txt")
+		requireNoError(t, err)
+		assertEqual(t, 2, len(got))
+		assertEqual(t, "staging", got["env"])
+		assertEqual(t, "v2", got["version"])
+	})
+
+	t.Run("delete tags", func(t *testing.T) {
+		tags := map[string]string{"env": "prod"}
+		err := m.PutObjectTagging(ctx, "bkt", "obj.txt", tags)
+		requireNoError(t, err)
+
+		err = m.DeleteObjectTagging(ctx, "bkt", "obj.txt")
+		requireNoError(t, err)
+
+		got, err := m.GetObjectTagging(ctx, "bkt", "obj.txt")
+		requireNoError(t, err)
+		assertEqual(t, 0, len(got))
+	})
+
+	t.Run("object not found", func(t *testing.T) {
+		err := m.PutObjectTagging(ctx, "bkt", "missing.txt", map[string]string{"k": "v"})
+		assertError(t, err, true)
+
+		_, err = m.GetObjectTagging(ctx, "bkt", "missing.txt")
+		assertError(t, err, true)
+
+		err = m.DeleteObjectTagging(ctx, "bkt", "missing.txt")
+		assertError(t, err, true)
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutObjectTagging(ctx, "nonexistent", "obj.txt", map[string]string{"k": "v"})
+		assertError(t, err, true)
+
+		_, err = m.GetObjectTagging(ctx, "nonexistent", "obj.txt")
+		assertError(t, err, true)
+
+		err = m.DeleteObjectTagging(ctx, "nonexistent", "obj.txt")
+		assertError(t, err, true)
+	})
+}
+
+func TestBucketTagging(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("put and get tags", func(t *testing.T) {
+		tags := map[string]string{"env": "prod", "team": "platform"}
+		err := m.PutBucketTagging(ctx, "bkt", tags)
+		requireNoError(t, err)
+
+		got, err := m.GetBucketTagging(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 2, len(got))
+		assertEqual(t, "prod", got["env"])
+		assertEqual(t, "platform", got["team"])
+	})
+
+	t.Run("replace tags", func(t *testing.T) {
+		oldTags := map[string]string{"env": "prod", "team": "platform"}
+		err := m.PutBucketTagging(ctx, "bkt", oldTags)
+		requireNoError(t, err)
+
+		newTags := map[string]string{"env": "staging", "cost-center": "eng"}
+		err = m.PutBucketTagging(ctx, "bkt", newTags)
+		requireNoError(t, err)
+
+		got, err := m.GetBucketTagging(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 2, len(got))
+		assertEqual(t, "staging", got["env"])
+		assertEqual(t, "eng", got["cost-center"])
+	})
+
+	t.Run("delete tags", func(t *testing.T) {
+		tags := map[string]string{"env": "prod"}
+		err := m.PutBucketTagging(ctx, "bkt", tags)
+		requireNoError(t, err)
+
+		err = m.DeleteBucketTagging(ctx, "bkt")
+		requireNoError(t, err)
+
+		got, err := m.GetBucketTagging(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 0, len(got))
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutBucketTagging(ctx, "nonexistent", map[string]string{"k": "v"})
+		assertError(t, err, true)
+
+		_, err = m.GetBucketTagging(ctx, "nonexistent")
+		assertError(t, err, true)
+
+		err = m.DeleteBucketTagging(ctx, "nonexistent")
+		assertError(t, err, true)
+	})
+}
+
+func TestCORSConfig(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("put and get", func(t *testing.T) {
+		cfg := driver.CORSConfig{
+			Rules: []driver.CORSRule{
+				{
+					AllowedOrigins: []string{"https://example.com"},
+					AllowedMethods: []string{"GET", "PUT"},
+					AllowedHeaders: []string{"Content-Type"},
+					ExposeHeaders:  []string{"ETag"},
+					MaxAgeSeconds:  3600,
+				},
+			},
+		}
+
+		err := m.PutCORSConfig(ctx, "bkt", cfg)
+		requireNoError(t, err)
+
+		got, err := m.GetCORSConfig(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, 1, len(got.Rules))
+		assertEqual(t, 1, len(got.Rules[0].AllowedOrigins))
+		assertEqual(t, "https://example.com", got.Rules[0].AllowedOrigins[0])
+		assertEqual(t, 2, len(got.Rules[0].AllowedMethods))
+		assertEqual(t, "GET", got.Rules[0].AllowedMethods[0])
+		assertEqual(t, "PUT", got.Rules[0].AllowedMethods[1])
+		assertEqual(t, 1, len(got.Rules[0].AllowedHeaders))
+		assertEqual(t, "Content-Type", got.Rules[0].AllowedHeaders[0])
+		assertEqual(t, 1, len(got.Rules[0].ExposeHeaders))
+		assertEqual(t, "ETag", got.Rules[0].ExposeHeaders[0])
+		assertEqual(t, 3600, got.Rules[0].MaxAgeSeconds)
+	})
+
+	t.Run("get without config", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "no-cors-bkt")
+		_, err := m.GetCORSConfig(ctx, "no-cors-bkt")
+		assertError(t, err, true)
+	})
+
+	t.Run("delete config", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "del-cors-bkt")
+		cfg := driver.CORSConfig{
+			Rules: []driver.CORSRule{
+				{
+					AllowedOrigins: []string{"*"},
+					AllowedMethods: []string{"GET"},
+				},
+			},
+		}
+		err := m.PutCORSConfig(ctx, "del-cors-bkt", cfg)
+		requireNoError(t, err)
+
+		err = m.DeleteCORSConfig(ctx, "del-cors-bkt")
+		requireNoError(t, err)
+
+		_, err = m.GetCORSConfig(ctx, "del-cors-bkt")
+		assertError(t, err, true)
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutCORSConfig(ctx, "nonexistent", driver.CORSConfig{})
+		assertError(t, err, true)
+
+		_, err = m.GetCORSConfig(ctx, "nonexistent")
+		assertError(t, err, true)
+
+		err = m.DeleteCORSConfig(ctx, "nonexistent")
+		assertError(t, err, true)
+	})
+}
+
+func TestEncryptionConfig(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_ = m.CreateBucket(ctx, "bkt")
+
+	t.Run("put and get AES256", func(t *testing.T) {
+		cfg := driver.EncryptionConfig{
+			Enabled:   true,
+			Algorithm: "AES256",
+		}
+
+		err := m.PutEncryptionConfig(ctx, "bkt", cfg)
+		requireNoError(t, err)
+
+		got, err := m.GetEncryptionConfig(ctx, "bkt")
+		requireNoError(t, err)
+		assertEqual(t, true, got.Enabled)
+		assertEqual(t, "AES256", got.Algorithm)
+		assertEqual(t, "", got.KeyID)
+	})
+
+	t.Run("put with KMS key", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "kms-bkt")
+		cfg := driver.EncryptionConfig{
+			Enabled:   true,
+			Algorithm: "aws:kms",
+			KeyID:     "key-123",
+		}
+
+		err := m.PutEncryptionConfig(ctx, "kms-bkt", cfg)
+		requireNoError(t, err)
+
+		got, err := m.GetEncryptionConfig(ctx, "kms-bkt")
+		requireNoError(t, err)
+		assertEqual(t, true, got.Enabled)
+		assertEqual(t, "aws:kms", got.Algorithm)
+		assertEqual(t, "key-123", got.KeyID)
+	})
+
+	t.Run("get without config", func(t *testing.T) {
+		_ = m.CreateBucket(ctx, "no-enc-bkt")
+		_, err := m.GetEncryptionConfig(ctx, "no-enc-bkt")
+		assertError(t, err, true)
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutEncryptionConfig(ctx, "nonexistent", driver.EncryptionConfig{})
+		assertError(t, err, true)
+
+		_, err = m.GetEncryptionConfig(ctx, "nonexistent")
+		assertError(t, err, true)
+	})
+}
+
 // --- test helpers (no if/else, use t.Fatal/t.Errorf) ---
 
 func requireNoError(t *testing.T, err error) {

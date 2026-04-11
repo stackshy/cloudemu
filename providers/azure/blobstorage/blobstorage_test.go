@@ -643,6 +643,292 @@ func TestCopyObjectMetrics(t *testing.T) {
 	assert.True(t, mon.hasMetric("Microsoft.Storage/storageAccounts", "Transactions"))
 }
 
+func TestBucketPolicy(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	require.NoError(t, m.CreateBucket(ctx, "policy-bucket"))
+
+	t.Run("put and get policy", func(t *testing.T) {
+		policy := driver.BucketPolicy{
+			Version: "2012-10-17",
+			Statements: []driver.PolicyStatement{
+				{
+					Effect:    "Allow",
+					Principal: "*",
+					Actions:   []string{"s3:GetObject"},
+					Resources: []string{"arn:aws:s3:::policy-bucket/*"},
+				},
+			},
+		}
+		require.NoError(t, m.PutBucketPolicy(ctx, "policy-bucket", policy))
+
+		got, err := m.GetBucketPolicy(ctx, "policy-bucket")
+		require.NoError(t, err)
+		assert.Equal(t, "2012-10-17", got.Version)
+		require.Len(t, got.Statements, 1)
+		assert.Equal(t, "Allow", got.Statements[0].Effect)
+		assert.Equal(t, "*", got.Statements[0].Principal)
+		assert.Equal(t, []string{"s3:GetObject"}, got.Statements[0].Actions)
+		assert.Equal(t, []string{"arn:aws:s3:::policy-bucket/*"}, got.Statements[0].Resources)
+	})
+
+	t.Run("get without policy", func(t *testing.T) {
+		require.NoError(t, m.CreateBucket(ctx, "no-policy-bucket"))
+
+		_, err := m.GetBucketPolicy(ctx, "no-policy-bucket")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no policy")
+	})
+
+	t.Run("delete policy", func(t *testing.T) {
+		require.NoError(t, m.DeleteBucketPolicy(ctx, "policy-bucket"))
+
+		_, err := m.GetBucketPolicy(ctx, "policy-bucket")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no policy")
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutBucketPolicy(ctx, "missing", driver.BucketPolicy{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		_, err = m.GetBucketPolicy(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		err = m.DeleteBucketPolicy(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestObjectTagging(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	require.NoError(t, m.CreateBucket(ctx, "tag-bucket"))
+	require.NoError(t, m.PutObject(ctx, "tag-bucket", "file.txt", []byte("hello"), "text/plain", nil))
+
+	t.Run("put and get tags", func(t *testing.T) {
+		tags := map[string]string{"env": "prod", "team": "backend"}
+		require.NoError(t, m.PutObjectTagging(ctx, "tag-bucket", "file.txt", tags))
+
+		got, err := m.GetObjectTagging(ctx, "tag-bucket", "file.txt")
+		require.NoError(t, err)
+		assert.Equal(t, "prod", got["env"])
+		assert.Equal(t, "backend", got["team"])
+		assert.Len(t, got, 2)
+	})
+
+	t.Run("replace tags", func(t *testing.T) {
+		newTags := map[string]string{"version": "v2"}
+		require.NoError(t, m.PutObjectTagging(ctx, "tag-bucket", "file.txt", newTags))
+
+		got, err := m.GetObjectTagging(ctx, "tag-bucket", "file.txt")
+		require.NoError(t, err)
+		assert.Equal(t, "v2", got["version"])
+		assert.Len(t, got, 1)
+	})
+
+	t.Run("delete tags", func(t *testing.T) {
+		require.NoError(t, m.DeleteObjectTagging(ctx, "tag-bucket", "file.txt"))
+
+		got, err := m.GetObjectTagging(ctx, "tag-bucket", "file.txt")
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("object not found", func(t *testing.T) {
+		err := m.PutObjectTagging(ctx, "tag-bucket", "missing", map[string]string{"k": "v"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		_, err = m.GetObjectTagging(ctx, "tag-bucket", "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		err = m.DeleteObjectTagging(ctx, "tag-bucket", "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutObjectTagging(ctx, "missing", "file.txt", map[string]string{"k": "v"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		_, err = m.GetObjectTagging(ctx, "missing", "file.txt")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		err = m.DeleteObjectTagging(ctx, "missing", "file.txt")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestBucketTagging(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	require.NoError(t, m.CreateBucket(ctx, "btag-bucket"))
+
+	t.Run("put and get tags", func(t *testing.T) {
+		tags := map[string]string{"env": "staging", "cost-center": "eng"}
+		require.NoError(t, m.PutBucketTagging(ctx, "btag-bucket", tags))
+
+		got, err := m.GetBucketTagging(ctx, "btag-bucket")
+		require.NoError(t, err)
+		assert.Equal(t, "staging", got["env"])
+		assert.Equal(t, "eng", got["cost-center"])
+		assert.Len(t, got, 2)
+	})
+
+	t.Run("replace tags", func(t *testing.T) {
+		newTags := map[string]string{"owner": "platform"}
+		require.NoError(t, m.PutBucketTagging(ctx, "btag-bucket", newTags))
+
+		got, err := m.GetBucketTagging(ctx, "btag-bucket")
+		require.NoError(t, err)
+		assert.Equal(t, "platform", got["owner"])
+		assert.Len(t, got, 1)
+	})
+
+	t.Run("delete tags", func(t *testing.T) {
+		require.NoError(t, m.DeleteBucketTagging(ctx, "btag-bucket"))
+
+		got, err := m.GetBucketTagging(ctx, "btag-bucket")
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutBucketTagging(ctx, "missing", map[string]string{"k": "v"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		_, err = m.GetBucketTagging(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		err = m.DeleteBucketTagging(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestCORSConfig(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	require.NoError(t, m.CreateBucket(ctx, "cors-bucket"))
+
+	t.Run("put and get", func(t *testing.T) {
+		cfg := driver.CORSConfig{
+			Rules: []driver.CORSRule{
+				{
+					AllowedOrigins: []string{"https://example.com"},
+					AllowedMethods: []string{"GET", "PUT"},
+					AllowedHeaders: []string{"Content-Type"},
+					ExposeHeaders:  []string{"ETag"},
+					MaxAgeSeconds:  3600,
+				},
+			},
+		}
+		require.NoError(t, m.PutCORSConfig(ctx, "cors-bucket", cfg))
+
+		got, err := m.GetCORSConfig(ctx, "cors-bucket")
+		require.NoError(t, err)
+		require.Len(t, got.Rules, 1)
+		assert.Equal(t, []string{"https://example.com"}, got.Rules[0].AllowedOrigins)
+		assert.Equal(t, []string{"GET", "PUT"}, got.Rules[0].AllowedMethods)
+		assert.Equal(t, []string{"Content-Type"}, got.Rules[0].AllowedHeaders)
+		assert.Equal(t, []string{"ETag"}, got.Rules[0].ExposeHeaders)
+		assert.Equal(t, 3600, got.Rules[0].MaxAgeSeconds)
+	})
+
+	t.Run("get without config", func(t *testing.T) {
+		require.NoError(t, m.CreateBucket(ctx, "no-cors-bucket"))
+
+		_, err := m.GetCORSConfig(ctx, "no-cors-bucket")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no CORS config")
+	})
+
+	t.Run("delete config", func(t *testing.T) {
+		require.NoError(t, m.DeleteCORSConfig(ctx, "cors-bucket"))
+
+		_, err := m.GetCORSConfig(ctx, "cors-bucket")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no CORS config")
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutCORSConfig(ctx, "missing", driver.CORSConfig{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		_, err = m.GetCORSConfig(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		err = m.DeleteCORSConfig(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestEncryptionConfig(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	require.NoError(t, m.CreateBucket(ctx, "enc-bucket"))
+
+	t.Run("put and get AES256", func(t *testing.T) {
+		cfg := driver.EncryptionConfig{
+			Enabled:   true,
+			Algorithm: "AES256",
+		}
+		require.NoError(t, m.PutEncryptionConfig(ctx, "enc-bucket", cfg))
+
+		got, err := m.GetEncryptionConfig(ctx, "enc-bucket")
+		require.NoError(t, err)
+		assert.True(t, got.Enabled)
+		assert.Equal(t, "AES256", got.Algorithm)
+		assert.Empty(t, got.KeyID)
+	})
+
+	t.Run("put with KMS key", func(t *testing.T) {
+		cfg := driver.EncryptionConfig{
+			Enabled:   true,
+			Algorithm: "aws:kms",
+			KeyID:     "arn:aws:kms:us-east-1:123456789012:key/my-key-id",
+		}
+		require.NoError(t, m.PutEncryptionConfig(ctx, "enc-bucket", cfg))
+
+		got, err := m.GetEncryptionConfig(ctx, "enc-bucket")
+		require.NoError(t, err)
+		assert.True(t, got.Enabled)
+		assert.Equal(t, "aws:kms", got.Algorithm)
+		assert.Equal(t, "arn:aws:kms:us-east-1:123456789012:key/my-key-id", got.KeyID)
+	})
+
+	t.Run("get without config", func(t *testing.T) {
+		require.NoError(t, m.CreateBucket(ctx, "no-enc-bucket"))
+
+		_, err := m.GetEncryptionConfig(ctx, "no-enc-bucket")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no encryption config")
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := m.PutEncryptionConfig(ctx, "missing", driver.EncryptionConfig{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+
+		_, err = m.GetEncryptionConfig(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
 // metricsCollector is a simple monitoring stub that records emitted metrics.
 type metricsCollector struct {
 	data []mondriver.MetricDatum
