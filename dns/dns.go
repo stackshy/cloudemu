@@ -157,3 +157,61 @@ func (d *DNS) UpdateRecord(ctx context.Context, config driver.RecordConfig) (*dr
 
 	return out.(*driver.RecordInfo), nil
 }
+
+//nolint:gocritic // config passed by value to match driver.DNS interface pattern
+func (d *DNS) CreateHealthCheck(ctx context.Context, config driver.HealthCheckConfig) (*driver.HealthCheckInfo, error) {
+	out, err := d.do(ctx, "CreateHealthCheck", config, func() (any, error) {
+		return d.driver.CreateHealthCheck(ctx, config)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.HealthCheckInfo), nil
+}
+
+func (d *DNS) DeleteHealthCheck(ctx context.Context, id string) error {
+	_, err := d.do(ctx, "DeleteHealthCheck", id, func() (any, error) {
+		return nil, d.driver.DeleteHealthCheck(ctx, id)
+	})
+
+	return err
+}
+
+func (d *DNS) GetHealthCheck(ctx context.Context, id string) (*driver.HealthCheckInfo, error) {
+	out, err := d.do(ctx, "GetHealthCheck", id, func() (any, error) { return d.driver.GetHealthCheck(ctx, id) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.HealthCheckInfo), nil
+}
+
+func (d *DNS) ListHealthChecks(ctx context.Context) ([]driver.HealthCheckInfo, error) {
+	out, err := d.do(ctx, "ListHealthChecks", nil, func() (any, error) { return d.driver.ListHealthChecks(ctx) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.HealthCheckInfo), nil
+}
+
+//nolint:gocritic // config passed by value to match driver.DNS interface pattern
+func (d *DNS) UpdateHealthCheck(ctx context.Context, id string, config driver.HealthCheckConfig) (*driver.HealthCheckInfo, error) {
+	out, err := d.do(ctx, "UpdateHealthCheck", config, func() (any, error) {
+		return d.driver.UpdateHealthCheck(ctx, id, config)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.HealthCheckInfo), nil
+}
+
+func (d *DNS) SetHealthCheckStatus(ctx context.Context, id, status string) error {
+	_, err := d.do(ctx, "SetHealthCheckStatus", id, func() (any, error) {
+		return nil, d.driver.SetHealthCheckStatus(ctx, id, status)
+	})
+
+	return err
+}
