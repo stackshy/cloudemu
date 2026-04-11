@@ -712,6 +712,210 @@ func TestCheckPermission(t *testing.T) {
 	})
 }
 
+func TestCreateGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		info, err := i.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+		require.NoError(t, err)
+		assert.Equal(t, "devs", info.Name)
+		assert.NotEmpty(t, info.ARN)
+	})
+
+	t.Run("empty name error", func(t *testing.T) {
+		_, err := i.CreateGroup(ctx, driver.GroupConfig{})
+		require.Error(t, err)
+	})
+
+	t.Run("duplicate error", func(t *testing.T) {
+		_, err := i.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateGroup(ctx, driver.GroupConfig{Name: "del-group"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := i.DeleteGroup(ctx, "del-group")
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := i.DeleteGroup(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestGetGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateGroup(ctx, driver.GroupConfig{Name: "get-group"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		info, err := i.GetGroup(ctx, "get-group")
+		require.NoError(t, err)
+		assert.Equal(t, "get-group", info.Name)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := i.GetGroup(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestListGroupsPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	groups, err := i.ListGroups(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(groups))
+
+	_, err = i.CreateGroup(ctx, driver.GroupConfig{Name: "g1"})
+	require.NoError(t, err)
+
+	_, err = i.CreateGroup(ctx, driver.GroupConfig{Name: "g2"})
+	require.NoError(t, err)
+
+	groups, err = i.ListGroups(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(groups))
+}
+
+func TestAddUserToGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	require.NoError(t, err)
+
+	_, err = i.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := i.AddUserToGroup(ctx, "alice", "devs")
+		require.NoError(t, err)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		err := i.AddUserToGroup(ctx, "nonexistent", "devs")
+		require.Error(t, err)
+	})
+
+	t.Run("group not found", func(t *testing.T) {
+		err := i.AddUserToGroup(ctx, "alice", "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestRemoveUserFromGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, _ = i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = i.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+	_ = i.AddUserToGroup(ctx, "alice", "devs")
+
+	t.Run("success", func(t *testing.T) {
+		err := i.RemoveUserFromGroup(ctx, "alice", "devs")
+		require.NoError(t, err)
+	})
+
+	t.Run("not a member", func(t *testing.T) {
+		err := i.RemoveUserFromGroup(ctx, "alice", "devs")
+		require.Error(t, err)
+	})
+}
+
+func TestListGroupsForUserPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, _ = i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = i.CreateGroup(ctx, driver.GroupConfig{Name: "g1"})
+	_, _ = i.CreateGroup(ctx, driver.GroupConfig{Name: "g2"})
+	_ = i.AddUserToGroup(ctx, "alice", "g1")
+	_ = i.AddUserToGroup(ctx, "alice", "g2")
+
+	t.Run("success", func(t *testing.T) {
+		groups, err := i.ListGroupsForUser(ctx, "alice")
+		require.NoError(t, err)
+		assert.Equal(t, 2, len(groups))
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := i.ListGroupsForUser(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestCreateAccessKeyPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		ak, err := i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+		require.NoError(t, err)
+		assert.NotEmpty(t, ak.AccessKeyID)
+		assert.NotEmpty(t, ak.SecretAccessKey)
+		assert.Equal(t, "alice", ak.UserName)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "nonexistent"})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteAccessKeyPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, _ = i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	ak, _ := i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+
+	t.Run("success", func(t *testing.T) {
+		err := i.DeleteAccessKey(ctx, "alice", ak.AccessKeyID)
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := i.DeleteAccessKey(ctx, "alice", "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestListAccessKeysPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, _ = i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+	_, _ = i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+
+	t.Run("success", func(t *testing.T) {
+		keys, err := i.ListAccessKeys(ctx, "alice")
+		require.NoError(t, err)
+		assert.Equal(t, 2, len(keys))
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := i.ListAccessKeys(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
 func TestIAMWithRecorder(t *testing.T) {
 	rec := recorder.New()
 	i := newTestIAM(WithRecorder(rec))

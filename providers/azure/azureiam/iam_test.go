@@ -584,6 +584,307 @@ func TestGetRole(t *testing.T) {
 	})
 }
 
+func TestCreateGroup(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		cfg     driver.GroupConfig
+		setup   func(m *Mock)
+		wantErr bool
+		errMsg  string
+	}{
+		{name: "success", cfg: driver.GroupConfig{Name: "developers"}},
+		{name: "empty name", cfg: driver.GroupConfig{}, wantErr: true, errMsg: "required"},
+		{
+			name: "duplicate",
+			cfg:  driver.GroupConfig{Name: "developers"},
+			setup: func(m *Mock) {
+				_, _ = m.CreateGroup(ctx, driver.GroupConfig{Name: "developers"})
+			},
+			wantErr: true, errMsg: "already exists",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newTestMock()
+			if tt.setup != nil {
+				tt.setup(m)
+			}
+			info, err := m.CreateGroup(ctx, tt.cfg)
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+				assert.Equal(t, "developers", info.Name)
+				assert.NotEmpty(t, info.ARN)
+			}
+		})
+	}
+}
+
+func TestDeleteGroup(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		group   string
+		wantErr bool
+		errMsg  string
+	}{
+		{name: "success", group: "devs"},
+		{name: "not found", group: "missing", wantErr: true, errMsg: "not found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := m.DeleteGroup(ctx, tt.group)
+
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			default:
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestGetGroup(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		info, err := m.GetGroup(ctx, "devs")
+		require.NoError(t, err)
+		assert.Equal(t, "devs", info.Name)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := m.GetGroup(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestListGroups(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateGroup(ctx, driver.GroupConfig{Name: "g1"})
+	_, _ = m.CreateGroup(ctx, driver.GroupConfig{Name: "g2"})
+
+	groups, err := m.ListGroups(ctx)
+	require.NoError(t, err)
+	assert.Len(t, groups, 2)
+}
+
+func TestAddUserToGroup(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = m.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+
+	t.Run("success", func(t *testing.T) {
+		err := m.AddUserToGroup(ctx, "alice", "devs")
+		require.NoError(t, err)
+
+		groups, err := m.ListGroupsForUser(ctx, "alice")
+		require.NoError(t, err)
+		assert.Len(t, groups, 1)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		err := m.AddUserToGroup(ctx, "missing", "devs")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("group not found", func(t *testing.T) {
+		err := m.AddUserToGroup(ctx, "alice", "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestRemoveUserFromGroup(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = m.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+	_ = m.AddUserToGroup(ctx, "alice", "devs")
+
+	t.Run("success", func(t *testing.T) {
+		err := m.RemoveUserFromGroup(ctx, "alice", "devs")
+		require.NoError(t, err)
+
+		groups, err := m.ListGroupsForUser(ctx, "alice")
+		require.NoError(t, err)
+		assert.Len(t, groups, 0)
+	})
+
+	t.Run("not a member", func(t *testing.T) {
+		err := m.RemoveUserFromGroup(ctx, "alice", "devs")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a member")
+	})
+
+	t.Run("group not found", func(t *testing.T) {
+		err := m.RemoveUserFromGroup(ctx, "alice", "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestListGroupsForUser(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = m.CreateGroup(ctx, driver.GroupConfig{Name: "g1"})
+	_, _ = m.CreateGroup(ctx, driver.GroupConfig{Name: "g2"})
+	_ = m.AddUserToGroup(ctx, "alice", "g1")
+	_ = m.AddUserToGroup(ctx, "alice", "g2")
+
+	t.Run("success", func(t *testing.T) {
+		groups, err := m.ListGroupsForUser(ctx, "alice")
+		require.NoError(t, err)
+		assert.Len(t, groups, 2)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := m.ListGroupsForUser(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestCreateAccessKey(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+
+	t.Run("success", func(t *testing.T) {
+		ak, err := m.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+		require.NoError(t, err)
+		assert.NotEmpty(t, ak.AccessKeyID)
+		assert.NotEmpty(t, ak.SecretAccessKey)
+		assert.Equal(t, "alice", ak.UserName)
+		assert.Equal(t, "Active", ak.Status)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := m.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "missing"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("empty user name", func(t *testing.T) {
+		_, err := m.CreateAccessKey(ctx, driver.AccessKeyConfig{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "required")
+	})
+}
+
+func TestDeleteAccessKey(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	ak, _ := m.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+
+	t.Run("success", func(t *testing.T) {
+		err := m.DeleteAccessKey(ctx, "alice", ak.AccessKeyID)
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := m.DeleteAccessKey(ctx, "alice", "nonexistent-key")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestListAccessKeys(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = m.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+	_, _ = m.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+
+	t.Run("success", func(t *testing.T) {
+		keys, err := m.ListAccessKeys(ctx, "alice")
+		require.NoError(t, err)
+		assert.Len(t, keys, 2)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := m.ListAccessKeys(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestListAttachedRolePolicies(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateRole(ctx, driver.RoleConfig{Name: "role1"})
+	p, _ := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "pol1", PolicyDocument: "{}"})
+	_ = m.AttachRolePolicy(ctx, "role1", p.ARN)
+
+	t.Run("success", func(t *testing.T) {
+		policies, err := m.ListAttachedRolePolicies(ctx, "role1")
+		require.NoError(t, err)
+		assert.Len(t, policies, 1)
+		assert.Contains(t, policies, p.ARN)
+	})
+
+	t.Run("role not found", func(t *testing.T) {
+		_, err := m.ListAttachedRolePolicies(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestListAttachedUserPolicies(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, _ = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	p, _ := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "pol1", PolicyDocument: "{}"})
+	_ = m.AttachUserPolicy(ctx, "alice", p.ARN)
+
+	t.Run("success", func(t *testing.T) {
+		policies, err := m.ListAttachedUserPolicies(ctx, "alice")
+		require.NoError(t, err)
+		assert.Len(t, policies, 1)
+		assert.Contains(t, policies, p.ARN)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := m.ListAttachedUserPolicies(ctx, "missing")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
 func TestGetPolicy(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
