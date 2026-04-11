@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/inject"
 	"github.com/stackshy/cloudemu/metrics"
 	"github.com/stackshy/cloudemu/networking/driver"
+	"github.com/stackshy/cloudemu/ratelimit"
 	"github.com/stackshy/cloudemu/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1132,4 +1134,268 @@ func TestNetworkingAllOptionsComposed(t *testing.T) {
 
 	q := metrics.NewQuery(mc)
 	assert.Equal(t, 2, q.ByName("calls_total").Count())
+}
+
+// --- Internet Gateway portable tests ---
+
+func TestInternetGatewayPortable(t *testing.T) {
+	n := newTestNetworking()
+	ctx := context.Background()
+
+	t.Run("create IGW", func(t *testing.T) {
+		igw, err := n.CreateInternetGateway(ctx, driver.InternetGatewayConfig{
+			Tags: map[string]string{"env": "test"},
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, igw.ID)
+		assert.Equal(t, "detached", igw.State)
+	})
+
+	t.Run("describe all IGWs", func(t *testing.T) {
+		igws, err := n.DescribeInternetGateways(ctx, nil)
+		require.NoError(t, err)
+		assert.Len(t, igws, 1)
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		igws, _ := n.DescribeInternetGateways(ctx, nil)
+		require.NotEmpty(t, igws)
+
+		filtered, err := n.DescribeInternetGateways(ctx, []string{igws[0].ID})
+		require.NoError(t, err)
+		assert.Len(t, filtered, 1)
+		assert.Equal(t, igws[0].ID, filtered[0].ID)
+	})
+
+	t.Run("attach IGW to VPC", func(t *testing.T) {
+		igws, _ := n.DescribeInternetGateways(ctx, nil)
+		vpc, _ := n.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+
+		err := n.AttachInternetGateway(ctx, igws[0].ID, vpc.ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("detach IGW", func(t *testing.T) {
+		igws, _ := n.DescribeInternetGateways(ctx, nil)
+		err := n.DetachInternetGateway(ctx, igws[0].ID, "vpc-1")
+		require.NoError(t, err)
+	})
+
+	t.Run("delete IGW", func(t *testing.T) {
+		igws, _ := n.DescribeInternetGateways(ctx, nil)
+		err := n.DeleteInternetGateway(ctx, igws[0].ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("delete nonexistent IGW", func(t *testing.T) {
+		err := n.DeleteInternetGateway(ctx, "igw-nonexistent")
+		require.Error(t, err)
+	})
+
+	t.Run("attach nonexistent IGW", func(t *testing.T) {
+		err := n.AttachInternetGateway(ctx, "igw-nonexistent", "vpc-1")
+		require.Error(t, err)
+	})
+
+	t.Run("detach nonexistent IGW", func(t *testing.T) {
+		err := n.DetachInternetGateway(ctx, "igw-nonexistent", "vpc-1")
+		require.Error(t, err)
+	})
+}
+
+// --- Elastic IP portable tests ---
+
+func TestElasticIPPortable(t *testing.T) {
+	n := newTestNetworking()
+	ctx := context.Background()
+
+	t.Run("allocate address", func(t *testing.T) {
+		eip, err := n.AllocateAddress(ctx, driver.ElasticIPConfig{
+			Tags: map[string]string{"env": "test"},
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, eip.AllocationID)
+		assert.NotEmpty(t, eip.PublicIP)
+	})
+
+	t.Run("describe all addresses", func(t *testing.T) {
+		eips, err := n.DescribeAddresses(ctx, nil)
+		require.NoError(t, err)
+		assert.Len(t, eips, 1)
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		eips, _ := n.DescribeAddresses(ctx, nil)
+		require.NotEmpty(t, eips)
+
+		filtered, err := n.DescribeAddresses(ctx, []string{eips[0].AllocationID})
+		require.NoError(t, err)
+		assert.Len(t, filtered, 1)
+		assert.Equal(t, eips[0].AllocationID, filtered[0].AllocationID)
+	})
+
+	t.Run("associate address", func(t *testing.T) {
+		eips, _ := n.DescribeAddresses(ctx, nil)
+		assocID, err := n.AssociateAddress(ctx, eips[0].AllocationID, "i-12345")
+		require.NoError(t, err)
+		assert.NotEmpty(t, assocID)
+	})
+
+	t.Run("disassociate address", func(t *testing.T) {
+		eips, _ := n.DescribeAddresses(ctx, nil)
+		err := n.DisassociateAddress(ctx, eips[0].AssociationID)
+		require.NoError(t, err)
+	})
+
+	t.Run("release address", func(t *testing.T) {
+		eips, _ := n.DescribeAddresses(ctx, nil)
+		err := n.ReleaseAddress(ctx, eips[0].AllocationID)
+		require.NoError(t, err)
+
+		eips, _ = n.DescribeAddresses(ctx, nil)
+		assert.Empty(t, eips)
+	})
+
+	t.Run("release nonexistent", func(t *testing.T) {
+		err := n.ReleaseAddress(ctx, "eipalloc-nonexistent")
+		require.Error(t, err)
+	})
+
+	t.Run("associate nonexistent allocation", func(t *testing.T) {
+		_, err := n.AssociateAddress(ctx, "eipalloc-nonexistent", "i-12345")
+		require.Error(t, err)
+	})
+
+	t.Run("disassociate nonexistent", func(t *testing.T) {
+		err := n.DisassociateAddress(ctx, "eipassoc-nonexistent")
+		require.Error(t, err)
+	})
+}
+
+// --- Route Table Association portable tests ---
+
+func TestRouteTableAssociationPortable(t *testing.T) {
+	n := newTestNetworking()
+	ctx := context.Background()
+
+	rt, err := n.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: "vpc-1"})
+	require.NoError(t, err)
+
+	t.Run("associate route table", func(t *testing.T) {
+		assoc, err := n.AssociateRouteTable(ctx, rt.ID, "subnet-1")
+		require.NoError(t, err)
+		assert.NotEmpty(t, assoc.ID)
+		assert.Equal(t, rt.ID, assoc.RouteTableID)
+		assert.Equal(t, "subnet-1", assoc.SubnetID)
+	})
+
+	t.Run("disassociate route table", func(t *testing.T) {
+		assoc, err := n.AssociateRouteTable(ctx, rt.ID, "subnet-2")
+		require.NoError(t, err)
+
+		err = n.DisassociateRouteTable(ctx, assoc.ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("associate nonexistent route table", func(t *testing.T) {
+		_, err := n.AssociateRouteTable(ctx, "rtb-nonexistent", "subnet-1")
+		require.Error(t, err)
+	})
+
+	t.Run("disassociate nonexistent", func(t *testing.T) {
+		err := n.DisassociateRouteTable(ctx, "rtbassoc-nonexistent")
+		require.Error(t, err)
+	})
+}
+
+// --- GetFlowLogRecords portable tests ---
+
+func TestGetFlowLogRecordsPortable(t *testing.T) {
+	n := newTestNetworking()
+	ctx := context.Background()
+
+	fl, err := n.CreateFlowLog(ctx, driver.FlowLogConfig{
+		ResourceID: "vpc-1", ResourceType: "VPC", TrafficType: "ALL",
+	})
+	require.NoError(t, err)
+
+	t.Run("get records", func(t *testing.T) {
+		records, err := n.GetFlowLogRecords(ctx, fl.ID, 10)
+		require.NoError(t, err)
+		// Mock driver returns empty slice.
+		assert.Equal(t, 0, len(records))
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := n.GetFlowLogRecords(ctx, "fl-nonexistent", 10)
+		require.Error(t, err)
+	})
+}
+
+func TestDescribeSubnetsPortable(t *testing.T) {
+	n := newTestNetworking()
+	ctx := context.Background()
+
+	vpc, err := n.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	sub, err := n.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpc.ID, CIDRBlock: "10.0.1.0/24"})
+	require.NoError(t, err)
+
+	subnets, err := n.DescribeSubnets(ctx, nil)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(subnets), 1)
+
+	subnets, err = n.DescribeSubnets(ctx, []string{sub.ID})
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(subnets))
+}
+
+func TestDeleteSecurityGroupPortable(t *testing.T) {
+	n := newTestNetworking()
+	ctx := context.Background()
+
+	vpc, err := n.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	sg, err := n.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{VPCID: vpc.ID, Name: "test-sg", Description: "test"})
+	require.NoError(t, err)
+
+	err = n.DeleteSecurityGroup(ctx, sg.ID)
+	require.NoError(t, err)
+
+	err = n.DeleteSecurityGroup(ctx, "sg-nonexistent")
+	require.Error(t, err)
+}
+
+func TestDescribeSecurityGroupsPortable(t *testing.T) {
+	n := newTestNetworking()
+	ctx := context.Background()
+
+	vpc, err := n.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	sg, err := n.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{VPCID: vpc.ID, Name: "test-sg", Description: "test"})
+	require.NoError(t, err)
+
+	groups, err := n.DescribeSecurityGroups(ctx, nil)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(groups), 1)
+
+	groups, err = n.DescribeSecurityGroups(ctx, []string{sg.ID})
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(groups))
+}
+
+func TestNetworkingWithRateLimiter(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	limiter := ratelimit.New(1, 1, fc)
+	n := newTestNetworking(WithRateLimiter(limiter))
+	ctx := context.Background()
+
+	_, err := n.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	_, err = n.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.1.0.0/16"})
+	require.Error(t, err)
 }
