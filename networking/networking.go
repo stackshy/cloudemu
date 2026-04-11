@@ -601,3 +601,61 @@ func (n *Networking) DisassociateRouteTable(
 
 	return err
 }
+
+// CreateVPCEndpoint creates a VPC endpoint.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (n *Networking) CreateVPCEndpoint(
+	ctx context.Context, config driver.VPCEndpointConfig,
+) (*driver.VPCEndpoint, error) {
+	out, err := n.do(ctx, "CreateVPCEndpoint", config, func() (any, error) {
+		return n.driver.CreateVPCEndpoint(ctx, config)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.VPCEndpoint), nil
+}
+
+// DeleteVPCEndpoint deletes a VPC endpoint.
+func (n *Networking) DeleteVPCEndpoint(
+	ctx context.Context, id string,
+) error {
+	_, err := n.do(ctx, "DeleteVPCEndpoint", id, func() (any, error) {
+		return nil, n.driver.DeleteVPCEndpoint(ctx, id)
+	})
+
+	return err
+}
+
+// DescribeVPCEndpoints returns VPC endpoints matching
+// the given IDs.
+func (n *Networking) DescribeVPCEndpoints(
+	ctx context.Context, ids []string,
+) ([]driver.VPCEndpoint, error) {
+	out, err := n.do(ctx, "DescribeVPCEndpoints", ids, func() (any, error) {
+		return n.driver.DescribeVPCEndpoints(ctx, ids)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.VPCEndpoint), nil
+}
+
+// ModifyVPCEndpoint modifies a VPC endpoint.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (n *Networking) ModifyVPCEndpoint(
+	ctx context.Context, id string, config driver.VPCEndpointConfig,
+) (*driver.VPCEndpoint, error) {
+	out, err := n.do(ctx, "ModifyVPCEndpoint", id, func() (any, error) {
+		return n.driver.ModifyVPCEndpoint(ctx, id, config)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.VPCEndpoint), nil
+}

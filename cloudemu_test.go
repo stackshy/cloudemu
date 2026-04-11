@@ -7955,3 +7955,156 @@ func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket
 		t.Errorf("expected NotFound for missing bucket, got %v", err)
 	}
 }
+
+// ─── VPC Endpoints ────────────────────────────────────────────
+
+func TestVPCEndpointAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testVPCEndpointOperations(t, ctx, p.VPC)
+}
+
+func TestVPCEndpointAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testVPCEndpointOperations(t, ctx, p.VNet)
+}
+
+func TestVPCEndpointGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testVPCEndpointOperations(t, ctx, p.VPC)
+}
+
+func testVPCEndpointOperations(
+	t *testing.T, ctx context.Context, d netdriver.Networking,
+) {
+	t.Helper()
+
+	// Create VPC first.
+	vpc, err := d.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create endpoint.
+	ep, err := d.CreateVPCEndpoint(ctx, netdriver.VPCEndpointConfig{
+		VPCID:        vpc.ID,
+		ServiceName:  "com.amazonaws.us-east-1.s3",
+		EndpointType: "Gateway",
+		SubnetIDs:    []string{"subnet-1"},
+		Tags:         map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ep.State != "available" {
+		t.Errorf("expected available, got %s", ep.State)
+	}
+
+	if ep.VPCID != vpc.ID {
+		t.Errorf("expected vpc %s, got %s", vpc.ID, ep.VPCID)
+	}
+
+	if ep.ServiceName != "com.amazonaws.us-east-1.s3" {
+		t.Errorf("expected s3 service, got %s", ep.ServiceName)
+	}
+
+	// Describe all.
+	eps, err := d.DescribeVPCEndpoints(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(eps))
+	}
+
+	// Describe by ID.
+	eps, err = d.DescribeVPCEndpoints(ctx, []string{ep.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(eps))
+	}
+
+	if eps[0].ID != ep.ID {
+		t.Errorf("expected %s, got %s", ep.ID, eps[0].ID)
+	}
+
+	// Modify endpoint.
+	modified, err := d.ModifyVPCEndpoint(ctx, ep.ID, netdriver.VPCEndpointConfig{
+		SubnetIDs: []string{"subnet-2", "subnet-3"},
+		Tags:      map[string]string{"env": "prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(modified.SubnetIDs) != 2 {
+		t.Errorf("expected 2 subnets, got %d", len(modified.SubnetIDs))
+	}
+
+	if modified.Tags["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %q", modified.Tags["env"])
+	}
+
+	// Modify nonexistent.
+	_, err = d.ModifyVPCEndpoint(ctx, "vpce-nonexistent", netdriver.VPCEndpointConfig{
+		SubnetIDs: []string{"subnet-1"},
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+
+	// Delete endpoint.
+	if err := d.DeleteVPCEndpoint(ctx, ep.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify gone.
+	eps, err = d.DescribeVPCEndpoints(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eps) != 0 {
+		t.Errorf("expected 0 endpoints, got %d", len(eps))
+	}
+
+	// Delete nonexistent.
+	err = d.DeleteVPCEndpoint(ctx, ep.ID)
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+
+	// Create with missing VPC ID.
+	_, err = d.CreateVPCEndpoint(ctx, netdriver.VPCEndpointConfig{
+		ServiceName: "svc",
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+
+	// Create with missing service name.
+	_, err = d.CreateVPCEndpoint(ctx, netdriver.VPCEndpointConfig{
+		VPCID: vpc.ID,
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+
+	// Create with nonexistent VPC.
+	_, err = d.CreateVPCEndpoint(ctx, netdriver.VPCEndpointConfig{
+		VPCID:       "vpc-nonexistent",
+		ServiceName: "svc",
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
