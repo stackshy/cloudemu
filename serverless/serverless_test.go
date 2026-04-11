@@ -22,8 +22,10 @@ type mockDriver struct {
 	layers      map[string][]driver.LayerVersion
 	concurrency map[string]*driver.ConcurrencyConfig
 	handlers    map[string]driver.HandlerFunc
+	mappings    map[string]*driver.EventSourceMappingInfo
 	versionSeq  int
 	layerSeq    int
+	mappingSeq  int
 }
 
 func newMockDriver() *mockDriver {
@@ -34,6 +36,7 @@ func newMockDriver() *mockDriver {
 		layers:      make(map[string][]driver.LayerVersion),
 		concurrency: make(map[string]*driver.ConcurrencyConfig),
 		handlers:    make(map[string]driver.HandlerFunc),
+		mappings:    make(map[string]*driver.EventSourceMappingInfo),
 	}
 }
 
@@ -317,6 +320,93 @@ func (m *mockDriver) DeleteFunctionConcurrency(_ context.Context, functionName s
 	delete(m.concurrency, functionName)
 
 	return nil
+}
+
+func (m *mockDriver) CreateEventSourceMapping(
+	_ context.Context, config driver.EventSourceMappingConfig,
+) (*driver.EventSourceMappingInfo, error) {
+	if config.FunctionName == "" {
+		return nil, fmt.Errorf("function name required")
+	}
+
+	if config.EventSourceArn == "" {
+		return nil, fmt.Errorf("event source ARN required")
+	}
+
+	m.mappingSeq++
+	uuid := fmt.Sprintf("esm-%d", m.mappingSeq)
+
+	state := "Disabled"
+	if config.Enabled {
+		state = "Enabled"
+	}
+
+	info := &driver.EventSourceMappingInfo{
+		UUID:             uuid,
+		EventSourceArn:   config.EventSourceArn,
+		FunctionName:     config.FunctionName,
+		BatchSize:        config.BatchSize,
+		Enabled:          config.Enabled,
+		StartingPosition: config.StartingPosition,
+		State:            state,
+	}
+	m.mappings[uuid] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteEventSourceMapping(_ context.Context, uuid string) error {
+	if _, ok := m.mappings[uuid]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.mappings, uuid)
+
+	return nil
+}
+
+func (m *mockDriver) GetEventSourceMapping(_ context.Context, uuid string) (*driver.EventSourceMappingInfo, error) {
+	info, ok := m.mappings[uuid]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+
+	return info, nil
+}
+
+func (m *mockDriver) ListEventSourceMappings(_ context.Context, functionName string) ([]driver.EventSourceMappingInfo, error) {
+	var result []driver.EventSourceMappingInfo
+
+	for _, info := range m.mappings {
+		if functionName == "" || info.FunctionName == functionName {
+			result = append(result, *info)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) UpdateEventSourceMapping(
+	_ context.Context, uuid string, config driver.EventSourceMappingConfig,
+) (*driver.EventSourceMappingInfo, error) {
+	info, ok := m.mappings[uuid]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+
+	if config.FunctionName != "" {
+		info.FunctionName = config.FunctionName
+	}
+
+	info.Enabled = config.Enabled
+
+	if config.Enabled {
+		info.State = "Enabled"
+	} else {
+		info.State = "Disabled"
+	}
+
+	return info, nil
 }
 
 func newTestServerless(opts ...Option) *Serverless {
@@ -869,4 +959,122 @@ func TestServerlessAllOptionsComposed(t *testing.T) {
 
 	q := metrics.NewQuery(mc)
 	assert.Equal(t, 2, q.ByName("calls_total").Count())
+}
+
+func TestCreateEventSourceMapping(t *testing.T) {
+	s := newTestServerless()
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		info, err := s.CreateEventSourceMapping(ctx, driver.EventSourceMappingConfig{
+			FunctionName:   "my-func",
+			EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:my-queue",
+			Enabled:        true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "my-func", info.FunctionName)
+		assert.Equal(t, "Enabled", info.State)
+	})
+
+	t.Run("missing function name", func(t *testing.T) {
+		_, err := s.CreateEventSourceMapping(ctx, driver.EventSourceMappingConfig{
+			EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:my-queue",
+		})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteEventSourceMapping(t *testing.T) {
+	s := newTestServerless()
+	ctx := context.Background()
+
+	info, err := s.CreateEventSourceMapping(ctx, driver.EventSourceMappingConfig{
+		FunctionName:   "del-func",
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:del-queue",
+	})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := s.DeleteEventSourceMapping(ctx, info.UUID)
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := s.DeleteEventSourceMapping(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestGetEventSourceMapping(t *testing.T) {
+	s := newTestServerless()
+	ctx := context.Background()
+
+	created, err := s.CreateEventSourceMapping(ctx, driver.EventSourceMappingConfig{
+		FunctionName:   "get-func",
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:get-queue",
+		Enabled:        true,
+	})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		info, err := s.GetEventSourceMapping(ctx, created.UUID)
+		require.NoError(t, err)
+		assert.Equal(t, "get-func", info.FunctionName)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := s.GetEventSourceMapping(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestListEventSourceMappings(t *testing.T) {
+	s := newTestServerless()
+	ctx := context.Background()
+
+	_, err := s.CreateEventSourceMapping(ctx, driver.EventSourceMappingConfig{
+		FunctionName:   "list-func-a",
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:queue-a",
+	})
+	require.NoError(t, err)
+
+	_, err = s.CreateEventSourceMapping(ctx, driver.EventSourceMappingConfig{
+		FunctionName:   "list-func-b",
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:queue-b",
+	})
+	require.NoError(t, err)
+
+	mappings, err := s.ListEventSourceMappings(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(mappings))
+
+	mappings, err = s.ListEventSourceMappings(ctx, "list-func-a")
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(mappings))
+}
+
+func TestUpdateEventSourceMapping(t *testing.T) {
+	s := newTestServerless()
+	ctx := context.Background()
+
+	created, err := s.CreateEventSourceMapping(ctx, driver.EventSourceMappingConfig{
+		FunctionName:   "upd-func",
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:upd-queue",
+		Enabled:        false,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Disabled", created.State)
+
+	t.Run("enable mapping", func(t *testing.T) {
+		info, err := s.UpdateEventSourceMapping(ctx, created.UUID, driver.EventSourceMappingConfig{
+			Enabled: true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "Enabled", info.State)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := s.UpdateEventSourceMapping(ctx, "nonexistent", driver.EventSourceMappingConfig{})
+		require.Error(t, err)
+	})
 }
