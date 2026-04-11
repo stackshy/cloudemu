@@ -400,3 +400,390 @@ func TestPortableGetError(t *testing.T) {
 	_, err := c.Get(ctx, "no-cache", "k")
 	require.Error(t, err)
 }
+
+func TestExpirePortable(t *testing.T) {
+	c, _ := newTestCache()
+	ctx := context.Background()
+
+	setupCacheWithItem(t, c)
+
+	t.Run("success", func(t *testing.T) {
+		err := c.Expire(ctx, "test-cache", "key1", 10*time.Second)
+		require.NoError(t, err)
+	})
+
+	t.Run("nonexistent cache", func(t *testing.T) {
+		err := c.Expire(ctx, "no-cache", "key1", 10*time.Second)
+		require.Error(t, err)
+	})
+
+	t.Run("nonexistent key", func(t *testing.T) {
+		err := c.Expire(ctx, "test-cache", "missing-key", 10*time.Second)
+		require.Error(t, err)
+	})
+}
+
+func TestGetTTLPortable(t *testing.T) {
+	c, fc := newTestCache()
+	ctx := context.Background()
+
+	setupCacheWithItem(t, c)
+
+	t.Run("no ttl returns negative one", func(t *testing.T) {
+		ttl, err := c.GetTTL(ctx, "test-cache", "key1")
+		require.NoError(t, err)
+		assert.Equal(t, time.Duration(-1), ttl)
+	})
+
+	t.Run("with ttl returns positive duration", func(t *testing.T) {
+		err := c.Expire(ctx, "test-cache", "key1", 30*time.Second)
+		require.NoError(t, err)
+
+		ttl, err := c.GetTTL(ctx, "test-cache", "key1")
+		require.NoError(t, err)
+		assert.True(t, ttl > 0, "expected positive TTL, got %v", ttl)
+	})
+
+	t.Run("expired key returns error", func(t *testing.T) {
+		err := c.Set(ctx, "test-cache", "expiring", []byte("val"), 5*time.Second)
+		require.NoError(t, err)
+
+		fc.Advance(10 * time.Second)
+
+		_, err = c.GetTTL(ctx, "test-cache", "expiring")
+		require.Error(t, err)
+	})
+
+	t.Run("nonexistent cache", func(t *testing.T) {
+		_, err := c.GetTTL(ctx, "no-cache", "key1")
+		require.Error(t, err)
+	})
+
+	t.Run("nonexistent key", func(t *testing.T) {
+		_, err := c.GetTTL(ctx, "test-cache", "missing-key")
+		require.Error(t, err)
+	})
+}
+
+func TestPersistPortable(t *testing.T) {
+	c, _ := newTestCache()
+	ctx := context.Background()
+
+	setupCacheWithItem(t, c)
+
+	t.Run("success", func(t *testing.T) {
+		err := c.Expire(ctx, "test-cache", "key1", 30*time.Second)
+		require.NoError(t, err)
+
+		ttl, err := c.GetTTL(ctx, "test-cache", "key1")
+		require.NoError(t, err)
+		assert.True(t, ttl > 0, "expected positive TTL before persist")
+
+		err = c.Persist(ctx, "test-cache", "key1")
+		require.NoError(t, err)
+
+		ttl, err = c.GetTTL(ctx, "test-cache", "key1")
+		require.NoError(t, err)
+		assert.Equal(t, time.Duration(-1), ttl, "expected TTL -1 after persist")
+	})
+
+	t.Run("nonexistent cache", func(t *testing.T) {
+		err := c.Persist(ctx, "no-cache", "key1")
+		require.Error(t, err)
+	})
+
+	t.Run("nonexistent key", func(t *testing.T) {
+		err := c.Persist(ctx, "test-cache", "missing-key")
+		require.Error(t, err)
+	})
+}
+
+func TestIncrPortable(t *testing.T) {
+	c, _ := newTestCache()
+	ctx := context.Background()
+
+	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "incr-cache"})
+	require.NoError(t, err)
+
+	t.Run("increment existing numeric key", func(t *testing.T) {
+		err := c.Set(ctx, "incr-cache", "counter", []byte("10"), 0)
+		require.NoError(t, err)
+
+		val, incrErr := c.Incr(ctx, "incr-cache", "counter")
+		require.NoError(t, incrErr)
+		assert.Equal(t, int64(11), val)
+	})
+
+	t.Run("increment nonexistent key initializes to one", func(t *testing.T) {
+		val, incrErr := c.Incr(ctx, "incr-cache", "new-counter")
+		require.NoError(t, incrErr)
+		assert.Equal(t, int64(1), val)
+	})
+
+	t.Run("nonexistent cache", func(t *testing.T) {
+		_, incrErr := c.Incr(ctx, "no-cache", "counter")
+		require.Error(t, incrErr)
+	})
+
+	t.Run("non-numeric value", func(t *testing.T) {
+		err := c.Set(ctx, "incr-cache", "text-key", []byte("hello"), 0)
+		require.NoError(t, err)
+
+		_, incrErr := c.Incr(ctx, "incr-cache", "text-key")
+		require.Error(t, incrErr)
+	})
+}
+
+func TestIncrByPortable(t *testing.T) {
+	c, _ := newTestCache()
+	ctx := context.Background()
+
+	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "incrby-cache"})
+	require.NoError(t, err)
+
+	t.Run("increment by delta", func(t *testing.T) {
+		err := c.Set(ctx, "incrby-cache", "counter", []byte("10"), 0)
+		require.NoError(t, err)
+
+		val, incrErr := c.IncrBy(ctx, "incrby-cache", "counter", 5)
+		require.NoError(t, incrErr)
+		assert.Equal(t, int64(15), val)
+	})
+
+	t.Run("increment nonexistent key by delta", func(t *testing.T) {
+		val, incrErr := c.IncrBy(ctx, "incrby-cache", "new-counter", 5)
+		require.NoError(t, incrErr)
+		assert.Equal(t, int64(5), val)
+	})
+
+	t.Run("nonexistent cache", func(t *testing.T) {
+		_, incrErr := c.IncrBy(ctx, "no-cache", "counter", 5)
+		require.Error(t, incrErr)
+	})
+
+	t.Run("non-numeric value", func(t *testing.T) {
+		err := c.Set(ctx, "incrby-cache", "text-key", []byte("hello"), 0)
+		require.NoError(t, err)
+
+		_, incrErr := c.IncrBy(ctx, "incrby-cache", "text-key", 5)
+		require.Error(t, incrErr)
+	})
+}
+
+func TestDecrPortable(t *testing.T) {
+	c, _ := newTestCache()
+	ctx := context.Background()
+
+	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "decr-cache"})
+	require.NoError(t, err)
+
+	t.Run("decrement existing numeric key", func(t *testing.T) {
+		err := c.Set(ctx, "decr-cache", "counter", []byte("10"), 0)
+		require.NoError(t, err)
+
+		val, decrErr := c.Decr(ctx, "decr-cache", "counter")
+		require.NoError(t, decrErr)
+		assert.Equal(t, int64(9), val)
+	})
+
+	t.Run("decrement nonexistent key initializes to negative one", func(t *testing.T) {
+		val, decrErr := c.Decr(ctx, "decr-cache", "new-counter")
+		require.NoError(t, decrErr)
+		assert.Equal(t, int64(-1), val)
+	})
+
+	t.Run("nonexistent cache", func(t *testing.T) {
+		_, decrErr := c.Decr(ctx, "no-cache", "counter")
+		require.Error(t, decrErr)
+	})
+
+	t.Run("non-numeric value", func(t *testing.T) {
+		err := c.Set(ctx, "decr-cache", "text-key", []byte("hello"), 0)
+		require.NoError(t, err)
+
+		_, decrErr := c.Decr(ctx, "decr-cache", "text-key")
+		require.Error(t, decrErr)
+	})
+}
+
+func TestDecrByPortable(t *testing.T) {
+	c, _ := newTestCache()
+	ctx := context.Background()
+
+	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "decrby-cache"})
+	require.NoError(t, err)
+
+	t.Run("decrement by delta", func(t *testing.T) {
+		err := c.Set(ctx, "decrby-cache", "counter", []byte("10"), 0)
+		require.NoError(t, err)
+
+		val, decrErr := c.DecrBy(ctx, "decrby-cache", "counter", 3)
+		require.NoError(t, decrErr)
+		assert.Equal(t, int64(7), val)
+	})
+
+	t.Run("decrement nonexistent key by delta", func(t *testing.T) {
+		val, decrErr := c.DecrBy(ctx, "decrby-cache", "new-counter", 3)
+		require.NoError(t, decrErr)
+		assert.Equal(t, int64(-3), val)
+	})
+
+	t.Run("nonexistent cache", func(t *testing.T) {
+		_, decrErr := c.DecrBy(ctx, "no-cache", "counter", 3)
+		require.Error(t, decrErr)
+	})
+
+	t.Run("non-numeric value", func(t *testing.T) {
+		err := c.Set(ctx, "decrby-cache", "text-key", []byte("hello"), 0)
+		require.NoError(t, err)
+
+		_, decrErr := c.DecrBy(ctx, "decrby-cache", "text-key", 3)
+		require.Error(t, decrErr)
+	})
+}
+
+func TestExpireRecorderAndMetrics(t *testing.T) {
+	rec := recorder.New()
+	mc := metrics.NewCollector()
+	c, _ := newTestCache(WithRecorder(rec), WithMetrics(mc))
+	ctx := context.Background()
+
+	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "rm-cache"})
+	require.NoError(t, err)
+
+	err = c.Set(ctx, "rm-cache", "k", []byte("v"), 0)
+	require.NoError(t, err)
+
+	err = c.Expire(ctx, "rm-cache", "k", 10*time.Second)
+	require.NoError(t, err)
+
+	_, err = c.GetTTL(ctx, "rm-cache", "k")
+	require.NoError(t, err)
+
+	err = c.Persist(ctx, "rm-cache", "k")
+	require.NoError(t, err)
+
+	expireCalls := rec.CallCountFor("cache", "Expire")
+	assert.Equal(t, 1, expireCalls)
+
+	getTTLCalls := rec.CallCountFor("cache", "GetTTL")
+	assert.Equal(t, 1, getTTLCalls)
+
+	persistCalls := rec.CallCountFor("cache", "Persist")
+	assert.Equal(t, 1, persistCalls)
+
+	q := metrics.NewQuery(mc)
+	callsCount := q.ByName("calls_total").Count()
+	assert.GreaterOrEqual(t, callsCount, 5)
+}
+
+func TestCounterRecorderAndMetrics(t *testing.T) {
+	rec := recorder.New()
+	mc := metrics.NewCollector()
+	c, _ := newTestCache(WithRecorder(rec), WithMetrics(mc))
+	ctx := context.Background()
+
+	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "cnt-cache"})
+	require.NoError(t, err)
+
+	err = c.Set(ctx, "cnt-cache", "k", []byte("0"), 0)
+	require.NoError(t, err)
+
+	_, err = c.Incr(ctx, "cnt-cache", "k")
+	require.NoError(t, err)
+
+	_, err = c.IncrBy(ctx, "cnt-cache", "k", 5)
+	require.NoError(t, err)
+
+	_, err = c.Decr(ctx, "cnt-cache", "k")
+	require.NoError(t, err)
+
+	_, err = c.DecrBy(ctx, "cnt-cache", "k", 3)
+	require.NoError(t, err)
+
+	incrCalls := rec.CallCountFor("cache", "Incr")
+	assert.Equal(t, 1, incrCalls)
+
+	incrByCalls := rec.CallCountFor("cache", "IncrBy")
+	assert.Equal(t, 1, incrByCalls)
+
+	decrCalls := rec.CallCountFor("cache", "Decr")
+	assert.Equal(t, 1, decrCalls)
+
+	decrByCalls := rec.CallCountFor("cache", "DecrBy")
+	assert.Equal(t, 1, decrByCalls)
+
+	q := metrics.NewQuery(mc)
+	callsCount := q.ByName("calls_total").Count()
+	assert.GreaterOrEqual(t, callsCount, 6)
+}
+
+func TestCounterErrorInjection(t *testing.T) {
+	inj := inject.NewInjector()
+	c, _ := newTestCache(WithErrorInjection(inj))
+	ctx := context.Background()
+
+	_, err := c.CreateCache(ctx, driver.CacheConfig{Name: "ei-cache"})
+	require.NoError(t, err)
+
+	err = c.Set(ctx, "ei-cache", "k", []byte("0"), 0)
+	require.NoError(t, err)
+
+	injectedErr := fmt.Errorf("injected")
+
+	t.Run("Expire injection", func(t *testing.T) {
+		inj.Set("cache", "Expire", injectedErr, inject.Always{})
+		err := c.Expire(ctx, "ei-cache", "k", 10*time.Second)
+		require.Error(t, err)
+		assert.Equal(t, injectedErr, err)
+		inj.Remove("cache", "Expire")
+	})
+
+	t.Run("GetTTL injection", func(t *testing.T) {
+		inj.Set("cache", "GetTTL", injectedErr, inject.Always{})
+		_, err := c.GetTTL(ctx, "ei-cache", "k")
+		require.Error(t, err)
+		assert.Equal(t, injectedErr, err)
+		inj.Remove("cache", "GetTTL")
+	})
+
+	t.Run("Persist injection", func(t *testing.T) {
+		inj.Set("cache", "Persist", injectedErr, inject.Always{})
+		err := c.Persist(ctx, "ei-cache", "k")
+		require.Error(t, err)
+		assert.Equal(t, injectedErr, err)
+		inj.Remove("cache", "Persist")
+	})
+
+	t.Run("Incr injection", func(t *testing.T) {
+		inj.Set("cache", "Incr", injectedErr, inject.Always{})
+		_, err := c.Incr(ctx, "ei-cache", "k")
+		require.Error(t, err)
+		assert.Equal(t, injectedErr, err)
+		inj.Remove("cache", "Incr")
+	})
+
+	t.Run("IncrBy injection", func(t *testing.T) {
+		inj.Set("cache", "IncrBy", injectedErr, inject.Always{})
+		_, err := c.IncrBy(ctx, "ei-cache", "k", 5)
+		require.Error(t, err)
+		assert.Equal(t, injectedErr, err)
+		inj.Remove("cache", "IncrBy")
+	})
+
+	t.Run("Decr injection", func(t *testing.T) {
+		inj.Set("cache", "Decr", injectedErr, inject.Always{})
+		_, err := c.Decr(ctx, "ei-cache", "k")
+		require.Error(t, err)
+		assert.Equal(t, injectedErr, err)
+		inj.Remove("cache", "Decr")
+	})
+
+	t.Run("DecrBy injection", func(t *testing.T) {
+		inj.Set("cache", "DecrBy", injectedErr, inject.Always{})
+		_, err := c.DecrBy(ctx, "ei-cache", "k", 3)
+		require.Error(t, err)
+		assert.Equal(t, injectedErr, err)
+		inj.Remove("cache", "DecrBy")
+	})
+}
