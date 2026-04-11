@@ -349,3 +349,229 @@ func TestPortableGetRuleError(t *testing.T) {
 	_, err := eb.GetRule(ctx, "no-bus", "no-rule")
 	require.Error(t, err)
 }
+
+func TestDeleteRulePortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "dr-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "del-rule",
+		EventBus:     "dr-bus",
+		EventPattern: `{"source": ["my.app"]}`,
+		State:        "ENABLED",
+	})
+	require.NoError(t, err)
+
+	err = eb.DeleteRule(ctx, "dr-bus", "del-rule")
+	require.NoError(t, err)
+
+	_, err = eb.GetRule(ctx, "dr-bus", "del-rule")
+	require.Error(t, err)
+}
+
+func TestGetRulePortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "gr-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "get-rule",
+		EventBus:     "gr-bus",
+		Description:  "test rule",
+		EventPattern: `{"source": ["my.app"]}`,
+		State:        "ENABLED",
+	})
+	require.NoError(t, err)
+
+	rule, err := eb.GetRule(ctx, "gr-bus", "get-rule")
+	require.NoError(t, err)
+	assert.Equal(t, "get-rule", rule.Name)
+	assert.Equal(t, "gr-bus", rule.EventBus)
+	assert.Equal(t, "test rule", rule.Description)
+	assert.Equal(t, "ENABLED", rule.State)
+	assert.Equal(t, `{"source": ["my.app"]}`, rule.EventPattern)
+}
+
+func TestListRulesPortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "lr-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "rule-a",
+		EventBus:     "lr-bus",
+		EventPattern: `{"source": ["app.a"]}`,
+	})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "rule-b",
+		EventBus:     "lr-bus",
+		EventPattern: `{"source": ["app.b"]}`,
+	})
+	require.NoError(t, err)
+
+	rules, err := eb.ListRules(ctx, "lr-bus")
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(rules))
+}
+
+func TestEnableRulePortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "en-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "en-rule",
+		EventBus:     "en-bus",
+		EventPattern: `{"source": ["my.app"]}`,
+		State:        "DISABLED",
+	})
+	require.NoError(t, err)
+
+	rule, err := eb.GetRule(ctx, "en-bus", "en-rule")
+	require.NoError(t, err)
+	assert.Equal(t, "DISABLED", rule.State)
+
+	err = eb.EnableRule(ctx, "en-bus", "en-rule")
+	require.NoError(t, err)
+
+	rule, err = eb.GetRule(ctx, "en-bus", "en-rule")
+	require.NoError(t, err)
+	assert.Equal(t, "ENABLED", rule.State)
+}
+
+func TestDisableRulePortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "dis-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "dis-rule",
+		EventBus:     "dis-bus",
+		EventPattern: `{"source": ["my.app"]}`,
+		State:        "ENABLED",
+	})
+	require.NoError(t, err)
+
+	rule, err := eb.GetRule(ctx, "dis-bus", "dis-rule")
+	require.NoError(t, err)
+	assert.Equal(t, "ENABLED", rule.State)
+
+	err = eb.DisableRule(ctx, "dis-bus", "dis-rule")
+	require.NoError(t, err)
+
+	rule, err = eb.GetRule(ctx, "dis-bus", "dis-rule")
+	require.NoError(t, err)
+	assert.Equal(t, "DISABLED", rule.State)
+}
+
+func TestPutTargetsPortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "pt-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "pt-rule",
+		EventBus:     "pt-bus",
+		EventPattern: `{"source": ["my.app"]}`,
+	})
+	require.NoError(t, err)
+
+	err = eb.PutTargets(ctx, "pt-bus", "pt-rule", []driver.Target{
+		{ID: "t1", ARN: "arn:aws:lambda:us-east-1:123456789012:function:my-func"},
+		{ID: "t2", ARN: "arn:aws:sqs:us-east-1:123456789012:my-queue"},
+	})
+	require.NoError(t, err)
+}
+
+func TestRemoveTargetsPortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "rt-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "rt-rule",
+		EventBus:     "rt-bus",
+		EventPattern: `{"source": ["my.app"]}`,
+	})
+	require.NoError(t, err)
+
+	err = eb.PutTargets(ctx, "rt-bus", "rt-rule", []driver.Target{
+		{ID: "t1", ARN: "arn:aws:lambda:us-east-1:123456789012:function:my-func"},
+		{ID: "t2", ARN: "arn:aws:sqs:us-east-1:123456789012:my-queue"},
+	})
+	require.NoError(t, err)
+
+	err = eb.RemoveTargets(ctx, "rt-bus", "rt-rule", []string{"t1"})
+	require.NoError(t, err)
+
+	targets, err := eb.ListTargets(ctx, "rt-bus", "rt-rule")
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(targets))
+	assert.Equal(t, "t2", targets[0].ID)
+}
+
+func TestListTargetsPortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "lt-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutRule(ctx, &driver.RuleConfig{
+		Name:         "lt-rule",
+		EventBus:     "lt-bus",
+		EventPattern: `{"source": ["my.app"]}`,
+	})
+	require.NoError(t, err)
+
+	err = eb.PutTargets(ctx, "lt-bus", "lt-rule", []driver.Target{
+		{ID: "t1", ARN: "arn:aws:lambda:us-east-1:123456789012:function:func1"},
+		{ID: "t2", ARN: "arn:aws:sqs:us-east-1:123456789012:queue1"},
+		{ID: "t3", ARN: "arn:aws:sns:us-east-1:123456789012:topic1"},
+	})
+	require.NoError(t, err)
+
+	targets, err := eb.ListTargets(ctx, "lt-bus", "lt-rule")
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(targets))
+}
+
+func TestGetEventHistoryPortable(t *testing.T) {
+	eb, _ := newTestEventBus()
+	ctx := context.Background()
+
+	_, err := eb.CreateEventBus(ctx, driver.EventBusConfig{Name: "eh-bus"})
+	require.NoError(t, err)
+
+	_, err = eb.PutEvents(ctx, []driver.Event{
+		{Source: "app.one", DetailType: "TypeA", Detail: `{"a":1}`, EventBus: "eh-bus"},
+		{Source: "app.two", DetailType: "TypeB", Detail: `{"b":2}`, EventBus: "eh-bus"},
+		{Source: "app.three", DetailType: "TypeC", Detail: `{"c":3}`, EventBus: "eh-bus"},
+	})
+	require.NoError(t, err)
+
+	history, err := eb.GetEventHistory(ctx, "eh-bus", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(history))
+
+	limited, err := eb.GetEventHistory(ctx, "eh-bus", 2)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(limited))
+}

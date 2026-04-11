@@ -345,6 +345,131 @@ func TestAllOptionsComposed(t *testing.T) {
 	assert.Equal(t, 2, q.ByName("calls_total").Count())
 }
 
+func TestPutLifecyclePolicyPortable(t *testing.T) {
+	cr, _ := newTestContainerRegistry()
+	ctx := context.Background()
+
+	_, err := cr.CreateRepository(ctx, driver.RepositoryConfig{Name: "lcp-repo"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		policy := driver.LifecyclePolicy{
+			Rules: []driver.LifecycleRule{
+				{Priority: 1, Description: "expire old", TagStatus: "untagged", CountType: "imageCountMoreThan", CountValue: 5, Action: "expire"},
+			},
+		}
+		putErr := cr.PutLifecyclePolicy(ctx, "lcp-repo", policy)
+		require.NoError(t, putErr)
+	})
+
+	t.Run("repo not found", func(t *testing.T) {
+		putErr := cr.PutLifecyclePolicy(ctx, "no-repo", driver.LifecyclePolicy{})
+		require.Error(t, putErr)
+	})
+}
+
+func TestGetLifecyclePolicyPortable(t *testing.T) {
+	cr, _ := newTestContainerRegistry()
+	ctx := context.Background()
+
+	_, err := cr.CreateRepository(ctx, driver.RepositoryConfig{Name: "glcp-repo"})
+	require.NoError(t, err)
+
+	policy := driver.LifecyclePolicy{
+		Rules: []driver.LifecycleRule{
+			{Priority: 1, Description: "expire old", TagStatus: "untagged", CountType: "imageCountMoreThan", CountValue: 3, Action: "expire"},
+		},
+	}
+	err = cr.PutLifecyclePolicy(ctx, "glcp-repo", policy)
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		got, getErr := cr.GetLifecyclePolicy(ctx, "glcp-repo")
+		require.NoError(t, getErr)
+		require.NotNil(t, got)
+		assert.Equal(t, 1, len(got.Rules))
+		assert.Equal(t, "expire old", got.Rules[0].Description)
+	})
+
+	t.Run("repo not found", func(t *testing.T) {
+		_, getErr := cr.GetLifecyclePolicy(ctx, "no-repo")
+		require.Error(t, getErr)
+	})
+}
+
+func TestEvaluateLifecyclePolicyPortable(t *testing.T) {
+	cr, _ := newTestContainerRegistry()
+	ctx := context.Background()
+
+	_, err := cr.CreateRepository(ctx, driver.RepositoryConfig{Name: "eval-repo"})
+	require.NoError(t, err)
+
+	policy := driver.LifecyclePolicy{
+		Rules: []driver.LifecycleRule{
+			{Priority: 1, TagStatus: "any", CountType: "imageCountMoreThan", CountValue: 0, Action: "expire"},
+		},
+	}
+	err = cr.PutLifecyclePolicy(ctx, "eval-repo", policy)
+	require.NoError(t, err)
+
+	_, err = cr.PutImage(ctx, &driver.ImageManifest{
+		Repository: "eval-repo", Tag: "v1", Digest: "sha256:aaa", SizeBytes: 100,
+	})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		digests, evalErr := cr.EvaluateLifecyclePolicy(ctx, "eval-repo")
+		require.NoError(t, evalErr)
+		assert.GreaterOrEqual(t, len(digests), 0)
+	})
+
+	t.Run("repo not found", func(t *testing.T) {
+		_, evalErr := cr.EvaluateLifecyclePolicy(ctx, "no-repo")
+		require.Error(t, evalErr)
+	})
+}
+
+func TestStartImageScanPortable(t *testing.T) {
+	cr, _ := newTestContainerRegistry()
+	ctx := context.Background()
+
+	setupRepoWithImage(t, cr)
+
+	t.Run("success", func(t *testing.T) {
+		result, scanErr := cr.StartImageScan(ctx, "test-repo", "latest")
+		require.NoError(t, scanErr)
+		require.NotNil(t, result)
+		assert.Equal(t, "test-repo", result.Repository)
+	})
+
+	t.Run("repo not found", func(t *testing.T) {
+		_, scanErr := cr.StartImageScan(ctx, "no-repo", "latest")
+		require.Error(t, scanErr)
+	})
+}
+
+func TestGetImageScanResultsPortable(t *testing.T) {
+	cr, _ := newTestContainerRegistry()
+	ctx := context.Background()
+
+	setupRepoWithImage(t, cr)
+
+	_, err := cr.StartImageScan(ctx, "test-repo", "latest")
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		result, getErr := cr.GetImageScanResults(ctx, "test-repo", "latest")
+		require.NoError(t, getErr)
+		require.NotNil(t, result)
+		assert.Equal(t, "test-repo", result.Repository)
+	})
+
+	t.Run("repo not found", func(t *testing.T) {
+		_, getErr := cr.GetImageScanResults(ctx, "no-repo", "latest")
+		require.Error(t, getErr)
+	})
+}
+
 func TestPortableGetImageError(t *testing.T) {
 	cr, _ := newTestContainerRegistry()
 	ctx := context.Background()

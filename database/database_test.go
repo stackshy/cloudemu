@@ -355,6 +355,219 @@ func TestAllOptionsComposed(t *testing.T) {
 	assert.Equal(t, 2, q.ByName("calls_total").Count())
 }
 
+func TestUpdateItemPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	setupTableWithItem(t, db)
+
+	t.Run("success", func(t *testing.T) {
+		result, err := db.UpdateItem(ctx, driver.UpdateItemInput{
+			Table: "test-table",
+			Key:   map[string]any{"pk": "user1", "sk": "item1"},
+			Actions: []driver.UpdateAction{
+				{Action: "SET", Field: "data", Value: "updated"},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "updated", result["data"])
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		_, err := db.UpdateItem(ctx, driver.UpdateItemInput{
+			Table: "no-table",
+			Key:   map[string]any{"pk": "k1"},
+			Actions: []driver.UpdateAction{
+				{Action: "SET", Field: "data", Value: "v"},
+			},
+		})
+		require.Error(t, err)
+	})
+}
+
+func TestBatchPutItemsPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "batch-table", PartitionKey: "pk", SortKey: "sk"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		items := []map[string]any{
+			{"pk": "u1", "sk": "a", "val": "one"},
+			{"pk": "u2", "sk": "b", "val": "two"},
+		}
+		batchErr := db.BatchPutItems(ctx, "batch-table", items)
+		require.NoError(t, batchErr)
+
+		item, getErr := db.GetItem(ctx, "batch-table", map[string]any{"pk": "u1", "sk": "a"})
+		require.NoError(t, getErr)
+		assert.Equal(t, "one", item["val"])
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		batchErr := db.BatchPutItems(ctx, "no-table", []map[string]any{{"pk": "k1"}})
+		require.Error(t, batchErr)
+	})
+}
+
+func TestBatchGetItemsPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "bget-table", PartitionKey: "pk", SortKey: "sk"})
+	require.NoError(t, err)
+
+	err = db.PutItem(ctx, "bget-table", map[string]any{"pk": "u1", "sk": "a", "val": "one"})
+	require.NoError(t, err)
+
+	err = db.PutItem(ctx, "bget-table", map[string]any{"pk": "u2", "sk": "b", "val": "two"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		keys := []map[string]any{
+			{"pk": "u1", "sk": "a"},
+			{"pk": "u2", "sk": "b"},
+		}
+		items, batchErr := db.BatchGetItems(ctx, "bget-table", keys)
+		require.NoError(t, batchErr)
+		assert.Equal(t, 2, len(items))
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		_, batchErr := db.BatchGetItems(ctx, "no-table", []map[string]any{{"pk": "k1"}})
+		require.Error(t, batchErr)
+	})
+}
+
+func TestUpdateTTLPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "ttl-table", PartitionKey: "pk"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		ttlErr := db.UpdateTTL(ctx, "ttl-table", driver.TTLConfig{Enabled: true, AttributeName: "expires_at"})
+		require.NoError(t, ttlErr)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		ttlErr := db.UpdateTTL(ctx, "no-table", driver.TTLConfig{Enabled: true, AttributeName: "ttl"})
+		require.Error(t, ttlErr)
+	})
+}
+
+func TestDescribeTTLPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "dttl-table", PartitionKey: "pk"})
+	require.NoError(t, err)
+
+	err = db.UpdateTTL(ctx, "dttl-table", driver.TTLConfig{Enabled: true, AttributeName: "expires_at"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		cfg, descErr := db.DescribeTTL(ctx, "dttl-table")
+		require.NoError(t, descErr)
+		assert.True(t, cfg.Enabled)
+		assert.Equal(t, "expires_at", cfg.AttributeName)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		_, descErr := db.DescribeTTL(ctx, "no-table")
+		require.Error(t, descErr)
+	})
+}
+
+func TestUpdateStreamConfigPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "stream-table", PartitionKey: "pk"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		streamErr := db.UpdateStreamConfig(ctx, "stream-table", driver.StreamConfig{
+			Enabled:  true,
+			ViewType: "NEW_AND_OLD_IMAGES",
+		})
+		require.NoError(t, streamErr)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		streamErr := db.UpdateStreamConfig(ctx, "no-table", driver.StreamConfig{Enabled: true})
+		require.Error(t, streamErr)
+	})
+}
+
+func TestGetStreamRecordsPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "gsrec-table", PartitionKey: "pk"})
+	require.NoError(t, err)
+
+	err = db.UpdateStreamConfig(ctx, "gsrec-table", driver.StreamConfig{
+		Enabled:  true,
+		ViewType: "NEW_AND_OLD_IMAGES",
+	})
+	require.NoError(t, err)
+
+	err = db.PutItem(ctx, "gsrec-table", map[string]any{"pk": "k1", "data": "v1"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		iter, recErr := db.GetStreamRecords(ctx, "gsrec-table", 10, "")
+		require.NoError(t, recErr)
+		require.NotNil(t, iter)
+		assert.GreaterOrEqual(t, len(iter.Records), 1)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		_, recErr := db.GetStreamRecords(ctx, "no-table", 10, "")
+		require.Error(t, recErr)
+	})
+}
+
+func TestTransactWriteItemsPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "txn-table", PartitionKey: "pk", SortKey: "sk"})
+	require.NoError(t, err)
+
+	t.Run("success puts", func(t *testing.T) {
+		puts := []map[string]any{
+			{"pk": "u1", "sk": "a", "val": "one"},
+			{"pk": "u2", "sk": "b", "val": "two"},
+		}
+		txnErr := db.TransactWriteItems(ctx, "txn-table", puts, nil)
+		require.NoError(t, txnErr)
+
+		item, getErr := db.GetItem(ctx, "txn-table", map[string]any{"pk": "u1", "sk": "a"})
+		require.NoError(t, getErr)
+		assert.Equal(t, "one", item["val"])
+	})
+
+	t.Run("success deletes", func(t *testing.T) {
+		deletes := []map[string]any{
+			{"pk": "u1", "sk": "a"},
+		}
+		txnErr := db.TransactWriteItems(ctx, "txn-table", nil, deletes)
+		require.NoError(t, txnErr)
+
+		item, _ := db.GetItem(ctx, "txn-table", map[string]any{"pk": "u1", "sk": "a"})
+		assert.Nil(t, item)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		txnErr := db.TransactWriteItems(ctx, "no-table", []map[string]any{{"pk": "k1"}}, nil)
+		require.Error(t, txnErr)
+	})
+}
+
 func TestPortableDeleteTableError(t *testing.T) {
 	db, _ := newTestDatabase()
 	ctx := context.Background()

@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/inject"
 	"github.com/stackshy/cloudemu/loadbalancer/driver"
 	"github.com/stackshy/cloudemu/metrics"
+	"github.com/stackshy/cloudemu/ratelimit"
 	"github.com/stackshy/cloudemu/recorder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -622,6 +624,186 @@ func TestLBWithLatency(t *testing.T) {
 	info, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "lat-lb"})
 	require.NoError(t, err)
 	assert.Equal(t, "lat-lb", info.Name)
+}
+
+func TestCreateRulePortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "rule-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		rule, ruleErr := lb.CreateRule(ctx, driver.RuleConfig{
+			ListenerARN: lis.ARN,
+			Priority:    10,
+			Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+			Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: "tg-arn"}},
+		})
+		require.NoError(t, ruleErr)
+		assert.NotEmpty(t, rule.ARN)
+		assert.Equal(t, lis.ARN, rule.ListenerARN)
+		assert.Equal(t, 10, rule.Priority)
+	})
+
+	t.Run("listener not found", func(t *testing.T) {
+		_, ruleErr := lb.CreateRule(ctx, driver.RuleConfig{ListenerARN: "nonexistent"})
+		require.Error(t, ruleErr)
+	})
+}
+
+func TestDeleteRulePortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "delrule-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	rule, err := lb.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: lis.ARN,
+		Priority:    1,
+		Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/"}}},
+		Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: "tg-arn"}},
+	})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		delErr := lb.DeleteRule(ctx, rule.ARN)
+		require.NoError(t, delErr)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		delErr := lb.DeleteRule(ctx, "nonexistent")
+		require.Error(t, delErr)
+	})
+}
+
+func TestDescribeRulesPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "descrule-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	_, err = lb.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: lis.ARN,
+		Priority:    1,
+		Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/api"}}},
+		Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: "tg-arn"}},
+	})
+	require.NoError(t, err)
+
+	rules, err := lb.DescribeRules(ctx, lis.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(rules))
+	assert.Equal(t, 1, rules[0].Priority)
+}
+
+func TestModifyListenerPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "modlis-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		modErr := lb.ModifyListener(ctx, driver.ModifyListenerInput{ListenerARN: lis.ARN, Port: 8080, Protocol: "HTTPS"})
+		require.NoError(t, modErr)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		modErr := lb.ModifyListener(ctx, driver.ModifyListenerInput{ListenerARN: "nonexistent", Port: 8080})
+		require.Error(t, modErr)
+	})
+}
+
+func TestGetLBAttributesPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "attr-lb"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		attrs, getErr := lb.GetLBAttributes(ctx, lbInfo.ARN)
+		require.NoError(t, getErr)
+		assert.Equal(t, 60, attrs.IdleTimeout)
+	})
+
+	t.Run("lb not found", func(t *testing.T) {
+		_, getErr := lb.GetLBAttributes(ctx, "nonexistent")
+		require.Error(t, getErr)
+	})
+}
+
+func TestPutLBAttributesPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "putattr-lb"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		putErr := lb.PutLBAttributes(ctx, lbInfo.ARN, driver.LBAttributes{IdleTimeout: 120, DeletionProtection: true})
+		require.NoError(t, putErr)
+
+		attrs, getErr := lb.GetLBAttributes(ctx, lbInfo.ARN)
+		require.NoError(t, getErr)
+		assert.Equal(t, 120, attrs.IdleTimeout)
+		assert.True(t, attrs.DeletionProtection)
+	})
+
+	t.Run("lb not found", func(t *testing.T) {
+		putErr := lb.PutLBAttributes(ctx, "nonexistent", driver.LBAttributes{IdleTimeout: 60})
+		require.Error(t, putErr)
+	})
+}
+
+func TestDescribeTargetHealthPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	tg, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "health-tg2"})
+	require.NoError(t, err)
+
+	err = lb.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}, {ID: "i-2", Port: 80}})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		health, healthErr := lb.DescribeTargetHealth(ctx, tg.ARN)
+		require.NoError(t, healthErr)
+		assert.Equal(t, 2, len(health))
+	})
+
+	t.Run("tg not found", func(t *testing.T) {
+		_, healthErr := lb.DescribeTargetHealth(ctx, "nonexistent")
+		require.Error(t, healthErr)
+	})
+}
+
+func TestLBWithRateLimiter(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	limiter := ratelimit.New(1, 1, fc)
+	lb := NewLB(newMockDriver(), WithRateLimiter(limiter))
+	ctx := context.Background()
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "rl-lb"})
+	require.NoError(t, err)
+
+	_, err = lb.DescribeLoadBalancers(ctx, nil)
+	require.Error(t, err, "expected rate limit error on second call without time advance")
 }
 
 func TestLBAllOptionsComposed(t *testing.T) {
