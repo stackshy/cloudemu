@@ -591,3 +591,138 @@ func TestPortablePutItemError(t *testing.T) {
 	err := db.PutItem(ctx, "no-table", map[string]any{"pk": "k1"})
 	require.Error(t, err)
 }
+
+func TestCreateIndexPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "idx-table", PartitionKey: "pk", SortKey: "sk"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		info, createErr := db.CreateIndex(ctx, "idx-table", driver.GSIConfig{
+			Name: "gsi-1", PartitionKey: "email", SortKey: "created",
+		})
+		require.NoError(t, createErr)
+		assert.Equal(t, "gsi-1", info.Name)
+		assert.Equal(t, "email", info.PartitionKey)
+		assert.Equal(t, "created", info.SortKey)
+		assert.Equal(t, "ACTIVE", info.Status)
+	})
+
+	t.Run("duplicate", func(t *testing.T) {
+		_, createErr := db.CreateIndex(ctx, "idx-table", driver.GSIConfig{
+			Name: "gsi-1", PartitionKey: "email", SortKey: "created",
+		})
+		require.Error(t, createErr)
+	})
+
+	t.Run("empty name", func(t *testing.T) {
+		_, createErr := db.CreateIndex(ctx, "idx-table", driver.GSIConfig{
+			Name: "", PartitionKey: "email",
+		})
+		require.Error(t, createErr)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		_, createErr := db.CreateIndex(ctx, "no-table", driver.GSIConfig{
+			Name: "gsi-1", PartitionKey: "email",
+		})
+		require.Error(t, createErr)
+	})
+}
+
+func TestDeleteIndexPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "delidx-table", PartitionKey: "pk"})
+	require.NoError(t, err)
+
+	_, err = db.CreateIndex(ctx, "delidx-table", driver.GSIConfig{
+		Name: "gsi-del", PartitionKey: "email",
+	})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		delErr := db.DeleteIndex(ctx, "delidx-table", "gsi-del")
+		require.NoError(t, delErr)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		delErr := db.DeleteIndex(ctx, "delidx-table", "gsi-nonexistent")
+		require.Error(t, delErr)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		delErr := db.DeleteIndex(ctx, "no-table", "gsi-del")
+		require.Error(t, delErr)
+	})
+}
+
+func TestDescribeIndexPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "descidx-table", PartitionKey: "pk"})
+	require.NoError(t, err)
+
+	_, err = db.CreateIndex(ctx, "descidx-table", driver.GSIConfig{
+		Name: "gsi-desc", PartitionKey: "email", SortKey: "ts",
+	})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		info, descErr := db.DescribeIndex(ctx, "descidx-table", "gsi-desc")
+		require.NoError(t, descErr)
+		assert.Equal(t, "gsi-desc", info.Name)
+		assert.Equal(t, "email", info.PartitionKey)
+		assert.Equal(t, "ts", info.SortKey)
+		assert.Equal(t, "ACTIVE", info.Status)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, descErr := db.DescribeIndex(ctx, "descidx-table", "no-gsi")
+		require.Error(t, descErr)
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		_, descErr := db.DescribeIndex(ctx, "no-table", "gsi-desc")
+		require.Error(t, descErr)
+	})
+}
+
+func TestListIndexesPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	err := db.CreateTable(ctx, driver.TableConfig{Name: "listidx-table", PartitionKey: "pk"})
+	require.NoError(t, err)
+
+	t.Run("empty", func(t *testing.T) {
+		indexes, listErr := db.ListIndexes(ctx, "listidx-table")
+		require.NoError(t, listErr)
+		assert.Equal(t, 0, len(indexes))
+	})
+
+	_, err = db.CreateIndex(ctx, "listidx-table", driver.GSIConfig{
+		Name: "gsi-a", PartitionKey: "email",
+	})
+	require.NoError(t, err)
+
+	_, err = db.CreateIndex(ctx, "listidx-table", driver.GSIConfig{
+		Name: "gsi-b", PartitionKey: "name", SortKey: "age",
+	})
+	require.NoError(t, err)
+
+	t.Run("two indexes", func(t *testing.T) {
+		indexes, listErr := db.ListIndexes(ctx, "listidx-table")
+		require.NoError(t, listErr)
+		assert.Equal(t, 2, len(indexes))
+	})
+
+	t.Run("table not found", func(t *testing.T) {
+		_, listErr := db.ListIndexes(ctx, "no-table")
+		require.Error(t, listErr)
+	})
+}

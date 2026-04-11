@@ -7955,3 +7955,143 @@ func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket
 		t.Errorf("expected NotFound for missing bucket, got %v", err)
 	}
 }
+
+// ─── Global Secondary Indexes ───────────────────────────────────────────
+
+func TestGSIOperationsAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testGSIOperations(t, ctx, p.DynamoDB)
+}
+
+func TestGSIOperationsAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testGSIOperations(t, ctx, p.CosmosDB)
+}
+
+func TestGSIOperationsGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testGSIOperations(t, ctx, p.Firestore)
+}
+
+func testGSIOperations(t *testing.T, ctx context.Context, d driver.Database) {
+	t.Helper()
+
+	// Create table with no GSIs.
+	err := d.CreateTable(ctx, driver.TableConfig{
+		Name:         "users",
+		PartitionKey: "id",
+		SortKey:      "created",
+	})
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// Initially no indexes.
+	indexes, err := d.ListIndexes(ctx, "users")
+	if err != nil {
+		t.Fatalf("ListIndexes: %v", err)
+	}
+
+	if len(indexes) != 0 {
+		t.Errorf("expected 0 indexes, got %d", len(indexes))
+	}
+
+	// Create a GSI.
+	info, err := d.CreateIndex(ctx, "users", driver.GSIConfig{
+		Name: "email-index", PartitionKey: "email", SortKey: "created",
+	})
+	if err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	if info.Name != "email-index" {
+		t.Errorf("expected index name email-index, got %s", info.Name)
+	}
+
+	if info.Status != "ACTIVE" {
+		t.Errorf("expected status ACTIVE, got %s", info.Status)
+	}
+
+	// Describe the index.
+	desc, err := d.DescribeIndex(ctx, "users", "email-index")
+	if err != nil {
+		t.Fatalf("DescribeIndex: %v", err)
+	}
+
+	if desc.PartitionKey != "email" {
+		t.Errorf("expected partition key email, got %s", desc.PartitionKey)
+	}
+
+	// List should show 1 index.
+	indexes, err = d.ListIndexes(ctx, "users")
+	if err != nil {
+		t.Fatalf("ListIndexes: %v", err)
+	}
+
+	if len(indexes) != 1 {
+		t.Errorf("expected 1 index, got %d", len(indexes))
+	}
+
+	// Put some items and query via GSI.
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "1", "email": "alice@test.com", "created": "2025-01-01"})
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "2", "email": "alice@test.com", "created": "2025-06-01"})
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "3", "email": "bob@test.com", "created": "2025-03-01"})
+
+	result, err := d.Query(ctx, driver.QueryInput{
+		Table:     "users",
+		IndexName: "email-index",
+		KeyCondition: driver.KeyCondition{
+			PartitionKey: "email",
+			PartitionVal: "alice@test.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Query via GSI: %v", err)
+	}
+
+	if result.Count != 2 {
+		t.Errorf("expected 2 items for alice@test.com via GSI, got %d", result.Count)
+	}
+
+	// Duplicate index name should fail.
+	_, err = d.CreateIndex(ctx, "users", driver.GSIConfig{
+		Name: "email-index", PartitionKey: "name",
+	})
+	if err == nil {
+		t.Error("expected error for duplicate index, got nil")
+	}
+
+	// Delete the index.
+	err = d.DeleteIndex(ctx, "users", "email-index")
+	if err != nil {
+		t.Fatalf("DeleteIndex: %v", err)
+	}
+
+	// Describe should fail after delete.
+	_, err = d.DescribeIndex(ctx, "users", "email-index")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+
+	// Query via deleted index should fail.
+	_, err = d.Query(ctx, driver.QueryInput{
+		Table:     "users",
+		IndexName: "email-index",
+		KeyCondition: driver.KeyCondition{
+			PartitionKey: "email",
+			PartitionVal: "alice@test.com",
+		},
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for deleted index query, got %v", err)
+	}
+
+	// Error: table not found.
+	_, err = d.CreateIndex(ctx, "no-table", driver.GSIConfig{Name: "idx"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing table, got %v", err)
+	}
+}
