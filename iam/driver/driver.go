@@ -84,6 +84,23 @@ type AccessKeyInfo struct {
 	CreatedAt       string
 }
 
+// InstanceProfileConfig describes an instance profile to create.
+type InstanceProfileConfig struct {
+	Name     string
+	RoleName string
+	Tags     map[string]string
+}
+
+// InstanceProfileInfo describes an IAM instance profile.
+type InstanceProfileInfo struct {
+	ID        string
+	Name      string
+	RoleName  string
+	ARN       string
+	CreatedAt string
+	Tags      map[string]string
+}
+
 // IAM is the interface that IAM provider implementations must satisfy.
 type IAM interface {
 	CreateUser(ctx context.Context, config UserConfig) (*UserInfo, error)
@@ -123,4 +140,11 @@ type IAM interface {
 	CreateAccessKey(ctx context.Context, config AccessKeyConfig) (*AccessKeyInfo, error)
 	DeleteAccessKey(ctx context.Context, userName, accessKeyID string) error
 	ListAccessKeys(ctx context.Context, userName string) ([]AccessKeyInfo, error)
+
+	CreateInstanceProfile(ctx context.Context, config InstanceProfileConfig) (*InstanceProfileInfo, error)
+	DeleteInstanceProfile(ctx context.Context, name string) error
+	GetInstanceProfile(ctx context.Context, name string) (*InstanceProfileInfo, error)
+	ListInstanceProfiles(ctx context.Context) ([]InstanceProfileInfo, error)
+	AddRoleToInstanceProfile(ctx context.Context, profileName, roleName string) error
+	RemoveRoleFromInstanceProfile(ctx context.Context, profileName, roleName string) error
 }

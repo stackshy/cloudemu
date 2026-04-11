@@ -342,3 +342,62 @@ func (i *IAM) ListAccessKeys(ctx context.Context, userName string) ([]driver.Acc
 
 	return out.([]driver.AccessKeyInfo), nil
 }
+
+func (i *IAM) CreateInstanceProfile(
+	ctx context.Context, config driver.InstanceProfileConfig,
+) (*driver.InstanceProfileInfo, error) {
+	out, err := i.do(ctx, "CreateInstanceProfile", config, func() (any, error) {
+		return i.driver.CreateInstanceProfile(ctx, config)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.InstanceProfileInfo), nil
+}
+
+func (i *IAM) DeleteInstanceProfile(ctx context.Context, name string) error {
+	_, err := i.do(ctx, "DeleteInstanceProfile", name, func() (any, error) {
+		return nil, i.driver.DeleteInstanceProfile(ctx, name)
+	})
+
+	return err
+}
+
+func (i *IAM) GetInstanceProfile(ctx context.Context, name string) (*driver.InstanceProfileInfo, error) {
+	out, err := i.do(ctx, "GetInstanceProfile", name, func() (any, error) {
+		return i.driver.GetInstanceProfile(ctx, name)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.InstanceProfileInfo), nil
+}
+
+func (i *IAM) ListInstanceProfiles(ctx context.Context) ([]driver.InstanceProfileInfo, error) {
+	out, err := i.do(ctx, "ListInstanceProfiles", nil, func() (any, error) {
+		return i.driver.ListInstanceProfiles(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.InstanceProfileInfo), nil
+}
+
+func (i *IAM) AddRoleToInstanceProfile(ctx context.Context, profileName, roleName string) error {
+	_, err := i.do(ctx, "AddRoleToInstanceProfile", profileName, func() (any, error) {
+		return nil, i.driver.AddRoleToInstanceProfile(ctx, profileName, roleName)
+	})
+
+	return err
+}
+
+func (i *IAM) RemoveRoleFromInstanceProfile(ctx context.Context, profileName, roleName string) error {
+	_, err := i.do(ctx, "RemoveRoleFromInstanceProfile", profileName, func() (any, error) {
+		return nil, i.driver.RemoveRoleFromInstanceProfile(ctx, profileName, roleName)
+	})
+
+	return err
+}
