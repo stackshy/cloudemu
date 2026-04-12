@@ -22,11 +22,12 @@ var _ driver.IAM = (*Mock)(nil)
 
 // Mock is an in-memory mock implementation of the AWS IAM service.
 type Mock struct {
-	users      *memstore.Store[*userData]
-	roles      *memstore.Store[*roleData]
-	policies   *memstore.Store[*policyData]
-	groups     *memstore.Store[*groupData]
-	accessKeys *memstore.Store[*accessKeyData]
+	users            *memstore.Store[*userData]
+	roles            *memstore.Store[*roleData]
+	policies         *memstore.Store[*policyData]
+	groups           *memstore.Store[*groupData]
+	accessKeys       *memstore.Store[*accessKeyData]
+	instanceProfiles *memstore.Store[*driver.InstanceProfileInfo]
 
 	mu           sync.RWMutex
 	userPolicies map[string]map[string]bool // userName -> set of policy ARNs
@@ -81,15 +82,16 @@ type accessKeyData struct {
 // New creates a new IAM mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		users:        memstore.New[*userData](),
-		roles:        memstore.New[*roleData](),
-		policies:     memstore.New[*policyData](),
-		groups:       memstore.New[*groupData](),
-		accessKeys:   memstore.New[*accessKeyData](),
-		userPolicies: make(map[string]map[string]bool),
-		rolePolicies: make(map[string]map[string]bool),
-		groupUsers:   make(map[string]map[string]bool),
-		opts:         opts,
+		users:            memstore.New[*userData](),
+		roles:            memstore.New[*roleData](),
+		policies:         memstore.New[*policyData](),
+		groups:           memstore.New[*groupData](),
+		accessKeys:       memstore.New[*accessKeyData](),
+		instanceProfiles: memstore.New[*driver.InstanceProfileInfo](),
+		userPolicies:     make(map[string]map[string]bool),
+		rolePolicies:     make(map[string]map[string]bool),
+		groupUsers:       make(map[string]map[string]bool),
+		opts:             opts,
 	}
 }
 
@@ -812,6 +814,155 @@ func (m *Mock) ListAccessKeys(
 	}
 
 	return result, nil
+}
+
+// CreateInstanceProfile creates a new instance profile.
+func (m *Mock) CreateInstanceProfile(
+	_ context.Context, cfg driver.InstanceProfileConfig,
+) (*driver.InstanceProfileInfo, error) {
+	if cfg.Name == "" {
+		return nil, errors.Newf(
+			errors.InvalidArgument,
+			"instance profile name is required",
+		)
+	}
+
+	if m.instanceProfiles.Has(cfg.Name) {
+		return nil, errors.Newf(
+			errors.AlreadyExists,
+			"instance profile %q already exists", cfg.Name,
+		)
+	}
+
+	id := idgen.GenerateID("AIPA")
+	arn := idgen.AWSARN(
+		"iam", "", m.opts.AccountID,
+		"instance-profile/"+cfg.Name,
+	)
+
+	info := &driver.InstanceProfileInfo{
+		ID:        id,
+		Name:      cfg.Name,
+		RoleName:  cfg.RoleName,
+		ARN:       arn,
+		CreatedAt: m.opts.Clock.Now().UTC().Format(timeFormat),
+		Tags:      copyTags(cfg.Tags),
+	}
+	m.instanceProfiles.Set(cfg.Name, info)
+
+	return copyProfileInfo(info), nil
+}
+
+// DeleteInstanceProfile deletes the instance profile with the given name.
+func (m *Mock) DeleteInstanceProfile(
+	_ context.Context, name string,
+) error {
+	if !m.instanceProfiles.Delete(name) {
+		return errors.Newf(
+			errors.NotFound,
+			"instance profile %q not found", name,
+		)
+	}
+
+	return nil
+}
+
+// GetInstanceProfile returns the instance profile with the given name.
+func (m *Mock) GetInstanceProfile(
+	_ context.Context, name string,
+) (*driver.InstanceProfileInfo, error) {
+	p, ok := m.instanceProfiles.Get(name)
+	if !ok {
+		return nil, errors.Newf(
+			errors.NotFound,
+			"instance profile %q not found", name,
+		)
+	}
+
+	return copyProfileInfo(p), nil
+}
+
+// ListInstanceProfiles returns all instance profiles.
+func (m *Mock) ListInstanceProfiles(
+	_ context.Context,
+) ([]driver.InstanceProfileInfo, error) {
+	all := m.instanceProfiles.All()
+	result := make([]driver.InstanceProfileInfo, 0, len(all))
+
+	for _, p := range all {
+		result = append(result, *copyProfileInfo(p))
+	}
+
+	return result, nil
+}
+
+// AddRoleToInstanceProfile associates a role with an instance profile.
+func (m *Mock) AddRoleToInstanceProfile(
+	_ context.Context, profileName, roleName string,
+) error {
+	p, ok := m.instanceProfiles.Get(profileName)
+	if !ok {
+		return errors.Newf(
+			errors.NotFound,
+			"instance profile %q not found", profileName,
+		)
+	}
+
+	if !m.roles.Has(roleName) {
+		return errors.Newf(
+			errors.NotFound, "role %q not found", roleName,
+		)
+	}
+
+	if p.RoleName != "" {
+		return errors.Newf(
+			errors.AlreadyExists,
+			"instance profile %q already has role %q",
+			profileName, p.RoleName,
+		)
+	}
+
+	p.RoleName = roleName
+	m.instanceProfiles.Set(profileName, p)
+
+	return nil
+}
+
+// RemoveRoleFromInstanceProfile removes a role from an instance profile.
+func (m *Mock) RemoveRoleFromInstanceProfile(
+	_ context.Context, profileName, roleName string,
+) error {
+	p, ok := m.instanceProfiles.Get(profileName)
+	if !ok {
+		return errors.Newf(
+			errors.NotFound,
+			"instance profile %q not found", profileName,
+		)
+	}
+
+	if p.RoleName != roleName {
+		return errors.Newf(
+			errors.NotFound,
+			"role %q is not associated with instance profile %q",
+			roleName, profileName,
+		)
+	}
+
+	p.RoleName = ""
+	m.instanceProfiles.Set(profileName, p)
+
+	return nil
+}
+
+func copyProfileInfo(p *driver.InstanceProfileInfo) *driver.InstanceProfileInfo {
+	return &driver.InstanceProfileInfo{
+		ID:        p.ID,
+		Name:      p.Name,
+		RoleName:  p.RoleName,
+		ARN:       p.ARN,
+		CreatedAt: p.CreatedAt,
+		Tags:      copyTags(p.Tags),
+	}
 }
 
 // copyTags creates a shallow copy of a tags map.

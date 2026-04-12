@@ -9005,3 +9005,164 @@ func TestAlarmActionsGCP(t *testing.T) {
 		clock,
 	)
 }
+func testInstanceProfileOps(
+	t *testing.T,
+	iamSvc iamdriver.IAM,
+	providerName string,
+) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	// Create instance profile
+	profile, err := iamSvc.CreateInstanceProfile(ctx, iamdriver.InstanceProfileConfig{
+		Name: "web-server-profile",
+		Tags: map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatalf("[%s] CreateInstanceProfile: %v", providerName, err)
+	}
+
+	if profile.Name != "web-server-profile" {
+		t.Errorf("[%s] expected name web-server-profile, got %s", providerName, profile.Name)
+	}
+
+	if profile.ARN == "" {
+		t.Errorf("[%s] expected non-empty ARN", providerName)
+	}
+
+	if profile.ID == "" {
+		t.Errorf("[%s] expected non-empty ID", providerName)
+	}
+
+	if profile.CreatedAt == "" {
+		t.Errorf("[%s] expected non-empty CreatedAt", providerName)
+	}
+
+	// Duplicate should fail
+	_, err = iamSvc.CreateInstanceProfile(ctx, iamdriver.InstanceProfileConfig{
+		Name: "web-server-profile",
+	})
+	if err == nil {
+		t.Errorf("[%s] expected error for duplicate instance profile", providerName)
+	}
+
+	// Empty name should fail
+	_, err = iamSvc.CreateInstanceProfile(ctx, iamdriver.InstanceProfileConfig{})
+	if err == nil {
+		t.Errorf("[%s] expected error for empty name", providerName)
+	}
+
+	// Get instance profile
+	got, err := iamSvc.GetInstanceProfile(ctx, "web-server-profile")
+	if err != nil {
+		t.Fatalf("[%s] GetInstanceProfile: %v", providerName, err)
+	}
+
+	if got.Name != "web-server-profile" {
+		t.Errorf("[%s] expected name web-server-profile, got %s", providerName, got.Name)
+	}
+
+	// Get non-existent should fail
+	_, err = iamSvc.GetInstanceProfile(ctx, "nonexistent")
+	if err == nil {
+		t.Errorf("[%s] expected error for nonexistent profile", providerName)
+	}
+
+	// Create a role to associate
+	_, err = iamSvc.CreateRole(ctx, iamdriver.RoleConfig{Name: "ec2-role"})
+	if err != nil {
+		t.Fatalf("[%s] CreateRole: %v", providerName, err)
+	}
+
+	// Add role to instance profile
+	if err := iamSvc.AddRoleToInstanceProfile(ctx, "web-server-profile", "ec2-role"); err != nil {
+		t.Fatalf("[%s] AddRoleToInstanceProfile: %v", providerName, err)
+	}
+
+	// Verify role is set
+	got, err = iamSvc.GetInstanceProfile(ctx, "web-server-profile")
+	if err != nil {
+		t.Fatalf("[%s] GetInstanceProfile after add role: %v", providerName, err)
+	}
+
+	if got.RoleName != "ec2-role" {
+		t.Errorf("[%s] expected role ec2-role, got %s", providerName, got.RoleName)
+	}
+
+	// Add role to nonexistent profile should fail
+	if err := iamSvc.AddRoleToInstanceProfile(ctx, "nonexistent", "ec2-role"); err == nil {
+		t.Errorf("[%s] expected error adding role to nonexistent profile", providerName)
+	}
+
+	// Add nonexistent role should fail
+	if err := iamSvc.AddRoleToInstanceProfile(ctx, "web-server-profile", "nonexistent"); err == nil {
+		t.Errorf("[%s] expected error adding nonexistent role", providerName)
+	}
+
+	// List instance profiles
+	profiles, err := iamSvc.ListInstanceProfiles(ctx)
+	if err != nil {
+		t.Fatalf("[%s] ListInstanceProfiles: %v", providerName, err)
+	}
+
+	if len(profiles) != 1 {
+		t.Errorf("[%s] expected 1 profile, got %d", providerName, len(profiles))
+	}
+
+	// Remove role from instance profile
+	if err := iamSvc.RemoveRoleFromInstanceProfile(ctx, "web-server-profile", "ec2-role"); err != nil {
+		t.Fatalf("[%s] RemoveRoleFromInstanceProfile: %v", providerName, err)
+	}
+
+	// Verify role is cleared
+	got, err = iamSvc.GetInstanceProfile(ctx, "web-server-profile")
+	if err != nil {
+		t.Fatalf("[%s] GetInstanceProfile after remove role: %v", providerName, err)
+	}
+
+	if got.RoleName != "" {
+		t.Errorf("[%s] expected empty role, got %s", providerName, got.RoleName)
+	}
+
+	// Remove role from nonexistent profile should fail
+	if err := iamSvc.RemoveRoleFromInstanceProfile(ctx, "nonexistent", "ec2-role"); err == nil {
+		t.Errorf("[%s] expected error removing role from nonexistent profile", providerName)
+	}
+
+	// Remove wrong role should fail
+	if err := iamSvc.RemoveRoleFromInstanceProfile(ctx, "web-server-profile", "wrong-role"); err == nil {
+		t.Errorf("[%s] expected error removing wrong role", providerName)
+	}
+
+	// Delete instance profile
+	if err := iamSvc.DeleteInstanceProfile(ctx, "web-server-profile"); err != nil {
+		t.Fatalf("[%s] DeleteInstanceProfile: %v", providerName, err)
+	}
+
+	// Delete nonexistent should fail
+	if err := iamSvc.DeleteInstanceProfile(ctx, "web-server-profile"); err == nil {
+		t.Errorf("[%s] expected error deleting nonexistent profile", providerName)
+	}
+
+	// Verify deleted
+	_, err = iamSvc.GetInstanceProfile(ctx, "web-server-profile")
+	if err == nil {
+		t.Errorf("[%s] expected error after deleting profile", providerName)
+	}
+}
+
+func TestInstanceProfileAWS(t *testing.T) {
+	p := NewAWS()
+	testInstanceProfileOps(t, p.IAM, "AWS")
+}
+
+func TestInstanceProfileAzure(t *testing.T) {
+	p := NewAzure()
+	testInstanceProfileOps(t, p.IAM, "Azure")
+}
+
+func TestInstanceProfileGCP(t *testing.T) {
+	p := NewGCP()
+	testInstanceProfileOps(t, p.IAM, "GCP")
+}
