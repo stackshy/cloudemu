@@ -8233,3 +8233,200 @@ func testGSIOperations(t *testing.T, ctx context.Context, d driver.Database) {
 		t.Errorf("expected NotFound for missing table, got %v", err)
 	}
 }
+// ---------------------------------------------------------------------------
+// Event Source Mapping Tests
+// ---------------------------------------------------------------------------
+
+func testEventSourceMapping(t *testing.T, ctx context.Context, d serverlessdriver.Serverless) {
+	t.Helper()
+
+	// Create a function first (needed for context but not enforced by the mock).
+	_, err := d.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+		Name:    "esm-func",
+		Runtime: "go1.x",
+		Handler: "main",
+		Memory:  128,
+		Timeout: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	// Error: missing function name.
+	_, err = d.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:my-queue",
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for empty function name, got %v", err)
+	}
+
+	// Error: missing event source ARN.
+	_, err = d.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		FunctionName: "esm-func",
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for empty event source ARN, got %v", err)
+	}
+
+	// Create an enabled mapping.
+	mapping, err := d.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		FunctionName:     "esm-func",
+		EventSourceArn:   "arn:aws:sqs:us-east-1:123456789012:my-queue",
+		Enabled:          true,
+		BatchSize:        5,
+		StartingPosition: "LATEST",
+	})
+	if err != nil {
+		t.Fatalf("CreateEventSourceMapping: %v", err)
+	}
+	if mapping.UUID == "" {
+		t.Error("expected non-empty UUID")
+	}
+	if mapping.State != "Enabled" {
+		t.Errorf("expected State=Enabled, got %s", mapping.State)
+	}
+	if mapping.BatchSize != 5 {
+		t.Errorf("expected BatchSize=5, got %d", mapping.BatchSize)
+	}
+	if mapping.FunctionName != "esm-func" {
+		t.Errorf("expected FunctionName=esm-func, got %s", mapping.FunctionName)
+	}
+
+	// Create a disabled mapping with default batch size.
+	mapping2, err := d.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		FunctionName:   "esm-func",
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:other-queue",
+		Enabled:        false,
+	})
+	if err != nil {
+		t.Fatalf("CreateEventSourceMapping (disabled): %v", err)
+	}
+	if mapping2.State != "Disabled" {
+		t.Errorf("expected State=Disabled, got %s", mapping2.State)
+	}
+	if mapping2.BatchSize != 10 {
+		t.Errorf("expected default BatchSize=10, got %d", mapping2.BatchSize)
+	}
+
+	// Get mapping.
+	got, err := d.GetEventSourceMapping(ctx, mapping.UUID)
+	if err != nil {
+		t.Fatalf("GetEventSourceMapping: %v", err)
+	}
+	if got.UUID != mapping.UUID {
+		t.Errorf("expected UUID=%s, got %s", mapping.UUID, got.UUID)
+	}
+
+	// Get nonexistent mapping.
+	_, err = d.GetEventSourceMapping(ctx, "nonexistent-uuid")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing mapping, got %v", err)
+	}
+
+	// List all mappings.
+	all, err := d.ListEventSourceMappings(ctx, "")
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings (all): %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("expected 2 mappings, got %d", len(all))
+	}
+
+	// List mappings filtered by function name.
+	filtered, err := d.ListEventSourceMappings(ctx, "esm-func")
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings (filtered): %v", err)
+	}
+	if len(filtered) != 2 {
+		t.Errorf("expected 2 mappings for esm-func, got %d", len(filtered))
+	}
+
+	// List mappings for nonexistent function returns empty.
+	empty, err := d.ListEventSourceMappings(ctx, "nonexistent-func")
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings (nonexistent): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("expected 0 mappings for nonexistent function, got %d", len(empty))
+	}
+
+	// Update: disable the enabled mapping.
+	updated, err := d.UpdateEventSourceMapping(ctx, mapping.UUID, serverlessdriver.EventSourceMappingConfig{
+		Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("UpdateEventSourceMapping (disable): %v", err)
+	}
+	if updated.State != "Disabled" {
+		t.Errorf("expected State=Disabled after update, got %s", updated.State)
+	}
+	if updated.Enabled {
+		t.Errorf("expected Enabled=false after update, got true")
+	}
+
+	// Update: re-enable and change batch size.
+	updated2, err := d.UpdateEventSourceMapping(ctx, mapping.UUID, serverlessdriver.EventSourceMappingConfig{
+		Enabled:   true,
+		BatchSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("UpdateEventSourceMapping (re-enable): %v", err)
+	}
+	if updated2.State != "Enabled" {
+		t.Errorf("expected State=Enabled, got %s", updated2.State)
+	}
+	if updated2.BatchSize != 20 {
+		t.Errorf("expected BatchSize=20, got %d", updated2.BatchSize)
+	}
+
+	// Update nonexistent mapping.
+	_, err = d.UpdateEventSourceMapping(ctx, "nonexistent-uuid", serverlessdriver.EventSourceMappingConfig{})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for update on missing mapping, got %v", err)
+	}
+
+	// Delete mapping.
+	err = d.DeleteEventSourceMapping(ctx, mapping.UUID)
+	if err != nil {
+		t.Fatalf("DeleteEventSourceMapping: %v", err)
+	}
+
+	// Verify deletion.
+	_, err = d.GetEventSourceMapping(ctx, mapping.UUID)
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+
+	// Delete nonexistent mapping.
+	err = d.DeleteEventSourceMapping(ctx, "nonexistent-uuid")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for deleting missing mapping, got %v", err)
+	}
+
+	// Verify only one mapping remains.
+	remaining, err := d.ListEventSourceMappings(ctx, "")
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings (remaining): %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Errorf("expected 1 remaining mapping, got %d", len(remaining))
+	}
+}
+
+func TestEventSourceMappingAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testEventSourceMapping(t, ctx, p.Lambda)
+}
+
+func TestEventSourceMappingAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testEventSourceMapping(t, ctx, p.Functions)
+}
+
+func TestEventSourceMappingGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testEventSourceMapping(t, ctx, p.CloudFunctions)
+}
