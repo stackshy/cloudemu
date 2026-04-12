@@ -1872,3 +1872,26 @@ func TestListLaunchTemplates(t *testing.T) {
 		assertEqual(t, 3, len(templates))
 	})
 }
+
+func TestSetInstanceVPC(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		instances, err := m.RunInstances(ctx, defaultConfig(), 1)
+		requireNoError(t, err)
+
+		err = m.SetInstanceVPC(instances[0].ID, "vpc-123")
+		requireNoError(t, err)
+
+		desc, err := m.DescribeInstances(ctx, []string{instances[0].ID}, nil)
+		requireNoError(t, err)
+		assertEqual(t, 1, len(desc))
+		assertEqual(t, "vpc-123", desc[0].VPCID)
+	})
+
+	t.Run("instance not found", func(t *testing.T) {
+		err := m.SetInstanceVPC("i-nonexistent", "vpc-123")
+		assertError(t, err, true)
+	})
+}

@@ -34,6 +34,7 @@ import (
 	loggingdriver "github.com/stackshy/cloudemu/logging/driver"
 	notifdriver "github.com/stackshy/cloudemu/notification/driver"
 	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
+	"github.com/stackshy/cloudemu/topology"
 )
 
 func TestStorageLifecycle(t *testing.T) {
@@ -9165,4 +9166,131 @@ func TestInstanceProfileAzure(t *testing.T) {
 func TestInstanceProfileGCP(t *testing.T) {
 	p := NewGCP()
 	testInstanceProfileOps(t, p.IAM, "GCP")
+}
+
+// ---------------------------------------------------------------------------
+// Topology integration tests
+// ---------------------------------------------------------------------------
+
+// instanceVPCSetter is implemented by compute mocks that support setting the
+// VPC ID on an instance after creation.
+type instanceVPCSetter interface {
+	SetInstanceVPC(instanceID, vpcID string) error
+}
+
+func testTopologyCanConnect(
+	t *testing.T,
+	ctx context.Context,
+	comp computedriver.Compute,
+	net netdriver.Networking,
+	dns dnsdriver.DNS,
+) {
+	t.Helper()
+
+	engine := topology.New(comp, net, dns)
+
+	v, err := net.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	if err != nil {
+		t.Fatalf("CreateVPC: %v", err)
+	}
+
+	subnet, err := net.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID: v.ID, CIDRBlock: "10.0.0.0/16", AvailabilityZone: "zone-a",
+	})
+	if err != nil {
+		t.Fatalf("CreateSubnet: %v", err)
+	}
+
+	srcSG, err := net.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "topo-src-sg", Description: "topology src",
+	})
+	if err != nil {
+		t.Fatalf("CreateSecurityGroup (src): %v", err)
+	}
+
+	if err := net.AddEgressRule(ctx, srcSG.ID, netdriver.SecurityRule{
+		Protocol: "-1", FromPort: 0, ToPort: 0, CIDR: "0.0.0.0/0",
+	}); err != nil {
+		t.Fatalf("AddEgressRule: %v", err)
+	}
+
+	dstSG, err := net.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "topo-dst-sg", Description: "topology dst",
+	})
+	if err != nil {
+		t.Fatalf("CreateSecurityGroup (dst): %v", err)
+	}
+
+	if err := net.AddIngressRule(ctx, dstSG.ID, netdriver.SecurityRule{
+		Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "0.0.0.0/0",
+	}); err != nil {
+		t.Fatalf("AddIngressRule: %v", err)
+	}
+
+	srcInstances, err := comp.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "img-test", InstanceType: "standard",
+		SubnetID: subnet.ID, SecurityGroups: []string{srcSG.ID},
+	}, 1)
+	if err != nil {
+		t.Fatalf("RunInstances (src): %v", err)
+	}
+
+	dstInstances, err := comp.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "img-test", InstanceType: "standard",
+		SubnetID: subnet.ID, SecurityGroups: []string{dstSG.ID},
+	}, 1)
+	if err != nil {
+		t.Fatalf("RunInstances (dst): %v", err)
+	}
+
+	// Set VPC IDs on instances so the topology engine resolves them correctly.
+	if setter, ok := comp.(instanceVPCSetter); ok {
+		if err := setter.SetInstanceVPC(srcInstances[0].ID, v.ID); err != nil {
+			t.Fatalf("SetInstanceVPC (src): %v", err)
+		}
+
+		if err := setter.SetInstanceVPC(dstInstances[0].ID, v.ID); err != nil {
+			t.Fatalf("SetInstanceVPC (dst): %v", err)
+		}
+	}
+
+	result, err := engine.CanConnect(ctx, topology.ConnectivityQuery{
+		SrcInstanceID: srcInstances[0].ID,
+		DstInstanceID: dstInstances[0].ID,
+		Port:          443,
+		Protocol:      "tcp",
+	})
+	if err != nil {
+		t.Fatalf("CanConnect: %v", err)
+	}
+
+	if !result.Allowed {
+		t.Errorf("expected CanConnect to be allowed, got blocked: %s", result.Reason)
+	}
+
+	if !result.SGVerdict.Allowed {
+		t.Errorf("expected SG verdict allowed, got: %s", result.SGVerdict.Reason)
+	}
+
+	if len(result.Path) == 0 {
+		t.Error("expected non-empty path")
+	}
+}
+
+func TestTopologyCanConnectAWS(t *testing.T) {
+	p := NewAWS()
+	ctx := context.Background()
+	testTopologyCanConnect(t, ctx, p.EC2, p.VPC, p.Route53)
+}
+
+func TestTopologyCanConnectAzure(t *testing.T) {
+	p := NewAzure()
+	ctx := context.Background()
+	testTopologyCanConnect(t, ctx, p.VirtualMachines, p.VNet, p.DNS)
+}
+
+func TestTopologyCanConnectGCP(t *testing.T) {
+	p := NewGCP()
+	ctx := context.Background()
+	testTopologyCanConnect(t, ctx, p.GCE, p.VPC, p.CloudDNS)
 }
