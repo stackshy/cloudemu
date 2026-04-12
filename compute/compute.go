@@ -451,3 +451,29 @@ func (c *Compute) DescribeImages(ctx context.Context, ids []string) ([]driver.Im
 
 	return out.([]driver.ImageInfo), nil
 }
+
+// CreateKeyPair creates a new key pair.
+func (c *Compute) CreateKeyPair(ctx context.Context, cfg driver.KeyPairConfig) (*driver.KeyPairInfo, error) {
+	out, err := c.do(ctx, "CreateKeyPair", cfg, func() (any, error) { return c.driver.CreateKeyPair(ctx, cfg) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.KeyPairInfo), nil
+}
+
+// DeleteKeyPair deletes a key pair by name.
+func (c *Compute) DeleteKeyPair(ctx context.Context, name string) error {
+	_, err := c.do(ctx, "DeleteKeyPair", name, func() (any, error) { return nil, c.driver.DeleteKeyPair(ctx, name) })
+	return err
+}
+
+// DescribeKeyPairs returns key pairs matching the given names.
+func (c *Compute) DescribeKeyPairs(ctx context.Context, names []string) ([]driver.KeyPairInfo, error) {
+	out, err := c.do(ctx, "DescribeKeyPairs", names, func() (any, error) { return c.driver.DescribeKeyPairs(ctx, names) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.KeyPairInfo), nil
+}

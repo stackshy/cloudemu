@@ -107,6 +107,14 @@ type QueryResult struct {
 	NextPageToken string
 }
 
+// IndexInfo describes a Global Secondary Index.
+type IndexInfo struct {
+	Name         string
+	PartitionKey string
+	SortKey      string
+	Status       string // "ACTIVE", "CREATING", "DELETING"
+}
+
 // Database is the interface that database provider implementations must satisfy.
 type Database interface {
 	CreateTable(ctx context.Context, config TableConfig) error
@@ -134,4 +142,10 @@ type Database interface {
 
 	// Transactional writes
 	TransactWriteItems(ctx context.Context, table string, puts []map[string]any, deletes []map[string]any) error
+
+	// Global Secondary Indexes
+	CreateIndex(ctx context.Context, table string, config GSIConfig) (*IndexInfo, error)
+	DeleteIndex(ctx context.Context, table, indexName string) error
+	DescribeIndex(ctx context.Context, table, indexName string) (*IndexInfo, error)
+	ListIndexes(ctx context.Context, table string) ([]IndexInfo, error)
 }
