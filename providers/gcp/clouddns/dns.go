@@ -17,17 +17,19 @@ var _ driver.DNS = (*Mock)(nil)
 
 // Mock is an in-memory mock implementation of the GCP Cloud DNS service.
 type Mock struct {
-	zones   *memstore.Store[driver.ZoneInfo]
-	records *memstore.Store[driver.RecordInfo]
-	opts    *config.Options
+	zones        *memstore.Store[driver.ZoneInfo]
+	records      *memstore.Store[driver.RecordInfo]
+	healthChecks *memstore.Store[driver.HealthCheckInfo]
+	opts         *config.Options
 }
 
 // New creates a new Cloud DNS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		zones:   memstore.New[driver.ZoneInfo](),
-		records: memstore.New[driver.RecordInfo](),
-		opts:    opts,
+		zones:        memstore.New[driver.ZoneInfo](),
+		records:      memstore.New[driver.RecordInfo](),
+		healthChecks: memstore.New[driver.HealthCheckInfo](),
+		opts:         opts,
 	}
 }
 

@@ -833,6 +833,214 @@ func TestDeleteNetworkACL(t *testing.T) {
 	})
 }
 
+// --- Internet Gateway tests ---
+
+func TestInternetGateway(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+
+	t.Run("create IGW", func(t *testing.T) {
+		igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{
+			Tags: map[string]string{"env": "test"},
+		})
+		requireNoError(t, err)
+		assertNotEmpty(t, igw.ID)
+		assertEqual(t, "detached", igw.State)
+	})
+
+	t.Run("describe IGWs", func(t *testing.T) {
+		igws, err := m.DescribeInternetGateways(ctx, nil)
+		requireNoError(t, err)
+		assertEqual(t, 1, len(igws))
+		assertEqual(t, "detached", igws[0].State)
+	})
+
+	t.Run("attach IGW to VPC", func(t *testing.T) {
+		igws, _ := m.DescribeInternetGateways(ctx, nil)
+		err := m.AttachInternetGateway(ctx, igws[0].ID, v.ID)
+		requireNoError(t, err)
+
+		igws, _ = m.DescribeInternetGateways(ctx, []string{igws[0].ID})
+		assertEqual(t, 1, len(igws))
+		assertEqual(t, "attached", igws[0].State)
+		assertEqual(t, v.ID, igws[0].VpcID)
+	})
+
+	t.Run("detach IGW from VPC", func(t *testing.T) {
+		igws, _ := m.DescribeInternetGateways(ctx, nil)
+		err := m.DetachInternetGateway(ctx, igws[0].ID, v.ID)
+		requireNoError(t, err)
+
+		igws, _ = m.DescribeInternetGateways(ctx, []string{igws[0].ID})
+		assertEqual(t, 1, len(igws))
+		assertEqual(t, "detached", igws[0].State)
+	})
+
+	t.Run("delete IGW", func(t *testing.T) {
+		igws, _ := m.DescribeInternetGateways(ctx, nil)
+		err := m.DeleteInternetGateway(ctx, igws[0].ID)
+		requireNoError(t, err)
+
+		igws, _ = m.DescribeInternetGateways(ctx, nil)
+		assertEqual(t, 0, len(igws))
+	})
+
+	t.Run("delete nonexistent IGW", func(t *testing.T) {
+		err := m.DeleteInternetGateway(ctx, "igw-nope")
+		assertError(t, err, true)
+	})
+
+	t.Run("attach to nonexistent VPC", func(t *testing.T) {
+		igw, _ := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+		err := m.AttachInternetGateway(ctx, igw.ID, "vpc-nope")
+		assertError(t, err, true)
+	})
+
+	t.Run("attach nonexistent IGW", func(t *testing.T) {
+		err := m.AttachInternetGateway(ctx, "igw-nope", v.ID)
+		assertError(t, err, true)
+	})
+
+	t.Run("detach nonexistent IGW", func(t *testing.T) {
+		err := m.DetachInternetGateway(ctx, "igw-nope", v.ID)
+		assertError(t, err, true)
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		igw, _ := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+		igws, err := m.DescribeInternetGateways(ctx, []string{igw.ID})
+		requireNoError(t, err)
+		assertEqual(t, 1, len(igws))
+		assertEqual(t, igw.ID, igws[0].ID)
+	})
+
+	t.Run("describe nonexistent ID", func(t *testing.T) {
+		igws, err := m.DescribeInternetGateways(ctx, []string{"igw-nope"})
+		requireNoError(t, err)
+		assertEqual(t, 0, len(igws))
+	})
+}
+
+// --- Elastic IP tests ---
+
+func TestElasticIP(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	t.Run("allocate address", func(t *testing.T) {
+		eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{
+			Tags: map[string]string{"env": "test"},
+		})
+		requireNoError(t, err)
+		assertNotEmpty(t, eip.AllocationID)
+		assertNotEmpty(t, eip.PublicIP)
+	})
+
+	t.Run("describe addresses", func(t *testing.T) {
+		eips, err := m.DescribeAddresses(ctx, nil)
+		requireNoError(t, err)
+		assertEqual(t, 1, len(eips))
+	})
+
+	t.Run("associate address", func(t *testing.T) {
+		eips, _ := m.DescribeAddresses(ctx, nil)
+		assocID, err := m.AssociateAddress(ctx, eips[0].AllocationID, "i-12345")
+		requireNoError(t, err)
+		assertNotEmpty(t, assocID)
+
+		eips, _ = m.DescribeAddresses(ctx, []string{eips[0].AllocationID})
+		assertEqual(t, 1, len(eips))
+		assertEqual(t, assocID, eips[0].AssociationID)
+		assertEqual(t, "i-12345", eips[0].InstanceID)
+	})
+
+	t.Run("disassociate address", func(t *testing.T) {
+		eips, _ := m.DescribeAddresses(ctx, nil)
+		err := m.DisassociateAddress(ctx, eips[0].AssociationID)
+		requireNoError(t, err)
+
+		eips, _ = m.DescribeAddresses(ctx, nil)
+		assertEqual(t, "", eips[0].AssociationID)
+		assertEqual(t, "", eips[0].InstanceID)
+	})
+
+	t.Run("release address", func(t *testing.T) {
+		eips, _ := m.DescribeAddresses(ctx, nil)
+		err := m.ReleaseAddress(ctx, eips[0].AllocationID)
+		requireNoError(t, err)
+
+		eips, _ = m.DescribeAddresses(ctx, nil)
+		assertEqual(t, 0, len(eips))
+	})
+
+	t.Run("release nonexistent", func(t *testing.T) {
+		err := m.ReleaseAddress(ctx, "eipalloc-nope")
+		assertError(t, err, true)
+	})
+
+	t.Run("associate nonexistent allocation", func(t *testing.T) {
+		_, err := m.AssociateAddress(ctx, "eipalloc-nope", "i-12345")
+		assertError(t, err, true)
+	})
+
+	t.Run("disassociate nonexistent", func(t *testing.T) {
+		err := m.DisassociateAddress(ctx, "eipassoc-nope")
+		assertError(t, err, true)
+	})
+
+	t.Run("describe by ID", func(t *testing.T) {
+		eip, _ := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		eips, err := m.DescribeAddresses(ctx, []string{eip.AllocationID})
+		requireNoError(t, err)
+		assertEqual(t, 1, len(eips))
+		assertEqual(t, eip.AllocationID, eips[0].AllocationID)
+	})
+
+	t.Run("describe nonexistent ID", func(t *testing.T) {
+		eips, err := m.DescribeAddresses(ctx, []string{"eipalloc-nope"})
+		requireNoError(t, err)
+		assertEqual(t, 0, len(eips))
+	})
+}
+
+// --- Route Table Association tests ---
+
+func TestRouteTableAssociation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+	s, _ := m.CreateSubnet(ctx, driver.SubnetConfig{
+		VPCID: v.ID, CIDRBlock: "10.0.1.0/24",
+	})
+	rt, _ := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
+
+	t.Run("associate route table", func(t *testing.T) {
+		assoc, err := m.AssociateRouteTable(ctx, rt.ID, s.ID)
+		requireNoError(t, err)
+		assertNotEmpty(t, assoc.ID)
+		assertEqual(t, rt.ID, assoc.RouteTableID)
+		assertEqual(t, s.ID, assoc.SubnetID)
+	})
+
+	t.Run("disassociate route table", func(t *testing.T) {
+		// Re-associate to get a fresh association ID.
+		assoc, _ := m.AssociateRouteTable(ctx, rt.ID, s.ID)
+		err := m.DisassociateRouteTable(ctx, assoc.ID)
+		requireNoError(t, err)
+	})
+
+	t.Run("associate nonexistent route table", func(t *testing.T) {
+		_, err := m.AssociateRouteTable(ctx, "rtb-nope", s.ID)
+		assertError(t, err, true)
+	})
+
+	t.Run("disassociate nonexistent", func(t *testing.T) {
+		err := m.DisassociateRouteTable(ctx, "rtbassoc-nope")
+		assertError(t, err, true)
+	})
+}
+
 // --- test helpers ---
 
 func requireNoError(t *testing.T, err error) {

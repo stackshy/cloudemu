@@ -757,6 +757,26 @@ func (f *fakeMonitoring) SetAlarmState(_ context.Context, _, _, _ string) error 
 	return nil
 }
 
+func (f *fakeMonitoring) CreateNotificationChannel(_ context.Context, _ mondriver.NotificationChannelConfig) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeMonitoring) DeleteNotificationChannel(_ context.Context, _ string) error {
+	return nil
+}
+
+func (f *fakeMonitoring) GetNotificationChannel(_ context.Context, _ string) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeMonitoring) ListNotificationChannels(_ context.Context) ([]mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeMonitoring) GetAlarmHistory(_ context.Context, _ string, _ int) ([]mondriver.AlarmHistoryEntry, error) {
+	return nil, nil
+}
+
 func TestMetricsEmission(t *testing.T) {
 	ctx := context.Background()
 

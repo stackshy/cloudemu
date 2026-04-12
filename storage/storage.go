@@ -399,3 +399,63 @@ func (b *Bucket) GetEncryptionConfig(ctx context.Context, bucket string) (*drive
 
 	return out.(*driver.EncryptionConfig), nil
 }
+
+// PutObjectTagging sets tags on an object.
+func (b *Bucket) PutObjectTagging(ctx context.Context, bucket, key string, tags map[string]string) error {
+	_, err := b.do(ctx, "PutObjectTagging", map[string]string{"bucket": bucket, "key": key}, func() (any, error) {
+		return nil, b.driver.PutObjectTagging(ctx, bucket, key, tags)
+	})
+
+	return err
+}
+
+// GetObjectTagging returns tags for an object.
+func (b *Bucket) GetObjectTagging(ctx context.Context, bucket, key string) (map[string]string, error) {
+	out, err := b.do(ctx, "GetObjectTagging", map[string]string{"bucket": bucket, "key": key}, func() (any, error) {
+		return b.driver.GetObjectTagging(ctx, bucket, key)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(map[string]string), nil
+}
+
+// DeleteObjectTagging removes all tags from an object.
+func (b *Bucket) DeleteObjectTagging(ctx context.Context, bucket, key string) error {
+	_, err := b.do(ctx, "DeleteObjectTagging", map[string]string{"bucket": bucket, "key": key}, func() (any, error) {
+		return nil, b.driver.DeleteObjectTagging(ctx, bucket, key)
+	})
+
+	return err
+}
+
+// PutBucketTagging sets tags on a bucket.
+func (b *Bucket) PutBucketTagging(ctx context.Context, bucket string, tags map[string]string) error {
+	_, err := b.do(ctx, "PutBucketTagging", bucket, func() (any, error) {
+		return nil, b.driver.PutBucketTagging(ctx, bucket, tags)
+	})
+
+	return err
+}
+
+// GetBucketTagging returns tags for a bucket.
+func (b *Bucket) GetBucketTagging(ctx context.Context, bucket string) (map[string]string, error) {
+	out, err := b.do(ctx, "GetBucketTagging", bucket, func() (any, error) {
+		return b.driver.GetBucketTagging(ctx, bucket)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(map[string]string), nil
+}
+
+// DeleteBucketTagging removes all tags from a bucket.
+func (b *Bucket) DeleteBucketTagging(ctx context.Context, bucket string) error {
+	_, err := b.do(ctx, "DeleteBucketTagging", bucket, func() (any, error) {
+		return nil, b.driver.DeleteBucketTagging(ctx, bucket)
+	})
+
+	return err
+}

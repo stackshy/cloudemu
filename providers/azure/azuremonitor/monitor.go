@@ -3,6 +3,7 @@ package azuremonitor
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stackshy/cloudemu/config"
 	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
 	"github.com/stackshy/cloudemu/monitoring/driver"
 )
@@ -25,33 +27,39 @@ type metricKey struct {
 
 // alarmData holds the internal state of an Azure Monitor alert rule.
 type alarmData struct {
-	Name               string
-	Namespace          string
-	MetricName         string
-	Dimensions         map[string]string
-	ComparisonOperator string
-	Threshold          float64
-	Period             int
-	EvaluationPeriods  int
-	Stat               string
-	State              string
-	StateReason        string
+	Name                    string
+	Namespace               string
+	MetricName              string
+	Dimensions              map[string]string
+	ComparisonOperator      string
+	Threshold               float64
+	Period                  int
+	EvaluationPeriods       int
+	Stat                    string
+	State                   string
+	StateReason             string
+	AlarmActions            []string
+	OKActions               []string
+	InsufficientDataActions []string
 }
 
 // Mock is an in-memory mock implementation of the Azure Monitor service.
 type Mock struct {
-	mu      sync.RWMutex
-	metrics map[metricKey][]driver.MetricDatum
-	alarms  *memstore.Store[*alarmData]
-	opts    *config.Options
+	mu       sync.RWMutex
+	metrics  map[metricKey][]driver.MetricDatum
+	alarms   *memstore.Store[*alarmData]
+	channels *memstore.Store[*driver.NotificationChannelInfo]
+	history  []driver.AlarmHistoryEntry
+	opts     *config.Options
 }
 
 // New creates a new Azure Monitor mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		metrics: make(map[metricKey][]driver.MetricDatum),
-		alarms:  memstore.New[*alarmData](),
-		opts:    opts,
+		metrics:  make(map[metricKey][]driver.MetricDatum),
+		alarms:   memstore.New[*alarmData](),
+		channels: memstore.New[*driver.NotificationChannelInfo](),
+		opts:     opts,
 	}
 }
 
@@ -135,13 +143,30 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 	}
 
 	stat := computeStat(filtered, alarm.Stat)
+
+	var newState, reason string
 	if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
-		alarm.State = "ALARM"
-		alarm.StateReason = "Threshold crossed"
+		newState = "ALARM"
+		reason = "Threshold crossed"
 	} else {
-		alarm.State = "OK"
-		alarm.StateReason = "Threshold not crossed"
+		newState = "OK"
+		reason = "Threshold not crossed"
 	}
+
+	if alarm.State != newState {
+		m.mu.Lock()
+		m.history = append(m.history, driver.AlarmHistoryEntry{
+			AlarmName: alarm.Name,
+			Timestamp: now,
+			OldState:  alarm.State,
+			NewState:  newState,
+			Reason:    fmt.Sprintf("Transition from %s to %s: %s", alarm.State, newState, reason),
+		})
+		m.mu.Unlock()
+	}
+
+	alarm.State = newState
+	alarm.StateReason = reason
 }
 
 func (m *Mock) collectFilteredValues(namespace, metricName string, dims map[string]string, windowStart, now time.Time) []float64 {
@@ -299,16 +324,19 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 	}
 
 	alarm := &alarmData{
-		Name:               cfg.Name,
-		Namespace:          cfg.Namespace,
-		MetricName:         cfg.MetricName,
-		Dimensions:         dims,
-		ComparisonOperator: cfg.ComparisonOperator,
-		Threshold:          cfg.Threshold,
-		Period:             cfg.Period,
-		EvaluationPeriods:  cfg.EvaluationPeriods,
-		Stat:               cfg.Stat,
-		State:              "INSUFFICIENT_DATA",
+		Name:                    cfg.Name,
+		Namespace:               cfg.Namespace,
+		MetricName:              cfg.MetricName,
+		Dimensions:              dims,
+		ComparisonOperator:      cfg.ComparisonOperator,
+		Threshold:               cfg.Threshold,
+		Period:                  cfg.Period,
+		EvaluationPeriods:       cfg.EvaluationPeriods,
+		Stat:                    cfg.Stat,
+		State:                   "INSUFFICIENT_DATA",
+		AlarmActions:            append([]string{}, cfg.AlarmActions...),
+		OKActions:               append([]string{}, cfg.OKActions...),
+		InsufficientDataActions: append([]string{}, cfg.InsufficientDataActions...),
 	}
 
 	m.alarms.Set(cfg.Name, alarm)
@@ -363,6 +391,83 @@ func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) erro
 	a.StateReason = reason
 
 	return nil
+}
+
+// CreateNotificationChannel creates a new notification channel (action group) and returns its info.
+func (m *Mock) CreateNotificationChannel(
+	_ context.Context, cfg driver.NotificationChannelConfig,
+) (*driver.NotificationChannelInfo, error) {
+	if cfg.Name == "" {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "channel name is required")
+	}
+
+	tags := make(map[string]string, len(cfg.Tags))
+	for k, v := range cfg.Tags {
+		tags[k] = v
+	}
+
+	ch := &driver.NotificationChannelInfo{
+		ID:       idgen.GenerateID("chan-"),
+		Name:     cfg.Name,
+		Type:     cfg.Type,
+		Endpoint: cfg.Endpoint,
+		Tags:     tags,
+	}
+
+	m.channels.Set(ch.ID, ch)
+
+	return ch, nil
+}
+
+// DeleteNotificationChannel deletes the notification channel (action group) with the given ID.
+func (m *Mock) DeleteNotificationChannel(_ context.Context, id string) error {
+	if !m.channels.Delete(id) {
+		return cerrors.Newf(cerrors.NotFound, "notification channel %q not found", id)
+	}
+
+	return nil
+}
+
+// GetNotificationChannel returns the notification channel (action group) with the given ID.
+func (m *Mock) GetNotificationChannel(_ context.Context, id string) (*driver.NotificationChannelInfo, error) {
+	ch, ok := m.channels.Get(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "notification channel %q not found", id)
+	}
+
+	return ch, nil
+}
+
+// ListNotificationChannels returns all notification channels (action groups).
+func (m *Mock) ListNotificationChannels(_ context.Context) ([]driver.NotificationChannelInfo, error) {
+	all := m.channels.All()
+	result := make([]driver.NotificationChannelInfo, 0, len(all))
+
+	for _, ch := range all {
+		result = append(result, *ch)
+	}
+
+	return result, nil
+}
+
+// GetAlarmHistory returns alarm history entries filtered by alarm name, limited by limit.
+func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var filtered []driver.AlarmHistoryEntry
+
+	for _, entry := range m.history {
+		if entry.AlarmName == alarmName {
+			filtered = append(filtered, entry)
+		}
+	}
+
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+
+	return filtered, nil
 }
 
 // matchDimensions returns true if the data point dimensions contain all of the

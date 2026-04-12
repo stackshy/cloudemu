@@ -35,15 +35,18 @@ type MetricDataResult struct {
 
 // AlarmConfig describes an alarm to create.
 type AlarmConfig struct {
-	Name               string
-	Namespace          string
-	MetricName         string
-	Dimensions         map[string]string
-	ComparisonOperator string // "GreaterThanThreshold", "LessThanThreshold", etc.
-	Threshold          float64
-	Period             int
-	EvaluationPeriods  int
-	Stat               string
+	Name                    string
+	Namespace               string
+	MetricName              string
+	Dimensions              map[string]string
+	ComparisonOperator      string // "GreaterThanThreshold", "LessThanThreshold", etc.
+	Threshold               float64
+	Period                  int
+	EvaluationPeriods       int
+	Stat                    string
+	AlarmActions            []string // channel IDs to notify on ALARM
+	OKActions               []string // channel IDs to notify on OK
+	InsufficientDataActions []string // channel IDs to notify on INSUFFICIENT_DATA
 }
 
 // AlarmInfo describes an alarm.
@@ -56,6 +59,32 @@ type AlarmInfo struct {
 	Threshold          float64
 }
 
+// NotificationChannelConfig describes a notification channel.
+type NotificationChannelConfig struct {
+	Name     string
+	Type     string // "email", "webhook", "queue", "function"
+	Endpoint string
+	Tags     map[string]string
+}
+
+// NotificationChannelInfo describes a notification channel.
+type NotificationChannelInfo struct {
+	ID       string
+	Name     string
+	Type     string
+	Endpoint string
+	Tags     map[string]string
+}
+
+// AlarmHistoryEntry describes a state change or action in alarm history.
+type AlarmHistoryEntry struct {
+	AlarmName string
+	Timestamp time.Time
+	OldState  string
+	NewState  string
+	Reason    string
+}
+
 // Monitoring is the interface that monitoring provider implementations must satisfy.
 type Monitoring interface {
 	PutMetricData(ctx context.Context, data []MetricDatum) error
@@ -66,4 +95,13 @@ type Monitoring interface {
 	DeleteAlarm(ctx context.Context, name string) error
 	DescribeAlarms(ctx context.Context, names []string) ([]AlarmInfo, error)
 	SetAlarmState(ctx context.Context, name, state, reason string) error
+
+	// Notification Channels
+	CreateNotificationChannel(ctx context.Context, config NotificationChannelConfig) (*NotificationChannelInfo, error)
+	DeleteNotificationChannel(ctx context.Context, id string) error
+	GetNotificationChannel(ctx context.Context, id string) (*NotificationChannelInfo, error)
+	ListNotificationChannels(ctx context.Context) ([]NotificationChannelInfo, error)
+
+	// Alarm History
+	GetAlarmHistory(ctx context.Context, alarmName string, limit int) ([]AlarmHistoryEntry, error)
 }

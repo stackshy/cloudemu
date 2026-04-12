@@ -178,4 +178,14 @@ type Bucket interface {
 	// Encryption
 	PutEncryptionConfig(ctx context.Context, bucket string, config EncryptionConfig) error
 	GetEncryptionConfig(ctx context.Context, bucket string) (*EncryptionConfig, error)
+
+	// Object Tagging
+	PutObjectTagging(ctx context.Context, bucket, key string, tags map[string]string) error
+	GetObjectTagging(ctx context.Context, bucket, key string) (map[string]string, error)
+	DeleteObjectTagging(ctx context.Context, bucket, key string) error
+
+	// Bucket Tagging
+	PutBucketTagging(ctx context.Context, bucket string, tags map[string]string) error
+	GetBucketTagging(ctx context.Context, bucket string) (map[string]string, error)
+	DeleteBucketTagging(ctx context.Context, bucket string) error
 }

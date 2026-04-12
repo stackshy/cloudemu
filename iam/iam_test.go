@@ -16,27 +16,29 @@ import (
 
 // mockDriver implements driver.IAM for testing the portable wrapper.
 type mockDriver struct {
-	users          map[string]*driver.UserInfo
-	roles          map[string]*driver.RoleInfo
-	policies       map[string]*driver.PolicyInfo
-	groups         map[string]*driver.GroupInfo
-	accessKeys     map[string]*driver.AccessKeyInfo
-	userPolicies   map[string][]string // userName -> []policyARN
-	rolePolicies   map[string][]string // roleName -> []policyARN
-	groupUsers     map[string]map[string]bool
-	seq            int
+	users            map[string]*driver.UserInfo
+	roles            map[string]*driver.RoleInfo
+	policies         map[string]*driver.PolicyInfo
+	groups           map[string]*driver.GroupInfo
+	accessKeys       map[string]*driver.AccessKeyInfo
+	instanceProfiles map[string]*driver.InstanceProfileInfo
+	userPolicies     map[string][]string // userName -> []policyARN
+	rolePolicies     map[string][]string // roleName -> []policyARN
+	groupUsers       map[string]map[string]bool
+	seq              int
 }
 
 func newMockDriver() *mockDriver {
 	return &mockDriver{
-		users:        make(map[string]*driver.UserInfo),
-		roles:        make(map[string]*driver.RoleInfo),
-		policies:     make(map[string]*driver.PolicyInfo),
-		groups:       make(map[string]*driver.GroupInfo),
-		accessKeys:   make(map[string]*driver.AccessKeyInfo),
-		userPolicies: make(map[string][]string),
-		rolePolicies: make(map[string][]string),
-		groupUsers:   make(map[string]map[string]bool),
+		users:            make(map[string]*driver.UserInfo),
+		roles:            make(map[string]*driver.RoleInfo),
+		policies:         make(map[string]*driver.PolicyInfo),
+		groups:           make(map[string]*driver.GroupInfo),
+		accessKeys:       make(map[string]*driver.AccessKeyInfo),
+		instanceProfiles: make(map[string]*driver.InstanceProfileInfo),
+		userPolicies:     make(map[string][]string),
+		rolePolicies:     make(map[string][]string),
+		groupUsers:       make(map[string]map[string]bool),
 	}
 }
 
@@ -406,6 +408,95 @@ func (m *mockDriver) ListAccessKeys(_ context.Context, userName string) ([]drive
 	return result, nil
 }
 
+func (m *mockDriver) CreateInstanceProfile(
+	_ context.Context, cfg driver.InstanceProfileConfig,
+) (*driver.InstanceProfileInfo, error) {
+	if cfg.Name == "" {
+		return nil, fmt.Errorf("name required")
+	}
+
+	if _, ok := m.instanceProfiles[cfg.Name]; ok {
+		return nil, fmt.Errorf("already exists")
+	}
+
+	info := &driver.InstanceProfileInfo{
+		ID:       m.nextID("ip"),
+		Name:     cfg.Name,
+		RoleName: cfg.RoleName,
+		ARN:      "arn:aws:iam::123456789012:instance-profile/" + cfg.Name,
+		Tags:     cfg.Tags,
+	}
+	m.instanceProfiles[cfg.Name] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteInstanceProfile(_ context.Context, name string) error {
+	if _, ok := m.instanceProfiles[name]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.instanceProfiles, name)
+
+	return nil
+}
+
+func (m *mockDriver) GetInstanceProfile(
+	_ context.Context, name string,
+) (*driver.InstanceProfileInfo, error) {
+	info, ok := m.instanceProfiles[name]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+
+	return info, nil
+}
+
+func (m *mockDriver) ListInstanceProfiles(
+	_ context.Context,
+) ([]driver.InstanceProfileInfo, error) {
+	result := make([]driver.InstanceProfileInfo, 0, len(m.instanceProfiles))
+	for _, p := range m.instanceProfiles {
+		result = append(result, *p)
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) AddRoleToInstanceProfile(
+	_ context.Context, profileName, roleName string,
+) error {
+	p, ok := m.instanceProfiles[profileName]
+	if !ok {
+		return fmt.Errorf("profile not found")
+	}
+
+	if _, ok := m.roles[roleName]; !ok {
+		return fmt.Errorf("role not found")
+	}
+
+	p.RoleName = roleName
+
+	return nil
+}
+
+func (m *mockDriver) RemoveRoleFromInstanceProfile(
+	_ context.Context, profileName, roleName string,
+) error {
+	p, ok := m.instanceProfiles[profileName]
+	if !ok {
+		return fmt.Errorf("profile not found")
+	}
+
+	if p.RoleName != roleName {
+		return fmt.Errorf("role not associated")
+	}
+
+	p.RoleName = ""
+
+	return nil
+}
+
 func newTestIAM(opts ...Option) *IAM {
 	return NewIAM(newMockDriver(), opts...)
 }
@@ -712,6 +803,210 @@ func TestCheckPermission(t *testing.T) {
 	})
 }
 
+func TestCreateGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		info, err := i.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+		require.NoError(t, err)
+		assert.Equal(t, "devs", info.Name)
+		assert.NotEmpty(t, info.ARN)
+	})
+
+	t.Run("empty name error", func(t *testing.T) {
+		_, err := i.CreateGroup(ctx, driver.GroupConfig{})
+		require.Error(t, err)
+	})
+
+	t.Run("duplicate error", func(t *testing.T) {
+		_, err := i.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateGroup(ctx, driver.GroupConfig{Name: "del-group"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := i.DeleteGroup(ctx, "del-group")
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := i.DeleteGroup(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestGetGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateGroup(ctx, driver.GroupConfig{Name: "get-group"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		info, err := i.GetGroup(ctx, "get-group")
+		require.NoError(t, err)
+		assert.Equal(t, "get-group", info.Name)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := i.GetGroup(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestListGroupsPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	groups, err := i.ListGroups(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(groups))
+
+	_, err = i.CreateGroup(ctx, driver.GroupConfig{Name: "g1"})
+	require.NoError(t, err)
+
+	_, err = i.CreateGroup(ctx, driver.GroupConfig{Name: "g2"})
+	require.NoError(t, err)
+
+	groups, err = i.ListGroups(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(groups))
+}
+
+func TestAddUserToGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	require.NoError(t, err)
+
+	_, err = i.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := i.AddUserToGroup(ctx, "alice", "devs")
+		require.NoError(t, err)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		err := i.AddUserToGroup(ctx, "nonexistent", "devs")
+		require.Error(t, err)
+	})
+
+	t.Run("group not found", func(t *testing.T) {
+		err := i.AddUserToGroup(ctx, "alice", "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestRemoveUserFromGroupPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, _ = i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = i.CreateGroup(ctx, driver.GroupConfig{Name: "devs"})
+	_ = i.AddUserToGroup(ctx, "alice", "devs")
+
+	t.Run("success", func(t *testing.T) {
+		err := i.RemoveUserFromGroup(ctx, "alice", "devs")
+		require.NoError(t, err)
+	})
+
+	t.Run("not a member", func(t *testing.T) {
+		err := i.RemoveUserFromGroup(ctx, "alice", "devs")
+		require.Error(t, err)
+	})
+}
+
+func TestListGroupsForUserPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, _ = i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = i.CreateGroup(ctx, driver.GroupConfig{Name: "g1"})
+	_, _ = i.CreateGroup(ctx, driver.GroupConfig{Name: "g2"})
+	_ = i.AddUserToGroup(ctx, "alice", "g1")
+	_ = i.AddUserToGroup(ctx, "alice", "g2")
+
+	t.Run("success", func(t *testing.T) {
+		groups, err := i.ListGroupsForUser(ctx, "alice")
+		require.NoError(t, err)
+		assert.Equal(t, 2, len(groups))
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := i.ListGroupsForUser(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestCreateAccessKeyPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		ak, err := i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+		require.NoError(t, err)
+		assert.NotEmpty(t, ak.AccessKeyID)
+		assert.NotEmpty(t, ak.SecretAccessKey)
+		assert.Equal(t, "alice", ak.UserName)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "nonexistent"})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteAccessKeyPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, _ = i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	ak, _ := i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+
+	t.Run("success", func(t *testing.T) {
+		err := i.DeleteAccessKey(ctx, "alice", ak.AccessKeyID)
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := i.DeleteAccessKey(ctx, "alice", "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestListAccessKeysPortable(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, _ = i.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	_, _ = i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+	_, _ = i.CreateAccessKey(ctx, driver.AccessKeyConfig{UserName: "alice"})
+
+	t.Run("success", func(t *testing.T) {
+		keys, err := i.ListAccessKeys(ctx, "alice")
+		require.NoError(t, err)
+		assert.Equal(t, 2, len(keys))
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		_, err := i.ListAccessKeys(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
 func TestIAMWithRecorder(t *testing.T) {
 	rec := recorder.New()
 	i := newTestIAM(WithRecorder(rec))
@@ -865,4 +1160,127 @@ func TestIAMAllOptionsComposed(t *testing.T) {
 
 	q := metrics.NewQuery(mc)
 	assert.Equal(t, 2, q.ByName("calls_total").Count())
+}
+
+func TestCreateInstanceProfile(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		info, err := i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{Name: "web-profile"})
+		require.NoError(t, err)
+		assert.Equal(t, "web-profile", info.Name)
+		assert.NotEmpty(t, info.ARN)
+	})
+
+	t.Run("empty name error", func(t *testing.T) {
+		_, err := i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{})
+		require.Error(t, err)
+	})
+
+	t.Run("duplicate error", func(t *testing.T) {
+		_, err := i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{Name: "web-profile"})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteInstanceProfile(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{Name: "del-profile"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := i.DeleteInstanceProfile(ctx, "del-profile")
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := i.DeleteInstanceProfile(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestGetInstanceProfile(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{Name: "get-profile"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		info, err := i.GetInstanceProfile(ctx, "get-profile")
+		require.NoError(t, err)
+		assert.Equal(t, "get-profile", info.Name)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := i.GetInstanceProfile(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestListInstanceProfiles(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	profiles, err := i.ListInstanceProfiles(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(profiles))
+
+	_, err = i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{Name: "p1"})
+	require.NoError(t, err)
+
+	_, err = i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{Name: "p2"})
+	require.NoError(t, err)
+
+	profiles, err = i.ListInstanceProfiles(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(profiles))
+}
+
+func TestAddRoleToInstanceProfile(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{Name: "role-profile"})
+	require.NoError(t, err)
+
+	_, err = i.CreateRole(ctx, driver.RoleConfig{Name: "my-role"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := i.AddRoleToInstanceProfile(ctx, "role-profile", "my-role")
+		require.NoError(t, err)
+	})
+
+	t.Run("profile not found", func(t *testing.T) {
+		err := i.AddRoleToInstanceProfile(ctx, "nonexistent", "my-role")
+		require.Error(t, err)
+	})
+}
+
+func TestRemoveRoleFromInstanceProfile(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreateInstanceProfile(ctx, driver.InstanceProfileConfig{Name: "rm-profile"})
+	require.NoError(t, err)
+
+	_, err = i.CreateRole(ctx, driver.RoleConfig{Name: "rm-role"})
+	require.NoError(t, err)
+
+	err = i.AddRoleToInstanceProfile(ctx, "rm-profile", "rm-role")
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := i.RemoveRoleFromInstanceProfile(ctx, "rm-profile", "rm-role")
+		require.NoError(t, err)
+	})
+
+	t.Run("profile not found", func(t *testing.T) {
+		err := i.RemoveRoleFromInstanceProfile(ctx, "nonexistent", "rm-role")
+		require.Error(t, err)
+	})
 }

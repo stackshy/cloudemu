@@ -536,3 +536,281 @@ func TestGetLogEvents(t *testing.T) {
 		assert.Equal(t, 0, len(events))
 	})
 }
+
+func TestFilterLogEvents(t *testing.T) {
+	ctx := context.Background()
+	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	t.Run("filter by pattern", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
+			{Timestamp: baseTime, Message: "ERROR: something failed"},
+			{Timestamp: baseTime.Add(time.Second), Message: "INFO: all good"},
+			{Timestamp: baseTime.Add(2 * time.Second), Message: "ERROR: another failure"},
+		})
+		require.NoError(t, err)
+
+		events, err := m.FilterLogEvents(ctx, &driver.FilterLogEventsInput{
+			LogGroup:      "test-group",
+			FilterPattern: "ERROR",
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, 2, len(events))
+		assert.Equal(t, "ERROR: something failed", events[0].Message)
+		assert.Equal(t, "ERROR: another failure", events[1].Message)
+	})
+
+	t.Run("filter by time range", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
+			{Timestamp: baseTime, Message: "early"},
+			{Timestamp: baseTime.Add(time.Hour), Message: "middle"},
+			{Timestamp: baseTime.Add(2 * time.Hour), Message: "late"},
+		})
+		require.NoError(t, err)
+
+		events, err := m.FilterLogEvents(ctx, &driver.FilterLogEventsInput{
+			LogGroup:  "test-group",
+			StartTime: baseTime.Add(30 * time.Minute),
+			EndTime:   baseTime.Add(90 * time.Minute),
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, len(events))
+		assert.Equal(t, "middle", events[0].Message)
+	})
+
+	t.Run("filter by stream", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		_, err := m.CreateLogStream(ctx, "test-group", "other-stream")
+		require.NoError(t, err)
+
+		err = m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
+			{Timestamp: baseTime, Message: "target"},
+		})
+		require.NoError(t, err)
+
+		err = m.PutLogEvents(ctx, "test-group", "other-stream", []driver.LogEvent{
+			{Timestamp: baseTime, Message: "ignore"},
+		})
+		require.NoError(t, err)
+
+		events, err := m.FilterLogEvents(ctx, &driver.FilterLogEventsInput{
+			LogGroup:  "test-group",
+			LogStream: "test-stream",
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, len(events))
+		assert.Equal(t, "target", events[0].Message)
+		assert.Equal(t, "test-stream", events[0].LogStream)
+	})
+
+	t.Run("empty pattern returns all", func(t *testing.T) {
+		m := newTestMock()
+		setupGroupAndStream(t, m)
+
+		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
+			{Timestamp: baseTime, Message: "one"},
+			{Timestamp: baseTime.Add(time.Second), Message: "two"},
+			{Timestamp: baseTime.Add(2 * time.Second), Message: "three"},
+		})
+		require.NoError(t, err)
+
+		events, err := m.FilterLogEvents(ctx, &driver.FilterLogEventsInput{
+			LogGroup:      "test-group",
+			FilterPattern: "",
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, 3, len(events))
+	})
+
+	t.Run("log group not found error", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.FilterLogEvents(ctx, &driver.FilterLogEventsInput{
+			LogGroup: "nonexistent",
+		})
+		require.Error(t, err)
+	})
+}
+
+func TestPutMetricFilter(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
+		require.NoError(t, err)
+
+		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+			Name:            "my-filter",
+			LogGroup:        "grp",
+			FilterPattern:   "ERROR",
+			MetricName:      "ErrorCount",
+			MetricNamespace: "MyApp",
+			MetricValue:     "1",
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("update existing filter", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
+		require.NoError(t, err)
+
+		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+			Name:            "my-filter",
+			LogGroup:        "grp",
+			FilterPattern:   "ERROR",
+			MetricName:      "ErrorCount",
+			MetricNamespace: "MyApp",
+			MetricValue:     "1",
+		})
+		require.NoError(t, err)
+
+		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+			Name:            "my-filter",
+			LogGroup:        "grp",
+			FilterPattern:   "WARN",
+			MetricName:      "WarnCount",
+			MetricNamespace: "MyApp",
+			MetricValue:     "1",
+		})
+		require.NoError(t, err)
+
+		filters, err := m.DescribeMetricFilters(ctx, "grp")
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, len(filters))
+		assert.Equal(t, "WARN", filters[0].FilterPattern)
+	})
+
+	t.Run("log group not found", func(t *testing.T) {
+		m := newTestMock()
+
+		err := m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+			Name:     "my-filter",
+			LogGroup: "nonexistent",
+		})
+		require.Error(t, err)
+	})
+
+	t.Run("empty name error", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
+		require.NoError(t, err)
+
+		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+			Name:     "",
+			LogGroup: "grp",
+		})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteMetricFilter(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
+		require.NoError(t, err)
+
+		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+			Name:          "del-filter",
+			LogGroup:      "grp",
+			FilterPattern: "ERROR",
+			MetricName:    "ErrorCount",
+		})
+		require.NoError(t, err)
+
+		err = m.DeleteMetricFilter(ctx, "grp", "del-filter")
+		require.NoError(t, err)
+
+		filters, err := m.DescribeMetricFilters(ctx, "grp")
+		require.NoError(t, err)
+
+		assert.Equal(t, 0, len(filters))
+	})
+
+	t.Run("nonexistent filter error", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
+		require.NoError(t, err)
+
+		err = m.DeleteMetricFilter(ctx, "grp", "nonexistent")
+		require.Error(t, err)
+	})
+
+	t.Run("log group not found", func(t *testing.T) {
+		m := newTestMock()
+
+		err := m.DeleteMetricFilter(ctx, "nonexistent", "my-filter")
+		require.Error(t, err)
+	})
+}
+
+func TestDescribeMetricFilters(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("multiple filters", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
+		require.NoError(t, err)
+
+		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+			Name:          "filter-1",
+			LogGroup:      "grp",
+			FilterPattern: "ERROR",
+			MetricName:    "ErrorCount",
+		})
+		require.NoError(t, err)
+
+		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+			Name:          "filter-2",
+			LogGroup:      "grp",
+			FilterPattern: "WARN",
+			MetricName:    "WarnCount",
+		})
+		require.NoError(t, err)
+
+		filters, err := m.DescribeMetricFilters(ctx, "grp")
+		require.NoError(t, err)
+
+		assert.Equal(t, 2, len(filters))
+	})
+
+	t.Run("empty group returns empty", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "empty-grp"})
+		require.NoError(t, err)
+
+		filters, err := m.DescribeMetricFilters(ctx, "empty-grp")
+		require.NoError(t, err)
+
+		assert.Equal(t, 0, len(filters))
+	})
+
+	t.Run("log group not found", func(t *testing.T) {
+		m := newTestMock()
+
+		_, err := m.DescribeMetricFilters(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
