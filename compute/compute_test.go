@@ -24,6 +24,7 @@ type mockCompute struct {
 	volumes   map[string]*driver.VolumeInfo
 	snapshots map[string]*driver.SnapshotInfo
 	images    map[string]*driver.ImageInfo
+	keyPairs  map[string]*driver.KeyPairInfo
 	asgs      map[string]*driver.AutoScalingGroup
 	policies  map[string]*driver.ScalingPolicy
 	spots     map[string]*driver.SpotInstanceRequest
@@ -37,6 +38,7 @@ func newMockCompute() *mockCompute {
 		volumes:   make(map[string]*driver.VolumeInfo),
 		snapshots: make(map[string]*driver.SnapshotInfo),
 		images:    make(map[string]*driver.ImageInfo),
+		keyPairs:  make(map[string]*driver.KeyPairInfo),
 		asgs:      make(map[string]*driver.AutoScalingGroup),
 		policies:  make(map[string]*driver.ScalingPolicy),
 		spots:     make(map[string]*driver.SpotInstanceRequest),
@@ -1797,5 +1799,159 @@ func TestDescribeImagesPortableError(t *testing.T) {
 	inj.Set("compute", "DescribeImages", fmt.Errorf("injected"), inject.Always{})
 
 	_, err := c.DescribeImages(ctx, nil)
+	require.Error(t, err)
+}
+
+// =====================================================================
+// Key Pair Mock Methods
+// =====================================================================
+
+func (mc *mockCompute) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driver.KeyPairInfo, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	if cfg.Name == "" {
+		return nil, fmt.Errorf("key pair name must not be empty")
+	}
+
+	if _, ok := mc.keyPairs[cfg.Name]; ok {
+		return nil, fmt.Errorf("key pair %s already exists", cfg.Name)
+	}
+
+	keyType := cfg.KeyType
+	if keyType == "" {
+		keyType = "rsa"
+	}
+
+	mc.counter++
+	kp := &driver.KeyPairInfo{
+		ID:          fmt.Sprintf("kp-%06d", mc.counter),
+		Name:        cfg.Name,
+		Fingerprint: "fp-" + cfg.Name,
+		KeyType:     keyType,
+		PublicKey:    "mock-public-key-" + cfg.Name,
+		PrivateKey:  "mock-private-key-" + cfg.Name,
+		Tags:        cfg.Tags,
+	}
+	mc.keyPairs[cfg.Name] = kp
+
+	result := *kp
+
+	return &result, nil
+}
+
+func (mc *mockCompute) DeleteKeyPair(_ context.Context, name string) error {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	if _, ok := mc.keyPairs[name]; !ok {
+		return fmt.Errorf("key pair %s not found", name)
+	}
+
+	delete(mc.keyPairs, name)
+
+	return nil
+}
+
+func (mc *mockCompute) DescribeKeyPairs(_ context.Context, names []string) ([]driver.KeyPairInfo, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	var result []driver.KeyPairInfo
+
+	if len(names) == 0 {
+		for _, kp := range mc.keyPairs {
+			cp := *kp
+			cp.PrivateKey = ""
+			result = append(result, cp)
+		}
+
+		return result, nil
+	}
+
+	for _, name := range names {
+		if kp, ok := mc.keyPairs[name]; ok {
+			cp := *kp
+			cp.PrivateKey = ""
+			result = append(result, cp)
+		}
+	}
+
+	return result, nil
+}
+
+// =====================================================================
+// Key Pair Portable Tests
+// =====================================================================
+
+func TestCreateKeyPairPortable(t *testing.T) {
+	c := newTestCompute()
+	ctx := context.Background()
+
+	kp, err := c.CreateKeyPair(ctx, driver.KeyPairConfig{Name: "my-key", KeyType: "ed25519"})
+	require.NoError(t, err)
+	assert.NotEmpty(t, kp.ID)
+	assert.Equal(t, "my-key", kp.Name)
+	assert.Equal(t, "ed25519", kp.KeyType)
+	assert.NotEmpty(t, kp.PrivateKey)
+}
+
+func TestCreateKeyPairPortableError(t *testing.T) {
+	inj := inject.NewInjector()
+	c := newTestCompute(WithErrorInjection(inj))
+	ctx := context.Background()
+
+	inj.Set("compute", "CreateKeyPair", fmt.Errorf("injected"), inject.Always{})
+
+	_, err := c.CreateKeyPair(ctx, driver.KeyPairConfig{Name: "fail-key"})
+	require.Error(t, err)
+}
+
+func TestDeleteKeyPairPortable(t *testing.T) {
+	c := newTestCompute()
+	ctx := context.Background()
+
+	_, err := c.CreateKeyPair(ctx, driver.KeyPairConfig{Name: "del-key"})
+	require.NoError(t, err)
+
+	err = c.DeleteKeyPair(ctx, "del-key")
+	require.NoError(t, err)
+
+	err = c.DeleteKeyPair(ctx, "del-key")
+	require.Error(t, err)
+}
+
+func TestDescribeKeyPairsPortable(t *testing.T) {
+	c := newTestCompute()
+	ctx := context.Background()
+
+	_, err := c.CreateKeyPair(ctx, driver.KeyPairConfig{Name: "kp-a"})
+	require.NoError(t, err)
+
+	_, err = c.CreateKeyPair(ctx, driver.KeyPairConfig{Name: "kp-b"})
+	require.NoError(t, err)
+
+	all, err := c.DescribeKeyPairs(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(all))
+
+	for _, kp := range all {
+		assert.Empty(t, kp.PrivateKey, "DescribeKeyPairs should not return PrivateKey")
+	}
+
+	filtered, err := c.DescribeKeyPairs(ctx, []string{"kp-a"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(filtered))
+	assert.Equal(t, "kp-a", filtered[0].Name)
+}
+
+func TestDescribeKeyPairsPortableError(t *testing.T) {
+	inj := inject.NewInjector()
+	c := newTestCompute(WithErrorInjection(inj))
+	ctx := context.Background()
+
+	inj.Set("compute", "DescribeKeyPairs", fmt.Errorf("injected"), inject.Always{})
+
+	_, err := c.DescribeKeyPairs(ctx, nil)
 	require.Error(t, err)
 }

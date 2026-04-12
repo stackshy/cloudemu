@@ -767,3 +767,100 @@ func appendSnapRecord(records []driver.StreamRecord, rec *driver.StreamRecord) [
 
 	return records
 }
+
+// CreateIndex creates a composite index on a collection.
+func (m *Mock) CreateIndex(_ context.Context, table string, cfg driver.GSIConfig) (*driver.IndexInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	if cfg.Name == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "index name must not be empty")
+	}
+
+	for _, gsi := range cd.config.GSIs {
+		if gsi.Name == cfg.Name {
+			return nil, cerrors.Newf(cerrors.AlreadyExists, "index %s already exists", cfg.Name)
+		}
+	}
+
+	cd.config.GSIs = append(cd.config.GSIs, cfg)
+
+	return &driver.IndexInfo{
+		Name:         cfg.Name,
+		PartitionKey: cfg.PartitionKey,
+		SortKey:      cfg.SortKey,
+		Status:       "ACTIVE",
+	}, nil
+}
+
+// DeleteIndex removes a composite index from a collection.
+func (m *Mock) DeleteIndex(_ context.Context, table, indexName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	for i, gsi := range cd.config.GSIs {
+		if gsi.Name == indexName {
+			cd.config.GSIs = append(cd.config.GSIs[:i], cd.config.GSIs[i+1:]...)
+			return nil
+		}
+	}
+
+	return cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
+}
+
+// DescribeIndex returns information about a composite index.
+func (m *Mock) DescribeIndex(_ context.Context, table, indexName string) (*driver.IndexInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	for _, gsi := range cd.config.GSIs {
+		if gsi.Name == indexName {
+			return &driver.IndexInfo{
+				Name:         gsi.Name,
+				PartitionKey: gsi.PartitionKey,
+				SortKey:      gsi.SortKey,
+				Status:       "ACTIVE",
+			}, nil
+		}
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
+}
+
+// ListIndexes returns all composite indexes for a collection.
+func (m *Mock) ListIndexes(_ context.Context, table string) ([]driver.IndexInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	indexes := make([]driver.IndexInfo, 0, len(cd.config.GSIs))
+	for _, gsi := range cd.config.GSIs {
+		indexes = append(indexes, driver.IndexInfo{
+			Name:         gsi.Name,
+			PartitionKey: gsi.PartitionKey,
+			SortKey:      gsi.SortKey,
+			Status:       "ACTIVE",
+		})
+	}
+
+	return indexes, nil
+}

@@ -113,6 +113,27 @@ type InvokeOutput struct {
 // HandlerFunc is a function handler that processes invocations.
 type HandlerFunc func(ctx context.Context, payload []byte) ([]byte, error)
 
+// EventSourceMappingConfig describes an event source mapping to create.
+type EventSourceMappingConfig struct {
+	EventSourceArn   string
+	FunctionName     string
+	BatchSize        int
+	Enabled          bool
+	StartingPosition string // "LATEST", "TRIM_HORIZON"
+}
+
+// EventSourceMappingInfo describes an event source mapping.
+type EventSourceMappingInfo struct {
+	UUID             string
+	EventSourceArn   string
+	FunctionName     string
+	BatchSize        int
+	Enabled          bool
+	StartingPosition string
+	State            string // "Enabled", "Disabled", "Creating", "Deleting"
+	CreatedAt        string
+}
+
 // Serverless is the interface that serverless provider implementations must satisfy.
 type Serverless interface {
 	CreateFunction(ctx context.Context, config FunctionConfig) (*FunctionInfo, error)
@@ -145,4 +166,11 @@ type Serverless interface {
 	PutFunctionConcurrency(ctx context.Context, config ConcurrencyConfig) error
 	GetFunctionConcurrency(ctx context.Context, functionName string) (*ConcurrencyConfig, error)
 	DeleteFunctionConcurrency(ctx context.Context, functionName string) error
+
+	// Event Source Mappings
+	CreateEventSourceMapping(ctx context.Context, config EventSourceMappingConfig) (*EventSourceMappingInfo, error)
+	DeleteEventSourceMapping(ctx context.Context, uuid string) error
+	GetEventSourceMapping(ctx context.Context, uuid string) (*EventSourceMappingInfo, error)
+	ListEventSourceMappings(ctx context.Context, functionName string) ([]EventSourceMappingInfo, error)
+	UpdateEventSourceMapping(ctx context.Context, uuid string, config EventSourceMappingConfig) (*EventSourceMappingInfo, error)
 }

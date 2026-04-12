@@ -7956,6 +7956,842 @@ func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket
 	}
 }
 
+// testKeyPairOperations is a shared helper that tests key pair CRUD operations.
+func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Compute) {
+	t.Helper()
+
+	// Create a key pair
+	kp, err := c.CreateKeyPair(ctx, computedriver.KeyPairConfig{
+		Name:    "test-key",
+		KeyType: "ed25519",
+		Tags:    map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateKeyPair: %v", err)
+	}
+
+	if kp.Name != "test-key" {
+		t.Errorf("expected name 'test-key', got %q", kp.Name)
+	}
+
+	if kp.KeyType != "ed25519" {
+		t.Errorf("expected key type 'ed25519', got %q", kp.KeyType)
+	}
+
+	if kp.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+
+	if kp.Fingerprint != "fp-test-key" {
+		t.Errorf("expected fingerprint 'fp-test-key', got %q", kp.Fingerprint)
+	}
+
+	if kp.PrivateKey == "" {
+		t.Error("expected PrivateKey to be populated on create")
+	}
+
+	if kp.PublicKey == "" {
+		t.Error("expected PublicKey to be populated")
+	}
+
+	if kp.CreatedAt == "" {
+		t.Error("expected non-empty CreatedAt")
+	}
+
+	if kp.Tags["env"] != "test" {
+		t.Errorf("expected tag env=test, got %q", kp.Tags["env"])
+	}
+
+	// Create another with default key type
+	kp2, err := c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: "default-key"})
+	if err != nil {
+		t.Fatalf("CreateKeyPair default: %v", err)
+	}
+
+	if kp2.KeyType != "rsa" {
+		t.Errorf("expected default key type 'rsa', got %q", kp2.KeyType)
+	}
+
+	// Duplicate should fail
+	_, err = c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: "test-key"})
+	if err == nil {
+		t.Error("expected error for duplicate key pair")
+	}
+
+	// Empty name should fail
+	_, err = c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: ""})
+	if err == nil {
+		t.Error("expected error for empty key pair name")
+	}
+
+	// Describe all
+	all, err := c.DescribeKeyPairs(ctx, nil)
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs all: %v", err)
+	}
+
+	if len(all) != 2 {
+		t.Fatalf("expected 2 key pairs, got %d", len(all))
+	}
+
+	for _, kpi := range all {
+		if kpi.PrivateKey != "" {
+			t.Errorf("DescribeKeyPairs should not return PrivateKey, got %q", kpi.PrivateKey)
+		}
+	}
+
+	// Describe by name
+	filtered, err := c.DescribeKeyPairs(ctx, []string{"test-key"})
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs filtered: %v", err)
+	}
+
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 key pair, got %d", len(filtered))
+	}
+
+	if filtered[0].Name != "test-key" {
+		t.Errorf("expected name 'test-key', got %q", filtered[0].Name)
+	}
+
+	// Delete
+	if err := c.DeleteKeyPair(ctx, "test-key"); err != nil {
+		t.Fatalf("DeleteKeyPair: %v", err)
+	}
+
+	// Delete again should fail
+	err = c.DeleteKeyPair(ctx, "test-key")
+	if err == nil {
+		t.Error("expected error deleting non-existent key pair")
+	}
+
+	// Verify only one remains
+	remaining, err := c.DescribeKeyPairs(ctx, nil)
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs after delete: %v", err)
+	}
+
+	if len(remaining) != 1 {
+		t.Errorf("expected 1 key pair after delete, got %d", len(remaining))
+	}
+}
+
+func TestKeyPairAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testKeyPairOperations(t, ctx, p.EC2)
+}
+
+func TestKeyPairAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testKeyPairOperations(t, ctx, p.VirtualMachines)
+}
+
+func TestKeyPairGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testKeyPairOperations(t, ctx, p.GCE)
+}
+
+// ─── Global Secondary Indexes ───────────────────────────────────────────
+
+func TestGSIOperationsAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testGSIOperations(t, ctx, p.DynamoDB)
+}
+
+func TestGSIOperationsAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testGSIOperations(t, ctx, p.CosmosDB)
+}
+
+func TestGSIOperationsGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testGSIOperations(t, ctx, p.Firestore)
+}
+
+func testGSIOperations(t *testing.T, ctx context.Context, d driver.Database) {
+	t.Helper()
+
+	// Create table with no GSIs.
+	err := d.CreateTable(ctx, driver.TableConfig{
+		Name:         "users",
+		PartitionKey: "id",
+		SortKey:      "created",
+	})
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// Initially no indexes.
+	indexes, err := d.ListIndexes(ctx, "users")
+	if err != nil {
+		t.Fatalf("ListIndexes: %v", err)
+	}
+
+	if len(indexes) != 0 {
+		t.Errorf("expected 0 indexes, got %d", len(indexes))
+	}
+
+	// Create a GSI.
+	info, err := d.CreateIndex(ctx, "users", driver.GSIConfig{
+		Name: "email-index", PartitionKey: "email", SortKey: "created",
+	})
+	if err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	if info.Name != "email-index" {
+		t.Errorf("expected index name email-index, got %s", info.Name)
+	}
+
+	if info.Status != "ACTIVE" {
+		t.Errorf("expected status ACTIVE, got %s", info.Status)
+	}
+
+	// Describe the index.
+	desc, err := d.DescribeIndex(ctx, "users", "email-index")
+	if err != nil {
+		t.Fatalf("DescribeIndex: %v", err)
+	}
+
+	if desc.PartitionKey != "email" {
+		t.Errorf("expected partition key email, got %s", desc.PartitionKey)
+	}
+
+	// List should show 1 index.
+	indexes, err = d.ListIndexes(ctx, "users")
+	if err != nil {
+		t.Fatalf("ListIndexes: %v", err)
+	}
+
+	if len(indexes) != 1 {
+		t.Errorf("expected 1 index, got %d", len(indexes))
+	}
+
+	// Put some items and query via GSI.
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "1", "email": "alice@test.com", "created": "2025-01-01"})
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "2", "email": "alice@test.com", "created": "2025-06-01"})
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "3", "email": "bob@test.com", "created": "2025-03-01"})
+
+	result, err := d.Query(ctx, driver.QueryInput{
+		Table:     "users",
+		IndexName: "email-index",
+		KeyCondition: driver.KeyCondition{
+			PartitionKey: "email",
+			PartitionVal: "alice@test.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Query via GSI: %v", err)
+	}
+
+	if result.Count != 2 {
+		t.Errorf("expected 2 items for alice@test.com via GSI, got %d", result.Count)
+	}
+
+	// Duplicate index name should fail.
+	_, err = d.CreateIndex(ctx, "users", driver.GSIConfig{
+		Name: "email-index", PartitionKey: "name",
+	})
+	if err == nil {
+		t.Error("expected error for duplicate index, got nil")
+	}
+
+	// Delete the index.
+	err = d.DeleteIndex(ctx, "users", "email-index")
+	if err != nil {
+		t.Fatalf("DeleteIndex: %v", err)
+	}
+
+	// Describe should fail after delete.
+	_, err = d.DescribeIndex(ctx, "users", "email-index")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+
+	// Query via deleted index should fail.
+	_, err = d.Query(ctx, driver.QueryInput{
+		Table:     "users",
+		IndexName: "email-index",
+		KeyCondition: driver.KeyCondition{
+			PartitionKey: "email",
+			PartitionVal: "alice@test.com",
+		},
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for deleted index query, got %v", err)
+	}
+
+	// Error: table not found.
+	_, err = d.CreateIndex(ctx, "no-table", driver.GSIConfig{Name: "idx"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing table, got %v", err)
+	}
+}
+// ---------------------------------------------------------------------------
+// Event Source Mapping Tests
+// ---------------------------------------------------------------------------
+
+func testEventSourceMapping(t *testing.T, ctx context.Context, d serverlessdriver.Serverless) {
+	t.Helper()
+
+	// Create a function first (needed for context but not enforced by the mock).
+	_, err := d.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+		Name:    "esm-func",
+		Runtime: "go1.x",
+		Handler: "main",
+		Memory:  128,
+		Timeout: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	// Error: missing function name.
+	_, err = d.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:my-queue",
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for empty function name, got %v", err)
+	}
+
+	// Error: missing event source ARN.
+	_, err = d.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		FunctionName: "esm-func",
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for empty event source ARN, got %v", err)
+	}
+
+	// Create an enabled mapping.
+	mapping, err := d.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		FunctionName:     "esm-func",
+		EventSourceArn:   "arn:aws:sqs:us-east-1:123456789012:my-queue",
+		Enabled:          true,
+		BatchSize:        5,
+		StartingPosition: "LATEST",
+	})
+	if err != nil {
+		t.Fatalf("CreateEventSourceMapping: %v", err)
+	}
+	if mapping.UUID == "" {
+		t.Error("expected non-empty UUID")
+	}
+	if mapping.State != "Enabled" {
+		t.Errorf("expected State=Enabled, got %s", mapping.State)
+	}
+	if mapping.BatchSize != 5 {
+		t.Errorf("expected BatchSize=5, got %d", mapping.BatchSize)
+	}
+	if mapping.FunctionName != "esm-func" {
+		t.Errorf("expected FunctionName=esm-func, got %s", mapping.FunctionName)
+	}
+
+	// Create a disabled mapping with default batch size.
+	mapping2, err := d.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		FunctionName:   "esm-func",
+		EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:other-queue",
+		Enabled:        false,
+	})
+	if err != nil {
+		t.Fatalf("CreateEventSourceMapping (disabled): %v", err)
+	}
+	if mapping2.State != "Disabled" {
+		t.Errorf("expected State=Disabled, got %s", mapping2.State)
+	}
+	if mapping2.BatchSize != 10 {
+		t.Errorf("expected default BatchSize=10, got %d", mapping2.BatchSize)
+	}
+
+	// Get mapping.
+	got, err := d.GetEventSourceMapping(ctx, mapping.UUID)
+	if err != nil {
+		t.Fatalf("GetEventSourceMapping: %v", err)
+	}
+	if got.UUID != mapping.UUID {
+		t.Errorf("expected UUID=%s, got %s", mapping.UUID, got.UUID)
+	}
+
+	// Get nonexistent mapping.
+	_, err = d.GetEventSourceMapping(ctx, "nonexistent-uuid")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing mapping, got %v", err)
+	}
+
+	// List all mappings.
+	all, err := d.ListEventSourceMappings(ctx, "")
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings (all): %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("expected 2 mappings, got %d", len(all))
+	}
+
+	// List mappings filtered by function name.
+	filtered, err := d.ListEventSourceMappings(ctx, "esm-func")
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings (filtered): %v", err)
+	}
+	if len(filtered) != 2 {
+		t.Errorf("expected 2 mappings for esm-func, got %d", len(filtered))
+	}
+
+	// List mappings for nonexistent function returns empty.
+	empty, err := d.ListEventSourceMappings(ctx, "nonexistent-func")
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings (nonexistent): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("expected 0 mappings for nonexistent function, got %d", len(empty))
+	}
+
+	// Update: disable the enabled mapping.
+	updated, err := d.UpdateEventSourceMapping(ctx, mapping.UUID, serverlessdriver.EventSourceMappingConfig{
+		Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("UpdateEventSourceMapping (disable): %v", err)
+	}
+	if updated.State != "Disabled" {
+		t.Errorf("expected State=Disabled after update, got %s", updated.State)
+	}
+	if updated.Enabled {
+		t.Errorf("expected Enabled=false after update, got true")
+	}
+
+	// Update: re-enable and change batch size.
+	updated2, err := d.UpdateEventSourceMapping(ctx, mapping.UUID, serverlessdriver.EventSourceMappingConfig{
+		Enabled:   true,
+		BatchSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("UpdateEventSourceMapping (re-enable): %v", err)
+	}
+	if updated2.State != "Enabled" {
+		t.Errorf("expected State=Enabled, got %s", updated2.State)
+	}
+	if updated2.BatchSize != 20 {
+		t.Errorf("expected BatchSize=20, got %d", updated2.BatchSize)
+	}
+
+	// Update nonexistent mapping.
+	_, err = d.UpdateEventSourceMapping(ctx, "nonexistent-uuid", serverlessdriver.EventSourceMappingConfig{})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for update on missing mapping, got %v", err)
+	}
+
+	// Delete mapping.
+	err = d.DeleteEventSourceMapping(ctx, mapping.UUID)
+	if err != nil {
+		t.Fatalf("DeleteEventSourceMapping: %v", err)
+	}
+
+	// Verify deletion.
+	_, err = d.GetEventSourceMapping(ctx, mapping.UUID)
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+
+	// Delete nonexistent mapping.
+	err = d.DeleteEventSourceMapping(ctx, "nonexistent-uuid")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for deleting missing mapping, got %v", err)
+	}
+
+	// Verify only one mapping remains.
+	remaining, err := d.ListEventSourceMappings(ctx, "")
+	if err != nil {
+		t.Fatalf("ListEventSourceMappings (remaining): %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Errorf("expected 1 remaining mapping, got %d", len(remaining))
+	}
+}
+
+func TestEventSourceMappingAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testEventSourceMapping(t, ctx, p.Lambda)
+}
+
+func TestEventSourceMappingAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testEventSourceMapping(t, ctx, p.Functions)
+}
+
+func TestEventSourceMappingGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testEventSourceMapping(t, ctx, p.CloudFunctions)
+}
+// ─── VPC Endpoints ────────────────────────────────────────────
+
+func TestVPCEndpointAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testVPCEndpointOperations(t, ctx, p.VPC)
+}
+
+func TestVPCEndpointAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testVPCEndpointOperations(t, ctx, p.VNet)
+}
+
+func TestVPCEndpointGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testVPCEndpointOperations(t, ctx, p.VPC)
+}
+
+func testVPCEndpointOperations(
+	t *testing.T, ctx context.Context, d netdriver.Networking,
+) {
+	t.Helper()
+
+	// Create VPC first.
+	vpc, err := d.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create endpoint.
+	ep, err := d.CreateVPCEndpoint(ctx, netdriver.VPCEndpointConfig{
+		VPCID:        vpc.ID,
+		ServiceName:  "com.amazonaws.us-east-1.s3",
+		EndpointType: "Gateway",
+		SubnetIDs:    []string{"subnet-1"},
+		Tags:         map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ep.State != "available" {
+		t.Errorf("expected available, got %s", ep.State)
+	}
+
+	if ep.VPCID != vpc.ID {
+		t.Errorf("expected vpc %s, got %s", vpc.ID, ep.VPCID)
+	}
+
+	if ep.ServiceName != "com.amazonaws.us-east-1.s3" {
+		t.Errorf("expected s3 service, got %s", ep.ServiceName)
+	}
+
+	// Describe all.
+	eps, err := d.DescribeVPCEndpoints(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(eps))
+	}
+
+	// Describe by ID.
+	eps, err = d.DescribeVPCEndpoints(ctx, []string{ep.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint, got %d", len(eps))
+	}
+
+	if eps[0].ID != ep.ID {
+		t.Errorf("expected %s, got %s", ep.ID, eps[0].ID)
+	}
+
+	// Modify endpoint.
+	modified, err := d.ModifyVPCEndpoint(ctx, ep.ID, netdriver.VPCEndpointConfig{
+		SubnetIDs: []string{"subnet-2", "subnet-3"},
+		Tags:      map[string]string{"env": "prod"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(modified.SubnetIDs) != 2 {
+		t.Errorf("expected 2 subnets, got %d", len(modified.SubnetIDs))
+	}
+
+	if modified.Tags["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %q", modified.Tags["env"])
+	}
+
+	// Modify nonexistent.
+	_, err = d.ModifyVPCEndpoint(ctx, "vpce-nonexistent", netdriver.VPCEndpointConfig{
+		SubnetIDs: []string{"subnet-1"},
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+
+	// Delete endpoint.
+	if err := d.DeleteVPCEndpoint(ctx, ep.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify gone.
+	eps, err = d.DescribeVPCEndpoints(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(eps) != 0 {
+		t.Errorf("expected 0 endpoints, got %d", len(eps))
+	}
+
+	// Delete nonexistent.
+	err = d.DeleteVPCEndpoint(ctx, ep.ID)
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+
+	// Create with missing VPC ID.
+	_, err = d.CreateVPCEndpoint(ctx, netdriver.VPCEndpointConfig{
+		ServiceName: "svc",
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+
+	// Create with missing service name.
+	_, err = d.CreateVPCEndpoint(ctx, netdriver.VPCEndpointConfig{
+		VPCID: vpc.ID,
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+
+	// Create with nonexistent VPC.
+	_, err = d.CreateVPCEndpoint(ctx, netdriver.VPCEndpointConfig{
+		VPCID:       "vpc-nonexistent",
+		ServiceName: "svc",
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound, got %v", err)
+	}
+}
+func TestHealthCheckAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testHealthCheck(t, ctx, p.Route53)
+}
+
+func TestHealthCheckAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testHealthCheck(t, ctx, p.DNS)
+}
+
+func TestHealthCheckGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testHealthCheck(t, ctx, p.CloudDNS)
+}
+
+func testHealthCheck(t *testing.T, ctx context.Context, d dnsdriver.DNS) {
+	t.Helper()
+
+	// Create health check with defaults.
+	hc, err := d.CreateHealthCheck(ctx, dnsdriver.HealthCheckConfig{
+		Endpoint: "10.0.0.1",
+		Port:     80,
+		Protocol: "HTTP",
+		Path:     "/health",
+		Tags:     map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateHealthCheck: %v", err)
+	}
+
+	if hc.ID == "" {
+		t.Error("expected non-empty health check ID")
+	}
+
+	if hc.Endpoint != "10.0.0.1" {
+		t.Errorf("expected endpoint 10.0.0.1, got %q", hc.Endpoint)
+	}
+
+	if hc.Status != "HEALTHY" {
+		t.Errorf("expected HEALTHY status, got %q", hc.Status)
+	}
+
+	if hc.IntervalSeconds != 30 {
+		t.Errorf("expected default interval 30, got %d", hc.IntervalSeconds)
+	}
+
+	if hc.FailureThreshold != 3 {
+		t.Errorf("expected default threshold 3, got %d", hc.FailureThreshold)
+	}
+
+	if hc.Tags["env"] != "test" {
+		t.Errorf("expected tag env=test, got %q", hc.Tags["env"])
+	}
+
+	// Get health check.
+	got, err := d.GetHealthCheck(ctx, hc.ID)
+	if err != nil {
+		t.Fatalf("GetHealthCheck: %v", err)
+	}
+
+	if got.Endpoint != "10.0.0.1" {
+		t.Errorf("expected endpoint 10.0.0.1, got %q", got.Endpoint)
+	}
+
+	// List health checks.
+	checks, err := d.ListHealthChecks(ctx)
+	if err != nil {
+		t.Fatalf("ListHealthChecks: %v", err)
+	}
+
+	if len(checks) != 1 {
+		t.Errorf("expected 1 health check, got %d", len(checks))
+	}
+
+	// Create second health check.
+	hc2, err := d.CreateHealthCheck(ctx, dnsdriver.HealthCheckConfig{
+		Endpoint:         "10.0.0.2",
+		Port:             443,
+		Protocol:         "HTTPS",
+		Path:             "/status",
+		IntervalSeconds:  10,
+		FailureThreshold: 5,
+	})
+	if err != nil {
+		t.Fatalf("CreateHealthCheck (second): %v", err)
+	}
+
+	if hc2.IntervalSeconds != 10 {
+		t.Errorf("expected interval 10, got %d", hc2.IntervalSeconds)
+	}
+
+	if hc2.FailureThreshold != 5 {
+		t.Errorf("expected threshold 5, got %d", hc2.FailureThreshold)
+	}
+
+	checks, err = d.ListHealthChecks(ctx)
+	if err != nil {
+		t.Fatalf("ListHealthChecks (after second create): %v", err)
+	}
+
+	if len(checks) != 2 {
+		t.Errorf("expected 2 health checks, got %d", len(checks))
+	}
+
+	// Update health check.
+	updated, err := d.UpdateHealthCheck(ctx, hc.ID, dnsdriver.HealthCheckConfig{
+		Endpoint: "10.0.0.99",
+		Port:     8080,
+		Tags:     map[string]string{"env": "prod"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateHealthCheck: %v", err)
+	}
+
+	if updated.Endpoint != "10.0.0.99" {
+		t.Errorf("expected updated endpoint 10.0.0.99, got %q", updated.Endpoint)
+	}
+
+	if updated.Port != 8080 {
+		t.Errorf("expected updated port 8080, got %d", updated.Port)
+	}
+
+	if updated.Tags["env"] != "prod" {
+		t.Errorf("expected updated tag env=prod, got %q", updated.Tags["env"])
+	}
+
+	// Set health check status.
+	err = d.SetHealthCheckStatus(ctx, hc.ID, "UNHEALTHY")
+	if err != nil {
+		t.Fatalf("SetHealthCheckStatus: %v", err)
+	}
+
+	got, err = d.GetHealthCheck(ctx, hc.ID)
+	if err != nil {
+		t.Fatalf("GetHealthCheck (after status change): %v", err)
+	}
+
+	if got.Status != "UNHEALTHY" {
+		t.Errorf("expected UNHEALTHY status, got %q", got.Status)
+	}
+
+	// Set back to healthy.
+	err = d.SetHealthCheckStatus(ctx, hc.ID, "HEALTHY")
+	if err != nil {
+		t.Fatalf("SetHealthCheckStatus (back to healthy): %v", err)
+	}
+
+	got, err = d.GetHealthCheck(ctx, hc.ID)
+	if err != nil {
+		t.Fatalf("GetHealthCheck (after revert): %v", err)
+	}
+
+	if got.Status != "HEALTHY" {
+		t.Errorf("expected HEALTHY status, got %q", got.Status)
+	}
+
+	// Delete health check.
+	err = d.DeleteHealthCheck(ctx, hc.ID)
+	if err != nil {
+		t.Fatalf("DeleteHealthCheck: %v", err)
+	}
+
+	checks, err = d.ListHealthChecks(ctx)
+	if err != nil {
+		t.Fatalf("ListHealthChecks (after delete): %v", err)
+	}
+
+	if len(checks) != 1 {
+		t.Errorf("expected 1 health check after delete, got %d", len(checks))
+	}
+
+	// Error: create with empty endpoint.
+	_, err = d.CreateHealthCheck(ctx, dnsdriver.HealthCheckConfig{})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for empty endpoint, got %v", err)
+	}
+
+	// Error: get nonexistent.
+	_, err = d.GetHealthCheck(ctx, "nonexistent")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing health check, got %v", err)
+	}
+
+	// Error: update nonexistent.
+	_, err = d.UpdateHealthCheck(ctx, "nonexistent", dnsdriver.HealthCheckConfig{Endpoint: "10.0.0.1"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for update on missing health check, got %v", err)
+	}
+
+	// Error: delete nonexistent.
+	err = d.DeleteHealthCheck(ctx, "nonexistent")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for delete on missing health check, got %v", err)
+	}
+
+	// Error: set status on nonexistent.
+	err = d.SetHealthCheckStatus(ctx, "nonexistent", "HEALTHY")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for set status on missing health check, got %v", err)
+	}
+
+	// Error: set invalid status.
+	err = d.SetHealthCheckStatus(ctx, hc2.ID, "INVALID")
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for invalid status, got %v", err)
+	}
+}
 func testAlarmActions(
 	t *testing.T,
 	label string,
