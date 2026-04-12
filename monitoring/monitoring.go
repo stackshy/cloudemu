@@ -132,3 +132,62 @@ func (m *Monitoring) SetAlarmState(ctx context.Context, name, state, reason stri
 	_, err := m.do(ctx, "SetAlarmState", name, func() (any, error) { return nil, m.driver.SetAlarmState(ctx, name, state, reason) })
 	return err
 }
+
+// CreateNotificationChannel creates a new notification channel.
+func (m *Monitoring) CreateNotificationChannel(
+	ctx context.Context, cfg driver.NotificationChannelConfig,
+) (*driver.NotificationChannelInfo, error) {
+	out, err := m.do(ctx, "CreateNotificationChannel", cfg, func() (any, error) {
+		return m.driver.CreateNotificationChannel(ctx, cfg)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.NotificationChannelInfo), nil
+}
+
+// DeleteNotificationChannel deletes a notification channel by ID.
+func (m *Monitoring) DeleteNotificationChannel(ctx context.Context, id string) error {
+	_, err := m.do(ctx, "DeleteNotificationChannel", id, func() (any, error) {
+		return nil, m.driver.DeleteNotificationChannel(ctx, id)
+	})
+
+	return err
+}
+
+// GetNotificationChannel returns a notification channel by ID.
+func (m *Monitoring) GetNotificationChannel(ctx context.Context, id string) (*driver.NotificationChannelInfo, error) {
+	out, err := m.do(ctx, "GetNotificationChannel", id, func() (any, error) {
+		return m.driver.GetNotificationChannel(ctx, id)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.NotificationChannelInfo), nil
+}
+
+// ListNotificationChannels returns all notification channels.
+func (m *Monitoring) ListNotificationChannels(ctx context.Context) ([]driver.NotificationChannelInfo, error) {
+	out, err := m.do(ctx, "ListNotificationChannels", nil, func() (any, error) {
+		return m.driver.ListNotificationChannels(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.NotificationChannelInfo), nil
+}
+
+// GetAlarmHistory returns alarm history entries filtered by alarm name.
+func (m *Monitoring) GetAlarmHistory(ctx context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
+	out, err := m.do(ctx, "GetAlarmHistory", alarmName, func() (any, error) {
+		return m.driver.GetAlarmHistory(ctx, alarmName, limit)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.AlarmHistoryEntry), nil
+}

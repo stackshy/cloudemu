@@ -1015,3 +1015,23 @@ func (m *monitoringMock) DescribeAlarms(_ context.Context, _ []string) ([]mondri
 func (m *monitoringMock) SetAlarmState(_ context.Context, _, _, _ string) error {
 	return nil
 }
+
+func (m *monitoringMock) CreateNotificationChannel(_ context.Context, _ mondriver.NotificationChannelConfig) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *monitoringMock) DeleteNotificationChannel(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *monitoringMock) GetNotificationChannel(_ context.Context, _ string) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *monitoringMock) ListNotificationChannels(_ context.Context) ([]mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *monitoringMock) GetAlarmHistory(_ context.Context, _ string, _ int) ([]mondriver.AlarmHistoryEntry, error) {
+	return nil, nil
+}

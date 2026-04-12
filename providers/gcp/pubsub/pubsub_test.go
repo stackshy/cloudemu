@@ -591,6 +591,26 @@ func (m *pubsubMonMock) SetAlarmState(_ context.Context, _, _, _ string) error {
 	return nil
 }
 
+func (m *pubsubMonMock) CreateNotificationChannel(_ context.Context, _ mondriver.NotificationChannelConfig) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *pubsubMonMock) DeleteNotificationChannel(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *pubsubMonMock) GetNotificationChannel(_ context.Context, _ string) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *pubsubMonMock) ListNotificationChannels(_ context.Context) ([]mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *pubsubMonMock) GetAlarmHistory(_ context.Context, _ string, _ int) ([]mondriver.AlarmHistoryEntry, error) {
+	return nil, nil
+}
+
 func TestSendMessageBatchFIFOWithDedup(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newTestMock()
