@@ -249,3 +249,47 @@ func (db *Database) TransactWriteItems(
 
 	return err
 }
+
+func (db *Database) CreateIndex(ctx context.Context, table string, cfg driver.GSIConfig) (*driver.IndexInfo, error) {
+	out, err := db.do(ctx, "CreateIndex", map[string]any{"table": table}, func() (any, error) {
+		return db.driver.CreateIndex(ctx, table, cfg)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.IndexInfo), nil
+}
+
+func (db *Database) DeleteIndex(ctx context.Context, table, indexName string) error {
+	_, err := db.do(ctx, "DeleteIndex", map[string]any{"table": table, "indexName": indexName}, func() (any, error) {
+		return nil, db.driver.DeleteIndex(ctx, table, indexName)
+	})
+
+	return err
+}
+
+func (db *Database) DescribeIndex(ctx context.Context, table, indexName string) (*driver.IndexInfo, error) {
+	out, err := db.do(ctx, "DescribeIndex", map[string]any{"table": table, "indexName": indexName}, func() (any, error) {
+		return db.driver.DescribeIndex(ctx, table, indexName)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.IndexInfo), nil
+}
+
+func (db *Database) ListIndexes(ctx context.Context, table string) ([]driver.IndexInfo, error) {
+	out, err := db.do(ctx, "ListIndexes", map[string]any{"table": table}, func() (any, error) {
+		return db.driver.ListIndexes(ctx, table)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.IndexInfo), nil
+}
