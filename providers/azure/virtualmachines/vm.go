@@ -91,6 +91,7 @@ type Mock struct {
 	volumes      *memstore.Store[*driver.VolumeInfo]
 	snapshots    *memstore.Store[*driver.SnapshotInfo]
 	images       *memstore.Store[*driver.ImageInfo]
+	keyPairs     *memstore.Store[*driver.KeyPairInfo]
 	sm           *statemachine.Machine
 	opts         *config.Options
 	ipCounter    atomic.Int64
@@ -170,6 +171,7 @@ func New(opts *config.Options) *Mock {
 		volumes:      memstore.New[*driver.VolumeInfo](),
 		snapshots:    memstore.New[*driver.SnapshotInfo](),
 		images:       memstore.New[*driver.ImageInfo](),
+		keyPairs:     memstore.New[*driver.KeyPairInfo](),
 		sm:           statemachine.New(compute.VMTransitions()),
 		opts:         opts,
 	}
@@ -516,6 +518,76 @@ func (m *Mock) DeregisterImage(_ context.Context, id string) error {
 
 func (m *Mock) DescribeImages(_ context.Context, ids []string) ([]driver.ImageInfo, error) {
 	return describeResources(m.images, ids), nil
+}
+
+// CreateKeyPair creates a new key pair.
+func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driver.KeyPairInfo, error) {
+	if cfg.Name == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "key pair name must not be empty")
+	}
+
+	if _, ok := m.keyPairs.Get(cfg.Name); ok {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "key pair %q already exists", cfg.Name)
+	}
+
+	keyType := cfg.KeyType
+	if keyType == "" {
+		keyType = "rsa"
+	}
+
+	kp := &driver.KeyPairInfo{
+		ID:          idgen.AzureID("sub", "rg", "Microsoft.Compute", "sshPublicKeys", cfg.Name),
+		Name:        cfg.Name,
+		Fingerprint: "fp-" + cfg.Name,
+		KeyType:     keyType,
+		PublicKey:   "mock-public-key-" + cfg.Name,
+		PrivateKey:  "mock-private-key-" + cfg.Name,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:        copyTags(cfg.Tags),
+	}
+
+	m.keyPairs.Set(cfg.Name, kp)
+
+	result := *kp
+
+	return &result, nil
+}
+
+// DeleteKeyPair deletes a key pair by name.
+func (m *Mock) DeleteKeyPair(_ context.Context, name string) error {
+	if !m.keyPairs.Delete(name) {
+		return cerrors.Newf(cerrors.NotFound, "key pair %q not found", name)
+	}
+
+	return nil
+}
+
+// DescribeKeyPairs returns key pairs matching the given names.
+func (m *Mock) DescribeKeyPairs(_ context.Context, names []string) ([]driver.KeyPairInfo, error) {
+	if len(names) == 0 {
+		all := m.keyPairs.All()
+		result := make([]driver.KeyPairInfo, 0, len(all))
+
+		for _, kp := range all {
+			cp := *kp
+			cp.PrivateKey = ""
+			result = append(result, cp)
+		}
+
+		return result, nil
+	}
+
+	var result []driver.KeyPairInfo
+
+	for _, name := range names {
+		if kp, ok := m.keyPairs.Get(name); ok {
+			cp := *kp
+			cp.PrivateKey = ""
+			result = append(result, cp)
+		}
+	}
+
+	return result, nil
 }
 
 func describeResources[T any](store *memstore.Store[*T], ids []string) []T {

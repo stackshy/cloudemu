@@ -206,6 +206,31 @@ type RouteTableAssociation struct {
 	SubnetID     string
 }
 
+// VPCEndpointConfig describes a VPC endpoint to create.
+type VPCEndpointConfig struct {
+	VPCID            string
+	ServiceName      string
+	EndpointType     string // "Gateway" or "Interface"
+	SubnetIDs        []string
+	SecurityGroupIDs []string
+	RouteTableIDs    []string
+	Tags             map[string]string
+}
+
+// VPCEndpoint describes a VPC endpoint.
+type VPCEndpoint struct {
+	ID               string
+	VPCID            string
+	ServiceName      string
+	EndpointType     string
+	State            string // "available", "pending", "deleting"
+	SubnetIDs        []string
+	SecurityGroupIDs []string
+	RouteTableIDs    []string
+	Tags             map[string]string
+	CreatedAt        string
+}
+
 // Networking is the interface that networking provider
 // implementations must satisfy.
 type Networking interface {
@@ -275,4 +300,10 @@ type Networking interface {
 	// Route Table Associations
 	AssociateRouteTable(ctx context.Context, routeTableID, subnetID string) (*RouteTableAssociation, error)
 	DisassociateRouteTable(ctx context.Context, associationID string) error
+
+	// VPC Endpoints
+	CreateVPCEndpoint(ctx context.Context, config VPCEndpointConfig) (*VPCEndpoint, error)
+	DeleteVPCEndpoint(ctx context.Context, id string) error
+	DescribeVPCEndpoints(ctx context.Context, ids []string) ([]VPCEndpoint, error)
+	ModifyVPCEndpoint(ctx context.Context, id string, config VPCEndpointConfig) (*VPCEndpoint, error)
 }

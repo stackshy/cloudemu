@@ -172,6 +172,25 @@ type ImageInfo struct {
 	Tags        map[string]string
 }
 
+// KeyPairConfig describes a key pair to create.
+type KeyPairConfig struct {
+	Name    string
+	KeyType string // "rsa" or "ed25519"
+	Tags    map[string]string
+}
+
+// KeyPairInfo describes a key pair.
+type KeyPairInfo struct {
+	ID          string
+	Name        string
+	Fingerprint string
+	KeyType     string
+	PublicKey   string
+	PrivateKey  string // only returned on create
+	CreatedAt   string
+	Tags        map[string]string
+}
+
 // Compute is the interface that compute provider implementations must satisfy.
 type Compute interface {
 	RunInstances(ctx context.Context, config InstanceConfig, count int) ([]Instance, error)
@@ -222,4 +241,9 @@ type Compute interface {
 	CreateImage(ctx context.Context, config ImageConfig) (*ImageInfo, error)
 	DeregisterImage(ctx context.Context, id string) error
 	DescribeImages(ctx context.Context, ids []string) ([]ImageInfo, error)
+
+	// Key Pairs
+	CreateKeyPair(ctx context.Context, config KeyPairConfig) (*KeyPairInfo, error)
+	DeleteKeyPair(ctx context.Context, name string) error
+	DescribeKeyPairs(ctx context.Context, names []string) ([]KeyPairInfo, error)
 }
