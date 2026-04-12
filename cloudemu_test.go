@@ -7956,6 +7956,283 @@ func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket
 	}
 }
 
+// testKeyPairOperations is a shared helper that tests key pair CRUD operations.
+func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Compute) {
+	t.Helper()
+
+	// Create a key pair
+	kp, err := c.CreateKeyPair(ctx, computedriver.KeyPairConfig{
+		Name:    "test-key",
+		KeyType: "ed25519",
+		Tags:    map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateKeyPair: %v", err)
+	}
+
+	if kp.Name != "test-key" {
+		t.Errorf("expected name 'test-key', got %q", kp.Name)
+	}
+
+	if kp.KeyType != "ed25519" {
+		t.Errorf("expected key type 'ed25519', got %q", kp.KeyType)
+	}
+
+	if kp.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+
+	if kp.Fingerprint != "fp-test-key" {
+		t.Errorf("expected fingerprint 'fp-test-key', got %q", kp.Fingerprint)
+	}
+
+	if kp.PrivateKey == "" {
+		t.Error("expected PrivateKey to be populated on create")
+	}
+
+	if kp.PublicKey == "" {
+		t.Error("expected PublicKey to be populated")
+	}
+
+	if kp.CreatedAt == "" {
+		t.Error("expected non-empty CreatedAt")
+	}
+
+	if kp.Tags["env"] != "test" {
+		t.Errorf("expected tag env=test, got %q", kp.Tags["env"])
+	}
+
+	// Create another with default key type
+	kp2, err := c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: "default-key"})
+	if err != nil {
+		t.Fatalf("CreateKeyPair default: %v", err)
+	}
+
+	if kp2.KeyType != "rsa" {
+		t.Errorf("expected default key type 'rsa', got %q", kp2.KeyType)
+	}
+
+	// Duplicate should fail
+	_, err = c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: "test-key"})
+	if err == nil {
+		t.Error("expected error for duplicate key pair")
+	}
+
+	// Empty name should fail
+	_, err = c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: ""})
+	if err == nil {
+		t.Error("expected error for empty key pair name")
+	}
+
+	// Describe all
+	all, err := c.DescribeKeyPairs(ctx, nil)
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs all: %v", err)
+	}
+
+	if len(all) != 2 {
+		t.Fatalf("expected 2 key pairs, got %d", len(all))
+	}
+
+	for _, kpi := range all {
+		if kpi.PrivateKey != "" {
+			t.Errorf("DescribeKeyPairs should not return PrivateKey, got %q", kpi.PrivateKey)
+		}
+	}
+
+	// Describe by name
+	filtered, err := c.DescribeKeyPairs(ctx, []string{"test-key"})
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs filtered: %v", err)
+	}
+
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 key pair, got %d", len(filtered))
+	}
+
+	if filtered[0].Name != "test-key" {
+		t.Errorf("expected name 'test-key', got %q", filtered[0].Name)
+	}
+
+	// Delete
+	if err := c.DeleteKeyPair(ctx, "test-key"); err != nil {
+		t.Fatalf("DeleteKeyPair: %v", err)
+	}
+
+	// Delete again should fail
+	err = c.DeleteKeyPair(ctx, "test-key")
+	if err == nil {
+		t.Error("expected error deleting non-existent key pair")
+	}
+
+	// Verify only one remains
+	remaining, err := c.DescribeKeyPairs(ctx, nil)
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs after delete: %v", err)
+	}
+
+	if len(remaining) != 1 {
+		t.Errorf("expected 1 key pair after delete, got %d", len(remaining))
+	}
+}
+
+func TestKeyPairAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testKeyPairOperations(t, ctx, p.EC2)
+}
+
+func TestKeyPairAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testKeyPairOperations(t, ctx, p.VirtualMachines)
+}
+
+func TestKeyPairGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testKeyPairOperations(t, ctx, p.GCE)
+}
+
+// ─── Global Secondary Indexes ───────────────────────────────────────────
+
+func TestGSIOperationsAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testGSIOperations(t, ctx, p.DynamoDB)
+}
+
+func TestGSIOperationsAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testGSIOperations(t, ctx, p.CosmosDB)
+}
+
+func TestGSIOperationsGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testGSIOperations(t, ctx, p.Firestore)
+}
+
+func testGSIOperations(t *testing.T, ctx context.Context, d driver.Database) {
+	t.Helper()
+
+	// Create table with no GSIs.
+	err := d.CreateTable(ctx, driver.TableConfig{
+		Name:         "users",
+		PartitionKey: "id",
+		SortKey:      "created",
+	})
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// Initially no indexes.
+	indexes, err := d.ListIndexes(ctx, "users")
+	if err != nil {
+		t.Fatalf("ListIndexes: %v", err)
+	}
+
+	if len(indexes) != 0 {
+		t.Errorf("expected 0 indexes, got %d", len(indexes))
+	}
+
+	// Create a GSI.
+	info, err := d.CreateIndex(ctx, "users", driver.GSIConfig{
+		Name: "email-index", PartitionKey: "email", SortKey: "created",
+	})
+	if err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	if info.Name != "email-index" {
+		t.Errorf("expected index name email-index, got %s", info.Name)
+	}
+
+	if info.Status != "ACTIVE" {
+		t.Errorf("expected status ACTIVE, got %s", info.Status)
+	}
+
+	// Describe the index.
+	desc, err := d.DescribeIndex(ctx, "users", "email-index")
+	if err != nil {
+		t.Fatalf("DescribeIndex: %v", err)
+	}
+
+	if desc.PartitionKey != "email" {
+		t.Errorf("expected partition key email, got %s", desc.PartitionKey)
+	}
+
+	// List should show 1 index.
+	indexes, err = d.ListIndexes(ctx, "users")
+	if err != nil {
+		t.Fatalf("ListIndexes: %v", err)
+	}
+
+	if len(indexes) != 1 {
+		t.Errorf("expected 1 index, got %d", len(indexes))
+	}
+
+	// Put some items and query via GSI.
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "1", "email": "alice@test.com", "created": "2025-01-01"})
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "2", "email": "alice@test.com", "created": "2025-06-01"})
+	_ = d.PutItem(ctx, "users", map[string]any{"id": "3", "email": "bob@test.com", "created": "2025-03-01"})
+
+	result, err := d.Query(ctx, driver.QueryInput{
+		Table:     "users",
+		IndexName: "email-index",
+		KeyCondition: driver.KeyCondition{
+			PartitionKey: "email",
+			PartitionVal: "alice@test.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Query via GSI: %v", err)
+	}
+
+	if result.Count != 2 {
+		t.Errorf("expected 2 items for alice@test.com via GSI, got %d", result.Count)
+	}
+
+	// Duplicate index name should fail.
+	_, err = d.CreateIndex(ctx, "users", driver.GSIConfig{
+		Name: "email-index", PartitionKey: "name",
+	})
+	if err == nil {
+		t.Error("expected error for duplicate index, got nil")
+	}
+
+	// Delete the index.
+	err = d.DeleteIndex(ctx, "users", "email-index")
+	if err != nil {
+		t.Fatalf("DeleteIndex: %v", err)
+	}
+
+	// Describe should fail after delete.
+	_, err = d.DescribeIndex(ctx, "users", "email-index")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound after delete, got %v", err)
+	}
+
+	// Query via deleted index should fail.
+	_, err = d.Query(ctx, driver.QueryInput{
+		Table:     "users",
+		IndexName: "email-index",
+		KeyCondition: driver.KeyCondition{
+			PartitionKey: "email",
+			PartitionVal: "alice@test.com",
+		},
+	})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for deleted index query, got %v", err)
+	}
+
+	// Error: table not found.
+	_, err = d.CreateIndex(ctx, "no-table", driver.GSIConfig{Name: "idx"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing table, got %v", err)
+	}
+}
 // ---------------------------------------------------------------------------
 // Event Source Mapping Tests
 // ---------------------------------------------------------------------------
