@@ -649,3 +649,195 @@ func TestResolveNotFound(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, values)
 }
+
+// ---------------------------------------------------------------------------
+// Dependency Graph tests
+// ---------------------------------------------------------------------------
+
+// createGraphResources is a helper that creates a VPC, subnet, SG, and instance.
+// It returns their IDs for graph verification.
+func createGraphResources(
+	t *testing.T,
+	ctx context.Context,
+	ec2Mock *ec2.Mock,
+	vpcMock *vpc.Mock,
+) (vpcID, subnetID, sgID, instanceID string) {
+	t.Helper()
+
+	v, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	subnet, err := vpcMock.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID: v.ID, CIDRBlock: "10.0.1.0/24", AvailabilityZone: "us-east-1a",
+	})
+	require.NoError(t, err)
+
+	sg, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "graph-sg", Description: "graph test",
+	})
+	require.NoError(t, err)
+
+	instances, err := ec2Mock.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+		SubnetID: subnet.ID, SecurityGroups: []string{sg.ID},
+	}, 1)
+	require.NoError(t, err)
+
+	err = ec2Mock.SetInstanceVPC(instances[0].ID, v.ID)
+	require.NoError(t, err)
+
+	return v.ID, subnet.ID, sg.ID, instances[0].ID
+}
+
+func TestBuildDependencyGraph(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, sgID, instanceID := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, graph)
+
+	// Verify all resources are present.
+	ids := resourceIDs(graph)
+	assert.Contains(t, ids, vpcID)
+	assert.Contains(t, ids, subnetID)
+	assert.Contains(t, ids, sgID)
+	assert.Contains(t, ids, instanceID)
+
+	// Verify dependencies exist.
+	assert.True(t, hasDependency(graph, subnetID, vpcID, "member-of"))
+	assert.True(t, hasDependency(graph, sgID, vpcID, "member-of"))
+	assert.True(t, hasDependency(graph, instanceID, vpcID, "member-of"))
+	assert.True(t, hasDependency(graph, instanceID, subnetID, "member-of"))
+	assert.True(t, hasDependency(graph, instanceID, sgID, "secured-by"))
+}
+
+func TestBlastRadius(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, sgID, instanceID := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	report, err := engine.BlastRadius(ctx, vpcID)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+
+	assert.Equal(t, vpcID, report.Target.ID)
+	assert.Equal(t, "delete", report.Action)
+
+	// Subnet and SG are direct dependents of VPC.
+	directIDs := refIDs(report.DirectlyAffected)
+	assert.Contains(t, directIDs, subnetID)
+	assert.Contains(t, directIDs, sgID)
+
+	// Instance depends on subnet and SG, so it should appear in transitive impact.
+	allImpacted := append(refIDs(report.DirectlyAffected), refIDs(report.TransitiveImpact)...)
+	assert.Contains(t, allImpacted, instanceID)
+	assert.NotEmpty(t, report.BrokenConnections)
+	assert.NotEmpty(t, report.Summary)
+}
+
+func TestDependsOn(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, sgID, instanceID := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	deps, err := engine.DependsOn(ctx, instanceID)
+	require.NoError(t, err)
+
+	depIDs := refIDs(deps)
+	assert.Contains(t, depIDs, vpcID)
+	assert.Contains(t, depIDs, subnetID)
+	assert.Contains(t, depIDs, sgID)
+}
+
+func TestDependedBy(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, sgID, instanceID := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	dependents, err := engine.DependedBy(ctx, vpcID)
+	require.NoError(t, err)
+
+	depIDs := refIDs(dependents)
+	assert.Contains(t, depIDs, subnetID)
+	assert.Contains(t, depIDs, sgID)
+	assert.Contains(t, depIDs, instanceID)
+}
+
+func TestExportDOT(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, _, _ := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+
+	dot := graph.ExportDOT()
+	assert.Contains(t, dot, "digraph CloudEmu")
+	assert.Contains(t, dot, vpcID)
+	assert.Contains(t, dot, subnetID)
+	assert.Contains(t, dot, "member-of")
+}
+
+func TestExportMermaid(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, _, _ := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+
+	mermaid := graph.ExportMermaid()
+	assert.Contains(t, mermaid, "graph TD")
+	assert.Contains(t, mermaid, vpcID)
+	assert.Contains(t, mermaid, subnetID)
+	assert.Contains(t, mermaid, "member-of")
+}
+
+func TestBlastRadiusNotFound(t *testing.T) {
+	engine, _, _, _ := newTestEngine()
+	ctx := context.Background()
+
+	_, err := engine.BlastRadius(ctx, "nonexistent-resource")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// ---------------------------------------------------------------------------
+// Graph test helpers
+// ---------------------------------------------------------------------------
+
+func resourceIDs(g *DependencyGraph) []string {
+	ids := make([]string, 0, len(g.Resources))
+	for _, r := range g.Resources {
+		ids = append(ids, r.ID)
+	}
+
+	return ids
+}
+
+func refIDs(refs []ResourceRef) []string {
+	ids := make([]string, 0, len(refs))
+	for _, r := range refs {
+		ids = append(ids, r.ID)
+	}
+
+	return ids
+}
+
+func hasDependency(g *DependencyGraph, fromID, toID, depType string) bool {
+	for _, d := range g.Dependencies {
+		if d.From.ID == fromID && d.To.ID == toID && d.Type == depType {
+			return true
+		}
+	}
+
+	return false
+}
