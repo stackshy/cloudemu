@@ -1761,3 +1761,32 @@ func (c *vmMetricsCollector) hasMetric(namespace, metricName string) bool {
 
 	return false
 }
+
+func TestSetInstanceVPC(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cfg := driver.InstanceConfig{
+		ImageID:      "img-123",
+		InstanceType: "Standard_B1s",
+		Tags:         map[string]string{"env": "test"},
+	}
+
+	t.Run("success", func(t *testing.T) {
+		instances, err := m.RunInstances(ctx, cfg, 1)
+		require.NoError(t, err)
+
+		err = m.SetInstanceVPC(instances[0].ID, "vnet-123")
+		require.NoError(t, err)
+
+		desc, err := m.DescribeInstances(ctx, []string{instances[0].ID}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 1, len(desc))
+		assert.Equal(t, "vnet-123", desc[0].VPCID)
+	})
+
+	t.Run("instance not found", func(t *testing.T) {
+		err := m.SetInstanceVPC("i-nonexistent", "vnet-123")
+		require.Error(t, err)
+	})
+}
