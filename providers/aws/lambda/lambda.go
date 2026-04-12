@@ -20,6 +20,13 @@ var _ driver.Serverless = (*Mock)(nil)
 // initialVersion is the starting version number for published versions.
 const initialVersion = 1
 
+const (
+	defaultBatchSize = 10
+	stateEnabled     = "Enabled"
+	stateDisabled    = "Disabled"
+	timeFormat       = "2006-01-02T15:04:05Z"
+)
+
 type versionData struct {
 	config    driver.FunctionConfig
 	version   string
@@ -49,6 +56,7 @@ type funcData struct {
 type Mock struct {
 	funcs      *memstore.Store[funcData]
 	layers     *memstore.Store[*layerData]
+	mappings   *memstore.Store[*driver.EventSourceMappingInfo]
 	opts       *config.Options
 	handlersMu sync.RWMutex
 	handlers   map[string]driver.HandlerFunc
@@ -78,6 +86,7 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		funcs:    memstore.New[funcData](),
 		layers:   memstore.New[*layerData](),
+		mappings: memstore.New[*driver.EventSourceMappingInfo](),
 		opts:     opts,
 		handlers: make(map[string]driver.HandlerFunc),
 	}

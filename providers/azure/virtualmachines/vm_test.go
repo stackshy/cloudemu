@@ -1728,6 +1728,26 @@ func (c *vmMetricsCollector) ListMetrics(_ context.Context, _ string) ([]string,
 	return nil, nil
 }
 
+func (c *vmMetricsCollector) CreateNotificationChannel(_ context.Context, _ mondriver.NotificationChannelConfig) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (c *vmMetricsCollector) DeleteNotificationChannel(_ context.Context, _ string) error {
+	return nil
+}
+
+func (c *vmMetricsCollector) GetNotificationChannel(_ context.Context, _ string) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (c *vmMetricsCollector) ListNotificationChannels(_ context.Context) ([]mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (c *vmMetricsCollector) GetAlarmHistory(_ context.Context, _ string, _ int) ([]mondriver.AlarmHistoryEntry, error) {
+	return nil, nil
+}
+
 func (c *vmMetricsCollector) reset() {
 	c.data = nil
 }

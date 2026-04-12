@@ -16,15 +16,17 @@ import (
 
 // mockDriver implements driver.DNS for testing the portable wrapper.
 type mockDriver struct {
-	zones   map[string]*driver.ZoneInfo
-	records map[string]map[string]*driver.RecordInfo // zoneID -> "name|type" -> record
-	seq     int
+	zones        map[string]*driver.ZoneInfo
+	records      map[string]map[string]*driver.RecordInfo // zoneID -> "name|type" -> record
+	healthChecks map[string]*driver.HealthCheckInfo
+	seq          int
 }
 
 func newMockDriver() *mockDriver {
 	return &mockDriver{
-		zones:   make(map[string]*driver.ZoneInfo),
-		records: make(map[string]map[string]*driver.RecordInfo),
+		zones:        make(map[string]*driver.ZoneInfo),
+		records:      make(map[string]map[string]*driver.RecordInfo),
+		healthChecks: make(map[string]*driver.HealthCheckInfo),
 	}
 }
 
@@ -162,6 +164,78 @@ func (m *mockDriver) UpdateRecord(_ context.Context, config driver.RecordConfig)
 	info.Values = config.Values
 
 	return info, nil
+}
+
+func (m *mockDriver) CreateHealthCheck(_ context.Context, config driver.HealthCheckConfig) (*driver.HealthCheckInfo, error) {
+	if config.Endpoint == "" {
+		return nil, fmt.Errorf("endpoint required")
+	}
+
+	id := m.nextID("hc")
+	info := &driver.HealthCheckInfo{
+		ID: id, Endpoint: config.Endpoint, Port: config.Port, Protocol: config.Protocol,
+		Path: config.Path, IntervalSeconds: config.IntervalSeconds, FailureThreshold: config.FailureThreshold,
+		Status: "HEALTHY", Tags: config.Tags,
+	}
+	m.healthChecks[id] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteHealthCheck(_ context.Context, id string) error {
+	if _, ok := m.healthChecks[id]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.healthChecks, id)
+
+	return nil
+}
+
+func (m *mockDriver) GetHealthCheck(_ context.Context, id string) (*driver.HealthCheckInfo, error) {
+	info, ok := m.healthChecks[id]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+
+	return info, nil
+}
+
+func (m *mockDriver) ListHealthChecks(_ context.Context) ([]driver.HealthCheckInfo, error) {
+	result := make([]driver.HealthCheckInfo, 0, len(m.healthChecks))
+	for _, info := range m.healthChecks {
+		result = append(result, *info)
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) UpdateHealthCheck(_ context.Context, id string, config driver.HealthCheckConfig) (*driver.HealthCheckInfo, error) {
+	info, ok := m.healthChecks[id]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+
+	if config.Endpoint != "" {
+		info.Endpoint = config.Endpoint
+	}
+
+	if config.Port != 0 {
+		info.Port = config.Port
+	}
+
+	return info, nil
+}
+
+func (m *mockDriver) SetHealthCheckStatus(_ context.Context, id, status string) error {
+	info, ok := m.healthChecks[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+
+	info.Status = status
+
+	return nil
 }
 
 func newTestDNS(opts ...Option) *DNS {
@@ -493,4 +567,118 @@ func TestDNSAllOptionsComposed(t *testing.T) {
 
 	q := metrics.NewQuery(mc)
 	assert.Equal(t, 2, q.ByName("calls_total").Count())
+}
+
+func TestCreateHealthCheck(t *testing.T) {
+	d := newTestDNS()
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		hc, err := d.CreateHealthCheck(ctx, driver.HealthCheckConfig{
+			Endpoint: "10.0.0.1", Port: 80, Protocol: "HTTP",
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, hc.ID)
+		assert.Equal(t, "10.0.0.1", hc.Endpoint)
+		assert.Equal(t, "HEALTHY", hc.Status)
+	})
+
+	t.Run("empty endpoint error", func(t *testing.T) {
+		_, err := d.CreateHealthCheck(ctx, driver.HealthCheckConfig{})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteHealthCheck(t *testing.T) {
+	d := newTestDNS()
+	ctx := context.Background()
+
+	hc, err := d.CreateHealthCheck(ctx, driver.HealthCheckConfig{Endpoint: "10.0.0.1"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := d.DeleteHealthCheck(ctx, hc.ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := d.DeleteHealthCheck(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestGetHealthCheck(t *testing.T) {
+	d := newTestDNS()
+	ctx := context.Background()
+
+	hc, err := d.CreateHealthCheck(ctx, driver.HealthCheckConfig{Endpoint: "10.0.0.1"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		got, err := d.GetHealthCheck(ctx, hc.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "10.0.0.1", got.Endpoint)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := d.GetHealthCheck(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestListHealthChecks(t *testing.T) {
+	d := newTestDNS()
+	ctx := context.Background()
+
+	checks, err := d.ListHealthChecks(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(checks))
+
+	_, err = d.CreateHealthCheck(ctx, driver.HealthCheckConfig{Endpoint: "10.0.0.1"})
+	require.NoError(t, err)
+
+	_, err = d.CreateHealthCheck(ctx, driver.HealthCheckConfig{Endpoint: "10.0.0.2"})
+	require.NoError(t, err)
+
+	checks, err = d.ListHealthChecks(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(checks))
+}
+
+func TestUpdateHealthCheck(t *testing.T) {
+	d := newTestDNS()
+	ctx := context.Background()
+
+	hc, err := d.CreateHealthCheck(ctx, driver.HealthCheckConfig{Endpoint: "10.0.0.1", Port: 80})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		updated, err := d.UpdateHealthCheck(ctx, hc.ID, driver.HealthCheckConfig{Endpoint: "10.0.0.2", Port: 443})
+		require.NoError(t, err)
+		assert.Equal(t, "10.0.0.2", updated.Endpoint)
+		assert.Equal(t, 443, updated.Port)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := d.UpdateHealthCheck(ctx, "nonexistent", driver.HealthCheckConfig{Endpoint: "10.0.0.3"})
+		require.Error(t, err)
+	})
+}
+
+func TestSetHealthCheckStatus(t *testing.T) {
+	d := newTestDNS()
+	ctx := context.Background()
+
+	hc, err := d.CreateHealthCheck(ctx, driver.HealthCheckConfig{Endpoint: "10.0.0.1"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := d.SetHealthCheckStatus(ctx, hc.ID, "UNHEALTHY")
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := d.SetHealthCheckStatus(ctx, "nonexistent", "HEALTHY")
+		require.Error(t, err)
+	})
 }

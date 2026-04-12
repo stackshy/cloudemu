@@ -963,6 +963,26 @@ func (c *metricsCollector) ListMetrics(_ context.Context, _ string) ([]string, e
 	return nil, nil
 }
 
+func (c *metricsCollector) CreateNotificationChannel(_ context.Context, _ mondriver.NotificationChannelConfig) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (c *metricsCollector) DeleteNotificationChannel(_ context.Context, _ string) error {
+	return nil
+}
+
+func (c *metricsCollector) GetNotificationChannel(_ context.Context, _ string) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (c *metricsCollector) ListNotificationChannels(_ context.Context) ([]mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (c *metricsCollector) GetAlarmHistory(_ context.Context, _ string, _ int) ([]mondriver.AlarmHistoryEntry, error) {
+	return nil, nil
+}
+
 func (c *metricsCollector) reset() {
 	c.data = nil
 }

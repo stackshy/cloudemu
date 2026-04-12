@@ -613,6 +613,26 @@ func (m *cfMonMock) SetAlarmState(_ context.Context, _, _, _ string) error {
 	return nil
 }
 
+func (m *cfMonMock) CreateNotificationChannel(_ context.Context, _ mondriver.NotificationChannelConfig) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *cfMonMock) DeleteNotificationChannel(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *cfMonMock) GetNotificationChannel(_ context.Context, _ string) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *cfMonMock) ListNotificationChannels(_ context.Context) ([]mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+
+func (m *cfMonMock) GetAlarmHistory(_ context.Context, _ string, _ int) ([]mondriver.AlarmHistoryEntry, error) {
+	return nil, nil
+}
+
 func TestListVersionsMultiple(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
