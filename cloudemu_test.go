@@ -8582,3 +8582,213 @@ func testVPCEndpointOperations(
 		t.Errorf("expected NotFound, got %v", err)
 	}
 }
+func TestHealthCheckAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testHealthCheck(t, ctx, p.Route53)
+}
+
+func TestHealthCheckAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testHealthCheck(t, ctx, p.DNS)
+}
+
+func TestHealthCheckGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testHealthCheck(t, ctx, p.CloudDNS)
+}
+
+func testHealthCheck(t *testing.T, ctx context.Context, d dnsdriver.DNS) {
+	t.Helper()
+
+	// Create health check with defaults.
+	hc, err := d.CreateHealthCheck(ctx, dnsdriver.HealthCheckConfig{
+		Endpoint: "10.0.0.1",
+		Port:     80,
+		Protocol: "HTTP",
+		Path:     "/health",
+		Tags:     map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateHealthCheck: %v", err)
+	}
+
+	if hc.ID == "" {
+		t.Error("expected non-empty health check ID")
+	}
+
+	if hc.Endpoint != "10.0.0.1" {
+		t.Errorf("expected endpoint 10.0.0.1, got %q", hc.Endpoint)
+	}
+
+	if hc.Status != "HEALTHY" {
+		t.Errorf("expected HEALTHY status, got %q", hc.Status)
+	}
+
+	if hc.IntervalSeconds != 30 {
+		t.Errorf("expected default interval 30, got %d", hc.IntervalSeconds)
+	}
+
+	if hc.FailureThreshold != 3 {
+		t.Errorf("expected default threshold 3, got %d", hc.FailureThreshold)
+	}
+
+	if hc.Tags["env"] != "test" {
+		t.Errorf("expected tag env=test, got %q", hc.Tags["env"])
+	}
+
+	// Get health check.
+	got, err := d.GetHealthCheck(ctx, hc.ID)
+	if err != nil {
+		t.Fatalf("GetHealthCheck: %v", err)
+	}
+
+	if got.Endpoint != "10.0.0.1" {
+		t.Errorf("expected endpoint 10.0.0.1, got %q", got.Endpoint)
+	}
+
+	// List health checks.
+	checks, err := d.ListHealthChecks(ctx)
+	if err != nil {
+		t.Fatalf("ListHealthChecks: %v", err)
+	}
+
+	if len(checks) != 1 {
+		t.Errorf("expected 1 health check, got %d", len(checks))
+	}
+
+	// Create second health check.
+	hc2, err := d.CreateHealthCheck(ctx, dnsdriver.HealthCheckConfig{
+		Endpoint:         "10.0.0.2",
+		Port:             443,
+		Protocol:         "HTTPS",
+		Path:             "/status",
+		IntervalSeconds:  10,
+		FailureThreshold: 5,
+	})
+	if err != nil {
+		t.Fatalf("CreateHealthCheck (second): %v", err)
+	}
+
+	if hc2.IntervalSeconds != 10 {
+		t.Errorf("expected interval 10, got %d", hc2.IntervalSeconds)
+	}
+
+	if hc2.FailureThreshold != 5 {
+		t.Errorf("expected threshold 5, got %d", hc2.FailureThreshold)
+	}
+
+	checks, err = d.ListHealthChecks(ctx)
+	if err != nil {
+		t.Fatalf("ListHealthChecks (after second create): %v", err)
+	}
+
+	if len(checks) != 2 {
+		t.Errorf("expected 2 health checks, got %d", len(checks))
+	}
+
+	// Update health check.
+	updated, err := d.UpdateHealthCheck(ctx, hc.ID, dnsdriver.HealthCheckConfig{
+		Endpoint: "10.0.0.99",
+		Port:     8080,
+		Tags:     map[string]string{"env": "prod"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateHealthCheck: %v", err)
+	}
+
+	if updated.Endpoint != "10.0.0.99" {
+		t.Errorf("expected updated endpoint 10.0.0.99, got %q", updated.Endpoint)
+	}
+
+	if updated.Port != 8080 {
+		t.Errorf("expected updated port 8080, got %d", updated.Port)
+	}
+
+	if updated.Tags["env"] != "prod" {
+		t.Errorf("expected updated tag env=prod, got %q", updated.Tags["env"])
+	}
+
+	// Set health check status.
+	err = d.SetHealthCheckStatus(ctx, hc.ID, "UNHEALTHY")
+	if err != nil {
+		t.Fatalf("SetHealthCheckStatus: %v", err)
+	}
+
+	got, err = d.GetHealthCheck(ctx, hc.ID)
+	if err != nil {
+		t.Fatalf("GetHealthCheck (after status change): %v", err)
+	}
+
+	if got.Status != "UNHEALTHY" {
+		t.Errorf("expected UNHEALTHY status, got %q", got.Status)
+	}
+
+	// Set back to healthy.
+	err = d.SetHealthCheckStatus(ctx, hc.ID, "HEALTHY")
+	if err != nil {
+		t.Fatalf("SetHealthCheckStatus (back to healthy): %v", err)
+	}
+
+	got, err = d.GetHealthCheck(ctx, hc.ID)
+	if err != nil {
+		t.Fatalf("GetHealthCheck (after revert): %v", err)
+	}
+
+	if got.Status != "HEALTHY" {
+		t.Errorf("expected HEALTHY status, got %q", got.Status)
+	}
+
+	// Delete health check.
+	err = d.DeleteHealthCheck(ctx, hc.ID)
+	if err != nil {
+		t.Fatalf("DeleteHealthCheck: %v", err)
+	}
+
+	checks, err = d.ListHealthChecks(ctx)
+	if err != nil {
+		t.Fatalf("ListHealthChecks (after delete): %v", err)
+	}
+
+	if len(checks) != 1 {
+		t.Errorf("expected 1 health check after delete, got %d", len(checks))
+	}
+
+	// Error: create with empty endpoint.
+	_, err = d.CreateHealthCheck(ctx, dnsdriver.HealthCheckConfig{})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for empty endpoint, got %v", err)
+	}
+
+	// Error: get nonexistent.
+	_, err = d.GetHealthCheck(ctx, "nonexistent")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for missing health check, got %v", err)
+	}
+
+	// Error: update nonexistent.
+	_, err = d.UpdateHealthCheck(ctx, "nonexistent", dnsdriver.HealthCheckConfig{Endpoint: "10.0.0.1"})
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for update on missing health check, got %v", err)
+	}
+
+	// Error: delete nonexistent.
+	err = d.DeleteHealthCheck(ctx, "nonexistent")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for delete on missing health check, got %v", err)
+	}
+
+	// Error: set status on nonexistent.
+	err = d.SetHealthCheckStatus(ctx, "nonexistent", "HEALTHY")
+	if !cerrors.IsNotFound(err) {
+		t.Errorf("expected NotFound for set status on missing health check, got %v", err)
+	}
+
+	// Error: set invalid status.
+	err = d.SetHealthCheckStatus(ctx, hc2.ID, "INVALID")
+	if !cerrors.IsInvalidArgument(err) {
+		t.Errorf("expected InvalidArgument for invalid status, got %v", err)
+	}
+}
