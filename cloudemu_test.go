@@ -7956,6 +7956,144 @@ func testBucketTagging(t *testing.T, ctx context.Context, d storagedriver.Bucket
 	}
 }
 
+// testKeyPairOperations is a shared helper that tests key pair CRUD operations.
+func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Compute) {
+	t.Helper()
+
+	// Create a key pair
+	kp, err := c.CreateKeyPair(ctx, computedriver.KeyPairConfig{
+		Name:    "test-key",
+		KeyType: "ed25519",
+		Tags:    map[string]string{"env": "test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateKeyPair: %v", err)
+	}
+
+	if kp.Name != "test-key" {
+		t.Errorf("expected name 'test-key', got %q", kp.Name)
+	}
+
+	if kp.KeyType != "ed25519" {
+		t.Errorf("expected key type 'ed25519', got %q", kp.KeyType)
+	}
+
+	if kp.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+
+	if kp.Fingerprint != "fp-test-key" {
+		t.Errorf("expected fingerprint 'fp-test-key', got %q", kp.Fingerprint)
+	}
+
+	if kp.PrivateKey == "" {
+		t.Error("expected PrivateKey to be populated on create")
+	}
+
+	if kp.PublicKey == "" {
+		t.Error("expected PublicKey to be populated")
+	}
+
+	if kp.CreatedAt == "" {
+		t.Error("expected non-empty CreatedAt")
+	}
+
+	if kp.Tags["env"] != "test" {
+		t.Errorf("expected tag env=test, got %q", kp.Tags["env"])
+	}
+
+	// Create another with default key type
+	kp2, err := c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: "default-key"})
+	if err != nil {
+		t.Fatalf("CreateKeyPair default: %v", err)
+	}
+
+	if kp2.KeyType != "rsa" {
+		t.Errorf("expected default key type 'rsa', got %q", kp2.KeyType)
+	}
+
+	// Duplicate should fail
+	_, err = c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: "test-key"})
+	if err == nil {
+		t.Error("expected error for duplicate key pair")
+	}
+
+	// Empty name should fail
+	_, err = c.CreateKeyPair(ctx, computedriver.KeyPairConfig{Name: ""})
+	if err == nil {
+		t.Error("expected error for empty key pair name")
+	}
+
+	// Describe all
+	all, err := c.DescribeKeyPairs(ctx, nil)
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs all: %v", err)
+	}
+
+	if len(all) != 2 {
+		t.Fatalf("expected 2 key pairs, got %d", len(all))
+	}
+
+	for _, kpi := range all {
+		if kpi.PrivateKey != "" {
+			t.Errorf("DescribeKeyPairs should not return PrivateKey, got %q", kpi.PrivateKey)
+		}
+	}
+
+	// Describe by name
+	filtered, err := c.DescribeKeyPairs(ctx, []string{"test-key"})
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs filtered: %v", err)
+	}
+
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 key pair, got %d", len(filtered))
+	}
+
+	if filtered[0].Name != "test-key" {
+		t.Errorf("expected name 'test-key', got %q", filtered[0].Name)
+	}
+
+	// Delete
+	if err := c.DeleteKeyPair(ctx, "test-key"); err != nil {
+		t.Fatalf("DeleteKeyPair: %v", err)
+	}
+
+	// Delete again should fail
+	err = c.DeleteKeyPair(ctx, "test-key")
+	if err == nil {
+		t.Error("expected error deleting non-existent key pair")
+	}
+
+	// Verify only one remains
+	remaining, err := c.DescribeKeyPairs(ctx, nil)
+	if err != nil {
+		t.Fatalf("DescribeKeyPairs after delete: %v", err)
+	}
+
+	if len(remaining) != 1 {
+		t.Errorf("expected 1 key pair after delete, got %d", len(remaining))
+	}
+}
+
+func TestKeyPairAWS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+	testKeyPairOperations(t, ctx, p.EC2)
+}
+
+func TestKeyPairAzure(t *testing.T) {
+	ctx := context.Background()
+	p := NewAzure()
+	testKeyPairOperations(t, ctx, p.VirtualMachines)
+}
+
+func TestKeyPairGCP(t *testing.T) {
+	ctx := context.Background()
+	p := NewGCP()
+	testKeyPairOperations(t, ctx, p.GCE)
+}
+
 // ─── Global Secondary Indexes ───────────────────────────────────────────
 
 func TestGSIOperationsAWS(t *testing.T) {
