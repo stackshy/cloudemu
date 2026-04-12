@@ -8,9 +8,19 @@ import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	"github.com/stackshy/cloudemu/config"
 	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	iamdriver "github.com/stackshy/cloudemu/iam/driver"
+	monitoringdriver "github.com/stackshy/cloudemu/monitoring/driver"
+	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	serverlessdriver "github.com/stackshy/cloudemu/serverless/driver"
+	"github.com/stackshy/cloudemu/providers/aws/awsiam"
+	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/providers/aws/ec2"
+	"github.com/stackshy/cloudemu/providers/aws/elb"
+	"github.com/stackshy/cloudemu/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/providers/aws/route53"
+	"github.com/stackshy/cloudemu/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/providers/aws/vpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,10 +36,6 @@ func newTestEngine() (*Engine, *ec2.Mock, *vpc.Mock, *route53.Mock) {
 
 	return engine, ec2Mock, vpcMock, dnsMock
 }
-
-// ---------------------------------------------------------------------------
-// CIDR helper tests
-// ---------------------------------------------------------------------------
 
 func TestIPInCIDR(t *testing.T) {
 	tests := []struct {
@@ -203,10 +209,6 @@ func TestFindMatchingRoute(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Security tests
-// ---------------------------------------------------------------------------
-
 func TestEvaluateSecurityGroupsAllowed(t *testing.T) {
 	engine, _, vpcMock, _ := newTestEngine()
 	ctx := context.Background()
@@ -316,10 +318,6 @@ func TestEvaluateNetworkACLDenyBeforeAllow(t *testing.T) {
 	assert.Equal(t, 50, verdict.RuleNumber)
 	assert.Equal(t, "deny", verdict.Action)
 }
-
-// ---------------------------------------------------------------------------
-// CanConnect tests
-// ---------------------------------------------------------------------------
 
 // createVPCWithSubnetAndSGs is a helper that creates a VPC, a subnet, and two
 // security groups. It returns the IDs needed by CanConnect tests.
@@ -555,10 +553,6 @@ func TestCanConnectInstanceNotRunning(t *testing.T) {
 	assert.Contains(t, err.Error(), "not running")
 }
 
-// ---------------------------------------------------------------------------
-// TraceRoute tests
-// ---------------------------------------------------------------------------
-
 func TestTraceRoute(t *testing.T) {
 	engine, ec2Mock, vpcMock, _ := newTestEngine()
 	ctx := context.Background()
@@ -612,10 +606,6 @@ func TestTraceRoute(t *testing.T) {
 	assert.Equal(t, "igw-123", hops[3].ResourceID)
 }
 
-// ---------------------------------------------------------------------------
-// Resolve tests
-// ---------------------------------------------------------------------------
-
 func TestResolve(t *testing.T) {
 	engine, _, _, dnsMock := newTestEngine()
 	ctx := context.Background()
@@ -649,10 +639,6 @@ func TestResolveNotFound(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, values)
 }
-
-// ---------------------------------------------------------------------------
-// Dependency Graph tests
-// ---------------------------------------------------------------------------
 
 // createGraphResources is a helper that creates a VPC, subnet, SG, and instance.
 // It returns their IDs for graph verification.
@@ -810,10 +796,6 @@ func TestBlastRadiusNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-// ---------------------------------------------------------------------------
-// Graph test helpers
-// ---------------------------------------------------------------------------
-
 func resourceIDs(g *DependencyGraph) []string {
 	ids := make([]string, 0, len(g.Resources))
 	for _, r := range g.Resources {
@@ -840,4 +822,366 @@ func hasDependency(g *DependencyGraph, fromID, toID, depType string) bool {
 	}
 
 	return false
+}
+
+func hasResourceType(g *DependencyGraph, resType string) bool {
+	for _, r := range g.Resources {
+		if r.Type == resType {
+			return true
+		}
+	}
+
+	return false
+}
+
+// newTestOpts returns shared config options for tests.
+func newTestOpts() *config.Options {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	return config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
+}
+
+func TestVolumeInGraph(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, sgID, instanceID := createGraphResources(t, ctx, ec2Mock, vpcMock)
+	_ = vpcID
+	_ = subnetID
+	_ = sgID
+
+	vol, err := ec2Mock.CreateVolume(ctx, computedriver.VolumeConfig{
+		Size: 100, VolumeType: "gp2", AvailabilityZone: "us-east-1a",
+	})
+	require.NoError(t, err)
+
+	err = ec2Mock.AttachVolume(ctx, vol.ID, instanceID, "/dev/sdf")
+	require.NoError(t, err)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+
+	assert.Contains(t, resourceIDs(graph), vol.ID)
+	assert.True(t, hasDependency(graph, vol.ID, instanceID, "attached-to"))
+}
+
+func TestBlastRadiusWithVolumes(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	_, _, _, instanceID := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	vol, err := ec2Mock.CreateVolume(ctx, computedriver.VolumeConfig{
+		Size: 50, VolumeType: "gp2", AvailabilityZone: "us-east-1a",
+	})
+	require.NoError(t, err)
+
+	err = ec2Mock.AttachVolume(ctx, vol.ID, instanceID, "/dev/sdf")
+	require.NoError(t, err)
+
+	report, err := engine.BlastRadius(ctx, instanceID)
+	require.NoError(t, err)
+
+	// The volume depends on the instance, so it's a direct dependent.
+	directIDs := refIDs(report.DirectlyAffected)
+	assert.Contains(t, directIDs, vol.ID)
+}
+
+func TestLBChainGraph(t *testing.T) {
+	opts := newTestOpts()
+	ec2Mock := ec2.New(opts)
+	vpcMock := vpc.New(opts)
+	dnsMock := route53.New(opts)
+	elbMock := elb.New(opts)
+	engine := New(ec2Mock, vpcMock, dnsMock, WithLoadBalancer(elbMock))
+	ctx := context.Background()
+
+	v, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	subnet, err := vpcMock.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID: v.ID, CIDRBlock: "10.0.1.0/24", AvailabilityZone: "us-east-1a",
+	})
+	require.NoError(t, err)
+
+	sg, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "lb-sg", Description: "lb test",
+	})
+	require.NoError(t, err)
+
+	instances, err := ec2Mock.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+		SubnetID: subnet.ID, SecurityGroups: []string{sg.ID},
+	}, 1)
+	require.NoError(t, err)
+
+	err = ec2Mock.SetInstanceVPC(instances[0].ID, v.ID)
+	require.NoError(t, err)
+
+	lb, err := elbMock.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "test-lb", Type: "application", Scheme: "internal",
+		Subnets: []string{subnet.ID},
+	})
+	require.NoError(t, err)
+
+	tg, err := elbMock.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "test-tg", Protocol: "HTTP", Port: 80, VPCID: v.ID,
+	})
+	require.NoError(t, err)
+
+	lis, err := elbMock.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	require.NoError(t, err)
+
+	err = elbMock.RegisterTargets(ctx, tg.ARN, []lbdriver.Target{
+		{ID: instances[0].ID, Port: 80},
+	})
+	require.NoError(t, err)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+
+	// Verify LB chain resources exist.
+	ids := resourceIDs(graph)
+	assert.Contains(t, ids, lb.ARN)
+	assert.Contains(t, ids, tg.ARN)
+	assert.Contains(t, ids, lis.ARN)
+
+	// Verify LB chain dependencies.
+	assert.True(t, hasDependency(graph, lb.ARN, subnet.ID, "member-of"))
+	assert.True(t, hasDependency(graph, tg.ARN, v.ID, "member-of"))
+	assert.True(t, hasDependency(graph, lis.ARN, lb.ARN, "belongs-to"))
+	assert.True(t, hasDependency(graph, lis.ARN, tg.ARN, "routes-to"))
+	assert.True(t, hasDependency(graph, instances[0].ID, tg.ARN, "member-of"))
+}
+
+func TestFunctionESMGraph(t *testing.T) {
+	opts := newTestOpts()
+	ec2Mock := ec2.New(opts)
+	vpcMock := vpc.New(opts)
+	dnsMock := route53.New(opts)
+	lambdaMock := lambda.New(opts)
+	sqsMock := sqs.New(opts)
+	engine := New(ec2Mock, vpcMock, dnsMock,
+		WithServerless(lambdaMock),
+		WithMessageQueue(sqsMock),
+	)
+	ctx := context.Background()
+
+	fn, err := lambdaMock.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+		Name: "my-func", Runtime: "go1.x", Handler: "main",
+	})
+	require.NoError(t, err)
+
+	q, err := sqsMock.CreateQueue(ctx, mqdriver.QueueConfig{Name: "my-queue"})
+	require.NoError(t, err)
+
+	esm, err := lambdaMock.CreateEventSourceMapping(ctx, serverlessdriver.EventSourceMappingConfig{
+		EventSourceArn: q.ARN, FunctionName: fn.Name, BatchSize: 10, Enabled: true,
+	})
+	require.NoError(t, err)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+
+	ids := resourceIDs(graph)
+	assert.Contains(t, ids, fn.ARN)
+	assert.Contains(t, ids, q.ARN)
+	assert.Contains(t, ids, esm.UUID)
+
+	// ESM triggers the function.
+	assert.True(t, hasDependency(graph, esm.UUID, fn.ARN, "triggers"))
+	// ESM is triggered by the queue.
+	assert.True(t, hasDependency(graph, esm.UUID, q.ARN, "triggered-by"))
+}
+
+func TestAlarmNotificationGraph(t *testing.T) {
+	opts := newTestOpts()
+	ec2Mock := ec2.New(opts)
+	vpcMock := vpc.New(opts)
+	dnsMock := route53.New(opts)
+	cwMock := cloudwatch.New(opts)
+	engine := New(ec2Mock, vpcMock, dnsMock, WithMonitoring(cwMock))
+	ctx := context.Background()
+
+	ch, err := cwMock.CreateNotificationChannel(ctx, monitoringdriver.NotificationChannelConfig{
+		Name: "ops-channel", Type: "email", Endpoint: "ops@example.com",
+	})
+	require.NoError(t, err)
+
+	err = cwMock.CreateAlarm(ctx, monitoringdriver.AlarmConfig{
+		Name: "high-cpu", Namespace: "AWS/EC2", MetricName: "CPUUtilization",
+		ComparisonOperator: "GreaterThanThreshold", Threshold: 80,
+		Period: 300, EvaluationPeriods: 1, Stat: "Average",
+		AlarmActions: []string{ch.ID},
+	})
+	require.NoError(t, err)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+
+	assert.True(t, hasResourceType(graph, "alarm"))
+	assert.True(t, hasResourceType(graph, "notification-channel"))
+}
+
+func TestInstanceProfileGraph(t *testing.T) {
+	opts := newTestOpts()
+	ec2Mock := ec2.New(opts)
+	vpcMock := vpc.New(opts)
+	dnsMock := route53.New(opts)
+	iamMock := awsiam.New(opts)
+	engine := New(ec2Mock, vpcMock, dnsMock, WithIAM(iamMock))
+	ctx := context.Background()
+
+	_, err := iamMock.CreateRole(ctx, iamdriver.RoleConfig{Name: "test-role"})
+	require.NoError(t, err)
+
+	profile, err := iamMock.CreateInstanceProfile(ctx, iamdriver.InstanceProfileConfig{
+		Name: "test-profile", RoleName: "test-role",
+	})
+	require.NoError(t, err)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+
+	assert.Contains(t, resourceIDs(graph), profile.Name)
+	assert.True(t, hasDependency(graph, profile.Name, "test-role", "uses"))
+}
+
+func TestWhatIfDelete(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, _, _, _ := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	report, err := engine.WhatIf(ctx, "delete", vpcID)
+	require.NoError(t, err)
+	assert.Equal(t, "delete", report.Action)
+	assert.NotEmpty(t, report.DirectlyAffected)
+}
+
+func TestWhatIfStop(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	_, _, _, instanceID := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	report, err := engine.WhatIf(ctx, "stop", instanceID)
+	require.NoError(t, err)
+	assert.Equal(t, "stop", report.Action)
+	assert.Equal(t, instanceID, report.Target.ID)
+	assert.NotEmpty(t, report.BrokenConnections)
+	assert.Contains(t, report.Summary, "stopping")
+}
+
+func TestWhatIfDisconnect(t *testing.T) {
+	engine, _, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	v1, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	v2, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.1.0.0/16"})
+	require.NoError(t, err)
+
+	peering, err := vpcMock.CreatePeeringConnection(ctx, netdriver.PeeringConfig{
+		RequesterVPC: v1.ID, AccepterVPC: v2.ID,
+	})
+	require.NoError(t, err)
+
+	err = vpcMock.AcceptPeeringConnection(ctx, peering.ID)
+	require.NoError(t, err)
+
+	report, err := engine.WhatIf(ctx, "disconnect", peering.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "disconnect", report.Action)
+	assert.NotEmpty(t, report.BrokenConnections)
+	assert.Contains(t, report.Summary, "disconnecting")
+}
+
+func TestWhatIfInvalidAction(t *testing.T) {
+	engine, _, _, _ := newTestEngine()
+	ctx := context.Background()
+
+	_, err := engine.WhatIf(ctx, "explode", "fake-id")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported action")
+}
+
+func TestOrphanedResources(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	vpcID, subnetID, _, _ := createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	// Create a second subnet in the same VPC.
+	subnet2, err := vpcMock.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID: vpcID, CIDRBlock: "10.0.2.0/24", AvailabilityZone: "us-east-1b",
+	})
+	require.NoError(t, err)
+
+	_ = subnetID
+
+	// Deleting the VPC should orphan nothing (subnets are direct dependents).
+	// But let's check that blast radius includes orphaned info.
+	report, err := engine.BlastRadius(ctx, vpcID)
+	require.NoError(t, err)
+	assert.NotNil(t, report)
+
+	// Both subnets should be direct dependents.
+	directIDs := refIDs(report.DirectlyAffected)
+	assert.Contains(t, directIDs, subnetID)
+	assert.Contains(t, directIDs, subnet2.ID)
+}
+
+func TestProviderField(t *testing.T) {
+	opts := newTestOpts()
+	ec2Mock := ec2.New(opts)
+	vpcMock := vpc.New(opts)
+	dnsMock := route53.New(opts)
+	engine := New(ec2Mock, vpcMock, dnsMock, WithProvider("aws"))
+	ctx := context.Background()
+
+	_, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	require.NoError(t, err)
+
+	for _, r := range graph.Resources {
+		assert.Equal(t, "aws", r.Provider)
+	}
+}
+
+func TestGetDependencyGraph(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	graph, err := engine.GetDependencyGraph(ctx)
+	require.NoError(t, err)
+	assert.NotEmpty(t, graph.Resources)
+}
+
+func TestEngineExportDOT(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	dot, err := engine.ExportDOT(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, dot, "digraph CloudEmu")
+}
+
+func TestEngineExportMermaid(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	createGraphResources(t, ctx, ec2Mock, vpcMock)
+
+	mermaid, err := engine.ExportMermaid(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, mermaid, "graph TD")
 }
