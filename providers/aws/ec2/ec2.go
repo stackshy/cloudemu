@@ -366,6 +366,19 @@ func (m *Mock) ModifyInstance(_ context.Context, instanceID string, input driver
 	return nil
 }
 
+// SetInstanceVPC sets the VPC ID on an existing instance. This is a test
+// helper since RunInstances does not automatically resolve VPC from subnet.
+func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	inst.VPCID = vpcID
+
+	return nil
+}
+
 // CreateVolume creates a new EBS volume.
 func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
 	id := fmt.Sprintf("vol-%012d", m.volCounter.Add(1))

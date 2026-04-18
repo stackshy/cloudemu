@@ -330,6 +330,19 @@ func (m *Mock) ModifyInstance(_ context.Context, instanceID string, input driver
 	return nil
 }
 
+// SetInstanceVPC sets the VPC ID on an existing instance. This is a test
+// helper since RunInstances does not automatically resolve VPC from subnet.
+func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	inst.VPCID = vpcID
+
+	return nil
+}
+
 func matchesFilters(inst *instanceData, filters []driver.DescribeFilter) bool {
 	for _, f := range filters {
 		if !matchesSingleFilter(inst, f) {
