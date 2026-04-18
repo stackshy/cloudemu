@@ -1,9 +1,9 @@
-package server
+package s3
 
 import "encoding/xml"
 
-// s3Error is the XML error response format used by S3.
-type s3Error struct {
+// errorXML is the XML error response format used by S3.
+type errorXML struct {
 	XMLName xml.Name `xml:"Error"`
 	Code    string   `xml:"Code"`
 	Message string   `xml:"Message"`

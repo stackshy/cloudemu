@@ -1,13 +1,13 @@
-package server
+package dynamodb
 
 import (
 	"fmt"
 	"strconv"
 )
 
-// fromDynamoDBItem converts a DynamoDB wire-format item to a plain map.
-// Wire: {"pk": {"S": "val"}, "age": {"N": "25"}} becomes {"pk": "val", "age": "25"}.
-func fromDynamoDBItem(wire map[string]any) map[string]any {
+// fromWireItem converts a DynamoDB wire-format item to a plain map.
+// Wire: {"pk": {"S": "val"}, "age": {"N": "25"}} becomes {"pk": "val", "age": 25}.
+func fromWireItem(wire map[string]any) map[string]any {
 	if wire == nil {
 		return nil
 	}
@@ -21,19 +21,19 @@ func fromDynamoDBItem(wire map[string]any) map[string]any {
 	return item
 }
 
-// toDynamoDBItem converts a plain map back to DynamoDB wire format.
-func toDynamoDBItem(item map[string]any) map[string]any {
+// toWireItem converts a plain map back to DynamoDB wire format.
+func toWireItem(item map[string]any) map[string]any {
 	if item == nil {
 		return nil
 	}
 
-	wire := make(map[string]any, len(item))
+	w := make(map[string]any, len(item))
 
 	for k, v := range item {
-		wire[k] = toAttributeValue(v)
+		w[k] = toAttributeValue(v)
 	}
 
-	return wire
+	return w
 }
 
 // fromAttributeValue extracts the plain value from a DynamoDB AttributeValue.
@@ -66,17 +66,17 @@ func fromAttributeValue(v any) any {
 	}
 
 	if l, ok := av["L"]; ok {
-		return fromDynamoDBList(l)
+		return fromList(l)
 	}
 
 	if m, ok := av["M"]; ok {
-		return fromDynamoDBMap(m)
+		return fromMap(m)
 	}
 
 	return v
 }
 
-func fromDynamoDBList(v any) []any {
+func fromList(v any) []any {
 	list, ok := v.([]any)
 	if !ok {
 		return nil
@@ -91,13 +91,13 @@ func fromDynamoDBList(v any) []any {
 	return result
 }
 
-func fromDynamoDBMap(v any) map[string]any {
+func fromMap(v any) map[string]any {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return nil
 	}
 
-	return fromDynamoDBItem(m)
+	return fromWireItem(m)
 }
 
 // toAttributeValue wraps a plain value into DynamoDB wire format.
@@ -118,7 +118,7 @@ func toAttributeValue(v any) map[string]any {
 	case []any:
 		return toListValue(val)
 	case map[string]any:
-		return map[string]any{"M": toDynamoDBItem(val)}
+		return map[string]any{"M": toWireItem(val)}
 	default:
 		return map[string]any{"S": fmt.Sprintf("%v", val)}
 	}

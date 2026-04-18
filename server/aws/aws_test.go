@@ -1,4 +1,4 @@
-package server_test
+package aws_test
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stackshy/cloudemu"
-	"github.com/stackshy/cloudemu/server"
+	awsserver "github.com/stackshy/cloudemu/server/aws"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,11 +23,8 @@ func newTestServer(t *testing.T) (string, aws.Config) {
 	t.Helper()
 
 	provider := cloudemu.NewAWS()
-	srv := server.New(server.Drivers{
-		Storage:  provider.S3,
-		Database: provider.DynamoDB,
-	})
-	ts := httptest.NewServer(srv.Handler())
+	srv := awsserver.New(provider.S3, provider.DynamoDB)
+	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),

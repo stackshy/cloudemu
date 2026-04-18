@@ -1,4 +1,8 @@
-package server
+// Package dynamodb implements the DynamoDB JSON-RPC protocol as a
+// server.Handler. Point the real aws-sdk-go-v2 DynamoDB client at a Server
+// registered with this handler and operations work against an in-memory
+// database driver.
+package dynamodb
 
 import (
 	"net/http"
@@ -6,37 +10,54 @@ import (
 
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/server/wire"
 )
 
-const dynamoDBTargetPrefix = "DynamoDB_20120810."
+const targetPrefix = "DynamoDB_20120810."
 
-// handleDynamoDB dispatches DynamoDB JSON-RPC requests based on X-Amz-Target.
-func (s *Server) handleDynamoDB(w http.ResponseWriter, r *http.Request, target string) {
-	op := strings.TrimPrefix(target, dynamoDBTargetPrefix)
+// Handler serves DynamoDB JSON-RPC requests against a database.Database driver.
+type Handler struct {
+	db dbdriver.Database
+}
+
+// New returns a DynamoDB handler backed by db.
+func New(db dbdriver.Database) *Handler {
+	return &Handler{db: db}
+}
+
+// Matches returns true for DynamoDB-shaped requests, identified by an
+// X-Amz-Target header of "DynamoDB_20120810.<Operation>".
+func (*Handler) Matches(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
+}
+
+// ServeHTTP dispatches DynamoDB operations based on X-Amz-Target.
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
 	switch op {
 	case "CreateTable":
-		s.ddbCreateTable(w, r)
+		h.createTable(w, r)
 	case "DeleteTable":
-		s.ddbDeleteTable(w, r)
+		h.deleteTable(w, r)
 	case "DescribeTable":
-		s.ddbDescribeTable(w, r)
+		h.describeTable(w, r)
 	case "ListTables":
-		s.ddbListTables(w, r)
+		h.listTables(w, r)
 	case "PutItem":
-		s.ddbPutItem(w, r)
+		h.putItem(w, r)
 	case "GetItem":
-		s.ddbGetItem(w, r)
+		h.getItem(w, r)
 	case "DeleteItem":
-		s.ddbDeleteItem(w, r)
+		h.deleteItem(w, r)
 	case "Query":
-		s.ddbQuery(w, r)
+		h.query(w, r)
 	default:
-		writeJSONError(w, http.StatusBadRequest, "UnknownOperationException", "unknown operation: "+op)
+		wire.WriteJSONError(w, http.StatusBadRequest, "UnknownOperationException", "unknown operation: "+op)
 	}
 }
 
-func (s *Server) ddbCreateTable(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string `json:"TableName"`
 		KeySchema []struct {
@@ -49,7 +70,7 @@ func (s *Server) ddbCreateTable(w http.ResponseWriter, r *http.Request) {
 		} `json:"AttributeDefinitions"`
 	}
 
-	if !decodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -65,12 +86,12 @@ func (s *Server) ddbCreateTable(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.drivers.Database.CreateTable(r.Context(), cfg); err != nil {
-		writeDDBErr(w, err)
+	if err := h.db.CreateTable(r.Context(), cfg); err != nil {
+		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, map[string]any{
+	wire.WriteJSON(w, map[string]any{
 		"TableDescription": map[string]any{
 			"TableName":   req.TableName,
 			"TableStatus": "ACTIVE",
@@ -79,21 +100,21 @@ func (s *Server) ddbCreateTable(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) ddbDeleteTable(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string `json:"TableName"`
 	}
 
-	if !decodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	if err := s.drivers.Database.DeleteTable(r.Context(), req.TableName); err != nil {
-		writeDDBErr(w, err)
+	if err := h.db.DeleteTable(r.Context(), req.TableName); err != nil {
+		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, map[string]any{
+	wire.WriteJSON(w, map[string]any{
 		"TableDescription": map[string]any{
 			"TableName":   req.TableName,
 			"TableStatus": "DELETING",
@@ -101,18 +122,18 @@ func (s *Server) ddbDeleteTable(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) ddbDescribeTable(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) describeTable(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string `json:"TableName"`
 	}
 
-	if !decodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	cfg, err := s.drivers.Database.DescribeTable(r.Context(), req.TableName)
+	cfg, err := h.db.DescribeTable(r.Context(), req.TableName)
 	if err != nil {
-		writeDDBErr(w, err)
+		writeErr(w, err)
 		return
 	}
 
@@ -126,7 +147,7 @@ func (s *Server) ddbDescribeTable(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, map[string]any{
+	wire.WriteJSON(w, map[string]any{
 		"Table": map[string]any{
 			"TableName":   cfg.Name,
 			"TableStatus": "ACTIVE",
@@ -135,92 +156,92 @@ func (s *Server) ddbDescribeTable(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) ddbListTables(w http.ResponseWriter, r *http.Request) {
-	tables, err := s.drivers.Database.ListTables(r.Context())
+func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
+	tables, err := h.db.ListTables(r.Context())
 	if err != nil {
-		writeDDBErr(w, err)
+		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, map[string]any{
+	wire.WriteJSON(w, map[string]any{
 		"TableNames": tables,
 	})
 }
 
-func (s *Server) ddbPutItem(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string         `json:"TableName"`
 		Item      map[string]any `json:"Item"`
 	}
 
-	if !decodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	item := fromDynamoDBItem(req.Item)
+	item := fromWireItem(req.Item)
 
-	if err := s.drivers.Database.PutItem(r.Context(), req.TableName, item); err != nil {
-		writeDDBErr(w, err)
+	if err := h.db.PutItem(r.Context(), req.TableName, item); err != nil {
+		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, map[string]any{})
+	wire.WriteJSON(w, map[string]any{})
 }
 
-func (s *Server) ddbGetItem(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string         `json:"TableName"`
 		Key       map[string]any `json:"Key"`
 	}
 
-	if !decodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	key := fromDynamoDBItem(req.Key)
+	key := fromWireItem(req.Key)
 
-	item, err := s.drivers.Database.GetItem(r.Context(), req.TableName, key)
+	item, err := h.db.GetItem(r.Context(), req.TableName, key)
 	if err != nil {
 		// DynamoDB returns an empty response for missing items, not an error.
 		if cerrors.IsNotFound(err) {
-			writeJSON(w, map[string]any{})
+			wire.WriteJSON(w, map[string]any{})
 			return
 		}
 
-		writeDDBErr(w, err)
+		writeErr(w, err)
 
 		return
 	}
 
 	resp := map[string]any{}
 	if item != nil {
-		resp["Item"] = toDynamoDBItem(item)
+		resp["Item"] = toWireItem(item)
 	}
 
-	writeJSON(w, resp)
+	wire.WriteJSON(w, resp)
 }
 
-func (s *Server) ddbDeleteItem(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string         `json:"TableName"`
 		Key       map[string]any `json:"Key"`
 	}
 
-	if !decodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	key := fromDynamoDBItem(req.Key)
+	key := fromWireItem(req.Key)
 
-	if err := s.drivers.Database.DeleteItem(r.Context(), req.TableName, key); err != nil {
-		writeDDBErr(w, err)
+	if err := h.db.DeleteItem(r.Context(), req.TableName, key); err != nil {
+		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, map[string]any{})
+	wire.WriteJSON(w, map[string]any{})
 }
 
-func (s *Server) ddbQuery(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
@@ -231,11 +252,11 @@ func (s *Server) ddbQuery(w http.ResponseWriter, r *http.Request) {
 		IndexName                 string            `json:"IndexName"`
 	}
 
-	if !decodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	vals := fromDynamoDBItem(req.ExpressionAttributeValues)
+	vals := fromWireItem(req.ExpressionAttributeValues)
 	kc := parseKeyCondition(req.KeyConditionExpression, vals, req.ExpressionAttributeNames)
 
 	forward := true
@@ -243,7 +264,7 @@ func (s *Server) ddbQuery(w http.ResponseWriter, r *http.Request) {
 		forward = *req.ScanIndexForward
 	}
 
-	result, err := s.drivers.Database.Query(r.Context(), dbdriver.QueryInput{
+	result, err := h.db.Query(r.Context(), dbdriver.QueryInput{
 		Table:        req.TableName,
 		IndexName:    req.IndexName,
 		KeyCondition: kc,
@@ -251,16 +272,16 @@ func (s *Server) ddbQuery(w http.ResponseWriter, r *http.Request) {
 		ScanForward:  forward,
 	})
 	if err != nil {
-		writeDDBErr(w, err)
+		writeErr(w, err)
 		return
 	}
 
 	items := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, toDynamoDBItem(item))
+		items = append(items, toWireItem(item))
 	}
 
-	writeJSON(w, map[string]any{
+	wire.WriteJSON(w, map[string]any{
 		"Items": items,
 		"Count": result.Count,
 	})
@@ -307,14 +328,10 @@ func parseKeyCondition(
 	return kc
 }
 
-// findCaseInsensitive returns the index of substr in s (case-insensitive),
-// or -1 if not found.
 func findCaseInsensitive(s, substr string) int {
 	return strings.Index(strings.ToUpper(s), strings.ToUpper(substr))
 }
 
-// resolveAttrName resolves an expression attribute name placeholder (#name)
-// to its real attribute name.
 func resolveAttrName(token string, names map[string]string) string {
 	if v, ok := names[token]; ok {
 		return v
@@ -323,8 +340,6 @@ func resolveAttrName(token string, names map[string]string) string {
 	return token
 }
 
-// resolveExprVal resolves an expression attribute value placeholder (:val)
-// to its actual value.
 func resolveExprVal(token string, vals map[string]any) any {
 	if v, ok := vals[token]; ok {
 		return v
@@ -333,16 +348,16 @@ func resolveExprVal(token string, vals map[string]any) any {
 	return token
 }
 
-// writeDDBErr maps CloudEmu errors to DynamoDB HTTP error responses.
-func writeDDBErr(w http.ResponseWriter, err error) {
+// writeErr maps CloudEmu errors to DynamoDB HTTP error responses.
+func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
 	case cerrors.IsAlreadyExists(err):
-		writeJSONError(w, http.StatusBadRequest, "ResourceInUseException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceInUseException", err.Error())
 	case cerrors.IsInvalidArgument(err):
-		writeJSONError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", err.Error())
 	default:
-		writeJSONError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 	}
 }
