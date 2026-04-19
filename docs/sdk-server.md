@@ -47,6 +47,11 @@ Region and credentials can be any dummy values — the server doesn't validate s
 | **S3** | CreateBucket, DeleteBucket, ListBuckets, PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2 (with prefix, delimiter, common prefixes, continuation token), CopyObject |
 | **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, Query (with `KeyConditionExpression`, `ExpressionAttributeValues`, `ExpressionAttributeNames`) |
 | **EC2** | RunInstances (tags, security groups, multi-count), DescribeInstances (filters: `instance-id`, `instance-type`, `instance-state-name`, `tag:*`), StartInstances, StopInstances, RebootInstances, TerminateInstances, ModifyInstanceAttribute |
+| **EC2 — VPC** | CreateVpc, DeleteVpc, DescribeVpcs |
+| **EC2 — Subnet** | CreateSubnet, DeleteSubnet, DescribeSubnets |
+| **EC2 — Security Group** | CreateSecurityGroup, DeleteSecurityGroup, DescribeSecurityGroups, AuthorizeSecurityGroupIngress/Egress, RevokeSecurityGroupIngress/Egress |
+| **EC2 — Internet Gateway** | CreateInternetGateway, AttachInternetGateway, DetachInternetGateway, DescribeInternetGateways |
+| **EC2 — Route Table** | CreateRouteTable, DescribeRouteTables, CreateRoute (gateway/nat-gateway/peering targets) |
 
 Any operation not in this list returns `501 Not Implemented` or the AWS-style `UnknownOperation` / `InvalidAction` error. The list grows each phase — see the bottom of this page.
 
@@ -94,8 +99,8 @@ The EC2 SDK-compat work is Phase 1 of a larger initiative (tracked in [#121](htt
 
 | Phase | Scope |
 |-------|-------|
-| 1 ✅ | Query-protocol foundation + EC2 core instance ops |
-| 2 | VPC, Subnets, Security Groups, Internet Gateways, Route Tables |
+| 1 (done) | Query-protocol foundation + EC2 core instance ops |
+| 2 (done) | VPC, Subnets, Security Groups, Internet Gateways, Route Tables |
 | 3 | EBS Volumes, Key Pairs |
 | 4 | Auto-Scaling Groups + Scaling Policies |
 | 5 | Snapshots, AMIs |

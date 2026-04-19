@@ -26,7 +26,10 @@ func newEC2Client(t *testing.T) *ec2.Client {
 	t.Helper()
 
 	provider := cloudemu.NewAWS()
-	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2})
+	srv := awsserver.New(awsserver.Drivers{
+		EC2: provider.EC2,
+		VPC: provider.VPC,
+	})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
@@ -411,8 +414,6 @@ func newMultiClient(t *testing.T) (*ec2.Client, *s3.Client, *dynamodb.Client) {
 	return ec2c, s3c, ddbc
 }
 
-// --- RunInstances edge cases ---------------------------------------------
-
 // Bug-fix regression: MinCount=1, MaxCount=5 should launch 5, not 1.
 func TestEC2RunInstancesHonoursMaxCount(t *testing.T) {
 	client := newEC2Client(t)
@@ -528,8 +529,6 @@ func TestEC2RunInstancesTagsWithSpecialChars(t *testing.T) {
 	assert.Equal(t, "name with spaces", got["App"])
 	assert.Equal(t, "k=v&x=y", got["Expr"])
 }
-
-// --- DescribeInstances edge cases ----------------------------------------
 
 func TestEC2DescribeInstancesEmpty(t *testing.T) {
 	client := newEC2Client(t)
@@ -652,8 +651,6 @@ func TestEC2DescribeInstancesByUnknownIDReturnsEmpty(t *testing.T) {
 	assert.Empty(t, collectIDs(out))
 }
 
-// --- State transitions ---------------------------------------------------
-
 func TestEC2StopIdempotent(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := context.Background()
@@ -701,13 +698,11 @@ func TestEC2BatchOperationsMultipleIDs(t *testing.T) {
 	assert.Len(t, startOut.StartingInstances, 3)
 }
 
-// --- Wire / protocol robustness ------------------------------------------
-
 func TestEC2GETWithActionInQueryString(t *testing.T) {
 	// Our Matches supports both POST (SDK default) and GET with Action=... in
 	// the URL. Prove the GET path works.
 	provider := cloudemu.NewAWS()
-	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2})
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
@@ -721,7 +716,7 @@ func TestEC2GETWithActionInQueryString(t *testing.T) {
 
 func TestEC2UnknownActionReturnsError(t *testing.T) {
 	provider := cloudemu.NewAWS()
-	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2})
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
@@ -738,7 +733,7 @@ func TestEC2UnknownActionReturnsError(t *testing.T) {
 func TestEC2OverlyLargeBodyRejected(t *testing.T) {
 	// Prove MaxBytesReader limit works; 2 MiB body exceeds 1 MiB cap.
 	provider := cloudemu.NewAWS()
-	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2})
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
@@ -752,8 +747,6 @@ func TestEC2OverlyLargeBodyRejected(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode,
 		"oversized body should be rejected")
 }
-
-// --- Cross-service dispatch regression -----------------------------------
 
 // When EC2 is registered alongside S3 and DynamoDB, each SDK client must
 // still hit its own handler. This guards against Matches regressions.
@@ -830,8 +823,6 @@ func TestEC2AndS3AndDDBInterleaved(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
-
-// --- Concurrency ---------------------------------------------------------
 
 func TestEC2StopInstancesUnknownIDReturnsError(t *testing.T) {
 	client := newEC2Client(t)
@@ -952,4 +943,507 @@ func collectIDs(out *ec2.DescribeInstancesOutput) []string {
 	}
 
 	return ids
+}
+
+// Phase 2 — VPC, Subnet, Security Group, Internet Gateway, Route Table
+func TestEC2CreateAndDescribeVpc(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	cre, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.0.0.0/16"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, cre.Vpc)
+
+	id := aws.ToString(cre.Vpc.VpcId)
+	assert.NotEmpty(t, id)
+	assert.Equal(t, "10.0.0.0/16", aws.ToString(cre.Vpc.CidrBlock))
+
+	desc, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{id}})
+	require.NoError(t, err)
+	require.Len(t, desc.Vpcs, 1)
+	assert.Equal(t, id, aws.ToString(desc.Vpcs[0].VpcId))
+}
+
+func TestEC2DescribeAllVpcs(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		_, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+			CidrBlock: aws.String("10.0.0.0/16"),
+		})
+		require.NoError(t, err)
+	}
+
+	desc, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(desc.Vpcs), 3)
+}
+
+func TestEC2DeleteVpc(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	cre, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.1.0.0/16")})
+	require.NoError(t, err)
+	id := aws.ToString(cre.Vpc.VpcId)
+
+	_, err = client.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(id)})
+	require.NoError(t, err)
+}
+
+func TestEC2DeleteVpcUnknownReturnsError(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	_, err := client.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String("vpc-ghost")})
+	require.Error(t, err)
+}
+
+func TestEC2CreateAndDescribeSubnet(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpc.Vpc.VpcId)
+
+	sub, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:            aws.String(vpcID),
+		CidrBlock:        aws.String("10.0.1.0/24"),
+		AvailabilityZone: aws.String("us-east-1a"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, sub.Subnet)
+
+	subnetID := aws.ToString(sub.Subnet.SubnetId)
+	assert.Equal(t, vpcID, aws.ToString(sub.Subnet.VpcId))
+	assert.Equal(t, "10.0.1.0/24", aws.ToString(sub.Subnet.CidrBlock))
+
+	desc, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
+		SubnetIds: []string{subnetID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Subnets, 1)
+}
+
+func TestEC2DeleteSubnet(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sub, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     vpc.Vpc.VpcId,
+		CidrBlock: aws.String("10.0.2.0/24"),
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: sub.Subnet.SubnetId})
+	require.NoError(t, err)
+}
+
+func TestEC2CreateSecurityGroup(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sg, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("web"),
+		Description: aws.String("web-tier access"),
+		VpcId:       vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, aws.ToString(sg.GroupId))
+}
+
+func TestEC2AuthorizeIngressCIDR(t *testing.T) {
+	// Real AWS flow: create SG, authorize ingress rule, describe sees the rule.
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sg, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("http"),
+		Description: aws.String("allow http"),
+		VpcId:       vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+	sgID := aws.ToString(sg.GroupId)
+
+	_, err = client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(sgID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(80),
+			ToPort:     aws.Int32(80),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{sgID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.SecurityGroups, 1)
+
+	perms := desc.SecurityGroups[0].IpPermissions
+	require.Len(t, perms, 1, "expected 1 ingress permission")
+	assert.Equal(t, "tcp", aws.ToString(perms[0].IpProtocol))
+	assert.Equal(t, int32(80), aws.ToInt32(perms[0].FromPort))
+	assert.Equal(t, int32(80), aws.ToInt32(perms[0].ToPort))
+	require.Len(t, perms[0].IpRanges, 1)
+	assert.Equal(t, "0.0.0.0/0", aws.ToString(perms[0].IpRanges[0].CidrIp))
+}
+
+func TestEC2AuthorizeIngressMultipleRules(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sg, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("multi"),
+		Description: aws.String("multiple rules"),
+		VpcId:       vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+
+	_, err = client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: sg.GroupId,
+		IpPermissions: []ec2types.IpPermission{
+			{
+				IpProtocol: aws.String("tcp"), FromPort: aws.Int32(80), ToPort: aws.Int32(80),
+				IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+			},
+			{
+				IpProtocol: aws.String("tcp"), FromPort: aws.Int32(443), ToPort: aws.Int32(443),
+				IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{aws.ToString(sg.GroupId)},
+	})
+	require.NoError(t, err)
+	assert.Len(t, desc.SecurityGroups[0].IpPermissions, 2)
+}
+
+func TestEC2RevokeIngress(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sg, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("rev"),
+		Description: aws.String("revoke test"),
+		VpcId:       vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+
+	rule := []ec2types.IpPermission{{
+		IpProtocol: aws.String("tcp"), FromPort: aws.Int32(22), ToPort: aws.Int32(22),
+		IpRanges: []ec2types.IpRange{{CidrIp: aws.String("10.0.0.0/16")}},
+	}}
+
+	_, err = client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: sg.GroupId, IpPermissions: rule,
+	})
+	require.NoError(t, err)
+
+	_, err = client.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
+		GroupId: sg.GroupId, IpPermissions: rule,
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{aws.ToString(sg.GroupId)},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, desc.SecurityGroups[0].IpPermissions,
+		"ingress rule should be removed after revoke")
+}
+
+func TestEC2AuthorizeEgress(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sg, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("eg"),
+		Description: aws.String("egress test"),
+		VpcId:       vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+
+	_, err = client.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{
+		GroupId: sg.GroupId,
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("-1"), FromPort: aws.Int32(0), ToPort: aws.Int32(0),
+			IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{aws.ToString(sg.GroupId)},
+	})
+	require.NoError(t, err)
+	assert.Len(t, desc.SecurityGroups[0].IpPermissionsEgress, 1)
+}
+
+func TestEC2DeleteSecurityGroup(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sg, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("del"),
+		Description: aws.String("delete"),
+		VpcId:       vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: sg.GroupId})
+	require.NoError(t, err)
+}
+
+func TestEC2InternetGatewayLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpc.Vpc.VpcId)
+
+	cre, err := client.CreateInternetGateway(ctx, &ec2.CreateInternetGatewayInput{})
+	require.NoError(t, err)
+	igwID := aws.ToString(cre.InternetGateway.InternetGatewayId)
+	assert.NotEmpty(t, igwID)
+
+	_, err = client.AttachInternetGateway(ctx, &ec2.AttachInternetGatewayInput{
+		InternetGatewayId: aws.String(igwID),
+		VpcId:             aws.String(vpcID),
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
+		InternetGatewayIds: []string{igwID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.InternetGateways, 1)
+	require.Len(t, desc.InternetGateways[0].Attachments, 1,
+		"IGW should show VPC attachment after Attach")
+	assert.Equal(t, vpcID, aws.ToString(desc.InternetGateways[0].Attachments[0].VpcId))
+
+	_, err = client.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{
+		InternetGatewayId: aws.String(igwID),
+		VpcId:             aws.String(vpcID),
+	})
+	require.NoError(t, err)
+}
+
+func TestEC2RouteTableLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpc.Vpc.VpcId)
+
+	cre, err := client.CreateRouteTable(ctx, &ec2.CreateRouteTableInput{
+		VpcId: aws.String(vpcID),
+	})
+	require.NoError(t, err)
+	rtID := aws.ToString(cre.RouteTable.RouteTableId)
+	assert.NotEmpty(t, rtID)
+
+	// Create an IGW to target.
+	igw, err := client.CreateInternetGateway(ctx, &ec2.CreateInternetGatewayInput{})
+	require.NoError(t, err)
+	igwID := aws.ToString(igw.InternetGateway.InternetGatewayId)
+
+	_, err = client.CreateRoute(ctx, &ec2.CreateRouteInput{
+		RouteTableId:         aws.String(rtID),
+		DestinationCidrBlock: aws.String("0.0.0.0/0"),
+		GatewayId:            aws.String(igwID),
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{
+		RouteTableIds: []string{rtID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.RouteTables, 1)
+
+	// The route we created should be visible.
+	foundRoute := false
+	for _, route := range desc.RouteTables[0].Routes {
+		if aws.ToString(route.DestinationCidrBlock) == "0.0.0.0/0" &&
+			aws.ToString(route.GatewayId) == igwID {
+			foundRoute = true
+		}
+	}
+	assert.True(t, foundRoute, "0.0.0.0/0 → IGW route should be visible in DescribeRouteTables")
+}
+
+func TestEC2CreateRouteMissingTargetReturnsError(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	rt, err := client.CreateRouteTable(ctx, &ec2.CreateRouteTableInput{VpcId: vpc.Vpc.VpcId})
+	require.NoError(t, err)
+
+	_, err = client.CreateRoute(ctx, &ec2.CreateRouteInput{
+		RouteTableId:         rt.RouteTable.RouteTableId,
+		DestinationCidrBlock: aws.String("0.0.0.0/0"),
+		// No target provided.
+	})
+	require.Error(t, err)
+}
+
+// TestEC2EndToEndRealisticAWSWorkflow simulates the classic AWS setup flow
+// a real app goes through: build VPC → subnet → SG with ingress rule →
+// IGW attached → route table with 0.0.0.0/0 route → launch an instance in
+// the subnet referencing the SG. Every call is the real aws-sdk-go-v2 client
+// hitting CloudEmu over HTTP.
+func TestEC2EndToEndRealisticAWSWorkflow(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	// 1. VPC
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.0.0.0/16"),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeVpc,
+			Tags:         []ec2types.Tag{{Key: aws.String("Name"), Value: aws.String("e2e-vpc")}},
+		}},
+	})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpc.Vpc.VpcId)
+
+	// 2. Subnet in the VPC
+	sub, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId: aws.String(vpcID), CidrBlock: aws.String("10.0.1.0/24"),
+		AvailabilityZone: aws.String("us-east-1a"),
+	})
+	require.NoError(t, err)
+	subnetID := aws.ToString(sub.Subnet.SubnetId)
+
+	// 3. Security group with ingress rule (allow HTTP from anywhere)
+	sg, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("web"),
+		Description: aws.String("allow HTTP"),
+		VpcId:       aws.String(vpcID),
+	})
+	require.NoError(t, err)
+	sgID := aws.ToString(sg.GroupId)
+
+	_, err = client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(sgID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"), FromPort: aws.Int32(80), ToPort: aws.Int32(80),
+			IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	})
+	require.NoError(t, err)
+
+	// 4. Internet Gateway + attach
+	igw, err := client.CreateInternetGateway(ctx, &ec2.CreateInternetGatewayInput{})
+	require.NoError(t, err)
+	igwID := aws.ToString(igw.InternetGateway.InternetGatewayId)
+
+	_, err = client.AttachInternetGateway(ctx, &ec2.AttachInternetGatewayInput{
+		InternetGatewayId: aws.String(igwID), VpcId: aws.String(vpcID),
+	})
+	require.NoError(t, err)
+
+	// 5. Route table with default route to the IGW
+	rt, err := client.CreateRouteTable(ctx, &ec2.CreateRouteTableInput{
+		VpcId: aws.String(vpcID),
+	})
+	require.NoError(t, err)
+	rtID := aws.ToString(rt.RouteTable.RouteTableId)
+
+	_, err = client.CreateRoute(ctx, &ec2.CreateRouteInput{
+		RouteTableId:         aws.String(rtID),
+		DestinationCidrBlock: aws.String("0.0.0.0/0"),
+		GatewayId:            aws.String(igwID),
+	})
+	require.NoError(t, err)
+
+	// 6. Launch an EC2 instance in our subnet, with our SG attached.
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:          aws.String("ami-e2e"),
+		InstanceType:     ec2types.InstanceTypeT2Micro,
+		MinCount:         aws.Int32(1),
+		MaxCount:         aws.Int32(1),
+		SubnetId:         aws.String(subnetID),
+		SecurityGroupIds: []string{sgID},
+	})
+	require.NoError(t, err)
+	require.Len(t, run.Instances, 1)
+	instanceID := aws.ToString(run.Instances[0].InstanceId)
+
+	// 7. Describe verifies the instance kept its subnet and SG.
+	desc, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, desc.Reservations)
+	require.NotEmpty(t, desc.Reservations[0].Instances)
+
+	inst := desc.Reservations[0].Instances[0]
+	assert.Equal(t, subnetID, aws.ToString(inst.SubnetId),
+		"launched instance should carry the subnet we asked for")
+
+	gotSG := make([]string, 0, len(inst.SecurityGroups))
+	for _, g := range inst.SecurityGroups {
+		gotSG = append(gotSG, aws.ToString(g.GroupId))
+	}
+
+	assert.Contains(t, gotSG, sgID,
+		"launched instance should carry the SG we asked for")
+
+	// 8. All resources visible in their respective Describe calls.
+	vpcs, _ := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{vpcID}})
+	assert.Len(t, vpcs.Vpcs, 1)
+
+	subs, _ := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: []string{subnetID}})
+	assert.Len(t, subs.Subnets, 1)
+
+	sgs, _ := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{sgID},
+	})
+	assert.Len(t, sgs.SecurityGroups, 1)
+
+	igws, _ := client.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
+		InternetGatewayIds: []string{igwID},
+	})
+	assert.Len(t, igws.InternetGateways, 1)
+
+	rts, _ := client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{
+		RouteTableIds: []string{rtID},
+	})
+	assert.Len(t, rts.RouteTables, 1)
 }
