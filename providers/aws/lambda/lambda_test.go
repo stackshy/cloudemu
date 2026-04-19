@@ -719,8 +719,6 @@ func TestAliasRoutingConfigDeepCopy(t *testing.T) {
 	assertEqual(t, 0.5, alias.RoutingConfig.Weight)
 }
 
-// --- test helpers ---
-
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

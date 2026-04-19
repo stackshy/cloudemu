@@ -614,8 +614,6 @@ func TestReceiveMessagesWithOptionsMetrics(t *testing.T) {
 	assertGreaterThan(t, len(result.Values), 0)
 }
 
-// --- test helpers ---
-
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

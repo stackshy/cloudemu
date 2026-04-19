@@ -322,8 +322,6 @@ func TestAlarmEvaluationOperators(t *testing.T) {
 	}
 }
 
-// --- test helpers ---
-
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

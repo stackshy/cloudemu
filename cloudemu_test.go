@@ -413,12 +413,9 @@ func TestCrossProvider(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // Real-World Scenario Tests
 // These simulate what a real user would do: create a cloud environment,
 // seed resources, then perform operations — all without real cloud resources.
-// ==============================================================================
-
 // TestRealWorldAWS_InfraSetup simulates setting up a full AWS infrastructure:
 // VPC → Subnets → Security Groups → EC2 instances → S3 buckets → DNS → Monitoring
 func TestRealWorldAWS_InfraSetup(t *testing.T) {
@@ -772,10 +769,7 @@ func TestRealWorldGCP_InfraSetup(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // New Tests: Fixing 6 gaps to make CloudEmu behave like real cloud
-// ==============================================================================
-
 func TestScanMissingOperators(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
@@ -1235,10 +1229,7 @@ func TestLifecycleStartEmitsRunningMetrics(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // Feature: Dead-Letter Queue Tests
-// ==============================================================================
-
 func TestDeadLetterQueue(t *testing.T) {
 	ctx := context.Background()
 	clock := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -1404,10 +1395,7 @@ func TestDeadLetterQueueGCP(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // Feature: Cost Simulation Tests
-// ==============================================================================
-
 func TestCostTracker(t *testing.T) {
 	tracker := cost.New()
 
@@ -1479,10 +1467,7 @@ func TestCostTrackerReset(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // Feature: Lambda-SQS Trigger Tests
-// ==============================================================================
-
 func TestLambdaSQSTrigger(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
@@ -1613,10 +1598,7 @@ func TestGCPCloudFunctionPubSubTrigger(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // Integration Tests: Secrets (AWS SecretsManager, Azure KeyVault, GCP SecretManager)
-// ==============================================================================
-
 func TestAWSSecretsManagerOperations(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
@@ -1726,10 +1708,7 @@ func testSecretsWithDriver(t *testing.T, ctx context.Context, d secretsdriver.Se
 	}
 }
 
-// ==============================================================================
 // Integration Tests: Cache (AWS ElastiCache, Azure Cache, GCP Memorystore)
-// ==============================================================================
-
 func TestAWSElastiCacheOperations(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
@@ -1841,10 +1820,7 @@ func testCacheWithDriver(t *testing.T, ctx context.Context, d cachedriver.Cache)
 	}
 }
 
-// ==============================================================================
 // Integration Tests: Logging (AWS CloudWatch Logs, Azure Log Analytics, GCP Cloud Logging)
-// ==============================================================================
-
 func TestAWSCloudWatchLogsOperations(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
@@ -1985,10 +1961,7 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 	}
 }
 
-// ==============================================================================
 // Integration Tests: FilterLogEvents and MetricFilters
-// ==============================================================================
-
 func TestFilterLogEventsAWS(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
@@ -2260,10 +2233,7 @@ func TestMetricFiltersAWS(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // Integration Tests: Notification (AWS SNS, Azure Notification Hubs, GCP FCM)
-// ==============================================================================
-
 func TestAWSSNSOperations(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()
@@ -2392,10 +2362,7 @@ func testNotificationWithDriver(t *testing.T, ctx context.Context, d notifdriver
 	}
 }
 
-// ==============================================================================
 // Cross-Provider Integration: All 4 new services work consistently
-// ==============================================================================
-
 func TestCrossProviderNewServices(t *testing.T) {
 	ctx := context.Background()
 
@@ -2510,10 +2477,7 @@ func TestCrossProviderNewServices(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // Integration Tests: CacheInfo Tags Persistence
-// ==============================================================================
-
 func TestCacheTagsPersistence(t *testing.T) {
 	ctx := context.Background()
 
@@ -2593,10 +2557,7 @@ func TestCacheTagsPersistence(t *testing.T) {
 	}
 }
 
-// ==============================================================================
 // Integration Tests: LogQueryInput Pointer Interface
-// ==============================================================================
-
 func TestLogQueryInputPointer(t *testing.T) {
 	ctx := context.Background()
 
@@ -2681,10 +2642,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Container Registry Tests
-// ---------------------------------------------------------------------------
-
 func TestContainerRegistryOperations(t *testing.T) {
 	ctx := context.Background()
 	awsP := NewAWS()
@@ -2960,10 +2918,7 @@ func TestContainerRegistryImageScan(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Event Bus Tests
-// ---------------------------------------------------------------------------
-
 func TestEventBusOperations(t *testing.T) {
 	ctx := context.Background()
 	awsP := NewAWS()
@@ -3170,10 +3125,7 @@ func TestEventPatternMatching(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Storage Enhancement Tests
-// ---------------------------------------------------------------------------
-
 func TestPresignedURLs(t *testing.T) {
 	ctx := context.Background()
 	awsP := NewAWS()
@@ -3478,10 +3430,7 @@ func TestBucketVersioning(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Database Enhancement Tests
-// ---------------------------------------------------------------------------
-
 func TestDatabaseTTL(t *testing.T) {
 	ctx := context.Background()
 	clk := config.NewFakeClock(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -3725,10 +3674,7 @@ func TestTransactWriteItems(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Compute Enhancement Tests
-// ---------------------------------------------------------------------------
-
 func TestAutoScalingGroup(t *testing.T) {
 	ctx := context.Background()
 	awsP := NewAWS()
@@ -4020,10 +3966,7 @@ func TestLaunchTemplates(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Serverless Enhancement Tests
-// ---------------------------------------------------------------------------
-
 func TestFunctionVersions(t *testing.T) {
 	ctx := context.Background()
 	awsP := NewAWS()
@@ -4331,10 +4274,7 @@ func TestFunctionConcurrency(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Message Queue Enhancement Tests
-// ---------------------------------------------------------------------------
-
 func TestBatchSendMessages(t *testing.T) {
 	ctx := context.Background()
 	awsP := NewAWS()
@@ -4565,10 +4505,7 @@ func TestPurgeQueue(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Networking Enhancement Tests
-// ---------------------------------------------------------------------------
-
 func TestVPCPeering(t *testing.T) {
 	ctx := context.Background()
 	awsP := NewAWS()
@@ -8234,10 +8171,7 @@ func testGSIOperations(t *testing.T, ctx context.Context, d driver.Database) {
 		t.Errorf("expected NotFound for missing table, got %v", err)
 	}
 }
-// ---------------------------------------------------------------------------
 // Event Source Mapping Tests
-// ---------------------------------------------------------------------------
-
 func testEventSourceMapping(t *testing.T, ctx context.Context, d serverlessdriver.Serverless) {
 	t.Helper()
 
@@ -9168,10 +9102,7 @@ func TestInstanceProfileGCP(t *testing.T) {
 	testInstanceProfileOps(t, p.IAM, "GCP")
 }
 
-// ---------------------------------------------------------------------------
 // Topology integration tests
-// ---------------------------------------------------------------------------
-
 // instanceVPCSetter is implemented by compute mocks that support setting the
 // VPC ID on an instance after creation.
 type instanceVPCSetter interface {

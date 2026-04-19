@@ -27,10 +27,7 @@ func newTestEngine() (*Engine, *ec2.Mock, *vpc.Mock, *route53.Mock) {
 	return engine, ec2Mock, vpcMock, dnsMock
 }
 
-// ---------------------------------------------------------------------------
 // CIDR helper tests
-// ---------------------------------------------------------------------------
-
 func TestIPInCIDR(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -203,10 +200,7 @@ func TestFindMatchingRoute(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Security tests
-// ---------------------------------------------------------------------------
-
 func TestEvaluateSecurityGroupsAllowed(t *testing.T) {
 	engine, _, vpcMock, _ := newTestEngine()
 	ctx := context.Background()
@@ -317,10 +311,7 @@ func TestEvaluateNetworkACLDenyBeforeAllow(t *testing.T) {
 	assert.Equal(t, "deny", verdict.Action)
 }
 
-// ---------------------------------------------------------------------------
 // CanConnect tests
-// ---------------------------------------------------------------------------
-
 // createVPCWithSubnetAndSGs is a helper that creates a VPC, a subnet, and two
 // security groups. It returns the IDs needed by CanConnect tests.
 func createVPCWithSubnetAndSGs(
@@ -555,10 +546,7 @@ func TestCanConnectInstanceNotRunning(t *testing.T) {
 	assert.Contains(t, err.Error(), "not running")
 }
 
-// ---------------------------------------------------------------------------
 // TraceRoute tests
-// ---------------------------------------------------------------------------
-
 func TestTraceRoute(t *testing.T) {
 	engine, ec2Mock, vpcMock, _ := newTestEngine()
 	ctx := context.Background()
@@ -612,10 +600,7 @@ func TestTraceRoute(t *testing.T) {
 	assert.Equal(t, "igw-123", hops[3].ResourceID)
 }
 
-// ---------------------------------------------------------------------------
 // Resolve tests
-// ---------------------------------------------------------------------------
-
 func TestResolve(t *testing.T) {
 	engine, _, _, dnsMock := newTestEngine()
 	ctx := context.Background()
