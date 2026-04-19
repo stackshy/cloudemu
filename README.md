@@ -137,6 +137,7 @@ Currently covered:
 | **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, Query |
 | **EC2** | RunInstances, DescribeInstances (with filters), StartInstances, StopInstances, RebootInstances, TerminateInstances, ModifyInstanceAttribute |
 | **EC2 — VPC & Networking** | CreateVpc, DeleteVpc, DescribeVpcs, CreateSubnet, DeleteSubnet, DescribeSubnets, CreateSecurityGroup, DeleteSecurityGroup, DescribeSecurityGroups, AuthorizeSecurityGroupIngress/Egress, RevokeSecurityGroupIngress/Egress, CreateInternetGateway, AttachInternetGateway, DetachInternetGateway, DescribeInternetGateways, CreateRouteTable, DescribeRouteTables, CreateRoute |
+| **EC2 — EBS & Key Pairs** | CreateVolume, DeleteVolume, DescribeVolumes, AttachVolume, DetachVolume, CreateKeyPair, DeleteKeyPair, DescribeKeyPairs |
 
 More services land progressively — see [docs/sdk-server.md](docs/sdk-server.md).
 

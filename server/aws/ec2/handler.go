@@ -69,7 +69,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	action := r.Form.Get("Action")
 
-	if h.routeCompute(w, r, action) {
+	if h.routeInstances(w, r, action) {
+		return
+	}
+
+	if h.routeVolumes(w, r, action) {
+		return
+	}
+
+	if h.routeKeyPairs(w, r, action) {
 		return
 	}
 
@@ -81,9 +89,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"InvalidAction", "unknown action: "+action)
 }
 
-// routeCompute dispatches compute-driver-backed actions. Returns true if the
-// action was handled.
-func (h *Handler) routeCompute(w http.ResponseWriter, r *http.Request, action string) bool {
+// routeInstances dispatches instance-lifecycle actions backed by the compute
+// driver. Returns true if the action was handled.
+func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "RunInstances":
 		h.runInstances(w, r)
@@ -99,6 +107,40 @@ func (h *Handler) routeCompute(w http.ResponseWriter, r *http.Request, action st
 		h.terminateInstances(w, r)
 	case "ModifyInstanceAttribute":
 		h.modifyInstanceAttribute(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeVolumes(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateVolume":
+		h.createVolume(w, r)
+	case "DeleteVolume":
+		h.deleteVolume(w, r)
+	case "DescribeVolumes":
+		h.describeVolumes(w, r)
+	case "AttachVolume":
+		h.attachVolume(w, r)
+	case "DetachVolume":
+		h.detachVolume(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeKeyPairs(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateKeyPair":
+		h.createKeyPair(w, r)
+	case "DeleteKeyPair":
+		h.deleteKeyPair(w, r)
+	case "DescribeKeyPairs":
+		h.describeKeyPairs(w, r)
 	default:
 		return false
 	}

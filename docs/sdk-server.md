@@ -52,6 +52,8 @@ Region and credentials can be any dummy values — the server doesn't validate s
 | **EC2 — Security Group** | CreateSecurityGroup, DeleteSecurityGroup, DescribeSecurityGroups, AuthorizeSecurityGroupIngress/Egress, RevokeSecurityGroupIngress/Egress |
 | **EC2 — Internet Gateway** | CreateInternetGateway, AttachInternetGateway, DetachInternetGateway, DescribeInternetGateways |
 | **EC2 — Route Table** | CreateRouteTable, DescribeRouteTables, CreateRoute (gateway/nat-gateway/peering targets) |
+| **EC2 — EBS Volumes** | CreateVolume, DeleteVolume, DescribeVolumes, AttachVolume, DetachVolume |
+| **EC2 — Key Pairs** | CreateKeyPair, DeleteKeyPair, DescribeKeyPairs |
 
 Any operation not in this list returns `501 Not Implemented` or the AWS-style `UnknownOperation` / `InvalidAction` error. The list grows each phase — see the bottom of this page.
 
@@ -101,6 +103,7 @@ The EC2 SDK-compat work is Phase 1 of a larger initiative (tracked in [#121](htt
 |-------|-------|
 | 1 (done) | Query-protocol foundation + EC2 core instance ops |
 | 2 (done) | VPC, Subnets, Security Groups, Internet Gateways, Route Tables |
+| 3 (done) | EBS Volumes, Key Pairs |
 | 3 | EBS Volumes, Key Pairs |
 | 4 | Auto-Scaling Groups + Scaling Policies |
 | 5 | Snapshots, AMIs |
