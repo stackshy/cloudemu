@@ -9,6 +9,7 @@ package aws
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
@@ -23,6 +24,7 @@ type Drivers struct {
 	S3       storagedriver.Bucket
 	DynamoDB dbdriver.Database
 	EC2      computedriver.Compute
+	VPC      netdriver.Networking
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -30,7 +32,9 @@ type Drivers struct {
 // dispatch is unambiguous:
 //
 //   - DynamoDB matches on X-Amz-Target header (JSON-RPC).
-//   - EC2 matches on Action= (form-encoded POST or query string).
+//   - EC2 matches on Action= (form-encoded POST or query string). The EC2
+//     handler also serves VPC/networking ops since real AWS uses one endpoint
+//     for both.
 //   - S3 is the REST fallback.
 func New(d Drivers) *server.Server {
 	srv := server.New()
@@ -39,8 +43,8 @@ func New(d Drivers) *server.Server {
 		srv.Register(dynamodb.New(d.DynamoDB))
 	}
 
-	if d.EC2 != nil {
-		srv.Register(ec2.New(d.EC2))
+	if d.EC2 != nil || d.VPC != nil {
+		srv.Register(ec2.New(d.EC2, d.VPC))
 	}
 
 	if d.S3 != nil {

@@ -136,6 +136,7 @@ Currently covered:
 | **S3** | CreateBucket, DeleteBucket, ListBuckets, PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2, CopyObject |
 | **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, Query |
 | **EC2** | RunInstances, DescribeInstances (with filters), StartInstances, StopInstances, RebootInstances, TerminateInstances, ModifyInstanceAttribute |
+| **EC2 — VPC & Networking** | CreateVpc, DeleteVpc, DescribeVpcs, CreateSubnet, DeleteSubnet, DescribeSubnets, CreateSecurityGroup, DeleteSecurityGroup, DescribeSecurityGroups, AuthorizeSecurityGroupIngress/Egress, RevokeSecurityGroupIngress/Egress, CreateInternetGateway, AttachInternetGateway, DetachInternetGateway, DescribeInternetGateways, CreateRouteTable, DescribeRouteTables, CreateRoute |
 
 More services land progressively — see [docs/sdk-server.md](docs/sdk-server.md).
 

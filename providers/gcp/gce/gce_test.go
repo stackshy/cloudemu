@@ -1369,10 +1369,6 @@ func TestCancelSpotRequestsPersistentType(t *testing.T) {
 	assert.Equal(t, compute.StateRunning, desc[0].State)
 }
 
-// =====================================================================
-// Volume Tests
-// =====================================================================
-
 func TestCreateVolume(t *testing.T) {
 	ctx := context.Background()
 
@@ -1556,10 +1552,6 @@ func TestDetachVolume(t *testing.T) {
 	})
 }
 
-// =====================================================================
-// Snapshot Tests
-// =====================================================================
-
 func TestCreateSnapshot(t *testing.T) {
 	ctx := context.Background()
 
@@ -1650,10 +1642,6 @@ func TestDescribeSnapshots(t *testing.T) {
 	// Keep snap2 referenced
 	assert.NotEmpty(t, snap2.ID)
 }
-
-// =====================================================================
-// Image Tests
-// =====================================================================
 
 func TestCreateImage(t *testing.T) {
 	ctx := context.Background()

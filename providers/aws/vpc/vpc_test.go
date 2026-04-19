@@ -295,8 +295,6 @@ func TestAddAndRemoveSecurityGroupRules(t *testing.T) {
 	})
 }
 
-// --- Peering Connection tests ---
-
 func TestCreatePeeringConnection(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -447,8 +445,6 @@ func TestDescribePeeringConnections(t *testing.T) {
 	})
 }
 
-// --- NAT Gateway tests ---
-
 func TestCreateNATGateway(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -515,8 +511,6 @@ func TestDescribeNATGateways(t *testing.T) {
 		assertEqual(t, nat1.ID, nats[0].ID)
 	})
 }
-
-// --- Flow Log tests ---
 
 func TestCreateFlowLog(t *testing.T) {
 	m := newTestMock()
@@ -630,8 +624,6 @@ func TestGetFlowLogRecords(t *testing.T) {
 	})
 }
 
-// --- Route Table tests ---
-
 func TestCreateRouteTable(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -727,8 +719,6 @@ func TestDeleteRouteTable(t *testing.T) {
 		assertError(t, err, true)
 	})
 }
-
-// --- Network ACL tests ---
 
 func TestCreateNetworkACL(t *testing.T) {
 	m := newTestMock()
@@ -833,8 +823,6 @@ func TestDeleteNetworkACL(t *testing.T) {
 	})
 }
 
-// --- Internet Gateway tests ---
-
 func TestInternetGateway(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -922,8 +910,6 @@ func TestInternetGateway(t *testing.T) {
 	})
 }
 
-// --- Elastic IP tests ---
-
 func TestElasticIP(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -1004,8 +990,6 @@ func TestElasticIP(t *testing.T) {
 	})
 }
 
-// --- Route Table Association tests ---
-
 func TestRouteTableAssociation(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -1040,8 +1024,6 @@ func TestRouteTableAssociation(t *testing.T) {
 		assertError(t, err, true)
 	})
 }
-
-// --- test helpers ---
 
 func requireNoError(t *testing.T, err error) {
 	t.Helper()

@@ -1021,8 +1021,6 @@ func TestDescribeNetworkACLsWithIDs(t *testing.T) {
 	}
 }
 
-// --- Internet Gateway tests ---
-
 func TestInternetGateway(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
@@ -1118,8 +1116,6 @@ func TestInternetGateway(t *testing.T) {
 	})
 }
 
-// --- Elastic IP tests ---
-
 func TestElasticIP(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
@@ -1205,8 +1201,6 @@ func TestElasticIP(t *testing.T) {
 	})
 }
 
-// --- Route Table Association tests ---
-
 func TestRouteTableAssociation(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
@@ -1246,8 +1240,6 @@ func TestRouteTableAssociation(t *testing.T) {
 		assert.Contains(t, err.Error(), "not found")
 	})
 }
-
-// --- GetFlowLogRecords tests ---
 
 func TestGetFlowLogRecords(t *testing.T) {
 	ctx := context.Background()

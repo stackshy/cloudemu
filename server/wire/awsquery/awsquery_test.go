@@ -110,6 +110,37 @@ func TestFlatTags(t *testing.T) {
 	}
 }
 
+func TestCollectIndices(t *testing.T) {
+	form := url.Values{
+		"Foo.1":         {"a"},
+		"Foo.2.Bar":     {"b"},
+		"Foo.10":        {"j"},
+		"Foo.3.Baz.1":   {"c"},
+		"Other.1":       {"x"},
+		"NotIndexed":    {"y"},
+		"Foo.notanint":  {"z"},
+	}
+
+	got := awsquery.CollectIndices(form, "Foo")
+
+	want := []int{1, 2, 3, 10}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCollectIndicesEmpty(t *testing.T) {
+	if got := awsquery.CollectIndices(url.Values{"Other": {"x"}}, "Foo"); got != nil {
+		t.Errorf("expected nil, got %v", got)
+	}
+}
+
 type sampleResponse struct {
 	XMLName xml.Name `xml:"SampleResponse"`
 	Xmlns   string   `xml:"xmlns,attr"`

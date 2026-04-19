@@ -9,6 +9,7 @@ import (
 
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	cerrors "github.com/stackshy/cloudemu/errors"
+	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/server/wire/awsquery"
 )
 
@@ -22,14 +23,18 @@ const formContentType = "application/x-www-form-urlencoded"
 // plenty of headroom while preventing memory-exhaustion attacks.
 const maxFormBodyBytes = 1 << 20
 
-// Handler serves EC2 query-protocol requests against a compute driver.
+// Handler serves EC2 query-protocol requests. Real AWS EC2 serves both
+// compute and VPC/networking on one endpoint, so the handler holds both
+// drivers and dispatches based on the Action parameter.
 type Handler struct {
 	compute computedriver.Compute
+	vpc     netdriver.Networking
 }
 
-// New returns an EC2 handler backed by c.
-func New(c computedriver.Compute) *Handler {
-	return &Handler{compute: c}
+// New returns an EC2 handler backed by c and v. Either may be nil if only
+// one service is being emulated, though most workflows need both together.
+func New(c computedriver.Compute, v netdriver.Networking) *Handler {
+	return &Handler{compute: c, vpc: v}
 }
 
 // Matches returns true for EC2-shaped requests. EC2 uses the AWS query
@@ -64,6 +69,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	action := r.Form.Get("Action")
 
+	if h.routeCompute(w, r, action) {
+		return
+	}
+
+	if h.routeVPC(w, r, action) {
+		return
+	}
+
+	awsquery.WriteXMLError(w, http.StatusBadRequest,
+		"InvalidAction", "unknown action: "+action)
+}
+
+// routeCompute dispatches compute-driver-backed actions. Returns true if the
+// action was handled.
+func (h *Handler) routeCompute(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "RunInstances":
 		h.runInstances(w, r)
@@ -80,17 +100,133 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "ModifyInstanceAttribute":
 		h.modifyInstanceAttribute(w, r)
 	default:
-		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"InvalidAction", "unknown action: "+action)
+		return false
 	}
+
+	return true
 }
 
-// writeErr maps CloudEmu errors to EC2 XML error responses.
+// routeVPC dispatches VPC/networking-driver-backed actions. Returns true if
+// the action was handled. Split into per-resource sub-routers to keep
+// individual dispatch tables small.
+func (h *Handler) routeVPC(w http.ResponseWriter, r *http.Request, action string) bool {
+	if h.routeVPCResource(w, r, action) {
+		return true
+	}
+
+	if h.routeVPCSubnet(w, r, action) {
+		return true
+	}
+
+	if h.routeVPCSecurityGroup(w, r, action) {
+		return true
+	}
+
+	if h.routeVPCInternetGateway(w, r, action) {
+		return true
+	}
+
+	return h.routeVPCRouteTable(w, r, action)
+}
+
+func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateVpc":
+		h.createVpc(w, r)
+	case "DeleteVpc":
+		h.deleteVpc(w, r)
+	case "DescribeVpcs":
+		h.describeVpcs(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeVPCSubnet(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateSubnet":
+		h.createSubnet(w, r)
+	case "DeleteSubnet":
+		h.deleteSubnet(w, r)
+	case "DescribeSubnets":
+		h.describeSubnets(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeVPCSecurityGroup(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateSecurityGroup":
+		h.createSecurityGroup(w, r)
+	case "DeleteSecurityGroup":
+		h.deleteSecurityGroup(w, r)
+	case "DescribeSecurityGroups":
+		h.describeSecurityGroups(w, r)
+	case "AuthorizeSecurityGroupIngress":
+		h.authorizeSecurityGroupIngress(w, r)
+	case "AuthorizeSecurityGroupEgress":
+		h.authorizeSecurityGroupEgress(w, r)
+	case "RevokeSecurityGroupIngress":
+		h.revokeSecurityGroupIngress(w, r)
+	case "RevokeSecurityGroupEgress":
+		h.revokeSecurityGroupEgress(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeVPCInternetGateway(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateInternetGateway":
+		h.createInternetGateway(w, r)
+	case "AttachInternetGateway":
+		h.attachInternetGateway(w, r)
+	case "DetachInternetGateway":
+		h.detachInternetGateway(w, r)
+	case "DescribeInternetGateways":
+		h.describeInternetGateways(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateRouteTable":
+		h.createRouteTable(w, r)
+	case "DescribeRouteTables":
+		h.describeRouteTables(w, r)
+	case "CreateRoute":
+		h.createRoute(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// writeErr maps CloudEmu errors to EC2 XML error responses for instance ops.
+// VPC ops should use writeErrWithNotFound to emit resource-specific codes like
+// "InvalidVpcID.NotFound" or "InvalidSubnetID.NotFound".
 func writeErr(w http.ResponseWriter, err error) {
+	writeErrWithNotFound(w, err, "InvalidInstanceID.NotFound", "IncorrectInstanceState")
+}
+
+// writeErrWithNotFound writes an error with caller-supplied NotFound and
+// FailedPrecondition codes so each resource type emits the right AWS error.
+func writeErrWithNotFound(w http.ResponseWriter, err error, notFoundCode, preconditionCode string) {
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"InvalidInstanceID.NotFound", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode, err.Error())
 	case cerrors.IsAlreadyExists(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"ResourceAlreadyExists", err.Error())
@@ -99,7 +235,7 @@ func writeErr(w http.ResponseWriter, err error) {
 			"InvalidParameterValue", err.Error())
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"IncorrectInstanceState", err.Error())
+			preconditionCode, err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError,
 			"InternalError", err.Error())

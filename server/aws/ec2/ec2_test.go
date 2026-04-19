@@ -17,9 +17,11 @@ import (
 	"github.com/stackshy/cloudemu/server/wire/awsquery"
 )
 
-// newHandler returns a Handler wired to a fresh in-memory provider.
+// newHandler returns a Handler wired to a fresh in-memory provider. Phase-1
+// unit tests only need the compute driver; Phase-2 tests in security_group_test.go
+// and siblings construct their own Handler with both drivers.
 func newHandler() *Handler {
-	return New(awsec2.New(config.NewOptions()))
+	return New(awsec2.New(config.NewOptions()), nil)
 }
 
 // do runs a request through the handler and returns the recorded response.
@@ -41,8 +43,6 @@ func do(t *testing.T, h *Handler, method, path string, form url.Values) *httptes
 
 	return rr
 }
-
-// --- Matches -------------------------------------------------------------
 
 func TestMatchesRejectsDynamoDBTarget(t *testing.T) {
 	h := newHandler()
@@ -99,8 +99,6 @@ func TestMatchesRejectsJSONPost(t *testing.T) {
 	}
 }
 
-// --- ServeHTTP dispatch --------------------------------------------------
-
 func TestServeHTTPUnknownActionReturns400(t *testing.T) {
 	h := newHandler()
 
@@ -152,8 +150,6 @@ func TestServeHTTPEveryActionRoutes(t *testing.T) {
 	}
 }
 
-// --- writeErr ------------------------------------------------------------
-
 func TestWriteErrMappings(t *testing.T) {
 	cases := []struct {
 		err      error
@@ -177,8 +173,6 @@ func TestWriteErrMappings(t *testing.T) {
 	}
 }
 
-// --- instanceCount -------------------------------------------------------
-
 func TestInstanceCount(t *testing.T) {
 	cases := []struct {
 		minS, maxS string
@@ -201,8 +195,6 @@ func TestInstanceCount(t *testing.T) {
 		}
 	}
 }
-
-// --- mergeTagSpecs -------------------------------------------------------
 
 func TestMergeTagSpecsInstanceOnly(t *testing.T) {
 	specs := []awsquery.TagSpec{
@@ -249,8 +241,6 @@ func TestMergeTagSpecsAllWrongResourceReturnsNil(t *testing.T) {
 	}
 }
 
-// --- toInstanceXMLs ------------------------------------------------------
-
 func TestToInstanceXMLs(t *testing.T) {
 	in := []computedriver.Instance{{
 		ID: "i-a", ImageID: "ami-1", InstanceType: "t2.micro",
@@ -283,8 +273,6 @@ func TestToInstanceXMLsEmpty(t *testing.T) {
 	}
 }
 
-// --- toDriverFilters -----------------------------------------------------
-
 func TestToDriverFiltersRoundTrip(t *testing.T) {
 	in := []awsquery.Filter{
 		{Name: "instance-state-name", Values: []string{"running"}},
@@ -312,8 +300,6 @@ func TestToDriverFiltersNilForEmpty(t *testing.T) {
 	}
 }
 
-// --- stateChanges --------------------------------------------------------
-
 func TestStateChanges(t *testing.T) {
 	cur := instanceState{Code: stateCodeStopping, Name: "stopping"}
 	prev := instanceState{Code: stateCodeRunning, Name: "running"}
@@ -333,8 +319,6 @@ func TestStateChanges(t *testing.T) {
 	}
 }
 
-// --- stripInstancePrefix -------------------------------------------------
-
 func TestStripInstancePrefix(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"i-abc", "abc"},
@@ -349,8 +333,6 @@ func TestStripInstancePrefix(t *testing.T) {
 		}
 	}
 }
-
-// --- stateCode -----------------------------------------------------------
 
 func TestStateCodeAllStates(t *testing.T) {
 	cases := []struct {
@@ -373,7 +355,6 @@ func TestStateCodeAllStates(t *testing.T) {
 	}
 }
 
-// --- Driver error paths --------------------------------------------------
 //
 // These trigger the provider's NotFound error by calling state-transition
 // ops with unknown IDs, exercising writeErr dispatch from every operation.
@@ -421,8 +402,6 @@ func TestOperationsWithUnknownIDReturnError(t *testing.T) {
 	}
 }
 
-// --- ModifyInstanceAttribute noop path -----------------------------------
-
 func TestModifyInstanceAttributeNoopReturnsOK(t *testing.T) {
 	h := newHandler()
 
@@ -449,8 +428,6 @@ func TestModifyInstanceAttributeNoopReturnsOK(t *testing.T) {
 		t.Fatalf("noop modify returned %d: %s", rr.Code, rr.Body.String())
 	}
 }
-
-// --- helpers -------------------------------------------------------------
 
 // extractFirstInstanceID pulls the first <instanceId>…</instanceId> value out
 // of an XML response. Crude but good enough for these focused unit tests.

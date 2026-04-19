@@ -974,10 +974,6 @@ func (mc *mockCompute) DescribeImages(_ context.Context, ids []string) ([]driver
 	return result, nil
 }
 
-// =====================================================================
-// Volume Portable Tests
-// =====================================================================
-
 func TestCreateVolumePortable(t *testing.T) {
 	c := newTestCompute()
 	ctx := context.Background()
@@ -1096,10 +1092,6 @@ func TestDetachVolumePortableError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// =====================================================================
-// Snapshot Portable Tests
-// =====================================================================
-
 func TestCreateSnapshotPortable(t *testing.T) {
 	c := newTestCompute()
 	ctx := context.Background()
@@ -1163,10 +1155,6 @@ func TestDescribeSnapshotsPortable(t *testing.T) {
 	assert.Equal(t, 1, len(snaps))
 	assert.Equal(t, snap.ID, snaps[0].ID)
 }
-
-// =====================================================================
-// Image Portable Tests
-// =====================================================================
 
 func TestCreateImagePortable(t *testing.T) {
 	c := newTestCompute()
@@ -1243,10 +1231,6 @@ func TestDescribeImagesPortable(t *testing.T) {
 	assert.Equal(t, img.ID, imgs[0].ID)
 }
 
-// =====================================================================
-// ModifyInstance Portable Tests
-// =====================================================================
-
 func TestModifyInstancePortable(t *testing.T) {
 	c := newTestCompute()
 	ctx := context.Background()
@@ -1275,10 +1259,6 @@ func TestModifyInstancePortableError(t *testing.T) {
 	})
 	require.Error(t, err)
 }
-
-// =====================================================================
-// Auto Scaling Group Portable Tests
-// =====================================================================
 
 func TestCreateAutoScalingGroupPortable(t *testing.T) {
 	c := newTestCompute()
@@ -1436,10 +1416,6 @@ func TestSetDesiredCapacityPortableError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// =====================================================================
-// Scaling Policy Portable Tests
-// =====================================================================
-
 func TestPutScalingPolicyPortable(t *testing.T) {
 	c := newTestCompute()
 	ctx := context.Background()
@@ -1521,10 +1497,6 @@ func TestExecuteScalingPolicyPortableError(t *testing.T) {
 	err := c.ExecuteScalingPolicy(ctx, "nonexistent-asg", "nonexistent-policy")
 	require.Error(t, err)
 }
-
-// =====================================================================
-// Spot Instance Portable Tests
-// =====================================================================
 
 func TestRequestSpotInstancesPortable(t *testing.T) {
 	c := newTestCompute()
@@ -1617,10 +1589,6 @@ func TestDescribeSpotRequestsPortableError(t *testing.T) {
 	_, err := c.DescribeSpotRequests(ctx, []string{"sir-nonexistent"})
 	require.Error(t, err)
 }
-
-// =====================================================================
-// Launch Template Portable Tests
-// =====================================================================
 
 func TestCreateLaunchTemplatePortable(t *testing.T) {
 	c := newTestCompute()
@@ -1721,10 +1689,6 @@ func TestListLaunchTemplatesPortableEmpty(t *testing.T) {
 	assert.Empty(t, templates)
 }
 
-// =====================================================================
-// Error Injection Tests for List/Describe methods (cover error return paths)
-// =====================================================================
-
 func TestListAutoScalingGroupsPortableError(t *testing.T) {
 	inj := inject.NewInjector()
 	c := newTestCompute(WithErrorInjection(inj))
@@ -1802,10 +1766,6 @@ func TestDescribeImagesPortableError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// =====================================================================
-// Key Pair Mock Methods
-// =====================================================================
-
 func (mc *mockCompute) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driver.KeyPairInfo, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
@@ -1879,10 +1839,6 @@ func (mc *mockCompute) DescribeKeyPairs(_ context.Context, names []string) ([]dr
 
 	return result, nil
 }
-
-// =====================================================================
-// Key Pair Portable Tests
-// =====================================================================
 
 func TestCreateKeyPairPortable(t *testing.T) {
 	c := newTestCompute()

@@ -7,11 +7,7 @@
 // package and one Register call; the core server never changes.
 package server
 
-import (
-	"context"
-	"net"
-	"net/http"
-)
+import "net/http"
 
 // Handler is a self-contained protocol handler registered with a Server.
 // Matches inspects the request and returns true if this handler should serve
@@ -22,11 +18,10 @@ type Handler interface {
 	ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
-// Server routes incoming HTTP requests to registered Handlers.
-// Server itself implements http.Handler, so httptest.NewServer(srv) works.
+// Server routes incoming HTTP requests to registered Handlers. Server itself
+// implements http.Handler, so httptest.NewServer(srv) works.
 type Server struct {
 	handlers []Handler
-	listener net.Listener
 }
 
 // New creates a Server preloaded with the given handlers. Additional handlers
@@ -52,29 +47,4 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "no handler registered for this request", http.StatusNotImplemented)
-}
-
-// Start listens on addr and serves requests. Blocks until Close is called.
-func (s *Server) Start(addr string) error {
-	var lc net.ListenConfig
-
-	ln, err := lc.Listen(context.Background(), "tcp", addr)
-	if err != nil {
-		return err
-	}
-
-	s.listener = ln
-
-	srv := &http.Server{Handler: s} //nolint:gosec // local dev server, timeouts not needed
-
-	return srv.Serve(ln)
-}
-
-// Close shuts down the listener started by Start.
-func (s *Server) Close() error {
-	if s.listener != nil {
-		return s.listener.Close()
-	}
-
-	return nil
 }

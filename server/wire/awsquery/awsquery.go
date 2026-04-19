@@ -139,8 +139,13 @@ func parseTagMap(form url.Values, prefix string) map[string]string {
 	return out
 }
 
-// collectIndices returns the unique ascending N values for which any form key
-// starts with "<prefix>.N" or "<prefix>.N.*".
+// CollectIndices returns the unique ascending N values for which any form key
+// starts with "<prefix>.N" or "<prefix>.N.*". Exposed so sibling packages
+// parsing deeply-nested AWS wire structures can reuse the same logic.
+func CollectIndices(form url.Values, prefix string) []int {
+	return collectIndices(form, prefix)
+}
+
 func collectIndices(form url.Values, prefix string) []int {
 	seen := make(map[int]struct{})
 	dot := prefix + "."
