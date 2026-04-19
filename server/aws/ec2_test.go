@@ -1447,3 +1447,137 @@ func TestEC2EndToEndRealisticAWSWorkflow(t *testing.T) {
 	})
 	assert.Len(t, rts.RouteTables, 1)
 }
+
+func TestEC2VolumeLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	cre, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(100),
+		VolumeType:       ec2types.VolumeTypeGp3,
+	})
+	require.NoError(t, err)
+	volID := aws.ToString(cre.VolumeId)
+	assert.NotEmpty(t, volID)
+	assert.Equal(t, int32(100), aws.ToInt32(cre.Size))
+
+	desc, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		VolumeIds: []string{volID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Volumes, 1)
+	assert.Equal(t, "us-east-1a", aws.ToString(desc.Volumes[0].AvailabilityZone))
+
+	_, err = client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volID)})
+	require.NoError(t, err)
+}
+
+func TestEC2VolumeAttachDetach(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-vol"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(20),
+	})
+	require.NoError(t, err)
+	volID := aws.ToString(vol.VolumeId)
+
+	att, err := client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId:   aws.String(volID),
+		InstanceId: aws.String(instID),
+		Device:     aws.String("/dev/sdf"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, volID, aws.ToString(att.VolumeId))
+	assert.Equal(t, instID, aws.ToString(att.InstanceId))
+	assert.Equal(t, "/dev/sdf", aws.ToString(att.Device))
+
+	desc, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		VolumeIds: []string{volID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Volumes, 1)
+	require.Len(t, desc.Volumes[0].Attachments, 1,
+		"volume should report attachment in describe")
+	assert.Equal(t, instID, aws.ToString(desc.Volumes[0].Attachments[0].InstanceId))
+
+	_, err = client.DetachVolume(ctx, &ec2.DetachVolumeInput{
+		VolumeId: aws.String(volID),
+	})
+	require.NoError(t, err)
+}
+
+func TestEC2DeleteVolumeUnknownReturnsError(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	_, err := client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{
+		VolumeId: aws.String("vol-ghost"),
+	})
+	require.Error(t, err)
+}
+
+func TestEC2KeyPairLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	cre, err := client.CreateKeyPair(ctx, &ec2.CreateKeyPairInput{
+		KeyName: aws.String("my-key"),
+		KeyType: ec2types.KeyTypeRsa,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "my-key", aws.ToString(cre.KeyName))
+	assert.NotEmpty(t, aws.ToString(cre.KeyFingerprint))
+	assert.NotEmpty(t, aws.ToString(cre.KeyMaterial),
+		"CreateKeyPair must return private key material")
+
+	desc, err := client.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{
+		KeyNames: []string{"my-key"},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.KeyPairs, 1)
+	assert.Equal(t, "my-key", aws.ToString(desc.KeyPairs[0].KeyName))
+
+	_, err = client.DeleteKeyPair(ctx, &ec2.DeleteKeyPairInput{
+		KeyName: aws.String("my-key"),
+	})
+	require.NoError(t, err)
+}
+
+func TestEC2DescribeKeyPairsEmpty(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	out, err := client.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{})
+	require.NoError(t, err)
+	assert.Empty(t, out.KeyPairs)
+}
+
+func TestEC2RunInstancesWithKeyPair(t *testing.T) {
+	// Realistic flow: create key pair, launch instance with KeyName,
+	// verify KeyName on the describe response.
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	_, err := client.CreateKeyPair(ctx, &ec2.CreateKeyPairInput{
+		KeyName: aws.String("launch-key"),
+	})
+	require.NoError(t, err)
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-kp"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+		KeyName: aws.String("launch-key"),
+	})
+	require.NoError(t, err)
+	require.Len(t, run.Instances, 1)
+}
