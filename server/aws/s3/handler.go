@@ -32,14 +32,20 @@ func New(b driver.Bucket) *Handler {
 }
 
 // Matches returns true for requests that look like S3 REST calls: no
-// X-Amz-Target header (that's JSON-RPC services like DynamoDB) and no
-// Action= form parameter (that's query-protocol services like EC2/SQS).
+// X-Amz-Target header (that's JSON-RPC services like DynamoDB), no Action= in
+// the URL, and no form-encoded body (that's query-protocol services like EC2).
 func (*Handler) Matches(r *http.Request) bool {
 	if r.Header.Get("X-Amz-Target") != "" {
 		return false
 	}
 
 	if r.URL.Query().Get("Action") != "" {
+		return false
+	}
+
+	if r.Method == http.MethodPost &&
+		strings.HasPrefix(r.Header.Get("Content-Type"),
+			"application/x-www-form-urlencoded") {
 		return false
 	}
 

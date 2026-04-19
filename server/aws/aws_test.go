@@ -23,7 +23,11 @@ func newTestServer(t *testing.T) (string, aws.Config) {
 	t.Helper()
 
 	provider := cloudemu.NewAWS()
-	srv := awsserver.New(provider.S3, provider.DynamoDB)
+	srv := awsserver.New(awsserver.Drivers{
+		S3:       provider.S3,
+		DynamoDB: provider.DynamoDB,
+		EC2:      provider.EC2,
+	})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
