@@ -1,7 +1,11 @@
 package awsquery_test
 
 import (
+	"encoding/xml"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/server/wire/awsquery"
@@ -103,6 +107,69 @@ func TestFlatTags(t *testing.T) {
 	want := map[string]string{"k1": "v1", "k2": "v2"}
 	if !equalMaps(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+type sampleResponse struct {
+	XMLName xml.Name `xml:"SampleResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Value   string   `xml:"value"`
+}
+
+func TestWriteXMLResponse(t *testing.T) {
+	rr := httptest.NewRecorder()
+
+	awsquery.WriteXMLResponse(rr, sampleResponse{
+		Xmlns: awsquery.Namespace,
+		Value: "hello",
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+
+	if ct := rr.Header().Get("Content-Type"); ct != "text/xml" {
+		t.Errorf("Content-Type = %q, want text/xml", ct)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "<?xml") {
+		t.Errorf("body should start with XML declaration: %s", body)
+	}
+
+	if !strings.Contains(body, "<SampleResponse") {
+		t.Errorf("body should contain root element: %s", body)
+	}
+
+	if !strings.Contains(body, "<value>hello</value>") {
+		t.Errorf("body should contain payload: %s", body)
+	}
+}
+
+func TestWriteXMLError(t *testing.T) {
+	rr := httptest.NewRecorder()
+
+	awsquery.WriteXMLError(rr, http.StatusBadRequest, "InvalidParameter", "bad value")
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+
+	if ct := rr.Header().Get("Content-Type"); ct != "text/xml" {
+		t.Errorf("Content-Type = %q, want text/xml", ct)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "<Code>InvalidParameter</Code>") {
+		t.Errorf("body should contain Code: %s", body)
+	}
+
+	if !strings.Contains(body, "<Message>bad value</Message>") {
+		t.Errorf("body should contain Message: %s", body)
+	}
+
+	if !strings.Contains(body, "<RequestID>") {
+		t.Errorf("body should contain RequestID: %s", body)
 	}
 }
 
