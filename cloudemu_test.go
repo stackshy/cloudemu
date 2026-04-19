@@ -9294,3 +9294,211 @@ func TestTopologyCanConnectGCP(t *testing.T) {
 	ctx := context.Background()
 	testTopologyCanConnect(t, ctx, p.GCE, p.VPC, p.CloudDNS)
 }
+
+// ---------------------------------------------------------------------------
+// Dependency Graph integration tests
+// ---------------------------------------------------------------------------
+
+func testDependencyGraph(
+	t *testing.T,
+	ctx context.Context,
+	comp computedriver.Compute,
+	net netdriver.Networking,
+	dns dnsdriver.DNS,
+) {
+	t.Helper()
+
+	engine := topology.New(comp, net, dns)
+
+	v, err := net.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	if err != nil {
+		t.Fatalf("CreateVPC: %v", err)
+	}
+
+	subnet, err := net.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID: v.ID, CIDRBlock: "10.0.0.0/16", AvailabilityZone: "zone-a",
+	})
+	if err != nil {
+		t.Fatalf("CreateSubnet: %v", err)
+	}
+
+	sg, err := net.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "depgraph-sg", Description: "depgraph test",
+	})
+	if err != nil {
+		t.Fatalf("CreateSecurityGroup: %v", err)
+	}
+
+	instances, err := comp.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "img-test", InstanceType: "standard",
+		SubnetID: subnet.ID, SecurityGroups: []string{sg.ID},
+	}, 1)
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+
+	if setter, ok := comp.(instanceVPCSetter); ok {
+		if err := setter.SetInstanceVPC(instances[0].ID, v.ID); err != nil {
+			t.Fatalf("SetInstanceVPC: %v", err)
+		}
+	}
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	if err != nil {
+		t.Fatalf("BuildDependencyGraph: %v", err)
+	}
+
+	// At minimum: 1 VPC + 1 subnet + 1 SG + 1 instance = 4 resources.
+	if len(graph.Resources) < 4 {
+		t.Errorf("expected at least 4 resources, got %d", len(graph.Resources))
+	}
+
+	// At minimum: subnet->VPC + SG->VPC + instance->VPC + instance->subnet + instance->SG = 5 deps.
+	if len(graph.Dependencies) < 5 {
+		t.Errorf("expected at least 5 dependencies, got %d", len(graph.Dependencies))
+	}
+}
+
+func TestDependencyGraphAWS(t *testing.T) {
+	p := NewAWS()
+	ctx := context.Background()
+	testDependencyGraph(t, ctx, p.EC2, p.VPC, p.Route53)
+}
+
+func TestDependencyGraphAzure(t *testing.T) {
+	p := NewAzure()
+	ctx := context.Background()
+	testDependencyGraph(t, ctx, p.VirtualMachines, p.VNet, p.DNS)
+}
+
+func TestDependencyGraphGCP(t *testing.T) {
+	p := NewGCP()
+	ctx := context.Background()
+	testDependencyGraph(t, ctx, p.GCE, p.VPC, p.CloudDNS)
+}
+
+// ---------------------------------------------------------------------------
+// Cross-service dependency graph integration tests
+// ---------------------------------------------------------------------------
+
+func testCrossServiceDependencyGraph(
+	t *testing.T,
+	ctx context.Context,
+	comp computedriver.Compute,
+	net netdriver.Networking,
+	dns dnsdriver.DNS,
+	lb lbdriver.LoadBalancer,
+	provider string,
+) {
+	t.Helper()
+
+	engine := topology.New(comp, net, dns,
+		topology.WithLoadBalancer(lb),
+		topology.WithProvider(provider),
+	)
+
+	v, err := net.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	if err != nil {
+		t.Fatalf("CreateVPC: %v", err)
+	}
+
+	subnet, err := net.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID: v.ID, CIDRBlock: "10.0.0.0/16", AvailabilityZone: "zone-a",
+	})
+	if err != nil {
+		t.Fatalf("CreateSubnet: %v", err)
+	}
+
+	sg, err := net.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "cross-sg", Description: "cross-service test",
+	})
+	if err != nil {
+		t.Fatalf("CreateSecurityGroup: %v", err)
+	}
+
+	instances, err := comp.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "img-test", InstanceType: "standard",
+		SubnetID: subnet.ID, SecurityGroups: []string{sg.ID},
+	}, 1)
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+
+	if setter, ok := comp.(instanceVPCSetter); ok {
+		if err := setter.SetInstanceVPC(instances[0].ID, v.ID); err != nil {
+			t.Fatalf("SetInstanceVPC: %v", err)
+		}
+	}
+
+	createdLB, err := lb.CreateLoadBalancer(ctx, lbdriver.LBConfig{
+		Name: "int-lb", Type: "application", Scheme: "internal",
+		Subnets: []string{subnet.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateLoadBalancer: %v", err)
+	}
+
+	tg, err := lb.CreateTargetGroup(ctx, lbdriver.TargetGroupConfig{
+		Name: "int-tg", Protocol: "HTTP", Port: 80, VPCID: v.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTargetGroup: %v", err)
+	}
+
+	_, err = lb.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN: createdLB.ARN, Protocol: "HTTP", Port: 80, TargetGroupARN: tg.ARN,
+	})
+	if err != nil {
+		t.Fatalf("CreateListener: %v", err)
+	}
+
+	err = lb.RegisterTargets(ctx, tg.ARN, []lbdriver.Target{{ID: instances[0].ID, Port: 80}})
+	if err != nil {
+		t.Fatalf("RegisterTargets: %v", err)
+	}
+
+	graph, err := engine.BuildDependencyGraph(ctx)
+	if err != nil {
+		t.Fatalf("BuildDependencyGraph: %v", err)
+	}
+
+	// Should have core resources + LB resources.
+	if len(graph.Resources) < 7 {
+		t.Errorf("expected at least 7 resources, got %d", len(graph.Resources))
+	}
+
+	// Verify provider field is populated.
+	for _, r := range graph.Resources {
+		if r.Provider != provider {
+			t.Errorf("resource %s has provider %q, want %q", r.ID, r.Provider, provider)
+		}
+	}
+
+	// Verify WhatIf works on the LB.
+	report, err := engine.WhatIf(ctx, "delete", createdLB.ARN)
+	if err != nil {
+		t.Fatalf("WhatIf: %v", err)
+	}
+
+	if report.Action != "delete" {
+		t.Errorf("expected action 'delete', got %q", report.Action)
+	}
+}
+
+func TestCrossServiceDependencyGraphAWS(t *testing.T) {
+	p := NewAWS()
+	ctx := context.Background()
+	testCrossServiceDependencyGraph(t, ctx, p.EC2, p.VPC, p.Route53, p.ELB, "aws")
+}
+
+func TestCrossServiceDependencyGraphAzure(t *testing.T) {
+	p := NewAzure()
+	ctx := context.Background()
+	testCrossServiceDependencyGraph(t, ctx, p.VirtualMachines, p.VNet, p.DNS, p.LB, "azure")
+}
+
+func TestCrossServiceDependencyGraphGCP(t *testing.T) {
+	p := NewGCP()
+	ctx := context.Background()
+	testCrossServiceDependencyGraph(t, ctx, p.GCE, p.VPC, p.CloudDNS, p.LB, "gcp")
+}
