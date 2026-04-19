@@ -43,6 +43,15 @@ Each service defines a minimal Go interface in `<service>/driver/driver.go`. The
 
 The bottom layer contains the actual mock implementations for each cloud provider. These live in `providers/aws/`, `providers/azure/`, and `providers/gcp/`. Each implementation uses `internal/memstore.Store[V]` as its backing data structure -- a generic, thread-safe in-memory store. All state lives in process memory with no external dependencies.
 
+## Cross-Service Engines
+
+Sitting above Layer 2 (driver interfaces) are **cross-service engines** that consume driver interfaces directly without going through the portable API. They're peers of each other, not layers in the three-layer stack. Two exist today:
+
+- `topology/` -- reads from compute, networking, and DNS drivers to simulate real network connectivity (`CanConnect`, `TraceRoute`, `Resolve`, security-group and NACL evaluation). See [topology.md](topology.md).
+- `server/` -- exposes driver interfaces over HTTP in each cloud's native SDK wire format, so real `aws-sdk-go-v2` clients work against CloudEmu by only changing `BaseEndpoint`. Currently covers S3, DynamoDB, and EC2 core instance operations. Uses a pluggable `Handler` registry so new services drop in as self-contained packages without touching the core. See [sdk-server.md](sdk-server.md).
+
+Both engines depend only on Layer 2 interfaces -- never on concrete provider types -- so they work uniformly across AWS, Azure, and GCP backends.
+
 ## Cross-Service Wiring
 
 Provider factories automatically wire cross-service dependencies using `SetMonitoring()`. When a compute instance is launched, the compute mock pushes metrics directly into the monitoring service. This wiring is established at provider creation time.
