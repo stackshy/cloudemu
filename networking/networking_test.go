@@ -1229,8 +1229,6 @@ func TestNetworkingAllOptionsComposed(t *testing.T) {
 	assert.Equal(t, 2, q.ByName("calls_total").Count())
 }
 
-// --- Internet Gateway portable tests ---
-
 func TestInternetGatewayPortable(t *testing.T) {
 	n := newTestNetworking()
 	ctx := context.Background()
@@ -1295,8 +1293,6 @@ func TestInternetGatewayPortable(t *testing.T) {
 		require.Error(t, err)
 	})
 }
-
-// --- Elastic IP portable tests ---
 
 func TestElasticIPPortable(t *testing.T) {
 	n := newTestNetworking()
@@ -1365,8 +1361,6 @@ func TestElasticIPPortable(t *testing.T) {
 	})
 }
 
-// --- Route Table Association portable tests ---
-
 func TestRouteTableAssociationPortable(t *testing.T) {
 	n := newTestNetworking()
 	ctx := context.Background()
@@ -1400,8 +1394,6 @@ func TestRouteTableAssociationPortable(t *testing.T) {
 		require.Error(t, err)
 	})
 }
-
-// --- GetFlowLogRecords portable tests ---
 
 func TestGetFlowLogRecordsPortable(t *testing.T) {
 	n := newTestNetworking()
@@ -1492,8 +1484,6 @@ func TestNetworkingWithRateLimiter(t *testing.T) {
 	_, err = n.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.1.0.0/16"})
 	require.Error(t, err)
 }
-
-// --- VPC Endpoint portable tests ---
 
 func TestVPCEndpointPortable(t *testing.T) {
 	n := newTestNetworking()

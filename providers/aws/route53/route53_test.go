@@ -345,8 +345,6 @@ func TestDeleteZoneCascadesRecords(t *testing.T) {
 	assertError(t, err, true)
 }
 
-// --- test helpers ---
-
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

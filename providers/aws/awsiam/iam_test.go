@@ -687,8 +687,6 @@ func TestCheckPermissionViaRole(t *testing.T) {
 	assertEqual(t, true, allowed)
 }
 
-// --- test helpers ---
-
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

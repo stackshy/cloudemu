@@ -286,10 +286,7 @@ func TestLifecycleStateMachine(t *testing.T) {
 	assertEqual(t, compute.StateTerminated, desc[0].State)
 }
 
-// =====================================================================
 // Volume Tests
-// =====================================================================
-
 func TestCreateVolume(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -469,10 +466,7 @@ func TestDetachVolume(t *testing.T) {
 	})
 }
 
-// =====================================================================
 // Snapshot Tests
-// =====================================================================
-
 func TestCreateSnapshot(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		m := newTestMock()
@@ -566,10 +560,7 @@ func TestDescribeSnapshots(t *testing.T) {
 	assertNotEmpty(t, snap2.ID)
 }
 
-// =====================================================================
 // Image Tests
-// =====================================================================
-
 func TestCreateImage(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		m := newTestMock()
@@ -673,8 +664,6 @@ func TestDescribeImages(t *testing.T) {
 	assertNotEmpty(t, img2.ID)
 }
 
-// --- test helpers ---
-
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -713,10 +702,7 @@ func assertTrue(t *testing.T, val bool, msg string) {
 	}
 }
 
-// =====================================================================
 // Auto-Scaling Group Tests
-// =====================================================================
-
 func TestCreateAutoScalingGroup(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1163,10 +1149,7 @@ func TestSetDesiredCapacity(t *testing.T) {
 	})
 }
 
-// =====================================================================
 // Scaling Policy Tests
-// =====================================================================
-
 func TestPutScalingPolicy(t *testing.T) {
 	t.Run("create new policy", func(t *testing.T) {
 		m := newTestMock()
@@ -1499,10 +1482,7 @@ func TestExecuteScalingPolicy(t *testing.T) {
 	})
 }
 
-// =====================================================================
 // Spot Instance Tests
-// =====================================================================
-
 func TestRequestSpotInstances(t *testing.T) {
 	t.Run("single one-time", func(t *testing.T) {
 		m := newTestMock()
@@ -1722,10 +1702,7 @@ func TestDescribeSpotRequests(t *testing.T) {
 	})
 }
 
-// =====================================================================
 // Launch Template Tests
-// =====================================================================
-
 func TestCreateLaunchTemplate(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		m := newTestMock()

@@ -105,6 +105,42 @@ cloudemu goes beyond basic CRUD mocks. It reproduces real cloud behaviors so you
 - **Stream/Change Feed** — Database mutations produce stream records (INSERT/MODIFY/REMOVE).
 - **Numeric-Aware Comparisons** — Database filters compare `"10" > "9"` correctly using numeric ordering.
 
+## Use the Real AWS SDK (no code changes)
+
+If your app already uses `aws-sdk-go-v2`, you don't have to rewrite anything. cloudemu ships an HTTP server that speaks the real AWS wire protocols. Point the SDK's `BaseEndpoint` at localhost and your production code just works.
+
+```go
+import (
+    "github.com/stackshy/cloudemu"
+    awsserver "github.com/stackshy/cloudemu/server/aws"
+)
+
+aws := cloudemu.NewAWS()
+srv := awsserver.New(awsserver.Drivers{
+    S3: aws.S3, DynamoDB: aws.DynamoDB, EC2: aws.EC2,
+})
+ts := httptest.NewServer(srv)
+
+// Use the REAL aws-sdk-go-v2 client — only the endpoint changes.
+s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+    o.BaseEndpoint = aws.String(ts.URL)
+    o.UsePathStyle = true
+})
+s3Client.PutObject(ctx, &s3.PutObjectInput{...}) // works
+```
+
+Currently covered:
+
+| Service | Operations |
+|---------|-----------|
+| **S3** | CreateBucket, DeleteBucket, ListBuckets, PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2, CopyObject |
+| **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, Query |
+| **EC2** | RunInstances, DescribeInstances (with filters), StartInstances, StopInstances, RebootInstances, TerminateInstances, ModifyInstanceAttribute |
+| **EC2 — VPC & Networking** | CreateVpc, DeleteVpc, DescribeVpcs, CreateSubnet, DeleteSubnet, DescribeSubnets, CreateSecurityGroup, DeleteSecurityGroup, DescribeSecurityGroups, AuthorizeSecurityGroupIngress/Egress, RevokeSecurityGroupIngress/Egress, CreateInternetGateway, AttachInternetGateway, DetachInternetGateway, DescribeInternetGateways, CreateRouteTable, DescribeRouteTables, CreateRoute |
+| **EC2 — EBS & Key Pairs** | CreateVolume, DeleteVolume, DescribeVolumes, AttachVolume, DetachVolume, CreateKeyPair, DeleteKeyPair, DescribeKeyPairs |
+
+More services land progressively — see [docs/sdk-server.md](docs/sdk-server.md).
+
 ## Cross-Cutting Features
 
 Every service can be wrapped with a portable API layer that adds test-oriented features:
@@ -156,15 +192,18 @@ if cerrors.IsNotFound(err) {
 
 ## Architecture
 
-Three-layer design inspired by Go CDK:
+Three-layer design inspired by Go CDK, plus pluggable cross-service engines:
 
 ```
-Portable API     →  recording, metrics, rate limiting, error injection
-Driver Interface →  minimal Go interfaces per service
-Provider Mocks   →  in-memory backends (AWS/Azure/GCP) using generic memstore
+SDK-Compat Server  →  point real aws-sdk-go-v2 at localhost (server/)
+Topology Engine    →  simulate network connectivity (topology/)
+        ↓ both consume the same contract ↓
+Portable API       →  recording, metrics, rate limiting, error injection
+Driver Interface   →  minimal Go interfaces per service
+Provider Mocks     →  in-memory backends (AWS/Azure/GCP) using generic memstore
 ```
 
-All mocks are backed by a generic, thread-safe `memstore.Store[V]`. Services emit cloud-native metrics to the monitoring service, so you can query metrics via `GetMetricData` the same way you would with real CloudWatch, Azure Monitor, or Cloud Monitoring.
+All mocks are backed by a generic, thread-safe `memstore.Store[V]`. Services emit cloud-native metrics to the monitoring service, so you can query metrics via `GetMetricData` the same way you would with real CloudWatch, Azure Monitor, or Cloud Monitoring. The SDK-compat server and topology engine sit above the driver layer as separate consumers — new services plug in without touching the core.
 
 ## Running Tests
 

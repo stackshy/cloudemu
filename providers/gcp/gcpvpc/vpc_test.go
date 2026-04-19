@@ -1215,8 +1215,6 @@ func TestFlowLogRejectTrafficType(t *testing.T) {
 	}
 }
 
-// --- Internet Gateway tests ---
-
 func TestInternetGateway(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
@@ -1314,8 +1312,6 @@ func TestInternetGateway(t *testing.T) {
 	})
 }
 
-// --- Elastic IP tests ---
-
 func TestElasticIP(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
@@ -1400,8 +1396,6 @@ func TestElasticIP(t *testing.T) {
 		assert.Empty(t, eips)
 	})
 }
-
-// --- Route Table Association tests ---
 
 func TestRouteTableAssociation(t *testing.T) {
 	ctx := context.Background()

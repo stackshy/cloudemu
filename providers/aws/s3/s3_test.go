@@ -1082,8 +1082,6 @@ func TestEncryptionConfig(t *testing.T) {
 	})
 }
 
-// --- test helpers (no if/else, use t.Fatal/t.Errorf) ---
-
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
