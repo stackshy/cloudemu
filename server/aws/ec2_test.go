@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -1580,4 +1581,122 @@ func TestEC2RunInstancesWithKeyPair(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, run.Instances, 1)
+}
+
+func TestASGLifecycle(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	require.NoError(t, err)
+
+	asc := autoscaling.NewFromConfig(cfg, func(o *autoscaling.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+	ctx := context.Background()
+
+	_, err = asc.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("web-asg"),
+		MinSize:              aws.Int32(1),
+		MaxSize:              aws.Int32(5),
+		DesiredCapacity:      aws.Int32(2),
+		AvailabilityZones:    []string{"us-east-1a", "us-east-1b"},
+	})
+	require.NoError(t, err)
+
+	desc, err := asc.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
+		AutoScalingGroupNames: []string{"web-asg"},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.AutoScalingGroups, 1)
+	assert.Equal(t, int32(5), aws.ToInt32(desc.AutoScalingGroups[0].MaxSize))
+
+	_, err = asc.SetDesiredCapacity(ctx, &autoscaling.SetDesiredCapacityInput{
+		AutoScalingGroupName: aws.String("web-asg"),
+		DesiredCapacity:      aws.Int32(3),
+	})
+	require.NoError(t, err)
+
+	_, err = asc.UpdateAutoScalingGroup(ctx, &autoscaling.UpdateAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("web-asg"),
+		MinSize:              aws.Int32(2),
+		MaxSize:              aws.Int32(10),
+		DesiredCapacity:      aws.Int32(4),
+	})
+	require.NoError(t, err)
+
+	_, err = asc.DeleteAutoScalingGroup(ctx, &autoscaling.DeleteAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("web-asg"),
+		ForceDelete:          aws.Bool(true),
+	})
+	require.NoError(t, err)
+}
+
+func TestASGScalingPolicy(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	asc := autoscaling.NewFromConfig(cfg, func(o *autoscaling.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+	ctx := context.Background()
+
+	_, err := asc.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("scale-asg"),
+		MinSize:              aws.Int32(1), MaxSize: aws.Int32(3),
+		DesiredCapacity:   aws.Int32(1),
+		AvailabilityZones: []string{"us-east-1a"},
+	})
+	require.NoError(t, err)
+
+	_, err = asc.PutScalingPolicy(ctx, &autoscaling.PutScalingPolicyInput{
+		AutoScalingGroupName: aws.String("scale-asg"),
+		PolicyName:           aws.String("scale-up"),
+		AdjustmentType:       aws.String("ChangeInCapacity"),
+		ScalingAdjustment:    aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	_, err = asc.ExecutePolicy(ctx, &autoscaling.ExecutePolicyInput{
+		AutoScalingGroupName: aws.String("scale-asg"),
+		PolicyName:           aws.String("scale-up"),
+	})
+	require.NoError(t, err)
+
+	_, err = asc.DeletePolicy(ctx, &autoscaling.DeletePolicyInput{
+		AutoScalingGroupName: aws.String("scale-asg"),
+		PolicyName:           aws.String("scale-up"),
+	})
+	require.NoError(t, err)
+}
+
+func TestASGDeleteUnknownReturnsError(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	asc := autoscaling.NewFromConfig(cfg, func(o *autoscaling.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+
+	_, err := asc.DeleteAutoScalingGroup(context.Background(), &autoscaling.DeleteAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("ghost-asg"),
+	})
+	require.Error(t, err)
 }

@@ -81,12 +81,41 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.routeAutoScaling(w, r, action) {
+		return
+	}
+
 	if h.routeVPC(w, r, action) {
 		return
 	}
 
 	awsquery.WriteXMLError(w, http.StatusBadRequest,
 		"InvalidAction", "unknown action: "+action)
+}
+
+func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateAutoScalingGroup":
+		h.createAutoScalingGroup(w, r)
+	case "UpdateAutoScalingGroup":
+		h.updateAutoScalingGroup(w, r)
+	case "DeleteAutoScalingGroup":
+		h.deleteAutoScalingGroup(w, r)
+	case "DescribeAutoScalingGroups":
+		h.describeAutoScalingGroups(w, r)
+	case "SetDesiredCapacity":
+		h.setDesiredCapacity(w, r)
+	case "PutScalingPolicy":
+		h.putScalingPolicy(w, r)
+	case "DeletePolicy":
+		h.deleteScalingPolicy(w, r)
+	case "ExecutePolicy":
+		h.executePolicy(w, r)
+	default:
+		return false
+	}
+
+	return true
 }
 
 // routeInstances dispatches instance-lifecycle actions backed by the compute
