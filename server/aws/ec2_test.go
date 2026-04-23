@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -1580,4 +1581,379 @@ func TestEC2RunInstancesWithKeyPair(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, run.Instances, 1)
+}
+
+func TestASGLifecycle(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	require.NoError(t, err)
+
+	asc := autoscaling.NewFromConfig(cfg, func(o *autoscaling.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+	ctx := context.Background()
+
+	_, err = asc.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("web-asg"),
+		MinSize:              aws.Int32(1),
+		MaxSize:              aws.Int32(5),
+		DesiredCapacity:      aws.Int32(2),
+		AvailabilityZones:    []string{"us-east-1a", "us-east-1b"},
+	})
+	require.NoError(t, err)
+
+	desc, err := asc.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
+		AutoScalingGroupNames: []string{"web-asg"},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.AutoScalingGroups, 1)
+	assert.Equal(t, int32(5), aws.ToInt32(desc.AutoScalingGroups[0].MaxSize))
+
+	_, err = asc.SetDesiredCapacity(ctx, &autoscaling.SetDesiredCapacityInput{
+		AutoScalingGroupName: aws.String("web-asg"),
+		DesiredCapacity:      aws.Int32(3),
+	})
+	require.NoError(t, err)
+
+	_, err = asc.UpdateAutoScalingGroup(ctx, &autoscaling.UpdateAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("web-asg"),
+		MinSize:              aws.Int32(2),
+		MaxSize:              aws.Int32(10),
+		DesiredCapacity:      aws.Int32(4),
+	})
+	require.NoError(t, err)
+
+	_, err = asc.DeleteAutoScalingGroup(ctx, &autoscaling.DeleteAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("web-asg"),
+		ForceDelete:          aws.Bool(true),
+	})
+	require.NoError(t, err)
+}
+
+func TestASGScalingPolicy(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	asc := autoscaling.NewFromConfig(cfg, func(o *autoscaling.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+	ctx := context.Background()
+
+	_, err := asc.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("scale-asg"),
+		MinSize:              aws.Int32(1), MaxSize: aws.Int32(3),
+		DesiredCapacity:   aws.Int32(1),
+		AvailabilityZones: []string{"us-east-1a"},
+	})
+	require.NoError(t, err)
+
+	_, err = asc.PutScalingPolicy(ctx, &autoscaling.PutScalingPolicyInput{
+		AutoScalingGroupName: aws.String("scale-asg"),
+		PolicyName:           aws.String("scale-up"),
+		AdjustmentType:       aws.String("ChangeInCapacity"),
+		ScalingAdjustment:    aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	_, err = asc.ExecutePolicy(ctx, &autoscaling.ExecutePolicyInput{
+		AutoScalingGroupName: aws.String("scale-asg"),
+		PolicyName:           aws.String("scale-up"),
+	})
+	require.NoError(t, err)
+
+	_, err = asc.DeletePolicy(ctx, &autoscaling.DeletePolicyInput{
+		AutoScalingGroupName: aws.String("scale-asg"),
+		PolicyName:           aws.String("scale-up"),
+	})
+	require.NoError(t, err)
+}
+
+func TestASGDeleteUnknownReturnsError(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	asc := autoscaling.NewFromConfig(cfg, func(o *autoscaling.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+
+	_, err := asc.DeleteAutoScalingGroup(context.Background(), &autoscaling.DeleteAutoScalingGroupInput{
+		AutoScalingGroupName: aws.String("ghost-asg"),
+	})
+	require.Error(t, err)
+}
+
+func TestSnapshotLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(10),
+	})
+	require.NoError(t, err)
+
+	snap, err := client.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    vol.VolumeId,
+		Description: aws.String("backup"),
+	})
+	require.NoError(t, err)
+	snapID := aws.ToString(snap.SnapshotId)
+	assert.NotEmpty(t, snapID)
+
+	desc, err := client.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		SnapshotIds: []string{snapID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Snapshots, 1)
+	assert.Equal(t, aws.ToString(vol.VolumeId), aws.ToString(desc.Snapshots[0].VolumeId))
+
+	_, err = client.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(snapID)})
+	require.NoError(t, err)
+}
+
+func TestImageLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-base"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
+		InstanceId:  run.Instances[0].InstanceId,
+		Name:        aws.String("backup-ami"),
+		Description: aws.String("created from instance"),
+	})
+	require.NoError(t, err)
+	imgID := aws.ToString(img.ImageId)
+	assert.NotEmpty(t, imgID)
+
+	desc, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{
+		ImageIds: []string{imgID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Images, 1)
+
+	_, err = client.DeregisterImage(ctx, &ec2.DeregisterImageInput{ImageId: aws.String(imgID)})
+	require.NoError(t, err)
+}
+
+func TestSnapshotUnknownReturnsError(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	_, err := client.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{
+		SnapshotId: aws.String("snap-ghost"),
+	})
+	require.Error(t, err)
+}
+
+func TestSpotInstanceLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	out, err := client.RequestSpotInstances(ctx, &ec2.RequestSpotInstancesInput{
+		InstanceCount: aws.Int32(1),
+		SpotPrice:     aws.String("0.05"),
+		LaunchSpecification: &ec2types.RequestSpotLaunchSpecification{
+			ImageId:      aws.String("ami-spot"),
+			InstanceType: ec2types.InstanceTypeT2Micro,
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, out.SpotInstanceRequests)
+
+	reqID := aws.ToString(out.SpotInstanceRequests[0].SpotInstanceRequestId)
+	assert.NotEmpty(t, reqID)
+
+	desc, err := client.DescribeSpotInstanceRequests(ctx, &ec2.DescribeSpotInstanceRequestsInput{
+		SpotInstanceRequestIds: []string{reqID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.SpotInstanceRequests, 1)
+
+	_, err = client.CancelSpotInstanceRequests(ctx, &ec2.CancelSpotInstanceRequestsInput{
+		SpotInstanceRequestIds: []string{reqID},
+	})
+	require.NoError(t, err)
+}
+
+func TestLaunchTemplateLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	cre, err := client.CreateLaunchTemplate(ctx, &ec2.CreateLaunchTemplateInput{
+		LaunchTemplateName: aws.String("web-template"),
+		LaunchTemplateData: &ec2types.RequestLaunchTemplateData{
+			ImageId:      aws.String("ami-tmpl"),
+			InstanceType: ec2types.InstanceTypeT2Micro,
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "web-template", aws.ToString(cre.LaunchTemplate.LaunchTemplateName))
+
+	desc, err := client.DescribeLaunchTemplates(ctx, &ec2.DescribeLaunchTemplatesInput{
+		LaunchTemplateNames: []string{"web-template"},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.LaunchTemplates, 1)
+
+	_, err = client.DeleteLaunchTemplate(ctx, &ec2.DeleteLaunchTemplateInput{
+		LaunchTemplateName: aws.String("web-template"),
+	})
+	require.NoError(t, err)
+}
+
+func TestNatGatewayLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sub, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId: vpc.Vpc.VpcId, CidrBlock: aws.String("10.0.1.0/24"),
+	})
+	require.NoError(t, err)
+
+	nat, err := client.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
+		SubnetId: sub.Subnet.SubnetId,
+	})
+	require.NoError(t, err)
+	natID := aws.ToString(nat.NatGateway.NatGatewayId)
+	assert.NotEmpty(t, natID)
+
+	desc, err := client.DescribeNatGateways(ctx, &ec2.DescribeNatGatewaysInput{
+		NatGatewayIds: []string{natID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.NatGateways, 1)
+
+	_, err = client.DeleteNatGateway(ctx, &ec2.DeleteNatGatewayInput{
+		NatGatewayId: aws.String(natID),
+	})
+	require.NoError(t, err)
+}
+
+func TestVpcPeeringLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpcA, _ := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	vpcB, _ := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.1.0.0/16")})
+
+	p, err := client.CreateVpcPeeringConnection(ctx, &ec2.CreateVpcPeeringConnectionInput{
+		VpcId:     vpcA.Vpc.VpcId,
+		PeerVpcId: vpcB.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+	pid := aws.ToString(p.VpcPeeringConnection.VpcPeeringConnectionId)
+
+	_, err = client.AcceptVpcPeeringConnection(ctx, &ec2.AcceptVpcPeeringConnectionInput{
+		VpcPeeringConnectionId: aws.String(pid),
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeVpcPeeringConnections(ctx, &ec2.DescribeVpcPeeringConnectionsInput{
+		VpcPeeringConnectionIds: []string{pid},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.VpcPeeringConnections, 1)
+
+	_, err = client.DeleteVpcPeeringConnection(ctx, &ec2.DeleteVpcPeeringConnectionInput{
+		VpcPeeringConnectionId: aws.String(pid),
+	})
+	require.NoError(t, err)
+}
+
+func TestFlowLogsLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, _ := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	vpcID := aws.ToString(vpc.Vpc.VpcId)
+
+	create, err := client.CreateFlowLogs(ctx, &ec2.CreateFlowLogsInput{
+		ResourceIds:  []string{vpcID},
+		ResourceType: ec2types.FlowLogsResourceTypeVpc,
+		TrafficType:  ec2types.TrafficTypeAll,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, create.FlowLogIds)
+	flowID := create.FlowLogIds[0]
+
+	desc, err := client.DescribeFlowLogs(ctx, &ec2.DescribeFlowLogsInput{
+		FlowLogIds: []string{flowID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.FlowLogs, 1)
+
+	_, err = client.DeleteFlowLogs(ctx, &ec2.DeleteFlowLogsInput{
+		FlowLogIds: []string{flowID},
+	})
+	require.NoError(t, err)
+}
+
+func TestNetworkACLLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, _ := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+
+	cre, err := client.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{
+		VpcId: vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+	aclID := aws.ToString(cre.NetworkAcl.NetworkAclId)
+	assert.NotEmpty(t, aclID)
+
+	_, err = client.CreateNetworkAclEntry(ctx, &ec2.CreateNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(100),
+		Protocol:     aws.String("6"),
+		RuleAction:   ec2types.RuleActionAllow,
+		CidrBlock:    aws.String("0.0.0.0/0"),
+		Egress:       aws.Bool(false),
+		PortRange:    &ec2types.PortRange{From: aws.Int32(80), To: aws.Int32(80)},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{
+		NetworkAclIds: []string{aclID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.NetworkAcls, 1)
+	assert.NotEmpty(t, desc.NetworkAcls[0].Entries)
+
+	_, err = client.DeleteNetworkAclEntry(ctx, &ec2.DeleteNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(100),
+		Egress:       aws.Bool(false),
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeleteNetworkAcl(ctx, &ec2.DeleteNetworkAclInput{
+		NetworkAclId: aws.String(aclID),
+	})
+	require.NoError(t, err)
 }

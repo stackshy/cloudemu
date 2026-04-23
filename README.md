@@ -138,6 +138,11 @@ Currently covered:
 | **EC2** | RunInstances, DescribeInstances (with filters), StartInstances, StopInstances, RebootInstances, TerminateInstances, ModifyInstanceAttribute |
 | **EC2 — VPC & Networking** | CreateVpc, DeleteVpc, DescribeVpcs, CreateSubnet, DeleteSubnet, DescribeSubnets, CreateSecurityGroup, DeleteSecurityGroup, DescribeSecurityGroups, AuthorizeSecurityGroupIngress/Egress, RevokeSecurityGroupIngress/Egress, CreateInternetGateway, AttachInternetGateway, DetachInternetGateway, DescribeInternetGateways, CreateRouteTable, DescribeRouteTables, CreateRoute |
 | **EC2 — EBS & Key Pairs** | CreateVolume, DeleteVolume, DescribeVolumes, AttachVolume, DetachVolume, CreateKeyPair, DeleteKeyPair, DescribeKeyPairs |
+| **Auto Scaling** | CreateAutoScalingGroup, Update/Delete/DescribeAutoScalingGroups, SetDesiredCapacity, Put/Delete/ExecutePolicy |
+| **EC2 — Snapshots/AMIs** | Create/Delete/DescribeSnapshots, Create/Deregister/DescribeImages |
+| **EC2 — Spot/Launch Templates** | Request/Cancel/DescribeSpotInstanceRequests, Create/Delete/DescribeLaunchTemplates |
+| **EC2 — NAT/Peering/Flow Logs** | NAT gateways, VPC peering connections, VPC flow logs |
+| **EC2 — Network ACLs** | Create/Delete/DescribeNetworkAcls, Create/DeleteNetworkAclEntry |
 
 More services land progressively — see [docs/sdk-server.md](docs/sdk-server.md).
 
