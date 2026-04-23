@@ -85,12 +85,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.routeSnapshots(w, r, action) {
+		return
+	}
+
+	if h.routeImages(w, r, action) {
+		return
+	}
+
 	if h.routeVPC(w, r, action) {
 		return
 	}
 
 	awsquery.WriteXMLError(w, http.StatusBadRequest,
 		"InvalidAction", "unknown action: "+action)
+}
+
+func (h *Handler) routeSnapshots(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateSnapshot":
+		h.createSnapshot(w, r)
+	case "DeleteSnapshot":
+		h.deleteSnapshot(w, r)
+	case "DescribeSnapshots":
+		h.describeSnapshots(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateImage":
+		h.createImage(w, r)
+	case "DeregisterImage":
+		h.deregisterImage(w, r)
+	case "DescribeImages":
+		h.describeImages(w, r)
+	default:
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {

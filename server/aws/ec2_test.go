@@ -1700,3 +1700,70 @@ func TestASGDeleteUnknownReturnsError(t *testing.T) {
 	})
 	require.Error(t, err)
 }
+
+func TestSnapshotLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(10),
+	})
+	require.NoError(t, err)
+
+	snap, err := client.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    vol.VolumeId,
+		Description: aws.String("backup"),
+	})
+	require.NoError(t, err)
+	snapID := aws.ToString(snap.SnapshotId)
+	assert.NotEmpty(t, snapID)
+
+	desc, err := client.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		SnapshotIds: []string{snapID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Snapshots, 1)
+	assert.Equal(t, aws.ToString(vol.VolumeId), aws.ToString(desc.Snapshots[0].VolumeId))
+
+	_, err = client.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(snapID)})
+	require.NoError(t, err)
+}
+
+func TestImageLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-base"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
+		InstanceId:  run.Instances[0].InstanceId,
+		Name:        aws.String("backup-ami"),
+		Description: aws.String("created from instance"),
+	})
+	require.NoError(t, err)
+	imgID := aws.ToString(img.ImageId)
+	assert.NotEmpty(t, imgID)
+
+	desc, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{
+		ImageIds: []string{imgID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Images, 1)
+
+	_, err = client.DeregisterImage(ctx, &ec2.DeregisterImageInput{ImageId: aws.String(imgID)})
+	require.NoError(t, err)
+}
+
+func TestSnapshotUnknownReturnsError(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	_, err := client.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{
+		SnapshotId: aws.String("snap-ghost"),
+	})
+	require.Error(t, err)
+}
