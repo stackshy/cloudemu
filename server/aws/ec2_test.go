@@ -7,11 +7,14 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -1954,6 +1957,129 @@ func TestNetworkACLLifecycle(t *testing.T) {
 
 	_, err = client.DeleteNetworkAcl(ctx, &ec2.DeleteNetworkAclInput{
 		NetworkAclId: aws.String(aclID),
+	})
+	require.NoError(t, err)
+}
+
+func TestCloudWatchMetricsFlow(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{
+		EC2: provider.EC2, VPC: provider.VPC, CloudWatch: provider.CloudWatch,
+	})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	cw := cloudwatch.NewFromConfig(cfg, func(o *cloudwatch.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+	ec2c := ec2.NewFromConfig(cfg, func(o *ec2.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+	ctx := context.Background()
+
+	// Launch an EC2 instance — this auto-emits 5 metrics via the provider.
+	run, err := ec2c.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-cw"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	id := aws.ToString(run.Instances[0].InstanceId)
+
+	// Read metrics back via the real CloudWatch SDK.
+	end := time.Now().UTC()
+	start := end.Add(-1 * time.Hour)
+
+	out, err := cw.GetMetricStatistics(ctx, &cloudwatch.GetMetricStatisticsInput{
+		Namespace:  aws.String("AWS/EC2"),
+		MetricName: aws.String("CPUUtilization"),
+		Dimensions: []cwtypes.Dimension{{
+			Name: aws.String("InstanceId"), Value: aws.String(id),
+		}},
+		StartTime:  aws.Time(start),
+		EndTime:    aws.Time(end),
+		Period:     aws.Int32(60),
+		Statistics: []cwtypes.Statistic{cwtypes.StatisticAverage},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, out.Datapoints, "CPUUtilization should have datapoints after RunInstances")
+	assert.Greater(t, aws.ToFloat64(out.Datapoints[0].Average), 0.0)
+}
+
+func TestCloudWatchPutMetricData(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{CloudWatch: provider.CloudWatch})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	cw := cloudwatch.NewFromConfig(cfg, func(o *cloudwatch.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+	ctx := context.Background()
+
+	_, err := cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace: aws.String("MyApp"),
+		MetricData: []cwtypes.MetricDatum{{
+			MetricName: aws.String("RequestCount"),
+			Value:      aws.Float64(42.0),
+			Unit:       cwtypes.StandardUnitCount,
+			Dimensions: []cwtypes.Dimension{{
+				Name: aws.String("Service"), Value: aws.String("api"),
+			}},
+		}},
+	})
+	require.NoError(t, err)
+
+	list, err := cw.ListMetrics(ctx, &cloudwatch.ListMetricsInput{
+		Namespace: aws.String("MyApp"),
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, list.Metrics)
+}
+
+func TestCloudWatchAlarmLifecycle(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{CloudWatch: provider.CloudWatch})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, _ := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("t", "t", "")))
+	cw := cloudwatch.NewFromConfig(cfg, func(o *cloudwatch.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+	ctx := context.Background()
+
+	_, err := cw.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String("HighCPU"),
+		Namespace:          aws.String("AWS/EC2"),
+		MetricName:         aws.String("CPUUtilization"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		Threshold:          aws.Float64(80.0),
+		Period:             aws.Int32(60),
+		EvaluationPeriods:  aws.Int32(2),
+		Statistic:          cwtypes.StatisticAverage,
+	})
+	require.NoError(t, err)
+
+	desc, err := cw.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{
+		AlarmNames: []string{"HighCPU"},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.MetricAlarms, 1)
+	assert.Equal(t, "HighCPU", aws.ToString(desc.MetricAlarms[0].AlarmName))
+
+	_, err = cw.DeleteAlarms(ctx, &cloudwatch.DeleteAlarmsInput{
+		AlarmNames: []string{"HighCPU"},
 	})
 	require.NoError(t, err)
 }
