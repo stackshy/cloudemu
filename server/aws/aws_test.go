@@ -1151,3 +1151,276 @@ func TestDDBFullLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, tables.TableNames, "products")
 }
+
+func TestDDBUpdateItem(t *testing.T) {
+	client := newDDBClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String("counters"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("counters"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":    &ddbtypes.AttributeValueMemberS{Value: "c1"},
+			"count": &ddbtypes.AttributeValueMemberN{Value: "0"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String("counters"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "c1"},
+		},
+		UpdateExpression: aws.String("SET #c = :v"),
+		ExpressionAttributeNames: map[string]string{
+			"#c": "count",
+		},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":v": &ddbtypes.AttributeValueMemberN{Value: "42"},
+		},
+	})
+	require.NoError(t, err)
+
+	got, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String("counters"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "c1"},
+		},
+	})
+	require.NoError(t, err)
+	count := got.Item["count"].(*ddbtypes.AttributeValueMemberN).Value
+	assert.Equal(t, "42", count)
+}
+
+func TestDDBUpdateItemRemove(t *testing.T) {
+	client := newDDBClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String("rm"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("rm"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "k1"},
+			"temp": &ddbtypes.AttributeValueMemberS{Value: "delete-me"},
+			"keep": &ddbtypes.AttributeValueMemberS{Value: "stay"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String("rm"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "k1"},
+		},
+		UpdateExpression: aws.String("REMOVE temp"),
+	})
+	require.NoError(t, err)
+
+	got, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String("rm"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "k1"},
+		},
+	})
+	require.NoError(t, err)
+	_, hasTemp := got.Item["temp"]
+	assert.False(t, hasTemp, "temp should be removed")
+	assert.Contains(t, got.Item, "keep")
+}
+
+func TestDDBScan(t *testing.T) {
+	client := newDDBClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String("products"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("sku"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("sku"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	for _, p := range []struct{ sku, cat string }{
+		{"a", "electronics"}, {"b", "books"}, {"c", "electronics"},
+	} {
+		_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: aws.String("products"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"sku":      &ddbtypes.AttributeValueMemberS{Value: p.sku},
+				"category": &ddbtypes.AttributeValueMemberS{Value: p.cat},
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	out, err := client.Scan(ctx, &dynamodb.ScanInput{
+		TableName: aws.String("products"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), out.Count)
+
+	filtered, err := client.Scan(ctx, &dynamodb.ScanInput{
+		TableName:        aws.String("products"),
+		FilterExpression: aws.String("category = :c"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":c": &ddbtypes.AttributeValueMemberS{Value: "electronics"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), filtered.Count)
+}
+
+func TestDDBBatchWriteItem(t *testing.T) {
+	client := newDDBClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String("batchw"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	_, err = client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"batchw": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "x"},
+				}}},
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "y"},
+				}}},
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "z"},
+				}}},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Delete one via batch.
+	_, err = client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"batchw": {
+				{DeleteRequest: &ddbtypes.DeleteRequest{Key: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "y"},
+				}}},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	scan, err := client.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String("batchw")})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), scan.Count)
+}
+
+func TestDDBBatchGetItem(t *testing.T) {
+	client := newDDBClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String("batchr"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	for _, id := range []string{"a", "b", "c"} {
+		_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: aws.String("batchr"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id": &ddbtypes.AttributeValueMemberS{Value: id},
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	out, err := client.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]ddbtypes.KeysAndAttributes{
+			"batchr": {
+				Keys: []map[string]ddbtypes.AttributeValue{
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "a"}},
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "c"}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, out.Responses["batchr"], 2)
+}
+
+func TestDDBTransactWriteItems(t *testing.T) {
+	client := newDDBClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String("txn"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	_, err = client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []ddbtypes.TransactWriteItem{
+			{Put: &ddbtypes.Put{
+				TableName: aws.String("txn"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "t1"},
+				},
+			}},
+			{Put: &ddbtypes.Put{
+				TableName: aws.String("txn"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "t2"},
+				},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	scan, err := client.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String("txn")})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), scan.Count)
+}
