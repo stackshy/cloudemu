@@ -54,6 +54,15 @@ Region and credentials can be any dummy values — the server doesn't validate s
 | **EC2 — Route Table** | CreateRouteTable, DescribeRouteTables, CreateRoute (gateway/nat-gateway/peering targets) |
 | **EC2 — EBS Volumes** | CreateVolume, DeleteVolume, DescribeVolumes, AttachVolume, DetachVolume |
 | **EC2 — Key Pairs** | CreateKeyPair, DeleteKeyPair, DescribeKeyPairs |
+| **Auto Scaling** | CreateAutoScalingGroup, UpdateAutoScalingGroup, DeleteAutoScalingGroup, DescribeAutoScalingGroups, SetDesiredCapacity, PutScalingPolicy, DeletePolicy, ExecutePolicy |
+| **EC2 — Snapshots** | CreateSnapshot, DeleteSnapshot, DescribeSnapshots |
+| **EC2 — AMIs** | CreateImage, DeregisterImage, DescribeImages |
+| **EC2 — Spot Instances** | RequestSpotInstances, CancelSpotInstanceRequests, DescribeSpotInstanceRequests |
+| **EC2 — Launch Templates** | CreateLaunchTemplate, DeleteLaunchTemplate, DescribeLaunchTemplates |
+| **EC2 — NAT Gateways** | CreateNatGateway, DeleteNatGateway, DescribeNatGateways |
+| **EC2 — VPC Peering** | CreateVpcPeeringConnection, AcceptVpcPeeringConnection, DeleteVpcPeeringConnection, DescribeVpcPeeringConnections |
+| **EC2 — Flow Logs** | CreateFlowLogs, DeleteFlowLogs, DescribeFlowLogs |
+| **EC2 — Network ACLs** | CreateNetworkAcl, DeleteNetworkAcl, DescribeNetworkAcls, CreateNetworkAclEntry, DeleteNetworkAclEntry |
 
 Any operation not in this list returns `501 Not Implemented` or the AWS-style `UnknownOperation` / `InvalidAction` error. The list grows each phase — see the bottom of this page.
 
@@ -104,6 +113,11 @@ The EC2 SDK-compat work is Phase 1 of a larger initiative (tracked in [#121](htt
 | 1 (done) | Query-protocol foundation + EC2 core instance ops |
 | 2 (done) | VPC, Subnets, Security Groups, Internet Gateways, Route Tables |
 | 3 (done) | EBS Volumes, Key Pairs |
+| 4 (done) | Auto Scaling Groups + scaling policies |
+| 5 (done) | Snapshots + AMIs |
+| 6 (done) | Spot Instances + Launch Templates |
+| 7 (done) | NAT Gateways + VPC Peering + Flow Logs |
+| 8 (done) | Network ACLs |
 | 3 | EBS Volumes, Key Pairs |
 | 4 | Auto-Scaling Groups + Scaling Policies |
 | 5 | Snapshots, AMIs |
