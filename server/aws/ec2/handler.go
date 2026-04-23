@@ -58,6 +58,11 @@ func (*Handler) Matches(r *http.Request) bool {
 	return false
 }
 
+// routeFunc is a per-resource dispatcher that returns true when it handled
+// the action. ServeHTTP iterates a list of these so adding a new resource
+// means appending one function rather than editing the main handler.
+type routeFunc func(w http.ResponseWriter, r *http.Request, action string) bool
+
 // ServeHTTP parses the request form and dispatches on Action.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBodyBytes)
@@ -69,32 +74,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	action := r.Form.Get("Action")
 
-	if h.routeInstances(w, r, action) {
-		return
+	routes := []routeFunc{
+		h.routeInstances,
+		h.routeVolumes,
+		h.routeKeyPairs,
+		h.routeAutoScaling,
+		h.routeSnapshots,
+		h.routeImages,
+		h.routeSpot,
+		h.routeLaunchTemplates,
+		h.routeVPC,
 	}
-
-	if h.routeVolumes(w, r, action) {
-		return
-	}
-
-	if h.routeKeyPairs(w, r, action) {
-		return
-	}
-
-	if h.routeAutoScaling(w, r, action) {
-		return
-	}
-
-	if h.routeSnapshots(w, r, action) {
-		return
-	}
-
-	if h.routeImages(w, r, action) {
-		return
-	}
-
-	if h.routeVPC(w, r, action) {
-		return
+	for _, route := range routes {
+		if route(w, r, action) {
+			return
+		}
 	}
 
 	awsquery.WriteXMLError(w, http.StatusBadRequest,
@@ -124,6 +118,36 @@ func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, action str
 		h.deregisterImage(w, r)
 	case "DescribeImages":
 		h.describeImages(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeSpot(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "RequestSpotInstances":
+		h.requestSpotInstances(w, r)
+	case "CancelSpotInstanceRequests":
+		h.cancelSpotInstanceRequests(w, r)
+	case "DescribeSpotInstanceRequests":
+		h.describeSpotInstanceRequests(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateLaunchTemplate":
+		h.createLaunchTemplate(w, r)
+	case "DeleteLaunchTemplate":
+		h.deleteLaunchTemplate(w, r)
+	case "DescribeLaunchTemplates":
+		h.describeLaunchTemplates(w, r)
 	default:
 		return false
 	}

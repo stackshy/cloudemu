@@ -1767,3 +1767,59 @@ func TestSnapshotUnknownReturnsError(t *testing.T) {
 	})
 	require.Error(t, err)
 }
+
+func TestSpotInstanceLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	out, err := client.RequestSpotInstances(ctx, &ec2.RequestSpotInstancesInput{
+		InstanceCount: aws.Int32(1),
+		SpotPrice:     aws.String("0.05"),
+		LaunchSpecification: &ec2types.RequestSpotLaunchSpecification{
+			ImageId:      aws.String("ami-spot"),
+			InstanceType: ec2types.InstanceTypeT2Micro,
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, out.SpotInstanceRequests)
+
+	reqID := aws.ToString(out.SpotInstanceRequests[0].SpotInstanceRequestId)
+	assert.NotEmpty(t, reqID)
+
+	desc, err := client.DescribeSpotInstanceRequests(ctx, &ec2.DescribeSpotInstanceRequestsInput{
+		SpotInstanceRequestIds: []string{reqID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.SpotInstanceRequests, 1)
+
+	_, err = client.CancelSpotInstanceRequests(ctx, &ec2.CancelSpotInstanceRequestsInput{
+		SpotInstanceRequestIds: []string{reqID},
+	})
+	require.NoError(t, err)
+}
+
+func TestLaunchTemplateLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	cre, err := client.CreateLaunchTemplate(ctx, &ec2.CreateLaunchTemplateInput{
+		LaunchTemplateName: aws.String("web-template"),
+		LaunchTemplateData: &ec2types.RequestLaunchTemplateData{
+			ImageId:      aws.String("ami-tmpl"),
+			InstanceType: ec2types.InstanceTypeT2Micro,
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "web-template", aws.ToString(cre.LaunchTemplate.LaunchTemplateName))
+
+	desc, err := client.DescribeLaunchTemplates(ctx, &ec2.DescribeLaunchTemplatesInput{
+		LaunchTemplateNames: []string{"web-template"},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.LaunchTemplates, 1)
+
+	_, err = client.DeleteLaunchTemplate(ctx, &ec2.DeleteLaunchTemplateInput{
+		LaunchTemplateName: aws.String("web-template"),
+	})
+	require.NoError(t, err)
+}
