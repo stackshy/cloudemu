@@ -39,6 +39,7 @@ type deleteSnapshotResponseXML struct {
 	Return    bool     `xml:"return"`
 }
 
+//nolint:dupl // per-resource create pattern; mirrors peering/flow-log shape
 func (h *Handler) createSnapshot(w http.ResponseWriter, r *http.Request) {
 	cfg := computedriver.SnapshotConfig{
 		VolumeID:    r.Form.Get("VolumeId"),

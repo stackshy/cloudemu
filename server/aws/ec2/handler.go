@@ -83,6 +83,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeImages,
 		h.routeSpot,
 		h.routeLaunchTemplates,
+		h.routeNatGateways,
+		h.routeVpcPeering,
+		h.routeFlowLogs,
 		h.routeVPC,
 	}
 	for _, route := range routes {
@@ -118,6 +121,53 @@ func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, action str
 		h.deregisterImage(w, r)
 	case "DescribeImages":
 		h.describeImages(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeNatGateways(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateNatGateway":
+		h.createNatGateway(w, r)
+	case "DeleteNatGateway":
+		h.deleteNatGateway(w, r)
+	case "DescribeNatGateways":
+		h.describeNatGateways(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeVpcPeering(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateVpcPeeringConnection":
+		h.createVpcPeeringConnection(w, r)
+	case "AcceptVpcPeeringConnection":
+		h.acceptVpcPeeringConnection(w, r)
+	case "DeleteVpcPeeringConnection":
+		h.deleteVpcPeeringConnection(w, r)
+	case "DescribeVpcPeeringConnections":
+		h.describeVpcPeeringConnections(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeFlowLogs(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateFlowLogs":
+		h.createFlowLogs(w, r)
+	case "DeleteFlowLogs":
+		h.deleteFlowLogs(w, r)
+	case "DescribeFlowLogs":
+		h.describeFlowLogs(w, r)
 	default:
 		return false
 	}

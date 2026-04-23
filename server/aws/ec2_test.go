@@ -1823,3 +1823,93 @@ func TestLaunchTemplateLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func TestNatGatewayLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+
+	sub, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId: vpc.Vpc.VpcId, CidrBlock: aws.String("10.0.1.0/24"),
+	})
+	require.NoError(t, err)
+
+	nat, err := client.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
+		SubnetId: sub.Subnet.SubnetId,
+	})
+	require.NoError(t, err)
+	natID := aws.ToString(nat.NatGateway.NatGatewayId)
+	assert.NotEmpty(t, natID)
+
+	desc, err := client.DescribeNatGateways(ctx, &ec2.DescribeNatGatewaysInput{
+		NatGatewayIds: []string{natID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.NatGateways, 1)
+
+	_, err = client.DeleteNatGateway(ctx, &ec2.DeleteNatGatewayInput{
+		NatGatewayId: aws.String(natID),
+	})
+	require.NoError(t, err)
+}
+
+func TestVpcPeeringLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpcA, _ := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	vpcB, _ := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.1.0.0/16")})
+
+	p, err := client.CreateVpcPeeringConnection(ctx, &ec2.CreateVpcPeeringConnectionInput{
+		VpcId:     vpcA.Vpc.VpcId,
+		PeerVpcId: vpcB.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+	pid := aws.ToString(p.VpcPeeringConnection.VpcPeeringConnectionId)
+
+	_, err = client.AcceptVpcPeeringConnection(ctx, &ec2.AcceptVpcPeeringConnectionInput{
+		VpcPeeringConnectionId: aws.String(pid),
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeVpcPeeringConnections(ctx, &ec2.DescribeVpcPeeringConnectionsInput{
+		VpcPeeringConnectionIds: []string{pid},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.VpcPeeringConnections, 1)
+
+	_, err = client.DeleteVpcPeeringConnection(ctx, &ec2.DeleteVpcPeeringConnectionInput{
+		VpcPeeringConnectionId: aws.String(pid),
+	})
+	require.NoError(t, err)
+}
+
+func TestFlowLogsLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, _ := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	vpcID := aws.ToString(vpc.Vpc.VpcId)
+
+	create, err := client.CreateFlowLogs(ctx, &ec2.CreateFlowLogsInput{
+		ResourceIds:  []string{vpcID},
+		ResourceType: ec2types.FlowLogsResourceTypeVpc,
+		TrafficType:  ec2types.TrafficTypeAll,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, create.FlowLogIds)
+	flowID := create.FlowLogIds[0]
+
+	desc, err := client.DescribeFlowLogs(ctx, &ec2.DescribeFlowLogsInput{
+		FlowLogIds: []string{flowID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.FlowLogs, 1)
+
+	_, err = client.DeleteFlowLogs(ctx, &ec2.DeleteFlowLogsInput{
+		FlowLogIds: []string{flowID},
+	})
+	require.NoError(t, err)
+}
