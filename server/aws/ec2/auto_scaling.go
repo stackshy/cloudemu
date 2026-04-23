@@ -14,6 +14,9 @@ import (
 // "right" one so the wire capture matches real AWS.
 const asgNamespace = "http://autoscaling.amazonaws.com/doc/2011-01-01/"
 
+// formTrue is the literal AWS SDKs emit for boolean true in form-encoded bodies.
+const formTrue = "true"
+
 type asgResponseMetadata struct {
 	RequestID string `xml:"RequestId"`
 }
@@ -115,7 +118,7 @@ func (h *Handler) createAutoScalingGroup(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) deleteAutoScalingGroup(w http.ResponseWriter, r *http.Request) {
-	force := r.Form.Get("ForceDelete") == "true"
+	force := r.Form.Get("ForceDelete") == formTrue
 
 	if err := h.compute.DeleteAutoScalingGroup(r.Context(),
 		r.Form.Get("AutoScalingGroupName"), force); err != nil {

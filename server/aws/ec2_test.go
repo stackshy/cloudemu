@@ -1913,3 +1913,47 @@ func TestFlowLogsLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func TestNetworkACLLifecycle(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpc, _ := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+
+	cre, err := client.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{
+		VpcId: vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+	aclID := aws.ToString(cre.NetworkAcl.NetworkAclId)
+	assert.NotEmpty(t, aclID)
+
+	_, err = client.CreateNetworkAclEntry(ctx, &ec2.CreateNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(100),
+		Protocol:     aws.String("6"),
+		RuleAction:   ec2types.RuleActionAllow,
+		CidrBlock:    aws.String("0.0.0.0/0"),
+		Egress:       aws.Bool(false),
+		PortRange:    &ec2types.PortRange{From: aws.Int32(80), To: aws.Int32(80)},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{
+		NetworkAclIds: []string{aclID},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.NetworkAcls, 1)
+	assert.NotEmpty(t, desc.NetworkAcls[0].Entries)
+
+	_, err = client.DeleteNetworkAclEntry(ctx, &ec2.DeleteNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(100),
+		Egress:       aws.Bool(false),
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeleteNetworkAcl(ctx, &ec2.DeleteNetworkAclInput{
+		NetworkAclId: aws.String(aclID),
+	})
+	require.NoError(t, err)
+}

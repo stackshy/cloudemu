@@ -86,6 +86,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeNatGateways,
 		h.routeVpcPeering,
 		h.routeFlowLogs,
+		h.routeNetworkACLs,
 		h.routeVPC,
 	}
 	for _, route := range routes {
@@ -168,6 +169,25 @@ func (h *Handler) routeFlowLogs(w http.ResponseWriter, r *http.Request, action s
 		h.deleteFlowLogs(w, r)
 	case "DescribeFlowLogs":
 		h.describeFlowLogs(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeNetworkACLs(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
+	case "CreateNetworkAcl":
+		h.createNetworkACL(w, r)
+	case "DeleteNetworkAcl":
+		h.deleteNetworkACL(w, r)
+	case "DescribeNetworkAcls":
+		h.describeNetworkACLs(w, r)
+	case "CreateNetworkAclEntry":
+		h.createNetworkACLEntry(w, r)
+	case "DeleteNetworkAclEntry":
+		h.deleteNetworkACLEntry(w, r)
 	default:
 		return false
 	}
