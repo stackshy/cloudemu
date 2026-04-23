@@ -63,6 +63,7 @@ Region and credentials can be any dummy values — the server doesn't validate s
 | **EC2 — VPC Peering** | CreateVpcPeeringConnection, AcceptVpcPeeringConnection, DeleteVpcPeeringConnection, DescribeVpcPeeringConnections |
 | **EC2 — Flow Logs** | CreateFlowLogs, DeleteFlowLogs, DescribeFlowLogs |
 | **EC2 — Network ACLs** | CreateNetworkAcl, DeleteNetworkAcl, DescribeNetworkAcls, CreateNetworkAclEntry, DeleteNetworkAclEntry |
+| **CloudWatch** *(rpc-v2-cbor)* | PutMetricData, GetMetricStatistics, ListMetrics, PutMetricAlarm, DescribeAlarms, DeleteAlarms |
 
 Any operation not in this list returns `501 Not Implemented` or the AWS-style `UnknownOperation` / `InvalidAction` error. The list grows each phase — see the bottom of this page.
 

@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.6 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.22 // indirect
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.66.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.297.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.8 // indirect
@@ -29,6 +30,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10 // indirect
 	github.com/aws/smithy-go v1.25.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

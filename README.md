@@ -143,6 +143,7 @@ Currently covered:
 | **EC2 — Spot/Launch Templates** | Request/Cancel/DescribeSpotInstanceRequests, Create/Delete/DescribeLaunchTemplates |
 | **EC2 — NAT/Peering/Flow Logs** | NAT gateways, VPC peering connections, VPC flow logs |
 | **EC2 — Network ACLs** | Create/Delete/DescribeNetworkAcls, Create/DeleteNetworkAclEntry |
+| **CloudWatch** | PutMetricData, GetMetricStatistics, ListMetrics, PutMetricAlarm, Describe/DeleteAlarms (Smithy rpc-v2-cbor) |
 
 More services land progressively — see [docs/sdk-server.md](docs/sdk-server.md).
 

@@ -12,7 +12,7 @@ import (
 	awsvpc "github.com/stackshy/cloudemu/providers/aws/vpc"
 )
 
-// newFullHandler wires both compute and VPC drivers for Phase-2 tests.
+// newFullHandler wires compute and VPC drivers for Phase-2 tests (no monitoring).
 func newFullHandler() *Handler {
 	opts := config.NewOptions()
 
