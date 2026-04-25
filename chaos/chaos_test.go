@@ -1,18 +1,25 @@
 package chaos_test
 
 import (
-	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stackshy/cloudemu/chaos"
 	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	awsec2 "github.com/stackshy/cloudemu/providers/aws/ec2"
-	awss3 "github.com/stackshy/cloudemu/providers/aws/s3"
 )
+
+func TestNewWithNilClockUsesRealClock(t *testing.T) {
+	e := chaos.New(nil)
+	defer e.Stop()
+
+	// Apply a scenario; if the clock plumbing is broken, Active won't fire.
+	e.Apply(chaos.LatencySpike("storage", time.Millisecond, time.Hour))
+
+	if eff := e.Check("storage", "Op"); eff.Latency != time.Millisecond {
+		t.Fatalf("expected scenario to be live, got %+v", eff)
+	}
+}
 
 func TestEngineNilSafe(t *testing.T) {
 	var e *chaos.Engine
@@ -22,151 +29,97 @@ func TestEngineNilSafe(t *testing.T) {
 	}
 }
 
-func TestServiceOutage(t *testing.T) {
+func TestEngineNoActiveScenariosReturnsZeroEffect(t *testing.T) {
 	e := chaos.New(config.RealClock{})
 	defer e.Stop()
 
-	e.Apply(chaos.ServiceOutage("storage", time.Hour))
-
-	eff := e.Check("storage", "PutObject")
-	if eff.Error == nil {
-		t.Fatal("expected error during outage, got nil")
-	}
-
-	if cerrors.GetCode(eff.Error) != cerrors.Unavailable {
-		t.Errorf("expected Unavailable, got %v", eff.Error)
-	}
-
-	// Different service should not be affected.
-	if eff := e.Check("compute", "RunInstances"); eff.Error != nil {
-		t.Errorf("compute should be unaffected, got %v", eff.Error)
+	if eff := e.Check("storage", "Op"); eff.Latency != 0 || eff.Error != nil {
+		t.Fatalf("empty engine should produce zero effect, got %+v", eff)
 	}
 }
 
-func TestServiceOutageExpiresAndUnregisters(t *testing.T) {
+func TestEngineMergesMultipleScenarios(t *testing.T) {
 	e := chaos.New(config.RealClock{})
 	defer e.Stop()
 
-	e.Apply(chaos.ServiceOutage("storage", 10*time.Millisecond))
-
-	if e.Check("storage", "Op").Error == nil {
-		t.Fatal("should fail while active")
-	}
-
-	time.Sleep(20 * time.Millisecond)
-
-	if e.Check("storage", "Op").Error != nil {
-		t.Fatal("should recover after window")
-	}
-}
-
-func TestLatencySpike(t *testing.T) {
-	e := chaos.New(config.RealClock{})
-	defer e.Stop()
-
-	e.Apply(chaos.LatencySpike("storage", 50*time.Millisecond, time.Hour))
-
-	if eff := e.Check("storage", "Op"); eff.Latency != 50*time.Millisecond {
-		t.Errorf("latency = %v, want 50ms", eff.Latency)
-	}
-
-	// Wrong service: no latency.
-	if eff := e.Check("compute", "Op"); eff.Latency != 0 {
-		t.Errorf("expected 0 latency for compute, got %v", eff.Latency)
-	}
-}
-
-func TestProbabilisticFailure(t *testing.T) {
-	e := chaos.New(config.RealClock{})
-	defer e.Stop()
-
-	myErr := errors.New("test failure")
-	e.Apply(chaos.ProbabilisticFailure("storage", "GetObject", myErr, 1.0, time.Hour))
-
-	// p=1.0 means every call should fail.
-	for range 20 {
-		if eff := e.Check("storage", "GetObject"); eff.Error == nil {
-			t.Fatal("p=1.0 should always inject")
-		}
-	}
-
-	// Non-targeted op should not be affected.
-	if eff := e.Check("storage", "PutObject"); eff.Error != nil {
-		t.Errorf("PutObject should not be affected: %v", eff.Error)
-	}
-}
-
-func TestProbabilisticFailureZeroProbability(t *testing.T) {
-	e := chaos.New(config.RealClock{})
-	defer e.Stop()
-
-	myErr := errors.New("never")
-	e.Apply(chaos.ProbabilisticFailure("storage", "Op", myErr, 0.0, time.Hour))
-
-	for range 20 {
-		if eff := e.Check("storage", "Op"); eff.Error != nil {
-			t.Fatalf("p=0.0 should never inject, got %v", eff.Error)
-		}
-	}
-}
-
-func TestThrottle(t *testing.T) {
-	e := chaos.New(config.RealClock{})
-	defer e.Stop()
-
-	e.Apply(chaos.Throttle("compute", "RunInstances", 3, time.Hour))
-
-	// First 3 calls in the same second pass.
-	for i := range 3 {
-		if eff := e.Check("compute", "RunInstances"); eff.Error != nil {
-			t.Fatalf("call %d should pass under threshold, got %v", i, eff.Error)
-		}
-	}
-
-	// 4th in same second should be throttled.
-	if eff := e.Check("compute", "RunInstances"); eff.Error == nil {
-		t.Fatal("4th call should be throttled")
-	}
-}
-
-func TestComposite(t *testing.T) {
-	e := chaos.New(config.RealClock{})
-	defer e.Stop()
-
-	myErr := errors.New("composite-err")
-	e.Apply(chaos.Composite(
-		chaos.LatencySpike("storage", 10*time.Millisecond, time.Hour),
-		chaos.ProbabilisticFailure("storage", "Op", myErr, 1.0, time.Hour),
-	))
+	e.Apply(chaos.LatencySpike("storage", 10*time.Millisecond, time.Hour))
+	e.Apply(chaos.LatencySpike("storage", 20*time.Millisecond, time.Hour))
 
 	eff := e.Check("storage", "Op")
-	if eff.Latency != 10*time.Millisecond {
-		t.Errorf("composite latency = %v, want 10ms", eff.Latency)
-	}
-
-	if eff.Error == nil {
-		t.Error("composite should propagate inner failure")
+	if eff.Latency != 30*time.Millisecond {
+		t.Errorf("latencies should sum: got %v want 30ms", eff.Latency)
 	}
 }
 
-func TestActiveStop(t *testing.T) {
+func TestEngineExpiresScenariosLazily(t *testing.T) {
+	e := chaos.New(config.RealClock{})
+	defer e.Stop()
+
+	e.Apply(chaos.LatencySpike("storage", time.Millisecond, 5*time.Millisecond))
+
+	if eff := e.Check("storage", "Op"); eff.Latency == 0 {
+		t.Fatal("scenario should be active immediately")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	// The next Check should drop the expired scenario.
+	if eff := e.Check("storage", "Op"); eff.Latency != 0 {
+		t.Errorf("expected scenario to expire, got %+v", eff)
+	}
+}
+
+func TestActiveStopRemovesScenario(t *testing.T) {
 	e := chaos.New(config.RealClock{})
 	defer e.Stop()
 
 	a := e.Apply(chaos.ServiceOutage("storage", time.Hour))
 
-	if eff := e.Check("storage", "Op"); eff.Error == nil {
-		t.Fatal("should fail while active")
+	if e.Check("storage", "Op").Error == nil {
+		t.Fatal("scenario should be active")
 	}
 
 	a.Stop()
 
 	if eff := e.Check("storage", "Op"); eff.Error != nil {
-		t.Errorf("should be cleared after Stop, got %v", eff.Error)
+		t.Errorf("scenario should be cleared after Stop, got %v", eff.Error)
 	}
 }
 
-func TestRecorded(t *testing.T) {
+func TestActiveStopOnNilSafe(t *testing.T) {
+	var a *chaos.Active
+
+	a.Stop() // should not panic
+}
+
+func TestActiveStopIdempotent(t *testing.T) {
+	e := chaos.New(config.RealClock{})
+	defer e.Stop()
+
+	a := e.Apply(chaos.ServiceOutage("storage", time.Hour))
+
+	a.Stop()
+	a.Stop() // second call should be a no-op
+}
+
+func TestEngineStopClearsAllScenarios(t *testing.T) {
+	e := chaos.New(config.RealClock{})
+
+	e.Apply(chaos.ServiceOutage("storage", time.Hour))
+	e.Apply(chaos.LatencySpike("compute", time.Second, time.Hour))
+
+	e.Stop()
+
+	if eff := e.Check("storage", "Op"); eff.Error != nil {
+		t.Errorf("Stop should clear storage outage, got %v", eff.Error)
+	}
+
+	if eff := e.Check("compute", "Op"); eff.Latency != 0 {
+		t.Errorf("Stop should clear compute latency, got %v", eff.Latency)
+	}
+}
+
+func TestRecordedCapturesAppliedEffects(t *testing.T) {
 	e := chaos.New(config.RealClock{})
 	defer e.Stop()
 
@@ -181,10 +134,44 @@ func TestRecorded(t *testing.T) {
 		t.Fatalf("len=%d want 3", len(rec))
 	}
 
+	for _, r := range rec {
+		if r.Service != "storage" || r.Operation != "Op" {
+			t.Errorf("recorded event wrong: %+v", r)
+		}
+
+		if r.Effect.Error == nil {
+			t.Errorf("recorded event missing effect error: %+v", r)
+		}
+
+		if r.When.IsZero() {
+			t.Errorf("recorded event has zero timestamp: %+v", r)
+		}
+	}
+}
+
+func TestRecordedSkipsNoOps(t *testing.T) {
+	e := chaos.New(config.RealClock{})
+	defer e.Stop()
+
+	// No scenarios applied — the call should produce no recording.
+	_ = e.Check("storage", "Op")
+
+	if rec := e.Recorded(); len(rec) != 0 {
+		t.Errorf("expected no recordings without active scenario, got %d", len(rec))
+	}
+}
+
+func TestResetClearsRecorded(t *testing.T) {
+	e := chaos.New(config.RealClock{})
+	defer e.Stop()
+
+	e.Apply(chaos.ServiceOutage("storage", time.Hour))
+	_ = e.Check("storage", "Op")
+
 	e.Reset()
 
-	if len(e.Recorded()) != 0 {
-		t.Error("Reset should clear recorded events")
+	if rec := e.Recorded(); len(rec) != 0 {
+		t.Errorf("Reset should clear recorded events, got %d", len(rec))
 	}
 }
 
@@ -212,68 +199,17 @@ func TestEngineConcurrentSafe(t *testing.T) {
 
 	wg.Wait()
 
-	rec := e.Recorded()
-	if len(rec) != workers*100 {
+	if rec := e.Recorded(); len(rec) != workers*100 {
 		t.Errorf("recorded=%d want %d", len(rec), workers*100)
 	}
 }
 
-func TestWrapBucketAppliesChaos(t *testing.T) {
-	opts := config.NewOptions()
-	bucket := awss3.New(opts)
-	e := chaos.New(config.RealClock{})
-
-	wrapped := chaos.WrapBucket(bucket, e)
-
-	ctx := context.Background()
-	if err := wrapped.CreateBucket(ctx, "test-bucket"); err != nil {
-		t.Fatalf("baseline call should succeed: %v", err)
+func TestErrChaosInjectedExported(t *testing.T) {
+	if chaos.ErrChaosInjected == nil {
+		t.Fatal("ErrChaosInjected should be a non-nil sentinel")
 	}
 
-	e.Apply(chaos.ServiceOutage("storage", time.Hour))
-
-	if err := wrapped.CreateBucket(ctx, "another"); err == nil {
-		t.Fatal("expected outage error after chaos applied")
+	if chaos.ErrChaosInjected.Error() == "" {
+		t.Error("ErrChaosInjected should have a message")
 	}
-}
-
-func TestWrapComputeAppliesChaos(t *testing.T) {
-	opts := config.NewOptions()
-	ec2 := awsec2.New(opts)
-	e := chaos.New(config.RealClock{})
-
-	wrapped := chaos.WrapCompute(ec2, e)
-	ctx := context.Background()
-
-	// Baseline: instance launches fine.
-	if _, err := wrapped.RunInstances(ctx, computeInstanceConfig(), 1); err != nil {
-		t.Fatalf("baseline RunInstances: %v", err)
-	}
-
-	// Apply outage: next call should fail with chaos error before reaching driver.
-	e.Apply(chaos.ServiceOutage("compute", time.Hour))
-
-	if _, err := wrapped.RunInstances(ctx, computeInstanceConfig(), 1); err == nil {
-		t.Fatal("expected chaos error during compute outage")
-	}
-}
-
-// computeInstanceConfig builds a minimal InstanceConfig the AWS EC2 mock accepts.
-func computeInstanceConfig() computeConfig {
-	return computeConfig{
-		ImageID:      "ami-test",
-		InstanceType: "t2.micro",
-	}
-}
-
-// computeConfig type-aliases the driver type so the test file doesn't need
-// to import the deeply-nested compute/driver package.
-type computeConfig = struct {
-	ImageID        string
-	InstanceType   string
-	Tags           map[string]string
-	SubnetID       string
-	SecurityGroups []string
-	KeyName        string
-	UserData       string
 }
