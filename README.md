@@ -105,6 +105,21 @@ cloudemu goes beyond basic CRUD mocks. It reproduces real cloud behaviors so you
 - **Stream/Change Feed** — Database mutations produce stream records (INSERT/MODIFY/REMOVE).
 - **Numeric-Aware Comparisons** — Database filters compare `"10" > "9"` correctly using numeric ordering.
 
+## Chaos Engineering — Test Your App Against Cloud Failure
+
+CloudEmu can deliberately fail or slow down services in controlled, time-bounded windows, so retry logic, timeouts, and graceful-degradation paths in your code can actually be exercised.
+
+```go
+engine := chaos.New(config.RealClock{})
+chaosS3 := chaos.WrapBucket(cloud.S3, engine)
+
+// Run your app against this S3...
+engine.Apply(chaos.ServiceOutage("storage", 5*time.Second))
+// ...calls fail for 5 seconds, then recover automatically.
+```
+
+Scenarios available today: `ServiceOutage`, `LatencySpike`, `ProbabilisticFailure`, `Throttle`, `Composite`. Works for both Go API and SDK-compat HTTP clients. See [docs/chaos.md](docs/chaos.md).
+
 ## Use the Real AWS SDK (no code changes)
 
 If your app already uses `aws-sdk-go-v2`, you don't have to rewrite anything. cloudemu ships an HTTP server that speaks the real AWS wire protocols. Point the SDK's `BaseEndpoint` at localhost and your production code just works.
