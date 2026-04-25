@@ -45,7 +45,7 @@ Region and credentials can be any dummy values — the server doesn't validate s
 | Service | Operations |
 |---------|-----------|
 | **S3** | CreateBucket, DeleteBucket, ListBuckets, PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2 (with prefix, delimiter, common prefixes, continuation token), CopyObject |
-| **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, Query (with `KeyConditionExpression`, `ExpressionAttributeValues`, `ExpressionAttributeNames`) |
+| **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, UpdateItem (SET/REMOVE), Query, Scan (with FilterExpression), BatchWriteItem, BatchGetItem, TransactWriteItems |
 | **EC2** | RunInstances (tags, security groups, multi-count), DescribeInstances (filters: `instance-id`, `instance-type`, `instance-state-name`, `tag:*`), StartInstances, StopInstances, RebootInstances, TerminateInstances, ModifyInstanceAttribute |
 | **EC2 — VPC** | CreateVpc, DeleteVpc, DescribeVpcs |
 | **EC2 — Subnet** | CreateSubnet, DeleteSubnet, DescribeSubnets |

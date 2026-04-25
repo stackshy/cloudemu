@@ -35,6 +35,15 @@ func (*Handler) Matches(r *http.Request) bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
+	if h.routeTables(w, r, op) || h.routeItems(w, r, op) || h.routeBatch(w, r, op) {
+		return
+	}
+
+	wire.WriteJSONError(w, http.StatusBadRequest,
+		"UnknownOperationException", "unknown operation: "+op)
+}
+
+func (h *Handler) routeTables(w http.ResponseWriter, r *http.Request, op string) bool {
 	switch op {
 	case "CreateTable":
 		h.createTable(w, r)
@@ -44,17 +53,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeTable(w, r)
 	case "ListTables":
 		h.listTables(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) routeItems(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
 	case "PutItem":
 		h.putItem(w, r)
 	case "GetItem":
 		h.getItem(w, r)
 	case "DeleteItem":
 		h.deleteItem(w, r)
+	case "UpdateItem":
+		h.updateItem(w, r)
 	case "Query":
 		h.query(w, r)
+	case "Scan":
+		h.scan(w, r)
 	default:
-		wire.WriteJSONError(w, http.StatusBadRequest, "UnknownOperationException", "unknown operation: "+op)
+		return false
 	}
+
+	return true
+}
+
+func (h *Handler) routeBatch(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
+	case "BatchWriteItem":
+		h.batchWriteItem(w, r)
+	case "BatchGetItem":
+		h.batchGetItem(w, r)
+	case "TransactWriteItems":
+		h.transactWriteItems(w, r)
+	default:
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
