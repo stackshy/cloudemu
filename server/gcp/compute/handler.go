@@ -31,6 +31,8 @@ const (
 	resourceInstances  = "instances"
 	resourceOperations = "operations"
 	resourceDisks      = "disks"
+	resourceSnapshots  = "snapshots"
+	resourceImages     = "images"
 )
 
 // Handler serves GCP Compute Engine REST requests for instances and zone
@@ -54,7 +56,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceInstances, resourceOperations, resourceDisks:
+	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots, resourceImages:
 		return true
 	}
 
@@ -79,6 +81,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rp.ResourceType == resourceSnapshots {
+		h.serveSnapshotsRoute(w, r, rp)
+		return
+	}
+
+	if rp.ResourceType == resourceImages {
+		h.serveImagesRoute(w, r, rp)
+		return
+	}
+
 	switch {
 	case rp.Action != "":
 		h.serveInstanceAction(w, r, rp)
@@ -89,7 +101,57 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
+func (h *Handler) serveSnapshotsRoute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if rp.ResourceName == "" {
+		switch r.Method {
+		case http.MethodPost:
+			h.insertSnapshot(w, r, rp)
+		case http.MethodGet:
+			h.listSnapshots(w, r, rp)
+		default:
+			writeNotImplemented(w, r.Method+" "+r.URL.Path)
+		}
+
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getSnapshot(w, r, rp)
+	case http.MethodDelete:
+		h.deleteSnapshot(w, r, rp)
+	default:
+		writeNotImplemented(w, r.Method+" "+r.URL.Path)
+	}
+}
+
+//nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
+func (h *Handler) serveImagesRoute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if rp.ResourceName == "" {
+		switch r.Method {
+		case http.MethodPost:
+			h.insertImage(w, r, rp)
+		case http.MethodGet:
+			h.listImages(w, r, rp)
+		default:
+			writeNotImplemented(w, r.Method+" "+r.URL.Path)
+		}
+
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getImage(w, r, rp)
+	case http.MethodDelete:
+		h.deleteImage(w, r, rp)
+	default:
+		writeNotImplemented(w, r.Method+" "+r.URL.Path)
+	}
+}
+
+//nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
 func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	if rp.ResourceName == "" {
 		switch r.Method {
