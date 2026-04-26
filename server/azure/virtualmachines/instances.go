@@ -98,7 +98,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 	azurearm.WriteJSON(w, http.StatusOK, vmListResponse{Value: out})
 }
 
-// delete handles DELETE virtualMachines/{name}.
+// delete handles DELETE virtualMachines/{name}. Returns a 202 Accepted with
+// the async-operation polling header so the SDK's poller terminates cleanly.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
@@ -113,7 +114,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	writeAcceptedAsync(w, r, rp.Subscription, "delete-"+rp.ResourceName)
 }
 
 // start handles POST virtualMachines/{name}/start.
@@ -137,7 +138,8 @@ func (h *Handler) restart(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 	h.lifecycleAction(w, r, rp, h.compute.RebootInstances)
 }
 
-// lifecycleAction is the shared body for start/stop/restart.
+// lifecycleAction is the shared body for start/stop/restart. Returns 202
+// + async polling header so real Azure SDK pollers terminate.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) lifecycleAction(
@@ -155,7 +157,28 @@ func (h *Handler) lifecycleAction(
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	writeAcceptedAsync(w, r, rp.Subscription, rp.SubResource+"-"+rp.ResourceName)
+}
+
+// writeAcceptedAsync replies 202 Accepted with the Azure-AsyncOperation and
+// Location headers pointing to our operationStatuses endpoint. The Azure SDK
+// poller will GET that URL and observe Succeeded immediately.
+func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, subscription, opID string) {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+
+	statusURL := scheme + "://" + r.Host +
+		"/subscriptions/" + subscription +
+		"/providers/" + providerName +
+		"/locations/eastus/operationStatuses/" + opID +
+		"?api-version=2023-09-01"
+
+	w.Header().Set("Azure-AsyncOperation", statusURL)
+	w.Header().Set("Location", statusURL)
+	w.Header().Set("Retry-After", "0")
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // findByName looks up a VM by its ARM resource name. Returns NotFound when

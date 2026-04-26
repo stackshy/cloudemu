@@ -32,6 +32,10 @@ const providerName = "Microsoft.Compute"
 // resourceType is the ARM resource type this handler serves.
 const resourceType = "virtualMachines"
 
+// resourceTypeLocations is the resource type used for async operation
+// status endpoints (Microsoft.Compute/locations/{loc}/operationStatuses/{id}).
+const resourceTypeLocations = "locations"
+
 // Handler serves ARM JSON requests for Microsoft.Compute/virtualMachines.
 type Handler struct {
 	compute computedriver.Compute
@@ -42,10 +46,8 @@ func New(c computedriver.Compute) *Handler {
 	return &Handler{compute: c}
 }
 
-// Matches returns true for ARM URLs targeting Microsoft.Compute/virtualMachines.
-// The match is loose enough to accept both subscription-scoped and resource-
-// group-scoped paths, but strict enough to leave other ARM providers alone so
-// future services (storage, network) can register their own handler.
+// Matches returns true for ARM URLs targeting Microsoft.Compute/virtualMachines
+// or our async-operation status endpoints.
 func (*Handler) Matches(r *http.Request) bool {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
@@ -56,7 +58,12 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.ResourceType == resourceType
+	switch rp.ResourceType {
+	case resourceType, resourceTypeLocations:
+		return true
+	}
+
+	return false
 }
 
 // ServeHTTP routes the request to the matching operation. Unrecognized
@@ -69,6 +76,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rp.ResourceType == resourceTypeLocations && rp.SubResource == "operationStatuses" {
+		serveOperationStatus(w, r, rp)
+		return
+	}
+
 	switch {
 	case rp.SubResource != "":
 		h.serveAction(w, r, rp)
@@ -77,6 +89,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.serveCollection(w, r, rp)
 	}
+}
+
+// serveOperationStatus answers the async-operation polling endpoint that the
+// Azure SDK hits after we 202-Accepted a long-running op. Since our backing
+// driver is synchronous, we always return Succeeded.
+//
+//nolint:gocritic // rp is a request-scoped value
+func serveOperationStatus(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if r.Method != http.MethodGet {
+		writeNotImplemented(w, r.Method+" "+r.URL.Path)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, map[string]string{
+		"name":      rp.SubResourceName,
+		"status":    "Succeeded",
+		"startTime": "2024-01-01T00:00:00Z",
+		"endTime":   "2024-01-01T00:00:01Z",
+	})
 }
 
 //nolint:gocritic // rp travels through the dispatch chain once per request

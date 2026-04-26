@@ -216,8 +216,12 @@ func TestVMDelete(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("delete status=%d want 204", resp.StatusCode)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Errorf("delete status=%d want 202", resp.StatusCode)
+	}
+
+	if resp.Header.Get("Azure-AsyncOperation") == "" {
+		t.Error("missing Azure-AsyncOperation header on delete response")
 	}
 }
 
@@ -236,9 +240,13 @@ func TestVMLifecycleActions(t *testing.T) {
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode != http.StatusNoContent {
+			if resp.StatusCode != http.StatusAccepted {
 				dump, _ := io.ReadAll(resp.Body)
 				t.Errorf("%s: status=%d body=%s", action, resp.StatusCode, dump)
+			}
+
+			if resp.Header.Get("Azure-AsyncOperation") == "" {
+				t.Errorf("%s: missing Azure-AsyncOperation header", action)
 			}
 		})
 	}

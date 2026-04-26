@@ -16,6 +16,7 @@ package gcprest
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -221,12 +222,16 @@ type Operation struct {
 // NewDoneOperation builds an Operation in DONE state for opType targeting the
 // resource at scope/scopeName/resourceType/name. host is the test server URL
 // so selfLink/targetLink are absolute and SDKs can navigate them.
+//
+// Operation.ID must be a numeric string (uint64) — GCP's protobuf JSON
+// unmarshaling rejects anything else. The human-readable identifier goes in
+// Name instead.
 func NewDoneOperation(host, project, scope, scopeName, resourceType, name, opType string) Operation {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	opName := "operation-" + name + "-" + opType
 	op := Operation{
 		Kind:          "compute#operation",
-		ID:            opName,
+		ID:            strconv.FormatInt(time.Now().UnixNano(), 10),
 		Name:          opName,
 		OperationType: opType,
 		TargetLink:    SelfLink(host, project, scope, scopeName, resourceType, name),

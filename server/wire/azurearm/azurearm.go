@@ -36,12 +36,13 @@ const pairLen = 2
 // ResourcePath is a parsed ARM URL path. Fields are empty when not present in
 // the path (e.g., a subscription-scoped list has no ResourceGroup).
 type ResourcePath struct {
-	Subscription  string
-	ResourceGroup string
-	Provider      string // e.g. "Microsoft.Compute"
-	ResourceType  string // e.g. "virtualMachines"
-	ResourceName  string // empty for collection paths
-	SubResource   string // e.g. "start", "powerOff" — empty for resource ops
+	Subscription    string
+	ResourceGroup   string
+	Provider        string // e.g. "Microsoft.Compute"
+	ResourceType    string // e.g. "virtualMachines" or "locations"
+	ResourceName    string // empty for collection paths
+	SubResource     string // e.g. "start", "powerOff", "operationStatuses"
+	SubResourceName string // e.g. operation GUID for .../operationStatuses/{id}
 }
 
 // ParsePath extracts the ARM path components from urlPath. Returns ok=false
@@ -97,7 +98,9 @@ func parseResourceGroup(parts []string, i int, rp *ResourcePath) int {
 	return i + pairLen
 }
 
-// parseTrailing records {name} and {subResource} segments if present.
+// parseTrailing records {name}, {subResource}, and {subResourceName} segments
+// if present. The fourth segment lets us model paths like
+// .../locations/{loc}/operationStatuses/{id}.
 func parseTrailing(parts []string, i int, rp *ResourcePath) {
 	if i < len(parts) {
 		rp.ResourceName = parts[i]
@@ -106,6 +109,11 @@ func parseTrailing(parts []string, i int, rp *ResourcePath) {
 
 	if i < len(parts) {
 		rp.SubResource = parts[i]
+		i++
+	}
+
+	if i < len(parts) {
+		rp.SubResourceName = parts[i]
 	}
 }
 

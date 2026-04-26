@@ -30,6 +30,7 @@ import (
 const (
 	resourceInstances  = "instances"
 	resourceOperations = "operations"
+	resourceDisks      = "disks"
 )
 
 // Handler serves GCP Compute Engine REST requests for instances and zone
@@ -53,7 +54,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceInstances, resourceOperations:
+	case resourceInstances, resourceOperations, resourceDisks:
 		return true
 	}
 
@@ -73,6 +74,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rp.ResourceType == resourceDisks {
+		h.serveDisksRoute(w, r, rp)
+		return
+	}
+
 	switch {
 	case rp.Action != "":
 		h.serveInstanceAction(w, r, rp)
@@ -80,6 +86,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveInstance(w, r, rp)
 	default:
 		h.serveInstanceCollection(w, r, rp)
+	}
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if rp.ResourceName == "" {
+		switch r.Method {
+		case http.MethodPost:
+			h.insertDisk(w, r, rp)
+		case http.MethodGet:
+			h.listDisks(w, r, rp)
+		default:
+			writeNotImplemented(w, r.Method+" "+r.URL.Path)
+		}
+
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getDisk(w, r, rp)
+	case http.MethodDelete:
+		h.deleteDisk(w, r, rp)
+	default:
+		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 	}
 }
 
@@ -143,8 +174,9 @@ func serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.Resource
 
 	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", strings.TrimPrefix(rp.ResourceName, "operation-"), "noop")
+	// Preserve the original operation name so SDK clients matching on Name
+	// still recognize the polled operation, but keep ID numeric (uint64).
 	op.Name = rp.ResourceName
-	op.ID = rp.ResourceName
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }

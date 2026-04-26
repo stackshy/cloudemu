@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
@@ -242,7 +243,9 @@ func tagOr(m map[string]string, key, fallback string) string {
 	return fallback
 }
 
-// toInstanceResponse maps a driver Instance back to GCP's REST shape.
+// toInstanceResponse maps a driver Instance back to GCP's REST shape. The
+// ID field is uint64-shaped because GCP's protobuf JSON unmarshaller rejects
+// non-numeric strings — we hash the driver ID into a stable numeric value.
 //
 //nolint:gocritic // rp is a request-scoped value passed once per response build
 func toInstanceResponse(inst *computedriver.Instance, rp gcprest.ResourcePath, host string) instanceResponse {
@@ -250,7 +253,7 @@ func toInstanceResponse(inst *computedriver.Instance, rp gcprest.ResourcePath, h
 
 	return instanceResponse{
 		Kind:        "compute#instance",
-		ID:          inst.ID,
+		ID:          numericID(inst.ID),
 		Name:        name,
 		MachineType: gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "machineTypes", inst.InstanceType),
 		Status:      gcpStatusFor(inst.State),
@@ -258,6 +261,23 @@ func toInstanceResponse(inst *computedriver.Instance, rp gcprest.ResourcePath, h
 		SelfLink:    gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", name),
 		Labels:      stripInternalTags(inst.Tags),
 	}
+}
+
+// numericID returns a stable uint64-shaped string derived from a driver
+// resource ID. GCP IDs in the wire protocol are uint64; non-numeric values
+// fail the SDK's protobuf unmarshalling.
+func numericID(driverID string) string {
+	const fnvOffset uint64 = 14695981039346656037
+
+	const fnvPrime uint64 = 1099511628211
+
+	h := fnvOffset
+	for i := 0; i < len(driverID); i++ {
+		h ^= uint64(driverID[i])
+		h *= fnvPrime
+	}
+
+	return strconv.FormatUint(h, 10)
 }
 
 func stripInternalTags(in map[string]string) map[string]string {
