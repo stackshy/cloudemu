@@ -32,6 +32,12 @@ type Drivers struct {
 // New returns a server that speaks GCP's REST JSON wire protocol for every
 // non-nil driver in d.
 //
+// GCS's Matches() also accepts /{bucket}/{object} for direct-media downloads,
+// which is broad enough to swallow Firestore and Cloud Monitoring traffic if
+// it registers first. Register more-specific handlers (compute, networks,
+// firestore, monitoring) ahead of GCS so first-match-wins keeps each on the
+// correct package.
+//
 //nolint:gocritic // Drivers is all interface fields; by-value keeps the caller API ergonomic
 func New(d Drivers) *server.Server {
 	srv := server.New()
@@ -44,16 +50,16 @@ func New(d Drivers) *server.Server {
 		srv.Register(networks.New(d.Networking))
 	}
 
-	if d.Storage != nil {
-		srv.Register(gcs.New(d.Storage))
-	}
-
 	if d.Firestore != nil {
 		srv.Register(firestore.New(d.Firestore))
 	}
 
 	if d.Monitoring != nil {
 		srv.Register(monitoring.New(d.Monitoring))
+	}
+
+	if d.Storage != nil {
+		srv.Register(gcs.New(d.Storage))
 	}
 
 	return srv
