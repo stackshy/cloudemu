@@ -10,22 +10,18 @@ import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
+	"github.com/stackshy/cloudemu/server/gcp/gcs"
+	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 )
 
-// Drivers bundles the driver interfaces the GCP server can expose. Leave a
-// field nil to omit that service; the server returns 501 Not Implemented for
-// any request that no registered handler matches.
+// Drivers bundles the driver interfaces the GCP server can expose.
 type Drivers struct {
 	Compute computedriver.Compute
+	Storage storagedriver.Bucket
 }
 
 // New returns a server that speaks GCP's REST JSON wire protocol for every
-// non-nil driver in d. Routing is path-based on
-//
-//	/compute/v1/projects/{p}/zones/{z}/{type}/{name}
-//
-// so handlers can register independently — Compute Engine doesn't conflict
-// with future GCS or Firestore handlers.
+// non-nil driver in d.
 //
 
 func New(d Drivers) *server.Server {
@@ -33,6 +29,10 @@ func New(d Drivers) *server.Server {
 
 	if d.Compute != nil {
 		srv.Register(compute.New(d.Compute))
+	}
+
+	if d.Storage != nil {
+		srv.Register(gcs.New(d.Storage))
 	}
 
 	return srv
