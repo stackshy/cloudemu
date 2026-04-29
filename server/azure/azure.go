@@ -9,11 +9,15 @@ package azure
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/images"
+	"github.com/stackshy/cloudemu/server/azure/monitor"
+	"github.com/stackshy/cloudemu/server/azure/network"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
 	"github.com/stackshy/cloudemu/server/azure/virtualmachines"
@@ -35,6 +39,8 @@ type Drivers struct {
 	SSHPublicKeys   computedriver.Compute
 	BlobStorage     storagedriver.Bucket
 	CosmosDB        dbdriver.Database
+	Network         netdriver.Networking
+	Monitor         mondriver.Monitoring
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -72,6 +78,14 @@ func New(d Drivers) *server.Server {
 	// blob handler.
 	if d.CosmosDB != nil {
 		srv.Register(cosmos.New(d.CosmosDB))
+	}
+
+	if d.Network != nil {
+		srv.Register(network.New(d.Network))
+	}
+
+	if d.Monitor != nil {
+		srv.Register(monitor.New(d.Monitor))
 	}
 
 	if d.VirtualMachines != nil {
