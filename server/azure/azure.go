@@ -8,8 +8,10 @@ package azure
 
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
+	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/azure/blob"
+	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
@@ -32,6 +34,7 @@ type Drivers struct {
 	Images          computedriver.Compute
 	SSHPublicKeys   computedriver.Compute
 	BlobStorage     storagedriver.Bucket
+	CosmosDB        dbdriver.Database
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -63,6 +66,12 @@ func New(d Drivers) *server.Server {
 
 	if d.SSHPublicKeys != nil {
 		srv.Register(sshpublickeys.New(d.SSHPublicKeys))
+	}
+
+	// Cosmos DB matches on /dbs/* paths — register before the catch-all
+	// blob handler.
+	if d.CosmosDB != nil {
+		srv.Register(cosmos.New(d.CosmosDB))
 	}
 
 	if d.VirtualMachines != nil {
