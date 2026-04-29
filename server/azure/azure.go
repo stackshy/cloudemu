@@ -9,11 +9,13 @@ package azure
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	"github.com/stackshy/cloudemu/server"
+	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
 	"github.com/stackshy/cloudemu/server/azure/virtualmachines"
+	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 )
 
 // Drivers bundles the driver interfaces the Azure server can expose. Leave a
@@ -29,6 +31,7 @@ type Drivers struct {
 	Snapshots       computedriver.Compute
 	Images          computedriver.Compute
 	SSHPublicKeys   computedriver.Compute
+	BlobStorage     storagedriver.Bucket
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -64,6 +67,13 @@ func New(d Drivers) *server.Server {
 
 	if d.VirtualMachines != nil {
 		srv.Register(virtualmachines.New(d.VirtualMachines))
+	}
+
+	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It
+	// must register last so its permissive Matches() doesn't shadow the
+	// ARM-specific resource handlers.
+	if d.BlobStorage != nil {
+		srv.Register(blob.New(d.BlobStorage))
 	}
 
 	return srv
