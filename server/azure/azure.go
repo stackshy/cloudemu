@@ -15,12 +15,14 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/disks"
+	"github.com/stackshy/cloudemu/server/azure/functions"
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/network"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
 	"github.com/stackshy/cloudemu/server/azure/virtualmachines"
+	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 )
 
@@ -41,6 +43,7 @@ type Drivers struct {
 	CosmosDB        dbdriver.Database
 	Network         netdriver.Networking
 	Monitor         mondriver.Monitoring
+	Functions       sdrv.Serverless
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -51,13 +54,13 @@ type Drivers struct {
 // so handlers can register independently — virtualMachines doesn't conflict
 // with future blob storage or networking handlers.
 //
-//nolint:gocritic // Drivers is all interface fields; by-value keeps the caller API ergonomic
+//nolint:gocritic,gocyclo // Drivers is all interface fields; one if-per-driver is the simplest expression
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
-	// Register more-specific resource handlers first so their resourceType
-	// match wins over virtualMachines (which also accepts the locations
-	// sub-path used for async-operation polling).
+	// Register more-specific compute resource handlers first so their
+	// resourceType match wins over virtualMachines (which also accepts the
+	// locations sub-path used for async-operation polling).
 	if d.Disks != nil {
 		srv.Register(disks.New(d.Disks))
 	}
@@ -86,6 +89,10 @@ func New(d Drivers) *server.Server {
 
 	if d.Monitor != nil {
 		srv.Register(monitor.New(d.Monitor))
+	}
+
+	if d.Functions != nil {
+		srv.Register(functions.New(d.Functions))
 	}
 
 	if d.VirtualMachines != nil {

@@ -12,21 +12,24 @@ import (
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/server"
+	"github.com/stackshy/cloudemu/server/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
 	"github.com/stackshy/cloudemu/server/gcp/firestore"
 	"github.com/stackshy/cloudemu/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/server/gcp/networks"
+	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 )
 
 // Drivers bundles the driver interfaces the GCP server can expose.
 type Drivers struct {
-	Compute    computedriver.Compute
-	Storage    storagedriver.Bucket
-	Firestore  dbdriver.Database
-	Networking netdriver.Networking
-	Monitoring mondriver.Monitoring
+	Compute        computedriver.Compute
+	Storage        storagedriver.Bucket
+	Firestore      dbdriver.Database
+	Networking     netdriver.Networking
+	Monitoring     mondriver.Monitoring
+	CloudFunctions sdrv.Serverless
 }
 
 // New returns a server that speaks GCP's REST JSON wire protocol for every
@@ -48,6 +51,13 @@ func New(d Drivers) *server.Server {
 
 	if d.Networking != nil {
 		srv.Register(networks.New(d.Networking))
+	}
+
+	// CloudFunctions matches /v1/projects/{p}/locations/{l}/functions paths
+	// before Firestore so the locations+functions guard wins over Firestore's
+	// /v1/projects/ prefix match.
+	if d.CloudFunctions != nil {
+		srv.Register(cloudfunctions.New(d.CloudFunctions))
 	}
 
 	if d.Firestore != nil {
