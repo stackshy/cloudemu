@@ -318,6 +318,73 @@ func TestEC2StartInstancesUnknownIDReturnsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestEC2StartInstancesIdempotentOnRunning verifies AWS-documented idempotent
+// behavior: calling StartInstances on an already-running instance returns
+// 200 with currentState=running rather than IncorrectInstanceState.
+//
+// Issue: https://github.com/stackshy/cloudemu/issues/152
+func TestEC2StartInstancesIdempotentOnRunning(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-idem"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	id := aws.ToString(run.Instances[0].InstanceId)
+
+	// Instance is already running. Real AWS treats this as a no-op.
+	out, err := client.StartInstances(ctx, &ec2.StartInstancesInput{
+		InstanceIds: []string{id},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.StartingInstances, 1)
+
+	desc, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{id},
+	})
+	require.NoError(t, err)
+	require.Equal(t, ec2types.InstanceStateNameRunning,
+		desc.Reservations[0].Instances[0].State.Name)
+}
+
+// TestEC2StopInstancesIdempotentOnStopped verifies the stopped-side of the
+// same AWS-documented idempotent behavior.
+func TestEC2StopInstancesIdempotentOnStopped(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-idem-stop"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
+	})
+	require.NoError(t, err)
+
+	id := aws.ToString(run.Instances[0].InstanceId)
+
+	// First stop transitions running → stopped.
+	_, err = client.StopInstances(ctx, &ec2.StopInstancesInput{
+		InstanceIds: []string{id},
+	})
+	require.NoError(t, err)
+
+	// Second stop on already-stopped instance is a no-op in real AWS.
+	out, err := client.StopInstances(ctx, &ec2.StopInstancesInput{
+		InstanceIds: []string{id},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.StoppingInstances, 1)
+
+	desc, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{id},
+	})
+	require.NoError(t, err)
+	require.Equal(t, ec2types.InstanceStateNameStopped,
+		desc.Reservations[0].Instances[0].State.Name)
+}
+
 func TestEC2ModifyInstanceAttributeType(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := context.Background()
