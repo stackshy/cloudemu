@@ -9,6 +9,7 @@ package azure
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/server"
@@ -19,6 +20,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/network"
+	"github.com/stackshy/cloudemu/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
 	"github.com/stackshy/cloudemu/server/azure/virtualmachines"
@@ -44,6 +46,7 @@ type Drivers struct {
 	Network         netdriver.Networking
 	Monitor         mondriver.Monitoring
 	Functions       sdrv.Serverless
+	ServiceBus      mqdriver.MessageQueue
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -93,6 +96,10 @@ func New(d Drivers) *server.Server {
 
 	if d.Functions != nil {
 		srv.Register(functions.New(d.Functions))
+	}
+
+	if d.ServiceBus != nil {
+		srv.Register(servicebus.New(d.ServiceBus))
 	}
 
 	if d.VirtualMachines != nil {

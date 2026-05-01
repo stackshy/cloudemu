@@ -9,6 +9,7 @@ package aws
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/server"
@@ -17,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/ec2"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/s3"
+	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 )
@@ -31,6 +33,7 @@ type Drivers struct {
 	VPC        netdriver.Networking
 	CloudWatch mondriver.Monitoring
 	Lambda     sdrv.Serverless
+	SQS        mqdriver.MessageQueue
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -58,6 +61,13 @@ func New(d Drivers) *server.Server {
 
 	if d.DynamoDB != nil {
 		srv.Register(dynamodb.New(d.DynamoDB))
+	}
+
+	// SQS shares the X-Amz-Target header with DynamoDB but uses a different
+	// prefix (AmazonSQS.* vs DynamoDB_20120810.*); their Matches predicates
+	// are mutually exclusive.
+	if d.SQS != nil {
+		srv.Register(sqs.New(d.SQS))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
