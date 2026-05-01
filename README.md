@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo.svg" alt="cloudemu" width="96" height="96" />
+</p>
+
+<p align="center">
   <h1 align="center">cloudemu</h1>
   <p align="center"><b>Zero-Cost In-Memory Cloud Emulation for Go</b></p>
 </p>
@@ -120,45 +124,60 @@ engine.Apply(chaos.ServiceOutage("storage", 5*time.Second))
 
 Scenarios available today: `ServiceOutage`, `LatencySpike`, `ProbabilisticFailure`, `Throttle`, `Composite`. Works for both Go API and SDK-compat HTTP clients. See [docs/chaos.md](docs/chaos.md).
 
-## Use the Real AWS SDK (no code changes)
+## Use the Real Cloud SDKs (no code changes)
 
-If your app already uses `aws-sdk-go-v2`, you don't have to rewrite anything. cloudemu ships an HTTP server that speaks the real AWS wire protocols. Point the SDK's `BaseEndpoint` at localhost and your production code just works.
+If your app already uses `aws-sdk-go-v2`, `azure-sdk-for-go`, or `cloud.google.com/go`, you don't have to rewrite anything. cloudemu ships HTTP servers that speak the real wire protocols of all three providers. Point the SDK's endpoint at localhost and your production code just works.
 
 ```go
 import (
     "github.com/stackshy/cloudemu"
-    awsserver "github.com/stackshy/cloudemu/server/aws"
+    awsserver   "github.com/stackshy/cloudemu/server/aws"
+    azureserver "github.com/stackshy/cloudemu/server/azure"
+    gcpserver   "github.com/stackshy/cloudemu/server/gcp"
 )
 
+// AWS
 aws := cloudemu.NewAWS()
-srv := awsserver.New(awsserver.Drivers{
-    S3: aws.S3, DynamoDB: aws.DynamoDB, EC2: aws.EC2,
-})
-ts := httptest.NewServer(srv)
+awsTS := httptest.NewServer(awsserver.New(awsserver.Drivers{
+    S3:     aws.S3,     DynamoDB: aws.DynamoDB, EC2: aws.EC2, VPC: aws.VPC,
+    Lambda: aws.Lambda, SQS:      aws.SQS,      CloudWatch: aws.CloudWatch,
+}))
 
-// Use the REAL aws-sdk-go-v2 client — only the endpoint changes.
+// Azure (TLS — Azure SDK refuses bearer tokens over plain HTTP)
+az := cloudemu.NewAzure()
+azureTS := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{
+    VirtualMachines: az.VirtualMachines, BlobStorage: az.BlobStorage,
+    CosmosDB: az.CosmosDB, Network: az.VNet, Monitor: az.Monitor,
+    Functions: az.Functions, ServiceBus: az.ServiceBus,
+}))
+
+// GCP
+gcp := cloudemu.NewGCP()
+gcpTS := httptest.NewServer(gcpserver.New(gcpserver.Drivers{
+    Compute: gcp.GCE, Networking: gcp.VPC, Storage: gcp.GCS,
+    Firestore: gcp.Firestore, Monitoring: gcp.CloudMonitoring,
+    CloudFunctions: gcp.CloudFunctions, PubSub: gcp.PubSub,
+}))
+
+// Use the REAL SDK clients — only the endpoint changes.
 s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-    o.BaseEndpoint = aws.String(ts.URL)
+    o.BaseEndpoint = aws.String(awsTS.URL)
     o.UsePathStyle = true
 })
 s3Client.PutObject(ctx, &s3.PutObjectInput{...}) // works
 ```
 
-Currently covered:
+Currently covered (lockstep across all 3 providers):
 
-| Service | Operations |
-|---------|-----------|
-| **S3** | CreateBucket, DeleteBucket, ListBuckets, PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2, CopyObject |
-| **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, Query |
-| **EC2** | RunInstances, DescribeInstances (with filters), StartInstances, StopInstances, RebootInstances, TerminateInstances, ModifyInstanceAttribute |
-| **EC2 — VPC & Networking** | CreateVpc, DeleteVpc, DescribeVpcs, CreateSubnet, DeleteSubnet, DescribeSubnets, CreateSecurityGroup, DeleteSecurityGroup, DescribeSecurityGroups, AuthorizeSecurityGroupIngress/Egress, RevokeSecurityGroupIngress/Egress, CreateInternetGateway, AttachInternetGateway, DetachInternetGateway, DescribeInternetGateways, CreateRouteTable, DescribeRouteTables, CreateRoute |
-| **EC2 — EBS & Key Pairs** | CreateVolume, DeleteVolume, DescribeVolumes, AttachVolume, DetachVolume, CreateKeyPair, DeleteKeyPair, DescribeKeyPairs |
-| **Auto Scaling** | CreateAutoScalingGroup, Update/Delete/DescribeAutoScalingGroups, SetDesiredCapacity, Put/Delete/ExecutePolicy |
-| **EC2 — Snapshots/AMIs** | Create/Delete/DescribeSnapshots, Create/Deregister/DescribeImages |
-| **EC2 — Spot/Launch Templates** | Request/Cancel/DescribeSpotInstanceRequests, Create/Delete/DescribeLaunchTemplates |
-| **EC2 — NAT/Peering/Flow Logs** | NAT gateways, VPC peering connections, VPC flow logs |
-| **EC2 — Network ACLs** | Create/Delete/DescribeNetworkAcls, Create/DeleteNetworkAclEntry |
-| **CloudWatch** | PutMetricData, GetMetricStatistics, ListMetrics, PutMetricAlarm, Describe/DeleteAlarms (Smithy rpc-v2-cbor) |
+| Domain | AWS | Azure | GCP |
+|--------|-----|-------|-----|
+| **Storage** | S3 | Blob (containers + blobs, copy) | GCS |
+| **Compute** | EC2 (+ VPC/Subnets/SG/IGW/RT/NAT/Peering/FlowLogs/NACL/EBS/KeyPairs/AMIs/Snapshots/Spot/LaunchTemplates) | VirtualMachines (+ Disks, Snapshots, Images, SSH keys) | Compute Engine (+ Disks, Snapshots, Images) |
+| **Database** | DynamoDB (CRUD, Query, Scan, Batch, TransactWrite) | Cosmos DB (DBs, containers, documents) | Firestore (commit, batchGet, runQuery) |
+| **Networking** | (in EC2) | Virtual Network | VPC + Subnets + Firewalls + Routes |
+| **Monitoring** | CloudWatch (Smithy rpc-v2-cbor) | Azure Monitor | Cloud Monitoring (alert policies + time series) |
+| **Serverless** | Lambda (lifecycle + Invoke) | Functions (`Microsoft.Web/sites` + `/api/{name}` invoke) | Cloud Functions v1 (lifecycle + `:call`) |
+| **Message Queue** | SQS (JSON-RPC) | Service Bus (ARM + REST data plane) | Pub/Sub (topics/subs + publish/pull/ack) |
 
 More services land progressively — see [docs/sdk-server.md](docs/sdk-server.md).
 

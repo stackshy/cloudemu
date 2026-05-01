@@ -9,13 +9,17 @@ package aws
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
+	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/s3"
+	"github.com/stackshy/cloudemu/server/aws/sqs"
+	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 )
 
@@ -28,6 +32,8 @@ type Drivers struct {
 	EC2        computedriver.Compute
 	VPC        netdriver.Networking
 	CloudWatch mondriver.Monitoring
+	Lambda     sdrv.Serverless
+	SQS        mqdriver.MessageQueue
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -39,6 +45,8 @@ type Drivers struct {
 //   - EC2 matches on Action= (form-encoded POST or query string). The EC2
 //     handler also serves VPC and Auto Scaling ops since real AWS uses the
 //     same query-protocol endpoint for all of them.
+//   - Lambda matches on the /2015-03-31/functions path prefix and must
+//     register before S3 so its REST URLs aren't swallowed by the catch-all.
 //   - S3 is the REST fallback.
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
@@ -55,8 +63,19 @@ func New(d Drivers) *server.Server {
 		srv.Register(dynamodb.New(d.DynamoDB))
 	}
 
+	// SQS shares the X-Amz-Target header with DynamoDB but uses a different
+	// prefix (AmazonSQS.* vs DynamoDB_20120810.*); their Matches predicates
+	// are mutually exclusive.
+	if d.SQS != nil {
+		srv.Register(sqs.New(d.SQS))
+	}
+
 	if d.EC2 != nil || d.VPC != nil {
 		srv.Register(ec2.New(d.EC2, d.VPC))
+	}
+
+	if d.Lambda != nil {
+		srv.Register(lambda.New(d.Lambda))
 	}
 
 	if d.S3 != nil {

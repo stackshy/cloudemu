@@ -73,7 +73,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	container, blob := parseBlobPath(r.URL.Path)
 	q := r.URL.Query()
 
-	w.Header().Set("x-ms-version", xmsVersion)
+	w.Header().Set("X-Ms-Version", xmsVersion)
 
 	switch {
 	case container == "" && q.Get("comp") == compList:
@@ -131,7 +131,7 @@ func (h *Handler) containerOp(w http.ResponseWriter, r *http.Request, container 
 func (h *Handler) blobOp(w http.ResponseWriter, r *http.Request, container, blob string) {
 	switch r.Method {
 	case http.MethodPut:
-		if r.Header.Get("x-ms-copy-source") != "" {
+		if r.Header.Get("X-Ms-Copy-Source") != "" {
 			h.copyBlob(w, r, container, blob)
 			return
 		}
@@ -270,7 +270,7 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 
 	w.Header().Set("ETag", "\"0x8DAB0\"")
 	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
-	w.Header().Set("x-ms-request-server-encrypted", "true")
+	w.Header().Set("X-Ms-Request-Server-Encrypted", "true")
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -302,7 +302,7 @@ func writeBlobHeaders(w http.ResponseWriter, info *storagedriver.ObjectInfo, siz
 	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
 	w.Header().Set("Last-Modified", httpDate(info.LastModified))
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("x-ms-blob-type", "BlockBlob")
+	w.Header().Set("X-Ms-Blob-Type", "BlockBlob")
 
 	for k, v := range info.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
@@ -319,7 +319,7 @@ func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, 
 }
 
 func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
-	src := r.Header.Get("x-ms-copy-source")
+	src := r.Header.Get("X-Ms-Copy-Source")
 	srcBucket, srcKey := extractCopySource(src)
 
 	if srcBucket == "" || srcKey == "" {
@@ -334,8 +334,8 @@ func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, bl
 		return
 	}
 
-	w.Header().Set("x-ms-copy-id", "00000000-0000-0000-0000-000000000001")
-	w.Header().Set("x-ms-copy-status", "success")
+	w.Header().Set("X-Ms-Copy-Id", "00000000-0000-0000-0000-000000000001")
+	w.Header().Set("X-Ms-Copy-Status", "success")
 	w.Header().Set("ETag", "\"0x8DAB0\"")
 	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
 	w.WriteHeader(http.StatusAccepted)
@@ -386,7 +386,7 @@ func writeXML(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("Content-Type", contentTypeXML)
-	w.Header().Set("x-ms-error-code", code)
+	w.Header().Set("X-Ms-Error-Code", code)
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(xml.Header))
 	_ = xml.NewEncoder(w).Encode(errorXML{Code: code, Message: msg})
