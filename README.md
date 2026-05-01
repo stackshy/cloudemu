@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo.svg" alt="cloudemu" width="96" height="96" />
+</p>
+
+<p align="center">
   <h1 align="center">cloudemu</h1>
   <p align="center"><b>Zero-Cost In-Memory Cloud Emulation for Go</b></p>
 </p>
