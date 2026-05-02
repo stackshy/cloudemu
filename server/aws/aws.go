@@ -12,11 +12,13 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
+	"github.com/stackshy/cloudemu/server/aws/rds"
 	"github.com/stackshy/cloudemu/server/aws/s3"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
@@ -34,6 +36,7 @@ type Drivers struct {
 	CloudWatch mondriver.Monitoring
 	Lambda     sdrv.Serverless
 	SQS        mqdriver.MessageQueue
+	RDS        rdbdriver.RelationalDB
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -42,6 +45,9 @@ type Drivers struct {
 //
 //   - CloudWatch matches on Smithy-Protocol: rpc-v2-cbor header.
 //   - DynamoDB matches on X-Amz-Target header (JSON-RPC).
+//   - RDS matches form-encoded POSTs whose Action is one of the known RDS
+//     operations. It must register before EC2 because both speak the AWS
+//     query protocol on the same content type.
 //   - EC2 matches on Action= (form-encoded POST or query string). The EC2
 //     handler also serves VPC and Auto Scaling ops since real AWS uses the
 //     same query-protocol endpoint for all of them.
@@ -68,6 +74,14 @@ func New(d Drivers) *server.Server {
 	// are mutually exclusive.
 	if d.SQS != nil {
 		srv.Register(sqs.New(d.SQS))
+	}
+
+	// RDS must be registered before EC2: both speak AWS query-protocol on
+	// POST + form-encoded bodies, and Server matches in registration order.
+	// RDS's Matches is action-specific, so a request bound for EC2 will fall
+	// through to the EC2 handler unchanged.
+	if d.RDS != nil {
+		srv.Register(rds.New(d.RDS))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
