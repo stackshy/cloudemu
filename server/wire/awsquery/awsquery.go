@@ -196,11 +196,23 @@ func WriteXMLResponse(w http.ResponseWriter, v any) {
 	_ = xml.NewEncoder(w).Encode(v)
 }
 
-// ErrorResponse is the AWS-style XML error body.
+// ErrorResponse is the AWS-style XML error body. It emits BOTH the EC2 query
+// shape (<Errors><Error>...</Error></Errors>) and the standard query shape
+// (<Error>...</Error> at the response root) so that:
+//
+//   - EC2 SDK (which parses xml:"Errors>Error>Code") finds the wrapped form.
+//   - RDS / Redshift / Neptune / DocumentDB SDKs (which parse xml:"Error>Code"
+//     against a wrappedErrorResponse) find the unwrapped form.
+//
+// The duplication is harmless: each SDK matches its own shape via XPath-style
+// xml tags and ignores the other.
 type ErrorResponse struct {
 	XMLName   xml.Name `xml:"Response"`
-	RequestID string   `xml:"RequestID"`
 	Errors    []Error  `xml:"Errors>Error"`
+	Error     Error    `xml:"Error"`
+	RequestID string   `xml:"RequestID"`
+	//nolint:revive,stylecheck,staticcheck // SDKs literally look for "RequestId", not "RequestID"; the second field is intentional.
+	RequestId string `xml:"RequestId"`
 }
 
 // Error is one error entry.
@@ -209,14 +221,18 @@ type Error struct {
 	Message string `xml:"Message"`
 }
 
-// WriteXMLError writes an AWS-style XML error response.
+// WriteXMLError writes an AWS-style XML error response. The response shape is
+// compatible with both the EC2 query SDK and the standard query SDKs (RDS,
+// Redshift, Neptune, DocumentDB).
 func WriteXMLError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "text/xml")
 	w.WriteHeader(status)
 	fmt.Fprint(w, xml.Header)
 
 	_ = xml.NewEncoder(w).Encode(ErrorResponse{
-		RequestID: RequestID,
 		Errors:    []Error{{Code: code, Message: message}},
+		Error:     Error{Code: code, Message: message},
+		RequestID: RequestID,
+		RequestId: RequestID,
 	})
 }
