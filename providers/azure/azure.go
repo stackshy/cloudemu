@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/azure/functions"
 	"github.com/stackshy/cloudemu/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/providers/azure/loganalytics"
+	"github.com/stackshy/cloudemu/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/providers/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/providers/azure/virtualmachines"
@@ -39,6 +40,7 @@ type Provider struct {
 	NotificationHubs *notificationhubs.Mock
 	ACR              *acr.Mock
 	EventGrid        *eventgrid.Mock
+	MySQLFlex        *mysqlflex.Mock
 }
 
 // New creates a new Azure provider with all mock services.
@@ -61,6 +63,7 @@ func New(opts ...config.Option) *Provider {
 		NotificationHubs: notificationhubs.New(o),
 		ACR:              acr.New(o),
 		EventGrid:        eventgrid.New(o),
+		MySQLFlex:        mysqlflex.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.BlobStorage.SetMonitoring(p.Monitor)
@@ -72,6 +75,7 @@ func New(opts ...config.Option) *Provider {
 	p.NotificationHubs.SetMonitoring(p.Monitor)
 	p.ACR.SetMonitoring(p.Monitor)
 	p.EventGrid.SetMonitoring(p.Monitor)
+	p.MySQLFlex.SetMonitoring(p.Monitor)
 
 	return p
 }
