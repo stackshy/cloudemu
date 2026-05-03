@@ -12,11 +12,13 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
+	"github.com/stackshy/cloudemu/server/aws/eks"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/rds"
 	"github.com/stackshy/cloudemu/server/aws/redshift"
@@ -39,6 +41,7 @@ type Drivers struct {
 	SQS        mqdriver.MessageQueue
 	RDS        rdbdriver.RelationalDB
 	Redshift   rdbdriver.RelationalDB
+	EKS        eksdriver.EKS
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -59,7 +62,7 @@ type Drivers struct {
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
 //
-//nolint:gocritic // Drivers is all interface fields (pointer-width); by-value
+//nolint:gocritic,gocyclo // Drivers is by-value for ergonomics; the dispatch is one if-per-driver and grows with the bundle.
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
@@ -100,6 +103,14 @@ func New(d Drivers) *server.Server {
 
 	if d.Lambda != nil {
 		srv.Register(lambda.New(d.Lambda))
+	}
+
+	// EKS is a REST/JSON service rooted at /clusters. It must register
+	// before S3 because S3 is the permissive REST fallback that would
+	// otherwise claim the same path. EKS's Matches predicate is rooted
+	// at /clusters specifically so it doesn't shadow other REST URLs.
+	if d.EKS != nil {
+		srv.Register(eks.New(d.EKS))
 	}
 
 	if d.S3 != nil {
