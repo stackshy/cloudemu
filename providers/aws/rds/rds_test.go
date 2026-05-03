@@ -249,6 +249,50 @@ func TestClusterSnapshotAndRestore(t *testing.T) {
 	requireNoError(t, m.DeleteClusterSnapshot(ctx, "csnap-1"))
 }
 
+func TestDefaultPortFor(t *testing.T) {
+	tests := []struct {
+		engine string
+		want   int
+	}{
+		{"mysql", 3306},
+		{"mariadb", 3306},
+		{"aurora-mysql", 3306},
+		{"postgres", 5432},
+		{"aurora-postgresql", 5432},
+		{"neptune", 8182},
+		{"docdb", 27017},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.engine, func(t *testing.T) {
+			if got := defaultPortFor(tc.engine); got != tc.want {
+				t.Errorf("defaultPortFor(%q)=%d, want %d", tc.engine, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNamespaceFor(t *testing.T) {
+	tests := []struct {
+		engine string
+		want   string
+	}{
+		{"mysql", "AWS/RDS"},
+		{"postgres", "AWS/RDS"},
+		{"aurora-mysql", "AWS/RDS"},
+		{"neptune", "AWS/Neptune"},
+		{"docdb", "AWS/DocDB"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.engine, func(t *testing.T) {
+			if got := namespaceFor(tc.engine); got != tc.want {
+				t.Errorf("namespaceFor(%q)=%q, want %q", tc.engine, got, tc.want)
+			}
+		})
+	}
+}
+
 // requireNoError fails the test immediately if err is non-nil.
 func requireNoError(t *testing.T, err error) {
 	t.Helper()

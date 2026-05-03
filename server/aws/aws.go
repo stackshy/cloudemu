@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/ec2"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/rds"
+	"github.com/stackshy/cloudemu/server/aws/redshift"
 	"github.com/stackshy/cloudemu/server/aws/s3"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
@@ -37,6 +38,7 @@ type Drivers struct {
 	Lambda     sdrv.Serverless
 	SQS        mqdriver.MessageQueue
 	RDS        rdbdriver.RelationalDB
+	Redshift   rdbdriver.RelationalDB
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -82,6 +84,14 @@ func New(d Drivers) *server.Server {
 	// through to the EC2 handler unchanged.
 	if d.RDS != nil {
 		srv.Register(rds.New(d.RDS))
+	}
+
+	// Redshift sits between RDS and EC2 in the query-protocol pecking order.
+	// Its action set (CreateCluster, DescribeClusters, …) is disjoint from
+	// RDS's (CreateDBInstance, …) and from EC2's (RunInstances, …), so no
+	// shadowing occurs.
+	if d.Redshift != nil {
+		srv.Register(redshift.New(d.Redshift))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {

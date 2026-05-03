@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/providers/aws/rds"
+	"github.com/stackshy/cloudemu/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/providers/aws/route53"
 	"github.com/stackshy/cloudemu/providers/aws/s3"
 	"github.com/stackshy/cloudemu/providers/aws/secretsmanager"
@@ -41,6 +42,7 @@ type Provider struct {
 	ECR            *ecr.Mock
 	EventBridge    *eventbridge.Mock
 	RDS            *rds.Mock
+	Redshift       *redshift.Mock
 }
 
 // New creates a new AWS provider with all mock services.
@@ -64,6 +66,7 @@ func New(opts ...config.Option) *Provider {
 		ECR:            ecr.New(o),
 		EventBridge:    eventbridge.New(o),
 		RDS:            rds.New(o),
+		Redshift:       redshift.New(o),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
 	p.S3.SetMonitoring(p.CloudWatch)
@@ -76,6 +79,7 @@ func New(opts ...config.Option) *Provider {
 	p.ECR.SetMonitoring(p.CloudWatch)
 	p.EventBridge.SetMonitoring(p.CloudWatch)
 	p.RDS.SetMonitoring(p.CloudWatch)
+	p.Redshift.SetMonitoring(p.CloudWatch)
 
 	return p
 }
