@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/providers/azure/loganalytics"
 	"github.com/stackshy/cloudemu/providers/azure/notificationhubs"
+	"github.com/stackshy/cloudemu/providers/azure/postgresflex"
 	"github.com/stackshy/cloudemu/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/providers/azure/vnet"
@@ -41,6 +42,7 @@ type Provider struct {
 	ACR              *acr.Mock
 	EventGrid        *eventgrid.Mock
 	SQL              *azuresql.Mock
+	PostgresFlex     *postgresflex.Mock
 }
 
 // New creates a new Azure provider with all mock services.
@@ -64,6 +66,7 @@ func New(opts ...config.Option) *Provider {
 		ACR:              acr.New(o),
 		EventGrid:        eventgrid.New(o),
 		SQL:              azuresql.New(o),
+		PostgresFlex:     postgresflex.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.BlobStorage.SetMonitoring(p.Monitor)
@@ -76,6 +79,7 @@ func New(opts ...config.Option) *Provider {
 	p.ACR.SetMonitoring(p.Monitor)
 	p.EventGrid.SetMonitoring(p.Monitor)
 	p.SQL.SetMonitoring(p.Monitor)
+	p.PostgresFlex.SetMonitoring(p.Monitor)
 
 	return p
 }

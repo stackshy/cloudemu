@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/network"
+	"github.com/stackshy/cloudemu/server/azure/postgresflex"
 	"github.com/stackshy/cloudemu/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
@@ -50,6 +51,7 @@ type Drivers struct {
 	Functions       sdrv.Serverless
 	ServiceBus      mqdriver.MessageQueue
 	SQL             rdbdriver.RelationalDB
+	PostgresFlex    rdbdriver.RelationalDB
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -109,6 +111,12 @@ func New(d Drivers) *server.Server {
 	// network so registration order is unconstrained.
 	if d.SQL != nil {
 		srv.Register(azuresql.New(d.SQL))
+	}
+
+	// Postgres Flex matches on a distinct provider name
+	// (Microsoft.DBforPostgreSQL) so registration order is unconstrained.
+	if d.PostgresFlex != nil {
+		srv.Register(postgresflex.New(d.PostgresFlex))
 	}
 
 	if d.VirtualMachines != nil {
