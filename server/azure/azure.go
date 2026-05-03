@@ -14,6 +14,7 @@ import (
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/server"
+	"github.com/stackshy/cloudemu/server/azure/azuresql"
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/disks"
@@ -49,6 +50,7 @@ type Drivers struct {
 	Monitor         mondriver.Monitoring
 	Functions       sdrv.Serverless
 	ServiceBus      mqdriver.MessageQueue
+	SQL             rdbdriver.RelationalDB
 	PostgresFlex    rdbdriver.RelationalDB
 }
 
@@ -103,6 +105,12 @@ func New(d Drivers) *server.Server {
 
 	if d.ServiceBus != nil {
 		srv.Register(servicebus.New(d.ServiceBus))
+	}
+
+	// Microsoft.Sql provider — distinct ARM provider name from compute and
+	// network so registration order is unconstrained.
+	if d.SQL != nil {
+		srv.Register(azuresql.New(d.SQL))
 	}
 
 	// Postgres Flex matches on a distinct provider name

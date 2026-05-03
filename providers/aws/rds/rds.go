@@ -23,12 +23,31 @@ import (
 const (
 	defaultPort          = 3306
 	defaultPortPostgres  = 5432
+	defaultPortNeptune   = 8182
+	defaultPortDocDB     = 27017
 	defaultStorage       = 20
 	defaultStorageType   = "gp2"
 	defaultInstanceClass = "db.t3.micro"
 	cpuMetricRunning     = 25.0
 	connectionsRunning   = 5.0
 	cpuMetricStopped     = 0.0
+)
+
+// Metric namespaces for engines that share the RDS wire protocol but emit
+// CloudWatch metrics under their own service namespace in real AWS.
+const (
+	namespaceRDS     = "AWS/RDS"
+	namespaceNeptune = "AWS/Neptune"
+	namespaceDocDB   = "AWS/DocDB"
+)
+
+// engineNeptune and engineDocDB are the Engine values the AWS SDKs send for
+// Amazon Neptune and Amazon DocumentDB. Both share the RDS query-protocol
+// wire surface, so the same handler serves all three; only the port and the
+// CloudWatch metric namespace differ by engine.
+const (
+	engineNeptune = "neptune"
+	engineDocDB   = "docdb"
 )
 
 var _ rdsdriver.RelationalDB = (*Mock)(nil)
@@ -62,20 +81,21 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
 }
 
-func (m *Mock) emitInstanceMetrics(instanceID string, cpu, connections float64) {
+func (m *Mock) emitInstanceMetrics(instanceID, engine string, cpu, connections float64) {
 	if m.monitoring == nil {
 		return
 	}
 
 	now := m.opts.Clock.Now()
 	dims := map[string]string{"DBInstanceIdentifier": instanceID}
+	ns := namespaceFor(engine)
 
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{
-		{Namespace: "AWS/RDS", MetricName: "CPUUtilization", Value: cpu, Unit: "Percent", Dimensions: dims, Timestamp: now},
-		{Namespace: "AWS/RDS", MetricName: "DatabaseConnections", Value: connections, Unit: "Count", Dimensions: dims, Timestamp: now},
-		{Namespace: "AWS/RDS", MetricName: "FreeableMemory", Value: 1 << 30, Unit: "Bytes", Dimensions: dims, Timestamp: now},
-		{Namespace: "AWS/RDS", MetricName: "ReadIOPS", Value: 10, Unit: "Count/Second", Dimensions: dims, Timestamp: now},
-		{Namespace: "AWS/RDS", MetricName: "WriteIOPS", Value: 5, Unit: "Count/Second", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "CPUUtilization", Value: cpu, Unit: "Percent", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "DatabaseConnections", Value: connections, Unit: "Count", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "FreeableMemory", Value: 1 << 30, Unit: "Bytes", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "ReadIOPS", Value: 10, Unit: "Count/Second", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "WriteIOPS", Value: 5, Unit: "Count/Second", Dimensions: dims, Timestamp: now},
 	})
 }
 
@@ -83,8 +103,26 @@ func defaultPortFor(engine string) int {
 	switch engine {
 	case "postgres", "aurora-postgresql":
 		return defaultPortPostgres
+	case engineNeptune:
+		return defaultPortNeptune
+	case engineDocDB:
+		return defaultPortDocDB
 	default:
 		return defaultPort
+	}
+}
+
+// namespaceFor returns the CloudWatch metric namespace for the given engine.
+// Neptune and DocumentDB share the RDS wire protocol but real AWS emits their
+// metrics under engine-specific namespaces, so we mirror that behavior.
+func namespaceFor(engine string) string {
+	switch engine {
+	case engineNeptune:
+		return namespaceNeptune
+	case engineDocDB:
+		return namespaceDocDB
+	default:
+		return namespaceRDS
 	}
 }
 
@@ -197,7 +235,7 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		m.clusters.Set(cfg.ClusterID, cluster)
 	}
 
-	m.emitInstanceMetrics(cfg.ID, cpuMetricRunning, connectionsRunning)
+	m.emitInstanceMetrics(cfg.ID, cfg.Engine, cpuMetricRunning, connectionsRunning)
 
 	out := inst
 
@@ -327,7 +365,7 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 	inst.State = rdsdriver.StateAvailable
 	m.instances.Set(id, inst)
 
-	m.emitInstanceMetrics(id, cpuMetricRunning, connectionsRunning)
+	m.emitInstanceMetrics(id, inst.Engine, cpuMetricRunning, connectionsRunning)
 
 	return nil
 }
@@ -353,7 +391,7 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 	inst.State = to
 	m.instances.Set(id, inst)
 
-	m.emitInstanceMetrics(id, cpu, conns)
+	m.emitInstanceMetrics(id, inst.Engine, cpu, conns)
 
 	return nil
 }
@@ -645,7 +683,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 
 	m.instances.Set(input.NewInstanceID, inst)
 
-	m.emitInstanceMetrics(input.NewInstanceID, cpuMetricRunning, connectionsRunning)
+	m.emitInstanceMetrics(input.NewInstanceID, snap.Engine, cpuMetricRunning, connectionsRunning)
 
 	out := inst
 
