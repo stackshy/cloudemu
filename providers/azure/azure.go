@@ -9,6 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/azure/azureiam"
 	"github.com/stackshy/cloudemu/providers/azure/azurelb"
 	"github.com/stackshy/cloudemu/providers/azure/azuremonitor"
+	"github.com/stackshy/cloudemu/providers/azure/azuresql"
 	"github.com/stackshy/cloudemu/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/providers/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/providers/azure/eventgrid"
@@ -39,6 +40,7 @@ type Provider struct {
 	NotificationHubs *notificationhubs.Mock
 	ACR              *acr.Mock
 	EventGrid        *eventgrid.Mock
+	SQL              *azuresql.Mock
 }
 
 // New creates a new Azure provider with all mock services.
@@ -61,6 +63,7 @@ func New(opts ...config.Option) *Provider {
 		NotificationHubs: notificationhubs.New(o),
 		ACR:              acr.New(o),
 		EventGrid:        eventgrid.New(o),
+		SQL:              azuresql.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.BlobStorage.SetMonitoring(p.Monitor)
@@ -72,6 +75,7 @@ func New(opts ...config.Option) *Provider {
 	p.NotificationHubs.SetMonitoring(p.Monitor)
 	p.ACR.SetMonitoring(p.Monitor)
 	p.EventGrid.SetMonitoring(p.Monitor)
+	p.SQL.SetMonitoring(p.Monitor)
 
 	return p
 }
