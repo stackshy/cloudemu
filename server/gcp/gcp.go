@@ -12,8 +12,10 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/gcp/cloudfunctions"
+	"github.com/stackshy/cloudemu/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
 	"github.com/stackshy/cloudemu/server/gcp/firestore"
 	"github.com/stackshy/cloudemu/server/gcp/gcs"
@@ -33,6 +35,7 @@ type Drivers struct {
 	Monitoring     mondriver.Monitoring
 	CloudFunctions sdrv.Serverless
 	PubSub         mqdriver.MessageQueue
+	CloudSQL       rdbdriver.RelationalDB
 }
 
 // New returns a server that speaks GCP's REST JSON wire protocol for every
@@ -68,6 +71,12 @@ func New(d Drivers) *server.Server {
 	// Firestore's permissive /v1/projects/ prefix.
 	if d.PubSub != nil {
 		srv.Register(pubsub.New(d.PubSub))
+	}
+
+	// Cloud SQL matches /v1/projects/{p}/{instances|operations}/...; same
+	// /v1/projects/ space as Firestore, so register first.
+	if d.CloudSQL != nil {
+		srv.Register(cloudsql.New(d.CloudSQL))
 	}
 
 	if d.Firestore != nil {
