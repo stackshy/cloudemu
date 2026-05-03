@@ -12,6 +12,7 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
@@ -20,6 +21,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/network"
+	"github.com/stackshy/cloudemu/server/azure/postgresflex"
 	"github.com/stackshy/cloudemu/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
@@ -47,6 +49,7 @@ type Drivers struct {
 	Monitor         mondriver.Monitoring
 	Functions       sdrv.Serverless
 	ServiceBus      mqdriver.MessageQueue
+	PostgresFlex    rdbdriver.RelationalDB
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -100,6 +103,12 @@ func New(d Drivers) *server.Server {
 
 	if d.ServiceBus != nil {
 		srv.Register(servicebus.New(d.ServiceBus))
+	}
+
+	// Postgres Flex matches on a distinct provider name
+	// (Microsoft.DBforPostgreSQL) so registration order is unconstrained.
+	if d.PostgresFlex != nil {
+		srv.Register(postgresflex.New(d.PostgresFlex))
 	}
 
 	if d.VirtualMachines != nil {
