@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/gcp/gcplb"
 	"github.com/stackshy/cloudemu/providers/gcp/gcpvpc"
 	"github.com/stackshy/cloudemu/providers/gcp/gcs"
+	"github.com/stackshy/cloudemu/providers/gcp/gke"
 	"github.com/stackshy/cloudemu/providers/gcp/memorystore"
 	"github.com/stackshy/cloudemu/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/providers/gcp/secretmanager"
@@ -41,6 +42,7 @@ type Provider struct {
 	ArtifactRegistry *artifactregistry.Mock
 	Eventarc         *eventarc.Mock
 	CloudSQL         *cloudsql.Mock
+	GKE              *gke.Mock
 }
 
 // New creates a new GCP provider with all mock services.
@@ -64,6 +66,7 @@ func New(opts ...config.Option) *Provider {
 		ArtifactRegistry: artifactregistry.New(o),
 		Eventarc:         eventarc.New(o),
 		CloudSQL:         cloudsql.New(o),
+		GKE:              gke.New(o),
 	}
 	p.GCE.SetMonitoring(p.CloudMonitoring)
 	p.GCS.SetMonitoring(p.CloudMonitoring)
@@ -76,6 +79,7 @@ func New(opts ...config.Option) *Provider {
 	p.ArtifactRegistry.SetMonitoring(p.CloudMonitoring)
 	p.Eventarc.SetMonitoring(p.CloudMonitoring)
 	p.CloudSQL.SetMonitoring(p.CloudMonitoring)
+	p.GKE.SetMonitoring(p.CloudMonitoring)
 
 	return p
 }
