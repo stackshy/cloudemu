@@ -4,6 +4,7 @@ package azure
 import (
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/providers/azure/acr"
+	"github.com/stackshy/cloudemu/providers/azure/aks"
 	"github.com/stackshy/cloudemu/providers/azure/azurecache"
 	"github.com/stackshy/cloudemu/providers/azure/azuredns"
 	"github.com/stackshy/cloudemu/providers/azure/azureiam"
@@ -45,6 +46,7 @@ type Provider struct {
 	SQL              *azuresql.Mock
 	PostgresFlex     *postgresflex.Mock
 	MySQLFlex        *mysqlflex.Mock
+	AKS              *aks.Mock
 }
 
 // New creates a new Azure provider with all mock services.
@@ -70,6 +72,7 @@ func New(opts ...config.Option) *Provider {
 		SQL:              azuresql.New(o),
 		PostgresFlex:     postgresflex.New(o),
 		MySQLFlex:        mysqlflex.New(o),
+		AKS:              aks.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.BlobStorage.SetMonitoring(p.Monitor)
@@ -84,6 +87,7 @@ func New(opts ...config.Option) *Provider {
 	p.SQL.SetMonitoring(p.Monitor)
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
+	p.AKS.SetMonitoring(p.Monitor)
 
 	return p
 }

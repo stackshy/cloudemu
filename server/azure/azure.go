@@ -14,6 +14,7 @@ import (
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/server"
+	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
 	"github.com/stackshy/cloudemu/server/azure/azuresql"
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
@@ -54,6 +55,7 @@ type Drivers struct {
 	SQL             rdbdriver.RelationalDB
 	PostgresFlex    rdbdriver.RelationalDB
 	MySQLFlex       rdbdriver.RelationalDB
+	AKS             aksserver.Backend
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -125,6 +127,13 @@ func New(d Drivers) *server.Server {
 	// Postgres Flex and SQL, so registration order is unconstrained.
 	if d.MySQLFlex != nil {
 		srv.Register(mysqlflex.New(d.MySQLFlex))
+	}
+
+	// AKS matches on Microsoft.ContainerService provider — distinct ARM
+	// provider name from compute / network / database, so registration order
+	// is unconstrained.
+	if d.AKS != nil {
+		srv.Register(aksserver.New(d.AKS))
 	}
 
 	if d.VirtualMachines != nil {
