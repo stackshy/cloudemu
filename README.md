@@ -1,11 +1,17 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo.svg" alt="cloudemu" width="96" height="96" />
 </p>
-
 <p align="center">
-  <h1 align="center">cloudemu</h1>
-  <p align="center"><b>Zero-Cost In-Memory Cloud Emulation for Go</b></p>
+  <p align="center"> <b>A Zero-Dependency, In-Memory Multi-Cloud Service Emulation Library for Go (Research)</b></p>
+  <p align="center">Roll Numbers and Names:</p>
+  
+  <p align="center"> Nitin Kumar (2210992001) (<b>Team Leader</b>),
+    Gursewak Singh (2210991601),
+    Devansh (2210991490)
+  </p>
+
 </p>
+
 
 <p align="center">
   <a href="https://pkg.go.dev/github.com/stackshy/cloudemu"><img src="https://pkg.go.dev/badge/github.com/stackshy/cloudemu.svg" alt="Go Reference"></a>
