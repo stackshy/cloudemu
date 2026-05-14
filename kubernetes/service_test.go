@@ -1,6 +1,7 @@
 package kubernetes_test
 
 import (
+	"bytes"
 	"net/http"
 	"testing"
 
@@ -142,6 +143,66 @@ func TestService_ClusterIPImmutableOnUpdate(t *testing.T) {
 
 	if updated.Spec.Ports[0].Port != 8080 {
 		t.Fatalf("Port: got %d, want 8080", updated.Spec.Ports[0].Port)
+	}
+}
+
+func TestService_PatchPreservesClusterIP(t *testing.T) {
+	base, cleanup := newFixture(t)
+	t.Cleanup(cleanup)
+
+	resp := do(t, http.MethodPost, base+"/api/v1/namespaces/default/services",
+		mustJSON(t, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "patchable"},
+			Spec: corev1.ServiceSpec{
+				Type:  corev1.ServiceTypeClusterIP,
+				Ports: []corev1.ServicePort{{Port: 80}},
+			},
+		}))
+
+	var created corev1.Service
+	mustDecode(t, resp.Body, &created)
+
+	allocatedIP := created.Spec.ClusterIP
+
+	// Patch attempts to overwrite ClusterIP and change ports.
+	patch := []byte(`{"spec":{"clusterIP":"10.96.42.42","ports":[{"port":9090}]}}`)
+
+	req, _ := http.NewRequest(http.MethodPatch,
+		base+"/api/v1/namespaces/default/services/patchable",
+		bytes.NewReader(patch))
+	req.Header.Set("Content-Type", "application/merge-patch+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch status: got %d", resp.StatusCode)
+	}
+
+	var patched corev1.Service
+	mustDecode(t, resp.Body, &patched)
+
+	if patched.Spec.ClusterIP != allocatedIP {
+		t.Fatalf("ClusterIP after patch: got %q, want %q (immutable)", patched.Spec.ClusterIP, allocatedIP)
+	}
+
+	if patched.Spec.Ports[0].Port != 9090 {
+		t.Fatalf("Port after patch: got %d, want 9090", patched.Spec.Ports[0].Port)
+	}
+
+	// Get the service back too — exercises getService happy path.
+	resp = do(t, http.MethodGet, base+"/api/v1/namespaces/default/services/patchable", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get: got %d", resp.StatusCode)
+	}
+
+	var got corev1.Service
+	mustDecode(t, resp.Body, &got)
+
+	if got.Spec.ClusterIP != allocatedIP {
+		t.Fatalf("ClusterIP after Get: got %q", got.Spec.ClusterIP)
 	}
 }
 
