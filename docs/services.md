@@ -22,6 +22,8 @@ This document lists every service and operation available in CloudEmu across all
 | 14 | Notification | `sns` | `notificationhubs` | `fcm` |
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
+| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
+| 18 | Kubernetes (Control Plane) | `eks` | `aks` | `gke` |
 
 ---
 
@@ -977,6 +979,100 @@ This document lists every service and operation available in CloudEmu across all
 
 ---
 
+## 17. Relational Database
+
+**Driver interface:** `relationaldb/driver/driver.go`
+**AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `azuresql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`
+
+A single portable interface backs every RDBMS handler. Engine selection (MySQL / PostgreSQL / Aurora / Neptune / DocumentDB / Redshift / Cloud SQL / Azure SQL / …) is a field on the input config, not a separate driver.
+
+### Instance Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateInstance` | `(ctx, InstanceConfig) (*Instance, error)` |
+| `DescribeInstances` | `(ctx, ids) ([]Instance, error)` |
+| `ModifyInstance` | `(ctx, id, ModifyInstanceInput) (*Instance, error)` |
+| `DeleteInstance` | `(ctx, id) error` |
+| `StartInstance` | `(ctx, id) error` |
+| `StopInstance` | `(ctx, id) error` |
+| `RebootInstance` | `(ctx, id) error` |
+
+### Cluster Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateCluster` | `(ctx, ClusterConfig) (*Cluster, error)` |
+| `DescribeClusters` | `(ctx, ids) ([]Cluster, error)` |
+| `ModifyCluster` | `(ctx, id, ModifyInstanceInput) (*Cluster, error)` |
+| `DeleteCluster` | `(ctx, id) error` |
+| `StartCluster` | `(ctx, id) error` |
+| `StopCluster` | `(ctx, id) error` |
+
+### Snapshot Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateSnapshot` | `(ctx, SnapshotConfig) (*Snapshot, error)` |
+| `DescribeSnapshots` | `(ctx, ids, instanceID) ([]Snapshot, error)` |
+| `DeleteSnapshot` | `(ctx, id) error` |
+| `RestoreInstanceFromSnapshot` | `(ctx, RestoreInstanceInput) (*Instance, error)` |
+
+### Cluster Snapshot Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateClusterSnapshot` | `(ctx, ClusterSnapshotConfig) (*ClusterSnapshot, error)` |
+| `DescribeClusterSnapshots` | `(ctx, ids, clusterID) ([]ClusterSnapshot, error)` |
+| `DeleteClusterSnapshot` | `(ctx, id) error` |
+| `RestoreClusterFromSnapshot` | `(ctx, RestoreClusterInput) (*Cluster, error)` |
+
+**Total: 21 operations**
+
+---
+
+## 18. Kubernetes (Control Plane)
+
+**AWS:** `eks` | **Azure:** `aks` | **GCP:** `gke`
+
+Wave-1 control-plane coverage: cluster, node-pool, and addon / Fargate-profile / maintenance-config lifecycle. The Kubernetes data plane (Pods, Services, Deployments, …) is intentionally deferred to Wave 2. Stub kubeconfigs returned from credential/auth endpoints point at `*-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local` so any caller trying to drive the K8s API fails fast with a clear sentinel.
+
+Each provider exposes its native API surface — there is no single portable Kubernetes driver. Use `providers/aws/eks`, `providers/azure/aks`, and `providers/gcp/gke` for direct Go access, or the SDK-compat handlers for `aws-sdk-go-v2/service/eks`, `armcontainerservice/v6`, and `container/v1`.
+
+### AWS EKS (`providers/aws/eks`)
+
+| Resource | Operations |
+|----------|-----------|
+| Clusters | CreateCluster, DescribeCluster, ListClusters, UpdateClusterConfig, UpdateClusterVersion, DeleteCluster |
+| Node Groups | CreateNodegroup, DescribeNodegroup, ListNodegroups, UpdateNodegroupConfig, UpdateNodegroupVersion, DeleteNodegroup |
+| Fargate Profiles | CreateFargateProfile, DescribeFargateProfile, ListFargateProfiles, DeleteFargateProfile |
+| Addons | CreateAddon, DescribeAddon, ListAddons, UpdateAddon, DeleteAddon |
+
+Operations: **21**
+
+### Azure AKS (`providers/azure/aks`)
+
+| Resource | Operations |
+|----------|-----------|
+| Managed Clusters | CreateOrUpdateCluster, GetCluster, UpdateClusterTags, DeleteCluster, ListClusters, ListClustersByResourceGroup, RotateClusterCertificates |
+| Agent Pools | CreateOrUpdateAgentPool, GetAgentPool, DeleteAgentPool, ListAgentPools |
+| Maintenance Configs | CreateOrUpdateMaintenanceConfig, GetMaintenanceConfig, DeleteMaintenanceConfig, ListMaintenanceConfigs |
+| Credentials | `ListClusterAdminCredentials`, `ListClusterUserCredentials`, `ListClusterMonitoringUserCredentials` (return stub kubeconfig) |
+
+Operations: **18**
+
+### GCP GKE (`providers/gcp/gke`)
+
+| Resource | Operations |
+|----------|-----------|
+| Clusters | CreateCluster, GetCluster, ListClusters, UpdateCluster, DeleteCluster, SetClusterLogging, SetClusterMonitoring, SetMasterAuth, SetLegacyAbac, SetNetworkPolicy, SetMaintenancePolicy, SetResourceLabels, StartIPRotation, CompleteIPRotation |
+| Node Pools | CreateNodePool, GetNodePool, ListNodePools, UpdateNodePool, DeleteNodePool, SetNodePoolSize, SetNodePoolAutoscaling, SetNodePoolManagement, RollbackNodePool |
+| Operations | GetOperation, ListOperations, CancelOperation |
+
+Operations: **26**
+
+---
+
 ## Summary
 
 | Service | Operations |
@@ -997,4 +1093,8 @@ This document lists every service and operation available in CloudEmu across all
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
-| **Grand Total** | **330** |
+| Relational Database | 21 |
+| Kubernetes — AWS EKS | 21 |
+| Kubernetes — Azure AKS | 18 |
+| Kubernetes — GCP GKE | 26 |
+| **Grand Total** | **416** |
