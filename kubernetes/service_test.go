@@ -206,6 +206,45 @@ func TestService_PatchPreservesClusterIP(t *testing.T) {
 	}
 }
 
+func TestService_UpdatePreservesTypeWhenOmitted(t *testing.T) {
+	base, cleanup := newFixture(t)
+	t.Cleanup(cleanup)
+
+	// Create a LoadBalancer Service.
+	do(t, http.MethodPost, base+"/api/v1/namespaces/default/services",
+		mustJSON(t, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "lb"},
+			Spec: corev1.ServiceSpec{
+				Type:  corev1.ServiceTypeLoadBalancer,
+				Ports: []corev1.ServicePort{{Port: 80}},
+			},
+		})).Body.Close()
+
+	// PUT a body that omits Type. The stored Type must survive — real
+	// apiserver requires .spec.type after the first successful Create.
+	resp := do(t, http.MethodPut, base+"/api/v1/namespaces/default/services/lb",
+		mustJSON(t, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "lb"},
+			Spec: corev1.ServiceSpec{
+				Ports: []corev1.ServicePort{{Port: 8080}},
+			},
+		}))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put: got %d", resp.StatusCode)
+	}
+
+	var got corev1.Service
+	mustDecode(t, resp.Body, &got)
+
+	if got.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		t.Fatalf("Type after update without Type in body: got %q, want LoadBalancer (preserved)", got.Spec.Type)
+	}
+
+	if got.Spec.Ports[0].Port != 8080 {
+		t.Fatalf("Port after update: got %d, want 8080", got.Spec.Ports[0].Port)
+	}
+}
+
 func TestService_LifecycleAndAllNamespacesList(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)

@@ -220,6 +220,13 @@ func (s *ClusterState) updateService(w http.ResponseWriter, r *http.Request, nam
 	in.Spec.ClusterIP = cur.Spec.ClusterIP
 	in.Spec.ClusterIPs = cur.Spec.ClusterIPs
 
+	// Real apiserver requires .spec.type to remain set after the first
+	// successful create. If the client omits it, fall back to the stored
+	// value rather than silently corrupting the object.
+	if in.Spec.Type == "" {
+		in.Spec.Type = cur.Spec.Type
+	}
+
 	svc := in
 	s.services[key] = &svc
 	writeJSON(w, http.StatusOK, &svc)

@@ -2,6 +2,7 @@ package kubernetes_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -130,42 +131,42 @@ func mustHaveItems(t *testing.T, base, path string, want int) {
 	// minimal-items helper would force interface{} dancing; type-asserting
 	// by path is simpler.
 	switch {
-	case endsWith(path, "configmaps"):
+	case strings.HasSuffix(path, "configmaps"):
 		var list corev1.ConfigMapList
 		mustDecode(t, resp.Body, &list)
 
 		if len(list.Items) != want {
 			t.Fatalf("configmaps in %s: got %d, want %d", path, len(list.Items), want)
 		}
-	case endsWith(path, "pods"):
+	case strings.HasSuffix(path, "pods"):
 		var list corev1.PodList
 		mustDecode(t, resp.Body, &list)
 
 		if len(list.Items) != want {
 			t.Fatalf("pods in %s: got %d, want %d", path, len(list.Items), want)
 		}
-	case endsWith(path, "secrets"):
+	case strings.HasSuffix(path, "secrets"):
 		var list corev1.SecretList
 		mustDecode(t, resp.Body, &list)
 
 		if len(list.Items) != want {
 			t.Fatalf("secrets in %s: got %d, want %d", path, len(list.Items), want)
 		}
-	case endsWith(path, "serviceaccounts"):
+	case strings.HasSuffix(path, "serviceaccounts"):
 		var list corev1.ServiceAccountList
 		mustDecode(t, resp.Body, &list)
 
 		if len(list.Items) != want {
 			t.Fatalf("sas in %s: got %d, want %d", path, len(list.Items), want)
 		}
-	case endsWith(path, "services"):
+	case strings.HasSuffix(path, "services"):
 		var list corev1.ServiceList
 		mustDecode(t, resp.Body, &list)
 
 		if len(list.Items) != want {
 			t.Fatalf("services in %s: got %d, want %d", path, len(list.Items), want)
 		}
-	case endsWith(path, "deployments"):
+	case strings.HasSuffix(path, "deployments"):
 		var list appsv1.DeploymentList
 		mustDecode(t, resp.Body, &list)
 
@@ -177,6 +178,3 @@ func mustHaveItems(t *testing.T, base, path string, want int) {
 	}
 }
 
-func endsWith(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
-}

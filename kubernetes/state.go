@@ -54,9 +54,10 @@ type ClusterState struct {
 // the same convention so allocations look familiar in tests.
 const firstClusterIPOffset uint32 = 1
 
-// newClusterState returns an empty state with the implicit "default" and
-// "kube-system" namespaces already present, matching the bootstrap state of
-// a fresh real cluster.
+// newClusterState returns state pre-populated with the three implicit
+// namespaces (default, kube-system, kube-public) and a "default"
+// ServiceAccount in each, matching the bootstrap state of a fresh real
+// cluster.
 func newClusterState() *ClusterState {
 	s := &ClusterState{
 		namespaces:      make(map[string]*corev1.Namespace),
