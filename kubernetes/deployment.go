@@ -30,7 +30,7 @@ func (s *ClusterState) serveDeployments(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchDeployments(w, r, "")
 
 			return
@@ -59,7 +59,7 @@ func (s *ClusterState) serveDeployments(w http.ResponseWriter, r *http.Request, 
 func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchDeployments(w, r, namespace)
 
 			return

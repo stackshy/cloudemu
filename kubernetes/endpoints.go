@@ -32,7 +32,7 @@ func (s *ClusterState) serveEndpoints(w http.ResponseWriter, r *http.Request, ro
 			return
 		}
 
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchEndpoints(w, r, "")
 
 			return
@@ -71,7 +71,7 @@ func (s *ClusterState) serveEndpointsCollection(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if r.URL.Query().Get("watch") == "true" {
+	if r.URL.Query().Get("watch") == watchQueryValue {
 		s.watchEndpoints(w, r, namespace)
 
 		return

@@ -32,7 +32,7 @@ func (s *ClusterState) serveServiceAccounts(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchServiceAccounts(w, r, "")
 
 			return
@@ -61,7 +61,7 @@ func (s *ClusterState) serveServiceAccounts(w http.ResponseWriter, r *http.Reque
 func (s *ClusterState) serveServiceAccountCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchServiceAccounts(w, r, namespace)
 
 			return

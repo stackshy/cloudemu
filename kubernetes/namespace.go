@@ -32,7 +32,7 @@ func (s *ClusterState) serveNamespaces(w http.ResponseWriter, r *http.Request, r
 func (s *ClusterState) serveNamespaceCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchNamespaces(w, r)
 
 			return

@@ -29,7 +29,7 @@ func (s *ClusterState) serveSecrets(w http.ResponseWriter, r *http.Request, rout
 			return
 		}
 
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchSecrets(w, r, "")
 
 			return
@@ -58,7 +58,7 @@ func (s *ClusterState) serveSecrets(w http.ResponseWriter, r *http.Request, rout
 func (s *ClusterState) serveSecretCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchSecrets(w, r, namespace)
 
 			return

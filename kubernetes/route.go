@@ -12,6 +12,11 @@ const namespacesSegment = "namespaces"
 // core (/api/v1) and apps (/apis/apps/v1).
 const apiVersionV1 = "v1"
 
+// watchQuery is the ?watch=true value clients pass to upgrade a list
+// request into a stream. Centralized so dispatchers don't all hold a
+// "true" literal.
+const watchQueryValue = "true"
+
 // Route holds the four pieces every Kubernetes REST URL decomposes into.
 // One Route value is the dispatch key for the per-resource handlers.
 type Route struct {

@@ -95,13 +95,12 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 			continue
 		}
 
+		// Channel full → drop this event for the slow subscriber rather
+		// than block the publisher or other subscribers. Real apiserver
+		// would disconnect; we shed load.
 		select {
 		case sub.ch <- watchEvent{Type: eventType, Object: obj}:
 		default:
-			// Channel full — drop this event for this slow subscriber
-			// rather than block the publisher / other subscribers. Real
-			// apiserver would disconnect; we lose an event, which is
-			// acceptable for a test backend.
 		}
 
 		keep = append(keep, sub)

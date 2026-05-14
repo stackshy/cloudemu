@@ -29,7 +29,7 @@ func (s *ClusterState) servePods(w http.ResponseWriter, r *http.Request, route *
 			return
 		}
 
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchPods(w, r, "")
 
 			return
@@ -58,7 +58,7 @@ func (s *ClusterState) servePods(w http.ResponseWriter, r *http.Request, route *
 func (s *ClusterState) servePodCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchPods(w, r, namespace)
 
 			return

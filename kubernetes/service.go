@@ -35,7 +35,7 @@ func (s *ClusterState) serveServices(w http.ResponseWriter, r *http.Request, rou
 			return
 		}
 
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchServices(w, r, "")
 
 			return
@@ -64,7 +64,7 @@ func (s *ClusterState) serveServices(w http.ResponseWriter, r *http.Request, rou
 func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
-		if r.URL.Query().Get("watch") == "true" {
+		if r.URL.Query().Get("watch") == watchQueryValue {
 			s.watchServices(w, r, namespace)
 
 			return
