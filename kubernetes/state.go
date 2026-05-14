@@ -24,6 +24,9 @@ type ClusterState struct {
 
 	// configMaps is namespaced — keyed by "<namespace>/<name>".
 	configMaps map[string]*corev1.ConfigMap
+
+	// pods is namespaced — keyed by "<namespace>/<name>".
+	pods map[string]*corev1.Pod
 }
 
 // newClusterState returns an empty state with the implicit "default" and
@@ -33,6 +36,7 @@ func newClusterState() *ClusterState {
 	s := &ClusterState{
 		namespaces: make(map[string]*corev1.Namespace),
 		configMaps: make(map[string]*corev1.ConfigMap),
+		pods:       make(map[string]*corev1.Pod),
 	}
 
 	for _, name := range []string{"default", "kube-system", "kube-public"} {
@@ -59,7 +63,9 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveNamespaces(w, r, route)
 	case "configmaps":
 		s.serveConfigMaps(w, r, route)
+	case "pods":
+		s.servePods(w, r, route)
 	default:
-		writeNotFound(w, "k8s api: resource not implemented in Wave 2 Phase 1: "+route.Resource)
+		writeNotFound(w, "k8s api: resource not implemented: "+route.Resource)
 	}
 }

@@ -81,7 +81,10 @@ func TestServeHTTP_UnknownResourceReturns404(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)
 
-	resp := do(t, http.MethodGet, base+"/api/v1/pods", nil)
+	// "nodes" is intentionally not implemented in Phase 2 — Pods, Services,
+	// Deployments etc. *are* served, so we need a resource that always falls
+	// through the dispatcher.
+	resp := do(t, http.MethodGet, base+"/api/v1/nodes", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {

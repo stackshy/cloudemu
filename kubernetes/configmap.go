@@ -13,6 +13,11 @@ import (
 
 // serveConfigMaps dispatches /api/v1/{namespaces/{ns}/configmaps|configmaps}
 // requests.
+//
+// Per-resource files share the dispatch shape on purpose; each resource keeps
+// its quirks (Service ClusterIP, Secret StringData merge) close to its type.
+//
+//nolint:dupl // see comment above.
 func (s *ClusterState) serveConfigMaps(w http.ResponseWriter, r *http.Request, route *Route) {
 	if route.APIGroup != "" || route.APIVersion != apiVersionV1 {
 		writeNotFound(w, "k8s api: configmaps are only served at /api/v1")
@@ -203,6 +208,10 @@ func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, n
 	writeJSON(w, http.StatusOK, &cm)
 }
 
+// Patch flow is identical across namespaced resources; sharing would force a
+// runtime type-switch and obscure the resource-specific store access.
+//
+//nolint:dupl // see comment above.
 func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := configMapKey(namespace, name)
 
