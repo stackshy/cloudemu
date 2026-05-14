@@ -13,15 +13,20 @@ import (
 // existing object.
 const contentTypeJSONMergePatch = "application/merge-patch+json"
 
-// applyJSONPatch reads the request body, merges it into a deep copy of cur
-// (which must be a pointer to a JSON-marshalable Kubernetes object), and
-// returns the resulting object as the same concrete pointer type. Callers
-// then assert it back to the specific kind.
+// applyJSONPatch reads a JSON-merge-patch (RFC 7396) body, merges it into
+// current, and returns a freshly-decoded T containing the result. The
+// stored object is never mutated; callers swap the returned value into
+// their store explicitly.
 //
 // Strategic-merge-patch and JSONPatch (RFC 6902) are intentionally not
 // supported in Phase 1; they can be added later if a test scenario needs
 // them. JSON-merge-patch covers the common client-go.Patch case.
-func applyJSONPatch(w http.ResponseWriter, r *http.Request, cur any) (any, bool) {
+//
+// On any wire-level failure (bad content-type, body read error, merge
+// error, or final unmarshal mismatch), the function writes a
+// metav1.Status-shaped 400 response to w and returns (nil, false). Callers
+// must early-return without touching w.
+func applyJSONPatch[T any](w http.ResponseWriter, r *http.Request, current *T) (*T, bool) {
 	ct := r.Header.Get("Content-Type")
 	if ct != "" && ct != contentTypeJSONMergePatch && ct != contentTypeJSON {
 		writeBadRequest(w, "k8s api: only application/merge-patch+json is supported in Wave 2 Phase 1, got "+ct)
@@ -36,7 +41,7 @@ func applyJSONPatch(w http.ResponseWriter, r *http.Request, cur any) (any, bool)
 		return nil, false
 	}
 
-	curBytes, err := json.Marshal(cur)
+	curBytes, err := json.Marshal(current)
 	if err != nil {
 		writeBadRequest(w, "k8s api: marshal current object: "+err.Error())
 
@@ -50,17 +55,14 @@ func applyJSONPatch(w http.ResponseWriter, r *http.Request, cur any) (any, bool)
 		return nil, false
 	}
 
-	// Unmarshal back into the same concrete type as cur. The caller passes
-	// in a *corev1.Namespace / *corev1.ConfigMap / ..., so we ask the JSON
-	// decoder to populate the same shape.
-	out := cur
-	if err := json.Unmarshal(merged, out); err != nil {
+	var patched T
+	if err := json.Unmarshal(merged, &patched); err != nil {
 		writeBadRequest(w, "k8s api: decode patched object: "+err.Error())
 
 		return nil, false
 	}
 
-	return out, true
+	return &patched, true
 }
 
 // mergePatch implements RFC 7396 JSON Merge Patch. We avoid pulling in

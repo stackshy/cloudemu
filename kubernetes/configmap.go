@@ -217,16 +217,9 @@ func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	cm, castOK := patched.(*corev1.ConfigMap)
-	if !castOK {
-		writeBadRequest(w, "k8s api: patched object is not a ConfigMap")
-
-		return
-	}
-
-	cm.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
-	s.configMaps[key] = cm
-	writeJSON(w, http.StatusOK, cm)
+	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	s.configMaps[key] = patched
+	writeJSON(w, http.StatusOK, patched)
 }
 
 func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, namespace, name string) {

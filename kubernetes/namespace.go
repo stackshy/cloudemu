@@ -170,16 +170,9 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	ns, castOK := patched.(*corev1.Namespace)
-	if !castOK {
-		writeBadRequest(w, "k8s api: patched object is not a Namespace")
-
-		return
-	}
-
-	ns.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
-	s.namespaces[name] = ns
-	writeJSON(w, http.StatusOK, ns)
+	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	s.namespaces[name] = patched
+	writeJSON(w, http.StatusOK, patched)
 }
 
 func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
