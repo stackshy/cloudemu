@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sync"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -37,6 +38,9 @@ type ClusterState struct {
 	// services is namespaced — keyed by "<namespace>/<name>".
 	services map[string]*corev1.Service
 
+	// deployments lives under apps/v1 — keyed by "<namespace>/<name>".
+	deployments map[string]*appsv1.Deployment
+
 	// nextClusterIP is the monotonic counter used to hand out Service
 	// ClusterIPs from 10.96.0.0/12. Incremented under mu.Lock by
 	// allocateClusterIP. Real apiserver uses an in-memory bitmap; the
@@ -61,6 +65,7 @@ func newClusterState() *ClusterState {
 		secrets:         make(map[string]*corev1.Secret),
 		serviceAccounts: make(map[string]*corev1.ServiceAccount),
 		services:        make(map[string]*corev1.Service),
+		deployments:     make(map[string]*appsv1.Deployment),
 		nextClusterIP:   firstClusterIPOffset,
 	}
 
@@ -101,6 +106,8 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveServiceAccounts(w, r, route)
 	case "services":
 		s.serveServices(w, r, route)
+	case "deployments":
+		s.serveDeployments(w, r, route)
 	default:
 		writeNotFound(w, "k8s api: resource not implemented: "+route.Resource)
 	}
