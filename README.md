@@ -98,13 +98,18 @@ SDK-compat coverage across AWS, Azure, and GCP:
 | Compute | EC2 (+ VPC, EBS, Snapshots, AMIs, Spot, Launch Templates, Auto Scaling) | Virtual Machines (+ Disks, Snapshots, Images, SSH keys) | Compute Engine (+ Disks, Snapshots, Images) |
 | NoSQL DB | DynamoDB | Cosmos DB | Firestore |
 | Relational DB | RDS + Aurora (incl. Neptune & DocumentDB engines), Redshift | SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server | Cloud SQL |
-| Kubernetes | EKS (control plane) | AKS (control plane) | GKE (control plane) |
+| Kubernetes | EKS (control plane + data plane) | AKS (control plane + data plane) | GKE (control plane + data plane) |
 | Serverless | Lambda | Functions | Cloud Functions v1 |
 | Message Queue | SQS | Service Bus | Pub/Sub |
 | Networking | VPC (under EC2) | Virtual Network | VPC + Subnets + Firewalls + Routes |
 | Monitoring | CloudWatch | Azure Monitor | Cloud Monitoring |
 
-The Kubernetes control plane is Wave 1 — cluster, node-pool, and addon/Fargate/maintenance-config lifecycle. The data plane (Pods/Services/Deployments) is deferred; stub kubeconfigs point at a clear `*-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local` sentinel.
+The Kubernetes story is two layers, both shipped:
+
+- **Control plane** (EKS / AKS / GKE) — cluster, node-pool, addon / Fargate / maintenance-config lifecycle via the real cloud SDKs.
+- **Data plane** (in-memory Kubernetes API) — Namespace, Pod, Service, ConfigMap, Secret, ServiceAccount, Deployment, Endpoints. Supports CRUD + JSON-merge Patch + Watch streaming, so real `client-go` `Informer`/`Reflector` machinery works against a cloudemu-emulated cluster. Kubeconfigs returned by the control plane point at the in-memory data plane — `kubectl apply -f deployment.yaml` followed by `kubectl get pods` round-trips end-to-end.
+
+What's intentionally out of scope: real controllers (Deployment ↛ ReplicaSet ↛ Pod), scheduler (Pods stay Pending), RBAC, PV/PVC, StatefulSet/DaemonSet/Job/CronJob, Ingress.
 
 Full per-service operation list: [docs/services.md](docs/services.md).
 Per-handler protocol details and limitations: [docs/sdk-server.md](docs/sdk-server.md).

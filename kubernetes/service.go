@@ -35,6 +35,12 @@ func (s *ClusterState) serveServices(w http.ResponseWriter, r *http.Request, rou
 			return
 		}
 
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchServices(w, r, "")
+
+			return
+		}
+
 		s.listServicesAllNamespaces(w)
 
 		return
@@ -58,12 +64,26 @@ func (s *ClusterState) serveServices(w http.ResponseWriter, r *http.Request, rou
 func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchServices(w, r, namespace)
+
+			return
+		}
+
 		s.listServices(w, namespace)
 	case http.MethodPost:
 		s.createService(w, r, namespace)
 	default:
 		writeMethodNotAllowed(w, "k8s api: services collection: method not allowed: "+r.Method)
 	}
+}
+
+func (s *ClusterState) watchServices(w http.ResponseWriter, r *http.Request, namespace string) {
+	s.mu.RLock()
+	sub := s.wServices.subscribe(namespace)
+	items := s.collectServicesLocked(namespace)
+	s.mu.RUnlock()
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveServiceItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -127,6 +147,15 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 
 	svc := in
 	s.services[key] = &svc
+
+	// Auto-create an empty Endpoints stub so kubectl get endpoints returns
+	// rows. Subsets stays nil — no scheduler / Pod IPs in Wave 2.
+	ep := newEndpointsObject(namespace, svc.Name)
+	s.endpoints[endpointsKey(namespace, svc.Name)] = ep
+
+	s.wServices.publish(EventAdded, namespace, *svc.DeepCopy())
+	s.wEndpoints.publish(EventAdded, namespace, *ep.DeepCopy())
+
 	writeJSON(w, http.StatusCreated, &svc)
 }
 
@@ -229,6 +258,7 @@ func (s *ClusterState) updateService(w http.ResponseWriter, r *http.Request, nam
 
 	svc := in
 	s.services[key] = &svc
+	s.wServices.publish(EventModified, namespace, *svc.DeepCopy())
 	writeJSON(w, http.StatusOK, &svc)
 }
 
@@ -255,6 +285,7 @@ func (s *ClusterState) patchService(w http.ResponseWriter, r *http.Request, name
 	patched.Spec.ClusterIP = cur.Spec.ClusterIP
 	patched.Spec.ClusterIPs = cur.Spec.ClusterIPs
 	s.services[key] = patched
+	s.wServices.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
@@ -272,6 +303,15 @@ func (s *ClusterState) deleteService(w http.ResponseWriter, namespace, name stri
 	}
 
 	delete(s.services, key)
+	s.wServices.publish(EventDeleted, namespace, *svc.DeepCopy())
+
+	// Tear down the paired Endpoints object so Watch subscribers see it go
+	// away alongside the Service.
+	if ep, ok := s.endpoints[endpointsKey(namespace, name)]; ok {
+		delete(s.endpoints, endpointsKey(namespace, name))
+		s.wEndpoints.publish(EventDeleted, namespace, *ep.DeepCopy())
+	}
+
 	writeJSON(w, http.StatusOK, svc.DeepCopy())
 }
 

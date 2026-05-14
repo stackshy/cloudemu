@@ -32,6 +32,12 @@ func (s *ClusterState) serveNamespaces(w http.ResponseWriter, r *http.Request, r
 func (s *ClusterState) serveNamespaceCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchNamespaces(w, r)
+
+			return
+		}
+
 		s.listNamespaces(w)
 	case http.MethodPost:
 		s.createNamespace(w, r)
@@ -53,6 +59,24 @@ func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request
 	default:
 		writeMethodNotAllowed(w, "k8s api: namespace item: method not allowed: "+r.Method)
 	}
+}
+
+func (s *ClusterState) watchNamespaces(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+
+	// Subscribe under RLock so any subsequent publisher sees us; the snapshot
+	// taken inside the same RLock is consistent with the subscription order.
+	// See streamWatch's contract for the race this closes.
+	sub := s.wNamespaces.subscribe("")
+
+	items := make([]corev1.Namespace, 0, len(s.namespaces))
+	for _, n := range s.namespaces {
+		items = append(items, *n.DeepCopy())
+	}
+
+	s.mu.RUnlock()
+
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +109,9 @@ func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
 	// namespace. Mirror that so `kubectl --namespace=<new>` finds an SA.
 	sa := newServiceAccountObject(in.Name, "default")
 	s.serviceAccounts[serviceAccountKey(in.Name, "default")] = sa
+
+	s.wNamespaces.publish(EventAdded, "", *ns.DeepCopy())
+	s.wServiceAccounts.publish(EventAdded, in.Name, *sa.DeepCopy())
 
 	writeJSON(w, http.StatusCreated, ns)
 }
@@ -159,6 +186,7 @@ func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, n
 	}
 
 	s.namespaces[name] = &in
+	s.wNamespaces.publish(EventModified, "", *in.DeepCopy())
 	writeJSON(w, http.StatusOK, &in)
 }
 
@@ -180,6 +208,7 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	s.namespaces[name] = patched
+	s.wNamespaces.publish(EventModified, "", *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
@@ -195,28 +224,42 @@ func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
 	}
 
 	delete(s.namespaces, name)
+	s.wNamespaces.publish(EventDeleted, "", *ns.DeepCopy())
 
 	// Cascading delete: drop every namespaced resource keyed under this
-	// namespace. Real apiserver does this via finalizers + garbage
-	// collection; we collapse it into a synchronous sweep because tests
-	// don't observe partial states.
+	// namespace. Each helper publishes a DELETED event so Watch subscribers
+	// see the cascade alongside the namespace going away.
 	prefix := name + "/"
-	deletePrefixedKeysFrom(s.configMaps, prefix)
-	deletePrefixedKeysFrom(s.pods, prefix)
-	deletePrefixedKeysFrom(s.secrets, prefix)
-	deletePrefixedKeysFrom(s.serviceAccounts, prefix)
-	deletePrefixedKeysFrom(s.services, prefix)
-	deletePrefixedKeysFrom(s.deployments, prefix)
+	cascadeDeleteWithEvents(s.configMaps, prefix, name, s.wConfigMaps)
+	cascadeDeleteWithEvents(s.pods, prefix, name, s.wPods)
+	cascadeDeleteWithEvents(s.secrets, prefix, name, s.wSecrets)
+	cascadeDeleteWithEvents(s.serviceAccounts, prefix, name, s.wServiceAccounts)
+	cascadeDeleteWithEvents(s.services, prefix, name, s.wServices)
+	cascadeDeleteWithEvents(s.deployments, prefix, name, s.wDeployments)
+	cascadeDeleteWithEvents(s.endpoints, prefix, name, s.wEndpoints)
 
 	writeJSON(w, http.StatusOK, ns.DeepCopy())
 }
 
-// deletePrefixedKeysFrom drops every entry in m whose key starts with prefix.
-// Used by deleteNamespace to cascade across the per-resource maps without
-// repeating the loop body for each one.
-func deletePrefixedKeysFrom[V any](m map[string]*V, prefix string) {
-	for k := range m {
+// deepCopier constrains the element type of a per-resource map: it must be
+// a pointer whose underlying type has the upstream Kubernetes-codegen
+// DeepCopy() *V method. Every corev1/appsv1 type we store satisfies this,
+// so cascadeDeleteWithEvents can publish its own copy of every event
+// instead of aliasing the stored object's inner maps to all subscribers.
+type deepCopier[V any] interface {
+	*V
+	DeepCopy() *V
+}
+
+// cascadeDeleteWithEvents drops every entry in m whose key starts with
+// prefix and publishes a DELETED Watch event for each removed object.
+// Each event ships a freshly DeepCopy()'d value so subscribers see their
+// own independent copy of the inner maps/slices — mutation by one
+// subscriber can't corrupt another's view.
+func cascadeDeleteWithEvents[V any, P deepCopier[V]](m map[string]P, prefix, ns string, b *broadcaster) {
+	for k, v := range m {
 		if strings.HasPrefix(k, prefix) {
+			b.publish(EventDeleted, ns, *v.DeepCopy())
 			delete(m, k)
 		}
 	}

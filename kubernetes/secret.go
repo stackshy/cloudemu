@@ -29,6 +29,12 @@ func (s *ClusterState) serveSecrets(w http.ResponseWriter, r *http.Request, rout
 			return
 		}
 
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchSecrets(w, r, "")
+
+			return
+		}
+
 		s.listSecretsAllNamespaces(w)
 
 		return
@@ -52,12 +58,26 @@ func (s *ClusterState) serveSecrets(w http.ResponseWriter, r *http.Request, rout
 func (s *ClusterState) serveSecretCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchSecrets(w, r, namespace)
+
+			return
+		}
+
 		s.listSecrets(w, namespace)
 	case http.MethodPost:
 		s.createSecret(w, r, namespace)
 	default:
 		writeMethodNotAllowed(w, "k8s api: secrets collection: method not allowed: "+r.Method)
 	}
+}
+
+func (s *ClusterState) watchSecrets(w http.ResponseWriter, r *http.Request, namespace string) {
+	s.mu.RLock()
+	sub := s.wSecrets.subscribe(namespace)
+	items := s.collectSecretsLocked(namespace)
+	s.mu.RUnlock()
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveSecretItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -111,6 +131,7 @@ func (s *ClusterState) createSecret(w http.ResponseWriter, r *http.Request, name
 
 	sec := in
 	s.secrets[key] = &sec
+	s.wSecrets.publish(EventAdded, namespace, *sec.DeepCopy())
 	writeJSON(w, http.StatusCreated, &sec)
 }
 
@@ -207,6 +228,7 @@ func (s *ClusterState) updateSecret(w http.ResponseWriter, r *http.Request, name
 
 	sec := in
 	s.secrets[key] = &sec
+	s.wSecrets.publish(EventModified, namespace, *sec.DeepCopy())
 	writeJSON(w, http.StatusOK, &sec)
 }
 
@@ -234,6 +256,7 @@ func (s *ClusterState) patchSecret(w http.ResponseWriter, r *http.Request, names
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	s.secrets[key] = patched
+	s.wSecrets.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
@@ -251,6 +274,7 @@ func (s *ClusterState) deleteSecret(w http.ResponseWriter, namespace, name strin
 	}
 
 	delete(s.secrets, key)
+	s.wSecrets.publish(EventDeleted, namespace, *sec.DeepCopy())
 	writeJSON(w, http.StatusOK, sec.DeepCopy())
 }
 

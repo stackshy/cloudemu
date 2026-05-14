@@ -32,6 +32,12 @@ func (s *ClusterState) serveServiceAccounts(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchServiceAccounts(w, r, "")
+
+			return
+		}
+
 		s.listServiceAccountsAllNamespaces(w)
 
 		return
@@ -55,12 +61,26 @@ func (s *ClusterState) serveServiceAccounts(w http.ResponseWriter, r *http.Reque
 func (s *ClusterState) serveServiceAccountCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchServiceAccounts(w, r, namespace)
+
+			return
+		}
+
 		s.listServiceAccounts(w, namespace)
 	case http.MethodPost:
 		s.createServiceAccount(w, r, namespace)
 	default:
 		writeMethodNotAllowed(w, "k8s api: serviceaccounts collection: method not allowed: "+r.Method)
 	}
+}
+
+func (s *ClusterState) watchServiceAccounts(w http.ResponseWriter, r *http.Request, namespace string) {
+	s.mu.RLock()
+	sub := s.wServiceAccounts.subscribe(namespace)
+	items := s.collectServiceAccountsLocked(namespace)
+	s.mu.RUnlock()
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveServiceAccountItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -109,6 +129,7 @@ func (s *ClusterState) createServiceAccount(w http.ResponseWriter, r *http.Reque
 
 	sa := in
 	s.serviceAccounts[key] = &sa
+	s.wServiceAccounts.publish(EventAdded, namespace, *sa.DeepCopy())
 	writeJSON(w, http.StatusCreated, &sa)
 }
 
@@ -200,6 +221,7 @@ func (s *ClusterState) updateServiceAccount(w http.ResponseWriter, r *http.Reque
 
 	sa := in
 	s.serviceAccounts[key] = &sa
+	s.wServiceAccounts.publish(EventModified, namespace, *sa.DeepCopy())
 	writeJSON(w, http.StatusOK, &sa)
 }
 
@@ -227,6 +249,7 @@ func (s *ClusterState) patchServiceAccount(w http.ResponseWriter, r *http.Reques
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	s.serviceAccounts[key] = patched
+	s.wServiceAccounts.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
@@ -244,6 +267,7 @@ func (s *ClusterState) deleteServiceAccount(w http.ResponseWriter, namespace, na
 	}
 
 	delete(s.serviceAccounts, key)
+	s.wServiceAccounts.publish(EventDeleted, namespace, *sa.DeepCopy())
 	writeJSON(w, http.StatusOK, sa.DeepCopy())
 }
 

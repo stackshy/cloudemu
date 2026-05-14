@@ -33,6 +33,12 @@ func (s *ClusterState) serveConfigMaps(w http.ResponseWriter, r *http.Request, r
 			return
 		}
 
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchConfigMaps(w, r, "")
+
+			return
+		}
+
 		s.listConfigMapsAllNamespaces(w)
 
 		return
@@ -56,12 +62,26 @@ func (s *ClusterState) serveConfigMaps(w http.ResponseWriter, r *http.Request, r
 func (s *ClusterState) serveConfigMapCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchConfigMaps(w, r, namespace)
+
+			return
+		}
+
 		s.listConfigMaps(w, namespace)
 	case http.MethodPost:
 		s.createConfigMap(w, r, namespace)
 	default:
 		writeMethodNotAllowed(w, "k8s api: configmaps collection: method not allowed: "+r.Method)
 	}
+}
+
+func (s *ClusterState) watchConfigMaps(w http.ResponseWriter, r *http.Request, namespace string) {
+	s.mu.RLock()
+	sub := s.wConfigMaps.subscribe(namespace)
+	items := s.collectConfigMapsLocked(namespace)
+	s.mu.RUnlock()
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveConfigMapItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -111,6 +131,7 @@ func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, n
 
 	cm := in
 	s.configMaps[key] = &cm
+	s.wConfigMaps.publish(EventAdded, namespace, *cm.DeepCopy())
 	writeJSON(w, http.StatusCreated, &cm)
 }
 
@@ -206,6 +227,7 @@ func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, n
 
 	cm := in
 	s.configMaps[key] = &cm
+	s.wConfigMaps.publish(EventModified, namespace, *cm.DeepCopy())
 	writeJSON(w, http.StatusOK, &cm)
 }
 
@@ -233,6 +255,7 @@ func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, na
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	s.configMaps[key] = patched
+	s.wConfigMaps.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
@@ -250,6 +273,7 @@ func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, namespace, name st
 	}
 
 	delete(s.configMaps, key)
+	s.wConfigMaps.publish(EventDeleted, namespace, *cm.DeepCopy())
 	writeJSON(w, http.StatusOK, cm.DeepCopy())
 }
 

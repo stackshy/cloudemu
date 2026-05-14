@@ -29,6 +29,12 @@ func (s *ClusterState) servePods(w http.ResponseWriter, r *http.Request, route *
 			return
 		}
 
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchPods(w, r, "")
+
+			return
+		}
+
 		s.listPodsAllNamespaces(w)
 
 		return
@@ -52,12 +58,26 @@ func (s *ClusterState) servePods(w http.ResponseWriter, r *http.Request, route *
 func (s *ClusterState) servePodCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("watch") == watchQueryValue {
+			s.watchPods(w, r, namespace)
+
+			return
+		}
+
 		s.listPods(w, namespace)
 	case http.MethodPost:
 		s.createPod(w, r, namespace)
 	default:
 		writeMethodNotAllowed(w, "k8s api: pods collection: method not allowed: "+r.Method)
 	}
+}
+
+func (s *ClusterState) watchPods(w http.ResponseWriter, r *http.Request, namespace string) {
+	s.mu.RLock()
+	sub := s.wPods.subscribe(namespace)
+	items := s.collectPodsLocked(namespace)
+	s.mu.RUnlock()
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) servePodItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -112,6 +132,7 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 
 	pod := in
 	s.pods[key] = &pod
+	s.wPods.publish(EventAdded, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusCreated, &pod)
 }
 
@@ -203,6 +224,7 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 
 	pod := in
 	s.pods[key] = &pod
+	s.wPods.publish(EventModified, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusOK, &pod)
 }
 
@@ -230,6 +252,7 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	s.pods[key] = patched
+	s.wPods.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
@@ -247,6 +270,7 @@ func (s *ClusterState) deletePod(w http.ResponseWriter, namespace, name string) 
 	}
 
 	delete(s.pods, key)
+	s.wPods.publish(EventDeleted, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusOK, pod.DeepCopy())
 }
 

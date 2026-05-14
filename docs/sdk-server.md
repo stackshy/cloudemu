@@ -251,6 +251,7 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 | GCP Cloud SQL | `/v1/projects/.../{instances,operations}[/...]` |
 | GCP GKE | `/v1/projects/.../locations/.../{clusters,operations}[/...]` |
 | GCP GCS | Fallback (`/storage/v1/` and `/{bucket}/{object}` direct-media) |
+| **Kubernetes data plane** (shared across all 3 providers) | URL prefix `/k8s/{cluster-uid}/`. Registered on AWS, Azure, and GCP servers; cluster UID is the one minted by the matching control-plane handler on Create. |
 
 Registration order matters when handlers share a path prefix — `awsserver.New` / `azureserver.New` / `gcpserver.New` register more-specific handlers ahead of catch-alls (S3, Blob, GCS) so first-match-wins resolves correctly.
 
@@ -258,11 +259,13 @@ Registration order matters when handlers share a path prefix — `awsserver.New`
 
 | Provider | Domains shipped | Notes |
 |----------|----------------|-------|
-| AWS | Storage, Compute (+ VPC/SG/Subnet/IGW/RT/NAT/Peering/FlowLogs/NACL/EBS/Keys/AMIs/Snapshots/Spot/LaunchTemplates), NoSQL DB, Relational DB (RDS/Aurora/Neptune/DocumentDB/Redshift), Kubernetes (EKS control plane), Serverless, Message Queue, Monitoring | The most-mature provider — EC2 was Phase 1 of SDK-compat |
-| Azure | Storage, Compute (+ Disks/Snapshots/Images/SSHKeys), NoSQL DB, Relational DB (SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server), Kubernetes (AKS control plane), Serverless, Message Queue (ARM only), Networking, Monitoring | Data-plane Service Bus over AMQP is out of scope (use raw-HTTP REST data plane for tests) |
-| GCP | Storage, Compute (+ Disks/Snapshots/Images), NoSQL DB, Relational DB (Cloud SQL), Kubernetes (GKE control plane), Serverless, Message Queue, Networking, Monitoring | All driven via REST (the `cloud.google.com/go/*` clients with `option.WithEndpoint`, or the auto-generated `google.golang.org/api/*` clients) |
+| AWS | Storage, Compute (+ VPC/SG/Subnet/IGW/RT/NAT/Peering/FlowLogs/NACL/EBS/Keys/AMIs/Snapshots/Spot/LaunchTemplates), NoSQL DB, Relational DB (RDS/Aurora/Neptune/DocumentDB/Redshift), Kubernetes (EKS control plane + shared data plane), Serverless, Message Queue, Monitoring | The most-mature provider — EC2 was Phase 1 of SDK-compat |
+| Azure | Storage, Compute (+ Disks/Snapshots/Images/SSHKeys), NoSQL DB, Relational DB (SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server), Kubernetes (AKS control plane + shared data plane), Serverless, Message Queue (ARM only), Networking, Monitoring | Data-plane Service Bus over AMQP is out of scope (use raw-HTTP REST data plane for tests) |
+| GCP | Storage, Compute (+ Disks/Snapshots/Images), NoSQL DB, Relational DB (Cloud SQL), Kubernetes (GKE control plane + shared data plane), Serverless, Message Queue, Networking, Monitoring | All driven via REST (the `cloud.google.com/go/*` clients with `option.WithEndpoint`, or the auto-generated `google.golang.org/api/*` clients) |
 
-Kubernetes control-plane handlers are Wave 1 — cluster + node-pool + addon/Fargate/maintenance-config lifecycle only. The Kubernetes data plane (Pods, Services, Deployments, …) is intentionally deferred to Wave 2; stub kubeconfigs returned by the credential/auth endpoints point at `*-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local` so callers that try to drive the K8s API fail fast with a clear sentinel.
+Kubernetes ships as **two cooperating handlers**: per-provider control planes (EKS / AKS / GKE — clusters + node pools + addons / Fargate / maintenance configs) and a shared in-memory **data plane** registered under `/k8s/{cluster-uid}/`. The control plane mints a UID on every cluster Create and embeds it in the kubeconfig (or `Cluster.Endpoint` for GKE); `client-go` and `kubectl` connect to the data plane via that URL. Resources served on the data plane: Namespace, ConfigMap, Pod, Service, Secret, ServiceAccount, Deployment (apps/v1), and Endpoints (auto-created for each Service). Every list endpoint supports `?watch=true` for streaming events, so real `Informer` / `Reflector` machinery works.
+
+The data plane intentionally has no controllers — Deployments don't spawn ReplicaSets, Pods stay Pending, Endpoints are empty stubs. RBAC, subresources, PV/PVC, StatefulSet/DaemonSet/Job/CronJob, and Ingress are out of scope.
 
 The remaining service domains (IAM, DNS, Load Balancer, Cache, Secrets, Logging, Notifications, Container Registry, Event Bus) have full driver implementations in `providers/{aws,azure,gcp}/`; SDK-compat handlers are added in lockstep across all 3 providers as each domain ships.
 
