@@ -23,7 +23,7 @@ This document lists every service and operation available in CloudEmu across all
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
-| 18 | Kubernetes (Control Plane) | `eks` | `aks` | `gke` |
+| 18 | Kubernetes | `eks` + shared `kubernetes/` | `aks` + shared `kubernetes/` | `gke` + shared `kubernetes/` |
 
 ---
 
@@ -1031,13 +1031,12 @@ A single portable interface backs every RDBMS handler. Engine selection (MySQL /
 
 ---
 
-## 18. Kubernetes (Control Plane)
+## 18. Kubernetes
 
-**AWS:** `eks` | **Azure:** `aks` | **GCP:** `gke`
+**Control plane:** AWS `eks`, Azure `aks`, GCP `gke` — cluster, node-pool, and addon / Fargate-profile / maintenance-config lifecycle, driven by the real cloud SDKs.
+**Data plane:** shared `kubernetes/` package — an in-memory Kubernetes API server registered by every cluster across all three providers. Kubeconfigs returned by the control plane point at `<base>/k8s/<cluster-uid>` so `client-go` and `kubectl` operate end-to-end.
 
-Wave-1 control-plane coverage: cluster, node-pool, and addon / Fargate-profile / maintenance-config lifecycle. The Kubernetes data plane (Pods, Services, Deployments, …) is intentionally deferred to Wave 2. Stub kubeconfigs returned from credential/auth endpoints point at `*-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local` so any caller trying to drive the K8s API fails fast with a clear sentinel.
-
-Each provider exposes its native API surface — there is no single portable Kubernetes driver. Use `providers/aws/eks`, `providers/azure/aks`, and `providers/gcp/gke` for direct Go access, or the SDK-compat handlers for `aws-sdk-go-v2/service/eks`, `armcontainerservice/v6`, and `container/v1`.
+Each provider exposes its native control-plane API. The data plane has no portable driver — clients connect via the kubeconfig the control plane hands out, then talk standard Kubernetes REST.
 
 ### AWS EKS (`providers/aws/eks`)
 
@@ -1057,7 +1056,7 @@ Operations: **21**
 | Managed Clusters | CreateOrUpdateCluster, GetCluster, UpdateClusterTags, DeleteCluster, ListClusters, ListClustersByResourceGroup, RotateClusterCertificates |
 | Agent Pools | CreateOrUpdateAgentPool, GetAgentPool, DeleteAgentPool, ListAgentPools |
 | Maintenance Configs | CreateOrUpdateMaintenanceConfig, GetMaintenanceConfig, DeleteMaintenanceConfig, ListMaintenanceConfigs |
-| Credentials | `ListClusterAdminCredentials`, `ListClusterUserCredentials`, `ListClusterMonitoringUserCredentials` (return stub kubeconfig) |
+| Credentials | `ListClusterAdminCredentials`, `ListClusterUserCredentials`, `ListClusterMonitoringUserCredentials` — return a kubeconfig pointing at the in-memory data plane (or the `*-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local` sentinel when no APIServer is wired) |
 
 Operations: **18**
 
@@ -1070,6 +1069,27 @@ Operations: **18**
 | Operations | GetOperation, ListOperations, CancelOperation |
 
 Operations: **26**
+
+### Data plane (`kubernetes/`)
+
+Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Anonymous auth (kubeconfigs use `insecure-skip-tls-verify: true`).
+
+| Resource | Group / Version | Verbs |
+|---|---|---|
+| Namespace | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** |
+| ConfigMap | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** |
+| Secret | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — StringData merged into Data on create/update |
+| ServiceAccount | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — `default` SA auto-created in every namespace |
+| Pod | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — born Pending, no scheduler |
+| Service | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — ClusterIP allocated from 10.96.0.0/12; immutable on update |
+| Endpoints | `core/v1` | Get, List, **Watch** — auto-created (empty Subsets) on Service create; not user-creatable |
+| Deployment | `apps/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — status mirrored from spec.replicas (no controller) |
+
+**Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) just works.
+
+**Cascade**: deleting a Namespace publishes DELETED events for every child resource.
+
+**Not in scope**: real controllers (no Deployment → ReplicaSet → Pod, no Pods scheduled to nodes), RBAC, subresources (`/status`, `/scale`, `/log`, `/exec`), PV/PVC, StatefulSet, DaemonSet, Job/CronJob, Ingress, NetworkPolicy.
 
 ---
 
@@ -1094,7 +1114,8 @@ Operations: **26**
 | Container Registry | 14 |
 | Event Bus | 15 |
 | Relational Database | 21 |
-| Kubernetes — AWS EKS | 21 |
-| Kubernetes — Azure AKS | 18 |
-| Kubernetes — GCP GKE | 26 |
-| **Grand Total** | **416** |
+| Kubernetes — AWS EKS (control plane) | 21 |
+| Kubernetes — Azure AKS (control plane) | 18 |
+| Kubernetes — GCP GKE (control plane) | 26 |
+| Kubernetes — data plane (8 resources × 7 verbs incl. Watch) | 56 |
+| **Grand Total** | **472** |
