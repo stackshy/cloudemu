@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -96,7 +97,9 @@ func (s *ClusterState) listNamespaces(w http.ResponseWriter) {
 
 	items := make([]corev1.Namespace, 0, len(names))
 	for _, n := range names {
-		items = append(items, *s.namespaces[n])
+		// DeepCopy so callers can't reach back into our stored maps via the
+		// returned Labels/Annotations references.
+		items = append(items, *s.namespaces[n].DeepCopy())
 	}
 
 	writeJSON(w, http.StatusOK, &corev1.NamespaceList{
@@ -116,7 +119,7 @@ func (s *ClusterState) getNamespace(w http.ResponseWriter, name string) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ns)
+	writeJSON(w, http.StatusOK, ns.DeepCopy())
 }
 
 func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, name string) {
@@ -191,12 +194,12 @@ func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
 	// Cascading delete: drop any namespaced resources that lived inside.
 	prefix := name + "/"
 	for k := range s.configMaps {
-		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
+		if strings.HasPrefix(k, prefix) {
 			delete(s.configMaps, k)
 		}
 	}
 
-	writeJSON(w, http.StatusOK, ns)
+	writeJSON(w, http.StatusOK, ns.DeepCopy())
 }
 
 // newNamespaceObject builds a fresh Namespace with the implicit fields a

@@ -143,7 +143,9 @@ func (s *ClusterState) collectConfigMapsLocked(namespace string) []corev1.Config
 
 	items := make([]corev1.ConfigMap, 0, len(keys))
 	for _, k := range keys {
-		items = append(items, *s.configMaps[k])
+		// DeepCopy so callers can't reach back into our stored Data map via
+		// the returned ConfigMap.
+		items = append(items, *s.configMaps[k].DeepCopy())
 	}
 
 	return items
@@ -160,7 +162,7 @@ func (s *ClusterState) getConfigMap(w http.ResponseWriter, namespace, name strin
 		return
 	}
 
-	writeJSON(w, http.StatusOK, cm)
+	writeJSON(w, http.StatusOK, cm.DeepCopy())
 }
 
 func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -169,7 +171,9 @@ func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	if in.Name != "" && in.Name != name {
+	// Match updateNamespace's behavior: real apiserver requires
+	// metadata.name to be present and equal to the URL name.
+	if in.Name != name {
 		writeBadRequest(w, "k8s api: configmap name in body does not match URL")
 
 		return
@@ -236,7 +240,7 @@ func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, namespace, name st
 	}
 
 	delete(s.configMaps, key)
-	writeJSON(w, http.StatusOK, cm)
+	writeJSON(w, http.StatusOK, cm.DeepCopy())
 }
 
 func (s *ClusterState) namespaceExists(name string) bool {

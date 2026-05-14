@@ -64,6 +64,8 @@ type Drivers struct {
 //     same query-protocol endpoint for all of them.
 //   - Lambda matches on the /2015-03-31/functions path prefix and must
 //     register before S3 so its REST URLs aren't swallowed by the catch-all.
+//   - K8sAPI matches /k8s/{uid}/... — disjoint from every other AWS path;
+//     registered before S3's REST fallback.
 //   - S3 is the REST fallback.
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
