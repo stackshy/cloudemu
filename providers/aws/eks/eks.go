@@ -22,6 +22,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
 )
@@ -58,6 +59,15 @@ type Mock struct {
 
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// k8sAPI is the shared in-memory Kubernetes data-plane server. When set,
+	// CreateCluster registers a fresh ClusterState with it and DescribeCluster
+	// returns an Endpoint pointing at that state. When nil, the Wave 1
+	// behavior is preserved: Endpoint stays the *-DATAPLANE-NOT-IMPLEMENTED
+	// sentinel.
+	k8sAPI *kubernetes.APIServer
+	// k8sUIDs maps cluster name → the UID we registered with k8sAPI.
+	k8sUIDs map[string]string
 }
 
 // New creates a new AWS EKS mock.
@@ -68,12 +78,24 @@ func New(opts *config.Options) *Mock {
 		fargateProfiles: memstore.New[eksdriver.FargateProfile](),
 		addons:          memstore.New[eksdriver.Addon](),
 		opts:            opts,
+		k8sUIDs:         make(map[string]string),
 	}
 }
 
 // SetMonitoring wires a CloudWatch-style backend for auto-metric emission.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetK8sAPI wires a shared in-memory Kubernetes data-plane server. After
+// this is set, CreateCluster registers a fresh ClusterState with api and
+// DescribeCluster returns an Endpoint that points at it. Pass the same
+// *kubernetes.APIServer as awsserver.Drivers.K8sAPI when constructing the
+// SDK-compat server, so kubeconfigs land on the right backend.
+func (m *Mock) SetK8sAPI(api *kubernetes.APIServer) {
+	m.mu.Lock()
+	m.k8sAPI = api
+	m.mu.Unlock()
 }
 
 // nodegroupKey uniquely identifies a nodegroup across clusters.
@@ -229,13 +251,48 @@ func (m *Mock) CreateCluster(_ context.Context, cfg eksdriver.ClusterConfig) (*e
 		CreatedAt: m.opts.Clock.Now().UTC(),
 	}
 
+	// Wave 2: if a Kubernetes data-plane server is wired, register a fresh
+	// ClusterState and remember the UID so DescribeCluster can return an
+	// Endpoint that actually answers.
+	if m.k8sAPI != nil {
+		uid, _ := m.k8sAPI.RegisterCluster()
+		m.k8sUIDs[cfg.Name] = uid
+	}
+
 	m.clusters.Set(cfg.Name, cluster)
 
 	m.emitClusterMetrics(cfg.Name)
 
 	out := cluster
+	m.withK8sEndpoint(&out)
 
 	return &out, nil
+}
+
+// withK8sEndpoint mutates c.Endpoint in place to point at the per-cluster
+// Kubernetes data-plane URL when a shared APIServer is wired and the cluster
+// has an associated UID. Falls back to the Wave 1 sentinel otherwise so
+// existing test fixtures keep working.
+//
+// Caller must hold at least an RLock on m.mu. c is passed by pointer because
+// eksdriver.Cluster is a heavy struct (slice + map fields); the caller
+// usually wraps this with `out := <local copy>; m.withK8sEndpoint(&out)`.
+func (m *Mock) withK8sEndpoint(c *eksdriver.Cluster) {
+	if m.k8sAPI == nil {
+		return
+	}
+
+	uid, ok := m.k8sUIDs[c.Name]
+	if !ok {
+		return
+	}
+
+	base := m.k8sAPI.BaseURL()
+	if base == "" {
+		return
+	}
+
+	c.Endpoint = base + "/k8s/" + uid
 }
 
 // DescribeCluster looks up a cluster by name.
@@ -249,6 +306,7 @@ func (m *Mock) DescribeCluster(_ context.Context, name string) (*eksdriver.Clust
 	}
 
 	out := c
+	m.withK8sEndpoint(&out)
 
 	return &out, nil
 }
@@ -372,7 +430,16 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 
 	m.clusters.Delete(name)
 
+	// Wave 2: tear down the cluster's Kubernetes data-plane state too. The
+	// UID map entry is dropped after deregister so subsequent describes find
+	// nothing — matching the real cluster going away.
+	if uid, ok := m.k8sUIDs[name]; ok && m.k8sAPI != nil {
+		m.k8sAPI.DeregisterCluster(uid)
+		delete(m.k8sUIDs, name)
+	}
+
 	out := c
+	m.withK8sEndpoint(&out)
 
 	return &out, nil
 }

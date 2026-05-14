@@ -9,6 +9,7 @@ package aws
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -42,6 +43,11 @@ type Drivers struct {
 	RDS        rdbdriver.RelationalDB
 	Redshift   rdbdriver.RelationalDB
 	EKS        eksdriver.EKS
+	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
+	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
+	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
+	// the same backend. Leave nil to disable Kubernetes data-plane support.
+	K8sAPI *kubernetes.APIServer
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -58,6 +64,8 @@ type Drivers struct {
 //     same query-protocol endpoint for all of them.
 //   - Lambda matches on the /2015-03-31/functions path prefix and must
 //     register before S3 so its REST URLs aren't swallowed by the catch-all.
+//   - K8sAPI matches /k8s/{uid}/... — disjoint from every other AWS path;
+//     registered before S3's REST fallback.
 //   - S3 is the REST fallback.
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
@@ -111,6 +119,12 @@ func New(d Drivers) *server.Server {
 	// at /clusters specifically so it doesn't shadow other REST URLs.
 	if d.EKS != nil {
 		srv.Register(eks.New(d.EKS))
+	}
+
+	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from
+	// every other AWS path. Registered before S3's REST fallback.
+	if d.K8sAPI != nil {
+		srv.Register(d.K8sAPI)
 	}
 
 	if d.S3 != nil {
