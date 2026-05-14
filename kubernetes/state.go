@@ -46,6 +46,16 @@ type ClusterState struct {
 	// allocateClusterIP. Real apiserver uses an in-memory bitmap; the
 	// monotonic counter is enough for tests.
 	nextClusterIP uint32
+
+	// Per-resource Watch broadcasters. Handlers publish on Create/Update/
+	// Patch/Delete; ?watch=true requests subscribe via streamWatch.
+	wNamespaces      *broadcaster
+	wConfigMaps      *broadcaster
+	wPods            *broadcaster
+	wSecrets         *broadcaster
+	wServiceAccounts *broadcaster
+	wServices        *broadcaster
+	wDeployments     *broadcaster
 }
 
 // firstClusterIPOffset is the first integer offset above 10.96.0.0 that the
@@ -60,14 +70,21 @@ const firstClusterIPOffset uint32 = 1
 // cluster.
 func newClusterState() *ClusterState {
 	s := &ClusterState{
-		namespaces:      make(map[string]*corev1.Namespace),
-		configMaps:      make(map[string]*corev1.ConfigMap),
-		pods:            make(map[string]*corev1.Pod),
-		secrets:         make(map[string]*corev1.Secret),
-		serviceAccounts: make(map[string]*corev1.ServiceAccount),
-		services:        make(map[string]*corev1.Service),
-		deployments:     make(map[string]*appsv1.Deployment),
-		nextClusterIP:   firstClusterIPOffset,
+		namespaces:       make(map[string]*corev1.Namespace),
+		configMaps:       make(map[string]*corev1.ConfigMap),
+		pods:             make(map[string]*corev1.Pod),
+		secrets:          make(map[string]*corev1.Secret),
+		serviceAccounts:  make(map[string]*corev1.ServiceAccount),
+		services:         make(map[string]*corev1.Service),
+		deployments:      make(map[string]*appsv1.Deployment),
+		nextClusterIP:    firstClusterIPOffset,
+		wNamespaces:      newBroadcaster(),
+		wConfigMaps:      newBroadcaster(),
+		wPods:            newBroadcaster(),
+		wSecrets:         newBroadcaster(),
+		wServiceAccounts: newBroadcaster(),
+		wServices:        newBroadcaster(),
+		wDeployments:     newBroadcaster(),
 	}
 
 	for _, name := range []string{"default", "kube-system", "kube-public"} {

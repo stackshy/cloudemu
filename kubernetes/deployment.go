@@ -30,6 +30,12 @@ func (s *ClusterState) serveDeployments(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
+		if r.URL.Query().Get("watch") == "true" {
+			s.watchDeployments(w, r, "")
+
+			return
+		}
+
 		s.listDeploymentsAllNamespaces(w)
 
 		return
@@ -53,12 +59,25 @@ func (s *ClusterState) serveDeployments(w http.ResponseWriter, r *http.Request, 
 func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.Request, namespace string) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("watch") == "true" {
+			s.watchDeployments(w, r, namespace)
+
+			return
+		}
+
 		s.listDeployments(w, namespace)
 	case http.MethodPost:
 		s.createDeployment(w, r, namespace)
 	default:
 		writeMethodNotAllowed(w, "k8s api: deployments collection: method not allowed: "+r.Method)
 	}
+}
+
+func (s *ClusterState) watchDeployments(w http.ResponseWriter, r *http.Request, namespace string) {
+	s.mu.RLock()
+	items := s.collectDeploymentsLocked(namespace)
+	s.mu.RUnlock()
+	streamWatch(r.Context(), w, s.wDeployments, namespace, items)
 }
 
 func (s *ClusterState) serveDeploymentItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -112,6 +131,7 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 
 	dep := in
 	s.deployments[key] = &dep
+	s.wDeployments.publish(EventAdded, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusCreated, &dep)
 }
 
@@ -204,6 +224,7 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 
 	dep := in
 	s.deployments[key] = &dep
+	s.wDeployments.publish(EventModified, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusOK, &dep)
 }
 
@@ -228,6 +249,7 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	mirrorDeploymentReplicas(patched)
 	s.deployments[key] = patched
+	s.wDeployments.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
@@ -245,6 +267,7 @@ func (s *ClusterState) deleteDeployment(w http.ResponseWriter, namespace, name s
 	}
 
 	delete(s.deployments, key)
+	s.wDeployments.publish(EventDeleted, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusOK, dep.DeepCopy())
 }
 

@@ -32,6 +32,12 @@ func (s *ClusterState) serveNamespaces(w http.ResponseWriter, r *http.Request, r
 func (s *ClusterState) serveNamespaceCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("watch") == "true" {
+			s.watchNamespaces(w, r)
+
+			return
+		}
+
 		s.listNamespaces(w)
 	case http.MethodPost:
 		s.createNamespace(w, r)
@@ -53,6 +59,19 @@ func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request
 	default:
 		writeMethodNotAllowed(w, "k8s api: namespace item: method not allowed: "+r.Method)
 	}
+}
+
+func (s *ClusterState) watchNamespaces(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+
+	items := make([]corev1.Namespace, 0, len(s.namespaces))
+	for _, n := range s.namespaces {
+		items = append(items, *n.DeepCopy())
+	}
+
+	s.mu.RUnlock()
+
+	streamWatch(r.Context(), w, s.wNamespaces, "", items)
 }
 
 func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +104,9 @@ func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
 	// namespace. Mirror that so `kubectl --namespace=<new>` finds an SA.
 	sa := newServiceAccountObject(in.Name, "default")
 	s.serviceAccounts[serviceAccountKey(in.Name, "default")] = sa
+
+	s.wNamespaces.publish(EventAdded, "", *ns.DeepCopy())
+	s.wServiceAccounts.publish(EventAdded, in.Name, *sa.DeepCopy())
 
 	writeJSON(w, http.StatusCreated, ns)
 }
@@ -159,6 +181,7 @@ func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, n
 	}
 
 	s.namespaces[name] = &in
+	s.wNamespaces.publish(EventModified, "", *in.DeepCopy())
 	writeJSON(w, http.StatusOK, &in)
 }
 
@@ -180,6 +203,7 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	s.namespaces[name] = patched
+	s.wNamespaces.publish(EventModified, "", *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
@@ -195,28 +219,28 @@ func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
 	}
 
 	delete(s.namespaces, name)
+	s.wNamespaces.publish(EventDeleted, "", *ns.DeepCopy())
 
 	// Cascading delete: drop every namespaced resource keyed under this
-	// namespace. Real apiserver does this via finalizers + garbage
-	// collection; we collapse it into a synchronous sweep because tests
-	// don't observe partial states.
+	// namespace. Each helper publishes a DELETED event so Watch subscribers
+	// see the cascade alongside the namespace going away.
 	prefix := name + "/"
-	deletePrefixedKeysFrom(s.configMaps, prefix)
-	deletePrefixedKeysFrom(s.pods, prefix)
-	deletePrefixedKeysFrom(s.secrets, prefix)
-	deletePrefixedKeysFrom(s.serviceAccounts, prefix)
-	deletePrefixedKeysFrom(s.services, prefix)
-	deletePrefixedKeysFrom(s.deployments, prefix)
+	cascadeDeleteWithEvents(s.configMaps, prefix, name, s.wConfigMaps)
+	cascadeDeleteWithEvents(s.pods, prefix, name, s.wPods)
+	cascadeDeleteWithEvents(s.secrets, prefix, name, s.wSecrets)
+	cascadeDeleteWithEvents(s.serviceAccounts, prefix, name, s.wServiceAccounts)
+	cascadeDeleteWithEvents(s.services, prefix, name, s.wServices)
+	cascadeDeleteWithEvents(s.deployments, prefix, name, s.wDeployments)
 
 	writeJSON(w, http.StatusOK, ns.DeepCopy())
 }
 
-// deletePrefixedKeysFrom drops every entry in m whose key starts with prefix.
-// Used by deleteNamespace to cascade across the per-resource maps without
-// repeating the loop body for each one.
-func deletePrefixedKeysFrom[V any](m map[string]*V, prefix string) {
-	for k := range m {
+// cascadeDeleteWithEvents drops every entry in m whose key starts with
+// prefix and publishes a DELETED Watch event for each removed object.
+func cascadeDeleteWithEvents[V any](m map[string]*V, prefix, ns string, b *broadcaster) {
+	for k, v := range m {
 		if strings.HasPrefix(k, prefix) {
+			b.publish(EventDeleted, ns, *v)
 			delete(m, k)
 		}
 	}
