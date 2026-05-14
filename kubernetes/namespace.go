@@ -241,12 +241,25 @@ func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
 	writeJSON(w, http.StatusOK, ns.DeepCopy())
 }
 
+// deepCopier constrains the element type of a per-resource map: it must be
+// a pointer whose underlying type has the upstream Kubernetes-codegen
+// DeepCopy() *V method. Every corev1/appsv1 type we store satisfies this,
+// so cascadeDeleteWithEvents can publish its own copy of every event
+// instead of aliasing the stored object's inner maps to all subscribers.
+type deepCopier[V any] interface {
+	*V
+	DeepCopy() *V
+}
+
 // cascadeDeleteWithEvents drops every entry in m whose key starts with
 // prefix and publishes a DELETED Watch event for each removed object.
-func cascadeDeleteWithEvents[V any](m map[string]*V, prefix, ns string, b *broadcaster) {
+// Each event ships a freshly DeepCopy()'d value so subscribers see their
+// own independent copy of the inner maps/slices — mutation by one
+// subscriber can't corrupt another's view.
+func cascadeDeleteWithEvents[V any, P deepCopier[V]](m map[string]P, prefix, ns string, b *broadcaster) {
 	for k, v := range m {
 		if strings.HasPrefix(k, prefix) {
-			b.publish(EventDeleted, ns, *v)
+			b.publish(EventDeleted, ns, *v.DeepCopy())
 			delete(m, k)
 		}
 	}
