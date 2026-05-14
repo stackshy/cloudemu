@@ -18,6 +18,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
@@ -94,6 +95,15 @@ type Mock struct {
 
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// k8sAPI is the shared in-memory Kubernetes data-plane server. When set,
+	// CreateOrUpdateCluster registers a fresh ClusterState with api and
+	// Kubeconfig returns a kubeconfig pointing at it. When nil, the Wave 1
+	// behavior is preserved: kubeconfigs point at the *-DATAPLANE-NOT-IMPLEMENTED
+	// sentinel.
+	k8sAPI *kubernetes.APIServer
+	// k8sUIDs maps "{rg}/{name}" → the UID we registered with k8sAPI.
+	k8sUIDs map[string]string
 }
 
 // New creates a new AKS mock.
@@ -103,12 +113,24 @@ func New(opts *config.Options) *Mock {
 		pools:       memstore.New[AgentPool](),
 		maintenance: memstore.New[MaintenanceConfig](),
 		opts:        opts,
+		k8sUIDs:     make(map[string]string),
 	}
 }
 
 // SetMonitoring wires an Azure-Monitor-style backend for auto-metric emission.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetK8sAPI wires a shared in-memory Kubernetes data-plane server. After this
+// is set, CreateOrUpdateCluster registers a fresh ClusterState with api and
+// Kubeconfig returns a kubeconfig YAML that points at it. Pass the same
+// *kubernetes.APIServer as azureserver.Drivers.K8sAPI when constructing the
+// SDK-compat server, so kubeconfigs land on the right backend.
+func (m *Mock) SetK8sAPI(api *kubernetes.APIServer) {
+	m.mu.Lock()
+	m.k8sAPI = api
+	m.mu.Unlock()
 }
 
 // clusterKey is the storage key for a managed cluster: "{rg}/{name}".
@@ -264,6 +286,17 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	// Inline pools — replace what we have for this cluster.
 	cluster.AgentPoolNames = m.replaceInlinePools(input, now)
 
+	// Wave 2: if a Kubernetes data-plane server is wired and this is a fresh
+	// cluster, register a ClusterState and remember the UID so Kubeconfig can
+	// return a working URL. CreateOrUpdate may be called more than once for
+	// the same cluster name; only register on the first sighting.
+	if m.k8sAPI != nil {
+		if _, ok := m.k8sUIDs[key]; !ok {
+			uid, _ := m.k8sAPI.RegisterCluster()
+			m.k8sUIDs[key] = uid
+		}
+	}
+
 	m.clusters.Set(key, cluster)
 
 	m.emitClusterMetrics(input.Subscription, input.ResourceGroup, input.Name,
@@ -409,6 +442,14 @@ func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
 	}
 
 	m.clusters.Delete(key)
+
+	// Wave 2: tear down the cluster's Kubernetes data-plane state alongside
+	// the control-plane record. Subsequent kubeconfig lookups will no longer
+	// see a registered UID and fall back to the sentinel.
+	if uid, ok := m.k8sUIDs[key]; ok && m.k8sAPI != nil {
+		m.k8sAPI.DeregisterCluster(uid)
+		delete(m.k8sUIDs, key)
+	}
 
 	return nil
 }
@@ -670,10 +711,23 @@ func (m *Mock) ListMaintenanceConfigs(_ context.Context, rg, cluster string) ([]
 // real cloudemu-served Kubernetes API endpoint.
 //
 // The output is deterministic: callers in tests can match on the sentinel
-// host to confirm the data plane is intentionally unimplemented. The receiver
-// is kept (unused) so the method satisfies the server-side Backend
-// interface alongside the rest of the AKS surface.
-func (*Mock) StubKubeconfig(rg, name string) []byte {
+// host to confirm the data plane is intentionally unimplemented. When a
+// shared kubernetes.APIServer is wired (Wave 2 Phase 3 onward), the
+// returned kubeconfig instead points at <base>/k8s/<uid> — the real
+// in-memory K8s API server registered to this cluster on Create.
+func (m *Mock) StubKubeconfig(rg, name string) []byte {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.k8sAPI != nil {
+		key := clusterKey(rg, name)
+		if uid, ok := m.k8sUIDs[key]; ok {
+			if base := m.k8sAPI.BaseURL(); base != "" {
+				return kubernetes.RenderKubeconfig(base, uid, name)
+			}
+		}
+	}
+
 	return fmt.Appendf(nil, `apiVersion: v1
 kind: Config
 clusters:
