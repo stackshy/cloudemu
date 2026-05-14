@@ -84,6 +84,94 @@ func TestEndpoints_ReadOnly(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestEndpoints_NamespacedList(t *testing.T) {
+	base, cleanup := newFixture(t)
+	t.Cleanup(cleanup)
+
+	// Two Services in default → two Endpoints in default's namespaced list.
+	for _, n := range []string{"a", "b"} {
+		do(t, http.MethodPost, base+"/api/v1/namespaces/default/services",
+			mustJSON(t, &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: n},
+				Spec: corev1.ServiceSpec{
+					Type:  corev1.ServiceTypeClusterIP,
+					Ports: []corev1.ServicePort{{Port: 80}},
+				},
+			})).Body.Close()
+	}
+
+	resp := do(t, http.MethodGet, base+"/api/v1/namespaces/default/endpoints", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list: got %d, want 200", resp.StatusCode)
+	}
+
+	var list corev1.EndpointsList
+	mustDecode(t, resp.Body, &list)
+
+	if len(list.Items) != 2 {
+		t.Fatalf("got %d, want 2 endpoints in default ns", len(list.Items))
+	}
+}
+
+func TestEndpoints_GetMissingReturns404(t *testing.T) {
+	base, cleanup := newFixture(t)
+	t.Cleanup(cleanup)
+
+	resp := do(t, http.MethodGet, base+"/api/v1/namespaces/default/endpoints/ghost", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("got %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestEndpoints_ErrorPaths(t *testing.T) {
+	base, cleanup := newFixture(t)
+	t.Cleanup(cleanup)
+
+	// Wrong API group → 404
+	resp := do(t, http.MethodGet, base+"/apis/apps/v1/namespaces/default/endpoints", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("wrong-group: got %d, want 404", resp.StatusCode)
+	}
+
+	resp.Body.Close()
+
+	// Namespace not found → 404
+	resp = do(t, http.MethodGet, base+"/api/v1/namespaces/nope/endpoints", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing-ns: got %d, want 404", resp.StatusCode)
+	}
+
+	resp.Body.Close()
+
+	// Non-GET on cluster-wide → 405
+	resp = do(t, http.MethodPost, base+"/api/v1/endpoints", nil)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("cluster POST: got %d, want 405", resp.StatusCode)
+	}
+
+	resp.Body.Close()
+
+	// Non-GET on namespaced item → 405. First create a service so the
+	// endpoints item exists.
+	do(t, http.MethodPost, base+"/api/v1/namespaces/default/services",
+		mustJSON(t, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "svc"},
+			Spec: corev1.ServiceSpec{
+				Type:  corev1.ServiceTypeClusterIP,
+				Ports: []corev1.ServicePort{{Port: 80}},
+			},
+		})).Body.Close()
+
+	resp = do(t, http.MethodDelete, base+"/api/v1/namespaces/default/endpoints/svc", nil)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("item DELETE: got %d, want 405", resp.StatusCode)
+	}
+
+	resp.Body.Close()
+}
+
 func TestEndpoints_AllNamespacesList(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)
