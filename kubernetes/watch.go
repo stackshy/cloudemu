@@ -110,20 +110,37 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 }
 
 // streamWatch handles ?watch=true requests for a given resource kind. It
-// emits an initial ADDED event for every existing item (so client-go
-// Reflectors see the full state), then streams events from the broadcaster
-// until the client disconnects.
+// emits an initial ADDED event for every item in initial (so client-go
+// Reflectors see the full state), then streams events from sub until the
+// client disconnects.
 //
-// initial is the slice of current items at subscribe time. items must be
-// JSON-encodable as Kubernetes objects. namespace ("" for cluster-wide /
-// all-namespaces) filters subsequent events.
+// CALLER MUST SUBSCRIBE BEFORE TAKING THE SNAPSHOT, BOTH UNDER THE SAME
+// state.mu LOCK. That ordering is what closes the otherwise-present race
+// between snapshot-and-subscribe — without it, a mutation landing between
+// snapshot-release and subscribe-register would be invisible to the
+// subscriber (event published with no subscriber yet, state change not in
+// snapshot). The handler pattern is:
+//
+//	s.mu.RLock()
+//	sub := broadcaster.subscribe(namespace)   // visible to subsequent publishers
+//	initial := <collect snapshot under RLock>
+//	s.mu.RUnlock()
+//	streamWatch(r.Context(), w, sub, initial)
+//
+// Any mutation in flight while we hold RLock waits for RUnlock and then
+// publishes — the subscriber picks it up from sub.ch. Any mutation that
+// completed before our RLock is already in the snapshot.
+//
+// streamWatch closes sub.done on return so broadcaster.publish can prune
+// the subscriber slice on the next publish.
 func streamWatch[T any](
 	ctx context.Context,
 	w http.ResponseWriter,
-	b *broadcaster,
-	namespace string,
+	sub *subscriber,
 	initial []T,
 ) {
+	defer close(sub.done)
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeStatus(w, http.StatusInternalServerError, metav1.StatusReasonInternalError,
@@ -137,13 +154,6 @@ func streamWatch[T any](
 	w.WriteHeader(http.StatusOK)
 
 	enc := json.NewEncoder(w)
-
-	// Subscribe BEFORE emitting the initial snapshot so we don't miss any
-	// event published between snapshot and subscribe. The cost is that the
-	// snapshot may overlap with a same-key event from the broadcaster —
-	// client-go Reflectors deduplicate by resourceVersion, which is fine.
-	sub := b.subscribe(namespace)
-	defer close(sub.done)
 
 	for _, item := range initial {
 		if err := enc.Encode(watchEvent{Type: EventAdded, Object: item}); err != nil {

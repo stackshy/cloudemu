@@ -77,9 +77,10 @@ func (s *ClusterState) serveServiceAccountCollection(w http.ResponseWriter, r *h
 
 func (s *ClusterState) watchServiceAccounts(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
+	sub := s.wServiceAccounts.subscribe(namespace)
 	items := s.collectServiceAccountsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, s.wServiceAccounts, namespace, items)
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveServiceAccountItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

@@ -78,9 +78,10 @@ func (s *ClusterState) serveConfigMapCollection(w http.ResponseWriter, r *http.R
 
 func (s *ClusterState) watchConfigMaps(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
+	sub := s.wConfigMaps.subscribe(namespace)
 	items := s.collectConfigMapsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, s.wConfigMaps, namespace, items)
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveConfigMapItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

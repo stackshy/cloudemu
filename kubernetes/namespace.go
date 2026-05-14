@@ -64,6 +64,11 @@ func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request
 func (s *ClusterState) watchNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 
+	// Subscribe under RLock so any subsequent publisher sees us; the snapshot
+	// taken inside the same RLock is consistent with the subscription order.
+	// See streamWatch's contract for the race this closes.
+	sub := s.wNamespaces.subscribe("")
+
 	items := make([]corev1.Namespace, 0, len(s.namespaces))
 	for _, n := range s.namespaces {
 		items = append(items, *n.DeepCopy())
@@ -71,7 +76,7 @@ func (s *ClusterState) watchNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.RUnlock()
 
-	streamWatch(r.Context(), w, s.wNamespaces, "", items)
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {

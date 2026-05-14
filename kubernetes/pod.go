@@ -74,9 +74,10 @@ func (s *ClusterState) servePodCollection(w http.ResponseWriter, r *http.Request
 
 func (s *ClusterState) watchPods(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
+	sub := s.wPods.subscribe(namespace)
 	items := s.collectPodsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, s.wPods, namespace, items)
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) servePodItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

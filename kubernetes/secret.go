@@ -74,9 +74,10 @@ func (s *ClusterState) serveSecretCollection(w http.ResponseWriter, r *http.Requ
 
 func (s *ClusterState) watchSecrets(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
+	sub := s.wSecrets.subscribe(namespace)
 	items := s.collectSecretsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, s.wSecrets, namespace, items)
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveSecretItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

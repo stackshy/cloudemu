@@ -75,9 +75,10 @@ func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.
 
 func (s *ClusterState) watchDeployments(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
+	sub := s.wDeployments.subscribe(namespace)
 	items := s.collectDeploymentsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, s.wDeployments, namespace, items)
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveDeploymentItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

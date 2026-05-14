@@ -80,9 +80,10 @@ func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Req
 
 func (s *ClusterState) watchServices(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
+	sub := s.wServices.subscribe(namespace)
 	items := s.collectServicesLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, s.wServices, namespace, items)
+	streamWatch(r.Context(), w, sub, items)
 }
 
 func (s *ClusterState) serveServiceItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
