@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -188,6 +189,22 @@ func TestConfigMap_LifecycleInNamespace(t *testing.T) {
 	}
 
 	resp.Body.Close()
+}
+
+func TestRenderKubeconfig_HasExpectedFields(t *testing.T) {
+	got := string(kubernetes.RenderKubeconfig("http://127.0.0.1:1234", "abc123", "my-cluster"))
+
+	for _, want := range []string{
+		"server: http://127.0.0.1:1234/k8s/abc123",
+		"insecure-skip-tls-verify: true",
+		"token: " + kubernetes.StubToken,
+		"current-context: my-cluster",
+		"cluster: my-cluster",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("kubeconfig missing %q\n\n%s", want, got)
+		}
+	}
 }
 
 // mustDo issues an HTTP request and fatally fails the test on transport error.
