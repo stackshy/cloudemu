@@ -706,16 +706,16 @@ func (m *Mock) ListMaintenanceConfigs(_ context.Context, rg, cluster string) ([]
 	return out, nil
 }
 
-// StubKubeconfig returns a stub kubeconfig blob pointing at the
-// "data-plane not implemented" sentinel host. Wave 2 will replace this with a
-// real cloudemu-served Kubernetes API endpoint.
+// Kubeconfig returns a kubeconfig blob for the named managed cluster.
 //
-// The output is deterministic: callers in tests can match on the sentinel
-// host to confirm the data plane is intentionally unimplemented. When a
-// shared kubernetes.APIServer is wired (Wave 2 Phase 3 onward), the
-// returned kubeconfig instead points at <base>/k8s/<uid> — the real
-// in-memory K8s API server registered to this cluster on Create.
-func (m *Mock) StubKubeconfig(rg, name string) []byte {
+// When a shared kubernetes.APIServer is wired (Phase 3 onward) and the
+// cluster has a registered UID, the kubeconfig points at <base>/k8s/<uid> —
+// the real in-memory K8s API server registered to this cluster on Create.
+// When the APIServer isn't wired (Wave 1 fallback), the kubeconfig points
+// at the *-DATAPLANE-NOT-IMPLEMENTED sentinel host instead, so callers in
+// tests can match on it to confirm the data plane is intentionally
+// unimplemented.
+func (m *Mock) Kubeconfig(rg, name string) []byte {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

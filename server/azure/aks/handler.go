@@ -68,7 +68,7 @@ type Backend interface {
 	DeleteMaintenanceConfig(ctx context.Context, rg, cluster, name string) error
 	ListMaintenanceConfigs(ctx context.Context, rg, cluster string) ([]aks.MaintenanceConfig, error)
 
-	StubKubeconfig(rg, name string) []byte
+	Kubeconfig(rg, name string) []byte
 }
 
 // Handler serves Microsoft.ContainerService ARM requests against an AKS Backend.
