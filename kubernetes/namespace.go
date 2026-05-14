@@ -81,6 +81,11 @@ func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
 	ns.Annotations = in.Annotations
 	s.namespaces[in.Name] = ns
 
+	// Real apiserver auto-creates a "default" ServiceAccount in every new
+	// namespace. Mirror that so `kubectl --namespace=<new>` finds an SA.
+	sa := newServiceAccountObject(in.Name, "default")
+	s.serviceAccounts[serviceAccountKey(in.Name, "default")] = sa
+
 	writeJSON(w, http.StatusCreated, ns)
 }
 

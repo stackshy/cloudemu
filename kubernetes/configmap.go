@@ -79,6 +79,7 @@ func (s *ClusterState) serveConfigMapItem(w http.ResponseWriter, r *http.Request
 	}
 }
 
+//nolint:dupl // namespaced-create CRUD pattern; copy-paste is clearer than a generic helper.
 func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, namespace string) {
 	var in corev1.ConfigMap
 	if !readJSON(w, r, &in) {

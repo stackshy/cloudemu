@@ -30,6 +30,9 @@ type ClusterState struct {
 
 	// secrets is namespaced — keyed by "<namespace>/<name>".
 	secrets map[string]*corev1.Secret
+
+	// serviceAccounts is namespaced — keyed by "<namespace>/<name>".
+	serviceAccounts map[string]*corev1.ServiceAccount
 }
 
 // newClusterState returns an empty state with the implicit "default" and
@@ -37,14 +40,20 @@ type ClusterState struct {
 // a fresh real cluster.
 func newClusterState() *ClusterState {
 	s := &ClusterState{
-		namespaces: make(map[string]*corev1.Namespace),
-		configMaps: make(map[string]*corev1.ConfigMap),
-		pods:       make(map[string]*corev1.Pod),
-		secrets:    make(map[string]*corev1.Secret),
+		namespaces:      make(map[string]*corev1.Namespace),
+		configMaps:      make(map[string]*corev1.ConfigMap),
+		pods:            make(map[string]*corev1.Pod),
+		secrets:         make(map[string]*corev1.Secret),
+		serviceAccounts: make(map[string]*corev1.ServiceAccount),
 	}
 
 	for _, name := range []string{"default", "kube-system", "kube-public"} {
 		s.namespaces[name] = newNamespaceObject(name)
+		// Real apiserver auto-creates a "default" ServiceAccount in every
+		// namespace. We do the same so `kubectl get sa default` works in
+		// the bootstrap namespaces.
+		sa := newServiceAccountObject(name, "default")
+		s.serviceAccounts[serviceAccountKey(name, "default")] = sa
 	}
 
 	return s
@@ -71,6 +80,8 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.servePods(w, r, route)
 	case "secrets":
 		s.serveSecrets(w, r, route)
+	case "serviceaccounts":
+		s.serveServiceAccounts(w, r, route)
 	default:
 		writeNotFound(w, "k8s api: resource not implemented: "+route.Resource)
 	}

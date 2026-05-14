@@ -170,6 +170,7 @@ func (s *ClusterState) getPod(w http.ResponseWriter, namespace, name string) {
 	writeJSON(w, http.StatusOK, pod.DeepCopy())
 }
 
+//nolint:dupl // namespaced-update CRUD pattern; copy-paste is clearer than a generic helper.
 func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	var in corev1.Pod
 	if !readJSON(w, r, &in) {
