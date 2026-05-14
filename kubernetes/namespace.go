@@ -231,6 +231,7 @@ func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
 	cascadeDeleteWithEvents(s.serviceAccounts, prefix, name, s.wServiceAccounts)
 	cascadeDeleteWithEvents(s.services, prefix, name, s.wServices)
 	cascadeDeleteWithEvents(s.deployments, prefix, name, s.wDeployments)
+	cascadeDeleteWithEvents(s.endpoints, prefix, name, s.wEndpoints)
 
 	writeJSON(w, http.StatusOK, ns.DeepCopy())
 }

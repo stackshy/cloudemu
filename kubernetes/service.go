@@ -146,7 +146,15 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 
 	svc := in
 	s.services[key] = &svc
+
+	// Auto-create an empty Endpoints stub so kubectl get endpoints returns
+	// rows. Subsets stays nil — no scheduler / Pod IPs in Wave 2.
+	ep := newEndpointsObject(namespace, svc.Name)
+	s.endpoints[endpointsKey(namespace, svc.Name)] = ep
+
 	s.wServices.publish(EventAdded, namespace, *svc.DeepCopy())
+	s.wEndpoints.publish(EventAdded, namespace, *ep.DeepCopy())
+
 	writeJSON(w, http.StatusCreated, &svc)
 }
 
@@ -295,6 +303,14 @@ func (s *ClusterState) deleteService(w http.ResponseWriter, namespace, name stri
 
 	delete(s.services, key)
 	s.wServices.publish(EventDeleted, namespace, *svc.DeepCopy())
+
+	// Tear down the paired Endpoints object so Watch subscribers see it go
+	// away alongside the Service.
+	if ep, ok := s.endpoints[endpointsKey(namespace, name)]; ok {
+		delete(s.endpoints, endpointsKey(namespace, name))
+		s.wEndpoints.publish(EventDeleted, namespace, *ep.DeepCopy())
+	}
+
 	writeJSON(w, http.StatusOK, svc.DeepCopy())
 }
 

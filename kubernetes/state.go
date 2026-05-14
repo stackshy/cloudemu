@@ -41,6 +41,13 @@ type ClusterState struct {
 	// deployments lives under apps/v1 — keyed by "<namespace>/<name>".
 	deployments map[string]*appsv1.Deployment
 
+	// endpoints — keyed by "<namespace>/<name>". Real apiserver populates
+	// Subsets[].Addresses from Pods that match the Service selector via the
+	// endpoints controller. Wave 2 doesn't ship a controller, so endpoints
+	// objects are auto-created (empty) when their backing Service is created
+	// and torn down when it's deleted.
+	endpoints map[string]*corev1.Endpoints
+
 	// nextClusterIP is the monotonic counter used to hand out Service
 	// ClusterIPs from 10.96.0.0/12. Incremented under mu.Lock by
 	// allocateClusterIP. Real apiserver uses an in-memory bitmap; the
@@ -56,6 +63,7 @@ type ClusterState struct {
 	wServiceAccounts *broadcaster
 	wServices        *broadcaster
 	wDeployments     *broadcaster
+	wEndpoints       *broadcaster
 }
 
 // firstClusterIPOffset is the first integer offset above 10.96.0.0 that the
@@ -77,6 +85,7 @@ func newClusterState() *ClusterState {
 		serviceAccounts:  make(map[string]*corev1.ServiceAccount),
 		services:         make(map[string]*corev1.Service),
 		deployments:      make(map[string]*appsv1.Deployment),
+		endpoints:        make(map[string]*corev1.Endpoints),
 		nextClusterIP:    firstClusterIPOffset,
 		wNamespaces:      newBroadcaster(),
 		wConfigMaps:      newBroadcaster(),
@@ -85,6 +94,7 @@ func newClusterState() *ClusterState {
 		wServiceAccounts: newBroadcaster(),
 		wServices:        newBroadcaster(),
 		wDeployments:     newBroadcaster(),
+		wEndpoints:       newBroadcaster(),
 	}
 
 	for _, name := range []string{"default", "kube-system", "kube-public"} {
@@ -126,6 +136,8 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveServices(w, r, route)
 	case "deployments":
 		s.serveDeployments(w, r, route)
+	case "endpoints":
+		s.serveEndpoints(w, r, route)
 	default:
 		writeNotFound(w, "k8s api: resource not implemented: "+route.Resource)
 	}
