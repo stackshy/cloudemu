@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sync"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -24,19 +25,58 @@ type ClusterState struct {
 
 	// configMaps is namespaced — keyed by "<namespace>/<name>".
 	configMaps map[string]*corev1.ConfigMap
+
+	// pods is namespaced — keyed by "<namespace>/<name>".
+	pods map[string]*corev1.Pod
+
+	// secrets is namespaced — keyed by "<namespace>/<name>".
+	secrets map[string]*corev1.Secret
+
+	// serviceAccounts is namespaced — keyed by "<namespace>/<name>".
+	serviceAccounts map[string]*corev1.ServiceAccount
+
+	// services is namespaced — keyed by "<namespace>/<name>".
+	services map[string]*corev1.Service
+
+	// deployments lives under apps/v1 — keyed by "<namespace>/<name>".
+	deployments map[string]*appsv1.Deployment
+
+	// nextClusterIP is the monotonic counter used to hand out Service
+	// ClusterIPs from 10.96.0.0/12. Incremented under mu.Lock by
+	// allocateClusterIP. Real apiserver uses an in-memory bitmap; the
+	// monotonic counter is enough for tests.
+	nextClusterIP uint32
 }
 
-// newClusterState returns an empty state with the implicit "default" and
-// "kube-system" namespaces already present, matching the bootstrap state of
-// a fresh real cluster.
+// firstClusterIPOffset is the first integer offset above 10.96.0.0 that the
+// service ClusterIP allocator hands out (so the first allocated IP is
+// 10.96.0.1). 10.96.0.0/12 is the kubeadm default service CIDR — we keep
+// the same convention so allocations look familiar in tests.
+const firstClusterIPOffset uint32 = 1
+
+// newClusterState returns state pre-populated with the three implicit
+// namespaces (default, kube-system, kube-public) and a "default"
+// ServiceAccount in each, matching the bootstrap state of a fresh real
+// cluster.
 func newClusterState() *ClusterState {
 	s := &ClusterState{
-		namespaces: make(map[string]*corev1.Namespace),
-		configMaps: make(map[string]*corev1.ConfigMap),
+		namespaces:      make(map[string]*corev1.Namespace),
+		configMaps:      make(map[string]*corev1.ConfigMap),
+		pods:            make(map[string]*corev1.Pod),
+		secrets:         make(map[string]*corev1.Secret),
+		serviceAccounts: make(map[string]*corev1.ServiceAccount),
+		services:        make(map[string]*corev1.Service),
+		deployments:     make(map[string]*appsv1.Deployment),
+		nextClusterIP:   firstClusterIPOffset,
 	}
 
 	for _, name := range []string{"default", "kube-system", "kube-public"} {
 		s.namespaces[name] = newNamespaceObject(name)
+		// Real apiserver auto-creates a "default" ServiceAccount in every
+		// namespace. We do the same so `kubectl get sa default` works in
+		// the bootstrap namespaces.
+		sa := newServiceAccountObject(name, "default")
+		s.serviceAccounts[serviceAccountKey(name, "default")] = sa
 	}
 
 	return s
@@ -59,7 +99,17 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveNamespaces(w, r, route)
 	case "configmaps":
 		s.serveConfigMaps(w, r, route)
+	case "pods":
+		s.servePods(w, r, route)
+	case "secrets":
+		s.serveSecrets(w, r, route)
+	case "serviceaccounts":
+		s.serveServiceAccounts(w, r, route)
+	case "services":
+		s.serveServices(w, r, route)
+	case "deployments":
+		s.serveDeployments(w, r, route)
 	default:
-		writeNotFound(w, "k8s api: resource not implemented in Wave 2 Phase 1: "+route.Resource)
+		writeNotFound(w, "k8s api: resource not implemented: "+route.Resource)
 	}
 }

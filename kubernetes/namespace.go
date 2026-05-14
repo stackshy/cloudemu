@@ -81,6 +81,11 @@ func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
 	ns.Annotations = in.Annotations
 	s.namespaces[in.Name] = ns
 
+	// Real apiserver auto-creates a "default" ServiceAccount in every new
+	// namespace. Mirror that so `kubectl --namespace=<new>` finds an SA.
+	sa := newServiceAccountObject(in.Name, "default")
+	s.serviceAccounts[serviceAccountKey(in.Name, "default")] = sa
+
 	writeJSON(w, http.StatusCreated, ns)
 }
 
@@ -191,15 +196,30 @@ func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
 
 	delete(s.namespaces, name)
 
-	// Cascading delete: drop any namespaced resources that lived inside.
+	// Cascading delete: drop every namespaced resource keyed under this
+	// namespace. Real apiserver does this via finalizers + garbage
+	// collection; we collapse it into a synchronous sweep because tests
+	// don't observe partial states.
 	prefix := name + "/"
-	for k := range s.configMaps {
-		if strings.HasPrefix(k, prefix) {
-			delete(s.configMaps, k)
-		}
-	}
+	deletePrefixedKeysFrom(s.configMaps, prefix)
+	deletePrefixedKeysFrom(s.pods, prefix)
+	deletePrefixedKeysFrom(s.secrets, prefix)
+	deletePrefixedKeysFrom(s.serviceAccounts, prefix)
+	deletePrefixedKeysFrom(s.services, prefix)
+	deletePrefixedKeysFrom(s.deployments, prefix)
 
 	writeJSON(w, http.StatusOK, ns.DeepCopy())
+}
+
+// deletePrefixedKeysFrom drops every entry in m whose key starts with prefix.
+// Used by deleteNamespace to cascade across the per-resource maps without
+// repeating the loop body for each one.
+func deletePrefixedKeysFrom[V any](m map[string]*V, prefix string) {
+	for k := range m {
+		if strings.HasPrefix(k, prefix) {
+			delete(m, k)
+		}
+	}
 }
 
 // newNamespaceObject builds a fresh Namespace with the implicit fields a
