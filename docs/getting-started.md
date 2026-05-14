@@ -10,7 +10,7 @@ Requires Go 1.25.0 or later.
 
 ## Creating Providers
 
-CloudEmu provides three top-level factory functions, one per cloud provider. Each returns a provider struct with all 16 services ready to use.
+CloudEmu provides three top-level factory functions, one per cloud provider. Each returns a provider struct with every supported service ready to use.
 
 ### AWS
 
@@ -27,11 +27,12 @@ func main() {
     ctx := context.Background()
     aws := cloudemu.NewAWS()
 
-    // All 16 services are available:
+    // All services are available, e.g.:
     // aws.S3, aws.EC2, aws.DynamoDB, aws.Lambda, aws.VPC,
     // aws.CloudWatch, aws.IAM, aws.Route53, aws.ELB, aws.SQS,
     // aws.ElastiCache, aws.SecretsManager, aws.CloudWatchLogs,
-    // aws.SNS, aws.ECR, aws.EventBridge
+    // aws.SNS, aws.ECR, aws.EventBridge,
+    // aws.RDS, aws.Redshift, aws.EKS
     _ = ctx
 }
 ```
