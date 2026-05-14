@@ -72,7 +72,7 @@ func (h *Handler) getCluster(w http.ResponseWriter, r *http.Request, p *gkePath)
 
 	pools, _ := h.gke.ListNodePools(r.Context(), p.location, p.name)
 
-	writeJSON(w, http.StatusOK, toClusterResource(c, p.project, pools))
+	writeJSON(w, http.StatusOK, toClusterResource(c, p.project, h.gke.Endpoint(p.location, p.name), pools))
 }
 
 func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, p *gkePath) {
@@ -86,7 +86,8 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, p *gkePat
 
 	for i := range clusters {
 		pools, _ := h.gke.ListNodePools(r.Context(), clusters[i].Location, clusters[i].Name)
-		out.Clusters = append(out.Clusters, toClusterResource(&clusters[i], p.project, pools))
+		endpoint := h.gke.Endpoint(clusters[i].Location, clusters[i].Name)
+		out.Clusters = append(out.Clusters, toClusterResource(&clusters[i], p.project, endpoint, pools))
 	}
 
 	writeJSON(w, http.StatusOK, out)

@@ -170,10 +170,11 @@ type gkeOperation struct {
 	SelfLink      string `json:"selfLink,omitempty"`
 }
 
-// toClusterResource converts a provider Cluster into the wire shape, populating
-// the Wave-1 stub Endpoint and CA certificate so SDK consumers see a complete
-// envelope. The endpoint hostname encodes that the data-plane is a stub.
-func toClusterResource(c *gke.Cluster, project string, pools []gke.NodePool) gkeCluster {
+// toClusterResource converts a provider Cluster into the wire shape. The
+// endpoint argument is what the Mock reported via Endpoint(location, name) —
+// either the in-memory K8s data-plane URL when Wave 2 is wired, or the
+// "https://GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local" sentinel.
+func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.NodePool) gkeCluster {
 	out := gkeCluster{
 		Name:              c.Name,
 		Description:       c.Description,
@@ -186,7 +187,7 @@ func toClusterResource(c *gke.Cluster, project string, pools []gke.NodePool) gke
 		ResourceLabels:    c.ResourceLabels,
 		NodeIpv4CIDRSize:  c.NodeIPv4CIDRSize,
 		ClusterIpv4Cidr:   c.ClusterIPv4CIDR,
-		Endpoint:          gke.StubEndpoint,
+		Endpoint:          endpoint,
 		MasterAuth: &gkeMasterAuth{
 			Username:             c.MasterUsername,
 			ClusterCaCertificate: gke.StubCACert,
