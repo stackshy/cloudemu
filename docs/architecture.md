@@ -79,7 +79,7 @@ Each provider has a factory function (`New()`) in its top-level package (`provid
 
 1. Accepts functional `config.Option` values for configuration (clock, region, account ID, etc.)
 2. Creates `config.Options` from the functional options
-3. Instantiates all 16 service mocks, passing the shared options to each
+3. Instantiates every service mock, passing the shared options to each
 4. Wires cross-service dependencies (e.g., compute to monitoring)
 5. Returns the `Provider` struct with all services accessible as public fields
 
@@ -89,7 +89,7 @@ aws := cloudemu.NewAWS(
     config.WithAccountID("123456789012"),
 )
 
-// All 16 services are ready to use
+// All services are ready to use
 aws.S3.CreateBucket(ctx, "my-bucket")
 aws.EC2.RunInstances(ctx, instanceConfig, 1)
 aws.DynamoDB.CreateTable(ctx, tableConfig)
@@ -169,9 +169,13 @@ containerregistry/
     driver/driver.go                  # ContainerRegistry interface
 eventbus/
     driver/driver.go                  # EventBus interface
+relationaldb/
+    driver/driver.go                  # Relational DB interface (RDS, Aurora, Neptune,
+                                      # DocumentDB, Redshift, Azure SQL, Postgres/MySQL
+                                      # Flexible Server, Cloud SQL)
 providers/
     aws/
-        aws.go                        # AWS factory (wires all 16 services)
+        aws.go                        # AWS factory (wires all services)
         s3/                           # S3 mock
         ec2/                          # EC2 mock
         dynamodb/                     # DynamoDB mock
@@ -188,8 +192,12 @@ providers/
         sns/                          # SNS mock
         ecr/                          # ECR mock
         eventbridge/                  # EventBridge mock
+        rds/                          # RDS mock (Aurora + Neptune + DocumentDB engines)
+        redshift/                     # Redshift mock
+        eks/                          # EKS control-plane mock (clusters, node groups,
+                                      # Fargate profiles, addons)
     azure/
-        azure.go                      # Azure factory (wires all 16 services)
+        azure.go                      # Azure factory (wires all services)
         blobstorage/                  # Blob Storage mock
         virtualmachines/              # Virtual Machines mock
         cosmosdb/                     # Cosmos DB mock
@@ -206,8 +214,13 @@ providers/
         notificationhubs/             # Notification Hubs mock
         acr/                          # ACR mock
         eventgrid/                    # Event Grid mock
+        azuresql/                     # Azure SQL Database mock
+        postgresflex/                 # Azure PostgreSQL Flexible Server mock
+        mysqlflex/                    # Azure MySQL Flexible Server mock
+        aks/                          # AKS control-plane mock (managed clusters,
+                                      # agent pools, maintenance configs)
     gcp/
-        gcp.go                        # GCP factory (wires all 16 services)
+        gcp.go                        # GCP factory (wires all services)
         gcs/                          # GCS mock
         gce/                          # GCE mock
         firestore/                    # Firestore mock
@@ -224,6 +237,9 @@ providers/
         fcm/                          # FCM mock
         artifactregistry/             # Artifact Registry mock
         eventarc/                     # Eventarc mock
+        cloudsql/                     # Cloud SQL mock
+        gke/                          # GKE control-plane mock (clusters, node pools,
+                                      # operations)
 server/                               # SDK-compat HTTP servers (real cloud SDKs work against this)
     server.go                         # core: Handler interface + dispatcher
     wire/
@@ -236,12 +252,18 @@ server/                               # SDK-compat HTTP servers (real cloud SDKs
         s3/  ec2/  dynamodb/          # S3 REST+XML, EC2 query, DynamoDB JSON-RPC
         cloudwatch/                   # Smithy rpc-v2-cbor
         lambda/  sqs/                 # REST + JSON-RPC handlers
+        rds/  redshift/               # query-protocol relational DB handlers
+        eks/                          # REST EKS control-plane handler
     azure/
         azure.go                      # azureserver.New(Drivers{...})
         virtualmachines/  disks/  snapshots/  images/  sshpublickeys/
         blob/  cosmos/  network/  monitor/  functions/  servicebus/
+        azuresql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
+        aks/                          # ARM AKS control-plane handler
     gcp/
         gcp.go                        # gcpserver.New(Drivers{...})
         compute/  networks/  gcs/  firestore/  monitoring/
         cloudfunctions/  pubsub/
+        cloudsql/                     # REST Cloud SQL handler
+        gke/                          # REST GKE control-plane handler
 ```
