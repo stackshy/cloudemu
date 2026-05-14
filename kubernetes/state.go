@@ -33,7 +33,22 @@ type ClusterState struct {
 
 	// serviceAccounts is namespaced — keyed by "<namespace>/<name>".
 	serviceAccounts map[string]*corev1.ServiceAccount
+
+	// services is namespaced — keyed by "<namespace>/<name>".
+	services map[string]*corev1.Service
+
+	// nextClusterIP is the monotonic counter used to hand out Service
+	// ClusterIPs from 10.96.0.0/12. Incremented under mu.Lock by
+	// allocateClusterIP. Real apiserver uses an in-memory bitmap; the
+	// monotonic counter is enough for tests.
+	nextClusterIP uint32
 }
+
+// firstClusterIPOffset is the first integer offset above 10.96.0.0 that the
+// service ClusterIP allocator hands out (so the first allocated IP is
+// 10.96.0.1). 10.96.0.0/12 is the kubeadm default service CIDR — we keep
+// the same convention so allocations look familiar in tests.
+const firstClusterIPOffset uint32 = 1
 
 // newClusterState returns an empty state with the implicit "default" and
 // "kube-system" namespaces already present, matching the bootstrap state of
@@ -45,6 +60,8 @@ func newClusterState() *ClusterState {
 		pods:            make(map[string]*corev1.Pod),
 		secrets:         make(map[string]*corev1.Secret),
 		serviceAccounts: make(map[string]*corev1.ServiceAccount),
+		services:        make(map[string]*corev1.Service),
+		nextClusterIP:   firstClusterIPOffset,
 	}
 
 	for _, name := range []string{"default", "kube-system", "kube-public"} {
@@ -82,6 +99,8 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveSecrets(w, r, route)
 	case "serviceaccounts":
 		s.serveServiceAccounts(w, r, route)
+	case "services":
+		s.serveServices(w, r, route)
 	default:
 		writeNotFound(w, "k8s api: resource not implemented: "+route.Resource)
 	}
