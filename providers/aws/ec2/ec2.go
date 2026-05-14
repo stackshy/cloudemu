@@ -29,6 +29,12 @@ type lifecycleTransition struct {
 	finalState        string
 	metricValues      []float64
 	errVerb           string
+	// idempotentStates are states where the operation is a no-op rather than
+	// an error. Real AWS EC2 documents StartInstances on a running instance
+	// and StopInstances on a stopped instance as idempotent — they return
+	// 200 with currentState equal to previousState rather than
+	// IncorrectInstanceState.
+	idempotentStates []string
 }
 
 var (
@@ -40,12 +46,14 @@ var (
 		finalState:        compute.StateRunning,
 		metricValues:      runningMetricValues,
 		errVerb:           "start",
+		idempotentStates:  []string{compute.StateRunning, compute.StatePending},
 	}
 	stopTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateStopping,
 		finalState:        compute.StateStopped,
 		metricValues:      zeroMetricValues,
 		errVerb:           "stop",
+		idempotentStates:  []string{compute.StateStopped, compute.StateStopping},
 	}
 	rebootTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState: compute.StateRestarting,
@@ -234,11 +242,19 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	return results, nil
 }
 
+//nolint:gocritic // t is a small read-only config; copying once per call is fine.
 func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t lifecycleTransition) error {
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
 			return cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
+		}
+
+		// Real AWS EC2 documents Start/Stop as idempotent on the target
+		// state. Skip the state machine and return success without changing
+		// state when we're already there.
+		if isIdempotent(inst.State, t.idempotentStates) {
+			continue
 		}
 
 		if err := m.sm.Transition(id, t.intermediateState); err != nil {
@@ -253,6 +269,16 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 	}
 
 	return nil
+}
+
+func isIdempotent(state string, idempotentStates []string) bool {
+	for _, s := range idempotentStates {
+		if state == s {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Mock) StartInstances(ctx context.Context, instanceIDs []string) error {

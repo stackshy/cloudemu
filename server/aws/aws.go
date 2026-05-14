@@ -12,11 +12,16 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
+	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
+	"github.com/stackshy/cloudemu/server/aws/eks"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
+	"github.com/stackshy/cloudemu/server/aws/rds"
+	"github.com/stackshy/cloudemu/server/aws/redshift"
 	"github.com/stackshy/cloudemu/server/aws/s3"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
@@ -34,6 +39,9 @@ type Drivers struct {
 	CloudWatch mondriver.Monitoring
 	Lambda     sdrv.Serverless
 	SQS        mqdriver.MessageQueue
+	RDS        rdbdriver.RelationalDB
+	Redshift   rdbdriver.RelationalDB
+	EKS        eksdriver.EKS
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -42,6 +50,9 @@ type Drivers struct {
 //
 //   - CloudWatch matches on Smithy-Protocol: rpc-v2-cbor header.
 //   - DynamoDB matches on X-Amz-Target header (JSON-RPC).
+//   - RDS matches form-encoded POSTs whose Action is one of the known RDS
+//     operations. It must register before EC2 because both speak the AWS
+//     query protocol on the same content type.
 //   - EC2 matches on Action= (form-encoded POST or query string). The EC2
 //     handler also serves VPC and Auto Scaling ops since real AWS uses the
 //     same query-protocol endpoint for all of them.
@@ -51,7 +62,7 @@ type Drivers struct {
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
 //
-//nolint:gocritic // Drivers is all interface fields (pointer-width); by-value
+//nolint:gocritic,gocyclo // Drivers is by-value for ergonomics; the dispatch is one if-per-driver and grows with the bundle.
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
@@ -70,12 +81,36 @@ func New(d Drivers) *server.Server {
 		srv.Register(sqs.New(d.SQS))
 	}
 
+	// RDS must be registered before EC2: both speak AWS query-protocol on
+	// POST + form-encoded bodies, and Server matches in registration order.
+	// RDS's Matches is action-specific, so a request bound for EC2 will fall
+	// through to the EC2 handler unchanged.
+	if d.RDS != nil {
+		srv.Register(rds.New(d.RDS))
+	}
+
+	// Redshift sits between RDS and EC2 in the query-protocol pecking order.
+	// Its action set (CreateCluster, DescribeClusters, …) is disjoint from
+	// RDS's (CreateDBInstance, …) and from EC2's (RunInstances, …), so no
+	// shadowing occurs.
+	if d.Redshift != nil {
+		srv.Register(redshift.New(d.Redshift))
+	}
+
 	if d.EC2 != nil || d.VPC != nil {
 		srv.Register(ec2.New(d.EC2, d.VPC))
 	}
 
 	if d.Lambda != nil {
 		srv.Register(lambda.New(d.Lambda))
+	}
+
+	// EKS is a REST/JSON service rooted at /clusters. It must register
+	// before S3 because S3 is the permissive REST fallback that would
+	// otherwise claim the same path. EKS's Matches predicate is rooted
+	// at /clusters specifically so it doesn't shadow other REST URLs.
+	if d.EKS != nil {
+		srv.Register(eks.New(d.EKS))
 	}
 
 	if d.S3 != nil {

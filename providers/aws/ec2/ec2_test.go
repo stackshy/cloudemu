@@ -129,8 +129,29 @@ func TestStartInstances(t *testing.T) {
 		assertEqual(t, compute.StateRunning, result[0].State)
 	})
 
+	t.Run("idempotent on already running", func(t *testing.T) {
+		// Real AWS EC2 returns 200 OK with currentState=running when
+		// StartInstances is called on an already-running instance.
+		err := m.StartInstances(ctx, []string{id})
+		requireNoError(t, err)
+
+		result, _ := m.DescribeInstances(ctx, []string{id}, nil)
+		assertEqual(t, compute.StateRunning, result[0].State)
+	})
+
 	t.Run("not found", func(t *testing.T) {
 		err := m.StartInstances(ctx, []string{"i-nonexistent"})
+		assertError(t, err, true)
+	})
+
+	t.Run("rejects start on terminated", func(t *testing.T) {
+		// Real AWS rejects starting a terminated instance —
+		// the strict-state behavior is intentional here.
+		instances, _ := m.RunInstances(ctx, defaultConfig(), 1)
+		termID := instances[0].ID
+		_ = m.TerminateInstances(ctx, []string{termID})
+
+		err := m.StartInstances(ctx, []string{termID})
 		assertError(t, err, true)
 	})
 }
@@ -150,8 +171,24 @@ func TestStopInstances(t *testing.T) {
 		assertEqual(t, compute.StateStopped, result[0].State)
 	})
 
-	t.Run("cannot stop already stopped", func(t *testing.T) {
+	t.Run("idempotent on already stopped", func(t *testing.T) {
+		// Real AWS EC2 returns 200 OK with currentState=stopped when
+		// StopInstances is called on an already-stopped instance.
 		err := m.StopInstances(ctx, []string{id})
+		requireNoError(t, err)
+
+		result, _ := m.DescribeInstances(ctx, []string{id}, nil)
+		assertEqual(t, compute.StateStopped, result[0].State)
+	})
+
+	t.Run("rejects stop on terminated", func(t *testing.T) {
+		// Real AWS rejects stopping a terminated instance —
+		// strict-state behavior is intentional here.
+		instances, _ := m.RunInstances(ctx, defaultConfig(), 1)
+		termID := instances[0].ID
+		_ = m.TerminateInstances(ctx, []string{termID})
+
+		err := m.StopInstances(ctx, []string{termID})
 		assertError(t, err, true)
 	})
 }

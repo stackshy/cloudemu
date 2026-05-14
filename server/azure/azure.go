@@ -12,14 +12,19 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/server"
+	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
+	"github.com/stackshy/cloudemu/server/azure/azuresql"
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/functions"
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
+	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/server/azure/network"
+	"github.com/stackshy/cloudemu/server/azure/postgresflex"
 	"github.com/stackshy/cloudemu/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
@@ -47,6 +52,10 @@ type Drivers struct {
 	Monitor         mondriver.Monitoring
 	Functions       sdrv.Serverless
 	ServiceBus      mqdriver.MessageQueue
+	SQL             rdbdriver.RelationalDB
+	PostgresFlex    rdbdriver.RelationalDB
+	MySQLFlex       rdbdriver.RelationalDB
+	AKS             aksserver.Backend
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -100,6 +109,31 @@ func New(d Drivers) *server.Server {
 
 	if d.ServiceBus != nil {
 		srv.Register(servicebus.New(d.ServiceBus))
+	}
+
+	// Microsoft.Sql provider — distinct ARM provider name from compute and
+	// network so registration order is unconstrained.
+	if d.SQL != nil {
+		srv.Register(azuresql.New(d.SQL))
+	}
+
+	// Postgres Flex matches on a distinct provider name
+	// (Microsoft.DBforPostgreSQL) so registration order is unconstrained.
+	if d.PostgresFlex != nil {
+		srv.Register(postgresflex.New(d.PostgresFlex))
+	}
+
+	// MySQL Flex matches on Microsoft.DBforMySQL provider — distinct from
+	// Postgres Flex and SQL, so registration order is unconstrained.
+	if d.MySQLFlex != nil {
+		srv.Register(mysqlflex.New(d.MySQLFlex))
+	}
+
+	// AKS matches on Microsoft.ContainerService provider — distinct ARM
+	// provider name from compute / network / database, so registration order
+	// is unconstrained.
+	if d.AKS != nil {
+		srv.Register(aksserver.New(d.AKS))
 	}
 
 	if d.VirtualMachines != nil {
