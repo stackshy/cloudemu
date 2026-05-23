@@ -682,6 +682,80 @@ func TestDynamoDBMetricsEmission(t *testing.T) {
 	})
 }
 
+func TestTagging(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("tag and list", func(t *testing.T) {
+		m := newTestMock()
+		createTestTable(m, "tbl")
+
+		err := m.TagResource(ctx, "tbl", map[string]string{"env": "prod", "team": "data"})
+		requireNoError(t, err)
+
+		got, err := m.ListTagsOfResource(ctx, "tbl")
+		requireNoError(t, err)
+		assertEqual(t, 2, len(got))
+		assertEqual(t, "prod", got["env"])
+		assertEqual(t, "data", got["team"])
+	})
+
+	t.Run("tag merges with existing", func(t *testing.T) {
+		m := newTestMock()
+		createTestTable(m, "tbl")
+
+		requireNoError(t, m.TagResource(ctx, "tbl", map[string]string{"env": "stage", "owner": "alice"}))
+		requireNoError(t, m.TagResource(ctx, "tbl", map[string]string{"env": "prod", "team": "data"}))
+
+		got, err := m.ListTagsOfResource(ctx, "tbl")
+		requireNoError(t, err)
+		assertEqual(t, 3, len(got))
+		assertEqual(t, "prod", got["env"])
+		assertEqual(t, "alice", got["owner"])
+		assertEqual(t, "data", got["team"])
+	})
+
+	t.Run("untag removes keys", func(t *testing.T) {
+		m := newTestMock()
+		createTestTable(m, "tbl")
+
+		requireNoError(t, m.TagResource(ctx, "tbl", map[string]string{"env": "prod", "team": "data"}))
+		requireNoError(t, m.UntagResource(ctx, "tbl", []string{"env", "missing"}))
+
+		got, err := m.ListTagsOfResource(ctx, "tbl")
+		requireNoError(t, err)
+		assertEqual(t, 1, len(got))
+		assertEqual(t, "data", got["team"])
+	})
+
+	t.Run("list returns copy", func(t *testing.T) {
+		m := newTestMock()
+		createTestTable(m, "tbl")
+		requireNoError(t, m.TagResource(ctx, "tbl", map[string]string{"env": "prod"}))
+
+		got, err := m.ListTagsOfResource(ctx, "tbl")
+		requireNoError(t, err)
+
+		got["env"] = "mutated"
+
+		fresh, err := m.ListTagsOfResource(ctx, "tbl")
+		requireNoError(t, err)
+		assertEqual(t, "prod", fresh["env"])
+	})
+
+	t.Run("missing table errors", func(t *testing.T) {
+		m := newTestMock()
+
+		err := m.TagResource(ctx, "nope", map[string]string{"k": "v"})
+		assertError(t, err, true)
+
+		err = m.UntagResource(ctx, "nope", []string{"k"})
+		assertError(t, err, true)
+
+		_, err = m.ListTagsOfResource(ctx, "nope")
+		assertError(t, err, true)
+	})
+}
+
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

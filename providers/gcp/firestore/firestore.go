@@ -50,6 +50,7 @@ type collectionData struct {
 	streamConfig  driver.StreamConfig
 	streamRecords []driver.StreamRecord
 	seqCounter    atomic.Int64
+	labels        map[string]string
 }
 
 // Mock is an in-memory mock implementation of Google Cloud Firestore.
@@ -863,4 +864,64 @@ func (m *Mock) ListIndexes(_ context.Context, table string) ([]driver.IndexInfo,
 	}
 
 	return indexes, nil
+}
+
+// TagResource sets or replaces label key/values on a collection. GCP terms
+// these "labels"; the cross-cloud driver interface calls the method TagResource.
+// Existing labels not present in tags are preserved; existing labels present
+// in tags are overwritten.
+func (m *Mock) TagResource(_ context.Context, table string, tags map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	if cd.labels == nil {
+		cd.labels = make(map[string]string, len(tags))
+	}
+
+	for k, v := range tags {
+		cd.labels[k] = v
+	}
+
+	return nil
+}
+
+// UntagResource removes the given label keys from a collection. Unknown keys
+// are ignored.
+func (m *Mock) UntagResource(_ context.Context, table string, tagKeys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	for _, k := range tagKeys {
+		delete(cd.labels, k)
+	}
+
+	return nil
+}
+
+// ListTagsOfResource returns a copy of the label map for a collection.
+func (m *Mock) ListTagsOfResource(_ context.Context, table string) (map[string]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cd, exists := m.collections[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "collection %s not found", table)
+	}
+
+	out := make(map[string]string, len(cd.labels))
+	for k, v := range cd.labels {
+		out[k] = v
+	}
+
+	return out, nil
 }

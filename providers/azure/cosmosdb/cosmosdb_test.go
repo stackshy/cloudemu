@@ -891,3 +891,71 @@ func TestUpdateItemEmitsMetrics(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, mon.hasMetric("Microsoft.DocumentDB/databaseAccounts", "TotalRequests"))
 }
+
+func TestTagging(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("tag and list", func(t *testing.T) {
+		m := newTestMock()
+		createTestTable(t, m)
+
+		require.NoError(t, m.TagResource(ctx, "users", map[string]string{"env": "prod", "team": "data"}))
+
+		got, err := m.ListTagsOfResource(ctx, "users")
+		require.NoError(t, err)
+		assert.Equal(t, "prod", got["env"])
+		assert.Equal(t, "data", got["team"])
+		assert.Len(t, got, 2)
+	})
+
+	t.Run("tag merges with existing", func(t *testing.T) {
+		m := newTestMock()
+		createTestTable(t, m)
+
+		require.NoError(t, m.TagResource(ctx, "users", map[string]string{"env": "stage", "owner": "alice"}))
+		require.NoError(t, m.TagResource(ctx, "users", map[string]string{"env": "prod", "team": "data"}))
+
+		got, err := m.ListTagsOfResource(ctx, "users")
+		require.NoError(t, err)
+		assert.Len(t, got, 3)
+		assert.Equal(t, "prod", got["env"])
+		assert.Equal(t, "alice", got["owner"])
+		assert.Equal(t, "data", got["team"])
+	})
+
+	t.Run("untag removes keys", func(t *testing.T) {
+		m := newTestMock()
+		createTestTable(t, m)
+
+		require.NoError(t, m.TagResource(ctx, "users", map[string]string{"env": "prod", "team": "data"}))
+		require.NoError(t, m.UntagResource(ctx, "users", []string{"env", "missing"}))
+
+		got, err := m.ListTagsOfResource(ctx, "users")
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+		assert.Equal(t, "data", got["team"])
+	})
+
+	t.Run("list returns copy", func(t *testing.T) {
+		m := newTestMock()
+		createTestTable(t, m)
+		require.NoError(t, m.TagResource(ctx, "users", map[string]string{"env": "prod"}))
+
+		got, err := m.ListTagsOfResource(ctx, "users")
+		require.NoError(t, err)
+		got["env"] = "mutated"
+
+		fresh, err := m.ListTagsOfResource(ctx, "users")
+		require.NoError(t, err)
+		assert.Equal(t, "prod", fresh["env"])
+	})
+
+	t.Run("missing container errors", func(t *testing.T) {
+		m := newTestMock()
+
+		require.Error(t, m.TagResource(ctx, "nope", map[string]string{"k": "v"}))
+		require.Error(t, m.UntagResource(ctx, "nope", []string{"k"}))
+		_, err := m.ListTagsOfResource(ctx, "nope")
+		require.Error(t, err)
+	})
+}

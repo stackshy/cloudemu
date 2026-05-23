@@ -1163,3 +1163,75 @@ func TestUpdateItemEmitsMetrics(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, mon.data["firestore.googleapis.com/document/write_count"])
 }
+
+func TestTagging(t *testing.T) {
+	ctx := context.Background()
+
+	createColl := func(m *Mock, name string) {
+		require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: name, PartitionKey: "pk"}))
+	}
+
+	t.Run("tag and list", func(t *testing.T) {
+		m := newTestMock()
+		createColl(m, "coll")
+
+		require.NoError(t, m.TagResource(ctx, "coll", map[string]string{"env": "prod", "team": "data"}))
+
+		got, err := m.ListTagsOfResource(ctx, "coll")
+		require.NoError(t, err)
+		assert.Len(t, got, 2)
+		assert.Equal(t, "prod", got["env"])
+		assert.Equal(t, "data", got["team"])
+	})
+
+	t.Run("tag merges with existing", func(t *testing.T) {
+		m := newTestMock()
+		createColl(m, "coll")
+
+		require.NoError(t, m.TagResource(ctx, "coll", map[string]string{"env": "stage", "owner": "alice"}))
+		require.NoError(t, m.TagResource(ctx, "coll", map[string]string{"env": "prod", "team": "data"}))
+
+		got, err := m.ListTagsOfResource(ctx, "coll")
+		require.NoError(t, err)
+		assert.Len(t, got, 3)
+		assert.Equal(t, "prod", got["env"])
+		assert.Equal(t, "alice", got["owner"])
+		assert.Equal(t, "data", got["team"])
+	})
+
+	t.Run("untag removes keys", func(t *testing.T) {
+		m := newTestMock()
+		createColl(m, "coll")
+
+		require.NoError(t, m.TagResource(ctx, "coll", map[string]string{"env": "prod", "team": "data"}))
+		require.NoError(t, m.UntagResource(ctx, "coll", []string{"env", "missing"}))
+
+		got, err := m.ListTagsOfResource(ctx, "coll")
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+		assert.Equal(t, "data", got["team"])
+	})
+
+	t.Run("list returns copy", func(t *testing.T) {
+		m := newTestMock()
+		createColl(m, "coll")
+		require.NoError(t, m.TagResource(ctx, "coll", map[string]string{"env": "prod"}))
+
+		got, err := m.ListTagsOfResource(ctx, "coll")
+		require.NoError(t, err)
+		got["env"] = "mutated"
+
+		fresh, err := m.ListTagsOfResource(ctx, "coll")
+		require.NoError(t, err)
+		assert.Equal(t, "prod", fresh["env"])
+	})
+
+	t.Run("missing collection errors", func(t *testing.T) {
+		m := newTestMock()
+
+		require.Error(t, m.TagResource(ctx, "nope", map[string]string{"k": "v"}))
+		require.Error(t, m.UntagResource(ctx, "nope", []string{"k"}))
+		_, err := m.ListTagsOfResource(ctx, "nope")
+		require.Error(t, err)
+	})
+}
