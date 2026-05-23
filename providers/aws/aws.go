@@ -22,29 +22,31 @@ import (
 	"github.com/stackshy/cloudemu/providers/aws/sns"
 	"github.com/stackshy/cloudemu/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/providers/aws/vpc"
+	"github.com/stackshy/cloudemu/resourcediscovery"
 )
 
 // Provider holds all AWS mock services.
 type Provider struct {
-	S3             *s3.Mock
-	EC2            *ec2.Mock
-	DynamoDB       *dynamodb.Mock
-	Lambda         *lambda.Mock
-	VPC            *vpc.Mock
-	CloudWatch     *cloudwatch.Mock
-	IAM            *awsiam.Mock
-	Route53        *route53.Mock
-	ELB            *elb.Mock
-	SQS            *sqs.Mock
-	ElastiCache    *elasticache.Mock
-	SecretsManager *secretsmanager.Mock
-	CloudWatchLogs *cloudwatchlogs.Mock
-	SNS            *sns.Mock
-	ECR            *ecr.Mock
-	EventBridge    *eventbridge.Mock
-	RDS            *rds.Mock
-	Redshift       *redshift.Mock
-	EKS            *eks.Mock
+	S3                *s3.Mock
+	EC2               *ec2.Mock
+	DynamoDB          *dynamodb.Mock
+	Lambda            *lambda.Mock
+	VPC               *vpc.Mock
+	CloudWatch        *cloudwatch.Mock
+	IAM               *awsiam.Mock
+	Route53           *route53.Mock
+	ELB               *elb.Mock
+	SQS               *sqs.Mock
+	ElastiCache       *elasticache.Mock
+	SecretsManager    *secretsmanager.Mock
+	CloudWatchLogs    *cloudwatchlogs.Mock
+	SNS               *sns.Mock
+	ECR               *ecr.Mock
+	EventBridge       *eventbridge.Mock
+	RDS               *rds.Mock
+	Redshift          *redshift.Mock
+	EKS               *eks.Mock
+	ResourceDiscovery *resourcediscovery.Engine
 }
 
 // New creates a new AWS provider with all mock services.
@@ -84,6 +86,17 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetMonitoring(p.CloudWatch)
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
+
+	p.ResourceDiscovery = resourcediscovery.New(
+		resourcediscovery.ProviderAWS, o.AccountID, o.Region,
+		&resourcediscovery.Drivers{
+			Compute:    p.EC2,
+			Networking: p.VPC,
+			Storage:    p.S3,
+			Database:   p.DynamoDB,
+			Serverless: p.Lambda,
+		},
+	)
 
 	return p
 }
