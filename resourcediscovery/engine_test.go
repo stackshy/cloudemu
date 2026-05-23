@@ -2,6 +2,7 @@ package resourcediscovery
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	"github.com/stackshy/cloudemu/config"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	cerrors "github.com/stackshy/cloudemu/errors"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	"github.com/stackshy/cloudemu/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/providers/aws/ec2"
@@ -16,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/aws/s3"
 	"github.com/stackshy/cloudemu/providers/aws/vpc"
 	serverlessdriver "github.com/stackshy/cloudemu/serverless/driver"
+	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -262,4 +265,107 @@ func groupByType(rs []Resource) map[string][]Resource {
 		out[r.Type] = append(out[r.Type], r)
 	}
 	return out
+}
+
+// failingDatabase wraps a real Database driver and forces ListTables (or
+// ListTagsOfResource, if set) to return the supplied error. All other
+// methods delegate to the embedded interface.
+type failingDatabase struct {
+	dbdriver.Database
+	listErr    error
+	listTagErr error
+}
+
+func (f *failingDatabase) ListTables(ctx context.Context) ([]string, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.Database.ListTables(ctx)
+}
+
+func (f *failingDatabase) ListTagsOfResource(ctx context.Context, table string) (map[string]string, error) {
+	if f.listTagErr != nil {
+		return nil, f.listTagErr
+	}
+	return f.Database.ListTagsOfResource(ctx, table)
+}
+
+// failingStorage wraps a real Storage driver and forces GetBucketTagging
+// to return the supplied error.
+type failingStorage struct {
+	storagedriver.Bucket
+	tagErr error
+}
+
+func (f *failingStorage) GetBucketTagging(ctx context.Context, bucket string) (map[string]string, error) {
+	if f.tagErr != nil {
+		return nil, f.tagErr
+	}
+	return f.Bucket.GetBucketTagging(ctx, bucket)
+}
+
+func TestWalkerErrorPropagation(t *testing.T) {
+	ctx := context.Background()
+
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
+
+	t.Run("ListTables error wraps with walker name", func(t *testing.T) {
+		sentinel := errors.New("listtables blew up")
+		db := &failingDatabase{Database: dynamodb.New(opts), listErr: sentinel}
+
+		eng := New(ProviderAWS, "acct", "us-east-1", &Drivers{Database: db})
+		_, err := eng.ListAll(ctx)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, sentinel, "sentinel should propagate via %%w")
+		assert.Contains(t, err.Error(), "walkDatabase", "error should be wrapped with walker name")
+	})
+
+	t.Run("non-NotFound tag-lookup error propagates", func(t *testing.T) {
+		sentinel := errors.New("tagging service unavailable")
+
+		realDB := dynamodb.New(opts)
+		require.NoError(t, realDB.CreateTable(ctx, dbdriver.TableConfig{Name: "t1", PartitionKey: "pk"}))
+
+		db := &failingDatabase{Database: realDB, listTagErr: sentinel}
+		eng := New(ProviderAWS, "acct", "us-east-1", &Drivers{Database: db})
+
+		_, err := eng.ListAll(ctx)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, sentinel)
+		assert.Contains(t, err.Error(), `"t1"`, "error should name the resource that failed")
+	})
+
+	t.Run("NotFound tag-lookup is treated as race and resource is skipped", func(t *testing.T) {
+		realDB := dynamodb.New(opts)
+		require.NoError(t, realDB.CreateTable(ctx, dbdriver.TableConfig{Name: "alive", PartitionKey: "pk"}))
+
+		// Force every ListTagsOfResource to look like the table was deleted
+		// mid-walk. The walker should drop the resource silently rather
+		// than failing the whole ListAll.
+		db := &failingDatabase{
+			Database:   realDB,
+			listTagErr: cerrors.Newf(cerrors.NotFound, "table gone"),
+		}
+		eng := New(ProviderAWS, "acct", "us-east-1", &Drivers{Database: db})
+
+		out, err := eng.ListAll(ctx)
+		require.NoError(t, err)
+		assert.Empty(t, out, "race-disappeared resources should be skipped, not surfaced")
+	})
+
+	t.Run("storage tag-lookup error propagates", func(t *testing.T) {
+		sentinel := errors.New("s3 tagging timeout")
+
+		realS3 := s3.New(opts)
+		require.NoError(t, realS3.CreateBucket(ctx, "bkt"))
+
+		bkt := &failingStorage{Bucket: realS3, tagErr: sentinel}
+		eng := New(ProviderAWS, "acct", "us-east-1", &Drivers{Storage: bkt})
+
+		_, err := eng.ListAll(ctx)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, sentinel)
+		assert.Contains(t, err.Error(), `"bkt"`)
+	})
 }

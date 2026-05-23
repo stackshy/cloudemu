@@ -3,6 +3,8 @@ package resourcediscovery
 import (
 	"context"
 	"fmt"
+
+	cerrors "github.com/stackshy/cloudemu/errors"
 )
 
 // Provider name constants used for routing per-provider ARN construction.
@@ -115,9 +117,14 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 	for _, b := range buckets {
 		tags, tagErr := e.drivers.Storage.GetBucketTagging(ctx, b.Name)
 		if tagErr != nil {
-			// Buckets without tags surface a NotFound from the tagging API
-			// in real S3 — treat as "no tags" rather than failing the walk.
-			tags = nil
+			// NotFound means the bucket was deleted between ListBuckets and
+			// this tagging lookup. Skip it from the inventory; any other
+			// error is real and must propagate.
+			if cerrors.IsNotFound(tagErr) {
+				continue
+			}
+
+			return nil, fmt.Errorf("walkStorage tags %q: %w", b.Name, tagErr)
 		}
 
 		region := b.Region
@@ -147,7 +154,14 @@ func (e *Engine) walkDatabase(ctx context.Context) ([]Resource, error) {
 	for _, name := range tables {
 		tags, tagErr := e.drivers.Database.ListTagsOfResource(ctx, name)
 		if tagErr != nil {
-			tags = nil
+			// Race window: table was deleted between ListTables and the
+			// tagging lookup. Skip the now-gone resource. Any other error
+			// is real and must propagate.
+			if cerrors.IsNotFound(tagErr) {
+				continue
+			}
+
+			return nil, fmt.Errorf("walkDatabase tags %q: %w", name, tagErr)
 		}
 
 		out = append(out, Resource{
