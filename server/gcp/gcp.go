@@ -9,6 +9,7 @@ package gcp
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -39,6 +40,11 @@ type Drivers struct {
 	PubSub         mqdriver.MessageQueue
 	CloudSQL       rdbdriver.RelationalDB
 	GKE            *gkeprov.Mock
+	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
+	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
+	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
+	// the same backend. Leave nil to disable Kubernetes data-plane support.
+	K8sAPI *kubernetes.APIServer
 }
 
 // New returns a server that speaks GCP's REST JSON wire protocol for every
@@ -50,7 +56,7 @@ type Drivers struct {
 // firestore, monitoring) ahead of GCS so first-match-wins keeps each on the
 // correct package.
 //
-//nolint:gocritic // Drivers is all interface fields; by-value keeps the caller API ergonomic
+//nolint:gocritic,gocyclo // Drivers is all interface fields; one if-per-driver is the simplest expression and grows with the bundle.
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
@@ -94,6 +100,12 @@ func New(d Drivers) *server.Server {
 
 	if d.Monitoring != nil {
 		srv.Register(monitoring.New(d.Monitoring))
+	}
+
+	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from every
+	// other GCP path. Registered before the GCS fallback.
+	if d.K8sAPI != nil {
+		srv.Register(d.K8sAPI)
 	}
 
 	if d.Storage != nil {

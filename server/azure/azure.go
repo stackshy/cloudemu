@@ -9,6 +9,7 @@ package azure
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -56,6 +57,11 @@ type Drivers struct {
 	PostgresFlex    rdbdriver.RelationalDB
 	MySQLFlex       rdbdriver.RelationalDB
 	AKS             aksserver.Backend
+	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
+	// shared with awsserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
+	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
+	// the same backend. Leave nil to disable Kubernetes data-plane support.
+	K8sAPI *kubernetes.APIServer
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -138,6 +144,12 @@ func New(d Drivers) *server.Server {
 
 	if d.VirtualMachines != nil {
 		srv.Register(virtualmachines.New(d.VirtualMachines))
+	}
+
+	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from every
+	// other Azure path. Registered before the BlobStorage fallback.
+	if d.K8sAPI != nil {
+		srv.Register(d.K8sAPI)
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It

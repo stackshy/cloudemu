@@ -257,7 +257,7 @@ func (h *Handler) listClusterCredentials(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	kubeconfig := h.be.StubKubeconfig(rp.ResourceGroup, rp.ResourceName)
+	kubeconfig := h.be.Kubeconfig(rp.ResourceGroup, rp.ResourceName)
 
 	azurearm.WriteJSON(w, http.StatusOK, armCredentialResults{
 		Kubeconfigs: []armCredentialResult{

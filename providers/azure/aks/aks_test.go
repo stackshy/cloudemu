@@ -209,9 +209,9 @@ func TestRotateClusterCertificates(t *testing.T) {
 	}
 }
 
-func TestStubKubeconfigDataPlaneSentinel(t *testing.T) {
+func TestKubeconfigDataPlaneSentinel(t *testing.T) {
 	m := newTestMock()
-	kc := m.StubKubeconfig("rg-1", "k8s-1")
+	kc := m.Kubeconfig("rg-1", "k8s-1")
 
 	if !strings.Contains(string(kc), "AKS-DATAPLANE-NOT-IMPLEMENTED") {
 		t.Fatalf("expected stub kubeconfig to mention the not-implemented sentinel, got: %s", string(kc))

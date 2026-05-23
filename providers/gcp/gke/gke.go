@@ -21,6 +21,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/internal/idgen"
 	"github.com/stackshy/cloudemu/internal/memstore"
+	"github.com/stackshy/cloudemu/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 )
 
@@ -108,6 +109,14 @@ type Mock struct {
 
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// k8sAPI is the shared in-memory Kubernetes data-plane server. When set,
+	// CreateCluster registers a fresh ClusterState with api and Endpoint()
+	// returns the URL clients should hit. When nil, Endpoint() returns the
+	// Wave 1 sentinel host so existing tests keep working.
+	k8sAPI *kubernetes.APIServer
+	// k8sUIDs maps "{location}/{name}" → the UID we registered with k8sAPI.
+	k8sUIDs map[string]string
 }
 
 // New creates a new GKE mock.
@@ -117,12 +126,45 @@ func New(opts *config.Options) *Mock {
 		nodePools:  memstore.New[NodePool](),
 		operations: memstore.New[Operation](),
 		opts:       opts,
+		k8sUIDs:    make(map[string]string),
 	}
 }
 
 // SetMonitoring wires a Cloud Monitoring backend for auto-metric emission.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetK8sAPI wires a shared in-memory Kubernetes data-plane server. After
+// this is set, CreateCluster registers a fresh ClusterState with api and
+// Endpoint() returns the URL of that state for the given cluster. Pass the
+// same *kubernetes.APIServer as gcpserver.Drivers.K8sAPI when constructing
+// the SDK-compat server, so kubeconfigs land on the right backend.
+func (m *Mock) SetK8sAPI(api *kubernetes.APIServer) {
+	m.mu.Lock()
+	m.k8sAPI = api
+	m.mu.Unlock()
+}
+
+// Endpoint returns the data-plane URL clients should target for a given
+// cluster. If a Kubernetes APIServer is wired and the cluster has a
+// registered UID, returns "<base>/k8s/<uid>" — the in-memory data plane.
+// Otherwise returns "https://" + StubEndpoint so the Wave-1 sentinel surface
+// stays intact.
+func (m *Mock) Endpoint(location, name string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.k8sAPI != nil {
+		key := clusterKey(location, name)
+		if uid, ok := m.k8sUIDs[key]; ok {
+			if base := m.k8sAPI.BaseURL(); base != "" {
+				return base + "/k8s/" + uid
+			}
+		}
+	}
+
+	return "https://" + StubEndpoint
 }
 
 // emitClusterMetrics pushes container.googleapis.com metrics for a cluster.
@@ -249,6 +291,14 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		cluster.NodePoolNames = append(cluster.NodePoolNames, np.Name)
 	}
 
+	// Wave 2: if a Kubernetes data-plane server is wired, register a fresh
+	// ClusterState and remember the UID so Endpoint() can return a working
+	// URL.
+	if m.k8sAPI != nil {
+		uid, _ := m.k8sAPI.RegisterCluster()
+		m.k8sUIDs[key] = uid
+	}
+
 	m.clusters.Set(key, cluster)
 
 	op := m.recordOperation("CREATE_CLUSTER", input.Location,
@@ -365,6 +415,13 @@ func (m *Mock) DeleteCluster(_ context.Context, location, name string) (*Operati
 		if hasPrefix(k, prefix) {
 			m.nodePools.Delete(k)
 		}
+	}
+
+	// Wave 2: tear down the cluster's Kubernetes data-plane state alongside
+	// the control-plane record.
+	if uid, ok := m.k8sUIDs[key]; ok && m.k8sAPI != nil {
+		m.k8sAPI.DeregisterCluster(uid)
+		delete(m.k8sUIDs, key)
 	}
 
 	op := m.recordOperation("DELETE_CLUSTER", location,

@@ -22,13 +22,16 @@ import (
 
 cloud := cloudemu.NewAWS()
 srv := awsserver.New(awsserver.Drivers{
-    S3:       cloud.S3,
-    DynamoDB: cloud.DynamoDB,
-    EC2:      cloud.EC2,
-    VPC:      cloud.VPC,
-    Lambda:   cloud.Lambda,
-    SQS:      cloud.SQS,
+    S3:         cloud.S3,
+    DynamoDB:   cloud.DynamoDB,
+    EC2:        cloud.EC2,
+    VPC:        cloud.VPC,
+    Lambda:     cloud.Lambda,
+    SQS:        cloud.SQS,
     CloudWatch: cloud.CloudWatch,
+    RDS:        cloud.RDS,
+    Redshift:   cloud.Redshift,
+    EKS:        cloud.EKS,
 })
 ts := httptest.NewServer(srv)
 defer ts.Close()
@@ -63,6 +66,10 @@ srv := azureserver.New(azureserver.Drivers{
     Monitor:         cp.Monitor,
     Functions:       cp.Functions,
     ServiceBus:      cp.ServiceBus,
+    SQL:             cp.SQL,
+    PostgresFlex:    cp.PostgresFlex,
+    MySQLFlex:       cp.MySQLFlex,
+    AKS:             cp.AKS,
 })
 ts := httptest.NewTLSServer(srv) // Azure SDK requires TLS
 
@@ -98,6 +105,8 @@ srv := gcpserver.New(gcpserver.Drivers{
     Monitoring:     cp.CloudMonitoring,
     CloudFunctions: cp.CloudFunctions,
     PubSub:         cp.PubSub,
+    CloudSQL:       cp.CloudSQL,
+    GKE:            cp.GKE,
 })
 ts := httptest.NewServer(srv)
 
@@ -127,6 +136,9 @@ Region, credentials, and tokens can be any dummy values — the server doesn't v
 | **Lambda** *(REST + JSON)* | CreateFunction, GetFunction, ListFunctions, DeleteFunction, Invoke (sync) |
 | **SQS** *(JSON-RPC AwsJson1_0)* | CreateQueue, GetQueueUrl, ListQueues, DeleteQueue, SendMessage, ReceiveMessage, DeleteMessage |
 | **CloudWatch** *(Smithy rpc-v2-cbor)* | PutMetricData, GetMetricStatistics, ListMetrics, PutMetricAlarm, DescribeAlarms, DeleteAlarms |
+| **RDS / Aurora** *(query protocol)* | DBInstances (Create/Describe/Modify/Delete/Start/Stop/Reboot), DBClusters (Create/Describe/Modify/Delete/Start/Stop), DBSnapshots + DBClusterSnapshots (Create/Describe/Delete/Restore). One handler also serves the **Neptune** and **DocumentDB** engines — both reuse the same `aws-sdk-go-v2/service/{neptune,docdb}` client surface. |
+| **Redshift** *(query protocol)* | CreateCluster, DescribeClusters, ModifyCluster, DeleteCluster, RebootCluster, CreateClusterSnapshot, DescribeClusterSnapshots, DeleteClusterSnapshot, RestoreFromClusterSnapshot |
+| **EKS** *(REST + JSON)* | Clusters (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), NodeGroups (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), Fargate Profiles (Create/Describe/List/Delete), Addons (Create/Describe/List/Update/Delete). Stub kubeconfig only — data plane deferred to Wave 2. |
 
 ### Azure (`server/azure/`)
 
@@ -142,6 +154,10 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **Azure Monitor** | `microsoft.insights/metricAlerts` and metric data ingest/read |
 | **Functions** | `Microsoft.Web/sites` (Function Apps): CreateOrUpdate, Get, List, Delete + non-ARM `/api/{name}` invoke |
 | **Service Bus** | `Microsoft.ServiceBus/namespaces[/queues]` ARM CRUD + raw-HTTP REST data plane (`POST /{ns}/{queue}/messages`, `DELETE /messages/head`) |
+| **SQL Database** | `Microsoft.Sql/servers[/databases]` — servers and databases, full CRUD lifecycle |
+| **PostgreSQL Flexible Server** | `Microsoft.DBforPostgreSQL/flexibleServers` — full CRUD lifecycle |
+| **MySQL Flexible Server** | `Microsoft.DBforMySQL/flexibleServers` — full CRUD lifecycle |
+| **AKS** | `Microsoft.ContainerService/managedClusters` — ManagedClusters (CreateOrUpdate, Get, UpdateTags, Delete, List/ListByResourceGroup), AgentPools (CreateOrUpdate, Get, Delete, List), MaintenanceConfigurations (CreateOrUpdate, Get, Delete, List), ListClusterAdmin/User/MonitoringUser Credentials, RotateClusterCertificates. Stub kubeconfig only — data plane deferred to Wave 2. |
 
 ### GCP (`server/gcp/`)
 
@@ -156,6 +172,8 @@ All handlers speak REST + JSON.
 | **Cloud Monitoring** | Time-series ingest/read, alert policies |
 | **Cloud Functions v1** | Create (LRO), Get, List, Delete (LRO), `:call` (sync invoke) |
 | **Pub/Sub** | Topics + Subscriptions lifecycle, `:publish`, `:pull`, `:acknowledge` |
+| **Cloud SQL** | Instances (insert/get/list/patch/delete/start/stop/restart) + Operations (get/list) — supports the `sqladmin/v1` SDK |
+| **GKE** | Clusters (Create/Get/List/Update/Delete + `:setLogging`/`:setMonitoring`/`:setMasterAuth`/`:setLegacyAbac`/`:setNetworkPolicy`/`:setMaintenancePolicy`/`:setResourceLabels`/`:startIpRotation`/`:completeIpRotation`), NodePools (Create/Get/List/Update/Delete + `:setSize`/`:setAutoscaling`/`:setManagement`/`:rollback`), Operations (Get/List/`:cancel`). Stub kubeconfig only — data plane deferred to Wave 2. |
 
 Any operation not in these lists returns `501 Not Implemented` or the provider's native `UnknownOperation` / `NotImplemented` / `NOT_FOUND` error.
 
@@ -174,14 +192,20 @@ server/
 ├── aws/
 │   ├── aws.go                      # awsserver.New(Drivers{...})
 │   ├── s3/  ec2/  dynamodb/  lambda/  sqs/  cloudwatch/
+│   ├── rds/  redshift/             # query-protocol relational DB handlers
+│   └── eks/                        # REST EKS control-plane handler
 ├── azure/
 │   ├── azure.go                    # azureserver.New(Drivers{...})
 │   ├── virtualmachines/  disks/  snapshots/  images/  sshpublickeys/
 │   ├── blob/  cosmos/  network/  monitor/  functions/  servicebus/
+│   ├── azuresql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
+│   └── aks/                        # ARM AKS control-plane handler
 └── gcp/
     ├── gcp.go                      # gcpserver.New(Drivers{...})
-    └── compute/  networks/  gcs/  firestore/  monitoring/
-        cloudfunctions/  pubsub/
+    ├── compute/  networks/  gcs/  firestore/  monitoring/
+    ├── cloudfunctions/  pubsub/
+    ├── cloudsql/                   # REST Cloud SQL handler
+    └── gke/                        # REST GKE control-plane handler
 ```
 
 Each handler implements a two-method interface:
@@ -204,10 +228,17 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 | AWS DynamoDB | `X-Amz-Target: DynamoDB_20120810.*` header |
 | AWS SQS | `X-Amz-Target: AmazonSQS.*` header |
 | AWS Lambda | URL prefix `/2015-03-31/functions` |
+| AWS EKS | URL prefix `/clusters` |
+| AWS RDS | Form-encoded POST whose `Action=` is a known RDS operation (registered before EC2) |
+| AWS Redshift | Form-encoded POST whose `Action=` is a known Redshift operation (registered before EC2) |
 | AWS EC2 | `Action=…` in URL query or `Content-Type: application/x-www-form-urlencoded` POST |
 | AWS CloudWatch | `Smithy-Protocol: rpc-v2-cbor` header |
 | AWS S3 | Fallback (everything else REST-shaped) |
 | Azure (all ARM) | URL begins with `/subscriptions/{sub}` and matches `Microsoft.<Provider>/<Type>` |
+| Azure SQL | ARM provider `Microsoft.Sql` |
+| Azure PostgreSQL Flexible | ARM provider `Microsoft.DBforPostgreSQL/flexibleServers` |
+| Azure MySQL Flexible | ARM provider `Microsoft.DBforMySQL/flexibleServers` |
+| Azure AKS | ARM provider `Microsoft.ContainerService/managedClusters` |
 | Azure Cosmos | URL begins with `/dbs/` (data plane, non-ARM) |
 | Azure Functions invoke | URL begins with `/api/` (non-ARM data plane) |
 | Azure Service Bus data plane | Non-ARM URL ending in `/messages` or `/messages/head` |
@@ -217,7 +248,10 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 | GCP Pub/Sub | `/v1/projects/.../topics[/...]` or `/v1/projects/.../subscriptions[/...]` |
 | GCP Firestore | `/v1/projects/.../databases/.../documents[/...]` |
 | GCP Cloud Monitoring | `/v3/projects/.../` |
+| GCP Cloud SQL | `/v1/projects/.../{instances,operations}[/...]` |
+| GCP GKE | `/v1/projects/.../locations/.../{clusters,operations}[/...]` |
 | GCP GCS | Fallback (`/storage/v1/` and `/{bucket}/{object}` direct-media) |
+| **Kubernetes data plane** (shared across all 3 providers) | URL prefix `/k8s/{cluster-uid}/`. Registered on AWS, Azure, and GCP servers; cluster UID is the one minted by the matching control-plane handler on Create. |
 
 Registration order matters when handlers share a path prefix — `awsserver.New` / `azureserver.New` / `gcpserver.New` register more-specific handlers ahead of catch-alls (S3, Blob, GCS) so first-match-wins resolves correctly.
 
@@ -225,11 +259,15 @@ Registration order matters when handlers share a path prefix — `awsserver.New`
 
 | Provider | Domains shipped | Notes |
 |----------|----------------|-------|
-| AWS | Storage, Compute (+ VPC/SG/Subnet/IGW/RT/NAT/Peering/FlowLogs/NACL/EBS/Keys/AMIs/Snapshots/Spot/LaunchTemplates), Database, Serverless, Message Queue, Monitoring | The most-mature provider — EC2 was Phase 1 of SDK-compat |
-| Azure | Storage, Compute (+ Disks/Snapshots/Images/SSHKeys), Database, Serverless, Message Queue (ARM only), Networking, Monitoring | Data-plane Service Bus over AMQP is out of scope (use raw-HTTP REST data plane for tests) |
-| GCP | Storage, Compute (+ Disks/Snapshots/Images), Database, Serverless, Message Queue, Networking, Monitoring | All driven via REST (the `cloud.google.com/go/*` clients with `option.WithEndpoint`, or the auto-generated `google.golang.org/api/*` clients) |
+| AWS | Storage, Compute (+ VPC/SG/Subnet/IGW/RT/NAT/Peering/FlowLogs/NACL/EBS/Keys/AMIs/Snapshots/Spot/LaunchTemplates), NoSQL DB, Relational DB (RDS/Aurora/Neptune/DocumentDB/Redshift), Kubernetes (EKS control plane + shared data plane), Serverless, Message Queue, Monitoring | The most-mature provider — EC2 was Phase 1 of SDK-compat |
+| Azure | Storage, Compute (+ Disks/Snapshots/Images/SSHKeys), NoSQL DB, Relational DB (SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server), Kubernetes (AKS control plane + shared data plane), Serverless, Message Queue (ARM only), Networking, Monitoring | Data-plane Service Bus over AMQP is out of scope (use raw-HTTP REST data plane for tests) |
+| GCP | Storage, Compute (+ Disks/Snapshots/Images), NoSQL DB, Relational DB (Cloud SQL), Kubernetes (GKE control plane + shared data plane), Serverless, Message Queue, Networking, Monitoring | All driven via REST (the `cloud.google.com/go/*` clients with `option.WithEndpoint`, or the auto-generated `google.golang.org/api/*` clients) |
 
-The remaining 9 service domains (IAM, DNS, Load Balancer, Cache, Secrets, Logging, Notifications, Container Registry, Event Bus) have full driver implementations in `providers/{aws,azure,gcp}/`; SDK-compat handlers are added in lockstep across all 3 providers as each domain ships.
+Kubernetes ships as **two cooperating handlers**: per-provider control planes (EKS / AKS / GKE — clusters + node pools + addons / Fargate / maintenance configs) and a shared in-memory **data plane** registered under `/k8s/{cluster-uid}/`. The control plane mints a UID on every cluster Create and embeds it in the kubeconfig (or `Cluster.Endpoint` for GKE); `client-go` and `kubectl` connect to the data plane via that URL. Resources served on the data plane: Namespace, ConfigMap, Pod, Service, Secret, ServiceAccount, Deployment (apps/v1), and Endpoints (auto-created for each Service). Every list endpoint supports `?watch=true` for streaming events, so real `Informer` / `Reflector` machinery works.
+
+The data plane intentionally has no controllers — Deployments don't spawn ReplicaSets, Pods stay Pending, Endpoints are empty stubs. RBAC, subresources, PV/PVC, StatefulSet/DaemonSet/Job/CronJob, and Ingress are out of scope.
+
+The remaining service domains (IAM, DNS, Load Balancer, Cache, Secrets, Logging, Notifications, Container Registry, Event Bus) have full driver implementations in `providers/{aws,azure,gcp}/`; SDK-compat handlers are added in lockstep across all 3 providers as each domain ships.
 
 ## Writing your own handler
 

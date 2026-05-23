@@ -22,6 +22,8 @@ This document lists every service and operation available in CloudEmu across all
 | 14 | Notification | `sns` | `notificationhubs` | `fcm` |
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
+| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
+| 18 | Kubernetes | `eks` + shared `kubernetes/` | `aks` + shared `kubernetes/` | `gke` + shared `kubernetes/` |
 
 ---
 
@@ -977,6 +979,120 @@ This document lists every service and operation available in CloudEmu across all
 
 ---
 
+## 17. Relational Database
+
+**Driver interface:** `relationaldb/driver/driver.go`
+**AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `azuresql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`
+
+A single portable interface backs every RDBMS handler. Engine selection (MySQL / PostgreSQL / Aurora / Neptune / DocumentDB / Redshift / Cloud SQL / Azure SQL / …) is a field on the input config, not a separate driver.
+
+### Instance Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateInstance` | `(ctx, InstanceConfig) (*Instance, error)` |
+| `DescribeInstances` | `(ctx, ids) ([]Instance, error)` |
+| `ModifyInstance` | `(ctx, id, ModifyInstanceInput) (*Instance, error)` |
+| `DeleteInstance` | `(ctx, id) error` |
+| `StartInstance` | `(ctx, id) error` |
+| `StopInstance` | `(ctx, id) error` |
+| `RebootInstance` | `(ctx, id) error` |
+
+### Cluster Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateCluster` | `(ctx, ClusterConfig) (*Cluster, error)` |
+| `DescribeClusters` | `(ctx, ids) ([]Cluster, error)` |
+| `ModifyCluster` | `(ctx, id, ModifyInstanceInput) (*Cluster, error)` |
+| `DeleteCluster` | `(ctx, id) error` |
+| `StartCluster` | `(ctx, id) error` |
+| `StopCluster` | `(ctx, id) error` |
+
+### Snapshot Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateSnapshot` | `(ctx, SnapshotConfig) (*Snapshot, error)` |
+| `DescribeSnapshots` | `(ctx, ids, instanceID) ([]Snapshot, error)` |
+| `DeleteSnapshot` | `(ctx, id) error` |
+| `RestoreInstanceFromSnapshot` | `(ctx, RestoreInstanceInput) (*Instance, error)` |
+
+### Cluster Snapshot Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateClusterSnapshot` | `(ctx, ClusterSnapshotConfig) (*ClusterSnapshot, error)` |
+| `DescribeClusterSnapshots` | `(ctx, ids, clusterID) ([]ClusterSnapshot, error)` |
+| `DeleteClusterSnapshot` | `(ctx, id) error` |
+| `RestoreClusterFromSnapshot` | `(ctx, RestoreClusterInput) (*Cluster, error)` |
+
+**Total: 21 operations**
+
+---
+
+## 18. Kubernetes
+
+**Control plane:** AWS `eks`, Azure `aks`, GCP `gke` — cluster, node-pool, and addon / Fargate-profile / maintenance-config lifecycle, driven by the real cloud SDKs.
+**Data plane:** shared `kubernetes/` package — an in-memory Kubernetes API server registered by every cluster across all three providers. Kubeconfigs returned by the control plane point at `<base>/k8s/<cluster-uid>` so `client-go` and `kubectl` operate end-to-end.
+
+Each provider exposes its native control-plane API. The data plane has no portable driver — clients connect via the kubeconfig the control plane hands out, then talk standard Kubernetes REST.
+
+### AWS EKS (`providers/aws/eks`)
+
+| Resource | Operations |
+|----------|-----------|
+| Clusters | CreateCluster, DescribeCluster, ListClusters, UpdateClusterConfig, UpdateClusterVersion, DeleteCluster |
+| Node Groups | CreateNodegroup, DescribeNodegroup, ListNodegroups, UpdateNodegroupConfig, UpdateNodegroupVersion, DeleteNodegroup |
+| Fargate Profiles | CreateFargateProfile, DescribeFargateProfile, ListFargateProfiles, DeleteFargateProfile |
+| Addons | CreateAddon, DescribeAddon, ListAddons, UpdateAddon, DeleteAddon |
+
+Operations: **21**
+
+### Azure AKS (`providers/azure/aks`)
+
+| Resource | Operations |
+|----------|-----------|
+| Managed Clusters | CreateOrUpdateCluster, GetCluster, UpdateClusterTags, DeleteCluster, ListClusters, ListClustersByResourceGroup, RotateClusterCertificates |
+| Agent Pools | CreateOrUpdateAgentPool, GetAgentPool, DeleteAgentPool, ListAgentPools |
+| Maintenance Configs | CreateOrUpdateMaintenanceConfig, GetMaintenanceConfig, DeleteMaintenanceConfig, ListMaintenanceConfigs |
+| Credentials | `ListClusterAdminCredentials`, `ListClusterUserCredentials`, `ListClusterMonitoringUserCredentials` — return a kubeconfig pointing at the in-memory data plane (or the `*-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local` sentinel when no APIServer is wired) |
+
+Operations: **18**
+
+### GCP GKE (`providers/gcp/gke`)
+
+| Resource | Operations |
+|----------|-----------|
+| Clusters | CreateCluster, GetCluster, ListClusters, UpdateCluster, DeleteCluster, SetClusterLogging, SetClusterMonitoring, SetMasterAuth, SetLegacyAbac, SetNetworkPolicy, SetMaintenancePolicy, SetResourceLabels, StartIPRotation, CompleteIPRotation |
+| Node Pools | CreateNodePool, GetNodePool, ListNodePools, UpdateNodePool, DeleteNodePool, SetNodePoolSize, SetNodePoolAutoscaling, SetNodePoolManagement, RollbackNodePool |
+| Operations | GetOperation, ListOperations, CancelOperation |
+
+Operations: **26**
+
+### Data plane (`kubernetes/`)
+
+Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Anonymous auth (kubeconfigs use `insecure-skip-tls-verify: true`).
+
+| Resource | Group / Version | Verbs |
+|---|---|---|
+| Namespace | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** |
+| ConfigMap | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** |
+| Secret | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — StringData merged into Data on create/update |
+| ServiceAccount | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — `default` SA auto-created in every namespace |
+| Pod | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — born Pending, no scheduler |
+| Service | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — ClusterIP allocated from 10.96.0.0/12; immutable on update |
+| Endpoints | `core/v1` | Get, List, **Watch** — auto-created (empty Subsets) on Service create; not user-creatable |
+| Deployment | `apps/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — status mirrored from spec.replicas (no controller) |
+
+**Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) just works.
+
+**Cascade**: deleting a Namespace publishes DELETED events for every child resource.
+
+**Not in scope**: real controllers (no Deployment → ReplicaSet → Pod, no Pods scheduled to nodes), RBAC, subresources (`/status`, `/scale`, `/log`, `/exec`), PV/PVC, StatefulSet, DaemonSet, Job/CronJob, Ingress, NetworkPolicy.
+
+---
+
 ## Summary
 
 | Service | Operations |
@@ -997,4 +1113,9 @@ This document lists every service and operation available in CloudEmu across all
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
-| **Grand Total** | **330** |
+| Relational Database | 21 |
+| Kubernetes — AWS EKS (control plane) | 21 |
+| Kubernetes — Azure AKS (control plane) | 18 |
+| Kubernetes — GCP GKE (control plane) | 26 |
+| Kubernetes — data plane (8 resources × 7 verbs incl. Watch) | 56 |
+| **Grand Total** | **472** |
