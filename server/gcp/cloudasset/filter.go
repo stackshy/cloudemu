@@ -115,7 +115,18 @@ func applyService(out *parsedFilter, service string) {
 		return
 	}
 
-	out.Query.Services = expandPortableService(svc)
+	newServices := expandPortableService(svc)
+
+	// Cross-clause contradiction: if an earlier assetType: pinned a
+	// narrower service set, a service: clause that doesn't overlap means
+	// "this resource must belong to two different services" — impossible,
+	// so flag ForceEmpty.
+	if out.typeSet && len(out.Query.Services) > 0 && !servicesIntersect(out.Query.Services, newServices) {
+		out.ForceEmpty = true
+		return
+	}
+
+	out.Query.Services = newServices
 }
 
 func applyAssetType(out *parsedFilter, assetType string) {
@@ -128,12 +139,39 @@ func applyAssetType(out *parsedFilter, assetType string) {
 
 	svc, typ := mapGCPAssetType(assetType)
 	if svc != "" {
-		out.Query.Services = []string{svc}
+		newServices := []string{svc}
+
+		// Cross-clause contradiction: same idea as applyService — if a
+		// service: clause already narrowed Services and the new assetType
+		// belongs to a different service, no resource can satisfy both.
+		if out.serviceSet && len(out.Query.Services) > 0 && !servicesIntersect(out.Query.Services, newServices) {
+			out.ForceEmpty = true
+			return
+		}
+
+		out.Query.Services = newServices
 	}
 
 	if typ != "" {
 		out.Query.Type = typ
 	}
+}
+
+// servicesIntersect returns true when the two service-name sets share at
+// least one element. Used by the cross-clause contradiction checks above.
+func servicesIntersect(a, b []string) bool {
+	set := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		set[s] = struct{}{}
+	}
+
+	for _, s := range b {
+		if _, ok := set[s]; ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 func addLabel(out *parsedFilter, key, value string) {

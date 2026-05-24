@@ -49,8 +49,9 @@ type Handler struct {
 	engine    *resourcediscovery.Engine
 	projectID string
 
-	mu    sync.RWMutex
-	feeds map[string]*feed // keyed by full feed name (projects/X/feeds/Y)
+	mu         sync.RWMutex
+	feeds      map[string]*feed          // keyed by full feed name (projects/X/feeds/Y)
+	operations map[string]map[string]any // keyed by op name; caches completed export results
 }
 
 type feed struct {
@@ -73,11 +74,17 @@ func New(engine *resourcediscovery.Engine, projectID string) *Handler {
 	}
 
 	return &Handler{
-		engine:    engine,
-		projectID: projectID,
-		feeds:     make(map[string]*feed),
+		engine:     engine,
+		projectID:  projectID,
+		feeds:      make(map[string]*feed),
+		operations: make(map[string]map[string]any),
 	}
 }
+
+// operationNamePrefix tags operation IDs we own so the Operations.Get
+// path matcher (very broadly /v1/.../operations/...) only claims ours and
+// not the GCE/compute operations served by other handlers.
+const operationNamePrefix = "cloudemu-export-"
 
 // Matches accepts paths that are unambiguously Cloud Asset. We match
 // narrowly to avoid shadowing other GCP REST handlers (firestore claims
@@ -93,6 +100,13 @@ func (*Handler) Matches(r *http.Request) bool {
 		if _, ok := customMethods[p[i+1:]]; ok {
 			return true
 		}
+	}
+
+	// /v1/{parent}/operations/cloudemu-export-... — claim only operation
+	// names this package creates; other handlers (compute, networks)
+	// serve their own /operations/ paths.
+	if strings.Contains(p, "/operations/"+operationNamePrefix) {
+		return true
 	}
 
 	// /v1/{parent}/assets or /v1/{parent}/feeds[/{id}]
@@ -130,9 +144,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /v1/{parent}/operations/cloudemu-export-... — the result of an
+	// earlier exportAssets call. Cached in h.operations.
+	if before, id, ok := segmentBeforeLast(p, "/operations/"); ok && strings.HasPrefix(id, operationNamePrefix) {
+		h.getOperation(w, r, stripAPIPrefix(before)+"/operations/"+id)
+		return
+	}
+
 	// /v1/{parent}/feeds/{id} — derive the canonical feed name without /v1/.
 	if before, id, ok := segmentBeforeLast(p, "/feeds/"); ok {
+		if strings.ContainsRune(id, '/') {
+			writeError(w, http.StatusNotFound, "NOT_FOUND",
+				"feed id cannot contain '/': "+id)
+
+			return
+		}
+
 		h.serveFeedItem(w, r, stripAPIPrefix(before)+"/feeds/"+id)
+
 		return
 	}
 
@@ -227,36 +256,60 @@ func (*Handler) searchAllIamPolicies(w http.ResponseWriter, _ *http.Request, _ s
 
 // ----- exportAssets -----
 
-func (h *Handler) exportAssets(w http.ResponseWriter, r *http.Request, _ string) {
+func (h *Handler) exportAssets(w http.ResponseWriter, r *http.Request, scope string) {
 	body := readJSONBody(r)
 
 	parsed := parseFilter(strOrEmpty(body["filter"]))
-	if parsed.ForceEmpty {
-		writeJSON(w, http.StatusOK, completedExportOperation(nil))
-		return
+
+	var results []resourcediscovery.Resource
+
+	if !parsed.ForceEmpty {
+		var err error
+
+		results, err = h.engine.List(r.Context(), parsed.Query)
+		if err != nil {
+			writeCErr(w, err)
+			return
+		}
 	}
 
-	results, err := h.engine.List(r.Context(), parsed.Query)
-	if err != nil {
-		writeCErr(w, err)
-		return
+	op := h.buildAndCacheExportOperation(scope, results)
+	writeJSON(w, http.StatusOK, op)
+}
+
+// buildAndCacheExportOperation creates the LRO response and caches it under
+// its name so a subsequent Operations.Get can find it. The operation is
+// scope-prefixed (projects/X/operations/cloudemu-export-...) so the path
+// matcher in ServeHTTP routes the poll back to this handler.
+func (h *Handler) buildAndCacheExportOperation(scope string, results []resourcediscovery.Resource) map[string]any {
+	if scope == "" {
+		scope = "projects/" + h.projectID
 	}
 
-	writeJSON(w, http.StatusOK, completedExportOperation(results))
+	name := scope + "/operations/" + operationNamePrefix + strconv.FormatInt(time.Now().UnixNano(), 10)
+	op := completedExportOperation(name, results)
+
+	h.mu.Lock()
+	h.operations[name] = op
+	h.mu.Unlock()
+
+	return op
 }
 
 // completedExportOperation builds the synchronous LRO response shape.
-// Real Cloud Asset returns an operation name that the caller polls; the
-// mock returns done=true with the asset list inline so SDK calls that
-// expect the operation to be ready immediately work without polling.
-func completedExportOperation(results []resourcediscovery.Resource) map[string]any {
+// Real Cloud Asset is async — it returns an operation name that the
+// caller polls via Operations.Get. The mock returns done=true with the
+// asset list inline so most callers (which call .Do() and check Done)
+// work without polling, AND caches the response under name so callers
+// that DO poll via Operations.Get find a matching entry.
+func completedExportOperation(name string, results []resourcediscovery.Resource) map[string]any {
 	assets := make([]map[string]any, 0, len(results))
 	for i := range results {
 		assets = append(assets, resourceToAsset(&results[i]))
 	}
 
 	return map[string]any{
-		"name": "operations/cloudemu-export-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+		"name": name,
 		"done": true,
 		"metadata": map[string]any{
 			"@type": "type.googleapis.com/google.cloud.asset.v1.ExportAssetsRequest",
@@ -268,6 +321,22 @@ func completedExportOperation(results []resourcediscovery.Resource) map[string]a
 			"outputUriPrefix": "cloudemu://in-memory",
 		},
 	}
+}
+
+// getOperation serves Operations.Get for export operations cached by an
+// earlier exportAssets call. Method is implicitly GET; we don't enforce
+// because the dispatch already routed here for any verb on this path.
+func (h *Handler) getOperation(w http.ResponseWriter, _ *http.Request, name string) {
+	h.mu.RLock()
+	op, ok := h.operations[name]
+	h.mu.RUnlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "operation not found: "+name)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, op)
 }
 
 // ----- batchGetAssetsHistory -----

@@ -96,12 +96,55 @@ func TestParseFilter_ForceEmpty(t *testing.T) {
 			name: "label vs tag conflict on same key",
 			expr: "labels.env:prod tags.env:stage",
 		},
+		{
+			name: "service then assetType cross-contradiction",
+			expr: "service:compute.googleapis.com assetType:storage.googleapis.com/Bucket",
+		},
+		{
+			name: "assetType then service cross-contradiction",
+			expr: "assetType:firestore.googleapis.com/Database service:storage.googleapis.com",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseFilter(tt.expr)
 			assert.True(t, got.ForceEmpty, "expected ForceEmpty for %q", tt.expr)
+		})
+	}
+}
+
+// TestParseFilter_ServiceAssetTypeAgreement verifies that compatible
+// service + assetType pairs are NOT flagged. compute.googleapis.com
+// covers both portable compute and networking — Instance + Network +
+// Subnetwork + Firewall all belong to that service.
+func TestParseFilter_ServiceAssetTypeAgreement(t *testing.T) {
+	tests := []struct {
+		name string
+		expr string
+	}{
+		{
+			name: "compute service + Instance assetType",
+			expr: "service:compute.googleapis.com assetType:compute.googleapis.com/Instance",
+		},
+		{
+			name: "compute service + Network assetType",
+			expr: "service:compute.googleapis.com assetType:compute.googleapis.com/Network",
+		},
+		{
+			name: "storage service + Bucket assetType",
+			expr: "service:storage.googleapis.com assetType:storage.googleapis.com/Bucket",
+		},
+		{
+			name: "reverse order: assetType then matching service",
+			expr: "assetType:compute.googleapis.com/Instance service:compute.googleapis.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseFilter(tt.expr)
+			assert.False(t, got.ForceEmpty, "agreeing service+assetType must not trip ForceEmpty: %q", tt.expr)
 		})
 	}
 }

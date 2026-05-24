@@ -256,3 +256,108 @@ func TestEmptyProjectIDFallsBackToEngine(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, out.Results)
 }
+
+// TestSDKCloudAsset_BugFixes pins the three issues called out in the
+// PR #198 review so they cannot silently regress.
+func TestSDKCloudAsset_BugFixes(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewGCP()
+	const projectID = "my-test-project"
+
+	require.NoError(t, cloudP.GCS.CreateBucket(ctx, "bkt"))
+	require.NoError(t, cloudP.GCS.PutBucketTagging(ctx, "bkt", map[string]string{"env": "prod"}))
+	require.NoError(t, cloudP.Firestore.CreateTable(ctx, dbdriver.TableConfig{Name: "tbl", PartitionKey: "pk"}))
+
+	srv := gcpserver.New(gcpserver.Drivers{
+		Storage:           cloudP.GCS,
+		Firestore:         cloudP.Firestore,
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		ProjectID:         projectID,
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := cloudasset.NewService(ctx,
+		option.WithEndpoint(ts.URL),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+
+	scope := "projects/" + projectID
+
+	t.Run("Bug 1: service vs assetType contradiction returns empty", func(t *testing.T) {
+		out, err := client.V1.SearchAllResources(scope).
+			Query("service:compute.googleapis.com assetType:storage.googleapis.com/Bucket").Do()
+		require.NoError(t, err)
+		assert.Empty(t, out.Results,
+			"compute service + Bucket assetType is impossible — must yield zero")
+	})
+
+	t.Run("Bug 1: agreeing service+assetType still returns results", func(t *testing.T) {
+		out, err := client.V1.SearchAllResources(scope).
+			Query("service:storage.googleapis.com assetType:storage.googleapis.com/Bucket").Do()
+		require.NoError(t, err)
+		assert.Len(t, out.Results, 1)
+	})
+
+	t.Run("Bug 2: Operations.Get returns cached export result", func(t *testing.T) {
+		// Trigger an export — caches the operation under its name.
+		op, err := client.V1.ExportAssets(scope, &cloudasset.ExportAssetsRequest{}).Do()
+		require.NoError(t, err)
+		require.NotEmpty(t, op.Name, "operation must have a non-empty name to be pollable")
+
+		// Now poll via Operations.Get. Before the fix this 404'd.
+		polled, err := client.Operations.Get(op.Name).Do()
+		require.NoError(t, err, "Operations.Get must find the cached export op")
+		assert.True(t, polled.Done)
+		assert.Equal(t, op.Name, polled.Name)
+		assert.NotEmpty(t, polled.Response, "polled op must carry the response payload")
+	})
+
+	t.Run("Bug 2: Operations.Get on unknown name still 404s", func(t *testing.T) {
+		_, err := client.Operations.Get("projects/" + projectID + "/operations/cloudemu-export-bogus").Do()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "NOT_FOUND")
+	})
+
+	t.Run("Bug 3: feed id containing '/' is rejected", func(t *testing.T) {
+		// Construct a malformed feed name. The SDK's Get builds the URL
+		// from the name as-is.
+		_, err := client.Feeds.Get(scope + "/feeds/nested/path").Do()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "NOT_FOUND")
+	})
+}
+
+// TestSDKCloudAsset_BatchGetAssetsHistory fills the coverage gap from the
+// review — the endpoint was implemented but not exercised by any test.
+func TestSDKCloudAsset_BatchGetAssetsHistory(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewGCP()
+	const projectID = "history-test"
+
+	require.NoError(t, cloudP.GCS.CreateBucket(ctx, "h-bkt"))
+
+	srv := gcpserver.New(gcpserver.Drivers{
+		Storage:           cloudP.GCS,
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		ProjectID:         projectID,
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := cloudasset.NewService(ctx,
+		option.WithEndpoint(ts.URL),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+
+	out, err := client.V1.BatchGetAssetsHistory("projects/" + projectID).Do()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(out.Assets), 1,
+		"batchGetAssetsHistory should return the current snapshot wrapped in a temporal-asset entry")
+	for _, a := range out.Assets {
+		require.NotNil(t, a.Window, "each TemporalAsset must carry a window")
+		assert.NotEmpty(t, a.Window.StartTime)
+	}
+}
