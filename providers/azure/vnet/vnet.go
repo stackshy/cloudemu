@@ -300,6 +300,102 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 	return cerrors.Newf(cerrors.NotFound, "egress rule not found in network security group %q", groupID)
 }
 
+// UpdateVPCTags merges the given tags into the virtual network's tag map.
+func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]string) error {
+	v, ok := m.vpcs.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
+	}
+
+	if v.Tags == nil {
+		v.Tags = make(map[string]string, len(tags))
+	}
+
+	for k, val := range tags {
+		v.Tags[k] = val
+	}
+
+	return nil
+}
+
+// RemoveVPCTags removes the given tag keys from a virtual network.
+func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error {
+	v, ok := m.vpcs.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
+	}
+
+	for _, k := range keys {
+		delete(v.Tags, k)
+	}
+
+	return nil
+}
+
+// UpdateSubnetTags merges tags into the subnet's tag map.
+func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]string) error {
+	s, ok := m.subnets.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
+	}
+
+	if s.Tags == nil {
+		s.Tags = make(map[string]string, len(tags))
+	}
+
+	for k, val := range tags {
+		s.Tags[k] = val
+	}
+
+	return nil
+}
+
+// RemoveSubnetTags removes the given tag keys from a subnet.
+func (m *Mock) RemoveSubnetTags(_ context.Context, id string, keys []string) error {
+	s, ok := m.subnets.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
+	}
+
+	for _, k := range keys {
+		delete(s.Tags, k)
+	}
+
+	return nil
+}
+
+// UpdateSecurityGroupTags merges tags into the NSG's tag map.
+func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[string]string) error {
+	sg, ok := m.securityGroups.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+	}
+
+	if sg.Tags == nil {
+		sg.Tags = make(map[string]string, len(tags))
+	}
+
+	for k, val := range tags {
+		sg.Tags[k] = val
+	}
+
+	return nil
+}
+
+// RemoveSecurityGroupTags removes the given tag keys from an NSG.
+func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []string) error {
+	sg, ok := m.securityGroups.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+	}
+
+	for _, k := range keys {
+		delete(sg.Tags, k)
+	}
+
+	return nil
+}
+
 // copyTags creates a shallow copy of a tags map.
 func copyTags(tags map[string]string) map[string]string {
 	if tags == nil {

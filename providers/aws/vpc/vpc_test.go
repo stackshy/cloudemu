@@ -1025,6 +1025,84 @@ func TestRouteTableAssociation(t *testing.T) {
 	})
 }
 
+func TestTagMutation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("VPC tags update + remove", func(t *testing.T) {
+		m := newTestMock()
+
+		v, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16", Tags: map[string]string{"env": "stage"}})
+		requireNoError(t, err)
+
+		requireNoError(t, m.UpdateVPCTags(ctx, v.ID, map[string]string{"env": "prod", "team": "platform"}))
+
+		got, err := m.DescribeVPCs(ctx, []string{v.ID})
+		requireNoError(t, err)
+		assertEqual(t, "prod", got[0].Tags["env"])
+		assertEqual(t, "platform", got[0].Tags["team"])
+
+		requireNoError(t, m.RemoveVPCTags(ctx, v.ID, []string{"env", "missing"}))
+		got, err = m.DescribeVPCs(ctx, []string{v.ID})
+		requireNoError(t, err)
+		_, hasEnv := got[0].Tags["env"]
+		assertEqual(t, false, hasEnv)
+		assertEqual(t, "platform", got[0].Tags["team"])
+	})
+
+	t.Run("Subnet tags update + remove", func(t *testing.T) {
+		m := newTestMock()
+
+		v, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		requireNoError(t, err)
+
+		s, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
+		requireNoError(t, err)
+
+		requireNoError(t, m.UpdateSubnetTags(ctx, s.ID, map[string]string{"tier": "private"}))
+		got, err := m.DescribeSubnets(ctx, []string{s.ID})
+		requireNoError(t, err)
+		assertEqual(t, "private", got[0].Tags["tier"])
+
+		requireNoError(t, m.RemoveSubnetTags(ctx, s.ID, []string{"tier"}))
+		got, err = m.DescribeSubnets(ctx, []string{s.ID})
+		requireNoError(t, err)
+		_, hasTier := got[0].Tags["tier"]
+		assertEqual(t, false, hasTier)
+	})
+
+	t.Run("SecurityGroup tags update + remove", func(t *testing.T) {
+		m := newTestMock()
+
+		v, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		requireNoError(t, err)
+
+		sg, err := m.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{Name: "web", VPCID: v.ID})
+		requireNoError(t, err)
+
+		requireNoError(t, m.UpdateSecurityGroupTags(ctx, sg.ID, map[string]string{"role": "web"}))
+		got, err := m.DescribeSecurityGroups(ctx, []string{sg.ID})
+		requireNoError(t, err)
+		assertEqual(t, "web", got[0].Tags["role"])
+
+		requireNoError(t, m.RemoveSecurityGroupTags(ctx, sg.ID, []string{"role"}))
+		got, err = m.DescribeSecurityGroups(ctx, []string{sg.ID})
+		requireNoError(t, err)
+		_, hasRole := got[0].Tags["role"]
+		assertEqual(t, false, hasRole)
+	})
+
+	t.Run("missing resource errors", func(t *testing.T) {
+		m := newTestMock()
+
+		assertError(t, m.UpdateVPCTags(ctx, "vpc-nope", map[string]string{"k": "v"}), true)
+		assertError(t, m.RemoveVPCTags(ctx, "vpc-nope", []string{"k"}), true)
+		assertError(t, m.UpdateSubnetTags(ctx, "subnet-nope", map[string]string{"k": "v"}), true)
+		assertError(t, m.RemoveSubnetTags(ctx, "subnet-nope", []string{"k"}), true)
+		assertError(t, m.UpdateSecurityGroupTags(ctx, "sg-nope", map[string]string{"k": "v"}), true)
+		assertError(t, m.RemoveSecurityGroupTags(ctx, "sg-nope", []string{"k"}), true)
+	})
+}
+
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

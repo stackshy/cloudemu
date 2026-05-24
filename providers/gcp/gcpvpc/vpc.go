@@ -300,6 +300,103 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 	return cerrors.Newf(cerrors.NotFound, "egress rule not found in firewall rule %q", groupID)
 }
 
+// UpdateVPCTags merges the given labels into the network's label map. GCP
+// calls these labels; the cross-cloud Networking interface uses the term tags.
+func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]string) error {
+	v, ok := m.vpcs.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "network %q not found", id)
+	}
+
+	if v.Tags == nil {
+		v.Tags = make(map[string]string, len(tags))
+	}
+
+	for k, val := range tags {
+		v.Tags[k] = val
+	}
+
+	return nil
+}
+
+// RemoveVPCTags removes the given label keys from a network.
+func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error {
+	v, ok := m.vpcs.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "network %q not found", id)
+	}
+
+	for _, k := range keys {
+		delete(v.Tags, k)
+	}
+
+	return nil
+}
+
+// UpdateSubnetTags merges labels into the subnetwork's label map.
+func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]string) error {
+	s, ok := m.subnets.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "subnetwork %q not found", id)
+	}
+
+	if s.Tags == nil {
+		s.Tags = make(map[string]string, len(tags))
+	}
+
+	for k, val := range tags {
+		s.Tags[k] = val
+	}
+
+	return nil
+}
+
+// RemoveSubnetTags removes the given label keys from a subnetwork.
+func (m *Mock) RemoveSubnetTags(_ context.Context, id string, keys []string) error {
+	s, ok := m.subnets.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "subnetwork %q not found", id)
+	}
+
+	for _, k := range keys {
+		delete(s.Tags, k)
+	}
+
+	return nil
+}
+
+// UpdateSecurityGroupTags merges labels into the firewall rule's label map.
+func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[string]string) error {
+	sg, ok := m.securityGroups.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", id)
+	}
+
+	if sg.Tags == nil {
+		sg.Tags = make(map[string]string, len(tags))
+	}
+
+	for k, val := range tags {
+		sg.Tags[k] = val
+	}
+
+	return nil
+}
+
+// RemoveSecurityGroupTags removes the given label keys from a firewall rule.
+func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []string) error {
+	sg, ok := m.securityGroups.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", id)
+	}
+
+	for _, k := range keys {
+		delete(sg.Tags, k)
+	}
+
+	return nil
+}
+
 // copyTags creates a shallow copy of a tags map.
 func copyTags(tags map[string]string) map[string]string {
 	if tags == nil {
