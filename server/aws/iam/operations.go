@@ -614,6 +614,11 @@ func (h *Handler) removeRoleFromInstanceProfile(w http.ResponseWriter, r *http.R
 // lookupRole resolves a role name to RoleInfo for embedding in InstanceProfile
 // responses. Returns nil if the role doesn't exist — the caller falls back to
 // emitting a minimal Role with just the name.
+//
+// listInstanceProfiles calls this once per profile (an N+1 driver hop). This
+// is acceptable for an in-memory emulator at the scales it targets (tens of
+// profiles in a test); rewriting as a single bulk-fetch would be premature
+// optimization given the driver lacks a batch API.
 func (h *Handler) lookupRole(r *http.Request, name string) *iamdriver.RoleInfo {
 	if name == "" {
 		return nil

@@ -122,10 +122,10 @@ func New(d Drivers) *server.Server {
 		srv.Register(iam.New(d.IAM))
 	}
 
-	// Redshift sits between RDS and EC2 in the query-protocol pecking order.
-	// Its action set (CreateCluster, DescribeClusters, …) is disjoint from
-	// RDS's (CreateDBInstance, …) and from EC2's (RunInstances, …), so no
-	// shadowing occurs.
+	// Redshift sits with the other query-protocol handlers before the EC2
+	// catch-all. Its action set (CreateCluster, DescribeClusters, …) is
+	// disjoint from RDS's (CreateDBInstance, …), from IAM's (CreateUser, …),
+	// and from EC2's (RunInstances, …), so no shadowing occurs.
 	if d.Redshift != nil {
 		srv.Register(redshift.New(d.Redshift))
 	}

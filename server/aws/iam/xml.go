@@ -88,6 +88,16 @@ type policyXML struct {
 	Description      string `xml:"Description,omitempty"`
 }
 
+// toPolicyXML emits the wire shape the SDK expects. Two fields are fixed
+// constants rather than driver-derived because the in-memory PolicyInfo
+// doesn't carry them:
+//
+//   - AttachmentCount is always 0. The driver does not track the live
+//     count, and recomputing it would mean walking every user/role on
+//     every read. The SDK accepts the field at zero.
+//   - IsAttachable is always true. Real AWS distinguishes
+//     customer-managed (attachable) from AWS-managed policies; we only
+//     emit customer-managed, so true is correct.
 func toPolicyXML(p *iamdriver.PolicyInfo) policyXML {
 	return policyXML{
 		PolicyName:       p.Name,
@@ -109,6 +119,9 @@ type groupXML struct {
 	CreateDate string `xml:"CreateDate,omitempty"`
 }
 
+// toGroupXML emits the wire shape the SDK expects. GroupId is omitted
+// because the driver's GroupInfo doesn't carry one; the SDK tolerates the
+// missing field (it's modeled as optional on the response).
 func toGroupXML(g *iamdriver.GroupInfo) groupXML {
 	return groupXML{
 		GroupName:  g.Name,
