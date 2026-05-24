@@ -369,3 +369,64 @@ clock.Set(time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC))
 - **Auto-metrics** -- Backfill datapoints are generated at 1-minute intervals from `clock.Now()`. FakeClock ensures predictable timestamps.
 - **TTL evaluation** -- Database TTL checks compare item timestamps against the clock.
 - **Resource timestamps** -- All `CreatedAt`, `LastModified`, and similar fields use the clock.
+
+---
+
+## 10. Cross-Service Resource Discovery
+
+CloudEmu ships a cross-service inventory engine (`resourcediscovery/`) that walks every service driver a provider holds and returns a single normalized view of what exists. It sits next to the `topology/` engine as a peer of the portable API — it owns no state, constructs from driver interfaces, and is purely query-driven.
+
+The engine is the foundation for three SDK-compat handlers that speak the real cloud inventory APIs: **AWS Resource Explorer 2 + Resource Groups Tagging API**, **Azure Resource Graph**, and **GCP Cloud Asset Inventory**. A tag set through any one of those paths is immediately visible through the others, and through the engine's own `SearchByTag`.
+
+### Provider wiring
+
+Every provider factory wires the engine automatically. No setup required:
+
+```go
+aws := cloudemu.NewAWS(config.WithAccountID("123456789012"), config.WithRegion("us-west-2"))
+
+all, _ := aws.ResourceDiscovery.ListAll(ctx)
+// returns Resource{Provider, Service, Type, ID, ARN, Region, Tags, CreatedAt}
+// for every bucket, instance, VPC, subnet, security group, table, and function
+```
+
+The same field exists on Azure and GCP providers (`azure.ResourceDiscovery`, `gcp.ResourceDiscovery`). Internally, the engine reads from the existing Compute, Networking, Storage, Database, and Serverless drivers — any field that's nil is silently skipped, so partial test wirings work.
+
+### Engine API
+
+| Operation | Purpose |
+|-----------|---------|
+| `ListAll(ctx)` | Every resource the provider currently holds |
+| `List(ctx, Query)` | Filter by `Services`, `Type`, `Region`, and `Tags` (any-of for `Services`; AND across all non-empty fields) |
+| `SearchByTag(ctx, key, value)` | Every resource whose `Tags[key] == value` |
+| `GetTagKeys(ctx)` | Distinct tag keys across the inventory |
+| `GetTagValues(ctx, key)` | Distinct values for a key |
+| `TagResourceByARN(ctx, arn, tags)` | Apply tags to a resource addressed by canonical ARN/URN |
+| `UntagResourceByARN(ctx, arn, keys)` | Remove tag keys from a resource addressed by canonical ARN/URN |
+
+The `Resource` struct is uniform across clouds:
+
+```go
+type Resource struct {
+    Provider  string            // "aws" | "azure" | "gcp"
+    Service   string            // "compute" | "storage" | "networking" | "database" | "serverless"
+    Type      string            // e.g. "instance", "bucket", "vpc", "table", "function"
+    ID        string
+    ARN       string            // AWS ARN, Azure resource ID, or GCP //-prefixed URN
+    Region    string
+    Tags      map[string]string
+    CreatedAt time.Time
+}
+```
+
+### SDK-compat surfaces
+
+The engine drives three handlers, each registered on its provider's SDK-compat server. They all read from (and write tags through) the same engine, so the choice between them is purely about which SDK the calling code already speaks.
+
+| Cloud | Handler | What real SDK clients see |
+|-------|---------|--------------------------|
+| AWS | `server/aws/resourceexplorer2` + `server/aws/resourcegroupstaggingapi` | `resourceexplorer2.Search`, `resourcegroupstaggingapi.GetResources/TagResources/UntagResources/GetTagKeys/GetTagValues` |
+| Azure | `server/azure/resourcegraph` | `armresourcegraph.Resources` — KQL-shaped query over the unified inventory |
+| GCP | `server/gcp/cloudasset` | `cloudasset.SearchAllResources`, `assets.List`, `ExportAssets`, Feeds CRUD, `Operations.Get` |
+
+See [services.md — Resource Discovery](services.md#19-resource-discovery) for the full per-handler operation list and [sdk-server.md](sdk-server.md) for the wire protocols.

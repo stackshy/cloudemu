@@ -139,6 +139,8 @@ Region, credentials, and tokens can be any dummy values — the server doesn't v
 | **RDS / Aurora** *(query protocol)* | DBInstances (Create/Describe/Modify/Delete/Start/Stop/Reboot), DBClusters (Create/Describe/Modify/Delete/Start/Stop), DBSnapshots + DBClusterSnapshots (Create/Describe/Delete/Restore). One handler also serves the **Neptune** and **DocumentDB** engines — both reuse the same `aws-sdk-go-v2/service/{neptune,docdb}` client surface. |
 | **Redshift** *(query protocol)* | CreateCluster, DescribeClusters, ModifyCluster, DeleteCluster, RebootCluster, CreateClusterSnapshot, DescribeClusterSnapshots, DeleteClusterSnapshot, RestoreFromClusterSnapshot |
 | **EKS** *(REST + JSON)* | Clusters (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), NodeGroups (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), Fargate Profiles (Create/Describe/List/Delete), Addons (Create/Describe/List/Update/Delete). Stub kubeconfig only — data plane deferred to Wave 2. |
+| **Resource Explorer 2** *(JSON)* | Search — free-text plus filter expression over the cross-service inventory; results include ARN, resource type, region, owning account, and tags |
+| **Resource Groups Tagging API** *(JSON-RPC)* | GetResources (filter by `ResourceTypeFilters` + `TagFilters`, paginated), TagResources, UntagResources, GetTagKeys, GetTagValues |
 
 ### Azure (`server/azure/`)
 
@@ -158,6 +160,7 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **PostgreSQL Flexible Server** | `Microsoft.DBforPostgreSQL/flexibleServers` — full CRUD lifecycle |
 | **MySQL Flexible Server** | `Microsoft.DBforMySQL/flexibleServers` — full CRUD lifecycle |
 | **AKS** | `Microsoft.ContainerService/managedClusters` — ManagedClusters (CreateOrUpdate, Get, UpdateTags, Delete, List/ListByResourceGroup), AgentPools (CreateOrUpdate, Get, Delete, List), MaintenanceConfigurations (CreateOrUpdate, Get, Delete, List), ListClusterAdmin/User/MonitoringUser Credentials, RotateClusterCertificates. Stub kubeconfig only — data plane deferred to Wave 2. |
+| **Resource Graph** | `Microsoft.ResourceGraph` — `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with a KQL-shaped query over the cross-service inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
 
 ### GCP (`server/gcp/`)
 
@@ -174,6 +177,7 @@ All handlers speak REST + JSON.
 | **Pub/Sub** | Topics + Subscriptions lifecycle, `:publish`, `:pull`, `:acknowledge` |
 | **Cloud SQL** | Instances (insert/get/list/patch/delete/start/stop/restart) + Operations (get/list) — supports the `sqladmin/v1` SDK |
 | **GKE** | Clusters (Create/Get/List/Update/Delete + `:setLogging`/`:setMonitoring`/`:setMasterAuth`/`:setLegacyAbac`/`:setNetworkPolicy`/`:setMaintenancePolicy`/`:setResourceLabels`/`:startIpRotation`/`:completeIpRotation`), NodePools (Create/Get/List/Update/Delete + `:setSize`/`:setAutoscaling`/`:setManagement`/`:rollback`), Operations (Get/List/`:cancel`). Stub kubeconfig only — data plane deferred to Wave 2. |
+| **Cloud Asset Inventory** | `assets.list` (filter by `assetTypes[]`), `searchAllResources` (query + asset-type filter), `searchAllIamPolicies` (returns empty — out of scope), `exportAssets` (sync; inline results in the returned Operation), `batchGetAssetsHistory`, Feeds (create/list/get/patch/delete), `operations.get`. Resource names returned as GCP-shaped `//service/path` URNs. |
 
 Any operation not in these lists returns `501 Not Implemented` or the provider's native `UnknownOperation` / `NotImplemented` / `NOT_FOUND` error.
 

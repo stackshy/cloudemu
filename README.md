@@ -103,6 +103,7 @@ SDK-compat coverage across AWS, Azure, and GCP:
 | Message Queue | SQS | Service Bus | Pub/Sub |
 | Networking | VPC (under EC2) | Virtual Network | VPC + Subnets + Firewalls + Routes |
 | Monitoring | CloudWatch | Azure Monitor | Cloud Monitoring |
+| Resource Discovery | Resource Explorer + Resource Groups Tagging API | Resource Graph | Cloud Asset Inventory |
 
 The Kubernetes story is two layers, both shipped:
 
