@@ -1025,6 +1025,121 @@ func TestRouteTableAssociation(t *testing.T) {
 	})
 }
 
+func TestTagMutation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("VPC tags update + remove", func(t *testing.T) {
+		m := newTestMock()
+
+		v, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16", Tags: map[string]string{"env": "stage"}})
+		requireNoError(t, err)
+
+		requireNoError(t, m.UpdateVPCTags(ctx, v.ID, map[string]string{"env": "prod", "team": "platform"}))
+
+		got, err := m.DescribeVPCs(ctx, []string{v.ID})
+		requireNoError(t, err)
+		assertEqual(t, "prod", got[0].Tags["env"])
+		assertEqual(t, "platform", got[0].Tags["team"])
+
+		requireNoError(t, m.RemoveVPCTags(ctx, v.ID, []string{"env", "missing"}))
+		got, err = m.DescribeVPCs(ctx, []string{v.ID})
+		requireNoError(t, err)
+		_, hasEnv := got[0].Tags["env"]
+		assertEqual(t, false, hasEnv)
+		assertEqual(t, "platform", got[0].Tags["team"])
+	})
+
+	t.Run("Subnet tags update + remove", func(t *testing.T) {
+		m := newTestMock()
+
+		v, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		requireNoError(t, err)
+
+		s, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
+		requireNoError(t, err)
+
+		requireNoError(t, m.UpdateSubnetTags(ctx, s.ID, map[string]string{"tier": "private"}))
+		got, err := m.DescribeSubnets(ctx, []string{s.ID})
+		requireNoError(t, err)
+		assertEqual(t, "private", got[0].Tags["tier"])
+
+		requireNoError(t, m.RemoveSubnetTags(ctx, s.ID, []string{"tier"}))
+		got, err = m.DescribeSubnets(ctx, []string{s.ID})
+		requireNoError(t, err)
+		_, hasTier := got[0].Tags["tier"]
+		assertEqual(t, false, hasTier)
+	})
+
+	t.Run("SecurityGroup tags update + remove", func(t *testing.T) {
+		m := newTestMock()
+
+		v, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+		requireNoError(t, err)
+
+		sg, err := m.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{Name: "web", VPCID: v.ID})
+		requireNoError(t, err)
+
+		requireNoError(t, m.UpdateSecurityGroupTags(ctx, sg.ID, map[string]string{"role": "web"}))
+		got, err := m.DescribeSecurityGroups(ctx, []string{sg.ID})
+		requireNoError(t, err)
+		assertEqual(t, "web", got[0].Tags["role"])
+
+		requireNoError(t, m.RemoveSecurityGroupTags(ctx, sg.ID, []string{"role"}))
+		got, err = m.DescribeSecurityGroups(ctx, []string{sg.ID})
+		requireNoError(t, err)
+		_, hasRole := got[0].Tags["role"]
+		assertEqual(t, false, hasRole)
+	})
+
+	t.Run("missing resource errors", func(t *testing.T) {
+		m := newTestMock()
+
+		assertError(t, m.UpdateVPCTags(ctx, "vpc-nope", map[string]string{"k": "v"}), true)
+		assertError(t, m.RemoveVPCTags(ctx, "vpc-nope", []string{"k"}), true)
+		assertError(t, m.UpdateSubnetTags(ctx, "subnet-nope", map[string]string{"k": "v"}), true)
+		assertError(t, m.RemoveSubnetTags(ctx, "subnet-nope", []string{"k"}), true)
+		assertError(t, m.UpdateSecurityGroupTags(ctx, "sg-nope", map[string]string{"k": "v"}), true)
+		assertError(t, m.RemoveSecurityGroupTags(ctx, "sg-nope", []string{"k"}), true)
+	})
+}
+
+// TestTagMutationConcurrency drives many concurrent Update/Remove tag calls
+// against a single VPC. The new memstore.Update path holds the store lock
+// for the duration of the mutation and swaps in a freshly-built map, so
+// concurrent writers cannot tear the inner map. With go test -race this
+// catches any regression to in-place mutation under an unguarded read.
+//
+// Note: this test does NOT mix in Describe calls because reads through
+// memstore.Get release the lock before the caller dereferences the value
+// — a pre-existing pattern in the codebase that is out of scope here. A
+// follow-up should add a Read closure to memstore (or per-resource locks)
+// so reads can copy Tags under the same lock that protects writes.
+func TestTagMutationConcurrency(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	v, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	requireNoError(t, err)
+
+	const writers = 16
+	const iters = 100
+
+	done := make(chan struct{})
+	for w := 0; w < writers; w++ {
+		go func(w int) {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < iters; i++ {
+				_ = m.UpdateVPCTags(ctx, v.ID, map[string]string{"k": "v"})
+				_ = m.RemoveVPCTags(ctx, v.ID, []string{"k"})
+			}
+		}(w)
+	}
+
+	for w := 0; w < writers; w++ {
+		<-done
+	}
+}
+
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

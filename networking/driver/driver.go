@@ -306,4 +306,14 @@ type Networking interface {
 	DeleteVPCEndpoint(ctx context.Context, id string) error
 	DescribeVPCEndpoints(ctx context.Context, ids []string) ([]VPCEndpoint, error)
 	ModifyVPCEndpoint(ctx context.Context, id string, config VPCEndpointConfig) (*VPCEndpoint, error)
+
+	// Tag mutation. Update* merges keys into the resource's existing Tags
+	// (overlapping keys overwritten, others preserved); Remove* deletes the
+	// listed keys. Required by the Resource Groups Tagging API surface.
+	UpdateVPCTags(ctx context.Context, id string, tags map[string]string) error
+	RemoveVPCTags(ctx context.Context, id string, keys []string) error
+	UpdateSubnetTags(ctx context.Context, id string, tags map[string]string) error
+	RemoveSubnetTags(ctx context.Context, id string, keys []string) error
+	UpdateSecurityGroupTags(ctx context.Context, id string, tags map[string]string) error
+	RemoveSecurityGroupTags(ctx context.Context, id string, keys []string) error
 }

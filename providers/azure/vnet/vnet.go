@@ -300,6 +300,121 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 	return cerrors.Newf(cerrors.NotFound, "egress rule not found in network security group %q", groupID)
 }
 
+// UpdateVPCTags merges the given tags into the virtual network's tag map.
+// The mutation runs under memstore.Update's lock; a fresh map is swapped in
+// so concurrent readers iterating the old map are unaffected.
+func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]string) error {
+	if !m.vpcs.Update(id, func(v *vpcData) *vpcData {
+		v.Tags = mergeTagMap(v.Tags, tags)
+		return v
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
+	}
+
+	return nil
+}
+
+// RemoveVPCTags removes the given tag keys from a virtual network.
+func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error {
+	if !m.vpcs.Update(id, func(v *vpcData) *vpcData {
+		v.Tags = removeTagMapKeys(v.Tags, keys)
+		return v
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
+	}
+
+	return nil
+}
+
+// UpdateSubnetTags merges tags into the subnet's tag map.
+func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]string) error {
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.Tags = mergeTagMap(s.Tags, tags)
+		return s
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
+	}
+
+	return nil
+}
+
+// RemoveSubnetTags removes the given tag keys from a subnet.
+func (m *Mock) RemoveSubnetTags(_ context.Context, id string, keys []string) error {
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.Tags = removeTagMapKeys(s.Tags, keys)
+		return s
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
+	}
+
+	return nil
+}
+
+// UpdateSecurityGroupTags merges tags into the NSG's tag map.
+func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[string]string) error {
+	if !m.securityGroups.Update(id, func(sg *sgData) *sgData {
+		sg.Tags = mergeTagMap(sg.Tags, tags)
+		return sg
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+	}
+
+	return nil
+}
+
+// RemoveSecurityGroupTags removes the given tag keys from an NSG.
+func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []string) error {
+	if !m.securityGroups.Update(id, func(sg *sgData) *sgData {
+		sg.Tags = removeTagMapKeys(sg.Tags, keys)
+		return sg
+	}) {
+		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+	}
+
+	return nil
+}
+
+// mergeTagMap returns a fresh map containing existing's keys plus tags's
+// keys (tags wins on overlap). The original existing map is not modified
+// so concurrent readers can keep iterating it safely.
+func mergeTagMap(existing, tags map[string]string) map[string]string {
+	out := make(map[string]string, len(existing)+len(tags))
+
+	for k, v := range existing {
+		out[k] = v
+	}
+
+	for k, v := range tags {
+		out[k] = v
+	}
+
+	return out
+}
+
+// removeTagMapKeys returns a fresh map with the listed keys removed.
+func removeTagMapKeys(existing map[string]string, keys []string) map[string]string {
+	if len(existing) == 0 {
+		return existing
+	}
+
+	drop := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		drop[k] = struct{}{}
+	}
+
+	out := make(map[string]string, len(existing))
+
+	for k, v := range existing {
+		if _, gone := drop[k]; gone {
+			continue
+		}
+
+		out[k] = v
+	}
+
+	return out
+}
+
 // copyTags creates a shallow copy of a tags map.
 func copyTags(tags map[string]string) map[string]string {
 	if tags == nil {

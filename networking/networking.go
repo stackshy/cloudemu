@@ -659,3 +659,51 @@ func (n *Networking) ModifyVPCEndpoint(
 
 	return out.(*driver.VPCEndpoint), nil
 }
+
+func (n *Networking) UpdateVPCTags(ctx context.Context, id string, tags map[string]string) error {
+	_, err := n.do(ctx, "UpdateVPCTags", id, func() (any, error) {
+		return nil, n.driver.UpdateVPCTags(ctx, id, tags)
+	})
+
+	return err
+}
+
+func (n *Networking) RemoveVPCTags(ctx context.Context, id string, keys []string) error {
+	_, err := n.do(ctx, "RemoveVPCTags", id, func() (any, error) {
+		return nil, n.driver.RemoveVPCTags(ctx, id, keys)
+	})
+
+	return err
+}
+
+func (n *Networking) UpdateSubnetTags(ctx context.Context, id string, tags map[string]string) error {
+	_, err := n.do(ctx, "UpdateSubnetTags", id, func() (any, error) {
+		return nil, n.driver.UpdateSubnetTags(ctx, id, tags)
+	})
+
+	return err
+}
+
+func (n *Networking) RemoveSubnetTags(ctx context.Context, id string, keys []string) error {
+	_, err := n.do(ctx, "RemoveSubnetTags", id, func() (any, error) {
+		return nil, n.driver.RemoveSubnetTags(ctx, id, keys)
+	})
+
+	return err
+}
+
+func (n *Networking) UpdateSecurityGroupTags(ctx context.Context, id string, tags map[string]string) error {
+	_, err := n.do(ctx, "UpdateSecurityGroupTags", id, func() (any, error) {
+		return nil, n.driver.UpdateSecurityGroupTags(ctx, id, tags)
+	})
+
+	return err
+}
+
+func (n *Networking) RemoveSecurityGroupTags(ctx context.Context, id string, keys []string) error {
+	_, err := n.do(ctx, "RemoveSecurityGroupTags", id, func() (any, error) {
+		return nil, n.driver.RemoveSecurityGroupTags(ctx, id, keys)
+	})
+
+	return err
+}
