@@ -14,6 +14,7 @@ import (
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	"github.com/stackshy/cloudemu/resourcediscovery"
 	"github.com/stackshy/cloudemu/server"
 	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
 	"github.com/stackshy/cloudemu/server/azure/azuresql"
@@ -26,6 +27,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/server/azure/network"
 	"github.com/stackshy/cloudemu/server/azure/postgresflex"
+	"github.com/stackshy/cloudemu/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
@@ -62,6 +64,12 @@ type Drivers struct {
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
 	// the same backend. Leave nil to disable Kubernetes data-plane support.
 	K8sAPI *kubernetes.APIServer
+	// ResourceDiscovery is the cross-service inventory engine. Required to
+	// serve Azure Resource Graph (armresourcegraph) requests. Leave nil to
+	// omit the handler. SubscriptionID is needed for the subscription-scoping
+	// check on incoming queries.
+	ResourceDiscovery *resourcediscovery.Engine
+	SubscriptionID    string
 }
 
 // New returns a server that speaks the Azure ARM JSON wire protocol for every
@@ -150,6 +158,13 @@ func New(d Drivers) *server.Server {
 	// other Azure path. Registered before the BlobStorage fallback.
 	if d.K8sAPI != nil {
 		srv.Register(d.K8sAPI)
+	}
+
+	// Resource Graph matches /providers/Microsoft.ResourceGraph/... —
+	// distinct from any service-scoped ARM URL, so registration order is
+	// unconstrained relative to the resource handlers above.
+	if d.ResourceDiscovery != nil {
+		srv.Register(resourcegraph.New(d.ResourceDiscovery, d.SubscriptionID))
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It
