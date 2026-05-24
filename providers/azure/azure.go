@@ -23,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/providers/azure/vnet"
+	"github.com/stackshy/cloudemu/resourcediscovery"
 )
 
 // Provider holds all Azure mock services.
@@ -47,6 +48,8 @@ type Provider struct {
 	PostgresFlex     *postgresflex.Mock
 	MySQLFlex        *mysqlflex.Mock
 	AKS              *aks.Mock
+
+	ResourceDiscovery *resourcediscovery.Engine
 }
 
 // New creates a new Azure provider with all mock services.
@@ -88,6 +91,17 @@ func New(opts ...config.Option) *Provider {
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
 	p.AKS.SetMonitoring(p.Monitor)
+
+	p.ResourceDiscovery = resourcediscovery.New(
+		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
+		&resourcediscovery.Drivers{
+			Compute:    p.VirtualMachines,
+			Networking: p.VNet,
+			Storage:    p.BlobStorage,
+			Database:   p.CosmosDB,
+			Serverless: p.Functions,
+		},
+	)
 
 	return p
 }

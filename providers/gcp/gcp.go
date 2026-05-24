@@ -21,6 +21,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/gcp/memorystore"
 	"github.com/stackshy/cloudemu/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/providers/gcp/secretmanager"
+	"github.com/stackshy/cloudemu/resourcediscovery"
 )
 
 // Provider holds all GCP mock services.
@@ -43,6 +44,8 @@ type Provider struct {
 	Eventarc         *eventarc.Mock
 	CloudSQL         *cloudsql.Mock
 	GKE              *gke.Mock
+
+	ResourceDiscovery *resourcediscovery.Engine
 }
 
 // New creates a new GCP provider with all mock services.
@@ -80,6 +83,17 @@ func New(opts ...config.Option) *Provider {
 	p.Eventarc.SetMonitoring(p.CloudMonitoring)
 	p.CloudSQL.SetMonitoring(p.CloudMonitoring)
 	p.GKE.SetMonitoring(p.CloudMonitoring)
+
+	p.ResourceDiscovery = resourcediscovery.New(
+		resourcediscovery.ProviderGCP, o.ProjectID, o.Region,
+		&resourcediscovery.Drivers{
+			Compute:    p.GCE,
+			Networking: p.VPC,
+			Storage:    p.GCS,
+			Database:   p.Firestore,
+			Serverless: p.CloudFunctions,
+		},
+	)
 
 	return p
 }

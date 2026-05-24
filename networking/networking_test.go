@@ -760,6 +760,81 @@ func (m *mockDriver) ModifyVPCEndpoint(
 	return ep, nil
 }
 
+func (m *mockDriver) UpdateVPCTags(_ context.Context, id string, tags map[string]string) error {
+	v, ok := m.vpcs[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	if v.Tags == nil {
+		v.Tags = make(map[string]string, len(tags))
+	}
+	for k, val := range tags {
+		v.Tags[k] = val
+	}
+	return nil
+}
+
+func (m *mockDriver) RemoveVPCTags(_ context.Context, id string, keys []string) error {
+	v, ok := m.vpcs[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	for _, k := range keys {
+		delete(v.Tags, k)
+	}
+	return nil
+}
+
+func (m *mockDriver) UpdateSubnetTags(_ context.Context, id string, tags map[string]string) error {
+	s, ok := m.subnets[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	if s.Tags == nil {
+		s.Tags = make(map[string]string, len(tags))
+	}
+	for k, val := range tags {
+		s.Tags[k] = val
+	}
+	return nil
+}
+
+func (m *mockDriver) RemoveSubnetTags(_ context.Context, id string, keys []string) error {
+	s, ok := m.subnets[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	for _, k := range keys {
+		delete(s.Tags, k)
+	}
+	return nil
+}
+
+func (m *mockDriver) UpdateSecurityGroupTags(_ context.Context, id string, tags map[string]string) error {
+	sg, ok := m.securityGroups[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	if sg.Tags == nil {
+		sg.Tags = make(map[string]string, len(tags))
+	}
+	for k, val := range tags {
+		sg.Tags[k] = val
+	}
+	return nil
+}
+
+func (m *mockDriver) RemoveSecurityGroupTags(_ context.Context, id string, keys []string) error {
+	sg, ok := m.securityGroups[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+	for _, k := range keys {
+		delete(sg.Tags, k)
+	}
+	return nil
+}
+
 func newTestNetworking(opts ...Option) *Networking {
 	return NewNetworking(newMockDriver(), opts...)
 }

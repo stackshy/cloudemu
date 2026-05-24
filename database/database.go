@@ -293,3 +293,31 @@ func (db *Database) ListIndexes(ctx context.Context, table string) ([]driver.Ind
 
 	return out.([]driver.IndexInfo), nil
 }
+
+func (db *Database) TagResource(ctx context.Context, table string, tags map[string]string) error {
+	_, err := db.do(ctx, "TagResource", map[string]any{"table": table}, func() (any, error) {
+		return nil, db.driver.TagResource(ctx, table, tags)
+	})
+
+	return err
+}
+
+func (db *Database) UntagResource(ctx context.Context, table string, tagKeys []string) error {
+	_, err := db.do(ctx, "UntagResource", map[string]any{"table": table}, func() (any, error) {
+		return nil, db.driver.UntagResource(ctx, table, tagKeys)
+	})
+
+	return err
+}
+
+func (db *Database) ListTagsOfResource(ctx context.Context, table string) (map[string]string, error) {
+	out, err := db.do(ctx, "ListTagsOfResource", map[string]any{"table": table}, func() (any, error) {
+		return db.driver.ListTagsOfResource(ctx, table)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(map[string]string), nil
+}

@@ -148,4 +148,9 @@ type Database interface {
 	DeleteIndex(ctx context.Context, table, indexName string) error
 	DescribeIndex(ctx context.Context, table, indexName string) (*IndexInfo, error)
 	ListIndexes(ctx context.Context, table string) ([]IndexInfo, error)
+
+	// Tagging
+	TagResource(ctx context.Context, table string, tags map[string]string) error
+	UntagResource(ctx context.Context, table string, tagKeys []string) error
+	ListTagsOfResource(ctx context.Context, table string) (map[string]string, error)
 }
