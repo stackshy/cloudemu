@@ -1103,6 +1103,43 @@ func TestTagMutation(t *testing.T) {
 	})
 }
 
+// TestTagMutationConcurrency drives many concurrent Update/Remove tag calls
+// against a single VPC. The new memstore.Update path holds the store lock
+// for the duration of the mutation and swaps in a freshly-built map, so
+// concurrent writers cannot tear the inner map. With go test -race this
+// catches any regression to in-place mutation under an unguarded read.
+//
+// Note: this test does NOT mix in Describe calls because reads through
+// memstore.Get release the lock before the caller dereferences the value
+// — a pre-existing pattern in the codebase that is out of scope here. A
+// follow-up should add a Read closure to memstore (or per-resource locks)
+// so reads can copy Tags under the same lock that protects writes.
+func TestTagMutationConcurrency(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	v, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	requireNoError(t, err)
+
+	const writers = 16
+	const iters = 100
+
+	done := make(chan struct{})
+	for w := 0; w < writers; w++ {
+		go func(w int) {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < iters; i++ {
+				_ = m.UpdateVPCTags(ctx, v.ID, map[string]string{"k": "v"})
+				_ = m.RemoveVPCTags(ctx, v.ID, []string{"k"})
+			}
+		}(w)
+	}
+
+	for w := 0; w < writers; w++ {
+		<-done
+	}
+}
+
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

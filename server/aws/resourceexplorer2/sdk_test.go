@@ -148,6 +148,61 @@ func TestSDKResourceExplorer2(t *testing.T) {
 	})
 }
 
+// TestSDKResourceExplorer2_BugFixes exercises the four review-fix paths in
+// isolation so each can fail with a clear signal if it regresses.
+func TestSDKResourceExplorer2_BugFixes(t *testing.T) {
+	ctx := context.Background()
+	cloud := cloudemu.NewAWS()
+
+	// Seed one VPC (networking) and one EC2 instance via the engine surface.
+	_, err := cloud.VPC.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16", Tags: map[string]string{"env": "prod"},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, cloud.S3.CreateBucket(ctx, "log-bucket"))
+	require.NoError(t, cloud.S3.PutBucketTagging(ctx, "log-bucket", map[string]string{"env": "prod"}))
+
+	srv := awsserver.New(awsserver.Drivers{
+		S3:                cloud.S3,
+		VPC:               cloud.VPC,
+		ResourceDiscovery: cloud.ResourceDiscovery,
+		AccountID:         "123456789012",
+		Region:            "us-east-1",
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newREXClient(t, ts.URL)
+
+	t.Run("service:ec2 matches networking (not s3)", func(t *testing.T) {
+		out, err := client.Search(ctx, &rex.SearchInput{
+			QueryString: aws.String("service:ec2"),
+		})
+		require.NoError(t, err)
+		assert.Len(t, out.Resources, 1, "service:ec2 should expand to compute+networking; only the VPC matches")
+		assert.Equal(t, "ec2", aws.ToString(out.Resources[0].Service))
+	})
+
+	t.Run("CreateView rejects duplicate name", func(t *testing.T) {
+		_, err := client.CreateView(ctx, &rex.CreateViewInput{ViewName: aws.String("dup")})
+		require.NoError(t, err)
+
+		_, err = client.CreateView(ctx, &rex.CreateViewInput{ViewName: aws.String("dup")})
+		require.Error(t, err, "second CreateView with the same name must fail")
+		assert.Contains(t, err.Error(), "ConflictException")
+	})
+
+	t.Run("View Owner field carries the account ID", func(t *testing.T) {
+		created, err := client.CreateView(ctx, &rex.CreateViewInput{ViewName: aws.String("owned-view")})
+		require.NoError(t, err)
+
+		got, err := client.GetView(ctx, &rex.GetViewInput{ViewArn: created.View.ViewArn})
+		require.NoError(t, err)
+		assert.Equal(t, "123456789012", aws.ToString(got.View.Owner))
+	})
+}
+
 func newREXClient(t *testing.T, baseURL string) *rex.Client {
 	t.Helper()
 

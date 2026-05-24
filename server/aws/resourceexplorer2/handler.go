@@ -53,9 +53,10 @@ type Handler struct {
 	accountID string
 	region    string
 
-	mu      sync.RWMutex
-	views   map[string]*view  // keyed by ViewArn
-	indexes map[string]*index // keyed by region
+	mu          sync.RWMutex
+	views       map[string]*view  // keyed by ViewArn
+	viewsByName map[string]string // ViewName → ViewArn, for collision detection
+	indexes     map[string]*index // keyed by region
 }
 
 type view struct {
@@ -76,11 +77,12 @@ type index struct {
 // New returns a Resource Explorer 2 handler.
 func New(engine *resourcediscovery.Engine, accountID, region string) *Handler {
 	h := &Handler{
-		engine:    engine,
-		accountID: accountID,
-		region:    region,
-		views:     make(map[string]*view),
-		indexes:   make(map[string]*index),
+		engine:      engine,
+		accountID:   accountID,
+		region:      region,
+		views:       make(map[string]*view),
+		viewsByName: make(map[string]string),
+		indexes:     make(map[string]*index),
 	}
 
 	// Real Resource Explorer requires an Index in the calling region before
@@ -166,12 +168,15 @@ func (h *Handler) createView(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	arn := h.viewARN(req.ViewName)
-	if _, exists := h.views[arn]; exists {
+	// Dedupe by ViewName, not by ARN: every call to viewARN() generates a
+	// fresh unique suffix, so a name-only check is the only way to reject
+	// duplicates the way real Resource Explorer does.
+	if _, exists := h.viewsByName[req.ViewName]; exists {
 		wire.WriteJSONError(w, http.StatusConflict, "ConflictException", "view already exists: "+req.ViewName)
 		return
 	}
 
+	arn := h.viewARN(req.ViewName)
 	v := &view{
 		ARN:         arn,
 		Name:        req.ViewName,
@@ -180,9 +185,10 @@ func (h *Handler) createView(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now().UTC(),
 	}
 	h.views[arn] = v
+	h.viewsByName[req.ViewName] = arn
 
 	wire.WriteJSON(w, map[string]any{
-		"View": viewToWire(v),
+		"View": viewToWire(v, h.accountID),
 	})
 }
 
@@ -198,12 +204,14 @@ func (h *Handler) deleteView(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if _, ok := h.views[req.ViewArn]; !ok {
+	v, ok := h.views[req.ViewArn]
+	if !ok {
 		wire.WriteJSONError(w, http.StatusNotFound, "ResourceNotFoundException", "view not found: "+req.ViewArn)
 		return
 	}
 
 	delete(h.views, req.ViewArn)
+	delete(h.viewsByName, v.Name)
 	wire.WriteJSON(w, map[string]any{"ViewArn": req.ViewArn})
 }
 
@@ -238,7 +246,7 @@ func (h *Handler) getView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{
-		"View": viewToWire(v),
+		"View": viewToWire(v, h.accountID),
 		"Tags": v.Tags,
 	})
 }
@@ -378,11 +386,11 @@ func (h *Handler) indexARN(region string) string {
 	return idgen.AWSARN("resource-explorer-2", region, h.accountID, "index/"+idgen.GenerateID(""))
 }
 
-func viewToWire(v *view) map[string]any {
+func viewToWire(v *view, owner string) map[string]any {
 	return map[string]any{
 		"ViewArn": v.ARN,
 		"Filters": map[string]any{"FilterString": v.QueryString},
-		"Owner":   "",
+		"Owner":   owner,
 	}
 }
 

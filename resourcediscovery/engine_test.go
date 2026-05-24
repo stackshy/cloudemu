@@ -106,7 +106,7 @@ func TestListWithQueryFilters(t *testing.T) {
 	seedDDB(t, f, "stage-cache", map[string]string{"env": "stage"})
 
 	t.Run("by service", func(t *testing.T) {
-		got, err := f.engine.List(ctx, Query{Service: ServiceDatabase})
+		got, err := f.engine.List(ctx, Query{Services: []string{ServiceDatabase}})
 		require.NoError(t, err)
 		assert.Len(t, got, 2)
 		for _, r := range got {

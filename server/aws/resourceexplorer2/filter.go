@@ -43,7 +43,7 @@ func applyToken(q *resourcediscovery.Query, token string) {
 
 	switch key {
 	case "service":
-		q.Service = awsToPortableService(val)
+		q.Services = append(q.Services, awsToPortableServices(val)...)
 	case "region":
 		q.Region = val
 	}
@@ -62,20 +62,21 @@ func applyTagToken(q *resourcediscovery.Query, body string) {
 	q.Tags[key] = val
 }
 
-func awsToPortableService(s string) string {
+// awsToPortableServices maps an AWS service name to the set of portable
+// service names that match it. Most AWS services map 1:1; "ec2" expands to
+// {compute, networking} because real AWS uses ec2 for both VMs and VPC
+// resources while cloudemu's portable API splits them.
+func awsToPortableServices(s string) []string {
 	switch s {
 	case awsServiceEC2:
-		// ec2 covers both compute and networking in real AWS; the engine
-		// returns both because Query.Service applies to portable names. We
-		// use empty to match either.
-		return ""
+		return []string{portableServiceCompute, portableServiceNetworking}
 	case awsServiceS3:
-		return portableServiceStorage
+		return []string{portableServiceStorage}
 	case awsServiceDynamoDB:
-		return portableServiceDatabase
+		return []string{portableServiceDatabase}
 	case awsServiceLambda:
-		return portableServiceServerless
+		return []string{portableServiceServerless}
 	default:
-		return s
+		return []string{s}
 	}
 }

@@ -28,16 +28,21 @@ type Resource struct {
 
 // Query filters a list operation. All non-empty fields must match. Tags match
 // on key presence and (if value is non-empty) equality.
+//
+// Services is an any-of set: a resource matches if its Service is in the
+// slice. An empty/nil slice means "no service filter". This shape supports
+// cases like AWS's "ec2" which spans both compute and networking — the
+// caller can pass Services: []string{"compute", "networking"}.
 type Query struct {
-	Service string
-	Type    string
-	Region  string
-	Tags    map[string]string
+	Services []string
+	Type     string
+	Region   string
+	Tags     map[string]string
 }
 
 // matches returns true if r satisfies every non-empty field of q.
 func (q Query) matches(r *Resource) bool {
-	if !fieldMatch(q.Service, r.Service) {
+	if !sliceMatch(q.Services, r.Service) {
 		return false
 	}
 
@@ -55,6 +60,21 @@ func (q Query) matches(r *Resource) bool {
 // fieldMatch returns true when want is empty (no filter) or equals got.
 func fieldMatch(want, got string) bool {
 	return want == "" || want == got
+}
+
+// sliceMatch returns true when want is empty (no filter) or got is in want.
+func sliceMatch(want []string, got string) bool {
+	if len(want) == 0 {
+		return true
+	}
+
+	for _, w := range want {
+		if w == got {
+			return true
+		}
+	}
+
+	return false
 }
 
 // tagsMatch returns true when every required key is present, and any

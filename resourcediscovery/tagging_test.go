@@ -31,6 +31,7 @@ func TestParseSupportedARN(t *testing.T) {
 		{name: "non-aws partition", arn: "arn:azure:s3:::x", wantErr: true, errSubstr: "only AWS ARNs"},
 		{name: "malformed", arn: "not-an-arn", wantErr: true, errSubstr: "only AWS ARNs"},
 		{name: "missing parts", arn: "arn:aws:s3", wantErr: true, errSubstr: "malformed ARN"},
+		{name: "s3 object rejected", arn: "arn:aws:s3:::bkt/obj.txt", wantErr: true, errSubstr: "object ARNs are not yet supported"},
 	}
 
 	for _, tt := range tests {

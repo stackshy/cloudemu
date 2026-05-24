@@ -301,18 +301,14 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 }
 
 // UpdateVPCTags merges the given tags into the virtual network's tag map.
+// The mutation runs under memstore.Update's lock; a fresh map is swapped in
+// so concurrent readers iterating the old map are unaffected.
 func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]string) error {
-	v, ok := m.vpcs.Get(id)
-	if !ok {
+	if !m.vpcs.Update(id, func(v *vpcData) *vpcData {
+		v.Tags = mergeTagMap(v.Tags, tags)
+		return v
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
-	}
-
-	if v.Tags == nil {
-		v.Tags = make(map[string]string, len(tags))
-	}
-
-	for k, val := range tags {
-		v.Tags[k] = val
 	}
 
 	return nil
@@ -320,13 +316,11 @@ func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]strin
 
 // RemoveVPCTags removes the given tag keys from a virtual network.
 func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error {
-	v, ok := m.vpcs.Get(id)
-	if !ok {
+	if !m.vpcs.Update(id, func(v *vpcData) *vpcData {
+		v.Tags = removeTagMapKeys(v.Tags, keys)
+		return v
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
-	}
-
-	for _, k := range keys {
-		delete(v.Tags, k)
 	}
 
 	return nil
@@ -334,17 +328,11 @@ func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error 
 
 // UpdateSubnetTags merges tags into the subnet's tag map.
 func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]string) error {
-	s, ok := m.subnets.Get(id)
-	if !ok {
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.Tags = mergeTagMap(s.Tags, tags)
+		return s
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
-	}
-
-	if s.Tags == nil {
-		s.Tags = make(map[string]string, len(tags))
-	}
-
-	for k, val := range tags {
-		s.Tags[k] = val
 	}
 
 	return nil
@@ -352,13 +340,11 @@ func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]st
 
 // RemoveSubnetTags removes the given tag keys from a subnet.
 func (m *Mock) RemoveSubnetTags(_ context.Context, id string, keys []string) error {
-	s, ok := m.subnets.Get(id)
-	if !ok {
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.Tags = removeTagMapKeys(s.Tags, keys)
+		return s
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
-	}
-
-	for _, k := range keys {
-		delete(s.Tags, k)
 	}
 
 	return nil
@@ -366,17 +352,11 @@ func (m *Mock) RemoveSubnetTags(_ context.Context, id string, keys []string) err
 
 // UpdateSecurityGroupTags merges tags into the NSG's tag map.
 func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[string]string) error {
-	sg, ok := m.securityGroups.Get(id)
-	if !ok {
+	if !m.securityGroups.Update(id, func(sg *sgData) *sgData {
+		sg.Tags = mergeTagMap(sg.Tags, tags)
+		return sg
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
-	}
-
-	if sg.Tags == nil {
-		sg.Tags = make(map[string]string, len(tags))
-	}
-
-	for k, val := range tags {
-		sg.Tags[k] = val
 	}
 
 	return nil
@@ -384,16 +364,55 @@ func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[st
 
 // RemoveSecurityGroupTags removes the given tag keys from an NSG.
 func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []string) error {
-	sg, ok := m.securityGroups.Get(id)
-	if !ok {
+	if !m.securityGroups.Update(id, func(sg *sgData) *sgData {
+		sg.Tags = removeTagMapKeys(sg.Tags, keys)
+		return sg
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
 	}
 
-	for _, k := range keys {
-		delete(sg.Tags, k)
+	return nil
+}
+
+// mergeTagMap returns a fresh map containing existing's keys plus tags's
+// keys (tags wins on overlap). The original existing map is not modified
+// so concurrent readers can keep iterating it safely.
+func mergeTagMap(existing, tags map[string]string) map[string]string {
+	out := make(map[string]string, len(existing)+len(tags))
+
+	for k, v := range existing {
+		out[k] = v
 	}
 
-	return nil
+	for k, v := range tags {
+		out[k] = v
+	}
+
+	return out
+}
+
+// removeTagMapKeys returns a fresh map with the listed keys removed.
+func removeTagMapKeys(existing map[string]string, keys []string) map[string]string {
+	if len(existing) == 0 {
+		return existing
+	}
+
+	drop := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		drop[k] = struct{}{}
+	}
+
+	out := make(map[string]string, len(existing))
+
+	for k, v := range existing {
+		if _, gone := drop[k]; gone {
+			continue
+		}
+
+		out[k] = v
+	}
+
+	return out
 }
 
 // copyTags creates a shallow copy of a tags map.

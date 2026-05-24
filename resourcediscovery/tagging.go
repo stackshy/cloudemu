@@ -93,6 +93,15 @@ func parseS3ARN(arn, resource string) (parsedARN, error) {
 		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "S3 ARN missing bucket name: %q", arn)
 	}
 
+	// arn:aws:s3:::bucket-name → resource = "bucket-name" (taggable).
+	// arn:aws:s3:::bucket-name/object-key → resource = "bucket-name/object-key".
+	// Object-level tagging requires PutObjectTagging, not PutBucketTagging;
+	// reject until Phase 2.x adds object support.
+	if strings.ContainsRune(resource, '/') {
+		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument,
+			"S3 object ARNs are not yet supported (Phase 2 covers buckets only): %q", arn)
+	}
+
 	return parsedARN{service: awsServiceS3, id: resource}, nil
 }
 
