@@ -15,6 +15,7 @@ import (
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	"github.com/stackshy/cloudemu/resourcediscovery"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
@@ -23,6 +24,8 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/rds"
 	"github.com/stackshy/cloudemu/server/aws/redshift"
+	"github.com/stackshy/cloudemu/server/aws/resourceexplorer2"
+	"github.com/stackshy/cloudemu/server/aws/resourcegroupstaggingapi"
 	"github.com/stackshy/cloudemu/server/aws/s3"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
@@ -48,6 +51,13 @@ type Drivers struct {
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
 	// the same backend. Leave nil to disable Kubernetes data-plane support.
 	K8sAPI *kubernetes.APIServer
+	// ResourceDiscovery is the cross-service inventory engine. Required to
+	// serve Resource Explorer 2 and Resource Groups Tagging API requests.
+	// Leave nil to omit both handlers. AccountID and Region are needed for
+	// Resource Explorer to construct view/index ARNs.
+	ResourceDiscovery *resourcediscovery.Engine
+	AccountID         string
+	Region            string
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every
@@ -89,6 +99,12 @@ func New(d Drivers) *server.Server {
 		srv.Register(sqs.New(d.SQS))
 	}
 
+	// Resource Groups Tagging API: X-Amz-Target prefix
+	// ResourceGroupsTaggingAPI_20170126.* — disjoint from DynamoDB/SQS.
+	if d.ResourceDiscovery != nil {
+		srv.Register(resourcegroupstaggingapi.New(d.ResourceDiscovery))
+	}
+
 	// RDS must be registered before EC2: both speak AWS query-protocol on
 	// POST + form-encoded bodies, and Server matches in registration order.
 	// RDS's Matches is action-specific, so a request bound for EC2 will fall
@@ -125,6 +141,12 @@ func New(d Drivers) *server.Server {
 	// every other AWS path. Registered before S3's REST fallback.
 	if d.K8sAPI != nil {
 		srv.Register(d.K8sAPI)
+	}
+
+	// Resource Explorer 2 uses REST-JSON with fixed top-level paths
+	// (/CreateView, /Search, etc.). Must register before S3's catch-all.
+	if d.ResourceDiscovery != nil {
+		srv.Register(resourceexplorer2.New(d.ResourceDiscovery, d.AccountID, d.Region))
 	}
 
 	if d.S3 != nil {
