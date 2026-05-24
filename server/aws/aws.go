@@ -9,6 +9,7 @@ package aws
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
@@ -21,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
 	"github.com/stackshy/cloudemu/server/aws/eks"
+	"github.com/stackshy/cloudemu/server/aws/iam"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/rds"
 	"github.com/stackshy/cloudemu/server/aws/redshift"
@@ -46,6 +48,7 @@ type Drivers struct {
 	RDS        rdbdriver.RelationalDB
 	Redshift   rdbdriver.RelationalDB
 	EKS        eksdriver.EKS
+	IAM        iamdriver.IAM
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -111,6 +114,12 @@ func New(d Drivers) *server.Server {
 	// through to the EC2 handler unchanged.
 	if d.RDS != nil {
 		srv.Register(rds.New(d.RDS))
+	}
+
+	// IAM also speaks AWS query-protocol; its action set is disjoint from
+	// RDS, Redshift, and EC2. Registered before EC2 for the same reason.
+	if d.IAM != nil {
+		srv.Register(iam.New(d.IAM))
 	}
 
 	// Redshift sits between RDS and EC2 in the query-protocol pecking order.
