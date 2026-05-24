@@ -15,7 +15,9 @@ import (
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	gkeprov "github.com/stackshy/cloudemu/providers/gcp/gke"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	"github.com/stackshy/cloudemu/resourcediscovery"
 	"github.com/stackshy/cloudemu/server"
+	"github.com/stackshy/cloudemu/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/server/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
@@ -45,6 +47,13 @@ type Drivers struct {
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
 	// the same backend. Leave nil to disable Kubernetes data-plane support.
 	K8sAPI *kubernetes.APIServer
+	// ResourceDiscovery is the cross-service inventory engine. Required to
+	// serve Cloud Asset Inventory (cloudasset/v1) requests. Leave nil to
+	// omit the handler. ProjectID is used for feed-name validation; if
+	// empty the engine's own AccountID (GCP project ID for GCP engines)
+	// is used as the fallback.
+	ResourceDiscovery *resourcediscovery.Engine
+	ProjectID         string
 }
 
 // New returns a server that speaks GCP's REST JSON wire protocol for every
@@ -92,6 +101,14 @@ func New(d Drivers) *server.Server {
 	// same /v1/projects/ space as Firestore, so register first.
 	if d.GKE != nil {
 		srv.Register(gke.New(d.GKE))
+	}
+
+	// Cloud Asset Inventory matches /v1/{scope}:method and /v1/{parent}/
+	// {assets,feeds} paths. Register before Firestore: Firestore's Matches
+	// is /v1/projects/ broadly, which would otherwise swallow the colon-
+	// suffix custom methods that share the same prefix.
+	if d.ResourceDiscovery != nil {
+		srv.Register(cloudasset.New(d.ResourceDiscovery, d.ProjectID))
 	}
 
 	if d.Firestore != nil {
