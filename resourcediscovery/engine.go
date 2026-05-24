@@ -51,6 +51,20 @@ func New(provider, accountID, region string, drivers *Drivers) *Engine {
 	}
 }
 
+// AccountID returns the AWS account ID, Azure subscription ID, or GCP
+// project ID the engine was constructed with. Exposed so handlers built on
+// top of the engine (Resource Explorer, Resource Graph, Cloud Asset
+// Inventory) don't have to ask their callers to supply the same value a
+// second time when wiring up the server.
+func (e *Engine) AccountID() string {
+	return e.accountID
+}
+
+// Region returns the default region the engine was constructed with.
+func (e *Engine) Region() string {
+	return e.region
+}
+
 // ListAll walks every configured driver and returns the merged inventory.
 // Nil drivers are skipped silently. The first walker error short-circuits
 // the rest.

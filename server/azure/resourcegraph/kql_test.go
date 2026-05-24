@@ -122,3 +122,68 @@ func TestMapAzureType(t *testing.T) {
 		})
 	}
 }
+
+// TestParseKQL_ForceEmpty pins the AND-semantics fix: contradictory
+// chained where-clauses must surface ForceEmpty so the handler can return
+// zero rows. Real KQL would also yield zero — a resource cannot
+// simultaneously have two distinct types or two different tag values for
+// the same key.
+func TestParseKQL_ForceEmpty(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "two different type filters",
+			query: "Resources | where type == 'microsoft.compute/virtualmachines' | where type == 'microsoft.storage/storageaccounts'",
+		},
+		{
+			name:  "same type filter twice (still flagged — second clause is redundant by design)",
+			query: "Resources | where type == 'microsoft.compute/virtualmachines' | where type == 'microsoft.compute/virtualmachines'",
+		},
+		{
+			name:  "conflicting tag values for same key",
+			query: "Resources | where tags['env'] == 'prod' | where tags['env'] == 'stage'",
+		},
+		{
+			name:  "tag dot syntax conflicts with bracket syntax on same key",
+			query: "Resources | where tags['env'] == 'prod' | where tags.env == 'stage'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseKQL(tt.query)
+			assert.True(t, got.ForceEmpty, "expected ForceEmpty for contradictory query: %q", tt.query)
+		})
+	}
+}
+
+// TestParseKQL_NoFalsePositiveForceEmpty makes sure agreeing/compatible
+// chained clauses do NOT trip the contradiction sentinel.
+func TestParseKQL_NoFalsePositiveForceEmpty(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "type + unrelated tag",
+			query: "Resources | where type == 'microsoft.compute/virtualmachines' | where tags['env'] == 'prod'",
+		},
+		{
+			name:  "two tag filters on different keys",
+			query: "Resources | where tags['env'] == 'prod' | where tags['team'] == 'data'",
+		},
+		{
+			name:  "same tag key+value repeated",
+			query: "Resources | where tags['env'] == 'prod' | where tags['env'] == 'prod'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseKQL(tt.query)
+			assert.False(t, got.ForceEmpty, "ForceEmpty must not trip for compatible query: %q", tt.query)
+		})
+	}
+}

@@ -187,3 +187,98 @@ func newResourceGraphClient(t *testing.T, ts *httptest.Server) *armresourcegraph
 
 	return cf.NewClient()
 }
+
+// TestSDKResourceGraph_BugFixes pins the three issues called out in the
+// PR #197 review so they cannot silently regress.
+func TestSDKResourceGraph_BugFixes(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	require.NoError(t, cloudP.BlobStorage.CreateBucket(ctx, "bkt"))
+	require.NoError(t, cloudP.BlobStorage.PutBucketTagging(ctx, "bkt",
+		map[string]string{"env": "prod"}))
+
+	_, err := cloudP.VNet.CreateVPC(ctx, netdriver.VPCConfig{
+		CIDRBlock: "10.0.0.0/16", Tags: map[string]string{"env": "prod"},
+	})
+	require.NoError(t, err)
+
+	t.Run("Bug 1: contradictory type filters return empty (AND, not OR)", func(t *testing.T) {
+		srv := azureserver.New(azureserver.Drivers{
+			BlobStorage:       cloudP.BlobStorage,
+			Network:           cloudP.VNet,
+			ResourceDiscovery: cloudP.ResourceDiscovery,
+			SubscriptionID:    "123456789012",
+		})
+		ts := httptest.NewTLSServer(srv)
+		t.Cleanup(ts.Close)
+
+		client := newResourceGraphClient(t, ts)
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type == 'microsoft.compute/virtualmachines' | where type == 'microsoft.storage/storageaccounts'"),
+		}, nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, *out.TotalRecords, "AND of two distinct types must yield zero")
+	})
+
+	t.Run("Bug 1: conflicting tag values for same key return empty", func(t *testing.T) {
+		srv := azureserver.New(azureserver.Drivers{
+			BlobStorage:       cloudP.BlobStorage,
+			Network:           cloudP.VNet,
+			ResourceDiscovery: cloudP.ResourceDiscovery,
+			SubscriptionID:    "123456789012",
+		})
+		ts := httptest.NewTLSServer(srv)
+		t.Cleanup(ts.Close)
+
+		client := newResourceGraphClient(t, ts)
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where tags['env'] == 'prod' | where tags['env'] == 'stage'"),
+		}, nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, *out.TotalRecords)
+	})
+
+	t.Run("Bug 3: empty SubscriptionID falls back to engine.AccountID", func(t *testing.T) {
+		// Wire the server WITHOUT explicit SubscriptionID. Scoped queries
+		// for the engine's account ID should still work.
+		srv := azureserver.New(azureserver.Drivers{
+			BlobStorage:       cloudP.BlobStorage,
+			Network:           cloudP.VNet,
+			ResourceDiscovery: cloudP.ResourceDiscovery,
+			// SubscriptionID intentionally omitted.
+		})
+		ts := httptest.NewTLSServer(srv)
+		t.Cleanup(ts.Close)
+
+		client := newResourceGraphClient(t, ts)
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query:         to.Ptr("Resources"),
+			Subscriptions: []*string{to.Ptr(cloudP.ResourceDiscovery.AccountID())},
+		}, nil)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, *out.TotalRecords, int64(1),
+			"with SubscriptionID omitted, the handler must fall back to engine.AccountID() so scoped queries still match")
+	})
+
+	t.Run("Bug 2: /resources prefix does not shadow /resourcesHistory routing", func(t *testing.T) {
+		// Smoke-test the shadow case via the real client: ResourcesHistory
+		// must route to its own handler (which delegates back to
+		// queryResources today, but the dispatch path is distinct).
+		srv := azureserver.New(azureserver.Drivers{
+			BlobStorage:       cloudP.BlobStorage,
+			Network:           cloudP.VNet,
+			ResourceDiscovery: cloudP.ResourceDiscovery,
+			SubscriptionID:    "123456789012",
+		})
+		ts := httptest.NewTLSServer(srv)
+		t.Cleanup(ts.Close)
+
+		client := newResourceGraphClient(t, ts)
+		out, err := client.ResourcesHistory(ctx, armresourcegraph.ResourcesHistoryRequest{
+			Query: to.Ptr("Resources"),
+		}, nil)
+		require.NoError(t, err)
+		require.NotNil(t, out)
+	})
+}

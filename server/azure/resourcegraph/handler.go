@@ -12,9 +12,9 @@ import (
 // well-known ARM URL; the API-version query string is varied across SDK
 // releases so we ignore it for matching.
 const (
-	pathResources       = "/providers/Microsoft.ResourceGraph/resources"
-	pathResourcesHistry = "/providers/Microsoft.ResourceGraph/resourcesHistory"
-	pathOperations      = "/providers/Microsoft.ResourceGraph/operations"
+	pathResources        = "/providers/Microsoft.ResourceGraph/resources"
+	pathResourcesHistory = "/providers/Microsoft.ResourceGraph/resourcesHistory"
+	pathOperations       = "/providers/Microsoft.ResourceGraph/operations"
 )
 
 // Handler serves Azure Resource Graph ARM-JSON requests.
@@ -24,30 +24,40 @@ type Handler struct {
 }
 
 // New returns a Resource Graph handler backed by engine. subscriptionID is
-// returned in resource IDs and validated against the request's subscriptions
-// list (a request whose subscriptions field is set but does not include this
-// ID returns an empty result rather than an error).
+// validated against the request's subscriptions list (a request whose
+// subscriptions field is set but does not include this ID returns an empty
+// result rather than an error). If subscriptionID is empty, the engine's
+// own AccountID is used — that's the same value the engine was built with
+// when it constructed Azure-shaped resource IDs, so the two stay aligned
+// without callers having to pass the ID twice.
 func New(engine *resourcediscovery.Engine, subscriptionID string) *Handler {
+	if subscriptionID == "" && engine != nil {
+		subscriptionID = engine.AccountID()
+	}
+
 	return &Handler{engine: engine, subscriptionID: subscriptionID}
 }
 
-// Matches accepts ARM requests targeting Microsoft.ResourceGraph. The
-// resourcesHistory and operations paths are also routed here.
+// Matches accepts ARM requests targeting Microsoft.ResourceGraph. Uses
+// exact path equality, not prefix match, so /resources cannot shadow
+// /resourcesHistory (the longer path starts with the shorter one).
+// r.URL.Path strips the query string, so api-version is not in the way.
 func (*Handler) Matches(r *http.Request) bool {
-	p := r.URL.Path
-
-	return strings.HasPrefix(p, pathResources) ||
-		strings.HasPrefix(p, pathResourcesHistry) ||
-		strings.HasPrefix(p, pathOperations)
+	switch r.URL.Path {
+	case pathResources, pathResourcesHistory, pathOperations:
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case strings.HasPrefix(r.URL.Path, pathOperations):
+	switch r.URL.Path {
+	case pathOperations:
 		h.listOperations(w, r)
-	case strings.HasPrefix(r.URL.Path, pathResourcesHistry):
+	case pathResourcesHistory:
 		h.queryResourcesHistory(w, r)
-	case strings.HasPrefix(r.URL.Path, pathResources):
+	case pathResources:
 		h.queryResources(w, r)
 	default:
 		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown Resource Graph path: "+r.URL.Path)
@@ -80,6 +90,13 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parsed := parseKQL(req.Query)
+
+	// Contradiction in chained where-clauses (e.g. two type filters AND-ed
+	// together) — short-circuit before hitting the engine. See parsedKQL.
+	if parsed.ForceEmpty {
+		azurearm.WriteJSON(w, http.StatusOK, emptyResponse())
+		return
+	}
 
 	results, err := h.engine.List(r.Context(), parsed.Query)
 	if err != nil {

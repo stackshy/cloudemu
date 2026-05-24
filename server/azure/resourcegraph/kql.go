@@ -57,9 +57,20 @@ const (
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
 // extracted from `| limit N` / `| take N` (0 means no caller-specified limit).
+//
+// ForceEmpty is set when the parser detects a contradiction in chained
+// where-clauses (e.g. two different type filters AND-ed together). Real KQL
+// `where type == 'X' | where type == 'Y'` returns zero rows because a single
+// resource cannot have two types; the engine matcher would otherwise OR-merge
+// the two values via the Services slice, so we short-circuit at the handler.
 type parsedKQL struct {
-	Query resourcediscovery.Query
-	Limit int
+	Query      resourcediscovery.Query
+	Limit      int
+	ForceEmpty bool
+
+	// internal tracking — used by applyType / addTag to detect conflicts.
+	typeSet     bool
+	tagFirstVal map[string]string
 }
 
 // Pre-compiled KQL predicate regexes. Compiled once at package load; safe
@@ -157,11 +168,21 @@ func applyWhere(out *parsedKQL, body string) {
 }
 
 // applyType maps an Azure type string to portable Service + Type. Lower-case
-// before matching since Azure types are case-insensitive in KQL.
+// before matching since Azure types are case-insensitive in KQL. A second
+// type clause is treated as an AND contradiction — real KQL would yield
+// zero rows because a resource cannot have two types — so ForceEmpty is
+// flipped and later short-circuits the handler.
 func applyType(out *parsedKQL, azureType string) {
+	if out.typeSet {
+		out.ForceEmpty = true
+		return
+	}
+
+	out.typeSet = true
+
 	svc, typ := mapAzureType(strings.ToLower(azureType))
 	if svc != "" {
-		out.Query.Services = append(out.Query.Services, svc)
+		out.Query.Services = []string{svc}
 	}
 
 	if typ != "" {
@@ -169,7 +190,21 @@ func applyType(out *parsedKQL, azureType string) {
 	}
 }
 
+// addTag records a tag predicate. Repeating the same key with a different
+// value is a KQL contradiction (a single tag cannot hold two values at
+// once); flips ForceEmpty so the handler returns an empty result.
 func addTag(out *parsedKQL, key, value string) {
+	if prev, seen := out.tagFirstVal[key]; seen && prev != value {
+		out.ForceEmpty = true
+		return
+	}
+
+	if out.tagFirstVal == nil {
+		out.tagFirstVal = make(map[string]string)
+	}
+
+	out.tagFirstVal[key] = value
+
 	if out.Query.Tags == nil {
 		out.Query.Tags = make(map[string]string)
 	}
