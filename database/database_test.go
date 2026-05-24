@@ -726,3 +726,36 @@ func TestListIndexesPortable(t *testing.T) {
 		require.Error(t, listErr)
 	})
 }
+
+func TestTaggingPortable(t *testing.T) {
+	db, _ := newTestDatabase()
+	ctx := context.Background()
+
+	require.NoError(t, db.CreateTable(ctx, driver.TableConfig{Name: "tag-table", PartitionKey: "pk"}))
+
+	t.Run("tag and list", func(t *testing.T) {
+		require.NoError(t, db.TagResource(ctx, "tag-table", map[string]string{"env": "prod", "team": "data"}))
+
+		got, err := db.ListTagsOfResource(ctx, "tag-table")
+		require.NoError(t, err)
+		assert.Equal(t, "prod", got["env"])
+		assert.Equal(t, "data", got["team"])
+	})
+
+	t.Run("untag removes keys", func(t *testing.T) {
+		require.NoError(t, db.UntagResource(ctx, "tag-table", []string{"env"}))
+
+		got, err := db.ListTagsOfResource(ctx, "tag-table")
+		require.NoError(t, err)
+		_, hasEnv := got["env"]
+		assert.False(t, hasEnv)
+		assert.Equal(t, "data", got["team"])
+	})
+
+	t.Run("missing table errors", func(t *testing.T) {
+		require.Error(t, db.TagResource(ctx, "no-table", map[string]string{"k": "v"}))
+		require.Error(t, db.UntagResource(ctx, "no-table", []string{"k"}))
+		_, err := db.ListTagsOfResource(ctx, "no-table")
+		require.Error(t, err)
+	})
+}

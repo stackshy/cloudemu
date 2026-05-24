@@ -50,6 +50,7 @@ type tableData struct {
 	streamConfig  driver.StreamConfig
 	streamRecords []driver.StreamRecord
 	seqCounter    atomic.Int64
+	tags          map[string]string
 }
 
 // Mock is an in-memory mock implementation of Azure Cosmos DB.
@@ -882,4 +883,61 @@ func (m *Mock) ListIndexes(_ context.Context, table string) ([]driver.IndexInfo,
 	}
 
 	return indexes, nil
+}
+
+// TagResource sets or replaces tag key/values on a container. Existing keys
+// not present in tags are preserved; existing keys present in tags are overwritten.
+func (m *Mock) TagResource(_ context.Context, table string, tags map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
+	}
+
+	if td.tags == nil {
+		td.tags = make(map[string]string, len(tags))
+	}
+
+	for k, v := range tags {
+		td.tags[k] = v
+	}
+
+	return nil
+}
+
+// UntagResource removes the given tag keys from a container. Unknown keys are ignored.
+func (m *Mock) UntagResource(_ context.Context, table string, tagKeys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "container %s not found", table)
+	}
+
+	for _, k := range tagKeys {
+		delete(td.tags, k)
+	}
+
+	return nil
+}
+
+// ListTagsOfResource returns a copy of the tag map for a container.
+func (m *Mock) ListTagsOfResource(_ context.Context, table string) (map[string]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %s not found", table)
+	}
+
+	out := make(map[string]string, len(td.tags))
+	for k, v := range td.tags {
+		out[k] = v
+	}
+
+	return out, nil
 }
