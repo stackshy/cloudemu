@@ -55,6 +55,10 @@ func (h *Handler) getServiceAccount(w http.ResponseWriter, r *http.Request, proj
 	writeJSON(w, toServiceAccountJSON(project, email, &sa))
 }
 
+// listServiceAccounts returns SAs at the given project. A literal "-" in the
+// project segment is the GCP-wide wildcard meaning "every project the caller
+// can see" — we treat it as match-all because there's no concept of caller
+// identity in the emulator.
 func (h *Handler) listServiceAccounts(w http.ResponseWriter, r *http.Request, project string) {
 	users, err := h.iam.ListUsers(r.Context())
 	if err != nil {
@@ -62,24 +66,31 @@ func (h *Handler) listServiceAccounts(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 
+	wildcard := project == "-"
 	out := listServiceAccountsResponse{Accounts: make([]serviceAccount, 0, len(users))}
 
 	for i := range users {
 		u := &users[i]
-		if u.Path != project {
+		if !wildcard && u.Path != project {
 			continue
 		}
 
+		// When responding to a wildcard query, render each SA against its
+		// own real project; the URL "-" never appears in the returned name.
+		responseProject := project
+		if wildcard {
+			responseProject = u.Path
+		}
+
 		sa := saFromUser(u)
-		out.Accounts = append(out.Accounts, toServiceAccountJSON(project, u.Name, &sa))
+		out.Accounts = append(out.Accounts,
+			toServiceAccountJSON(responseProject, u.Name, &sa))
 	}
 
 	writeJSON(w, out)
 }
 
-func (h *Handler) deleteServiceAccount(w http.ResponseWriter, r *http.Request, project, email string) {
-	_ = project
-
+func (h *Handler) deleteServiceAccount(w http.ResponseWriter, r *http.Request, email string) {
 	if err := h.iam.DeleteUser(r.Context(), email); err != nil {
 		writeCErr(w, err)
 		return
@@ -89,14 +100,37 @@ func (h *Handler) deleteServiceAccount(w http.ResponseWriter, r *http.Request, p
 	writeJSON(w, struct{}{})
 }
 
+// updateServiceAccount handles PATCH .../serviceAccounts/{email}. The GCP
+// SDK wraps the payload as {"serviceAccount": {...}, "updateMask": "..."} —
+// decoding into a bare serviceAccount silently loses every field, so we
+// must decode the wrapper. updateMask itself is ignored; the emulator
+// always full-replaces.
+//
+// When the URL uses the wildcard project segment "projects/-/...", project
+// arrives as "-". We look up the existing SA first and reuse its stored
+// project for the re-create so the SA doesn't move to a synthetic "-"
+// project bucket that would later disappear from listServiceAccounts.
+//
+// The Delete+Create dance is non-atomic — a concurrent reader between the
+// two driver calls observes NotFound. The driver lacks an Update entry
+// point so this is the simplest workaround.
 func (h *Handler) updateServiceAccount(w http.ResponseWriter, r *http.Request, project, email string) {
-	var in serviceAccount
+	var in patchServiceAccountRequest
 	if !decodeJSONBody(w, r, &in) {
 		return
 	}
 
-	// The driver has no Update, so we do a destructive replace. Tags carry
-	// the displayName / description we re-store.
+	storedProject := project
+	if storedProject == "-" {
+		existing, err := h.iam.GetUser(r.Context(), email)
+		if err != nil {
+			writeCErr(w, err)
+			return
+		}
+
+		storedProject = existing.Path
+	}
+
 	if err := h.iam.DeleteUser(r.Context(), email); err != nil {
 		writeCErr(w, err)
 		return
@@ -104,17 +138,17 @@ func (h *Handler) updateServiceAccount(w http.ResponseWriter, r *http.Request, p
 
 	if _, err := h.iam.CreateUser(r.Context(), iamdriver.UserConfig{
 		Name: email,
-		Path: project,
+		Path: storedProject,
 		Tags: map[string]string{
-			"displayName": in.DisplayName,
-			"description": in.Description,
+			"displayName": in.ServiceAccount.DisplayName,
+			"description": in.ServiceAccount.Description,
 		},
 	}); err != nil {
 		writeCErr(w, err)
 		return
 	}
 
-	writeJSON(w, toServiceAccountJSON(project, email, &in))
+	writeJSON(w, toServiceAccountJSON(storedProject, email, &in.ServiceAccount))
 }
 
 // --- Roles ---
@@ -189,11 +223,11 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request, project stri
 			continue
 		}
 
-		props, perr := decodeRoleProps(dr.AssumeRolePolicyDoc)
-		if perr != nil {
-			continue
-		}
-
+		// If the stored doc is malformed (e.g. a portable test stashed a
+		// non-JSON value via the shared driver), emit the role with just
+		// its name rather than silently dropping it from the list — the
+		// underlying entry exists and the caller should see something.
+		props, _ := decodeRoleProps(dr.AssumeRolePolicyDoc)
 		out.Roles = append(out.Roles, toRoleJSON(project, dr.Name, &props))
 	}
 
@@ -201,8 +235,6 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request, project stri
 }
 
 func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request, project, roleID string) {
-	_ = project
-
 	dr, err := h.iam.GetRole(r.Context(), roleID)
 	if err != nil {
 		writeCErr(w, err)
@@ -227,6 +259,13 @@ func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request, project, ro
 	writeJSON(w, out)
 }
 
+// updateRole handles PATCH .../roles/{roleId}. Unlike SA Patch the role
+// payload is the bare resource body, with updateMask passed as a ?updateMask=
+// query parameter — we ignore the mask (emulator always full-replaces).
+//
+// The Delete+Create dance is non-atomic — a concurrent reader between the
+// two driver calls observes NotFound. The driver lacks an Update entry
+// point so this is the simplest workaround.
 func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request, project, roleID string) {
 	var in role
 	if !decodeJSONBody(w, r, &in) {
@@ -317,9 +356,7 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, project, emai
 	writeJSON(w, out)
 }
 
-func (h *Handler) deleteKey(w http.ResponseWriter, r *http.Request, project, email, keyID string) {
-	_ = project
-
+func (h *Handler) deleteKey(w http.ResponseWriter, r *http.Request, email, keyID string) {
 	if err := h.iam.DeleteAccessKey(r.Context(), email, keyID); err != nil {
 		writeCErr(w, err)
 		return

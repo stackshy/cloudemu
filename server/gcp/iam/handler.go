@@ -153,8 +153,8 @@ func (h *Handler) routeServiceAccounts(w http.ResponseWriter, r *http.Request, r
 		case http.MethodGet:
 			h.getServiceAccount(w, r, rt.project, rt.name)
 		case http.MethodDelete:
-			h.deleteServiceAccount(w, r, rt.project, rt.name)
-		case http.MethodPatch, http.MethodPut:
+			h.deleteServiceAccount(w, r, rt.name)
+		case http.MethodPatch:
 			h.updateServiceAccount(w, r, rt.project, rt.name)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
@@ -186,7 +186,7 @@ func (h *Handler) routeServiceAccountKeys(w http.ResponseWriter, r *http.Request
 		case http.MethodGet:
 			h.getKey(w, r, rt.project, rt.name, rt.subName)
 		case http.MethodDelete:
-			h.deleteKey(w, r, rt.project, rt.name, rt.subName)
+			h.deleteKey(w, r, rt.name, rt.subName)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
 				"unsupported verb on key: "+r.Method)
@@ -212,7 +212,7 @@ func (h *Handler) routeRoles(w http.ResponseWriter, r *http.Request, rt *route) 
 			h.getRole(w, r, rt.project, rt.name)
 		case http.MethodDelete:
 			h.deleteRole(w, r, rt.project, rt.name)
-		case http.MethodPatch, http.MethodPut:
+		case http.MethodPatch:
 			h.updateRole(w, r, rt.project, rt.name)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed",
