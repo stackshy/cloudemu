@@ -24,6 +24,7 @@ This document lists every service and operation available in CloudEmu across all
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
 | 18 | Kubernetes | `eks` + shared `kubernetes/` | `aks` + shared `kubernetes/` | `gke` + shared `kubernetes/` |
+| 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 
 ---
 
@@ -1093,6 +1094,61 @@ Shared in-memory K8s API server registered by every cluster from any provider. U
 
 ---
 
+## 19. Resource Discovery
+
+**Engine:** `resourcediscovery/` — a cross-service inventory engine that walks the Compute, Networking, Storage, Database, and Serverless drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
+
+**SDK-compat handlers:** AWS Resource Explorer Two + Resource Groups Tagging API, Azure Resource Graph, and GCP Cloud Asset Inventory. All three sit on top of the same engine, so a tag written through any one path is visible through the others.
+
+### Engine (`resourcediscovery/`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `New` | `(provider, accountID, region string, drivers *Drivers) *Engine` |
+| `ListAll` | `(ctx) ([]Resource, error)` |
+| `List` | `(ctx, Query) ([]Resource, error)` — filter by `Services`, `Type`, `Region`, `Tags` |
+| `SearchByTag` | `(ctx, key, value string) ([]Resource, error)` |
+| `GetTagKeys` | `(ctx) ([]string, error)` |
+| `GetTagValues` | `(ctx, key string) ([]string, error)` |
+| `TagResourceByARN` | `(ctx, arn string, tags map[string]string) error` |
+| `UntagResourceByARN` | `(ctx, arn string, keys []string) error` |
+
+### AWS — Resource Explorer 2 (`server/aws/resourceexplorer2`)
+
+| Operation | Notes |
+|-----------|-------|
+| `Search` | Free-text + filter expression over the unified inventory; returns ARN, resource type, region, owning account, tags |
+
+### AWS — Resource Groups Tagging API (`server/aws/resourcegroupstaggingapi`)
+
+| Operation | Notes |
+|-----------|-------|
+| `GetResources` | Filter by `ResourceTypeFilters` and `TagFilters`; pagination via `PaginationToken` |
+| `TagResources` | Apply a tag set to one or more ARNs in a single call |
+| `UntagResources` | Remove tag keys from one or more ARNs in a single call |
+| `GetTagKeys` | All tag keys across the inventory |
+| `GetTagValues` | All values for a given tag key |
+
+### Azure — Resource Graph (`server/azure/resourcegraph`)
+
+| Operation | Notes |
+|-----------|-------|
+| `Resources` | `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` — KQL-shaped query over the unified inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
+
+### GCP — Cloud Asset Inventory (`server/gcp/cloudasset`)
+
+| Resource | Operations |
+|----------|-----------|
+| Assets | `assets.list` (filter by `assetTypes[]`), `searchAllResources` (query string + asset-type filter), `searchAllIamPolicies` (returns empty — out of scope) |
+| Export | `exportAssets` — synchronous, returns an `Operation` with inline results |
+| Feeds | `feeds.create`, `feeds.list`, `feeds.get`, `feeds.patch`, `feeds.delete` |
+| Operations | `operations.get` — fetches cached `exportAssets` results |
+| Batch | `batchGetAssetsHistory` |
+
+Operations: **Engine 8** + **AWS Resource Explorer 1** + **AWS Resource Groups Tagging 5** + **Azure Resource Graph 1** + **GCP Cloud Asset 11** = **26**
+
+---
+
 ## Summary
 
 | Service | Operations |
@@ -1118,4 +1174,5 @@ Shared in-memory K8s API server registered by every cluster from any provider. U
 | Kubernetes — Azure AKS (control plane) | 18 |
 | Kubernetes — GCP GKE (control plane) | 26 |
 | Kubernetes — data plane (8 resources × 7 verbs incl. Watch) | 56 |
-| **Grand Total** | **472** |
+| Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
+| **Grand Total** | **498** |

@@ -9,6 +9,7 @@ package gcp
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
@@ -24,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/server/gcp/firestore"
 	"github.com/stackshy/cloudemu/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/server/gcp/gke"
+	"github.com/stackshy/cloudemu/server/gcp/iam"
 	"github.com/stackshy/cloudemu/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/server/gcp/networks"
 	"github.com/stackshy/cloudemu/server/gcp/pubsub"
@@ -42,6 +44,7 @@ type Drivers struct {
 	PubSub         mqdriver.MessageQueue
 	CloudSQL       rdbdriver.RelationalDB
 	GKE            *gkeprov.Mock
+	IAM            iamdriver.IAM
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -109,6 +112,16 @@ func New(d Drivers) *server.Server {
 	// suffix custom methods that share the same prefix.
 	if d.ResourceDiscovery != nil {
 		srv.Register(cloudasset.New(d.ResourceDiscovery, d.ProjectID))
+	}
+
+	// IAM matches /v1/projects/{p}/{serviceAccounts|roles}[/…] — its
+	// resource-type guard is disjoint from Firestore (which serves
+	// /v1/projects/{p}/databases/…) and from CloudFunctions / PubSub /
+	// CloudSQL / GKE / CloudAsset, so registration order is unconstrained
+	// among the /v1/projects/ family. Registered before Firestore for
+	// consistency with the pattern above.
+	if d.IAM != nil {
+		srv.Register(iam.New(d.IAM))
 	}
 
 	if d.Firestore != nil {

@@ -139,6 +139,9 @@ Region, credentials, and tokens can be any dummy values — the server doesn't v
 | **RDS / Aurora** *(query protocol)* | DBInstances (Create/Describe/Modify/Delete/Start/Stop/Reboot), DBClusters (Create/Describe/Modify/Delete/Start/Stop), DBSnapshots + DBClusterSnapshots (Create/Describe/Delete/Restore). One handler also serves the **Neptune** and **DocumentDB** engines — both reuse the same `aws-sdk-go-v2/service/{neptune,docdb}` client surface. |
 | **Redshift** *(query protocol)* | CreateCluster, DescribeClusters, ModifyCluster, DeleteCluster, RebootCluster, CreateClusterSnapshot, DescribeClusterSnapshots, DeleteClusterSnapshot, RestoreFromClusterSnapshot |
 | **EKS** *(REST + JSON)* | Clusters (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), NodeGroups (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), Fargate Profiles (Create/Describe/List/Delete), Addons (Create/Describe/List/Update/Delete). Stub kubeconfig only — data plane deferred to Wave 2. |
+| **IAM** *(query protocol)* | Users (Create/Get/List/Delete), Roles (Create/Get/List/Delete), Policies (Create/Get/List/Delete), Attach/Detach/ListAttached for both Users and Roles, Groups (Create/Get/List/Delete + AddUserToGroup/RemoveUserFromGroup/ListGroupsForUser), AccessKeys (Create/List/Delete), InstanceProfiles (Create/Get/List/Delete + AddRoleToInstanceProfile/RemoveRoleFromInstanceProfile). Errors surface as typed `*types.NoSuchEntityException` / `*types.EntityAlreadyExistsException`. |
+| **Resource Explorer 2** *(JSON)* | Search — free-text plus filter expression over the cross-service inventory; results include ARN, resource type, region, owning account, and tags |
+| **Resource Groups Tagging API** *(JSON-RPC)* | GetResources (filter by `ResourceTypeFilters` + `TagFilters`, paginated), TagResources, UntagResources, GetTagKeys, GetTagValues |
 
 ### Azure (`server/azure/`)
 
@@ -158,6 +161,8 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **PostgreSQL Flexible Server** | `Microsoft.DBforPostgreSQL/flexibleServers` — full CRUD lifecycle |
 | **MySQL Flexible Server** | `Microsoft.DBforMySQL/flexibleServers` — full CRUD lifecycle |
 | **AKS** | `Microsoft.ContainerService/managedClusters` — ManagedClusters (CreateOrUpdate, Get, UpdateTags, Delete, List/ListByResourceGroup), AgentPools (CreateOrUpdate, Get, Delete, List), MaintenanceConfigurations (CreateOrUpdate, Get, Delete, List), ListClusterAdmin/User/MonitoringUser Credentials, RotateClusterCertificates. Stub kubeconfig only — data plane deferred to Wave 2. |
+| **IAM (armauthorization)** | `Microsoft.Authorization` — RoleDefinitions (CreateOrUpdate, Get, List, Delete) and RoleAssignments (Create, Get, ListForScope, Delete) at any scope (subscription, resource group, resource, management group). Real `armauthorization` SDK clients round-trip end-to-end. Microsoft Graph (users/groups) is out of scope — deferred to a future handler. |
+| **Resource Graph** | `Microsoft.ResourceGraph` — `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with a KQL-shaped query over the cross-service inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
 
 ### GCP (`server/gcp/`)
 
@@ -174,6 +179,8 @@ All handlers speak REST + JSON.
 | **Pub/Sub** | Topics + Subscriptions lifecycle, `:publish`, `:pull`, `:acknowledge` |
 | **Cloud SQL** | Instances (insert/get/list/patch/delete/start/stop/restart) + Operations (get/list) — supports the `sqladmin/v1` SDK |
 | **GKE** | Clusters (Create/Get/List/Update/Delete + `:setLogging`/`:setMonitoring`/`:setMasterAuth`/`:setLegacyAbac`/`:setNetworkPolicy`/`:setMaintenancePolicy`/`:setResourceLabels`/`:startIpRotation`/`:completeIpRotation`), NodePools (Create/Get/List/Update/Delete + `:setSize`/`:setAutoscaling`/`:setManagement`/`:rollback`), Operations (Get/List/`:cancel`). Stub kubeconfig only — data plane deferred to Wave 2. |
+| **Cloud Asset Inventory** | `assets.list` (filter by `assetTypes[]`), `searchAllResources` (query + asset-type filter), `searchAllIamPolicies` (returns empty — out of scope), `exportAssets` (sync; inline results in the returned Operation), `batchGetAssetsHistory`, Feeds (create/list/get/patch/delete), `operations.get`. Resource names returned as GCP-shaped `//service/path` URNs. |
+| **IAM (iam.googleapis.com v1)** | ServiceAccounts (Create/Get/List/Delete/Patch), custom Roles (Create/Get/List/Delete/Patch), ServiceAccountKeys (Create/Get/List/Delete). Real `google.golang.org/api/iam/v1` clients round-trip end-to-end; errors surface as typed `*googleapi.Error`. Resource-level `getIamPolicy`/`setIamPolicy` bindings on individual GCP resources are out of scope. |
 
 Any operation not in these lists returns `501 Not Implemented` or the provider's native `UnknownOperation` / `NotImplemented` / `NOT_FOUND` error.
 
