@@ -9,6 +9,7 @@ package azure
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
@@ -22,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/functions"
+	azureiamhandler "github.com/stackshy/cloudemu/server/azure/iam"
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
@@ -59,6 +61,7 @@ type Drivers struct {
 	PostgresFlex    rdbdriver.RelationalDB
 	MySQLFlex       rdbdriver.RelationalDB
 	AKS             aksserver.Backend
+	IAM             iamdriver.IAM
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -165,6 +168,13 @@ func New(d Drivers) *server.Server {
 	// unconstrained relative to the resource handlers above.
 	if d.ResourceDiscovery != nil {
 		srv.Register(resourcegraph.New(d.ResourceDiscovery, d.SubscriptionID))
+	}
+
+	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
+	// at any scope — distinct from every other ARM provider name, so
+	// registration order is unconstrained.
+	if d.IAM != nil {
+		srv.Register(azureiamhandler.New(d.IAM))
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It
