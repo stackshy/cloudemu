@@ -180,6 +180,7 @@ All handlers speak REST + JSON.
 | **Cloud SQL** | Instances (insert/get/list/patch/delete/start/stop/restart) + Operations (get/list) — supports the `sqladmin/v1` SDK |
 | **GKE** | Clusters (Create/Get/List/Update/Delete + `:setLogging`/`:setMonitoring`/`:setMasterAuth`/`:setLegacyAbac`/`:setNetworkPolicy`/`:setMaintenancePolicy`/`:setResourceLabels`/`:startIpRotation`/`:completeIpRotation`), NodePools (Create/Get/List/Update/Delete + `:setSize`/`:setAutoscaling`/`:setManagement`/`:rollback`), Operations (Get/List/`:cancel`). Stub kubeconfig only — data plane deferred to Wave 2. |
 | **Cloud Asset Inventory** | `assets.list` (filter by `assetTypes[]`), `searchAllResources` (query + asset-type filter), `searchAllIamPolicies` (returns empty — out of scope), `exportAssets` (sync; inline results in the returned Operation), `batchGetAssetsHistory`, Feeds (create/list/get/patch/delete), `operations.get`. Resource names returned as GCP-shaped `//service/path` URNs. |
+| **IAM (iam.googleapis.com v1)** | ServiceAccounts (Create/Get/List/Delete/Patch), custom Roles (Create/Get/List/Delete/Patch), ServiceAccountKeys (Create/Get/List/Delete). Real `google.golang.org/api/iam/v1` clients round-trip end-to-end; errors surface as typed `*googleapi.Error`. Resource-level `getIamPolicy`/`setIamPolicy` bindings on individual GCP resources are out of scope. |
 
 Any operation not in these lists returns `501 Not Implemented` or the provider's native `UnknownOperation` / `NotImplemented` / `NOT_FOUND` error.
 
