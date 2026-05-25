@@ -23,7 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/functions"
-	azureiamhandler "github.com/stackshy/cloudemu/server/azure/iam"
+	"github.com/stackshy/cloudemu/server/azure/iam"
 	"github.com/stackshy/cloudemu/server/azure/images"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
@@ -174,7 +174,7 @@ func New(d Drivers) *server.Server {
 	// at any scope — distinct from every other ARM provider name, so
 	// registration order is unconstrained.
 	if d.IAM != nil {
-		srv.Register(azureiamhandler.New(d.IAM))
+		srv.Register(iam.New(d.IAM))
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It

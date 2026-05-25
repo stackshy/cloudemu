@@ -78,6 +78,16 @@ func (h *Handler) createOrUpdateRoleDefinition(
 
 	// Upsert: try create first, fall back to delete+create on AlreadyExists
 	// so subsequent PUTs to the same id behave as updates per ARM semantics.
+	//
+	// Caveat: the delete+create dance is not atomic — a concurrent reader
+	// between the two driver calls observes NotFound. The driver lacks an
+	// Update entry point, so this is the simplest workaround. Real ARM does
+	// an atomic upsert.
+	//
+	// Status code: armauthorization roleDefinitions.CreateOrUpdate models
+	// only 201 Created as success (per the Azure REST API spec for this
+	// specific endpoint — unlike e.g. managedClusters which returns 200 on
+	// update). So we always return 201 regardless of create-vs-update.
 	if _, err := h.iam.CreateRole(r.Context(), iamdriver.RoleConfig{
 		Name:                id,
 		AssumeRolePolicyDoc: string(propsJSON),
@@ -153,13 +163,32 @@ func (h *Handler) listRoleDefinitions(w http.ResponseWriter, r *http.Request, sc
 	writeARMJSON(w, http.StatusOK, out)
 }
 
+// deleteRoleDefinition deletes the role and echoes back the prior resource,
+// matching real Azure semantics (the SDK's RoleDefinitionsClientDeleteResponse
+// carries a RoleDefinition body).
 func (h *Handler) deleteRoleDefinition(w http.ResponseWriter, r *http.Request, id string) {
+	role, err := h.iam.GetRole(r.Context(), id)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	priorScope := role.Path
+
+	priorProps, perr := decodeRoleProperties(role.AssumeRolePolicyDoc)
+	if perr != nil {
+		writeARMError(w, http.StatusInternalServerError, "InternalError",
+			"could not decode stored role definition: "+perr.Error())
+		return
+	}
+
 	if err := h.iam.DeleteRole(r.Context(), id); err != nil {
 		writeCErr(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeARMJSON(w, http.StatusOK,
+		buildRoleDefinitionEnvelope(priorScope, id, &priorProps))
 }
 
 // --- Role Assignments ---

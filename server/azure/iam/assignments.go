@@ -61,11 +61,13 @@ func (s *assignmentStore) delete(id string) (roleAssignmentEnvelope, bool) {
 	return env, true
 }
 
-// listAtScope returns every assignment whose stored scope starts with the
-// query scope. Real Azure list-at-scope returns assignments AT the scope and
-// at all ancestor scopes; we implement a simpler "prefix or exact match"
-// that's correct for the typical narrow scope-equality case and a reasonable
-// approximation otherwise.
+// listAtScope returns assignments visible from the query scope. Real Azure
+// RoleAssignments.ListForScope returns assignments AT the queried scope and
+// at all ANCESTOR scopes (because permissions inherit downward) — it does
+// NOT return assignments at descendant scopes. We mirror that direction so
+// emulator tests get the same narrowing they'd see against real Azure.
+//
+// An empty or root ("/") query returns everything.
 func (s *assignmentStore) listAtScope(scope string) []roleAssignmentEnvelope {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -76,7 +78,6 @@ func (s *assignmentStore) listAtScope(scope string) []roleAssignmentEnvelope {
 		env := s.items[id]
 		if scope == "" || scope == "/" ||
 			env.Properties.Scope == scope ||
-			strings.HasPrefix(env.Properties.Scope, scope+"/") ||
 			strings.HasPrefix(scope, env.Properties.Scope+"/") {
 			out = append(out, env)
 		}
