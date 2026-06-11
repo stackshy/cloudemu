@@ -206,3 +206,135 @@ func (b *Bedrock) Converse(ctx context.Context, in driver.ConverseInput) (*drive
 
 	return out.(*driver.ConverseOutput), nil
 }
+
+// CreateGuardrail creates a content guardrail.
+//
+//nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
+func (b *Bedrock) CreateGuardrail(ctx context.Context, cfg driver.GuardrailConfig) (*driver.Guardrail, error) {
+	out, err := b.do(ctx, "CreateGuardrail", cfg, func() (any, error) { return b.driver.CreateGuardrail(ctx, cfg) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.Guardrail), nil
+}
+
+// GetGuardrail retrieves a guardrail by identifier and optional version.
+func (b *Bedrock) GetGuardrail(ctx context.Context, identifier, version string) (*driver.Guardrail, error) {
+	out, err := b.do(ctx, "GetGuardrail", identifier, func() (any, error) { return b.driver.GetGuardrail(ctx, identifier, version) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.Guardrail), nil
+}
+
+// ListGuardrails lists all guardrails.
+func (b *Bedrock) ListGuardrails(ctx context.Context) ([]driver.Guardrail, error) {
+	out, err := b.do(ctx, "ListGuardrails", nil, func() (any, error) { return b.driver.ListGuardrails(ctx) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.Guardrail), nil
+}
+
+// UpdateGuardrail updates a guardrail's mutable fields.
+//
+//nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
+func (b *Bedrock) UpdateGuardrail(ctx context.Context, identifier string, cfg driver.GuardrailConfig) (*driver.Guardrail, error) {
+	out, err := b.do(ctx, "UpdateGuardrail", identifier, func() (any, error) { return b.driver.UpdateGuardrail(ctx, identifier, cfg) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.Guardrail), nil
+}
+
+// DeleteGuardrail deletes a guardrail.
+func (b *Bedrock) DeleteGuardrail(ctx context.Context, identifier string) error {
+	_, err := b.do(ctx, "DeleteGuardrail", identifier, func() (any, error) { return nil, b.driver.DeleteGuardrail(ctx, identifier) })
+
+	return err
+}
+
+// CreateProvisionedModelThroughput provisions throughput for a model.
+//
+//nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
+func (b *Bedrock) CreateProvisionedModelThroughput(
+	ctx context.Context, cfg driver.ProvisionedThroughputConfig,
+) (*driver.ProvisionedThroughput, error) {
+	out, err := b.do(ctx, "CreateProvisionedModelThroughput", cfg, func() (any, error) {
+		return b.driver.CreateProvisionedModelThroughput(ctx, cfg)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ProvisionedThroughput), nil
+}
+
+// GetProvisionedModelThroughput retrieves provisioned throughput by identifier.
+func (b *Bedrock) GetProvisionedModelThroughput(ctx context.Context, identifier string) (*driver.ProvisionedThroughput, error) {
+	out, err := b.do(ctx, "GetProvisionedModelThroughput", identifier, func() (any, error) {
+		return b.driver.GetProvisionedModelThroughput(ctx, identifier)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ProvisionedThroughput), nil
+}
+
+// ListProvisionedModelThroughputs lists all provisioned throughputs.
+func (b *Bedrock) ListProvisionedModelThroughputs(ctx context.Context) ([]driver.ProvisionedThroughput, error) {
+	out, err := b.do(ctx, "ListProvisionedModelThroughputs", nil, func() (any, error) {
+		return b.driver.ListProvisionedModelThroughputs(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.ProvisionedThroughput), nil
+}
+
+// DeleteProvisionedModelThroughput deletes provisioned throughput by identifier.
+func (b *Bedrock) DeleteProvisionedModelThroughput(ctx context.Context, identifier string) error {
+	_, err := b.do(ctx, "DeleteProvisionedModelThroughput", identifier, func() (any, error) {
+		return nil, b.driver.DeleteProvisionedModelThroughput(ctx, identifier)
+	})
+
+	return err
+}
+
+// PutModelInvocationLoggingConfiguration sets the invocation logging config.
+func (b *Bedrock) PutModelInvocationLoggingConfiguration(ctx context.Context, cfg driver.LoggingConfig) error {
+	_, err := b.do(ctx, "PutModelInvocationLoggingConfiguration", cfg, func() (any, error) {
+		return nil, b.driver.PutModelInvocationLoggingConfiguration(ctx, cfg)
+	})
+
+	return err
+}
+
+// GetModelInvocationLoggingConfiguration returns the invocation logging config.
+func (b *Bedrock) GetModelInvocationLoggingConfiguration(ctx context.Context) (*driver.LoggingConfig, error) {
+	out, err := b.do(ctx, "GetModelInvocationLoggingConfiguration", nil, func() (any, error) {
+		return b.driver.GetModelInvocationLoggingConfiguration(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, _ := out.(*driver.LoggingConfig)
+
+	return cfg, nil
+}
+
+// DeleteModelInvocationLoggingConfiguration clears the invocation logging config.
+func (b *Bedrock) DeleteModelInvocationLoggingConfiguration(ctx context.Context) error {
+	_, err := b.do(ctx, "DeleteModelInvocationLoggingConfiguration", nil, func() (any, error) {
+		return nil, b.driver.DeleteModelInvocationLoggingConfiguration(ctx)
+	})
+
+	return err
+}

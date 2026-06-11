@@ -150,3 +150,53 @@ func TestWithRateLimiter(t *testing.T) {
 	_, err = b.ListFoundationModels(context.Background())
 	require.Error(t, err)
 }
+
+func TestManagementWrappers(t *testing.T) {
+	b := newTestBedrock()
+	ctx := context.Background()
+
+	g, err := b.CreateGuardrail(ctx, driver.GuardrailConfig{
+		Name:                    "gr-1",
+		BlockedInputMessaging:   "in",
+		BlockedOutputsMessaging: "out",
+	})
+	require.NoError(t, err)
+	require.Equal(t, driver.GuardrailReady, g.Status)
+
+	_, err = b.GetGuardrail(ctx, g.ID, "")
+	require.NoError(t, err)
+
+	gs, err := b.ListGuardrails(ctx)
+	require.NoError(t, err)
+	require.Len(t, gs, 1)
+
+	require.NoError(t, b.DeleteGuardrail(ctx, g.ID))
+
+	pt, err := b.CreateProvisionedModelThroughput(ctx, driver.ProvisionedThroughputConfig{
+		ProvisionedModelName: "pt-1",
+		ModelID:              titanModel,
+		ModelUnits:           1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, driver.ProvisionedInService, pt.Status)
+
+	_, err = b.GetProvisionedModelThroughput(ctx, "pt-1")
+	require.NoError(t, err)
+
+	pts, err := b.ListProvisionedModelThroughputs(ctx)
+	require.NoError(t, err)
+	require.Len(t, pts, 1)
+
+	require.NoError(t, b.DeleteProvisionedModelThroughput(ctx, "pt-1"))
+
+	require.NoError(t, b.PutModelInvocationLoggingConfiguration(ctx, driver.LoggingConfig{
+		TextDataDeliveryEnabled: true,
+		S3:                      &driver.S3LoggingConfig{BucketName: "logs"},
+	}))
+
+	lc, err := b.GetModelInvocationLoggingConfiguration(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, lc)
+
+	require.NoError(t, b.DeleteModelInvocationLoggingConfiguration(ctx))
+}
