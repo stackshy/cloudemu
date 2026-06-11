@@ -7,6 +7,7 @@
 package aws
 
 import (
+	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
@@ -18,6 +19,7 @@ import (
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
 	"github.com/stackshy/cloudemu/server"
+	"github.com/stackshy/cloudemu/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
@@ -49,6 +51,7 @@ type Drivers struct {
 	Redshift   rdbdriver.RelationalDB
 	EKS        eksdriver.EKS
 	IAM        iamdriver.IAM
+	Bedrock    bedrockdriver.Bedrock
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -144,6 +147,14 @@ func New(d Drivers) *server.Server {
 	// at /clusters specifically so it doesn't shadow other REST URLs.
 	if d.EKS != nil {
 		srv.Register(eks.New(d.EKS))
+	}
+
+	// Bedrock is a REST/JSON service rooted at /foundation-models,
+	// /model-customization-jobs, /custom-models, and /model/{id}/{invoke,
+	// converse}. It must register before S3 because S3 is the permissive
+	// REST fallback that would otherwise claim those paths.
+	if d.Bedrock != nil {
+		srv.Register(bedrock.New(d.Bedrock))
 	}
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from
