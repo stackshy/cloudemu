@@ -48,23 +48,24 @@ import (
 // compute driver — the driver's Volume*/Snapshot*/Image* methods back the
 // corresponding resources.
 type Drivers struct {
-	VirtualMachines computedriver.Compute
-	Disks           computedriver.Compute
-	Snapshots       computedriver.Compute
-	Images          computedriver.Compute
-	SSHPublicKeys   computedriver.Compute
-	BlobStorage     storagedriver.Bucket
-	CosmosDB        dbdriver.Database
-	Network         netdriver.Networking
-	Monitor         mondriver.Monitoring
-	Functions       sdrv.Serverless
-	ServiceBus      mqdriver.MessageQueue
-	SQL             rdbdriver.RelationalDB
-	PostgresFlex    rdbdriver.RelationalDB
-	MySQLFlex       rdbdriver.RelationalDB
-	AKS             aksserver.Backend
-	IAM             iamdriver.IAM
-	Databricks      dbxdriver.Databricks
+	VirtualMachines     computedriver.Compute
+	Disks               computedriver.Compute
+	Snapshots           computedriver.Compute
+	Images              computedriver.Compute
+	SSHPublicKeys       computedriver.Compute
+	BlobStorage         storagedriver.Bucket
+	CosmosDB            dbdriver.Database
+	Network             netdriver.Networking
+	Monitor             mondriver.Monitoring
+	Functions           sdrv.Serverless
+	ServiceBus          mqdriver.MessageQueue
+	SQL                 rdbdriver.RelationalDB
+	PostgresFlex        rdbdriver.RelationalDB
+	MySQLFlex           rdbdriver.RelationalDB
+	AKS                 aksserver.Backend
+	IAM                 iamdriver.IAM
+	Databricks          dbxdriver.Databricks
+	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -160,6 +161,13 @@ func New(d Drivers) *server.Server {
 	// provider name, so registration order is unconstrained.
 	if d.Databricks != nil {
 		srv.Register(databricks.New(d.Databricks))
+	}
+
+	// Databricks data plane matches /api/2.x/{clusters,instance-pools,jobs,
+	// permissions} — disjoint from ARM paths. Registered before the blob
+	// fallback so its REST URLs aren't swallowed.
+	if d.DatabricksDataPlane != nil {
+		srv.Register(databricks.NewDataPlane(d.DatabricksDataPlane))
 	}
 
 	if d.VirtualMachines != nil {

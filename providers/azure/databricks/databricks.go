@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/config"
@@ -15,8 +16,11 @@ import (
 	"github.com/stackshy/cloudemu/internal/memstore"
 )
 
-// Compile-time check that Mock implements driver.Databricks.
-var _ driver.Databricks = (*Mock)(nil)
+// Compile-time checks that Mock implements both Databricks interfaces.
+var (
+	_ driver.Databricks = (*Mock)(nil)
+	_ driver.DataPlane  = (*Mock)(nil)
+)
 
 const (
 	providerNamespace = "Microsoft.Databricks"
@@ -28,17 +32,29 @@ const (
 	urlShardModulo = 100
 )
 
-// Mock is an in-memory mock implementation of the Azure Databricks service.
+// Mock is an in-memory mock implementation of the Azure Databricks service,
+// covering both ARM workspace management and the workspace data plane.
 type Mock struct {
-	workspaces *memstore.Store[*driver.Workspace]
-	opts       *config.Options
+	workspaces  *memstore.Store[*driver.Workspace]
+	pools       *memstore.Store[*driver.InstancePool]
+	clusters    *memstore.Store[*driver.Cluster]
+	jobs        *memstore.Store[*driver.Job]
+	permissions *memstore.Store[*driver.ObjectPermissions]
+	opts        *config.Options
+
+	jobSeq atomic.Int64
+	runSeq atomic.Int64
 }
 
 // New creates a new Databricks mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		workspaces: memstore.New[*driver.Workspace](),
-		opts:       opts,
+		workspaces:  memstore.New[*driver.Workspace](),
+		pools:       memstore.New[*driver.InstancePool](),
+		clusters:    memstore.New[*driver.Cluster](),
+		jobs:        memstore.New[*driver.Job](),
+		permissions: memstore.New[*driver.ObjectPermissions](),
+		opts:        opts,
 	}
 }
 
