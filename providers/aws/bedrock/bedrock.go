@@ -91,6 +91,10 @@ func (m *Mock) CreateModelCustomizationJob(_ context.Context, cfg driver.Customi
 		return nil, errors.Newf(errors.AlreadyExists, "customization job %q already exists", cfg.JobName)
 	}
 
+	if m.models.Has(cfg.CustomModelName) {
+		return nil, errors.Newf(errors.AlreadyExists, "custom model %q already exists", cfg.CustomModelName)
+	}
+
 	now := m.now()
 	jobARN := idgen.AWSARN("bedrock", m.opts.Region, m.opts.AccountID, "model-customization-job/"+idgen.GenerateID(""))
 	modelARN := idgen.AWSARN("bedrock", m.opts.Region, m.opts.AccountID, "custom-model/"+cfg.CustomModelName)

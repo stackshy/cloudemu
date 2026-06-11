@@ -8,12 +8,14 @@ import (
 
 	"github.com/stackshy/cloudemu/bedrock/driver"
 	"github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/internal/idgen"
 )
 
 const (
 	contentTypeJSON = "application/json"
 	stopReasonTurn  = "end_turn"
 	defaultLatency  = 42 // deterministic emulated latency in milliseconds
+	embeddingDims   = 8  // length of the synthetic embedding vector
 
 	roleUser = "user"
 
@@ -88,10 +90,14 @@ func completion(modelID, prompt string) string {
 // encodeInvokeResponse marshals text into the response envelope of modelID's
 // family.
 func encodeInvokeResponse(modelID, text string, inTokens, outTokens int) ([]byte, error) {
+	if isEmbeddingModel(modelID) {
+		return json.Marshal(embeddingResponse{Embedding: fakeEmbedding(inTokens), InputTextTokenCount: inTokens})
+	}
+
 	switch familyOf(modelID) {
 	case familyAnthropic:
 		return json.Marshal(anthropicResponse{
-			ID: "msg_" + "sim", Type: "message", Role: "assistant", Model: modelID,
+			ID: idgen.GenerateID("msg_"), Type: "message", Role: "assistant", Model: modelID,
 			Content:    []anthropicContent{{Type: "text", Text: text}},
 			StopReason: stopReasonTurn,
 			Usage:      anthropicUsage{InputTokens: inTokens, OutputTokens: outTokens},
@@ -199,4 +205,21 @@ func conversationTokens(msgs []driver.Message) int {
 // wordCount is a crude token estimate: whitespace-separated words.
 func wordCount(s string) int {
 	return len(strings.Fields(s))
+}
+
+// isEmbeddingModel reports whether modelID is an embedding model, which
+// returns a vector rather than a text completion.
+func isEmbeddingModel(modelID string) bool {
+	return strings.Contains(modelID, "embed")
+}
+
+// fakeEmbedding produces a deterministic pseudo-embedding vector seeded by the
+// input token count, so the same input always yields the same vector.
+func fakeEmbedding(seed int) []float64 {
+	vec := make([]float64, embeddingDims)
+	for i := range vec {
+		vec[i] = float64((seed+i)%embeddingDims) / float64(embeddingDims)
+	}
+
+	return vec
 }

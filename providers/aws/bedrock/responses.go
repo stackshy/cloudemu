@@ -55,3 +55,10 @@ type genericResponse struct {
 	Completion string `json:"completion"`
 	StopReason string `json:"stop_reason"`
 }
+
+// embeddingResponse is the envelope returned by embedding models (e.g. Titan
+// Embeddings): a vector plus the input token count.
+type embeddingResponse struct {
+	Embedding           []float64 `json:"embedding"`
+	InputTextTokenCount int       `json:"inputTextTokenCount"`
+}

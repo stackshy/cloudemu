@@ -170,6 +170,43 @@ func TestInvokeModelFamilies(t *testing.T) {
 	}
 }
 
+func TestInvokeEmbeddingModel(t *testing.T) {
+	m := newTestMock()
+
+	res, err := m.InvokeModel(context.Background(), bedrockdriver.InvokeModelInput{
+		ModelID:     "amazon.titan-embed-text-v1",
+		ContentType: "application/json",
+		Body:        []byte(`{"inputText":"hello"}`),
+	})
+	requireNoError(t, err)
+
+	var resp struct {
+		Embedding []float64 `json:"embedding"`
+	}
+
+	requireNoError(t, json.Unmarshal(res.Body, &resp))
+
+	if len(resp.Embedding) == 0 {
+		t.Fatalf("expected an embedding vector, got %s", res.Body)
+	}
+}
+
+func TestDuplicateCustomModelName(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	cfg := bedrockdriver.CustomizationJobConfig{
+		JobName: "job-a", CustomModelName: "cm-1", RoleARN: "r", BaseModelIdentifier: titanModel,
+	}
+
+	_, err := m.CreateModelCustomizationJob(ctx, cfg)
+	requireNoError(t, err)
+
+	// Different job name, same custom-model name must be rejected.
+	cfg.JobName = "job-b"
+	_, err = m.CreateModelCustomizationJob(ctx, cfg)
+	assertError(t, err, true)
+}
+
 func TestInvokeModelUnknown(t *testing.T) {
 	m := newTestMock()
 
