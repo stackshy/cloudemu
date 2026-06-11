@@ -66,8 +66,17 @@ func (m *Mock) CreateWorkspace(_ context.Context, cfg driver.WorkspaceConfig) (*
 	k := key(cfg.ResourceGroup, cfg.Name)
 
 	if existing, ok := m.workspaces.Get(k); ok {
-		// ARM PUT is create-or-update: return the existing workspace.
-		return cloneWorkspace(existing), nil
+		// ARM PUT is create-or-update: apply the mutable fields (tags, SKU) to
+		// a copy and swap it in, preserving the identity fields (ID, workspace
+		// ID/URL, created time). Location and managed RG are immutable in real
+		// Azure, so they are left untouched.
+		updated := *existing
+		updated.Tags = copyMap(cfg.Tags)
+		updated.SKUName = skuOrDefault(cfg.SKUName)
+		updated.SKUTier = cfg.SKUTier
+		m.workspaces.Set(k, &updated)
+
+		return cloneWorkspace(&updated), nil
 	}
 
 	wsID := workspaceID(k)
@@ -112,14 +121,20 @@ func (m *Mock) DeleteWorkspace(_ context.Context, resourceGroup, name string) er
 
 // UpdateWorkspaceTags replaces a workspace's tags.
 func (m *Mock) UpdateWorkspaceTags(_ context.Context, resourceGroup, name string, tags map[string]string) (*driver.Workspace, error) {
-	ws, ok := m.workspaces.Get(key(resourceGroup, name))
+	k := key(resourceGroup, name)
+
+	ws, ok := m.workspaces.Get(k)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "workspace %q not found", name)
 	}
 
-	ws.Tags = copyMap(tags)
+	// Mutate a copy and swap it in rather than writing the shared struct in
+	// place, so concurrent readers never observe a torn update.
+	updated := *ws
+	updated.Tags = copyMap(tags)
+	m.workspaces.Set(k, &updated)
 
-	return cloneWorkspace(ws), nil
+	return cloneWorkspace(&updated), nil
 }
 
 // ListWorkspacesByResourceGroup lists workspaces in a resource group.

@@ -74,6 +74,36 @@ func TestCreateWorkspaceIdempotent(t *testing.T) {
 	assertEqual(t, first.WorkspaceID, second.WorkspaceID)
 }
 
+func TestCreateOrUpdateAppliesMutableFields(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	first, err := m.CreateWorkspace(ctx, validConfig())
+	requireNoError(t, err)
+
+	// PUT again with changed tags + SKU — ARM create-or-update must apply them.
+	cfg := validConfig()
+	cfg.SKUName = "premium"
+	cfg.Tags = map[string]string{"env": "prod"}
+
+	updated, err := m.CreateWorkspace(ctx, cfg)
+	requireNoError(t, err)
+
+	assertEqual(t, "premium", updated.SKUName)
+	assertEqual(t, "prod", updated.Tags["env"])
+
+	// Identity fields are preserved across the update.
+	assertEqual(t, first.ID, updated.ID)
+	assertEqual(t, first.WorkspaceID, updated.WorkspaceID)
+	assertEqual(t, first.CreatedAt, updated.CreatedAt)
+
+	// The change is durable.
+	got, err := m.GetWorkspace(ctx, "rg-1", "ws-1")
+	requireNoError(t, err)
+	assertEqual(t, "premium", got.SKUName)
+	assertEqual(t, "prod", got.Tags["env"])
+}
+
 func TestGetAndDeleteWorkspace(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
