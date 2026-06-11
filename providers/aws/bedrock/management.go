@@ -92,7 +92,14 @@ func (m *Mock) UpdateGuardrail(_ context.Context, identifier string, cfg driver.
 	updated.BlockedInputMessaging = orDefault(cfg.BlockedInputMessaging, g.BlockedInputMessaging)
 	updated.BlockedOutputsMessaging = orDefault(cfg.BlockedOutputsMessaging, g.BlockedOutputsMessaging)
 	updated.UpdatedAt = m.now()
-	m.guardrails.Set(g.Name, &updated)
+
+	// Guardrails are keyed by name; re-key when an update renames one so
+	// lookups by the new name keep working.
+	if updated.Name != g.Name {
+		m.guardrails.Delete(g.Name)
+	}
+
+	m.guardrails.Set(updated.Name, &updated)
 
 	result := updated
 

@@ -55,6 +55,32 @@ func TestGuardrailLifecycle(t *testing.T) {
 	assertError(t, err, true)
 }
 
+func TestGuardrailRenameRekeys(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	g := newGuardrail(t, m, "gr-old")
+
+	_, err := m.UpdateGuardrail(ctx, g.ID, bedrockdriver.GuardrailConfig{
+		Name:                    "gr-new",
+		BlockedInputMessaging:   "in",
+		BlockedOutputsMessaging: "out",
+	})
+	requireNoError(t, err)
+
+	// Lookup by the new name must succeed; the old name must be gone.
+	got, err := m.GetGuardrail(ctx, "gr-new", "")
+	requireNoError(t, err)
+	assertEqual(t, "gr-new", got.Name)
+
+	_, err = m.GetGuardrail(ctx, "gr-old", "")
+	assertError(t, err, true)
+
+	list, err := m.ListGuardrails(ctx)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(list))
+}
+
 func TestGuardrailValidation(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
