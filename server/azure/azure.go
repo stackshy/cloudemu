@@ -9,6 +9,7 @@ package azure
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
@@ -21,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/azuresql"
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
+	"github.com/stackshy/cloudemu/server/azure/databricks"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/functions"
 	"github.com/stackshy/cloudemu/server/azure/iam"
@@ -62,6 +64,7 @@ type Drivers struct {
 	MySQLFlex       rdbdriver.RelationalDB
 	AKS             aksserver.Backend
 	IAM             iamdriver.IAM
+	Databricks      dbxdriver.Databricks
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -151,6 +154,12 @@ func New(d Drivers) *server.Server {
 	// is unconstrained.
 	if d.AKS != nil {
 		srv.Register(aksserver.New(d.AKS))
+	}
+
+	// Databricks matches on Microsoft.Databricks/workspaces — a distinct ARM
+	// provider name, so registration order is unconstrained.
+	if d.Databricks != nil {
+		srv.Register(databricks.New(d.Databricks))
 	}
 
 	if d.VirtualMachines != nil {
