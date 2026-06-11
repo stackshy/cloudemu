@@ -141,9 +141,100 @@ type ConverseOutput struct {
 	LatencyMs    int
 }
 
+// Guardrail status values.
+const (
+	GuardrailReady    = "READY"
+	GuardrailCreating = "CREATING"
+	GuardrailUpdating = "UPDATING"
+	GuardrailFailed   = "FAILED"
+)
+
+// Provisioned throughput status values.
+const (
+	ProvisionedCreating  = "Creating"
+	ProvisionedInService = "InService"
+	ProvisionedUpdating  = "Updating"
+	ProvisionedFailed    = "Failed"
+)
+
+// GuardrailConfig describes a guardrail to create or update.
+type GuardrailConfig struct {
+	Name                    string
+	Description             string
+	BlockedInputMessaging   string
+	BlockedOutputsMessaging string
+	KMSKeyID                string
+	ClientRequestToken      string
+	Tags                    map[string]string
+}
+
+// Guardrail describes a content guardrail.
+type Guardrail struct {
+	ID                      string
+	ARN                     string
+	Name                    string
+	Description             string
+	Version                 string
+	Status                  string
+	BlockedInputMessaging   string
+	BlockedOutputsMessaging string
+	KMSKeyARN               string
+	CreatedAt               string
+	UpdatedAt               string
+}
+
+// ProvisionedThroughputConfig describes a provisioned-throughput purchase.
+type ProvisionedThroughputConfig struct {
+	ProvisionedModelName string
+	ModelID              string
+	ModelUnits           int
+	CommitmentDuration   string
+	ClientRequestToken   string
+	Tags                 map[string]string
+}
+
+// ProvisionedThroughput describes provisioned model throughput.
+type ProvisionedThroughput struct {
+	ARN                string
+	Name               string
+	ModelARN           string
+	DesiredModelARN    string
+	FoundationModelARN string
+	ModelUnits         int
+	DesiredModelUnits  int
+	Status             string
+	CommitmentDuration string
+	CreationTime       string
+	LastModifiedTime   string
+}
+
+// S3LoggingConfig is an S3 delivery target for invocation logs.
+type S3LoggingConfig struct {
+	BucketName string
+	KeyPrefix  string
+}
+
+// CloudWatchLoggingConfig is a CloudWatch Logs delivery target.
+type CloudWatchLoggingConfig struct {
+	LogGroupName        string
+	RoleARN             string
+	LargeDataDeliveryS3 *S3LoggingConfig
+}
+
+// LoggingConfig is the model-invocation logging configuration.
+type LoggingConfig struct {
+	TextDataDeliveryEnabled      bool
+	ImageDataDeliveryEnabled     bool
+	EmbeddingDataDeliveryEnabled bool
+	VideoDataDeliveryEnabled     bool
+	S3                           *S3LoggingConfig
+	CloudWatch                   *CloudWatchLoggingConfig
+}
+
 // Bedrock is the interface that foundation-model service implementations must
 // satisfy. It spans the control plane (model catalog, customization jobs,
-// custom models) and the runtime (InvokeModel, Converse).
+// custom models, guardrails, provisioned throughput, invocation logging) and
+// the runtime (InvokeModel, Converse).
 type Bedrock interface {
 	ListFoundationModels(ctx context.Context) ([]FoundationModel, error)
 	GetFoundationModel(ctx context.Context, modelID string) (*FoundationModel, error)
@@ -158,4 +249,19 @@ type Bedrock interface {
 
 	InvokeModel(ctx context.Context, in InvokeModelInput) (*InvokeModelResult, error)
 	Converse(ctx context.Context, in ConverseInput) (*ConverseOutput, error)
+
+	CreateGuardrail(ctx context.Context, cfg GuardrailConfig) (*Guardrail, error)
+	GetGuardrail(ctx context.Context, identifier, version string) (*Guardrail, error)
+	ListGuardrails(ctx context.Context) ([]Guardrail, error)
+	UpdateGuardrail(ctx context.Context, identifier string, cfg GuardrailConfig) (*Guardrail, error)
+	DeleteGuardrail(ctx context.Context, identifier string) error
+
+	CreateProvisionedModelThroughput(ctx context.Context, cfg ProvisionedThroughputConfig) (*ProvisionedThroughput, error)
+	GetProvisionedModelThroughput(ctx context.Context, identifier string) (*ProvisionedThroughput, error)
+	ListProvisionedModelThroughputs(ctx context.Context) ([]ProvisionedThroughput, error)
+	DeleteProvisionedModelThroughput(ctx context.Context, identifier string) error
+
+	PutModelInvocationLoggingConfiguration(ctx context.Context, cfg LoggingConfig) error
+	GetModelInvocationLoggingConfiguration(ctx context.Context) (*LoggingConfig, error)
+	DeleteModelInvocationLoggingConfiguration(ctx context.Context) error
 }

@@ -302,3 +302,145 @@ func TestSDKConverse(t *testing.T) {
 		t.Fatalf("expected non-zero token usage, got %+v", out.Usage)
 	}
 }
+
+func TestSDKGuardrailLifecycle(t *testing.T) {
+	client := newControlClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreateGuardrail(ctx, &awsbedrock.CreateGuardrailInput{
+		Name:                    aws.String("gr-1"),
+		Description:             aws.String("test guardrail"),
+		BlockedInputMessaging:   aws.String("blocked input"),
+		BlockedOutputsMessaging: aws.String("blocked output"),
+	})
+	if err != nil {
+		t.Fatalf("CreateGuardrail: %v", err)
+	}
+
+	if aws.ToString(created.GuardrailId) == "" || aws.ToString(created.GuardrailArn) == "" {
+		t.Fatalf("expected guardrail id + arn, got %+v", created)
+	}
+
+	got, err := client.GetGuardrail(ctx, &awsbedrock.GetGuardrailInput{
+		GuardrailIdentifier: created.GuardrailId,
+	})
+	if err != nil {
+		t.Fatalf("GetGuardrail: %v", err)
+	}
+
+	if got.Status != bedrocktypes.GuardrailStatusReady {
+		t.Fatalf("got status %q, want READY", got.Status)
+	}
+
+	list, err := client.ListGuardrails(ctx, &awsbedrock.ListGuardrailsInput{})
+	if err != nil {
+		t.Fatalf("ListGuardrails: %v", err)
+	}
+
+	if len(list.Guardrails) != 1 {
+		t.Fatalf("got %d guardrails, want 1", len(list.Guardrails))
+	}
+
+	if _, err = client.UpdateGuardrail(ctx, &awsbedrock.UpdateGuardrailInput{
+		GuardrailIdentifier:     created.GuardrailId,
+		Name:                    aws.String("gr-1"),
+		BlockedInputMessaging:   aws.String("updated input"),
+		BlockedOutputsMessaging: aws.String("updated output"),
+	}); err != nil {
+		t.Fatalf("UpdateGuardrail: %v", err)
+	}
+
+	if _, err = client.DeleteGuardrail(ctx, &awsbedrock.DeleteGuardrailInput{
+		GuardrailIdentifier: created.GuardrailId,
+	}); err != nil {
+		t.Fatalf("DeleteGuardrail: %v", err)
+	}
+
+	_, err = client.GetGuardrail(ctx, &awsbedrock.GetGuardrailInput{GuardrailIdentifier: created.GuardrailId})
+	if err == nil {
+		t.Fatal("expected error after delete")
+	}
+}
+
+func TestSDKProvisionedThroughputLifecycle(t *testing.T) {
+	client := newControlClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreateProvisionedModelThroughput(ctx, &awsbedrock.CreateProvisionedModelThroughputInput{
+		ProvisionedModelName: aws.String("pt-1"),
+		ModelId:              aws.String(claudeModel),
+		ModelUnits:           aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("CreateProvisionedModelThroughput: %v", err)
+	}
+
+	got, err := client.GetProvisionedModelThroughput(ctx, &awsbedrock.GetProvisionedModelThroughputInput{
+		ProvisionedModelId: aws.String("pt-1"),
+	})
+	if err != nil {
+		t.Fatalf("GetProvisionedModelThroughput: %v", err)
+	}
+
+	if got.Status != bedrocktypes.ProvisionedModelStatusInService {
+		t.Fatalf("got status %q, want InService", got.Status)
+	}
+
+	list, err := client.ListProvisionedModelThroughputs(ctx, &awsbedrock.ListProvisionedModelThroughputsInput{})
+	if err != nil {
+		t.Fatalf("ListProvisionedModelThroughputs: %v", err)
+	}
+
+	if len(list.ProvisionedModelSummaries) != 1 {
+		t.Fatalf("got %d summaries, want 1", len(list.ProvisionedModelSummaries))
+	}
+
+	if _, err = client.DeleteProvisionedModelThroughput(ctx, &awsbedrock.DeleteProvisionedModelThroughputInput{
+		ProvisionedModelId: aws.String(aws.ToString(created.ProvisionedModelArn)),
+	}); err != nil {
+		t.Fatalf("DeleteProvisionedModelThroughput: %v", err)
+	}
+}
+
+func TestSDKModelInvocationLogging(t *testing.T) {
+	client := newControlClient(t)
+	ctx := context.Background()
+
+	_, err := client.PutModelInvocationLoggingConfiguration(ctx, &awsbedrock.PutModelInvocationLoggingConfigurationInput{
+		LoggingConfig: &bedrocktypes.LoggingConfig{
+			TextDataDeliveryEnabled: aws.Bool(true),
+			S3Config: &bedrocktypes.S3Config{
+				BucketName: aws.String("my-logs"),
+				KeyPrefix:  aws.String("bedrock/"),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PutModelInvocationLoggingConfiguration: %v", err)
+	}
+
+	got, err := client.GetModelInvocationLoggingConfiguration(ctx, &awsbedrock.GetModelInvocationLoggingConfigurationInput{})
+	if err != nil {
+		t.Fatalf("GetModelInvocationLoggingConfiguration: %v", err)
+	}
+
+	if got.LoggingConfig == nil || got.LoggingConfig.S3Config == nil ||
+		aws.ToString(got.LoggingConfig.S3Config.BucketName) != "my-logs" {
+		t.Fatalf("unexpected logging config: %+v", got.LoggingConfig)
+	}
+
+	if _, err = client.DeleteModelInvocationLoggingConfiguration(ctx,
+		&awsbedrock.DeleteModelInvocationLoggingConfigurationInput{}); err != nil {
+		t.Fatalf("DeleteModelInvocationLoggingConfiguration: %v", err)
+	}
+
+	after, err := client.GetModelInvocationLoggingConfiguration(ctx,
+		&awsbedrock.GetModelInvocationLoggingConfigurationInput{})
+	if err != nil {
+		t.Fatalf("GetModelInvocationLoggingConfiguration after delete: %v", err)
+	}
+
+	if after.LoggingConfig != nil {
+		t.Fatalf("expected nil logging config after delete, got %+v", after.LoggingConfig)
+	}
+}

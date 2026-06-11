@@ -6,6 +6,7 @@ package bedrock
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/bedrock/driver"
@@ -20,20 +21,27 @@ var _ driver.Bedrock = (*Mock)(nil)
 
 // Mock is an in-memory mock implementation of the AWS Bedrock service.
 type Mock struct {
-	foundation []driver.FoundationModel
-	jobs       *memstore.Store[*driver.CustomizationJob]
-	models     *memstore.Store[*driver.CustomModel]
-	opts       *config.Options
+	foundation  []driver.FoundationModel
+	jobs        *memstore.Store[*driver.CustomizationJob]
+	models      *memstore.Store[*driver.CustomModel]
+	guardrails  *memstore.Store[*driver.Guardrail]
+	provisioned *memstore.Store[*driver.ProvisionedThroughput]
+	opts        *config.Options
+
+	logMu   sync.RWMutex
+	logging *driver.LoggingConfig
 }
 
 // New creates a new Bedrock mock seeded with a realistic foundation-model
 // catalog.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		foundation: seedFoundationModels(opts.Region),
-		jobs:       memstore.New[*driver.CustomizationJob](),
-		models:     memstore.New[*driver.CustomModel](),
-		opts:       opts,
+		foundation:  seedFoundationModels(opts.Region),
+		jobs:        memstore.New[*driver.CustomizationJob](),
+		models:      memstore.New[*driver.CustomModel](),
+		guardrails:  memstore.New[*driver.Guardrail](),
+		provisioned: memstore.New[*driver.ProvisionedThroughput](),
+		opts:        opts,
 	}
 }
 

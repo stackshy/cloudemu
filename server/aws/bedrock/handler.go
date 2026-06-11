@@ -38,6 +38,11 @@ const (
 	prefixCustom     = "/custom-models"
 	prefixRuntime    = "/model/"
 
+	prefixGuardrails    = "/guardrails"
+	prefixProvisioned   = "/provisioned-model-throughput"
+	pathProvisionedList = "/provisioned-model-throughputs"
+	pathLogging         = "/logging/modelinvocations"
+
 	actionInvoke   = "invoke"
 	actionConverse = "converse"
 )
@@ -52,14 +57,26 @@ func New(drv bedrockdriver.Bedrock) *Handler {
 	return &Handler{bedrock: drv}
 }
 
+// collectionPrefixes are the URL prefixes that own both a collection path and
+// a "/{id}" resource path.
+//
+//nolint:gochecknoglobals // immutable routing table shared by Matches and ServeHTTP
+var collectionPrefixes = []string{prefixFoundation, prefixJobs, prefixCustom, prefixGuardrails, prefixProvisioned}
+
+// claims reports whether path p belongs to this handler.
+func claims(p string) bool {
+	for _, pre := range collectionPrefixes {
+		if p == pre || strings.HasPrefix(p, pre+"/") {
+			return true
+		}
+	}
+
+	return strings.HasPrefix(p, prefixRuntime) || p == pathProvisionedList || p == pathLogging
+}
+
 // Matches claims the Bedrock control-plane and runtime URL prefixes.
 func (*Handler) Matches(r *http.Request) bool {
-	p := r.URL.Path
-
-	return p == prefixFoundation || strings.HasPrefix(p, prefixFoundation+"/") ||
-		p == prefixJobs || strings.HasPrefix(p, prefixJobs+"/") ||
-		p == prefixCustom || strings.HasPrefix(p, prefixCustom+"/") ||
-		strings.HasPrefix(p, prefixRuntime)
+	return claims(r.URL.Path)
 }
 
 // ServeHTTP routes by URL prefix.
@@ -76,7 +93,101 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, prefixRuntime):
 		h.serveRuntime(w, r, strings.TrimPrefix(p, prefixRuntime))
 	default:
+		h.serveManagement(w, r, p)
+	}
+}
+
+// serveManagement routes the guardrail, provisioned-throughput, and invocation
+// logging surfaces. Split out of ServeHTTP to keep each dispatcher small.
+func (h *Handler) serveManagement(w http.ResponseWriter, r *http.Request, p string) {
+	switch {
+	case p == pathProvisionedList:
+		h.serveProvisionedList(w, r)
+	case p == prefixProvisioned || strings.HasPrefix(p, prefixProvisioned+"/"):
+		h.serveProvisioned(w, r, strings.TrimPrefix(strings.TrimPrefix(p, prefixProvisioned), "/"))
+	case p == prefixGuardrails || strings.HasPrefix(p, prefixGuardrails+"/"):
+		h.serveGuardrails(w, r, strings.TrimPrefix(strings.TrimPrefix(p, prefixGuardrails), "/"))
+	case p == pathLogging:
+		h.serveLogging(w, r)
+	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported path: "+p)
+	}
+}
+
+// serveGuardrails handles /guardrails[/{id}].
+func (h *Handler) serveGuardrails(w http.ResponseWriter, r *http.Request, id string) {
+	if id == "" {
+		switch r.Method {
+		case http.MethodPost:
+			h.createGuardrail(w, r)
+		case http.MethodGet:
+			h.listGuardrails(w, r)
+		default:
+			methodNotAllowed(w)
+		}
+
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getGuardrail(w, r, id)
+	case http.MethodPut:
+		h.updateGuardrail(w, r, id)
+	case http.MethodDelete:
+		h.deleteGuardrail(w, r, id)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+// serveProvisioned handles /provisioned-model-throughput[/{id}]. The bare path
+// is create-only (POST); listing uses the plural path.
+func (h *Handler) serveProvisioned(w http.ResponseWriter, r *http.Request, id string) {
+	if id == "" {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+
+			return
+		}
+
+		h.createProvisioned(w, r)
+
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getProvisioned(w, r, id)
+	case http.MethodDelete:
+		h.deleteProvisioned(w, r, id)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+// serveProvisionedList handles GET /provisioned-model-throughputs.
+func (h *Handler) serveProvisionedList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+
+		return
+	}
+
+	h.listProvisioned(w, r)
+}
+
+// serveLogging handles /logging/modelinvocations.
+func (h *Handler) serveLogging(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPut:
+		h.putLogging(w, r)
+	case http.MethodGet:
+		h.getLogging(w, r)
+	case http.MethodDelete:
+		h.deleteLogging(w, r)
+	default:
+		methodNotAllowed(w)
 	}
 }
 
