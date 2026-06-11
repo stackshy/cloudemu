@@ -53,6 +53,7 @@ func WithErrorInjection(i *inject.Injector) Option { return func(b *Databricks) 
 // WithLatency sets simulated latency.
 func WithLatency(d time.Duration) Option { return func(b *Databricks) { b.latency = d } }
 
+//nolint:dupl // standard cross-cutting pipeline; intentionally mirrors DataPlane.do in this package.
 func (b *Databricks) do(_ context.Context, op string, input any, fn func() (any, error)) (any, error) {
 	start := time.Now()
 
