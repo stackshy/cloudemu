@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/azure/azuresql"
 	"github.com/stackshy/cloudemu/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/providers/azure/cosmosdb"
+	"github.com/stackshy/cloudemu/providers/azure/databricks"
 	"github.com/stackshy/cloudemu/providers/azure/eventgrid"
 	"github.com/stackshy/cloudemu/providers/azure/functions"
 	"github.com/stackshy/cloudemu/providers/azure/keyvault"
@@ -48,6 +49,7 @@ type Provider struct {
 	PostgresFlex     *postgresflex.Mock
 	MySQLFlex        *mysqlflex.Mock
 	AKS              *aks.Mock
+	Databricks       *databricks.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 }
@@ -76,6 +78,7 @@ func New(opts ...config.Option) *Provider {
 		PostgresFlex:     postgresflex.New(o),
 		MySQLFlex:        mysqlflex.New(o),
 		AKS:              aks.New(o),
+		Databricks:       databricks.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.BlobStorage.SetMonitoring(p.Monitor)

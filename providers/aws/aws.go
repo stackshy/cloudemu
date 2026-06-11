@@ -4,6 +4,7 @@ package aws
 import (
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/providers/aws/awsiam"
+	"github.com/stackshy/cloudemu/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/providers/aws/cloudwatchlogs"
 	"github.com/stackshy/cloudemu/providers/aws/dynamodb"
@@ -46,6 +47,7 @@ type Provider struct {
 	RDS               *rds.Mock
 	Redshift          *redshift.Mock
 	EKS               *eks.Mock
+	Bedrock           *bedrock.Mock
 	ResourceDiscovery *resourcediscovery.Engine
 }
 
@@ -72,6 +74,7 @@ func New(opts ...config.Option) *Provider {
 		RDS:            rds.New(o),
 		Redshift:       redshift.New(o),
 		EKS:            eks.New(o),
+		Bedrock:        bedrock.New(o),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
 	p.S3.SetMonitoring(p.CloudWatch)
