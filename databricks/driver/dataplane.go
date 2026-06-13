@@ -88,9 +88,84 @@ type ObjectPermissions struct {
 	AccessControlList []AccessControl
 }
 
+// Run life-cycle and result state values.
+const (
+	RunRunning     = "RUNNING"
+	RunTerminated  = "TERMINATED"
+	ResultSuccess  = "SUCCESS"
+	ResultCanceled = "CANCELED"
+)
+
+// Library install status values.
+const (
+	LibraryInstalled          = "INSTALLED"
+	LibraryUninstallOnRestart = "UNINSTALL_ON_RESTART"
+)
+
+// Run describes a single job run.
+type Run struct {
+	RunID          int64
+	JobID          int64
+	RunName        string
+	LifeCycleState string
+	ResultState    string
+	StateMessage   string
+	StartTime      int64
+	EndTime        int64
+}
+
+// RunOutput is the output of a completed run.
+type RunOutput struct {
+	Run            Run
+	NotebookResult string
+}
+
+// ClusterPolicyConfig describes a cluster policy to create or edit.
+type ClusterPolicyConfig struct {
+	Name               string
+	Definition         string
+	Description        string
+	MaxClustersPerUser int64
+}
+
+// ClusterPolicy describes a cluster policy.
+type ClusterPolicy struct {
+	PolicyID           string
+	Name               string
+	Definition         string
+	Description        string
+	MaxClustersPerUser int64
+	CreatorUserName    string
+	CreatedAt          int64
+}
+
+// LibrarySpec identifies a library to install on a cluster. Exactly one source
+// field is typically set.
+type LibrarySpec struct {
+	Jar              string
+	Egg              string
+	Whl              string
+	PypiPackage      string
+	MavenCoordinates string
+	Cran             string
+}
+
+// LibraryStatus is the install status of a library on a cluster.
+type LibraryStatus struct {
+	Library LibrarySpec
+	Status  string
+}
+
+// ClusterLibraryStatuses bundles a cluster's library statuses.
+type ClusterLibraryStatuses struct {
+	ClusterID string
+	Statuses  []LibraryStatus
+}
+
 // DataPlane is the interface for the Databricks workspace data plane: compute
-// (instance pools, clusters), jobs, and object permissions. It is separate
-// from the ARM-level Databricks (workspace management) interface.
+// (instance pools, clusters, cluster policies, libraries), jobs and runs, and
+// object permissions. It is separate from the ARM-level Databricks (workspace
+// management) interface.
 type DataPlane interface {
 	CreateInstancePool(ctx context.Context, cfg InstancePoolConfig) (*InstancePool, error)
 	GetInstancePool(ctx context.Context, id string) (*InstancePool, error)
@@ -114,6 +189,22 @@ type DataPlane interface {
 	ResetJob(ctx context.Context, id int64, cfg JobConfig) error
 	DeleteJob(ctx context.Context, id int64) error
 	RunJobNow(ctx context.Context, id int64) (int64, error)
+
+	GetRun(ctx context.Context, runID int64) (*Run, error)
+	ListRuns(ctx context.Context, jobID int64) ([]Run, error)
+	CancelRun(ctx context.Context, runID int64) error
+	GetRunOutput(ctx context.Context, runID int64) (*RunOutput, error)
+
+	CreateClusterPolicy(ctx context.Context, cfg ClusterPolicyConfig) (*ClusterPolicy, error)
+	GetClusterPolicy(ctx context.Context, policyID string) (*ClusterPolicy, error)
+	EditClusterPolicy(ctx context.Context, policyID string, cfg ClusterPolicyConfig) error
+	DeleteClusterPolicy(ctx context.Context, policyID string) error
+	ListClusterPolicies(ctx context.Context) ([]ClusterPolicy, error)
+
+	InstallLibraries(ctx context.Context, clusterID string, libs []LibrarySpec) error
+	UninstallLibraries(ctx context.Context, clusterID string, libs []LibrarySpec) error
+	ClusterLibraryStatuses(ctx context.Context, clusterID string) ([]LibraryStatus, error)
+	AllClusterLibraryStatuses(ctx context.Context) ([]ClusterLibraryStatuses, error)
 
 	GetPermissions(ctx context.Context, objectType, objectID string) (*ObjectPermissions, error)
 	SetPermissions(ctx context.Context, objectType, objectID string, acl []AccessControl) (*ObjectPermissions, error)
