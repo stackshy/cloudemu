@@ -119,4 +119,23 @@ func TestSDKClusterPolicyPoolAzureSource(t *testing.T) {
 	if got.ClusterSource != compute.ClusterSourceApi {
 		t.Fatalf("cluster_source: got %q, want API", got.ClusterSource)
 	}
+
+	// The issue reports the drop on create->list, so pin the list path too
+	// (it shares the same response converter as Get).
+	all, err := w.Clusters.ListAll(ctx, compute.ListClustersRequest{})
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+
+	if len(all) != 1 {
+		t.Fatalf("got %d clusters, want 1", len(all))
+	}
+
+	listed := all[0]
+	if listed.PolicyId != "policy-123" || listed.InstancePoolId != pool.InstancePoolId ||
+		listed.ClusterSource != compute.ClusterSourceApi ||
+		listed.AzureAttributes == nil ||
+		listed.AzureAttributes.Availability != compute.AzureAvailabilityOnDemandAzure {
+		t.Fatalf("list dropped a field: %+v (azure=%+v)", listed, listed.AzureAttributes)
+	}
 }
