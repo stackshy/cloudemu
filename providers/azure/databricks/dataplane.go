@@ -282,13 +282,28 @@ func (m *Mock) DeleteJob(_ context.Context, id int64) error {
 	return nil
 }
 
-// RunJobNow triggers a run and returns its run ID.
+// RunJobNow triggers a run and returns its run ID. The run completes
+// synchronously (TERMINATED / SUCCESS) so Get/List/Output are deterministic.
 func (m *Mock) RunJobNow(_ context.Context, id int64) (int64, error) {
-	if !m.jobs.Has(jobKey(id)) {
+	job, ok := m.jobs.Get(jobKey(id))
+	if !ok {
 		return 0, errors.Newf(errors.NotFound, "job %d not found", id)
 	}
 
-	return m.runSeq.Add(1), nil
+	runID := m.runSeq.Add(1)
+	now := m.opts.Clock.Now().UTC().UnixMilli()
+	m.runs.Set(jobKey(runID), &driver.Run{
+		RunID:          runID,
+		JobID:          id,
+		RunName:        job.Name,
+		LifeCycleState: driver.RunTerminated,
+		ResultState:    driver.ResultSuccess,
+		StateMessage:   "Run completed",
+		StartTime:      now,
+		EndTime:        now,
+	})
+
+	return runID, nil
 }
 
 // --- permissions ---

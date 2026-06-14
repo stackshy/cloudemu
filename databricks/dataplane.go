@@ -317,3 +317,228 @@ func (d *DataPlane) UpdatePermissions(
 
 	return out.(*driver.ObjectPermissions), nil
 }
+
+// GetRun retrieves a job run by ID.
+func (d *DataPlane) GetRun(ctx context.Context, runID int64) (*driver.Run, error) {
+	out, err := d.do(ctx, "GetRun", runID, func() (any, error) { return d.driver.GetRun(ctx, runID) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.Run), nil
+}
+
+// ListRuns lists runs, optionally filtered by job ID (0 = all).
+func (d *DataPlane) ListRuns(ctx context.Context, jobID int64) ([]driver.Run, error) {
+	out, err := d.do(ctx, "ListRuns", jobID, func() (any, error) { return d.driver.ListRuns(ctx, jobID) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.Run), nil
+}
+
+// CancelRun cancels a job run.
+func (d *DataPlane) CancelRun(ctx context.Context, runID int64) error {
+	_, err := d.do(ctx, "CancelRun", runID, func() (any, error) { return nil, d.driver.CancelRun(ctx, runID) })
+
+	return err
+}
+
+// GetRunOutput retrieves a run's output.
+func (d *DataPlane) GetRunOutput(ctx context.Context, runID int64) (*driver.RunOutput, error) {
+	out, err := d.do(ctx, "GetRunOutput", runID, func() (any, error) { return d.driver.GetRunOutput(ctx, runID) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.RunOutput), nil
+}
+
+// CreateClusterPolicy creates a cluster policy.
+func (d *DataPlane) CreateClusterPolicy(ctx context.Context, cfg driver.ClusterPolicyConfig) (*driver.ClusterPolicy, error) {
+	out, err := d.do(ctx, "CreateClusterPolicy", cfg, func() (any, error) { return d.driver.CreateClusterPolicy(ctx, cfg) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ClusterPolicy), nil
+}
+
+// GetClusterPolicy retrieves a cluster policy by ID.
+func (d *DataPlane) GetClusterPolicy(ctx context.Context, policyID string) (*driver.ClusterPolicy, error) {
+	out, err := d.do(ctx, "GetClusterPolicy", policyID, func() (any, error) { return d.driver.GetClusterPolicy(ctx, policyID) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ClusterPolicy), nil
+}
+
+// EditClusterPolicy updates a cluster policy.
+func (d *DataPlane) EditClusterPolicy(ctx context.Context, policyID string, cfg driver.ClusterPolicyConfig) error {
+	_, err := d.do(ctx, "EditClusterPolicy", policyID, func() (any, error) {
+		return nil, d.driver.EditClusterPolicy(ctx, policyID, cfg)
+	})
+
+	return err
+}
+
+// DeleteClusterPolicy deletes a cluster policy by ID.
+func (d *DataPlane) DeleteClusterPolicy(ctx context.Context, policyID string) error {
+	_, err := d.do(ctx, "DeleteClusterPolicy", policyID, func() (any, error) {
+		return nil, d.driver.DeleteClusterPolicy(ctx, policyID)
+	})
+
+	return err
+}
+
+// ListClusterPolicies lists all cluster policies.
+func (d *DataPlane) ListClusterPolicies(ctx context.Context) ([]driver.ClusterPolicy, error) {
+	out, err := d.do(ctx, "ListClusterPolicies", nil, func() (any, error) { return d.driver.ListClusterPolicies(ctx) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.ClusterPolicy), nil
+}
+
+// InstallLibraries installs libraries on a cluster.
+func (d *DataPlane) InstallLibraries(ctx context.Context, clusterID string, libs []driver.LibrarySpec) error {
+	_, err := d.do(ctx, "InstallLibraries", clusterID, func() (any, error) {
+		return nil, d.driver.InstallLibraries(ctx, clusterID, libs)
+	})
+
+	return err
+}
+
+// UninstallLibraries marks libraries for removal on a cluster.
+func (d *DataPlane) UninstallLibraries(ctx context.Context, clusterID string, libs []driver.LibrarySpec) error {
+	_, err := d.do(ctx, "UninstallLibraries", clusterID, func() (any, error) {
+		return nil, d.driver.UninstallLibraries(ctx, clusterID, libs)
+	})
+
+	return err
+}
+
+// ClusterLibraryStatuses returns the library statuses for one cluster.
+func (d *DataPlane) ClusterLibraryStatuses(ctx context.Context, clusterID string) ([]driver.LibraryStatus, error) {
+	out, err := d.do(ctx, "ClusterLibraryStatuses", clusterID, func() (any, error) {
+		return d.driver.ClusterLibraryStatuses(ctx, clusterID)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.LibraryStatus), nil
+}
+
+// AllClusterLibraryStatuses returns library statuses across all clusters.
+func (d *DataPlane) AllClusterLibraryStatuses(ctx context.Context) ([]driver.ClusterLibraryStatuses, error) {
+	out, err := d.do(ctx, "AllClusterLibraryStatuses", nil, func() (any, error) {
+		return d.driver.AllClusterLibraryStatuses(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.ClusterLibraryStatuses), nil
+}
+
+// ResizeCluster changes a cluster's worker count or autoscale bounds.
+func (d *DataPlane) ResizeCluster(ctx context.Context, id string, numWorkers, autoscaleMin, autoscaleMax int32) error {
+	_, err := d.do(ctx, "ResizeCluster", id, func() (any, error) {
+		return nil, d.driver.ResizeCluster(ctx, id, numWorkers, autoscaleMin, autoscaleMax)
+	})
+
+	return err
+}
+
+// PinCluster pins a cluster.
+func (d *DataPlane) PinCluster(ctx context.Context, id string) error {
+	_, err := d.do(ctx, "PinCluster", id, func() (any, error) { return nil, d.driver.PinCluster(ctx, id) })
+
+	return err
+}
+
+// UnpinCluster unpins a cluster.
+func (d *DataPlane) UnpinCluster(ctx context.Context, id string) error {
+	_, err := d.do(ctx, "UnpinCluster", id, func() (any, error) { return nil, d.driver.UnpinCluster(ctx, id) })
+
+	return err
+}
+
+// ListNodeTypes returns the available node-type catalog.
+func (d *DataPlane) ListNodeTypes(ctx context.Context) ([]driver.NodeType, error) {
+	out, err := d.do(ctx, "ListNodeTypes", nil, func() (any, error) { return d.driver.ListNodeTypes(ctx) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.NodeType), nil
+}
+
+// ListSparkVersions returns the available runtime versions.
+func (d *DataPlane) ListSparkVersions(ctx context.Context) ([]driver.SparkVersion, error) {
+	out, err := d.do(ctx, "ListSparkVersions", nil, func() (any, error) { return d.driver.ListSparkVersions(ctx) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.SparkVersion), nil
+}
+
+// ListZones returns the availability zones and the default zone.
+func (d *DataPlane) ListZones(ctx context.Context) (zones []string, defaultZone string, err error) {
+	type zonesResult struct {
+		zones       []string
+		defaultZone string
+	}
+
+	out, err := d.do(ctx, "ListZones", nil, func() (any, error) {
+		zs, def, zErr := d.driver.ListZones(ctx)
+
+		return zonesResult{zones: zs, defaultZone: def}, zErr
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	res := out.(zonesResult)
+
+	return res.zones, res.defaultZone, nil
+}
+
+// SubmitRun submits a one-time run and returns its ID.
+func (d *DataPlane) SubmitRun(ctx context.Context, runName string) (int64, error) {
+	out, err := d.do(ctx, "SubmitRun", runName, func() (any, error) { return d.driver.SubmitRun(ctx, runName) })
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int64), nil
+}
+
+// CancelAllRuns cancels all runs for a job.
+func (d *DataPlane) CancelAllRuns(ctx context.Context, jobID int64) error {
+	_, err := d.do(ctx, "CancelAllRuns", jobID, func() (any, error) { return nil, d.driver.CancelAllRuns(ctx, jobID) })
+
+	return err
+}
+
+// DeleteRun deletes a run by ID.
+func (d *DataPlane) DeleteRun(ctx context.Context, runID int64) error {
+	_, err := d.do(ctx, "DeleteRun", runID, func() (any, error) { return nil, d.driver.DeleteRun(ctx, runID) })
+
+	return err
+}
+
+// RepairRun repairs a run and returns the repair ID.
+func (d *DataPlane) RepairRun(ctx context.Context, runID int64) (int64, error) {
+	out, err := d.do(ctx, "RepairRun", runID, func() (any, error) { return d.driver.RepairRun(ctx, runID) })
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int64), nil
+}
