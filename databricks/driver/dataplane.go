@@ -16,6 +16,10 @@ const (
 	ClusterTerminated = "TERMINATED"
 )
 
+// ClusterSourceAPI is the cluster_source reported for clusters created through
+// the API surface (the only path the in-memory backend offers).
+const ClusterSourceAPI = "API"
+
 // InstancePoolConfig describes an instance pool to create or edit.
 type InstancePoolConfig struct {
 	Name                               string
@@ -40,28 +44,38 @@ type InstancePool struct {
 
 // ClusterConfig describes a cluster to create or edit.
 type ClusterConfig struct {
-	Name          string
-	SparkVersion  string
-	NodeTypeID    string
-	NumWorkers    int32
-	AutoscaleMin  int32
-	AutoscaleMax  int32
-	RuntimeEngine string
-	CustomTags    map[string]string
+	Name              string
+	SparkVersion      string
+	NodeTypeID        string
+	NumWorkers        int32
+	AutoscaleMin      int32
+	AutoscaleMax      int32
+	RuntimeEngine     string
+	CustomTags        map[string]string
+	PolicyID          string
+	InstancePoolID    string
+	AzureAvailability string
 }
 
 // Cluster describes a compute cluster.
 type Cluster struct {
-	ID            string
-	Name          string
-	SparkVersion  string
-	NodeTypeID    string
-	State         string
-	NumWorkers    int32
-	AutoscaleMin  int32
-	AutoscaleMax  int32
-	RuntimeEngine string
-	CustomTags    map[string]string
+	ID                string
+	Name              string
+	SparkVersion      string
+	NodeTypeID        string
+	State             string
+	NumWorkers        int32
+	AutoscaleMin      int32
+	AutoscaleMax      int32
+	RuntimeEngine     string
+	CustomTags        map[string]string
+	PolicyID          string
+	InstancePoolID    string
+	AzureAvailability string
+	// ClusterSource is assigned by the backend, not the caller. Real Databricks
+	// reports how the cluster was created (API / UI / JOB); the in-memory
+	// backend always creates via the API surface, so it reports "API".
+	ClusterSource string
 	Pinned        bool
 }
 
