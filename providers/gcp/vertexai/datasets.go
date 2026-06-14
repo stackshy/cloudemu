@@ -28,16 +28,14 @@ func (m *Mock) CreateDataset(_ context.Context, cfg driver.DatasetConfig) (*driv
 		Name:              name,
 		DisplayName:       cfg.DisplayName,
 		MetadataSchemaURI: cfg.MetadataSchemaURI,
-		Labels:            cfg.Labels,
+		Labels:            copyLabels(cfg.Labels),
 		CreateTime:        now,
 		UpdateTime:        now,
 	}
 	m.datasets.Set(name, ds)
 	m.emitMetric("dataset/count", 1, map[string]string{"location": orLocation(cfg.Location)})
 
-	out := *ds
-
-	return m.doneOp(cfg.Location, name), &out, nil
+	return m.doneOp(cfg.Location, name), cloneDataset(ds), nil
 }
 
 func (m *Mock) GetDataset(_ context.Context, name string) (*driver.Dataset, error) {
@@ -46,9 +44,7 @@ func (m *Mock) GetDataset(_ context.Context, name string) (*driver.Dataset, erro
 		return nil, errors.Newf(errors.NotFound, "dataset %q not found", name)
 	}
 
-	out := *ds
-
-	return &out, nil
+	return cloneDataset(ds), nil
 }
 
 func (m *Mock) ListDatasets(_ context.Context, location string) ([]driver.Dataset, error) {
@@ -56,7 +52,7 @@ func (m *Mock) ListDatasets(_ context.Context, location string) ([]driver.Datase
 
 	for _, ds := range m.datasets.All() {
 		if location == "" || locationOf(ds.Name) == location {
-			out = append(out, *ds)
+			out = append(out, *cloneDataset(ds))
 		}
 	}
 
@@ -69,14 +65,16 @@ func (m *Mock) PatchDataset(_ context.Context, name, displayName string) (*drive
 		return nil, errors.Newf(errors.NotFound, "dataset %q not found", name)
 	}
 
+	// Copy-then-Set: never mutate the stored pointer in place.
+	updated := *ds
 	if displayName != "" {
-		ds.DisplayName = displayName
+		updated.DisplayName = displayName
 	}
 
-	ds.UpdateTime = m.now()
-	out := *ds
+	updated.UpdateTime = m.now()
+	m.datasets.Set(name, &updated)
 
-	return &out, nil
+	return cloneDataset(&updated), nil
 }
 
 func (m *Mock) DeleteDataset(_ context.Context, name string) (*driver.Operation, error) {

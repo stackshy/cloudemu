@@ -20,16 +20,14 @@ func (m *Mock) UploadModel(_ context.Context, cfg driver.ModelConfig) (*driver.O
 		ArtifactURI:    cfg.ArtifactURI,
 		VersionID:      "1",
 		VersionAliases: []string{"default"},
-		Labels:         cfg.Labels,
+		Labels:         copyLabels(cfg.Labels),
 		CreateTime:     now,
 		UpdateTime:     now,
 	}
 	m.models.Set(name, model)
 	m.emitMetric("model/count", 1, map[string]string{"location": orLocation(cfg.Location)})
 
-	out := *model
-
-	return m.doneOp(cfg.Location, name), &out, nil
+	return m.doneOp(cfg.Location, name), cloneModel(model), nil
 }
 
 func (m *Mock) GetModel(_ context.Context, name string) (*driver.Model, error) {
@@ -40,9 +38,7 @@ func (m *Mock) GetModel(_ context.Context, name string) (*driver.Model, error) {
 		return nil, errors.Newf(errors.NotFound, "model %q not found", name)
 	}
 
-	out := *model
-
-	return &out, nil
+	return cloneModel(model), nil
 }
 
 func (m *Mock) ListModels(_ context.Context, location string) ([]driver.Model, error) {
@@ -50,7 +46,7 @@ func (m *Mock) ListModels(_ context.Context, location string) ([]driver.Model, e
 
 	for _, model := range m.models.All() {
 		if location == "" || locationOf(model.Name) == location {
-			out = append(out, *model)
+			out = append(out, *cloneModel(model))
 		}
 	}
 
@@ -63,18 +59,20 @@ func (m *Mock) PatchModel(_ context.Context, name, displayName, description stri
 		return nil, errors.Newf(errors.NotFound, "model %q not found", name)
 	}
 
+	// Copy-then-Set: never mutate the stored pointer in place.
+	updated := *model
 	if displayName != "" {
-		model.DisplayName = displayName
+		updated.DisplayName = displayName
 	}
 
 	if description != "" {
-		model.Description = description
+		updated.Description = description
 	}
 
-	model.UpdateTime = m.now()
-	out := *model
+	updated.UpdateTime = m.now()
+	m.models.Set(name, &updated)
 
-	return &out, nil
+	return cloneModel(&updated), nil
 }
 
 func (m *Mock) DeleteModel(_ context.Context, name string) (*driver.Operation, error) {
@@ -95,7 +93,7 @@ func (m *Mock) ListModelVersions(_ context.Context, name string) ([]driver.Model
 		return nil, errors.Newf(errors.NotFound, "model %q not found", name)
 	}
 
-	return []driver.Model{*model}, nil
+	return []driver.Model{*cloneModel(model)}, nil
 }
 
 func (m *Mock) DeleteModelVersion(_ context.Context, name string) (*driver.Operation, error) {

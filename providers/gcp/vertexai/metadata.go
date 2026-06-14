@@ -133,21 +133,28 @@ func (m *Mock) ListSchedules(_ context.Context, location string) ([]driver.Sched
 }
 
 func (m *Mock) PauseSchedule(_ context.Context, name string) error {
-	return m.setScheduleState(name, "PAUSED")
+	return m.setScheduleState(name, "ACTIVE", "PAUSED")
 }
 
 func (m *Mock) ResumeSchedule(_ context.Context, name string) error {
-	return m.setScheduleState(name, "ACTIVE")
+	return m.setScheduleState(name, "PAUSED", "ACTIVE")
 }
 
-func (m *Mock) setScheduleState(name, state string) error {
+// setScheduleState copy-then-Sets a schedule to target only from the required
+// source state, rejecting illegal transitions like the real API.
+func (m *Mock) setScheduleState(name, from, target string) error {
 	s, ok := m.schedules.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "schedule %q not found", name)
 	}
 
+	if s.State != from {
+		return errors.Newf(errors.FailedPrecondition,
+			"schedule %q is %s; cannot transition to %s", name, s.State, target)
+	}
+
 	updated := *s
-	updated.State = state
+	updated.State = target
 	m.schedules.Set(name, &updated)
 
 	return nil
@@ -246,21 +253,28 @@ func (m *Mock) ListNotebookRuntimes(_ context.Context, location string) ([]drive
 }
 
 func (m *Mock) StartNotebookRuntime(_ context.Context, name string) (*driver.Operation, error) {
-	return m.setRuntimeState(name, "RUNNING")
+	return m.setRuntimeState(name, "STOPPED", "RUNNING")
 }
 
 func (m *Mock) StopNotebookRuntime(_ context.Context, name string) (*driver.Operation, error) {
-	return m.setRuntimeState(name, "STOPPED")
+	return m.setRuntimeState(name, "RUNNING", "STOPPED")
 }
 
-func (m *Mock) setRuntimeState(name, state string) (*driver.Operation, error) {
+// setRuntimeState copy-then-Sets a notebook runtime to target only from the
+// required source state, rejecting illegal transitions like the real API.
+func (m *Mock) setRuntimeState(name, from, target string) (*driver.Operation, error) {
 	nr, ok := m.nbRuntimes.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "notebook runtime %q not found", name)
 	}
 
+	if nr.RuntimeState != from {
+		return nil, errors.Newf(errors.FailedPrecondition,
+			"notebook runtime %q is %s; cannot transition to %s", name, nr.RuntimeState, target)
+	}
+
 	updated := *nr
-	updated.RuntimeState = state
+	updated.RuntimeState = target
 	m.nbRuntimes.Set(name, &updated)
 
 	return m.doneOp(locationOf(name), name), nil

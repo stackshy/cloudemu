@@ -15,16 +15,14 @@ func (m *Mock) CreateEndpoint(_ context.Context, cfg driver.EndpointConfig) (*dr
 		DisplayName:  cfg.DisplayName,
 		Description:  cfg.Description,
 		TrafficSplit: map[string]int{},
-		Labels:       cfg.Labels,
+		Labels:       copyLabels(cfg.Labels),
 		CreateTime:   now,
 		UpdateTime:   now,
 	}
 	m.endpoints.Set(name, ep)
 	m.emitMetric("endpoint/count", 1, map[string]string{"location": orLocation(cfg.Location)})
 
-	out := *ep
-
-	return m.doneOp(cfg.Location, name), &out, nil
+	return m.doneOp(cfg.Location, name), cloneEndpoint(ep), nil
 }
 
 func (m *Mock) GetEndpoint(_ context.Context, name string) (*driver.Endpoint, error) {
@@ -33,9 +31,7 @@ func (m *Mock) GetEndpoint(_ context.Context, name string) (*driver.Endpoint, er
 		return nil, errors.Newf(errors.NotFound, "endpoint %q not found", name)
 	}
 
-	out := *ep
-
-	return &out, nil
+	return cloneEndpoint(ep), nil
 }
 
 func (m *Mock) ListEndpoints(_ context.Context, location string) ([]driver.Endpoint, error) {
@@ -43,7 +39,7 @@ func (m *Mock) ListEndpoints(_ context.Context, location string) ([]driver.Endpo
 
 	for _, ep := range m.endpoints.All() {
 		if location == "" || locationOf(ep.Name) == location {
-			out = append(out, *ep)
+			out = append(out, *cloneEndpoint(ep))
 		}
 	}
 
@@ -71,15 +67,14 @@ func (m *Mock) DeployModel(_ context.Context, endpoint string, dm driver.Deploye
 		dm.ID = m.newID()
 	}
 
-	updated := *ep
-	updated.DeployedModels = append(append([]driver.DeployedModel{}, ep.DeployedModels...), dm)
+	// Deep-copy working set so the stored endpoint is never mutated in place.
+	updated := cloneEndpoint(ep)
+	updated.DeployedModels = append(updated.DeployedModels, dm)
 	updated.TrafficSplit = map[string]int{dm.ID: 100}
 	updated.UpdateTime = m.now()
-	m.endpoints.Set(endpoint, &updated)
+	m.endpoints.Set(endpoint, updated)
 
-	out := updated
-
-	return m.doneOp(locationOf(endpoint), endpoint), &out, nil
+	return m.doneOp(locationOf(endpoint), endpoint), cloneEndpoint(updated), nil
 }
 
 func (m *Mock) UndeployModel(_ context.Context, endpoint, deployedModelID string) (*driver.Operation, *driver.Endpoint, error) {
@@ -88,23 +83,22 @@ func (m *Mock) UndeployModel(_ context.Context, endpoint, deployedModelID string
 		return nil, nil, errors.Newf(errors.NotFound, "endpoint %q not found", endpoint)
 	}
 
-	kept := make([]driver.DeployedModel, 0, len(ep.DeployedModels))
+	updated := cloneEndpoint(ep)
 
-	for _, d := range ep.DeployedModels {
+	kept := make([]driver.DeployedModel, 0, len(updated.DeployedModels))
+
+	for _, d := range updated.DeployedModels {
 		if d.ID != deployedModelID {
 			kept = append(kept, d)
 		}
 	}
 
-	updated := *ep
 	updated.DeployedModels = kept
 	delete(updated.TrafficSplit, deployedModelID)
 	updated.UpdateTime = m.now()
-	m.endpoints.Set(endpoint, &updated)
+	m.endpoints.Set(endpoint, updated)
 
-	out := updated
-
-	return m.doneOp(locationOf(endpoint), endpoint), &out, nil
+	return m.doneOp(locationOf(endpoint), endpoint), cloneEndpoint(updated), nil
 }
 
 // Predict echoes the request instances back as predictions, which is

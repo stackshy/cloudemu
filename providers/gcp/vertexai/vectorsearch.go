@@ -107,9 +107,7 @@ func (m *Mock) GetIndexEndpoint(_ context.Context, name string) (*driver.IndexEn
 		return nil, errors.Newf(errors.NotFound, "index endpoint %q not found", name)
 	}
 
-	out := *ie
-
-	return &out, nil
+	return cloneIndexEndpoint(ie), nil
 }
 
 func (m *Mock) ListIndexEndpoints(_ context.Context, location string) ([]driver.IndexEndpoint, error) {
@@ -117,7 +115,7 @@ func (m *Mock) ListIndexEndpoints(_ context.Context, location string) ([]driver.
 
 	for _, ie := range m.indexEndpoints.All() {
 		if location == "" || locationOf(ie.Name) == location {
-			out = append(out, *ie)
+			out = append(out, *cloneIndexEndpoint(ie))
 		}
 	}
 
@@ -146,13 +144,11 @@ func (m *Mock) DeployIndex(
 		di.ID = m.newID()
 	}
 
-	updated := *ie
-	updated.DeployedIndexes = append(append([]driver.DeployedIndex{}, ie.DeployedIndexes...), di)
-	m.indexEndpoints.Set(indexEndpoint, &updated)
+	updated := cloneIndexEndpoint(ie)
+	updated.DeployedIndexes = append(updated.DeployedIndexes, di)
+	m.indexEndpoints.Set(indexEndpoint, updated)
 
-	out := updated
-
-	return m.doneOp(locationOf(indexEndpoint), indexEndpoint), &out, nil
+	return m.doneOp(locationOf(indexEndpoint), indexEndpoint), cloneIndexEndpoint(updated), nil
 }
 
 func (m *Mock) UndeployIndex(_ context.Context, indexEndpoint, deployedIndexID string) (*driver.Operation, *driver.IndexEndpoint, error) {
@@ -161,27 +157,38 @@ func (m *Mock) UndeployIndex(_ context.Context, indexEndpoint, deployedIndexID s
 		return nil, nil, errors.Newf(errors.NotFound, "index endpoint %q not found", indexEndpoint)
 	}
 
-	kept := make([]driver.DeployedIndex, 0, len(ie.DeployedIndexes))
+	updated := cloneIndexEndpoint(ie)
 
-	for _, d := range ie.DeployedIndexes {
+	kept := make([]driver.DeployedIndex, 0, len(updated.DeployedIndexes))
+
+	for _, d := range updated.DeployedIndexes {
 		if d.ID != deployedIndexID {
 			kept = append(kept, d)
 		}
 	}
 
-	updated := *ie
 	updated.DeployedIndexes = kept
-	m.indexEndpoints.Set(indexEndpoint, &updated)
+	m.indexEndpoints.Set(indexEndpoint, updated)
 
-	out := updated
-
-	return m.doneOp(locationOf(indexEndpoint), indexEndpoint), &out, nil
+	return m.doneOp(locationOf(indexEndpoint), indexEndpoint), cloneIndexEndpoint(updated), nil
 }
+
+// maxNeighbors bounds the synthesized neighbor count so an unvalidated (or
+// hostile) request can't trigger an unbounded allocation.
+const maxNeighbors = 1000
 
 // FindNeighbors returns deterministic synthetic neighbors for the query.
 func (m *Mock) FindNeighbors(_ context.Context, indexEndpoint, _ string, _ []float64, count int) ([]driver.Neighbor, error) {
 	if !m.indexEndpoints.Has(indexEndpoint) {
 		return nil, errors.Newf(errors.NotFound, "index endpoint %q not found", indexEndpoint)
+	}
+
+	if count < 0 {
+		count = 0
+	}
+
+	if count > maxNeighbors {
+		count = maxNeighbors
 	}
 
 	out := make([]driver.Neighbor, 0, count)
