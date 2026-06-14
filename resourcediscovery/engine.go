@@ -5,6 +5,7 @@ import (
 
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	serverlessdriver "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -20,6 +21,7 @@ type Drivers struct {
 	Storage    storagedriver.Bucket
 	Database   dbdriver.Database
 	Serverless serverlessdriver.Serverless
+	Databricks dbxdriver.Databricks
 }
 
 // Engine walks all configured service drivers and returns a normalized
@@ -75,6 +77,8 @@ func (e *Engine) ListAll(ctx context.Context) ([]Resource, error) {
 // List walks every configured driver and returns resources matching q.
 // Filtering happens after collection — walkers always return their full set
 // so tag/region resolution is consistent regardless of query shape.
+//
+//nolint:gocritic // q is the public Query filter, taken by value by API contract
 func (e *Engine) List(ctx context.Context, q Query) ([]Resource, error) {
 	var out []Resource
 
@@ -116,6 +120,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.Serverless != nil {
 		ws = append(ws, e.walkServerless)
+	}
+
+	if e.drivers.Databricks != nil {
+		ws = append(ws, e.walkDatabricks)
 	}
 
 	return ws

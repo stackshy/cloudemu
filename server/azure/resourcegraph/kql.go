@@ -34,16 +34,17 @@ import (
 // Canonical Azure resource type strings used by Resource Graph query syntax
 // and emitted in response rows.
 const (
-	azureTypeVM      = "microsoft.compute/virtualmachines"
-	azureTypeVNet    = "microsoft.network/virtualnetworks"
-	azureTypeSubnet  = "microsoft.network/subnets"
-	azureTypeSubnetN = "microsoft.network/virtualnetworks/subnets"
-	azureTypeNSG     = "microsoft.network/networksecuritygroups"
-	azureTypeStorage = "microsoft.storage/storageaccounts"
-	azureTypeStoCnt  = "microsoft.storage/storageaccounts/blobservices/containers"
-	azureTypeCosmos  = "microsoft.documentdb/databaseaccounts"
-	azureTypeCosmosC = "microsoft.documentdb/databaseaccounts/sqldatabases/containers"
-	azureTypeWebSite = "microsoft.web/sites"
+	azureTypeVM        = "microsoft.compute/virtualmachines"
+	azureTypeVNet      = "microsoft.network/virtualnetworks"
+	azureTypeSubnet    = "microsoft.network/subnets"
+	azureTypeSubnetN   = "microsoft.network/virtualnetworks/subnets"
+	azureTypeNSG       = "microsoft.network/networksecuritygroups"
+	azureTypeStorage   = "microsoft.storage/storageaccounts"
+	azureTypeStoCnt    = "microsoft.storage/storageaccounts/blobservices/containers"
+	azureTypeCosmos    = "microsoft.documentdb/databaseaccounts"
+	azureTypeCosmosC   = "microsoft.documentdb/databaseaccounts/sqldatabases/containers"
+	azureTypeWebSite   = "microsoft.web/sites"
+	azureTypeDatabrick = "microsoft.databricks/workspaces"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -53,6 +54,7 @@ const (
 	portableStorage    = "storage"
 	portableDatabase   = "database"
 	portableServerless = "serverless"
+	portableDatabricks = "databricks"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -80,6 +82,10 @@ type parsedKQL struct {
 var (
 	// type == 'X' / type =~ 'X' / type == "X".
 	reWhereType = regexp.MustCompile(`(?i)^\s*type\s*(==|=~)\s*['"]([^'"]+)['"]\s*$`)
+	// type in ('a','b') / type in~ ('a', "b") — case-insensitive in-list.
+	reWhereTypeIn = regexp.MustCompile(`(?i)^\s*type\s+in~?\s*\(([^)]*)\)\s*$`)
+	// a single quoted item inside an in-list.
+	reQuotedItem = regexp.MustCompile(`['"]([^'"]+)['"]`)
 	// resourceGroup == 'X'.
 	reWhereRG = regexp.MustCompile(`(?i)^\s*resourceGroup\s*==\s*['"]([^'"]+)['"]\s*$`)
 	// location == 'X'.
@@ -142,6 +148,19 @@ func applyWhere(out *parsedKQL, body string) {
 		return
 	}
 
+	if m := reWhereTypeIn.FindStringSubmatch(body); m != nil {
+		items := reQuotedItem.FindAllStringSubmatch(m[1], -1)
+
+		types := make([]string, 0, len(items))
+		for _, it := range items {
+			types = append(types, it[1])
+		}
+
+		applyTypeList(out, types)
+
+		return
+	}
+
 	if m := reWhereRG.FindStringSubmatch(body); m != nil {
 		// The engine does not track resource groups; every Azure resource
 		// is bucketed under a single "default" group. Filtering by RG is
@@ -181,6 +200,14 @@ func applyType(out *parsedKQL, azureType string) {
 	out.typeSet = true
 
 	svc, typ := mapAzureType(strings.ToLower(azureType))
+	if svc == "" && typ == "" {
+		// Unmapped type — match none, not all. Without this the empty Query
+		// would fall through to "no filter" and return the whole inventory.
+		out.ForceEmpty = true
+
+		return
+	}
+
 	if svc != "" {
 		out.Query.Services = []string{svc}
 	}
@@ -188,6 +215,49 @@ func applyType(out *parsedKQL, azureType string) {
 	if typ != "" {
 		out.Query.Type = typ
 	}
+}
+
+// applyTypeList handles `where type in~ ('a', 'b')` — an any-of set of types.
+// Each Azure type maps to a portable (service, type) pair; the services and
+// types are unioned into the engine Query as any-of filters. Like applyType,
+// a second type clause AND-ed on top is a contradiction and flips ForceEmpty.
+func applyTypeList(out *parsedKQL, azureTypes []string) {
+	if out.typeSet {
+		out.ForceEmpty = true
+		return
+	}
+
+	out.typeSet = true
+
+	for _, at := range azureTypes {
+		svc, typ := mapAzureType(strings.ToLower(strings.TrimSpace(at)))
+		if svc != "" {
+			out.Query.Services = appendUnique(out.Query.Services, svc)
+		}
+
+		if typ != "" {
+			out.Query.Types = appendUnique(out.Query.Types, typ)
+		}
+	}
+
+	// An empty list, or one containing only types cloudemu doesn't model,
+	// resolves to no filter terms. Match none rather than letting the empty
+	// Query fall through to "no filter" and return the whole inventory.
+	if len(out.Query.Services) == 0 && len(out.Query.Types) == 0 {
+		out.ForceEmpty = true
+	}
+}
+
+// appendUnique appends v to s only if it is not already present, preserving
+// order. Keeps the any-of filter slices free of duplicate entries.
+func appendUnique(s []string, v string) []string {
+	for _, existing := range s {
+		if existing == v {
+			return s
+		}
+	}
+
+	return append(s, v)
 }
 
 // addTag records a tag predicate. Repeating the same key with a different
@@ -232,6 +302,8 @@ func mapAzureType(azureType string) (service, typ string) {
 		return portableDatabase, "Table"
 	case azureTypeWebSite:
 		return portableServerless, "Function"
+	case azureTypeDatabrick:
+		return portableDatabricks, "Workspace"
 	default:
 		return "", ""
 	}
