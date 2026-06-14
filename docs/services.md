@@ -27,6 +27,7 @@ This document lists every service and operation available in CloudEmu across all
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
+| 22 | Machine Learning | _(planned: SageMaker)_ | _(planned: Azure ML / AI Foundry)_ | `vertexai` |
 
 ---
 
@@ -1322,6 +1323,37 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 
 ---
 
+## 22. Machine Learning
+
+**Driver interface:** `vertexai/driver/` | **AWS:** _planned (SageMaker)_ | **Azure:** _planned (Azure ML / AI Foundry)_ | **GCP:** GCP Vertex AI (`aiplatform.googleapis.com`)
+
+GCP-first. The REST surface is rooted at `/v1/projects/{p}/locations/{l}/...` with the
+Model Garden `generateContent` surface at `/v1/publishers/...`. Control-plane mutations
+return done `google.longrunning.Operation`s; job-family creates are synchronous (poll the
+`state` field). Auto-metrics are pushed to Cloud Monitoring via `SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| Datasets | Create/Get/List/Patch/Delete (+ImportData/ExportData) |
+| Model registry | UploadModel, Get/List/Patch/Delete, versions, evaluations |
+| Endpoints | Create/Get/List/Delete, DeployModel/UndeployModel, Predict/RawPredict |
+| Generative AI | generateContent, countTokens (publishers.models + endpoints), tuning jobs, cached contents |
+| Jobs | CustomJob, BatchPredictionJob, HyperparameterTuningJob (synchronous create + cancel) |
+| Pipelines | TrainingPipeline, PipelineJob |
+| Feature Store | FeatureGroup, Feature, FeatureOnlineStore, FeatureView (+fetchFeatureValues) |
+| Vector Search | Index (+upsert/remove datapoints), IndexEndpoint (+deploy/undeploy/findNeighbors) |
+| ML Metadata | MetadataStore, Tensorboard, Schedule, NotebookRuntimeTemplate, NotebookRuntime |
+| Operations | GetOperation / ListOperations (Go API) |
+
+The full Go API/driver and in-memory provider cover every family above. SDK-compat HTTP
+(REST round-tripped) currently spans models, endpoints (+predict), datasets, custom &
+batch-prediction jobs and `generateContent`/`countTokens`; the remaining families'
+handlers follow the same wire pattern as the next increment.
+
+**Total: 118 operations** (Go API/driver)
+
+---
+
 ## Summary
 
 | Service | Operations |
@@ -1350,4 +1382,5 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI — AWS Bedrock | 22 |
 | Databricks — Azure (control + data plane) | 52 |
-| **Grand Total** | **572** |
+| Machine Learning — GCP Vertex AI (Go API/driver) | 118 |
+| **Grand Total** | **690** |
