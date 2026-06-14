@@ -220,6 +220,12 @@ func (h *DataPlaneHandler) serveClusters(w http.ResponseWriter, r *http.Request,
 		actPermanentDelete: {http.MethodPost, lifecycle},
 		actStart:           {http.MethodPost, lifecycle},
 		actRestart:         {http.MethodPost, lifecycle},
+		actResize:          {http.MethodPost, h.resizeCluster},
+		actPin:             {http.MethodPost, h.pinCluster},
+		actUnpin:           {http.MethodPost, h.unpinCluster},
+		actListNodeTypes:   {http.MethodGet, h.listNodeTypes},
+		actSparkVersions:   {http.MethodGet, h.sparkVersions},
+		actListZones:       {http.MethodGet, h.listZones},
 	})
 }
 

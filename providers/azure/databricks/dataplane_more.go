@@ -62,6 +62,58 @@ func (m *Mock) GetRunOutput(_ context.Context, runID int64) (*driver.RunOutput, 
 	return &driver.RunOutput{Run: *run, NotebookResult: "ok"}, nil
 }
 
+// SubmitRun creates a one-time run (not tied to a stored job) and returns its
+// run ID. The run completes synchronously.
+func (m *Mock) SubmitRun(_ context.Context, runName string) (int64, error) {
+	runID := m.runSeq.Add(1)
+	now := m.opts.Clock.Now().UTC().UnixMilli()
+	m.runs.Set(jobKey(runID), &driver.Run{
+		RunID:          runID,
+		RunName:        runName,
+		LifeCycleState: driver.RunTerminated,
+		ResultState:    driver.ResultSuccess,
+		StateMessage:   "Run completed",
+		StartTime:      now,
+		EndTime:        now,
+	})
+
+	return runID, nil
+}
+
+// CancelAllRuns cancels every run belonging to a job.
+func (m *Mock) CancelAllRuns(_ context.Context, jobID int64) error {
+	for key, run := range m.runs.All() {
+		if run.JobID != jobID {
+			continue
+		}
+
+		updated := *run
+		updated.LifeCycleState = driver.RunTerminated
+		updated.ResultState = driver.ResultCanceled
+		m.runs.Set(key, &updated)
+	}
+
+	return nil
+}
+
+// DeleteRun removes a run by ID.
+func (m *Mock) DeleteRun(_ context.Context, runID int64) error {
+	if !m.runs.Delete(jobKey(runID)) {
+		return errors.Newf(errors.NotFound, "run %d not found", runID)
+	}
+
+	return nil
+}
+
+// RepairRun triggers a repair of a run and returns the new repair ID.
+func (m *Mock) RepairRun(_ context.Context, runID int64) (int64, error) {
+	if !m.runs.Has(jobKey(runID)) {
+		return 0, errors.Newf(errors.NotFound, "run %d not found", runID)
+	}
+
+	return m.runSeq.Add(1), nil
+}
+
 // --- cluster policies ---
 
 // CreateClusterPolicy creates a cluster policy.

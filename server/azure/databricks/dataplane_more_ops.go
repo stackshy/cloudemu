@@ -116,6 +116,10 @@ func (h *DataPlaneHandler) serveRuns(w http.ResponseWriter, r *http.Request, act
 		actList:      {http.MethodGet, h.listRuns},
 		actCancel:    {http.MethodPost, h.cancelRun},
 		actGetOutput: {http.MethodGet, h.getRunOutput},
+		actSubmit:    {http.MethodPost, h.submitRun},
+		actCancelAll: {http.MethodPost, h.cancelAllRuns},
+		actDelete:    {http.MethodPost, h.deleteRun},
+		actRepair:    {http.MethodPost, h.repairRun},
 	})
 }
 

@@ -54,6 +54,21 @@ type Cluster struct {
 	NumWorkers   int32
 	AutoscaleMin int32
 	AutoscaleMax int32
+	Pinned       bool
+}
+
+// NodeType describes an available compute node type.
+type NodeType struct {
+	NodeTypeID  string
+	Description string
+	NumCores    float64
+	MemoryMB    int32
+}
+
+// SparkVersion describes an available runtime version.
+type SparkVersion struct {
+	Key  string
+	Name string
 }
 
 // JobConfig describes a job to create or update. SettingsJSON is the raw job
@@ -181,6 +196,12 @@ type DataPlane interface {
 	PermanentDeleteCluster(ctx context.Context, id string) error
 	StartCluster(ctx context.Context, id string) error
 	RestartCluster(ctx context.Context, id string) error
+	ResizeCluster(ctx context.Context, id string, numWorkers, autoscaleMin, autoscaleMax int32) error
+	PinCluster(ctx context.Context, id string) error
+	UnpinCluster(ctx context.Context, id string) error
+	ListNodeTypes(ctx context.Context) ([]NodeType, error)
+	ListSparkVersions(ctx context.Context) ([]SparkVersion, error)
+	ListZones(ctx context.Context) (zones []string, defaultZone string, err error)
 
 	CreateJob(ctx context.Context, cfg JobConfig) (int64, error)
 	GetJob(ctx context.Context, id int64) (*Job, error)
@@ -190,9 +211,13 @@ type DataPlane interface {
 	DeleteJob(ctx context.Context, id int64) error
 	RunJobNow(ctx context.Context, id int64) (int64, error)
 
+	SubmitRun(ctx context.Context, runName string) (int64, error)
 	GetRun(ctx context.Context, runID int64) (*Run, error)
 	ListRuns(ctx context.Context, jobID int64) ([]Run, error)
 	CancelRun(ctx context.Context, runID int64) error
+	CancelAllRuns(ctx context.Context, jobID int64) error
+	DeleteRun(ctx context.Context, runID int64) error
+	RepairRun(ctx context.Context, runID int64) (int64, error)
 	GetRunOutput(ctx context.Context, runID int64) (*RunOutput, error)
 
 	CreateClusterPolicy(ctx context.Context, cfg ClusterPolicyConfig) (*ClusterPolicy, error)

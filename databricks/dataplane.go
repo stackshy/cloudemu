@@ -444,3 +444,101 @@ func (d *DataPlane) AllClusterLibraryStatuses(ctx context.Context) ([]driver.Clu
 
 	return out.([]driver.ClusterLibraryStatuses), nil
 }
+
+// ResizeCluster changes a cluster's worker count or autoscale bounds.
+func (d *DataPlane) ResizeCluster(ctx context.Context, id string, numWorkers, autoscaleMin, autoscaleMax int32) error {
+	_, err := d.do(ctx, "ResizeCluster", id, func() (any, error) {
+		return nil, d.driver.ResizeCluster(ctx, id, numWorkers, autoscaleMin, autoscaleMax)
+	})
+
+	return err
+}
+
+// PinCluster pins a cluster.
+func (d *DataPlane) PinCluster(ctx context.Context, id string) error {
+	_, err := d.do(ctx, "PinCluster", id, func() (any, error) { return nil, d.driver.PinCluster(ctx, id) })
+
+	return err
+}
+
+// UnpinCluster unpins a cluster.
+func (d *DataPlane) UnpinCluster(ctx context.Context, id string) error {
+	_, err := d.do(ctx, "UnpinCluster", id, func() (any, error) { return nil, d.driver.UnpinCluster(ctx, id) })
+
+	return err
+}
+
+// ListNodeTypes returns the available node-type catalog.
+func (d *DataPlane) ListNodeTypes(ctx context.Context) ([]driver.NodeType, error) {
+	out, err := d.do(ctx, "ListNodeTypes", nil, func() (any, error) { return d.driver.ListNodeTypes(ctx) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.NodeType), nil
+}
+
+// ListSparkVersions returns the available runtime versions.
+func (d *DataPlane) ListSparkVersions(ctx context.Context) ([]driver.SparkVersion, error) {
+	out, err := d.do(ctx, "ListSparkVersions", nil, func() (any, error) { return d.driver.ListSparkVersions(ctx) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.SparkVersion), nil
+}
+
+// ListZones returns the availability zones and the default zone.
+func (d *DataPlane) ListZones(ctx context.Context) (zones []string, defaultZone string, err error) {
+	type zonesResult struct {
+		zones       []string
+		defaultZone string
+	}
+
+	out, err := d.do(ctx, "ListZones", nil, func() (any, error) {
+		zs, def, zErr := d.driver.ListZones(ctx)
+
+		return zonesResult{zones: zs, defaultZone: def}, zErr
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	res := out.(zonesResult)
+
+	return res.zones, res.defaultZone, nil
+}
+
+// SubmitRun submits a one-time run and returns its ID.
+func (d *DataPlane) SubmitRun(ctx context.Context, runName string) (int64, error) {
+	out, err := d.do(ctx, "SubmitRun", runName, func() (any, error) { return d.driver.SubmitRun(ctx, runName) })
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int64), nil
+}
+
+// CancelAllRuns cancels all runs for a job.
+func (d *DataPlane) CancelAllRuns(ctx context.Context, jobID int64) error {
+	_, err := d.do(ctx, "CancelAllRuns", jobID, func() (any, error) { return nil, d.driver.CancelAllRuns(ctx, jobID) })
+
+	return err
+}
+
+// DeleteRun deletes a run by ID.
+func (d *DataPlane) DeleteRun(ctx context.Context, runID int64) error {
+	_, err := d.do(ctx, "DeleteRun", runID, func() (any, error) { return nil, d.driver.DeleteRun(ctx, runID) })
+
+	return err
+}
+
+// RepairRun repairs a run and returns the repair ID.
+func (d *DataPlane) RepairRun(ctx context.Context, runID int64) (int64, error) {
+	out, err := d.do(ctx, "RepairRun", runID, func() (any, error) { return d.driver.RepairRun(ctx, runID) })
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int64), nil
+}

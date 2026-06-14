@@ -58,6 +58,15 @@ const (
 	actUninstall       = "uninstall"
 	actClusterStatus   = "cluster-status"
 	actAllStatuses     = "all-cluster-statuses"
+	actResize          = "resize"
+	actPin             = "pin"
+	actUnpin           = "unpin"
+	actListNodeTypes   = "list-node-types"
+	actSparkVersions   = "spark-versions"
+	actListZones       = "list-zones"
+	actSubmit          = "submit"
+	actCancelAll       = "cancel-all"
+	actRepair          = "repair"
 )
 
 // minSubResourceSegs is the [api, ver, resource, sub, action] segment count
