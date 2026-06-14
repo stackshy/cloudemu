@@ -121,6 +121,14 @@ func defaultRates() map[string]float64 {
 		"azureai:ScoreOnlineEndpoint":      0.0,  // bundled into instance-hours
 		"azureai:CreateMLWorkspace":        0.0,
 		"azureai:CreateEndpoint":           0.0,
+
+		// Azure AI Search: service billed per SU-hour (proxied at create),
+		// queries/indexing per operation, indexes/data-sources free.
+		"azuresearch:CreateService":         0.336, // standard tier search-unit-hour proxy
+		"azuresearch:SearchDocuments":       0.0000004,
+		"azuresearch:IndexDocuments":        0.0000004,
+		"azuresearch:CreateOrUpdateIndex":   0.0,
+		"azuresearch:CreateOrUpdateIndexer": 0.0,
 	}
 }
 
