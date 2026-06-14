@@ -27,7 +27,7 @@ This document lists every service and operation available in CloudEmu across all
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
-| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | _(planned: Azure ML / AI Foundry)_ | _(planned: Vertex AI)_ |
+| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | _(planned: Vertex AI)_ |
 
 ---
 
@@ -1355,6 +1355,42 @@ trials, and tagging.
 
 **Total: 121 operations** (Go API/driver), all exposed over the SDK-compat HTTP server.
 
+### Azure — Azure AI
+
+**Driver interface:** `azureai/driver/` — spans both ARM providers plus the data planes.
+**Azure:** Azure AI Foundry / AI Studio / Azure OpenAI (`Microsoft.CognitiveServices`) and
+Azure Machine Learning (`Microsoft.MachineLearningServices`).
+
+ARM control-plane PUT returns the resource inline with a terminal `provisioningState` so the
+SDK LRO poller terminates on the first response. The data plane is host/path-routed
+(`*.openai.azure.com/openai/...`, `*.inference.ml.azure.com/score`). Auto-metrics push to
+Azure Monitor via `SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| AI Services accounts | accounts CRUD, list by RG/sub, listKeys, regenerateKey, listModels, listSkus, listUsages |
+| Model deployments | accounts/deployments CRUD + list (gpt-4o, embeddings, …) |
+| AI Foundry projects | accounts/projects CRUD + list |
+| Responsible AI | accounts/raiPolicies CRUD + list |
+| Commitment plans | accounts/commitmentPlans CRUD + list |
+| Private endpoints | accounts/privateEndpointConnections CRUD + list |
+| Azure OpenAI inference | chat/completions, completions, embeddings |
+| Agents / Assistants | assistants, threads, messages, runs (CRUD/list) |
+| AML workspaces | workspaces (Default/Hub/Project/FeatureStore) CRUD, list by RG/sub |
+| AML compute | computes CRUD + list, start/stop/restart (state machine) |
+| AML endpoints | online/batchEndpoints CRUD + list, deployments CRUD + list |
+| AML jobs | jobs create/get/list/cancel |
+| AML assets | models, data, environments, components, featuresets — versioned CRUD + list (container/versions) |
+| AML datastores / connections / schedules | CRUD + list |
+| AML registries | cross-workspace registries CRUD + list |
+| AML scoring | online-endpoint `/score` data plane |
+
+Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
+Layer-1 wrapper (`azureai/azureai.go`), chaos injection (`chaos.WrapAzureAI`), and cost rates
+integrate Azure AI with the cross-cutting layers like every other service.
+**Total: 92 operations** (Go API/driver) — 31 CognitiveServices + 46 MachineLearningServices
++ 15 data plane — all exposed over the SDK-compat HTTP server.
+
 ---
 
 ## Summary
@@ -1386,4 +1422,5 @@ trials, and tagging.
 | Generative AI — AWS Bedrock | 22 |
 | Databricks — Azure (control + data plane) | 52 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
-| **Grand Total** | **693** |
+| Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
+| **Grand Total** | **785** |
