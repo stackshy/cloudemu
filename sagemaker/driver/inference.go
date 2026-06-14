@@ -31,11 +31,15 @@ type ContainerDefinition struct {
 	Mode         string // SingleModel, MultiModel
 }
 
-// ModelConfig describes a model to create.
+// ModelConfig describes a model to create. Pipeline distinguishes an
+// inference-pipeline model (created via Containers) from a single-container
+// model (created via PrimaryContainer); the two echo back differently on
+// Describe.
 type ModelConfig struct {
 	ModelName  string
 	RoleARN    string
 	Containers []ContainerDefinition
+	Pipeline   bool
 	Tags       []Tag
 }
 
@@ -45,6 +49,7 @@ type Model struct {
 	ModelARN     string
 	RoleARN      string
 	Containers   []ContainerDefinition
+	Pipeline     bool
 	CreationTime string
 	Tags         []Tag
 }

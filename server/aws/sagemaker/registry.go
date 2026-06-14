@@ -34,6 +34,7 @@ func (h *Handler) routeRegistry(w http.ResponseWriter, r *http.Request, op strin
 	return true
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createModelPackageGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ModelPackageGroupName        string    `json:"ModelPackageGroupName"`
@@ -88,17 +89,14 @@ func (h *Handler) listModelPackageGroups(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	out := make([]map[string]any, 0, len(groups))
-	for i := range groups {
-		out = append(out, map[string]any{
-			"ModelPackageGroupName":   groups[i].GroupName,
-			"ModelPackageGroupArn":    groups[i].GroupARN,
-			"ModelPackageGroupStatus": groups[i].Status,
-			"CreationTime":            epoch(groups[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"ModelPackageGroupSummaryList": out})
+	writeSummaries(w, "ModelPackageGroupSummaryList", groups, func(g *driver.ModelPackageGroup) map[string]any {
+		return map[string]any{
+			"ModelPackageGroupName":   g.GroupName,
+			"ModelPackageGroupArn":    g.GroupARN,
+			"ModelPackageGroupStatus": g.Status,
+			"CreationTime":            epoch(g.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) deleteModelPackageGroup(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +139,7 @@ func (h *Handler) createModelPackage(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"ModelPackageArn": p.PackageARN})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) describeModelPackage(w http.ResponseWriter, r *http.Request) {
 	name, ok := decodeName1(w, r, "ModelPackageName")
 	if !ok {
@@ -177,19 +176,16 @@ func (h *Handler) listModelPackages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(pkgs))
-	for i := range pkgs {
-		out = append(out, map[string]any{
-			"ModelPackageArn":       pkgs[i].PackageARN,
-			"ModelPackageGroupName": pkgs[i].GroupName,
-			"ModelPackageVersion":   pkgs[i].Version,
-			"ModelPackageStatus":    pkgs[i].Status,
-			"ModelApprovalStatus":   pkgs[i].ApprovalStatus,
-			"CreationTime":          epoch(pkgs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"ModelPackageSummaryList": out})
+	writeSummaries(w, "ModelPackageSummaryList", pkgs, func(p *driver.ModelPackage) map[string]any {
+		return map[string]any{
+			"ModelPackageArn":       p.PackageARN,
+			"ModelPackageGroupName": p.GroupName,
+			"ModelPackageVersion":   p.Version,
+			"ModelPackageStatus":    p.Status,
+			"ModelApprovalStatus":   p.ApprovalStatus,
+			"CreationTime":          epoch(p.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) updateModelPackage(w http.ResponseWriter, r *http.Request) {

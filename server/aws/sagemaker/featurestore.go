@@ -119,17 +119,14 @@ func (h *Handler) listFeatureGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(groups))
-	for i := range groups {
-		out = append(out, map[string]any{
-			"FeatureGroupName":   groups[i].GroupName,
-			"FeatureGroupArn":    groups[i].GroupARN,
-			"FeatureGroupStatus": groups[i].Status,
-			"CreationTime":       epoch(groups[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"FeatureGroupSummaries": out})
+	writeSummaries(w, "FeatureGroupSummaries", groups, func(g *driver.FeatureGroup) map[string]any {
+		return map[string]any{
+			"FeatureGroupName":   g.GroupName,
+			"FeatureGroupArn":    g.GroupARN,
+			"FeatureGroupStatus": g.Status,
+			"CreationTime":       epoch(g.CreationTime),
+		}
+	})
 }
 
 // serveFeatureStoreRuntime handles the sagemaker-featurestore-runtime REST API.

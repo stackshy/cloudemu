@@ -34,6 +34,7 @@ func (h *Handler) routePipelines(w http.ResponseWriter, r *http.Request, op stri
 	return true
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) routePipelinesMeta(w http.ResponseWriter, r *http.Request, op string) bool {
 	switch op {
 	case "CreateExperiment":
@@ -59,6 +60,7 @@ func (h *Handler) routePipelinesMeta(w http.ResponseWriter, r *http.Request, op 
 	return true
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createPipeline(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PipelineName       string    `json:"PipelineName"`
@@ -117,16 +119,13 @@ func (h *Handler) listPipelines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(pipelines))
-	for i := range pipelines {
-		out = append(out, map[string]any{
-			"PipelineName": pipelines[i].PipelineName,
-			"PipelineArn":  pipelines[i].PipelineARN,
-			"CreationTime": epoch(pipelines[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"PipelineSummaries": out})
+	writeSummaries(w, "PipelineSummaries", pipelines, func(p *driver.Pipeline) map[string]any {
+		return map[string]any{
+			"PipelineName": p.PipelineName,
+			"PipelineArn":  p.PipelineARN,
+			"CreationTime": epoch(p.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) updatePipeline(w http.ResponseWriter, r *http.Request) {
@@ -200,6 +199,7 @@ func (h *Handler) describePipelineExecution(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) listPipelineExecutions(w http.ResponseWriter, r *http.Request) {
 	name, ok := decodeName1(w, r, "PipelineName")
 	if !ok {
@@ -213,16 +213,13 @@ func (h *Handler) listPipelineExecutions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	out := make([]map[string]any, 0, len(exs))
-	for i := range exs {
-		out = append(out, map[string]any{
-			"PipelineExecutionArn":    exs[i].ExecutionARN,
-			"PipelineExecutionStatus": exs[i].Status,
-			"StartTime":               epoch(exs[i].StartTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"PipelineExecutionSummaries": out})
+	writeSummaries(w, "PipelineExecutionSummaries", exs, func(e *driver.PipelineExecution) map[string]any {
+		return map[string]any{
+			"PipelineExecutionArn":    e.ExecutionARN,
+			"PipelineExecutionStatus": e.Status,
+			"StartTime":               epoch(e.StartTime),
+		}
+	})
 }
 
 func (h *Handler) stopPipelineExecution(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +237,7 @@ func (h *Handler) stopPipelineExecution(w http.ResponseWriter, r *http.Request) 
 	wire.WriteJSON(w, map[string]any{"PipelineExecutionArn": arn})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createExperiment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ExperimentName string    `json:"ExperimentName"`
@@ -294,16 +292,13 @@ func (h *Handler) listExperiments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(exps))
-	for i := range exps {
-		out = append(out, map[string]any{
-			"ExperimentName": exps[i].ExperimentName,
-			"ExperimentArn":  exps[i].ExperimentARN,
-			"CreationTime":   epoch(exps[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"ExperimentSummaries": out})
+	writeSummaries(w, "ExperimentSummaries", exps, func(e *driver.Experiment) map[string]any {
+		return map[string]any{
+			"ExperimentName": e.ExperimentName,
+			"ExperimentArn":  e.ExperimentARN,
+			"CreationTime":   epoch(e.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) deleteExperiment(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +316,7 @@ func (h *Handler) deleteExperiment(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"ExperimentArn": ""})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createTrial(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TrialName      string    `json:"TrialName"`
@@ -367,6 +363,7 @@ func (h *Handler) describeTrial(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) listTrials(w http.ResponseWriter, r *http.Request) {
 	expName, ok := decodeName1(w, r, "ExperimentName")
 	if !ok {
@@ -380,16 +377,13 @@ func (h *Handler) listTrials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(trials))
-	for i := range trials {
-		out = append(out, map[string]any{
-			"TrialName":    trials[i].TrialName,
-			"TrialArn":     trials[i].TrialARN,
-			"CreationTime": epoch(trials[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"TrialSummaries": out})
+	writeSummaries(w, "TrialSummaries", trials, func(t *driver.Trial) map[string]any {
+		return map[string]any{
+			"TrialName":    t.TrialName,
+			"TrialArn":     t.TrialARN,
+			"CreationTime": epoch(t.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) deleteTrial(w http.ResponseWriter, r *http.Request) {

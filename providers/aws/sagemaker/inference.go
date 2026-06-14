@@ -24,7 +24,8 @@ func (m *Mock) CreateModel(_ context.Context, cfg driver.ModelConfig) (*driver.M
 		ModelName:    cfg.ModelName,
 		ModelARN:     arn,
 		RoleARN:      cfg.RoleARN,
-		Containers:   cfg.Containers,
+		Containers:   copyContainers(cfg.Containers),
+		Pipeline:     cfg.Pipeline,
 		CreationTime: m.now(),
 		Tags:         copyTags(cfg.Tags),
 	}
@@ -32,9 +33,16 @@ func (m *Mock) CreateModel(_ context.Context, cfg driver.ModelConfig) (*driver.M
 	m.setTags(arn, cfg.Tags)
 	m.emitResourceCreated("Model")
 
-	out := *model
+	return cloneModel(model), nil
+}
 
-	return &out, nil
+// cloneModel returns a deep copy so callers never alias the stored slices.
+func cloneModel(in *driver.Model) *driver.Model {
+	out := *in
+	out.Containers = copyContainers(in.Containers)
+	out.Tags = copyTags(in.Tags)
+
+	return &out
 }
 
 func (m *Mock) DescribeModel(_ context.Context, name string) (*driver.Model, error) {
@@ -43,9 +51,7 @@ func (m *Mock) DescribeModel(_ context.Context, name string) (*driver.Model, err
 		return nil, errors.Newf(errors.NotFound, "model %q not found", name)
 	}
 
-	out := *model
-
-	return &out, nil
+	return cloneModel(model), nil
 }
 
 func (m *Mock) ListModels(_ context.Context) ([]driver.Model, error) {
@@ -53,7 +59,7 @@ func (m *Mock) ListModels(_ context.Context) ([]driver.Model, error) {
 	out := make([]driver.Model, 0, len(all))
 
 	for _, v := range all {
-		out = append(out, *v)
+		out = append(out, *cloneModel(v))
 	}
 
 	return out, nil
@@ -85,7 +91,7 @@ func (m *Mock) CreateEndpointConfig(_ context.Context, cfg driver.EndpointConfig
 	ec := &driver.EndpointConfig{
 		ConfigName:         cfg.ConfigName,
 		ConfigARN:          arn,
-		ProductionVariants: cfg.ProductionVariants,
+		ProductionVariants: copyVariants(cfg.ProductionVariants),
 		Serverless:         cfg.Serverless,
 		AsyncOutputS3URI:   cfg.AsyncOutputS3URI,
 		CreationTime:       m.now(),
@@ -94,9 +100,17 @@ func (m *Mock) CreateEndpointConfig(_ context.Context, cfg driver.EndpointConfig
 	m.endpointConfigs.Set(cfg.ConfigName, ec)
 	m.setTags(arn, cfg.Tags)
 
-	out := *ec
+	return cloneEndpointConfig(ec), nil
+}
 
-	return &out, nil
+// cloneEndpointConfig deep-copies the variant slice so callers never alias the
+// stored config.
+func cloneEndpointConfig(in *driver.EndpointConfig) *driver.EndpointConfig {
+	out := *in
+	out.ProductionVariants = copyVariants(in.ProductionVariants)
+	out.Tags = copyTags(in.Tags)
+
+	return &out
 }
 
 func (m *Mock) DescribeEndpointConfig(_ context.Context, name string) (*driver.EndpointConfig, error) {
@@ -105,9 +119,7 @@ func (m *Mock) DescribeEndpointConfig(_ context.Context, name string) (*driver.E
 		return nil, errors.Newf(errors.NotFound, "endpoint config %q not found", name)
 	}
 
-	out := *ec
-
-	return &out, nil
+	return cloneEndpointConfig(ec), nil
 }
 
 func (m *Mock) ListEndpointConfigs(_ context.Context) ([]driver.EndpointConfig, error) {
@@ -115,7 +127,7 @@ func (m *Mock) ListEndpointConfigs(_ context.Context) ([]driver.EndpointConfig, 
 	out := make([]driver.EndpointConfig, 0, len(all))
 
 	for _, v := range all {
-		out = append(out, *v)
+		out = append(out, *cloneEndpointConfig(v))
 	}
 
 	return out, nil
@@ -158,7 +170,7 @@ func (m *Mock) CreateEndpoint(_ context.Context, cfg driver.EndpointSpec) (*driv
 		EndpointARN:      arn,
 		ConfigName:       cfg.ConfigName,
 		Status:           driver.EndpointInService, // synchronous Creating -> InService
-		Variants:         ec.ProductionVariants,
+		Variants:         copyVariants(ec.ProductionVariants),
 		CreationTime:     now,
 		LastModifiedTime: now,
 		Tags:             copyTags(cfg.Tags),
@@ -167,9 +179,17 @@ func (m *Mock) CreateEndpoint(_ context.Context, cfg driver.EndpointSpec) (*driv
 	m.setTags(arn, cfg.Tags)
 	m.emitResourceCreated("Endpoint")
 
-	out := *ep
+	return cloneEndpoint(ep), nil
+}
 
-	return &out, nil
+// cloneEndpoint deep-copies the variant slice so callers never alias stored
+// state.
+func cloneEndpoint(in *driver.Endpoint) *driver.Endpoint {
+	out := *in
+	out.Variants = copyVariants(in.Variants)
+	out.Tags = copyTags(in.Tags)
+
+	return &out
 }
 
 func (m *Mock) DescribeEndpoint(_ context.Context, name string) (*driver.Endpoint, error) {
@@ -178,9 +198,7 @@ func (m *Mock) DescribeEndpoint(_ context.Context, name string) (*driver.Endpoin
 		return nil, errors.Newf(errors.NotFound, "endpoint %q not found", name)
 	}
 
-	out := *ep
-
-	return &out, nil
+	return cloneEndpoint(ep), nil
 }
 
 func (m *Mock) ListEndpoints(_ context.Context) ([]driver.Endpoint, error) {
@@ -188,7 +206,7 @@ func (m *Mock) ListEndpoints(_ context.Context) ([]driver.Endpoint, error) {
 	out := make([]driver.Endpoint, 0, len(all))
 
 	for _, v := range all {
-		out = append(out, *v)
+		out = append(out, *cloneEndpoint(v))
 	}
 
 	return out, nil
@@ -205,14 +223,16 @@ func (m *Mock) UpdateEndpoint(_ context.Context, name, configName string) (*driv
 		return nil, errors.Newf(errors.InvalidArgument, "endpoint config %q not found", configName)
 	}
 
-	ep.ConfigName = configName
-	ep.Variants = ec.ProductionVariants
-	ep.Status = driver.EndpointInService
-	ep.LastModifiedTime = m.now()
+	// Copy-then-Set: never mutate the stored pointer in place, so concurrent
+	// readers see either the old or the new endpoint atomically.
+	updated := *ep
+	updated.ConfigName = configName
+	updated.Variants = copyVariants(ec.ProductionVariants)
+	updated.Status = driver.EndpointInService
+	updated.LastModifiedTime = m.now()
+	m.endpoints.Set(name, &updated)
 
-	out := *ep
-
-	return &out, nil
+	return cloneEndpoint(&updated), nil
 }
 
 func (m *Mock) UpdateEndpointWeightsAndCapacities(
@@ -228,21 +248,25 @@ func (m *Mock) UpdateEndpointWeightsAndCapacities(
 		byName[w.VariantName] = w
 	}
 
-	for i := range ep.Variants {
-		if w, ok := byName[ep.Variants[i].VariantName]; ok {
-			ep.Variants[i].InitialVariantWeight = w.DesiredWeight
+	// Copy-then-Set: build a fresh variant slice so neither the stored endpoint
+	// nor the source EndpointConfig is mutated in place.
+	updated := *ep
+	updated.Variants = copyVariants(ep.Variants)
+
+	for i := range updated.Variants {
+		if w, ok := byName[updated.Variants[i].VariantName]; ok {
+			updated.Variants[i].InitialVariantWeight = w.DesiredWeight
 			if w.DesiredInstanceCount > 0 {
-				ep.Variants[i].InitialInstanceCount = w.DesiredInstanceCount
+				updated.Variants[i].InitialInstanceCount = w.DesiredInstanceCount
 			}
 		}
 	}
 
-	ep.Status = driver.EndpointInService
-	ep.LastModifiedTime = m.now()
+	updated.Status = driver.EndpointInService
+	updated.LastModifiedTime = m.now()
+	m.endpoints.Set(name, &updated)
 
-	out := *ep
-
-	return &out, nil
+	return cloneEndpoint(&updated), nil
 }
 
 func (m *Mock) DeleteEndpoint(_ context.Context, name string) error {

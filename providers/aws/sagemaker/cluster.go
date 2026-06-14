@@ -8,9 +8,18 @@ import (
 	"github.com/stackshy/cloudemu/sagemaker/driver"
 )
 
+// maxClusterInstancesPerGroup bounds the per-group instance count so an
+// oversized (copy-paste or hostile) create can't make a later ListClusterNodes
+// allocate unbounded node structs. The real HyperPod ceiling is in this range.
+const maxClusterInstancesPerGroup = 6758
+
 func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterSpec) (*driver.Cluster, error) {
 	if cfg.ClusterName == "" {
 		return nil, errors.New(errors.InvalidArgument, "clusterName is required")
+	}
+
+	if err := validateInstanceGroups(cfg.InstanceGroups); err != nil {
+		return nil, err
 	}
 
 	if m.clusters.Has(cfg.ClusterName) {
@@ -30,9 +39,25 @@ func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterSpec) (*driver
 	m.setTags(arn, cfg.Tags)
 	m.emitResourceCreated("Cluster")
 
-	out := *c
+	return cloneCluster(c), nil
+}
 
-	return &out, nil
+// validateInstanceGroups rejects negative or over-cap instance counts before
+// they are stored.
+func validateInstanceGroups(groups []driver.ClusterInstanceGroupSpec) error {
+	for _, g := range groups {
+		if g.InstanceCount < 0 {
+			return errors.Newf(errors.InvalidArgument, "instance group %q has negative InstanceCount", g.GroupName)
+		}
+
+		if g.InstanceCount > maxClusterInstancesPerGroup {
+			return errors.Newf(errors.InvalidArgument,
+				"instance group %q InstanceCount %d exceeds the maximum of %d",
+				g.GroupName, g.InstanceCount, maxClusterInstancesPerGroup)
+		}
+	}
+
+	return nil
 }
 
 func toInstanceGroups(in []driver.ClusterInstanceGroupSpec) []driver.ClusterInstanceGroup {
@@ -44,15 +69,26 @@ func toInstanceGroups(in []driver.ClusterInstanceGroupSpec) []driver.ClusterInst
 	return out
 }
 
+// cloneCluster deep-copies the instance-group and tag slices.
+func cloneCluster(in *driver.Cluster) *driver.Cluster {
+	out := *in
+	if in.InstanceGroups != nil {
+		out.InstanceGroups = make([]driver.ClusterInstanceGroup, len(in.InstanceGroups))
+		copy(out.InstanceGroups, in.InstanceGroups)
+	}
+
+	out.Tags = copyTags(in.Tags)
+
+	return &out
+}
+
 func (m *Mock) DescribeCluster(_ context.Context, name string) (*driver.Cluster, error) {
 	c, ok := m.clusters.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "cluster %q not found", name)
 	}
 
-	out := *c
-
-	return &out, nil
+	return cloneCluster(c), nil
 }
 
 func (m *Mock) ListClusters(_ context.Context) ([]driver.Cluster, error) {
@@ -60,7 +96,7 @@ func (m *Mock) ListClusters(_ context.Context) ([]driver.Cluster, error) {
 	out := make([]driver.Cluster, 0, len(all))
 
 	for _, v := range all {
-		out = append(out, *v)
+		out = append(out, *cloneCluster(v))
 	}
 
 	return out, nil
@@ -72,12 +108,16 @@ func (m *Mock) UpdateCluster(_ context.Context, name string, groups []driver.Clu
 		return nil, errors.Newf(errors.NotFound, "cluster %q not found", name)
 	}
 
-	c.InstanceGroups = toInstanceGroups(groups)
-	c.Status = driver.ClusterInService
+	if err := validateInstanceGroups(groups); err != nil {
+		return nil, err
+	}
 
-	out := *c
+	updated := *c
+	updated.InstanceGroups = toInstanceGroups(groups)
+	updated.Status = driver.ClusterInService
+	m.clusters.Set(name, &updated)
 
-	return &out, nil
+	return cloneCluster(&updated), nil
 }
 
 func (m *Mock) DeleteCluster(_ context.Context, name string) error {

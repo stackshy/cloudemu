@@ -500,14 +500,18 @@ func (m *Mock) StopCompilationJob(_ context.Context, name string) error {
 
 // --- shared helpers ---
 
-// stopJob applies mutate to a stored job, or returns NotFound.
+// stopJob applies mutate to a COPY of a stored job and re-stores it, or returns
+// NotFound. Copy-then-Set keeps concurrent Describe*/List* readers race-free:
+// they observe either the old or the new pointer, never an in-place write.
 func stopJob[T any](store *memstore.Store[*T], name, kind string, mutate func(*T)) error {
 	job, ok := store.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "%s %q not found", kind, name)
 	}
 
-	mutate(job)
+	updated := *job
+	mutate(&updated)
+	store.Set(name, &updated)
 
 	return nil
 }

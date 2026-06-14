@@ -86,6 +86,7 @@ func (h *Handler) createNotebookInstance(w http.ResponseWriter, r *http.Request)
 	wire.WriteJSON(w, map[string]any{"NotebookInstanceArn": nb.ARN})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) describeNotebookInstance(w http.ResponseWriter, r *http.Request) {
 	name, ok := decodeName1(w, r, "NotebookInstanceName")
 	if !ok {
@@ -118,18 +119,15 @@ func (h *Handler) listNotebookInstances(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	out := make([]map[string]any, 0, len(nbs))
-	for i := range nbs {
-		out = append(out, map[string]any{
-			"NotebookInstanceName":   nbs[i].Name,
-			"NotebookInstanceArn":    nbs[i].ARN,
-			"NotebookInstanceStatus": nbs[i].Status,
-			"InstanceType":           nbs[i].InstanceType,
-			"CreationTime":           epoch(nbs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"NotebookInstances": out})
+	writeSummaries(w, "NotebookInstances", nbs, func(nb *driver.NotebookInstance) map[string]any {
+		return map[string]any{
+			"NotebookInstanceName":   nb.Name,
+			"NotebookInstanceArn":    nb.ARN,
+			"NotebookInstanceStatus": nb.Status,
+			"InstanceType":           nb.InstanceType,
+			"CreationTime":           epoch(nb.CreationTime),
+		}
+	})
 }
 
 // wireLCStep is one OnCreate/OnStart shell step.
@@ -145,6 +143,7 @@ func firstStepContent(steps []wireLCStep) string {
 	return ""
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createNotebookLC(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NotebookInstanceLifecycleConfigName string       `json:"NotebookInstanceLifecycleConfigName"`
@@ -200,16 +199,13 @@ func (h *Handler) listNotebookLCs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(lcs))
-	for i := range lcs {
-		out = append(out, map[string]any{
-			"NotebookInstanceLifecycleConfigName": lcs[i].Name,
-			"NotebookInstanceLifecycleConfigArn":  lcs[i].ARN,
-			"CreationTime":                        epoch(lcs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"NotebookInstanceLifecycleConfigs": out})
+	writeSummaries(w, "NotebookInstanceLifecycleConfigs", lcs, func(lc *driver.NotebookLifecycleConfig) map[string]any {
+		return map[string]any{
+			"NotebookInstanceLifecycleConfigName": lc.Name,
+			"NotebookInstanceLifecycleConfigArn":  lc.ARN,
+			"CreationTime":                        epoch(lc.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) createCodeRepository(w http.ResponseWriter, r *http.Request) {
@@ -274,14 +270,11 @@ func (h *Handler) listCodeRepositories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(repos))
-	for i := range repos {
-		out = append(out, map[string]any{
-			"CodeRepositoryName": repos[i].Name,
-			"CodeRepositoryArn":  repos[i].ARN,
-			"CreationTime":       epoch(repos[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"CodeRepositorySummaryList": out})
+	writeSummaries(w, "CodeRepositorySummaryList", repos, func(repo *driver.CodeRepository) map[string]any {
+		return map[string]any{
+			"CodeRepositoryName": repo.Name,
+			"CodeRepositoryArn":  repo.ARN,
+			"CreationTime":       epoch(repo.CreationTime),
+		}
+	})
 }

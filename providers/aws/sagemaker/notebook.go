@@ -66,22 +66,37 @@ func (m *Mock) ListNotebookInstances(_ context.Context) ([]driver.NotebookInstan
 	return out, nil
 }
 
+// StartNotebookInstance moves a Stopped/Failed instance to InService. Starting
+// an instance that is not stopped is rejected, matching real SageMaker.
 func (m *Mock) StartNotebookInstance(_ context.Context, name string) error {
-	return m.setNotebookStatus(name, driver.NotebookInService)
+	return m.transitionNotebook(name, driver.NotebookInService,
+		map[string]bool{driver.NotebookStopped: true, driver.NotebookFailed: true})
 }
 
+// StopNotebookInstance moves an InService instance to Stopped. Stopping an
+// instance that is not in service is rejected, matching real SageMaker.
 func (m *Mock) StopNotebookInstance(_ context.Context, name string) error {
-	return m.setNotebookStatus(name, driver.NotebookStopped)
+	return m.transitionNotebook(name, driver.NotebookStopped,
+		map[string]bool{driver.NotebookInService: true})
 }
 
-func (m *Mock) setNotebookStatus(name, status string) error {
+// transitionNotebook copy-then-Sets the notebook to target only when its
+// current status is in allowedFrom; otherwise it returns FailedPrecondition.
+func (m *Mock) transitionNotebook(name, target string, allowedFrom map[string]bool) error {
 	nb, ok := m.notebooks.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "notebook instance %q not found", name)
 	}
 
-	nb.Status = status
-	nb.LastModifiedTime = m.now()
+	if !allowedFrom[nb.Status] {
+		return errors.Newf(errors.FailedPrecondition,
+			"notebook instance %q is %s; cannot transition to %s", name, nb.Status, target)
+	}
+
+	updated := *nb
+	updated.Status = target
+	updated.LastModifiedTime = m.now()
+	m.notebooks.Set(name, &updated)
 
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/stackshy/cloudemu/server/wire"
 )
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) routeMoreJobs(w http.ResponseWriter, r *http.Request, op string) bool {
 	switch op {
 	case "CreateProcessingJob":
@@ -32,6 +33,7 @@ func (h *Handler) routeMoreJobs(w http.ResponseWriter, r *http.Request, op strin
 	return true
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) routeTuningJobs(w http.ResponseWriter, r *http.Request, op string) bool {
 	switch op {
 	case "CreateHyperParameterTuningJob":
@@ -57,6 +59,7 @@ func (h *Handler) routeTuningJobs(w http.ResponseWriter, r *http.Request, op str
 	return true
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) routeMoreJobs2(w http.ResponseWriter, r *http.Request, op string) bool {
 	switch op {
 	case "CreateLabelingJob":
@@ -84,6 +87,7 @@ func (h *Handler) routeMoreJobs2(w http.ResponseWriter, r *http.Request, op stri
 
 // --- Processing ---
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createProcessingJob(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProcessingJobName string `json:"ProcessingJobName"`
@@ -143,17 +147,14 @@ func (h *Handler) listProcessingJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, map[string]any{
-			"ProcessingJobName":   jobs[i].JobName,
-			"ProcessingJobArn":    jobs[i].JobARN,
-			"ProcessingJobStatus": jobs[i].Status,
-			"CreationTime":        epoch(jobs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"ProcessingJobSummaries": out})
+	writeSummaries(w, "ProcessingJobSummaries", jobs, func(j *driver.ProcessingJob) map[string]any {
+		return map[string]any{
+			"ProcessingJobName":   j.JobName,
+			"ProcessingJobArn":    j.JobARN,
+			"ProcessingJobStatus": j.Status,
+			"CreationTime":        epoch(j.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) stopProcessingJob(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +163,7 @@ func (h *Handler) stopProcessingJob(w http.ResponseWriter, r *http.Request) {
 
 // --- Transform ---
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createTransformJob(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TransformJobName string    `json:"TransformJobName"`
@@ -217,17 +219,14 @@ func (h *Handler) listTransformJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, map[string]any{
-			"TransformJobName":   jobs[i].JobName,
-			"TransformJobArn":    jobs[i].JobARN,
-			"TransformJobStatus": jobs[i].Status,
-			"CreationTime":       epoch(jobs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"TransformJobSummaries": out})
+	writeSummaries(w, "TransformJobSummaries", jobs, func(j *driver.TransformJob) map[string]any {
+		return map[string]any{
+			"TransformJobName":   j.JobName,
+			"TransformJobArn":    j.JobARN,
+			"TransformJobStatus": j.Status,
+			"CreationTime":       epoch(j.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) stopTransformJob(w http.ResponseWriter, r *http.Request) {
@@ -306,17 +305,14 @@ func (h *Handler) listTuningJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, map[string]any{
-			"HyperParameterTuningJobName":   jobs[i].JobName,
-			"HyperParameterTuningJobArn":    jobs[i].JobARN,
-			"HyperParameterTuningJobStatus": jobs[i].Status,
-			"CreationTime":                  epoch(jobs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"HyperParameterTuningJobSummaries": out})
+	writeSummaries(w, "HyperParameterTuningJobSummaries", jobs, func(j *driver.HyperParameterTuningJob) map[string]any {
+		return map[string]any{
+			"HyperParameterTuningJobName":   j.JobName,
+			"HyperParameterTuningJobArn":    j.JobARN,
+			"HyperParameterTuningJobStatus": j.Status,
+			"CreationTime":                  epoch(j.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) stopTuningJob(w http.ResponseWriter, r *http.Request) {
@@ -325,6 +321,7 @@ func (h *Handler) stopTuningJob(w http.ResponseWriter, r *http.Request) {
 
 // --- AutoML V2 ---
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createAutoMLJob(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AutoMLJobName    string `json:"AutoMLJobName"`
@@ -384,17 +381,14 @@ func (h *Handler) listAutoMLJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, map[string]any{
-			"AutoMLJobName":   jobs[i].JobName,
-			"AutoMLJobArn":    jobs[i].JobARN,
-			"AutoMLJobStatus": jobs[i].Status,
-			"CreationTime":    epoch(jobs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"AutoMLJobSummaries": out})
+	writeSummaries(w, "AutoMLJobSummaries", jobs, func(j *driver.AutoMLJob) map[string]any {
+		return map[string]any{
+			"AutoMLJobName":   j.JobName,
+			"AutoMLJobArn":    j.JobARN,
+			"AutoMLJobStatus": j.Status,
+			"CreationTime":    epoch(j.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) stopAutoMLJob(w http.ResponseWriter, r *http.Request) {
@@ -403,6 +397,7 @@ func (h *Handler) stopAutoMLJob(w http.ResponseWriter, r *http.Request) {
 
 // --- Labeling ---
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createLabelingJob(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LabelingJobName    string    `json:"LabelingJobName"`
@@ -459,17 +454,14 @@ func (h *Handler) listLabelingJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, map[string]any{
-			"LabelingJobName":   jobs[i].JobName,
-			"LabelingJobArn":    jobs[i].JobARN,
-			"LabelingJobStatus": jobs[i].Status,
-			"CreationTime":      epoch(jobs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"LabelingJobSummaryList": out})
+	writeSummaries(w, "LabelingJobSummaryList", jobs, func(j *driver.LabelingJob) map[string]any {
+		return map[string]any{
+			"LabelingJobName":   j.JobName,
+			"LabelingJobArn":    j.JobARN,
+			"LabelingJobStatus": j.Status,
+			"CreationTime":      epoch(j.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) stopLabelingJob(w http.ResponseWriter, r *http.Request) {
@@ -478,6 +470,7 @@ func (h *Handler) stopLabelingJob(w http.ResponseWriter, r *http.Request) {
 
 // --- Compilation ---
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createCompilationJob(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CompilationJobName string    `json:"CompilationJobName"`
@@ -532,17 +525,14 @@ func (h *Handler) listCompilationJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, map[string]any{
-			"CompilationJobName":   jobs[i].JobName,
-			"CompilationJobArn":    jobs[i].JobARN,
-			"CompilationJobStatus": jobs[i].Status,
-			"CreationTime":         epoch(jobs[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"CompilationJobSummaries": out})
+	writeSummaries(w, "CompilationJobSummaries", jobs, func(j *driver.CompilationJob) map[string]any {
+		return map[string]any{
+			"CompilationJobName":   j.JobName,
+			"CompilationJobArn":    j.JobARN,
+			"CompilationJobStatus": j.Status,
+			"CreationTime":         epoch(j.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) stopCompilationJob(w http.ResponseWriter, r *http.Request) {

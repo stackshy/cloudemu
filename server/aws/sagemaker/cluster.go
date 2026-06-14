@@ -52,6 +52,7 @@ func (h *Handler) routeCluster(w http.ResponseWriter, r *http.Request, op string
 	return true
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ClusterName    string              `json:"ClusterName"`
@@ -121,17 +122,14 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(clusters))
-	for i := range clusters {
-		out = append(out, map[string]any{
-			"ClusterName":   clusters[i].ClusterName,
-			"ClusterArn":    clusters[i].ClusterARN,
-			"ClusterStatus": clusters[i].Status,
-			"CreationTime":  epoch(clusters[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"ClusterSummaries": out})
+	writeSummaries(w, "ClusterSummaries", clusters, func(c *driver.Cluster) map[string]any {
+		return map[string]any{
+			"ClusterName":   c.ClusterName,
+			"ClusterArn":    c.ClusterARN,
+			"ClusterStatus": c.Status,
+			"CreationTime":  epoch(c.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request) {
@@ -182,18 +180,15 @@ func (h *Handler) listClusterNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(nodes))
-	for i := range nodes {
-		out = append(out, map[string]any{
-			"InstanceGroupName": nodes[i].GroupName,
-			"InstanceId":        nodes[i].NodeID,
-			"InstanceType":      nodes[i].InstanceType,
-			"InstanceStatus":    map[string]any{"Status": nodes[i].Status},
-			"LaunchTime":        epoch(nodes[i].LaunchTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"ClusterNodeSummaries": out})
+	writeSummaries(w, "ClusterNodeSummaries", nodes, func(n *driver.ClusterNode) map[string]any {
+		return map[string]any{
+			"InstanceGroupName": n.GroupName,
+			"InstanceId":        n.NodeID,
+			"InstanceType":      n.InstanceType,
+			"InstanceStatus":    map[string]any{"Status": n.Status},
+			"LaunchTime":        epoch(n.LaunchTime),
+		}
+	})
 }
 
 func (h *Handler) describeClusterNode(w http.ResponseWriter, r *http.Request) {

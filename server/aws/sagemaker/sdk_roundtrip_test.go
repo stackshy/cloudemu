@@ -173,6 +173,11 @@ func TestSDKDescribeMissingTrainingJob(t *testing.T) {
 	})
 	require.Error(t, err)
 
+	// DescribeTrainingJob models ResourceNotFound, so the NotFound→ResourceNotFound
+	// mapping deserializes as a typed SDK error. (Typed-error matching is
+	// per-operation: the SDK only surfaces an exception an operation models;
+	// everything else — e.g. a generic ValidationException — arrives as
+	// *smithy.GenericAPIError, exactly as it does against real SageMaker.)
 	var rnf *smtypes.ResourceNotFound
 	assert.True(t, errors.As(err, &rnf), "expected ResourceNotFound, got %T", err)
 }

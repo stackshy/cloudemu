@@ -68,13 +68,15 @@ func (m *Mock) UpdatePipeline(_ context.Context, name, definition string) (*driv
 		return nil, errors.Newf(errors.NotFound, "pipeline %q not found", name)
 	}
 
+	updated := *p
 	if definition != "" {
-		p.Definition = definition
+		updated.Definition = definition
 	}
 
-	p.LastModifiedTime = m.now()
+	updated.LastModifiedTime = m.now()
+	m.pipelines.Set(name, &updated)
 
-	out := *p
+	out := updated
 
 	return &out, nil
 }
@@ -141,8 +143,10 @@ func (m *Mock) StopPipelineExecution(_ context.Context, executionARN string) err
 		return errors.Newf(errors.NotFound, "pipeline execution %q not found", executionARN)
 	}
 
-	ex.Status = driver.ExecutionStopped
-	ex.EndTime = m.now()
+	updated := *ex
+	updated.Status = driver.ExecutionStopped
+	updated.EndTime = m.now()
+	m.executions.Set(executionARN, &updated)
 
 	return nil
 }

@@ -80,6 +80,12 @@ func (m *Mock) CreateModelPackage(_ context.Context, cfg driver.ModelPackageSpec
 		return nil, errors.Newf(errors.InvalidArgument, "model package group %q not found", cfg.GroupName)
 	}
 
+	// Serialize version assignment: without the lock two concurrent creates for
+	// the same group could compute the same N+1 and mint a colliding ARN, and
+	// the second Set would silently overwrite the first.
+	m.pkgMu.Lock()
+	defer m.pkgMu.Unlock()
+
 	version := m.nextPackageVersion(cfg.GroupName)
 	arn := m.arn("model-package/" + cfg.GroupName + "/" + strconv.Itoa(version))
 	p := &driver.ModelPackage{
@@ -142,11 +148,14 @@ func (m *Mock) UpdateModelPackage(_ context.Context, arn, approvalStatus string)
 		return nil, errors.Newf(errors.NotFound, "model package %q not found", arn)
 	}
 
+	updated := *p
 	if approvalStatus != "" {
-		p.ApprovalStatus = approvalStatus
+		updated.ApprovalStatus = approvalStatus
 	}
 
-	out := *p
+	m.packages.Set(arn, &updated)
+
+	out := updated
 
 	return &out, nil
 }

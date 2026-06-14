@@ -3,10 +3,15 @@
 // compilation jobs, the model-and-endpoint inference stack, the model
 // registry, Studio, notebook instances, HyperPod clusters, Feature Store and
 // pipelines. Asynchronous jobs complete synchronously (straight to a terminal
-// state) so Describe/List calls are deterministic, mirroring the Bedrock mock.
+// state) so Describe/List calls are deterministic.
+//
+// This is the Layer-3 driver implementation. The portable Layer-1 wrapper that
+// adds recording/metrics/rate-limiting/error-injection/latency lives in the
+// module-root sagemaker package (sagemaker/sagemaker.go).
 package sagemaker
 
 import (
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/config"
@@ -62,6 +67,10 @@ type Mock struct {
 	trials      *memstore.Store[*driver.Trial]
 
 	tags *memstore.Store[[]driver.Tag] // keyed by resource ARN
+
+	// pkgMu serializes the read-compute-write of model-package version numbers
+	// so two concurrent CreateModelPackage calls can't mint the same ARN.
+	pkgMu sync.Mutex
 
 	monitoring mondriver.Monitoring
 }
@@ -136,6 +145,32 @@ func copyStrMap(in map[string]string) map[string]string {
 	for k, v := range in {
 		out[k] = v
 	}
+
+	return out
+}
+
+// copyVariants returns a deep copy of a production-variant slice so stored
+// endpoints/configs never share a backing array (mutating one would otherwise
+// corrupt the source EndpointConfig and sibling endpoints).
+func copyVariants(in []driver.ProductionVariant) []driver.ProductionVariant {
+	if in == nil {
+		return nil
+	}
+
+	out := make([]driver.ProductionVariant, len(in))
+	copy(out, in)
+
+	return out
+}
+
+// copyContainers returns a deep copy of a container-definition slice.
+func copyContainers(in []driver.ContainerDefinition) []driver.ContainerDefinition {
+	if in == nil {
+		return nil
+	}
+
+	out := make([]driver.ContainerDefinition, len(in))
+	copy(out, in)
 
 	return out
 }

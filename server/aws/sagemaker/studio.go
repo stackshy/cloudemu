@@ -32,6 +32,7 @@ func (h *Handler) routeStudio(w http.ResponseWriter, r *http.Request, op string)
 	return true
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) routeStudioSpacesApps(w http.ResponseWriter, r *http.Request, op string) bool {
 	switch op {
 	case "CreateSpace":
@@ -57,6 +58,7 @@ func (h *Handler) routeStudioSpacesApps(w http.ResponseWriter, r *http.Request, 
 	return true
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createSpace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DomainID  string    `json:"DomainId"`
@@ -82,6 +84,7 @@ func (h *Handler) createSpace(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"SpaceArn": sp.SpaceARN})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) describeSpace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DomainID  string `json:"DomainId"`
@@ -121,17 +124,14 @@ func (h *Handler) listSpaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(spaces))
-	for i := range spaces {
-		out = append(out, map[string]any{
-			"DomainId":     spaces[i].DomainID,
-			"SpaceName":    spaces[i].SpaceName,
-			"Status":       spaces[i].Status,
-			"CreationTime": epoch(spaces[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"Spaces": out})
+	writeSummaries(w, "Spaces", spaces, func(s *driver.Space) map[string]any {
+		return map[string]any{
+			"DomainId":     s.DomainID,
+			"SpaceName":    s.SpaceName,
+			"Status":       s.Status,
+			"CreationTime": epoch(s.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) deleteSpace(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +186,7 @@ func (h *Handler) createDomain(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"DomainArn": d.DomainARN, "DomainId": d.DomainID, "Url": d.URL})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) describeDomain(w http.ResponseWriter, r *http.Request) {
 	id, ok := decodeName1(w, r, "DomainId")
 	if !ok {
@@ -218,20 +219,18 @@ func (h *Handler) listDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(domains))
-	for i := range domains {
-		out = append(out, map[string]any{
-			"DomainId":     domains[i].DomainID,
-			"DomainArn":    domains[i].DomainARN,
-			"DomainName":   domains[i].DomainName,
-			"Status":       domains[i].Status,
-			"CreationTime": epoch(domains[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"Domains": out})
+	writeSummaries(w, "Domains", domains, func(d *driver.Domain) map[string]any {
+		return map[string]any{
+			"DomainId":     d.DomainID,
+			"DomainArn":    d.DomainARN,
+			"DomainName":   d.DomainName,
+			"Status":       d.Status,
+			"CreationTime": epoch(d.CreationTime),
+		}
+	})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createUserProfile(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DomainID        string `json:"DomainId"`
@@ -261,6 +260,7 @@ func (h *Handler) createUserProfile(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"UserProfileArn": up.UserProfileARN})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) describeUserProfile(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DomainID        string `json:"DomainId"`
@@ -300,17 +300,14 @@ func (h *Handler) listUserProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(ups))
-	for i := range ups {
-		out = append(out, map[string]any{
-			"DomainId":        ups[i].DomainID,
-			"UserProfileName": ups[i].UserProfileName,
-			"Status":          ups[i].Status,
-			"CreationTime":    epoch(ups[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"UserProfiles": out})
+	writeSummaries(w, "UserProfiles", ups, func(u *driver.UserProfile) map[string]any {
+		return map[string]any{
+			"DomainId":        u.DomainID,
+			"UserProfileName": u.UserProfileName,
+			"Status":          u.Status,
+			"CreationTime":    epoch(u.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) deleteUserProfile(w http.ResponseWriter, r *http.Request) {
@@ -410,18 +407,15 @@ func (h *Handler) listApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(apps))
-	for i := range apps {
-		out = append(out, map[string]any{
-			"AppName":      apps[i].AppName,
-			"AppType":      apps[i].AppType,
-			"DomainId":     apps[i].DomainID,
-			"Status":       apps[i].Status,
-			"CreationTime": epoch(apps[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"Apps": out})
+	writeSummaries(w, "Apps", apps, func(a *driver.App) map[string]any {
+		return map[string]any{
+			"AppName":      a.AppName,
+			"AppType":      a.AppType,
+			"DomainId":     a.DomainID,
+			"Status":       a.Status,
+			"CreationTime": epoch(a.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) deleteApp(w http.ResponseWriter, r *http.Request) {

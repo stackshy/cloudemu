@@ -59,6 +59,7 @@ func (h *Handler) createInferenceComponent(w http.ResponseWriter, r *http.Reques
 	wire.WriteJSON(w, map[string]any{"InferenceComponentArn": ic.ARN})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) describeInferenceComponent(w http.ResponseWriter, r *http.Request) {
 	name, ok := decodeName1(w, r, "InferenceComponentName")
 	if !ok {
@@ -90,18 +91,15 @@ func (h *Handler) listInferenceComponents(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	out := make([]map[string]any, 0, len(ics))
-	for i := range ics {
-		out = append(out, map[string]any{
-			"InferenceComponentName":   ics[i].Name,
-			"InferenceComponentArn":    ics[i].ARN,
-			"EndpointName":             ics[i].EndpointName,
-			"InferenceComponentStatus": ics[i].Status,
-			"CreationTime":             epoch(ics[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"InferenceComponents": out})
+	writeSummaries(w, "InferenceComponents", ics, func(ic *driver.InferenceComponent) map[string]any {
+		return map[string]any{
+			"InferenceComponentName":   ic.Name,
+			"InferenceComponentArn":    ic.ARN,
+			"EndpointName":             ic.EndpointName,
+			"InferenceComponentStatus": ic.Status,
+			"CreationTime":             epoch(ic.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) deleteInferenceComponent(w http.ResponseWriter, r *http.Request) {

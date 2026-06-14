@@ -92,16 +92,20 @@ func (m *Mock) PutRecord(_ context.Context, groupName string, record []driver.Fe
 	}
 
 	recordID := ""
+	found := false
 
 	for _, fv := range record {
 		if fv.Name == fg.RecordIdentifierName {
 			recordID = fv.Value
+			found = true
 
 			break
 		}
 	}
 
-	if recordID == "" {
+	// Check for presence of the identifier feature, not a non-empty value: an
+	// identifier whose value is legitimately the empty string is valid.
+	if !found {
 		return errors.Newf(errors.InvalidArgument, "record is missing identifier feature %q", fg.RecordIdentifierName)
 	}
 

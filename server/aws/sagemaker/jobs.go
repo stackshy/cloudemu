@@ -105,6 +105,7 @@ func (h *Handler) describeTrainingJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) listTrainingJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := h.svc.ListTrainingJobs(r.Context())
 	if err != nil {
@@ -113,18 +114,15 @@ func (h *Handler) listTrainingJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, map[string]any{
-			"TrainingJobName":   jobs[i].JobName,
-			"TrainingJobArn":    jobs[i].JobARN,
-			"TrainingJobStatus": jobs[i].Status,
-			"CreationTime":      epoch(jobs[i].CreationTime),
-			"LastModifiedTime":  epoch(jobs[i].LastModifiedTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"TrainingJobSummaries": out})
+	writeSummaries(w, "TrainingJobSummaries", jobs, func(j *driver.TrainingJob) map[string]any {
+		return map[string]any{
+			"TrainingJobName":   j.JobName,
+			"TrainingJobArn":    j.JobARN,
+			"TrainingJobStatus": j.Status,
+			"CreationTime":      epoch(j.CreationTime),
+			"LastModifiedTime":  epoch(j.LastModifiedTime),
+		}
+	})
 }
 
 func (h *Handler) stopTrainingJob(w http.ResponseWriter, r *http.Request) {

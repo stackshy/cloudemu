@@ -49,10 +49,15 @@ func (h *Handler) createModel(w http.ResponseWriter, r *http.Request) {
 		containers = append(containers, toContainer(c))
 	}
 
+	// An inference-pipeline model is created via Containers; a single-container
+	// model via PrimaryContainer. Track which so Describe echoes only that field.
+	pipeline := req.PrimaryContainer == nil && len(req.Containers) > 0
+
 	model, err := h.svc.CreateModel(r.Context(), driver.ModelConfig{
 		ModelName:  req.ModelName,
 		RoleARN:    req.ExecutionRoleArn,
 		Containers: containers,
+		Pipeline:   pipeline,
 		Tags:       toTags(req.Tags),
 	})
 	if err != nil {
@@ -86,15 +91,18 @@ func (h *Handler) describeModel(w http.ResponseWriter, r *http.Request) {
 		"ExecutionRoleArn": model.RoleARN,
 		"CreationTime":     epoch(model.CreationTime),
 	}
-	if len(model.Containers) > 0 {
-		resp["PrimaryContainer"] = fromContainer(model.Containers[0])
-
+	// Echo only the field the model was created with: a pipeline model reports
+	// Containers; a single-container model reports PrimaryContainer.
+	switch {
+	case model.Pipeline:
 		conts := make([]wireContainer, 0, len(model.Containers))
 		for _, c := range model.Containers {
 			conts = append(conts, fromContainer(c))
 		}
 
 		resp["Containers"] = conts
+	case len(model.Containers) > 0:
+		resp["PrimaryContainer"] = fromContainer(model.Containers[0])
 	}
 
 	wire.WriteJSON(w, resp)
@@ -108,16 +116,13 @@ func (h *Handler) listModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(models))
-	for i := range models {
-		out = append(out, map[string]any{
-			"ModelName":    models[i].ModelName,
-			"ModelArn":     models[i].ModelARN,
-			"CreationTime": epoch(models[i].CreationTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"Models": out})
+	writeSummaries(w, "Models", models, func(m *driver.Model) map[string]any {
+		return map[string]any{
+			"ModelName":    m.ModelName,
+			"ModelArn":     m.ModelARN,
+			"CreationTime": epoch(m.CreationTime),
+		}
+	})
 }
 
 func (h *Handler) deleteModel(w http.ResponseWriter, r *http.Request) {
@@ -248,6 +253,7 @@ func variantsToWire(in []driver.ProductionVariant) []wireVariant {
 	return out
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EndpointName       string    `json:"EndpointName"`
@@ -300,6 +306,7 @@ func (h *Handler) describeEndpoint(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request) {
 	eps, err := h.svc.ListEndpoints(r.Context())
 	if err != nil {
@@ -308,18 +315,15 @@ func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]map[string]any, 0, len(eps))
-	for i := range eps {
-		out = append(out, map[string]any{
-			"EndpointName":     eps[i].EndpointName,
-			"EndpointArn":      eps[i].EndpointARN,
-			"EndpointStatus":   eps[i].Status,
-			"CreationTime":     epoch(eps[i].CreationTime),
-			"LastModifiedTime": epoch(eps[i].LastModifiedTime),
-		})
-	}
-
-	wire.WriteJSON(w, map[string]any{"Endpoints": out})
+	writeSummaries(w, "Endpoints", eps, func(e *driver.Endpoint) map[string]any {
+		return map[string]any{
+			"EndpointName":     e.EndpointName,
+			"EndpointArn":      e.EndpointARN,
+			"EndpointStatus":   e.Status,
+			"CreationTime":     epoch(e.CreationTime),
+			"LastModifiedTime": epoch(e.LastModifiedTime),
+		}
+	})
 }
 
 func (h *Handler) deleteEndpoint(w http.ResponseWriter, r *http.Request) {

@@ -188,6 +188,18 @@ func stopByName(w http.ResponseWriter, r *http.Request, field string, fn func(co
 	wire.WriteJSON(w, map[string]any{})
 }
 
+// writeSummaries projects items into the awsJson1_1 list shape
+// {"<key>": [ {...}, ... ]} via per-item project. It collapses the otherwise
+// identical make/loop/WriteJSON boilerplate shared by every List* handler.
+func writeSummaries[T any](w http.ResponseWriter, key string, items []T, project func(*T) map[string]any) {
+	out := make([]map[string]any, 0, len(items))
+	for i := range items {
+		out = append(out, project(&items[i]))
+	}
+
+	wire.WriteJSON(w, map[string]any{key: out})
+}
+
 // epoch converts a stored RFC3339 timestamp to Unix seconds for awsJson1_1
 // timestamp serialization (the SDK's default format is unixTimestamp).
 func epoch(iso string) float64 {
