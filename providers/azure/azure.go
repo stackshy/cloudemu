@@ -5,6 +5,7 @@ import (
 	"github.com/stackshy/cloudemu/config"
 	"github.com/stackshy/cloudemu/providers/azure/acr"
 	"github.com/stackshy/cloudemu/providers/azure/aks"
+	"github.com/stackshy/cloudemu/providers/azure/azureai"
 	"github.com/stackshy/cloudemu/providers/azure/azurecache"
 	"github.com/stackshy/cloudemu/providers/azure/azuredns"
 	"github.com/stackshy/cloudemu/providers/azure/azureiam"
@@ -50,6 +51,7 @@ type Provider struct {
 	MySQLFlex        *mysqlflex.Mock
 	AKS              *aks.Mock
 	Databricks       *databricks.Mock
+	AzureAI          *azureai.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 }
@@ -79,6 +81,7 @@ func New(opts ...config.Option) *Provider {
 		MySQLFlex:        mysqlflex.New(o),
 		AKS:              aks.New(o),
 		Databricks:       databricks.New(o),
+		AzureAI:          azureai.New(o),
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.BlobStorage.SetMonitoring(p.Monitor)
@@ -94,6 +97,7 @@ func New(opts ...config.Option) *Provider {
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
 	p.AKS.SetMonitoring(p.Monitor)
+	p.AzureAI.SetMonitoring(p.Monitor)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
