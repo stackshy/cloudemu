@@ -35,16 +35,24 @@ type listPoolsResponse struct {
 	InstancePools []instancePoolJSON `json:"instance_pools"`
 }
 
+type azureAttributesJSON struct {
+	Availability string `json:"availability,omitempty"`
+}
+
 type clusterJSON struct {
-	ClusterID     string            `json:"cluster_id,omitempty"`
-	ClusterName   string            `json:"cluster_name,omitempty"`
-	SparkVersion  string            `json:"spark_version"`
-	NodeTypeID    string            `json:"node_type_id"`
-	State         string            `json:"state,omitempty"`
-	NumWorkers    int32             `json:"num_workers,omitempty"`
-	Autoscale     *autoscaleJSON    `json:"autoscale,omitempty"`
-	RuntimeEngine string            `json:"runtime_engine,omitempty"`
-	CustomTags    map[string]string `json:"custom_tags,omitempty"`
+	ClusterID       string               `json:"cluster_id,omitempty"`
+	ClusterName     string               `json:"cluster_name,omitempty"`
+	SparkVersion    string               `json:"spark_version"`
+	NodeTypeID      string               `json:"node_type_id"`
+	State           string               `json:"state,omitempty"`
+	NumWorkers      int32                `json:"num_workers,omitempty"`
+	Autoscale       *autoscaleJSON       `json:"autoscale,omitempty"`
+	RuntimeEngine   string               `json:"runtime_engine,omitempty"`
+	CustomTags      map[string]string    `json:"custom_tags,omitempty"`
+	PolicyID        string               `json:"policy_id,omitempty"`
+	InstancePoolID  string               `json:"instance_pool_id,omitempty"`
+	AzureAttributes *azureAttributesJSON `json:"azure_attributes,omitempty"`
+	ClusterSource   string               `json:"cluster_source,omitempty"`
 }
 
 type clusterID struct {
@@ -528,10 +536,15 @@ func clusterConfig(in *clusterJSON) dbxdriver.ClusterConfig {
 		Name: in.ClusterName, SparkVersion: in.SparkVersion,
 		NodeTypeID: in.NodeTypeID, NumWorkers: in.NumWorkers,
 		RuntimeEngine: in.RuntimeEngine, CustomTags: in.CustomTags,
+		PolicyID: in.PolicyID, InstancePoolID: in.InstancePoolID,
 	}
 	if in.Autoscale != nil {
 		cfg.AutoscaleMin = in.Autoscale.MinWorkers
 		cfg.AutoscaleMax = in.Autoscale.MaxWorkers
+	}
+
+	if in.AzureAttributes != nil {
+		cfg.AzureAvailability = in.AzureAttributes.Availability
 	}
 
 	return cfg
@@ -542,9 +555,14 @@ func toClusterJSON(c *dbxdriver.Cluster) clusterJSON {
 		ClusterID: c.ID, ClusterName: c.Name, SparkVersion: c.SparkVersion,
 		NodeTypeID: c.NodeTypeID, State: c.State, NumWorkers: c.NumWorkers,
 		RuntimeEngine: c.RuntimeEngine, CustomTags: c.CustomTags,
+		PolicyID: c.PolicyID, InstancePoolID: c.InstancePoolID, ClusterSource: c.ClusterSource,
 	}
 	if c.AutoscaleMax > 0 {
 		out.Autoscale = &autoscaleJSON{MinWorkers: c.AutoscaleMin, MaxWorkers: c.AutoscaleMax}
+	}
+
+	if c.AzureAvailability != "" {
+		out.AzureAttributes = &azureAttributesJSON{Availability: c.AzureAvailability}
 	}
 
 	return out

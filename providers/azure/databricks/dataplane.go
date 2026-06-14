@@ -105,16 +105,20 @@ func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterConfig) (*driv
 
 	id := idgen.GenerateID("cluster-")
 	cluster := &driver.Cluster{
-		ID:            id,
-		Name:          cfg.Name,
-		SparkVersion:  cfg.SparkVersion,
-		NodeTypeID:    cfg.NodeTypeID,
-		State:         driver.ClusterRunning,
-		NumWorkers:    cfg.NumWorkers,
-		AutoscaleMin:  cfg.AutoscaleMin,
-		AutoscaleMax:  cfg.AutoscaleMax,
-		RuntimeEngine: cfg.RuntimeEngine,
-		CustomTags:    cfg.CustomTags,
+		ID:                id,
+		Name:              cfg.Name,
+		SparkVersion:      cfg.SparkVersion,
+		NodeTypeID:        cfg.NodeTypeID,
+		State:             driver.ClusterRunning,
+		NumWorkers:        cfg.NumWorkers,
+		AutoscaleMin:      cfg.AutoscaleMin,
+		AutoscaleMax:      cfg.AutoscaleMax,
+		RuntimeEngine:     cfg.RuntimeEngine,
+		CustomTags:        cfg.CustomTags,
+		PolicyID:          cfg.PolicyID,
+		InstancePoolID:    cfg.InstancePoolID,
+		AzureAvailability: cfg.AzureAvailability,
+		ClusterSource:     driver.ClusterSourceAPI,
 	}
 	m.clusters.Set(id, cluster)
 
@@ -165,6 +169,9 @@ func (m *Mock) EditCluster(_ context.Context, id string, cfg driver.ClusterConfi
 	updated.AutoscaleMax = cfg.AutoscaleMax
 	updated.RuntimeEngine = cfg.RuntimeEngine
 	updated.CustomTags = cfg.CustomTags
+	updated.PolicyID = cfg.PolicyID
+	updated.InstancePoolID = cfg.InstancePoolID
+	updated.AzureAvailability = cfg.AzureAvailability
 	m.clusters.Set(id, &updated)
 
 	return nil

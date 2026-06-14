@@ -69,3 +69,54 @@ func TestSDKInstancePoolIdleAndTags(t *testing.T) {
 		t.Fatalf("custom_tags: got %v, want {team:data}", got.CustomTags)
 	}
 }
+
+// TestSDKClusterPolicyPoolAzureSource pins issue #229: policy_id,
+// instance_pool_id, azure_attributes.availability, and the backend-assigned
+// cluster_source must survive a create→get round-trip.
+func TestSDKClusterPolicyPoolAzureSource(t *testing.T) {
+	w := newWorkspace(t)
+	ctx := context.Background()
+
+	pool, err := w.InstancePools.Create(ctx, compute.CreateInstancePool{
+		InstancePoolName: "p1", NodeTypeId: "Standard_DS3_v2", MinIdleInstances: 1,
+	})
+	if err != nil {
+		t.Fatalf("Create pool: %v", err)
+	}
+
+	wait, err := w.Clusters.Create(ctx, compute.CreateCluster{
+		ClusterName:    "c1",
+		SparkVersion:   "13.3.x-scala2.12",
+		NodeTypeId:     "Standard_DS3_v2",
+		NumWorkers:     2,
+		PolicyId:       "policy-123",
+		InstancePoolId: pool.InstancePoolId,
+		AzureAttributes: &compute.AzureAttributes{
+			Availability: compute.AzureAvailabilityOnDemandAzure,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create cluster: %v", err)
+	}
+
+	got, err := w.Clusters.Get(ctx, compute.GetClusterRequest{ClusterId: wait.ClusterId})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.PolicyId != "policy-123" {
+		t.Fatalf("policy_id: got %q, want policy-123", got.PolicyId)
+	}
+
+	if got.InstancePoolId != pool.InstancePoolId {
+		t.Fatalf("instance_pool_id: got %q, want %q", got.InstancePoolId, pool.InstancePoolId)
+	}
+
+	if got.AzureAttributes == nil || got.AzureAttributes.Availability != compute.AzureAvailabilityOnDemandAzure {
+		t.Fatalf("azure_attributes.availability: got %+v, want ON_DEMAND_AZURE", got.AzureAttributes)
+	}
+
+	if got.ClusterSource != compute.ClusterSourceApi {
+		t.Fatalf("cluster_source: got %q, want API", got.ClusterSource)
+	}
+}
