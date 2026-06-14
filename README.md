@@ -104,6 +104,8 @@ SDK-compat coverage across AWS, Azure, and GCP:
 | Networking | VPC (under EC2) | Virtual Network | VPC + Subnets + Firewalls + Routes |
 | Monitoring | CloudWatch | Azure Monitor | Cloud Monitoring |
 | Resource Discovery | Resource Explorer + Resource Groups Tagging API | Resource Graph | Cloud Asset Inventory |
+| Generative AI | Bedrock (control plane + bedrock-runtime InvokeModel/Converse) | — | — |
+| Databricks | — | Databricks (ARM workspace + workspace data plane) | — |
 
 The Kubernetes story is two layers, both shipped:
 
