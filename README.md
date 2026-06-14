@@ -24,7 +24,7 @@ cloudemu emulates AWS, Azure, and GCP cloud services entirely in memory, so you 
 
 It ships two surfaces you can mix and match:
 
-- **SDK-compat HTTP server** — point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, or `cloud.google.com/go` clients at a local endpoint and they just work. No code changes in your app.
+- **SDK-compat HTTP server** — point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, `cloud.google.com/go`, or `databricks-sdk-go` clients at a local endpoint and they just work. No code changes in your app.
 - **Go API** — typed in-memory mocks (`aws.S3`, `azure.VirtualMachines`, `gcp.GCE`, …) for tests written against cloudemu directly.
 
 ## Install

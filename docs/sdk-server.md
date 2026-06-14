@@ -118,6 +118,39 @@ opts := []option.ClientOption{
 client, _ := gcpcompute.NewInstancesRESTClient(ctx, opts...)
 ```
 
+## Quick start (Databricks)
+
+The Azure server also speaks the `databricks-sdk-go` `WorkspaceClient` wire protocol. Wire the same `*databricks.Mock` into both `Databricks` (ARM workspace control plane) and `DatabricksDataPlane` (the `/api/2.x` workspace data plane).
+
+```go
+import (
+    "net/http/httptest"
+
+    databricks "github.com/databricks/databricks-sdk-go"
+    "github.com/databricks/databricks-sdk-go/config"
+    "github.com/databricks/databricks-sdk-go/service/compute"
+    "github.com/stackshy/cloudemu"
+    azureserver "github.com/stackshy/cloudemu/server/azure"
+)
+
+cp := cloudemu.NewAzure()
+srv := azureserver.New(azureserver.Drivers{
+    Databricks:          cp.Databricks, // Microsoft.Databricks/workspaces (ARM)
+    DatabricksDataPlane: cp.Databricks, // /api/2.x workspace data plane
+})
+ts := httptest.NewServer(srv)
+defer ts.Close()
+
+w, _ := databricks.NewWorkspaceClient(&databricks.Config{
+    Host:        ts.URL,
+    Token:       "test-token",
+    Credentials: config.PatCredentials{},
+})
+
+// Real WorkspaceClient calls round-trip against the in-memory backend.
+w.InstancePools.Create(ctx, compute.CreateInstancePool{InstancePoolName: "pool-1"})
+```
+
 Region, credentials, and tokens can be any dummy values — the server doesn't validate signatures or AAD tokens.
 
 ## Currently supported
@@ -165,7 +198,7 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **IAM (armauthorization)** | `Microsoft.Authorization` — RoleDefinitions (CreateOrUpdate, Get, List, Delete) and RoleAssignments (Create, Get, ListForScope, Delete) at any scope (subscription, resource group, resource, management group). Real `armauthorization` SDK clients round-trip end-to-end. Microsoft Graph (users/groups) is out of scope — deferred to a future handler. |
 | **Resource Graph** | `Microsoft.ResourceGraph` — `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with a KQL-shaped query over the cross-service inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
 | **Databricks (ARM control plane)** | `Microsoft.Databricks/workspaces` — CreateOrUpdate, Get, Delete, UpdateTags, List / ListByResourceGroup. Real `armdatabricks` SDK clients round-trip end-to-end. |
-| **Databricks (workspace data plane)** *(`databricks-sdk-go`, `/api/2.x`)* | Point the real `WorkspaceClient` at `Config.Host`. Clusters (create/edit/start/restart/resize/pin/unpin/delete + list-node-types / spark-versions / zones), instance pools, jobs + runs (submit / run-now / get / list / cancel / cancel-all / repair / output / delete), cluster policies, libraries (install / uninstall / status), and object permissions. Self-contained families: secrets (scopes / secrets / ACLs), tokens, git credentials, repos, DBFS (incl. block upload), workspace notebooks/directories, SQL warehouses, pipelines, serving endpoints, SCIM identity (users / groups / service principals), and Unity Catalog (catalogs / schemas / tables + metastores / external locations / storage credentials / volumes). |
+| **Databricks (workspace data plane)** *(`databricks-sdk-go`, `/api/2.x`)* | Point the real `WorkspaceClient` at `Config.Host`. Clusters (create/edit/start/restart/resize/pin/unpin/delete + list-node-types / spark-versions / zones), instance pools, jobs + runs (submit / run-now / get / list / cancel / cancel-all / repair / output / delete), cluster policies, libraries (install / uninstall / status), and object permissions. Self-contained families: secrets (scopes / secrets / ACLs), tokens, git credentials, repos, DBFS (incl. block upload), workspace notebooks/directories, SQL warehouses, pipelines, serving endpoints, SCIM identity (users / groups / service principals), and Unity Catalog (catalogs / schemas / tables + metastores / external locations / storage credentials / volumes). Also serves `GET /.well-known/databricks-config` so the SDK's host-metadata resolution succeeds (workspace-host stub) instead of logging a warning. |
 
 ### GCP (`server/gcp/`)
 
@@ -257,6 +290,7 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 | Azure AKS | ARM provider `Microsoft.ContainerService/managedClusters` |
 | Azure Databricks (ARM) | ARM provider `Microsoft.Databricks/workspaces` |
 | Azure Databricks (data plane) | Non-ARM URL prefix `/api/2.0/` or `/api/2.1/` (workspace data plane) |
+| Azure Databricks (host metadata) | `GET /.well-known/databricks-config` |
 | Azure Cosmos | URL begins with `/dbs/` (data plane, non-ARM) |
 | Azure Functions invoke | URL begins with `/api/` (non-ARM data plane) |
 | Azure Service Bus data plane | Non-ARM URL ending in `/messages` or `/messages/head` |
