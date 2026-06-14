@@ -39,6 +39,9 @@ type Mock struct {
 	pools       *memstore.Store[*driver.InstancePool]
 	clusters    *memstore.Store[*driver.Cluster]
 	jobs        *memstore.Store[*driver.Job]
+	runs        *memstore.Store[*driver.Run]
+	policies    *memstore.Store[*driver.ClusterPolicy]
+	libraries   *memstore.Store[[]driver.LibraryStatus]
 	permissions *memstore.Store[*driver.ObjectPermissions]
 	opts        *config.Options
 
@@ -53,6 +56,9 @@ func New(opts *config.Options) *Mock {
 		pools:       memstore.New[*driver.InstancePool](),
 		clusters:    memstore.New[*driver.Cluster](),
 		jobs:        memstore.New[*driver.Job](),
+		runs:        memstore.New[*driver.Run](),
+		policies:    memstore.New[*driver.ClusterPolicy](),
+		libraries:   memstore.New[[]driver.LibraryStatus](),
 		permissions: memstore.New[*driver.ObjectPermissions](),
 		opts:        opts,
 	}

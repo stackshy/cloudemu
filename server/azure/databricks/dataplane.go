@@ -29,6 +29,14 @@ const (
 	resClusters    = "clusters"
 	resJobs        = "jobs"
 	resPermissions = "permissions"
+	resPolicies    = "policies"
+	resLibraries   = "libraries"
+)
+
+// Sub-resource segments (e.g. /jobs/runs/..., /policies/clusters/...).
+const (
+	subRuns     = "runs"
+	subClusters = "clusters"
 )
 
 // Data-plane action path segments.
@@ -44,7 +52,26 @@ const (
 	actUpdate          = "update"
 	actReset           = "reset"
 	actRunNow          = "run-now"
+	actCancel          = "cancel"
+	actGetOutput       = "get-output"
+	actInstall         = "install"
+	actUninstall       = "uninstall"
+	actClusterStatus   = "cluster-status"
+	actAllStatuses     = "all-cluster-statuses"
+	actResize          = "resize"
+	actPin             = "pin"
+	actUnpin           = "unpin"
+	actListNodeTypes   = "list-node-types"
+	actSparkVersions   = "spark-versions"
+	actListZones       = "list-zones"
+	actSubmit          = "submit"
+	actCancelAll       = "cancel-all"
+	actRepair          = "repair"
 )
+
+// minSubResourceSegs is the [api, ver, resource, sub, action] segment count
+// for nested paths like /jobs/runs/{action} and /policies/clusters/{action}.
+const minSubResourceSegs = 5
 
 // minResourceSegs is the [api, ver, resource, action] segment count after
 // dpSplit; minPermissionsSegs additionally needs [type, id].
@@ -95,7 +122,7 @@ func (*DataPlaneHandler) Matches(r *http.Request) bool {
 	}
 
 	switch parts[2] {
-	case resPools, resClusters, resJobs, resPermissions:
+	case resPools, resClusters, resJobs, resPermissions, resPolicies, resLibraries:
 		return true
 	default:
 		return false
@@ -119,12 +146,38 @@ func (h *DataPlaneHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case resClusters:
 		h.serveClusters(w, r, action)
 	case resJobs:
-		h.serveJobs(w, r, action)
+		h.serveJobsResource(w, r, parts)
+	case resPolicies:
+		h.servePoliciesResource(w, r, parts)
+	case resLibraries:
+		h.serveLibraries(w, r, action)
 	case resPermissions:
 		h.servePermissions(w, r, parts)
 	default:
 		dpError(w, http.StatusNotFound, "ENDPOINT_NOT_FOUND", "unknown resource: "+resource)
 	}
+}
+
+// serveJobsResource routes /jobs/{action} and the nested /jobs/runs/{action}.
+func (h *DataPlaneHandler) serveJobsResource(w http.ResponseWriter, r *http.Request, parts []string) {
+	if parts[3] == subRuns && len(parts) >= minSubResourceSegs {
+		h.serveRuns(w, r, parts[4])
+
+		return
+	}
+
+	h.serveJobs(w, r, parts[3])
+}
+
+// servePoliciesResource routes the nested /policies/clusters/{action}.
+func (h *DataPlaneHandler) servePoliciesResource(w http.ResponseWriter, r *http.Request, parts []string) {
+	if parts[3] == subClusters && len(parts) >= minSubResourceSegs {
+		h.servePolicies(w, r, parts[4])
+
+		return
+	}
+
+	dpError(w, http.StatusNotFound, "ENDPOINT_NOT_FOUND", "unknown policies path")
 }
 
 // dpSplit strips the leading "/api/" and returns [ver, resource, action, ...].
