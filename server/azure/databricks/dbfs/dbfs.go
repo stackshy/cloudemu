@@ -509,8 +509,10 @@ func sliceRange(data []byte, offset, length int64) []byte {
 	}
 
 	end := int64(len(data))
-	if length > 0 && offset+length < end {
-		end = offset + length
+	// Guard against int64 overflow: a huge length (e.g. math.MaxInt64) makes
+	// offset+length wrap negative, which would slice with low > high and panic.
+	if want := offset + length; length > 0 && want >= offset && want < end {
+		end = want
 	}
 
 	return data[offset:end]

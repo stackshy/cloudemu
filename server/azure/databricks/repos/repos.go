@@ -41,6 +41,7 @@ type repo struct {
 	provider string
 	path     string
 	branch   string
+	tag      string
 	headSHA  string
 }
 
@@ -126,6 +127,7 @@ type repoView struct {
 	Provider     string `json:"provider"`
 	Path         string `json:"path"`
 	Branch       string `json:"branch"`
+	Tag          string `json:"tag,omitempty"`
 	HeadCommitID string `json:"head_commit_id"`
 }
 
@@ -218,12 +220,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 
+	// branch and tag are mutually exclusive checkout refs: setting one detaches
+	// from the other (a tag checkout clears the branch, and vice versa).
 	if req.Branch != "" {
 		rp.branch = req.Branch
+		rp.tag = ""
 	}
 
 	if req.Tag != "" {
-		rp.branch = req.Tag
+		rp.tag = req.Tag
+		rp.branch = ""
 	}
 
 	out := view(rp)
@@ -282,6 +288,7 @@ func view(rp *repo) repoView {
 		Provider:     rp.provider,
 		Path:         rp.path,
 		Branch:       rp.branch,
+		Tag:          rp.tag,
 		HeadCommitID: rp.headSHA,
 	}
 }
