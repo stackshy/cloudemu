@@ -169,3 +169,40 @@ func TestSDKWarehouseListEmpty(t *testing.T) {
 		t.Fatalf("got %d warehouses, want 0", len(all))
 	}
 }
+
+// TestSDKWarehouseAutoStopZeroAndTags pins issue #223: an explicit
+// auto_stop_mins of 0 (disable auto-stop) must be honored instead of being
+// replaced by the default, and warehouse tags must round-trip.
+func TestSDKWarehouseAutoStopZeroAndTags(t *testing.T) {
+	w := newWarehouseClient(t)
+	ctx := context.Background()
+
+	wait, err := w.Warehouses.Create(ctx, sql.CreateWarehouseRequest{
+		Name:         "wh-zero",
+		ClusterSize:  "Small",
+		AutoStopMins: 0,
+		// ForceSendFields makes the SDK serialize the zero value instead of
+		// omitting it — that's how a caller disables auto-stop on the wire.
+		ForceSendFields: []string{"AutoStopMins"},
+		Tags: &sql.EndpointTags{
+			CustomTags: []sql.EndpointTagPair{{Key: "team", Value: "data"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := w.Warehouses.GetById(ctx, wait.Id)
+	if err != nil {
+		t.Fatalf("GetById: %v", err)
+	}
+
+	if got.AutoStopMins != 0 {
+		t.Fatalf("auto_stop_mins: got %d, want 0 (explicit disable must be honored)", got.AutoStopMins)
+	}
+
+	if got.Tags == nil || len(got.Tags.CustomTags) != 1 ||
+		got.Tags.CustomTags[0].Key != "team" || got.Tags.CustomTags[0].Value != "data" {
+		t.Fatalf("tags: got %+v, want custom_tags [{team data}]", got.Tags)
+	}
+}

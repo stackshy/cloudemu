@@ -27,6 +27,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/databricks/gitcredentials"
 	"github.com/stackshy/cloudemu/server/azure/databricks/hostmeta"
 	"github.com/stackshy/cloudemu/server/azure/databricks/pipelines"
+	"github.com/stackshy/cloudemu/server/azure/databricks/queryhistory"
 	"github.com/stackshy/cloudemu/server/azure/databricks/repos"
 	"github.com/stackshy/cloudemu/server/azure/databricks/scim"
 	"github.com/stackshy/cloudemu/server/azure/databricks/secrets"
@@ -231,6 +232,7 @@ func registerDatabricksDataPlane(srv *server.Server, d *Drivers) {
 	srv.Register(dbfs.New())
 	srv.Register(wsfs.New())
 	srv.Register(sqlwarehouses.New())
+	srv.Register(queryhistory.New())
 	srv.Register(pipelines.New())
 	srv.Register(serving.New())
 	srv.Register(unitycatalog.New())

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -68,6 +69,53 @@ type warehouse struct {
 	CreatorName             string
 	WarehouseType           string
 	SpotInstancePolicy      string
+	Tags                    map[string]string
+}
+
+// endpointTagPair / endpointTags mirror sql.EndpointTagPair / sql.EndpointTags
+// — the wire shape of a warehouse's "tags" object.
+type endpointTagPair struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type endpointTags struct {
+	CustomTags []endpointTagPair `json:"custom_tags"`
+}
+
+func (t *endpointTags) toMap() map[string]string {
+	if t == nil || len(t.CustomTags) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(t.CustomTags))
+	for _, p := range t.CustomTags {
+		out[p.Key] = p.Value
+	}
+
+	return out
+}
+
+// tagsToWire renders a tag map back into the {custom_tags: [{key,value}]} wire
+// shape, with keys sorted so the output is deterministic.
+func tagsToWire(tags map[string]string) *endpointTags {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	pairs := make([]endpointTagPair, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, endpointTagPair{Key: k, Value: tags[k]})
+	}
+
+	return &endpointTags{CustomTags: pairs}
 }
 
 // Handler serves the Databricks SQL Warehouses data-plane REST API.
@@ -164,17 +212,20 @@ func (h *Handler) serveItemAction(w http.ResponseWriter, r *http.Request, id, ac
 }
 
 // createRequest is the subset of CreateWarehouseRequest fields we honor.
+// AutoStopMins is a pointer so an explicit 0 (disable auto-stop) is
+// distinguishable from an omitted field (which gets the default).
 type createRequest struct {
-	Name                    string `json:"name"`
-	ClusterSize             string `json:"cluster_size"`
-	AutoStopMins            int    `json:"auto_stop_mins"`
-	MaxNumClusters          int    `json:"max_num_clusters"`
-	MinNumClusters          int    `json:"min_num_clusters"`
-	EnablePhoton            bool   `json:"enable_photon"`
-	EnableServerlessCompute bool   `json:"enable_serverless_compute"`
-	CreatorName             string `json:"creator_name"`
-	WarehouseType           string `json:"warehouse_type"`
-	SpotInstancePolicy      string `json:"spot_instance_policy"`
+	Name                    string        `json:"name"`
+	ClusterSize             string        `json:"cluster_size"`
+	AutoStopMins            *int          `json:"auto_stop_mins"`
+	MaxNumClusters          int           `json:"max_num_clusters"`
+	MinNumClusters          int           `json:"min_num_clusters"`
+	EnablePhoton            bool          `json:"enable_photon"`
+	EnableServerlessCompute bool          `json:"enable_serverless_compute"`
+	CreatorName             string        `json:"creator_name"`
+	WarehouseType           string        `json:"warehouse_type"`
+	SpotInstancePolicy      string        `json:"spot_instance_policy"`
+	Tags                    *endpointTags `json:"tags"`
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +259,6 @@ func newWarehouse(req *createRequest) *warehouse {
 		Name:                    req.Name,
 		ClusterSize:             req.ClusterSize,
 		State:                   stateRunning,
-		AutoStopMins:            req.AutoStopMins,
 		MaxNumClusters:          req.MaxNumClusters,
 		MinNumClusters:          req.MinNumClusters,
 		EnablePhoton:            req.EnablePhoton,
@@ -216,14 +266,19 @@ func newWarehouse(req *createRequest) *warehouse {
 		CreatorName:             req.CreatorName,
 		WarehouseType:           req.WarehouseType,
 		SpotInstancePolicy:      req.SpotInstancePolicy,
+		Tags:                    req.Tags.toMap(),
 	}
 
 	if wh.ClusterSize == "" {
 		wh.ClusterSize = defaultClusterSize
 	}
 
-	if wh.AutoStopMins == 0 {
+	// A nil AutoStopMins means the field was omitted — apply the default. An
+	// explicit value (including 0, which disables auto-stop) is honored as-is.
+	if req.AutoStopMins == nil {
 		wh.AutoStopMins = defaultAutoStopMins
+	} else {
+		wh.AutoStopMins = *req.AutoStopMins
 	}
 
 	if wh.MaxNumClusters == 0 {
@@ -272,12 +327,14 @@ func (h *Handler) list(w http.ResponseWriter) {
 }
 
 // editRequest is the subset of EditWarehouseRequest fields we honor.
+// AutoStopMins is a pointer for the same explicit-0 reason as createRequest.
 type editRequest struct {
-	Name           string `json:"name"`
-	ClusterSize    string `json:"cluster_size"`
-	AutoStopMins   int    `json:"auto_stop_mins"`
-	MaxNumClusters int    `json:"max_num_clusters"`
-	MinNumClusters int    `json:"min_num_clusters"`
+	Name           string        `json:"name"`
+	ClusterSize    string        `json:"cluster_size"`
+	AutoStopMins   *int          `json:"auto_stop_mins"`
+	MaxNumClusters int           `json:"max_num_clusters"`
+	MinNumClusters int           `json:"min_num_clusters"`
+	Tags           *endpointTags `json:"tags"`
 }
 
 func (h *Handler) edit(w http.ResponseWriter, r *http.Request, id string) {
@@ -312,8 +369,8 @@ func applyEdit(wh *warehouse, req editRequest) {
 		wh.ClusterSize = req.ClusterSize
 	}
 
-	if req.AutoStopMins != 0 {
-		wh.AutoStopMins = req.AutoStopMins
+	if req.AutoStopMins != nil {
+		wh.AutoStopMins = *req.AutoStopMins
 	}
 
 	if req.MaxNumClusters != 0 {
@@ -322,6 +379,10 @@ func applyEdit(wh *warehouse, req editRequest) {
 
 	if req.MinNumClusters != 0 {
 		wh.MinNumClusters = req.MinNumClusters
+	}
+
+	if tags := req.Tags.toMap(); tags != nil {
+		wh.Tags = tags
 	}
 }
 
@@ -375,7 +436,7 @@ func (h *Handler) transition(w http.ResponseWriter, id, state string) {
 // toResponse renders a warehouse as the GetWarehouseResponse / EndpointInfo JSON
 // shape shared by Get and List.
 func toResponse(wh *warehouse) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"id":                        wh.ID,
 		"name":                      wh.Name,
 		"cluster_size":              wh.ClusterSize,
@@ -390,6 +451,12 @@ func toResponse(wh *warehouse) map[string]any {
 		"warehouse_type":            wh.WarehouseType,
 		"spot_instance_policy":      wh.SpotInstancePolicy,
 	}
+
+	if tags := tagsToWire(wh.Tags); tags != nil {
+		out["tags"] = tags
+	}
+
+	return out
 }
 
 // splitPath strips the leading/trailing "/" and returns the path segments.
