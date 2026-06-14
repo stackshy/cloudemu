@@ -89,6 +89,21 @@ func defaultRates() map[string]float64 {
 		"sagemaker:InvokeEndpoint":                0.0,    // bundled into hosting hours
 		"sagemaker:CreateNotebookInstance":        0.0464, // ml.t3.medium-equivalent instance-hour
 		"sagemaker:CreateModel":                   0.0,
+
+		// Vertex AI (training/pipelines per node-hour, online prediction and
+		// generateContent per request/call, registry resources free)
+		"vertexai:CreateCustomJob":               0.19, // n1-standard-4-equivalent node-hour
+		"vertexai:CreateHyperparameterTuningJob": 0.19,
+		"vertexai:CreateTrainingPipeline":        0.19,
+		"vertexai:CreatePipelineJob":             0.03, // pipeline run execution
+		"vertexai:CreateBatchPredictionJob":      0.19,
+		"vertexai:CreateTuningJob":               0.19,
+		"vertexai:DeployModel":                   0.19,     // online prediction node-hour
+		"vertexai:Predict":                       0.0,      // bundled into deployed node-hours
+		"vertexai:GenerateContent":               0.000125, // per 1K input chars-equivalent call
+		"vertexai:AssignNotebookRuntime":         0.15,     // managed notebook node-hour
+		"vertexai:CreateModel":                   0.0,
+		"vertexai:CreateEndpoint":                0.0,
 	}
 }
 
