@@ -268,6 +268,8 @@ func portableToAzureType(service, typ string) string {
 		return "microsoft.documentdb/databaseaccounts"
 	case "serverless/Function":
 		return "microsoft.web/sites"
+	case "databricks/Workspace":
+		return "microsoft.databricks/workspaces"
 	default:
 		return strings.ToLower(service + "/" + typ)
 	}

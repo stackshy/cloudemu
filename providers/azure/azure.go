@@ -103,6 +103,7 @@ func New(opts ...config.Option) *Provider {
 			Storage:    p.BlobStorage,
 			Database:   p.CosmosDB,
 			Serverless: p.Functions,
+			Databricks: p.Databricks,
 		},
 	)
 
