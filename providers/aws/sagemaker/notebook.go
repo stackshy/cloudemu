@@ -66,11 +66,11 @@ func (m *Mock) ListNotebookInstances(_ context.Context) ([]driver.NotebookInstan
 	return out, nil
 }
 
-// StartNotebookInstance moves a Stopped/Failed instance to InService. Starting
-// an instance that is not stopped is rejected, matching real SageMaker.
+// StartNotebookInstance moves a Stopped instance to InService. Starting an
+// instance that is not stopped is rejected, matching real SageMaker.
 func (m *Mock) StartNotebookInstance(_ context.Context, name string) error {
 	return m.transitionNotebook(name, driver.NotebookInService,
-		map[string]bool{driver.NotebookStopped: true, driver.NotebookFailed: true})
+		map[string]bool{driver.NotebookStopped: true})
 }
 
 // StopNotebookInstance moves an InService instance to Stopped. Stopping an
