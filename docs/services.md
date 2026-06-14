@@ -25,6 +25,7 @@ This document lists every service and operation available in CloudEmu across all
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
 | 18 | Kubernetes | `eks` + shared `kubernetes/` | `aks` + shared `kubernetes/` | `gke` + shared `kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
+| 20 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | _(planned: Azure ML / AI Foundry)_ | _(planned: Vertex AI)_ |
 
 ---
 
@@ -1149,6 +1150,38 @@ Operations: **Engine 8** + **AWS Resource Explorer 1** + **AWS Resource Groups T
 
 ---
 
+## 20. Machine Learning
+
+**Driver interface:** `sagemaker/driver/driver.go` (control plane + `Runtime`)
+**AWS:** SageMaker AI (+ sagemaker-runtime) | **Azure:** _planned_ | **GCP:** _planned_
+
+AWS-only today. The control plane speaks awsJson1_1 (`X-Amz-Target: SageMaker.*`); the
+runtime speaks restJson1 (`POST /endpoints/{name}/invocations`). Asynchronous jobs
+complete synchronously to a terminal state so Describe/List are deterministic. Auto-metrics
+are pushed to CloudWatch via `SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| Jobs | Training, Processing, Transform, HyperParameterTuning, AutoML (V2), Labeling, Compilation — each Create/Describe/List/Stop |
+| Inference | Model, EndpointConfig, Endpoint (+ UpdateEndpoint, UpdateEndpointWeightsAndCapacities), InferenceComponent |
+| Runtime | InvokeEndpoint, InvokeEndpointAsync (sagemaker-runtime) |
+| Model Registry | ModelPackageGroup, ModelPackage (versioned, approval status) |
+| Studio | Domain, UserProfile, Space, App |
+| Notebooks | NotebookInstance (+ Start/Stop), NotebookInstanceLifecycleConfig, CodeRepository |
+| Clusters | HyperPod Cluster (+ ListClusterNodes / DescribeClusterNode) |
+| Feature Store | FeatureGroup + online-store runtime (PutRecord / GetRecord / DeleteRecord) |
+| Pipelines | Pipeline (+ executions), Experiment, Trial |
+| Tagging | AddTags / ListTags / DeleteTags |
+
+SDK-compat HTTP coverage (real `aws-sdk-go-v2/service/sagemaker` + `sagemakerruntime`
+round-tripped): Model, EndpointConfig, Endpoint, TrainingJob, InvokeEndpoint, tagging. The
+remaining families are served by the Go API/driver; their SDK-compat handlers follow the
+same wire pattern and are the next increment.
+
+**Total: 121 operations** (Go API/driver)
+
+---
+
 ## Summary
 
 | Service | Operations |
@@ -1175,4 +1208,5 @@ Operations: **Engine 8** + **AWS Resource Explorer 1** + **AWS Resource Groups T
 | Kubernetes — GCP GKE (control plane) | 26 |
 | Kubernetes — data plane (8 resources × 7 verbs incl. Watch) | 56 |
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
-| **Grand Total** | **498** |
+| Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
+| **Grand Total** | **619** |
