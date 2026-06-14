@@ -119,7 +119,7 @@ func (h *Handler) runGenAI(w http.ResponseWriter, r *http.Request, model, action
 	}
 
 	switch action {
-	case "generateContent", actionStreamGenerateContent:
+	case "generateContent":
 		resp, err := h.svc.GenerateContent(r.Context(), model, toDriverRequest(req))
 		if err != nil {
 			writeCErr(w, err)
@@ -128,6 +128,18 @@ func (h *Handler) runGenAI(w http.ResponseWriter, r *http.Request, model, action
 		}
 
 		writeJSON(w, generateResponseJSON(resp))
+	case actionStreamGenerateContent:
+		resp, err := h.svc.GenerateContent(r.Context(), model, toDriverRequest(req))
+		if err != nil {
+			writeCErr(w, err)
+
+			return
+		}
+
+		// streamGenerateContent returns a JSON array of response chunks; emit a
+		// single-element array so SDK stream decoders iterate it correctly
+		// (a lone object fails array-decoding / yields zero chunks).
+		writeJSON(w, []map[string]any{generateResponseJSON(resp)})
 	case "countTokens":
 		resp, err := h.svc.CountTokens(r.Context(), model, toDriverRequest(req))
 		if err != nil {

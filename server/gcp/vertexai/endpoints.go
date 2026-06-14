@@ -1,6 +1,7 @@
 package vertexai
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 
@@ -248,7 +249,13 @@ func (h *Handler) rawPredict(w http.ResponseWriter, r *http.Request, endpoint st
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(out)
+	// Re-encode the echoed payload through json rather than writing the
+	// request-derived bytes verbatim: it keeps the response valid JSON and
+	// breaks the request→response taint flow (gosec G705) at the source.
+	var payload any
+	if jerr := json.Unmarshal(out, &payload); jerr != nil {
+		payload = map[string]any{"raw": string(out)}
+	}
+
+	writeJSON(w, payload)
 }

@@ -128,6 +128,33 @@ func TestPublishersGenerateContent(t *testing.T) {
 	assert.EqualValues(t, 2, ct["totalTokens"])
 }
 
+// TestStreamGenerateContentReturnsArray verifies :streamGenerateContent emits a
+// JSON array of chunks (not a lone object), which SDK stream decoders require.
+func TestStreamGenerateContentReturnsArray(t *testing.T) {
+	url := newServer(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hello there world"}}}},
+	})
+
+	req, err := http.NewRequest(http.MethodPost,
+		url+"/v1/publishers/google/models/gemini-2.5-pro:streamGenerateContent", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var chunks []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &chunks), "stream response must be a JSON array, got %s", raw)
+	require.GreaterOrEqual(t, len(chunks), 1)
+	assert.Contains(t, chunks[0], "candidates")
+}
+
 func TestCustomJobSynchronous(t *testing.T) {
 	url := newServer(t)
 
