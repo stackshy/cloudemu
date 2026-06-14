@@ -24,7 +24,7 @@ cloudemu emulates AWS, Azure, and GCP cloud services entirely in memory, so you 
 
 It ships two surfaces you can mix and match:
 
-- **SDK-compat HTTP server** — point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, or `cloud.google.com/go` clients at a local endpoint and they just work. No code changes in your app.
+- **SDK-compat HTTP server** — point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, `cloud.google.com/go`, or `databricks-sdk-go` clients at a local endpoint and they just work. No code changes in your app.
 - **Go API** — typed in-memory mocks (`aws.S3`, `azure.VirtualMachines`, `gcp.GCE`, …) for tests written against cloudemu directly.
 
 ## Install
@@ -70,6 +70,8 @@ client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory bac
 
 Equivalent setups for Azure (`azureserver.New`) and GCP (`gcpserver.New`) are in [docs/sdk-server.md](docs/sdk-server.md).
 
+The snippet above is a quick taste. To adopt cloudemu in a real app, don't write a demo — wire it into your existing client and tests so your real code runs against it. See [docs/integration.md](docs/integration.md).
+
 ## Or use the Go API directly
 
 ```go
@@ -104,6 +106,8 @@ SDK-compat coverage across AWS, Azure, and GCP:
 | Networking | VPC (under EC2) | Virtual Network | VPC + Subnets + Firewalls + Routes |
 | Monitoring | CloudWatch | Azure Monitor | Cloud Monitoring |
 | Resource Discovery | Resource Explorer + Resource Groups Tagging API | Resource Graph | Cloud Asset Inventory |
+| Generative AI | Bedrock (control plane + bedrock-runtime InvokeModel/Converse) | — | — |
+| Databricks | — | Databricks (ARM workspace + workspace data plane) | — |
 
 The Kubernetes story is two layers, both shipped:
 

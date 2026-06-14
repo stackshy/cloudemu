@@ -25,6 +25,8 @@ This document lists every service and operation available in CloudEmu across all
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
 | 18 | Kubernetes | `eks` + shared `kubernetes/` | `aks` + shared `kubernetes/` | `gke` + shared `kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
+| 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
+| 21 | Databricks | — | `databricks` | — |
 
 ---
 
@@ -1149,6 +1151,177 @@ Operations: **Engine 8** + **AWS Resource Explorer 1** + **AWS Resource Groups T
 
 ---
 
+## 20. Generative AI
+
+**Driver interface:** `bedrock/driver/driver.go`
+**AWS:** `bedrock` (+ `bedrock-runtime`) | **Azure:** — | **GCP:** —
+
+AWS-only. Backs the real `aws-sdk-go-v2/service/bedrock` and `.../bedrockruntime` clients against the in-memory backend.
+
+### Foundation Model Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `ListFoundationModels` | `(ctx) ([]FoundationModel, error)` |
+| `GetFoundationModel` | `(ctx, modelID) (*FoundationModel, error)` |
+
+### Model Customization Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateModelCustomizationJob` | `(ctx, CustomizationJobConfig) (*CustomizationJob, error)` |
+| `GetModelCustomizationJob` | `(ctx, jobIdentifier) (*CustomizationJob, error)` |
+| `ListModelCustomizationJobs` | `(ctx) ([]CustomizationJob, error)` |
+
+### Custom Model Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `ListCustomModels` | `(ctx) ([]CustomModel, error)` |
+| `GetCustomModel` | `(ctx, modelIdentifier) (*CustomModel, error)` |
+| `DeleteCustomModel` | `(ctx, modelIdentifier) error` |
+
+### Runtime Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `InvokeModel` | `(ctx, InvokeModelInput) (*InvokeModelResult, error)` |
+| `Converse` | `(ctx, ConverseInput) (*ConverseOutput, error)` |
+
+### Guardrail Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateGuardrail` | `(ctx, GuardrailConfig) (*Guardrail, error)` |
+| `GetGuardrail` | `(ctx, identifier, version) (*Guardrail, error)` |
+| `ListGuardrails` | `(ctx) ([]Guardrail, error)` |
+| `UpdateGuardrail` | `(ctx, identifier, GuardrailConfig) (*Guardrail, error)` |
+| `DeleteGuardrail` | `(ctx, identifier) error` |
+
+### Provisioned Throughput Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateProvisionedModelThroughput` | `(ctx, ProvisionedThroughputConfig) (*ProvisionedThroughput, error)` |
+| `GetProvisionedModelThroughput` | `(ctx, identifier) (*ProvisionedThroughput, error)` |
+| `ListProvisionedModelThroughputs` | `(ctx) ([]ProvisionedThroughput, error)` |
+| `DeleteProvisionedModelThroughput` | `(ctx, identifier) error` |
+
+### Invocation Logging Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `PutModelInvocationLoggingConfiguration` | `(ctx, LoggingConfig) error` |
+| `GetModelInvocationLoggingConfiguration` | `(ctx) (*LoggingConfig, error)` |
+| `DeleteModelInvocationLoggingConfiguration` | `(ctx) error` |
+
+**Total: 22 operations**
+
+---
+
+## 21. Databricks
+
+**Driver interfaces:** `databricks/driver/driver.go` (control plane), `databricks/driver/dataplane.go` (data plane)
+**AWS:** — | **Azure:** `databricks` | **GCP:** —
+
+Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane backs the real `databricks-sdk-go` WorkspaceClient. The SDK-compat-only workspace families (secrets, tokens, git credentials, repos, DBFS, workspace files, SQL warehouses, pipelines, serving endpoints, SCIM identity, Unity Catalog) have no portable Go API — see [sdk-server.md](sdk-server.md).
+
+### Workspace Operations (control plane)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateWorkspace` | `(ctx, WorkspaceConfig) (*Workspace, error)` |
+| `GetWorkspace` | `(ctx, resourceGroup, name) (*Workspace, error)` |
+| `DeleteWorkspace` | `(ctx, resourceGroup, name) error` |
+| `UpdateWorkspaceTags` | `(ctx, resourceGroup, name, tags) (*Workspace, error)` |
+| `ListWorkspacesByResourceGroup` | `(ctx, resourceGroup) ([]Workspace, error)` |
+| `ListWorkspaces` | `(ctx) ([]Workspace, error)` |
+
+### Instance Pool Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateInstancePool` | `(ctx, InstancePoolConfig) (*InstancePool, error)` |
+| `GetInstancePool` | `(ctx, id) (*InstancePool, error)` |
+| `ListInstancePools` | `(ctx) ([]InstancePool, error)` |
+| `EditInstancePool` | `(ctx, id, InstancePoolConfig) error` |
+| `DeleteInstancePool` | `(ctx, id) error` |
+
+### Cluster Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateCluster` | `(ctx, ClusterConfig) (*Cluster, error)` |
+| `GetCluster` | `(ctx, id) (*Cluster, error)` |
+| `ListClusters` | `(ctx) ([]Cluster, error)` |
+| `EditCluster` | `(ctx, id, ClusterConfig) error` |
+| `DeleteCluster` | `(ctx, id) error` |
+| `PermanentDeleteCluster` | `(ctx, id) error` |
+| `StartCluster` | `(ctx, id) error` |
+| `RestartCluster` | `(ctx, id) error` |
+| `ResizeCluster` | `(ctx, id, numWorkers, autoscaleMin, autoscaleMax) error` |
+| `PinCluster` | `(ctx, id) error` |
+| `UnpinCluster` | `(ctx, id) error` |
+| `ListNodeTypes` | `(ctx) ([]NodeType, error)` |
+| `ListSparkVersions` | `(ctx) ([]SparkVersion, error)` |
+| `ListZones` | `(ctx) (zones, defaultZone, error)` |
+
+### Job Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateJob` | `(ctx, JobConfig) (int64, error)` |
+| `GetJob` | `(ctx, id) (*Job, error)` |
+| `ListJobs` | `(ctx) ([]Job, error)` |
+| `UpdateJob` | `(ctx, id, JobConfig) error` |
+| `ResetJob` | `(ctx, id, JobConfig) error` |
+| `DeleteJob` | `(ctx, id) error` |
+| `RunJobNow` | `(ctx, id) (int64, error)` |
+
+### Run Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `SubmitRun` | `(ctx, runName) (int64, error)` |
+| `GetRun` | `(ctx, runID) (*Run, error)` |
+| `ListRuns` | `(ctx, jobID) ([]Run, error)` |
+| `CancelRun` | `(ctx, runID) error` |
+| `CancelAllRuns` | `(ctx, jobID) error` |
+| `DeleteRun` | `(ctx, runID) error` |
+| `RepairRun` | `(ctx, runID) (int64, error)` |
+| `GetRunOutput` | `(ctx, runID) (*RunOutput, error)` |
+
+### Cluster Policy Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateClusterPolicy` | `(ctx, ClusterPolicyConfig) (*ClusterPolicy, error)` |
+| `GetClusterPolicy` | `(ctx, policyID) (*ClusterPolicy, error)` |
+| `EditClusterPolicy` | `(ctx, policyID, ClusterPolicyConfig) error` |
+| `DeleteClusterPolicy` | `(ctx, policyID) error` |
+| `ListClusterPolicies` | `(ctx) ([]ClusterPolicy, error)` |
+
+### Library Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `InstallLibraries` | `(ctx, clusterID, []LibrarySpec) error` |
+| `UninstallLibraries` | `(ctx, clusterID, []LibrarySpec) error` |
+| `ClusterLibraryStatuses` | `(ctx, clusterID) ([]LibraryStatus, error)` |
+| `AllClusterLibraryStatuses` | `(ctx) ([]ClusterLibraryStatuses, error)` |
+
+### Permission Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `GetPermissions` | `(ctx, objectType, objectID) (*ObjectPermissions, error)` |
+| `SetPermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
+| `UpdatePermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
+
+**Total: 52 operations**
+
+---
+
 ## Summary
 
 | Service | Operations |
@@ -1175,4 +1348,6 @@ Operations: **Engine 8** + **AWS Resource Explorer 1** + **AWS Resource Groups T
 | Kubernetes — GCP GKE (control plane) | 26 |
 | Kubernetes — data plane (8 resources × 7 verbs incl. Watch) | 56 |
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
-| **Grand Total** | **498** |
+| Generative AI — AWS Bedrock | 22 |
+| Databricks — Azure (control + data plane) | 52 |
+| **Grand Total** | **572** |
