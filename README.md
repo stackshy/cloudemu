@@ -70,6 +70,8 @@ client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory bac
 
 Equivalent setups for Azure (`azureserver.New`) and GCP (`gcpserver.New`) are in [docs/sdk-server.md](docs/sdk-server.md).
 
+The snippet above is a quick taste. To adopt cloudemu in a real app, don't write a demo — wire it into your existing client and tests so your real code runs against it. See [docs/integration.md](docs/integration.md).
+
 ## Or use the Go API directly
 
 ```go
