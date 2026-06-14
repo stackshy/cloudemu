@@ -23,6 +23,13 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/databricks"
+	"github.com/stackshy/cloudemu/server/azure/databricks/dbfs"
+	"github.com/stackshy/cloudemu/server/azure/databricks/gitcredentials"
+	"github.com/stackshy/cloudemu/server/azure/databricks/repos"
+	"github.com/stackshy/cloudemu/server/azure/databricks/secrets"
+	"github.com/stackshy/cloudemu/server/azure/databricks/sqlwarehouses"
+	"github.com/stackshy/cloudemu/server/azure/databricks/token"
+	"github.com/stackshy/cloudemu/server/azure/databricks/wsfs"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/functions"
 	"github.com/stackshy/cloudemu/server/azure/iam"
@@ -165,9 +172,18 @@ func New(d Drivers) *server.Server {
 
 	// Databricks data plane matches /api/2.x/{clusters,instance-pools,jobs,
 	// permissions} — disjoint from ARM paths. Registered before the blob
-	// fallback so its REST URLs aren't swallowed.
+	// fallback so its REST URLs aren't swallowed. The additional /api/2.0
+	// handlers (secrets, tokens, git credentials, repos, DBFS, workspace, SQL
+	// warehouses) self-contain their state and claim disjoint path prefixes.
 	if d.DatabricksDataPlane != nil {
 		srv.Register(databricks.NewDataPlane(d.DatabricksDataPlane))
+		srv.Register(secrets.New())
+		srv.Register(token.New())
+		srv.Register(gitcredentials.New())
+		srv.Register(repos.New())
+		srv.Register(dbfs.New())
+		srv.Register(wsfs.New())
+		srv.Register(sqlwarehouses.New())
 	}
 
 	if d.VirtualMachines != nil {
