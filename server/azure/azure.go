@@ -8,6 +8,7 @@ package azure
 
 import (
 	azureaidriver "github.com/stackshy/cloudemu/azureai/driver"
+	azuresearchdriver "github.com/stackshy/cloudemu/azuresearch/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
@@ -21,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/server"
 	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
 	azureaiserver "github.com/stackshy/cloudemu/server/azure/azureai"
+	azuresearchserver "github.com/stackshy/cloudemu/server/azure/azuresearch"
 	"github.com/stackshy/cloudemu/server/azure/azuresql"
 	"github.com/stackshy/cloudemu/server/azure/blob"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
@@ -85,6 +87,8 @@ type Drivers struct {
 	CognitiveServices   azureaidriver.CognitiveServices
 	MachineLearning     azureaidriver.MachineLearning
 	AzureAIDataPlane    azureaidriver.DataPlane
+	SearchControl       azuresearchdriver.SearchControl
+	SearchDataPlane     azuresearchdriver.SearchDataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -201,6 +205,16 @@ func New(d Drivers) *server.Server {
 	// prefix, so registration order is unconstrained.
 	if d.AzureAIDataPlane != nil {
 		srv.Register(azureaiserver.NewDataPlane(d.AzureAIDataPlane))
+	}
+
+	// Azure AI Search — ARM control plane on Microsoft.Search, plus the
+	// host/path-routed search data plane (/indexes, /indexers, …).
+	if d.SearchControl != nil {
+		srv.Register(azuresearchserver.NewControl(d.SearchControl))
+	}
+
+	if d.SearchDataPlane != nil {
+		srv.Register(azuresearchserver.NewDataPlane(d.SearchDataPlane))
 	}
 
 	if d.VirtualMachines != nil {
