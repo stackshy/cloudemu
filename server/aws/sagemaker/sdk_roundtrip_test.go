@@ -181,3 +181,26 @@ func TestSDKDescribeMissingTrainingJob(t *testing.T) {
 	var rnf *smtypes.ResourceNotFound
 	assert.True(t, errors.As(err, &rnf), "expected ResourceNotFound, got %T", err)
 }
+
+// TestSDKValidationErrorIsGeneric locks in that an InvalidArgument →
+// ValidationException surfaces as a (non-modeled) error: CreateEndpoint against
+// a missing config returns an error that is NOT one of SageMaker's modeled
+// typed exceptions, matching real SageMaker where ValidationException is a
+// cross-service generic error.
+func TestSDKValidationErrorIsGeneric(t *testing.T) {
+	url := newServer(t)
+	client := awssm.NewFromConfig(newCfg(t), func(o *awssm.Options) { o.BaseEndpoint = aws.String(url) })
+
+	_, err := client.CreateEndpoint(context.Background(), &awssm.CreateEndpointInput{
+		EndpointName:       aws.String("ep"),
+		EndpointConfigName: aws.String("does-not-exist"),
+	})
+	require.Error(t, err)
+
+	var (
+		rnf   *smtypes.ResourceNotFound
+		inUse *smtypes.ResourceInUse
+	)
+	assert.False(t, errors.As(err, &rnf), "ValidationException must not match a modeled typed error")
+	assert.False(t, errors.As(err, &inUse), "ValidationException must not match a modeled typed error")
+}
