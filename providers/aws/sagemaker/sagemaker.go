@@ -163,14 +163,21 @@ func copyVariants(in []driver.ProductionVariant) []driver.ProductionVariant {
 	return out
 }
 
-// copyContainers returns a deep copy of a container-definition slice.
+// copyContainers returns a deep copy of a container-definition slice,
+// including each container's Environment map — a plain slice copy would leave
+// the maps aliased, so mutating a returned container's Environment would still
+// corrupt the stored model.
 func copyContainers(in []driver.ContainerDefinition) []driver.ContainerDefinition {
 	if in == nil {
 		return nil
 	}
 
 	out := make([]driver.ContainerDefinition, len(in))
-	copy(out, in)
+
+	for i, c := range in {
+		c.Environment = copyStrMap(c.Environment)
+		out[i] = c
+	}
 
 	return out
 }
