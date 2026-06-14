@@ -28,6 +28,7 @@ This document lists every service and operation available in CloudEmu across all
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
+| 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
 
 ---
 
@@ -1420,6 +1421,36 @@ integrate Azure AI with the cross-cutting layers like every other service.
 
 ---
 
+## 23. AI Search
+
+**Driver interface:** `azuresearch/driver/` — `Microsoft.Search/searchServices` (ARM control
+plane) plus the `{service}.search.windows.net` data plane.
+**Azure:** Azure AI Search (the RAG / retrieval backbone). **AWS / GCP:** _not applicable_.
+
+ARM PUT returns the resource inline with a terminal `provisioningState`; the data plane is
+host/path-routed (service name from the `{service}.search.windows.net` subdomain). Auto-metrics
+push to Azure Monitor via `SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| Services (control) | searchServices CRUD, list by RG/sub, update; listAdminKeys, regenerateAdminKey, listQueryKeys, createQueryKey, deleteQueryKey |
+| Private networking | sharedPrivateLinkResources CRUD+list, privateEndpointConnections CRUD+list |
+| Indexes | create-or-update, get, list, delete |
+| Documents | index (upload/merge/mergeOrUpload/delete), search (+count), suggest, autocomplete, count, get-by-key |
+| Indexers | create-or-update, get, list, delete, run, reset, status |
+| Data sources | create-or-update, get, list, delete |
+| Skillsets | create-or-update, get, list, delete |
+| Synonym maps | create-or-update, get, list, delete |
+| Aliases | create-or-update, get, list, delete |
+| Service statistics | counts + storage usage |
+
+Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
+Layer-1 wrapper (`azuresearch/azuresearch.go`), chaos injection (`chaos.WrapAzureSearch`), and
+cost rates integrate Azure AI Search with the cross-cutting layers like every other service.
+**Total: 53 operations** (Go API/driver) — 19 control plane + 34 data plane.
+
+---
+
 ## Summary
 
 | Service | Operations |
@@ -1451,4 +1482,5 @@ integrate Azure AI with the cross-cutting layers like every other service.
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
-| **Grand Total** | **913** |
+| AI Search — Azure AI Search (control + data plane) | 53 |
+| **Grand Total** | **966** |
