@@ -200,6 +200,14 @@ func applyType(out *parsedKQL, azureType string) {
 	out.typeSet = true
 
 	svc, typ := mapAzureType(strings.ToLower(azureType))
+	if svc == "" && typ == "" {
+		// Unmapped type — match none, not all. Without this the empty Query
+		// would fall through to "no filter" and return the whole inventory.
+		out.ForceEmpty = true
+
+		return
+	}
+
 	if svc != "" {
 		out.Query.Services = []string{svc}
 	}
@@ -230,6 +238,13 @@ func applyTypeList(out *parsedKQL, azureTypes []string) {
 		if typ != "" {
 			out.Query.Types = appendUnique(out.Query.Types, typ)
 		}
+	}
+
+	// An empty list, or one containing only types cloudemu doesn't model,
+	// resolves to no filter terms. Match none rather than letting the empty
+	// Query fall through to "no filter" and return the whole inventory.
+	if len(out.Query.Services) == 0 && len(out.Query.Types) == 0 {
+		out.ForceEmpty = true
 	}
 }
 

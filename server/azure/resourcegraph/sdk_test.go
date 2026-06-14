@@ -225,6 +225,22 @@ func TestSDKResourceGraph_DatabricksIndexing(t *testing.T) {
 		data := out.Data.([]any)
 		assert.Len(t, data, 2)
 	})
+
+	t.Run("type in~ with an unmodeled type matches none, not all", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type in~ ('microsoft.keyvault/vaults')"),
+		}, nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, *out.TotalRecords, "an unmapped type must not widen to the whole inventory")
+	})
+
+	t.Run("type == an unmodeled type matches none, not all", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type == 'microsoft.keyvault/vaults'"),
+		}, nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, *out.TotalRecords)
+	})
 }
 
 func rowsHaveType(data []any, want string) bool {
