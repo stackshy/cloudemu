@@ -27,7 +27,7 @@ This document lists every service and operation available in CloudEmu across all
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
-| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | _(planned: Vertex AI)_ |
+| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
 
 ---
 
@@ -1325,13 +1325,14 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 
 ## 22. Machine Learning
 
-**Driver interface:** `sagemaker/driver/driver.go` (control plane + `Runtime`)
-**AWS:** SageMaker AI (+ sagemaker-runtime) | **Azure:** _planned_ | **GCP:** _planned_
+### AWS — SageMaker AI
 
-AWS-only today. The control plane speaks awsJson1_1 (`X-Amz-Target: SageMaker.*`); the
-runtime speaks restJson1 (`POST /endpoints/{name}/invocations`). Asynchronous jobs
-complete synchronously to a terminal state so Describe/List are deterministic. Auto-metrics
-are pushed to CloudWatch via `SetMonitoring`.
+**Driver interface:** `sagemaker/driver/driver.go` (control plane + `Runtime`)
+
+The control plane speaks awsJson1_1 (`X-Amz-Target: SageMaker.*`); the runtime speaks
+restJson1 (`POST /endpoints/{name}/invocations`). Asynchronous jobs complete synchronously
+to a terminal state so Describe/List are deterministic. Auto-metrics → CloudWatch via
+`SetMonitoring`.
 
 | Family | Resources / Operations |
 |--------|------------------------|
@@ -1346,14 +1347,40 @@ are pushed to CloudWatch via `SetMonitoring`.
 | Pipelines | Pipeline (+ executions), Experiment, Trial |
 | Tagging | AddTags / ListTags / DeleteTags |
 
-SDK-compat HTTP coverage spans every family above and is round-tripped against the real
-`aws-sdk-go-v2/service/sagemaker`, `sagemakerruntime`, and `sagemakerfeaturestoreruntime`
-clients: all job kinds, the model/endpoint/inference-component stack + InvokeEndpoint, model
-registry, Studio, notebook instances, HyperPod clusters (+ nodes), Feature Store control
-plane + online-store runtime (PutRecord/GetRecord/DeleteRecord), pipelines/experiments/
-trials, and tagging.
+SDK-compat HTTP coverage spans every family above, round-tripped against the real
+`aws-sdk-go-v2/service/sagemaker`, `sagemakerruntime` and `sagemakerfeaturestoreruntime`
+clients. **Total: 121 operations.**
 
-**Total: 121 operations** (Go API/driver), all exposed over the SDK-compat HTTP server.
+### GCP — Vertex AI
+
+**Driver interface:** `vertexai/driver/` — `aiplatform.googleapis.com`
+
+REST rooted at `/v1/projects/{p}/locations/{l}/...` with the Model Garden `generateContent`
+surface at `/v1/publishers/...`. Control-plane mutations return done
+`google.longrunning.Operation`s; job-family creates are synchronous (poll the `state`
+field). Auto-metrics → Cloud Monitoring via `SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| Datasets | Create/Get/List/Patch/Delete (+ImportData/ExportData) |
+| Model registry | UploadModel, Get/List/Patch/Delete, versions, evaluations |
+| Endpoints | Create/Get/List/Delete, DeployModel/UndeployModel, Predict/RawPredict |
+| Generative AI | generateContent, countTokens (publishers.models + endpoints), tuning jobs, cached contents |
+| Jobs | CustomJob, BatchPredictionJob, HyperparameterTuningJob (synchronous create + cancel) |
+| Pipelines | TrainingPipeline, PipelineJob |
+| Feature Store | Featurestore (+ EntityType + online read/write), FeatureGroup, Feature, FeatureOnlineStore, FeatureView |
+| Vector Search | Index (+upsert/remove datapoints), IndexEndpoint (+deploy/undeploy/findNeighbors) |
+| ML Metadata | MetadataStore, Tensorboard, Schedule, NotebookRuntimeTemplate, NotebookRuntime |
+
+The full Go API/driver, in-memory provider, and SDK-compat HTTP server (REST round-tripped)
+cover every family above — models (+versions/evaluations), endpoints (+predict), datasets,
+custom/batch-prediction/hyperparameter-tuning jobs, training & pipeline jobs, tuning jobs,
+cached contents, Feature Store (featurestores/entityTypes/features + online read/write),
+Feature Registry & online stores, Vector Search (indexes + index endpoints), ML metadata,
+tensorboards, schedules, notebook runtimes, and `generateContent`/`countTokens`. A portable
+Layer-1 wrapper (`vertexai/vertexai.go`), chaos injection (`chaos.WrapVertexAI`), and cost
+rates integrate Vertex with the cross-cutting layers like every other service.
+**Total: 128 operations** (Go API/driver).
 
 ### Azure — Azure AI
 
@@ -1423,4 +1450,5 @@ integrate Azure AI with the cross-cutting layers like every other service.
 | Databricks — Azure (control + data plane) | 52 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
-| **Grand Total** | **785** |
+| Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
+| **Grand Total** | **913** |
