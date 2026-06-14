@@ -27,7 +27,7 @@ This document lists every service and operation available in CloudEmu across all
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
-| 22 | Machine Learning | _(planned: SageMaker)_ | _(planned: Azure ML / AI Foundry)_ | `vertexai` |
+| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | _(planned: Azure ML / AI Foundry)_ | `vertexai` |
 
 ---
 
@@ -1325,12 +1325,40 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 
 ## 22. Machine Learning
 
-**Driver interface:** `vertexai/driver/` | **AWS:** _planned (SageMaker)_ | **Azure:** _planned (Azure ML / AI Foundry)_ | **GCP:** GCP Vertex AI (`aiplatform.googleapis.com`)
+### AWS — SageMaker AI
 
-GCP-first. The REST surface is rooted at `/v1/projects/{p}/locations/{l}/...` with the
-Model Garden `generateContent` surface at `/v1/publishers/...`. Control-plane mutations
-return done `google.longrunning.Operation`s; job-family creates are synchronous (poll the
-`state` field). Auto-metrics are pushed to Cloud Monitoring via `SetMonitoring`.
+**Driver interface:** `sagemaker/driver/driver.go` (control plane + `Runtime`)
+
+The control plane speaks awsJson1_1 (`X-Amz-Target: SageMaker.*`); the runtime speaks
+restJson1 (`POST /endpoints/{name}/invocations`). Asynchronous jobs complete synchronously
+to a terminal state so Describe/List are deterministic. Auto-metrics → CloudWatch via
+`SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| Jobs | Training, Processing, Transform, HyperParameterTuning, AutoML (V2), Labeling, Compilation — each Create/Describe/List/Stop |
+| Inference | Model, EndpointConfig, Endpoint (+ UpdateEndpoint, UpdateEndpointWeightsAndCapacities), InferenceComponent |
+| Runtime | InvokeEndpoint, InvokeEndpointAsync (sagemaker-runtime) |
+| Model Registry | ModelPackageGroup, ModelPackage (versioned, approval status) |
+| Studio | Domain, UserProfile, Space, App |
+| Notebooks | NotebookInstance (+ Start/Stop), NotebookInstanceLifecycleConfig, CodeRepository |
+| Clusters | HyperPod Cluster (+ ListClusterNodes / DescribeClusterNode) |
+| Feature Store | FeatureGroup + online-store runtime (PutRecord / GetRecord / DeleteRecord) |
+| Pipelines | Pipeline (+ executions), Experiment, Trial |
+| Tagging | AddTags / ListTags / DeleteTags |
+
+SDK-compat HTTP coverage spans every family above, round-tripped against the real
+`aws-sdk-go-v2/service/sagemaker`, `sagemakerruntime` and `sagemakerfeaturestoreruntime`
+clients. **Total: 121 operations.**
+
+### GCP — Vertex AI
+
+**Driver interface:** `vertexai/driver/` — `aiplatform.googleapis.com`
+
+REST rooted at `/v1/projects/{p}/locations/{l}/...` with the Model Garden `generateContent`
+surface at `/v1/publishers/...`. Control-plane mutations return done
+`google.longrunning.Operation`s; job-family creates are synchronous (poll the `state`
+field). Auto-metrics → Cloud Monitoring via `SetMonitoring`.
 
 | Family | Resources / Operations |
 |--------|------------------------|
@@ -1340,17 +1368,14 @@ return done `google.longrunning.Operation`s; job-family creates are synchronous 
 | Generative AI | generateContent, countTokens (publishers.models + endpoints), tuning jobs, cached contents |
 | Jobs | CustomJob, BatchPredictionJob, HyperparameterTuningJob (synchronous create + cancel) |
 | Pipelines | TrainingPipeline, PipelineJob |
-| Feature Store | FeatureGroup, Feature, FeatureOnlineStore, FeatureView (+fetchFeatureValues) |
+| Feature Store | Featurestore (+ EntityType + online read/write), FeatureGroup, Feature, FeatureOnlineStore, FeatureView |
 | Vector Search | Index (+upsert/remove datapoints), IndexEndpoint (+deploy/undeploy/findNeighbors) |
 | ML Metadata | MetadataStore, Tensorboard, Schedule, NotebookRuntimeTemplate, NotebookRuntime |
-| Operations | GetOperation / ListOperations (Go API) |
 
 The full Go API/driver and in-memory provider cover every family above. SDK-compat HTTP
 (REST round-tripped) currently spans models, endpoints (+predict), datasets, custom &
-batch-prediction jobs and `generateContent`/`countTokens`; the remaining families'
-handlers follow the same wire pattern as the next increment.
-
-**Total: 118 operations** (Go API/driver)
+batch-prediction jobs and `generateContent`/`countTokens`; the remaining families' handlers
+follow the same wire pattern as the next increment. **Total: 127 operations** (Go API/driver).
 
 ---
 
@@ -1382,5 +1407,6 @@ handlers follow the same wire pattern as the next increment.
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI — AWS Bedrock | 22 |
 | Databricks — Azure (control + data plane) | 52 |
-| Machine Learning — GCP Vertex AI (Go API/driver) | 118 |
-| **Grand Total** | **690** |
+| Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
+| Machine Learning — GCP Vertex AI (Go API/driver) | 127 |
+| **Grand Total** | **820** |

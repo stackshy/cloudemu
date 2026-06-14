@@ -22,12 +22,14 @@ func (m *Mock) CreateInstancePool(_ context.Context, cfg driver.InstancePoolConf
 
 	id := idgen.GenerateID("pool-")
 	pool := &driver.InstancePool{
-		ID:               id,
-		Name:             cfg.Name,
-		NodeTypeID:       cfg.NodeTypeID,
-		State:            driver.PoolActive,
-		MinIdleInstances: cfg.MinIdleInstances,
-		MaxCapacity:      cfg.MaxCapacity,
+		ID:                                 id,
+		Name:                               cfg.Name,
+		NodeTypeID:                         cfg.NodeTypeID,
+		State:                              driver.PoolActive,
+		MinIdleInstances:                   cfg.MinIdleInstances,
+		MaxCapacity:                        cfg.MaxCapacity,
+		IdleInstanceAutoterminationMinutes: cfg.IdleInstanceAutoterminationMinutes,
+		CustomTags:                         cfg.CustomTags,
 	}
 	m.pools.Set(id, pool)
 
@@ -72,6 +74,8 @@ func (m *Mock) EditInstancePool(_ context.Context, id string, cfg driver.Instanc
 	updated.NodeTypeID = cfg.NodeTypeID
 	updated.MinIdleInstances = cfg.MinIdleInstances
 	updated.MaxCapacity = cfg.MaxCapacity
+	updated.IdleInstanceAutoterminationMinutes = cfg.IdleInstanceAutoterminationMinutes
+	updated.CustomTags = cfg.CustomTags
 	m.pools.Set(id, &updated)
 
 	return nil
@@ -89,6 +93,8 @@ func (m *Mock) DeleteInstancePool(_ context.Context, id string) error {
 // --- clusters ---
 
 // CreateCluster creates a cluster in the RUNNING state.
+//
+//nolint:gocritic // cfg matches the driver.DataPlane interface signature (by value)
 func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterConfig) (*driver.Cluster, error) {
 	switch {
 	case cfg.SparkVersion == "":
@@ -99,14 +105,20 @@ func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterConfig) (*driv
 
 	id := idgen.GenerateID("cluster-")
 	cluster := &driver.Cluster{
-		ID:           id,
-		Name:         cfg.Name,
-		SparkVersion: cfg.SparkVersion,
-		NodeTypeID:   cfg.NodeTypeID,
-		State:        driver.ClusterRunning,
-		NumWorkers:   cfg.NumWorkers,
-		AutoscaleMin: cfg.AutoscaleMin,
-		AutoscaleMax: cfg.AutoscaleMax,
+		ID:                id,
+		Name:              cfg.Name,
+		SparkVersion:      cfg.SparkVersion,
+		NodeTypeID:        cfg.NodeTypeID,
+		State:             driver.ClusterRunning,
+		NumWorkers:        cfg.NumWorkers,
+		AutoscaleMin:      cfg.AutoscaleMin,
+		AutoscaleMax:      cfg.AutoscaleMax,
+		RuntimeEngine:     cfg.RuntimeEngine,
+		CustomTags:        cfg.CustomTags,
+		PolicyID:          cfg.PolicyID,
+		InstancePoolID:    cfg.InstancePoolID,
+		AzureAvailability: cfg.AzureAvailability,
+		ClusterSource:     driver.ClusterSourceAPI,
 	}
 	m.clusters.Set(id, cluster)
 
@@ -140,6 +152,8 @@ func (m *Mock) ListClusters(_ context.Context) ([]driver.Cluster, error) {
 }
 
 // EditCluster updates a cluster's mutable fields.
+//
+//nolint:gocritic // cfg matches the driver.DataPlane interface signature (by value)
 func (m *Mock) EditCluster(_ context.Context, id string, cfg driver.ClusterConfig) error {
 	cluster, ok := m.clusters.Get(id)
 	if !ok {
@@ -153,6 +167,11 @@ func (m *Mock) EditCluster(_ context.Context, id string, cfg driver.ClusterConfi
 	updated.NumWorkers = cfg.NumWorkers
 	updated.AutoscaleMin = cfg.AutoscaleMin
 	updated.AutoscaleMax = cfg.AutoscaleMax
+	updated.RuntimeEngine = cfg.RuntimeEngine
+	updated.CustomTags = cfg.CustomTags
+	updated.PolicyID = cfg.PolicyID
+	updated.InstancePoolID = cfg.InstancePoolID
+	updated.AzureAvailability = cfg.AzureAvailability
 	m.clusters.Set(id, &updated)
 
 	return nil

@@ -78,6 +78,17 @@ func defaultRates() map[string]float64 {
 		// IAM (free)
 		"iam:CreateUser":      0.0,
 		"iam:CheckPermission": 0.0,
+
+		// SageMaker (training/processing per instance-hour, hosting per
+		// instance-hour, inference per request)
+		"sagemaker:CreateTrainingJob":             0.115, // ml.m5.large-equivalent instance-hour
+		"sagemaker:CreateProcessingJob":           0.115,
+		"sagemaker:CreateTransformJob":            0.115,
+		"sagemaker:CreateHyperParameterTuningJob": 0.115,
+		"sagemaker:CreateEndpoint":                0.115,  // real-time hosting instance-hour
+		"sagemaker:InvokeEndpoint":                0.0,    // bundled into hosting hours
+		"sagemaker:CreateNotebookInstance":        0.0464, // ml.t3.medium-equivalent instance-hour
+		"sagemaker:CreateModel":                   0.0,
 	}
 }
 

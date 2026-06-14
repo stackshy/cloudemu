@@ -20,6 +20,7 @@ import (
 
 	"github.com/stackshy/cloudemu"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	azureserver "github.com/stackshy/cloudemu/server/azure"
 )
@@ -157,6 +158,99 @@ func TestSDKResourceGraph(t *testing.T) {
 		assert.Contains(t, id, "Microsoft.Network")
 		assert.Equal(t, "123456789012", row["subscriptionId"])
 	})
+}
+
+// TestSDKResourceGraph_DatabricksIndexing pins issue #225: Databricks ARM
+// workspaces must appear in Resource Graph results (they are wired as a
+// service driver but were not fed into the discovery inventory), and the
+// `where type in~ (...)` case-insensitive in-list predicate must actually
+// filter instead of returning every row.
+func TestSDKResourceGraph_DatabricksIndexing(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	_, err := cloudP.Databricks.CreateWorkspace(ctx, dbxdriver.WorkspaceConfig{
+		Name: "ws-1", ResourceGroup: "rg-1", Location: "eastus", SKUName: "premium",
+		ManagedResourceGroupID: "/subscriptions/123456789012/resourceGroups/databricks-rg-1",
+		Tags:                   map[string]string{"env": "prod"},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, cloudP.BlobStorage.CreateBucket(ctx, "control-bucket"))
+
+	srv := azureserver.New(azureserver.Drivers{
+		Databricks:          cloudP.Databricks,
+		DatabricksDataPlane: cloudP.Databricks,
+		BlobStorage:         cloudP.BlobStorage,
+		ResourceDiscovery:   cloudP.ResourceDiscovery,
+		SubscriptionID:      "123456789012",
+	})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newResourceGraphClient(t, ts)
+
+	t.Run("workspace appears in bare Resources query", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources"),
+		}, nil)
+		require.NoError(t, err)
+
+		data := out.Data.([]any)
+		assert.Len(t, data, 2, "control bucket + databricks workspace")
+		assert.True(t, rowsHaveType(data, "microsoft.databricks/workspaces"),
+			"databricks workspace must be indexed alongside storage")
+	})
+
+	t.Run("type in~ filters to just the workspace", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type in~ ('microsoft.databricks/workspaces') | project id, name, type"),
+		}, nil)
+		require.NoError(t, err)
+
+		data := out.Data.([]any)
+		require.Len(t, data, 1, "in~ must narrow to the workspace, not return all rows")
+
+		row := data[0].(map[string]any)
+		assert.Equal(t, "ws-1", row["name"])
+		assert.Equal(t, "microsoft.databricks/workspaces", row["type"])
+	})
+
+	t.Run("type in~ with multiple types returns both", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type in~ ('microsoft.databricks/workspaces', 'microsoft.storage/storageaccounts')"),
+		}, nil)
+		require.NoError(t, err)
+
+		data := out.Data.([]any)
+		assert.Len(t, data, 2)
+	})
+
+	t.Run("type in~ with an unmodeled type matches none, not all", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type in~ ('microsoft.keyvault/vaults')"),
+		}, nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, *out.TotalRecords, "an unmapped type must not widen to the whole inventory")
+	})
+
+	t.Run("type == an unmodeled type matches none, not all", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type == 'microsoft.keyvault/vaults'"),
+		}, nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, *out.TotalRecords)
+	})
+}
+
+func rowsHaveType(data []any, want string) bool {
+	for _, d := range data {
+		if row, ok := d.(map[string]any); ok && row["type"] == want {
+			return true
+		}
+	}
+
+	return false
 }
 
 func newResourceGraphClient(t *testing.T, ts *httptest.Server) *armresourcegraph.Client {

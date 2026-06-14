@@ -16,45 +16,67 @@ const (
 	ClusterTerminated = "TERMINATED"
 )
 
+// ClusterSourceAPI is the cluster_source reported for clusters created through
+// the API surface (the only path the in-memory backend offers).
+const ClusterSourceAPI = "API"
+
 // InstancePoolConfig describes an instance pool to create or edit.
 type InstancePoolConfig struct {
-	Name             string
-	NodeTypeID       string
-	MinIdleInstances int32
-	MaxCapacity      int32
+	Name                               string
+	NodeTypeID                         string
+	MinIdleInstances                   int32
+	MaxCapacity                        int32
+	IdleInstanceAutoterminationMinutes int32
+	CustomTags                         map[string]string
 }
 
 // InstancePool describes an instance pool.
 type InstancePool struct {
-	ID               string
-	Name             string
-	NodeTypeID       string
-	State            string
-	MinIdleInstances int32
-	MaxCapacity      int32
+	ID                                 string
+	Name                               string
+	NodeTypeID                         string
+	State                              string
+	MinIdleInstances                   int32
+	MaxCapacity                        int32
+	IdleInstanceAutoterminationMinutes int32
+	CustomTags                         map[string]string
 }
 
 // ClusterConfig describes a cluster to create or edit.
 type ClusterConfig struct {
-	Name         string
-	SparkVersion string
-	NodeTypeID   string
-	NumWorkers   int32
-	AutoscaleMin int32
-	AutoscaleMax int32
+	Name              string
+	SparkVersion      string
+	NodeTypeID        string
+	NumWorkers        int32
+	AutoscaleMin      int32
+	AutoscaleMax      int32
+	RuntimeEngine     string
+	CustomTags        map[string]string
+	PolicyID          string
+	InstancePoolID    string
+	AzureAvailability string
 }
 
 // Cluster describes a compute cluster.
 type Cluster struct {
-	ID           string
-	Name         string
-	SparkVersion string
-	NodeTypeID   string
-	State        string
-	NumWorkers   int32
-	AutoscaleMin int32
-	AutoscaleMax int32
-	Pinned       bool
+	ID                string
+	Name              string
+	SparkVersion      string
+	NodeTypeID        string
+	State             string
+	NumWorkers        int32
+	AutoscaleMin      int32
+	AutoscaleMax      int32
+	RuntimeEngine     string
+	CustomTags        map[string]string
+	PolicyID          string
+	InstancePoolID    string
+	AzureAvailability string
+	// ClusterSource is assigned by the backend, not the caller. Real Databricks
+	// reports how the cluster was created (API / UI / JOB); the in-memory
+	// backend always creates via the API surface, so it reports "API".
+	ClusterSource string
+	Pinned        bool
 }
 
 // NodeType describes an available compute node type.

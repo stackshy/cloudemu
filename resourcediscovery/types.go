@@ -33,20 +33,30 @@ type Resource struct {
 // slice. An empty/nil slice means "no service filter". This shape supports
 // cases like AWS's "ec2" which spans both compute and networking — the
 // caller can pass Services: []string{"compute", "networking"}.
+//
+// Type is a single exact-match type filter. Types is an any-of set on the
+// resource Type, for callers that select several types at once (e.g. a KQL
+// `where type in~ ('a', 'b')`); an empty/nil slice means "no type-set filter".
+// Type and Types are independent — both must pass when both are set.
 type Query struct {
 	Services []string
 	Type     string
+	Types    []string
 	Region   string
 	Tags     map[string]string
 }
 
 // matches returns true if r satisfies every non-empty field of q.
-func (q Query) matches(r *Resource) bool {
+func (q *Query) matches(r *Resource) bool {
 	if !sliceMatch(q.Services, r.Service) {
 		return false
 	}
 
 	if !fieldMatch(q.Type, r.Type) {
+		return false
+	}
+
+	if !sliceMatch(q.Types, r.Type) {
 		return false
 	}
 

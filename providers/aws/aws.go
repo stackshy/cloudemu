@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/providers/aws/route53"
 	"github.com/stackshy/cloudemu/providers/aws/s3"
+	"github.com/stackshy/cloudemu/providers/aws/sagemaker"
 	"github.com/stackshy/cloudemu/providers/aws/secretsmanager"
 	"github.com/stackshy/cloudemu/providers/aws/sns"
 	"github.com/stackshy/cloudemu/providers/aws/sqs"
@@ -48,6 +49,7 @@ type Provider struct {
 	Redshift          *redshift.Mock
 	EKS               *eks.Mock
 	Bedrock           *bedrock.Mock
+	SageMaker         *sagemaker.Mock
 	ResourceDiscovery *resourcediscovery.Engine
 }
 
@@ -75,6 +77,7 @@ func New(opts ...config.Option) *Provider {
 		Redshift:       redshift.New(o),
 		EKS:            eks.New(o),
 		Bedrock:        bedrock.New(o),
+		SageMaker:      sagemaker.New(o),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
 	p.S3.SetMonitoring(p.CloudWatch)
@@ -89,6 +92,7 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetMonitoring(p.CloudWatch)
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
+	p.SageMaker.SetMonitoring(p.CloudWatch)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region,
