@@ -23,6 +23,7 @@ const (
 	ServiceStorage    = "storage"
 	ServiceDatabase   = "database"
 	ServiceServerless = "serverless"
+	ServiceDatabricks = "databricks"
 )
 
 // Resource type constants emitted by the walkers.
@@ -34,6 +35,7 @@ const (
 	TypeBucket        = "Bucket"
 	TypeTable         = "Table"
 	TypeFunction      = "Function"
+	TypeWorkspace     = "Workspace"
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
@@ -197,6 +199,35 @@ func (e *Engine) walkServerless(ctx context.Context) ([]Resource, error) {
 			ID:     fns[i].Name,
 			ARN:    arn,
 			Region: e.region, Tags: copyTags(fns[i].Tags),
+		})
+	}
+
+	return out, nil
+}
+
+// walkDatabricks lists Databricks workspaces from the control-plane driver.
+// Workspaces are ARM resources whose driver is wired in separately from the
+// five portable service drivers, so they need their own walker to appear in
+// the cross-service inventory (and therefore in Resource Graph results).
+func (e *Engine) walkDatabricks(ctx context.Context) ([]Resource, error) {
+	workspaces, err := e.drivers.Databricks.ListWorkspaces(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkDatabricks: %w", err)
+	}
+
+	out := make([]Resource, 0, len(workspaces))
+
+	for i := range workspaces {
+		region := workspaces[i].Location
+		if region == "" {
+			region = e.region
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceDatabricks, Type: TypeWorkspace,
+			ID:     workspaces[i].Name,
+			ARN:    workspaces[i].ID,
+			Region: region, Tags: copyTags(workspaces[i].Tags),
 		})
 	}
 

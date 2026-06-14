@@ -29,8 +29,10 @@ import (
 	"github.com/stackshy/cloudemu/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/server/gcp/networks"
 	"github.com/stackshy/cloudemu/server/gcp/pubsub"
+	vertexaisrv "github.com/stackshy/cloudemu/server/gcp/vertexai"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+	vertexaidriver "github.com/stackshy/cloudemu/vertexai/driver"
 )
 
 // Drivers bundles the driver interfaces the GCP server can expose.
@@ -44,6 +46,7 @@ type Drivers struct {
 	PubSub         mqdriver.MessageQueue
 	CloudSQL       rdbdriver.RelationalDB
 	GKE            *gkeprov.Mock
+	VertexAI       vertexaidriver.VertexAI
 	IAM            iamdriver.IAM
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
@@ -104,6 +107,14 @@ func New(d Drivers) *server.Server {
 	// same /v1/projects/ space as Firestore, so register first.
 	if d.GKE != nil {
 		srv.Register(gke.New(d.GKE))
+	}
+
+	// Vertex AI matches /v1/projects/{p}/locations/{l}/{models|endpoints|datasets|
+	// customJobs|batchPredictionJobs}/... and /v1/publishers/...:generateContent.
+	// Disjoint from GKE/functions/instances; registered before Firestore's
+	// permissive /v1/projects/ prefix.
+	if d.VertexAI != nil {
+		srv.Register(vertexaisrv.New(d.VertexAI))
 	}
 
 	// Cloud Asset Inventory matches /v1/{scope}:method and /v1/{parent}/

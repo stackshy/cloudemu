@@ -21,6 +21,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/gcp/memorystore"
 	"github.com/stackshy/cloudemu/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/providers/gcp/secretmanager"
+	"github.com/stackshy/cloudemu/providers/gcp/vertexai"
 	"github.com/stackshy/cloudemu/resourcediscovery"
 )
 
@@ -44,6 +45,7 @@ type Provider struct {
 	Eventarc         *eventarc.Mock
 	CloudSQL         *cloudsql.Mock
 	GKE              *gke.Mock
+	VertexAI         *vertexai.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 }
@@ -70,6 +72,7 @@ func New(opts ...config.Option) *Provider {
 		Eventarc:         eventarc.New(o),
 		CloudSQL:         cloudsql.New(o),
 		GKE:              gke.New(o),
+		VertexAI:         vertexai.New(o),
 	}
 	p.GCE.SetMonitoring(p.CloudMonitoring)
 	p.GCS.SetMonitoring(p.CloudMonitoring)
@@ -83,6 +86,7 @@ func New(opts ...config.Option) *Provider {
 	p.Eventarc.SetMonitoring(p.CloudMonitoring)
 	p.CloudSQL.SetMonitoring(p.CloudMonitoring)
 	p.GKE.SetMonitoring(p.CloudMonitoring)
+	p.VertexAI.SetMonitoring(p.CloudMonitoring)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderGCP, o.ProjectID, o.Region,

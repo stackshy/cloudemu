@@ -151,6 +151,8 @@ func (d *DataPlane) DeleteInstancePool(ctx context.Context, id string) error {
 }
 
 // CreateCluster creates a cluster.
+//
+//nolint:gocritic // cfg matches the driver.DataPlane interface signature (by value)
 func (d *DataPlane) CreateCluster(ctx context.Context, cfg driver.ClusterConfig) (*driver.Cluster, error) {
 	out, err := d.do(ctx, "CreateCluster", cfg, func() (any, error) { return d.driver.CreateCluster(ctx, cfg) })
 	if err != nil {
@@ -181,6 +183,8 @@ func (d *DataPlane) ListClusters(ctx context.Context) ([]driver.Cluster, error) 
 }
 
 // EditCluster updates a cluster.
+//
+//nolint:gocritic // cfg matches the driver.DataPlane interface signature (by value)
 func (d *DataPlane) EditCluster(ctx context.Context, id string, cfg driver.ClusterConfig) error {
 	_, err := d.do(ctx, "EditCluster", id, func() (any, error) { return nil, d.driver.EditCluster(ctx, id, cfg) })
 
