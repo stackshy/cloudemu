@@ -25,10 +25,15 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/databricks"
 	"github.com/stackshy/cloudemu/server/azure/databricks/dbfs"
 	"github.com/stackshy/cloudemu/server/azure/databricks/gitcredentials"
+	"github.com/stackshy/cloudemu/server/azure/databricks/pipelines"
 	"github.com/stackshy/cloudemu/server/azure/databricks/repos"
+	"github.com/stackshy/cloudemu/server/azure/databricks/scim"
 	"github.com/stackshy/cloudemu/server/azure/databricks/secrets"
+	"github.com/stackshy/cloudemu/server/azure/databricks/serving"
 	"github.com/stackshy/cloudemu/server/azure/databricks/sqlwarehouses"
 	"github.com/stackshy/cloudemu/server/azure/databricks/token"
+	"github.com/stackshy/cloudemu/server/azure/databricks/ucstorage"
+	"github.com/stackshy/cloudemu/server/azure/databricks/unitycatalog"
 	"github.com/stackshy/cloudemu/server/azure/databricks/wsfs"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	"github.com/stackshy/cloudemu/server/azure/functions"
@@ -170,21 +175,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(databricks.New(d.Databricks))
 	}
 
-	// Databricks data plane matches /api/2.x/{clusters,instance-pools,jobs,
-	// permissions} — disjoint from ARM paths. Registered before the blob
-	// fallback so its REST URLs aren't swallowed. The additional /api/2.0
-	// handlers (secrets, tokens, git credentials, repos, DBFS, workspace, SQL
-	// warehouses) self-contain their state and claim disjoint path prefixes.
-	if d.DatabricksDataPlane != nil {
-		srv.Register(databricks.NewDataPlane(d.DatabricksDataPlane))
-		srv.Register(secrets.New())
-		srv.Register(token.New())
-		srv.Register(gitcredentials.New())
-		srv.Register(repos.New())
-		srv.Register(dbfs.New())
-		srv.Register(wsfs.New())
-		srv.Register(sqlwarehouses.New())
-	}
+	registerDatabricksDataPlane(srv, &d)
 
 	if d.VirtualMachines != nil {
 		srv.Register(virtualmachines.New(d.VirtualMachines))
@@ -218,4 +209,29 @@ func New(d Drivers) *server.Server {
 	}
 
 	return srv
+}
+
+// registerDatabricksDataPlane registers the Databricks workspace data-plane
+// handlers when the data plane is enabled. The core handler is driver-backed;
+// the rest are self-contained handlers that own their in-memory state and
+// claim disjoint /api path prefixes (so registration order is unconstrained).
+// They sit before the blob fallback so their REST URLs aren't swallowed.
+func registerDatabricksDataPlane(srv *server.Server, d *Drivers) {
+	if d.DatabricksDataPlane == nil {
+		return
+	}
+
+	srv.Register(databricks.NewDataPlane(d.DatabricksDataPlane))
+	srv.Register(secrets.New())
+	srv.Register(token.New())
+	srv.Register(gitcredentials.New())
+	srv.Register(repos.New())
+	srv.Register(dbfs.New())
+	srv.Register(wsfs.New())
+	srv.Register(sqlwarehouses.New())
+	srv.Register(pipelines.New())
+	srv.Register(serving.New())
+	srv.Register(unitycatalog.New())
+	srv.Register(ucstorage.New())
+	srv.Register(scim.New())
 }
