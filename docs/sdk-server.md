@@ -118,6 +118,39 @@ opts := []option.ClientOption{
 client, _ := gcpcompute.NewInstancesRESTClient(ctx, opts...)
 ```
 
+## Quick start (Databricks)
+
+The Azure server also speaks the `databricks-sdk-go` `WorkspaceClient` wire protocol. Wire the same `*databricks.Mock` into both `Databricks` (ARM workspace control plane) and `DatabricksDataPlane` (the `/api/2.x` workspace data plane).
+
+```go
+import (
+    "net/http/httptest"
+
+    databricks "github.com/databricks/databricks-sdk-go"
+    "github.com/databricks/databricks-sdk-go/config"
+    "github.com/databricks/databricks-sdk-go/service/compute"
+    "github.com/stackshy/cloudemu"
+    azureserver "github.com/stackshy/cloudemu/server/azure"
+)
+
+cp := cloudemu.NewAzure()
+srv := azureserver.New(azureserver.Drivers{
+    Databricks:          cp.Databricks, // Microsoft.Databricks/workspaces (ARM)
+    DatabricksDataPlane: cp.Databricks, // /api/2.x workspace data plane
+})
+ts := httptest.NewServer(srv)
+defer ts.Close()
+
+w, _ := databricks.NewWorkspaceClient(&databricks.Config{
+    Host:        ts.URL,
+    Token:       "test-token",
+    Credentials: config.PatCredentials{},
+})
+
+// Real WorkspaceClient calls round-trip against the in-memory backend.
+w.InstancePools.Create(ctx, compute.CreateInstancePool{InstancePoolName: "pool-1"})
+```
+
 Region, credentials, and tokens can be any dummy values — the server doesn't validate signatures or AAD tokens.
 
 ## Currently supported
@@ -142,6 +175,7 @@ Region, credentials, and tokens can be any dummy values — the server doesn't v
 | **IAM** *(query protocol)* | Users (Create/Get/List/Delete), Roles (Create/Get/List/Delete), Policies (Create/Get/List/Delete), Attach/Detach/ListAttached for both Users and Roles, Groups (Create/Get/List/Delete + AddUserToGroup/RemoveUserFromGroup/ListGroupsForUser), AccessKeys (Create/List/Delete), InstanceProfiles (Create/Get/List/Delete + AddRoleToInstanceProfile/RemoveRoleFromInstanceProfile). Errors surface as typed `*types.NoSuchEntityException` / `*types.EntityAlreadyExistsException`. |
 | **Resource Explorer 2** *(JSON)* | Search — free-text plus filter expression over the cross-service inventory; results include ARN, resource type, region, owning account, and tags |
 | **Resource Groups Tagging API** *(JSON-RPC)* | GetResources (filter by `ResourceTypeFilters` + `TagFilters`, paginated), TagResources, UntagResources, GetTagKeys, GetTagValues |
+| **Bedrock** *(REST + JSON, `bedrock` + `bedrock-runtime`)* | Control plane: ListFoundationModels, GetFoundationModel, model-customization jobs (Create/Get/List), custom models (List/Get/Delete), Guardrails (Create/Get/List/Update/Delete), Provisioned Throughput (Create/Get/List/Delete), invocation-logging config (Put/Get/Delete). Runtime: InvokeModel (family-aware response envelopes) and Converse. |
 
 ### Azure (`server/azure/`)
 
@@ -163,6 +197,8 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **AKS** | `Microsoft.ContainerService/managedClusters` — ManagedClusters (CreateOrUpdate, Get, UpdateTags, Delete, List/ListByResourceGroup), AgentPools (CreateOrUpdate, Get, Delete, List), MaintenanceConfigurations (CreateOrUpdate, Get, Delete, List), ListClusterAdmin/User/MonitoringUser Credentials, RotateClusterCertificates. Stub kubeconfig only — data plane deferred to Wave 2. |
 | **IAM (armauthorization)** | `Microsoft.Authorization` — RoleDefinitions (CreateOrUpdate, Get, List, Delete) and RoleAssignments (Create, Get, ListForScope, Delete) at any scope (subscription, resource group, resource, management group). Real `armauthorization` SDK clients round-trip end-to-end. Microsoft Graph (users/groups) is out of scope — deferred to a future handler. |
 | **Resource Graph** | `Microsoft.ResourceGraph` — `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with a KQL-shaped query over the cross-service inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
+| **Databricks (ARM control plane)** | `Microsoft.Databricks/workspaces` — CreateOrUpdate, Get, Delete, UpdateTags, List / ListByResourceGroup. Real `armdatabricks` SDK clients round-trip end-to-end. |
+| **Databricks (workspace data plane)** *(`databricks-sdk-go`, `/api/2.x`)* | Point the real `WorkspaceClient` at `Config.Host`. Clusters (create/edit/start/restart/resize/pin/unpin/delete + list-node-types / spark-versions / zones), instance pools, jobs + runs (submit / run-now / get / list / cancel / cancel-all / repair / output / delete), cluster policies, libraries (install / uninstall / status), and object permissions. Self-contained families: secrets (scopes / secrets / ACLs), tokens, git credentials, repos, DBFS (incl. block upload), workspace notebooks/directories, SQL warehouses, pipelines, serving endpoints, SCIM identity (users / groups / service principals), and Unity Catalog (catalogs / schemas / tables + metastores / external locations / storage credentials / volumes). Also serves `GET /.well-known/databricks-config` so the SDK's host-metadata resolution succeeds (workspace-host stub) instead of logging a warning. |
 
 ### GCP (`server/gcp/`)
 
@@ -200,13 +236,18 @@ server/
 │   ├── aws.go                      # awsserver.New(Drivers{...})
 │   ├── s3/  ec2/  dynamodb/  lambda/  sqs/  cloudwatch/
 │   ├── rds/  redshift/             # query-protocol relational DB handlers
-│   └── eks/                        # REST EKS control-plane handler
+│   ├── eks/                        # REST EKS control-plane handler
+│   └── bedrock/                    # REST Bedrock control plane + bedrock-runtime
 ├── azure/
 │   ├── azure.go                    # azureserver.New(Drivers{...})
 │   ├── virtualmachines/  disks/  snapshots/  images/  sshpublickeys/
 │   ├── blob/  cosmos/  network/  monitor/  functions/  servicebus/
 │   ├── azuresql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
-│   └── aks/                        # ARM AKS control-plane handler
+│   ├── aks/                        # ARM AKS control-plane handler
+│   └── databricks/                 # ARM workspace + workspace data-plane families
+│       ├── secrets/  token/  gitcredentials/  repos/  dbfs/  wsfs/
+│       ├── sqlwarehouses/  pipelines/  serving/  scim/
+│       └── unitycatalog/  ucstorage/
 └── gcp/
     ├── gcp.go                      # gcpserver.New(Drivers{...})
     ├── compute/  networks/  gcs/  firestore/  monitoring/
@@ -240,12 +281,16 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 | AWS Redshift | Form-encoded POST whose `Action=` is a known Redshift operation (registered before EC2) |
 | AWS EC2 | `Action=…` in URL query or `Content-Type: application/x-www-form-urlencoded` POST |
 | AWS CloudWatch | `Smithy-Protocol: rpc-v2-cbor` header |
+| AWS Bedrock | URL prefix `/foundation-models`, `/model-customization-jobs`, `/custom-models`, `/guardrails`, `/provisioned-model-throughput`, `/logging/modelinvocations`, or bedrock-runtime `/model/{id}/invoke` and `/model/{id}/converse` |
 | AWS S3 | Fallback (everything else REST-shaped) |
 | Azure (all ARM) | URL begins with `/subscriptions/{sub}` and matches `Microsoft.<Provider>/<Type>` |
 | Azure SQL | ARM provider `Microsoft.Sql` |
 | Azure PostgreSQL Flexible | ARM provider `Microsoft.DBforPostgreSQL/flexibleServers` |
 | Azure MySQL Flexible | ARM provider `Microsoft.DBforMySQL/flexibleServers` |
 | Azure AKS | ARM provider `Microsoft.ContainerService/managedClusters` |
+| Azure Databricks (ARM) | ARM provider `Microsoft.Databricks/workspaces` |
+| Azure Databricks (data plane) | Non-ARM URL prefix `/api/2.0/` or `/api/2.1/` (workspace data plane) |
+| Azure Databricks (host metadata) | `GET /.well-known/databricks-config` |
 | Azure Cosmos | URL begins with `/dbs/` (data plane, non-ARM) |
 | Azure Functions invoke | URL begins with `/api/` (non-ARM data plane) |
 | Azure Service Bus data plane | Non-ARM URL ending in `/messages` or `/messages/head` |
@@ -274,7 +319,9 @@ Kubernetes ships as **two cooperating handlers**: per-provider control planes (E
 
 The data plane intentionally has no controllers — Deployments don't spawn ReplicaSets, Pods stay Pending, Endpoints are empty stubs. RBAC, subresources, PV/PVC, StatefulSet/DaemonSet/Job/CronJob, and Ingress are out of scope.
 
-The remaining service domains (IAM, DNS, Load Balancer, Cache, Secrets, Logging, Notifications, Container Registry, Event Bus) have full driver implementations in `providers/{aws,azure,gcp}/`; SDK-compat handlers are added in lockstep across all 3 providers as each domain ships.
+Two provider-specific services also ship as full SDK-compat handlers. **AWS Bedrock** covers the `bedrock` control plane (foundation models, customization jobs, custom models, guardrails, provisioned throughput, invocation logging) and the `bedrock-runtime` data plane (InvokeModel with family-aware response envelopes, and Converse). **Azure Databricks** covers the `armdatabricks` ARM workspace resource plus the `databricks-sdk-go` workspace data plane — clusters, instance pools, jobs and runs, cluster policies, libraries, permissions, secrets, tokens, git credentials, repos, DBFS, workspace notebooks/directories, SQL warehouses, pipelines, serving endpoints, SCIM identity, and Unity Catalog.
+
+The remaining service domains (DNS, Load Balancer, Cache, Secrets, Logging, Notifications, Container Registry, Event Bus) have full driver implementations in `providers/{aws,azure,gcp}/`; SDK-compat handlers are added in lockstep across all 3 providers as each domain ships.
 
 ## Writing your own handler
 
