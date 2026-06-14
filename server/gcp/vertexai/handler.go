@@ -41,16 +41,50 @@ const (
 var vertexCollections = map[string]bool{
 	"datasets": true, "models": true, "endpoints": true,
 	"customJobs": true, "batchPredictionJobs": true,
+	"hyperparameterTuningJobs": true, "trainingPipelines": true,
+	"pipelineJobs": true, "tuningJobs": true, "cachedContents": true,
+	"featurestores": true, "featureGroups": true, "featureOnlineStores": true,
+	"indexes": true, "indexEndpoints": true, "metadataStores": true,
+	"tensorboards": true, "schedules": true, "notebookRuntimes": true,
+	"notebookRuntimeTemplates": true,
 }
+
+// collectionHandler serves one Vertex collection's requests.
+type collectionHandler func(http.ResponseWriter, *http.Request, *vPath)
 
 // Handler serves Vertex AI REST requests against a vertexai driver.
 type Handler struct {
-	svc driver.VertexAI
+	svc    driver.VertexAI
+	routes map[string]collectionHandler
 }
 
 // New returns a Vertex AI handler backed by svc.
 func New(svc driver.VertexAI) *Handler {
-	return &Handler{svc: svc}
+	h := &Handler{svc: svc}
+	h.routes = map[string]collectionHandler{
+		"models":                   h.serveModels,
+		"endpoints":                h.serveEndpoints,
+		"datasets":                 h.serveDatasets,
+		"customJobs":               h.serveCustomJobs,
+		"batchPredictionJobs":      h.serveBatchPredictionJobs,
+		"hyperparameterTuningJobs": h.serveHyperparameterTuningJobs,
+		"trainingPipelines":        h.serveTrainingPipelines,
+		"pipelineJobs":             h.servePipelineJobs,
+		"tuningJobs":               h.serveTuningJobs,
+		"cachedContents":           h.serveCachedContents,
+		"featurestores":            h.serveFeaturestores,
+		"featureGroups":            h.serveFeatureGroups,
+		"featureOnlineStores":      h.serveFeatureOnlineStores,
+		"indexes":                  h.serveIndexes,
+		"indexEndpoints":           h.serveIndexEndpoints,
+		"metadataStores":           h.serveMetadataStores,
+		"tensorboards":             h.serveTensorboards,
+		"schedules":                h.serveSchedules,
+		"notebookRuntimes":         h.serveNotebookRuntimes,
+		"notebookRuntimeTemplates": h.serveNotebookRuntimeTemplates,
+	}
+
+	return h
 }
 
 // Matches claims the Vertex collection URLs and the publishers generateContent
@@ -165,18 +199,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch p.collection {
-	case "models":
-		h.serveModels(w, r, &p)
-	case "endpoints":
-		h.serveEndpoints(w, r, &p)
-	case "datasets":
-		h.serveDatasets(w, r, &p)
-	case "customJobs":
-		h.serveCustomJobs(w, r, &p)
-	case "batchPredictionJobs":
-		h.serveBatchPredictionJobs(w, r, &p)
-	default:
+	serve, ok := h.routes[p.collection]
+	if !ok {
 		writeError(w, http.StatusNotFound, "notFound", "unsupported collection: "+p.collection)
+
+		return
 	}
+
+	serve(w, r, &p)
 }

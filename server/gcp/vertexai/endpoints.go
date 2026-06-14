@@ -32,6 +32,7 @@ func endpointJSON(e *driver.Endpoint) map[string]any {
 	}
 }
 
+//nolint:dupl // REST shim; the decode/dispatch shape recurs across collections.
 func (h *Handler) serveEndpoints(w http.ResponseWriter, r *http.Request, p *vPath) {
 	if p.name == "" {
 		switch r.Method {
