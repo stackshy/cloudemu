@@ -70,11 +70,38 @@ func (m *Mock) DeployModel(_ context.Context, endpoint string, dm driver.Deploye
 	// Deep-copy working set so the stored endpoint is never mutated in place.
 	updated := cloneEndpoint(ep)
 	updated.DeployedModels = append(updated.DeployedModels, dm)
-	updated.TrafficSplit = map[string]int{dm.ID: 100}
+	// Rebalance traffic evenly across every deployed model so each keeps a
+	// split entry and the total stays at 100 (real multi-model endpoints never
+	// drop a deployed model from the split).
+	updated.TrafficSplit = evenTrafficSplit(updated.DeployedModels)
 	updated.UpdateTime = m.now()
 	m.endpoints.Set(endpoint, updated)
 
 	return m.doneOp(locationOf(endpoint), endpoint), cloneEndpoint(updated), nil
+}
+
+// evenTrafficSplit distributes 100% as evenly as possible across the deployed
+// models, assigning any rounding remainder to the first model so the split
+// always totals exactly 100. Returns an empty (non-nil) map when none remain.
+func evenTrafficSplit(models []driver.DeployedModel) map[string]int {
+	split := make(map[string]int, len(models))
+	if len(models) == 0 {
+		return split
+	}
+
+	base := 100 / len(models)
+	remainder := 100 % len(models)
+
+	for i, dm := range models {
+		share := base
+		if i < remainder {
+			share++
+		}
+
+		split[dm.ID] = share
+	}
+
+	return split
 }
 
 func (m *Mock) UndeployModel(_ context.Context, endpoint, deployedModelID string) (*driver.Operation, *driver.Endpoint, error) {
@@ -94,7 +121,7 @@ func (m *Mock) UndeployModel(_ context.Context, endpoint, deployedModelID string
 	}
 
 	updated.DeployedModels = kept
-	delete(updated.TrafficSplit, deployedModelID)
+	updated.TrafficSplit = evenTrafficSplit(kept)
 	updated.UpdateTime = m.now()
 	m.endpoints.Set(endpoint, updated)
 

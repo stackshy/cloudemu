@@ -3,6 +3,7 @@ package vertexai
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/vertexai/driver"
@@ -151,19 +152,64 @@ func (m *Mock) CreateCachedContent(_ context.Context, cfg driver.CachedContentCo
 		return nil, errors.New(errors.InvalidArgument, "model is required")
 	}
 
+	ttl := cfg.TTLSeconds
+	if ttl <= 0 {
+		ttl = defaultCacheTTLSeconds
+	}
+
+	created := m.opts.Clock.Now().UTC()
+	expire := created.Add(time.Duration(ttl) * time.Second)
+
 	name := m.resName(cfg.Location, "cachedContents", m.newID())
 	cc := &driver.CachedContent{
-		Name:        name,
-		Model:       cfg.Model,
-		DisplayName: cfg.DisplayName,
-		CreateTime:  m.now(),
-		ExpireTime:  m.now(),
+		Name:              name,
+		Model:             cfg.Model,
+		DisplayName:       cfg.DisplayName,
+		Contents:          cloneContents(cfg.Contents),
+		SystemInstruction: cloneContent(cfg.SystemInstruction),
+		CreateTime:        created.Format(time.RFC3339),
+		ExpireTime:        expire.Format(time.RFC3339),
 	}
 	m.cachedContent.Set(name, cc)
 
-	out := *cc
+	return cloneCachedContent(cc), nil
+}
 
-	return &out, nil
+// defaultCacheTTLSeconds matches Vertex's default context-cache lifetime (1h)
+// when the caller omits an explicit TTL.
+const defaultCacheTTLSeconds = 3600
+
+func cloneContents(in []driver.Content) []driver.Content {
+	if in == nil {
+		return nil
+	}
+
+	out := make([]driver.Content, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].Parts = append([]driver.Part(nil), in[i].Parts...)
+	}
+
+	return out
+}
+
+func cloneContent(in *driver.Content) *driver.Content {
+	if in == nil {
+		return nil
+	}
+
+	out := *in
+	out.Parts = append([]driver.Part(nil), in.Parts...)
+
+	return &out
+}
+
+func cloneCachedContent(in *driver.CachedContent) *driver.CachedContent {
+	out := *in
+	out.Contents = cloneContents(in.Contents)
+	out.SystemInstruction = cloneContent(in.SystemInstruction)
+
+	return &out
 }
 
 func (m *Mock) GetCachedContent(_ context.Context, name string) (*driver.CachedContent, error) {
@@ -172,9 +218,7 @@ func (m *Mock) GetCachedContent(_ context.Context, name string) (*driver.CachedC
 		return nil, errors.Newf(errors.NotFound, "cached content %q not found", name)
 	}
 
-	out := *cc
-
-	return &out, nil
+	return cloneCachedContent(cc), nil
 }
 
 func (m *Mock) ListCachedContents(_ context.Context, location string) ([]driver.CachedContent, error) {
@@ -182,7 +226,7 @@ func (m *Mock) ListCachedContents(_ context.Context, location string) ([]driver.
 
 	for _, cc := range m.cachedContent.All() {
 		if location == "" || locationOf(cc.Name) == location {
-			out = append(out, *cc)
+			out = append(out, *cloneCachedContent(cc))
 		}
 	}
 

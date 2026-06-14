@@ -84,11 +84,13 @@ type CachedContentConfig struct {
 
 // CachedContent is a context-cache entry (synchronous CRUD).
 type CachedContent struct {
-	Name        string // projects/{p}/locations/{l}/cachedContents/{id}
-	Model       string
-	DisplayName string
-	CreateTime  string
-	ExpireTime  string
+	Name              string // projects/{p}/locations/{l}/cachedContents/{id}
+	Model             string
+	DisplayName       string
+	Contents          []Content
+	SystemInstruction *Content
+	CreateTime        string
+	ExpireTime        string
 }
 
 // genAIAPI covers the Gemini runtime plus tuning jobs and context caching.

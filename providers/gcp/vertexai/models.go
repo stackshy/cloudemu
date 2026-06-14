@@ -97,6 +97,14 @@ func (m *Mock) ListModelVersions(_ context.Context, name string) ([]driver.Model
 }
 
 func (m *Mock) DeleteModelVersion(_ context.Context, name string) (*driver.Operation, error) {
+	base, _, _ := strings.Cut(name, "@")
+
+	if !m.models.Has(base) {
+		return nil, errors.Newf(errors.NotFound, "model version %q not found", name)
+	}
+
+	m.models.Delete(base)
+
 	return m.doneOp(locationOf(name), name), nil
 }
 

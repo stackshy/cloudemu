@@ -162,3 +162,138 @@ func TestLegacyFeaturestore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, stores, 1)
 }
+
+// TestPatchModelDoesNotMutateSnapshot guards the copy-then-Set fix: an earlier
+// GetModel snapshot must not change when PatchModel runs.
+func TestPatchModelDoesNotMutateSnapshot(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, model, err := m.UploadModel(ctx, driver.ModelConfig{Location: "us-central1", DisplayName: "before"})
+	require.NoError(t, err)
+
+	snap, err := m.GetModel(ctx, model.Name)
+	require.NoError(t, err)
+
+	_, err = m.PatchModel(ctx, model.Name, "after", "desc")
+	require.NoError(t, err)
+
+	assert.Equal(t, "before", snap.DisplayName, "prior snapshot must be unaffected by PatchModel")
+
+	got, err := m.GetModel(ctx, model.Name)
+	require.NoError(t, err)
+	assert.Equal(t, "after", got.DisplayName)
+}
+
+// TestCreateLabelsAreCloned guards against storing the caller's map by
+// reference: mutating cfg.Labels after create must not change the stored model.
+func TestCreateLabelsAreCloned(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	labels := map[string]string{"team": "ml"}
+
+	_, model, err := m.UploadModel(ctx, driver.ModelConfig{Location: "us-central1", DisplayName: "m", Labels: labels})
+	require.NoError(t, err)
+
+	labels["team"] = "mutated"
+
+	got, err := m.GetModel(ctx, model.Name)
+	require.NoError(t, err)
+	assert.Equal(t, "ml", got.Labels["team"], "stored labels must be a clone of the caller's map")
+}
+
+// TestDeployModelKeepsTrafficForAllModels guards the traffic-split merge fix:
+// deploying a second model must not drop the first from the split.
+func TestDeployModelKeepsTrafficForAllModels(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, ep, err := m.CreateEndpoint(ctx, driver.EndpointConfig{Location: "us-central1", DisplayName: "ep"})
+	require.NoError(t, err)
+
+	_, _, err = m.DeployModel(ctx, ep.Name, driver.DeployedModel{ID: "A", Model: "m/A"})
+	require.NoError(t, err)
+
+	_, after, err := m.DeployModel(ctx, ep.Name, driver.DeployedModel{ID: "B", Model: "m/B"})
+	require.NoError(t, err)
+
+	require.Len(t, after.DeployedModels, 2)
+	assert.Contains(t, after.TrafficSplit, "A", "A must keep a traffic-split entry after B deploys")
+	assert.Contains(t, after.TrafficSplit, "B")
+
+	total := 0
+	for _, v := range after.TrafficSplit {
+		total += v
+	}
+
+	assert.Equal(t, 100, total, "traffic split must total 100")
+
+	// Undeploy rebalances onto the survivor.
+	_, post, err := m.UndeployModel(ctx, ep.Name, "A")
+	require.NoError(t, err)
+	assert.NotContains(t, post.TrafficSplit, "A")
+	assert.Equal(t, 100, post.TrafficSplit["B"])
+}
+
+// TestCachedContentTTLAndContents guards the expiry/persist fix.
+func TestCachedContentTTLAndContents(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cc, err := m.CreateCachedContent(ctx, driver.CachedContentConfig{
+		Location: "us-central1", Model: "gemini-2.5-pro", TTLSeconds: 3600,
+		Contents: []driver.Content{{Role: "user", Parts: []driver.Part{{Text: "hi"}}}},
+	})
+	require.NoError(t, err)
+
+	assert.NotEqual(t, cc.CreateTime, cc.ExpireTime, "expireTime must be createTime + TTL, not equal")
+	assert.Greater(t, cc.ExpireTime, cc.CreateTime)
+	require.Len(t, cc.Contents, 1, "contents must be persisted")
+	assert.Equal(t, "hi", cc.Contents[0].Parts[0].Text)
+}
+
+// TestDeleteModelVersionActuallyDeletes guards the no-op fix.
+func TestDeleteModelVersionActuallyDeletes(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, model, err := m.UploadModel(ctx, driver.ModelConfig{Location: "us-central1", DisplayName: "m"})
+	require.NoError(t, err)
+
+	_, err = m.DeleteModelVersion(ctx, model.Name+"@1")
+	require.NoError(t, err)
+
+	_, err = m.GetModel(ctx, model.Name)
+	require.Error(t, err, "model must be gone after version delete")
+
+	_, err = m.DeleteModelVersion(ctx, model.Name+"@1")
+	require.Error(t, err, "deleting a missing version must return NotFound")
+}
+
+// TestChildListingPrefixDelimiter guards against sibling leakage between
+// featureGroups whose IDs share a prefix (fg1 vs fg10).
+func TestChildListingPrefixDelimiter(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, fg1, err := m.CreateFeatureGroup(ctx, driver.FeatureGroupConfig{Location: "us-central1", FeatureGroupID: "fg1"})
+	require.NoError(t, err)
+	_, fg10, err := m.CreateFeatureGroup(ctx, driver.FeatureGroupConfig{Location: "us-central1", FeatureGroupID: "fg10"})
+	require.NoError(t, err)
+
+	_, _, err = m.CreateFeature(ctx, fg1.Name, "f1", "")
+	require.NoError(t, err)
+	_, _, err = m.CreateFeature(ctx, fg10.Name, "f10a", "")
+	require.NoError(t, err)
+	_, _, err = m.CreateFeature(ctx, fg10.Name, "f10b", "")
+	require.NoError(t, err)
+
+	f1, err := m.ListFeatures(ctx, fg1.Name)
+	require.NoError(t, err)
+	assert.Len(t, f1, 1, "fg1 listing must not leak fg10's features")
+
+	f10, err := m.ListFeatures(ctx, fg10.Name)
+	require.NoError(t, err)
+	assert.Len(t, f10, 2)
+}

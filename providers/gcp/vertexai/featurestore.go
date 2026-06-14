@@ -2,6 +2,7 @@ package vertexai
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/vertexai/driver"
@@ -88,7 +89,7 @@ func (m *Mock) ListFeatures(_ context.Context, parent string) ([]driver.Feature,
 	out := make([]driver.Feature, 0)
 
 	for k, f := range m.features.All() {
-		if len(k) > len(parent) && k[:len(parent)] == parent {
+		if strings.HasPrefix(k, parent+"/") {
 			out = append(out, *f)
 		}
 	}
@@ -180,7 +181,7 @@ func (m *Mock) ListFeatureViews(_ context.Context, parent string) ([]driver.Feat
 	out := make([]driver.FeatureView, 0)
 
 	for k, fv := range m.featureViews.All() {
-		if len(k) > len(parent) && k[:len(parent)] == parent {
+		if strings.HasPrefix(k, parent+"/") {
 			out = append(out, *fv)
 		}
 	}
@@ -284,7 +285,7 @@ func (m *Mock) ListEntityTypes(_ context.Context, parent string) ([]driver.Entit
 	out := make([]driver.EntityType, 0)
 
 	for k, et := range m.entityTypes.All() {
-		if len(k) > len(parent) && k[:len(parent)] == parent {
+		if strings.HasPrefix(k, parent+"/") {
 			out = append(out, *et)
 		}
 	}
