@@ -18,43 +18,51 @@ const (
 
 // InstancePoolConfig describes an instance pool to create or edit.
 type InstancePoolConfig struct {
-	Name             string
-	NodeTypeID       string
-	MinIdleInstances int32
-	MaxCapacity      int32
+	Name                               string
+	NodeTypeID                         string
+	MinIdleInstances                   int32
+	MaxCapacity                        int32
+	IdleInstanceAutoterminationMinutes int32
+	CustomTags                         map[string]string
 }
 
 // InstancePool describes an instance pool.
 type InstancePool struct {
-	ID               string
-	Name             string
-	NodeTypeID       string
-	State            string
-	MinIdleInstances int32
-	MaxCapacity      int32
+	ID                                 string
+	Name                               string
+	NodeTypeID                         string
+	State                              string
+	MinIdleInstances                   int32
+	MaxCapacity                        int32
+	IdleInstanceAutoterminationMinutes int32
+	CustomTags                         map[string]string
 }
 
 // ClusterConfig describes a cluster to create or edit.
 type ClusterConfig struct {
-	Name         string
-	SparkVersion string
-	NodeTypeID   string
-	NumWorkers   int32
-	AutoscaleMin int32
-	AutoscaleMax int32
+	Name          string
+	SparkVersion  string
+	NodeTypeID    string
+	NumWorkers    int32
+	AutoscaleMin  int32
+	AutoscaleMax  int32
+	RuntimeEngine string
+	CustomTags    map[string]string
 }
 
 // Cluster describes a compute cluster.
 type Cluster struct {
-	ID           string
-	Name         string
-	SparkVersion string
-	NodeTypeID   string
-	State        string
-	NumWorkers   int32
-	AutoscaleMin int32
-	AutoscaleMax int32
-	Pinned       bool
+	ID            string
+	Name          string
+	SparkVersion  string
+	NodeTypeID    string
+	State         string
+	NumWorkers    int32
+	AutoscaleMin  int32
+	AutoscaleMax  int32
+	RuntimeEngine string
+	CustomTags    map[string]string
+	Pinned        bool
 }
 
 // NodeType describes an available compute node type.
