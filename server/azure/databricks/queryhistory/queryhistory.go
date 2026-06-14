@@ -34,10 +34,12 @@ type Handler struct{}
 // New returns a query-history handler.
 func New() *Handler { return &Handler{} }
 
-// Matches claims /api/{ver}/sql/history/queries.
+// Matches claims exactly /api/{ver}/sql/history/queries. Requiring the exact
+// segment count keeps any future sub-resource (e.g. .../queries/{id}) from
+// being swallowed and served an empty list instead of a 501.
 func (*Handler) Matches(r *http.Request) bool {
 	parts := splitPath(r.URL.Path)
-	if len(parts) < minSegs || parts[idxAPI] != "api" {
+	if len(parts) != minSegs || parts[idxAPI] != "api" {
 		return false
 	}
 
