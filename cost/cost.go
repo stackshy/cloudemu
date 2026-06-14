@@ -89,6 +89,23 @@ func defaultRates() map[string]float64 {
 		"sagemaker:InvokeEndpoint":                0.0,    // bundled into hosting hours
 		"sagemaker:CreateNotebookInstance":        0.0464, // ml.t3.medium-equivalent instance-hour
 		"sagemaker:CreateModel":                   0.0,
+
+		// Azure AI — Cognitive Services (AI Foundry / Azure OpenAI): inference
+		// per call, deployments/accounts free (billed via consumed tokens).
+		"azureai:ChatCompletions":  0.00001, // per-call proxy for token usage
+		"azureai:Completions":      0.00001,
+		"azureai:Embeddings":       0.000001,
+		"azureai:CreateDeployment": 0.0,
+		"azureai:CreateAccount":    0.0,
+
+		// Azure AI — Machine Learning: compute/jobs/endpoints per node-hour,
+		// assets and workspaces free.
+		"azureai:CreateCompute":            0.19, // STANDARD_DS3_v2-equivalent node-hour
+		"azureai:CreateJob":                0.19,
+		"azureai:CreateEndpointDeployment": 0.19, // online-endpoint instance-hour
+		"azureai:ScoreOnlineEndpoint":      0.0,  // bundled into instance-hours
+		"azureai:CreateMLWorkspace":        0.0,
+		"azureai:CreateEndpoint":           0.0,
 	}
 }
 
