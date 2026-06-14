@@ -1372,10 +1372,15 @@ field). Auto-metrics → Cloud Monitoring via `SetMonitoring`.
 | Vector Search | Index (+upsert/remove datapoints), IndexEndpoint (+deploy/undeploy/findNeighbors) |
 | ML Metadata | MetadataStore, Tensorboard, Schedule, NotebookRuntimeTemplate, NotebookRuntime |
 
-The full Go API/driver and in-memory provider cover every family above. SDK-compat HTTP
-(REST round-tripped) currently spans models, endpoints (+predict), datasets, custom &
-batch-prediction jobs and `generateContent`/`countTokens`; the remaining families' handlers
-follow the same wire pattern as the next increment. **Total: 128 operations** (Go API/driver).
+The full Go API/driver, in-memory provider, and SDK-compat HTTP server (REST round-tripped)
+cover every family above — models (+versions/evaluations), endpoints (+predict), datasets,
+custom/batch-prediction/hyperparameter-tuning jobs, training & pipeline jobs, tuning jobs,
+cached contents, Feature Store (featurestores/entityTypes/features + online read/write),
+Feature Registry & online stores, Vector Search (indexes + index endpoints), ML metadata,
+tensorboards, schedules, notebook runtimes, and `generateContent`/`countTokens`. A portable
+Layer-1 wrapper (`vertexai/vertexai.go`), chaos injection (`chaos.WrapVertexAI`), and cost
+rates integrate Vertex with the cross-cutting layers like every other service.
+**Total: 128 operations** (Go API/driver).
 
 ---
 
