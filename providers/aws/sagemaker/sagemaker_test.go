@@ -99,7 +99,7 @@ func TestAllJobKindsComplete(t *testing.T) {
 
 	cj, err := m.CreateCompilationJob(ctx, driver.CompilationJobConfig{JobName: "c1"})
 	require.NoError(t, err)
-	assert.Equal(t, driver.JobCompleted, cj.Status)
+	assert.Equal(t, driver.CompilationCompleted, cj.Status)
 }
 
 func TestInferenceFlowAndInvoke(t *testing.T) {

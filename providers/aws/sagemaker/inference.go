@@ -9,7 +9,7 @@ import (
 
 // --- Model ---
 
-//nolint:gocritic,dupl // cfg matches the driver signature; the create-record shape recurs across resources.
+//nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateModel(_ context.Context, cfg driver.ModelConfig) (*driver.Model, error) {
 	if cfg.ModelName == "" {
 		return nil, errors.New(errors.InvalidArgument, "modelName is required")
@@ -30,6 +30,7 @@ func (m *Mock) CreateModel(_ context.Context, cfg driver.ModelConfig) (*driver.M
 	}
 	m.models.Set(cfg.ModelName, model)
 	m.setTags(arn, cfg.Tags)
+	m.emitResourceCreated("Model")
 
 	out := *model
 
@@ -164,6 +165,7 @@ func (m *Mock) CreateEndpoint(_ context.Context, cfg driver.EndpointSpec) (*driv
 	}
 	m.endpoints.Set(cfg.EndpointName, ep)
 	m.setTags(arn, cfg.Tags)
+	m.emitResourceCreated("Endpoint")
 
 	out := *ep
 

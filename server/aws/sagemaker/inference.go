@@ -300,7 +300,6 @@ func (h *Handler) describeEndpoint(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // the list-summaries shape recurs across resources; sharing it would obscure each surface.
 func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request) {
 	eps, err := h.svc.ListEndpoints(r.Context())
 	if err != nil {

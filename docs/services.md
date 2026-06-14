@@ -1173,12 +1173,14 @@ are pushed to CloudWatch via `SetMonitoring`.
 | Pipelines | Pipeline (+ executions), Experiment, Trial |
 | Tagging | AddTags / ListTags / DeleteTags |
 
-SDK-compat HTTP coverage (real `aws-sdk-go-v2/service/sagemaker` + `sagemakerruntime`
-round-tripped): Model, EndpointConfig, Endpoint, TrainingJob, InvokeEndpoint, tagging. The
-remaining families are served by the Go API/driver; their SDK-compat handlers follow the
-same wire pattern and are the next increment.
+SDK-compat HTTP coverage spans every family above and is round-tripped against the real
+`aws-sdk-go-v2/service/sagemaker`, `sagemakerruntime`, and `sagemakerfeaturestoreruntime`
+clients: all job kinds, the model/endpoint/inference-component stack + InvokeEndpoint, model
+registry, Studio, notebook instances, HyperPod clusters (+ nodes), Feature Store control
+plane + online-store runtime (PutRecord/GetRecord/DeleteRecord), pipelines/experiments/
+trials, and tagging.
 
-**Total: 121 operations** (Go API/driver)
+**Total: 121 operations** (Go API/driver), all exposed over the SDK-compat HTTP server.
 
 ---
 

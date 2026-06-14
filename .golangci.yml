@@ -157,6 +157,12 @@ linters:
           - goconst
           - mnd
         path: _test\.go
+      # The SageMaker SDK-compat handlers are ~100 near-identical decode/encode
+      # shims (one per operation); dupl flags the shared shape, which is
+      # intentional boilerplate, not extractable logic.
+      - linters:
+          - dupl
+        path: server/aws/sagemaker/
       - linters:
           - revive
         text: "exported (.+) should have comment" # TODO fix errors reported by this and remove this line

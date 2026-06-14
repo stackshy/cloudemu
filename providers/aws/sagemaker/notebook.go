@@ -37,6 +37,7 @@ func (m *Mock) CreateNotebookInstance(_ context.Context, cfg driver.NotebookInst
 	}
 	m.notebooks.Set(cfg.Name, nb)
 	m.setTags(arn, cfg.Tags)
+	m.emitResourceCreated("NotebookInstance")
 
 	out := *nb
 

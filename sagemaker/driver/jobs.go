@@ -26,6 +26,17 @@ const (
 	LabelingInitializing = "Initializing"
 )
 
+// Compilation (Neo) jobs use upper-case status values, distinct from the
+// mixed-case set the other jobs share.
+const (
+	CompilationInProgress = "INPROGRESS"
+	CompilationCompleted  = "COMPLETED"
+	CompilationFailed     = "FAILED"
+	CompilationStarting   = "STARTING"
+	CompilationStopping   = "STOPPING"
+	CompilationStopped    = "STOPPED"
+)
+
 // Channel is an input data channel for a training/processing job.
 type Channel struct {
 	Name        string

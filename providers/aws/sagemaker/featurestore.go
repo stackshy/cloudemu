@@ -42,6 +42,7 @@ func (m *Mock) CreateFeatureGroup(_ context.Context, cfg driver.FeatureGroupSpec
 	}
 	m.featureGroups.Set(cfg.GroupName, fg)
 	m.setTags(arn, cfg.Tags)
+	m.emitResourceCreated("FeatureGroup")
 
 	out := *fg
 

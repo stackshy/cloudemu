@@ -13,6 +13,7 @@
 package sagemaker
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -33,14 +34,14 @@ func New(svc driver.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// Matches claims awsJson1_1 control-plane requests (by X-Amz-Target) and the
-// runtime invocation REST paths.
+// Matches claims awsJson1_1 control-plane requests (by X-Amz-Target), the
+// runtime invocation REST paths, and the feature-store online-runtime paths.
 func (*Handler) Matches(r *http.Request) bool {
 	if strings.HasPrefix(r.Header.Get("X-Amz-Target"), targetPrefix) {
 		return true
 	}
 
-	return isRuntimePath(r.URL.Path)
+	return isRuntimePath(r.URL.Path) || isFeatureStorePath(r.URL.Path)
 }
 
 func isRuntimePath(p string) bool {
@@ -48,8 +49,12 @@ func isRuntimePath(p string) bool {
 		(strings.HasSuffix(p, "/invocations") || strings.HasSuffix(p, "/async-invocations"))
 }
 
+func isFeatureStorePath(p string) bool {
+	return strings.HasPrefix(p, "/FeatureGroup/")
+}
+
 // ServeHTTP dispatches by X-Amz-Target for the control plane, falling back to
-// the runtime REST path.
+// the runtime and feature-store REST paths.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isRuntimePath(r.URL.Path) {
 		h.serveRuntime(w, r)
@@ -57,11 +62,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isFeatureStorePath(r.URL.Path) {
+		h.serveFeatureStoreRuntime(w, r)
+
+		return
+	}
+
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
-	if h.routeModels(w, r, op) || h.routeEndpoints(w, r, op) ||
-		h.routeJobs(w, r, op) || h.routeTags(w, r, op) {
-		return
+	routers := []func(http.ResponseWriter, *http.Request, string) bool{
+		h.routeModels, h.routeEndpoints, h.routeInferenceComponents,
+		h.routeJobs, h.routeMoreJobs,
+		h.routeRegistry, h.routeStudio, h.routeNotebook,
+		h.routeCluster, h.routeFeatureStore, h.routePipelines, h.routeTags,
+	}
+	for _, route := range routers {
+		if route(w, r, op) {
+			return
+		}
 	}
 
 	wire.WriteJSONError(w, http.StatusBadRequest, "UnknownOperationException", "unknown operation: "+op)
@@ -137,6 +155,37 @@ func (h *Handler) routeTags(w http.ResponseWriter, r *http.Request, op string) b
 	}
 
 	return true
+}
+
+// decodeName1 decodes a request body and returns the string value of the
+// single named field (e.g. "TrainingJobName"). Used by the many Describe/Stop
+// operations whose request is just one identifier.
+func decodeName1(w http.ResponseWriter, r *http.Request, field string) (string, bool) {
+	var m map[string]any
+	if !wire.DecodeJSON(w, r, &m) {
+		return "", false
+	}
+
+	name, _ := m[field].(string)
+
+	return name, true
+}
+
+// stopByName decodes the named identifier and invokes a Stop/Delete-style
+// driver call that returns only an error, writing an empty success body.
+func stopByName(w http.ResponseWriter, r *http.Request, field string, fn func(context.Context, string) error) {
+	name, ok := decodeName1(w, r, field)
+	if !ok {
+		return
+	}
+
+	if err := fn(r.Context(), name); err != nil {
+		writeDriverError(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
 }
 
 // epoch converts a stored RFC3339 timestamp to Unix seconds for awsJson1_1

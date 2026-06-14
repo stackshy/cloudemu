@@ -10,7 +10,6 @@ import (
 
 // --- Model package group ---
 
-//nolint:dupl // the create-record shape recurs across resources; sharing it would obscure each resource.
 func (m *Mock) CreateModelPackageGroup(_ context.Context, cfg driver.ModelPackageGroupSpec) (*driver.ModelPackageGroup, error) {
 	if cfg.GroupName == "" {
 		return nil, errors.New(errors.InvalidArgument, "modelPackageGroupName is required")

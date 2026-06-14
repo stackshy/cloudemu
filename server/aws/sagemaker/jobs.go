@@ -105,7 +105,6 @@ func (h *Handler) describeTrainingJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // the list-summaries shape recurs across resources; sharing it would obscure each surface.
 func (h *Handler) listTrainingJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := h.svc.ListTrainingJobs(r.Context())
 	if err != nil {

@@ -33,6 +33,7 @@ func (m *Mock) CreatePipeline(_ context.Context, cfg driver.PipelineSpec) (*driv
 	}
 	m.pipelines.Set(cfg.PipelineName, p)
 	m.setTags(arn, cfg.Tags)
+	m.emitResourceCreated("Pipeline")
 
 	out := *p
 

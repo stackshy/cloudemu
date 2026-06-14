@@ -455,7 +455,7 @@ func (m *Mock) CreateCompilationJob(_ context.Context, cfg driver.CompilationJob
 		OutputS3URI:        cfg.OutputS3URI,
 		TargetDevice:       cfg.TargetDevice,
 		Framework:          cfg.Framework,
-		Status:             driver.JobCompleted,
+		Status:             driver.CompilationCompleted,
 		CreationTime:       now,
 		CompilationEndTime: now,
 		LastModifiedTime:   now,
@@ -494,7 +494,7 @@ func (m *Mock) ListCompilationJobs(_ context.Context) ([]driver.CompilationJob, 
 
 func (m *Mock) StopCompilationJob(_ context.Context, name string) error {
 	return stopJob(m.compilationJobs, name, "compilation job", func(j *driver.CompilationJob) {
-		j.Status = driver.JobStopped
+		j.Status = driver.CompilationStopped
 	})
 }
 

@@ -28,6 +28,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterSpec) (*driver
 	}
 	m.clusters.Set(cfg.ClusterName, c)
 	m.setTags(arn, cfg.Tags)
+	m.emitResourceCreated("Cluster")
 
 	out := *c
 
