@@ -140,6 +140,12 @@ github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.31.12 h1:kOX5fC
 github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.31.12/go.mod h1:n8ixkV2383DfuJhsCMVdfeSfYWqJhO2uadau9wrta9U=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0 h1:hlSuz394kV0vhv9drL5lhuEFbEOEP1VyQpy15qWh1Pk=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0/go.mod h1:uoA43SdFwacedBfSgfFSjjCvYe8aYBS7EnU5GZ/YKMM=
+github.com/aws/aws-sdk-go-v2/service/sagemaker v1.254.0 h1:0vYBf7g+R421AjrPAKh+zoNDhWxqg4KixviLFTQ+6vI=
+github.com/aws/aws-sdk-go-v2/service/sagemaker v1.254.0/go.mod h1:AyCRrgn6Qm1nKR2grD+o8iFlKx5c7jF2h72YkkjEaoQ=
+github.com/aws/aws-sdk-go-v2/service/sagemakerfeaturestoreruntime v1.35.7 h1:P4YEn9pJpohKdSDgys1nhlT15ZoQh+wnzU8+bn6hO4A=
+github.com/aws/aws-sdk-go-v2/service/sagemakerfeaturestoreruntime v1.35.7/go.mod h1:5wimXnFCB0SDWjXfkvWjjPsS3LAIZCiEayM6AE8EniQ=
+github.com/aws/aws-sdk-go-v2/service/sagemakerruntime v1.41.0 h1:YRiKEeNe+Kgi03T1ODgPFJ/EkIA4MtKcitJjtoEd8kA=
+github.com/aws/aws-sdk-go-v2/service/sagemakerruntime v1.41.0/go.mod h1:y1haDXp66bFbEY007eY3iipsa1Mwi27QQNapOv0MQ7g=
 github.com/aws/aws-sdk-go-v2/service/signin v1.0.9 h1:QKZH0S178gCmFEgst8hN0mCX1KxLgHBKKY/CLqwP8lg=
 github.com/aws/aws-sdk-go-v2/service/signin v1.0.9/go.mod h1:7yuQJoT+OoH8aqIxw9vwF+8KpvLZ8AWmvmUWHsGQZvI=
 github.com/aws/aws-sdk-go-v2/service/sqs v1.42.27 h1:QgaWXVmNDxv/U/3UIHfGb7ohvtFgerf/bYcYylj4i8E=

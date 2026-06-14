@@ -27,6 +27,7 @@ This document lists every service and operation available in CloudEmu across all
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
+| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | _(planned: Azure ML / AI Foundry)_ | _(planned: Vertex AI)_ |
 
 ---
 
@@ -1322,6 +1323,40 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 
 ---
 
+## 22. Machine Learning
+
+**Driver interface:** `sagemaker/driver/driver.go` (control plane + `Runtime`)
+**AWS:** SageMaker AI (+ sagemaker-runtime) | **Azure:** _planned_ | **GCP:** _planned_
+
+AWS-only today. The control plane speaks awsJson1_1 (`X-Amz-Target: SageMaker.*`); the
+runtime speaks restJson1 (`POST /endpoints/{name}/invocations`). Asynchronous jobs
+complete synchronously to a terminal state so Describe/List are deterministic. Auto-metrics
+are pushed to CloudWatch via `SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| Jobs | Training, Processing, Transform, HyperParameterTuning, AutoML (V2), Labeling, Compilation — each Create/Describe/List/Stop |
+| Inference | Model, EndpointConfig, Endpoint (+ UpdateEndpoint, UpdateEndpointWeightsAndCapacities), InferenceComponent |
+| Runtime | InvokeEndpoint, InvokeEndpointAsync (sagemaker-runtime) |
+| Model Registry | ModelPackageGroup, ModelPackage (versioned, approval status) |
+| Studio | Domain, UserProfile, Space, App |
+| Notebooks | NotebookInstance (+ Start/Stop), NotebookInstanceLifecycleConfig, CodeRepository |
+| Clusters | HyperPod Cluster (+ ListClusterNodes / DescribeClusterNode) |
+| Feature Store | FeatureGroup + online-store runtime (PutRecord / GetRecord / DeleteRecord) |
+| Pipelines | Pipeline (+ executions), Experiment, Trial |
+| Tagging | AddTags / ListTags / DeleteTags |
+
+SDK-compat HTTP coverage spans every family above and is round-tripped against the real
+`aws-sdk-go-v2/service/sagemaker`, `sagemakerruntime`, and `sagemakerfeaturestoreruntime`
+clients: all job kinds, the model/endpoint/inference-component stack + InvokeEndpoint, model
+registry, Studio, notebook instances, HyperPod clusters (+ nodes), Feature Store control
+plane + online-store runtime (PutRecord/GetRecord/DeleteRecord), pipelines/experiments/
+trials, and tagging.
+
+**Total: 121 operations** (Go API/driver), all exposed over the SDK-compat HTTP server.
+
+---
+
 ## Summary
 
 | Service | Operations |
@@ -1350,4 +1385,5 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI — AWS Bedrock | 22 |
 | Databricks — Azure (control + data plane) | 52 |
-| **Grand Total** | **572** |
+| Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
+| **Grand Total** | **693** |

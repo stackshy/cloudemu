@@ -18,6 +18,7 @@ import (
 	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
+	sagemakerdriver "github.com/stackshy/cloudemu/sagemaker/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
@@ -31,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/resourceexplorer2"
 	"github.com/stackshy/cloudemu/server/aws/resourcegroupstaggingapi"
 	"github.com/stackshy/cloudemu/server/aws/s3"
+	sagemakersrv "github.com/stackshy/cloudemu/server/aws/sagemaker"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -52,6 +54,7 @@ type Drivers struct {
 	EKS        eksdriver.EKS
 	IAM        iamdriver.IAM
 	Bedrock    bedrockdriver.Bedrock
+	SageMaker  sagemakerdriver.Service
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -155,6 +158,14 @@ func New(d Drivers) *server.Server {
 	// REST fallback that would otherwise claim those paths.
 	if d.Bedrock != nil {
 		srv.Register(bedrock.New(d.Bedrock))
+	}
+
+	// SageMaker control plane matches the X-Amz-Target prefix "SageMaker."
+	// (disjoint from DynamoDB/SQS/Resource-Groups-Tagging), and the runtime
+	// matches /endpoints/{name}/invocations. The runtime path must register
+	// before S3's permissive REST fallback.
+	if d.SageMaker != nil {
+		srv.Register(sagemakersrv.New(d.SageMaker))
 	}
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from
