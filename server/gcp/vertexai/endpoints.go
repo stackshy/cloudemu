@@ -92,7 +92,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, locatio
 		return
 	}
 
-	op, _, err := h.svc.CreateEndpoint(r.Context(), driver.EndpointConfig{
+	op, ep, err := h.svc.CreateEndpoint(r.Context(), driver.EndpointConfig{
 		Location: location, DisplayName: req.DisplayName, Description: req.Description, Labels: req.Labels,
 	})
 	if err != nil {
@@ -101,7 +101,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, locatio
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, endpointJSON(ep), "Endpoint")
 }
 
 func (h *Handler) getEndpoint(w http.ResponseWriter, r *http.Request, name string) {
@@ -164,7 +164,7 @@ func (h *Handler) deployModel(w http.ResponseWriter, r *http.Request, endpoint s
 
 	dm := req.DeployedModel
 
-	op, _, err := h.svc.DeployModel(r.Context(), endpoint, driver.DeployedModel{
+	op, ep, err := h.svc.DeployModel(r.Context(), endpoint, driver.DeployedModel{
 		ID: dm.ID, Model: dm.Model, DisplayName: dm.DisplayName,
 		MachineType:     dm.DedicatedResources.MachineSpec.MachineType,
 		MinReplicaCount: dm.DedicatedResources.MinReplicaCount,
@@ -176,7 +176,15 @@ func (h *Handler) deployModel(w http.ResponseWriter, r *http.Request, endpoint s
 		return
 	}
 
-	writeOp(w, op)
+	// DeployModelResponse carries the newly deployed model (the last appended).
+	var deployed map[string]any
+
+	if n := len(ep.DeployedModels); n > 0 {
+		d := ep.DeployedModels[n-1]
+		deployed = map[string]any{"id": d.ID, "model": d.Model, "displayName": d.DisplayName}
+	}
+
+	writeResourceOp(w, op, map[string]any{"deployedModel": deployed}, "DeployModelResponse")
 }
 
 func (h *Handler) undeployModel(w http.ResponseWriter, r *http.Request, endpoint string) {
@@ -195,7 +203,7 @@ func (h *Handler) undeployModel(w http.ResponseWriter, r *http.Request, endpoint
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, nil, "UndeployModelResponse")
 }
 
 func (h *Handler) predict(w http.ResponseWriter, r *http.Request, endpoint string) {

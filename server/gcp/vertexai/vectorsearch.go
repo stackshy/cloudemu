@@ -73,7 +73,7 @@ func (h *Handler) createIndex(w http.ResponseWriter, r *http.Request, location s
 		return
 	}
 
-	op, _, err := h.svc.CreateIndex(r.Context(), driver.IndexConfig{
+	op, idx, err := h.svc.CreateIndex(r.Context(), driver.IndexConfig{
 		Location: location, DisplayName: req.DisplayName, Description: req.Description,
 		Dimensions: req.Metadata.Config.Dimensions,
 	})
@@ -83,7 +83,7 @@ func (h *Handler) createIndex(w http.ResponseWriter, r *http.Request, location s
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, indexJSON(idx), "Index")
 }
 
 func (h *Handler) getIndex(w http.ResponseWriter, r *http.Request, name string) {
@@ -236,7 +236,7 @@ func (h *Handler) createIndexEndpoint(w http.ResponseWriter, r *http.Request, lo
 		return
 	}
 
-	op, _, err := h.svc.CreateIndexEndpoint(r.Context(), driver.IndexEndpointConfig{
+	op, ie, err := h.svc.CreateIndexEndpoint(r.Context(), driver.IndexEndpointConfig{
 		Location: location, DisplayName: req.DisplayName, Description: req.Description,
 	})
 	if err != nil {
@@ -245,7 +245,7 @@ func (h *Handler) createIndexEndpoint(w http.ResponseWriter, r *http.Request, lo
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, indexEndpointJSON(ie), "IndexEndpoint")
 }
 
 func (h *Handler) getIndexEndpoint(w http.ResponseWriter, r *http.Request, name string) {
@@ -298,7 +298,7 @@ func (h *Handler) deployIndex(w http.ResponseWriter, r *http.Request, indexEndpo
 		return
 	}
 
-	op, _, err := h.svc.DeployIndex(r.Context(), indexEndpoint, driver.DeployedIndex{
+	op, ie, err := h.svc.DeployIndex(r.Context(), indexEndpoint, driver.DeployedIndex{
 		ID: req.DeployedIndex.ID, Index: req.DeployedIndex.Index,
 	})
 	if err != nil {
@@ -307,7 +307,15 @@ func (h *Handler) deployIndex(w http.ResponseWriter, r *http.Request, indexEndpo
 		return
 	}
 
-	writeOp(w, op)
+	// DeployIndexResponse carries the newly deployed index (the last appended).
+	var deployed map[string]any
+
+	if n := len(ie.DeployedIndexes); n > 0 {
+		d := ie.DeployedIndexes[n-1]
+		deployed = map[string]any{"id": d.ID, "index": d.Index}
+	}
+
+	writeResourceOp(w, op, map[string]any{"deployedIndex": deployed}, "DeployIndexResponse")
 }
 
 func (h *Handler) undeployIndex(w http.ResponseWriter, r *http.Request, indexEndpoint string) {
@@ -326,7 +334,7 @@ func (h *Handler) undeployIndex(w http.ResponseWriter, r *http.Request, indexEnd
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, nil, "UndeployIndexResponse")
 }
 
 func (h *Handler) findNeighbors(w http.ResponseWriter, r *http.Request, indexEndpoint string) {

@@ -42,14 +42,14 @@ func (h *Handler) createMetadataStore(w http.ResponseWriter, r *http.Request, lo
 		return
 	}
 
-	op, _, err := h.svc.CreateMetadataStore(r.Context(), location, r.URL.Query().Get("metadataStoreId"))
+	op, s, err := h.svc.CreateMetadataStore(r.Context(), location, r.URL.Query().Get("metadataStoreId"))
 	if err != nil {
 		writeCErr(w, err)
 
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, metadataStoreJSON(s), "MetadataStore")
 }
 
 func (h *Handler) getMetadataStore(w http.ResponseWriter, r *http.Request, name string) {
@@ -130,14 +130,14 @@ func (h *Handler) createTensorboard(w http.ResponseWriter, r *http.Request, loca
 		return
 	}
 
-	op, _, err := h.svc.CreateTensorboard(r.Context(), location, req.DisplayName)
+	op, tb, err := h.svc.CreateTensorboard(r.Context(), location, req.DisplayName)
 	if err != nil {
 		writeCErr(w, err)
 
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, tensorboardJSON(tb), "Tensorboard")
 }
 
 func (h *Handler) getTensorboard(w http.ResponseWriter, r *http.Request, name string) {
@@ -344,14 +344,14 @@ func (h *Handler) createNotebookRuntimeTemplate(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	op, _, err := h.svc.CreateNotebookRuntimeTemplate(r.Context(), location, req.DisplayName, req.MachineSpec.MachineType)
+	op, t, err := h.svc.CreateNotebookRuntimeTemplate(r.Context(), location, req.DisplayName, req.MachineSpec.MachineType)
 	if err != nil {
 		writeCErr(w, err)
 
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, nbTemplateJSON(t), "NotebookRuntimeTemplate")
 }
 
 func (h *Handler) getNotebookRuntimeTemplate(w http.ResponseWriter, r *http.Request, name string) {
@@ -468,14 +468,14 @@ func (h *Handler) assignNotebookRuntime(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	op, _, err := h.svc.AssignNotebookRuntime(r.Context(), location, req.NotebookRuntime.DisplayName)
+	op, nr, err := h.svc.AssignNotebookRuntime(r.Context(), location, req.NotebookRuntime.DisplayName)
 	if err != nil {
 		writeCErr(w, err)
 
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, nbRuntimeJSON(nr), "NotebookRuntime")
 }
 
 func (h *Handler) getNotebookRuntime(w http.ResponseWriter, r *http.Request, name string) {

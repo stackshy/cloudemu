@@ -58,7 +58,7 @@ func (h *Handler) createFeaturestore(w http.ResponseWriter, r *http.Request, loc
 		return
 	}
 
-	op, _, err := h.svc.CreateFeaturestore(r.Context(), driver.FeaturestoreConfig{
+	op, fs, err := h.svc.CreateFeaturestore(r.Context(), driver.FeaturestoreConfig{
 		Location: location, FeaturestoreID: r.URL.Query().Get("featurestoreId"),
 		OnlineNodeCount: req.OnlineServingConfig.FixedNodeCount,
 	})
@@ -68,7 +68,7 @@ func (h *Handler) createFeaturestore(w http.ResponseWriter, r *http.Request, loc
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, featurestoreJSON(fs), "Featurestore")
 }
 
 func (h *Handler) getFeaturestore(w http.ResponseWriter, r *http.Request, name string) {
@@ -169,14 +169,14 @@ func (h *Handler) createEntityType(w http.ResponseWriter, r *http.Request, p *vP
 		return
 	}
 
-	op, _, err := h.svc.CreateEntityType(r.Context(), p.name, r.URL.Query().Get("entityTypeId"), req.EntityType.Description)
+	op, et, err := h.svc.CreateEntityType(r.Context(), p.name, r.URL.Query().Get("entityTypeId"), req.EntityType.Description)
 	if err != nil {
 		writeCErr(w, err)
 
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, entityTypeJSON(et), "EntityType")
 }
 
 func (h *Handler) getEntityType(w http.ResponseWriter, r *http.Request, name string) {

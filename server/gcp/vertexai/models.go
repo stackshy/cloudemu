@@ -165,7 +165,7 @@ func (h *Handler) uploadModel(w http.ResponseWriter, r *http.Request, location s
 		return
 	}
 
-	op, _, err := h.svc.UploadModel(r.Context(), driver.ModelConfig{
+	op, mdl, err := h.svc.UploadModel(r.Context(), driver.ModelConfig{
 		Location:       location,
 		DisplayName:    req.Model.DisplayName,
 		Description:    req.Model.Description,
@@ -179,7 +179,7 @@ func (h *Handler) uploadModel(w http.ResponseWriter, r *http.Request, location s
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, modelJSON(mdl), "Model")
 }
 
 func (h *Handler) getModel(w http.ResponseWriter, r *http.Request, name string) {

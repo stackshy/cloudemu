@@ -86,7 +86,7 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request, location
 		return
 	}
 
-	op, _, err := h.svc.CreateDataset(r.Context(), driver.DatasetConfig{
+	op, ds, err := h.svc.CreateDataset(r.Context(), driver.DatasetConfig{
 		Location: location, DisplayName: req.DisplayName,
 		MetadataSchemaURI: req.MetadataSchemaURI, Labels: req.Labels,
 	})
@@ -96,7 +96,7 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request, location
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, datasetJSON(ds), "Dataset")
 }
 
 func (h *Handler) getDataset(w http.ResponseWriter, r *http.Request, name string) {

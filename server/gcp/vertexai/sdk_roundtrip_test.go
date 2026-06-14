@@ -73,6 +73,13 @@ func TestModelUploadAndGet(t *testing.T) {
 	name, _ := op["response"].(map[string]any)["name"].(string)
 	require.NotEmpty(t, name)
 
+	// The done LRO response must carry the typed Model (with @type and
+	// versionId), not just {name}, so SDK pollers can read the result.
+	resp := op["response"].(map[string]any)
+	assert.Contains(t, resp["@type"], "google.cloud.aiplatform.v1.Model")
+	assert.Equal(t, "1", resp["versionId"])
+	assert.Equal(t, "m1", resp["displayName"])
+
 	got := do(t, http.MethodGet, url+"/v1/"+name, nil)
 	assert.Equal(t, "m1", got["displayName"])
 

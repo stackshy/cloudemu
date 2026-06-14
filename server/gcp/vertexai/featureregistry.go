@@ -61,7 +61,7 @@ func (h *Handler) createFeatureGroup(w http.ResponseWriter, r *http.Request, loc
 		return
 	}
 
-	op, _, err := h.svc.CreateFeatureGroup(r.Context(), driver.FeatureGroupConfig{
+	op, fg, err := h.svc.CreateFeatureGroup(r.Context(), driver.FeatureGroupConfig{
 		Location: location, FeatureGroupID: r.URL.Query().Get("featureGroupId"),
 		Description: req.Description, BigQueryURI: req.BigQuery.BigQuerySource.InputURI,
 	})
@@ -71,7 +71,7 @@ func (h *Handler) createFeatureGroup(w http.ResponseWriter, r *http.Request, loc
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, featureGroupJSON(fg), "FeatureGroup")
 }
 
 func (h *Handler) getFeatureGroup(w http.ResponseWriter, r *http.Request, name string) {
@@ -151,14 +151,14 @@ func (h *Handler) createFeature(w http.ResponseWriter, r *http.Request, p *vPath
 		return
 	}
 
-	op, _, err := h.svc.CreateFeature(r.Context(), p.name, r.URL.Query().Get("featureId"), req.Description)
+	op, f, err := h.svc.CreateFeature(r.Context(), p.name, r.URL.Query().Get("featureId"), req.Description)
 	if err != nil {
 		writeCErr(w, err)
 
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, featureJSON(f), "Feature")
 }
 
 func (h *Handler) getFeature(w http.ResponseWriter, r *http.Request, name string) {
@@ -241,7 +241,7 @@ func (h *Handler) createFeatureOnlineStore(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	op, _, err := h.svc.CreateFeatureOnlineStore(r.Context(), driver.FeatureOnlineStoreConfig{
+	op, s, err := h.svc.CreateFeatureOnlineStore(r.Context(), driver.FeatureOnlineStoreConfig{
 		Location: location, FeatureOnlineStoreID: r.URL.Query().Get("featureOnlineStoreId"),
 	})
 	if err != nil {
@@ -250,7 +250,7 @@ func (h *Handler) createFeatureOnlineStore(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, onlineStoreJSON(s), "FeatureOnlineStore")
 }
 
 func (h *Handler) getFeatureOnlineStore(w http.ResponseWriter, r *http.Request, name string) {
@@ -342,7 +342,7 @@ func (h *Handler) createFeatureView(w http.ResponseWriter, r *http.Request, p *v
 		return
 	}
 
-	op, _, err := h.svc.CreateFeatureView(r.Context(), driver.FeatureViewConfig{
+	op, fv, err := h.svc.CreateFeatureView(r.Context(), driver.FeatureViewConfig{
 		Parent: p.name, FeatureViewID: r.URL.Query().Get("featureViewId"),
 		BigQueryURI: req.BigQuerySource.URI,
 	})
@@ -352,7 +352,7 @@ func (h *Handler) createFeatureView(w http.ResponseWriter, r *http.Request, p *v
 		return
 	}
 
-	writeOp(w, op)
+	writeResourceOp(w, op, featureViewJSON(fv), "FeatureView")
 }
 
 func (h *Handler) getFeatureView(w http.ResponseWriter, r *http.Request, name string) {

@@ -5,14 +5,23 @@
 // {location}-aiplatform.googleapis.com.
 //
 // Control-plane mutations return google.longrunning.Operation envelopes with
-// done=true so SDK pollers terminate on the first poll. Job-family creates
-// return the resource directly (synchronous). predict / generateContent are
-// synchronous data-plane calls.
+// done=true AND the typed result populated in response (with its @type), so SDK
+// pollers terminate on the first poll and unmarshal the resource straight off
+// the operation. Job-family creates return the resource directly (synchronous).
+// predict / generateContent are synchronous data-plane calls.
 //
 // The /v1/projects/{p}/locations/{l}/ prefix is shared with Cloud Functions,
 // Cloud SQL and GKE; Matches narrows on the Vertex collection segment so this
 // handler claims only its own URLs. It also claims /v1/publishers/ for the
 // Model Garden generateContent surface.
+//
+// LRO polling note: the operations collection
+// (.../locations/{l}/operations/{id}) is intentionally NOT claimed here — the
+// GKE handler, registered ahead of Vertex on the shared prefix, already owns
+// it. This is safe because every Vertex mutation completes done-on-arrival with
+// its result inlined (above), so a client never needs to poll. If a future
+// non-done Vertex op is introduced, route operations through a shared
+// per-location operations handler before relying on polling.
 package vertexai
 
 import (
