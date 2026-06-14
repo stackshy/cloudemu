@@ -6,7 +6,7 @@ Do this instead — point your app's *existing* cloud client at CloudEmu in your
 
 ## The trick
 
-Read the endpoint from an env var. Tests set it to a CloudEmu server; production leaves it unset and talks to the real cloud. Your code doesn't change.
+Make the endpoint injectable, then point it at CloudEmu in tests. An env var is the easy default (shown below) — but it's your call: a config field or setting it directly in the test works just as well. Production uses the real cloud; your code doesn't change.
 
 ```go
 // Where your app builds its client:
@@ -36,10 +36,12 @@ Keep CloudEmu in `_test.go` only — never import it from production code.
 
 ```markdown
 CloudEmu (github.com/stackshy/cloudemu) is an in-memory cloud emulator. To integrate it:
-do NOT create a demo main.go. Wire it into the real code — make the SDK endpoint read from
-CLOUDEMU_ENDPOINT (AWS o.BaseEndpoint, GCP option.WithEndpoint, Azure arm.ClientOptions,
-Databricks Config.Host), then add a _test.go helper that starts it with httptest.NewServer
-and sets CLOUDEMU_ENDPOINT via t.Setenv so existing tests run against it. Prod leaves the
-var unset → real cloud. Never import CloudEmu from production code.
+do NOT create a demo main.go — wire it into the real code so existing tests exercise it.
+Make the SDK endpoint injectable however this codebase prefers (an env var, a config field,
+or set directly in the test — your choice) and point it at CloudEmu: AWS o.BaseEndpoint,
+GCP option.WithEndpoint, Azure arm.ClientOptions, Databricks Config.Host. Add a _test.go
+helper that starts CloudEmu with httptest.NewServer and points the client at its URL so
+existing tests run against it. Production uses the real cloud, code unchanged. Never import
+CloudEmu from production code.
 See https://github.com/stackshy/cloudemu/blob/development/docs/integration.md
 ```
