@@ -58,6 +58,7 @@ func (m *Mock) DeleteFeatureGroup(_ context.Context, name string) (*driver.Opera
 	return m.doneOp(locationOf(name), name), nil
 }
 
+//nolint:dupl // parent/child create shape recurs; each maps a distinct resource.
 func (m *Mock) CreateFeature(_ context.Context, parent, featureID, description string) (*driver.Operation, *driver.Feature, error) {
 	if !m.featureGroups.Has(parent) {
 		return nil, nil, errors.Newf(errors.NotFound, "feature group %q not found", parent)
@@ -204,4 +205,133 @@ func (m *Mock) FetchFeatureValues(_ context.Context, featureView, entityID strin
 	}
 
 	return []driver.FeatureNameValue{{Name: "entity_id", Value: entityID}}, nil
+}
+
+// --- Classic Featurestore / EntityType (pre-FeatureGroup) ---
+
+func (m *Mock) CreateFeaturestore(_ context.Context, cfg driver.FeaturestoreConfig) (*driver.Operation, *driver.Featurestore, error) {
+	name := m.resName(cfg.Location, "featurestores", orID(cfg.FeaturestoreID, m.newID()))
+	fs := &driver.Featurestore{Name: name, State: "STABLE", OnlineNodeCount: cfg.OnlineNodeCount, CreateTime: m.now()}
+	m.featurestores.Set(name, fs)
+
+	out := *fs
+
+	return m.doneOp(cfg.Location, name), &out, nil
+}
+
+func (m *Mock) GetFeaturestore(_ context.Context, name string) (*driver.Featurestore, error) {
+	fs, ok := m.featurestores.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "featurestore %q not found", name)
+	}
+
+	out := *fs
+
+	return &out, nil
+}
+
+func (m *Mock) ListFeaturestores(_ context.Context, location string) ([]driver.Featurestore, error) {
+	out := make([]driver.Featurestore, 0)
+
+	for _, fs := range m.featurestores.All() {
+		if location == "" || locationOf(fs.Name) == location {
+			out = append(out, *fs)
+		}
+	}
+
+	return out, nil
+}
+
+func (m *Mock) DeleteFeaturestore(_ context.Context, name string) (*driver.Operation, error) {
+	if !m.featurestores.Has(name) {
+		return nil, errors.Newf(errors.NotFound, "featurestore %q not found", name)
+	}
+
+	m.featurestores.Delete(name)
+
+	return m.doneOp(locationOf(name), name), nil
+}
+
+//nolint:dupl // parent/child create shape recurs; each maps a distinct resource.
+func (m *Mock) CreateEntityType(
+	_ context.Context, parent, entityTypeID, description string,
+) (*driver.Operation, *driver.EntityType, error) {
+	if !m.featurestores.Has(parent) {
+		return nil, nil, errors.Newf(errors.NotFound, "featurestore %q not found", parent)
+	}
+
+	name := parent + "/entityTypes/" + orID(entityTypeID, m.newID())
+	et := &driver.EntityType{Name: name, Description: description, CreateTime: m.now()}
+	m.entityTypes.Set(name, et)
+
+	out := *et
+
+	return m.doneOp(locationOf(parent), name), &out, nil
+}
+
+func (m *Mock) GetEntityType(_ context.Context, name string) (*driver.EntityType, error) {
+	et, ok := m.entityTypes.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "entity type %q not found", name)
+	}
+
+	out := *et
+
+	return &out, nil
+}
+
+func (m *Mock) ListEntityTypes(_ context.Context, parent string) ([]driver.EntityType, error) {
+	out := make([]driver.EntityType, 0)
+
+	for k, et := range m.entityTypes.All() {
+		if len(k) > len(parent) && k[:len(parent)] == parent {
+			out = append(out, *et)
+		}
+	}
+
+	return out, nil
+}
+
+func (m *Mock) DeleteEntityType(_ context.Context, name string) (*driver.Operation, error) {
+	if !m.entityTypes.Has(name) {
+		return nil, errors.Newf(errors.NotFound, "entity type %q not found", name)
+	}
+
+	m.entityTypes.Delete(name)
+
+	return m.doneOp(locationOf(name), name), nil
+}
+
+func entityKey(entityType, entityID string) string {
+	return entityType + "\x00" + entityID
+}
+
+// WriteFeatureValues stores online feature values for an entity.
+func (m *Mock) WriteFeatureValues(_ context.Context, entityType, entityID string, values []driver.FeatureNameValue) error {
+	if !m.entityTypes.Has(entityType) {
+		return errors.Newf(errors.NotFound, "entity type %q not found", entityType)
+	}
+
+	stored := make([]driver.FeatureNameValue, len(values))
+	copy(stored, values)
+	m.entityRecords.Set(entityKey(entityType, entityID), stored)
+
+	return nil
+}
+
+// ReadFeatureValues returns the online feature values for an entity.
+func (m *Mock) ReadFeatureValues(_ context.Context, entityType, entityID string) ([]driver.FeatureNameValue, error) {
+	if !m.entityTypes.Has(entityType) {
+		return nil, errors.Newf(errors.NotFound, "entity type %q not found", entityType)
+	}
+
+	rec, ok := m.entityRecords.Get(entityKey(entityType, entityID))
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "entity %q not found", entityID)
+	}
+
+	out := make([]driver.FeatureNameValue, len(rec))
+	copy(out, rec)
+
+	return out, nil
 }

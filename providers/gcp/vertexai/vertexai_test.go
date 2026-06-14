@@ -128,3 +128,37 @@ func TestNotFound(t *testing.T) {
 	_, err := m.GetModel(context.Background(), "projects/proj/locations/us-central1/models/ghost")
 	require.Error(t, err)
 }
+
+func TestLegacyFeaturestore(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, fs, err := m.CreateFeaturestore(ctx, driver.FeaturestoreConfig{Location: "us-central1", FeaturestoreID: "fs1"})
+	require.NoError(t, err)
+	assert.Contains(t, fs.Name, "/featurestores/fs1")
+
+	got, err := m.GetFeaturestore(ctx, fs.Name)
+	require.NoError(t, err)
+	assert.Equal(t, "STABLE", got.State)
+
+	_, et, err := m.CreateEntityType(ctx, fs.Name, "users", "user entities")
+	require.NoError(t, err)
+	assert.Contains(t, et.Name, "/entityTypes/users")
+
+	ets, err := m.ListEntityTypes(ctx, fs.Name)
+	require.NoError(t, err)
+	assert.Len(t, ets, 1)
+
+	require.NoError(t, m.WriteFeatureValues(ctx, et.Name, "u1", []driver.FeatureNameValue{{Name: "age", Value: "30"}}))
+	vals, err := m.ReadFeatureValues(ctx, et.Name, "u1")
+	require.NoError(t, err)
+	require.Len(t, vals, 1)
+	assert.Equal(t, "age", vals[0].Name)
+
+	_, err = m.ReadFeatureValues(ctx, et.Name, "ghost")
+	require.Error(t, err)
+
+	stores, err := m.ListFeaturestores(ctx, "us-central1")
+	require.NoError(t, err)
+	assert.Len(t, stores, 1)
+}

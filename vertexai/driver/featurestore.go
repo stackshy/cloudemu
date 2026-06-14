@@ -58,9 +58,47 @@ type FeatureNameValue struct {
 	Value string
 }
 
-// featureStoreAPI covers the BigQuery-backed Feature Store: groups, features,
-// online stores, views, and the fetchFeatureValues data plane.
+// FeaturestoreConfig describes a classic (pre-Feature-Group) Featurestore.
+type FeaturestoreConfig struct {
+	Location        string
+	FeaturestoreID  string
+	OnlineNodeCount int
+}
+
+// Featurestore is the classic Vertex AI Featurestore — a container of
+// EntityTypes, distinct from the newer BigQuery-backed FeatureGroup.
+type Featurestore struct {
+	Name            string // projects/{p}/locations/{l}/featurestores/{id}
+	State           string
+	OnlineNodeCount int
+	CreateTime      string
+}
+
+// EntityType groups features within a classic Featurestore.
+type EntityType struct {
+	Name        string // .../featurestores/{f}/entityTypes/{id}
+	Description string
+	CreateTime  string
+}
+
+// featureStoreAPI covers both Feature Store generations: the classic
+// Featurestore/EntityType resources (+ online read/write) and the newer
+// BigQuery-backed FeatureGroup / FeatureOnlineStore / FeatureView stack.
 type featureStoreAPI interface {
+	CreateFeaturestore(ctx context.Context, cfg FeaturestoreConfig) (*Operation, *Featurestore, error)
+	GetFeaturestore(ctx context.Context, name string) (*Featurestore, error)
+	ListFeaturestores(ctx context.Context, location string) ([]Featurestore, error)
+	DeleteFeaturestore(ctx context.Context, name string) (*Operation, error)
+
+	CreateEntityType(ctx context.Context, parent, entityTypeID, description string) (*Operation, *EntityType, error)
+	GetEntityType(ctx context.Context, name string) (*EntityType, error)
+	ListEntityTypes(ctx context.Context, parent string) ([]EntityType, error)
+	DeleteEntityType(ctx context.Context, name string) (*Operation, error)
+
+	// Classic online serving, keyed by entityType + entity id.
+	WriteFeatureValues(ctx context.Context, entityType, entityID string, values []FeatureNameValue) error
+	ReadFeatureValues(ctx context.Context, entityType, entityID string) ([]FeatureNameValue, error)
+
 	CreateFeatureGroup(ctx context.Context, cfg FeatureGroupConfig) (*Operation, *FeatureGroup, error)
 	GetFeatureGroup(ctx context.Context, name string) (*FeatureGroup, error)
 	ListFeatureGroups(ctx context.Context, location string) ([]FeatureGroup, error)

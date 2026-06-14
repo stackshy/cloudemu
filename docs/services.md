@@ -1375,7 +1375,7 @@ field). Auto-metrics → Cloud Monitoring via `SetMonitoring`.
 The full Go API/driver and in-memory provider cover every family above. SDK-compat HTTP
 (REST round-tripped) currently spans models, endpoints (+predict), datasets, custom &
 batch-prediction jobs and `generateContent`/`countTokens`; the remaining families' handlers
-follow the same wire pattern as the next increment. **Total: 127 operations** (Go API/driver).
+follow the same wire pattern as the next increment. **Total: 128 operations** (Go API/driver).
 
 ---
 
@@ -1408,5 +1408,5 @@ follow the same wire pattern as the next increment. **Total: 127 operations** (G
 | Generative AI — AWS Bedrock | 22 |
 | Databricks — Azure (control + data plane) | 52 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
-| Machine Learning — GCP Vertex AI (Go API/driver) | 127 |
-| **Grand Total** | **820** |
+| Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
+| **Grand Total** | **821** |

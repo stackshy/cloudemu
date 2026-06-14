@@ -44,6 +44,9 @@ type Mock struct {
 	tuningJobs    *memstore.Store[*driver.TuningJob]
 	cachedContent *memstore.Store[*driver.CachedContent]
 
+	featurestores *memstore.Store[*driver.Featurestore]
+	entityTypes   *memstore.Store[*driver.EntityType]
+	entityRecords *memstore.Store[[]driver.FeatureNameValue] // keyed by entityType\x00entityID
 	featureGroups *memstore.Store[*driver.FeatureGroup]
 	features      *memstore.Store[*driver.Feature]
 	onlineStores  *memstore.Store[*driver.FeatureOnlineStore]
@@ -78,6 +81,9 @@ func New(opts *config.Options) *Mock {
 		pipelineJobs:   memstore.New[*driver.PipelineJob](),
 		tuningJobs:     memstore.New[*driver.TuningJob](),
 		cachedContent:  memstore.New[*driver.CachedContent](),
+		featurestores:  memstore.New[*driver.Featurestore](),
+		entityTypes:    memstore.New[*driver.EntityType](),
+		entityRecords:  memstore.New[[]driver.FeatureNameValue](),
 		featureGroups:  memstore.New[*driver.FeatureGroup](),
 		features:       memstore.New[*driver.Feature](),
 		onlineStores:   memstore.New[*driver.FeatureOnlineStore](),
