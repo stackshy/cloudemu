@@ -61,11 +61,16 @@ type deleteRepositoryResponse struct {
 	TagsDeleted      []string `json:"tagsDeleted"`
 }
 
-// shortID returns the final path segment, so an Azure resource-ID repository
-// name resolves back to the bare repository name used on the wire.
-func shortID(name string) string {
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		return name[idx+1:]
+// registriesMarker precedes the repository name in the Azure resource ID the
+// driver stores (…/Microsoft.ContainerRegistry/registries/{name}).
+const registriesMarker = "/registries/"
+
+// repoName recovers the bare repository name from the driver's resource-ID
+// Name. It splits on the resource-type marker rather than the last slash so
+// hierarchical names like "team/app" survive intact.
+func repoName(name string) string {
+	if idx := strings.Index(name, registriesMarker); idx >= 0 {
+		return name[idx+len(registriesMarker):]
 	}
 
 	return name

@@ -14,7 +14,7 @@ func (h *Handler) listRepositories(w http.ResponseWriter, r *http.Request) {
 
 	names := make([]string, 0, len(repos))
 	for i := range repos {
-		names = append(names, shortID(repos[i].Name))
+		names = append(names, repoName(repos[i].Name))
 	}
 
 	writeJSON(w, http.StatusOK, catalogResponse{Repositories: names})
@@ -35,7 +35,7 @@ func (h *Handler) getRepositoryProperties(w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, http.StatusOK, repositoryProperties{
 		Registry:             registryLoginServer,
-		ImageName:            shortID(rp.Name),
+		ImageName:            repoName(rp.Name),
 		CreatedTime:          rp.CreatedAt,
 		LastUpdateTime:       rp.CreatedAt,
 		ManifestCount:        len(images),

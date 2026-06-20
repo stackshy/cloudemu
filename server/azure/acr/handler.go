@@ -30,8 +30,9 @@ import (
 const pathPrefix = "/acr/v1/"
 
 const (
-	catalogSeg = "_catalog"
-	tagsSuffix = "/_tags"
+	catalogSeg   = "_catalog"
+	tagsSuffix   = "/_tags"
+	manifestsSeg = "/_manifests"
 )
 
 // Handler serves the ACR data-plane catalog API against a ContainerRegistry
@@ -58,6 +59,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case tail == catalogSeg && r.Method == http.MethodGet:
 		h.listRepositories(w, r)
+	case strings.Contains(tail, manifestsSeg):
+		// Manifest operations are out of scope; answer explicitly rather than
+		// letting the path masquerade as a (missing) repository.
+		writeErr(w, http.StatusNotImplemented, "UNSUPPORTED", "manifest operations are not supported")
 	case strings.HasSuffix(tail, tagsSuffix) && r.Method == http.MethodGet:
 		h.listTags(w, r, strings.TrimSuffix(tail, tagsSuffix))
 	case r.Method == http.MethodGet:
@@ -86,6 +91,8 @@ func writeCErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusNotFound, "NAME_UNKNOWN", err.Error())
 	case cerrors.IsInvalidArgument(err):
 		writeErr(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case cerrors.IsFailedPrecondition(err):
+		writeErr(w, http.StatusConflict, "DENIED", err.Error())
 	default:
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 	}

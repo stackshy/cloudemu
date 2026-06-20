@@ -146,6 +146,45 @@ func TestSDKACRDeleteRepository(t *testing.T) {
 	assertResponseCode(t, err, 404)
 }
 
+func TestSDKACRHierarchicalRepositoryName(t *testing.T) {
+	client, reg := newACRClient(t)
+	ctx := context.Background()
+
+	// Registry names are commonly hierarchical (e.g. "team/app"); the bare
+	// name must survive the resource-ID round-trip, not be truncated to the
+	// last path segment.
+	if _, err := reg.CreateRepository(ctx, crdriver.RepositoryConfig{Name: "team/app"}); err != nil {
+		t.Fatalf("seed CreateRepository: %v", err)
+	}
+
+	var names []string
+
+	pager := client.NewListRepositoriesPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			t.Fatalf("ListRepositories: %v", err)
+		}
+
+		for _, n := range page.Repositories.Names {
+			names = append(names, *n)
+		}
+	}
+
+	if !contains(names, "team/app") {
+		t.Fatalf("catalog %v missing hierarchical name \"team/app\"", names)
+	}
+
+	props, err := client.GetRepositoryProperties(ctx, "team/app", nil)
+	if err != nil {
+		t.Fatalf("GetRepositoryProperties(team/app): %v", err)
+	}
+
+	if props.Name == nil || *props.Name != "team/app" {
+		t.Fatalf("got repository name %v, want team/app", props.Name)
+	}
+}
+
 func TestSDKACRErrors(t *testing.T) {
 	client, _ := newACRClient(t)
 
