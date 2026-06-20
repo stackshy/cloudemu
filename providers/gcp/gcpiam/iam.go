@@ -299,6 +299,9 @@ func (m *Mock) GetPolicy(_ context.Context, arn string) (*driver.PolicyInfo, err
 		return nil, cerrors.Newf(cerrors.NotFound, "policy %q not found", arn)
 	}
 
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	info := toPolicyInfo(p)
 
 	return &info, nil
@@ -308,6 +311,9 @@ func (m *Mock) GetPolicy(_ context.Context, arn string) (*driver.PolicyInfo, err
 func (m *Mock) ListPolicies(_ context.Context) ([]driver.PolicyInfo, error) {
 	all := m.policies.All()
 	result := make([]driver.PolicyInfo, 0, len(all))
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	for _, p := range all {
 		result = append(result, toPolicyInfo(p))
@@ -721,6 +727,9 @@ func (m *Mock) collectPolicyARNs(principal string) map[string]bool {
 // to perform the given action on the given resource. Explicit Deny wins over Allow.
 func (m *Mock) CheckPermission(_ context.Context, principal, action, resource string) (bool, error) {
 	policyARNs := m.collectPolicyARNs(principal)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	hasAllow := false
 

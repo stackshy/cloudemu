@@ -3,6 +3,7 @@ package gcpiam
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -895,4 +896,41 @@ func TestPolicyVersionsErrors(t *testing.T) {
 
 	_, err = m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: "{}"})
 	assert.Equal(t, cerrors.ResourceExhausted, cerrors.GetCode(err))
+}
+
+func TestPolicyVersionsConcurrent(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	p, err := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "concurrent", PolicyDocument: `{"v":1}`})
+	require.NoError(t, err)
+	_, err = m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: `{"v":2}`})
+	require.NoError(t, err)
+	_, err = m.CreateUser(ctx, driver.UserConfig{Name: "u"})
+	require.NoError(t, err)
+	require.NoError(t, m.AttachUserPolicy(ctx, "u", p.ARN))
+
+	const iterations = 50
+
+	var wg sync.WaitGroup
+
+	for i := range iterations {
+		wg.Add(4)
+
+		go func() { defer wg.Done(); _, _ = m.GetPolicy(ctx, p.ARN) }()
+		go func() { defer wg.Done(); _, _ = m.ListPolicies(ctx) }()
+		go func() { defer wg.Done(); _, _ = m.CheckPermission(ctx, "u", "s3:GetObject", "*") }()
+		go func(n int) {
+			defer wg.Done()
+
+			ver := "v1"
+			if n%2 == 0 {
+				ver = "v2"
+			}
+
+			_ = m.SetDefaultPolicyVersion(ctx, p.ARN, ver)
+		}(i)
+	}
+
+	wg.Wait()
 }
