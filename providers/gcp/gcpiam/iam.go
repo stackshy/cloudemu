@@ -276,9 +276,11 @@ func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver
 		Description:    cfg.Description,
 	}
 	seedInitialVersion(p, cfg.PolicyDocument, m.opts.Clock.Now().UTC().Format(timeFormat))
-	m.policies.Set(arn, p)
 
+	// Snapshot before publishing p to the store: once Set runs, p is shared and
+	// its document may be mutated concurrently by the version operations.
 	info := toPolicyInfo(p)
+	m.policies.Set(arn, p)
 
 	return &info, nil
 }
