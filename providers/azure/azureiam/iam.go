@@ -62,6 +62,15 @@ type policyData struct {
 	Path           string
 	PolicyDocument string
 	Description    string
+	versions       []*policyVersionData
+	versionCounter int
+}
+
+type policyVersionData struct {
+	VersionID      string
+	PolicyDocument string
+	IsDefault      bool
+	CreatedAt      string
 }
 
 type groupData struct {
@@ -263,6 +272,7 @@ func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver
 		PolicyDocument: cfg.PolicyDocument,
 		Description:    cfg.Description,
 	}
+	seedInitialVersion(p, cfg.PolicyDocument, m.opts.Clock.Now().UTC().Format(timeFormat))
 	m.policies.Set(arn, p)
 
 	info := toPolicyInfo(p)
@@ -301,6 +311,171 @@ func (m *Mock) ListPolicies(_ context.Context) ([]driver.PolicyInfo, error) {
 	}
 
 	return result, nil
+}
+
+const maxPolicyVersions = 5
+
+// seedInitialVersion records the default v1 version when a policy is created.
+func seedInitialVersion(p *policyData, document, createdAt string) {
+	p.versionCounter = 1
+	p.versions = []*policyVersionData{{
+		VersionID:      "v1",
+		PolicyDocument: document,
+		IsDefault:      true,
+		CreatedAt:      createdAt,
+	}}
+}
+
+// CreatePolicyVersion adds a new version to a managed policy, optionally as the default.
+func (m *Mock) CreatePolicyVersion(_ context.Context, cfg driver.PolicyVersionConfig) (*driver.PolicyVersionInfo, error) {
+	p, ok := m.policies.Get(cfg.PolicyARN)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "policy %q not found", cfg.PolicyARN)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(p.versions) >= maxPolicyVersions {
+		return nil, cerrors.Newf(cerrors.ResourceExhausted,
+			"policy %q already has the maximum of %d versions", cfg.PolicyARN, maxPolicyVersions)
+	}
+
+	p.versionCounter++
+	v := &policyVersionData{
+		VersionID:      fmt.Sprintf("v%d", p.versionCounter),
+		PolicyDocument: cfg.PolicyDocument,
+		IsDefault:      cfg.SetAsDefault,
+		CreatedAt:      m.opts.Clock.Now().UTC().Format(timeFormat),
+	}
+
+	if cfg.SetAsDefault {
+		clearDefaults(p.versions)
+		p.PolicyDocument = cfg.PolicyDocument
+	}
+
+	p.versions = append(p.versions, v)
+	m.policies.Set(cfg.PolicyARN, p)
+
+	info := toPolicyVersionInfo(v)
+
+	return &info, nil
+}
+
+// GetPolicyVersion returns a single version of a managed policy.
+func (m *Mock) GetPolicyVersion(_ context.Context, policyARN, versionID string) (*driver.PolicyVersionInfo, error) {
+	p, ok := m.policies.Get(policyARN)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "policy %q not found", policyARN)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, v := range p.versions {
+		if v.VersionID == versionID {
+			info := toPolicyVersionInfo(v)
+			return &info, nil
+		}
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "version %q not found for policy %q", versionID, policyARN)
+}
+
+// ListPolicyVersions returns all versions of a managed policy.
+func (m *Mock) ListPolicyVersions(_ context.Context, policyARN string) ([]driver.PolicyVersionInfo, error) {
+	p, ok := m.policies.Get(policyARN)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "policy %q not found", policyARN)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]driver.PolicyVersionInfo, 0, len(p.versions))
+	for _, v := range p.versions {
+		result = append(result, toPolicyVersionInfo(v))
+	}
+
+	return result, nil
+}
+
+// DeletePolicyVersion removes a non-default version of a managed policy.
+func (m *Mock) DeletePolicyVersion(_ context.Context, policyARN, versionID string) error {
+	p, ok := m.policies.Get(policyARN)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "policy %q not found", policyARN)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for idx, v := range p.versions {
+		if v.VersionID != versionID {
+			continue
+		}
+
+		if v.IsDefault {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"cannot delete the default version %q of policy %q", versionID, policyARN)
+		}
+
+		p.versions = append(p.versions[:idx], p.versions[idx+1:]...)
+		m.policies.Set(policyARN, p)
+
+		return nil
+	}
+
+	return cerrors.Newf(cerrors.NotFound, "version %q not found for policy %q", versionID, policyARN)
+}
+
+// SetDefaultPolicyVersion marks an existing version as the default for a managed policy.
+func (m *Mock) SetDefaultPolicyVersion(_ context.Context, policyARN, versionID string) error {
+	p, ok := m.policies.Get(policyARN)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "policy %q not found", policyARN)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	target := findVersion(p.versions, versionID)
+	if target == nil {
+		return cerrors.Newf(cerrors.NotFound, "version %q not found for policy %q", versionID, policyARN)
+	}
+
+	clearDefaults(p.versions)
+
+	target.IsDefault = true
+	p.PolicyDocument = target.PolicyDocument
+	m.policies.Set(policyARN, p)
+
+	return nil
+}
+
+func clearDefaults(versions []*policyVersionData) {
+	for _, v := range versions {
+		v.IsDefault = false
+	}
+}
+
+func findVersion(versions []*policyVersionData, versionID string) *policyVersionData {
+	for _, v := range versions {
+		if v.VersionID == versionID {
+			return v
+		}
+	}
+
+	return nil
+}
+
+func toPolicyVersionInfo(v *policyVersionData) driver.PolicyVersionInfo {
+	return driver.PolicyVersionInfo{
+		VersionID:        v.VersionID,
+		PolicyDocument:   v.PolicyDocument,
+		IsDefaultVersion: v.IsDefault,
+		CreatedAt:        v.CreatedAt,
+	}
 }
 
 func (m *Mock) attachPolicy(

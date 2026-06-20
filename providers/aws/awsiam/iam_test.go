@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/iam/driver"
 )
 
@@ -685,6 +686,93 @@ func TestCheckPermissionViaRole(t *testing.T) {
 	allowed, err := m.CheckPermission(ctx, "reader", "s3:GetObject", "arn:aws:s3:::bucket/key")
 	requireNoError(t, err)
 	assertEqual(t, true, allowed)
+}
+
+func TestPolicyVersions(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	doc1 := makePolicyDoc([]map[string]any{{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}})
+	p, err := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "p1", PolicyDocument: doc1})
+	requireNoError(t, err)
+
+	// CreatePolicy seeds a default v1.
+	versions, err := m.ListPolicyVersions(ctx, p.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 1, len(versions))
+	assertEqual(t, "v1", versions[0].VersionID)
+	assertEqual(t, true, versions[0].IsDefaultVersion)
+
+	// A non-default version does not change the policy's effective document.
+	doc2 := makePolicyDoc([]map[string]any{{"Effect": "Deny", "Action": "s3:*", "Resource": "*"}})
+	v2, err := m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: doc2})
+	requireNoError(t, err)
+	assertEqual(t, "v2", v2.VersionID)
+	assertEqual(t, false, v2.IsDefaultVersion)
+
+	got, err := m.GetPolicy(ctx, p.ARN)
+	requireNoError(t, err)
+	assertEqual(t, doc1, got.PolicyDocument)
+
+	// Creating a version as default updates the effective document.
+	doc3 := makePolicyDoc([]map[string]any{{"Effect": "Allow", "Action": "ec2:*", "Resource": "*"}})
+	v3, err := m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: doc3, SetAsDefault: true})
+	requireNoError(t, err)
+	assertEqual(t, true, v3.IsDefaultVersion)
+
+	got, err = m.GetPolicy(ctx, p.ARN)
+	requireNoError(t, err)
+	assertEqual(t, doc3, got.PolicyDocument)
+
+	gv, err := m.GetPolicyVersion(ctx, p.ARN, "v2")
+	requireNoError(t, err)
+	assertEqual(t, doc2, gv.PolicyDocument)
+
+	// SetDefaultPolicyVersion switches the default back to v1.
+	requireNoError(t, m.SetDefaultPolicyVersion(ctx, p.ARN, "v1"))
+	got, err = m.GetPolicy(ctx, p.ARN)
+	requireNoError(t, err)
+	assertEqual(t, doc1, got.PolicyDocument)
+
+	// The default version cannot be deleted.
+	err = m.DeletePolicyVersion(ctx, p.ARN, "v1")
+	assertError(t, err, true)
+	assertEqual(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+
+	// A non-default version can be deleted.
+	requireNoError(t, m.DeletePolicyVersion(ctx, p.ARN, "v2"))
+	versions, err = m.ListPolicyVersions(ctx, p.ARN)
+	requireNoError(t, err)
+	assertEqual(t, 2, len(versions))
+}
+
+func TestPolicyVersionsErrors(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: "missing", PolicyDocument: "{}"})
+	assertEqual(t, cerrors.NotFound, cerrors.GetCode(err))
+	_, err = m.GetPolicyVersion(ctx, "missing", "v1")
+	assertEqual(t, cerrors.NotFound, cerrors.GetCode(err))
+	_, err = m.ListPolicyVersions(ctx, "missing")
+	assertEqual(t, cerrors.NotFound, cerrors.GetCode(err))
+	assertEqual(t, cerrors.NotFound, cerrors.GetCode(m.DeletePolicyVersion(ctx, "missing", "v1")))
+	assertEqual(t, cerrors.NotFound, cerrors.GetCode(m.SetDefaultPolicyVersion(ctx, "missing", "v1")))
+
+	p, err := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "p", PolicyDocument: "{}"})
+	requireNoError(t, err)
+
+	_, err = m.GetPolicyVersion(ctx, p.ARN, "v9")
+	assertEqual(t, cerrors.NotFound, cerrors.GetCode(err))
+
+	// v1 is seeded; four more reach the maximum of five, the next is rejected.
+	for range 4 {
+		_, err = m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: "{}"})
+		requireNoError(t, err)
+	}
+
+	_, err = m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: "{}"})
+	assertEqual(t, cerrors.ResourceExhausted, cerrors.GetCode(err))
 }
 
 func requireNoError(t *testing.T, err error) {

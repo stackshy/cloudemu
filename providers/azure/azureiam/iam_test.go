@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/config"
+	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -903,4 +904,84 @@ func TestGetPolicy(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
+}
+
+func TestPolicyVersions(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	doc1 := `{"doc":1}`
+	p, err := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "p1", PolicyDocument: doc1})
+	require.NoError(t, err)
+
+	versions, err := m.ListPolicyVersions(ctx, p.ARN)
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	assert.Equal(t, "v1", versions[0].VersionID)
+	assert.True(t, versions[0].IsDefaultVersion)
+
+	doc2 := `{"doc":2}`
+	v2, err := m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: doc2})
+	require.NoError(t, err)
+	assert.Equal(t, "v2", v2.VersionID)
+	assert.False(t, v2.IsDefaultVersion)
+
+	got, err := m.GetPolicy(ctx, p.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, doc1, got.PolicyDocument)
+
+	doc3 := `{"doc":3}`
+	v3, err := m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: doc3, SetAsDefault: true})
+	require.NoError(t, err)
+	assert.True(t, v3.IsDefaultVersion)
+
+	got, err = m.GetPolicy(ctx, p.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, doc3, got.PolicyDocument)
+
+	gv, err := m.GetPolicyVersion(ctx, p.ARN, "v2")
+	require.NoError(t, err)
+	assert.Equal(t, doc2, gv.PolicyDocument)
+
+	require.NoError(t, m.SetDefaultPolicyVersion(ctx, p.ARN, "v1"))
+	got, err = m.GetPolicy(ctx, p.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, doc1, got.PolicyDocument)
+
+	err = m.DeletePolicyVersion(ctx, p.ARN, "v1")
+	require.Error(t, err)
+	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+
+	require.NoError(t, m.DeletePolicyVersion(ctx, p.ARN, "v2"))
+	versions, err = m.ListPolicyVersions(ctx, p.ARN)
+	require.NoError(t, err)
+	assert.Len(t, versions, 2)
+}
+
+func TestPolicyVersionsErrors(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: "missing", PolicyDocument: "{}"})
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+	_, err = m.GetPolicyVersion(ctx, "missing", "v1")
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+	_, err = m.ListPolicyVersions(ctx, "missing")
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(m.DeletePolicyVersion(ctx, "missing", "v1")))
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(m.SetDefaultPolicyVersion(ctx, "missing", "v1")))
+
+	p, err := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "p", PolicyDocument: "{}"})
+	require.NoError(t, err)
+
+	_, err = m.GetPolicyVersion(ctx, p.ARN, "v9")
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+
+	for range 4 {
+		_, err = m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: "{}"})
+		require.NoError(t, err)
+	}
+
+	_, err = m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: p.ARN, PolicyDocument: "{}"})
+	assert.Equal(t, cerrors.ResourceExhausted, cerrors.GetCode(err))
 }
