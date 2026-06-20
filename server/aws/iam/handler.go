@@ -44,6 +44,11 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DeletePolicy":                  {},
 	"GetPolicy":                     {},
 	"ListPolicies":                  {},
+	"CreatePolicyVersion":           {},
+	"GetPolicyVersion":              {},
+	"ListPolicyVersions":            {},
+	"DeletePolicyVersion":           {},
+	"SetDefaultPolicyVersion":       {},
 	"AttachUserPolicy":              {},
 	"DetachUserPolicy":              {},
 	"AttachRolePolicy":              {},
@@ -134,6 +139,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getPolicy(w, r)
 	case "ListPolicies":
 		h.listPolicies(w, r)
+	case "CreatePolicyVersion":
+		h.createPolicyVersion(w, r)
+	case "GetPolicyVersion":
+		h.getPolicyVersion(w, r)
+	case "ListPolicyVersions":
+		h.listPolicyVersions(w, r)
+	case "DeletePolicyVersion":
+		h.deletePolicyVersion(w, r)
+	case "SetDefaultPolicyVersion":
+		h.setDefaultPolicyVersion(w, r)
 	case "AttachUserPolicy":
 		h.attachUserPolicy(w, r)
 	case "DetachUserPolicy":
@@ -195,6 +210,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidInput", err.Error())
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusConflict, "DeleteConflict", err.Error())
+	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
+		awsquery.WriteXMLError(w, http.StatusConflict, "LimitExceeded", err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 	}
