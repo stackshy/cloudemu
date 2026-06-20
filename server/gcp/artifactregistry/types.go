@@ -53,11 +53,16 @@ func repositoryResourceName(project, location, id string) string {
 	return "projects/" + project + "/locations/" + location + "/repositories/" + id
 }
 
-// shortID returns the final path segment, so a driver repository name of either
-// "myrepo" or "projects/x/repositories/myrepo" yields "myrepo".
-func shortID(name string) string {
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		return name[idx+1:]
+// repositoriesMarker precedes the repository name in the self-link the driver
+// stores (projects/{p}/repositories/{name}).
+const repositoriesMarker = "/repositories/"
+
+// repoName recovers the bare repository name from the driver's self-link Name.
+// It splits on the resource-type marker rather than the last slash so
+// hierarchical names like "team/app" survive intact.
+func repoName(name string) string {
+	if idx := strings.Index(name, repositoriesMarker); idx >= 0 {
+		return name[idx+len(repositoriesMarker):]
 	}
 
 	return name
@@ -65,7 +70,7 @@ func shortID(name string) string {
 
 func toRepositoryJSON(project, location string, r *crdriver.Repository) repositoryJSON {
 	return repositoryJSON{
-		Name:       repositoryResourceName(project, location, shortID(r.Name)),
+		Name:       repositoryResourceName(project, location, repoName(r.Name)),
 		Format:     dockerFormat,
 		Labels:     r.Tags,
 		CreateTime: r.CreatedAt,
