@@ -8,6 +8,7 @@ package gcp
 
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
@@ -18,6 +19,7 @@ import (
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
 	"github.com/stackshy/cloudemu/server"
+	"github.com/stackshy/cloudemu/server/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/server/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/server/gcp/cloudsql"
@@ -37,17 +39,18 @@ import (
 
 // Drivers bundles the driver interfaces the GCP server can expose.
 type Drivers struct {
-	Compute        computedriver.Compute
-	Storage        storagedriver.Bucket
-	Firestore      dbdriver.Database
-	Networking     netdriver.Networking
-	Monitoring     mondriver.Monitoring
-	CloudFunctions sdrv.Serverless
-	PubSub         mqdriver.MessageQueue
-	CloudSQL       rdbdriver.RelationalDB
-	GKE            *gkeprov.Mock
-	VertexAI       vertexaidriver.VertexAI
-	IAM            iamdriver.IAM
+	Compute          computedriver.Compute
+	Storage          storagedriver.Bucket
+	Firestore        dbdriver.Database
+	Networking       netdriver.Networking
+	Monitoring       mondriver.Monitoring
+	CloudFunctions   sdrv.Serverless
+	PubSub           mqdriver.MessageQueue
+	CloudSQL         rdbdriver.RelationalDB
+	GKE              *gkeprov.Mock
+	VertexAI         vertexaidriver.VertexAI
+	IAM              iamdriver.IAM
+	ArtifactRegistry crdriver.ContainerRegistry
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -133,6 +136,13 @@ func New(d Drivers) *server.Server {
 	// consistency with the pattern above.
 	if d.IAM != nil {
 		srv.Register(iam.New(d.IAM))
+	}
+
+	// Artifact Registry matches /v1/projects/{p}/locations/{l}/repositories[/…]
+	// — disjoint from IAM (serviceAccounts|roles) and Cloud Asset. Registered
+	// among the /v1/projects/ family, before Firestore's catch-all.
+	if d.ArtifactRegistry != nil {
+		srv.Register(artifactregistry.New(d.ArtifactRegistry))
 	}
 
 	if d.Firestore != nil {
