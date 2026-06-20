@@ -8,6 +8,7 @@ package azure
 
 import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
@@ -18,6 +19,7 @@ import (
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
 	"github.com/stackshy/cloudemu/server"
+	"github.com/stackshy/cloudemu/server/azure/acr"
 	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
 	"github.com/stackshy/cloudemu/server/azure/azuresql"
 	"github.com/stackshy/cloudemu/server/azure/blob"
@@ -78,6 +80,7 @@ type Drivers struct {
 	MySQLFlex           rdbdriver.RelationalDB
 	AKS                 aksserver.Backend
 	IAM                 iamdriver.IAM
+	ACR                 crdriver.ContainerRegistry
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -201,6 +204,12 @@ func New(d Drivers) *server.Server {
 	// registration order is unconstrained.
 	if d.IAM != nil {
 		srv.Register(iam.New(d.IAM))
+	}
+
+	// ACR data-plane catalog API matches /acr/v1/… — disjoint from ARM and
+	// must register before the permissive BlobStorage fallback below.
+	if d.ACR != nil {
+		srv.Register(acr.New(d.ACR))
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It
