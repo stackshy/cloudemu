@@ -56,6 +56,21 @@ type PolicyInfo struct {
 	Description    string
 }
 
+// PolicyVersionConfig describes a new version of a managed policy to create.
+type PolicyVersionConfig struct {
+	PolicyARN      string
+	PolicyDocument string
+	SetAsDefault   bool
+}
+
+// PolicyVersionInfo describes a single version of a managed policy.
+type PolicyVersionInfo struct {
+	VersionID        string
+	PolicyDocument   string
+	IsDefaultVersion bool
+	CreatedAt        string
+}
+
 // GroupConfig describes a group to create.
 type GroupConfig struct {
 	Name string
@@ -117,6 +132,12 @@ type IAM interface {
 	DeletePolicy(ctx context.Context, arn string) error
 	GetPolicy(ctx context.Context, arn string) (*PolicyInfo, error)
 	ListPolicies(ctx context.Context) ([]PolicyInfo, error)
+
+	CreatePolicyVersion(ctx context.Context, config PolicyVersionConfig) (*PolicyVersionInfo, error)
+	GetPolicyVersion(ctx context.Context, policyARN, versionID string) (*PolicyVersionInfo, error)
+	ListPolicyVersions(ctx context.Context, policyARN string) ([]PolicyVersionInfo, error)
+	DeletePolicyVersion(ctx context.Context, policyARN, versionID string) error
+	SetDefaultPolicyVersion(ctx context.Context, policyARN, versionID string) error
 
 	AttachUserPolicy(ctx context.Context, userName, policyARN string) error
 	DetachUserPolicy(ctx context.Context, userName, policyARN string) error

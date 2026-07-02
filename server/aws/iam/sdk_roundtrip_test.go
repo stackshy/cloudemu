@@ -2,6 +2,7 @@ package iam_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -311,5 +312,158 @@ func TestSDKIAMInstanceProfiles(t *testing.T) {
 		InstanceProfileName: aws.String("ec2-profile"),
 	}); err != nil {
 		t.Fatalf("DeleteInstanceProfile: %v", err)
+	}
+}
+
+func createPolicyForVersions(t *testing.T, client *awsiam.Client, name string) string {
+	t.Helper()
+
+	out, err := client.CreatePolicy(context.Background(), &awsiam.CreatePolicyInput{
+		PolicyName:     aws.String(name),
+		PolicyDocument: aws.String(samplePolicy),
+	})
+	if err != nil {
+		t.Fatalf("CreatePolicy: %v", err)
+	}
+
+	return aws.ToString(out.Policy.Arn)
+}
+
+func TestSDKIAMPolicyVersionLifecycle(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+	arn := createPolicyForVersions(t, client, "versioned")
+
+	// CreatePolicy auto-seeds a default v1.
+	listed, err := client.ListPolicyVersions(ctx, &awsiam.ListPolicyVersionsInput{PolicyArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("ListPolicyVersions: %v", err)
+	}
+
+	if len(listed.Versions) != 1 ||
+		aws.ToString(listed.Versions[0].VersionId) != "v1" || !listed.Versions[0].IsDefaultVersion {
+		t.Fatalf("expected seeded default v1, got %+v", listed.Versions)
+	}
+
+	const docV2 = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`
+
+	created, err := client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+		PolicyArn:      aws.String(arn),
+		PolicyDocument: aws.String(docV2),
+		SetAsDefault:   true,
+	})
+	if err != nil {
+		t.Fatalf("CreatePolicyVersion: %v", err)
+	}
+
+	if aws.ToString(created.PolicyVersion.VersionId) != "v2" || !created.PolicyVersion.IsDefaultVersion {
+		t.Fatalf("expected new default v2, got %+v", created.PolicyVersion)
+	}
+
+	// GetPolicyVersion round-trips the stored document.
+	gotVer, err := client.GetPolicyVersion(ctx, &awsiam.GetPolicyVersionInput{
+		PolicyArn: aws.String(arn), VersionId: aws.String("v2"),
+	})
+	if err != nil {
+		t.Fatalf("GetPolicyVersion: %v", err)
+	}
+
+	if aws.ToString(gotVer.PolicyVersion.Document) != docV2 {
+		t.Fatalf("GetPolicyVersion document mismatch: %q", aws.ToString(gotVer.PolicyVersion.Document))
+	}
+
+	// GetPolicy reflects the new default, then tracks SetDefaultPolicyVersion.
+	assertDefaultVersion(t, client, arn, "v2")
+
+	if _, err := client.SetDefaultPolicyVersion(ctx, &awsiam.SetDefaultPolicyVersionInput{
+		PolicyArn: aws.String(arn), VersionId: aws.String("v1"),
+	}); err != nil {
+		t.Fatalf("SetDefaultPolicyVersion: %v", err)
+	}
+
+	assertDefaultVersion(t, client, arn, "v1")
+}
+
+func assertDefaultVersion(t *testing.T, client *awsiam.Client, arn, want string) {
+	t.Helper()
+
+	pol, err := client.GetPolicy(context.Background(), &awsiam.GetPolicyInput{PolicyArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("GetPolicy: %v", err)
+	}
+
+	if got := aws.ToString(pol.Policy.DefaultVersionId); got != want {
+		t.Fatalf("got default version %q, want %q", got, want)
+	}
+}
+
+func TestSDKIAMPolicyVersionEdgeCases(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+	arn := createPolicyForVersions(t, client, "edge")
+
+	// The default version cannot be deleted (AWS DeleteConflict).
+	_, err := client.DeletePolicyVersion(ctx, &awsiam.DeletePolicyVersionInput{
+		PolicyArn: aws.String(arn), VersionId: aws.String("v1"),
+	})
+
+	var conflict *iamtypes.DeleteConflictException
+	if !errors.As(err, &conflict) {
+		t.Fatalf("deleting default version: want DeleteConflictException, got %v", err)
+	}
+
+	// A non-default version can be deleted.
+	if _, err := client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+		PolicyArn: aws.String(arn), PolicyDocument: aws.String(samplePolicy),
+	}); err != nil {
+		t.Fatalf("CreatePolicyVersion: %v", err)
+	}
+
+	if _, err := client.DeletePolicyVersion(ctx, &awsiam.DeletePolicyVersionInput{
+		PolicyArn: aws.String(arn), VersionId: aws.String("v2"),
+	}); err != nil {
+		t.Fatalf("DeletePolicyVersion(v2): %v", err)
+	}
+
+	// Unknown version and unknown policy both map to NoSuchEntity.
+	var notFound *iamtypes.NoSuchEntityException
+
+	_, err = client.GetPolicyVersion(ctx, &awsiam.GetPolicyVersionInput{
+		PolicyArn: aws.String(arn), VersionId: aws.String("v99"),
+	})
+	if !errors.As(err, &notFound) {
+		t.Fatalf("get unknown version: want NoSuchEntityException, got %v", err)
+	}
+
+	_, err = client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+		PolicyArn:      aws.String("arn:aws:iam::123456789012:policy/missing"),
+		PolicyDocument: aws.String(samplePolicy),
+	})
+	if !errors.As(err, &notFound) {
+		t.Fatalf("create version on missing policy: want NoSuchEntityException, got %v", err)
+	}
+}
+
+func TestSDKIAMPolicyVersionLimit(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+	arn := createPolicyForVersions(t, client, "maxed")
+
+	// v1 is seeded; four more reach the maximum of five.
+	for range 4 {
+		if _, err := client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+			PolicyArn: aws.String(arn), PolicyDocument: aws.String(samplePolicy),
+		}); err != nil {
+			t.Fatalf("CreatePolicyVersion: %v", err)
+		}
+	}
+
+	_, err := client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+		PolicyArn: aws.String(arn), PolicyDocument: aws.String(samplePolicy),
+	})
+
+	var limit *iamtypes.LimitExceededException
+	if !errors.As(err, &limit) {
+		t.Fatalf("exceeding version limit: want LimitExceededException, got %v", err)
 	}
 }

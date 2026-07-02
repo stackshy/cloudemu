@@ -180,6 +180,57 @@ func (i *IAM) ListPolicies(ctx context.Context) ([]driver.PolicyInfo, error) {
 	return out.([]driver.PolicyInfo), nil
 }
 
+func (i *IAM) CreatePolicyVersion(
+	ctx context.Context, config driver.PolicyVersionConfig,
+) (*driver.PolicyVersionInfo, error) {
+	out, err := i.do(ctx, "CreatePolicyVersion", config, func() (any, error) {
+		return i.driver.CreatePolicyVersion(ctx, config)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.PolicyVersionInfo), nil
+}
+
+func (i *IAM) GetPolicyVersion(ctx context.Context, policyARN, versionID string) (*driver.PolicyVersionInfo, error) {
+	out, err := i.do(ctx, "GetPolicyVersion", policyARN, func() (any, error) {
+		return i.driver.GetPolicyVersion(ctx, policyARN, versionID)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.PolicyVersionInfo), nil
+}
+
+func (i *IAM) ListPolicyVersions(ctx context.Context, policyARN string) ([]driver.PolicyVersionInfo, error) {
+	out, err := i.do(ctx, "ListPolicyVersions", policyARN, func() (any, error) {
+		return i.driver.ListPolicyVersions(ctx, policyARN)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.PolicyVersionInfo), nil
+}
+
+func (i *IAM) DeletePolicyVersion(ctx context.Context, policyARN, versionID string) error {
+	_, err := i.do(ctx, "DeletePolicyVersion", policyARN, func() (any, error) {
+		return nil, i.driver.DeletePolicyVersion(ctx, policyARN, versionID)
+	})
+
+	return err
+}
+
+func (i *IAM) SetDefaultPolicyVersion(ctx context.Context, policyARN, versionID string) error {
+	_, err := i.do(ctx, "SetDefaultPolicyVersion", policyARN, func() (any, error) {
+		return nil, i.driver.SetDefaultPolicyVersion(ctx, policyARN, versionID)
+	})
+
+	return err
+}
+
 func (i *IAM) AttachUserPolicy(ctx context.Context, userName, policyARN string) error {
 	_, err := i.do(ctx, "AttachUserPolicy", userName, func() (any, error) {
 		return nil, i.driver.AttachUserPolicy(ctx, userName, policyARN)

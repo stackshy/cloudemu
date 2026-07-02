@@ -9,6 +9,7 @@ package aws
 import (
 	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
@@ -24,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
+	"github.com/stackshy/cloudemu/server/aws/ecr"
 	"github.com/stackshy/cloudemu/server/aws/eks"
 	"github.com/stackshy/cloudemu/server/aws/iam"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
@@ -53,6 +55,7 @@ type Drivers struct {
 	Redshift   rdbdriver.RelationalDB
 	EKS        eksdriver.EKS
 	IAM        iamdriver.IAM
+	ECR        crdriver.ContainerRegistry
 	Bedrock    bedrockdriver.Bedrock
 	SageMaker  sagemakerdriver.Service
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -126,6 +129,10 @@ func New(d Drivers) *server.Server {
 	// RDS, Redshift, and EC2. Registered before EC2 for the same reason.
 	if d.IAM != nil {
 		srv.Register(iam.New(d.IAM))
+	}
+
+	if d.ECR != nil {
+		srv.Register(ecr.New(d.ECR))
 	}
 
 	// Redshift sits with the other query-protocol handlers before the EC2
