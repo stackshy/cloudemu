@@ -18,6 +18,7 @@ import (
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
+	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/azure/acr"
 	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
@@ -43,6 +44,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/functions"
 	"github.com/stackshy/cloudemu/server/azure/iam"
 	"github.com/stackshy/cloudemu/server/azure/images"
+	keyvaultsrv "github.com/stackshy/cloudemu/server/azure/keyvault"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/server/azure/network"
@@ -64,23 +66,26 @@ import (
 // compute driver — the driver's Volume*/Snapshot*/Image* methods back the
 // corresponding resources.
 type Drivers struct {
-	VirtualMachines     computedriver.Compute
-	Disks               computedriver.Compute
-	Snapshots           computedriver.Compute
-	Images              computedriver.Compute
-	SSHPublicKeys       computedriver.Compute
-	BlobStorage         storagedriver.Bucket
-	CosmosDB            dbdriver.Database
-	Network             netdriver.Networking
-	Monitor             mondriver.Monitoring
-	Functions           sdrv.Serverless
-	ServiceBus          mqdriver.MessageQueue
-	SQL                 rdbdriver.RelationalDB
-	PostgresFlex        rdbdriver.RelationalDB
-	MySQLFlex           rdbdriver.RelationalDB
-	AKS                 aksserver.Backend
-	IAM                 iamdriver.IAM
-	ACR                 crdriver.ContainerRegistry
+	VirtualMachines computedriver.Compute
+	Disks           computedriver.Compute
+	Snapshots       computedriver.Compute
+	Images          computedriver.Compute
+	SSHPublicKeys   computedriver.Compute
+	BlobStorage     storagedriver.Bucket
+	CosmosDB        dbdriver.Database
+	Network         netdriver.Networking
+	Monitor         mondriver.Monitoring
+	Functions       sdrv.Serverless
+	ServiceBus      mqdriver.MessageQueue
+	SQL             rdbdriver.RelationalDB
+	PostgresFlex    rdbdriver.RelationalDB
+	MySQLFlex       rdbdriver.RelationalDB
+	AKS             aksserver.Backend
+	IAM             iamdriver.IAM
+	ACR             crdriver.ContainerRegistry
+	// KeyVault serves the Key Vault secrets data-plane API (/secrets/…)
+	// against the secrets driver.
+	KeyVault            secretsdriver.Secrets
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -210,6 +215,13 @@ func New(d Drivers) *server.Server {
 	// must register before the permissive BlobStorage fallback below.
 	if d.ACR != nil {
 		srv.Register(acr.New(d.ACR))
+	}
+
+	// Key Vault secrets data-plane API matches /secrets/… — disjoint from ARM
+	// and from the Databricks secrets API (/api/{ver}/secrets), and must
+	// register before the permissive BlobStorage fallback below.
+	if d.KeyVault != nil {
+		srv.Register(keyvaultsrv.New(d.KeyVault))
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It
