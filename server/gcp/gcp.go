@@ -18,6 +18,7 @@ import (
 	gkeprov "github.com/stackshy/cloudemu/providers/gcp/gke"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
+	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/server/gcp/cloudasset"
@@ -31,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/server/gcp/networks"
 	"github.com/stackshy/cloudemu/server/gcp/pubsub"
+	secretmanagersrv "github.com/stackshy/cloudemu/server/gcp/secretmanager"
 	vertexaisrv "github.com/stackshy/cloudemu/server/gcp/vertexai"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -51,6 +53,9 @@ type Drivers struct {
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
+	// SecretManager serves the secretmanager.googleapis.com v1 REST API
+	// against the secrets driver.
+	SecretManager secretsdriver.Secrets
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -143,6 +148,13 @@ func New(d Drivers) *server.Server {
 	// among the /v1/projects/ family, before Firestore's catch-all.
 	if d.ArtifactRegistry != nil {
 		srv.Register(artifactregistry.New(d.ArtifactRegistry))
+	}
+
+	// Secret Manager matches /v1/projects/{p}/secrets[/…] — disjoint from IAM
+	// (serviceAccounts|roles), Artifact Registry (locations/…), and the rest
+	// of the /v1/projects/ family. Registered before Firestore's catch-all.
+	if d.SecretManager != nil {
+		srv.Register(secretmanagersrv.New(d.SecretManager))
 	}
 
 	if d.Firestore != nil {

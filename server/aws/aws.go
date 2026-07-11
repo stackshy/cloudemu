@@ -20,6 +20,7 @@ import (
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
 	sagemakerdriver "github.com/stackshy/cloudemu/sagemaker/driver"
+	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
@@ -35,6 +36,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/resourcegroupstaggingapi"
 	"github.com/stackshy/cloudemu/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/server/aws/sagemaker"
+	secretsmanagersrv "github.com/stackshy/cloudemu/server/aws/secretsmanager"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -58,6 +60,9 @@ type Drivers struct {
 	ECR        crdriver.ContainerRegistry
 	Bedrock    bedrockdriver.Bedrock
 	SageMaker  sagemakerdriver.Service
+	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
+	// the secrets driver.
+	SecretsManager secretsdriver.Secrets
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -133,6 +138,12 @@ func New(d Drivers) *server.Server {
 
 	if d.ECR != nil {
 		srv.Register(ecr.New(d.ECR))
+	}
+
+	// Secrets Manager matches the X-Amz-Target prefix "secretsmanager." —
+	// disjoint from DynamoDB, SQS, ECR, SageMaker, and the tagging API.
+	if d.SecretsManager != nil {
+		srv.Register(secretsmanagersrv.New(d.SecretsManager))
 	}
 
 	// Redshift sits with the other query-protocol handlers before the EC2
