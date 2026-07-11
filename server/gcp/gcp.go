@@ -20,6 +20,7 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/notification/driver"
 	gkeprov "github.com/stackshy/cloudemu/providers/gcp/gke"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
@@ -33,6 +34,7 @@ import (
 	"github.com/stackshy/cloudemu/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
 	"github.com/stackshy/cloudemu/server/gcp/eventarc"
+	fcmsrv "github.com/stackshy/cloudemu/server/gcp/fcm"
 	"github.com/stackshy/cloudemu/server/gcp/firestore"
 	"github.com/stackshy/cloudemu/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/server/gcp/gke"
@@ -81,6 +83,9 @@ type Drivers struct {
 	// Memorystore serves the redis.googleapis.com v1 REST API against the cache
 	// driver's instance control plane.
 	Memorystore cachedriver.Cache
+	// FCM serves the fcm.googleapis.com v1 messages:send API against the
+	// notification driver (Publish only; FCM has no topic/subscription CRUD).
+	FCM notifdriver.Notification
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -226,6 +231,13 @@ func New(d Drivers) *server.Server {
 	// Firestore's permissive /v1/projects/ prefix so its paths aren't swallowed.
 	if d.Memorystore != nil {
 		srv.Register(memorystoresrv.New(d.Memorystore))
+	}
+
+	// FCM matches /v1/projects/{p}/messages:send — disjoint from every other
+	// /v1/projects/ handler (none use the messages:send suffix). Registered
+	// before Firestore's permissive /v1/projects/ prefix match.
+	if d.FCM != nil {
+		srv.Register(fcmsrv.New(d.FCM))
 	}
 
 	if d.Firestore != nil {

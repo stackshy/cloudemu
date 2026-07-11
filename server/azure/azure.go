@@ -21,6 +21,7 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/notification/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
 	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
@@ -58,6 +59,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/server/azure/network"
+	notificationhubssrv "github.com/stackshy/cloudemu/server/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/server/azure/postgresflex"
 	"github.com/stackshy/cloudemu/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/server/azure/servicebus"
@@ -112,7 +114,10 @@ type Drivers struct {
 	LogAnalytics logdriver.Logging
 	// Cache serves the Azure Cache for Redis (Microsoft.Cache/redis) ARM API
 	// against the cache driver's cluster control plane.
-	Cache               cachedriver.Cache
+	Cache cachedriver.Cache
+	// NotificationHubs serves the Microsoft.NotificationHubs ARM API against the
+	// notification driver.
+	NotificationHubs    notifdriver.Notification
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -206,6 +211,14 @@ func New(d Drivers) *server.Server {
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.Cache != nil {
 		srv.Register(cachesrv.New(d.Cache))
+	}
+
+	// Notification Hubs matches on the Microsoft.NotificationHubs provider — a
+	// distinct ARM provider name from every other Azure handler, so
+	// registration order is unconstrained. Registered before the BlobStorage
+	// fallback.
+	if d.NotificationHubs != nil {
+		srv.Register(notificationhubssrv.New(d.NotificationHubs))
 	}
 
 	if d.Monitor != nil {
