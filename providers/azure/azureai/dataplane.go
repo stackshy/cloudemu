@@ -2,6 +2,8 @@ package azureai
 
 import (
 	"context"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/azureai/driver"
@@ -187,6 +189,8 @@ func (m *Mock) ListAssistants(_ context.Context, account string) ([]driver.Assis
 		}
 	}
 
+	sort.SliceStable(out, func(i, j int) bool { return seqFromID(out[i].ID) < seqFromID(out[j].ID) })
+
 	return out, nil
 }
 
@@ -259,7 +263,26 @@ func (m *Mock) ListMessages(_ context.Context, account, thread string) ([]driver
 		}
 	}
 
+	// Return in creation order; message IDs carry a monotonic sequence.
+	sort.SliceStable(out, func(i, j int) bool { return seqFromID(out[i].ID) < seqFromID(out[j].ID) })
+
 	return out, nil
+}
+
+// seqFromID extracts the monotonic sequence encoded as the hex suffix of an ID
+// minted by nextID ("<prefix>_<hex>"). Unparseable IDs sort first.
+func seqFromID(id string) int64 {
+	_, hexPart, ok := strings.Cut(id, "_")
+	if !ok {
+		return -1
+	}
+
+	n, err := strconv.ParseInt(hexPart, 16, 64)
+	if err != nil {
+		return -1
+	}
+
+	return n
 }
 
 func (m *Mock) CreateRun(_ context.Context, account, thread, assistant string) (*driver.Run, error) {

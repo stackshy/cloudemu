@@ -2,11 +2,25 @@ package azureai
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/azureai/driver"
 	"github.com/stackshy/cloudemu/errors"
 )
+
+// versionNewer reports whether candidate is a newer asset version than current.
+// Integer versions compare numerically ("10" > "9"); otherwise lexically.
+func versionNewer(candidate, current string) bool {
+	cn, cerr := strconv.Atoi(candidate)
+	rn, rerr := strconv.Atoi(current)
+
+	if cerr == nil && rerr == nil {
+		return cn > rn
+	}
+
+	return candidate > current
+}
 
 // --- Endpoints (online + batch) ---
 
@@ -295,7 +309,7 @@ func (m *Mock) ListAssetContainers(_ context.Context, resourceGroup, workspace, 
 
 	for k, a := range m.assets.All() {
 		if strings.HasPrefix(k, prefix) {
-			if cur, ok := latest[a.Name]; !ok || a.Version > cur.Version {
+			if cur, ok := latest[a.Name]; !ok || versionNewer(a.Version, cur.Version) {
 				latest[a.Name] = a
 			}
 		}

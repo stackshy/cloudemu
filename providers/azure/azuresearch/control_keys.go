@@ -2,6 +2,7 @@ package azuresearch
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/azuresearch/driver"
@@ -19,15 +20,27 @@ func (m *Mock) svcChildID(resourceGroup, service, childPath string) string {
 
 // --- Admin & query keys ---
 
-func (m *Mock) ListAdminKeys(_ context.Context, resourceGroup, name string) (*driver.AdminKeys, error) {
-	if err := m.requireService(resourceGroup, name); err != nil {
-		return nil, err
+// currentAdminKeys returns the persisted admin keys, or the deterministic
+// defaults when the service has never had a key regenerated.
+func (m *Mock) currentAdminKeys(resourceGroup, name string) *driver.AdminKeys {
+	if k, ok := m.adminKeys.Get(key(resourceGroup, name)); ok {
+		out := *k
+
+		return &out
 	}
 
 	return &driver.AdminKeys{
 		Primary:   hashHex(resourceGroup, name, "admin-primary"),
 		Secondary: hashHex(resourceGroup, name, "admin-secondary"),
-	}, nil
+	}
+}
+
+func (m *Mock) ListAdminKeys(_ context.Context, resourceGroup, name string) (*driver.AdminKeys, error) {
+	if err := m.requireService(resourceGroup, name); err != nil {
+		return nil, err
+	}
+
+	return m.currentAdminKeys(resourceGroup, name), nil
 }
 
 func (m *Mock) RegenerateAdminKey(_ context.Context, resourceGroup, name, which string) (*driver.AdminKeys, error) {
@@ -35,19 +48,22 @@ func (m *Mock) RegenerateAdminKey(_ context.Context, resourceGroup, name, which 
 		return nil, err
 	}
 
-	keys := &driver.AdminKeys{
-		Primary:   hashHex(resourceGroup, name, "admin-primary"),
-		Secondary: hashHex(resourceGroup, name, "admin-secondary"),
-	}
+	keys := m.currentAdminKeys(resourceGroup, name)
 
-	salt := "regen-" + m.now()
+	// Salt with a monotonic counter so each regeneration yields a distinct key
+	// and the rotation is observable via a subsequent ListAdminKeys.
+	salt := "regen-" + strconv.FormatInt(m.seq.Add(1), 16)
 	if strings.EqualFold(which, "secondary") {
 		keys.Secondary = hashHex(resourceGroup, name, "admin-secondary", salt)
 	} else {
 		keys.Primary = hashHex(resourceGroup, name, "admin-primary", salt)
 	}
 
-	return keys, nil
+	m.adminKeys.Set(key(resourceGroup, name), keys)
+
+	out := *keys
+
+	return &out, nil
 }
 
 func (m *Mock) ListQueryKeys(_ context.Context, resourceGroup, name string) ([]driver.QueryKey, error) {

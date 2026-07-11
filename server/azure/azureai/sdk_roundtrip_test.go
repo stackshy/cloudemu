@@ -109,6 +109,11 @@ func TestAccountKeysAndCatalogs(t *testing.T) {
 	assert.NotEqual(t, keys["key1"], regen["key1"], "regenerated key1 must change")
 	assert.Equal(t, keys["key2"], regen["key2"], "key2 must be stable")
 
+	// The rotation must persist: a subsequent listKeys returns the new key1.
+	after := do(t, http.MethodPost, url+base()+"/"+acct+"/listKeys", map[string]any{})
+	assert.Equal(t, regen["key1"], after["key1"], "rotated key1 must persist")
+	assert.Equal(t, keys["key2"], after["key2"])
+
 	models := do(t, http.MethodGet, url+base()+"/"+acct+"/models", nil)
 	assert.NotEmpty(t, models["value"])
 

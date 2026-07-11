@@ -136,8 +136,26 @@ func (h *CognitiveServicesHandler) listAccounts(w http.ResponseWriter, r *http.R
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
 }
 
+// accountActionMethods is the HTTP method each account action requires, matching
+// the real Microsoft.CognitiveServices REST contract.
+//
+//nolint:gochecknoglobals // immutable routing set
+var accountActionMethods = map[string]string{
+	"listKeys":      http.MethodPost,
+	"regenerateKey": http.MethodPost,
+	"models":        http.MethodGet,
+	"skus":          http.MethodGet,
+	"usages":        http.MethodGet,
+}
+
 // serveAccountAction handles the account-level verbs and read-only catalogs.
 func (h *CognitiveServicesHandler) serveAccountAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if want, ok := accountActionMethods[rp.SubResource]; ok && r.Method != want {
+		writeMethodNotAllowed(w)
+
+		return
+	}
+
 	switch rp.SubResource {
 	case "listKeys":
 		h.listKeys(w, r, rp)

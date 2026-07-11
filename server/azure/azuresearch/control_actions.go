@@ -7,9 +7,27 @@ import (
 	"github.com/stackshy/cloudemu/server/wire/azurearm"
 )
 
-// serveServiceAction handles the POST key verbs under a service.
+// actionMethods is the HTTP method each key action requires, matching the real
+// Microsoft.Search REST contract.
+//
+//nolint:gochecknoglobals // immutable routing set
+var actionMethods = map[string]string{
+	subAdminKeys:   http.MethodPost,
+	subRegenerate:  http.MethodPost,
+	subListQuery:   http.MethodPost,
+	subCreateQuery: http.MethodPost,
+	subDeleteQuery: http.MethodDelete,
+}
+
+// serveServiceAction handles the key verbs under a service.
 func (h *ControlHandler) serveServiceAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	rg, name := rp.ResourceGroup, rp.ResourceName
+
+	if want, ok := actionMethods[rp.SubResource]; ok && r.Method != want {
+		writeMethodNotAllowed(w)
+
+		return
+	}
 
 	switch rp.SubResource {
 	case subAdminKeys:

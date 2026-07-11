@@ -122,6 +122,39 @@ func TestSharedPrivateLinkAndPEC(t *testing.T) {
 	assert.Len(t, do(t, http.MethodGet, url+armBase()+"/"+svcN+"/privateEndpointConnections", nil)["value"], 1)
 }
 
+func TestAdminKeyRegenerationPersists(t *testing.T) {
+	url := newServer(t)
+	do(t, http.MethodPut, url+armBase()+"/"+svcN, map[string]any{"location": "eastus"})
+
+	orig := do(t, http.MethodPost, url+armBase()+"/"+svcN+"/listAdminKeys", map[string]any{})
+	regen := do(t, http.MethodPost, url+armBase()+"/"+svcN+"/regenerateAdminKey/primary", map[string]any{})
+	require.NotEqual(t, orig["primaryKey"], regen["primaryKey"])
+
+	// A subsequent list must return the rotated key, not the original.
+	after := do(t, http.MethodPost, url+armBase()+"/"+svcN+"/listAdminKeys", map[string]any{})
+	assert.Equal(t, regen["primaryKey"], after["primaryKey"])
+	assert.Equal(t, orig["secondaryKey"], after["secondaryKey"], "untouched key stays stable")
+}
+
+func TestKeyActionMethodEnforced(t *testing.T) {
+	url := newServer(t)
+	do(t, http.MethodPut, url+armBase()+"/"+svcN, map[string]any{"location": "eastus"})
+
+	// listAdminKeys requires POST; a GET must not leak keys.
+	req, _ := http.NewRequest(http.MethodGet, url+armBase()+"/"+svcN+"/listAdminKeys", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	// deleteQueryKey requires DELETE; a stray GET must not delete.
+	req2, _ := http.NewRequest(http.MethodGet, url+armBase()+"/"+svcN+"/deleteQueryKey/somekey", nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	require.NoError(t, err)
+	resp2.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp2.StatusCode)
+}
+
 func TestServiceNotFound(t *testing.T) {
 	url := newServer(t)
 

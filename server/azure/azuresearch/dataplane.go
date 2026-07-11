@@ -213,15 +213,37 @@ func dpDecode(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func dpJSON(w http.ResponseWriter, v any) {
+	dpJSONStatus(w, http.StatusOK, v)
+}
+
+func dpJSONStatus(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
 func dpErr(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": status, "message": msg}})
+	// Azure returns error.code as a string identifier, not the numeric HTTP status.
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": codeForStatus(status), "message": msg}})
+}
+
+// codeForStatus maps an HTTP status to the string error-code identifier Azure
+// data-plane clients expect in error.code.
+func codeForStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "BadRequest"
+	case http.StatusNotFound:
+		return "NotFound"
+	case http.StatusMethodNotAllowed:
+		return "MethodNotAllowed"
+	case http.StatusConflict:
+		return "Conflict"
+	default:
+		return "InternalServerError"
+	}
 }
 
 func dpMethodNotAllowed(w http.ResponseWriter) {

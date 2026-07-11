@@ -1,12 +1,114 @@
 package azuresearch_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// rawStatus posts body to url and returns the HTTP status code plus decoded body.
+func rawStatus(t *testing.T, method, url string, body any) (int, map[string]any) {
+	t.Helper()
+
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(method, url, bytes.NewReader(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+
+	return resp.StatusCode, out
+}
+
+func makeProductsIndex(t *testing.T, url string) {
+	t.Helper()
+
+	do(t, http.MethodPut, url+"/indexes/products", map[string]any{
+		"name": "products",
+		"fields": []any{
+			map[string]any{"name": "id", "type": "Edm.String", "key": true, "retrievable": true},
+			map[string]any{"name": "name", "type": "Edm.String", "searchable": true, "retrievable": true},
+		},
+	})
+}
+
+func TestMergeOrUploadPreservesFields(t *testing.T) {
+	url := newServer(t)
+	makeProductsIndex(t, url)
+
+	do(t, http.MethodPost, url+"/indexes/products/docs/index", map[string]any{
+		"value": []any{map[string]any{"@search.action": "upload", "id": "1", "name": "widget", "price": 9}},
+	})
+
+	// mergeOrUpload with only price must preserve the untouched name field.
+	do(t, http.MethodPost, url+"/indexes/products/docs/index", map[string]any{
+		"value": []any{map[string]any{"@search.action": "mergeOrUpload", "id": "1", "price": 12}},
+	})
+
+	doc := do(t, http.MethodGet, url+"/indexes/products/docs/1", nil)
+	assert.Equal(t, "widget", doc["name"])
+	assert.EqualValues(t, 12, doc["price"])
+}
+
+func TestSearchFilterTopSelect(t *testing.T) {
+	url := newServer(t)
+	makeProductsIndex(t, url)
+
+	do(t, http.MethodPost, url+"/indexes/products/docs/index", map[string]any{
+		"value": []any{
+			map[string]any{"@search.action": "upload", "id": "1", "name": "a", "price": 50},
+			map[string]any{"@search.action": "upload", "id": "2", "name": "b", "price": 150},
+			map[string]any{"@search.action": "upload", "id": "3", "name": "c", "price": 250},
+		},
+	})
+
+	// $filter must be honored, not ignored.
+	res := do(t, http.MethodPost, url+"/indexes/products/docs/search", map[string]any{
+		"search": "*", "filter": "price gt 100", "count": true, "orderby": "price asc",
+	})
+	require.Len(t, res["value"], 2)
+	assert.EqualValues(t, 2, res["@odata.count"])
+	assert.EqualValues(t, 150, res["value"].([]any)[0].(map[string]any)["price"])
+
+	// GET path honors $top/$select.
+	get := do(t, http.MethodGet, url+"/indexes/products/docs?search=*&$top=1&$select=id", nil)
+	require.Len(t, get["value"], 1)
+	first := get["value"].([]any)[0].(map[string]any)
+	_, hasName := first["name"]
+	assert.False(t, hasName, "$select=id should drop name")
+}
+
+func TestKeylessDocRejectedAndPartialBatch207(t *testing.T) {
+	url := newServer(t)
+	makeProductsIndex(t, url)
+
+	status, out := rawStatus(t, http.MethodPost, url+"/indexes/products/docs/index", map[string]any{
+		"value": []any{
+			map[string]any{"@search.action": "upload", "id": "1", "name": "ok"},
+			map[string]any{"@search.action": "upload", "name": "no-key"},   // missing key
+			map[string]any{"@search.action": "merge", "id": "99", "name": "x"}, // merge missing doc
+		},
+	})
+
+	assert.Equal(t, http.StatusMultiStatus, status, "partial failure must return 207")
+
+	results := out["value"].([]any)
+	require.Len(t, results, 3)
+	assert.Equal(t, true, results[0].(map[string]any)["status"])
+	assert.Equal(t, false, results[1].(map[string]any)["status"], "keyless doc must fail")
+	assert.Equal(t, false, results[2].(map[string]any)["status"], "merge of missing doc must 404")
+}
 
 func TestIndexAndDocumentSearch(t *testing.T) {
 	url := newServer(t)

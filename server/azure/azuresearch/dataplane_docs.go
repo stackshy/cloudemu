@@ -2,10 +2,20 @@ package azuresearch
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	srchdriver "github.com/stackshy/cloudemu/azuresearch/driver"
 )
+
+// atoiOr parses s as an int, returning def on failure or empty input.
+func atoiOr(s string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+		return n
+	}
+
+	return def
+}
 
 // serveDocs handles /indexes/{index}/docs/... actions.
 func (h *DataPlaneHandler) serveDocs(w http.ResponseWriter, r *http.Request, service, index string, parts []string) {
@@ -53,7 +63,14 @@ func (h *DataPlaneHandler) searchDocs(w http.ResponseWriter, r *http.Request, se
 		q := r.URL.Query()
 		req.Search = q.Get("search")
 		req.Filter = q.Get("$filter")
+		req.OrderBy = q.Get("$orderby")
 		req.Count = q.Get("$count") == "true"
+		req.Top = atoiOr(q.Get("$top"), 0)
+		req.Skip = atoiOr(q.Get("$skip"), 0)
+
+		if sel := q.Get("$select"); sel != "" {
+			req.Select = strings.Split(sel, ",")
+		}
 	} else {
 		var body struct {
 			Search  string `json:"search"`
@@ -139,13 +156,20 @@ func (h *DataPlaneHandler) indexDocs(w http.ResponseWriter, r *http.Request, ser
 	}
 
 	out := make([]map[string]any, 0, len(results))
+	status := http.StatusOK
+
 	for _, res := range results {
+		if !res.Status {
+			// Azure returns 207 Multi-Status when any document in the batch fails.
+			status = http.StatusMultiStatus
+		}
+
 		out = append(out, map[string]any{
 			"key": res.Key, "status": res.Status, "statusCode": res.StatusCode, "errorMessage": res.ErrorMsg,
 		})
 	}
 
-	dpJSON(w, map[string]any{"value": out})
+	dpJSONStatus(w, status, map[string]any{"value": out})
 }
 
 func (h *DataPlaneHandler) suggestDocs(w http.ResponseWriter, r *http.Request, service, index string) {

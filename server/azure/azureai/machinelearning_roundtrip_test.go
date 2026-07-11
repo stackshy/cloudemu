@@ -112,6 +112,23 @@ func TestMLJobsAndAssets(t *testing.T) {
 	assert.Len(t, containers["value"], 1)
 }
 
+func TestMLAssetLatestVersionNumeric(t *testing.T) {
+	url := newMLServer(t)
+	do(t, http.MethodPut, url+mlBase()+"/workspaces/ws1", map[string]any{"location": "eastus"})
+
+	// Register versions 1..10; lexical compare would report "9" as latest.
+	for _, v := range []string{"1", "2", "9", "10"} {
+		do(t, http.MethodPut, url+mlBase()+"/workspaces/ws1/models/m/versions/"+v, map[string]any{
+			"properties": map[string]any{"path": "azureml://models/m/" + v},
+		})
+	}
+
+	containers := do(t, http.MethodGet, url+mlBase()+"/workspaces/ws1/models", nil)
+	require.Len(t, containers["value"], 1)
+	c := containers["value"].([]any)[0].(map[string]any)
+	assert.Equal(t, "10", c["properties"].(map[string]any)["latestVersion"])
+}
+
 func TestMLDatastoresConnectionsSchedulesRegistries(t *testing.T) {
 	url := newMLServer(t)
 	do(t, http.MethodPut, url+mlBase()+"/workspaces/ws1", map[string]any{"location": "eastus"})

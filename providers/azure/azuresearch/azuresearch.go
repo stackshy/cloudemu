@@ -31,6 +31,7 @@ const (
 // Mock is the in-memory Azure AI Search service.
 type Mock struct {
 	services     *memstore.Store[*driver.Service]
+	adminKeys    *memstore.Store[*driver.AdminKeys]
 	queryKeys    *memstore.Store[*driver.QueryKey]
 	sharedLinks  *memstore.Store[*driver.SharedPrivateLink]
 	privateConns *memstore.Store[*driver.PrivateEndpointConnection]
@@ -54,6 +55,7 @@ type Mock struct {
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		services:     memstore.New[*driver.Service](),
+		adminKeys:    memstore.New[*driver.AdminKeys](),
 		queryKeys:    memstore.New[*driver.QueryKey](),
 		sharedLinks:  memstore.New[*driver.SharedPrivateLink](),
 		privateConns: memstore.New[*driver.PrivateEndpointConnection](),

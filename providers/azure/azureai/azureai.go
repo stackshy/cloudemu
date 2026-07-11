@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,7 @@ const (
 type Mock struct {
 	// CognitiveServices stores.
 	accounts         *memstore.Store[*driver.Account]
+	accountKeys      *memstore.Store[*driver.AccountKeys]
 	deployments      *memstore.Store[*driver.Deployment]
 	projects         *memstore.Store[*driver.Project]
 	raiPolicies      *memstore.Store[*driver.RaiPolicy]
@@ -68,6 +70,7 @@ type Mock struct {
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		accounts:         memstore.New[*driver.Account](),
+		accountKeys:      memstore.New[*driver.AccountKeys](),
 		deployments:      memstore.New[*driver.Deployment](),
 		projects:         memstore.New[*driver.Project](),
 		raiPolicies:      memstore.New[*driver.RaiPolicy](),
@@ -273,15 +276,27 @@ func (m *Mock) ListAccounts(_ context.Context) ([]driver.Account, error) {
 	return out, nil
 }
 
-func (m *Mock) ListAccountKeys(_ context.Context, resourceGroup, name string) (*driver.AccountKeys, error) {
-	if !m.accounts.Has(key(resourceGroup, name)) {
-		return nil, errors.Newf(errors.NotFound, "account %q not found", name)
+// currentAccountKeys returns the persisted keys, or the deterministic defaults
+// when the account has never had a key regenerated.
+func (m *Mock) currentAccountKeys(resourceGroup, name string) *driver.AccountKeys {
+	if k, ok := m.accountKeys.Get(key(resourceGroup, name)); ok {
+		out := *k
+
+		return &out
 	}
 
 	return &driver.AccountKeys{
 		Key1: deterministicKey(resourceGroup, name, "1"),
 		Key2: deterministicKey(resourceGroup, name, "2"),
-	}, nil
+	}
+}
+
+func (m *Mock) ListAccountKeys(_ context.Context, resourceGroup, name string) (*driver.AccountKeys, error) {
+	if !m.accounts.Has(key(resourceGroup, name)) {
+		return nil, errors.Newf(errors.NotFound, "account %q not found", name)
+	}
+
+	return m.currentAccountKeys(resourceGroup, name), nil
 }
 
 func (m *Mock) RegenerateAccountKey(_ context.Context, resourceGroup, name, keyName string) (*driver.AccountKeys, error) {
@@ -289,21 +304,22 @@ func (m *Mock) RegenerateAccountKey(_ context.Context, resourceGroup, name, keyN
 		return nil, errors.Newf(errors.NotFound, "account %q not found", name)
 	}
 
-	// Regenerate the named key by salting it with the current time; the other
-	// key is left stable.
-	keys := &driver.AccountKeys{
-		Key1: deterministicKey(resourceGroup, name, "1"),
-		Key2: deterministicKey(resourceGroup, name, "2"),
-	}
+	keys := m.currentAccountKeys(resourceGroup, name)
 
-	salt := "regen-" + m.now()
+	// Salt the named key with a monotonic counter so the rotation is distinct
+	// and observable via a subsequent ListAccountKeys; the other key is stable.
+	salt := "regen-" + strconv.FormatInt(m.seq.Add(1), 16)
 	if strings.EqualFold(keyName, "Key2") {
 		keys.Key2 = deterministicKey(resourceGroup, name, salt)
 	} else {
 		keys.Key1 = deterministicKey(resourceGroup, name, salt)
 	}
 
-	return keys, nil
+	m.accountKeys.Set(key(resourceGroup, name), keys)
+
+	out := *keys
+
+	return &out, nil
 }
 
 func (m *Mock) ListAccountUsages(_ context.Context, resourceGroup, name string) ([]driver.Usage, error) {

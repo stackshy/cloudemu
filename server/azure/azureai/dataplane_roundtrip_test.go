@@ -115,3 +115,29 @@ func TestScore(t *testing.T) {
 	})
 	require.NotNil(t, resp["input_data"])
 }
+
+func TestListMessagesOrdered(t *testing.T) {
+	url := newDPServer(t)
+
+	thread := do(t, http.MethodPost, url+"/openai/threads", map[string]any{})
+	threadID := thread["id"].(string)
+
+	want := []string{"m0", "m1", "m2", "m3", "m4"}
+	for _, c := range want {
+		do(t, http.MethodPost, url+"/openai/threads/"+threadID+"/messages", map[string]any{"role": "user", "content": c})
+	}
+
+	// Repeated listings must return a stable creation-ordered sequence.
+	for range 3 {
+		msgs := do(t, http.MethodGet, url+"/openai/threads/"+threadID+"/messages", nil)
+		data := msgs["data"].([]any)
+		require.Len(t, data, len(want))
+
+		got := make([]string, len(data))
+		for i, d := range data {
+			got[i] = d.(map[string]any)["content"].(string)
+		}
+
+		assert.Equal(t, want, got)
+	}
+}

@@ -73,6 +73,20 @@ func accountFromHost(host string) string {
 	return "default"
 }
 
+// endpointFromHost extracts the AML online-endpoint name from an inference host
+// such as {endpoint}.{region}.inference.ml.azure.com (region optional), taking
+// the leading DNS label. Falls back to accountFromHost for other hosts.
+func endpointFromHost(host string) string {
+	host, _, _ = strings.Cut(host, ":")
+	if i := strings.Index(host, ".inference.ml.azure.com"); i > 0 {
+		label, _, _ := strings.Cut(host[:i], ".")
+
+		return label
+	}
+
+	return accountFromHost(host)
+}
+
 func (h *DataPlaneHandler) serveInference(w http.ResponseWriter, r *http.Request, account string, parts []string) {
 	// /openai/deployments/{deployment}/{action}
 	const minSegs = 3
@@ -226,7 +240,7 @@ func (h *DataPlaneHandler) score(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, cerr := h.dp.ScoreOnlineEndpoint(r.Context(), accountFromHost(r.Host), body)
+	out, cerr := h.dp.ScoreOnlineEndpoint(r.Context(), endpointFromHost(r.Host), body)
 	if cerr != nil {
 		dpCErr(w, cerr)
 
@@ -270,7 +284,25 @@ func dpJSON(w http.ResponseWriter, v any) {
 func dpErr(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": msg, "code": status}})
+	// Azure OpenAI / azcore.ResponseError treat error.code as a string identifier.
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": msg, "code": codeForStatus(status)}})
+}
+
+// codeForStatus maps an HTTP status to the string error-code identifier Azure
+// data-plane clients expect in error.code.
+func codeForStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "BadRequest"
+	case http.StatusNotFound:
+		return "NotFound"
+	case http.StatusMethodNotAllowed:
+		return "MethodNotAllowed"
+	case http.StatusConflict:
+		return "Conflict"
+	default:
+		return "InternalServerError"
+	}
 }
 
 // dpCErr maps a typed cloud error to the OpenAI-style error envelope.
