@@ -8,6 +8,7 @@ package aws
 
 import (
 	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
+	cachedriver "github.com/stackshy/cloudemu/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
@@ -33,6 +34,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/ec2"
 	"github.com/stackshy/cloudemu/server/aws/ecr"
 	"github.com/stackshy/cloudemu/server/aws/eks"
+	"github.com/stackshy/cloudemu/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/server/aws/elbv2"
 	"github.com/stackshy/cloudemu/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/server/aws/iam"
@@ -82,6 +84,9 @@ type Drivers struct {
 	// EventBridge serves the EventBridge JSON 1.1 protocol against the eventbus
 	// driver.
 	EventBridge ebdriver.EventBus
+	// ElastiCache serves the ElastiCache query protocol (cluster control plane)
+	// against the cache driver.
+	ElastiCache cachedriver.Cache
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -192,6 +197,14 @@ func New(d Drivers) *server.Server {
 	// the EC2 handler doesn't claim ELBv2 form bodies first.
 	if d.ELB != nil {
 		srv.Register(elbv2.New(d.ELB))
+	}
+
+	// ElastiCache is another AWS query-protocol handler; register before the
+	// EC2 catch-all. Its action set (CreateCacheCluster, DescribeCacheClusters,
+	// DeleteCacheCluster) is disjoint from RDS, Redshift, IAM, and EC2, so no
+	// shadowing occurs.
+	if d.ElastiCache != nil {
+		srv.Register(elasticache.New(d.ElastiCache))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
