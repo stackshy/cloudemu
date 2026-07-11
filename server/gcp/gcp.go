@@ -10,6 +10,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
@@ -22,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/server/gcp/cloudasset"
+	"github.com/stackshy/cloudemu/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/server/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
@@ -53,6 +55,9 @@ type Drivers struct {
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
+	// CloudDNS serves the dns.googleapis.com v1 REST API against the dns
+	// driver.
+	CloudDNS dnsdriver.DNS
 	// SecretManager serves the secretmanager.googleapis.com v1 REST API
 	// against the secrets driver.
 	SecretManager secretsdriver.Secrets
@@ -155,6 +160,14 @@ func New(d Drivers) *server.Server {
 	// of the /v1/projects/ family. Registered before Firestore's catch-all.
 	if d.SecretManager != nil {
 		srv.Register(secretmanagersrv.New(d.SecretManager))
+	}
+
+	// Cloud DNS matches /dns/v1/projects/{p}/managedZones[...] — a distinct
+	// URL space from the /v1/projects/ family, so registration order is
+	// unconstrained relative to Firestore and the rest. Registered before the
+	// GCS fallback for consistency with the other handlers.
+	if d.CloudDNS != nil {
+		srv.Register(clouddns.New(d.CloudDNS))
 	}
 
 	if d.Firestore != nil {
