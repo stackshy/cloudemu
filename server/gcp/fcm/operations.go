@@ -50,6 +50,15 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request, rt route) 
 		return
 	}
 
+	if body.ValidateOnly {
+		// Dry run: validate the request only — do NOT auto-create the topic,
+		// publish, or emit metrics. Real FCM returns a fabricated message name.
+		gcprest.WriteJSON(w, http.StatusOK, messageResponse{
+			Name: "projects/" + rt.project + "/messages/fake_message_id",
+		})
+		return
+	}
+
 	topic := body.Message.Topic
 	if topic == "" {
 		// Token- or condition-addressed message: no named topic. Use a
