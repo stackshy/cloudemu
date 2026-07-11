@@ -97,7 +97,7 @@ type Drivers struct {
 	DNS dnsdriver.DNS
 	// LB serves the Azure Load Balancer (Microsoft.Network/loadBalancers) ARM
 	// API against the loadbalancer driver.
-	LB                  lbdriver.LoadBalancer
+	LB lbdriver.LoadBalancer
 	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
 	// against the eventbus driver, mapping topics to event buses.
 	EventGrid           ebdriver.EventBus
@@ -173,6 +173,8 @@ func New(d Drivers) *server.Server {
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.LB != nil {
 		srv.Register(lbsrv.New(d.LB))
+	}
+
 	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider
 	// name from every other Azure handler, so registration order is
 	// unconstrained. Registered before the BlobStorage fallback.

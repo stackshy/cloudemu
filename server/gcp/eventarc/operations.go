@@ -45,6 +45,9 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 
 	if target, ok := destinationTarget(body.Destination); ok {
 		if perr := h.bus.PutTargets(r.Context(), bus, triggerID, []ebdriver.Target{target}); perr != nil {
+			// Roll back the rule created above so a failed Create doesn't leave
+			// an orphaned trigger that blocks a later Create with the same id.
+			_ = h.bus.DeleteRule(r.Context(), bus, triggerID)
 			gcprest.WriteCErr(w, perr)
 			return
 		}
