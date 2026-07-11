@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/errors"
 	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
 	"github.com/stackshy/cloudemu/server/wire/awsquery"
 )
@@ -81,6 +82,13 @@ func (h *Handler) resolveLBArns(r *http.Request) ([]string, error) {
 				arns = append(arns, all[i].ARN)
 			}
 		}
+	}
+
+	// A Names filter that resolves to nothing must not fall through to the
+	// driver's "empty means all" behavior — real ELBv2 returns
+	// LoadBalancerNotFound for a name that doesn't exist.
+	if len(arns) == 0 {
+		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", names[0])
 	}
 
 	return arns, nil
@@ -173,6 +181,12 @@ func (h *Handler) resolveTGArns(r *http.Request) ([]string, error) {
 				arns = append(arns, all[i].ARN)
 			}
 		}
+	}
+
+	// As in resolveLBArns: a Names filter matching nothing is TargetGroupNotFound,
+	// not "return all".
+	if len(arns) == 0 {
+		return nil, cerrors.Newf(cerrors.NotFound, "target group %q not found", names[0])
 	}
 
 	return arns, nil

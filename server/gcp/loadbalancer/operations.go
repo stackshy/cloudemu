@@ -119,15 +119,23 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 	}
 
 	// A forwarding rule that references a backend service becomes a listener
-	// linking the load balancer to that target group.
+	// linking the load balancer to that target group. A dangling reference to a
+	// non-existent backend service is an error (as in real GCP), and a failed
+	// link must not be swallowed into a phantom success.
 	if bsName := backendServiceName(req.BackendService); bsName != "" {
-		if tg, ferr := h.findTGByName(r.Context(), bsName); ferr == nil {
-			_, _ = h.lb.CreateListener(r.Context(), lbdriver.ListenerConfig{
-				LBARN:          lb.ARN,
-				Protocol:       req.IPProtocol,
-				Port:           firstPort(req.PortRange),
-				TargetGroupARN: tg.ARN,
-			})
+		tg, ferr := h.findTGByName(r.Context(), bsName)
+		if ferr != nil {
+			gcprest.WriteCErr(w, ferr)
+			return
+		}
+		if _, lerr := h.lb.CreateListener(r.Context(), lbdriver.ListenerConfig{
+			LBARN:          lb.ARN,
+			Protocol:       req.IPProtocol,
+			Port:           firstPort(req.PortRange),
+			TargetGroupARN: tg.ARN,
+		}); lerr != nil {
+			gcprest.WriteCErr(w, lerr)
+			return
 		}
 	}
 

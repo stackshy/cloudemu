@@ -149,6 +149,10 @@ func writeErr(w http.ResponseWriter, err error) {
 // notFoundCode picks the AWS-shaped error code from the error message. The
 // message always carries the resource keyword.
 func notFoundCode(err error) string {
+	// Order matters: a rule's not-found message embeds the parent listener ARN
+	// (which contains "listener"), so "rule" must be checked before "listener"
+	// or a RuleNotFound would be misclassified as ListenerNotFound. Likewise
+	// "target group" before "target".
 	msg := err.Error()
 
 	switch {
@@ -156,10 +160,10 @@ func notFoundCode(err error) string {
 		return "LoadBalancerNotFound"
 	case strings.Contains(msg, "target group"):
 		return "TargetGroupNotFound"
-	case strings.Contains(msg, "listener"):
-		return "ListenerNotFound"
 	case strings.Contains(msg, "rule"):
 		return "RuleNotFound"
+	case strings.Contains(msg, "listener"):
+		return "ListenerNotFound"
 	case strings.Contains(msg, "target"):
 		return "TargetGroupNotFound"
 	default:
