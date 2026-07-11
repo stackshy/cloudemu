@@ -7,6 +7,7 @@
 package azure
 
 import (
+	cachedriver "github.com/stackshy/cloudemu/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
@@ -28,6 +29,7 @@ import (
 	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
 	"github.com/stackshy/cloudemu/server/azure/azuresql"
 	"github.com/stackshy/cloudemu/server/azure/blob"
+	cachesrv "github.com/stackshy/cloudemu/server/azure/cache"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/databricks"
 	"github.com/stackshy/cloudemu/server/azure/databricks/dbfs"
@@ -107,7 +109,10 @@ type Drivers struct {
 	// (Microsoft.OperationalInsights/workspaces) ARM API against the logging
 	// driver. The workspace lifecycle maps onto the driver's log-group
 	// lifecycle; the data-plane log-query API is out of scope.
-	LogAnalytics        logdriver.Logging
+	LogAnalytics logdriver.Logging
+	// Cache serves the Azure Cache for Redis (Microsoft.Cache/redis) ARM API
+	// against the cache driver's cluster control plane.
+	Cache               cachedriver.Cache
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -194,6 +199,13 @@ func New(d Drivers) *server.Server {
 	// order is unconstrained. Registered before the BlobStorage fallback.
 	if d.LogAnalytics != nil {
 		srv.Register(loganalyticssrv.New(d.LogAnalytics))
+	}
+
+	// Azure Cache for Redis matches on the Microsoft.Cache ARM provider — a
+	// unique provider name among Azure handlers, so registration order is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if d.Cache != nil {
+		srv.Register(cachesrv.New(d.Cache))
 	}
 
 	if d.Monitor != nil {

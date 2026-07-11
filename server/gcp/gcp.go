@@ -7,6 +7,7 @@
 package gcp
 
 import (
+	cachedriver "github.com/stackshy/cloudemu/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
@@ -37,6 +38,7 @@ import (
 	"github.com/stackshy/cloudemu/server/gcp/gke"
 	"github.com/stackshy/cloudemu/server/gcp/iam"
 	lbsrv "github.com/stackshy/cloudemu/server/gcp/loadbalancer"
+	memorystoresrv "github.com/stackshy/cloudemu/server/gcp/memorystore"
 	"github.com/stackshy/cloudemu/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/server/gcp/networks"
 	"github.com/stackshy/cloudemu/server/gcp/pubsub"
@@ -76,6 +78,9 @@ type Drivers struct {
 	// Eventarc serves the eventarc.googleapis.com v1 REST API against the
 	// eventbus driver, mapping triggers to rules under a per-location bus.
 	Eventarc ebdriver.EventBus
+	// Memorystore serves the redis.googleapis.com v1 REST API against the cache
+	// driver's instance control plane.
+	Memorystore cachedriver.Cache
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -212,6 +217,15 @@ func New(d Drivers) *server.Server {
 	// is unconstrained. Registered before the GCS fallback for consistency.
 	if d.CloudLogging != nil {
 		srv.Register(cloudloggingsrv.New(d.CloudLogging))
+	}
+
+	// Memorystore matches /v1/projects/{p}/locations/{l}/{instances|operations}
+	// — its resource-type guard is disjoint from GKE (clusters), Cloud Functions
+	// (functions), Vertex AI, and the rest of the /v1/projects/ family, so
+	// registration order among them is unconstrained. Registered before
+	// Firestore's permissive /v1/projects/ prefix so its paths aren't swallowed.
+	if d.Memorystore != nil {
+		srv.Register(memorystoresrv.New(d.Memorystore))
 	}
 
 	if d.Firestore != nil {
