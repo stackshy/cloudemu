@@ -11,6 +11,7 @@ import (
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
+	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
@@ -41,6 +42,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/databricks/unitycatalog"
 	"github.com/stackshy/cloudemu/server/azure/databricks/wsfs"
 	"github.com/stackshy/cloudemu/server/azure/disks"
+	dnssrv "github.com/stackshy/cloudemu/server/azure/dns"
 	"github.com/stackshy/cloudemu/server/azure/functions"
 	"github.com/stackshy/cloudemu/server/azure/iam"
 	"github.com/stackshy/cloudemu/server/azure/images"
@@ -85,7 +87,10 @@ type Drivers struct {
 	ACR             crdriver.ContainerRegistry
 	// KeyVault serves the Key Vault secrets data-plane API (/secrets/…)
 	// against the secrets driver.
-	KeyVault            secretsdriver.Secrets
+	KeyVault secretsdriver.Secrets
+	// DNS serves the Azure DNS (Microsoft.Network/dnsZones) ARM API against the
+	// dns driver.
+	DNS                 dnsdriver.DNS
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -140,6 +145,15 @@ func New(d Drivers) *server.Server {
 
 	if d.Network != nil {
 		srv.Register(network.New(d.Network))
+	}
+
+	// Azure DNS shares the Microsoft.Network ARM provider with the network
+	// handler above, but claims a disjoint resource type (dnsZones vs
+	// virtualNetworks / networkSecurityGroups / locations), so registration
+	// order relative to it is unconstrained. Registered before the BlobStorage
+	// fallback.
+	if d.DNS != nil {
+		srv.Register(dnssrv.New(d.DNS))
 	}
 
 	if d.Monitor != nil {

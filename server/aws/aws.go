@@ -11,6 +11,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
@@ -34,6 +35,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/redshift"
 	"github.com/stackshy/cloudemu/server/aws/resourceexplorer2"
 	"github.com/stackshy/cloudemu/server/aws/resourcegroupstaggingapi"
+	"github.com/stackshy/cloudemu/server/aws/route53"
 	"github.com/stackshy/cloudemu/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/server/aws/sagemaker"
 	secretsmanagersrv "github.com/stackshy/cloudemu/server/aws/secretsmanager"
@@ -63,6 +65,8 @@ type Drivers struct {
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
+	// Route53 serves the Route 53 REST/XML protocol against the dns driver.
+	Route53 dnsdriver.DNS
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -196,6 +200,14 @@ func New(d Drivers) *server.Server {
 	// (/CreateView, /Search, etc.). Must register before S3's catch-all.
 	if d.ResourceDiscovery != nil {
 		srv.Register(resourceexplorer2.New(d.ResourceDiscovery, d.AccountID, d.Region))
+	}
+
+	// Route 53 is a REST/XML service rooted at /2013-04-01/hostedzone — its own
+	// path space, disjoint from every other AWS handler. It must register
+	// before S3 because S3 is the permissive REST fallback that would otherwise
+	// claim those paths.
+	if d.Route53 != nil {
+		srv.Register(route53.New(d.Route53))
 	}
 
 	if d.S3 != nil {
