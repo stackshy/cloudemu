@@ -7,30 +7,44 @@
 package gcp
 
 import (
+	cachedriver "github.com/stackshy/cloudemu/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	logdriver "github.com/stackshy/cloudemu/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/notification/driver"
 	gkeprov "github.com/stackshy/cloudemu/providers/gcp/gke"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
+	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/server/gcp/cloudasset"
+	"github.com/stackshy/cloudemu/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/server/gcp/cloudfunctions"
+	cloudloggingsrv "github.com/stackshy/cloudemu/server/gcp/cloudlogging"
 	"github.com/stackshy/cloudemu/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
+	"github.com/stackshy/cloudemu/server/gcp/eventarc"
+	fcmsrv "github.com/stackshy/cloudemu/server/gcp/fcm"
 	"github.com/stackshy/cloudemu/server/gcp/firestore"
 	"github.com/stackshy/cloudemu/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/server/gcp/gke"
 	"github.com/stackshy/cloudemu/server/gcp/iam"
+	lbsrv "github.com/stackshy/cloudemu/server/gcp/loadbalancer"
+	memorystoresrv "github.com/stackshy/cloudemu/server/gcp/memorystore"
 	"github.com/stackshy/cloudemu/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/server/gcp/networks"
 	"github.com/stackshy/cloudemu/server/gcp/pubsub"
+	secretmanagersrv "github.com/stackshy/cloudemu/server/gcp/secretmanager"
 	vertexaisrv "github.com/stackshy/cloudemu/server/gcp/vertexai"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -51,6 +65,27 @@ type Drivers struct {
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
+	// CloudDNS serves the dns.googleapis.com v1 REST API against the dns
+	// driver.
+	CloudDNS dnsdriver.DNS
+	// LB serves the Cloud Load Balancing REST API (backendServices +
+	// forwardingRules on the compute API) against the loadbalancer driver.
+	LB lbdriver.LoadBalancer
+	// CloudLogging serves the logging.googleapis.com v2 REST API
+	// (entries:write/list, logs list/delete) against the logging driver.
+	CloudLogging logdriver.Logging
+	// SecretManager serves the secretmanager.googleapis.com v1 REST API
+	// against the secrets driver.
+	SecretManager secretsdriver.Secrets
+	// Eventarc serves the eventarc.googleapis.com v1 REST API against the
+	// eventbus driver, mapping triggers to rules under a per-location bus.
+	Eventarc ebdriver.EventBus
+	// Memorystore serves the redis.googleapis.com v1 REST API against the cache
+	// driver's instance control plane.
+	Memorystore cachedriver.Cache
+	// FCM serves the fcm.googleapis.com v1 messages:send API against the
+	// notification driver (Publish only; FCM has no topic/subscription CRUD).
+	FCM notifdriver.Notification
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -84,6 +119,19 @@ func New(d Drivers) *server.Server {
 
 	if d.Networking != nil {
 		srv.Register(networks.New(d.Networking))
+	}
+
+	// Cloud Load Balancing shares the /compute/v1/projects/… URL space with the
+	// compute and networks handlers above but claims a disjoint set of resource
+	// types — backendServices / forwardingRules — whereas compute claims
+	// instances / operations / disks / snapshots / images and networks claims
+	// networks / subnetworks / firewalls. gcprest.ParsePath keys dispatch on the
+	// resource-type segment, so first-match-wins routing is unambiguous and
+	// registration order relative to those two is unconstrained. Mutating LB ops
+	// return operation envelopes the SDK polls via the compute handler's
+	// /global/operations route.
+	if d.LB != nil {
+		srv.Register(lbsrv.New(d.LB))
 	}
 
 	// CloudFunctions matches /v1/projects/{p}/locations/{l}/functions paths
@@ -143,6 +191,53 @@ func New(d Drivers) *server.Server {
 	// among the /v1/projects/ family, before Firestore's catch-all.
 	if d.ArtifactRegistry != nil {
 		srv.Register(artifactregistry.New(d.ArtifactRegistry))
+	}
+
+	// Secret Manager matches /v1/projects/{p}/secrets[/…] — disjoint from IAM
+	// (serviceAccounts|roles), Artifact Registry (locations/…), and the rest
+	// of the /v1/projects/ family. Registered before Firestore's catch-all.
+	if d.SecretManager != nil {
+		srv.Register(secretmanagersrv.New(d.SecretManager))
+	}
+
+	// Eventarc matches /v1/projects/{p}/locations/{l}/triggers[/…] — a
+	// resource-type guard disjoint from IAM, Artifact Registry, Secret Manager,
+	// GKE, and the rest of the /v1/projects/ family. Registered before
+	// Firestore's catch-all.
+	if d.Eventarc != nil {
+		srv.Register(eventarc.New(d.Eventarc))
+	}
+
+	// Cloud DNS matches /dns/v1/projects/{p}/managedZones[...] — a distinct
+	// URL space from the /v1/projects/ family, so registration order is
+	// unconstrained relative to Firestore and the rest. Registered before the
+	// GCS fallback for consistency with the other handlers.
+	if d.CloudDNS != nil {
+		srv.Register(clouddns.New(d.CloudDNS))
+	}
+
+	// Cloud Logging matches /v2/entries:{write,list} and /v2/projects/{p}/logs
+	// — the logging.googleapis.com v2 URL space, disjoint from the /v1/projects/
+	// family, /compute/v1/, and /dns/v1/, so registration order relative to them
+	// is unconstrained. Registered before the GCS fallback for consistency.
+	if d.CloudLogging != nil {
+		srv.Register(cloudloggingsrv.New(d.CloudLogging))
+	}
+
+	// Memorystore matches /v1/projects/{p}/locations/{l}/{instances|operations}
+	// — its resource-type guard is disjoint from GKE (clusters), Cloud Functions
+	// (functions), Vertex AI, and the rest of the /v1/projects/ family, so
+	// registration order among them is unconstrained. Registered before
+	// Firestore's permissive /v1/projects/ prefix so its paths aren't swallowed.
+	if d.Memorystore != nil {
+		srv.Register(memorystoresrv.New(d.Memorystore))
+	}
+
+	// FCM matches /v1/projects/{p}/messages:send — disjoint from every other
+	// /v1/projects/ handler (none use the messages:send suffix). Registered
+	// before Firestore's permissive /v1/projects/ prefix match.
+	if d.FCM != nil {
+		srv.Register(fcmsrv.New(d.FCM))
 	}
 
 	if d.Firestore != nil {

@@ -8,33 +8,47 @@ package aws
 
 import (
 	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
+	cachedriver "github.com/stackshy/cloudemu/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
+	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	logdriver "github.com/stackshy/cloudemu/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/notification/driver"
 	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
 	sagemakerdriver "github.com/stackshy/cloudemu/sagemaker/driver"
+	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
+	cloudwatchlogssrv "github.com/stackshy/cloudemu/server/aws/cloudwatchlogs"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
 	"github.com/stackshy/cloudemu/server/aws/ecr"
 	"github.com/stackshy/cloudemu/server/aws/eks"
+	"github.com/stackshy/cloudemu/server/aws/elasticache"
+	"github.com/stackshy/cloudemu/server/aws/elbv2"
+	"github.com/stackshy/cloudemu/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/server/aws/iam"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/rds"
 	"github.com/stackshy/cloudemu/server/aws/redshift"
 	"github.com/stackshy/cloudemu/server/aws/resourceexplorer2"
 	"github.com/stackshy/cloudemu/server/aws/resourcegroupstaggingapi"
+	"github.com/stackshy/cloudemu/server/aws/route53"
 	"github.com/stackshy/cloudemu/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/server/aws/sagemaker"
+	secretsmanagersrv "github.com/stackshy/cloudemu/server/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/server/aws/sns"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -58,6 +72,25 @@ type Drivers struct {
 	ECR        crdriver.ContainerRegistry
 	Bedrock    bedrockdriver.Bedrock
 	SageMaker  sagemakerdriver.Service
+	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
+	// the secrets driver.
+	SecretsManager secretsdriver.Secrets
+	// CloudWatchLogs serves the CloudWatch Logs JSON 1.1 protocol against the
+	// logging driver.
+	CloudWatchLogs logdriver.Logging
+	// Route53 serves the Route 53 REST/XML protocol against the dns driver.
+	Route53 dnsdriver.DNS
+	// ELB serves the Elastic Load Balancing v2 (ALB/NLB) query protocol
+	// against the loadbalancer driver.
+	ELB lbdriver.LoadBalancer
+	// EventBridge serves the EventBridge JSON 1.1 protocol against the eventbus
+	// driver.
+	EventBridge ebdriver.EventBus
+	// ElastiCache serves the ElastiCache query protocol (cluster control plane)
+	// against the cache driver.
+	ElastiCache cachedriver.Cache
+	// SNS serves the SNS query protocol against the notification driver.
+	SNS notifdriver.Notification
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -135,12 +168,54 @@ func New(d Drivers) *server.Server {
 		srv.Register(ecr.New(d.ECR))
 	}
 
+	// Secrets Manager matches the X-Amz-Target prefix "secretsmanager." —
+	// disjoint from DynamoDB, SQS, ECR, SageMaker, and the tagging API.
+	if d.SecretsManager != nil {
+		srv.Register(secretsmanagersrv.New(d.SecretsManager))
+	}
+
+	// EventBridge matches the X-Amz-Target prefix "AWSEvents." — disjoint from
+	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
+	if d.EventBridge != nil {
+		srv.Register(eventbridge.New(d.EventBridge))
+	}
+
+	// CloudWatch Logs matches the X-Amz-Target prefix "Logs_20140328." —
+	// disjoint from DynamoDB, SQS, Secrets Manager, ECR, SageMaker, and the
+	// tagging API, so registration order relative to them is unconstrained.
+	if d.CloudWatchLogs != nil {
+		srv.Register(cloudwatchlogssrv.New(d.CloudWatchLogs))
+	}
+
 	// Redshift sits with the other query-protocol handlers before the EC2
 	// catch-all. Its action set (CreateCluster, DescribeClusters, …) is
 	// disjoint from RDS's (CreateDBInstance, …), from IAM's (CreateUser, …),
 	// and from EC2's (RunInstances, …), so no shadowing occurs.
 	if d.Redshift != nil {
 		srv.Register(redshift.New(d.Redshift))
+	}
+
+	// ELBv2 also speaks AWS query-protocol; its action set (CreateLoadBalancer,
+	// CreateTargetGroup, CreateListener, RegisterTargets, …) is disjoint from
+	// RDS, IAM, Redshift, and EC2. It must register before the EC2 catch-all so
+	// the EC2 handler doesn't claim ELBv2 form bodies first.
+	if d.ELB != nil {
+		srv.Register(elbv2.New(d.ELB))
+	}
+
+	// ElastiCache is another AWS query-protocol handler; register before the
+	// EC2 catch-all. Its action set (CreateCacheCluster, DescribeCacheClusters,
+	// DeleteCacheCluster) is disjoint from RDS, Redshift, IAM, and EC2, so no
+	// shadowing occurs.
+	if d.ElastiCache != nil {
+		srv.Register(elasticache.New(d.ElastiCache))
+	}
+
+	// SNS also speaks the AWS query protocol; its action set (CreateTopic,
+	// Subscribe, Publish, …) is disjoint from RDS, Redshift, IAM, and EC2, so
+	// no shadowing occurs. Registered before the EC2 catch-all.
+	if d.SNS != nil {
+		srv.Register(sns.New(d.SNS))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
@@ -185,6 +260,14 @@ func New(d Drivers) *server.Server {
 	// (/CreateView, /Search, etc.). Must register before S3's catch-all.
 	if d.ResourceDiscovery != nil {
 		srv.Register(resourceexplorer2.New(d.ResourceDiscovery, d.AccountID, d.Region))
+	}
+
+	// Route 53 is a REST/XML service rooted at /2013-04-01/hostedzone — its own
+	// path space, disjoint from every other AWS handler. It must register
+	// before S3 because S3 is the permissive REST fallback that would otherwise
+	// claim those paths.
+	if d.Route53 != nil {
+		srv.Register(route53.New(d.Route53))
 	}
 
 	if d.S3 != nil {
