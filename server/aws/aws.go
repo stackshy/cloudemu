@@ -21,6 +21,7 @@ import (
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/notification/driver"
 	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
@@ -47,6 +48,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/server/aws/sagemaker"
 	secretsmanagersrv "github.com/stackshy/cloudemu/server/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/server/aws/sns"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -87,6 +89,8 @@ type Drivers struct {
 	// ElastiCache serves the ElastiCache query protocol (cluster control plane)
 	// against the cache driver.
 	ElastiCache cachedriver.Cache
+	// SNS serves the SNS query protocol against the notification driver.
+	SNS notifdriver.Notification
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -205,6 +209,13 @@ func New(d Drivers) *server.Server {
 	// shadowing occurs.
 	if d.ElastiCache != nil {
 		srv.Register(elasticache.New(d.ElastiCache))
+	}
+
+	// SNS also speaks the AWS query protocol; its action set (CreateTopic,
+	// Subscribe, Publish, …) is disjoint from RDS, Redshift, IAM, and EC2, so
+	// no shadowing occurs. Registered before the EC2 catch-all.
+	if d.SNS != nil {
+		srv.Register(sns.New(d.SNS))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
