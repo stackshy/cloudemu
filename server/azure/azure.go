@@ -12,6 +12,7 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
 	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
@@ -44,6 +45,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/databricks/wsfs"
 	"github.com/stackshy/cloudemu/server/azure/disks"
 	dnssrv "github.com/stackshy/cloudemu/server/azure/dns"
+	eventgridsrv "github.com/stackshy/cloudemu/server/azure/eventgrid"
 	"github.com/stackshy/cloudemu/server/azure/functions"
 	"github.com/stackshy/cloudemu/server/azure/iam"
 	"github.com/stackshy/cloudemu/server/azure/images"
@@ -95,7 +97,10 @@ type Drivers struct {
 	DNS dnsdriver.DNS
 	// LB serves the Azure Load Balancer (Microsoft.Network/loadBalancers) ARM
 	// API against the loadbalancer driver.
-	LB                  lbdriver.LoadBalancer
+	LB lbdriver.LoadBalancer
+	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
+	// against the eventbus driver, mapping topics to event buses.
+	EventGrid           ebdriver.EventBus
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -168,6 +173,13 @@ func New(d Drivers) *server.Server {
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.LB != nil {
 		srv.Register(lbsrv.New(d.LB))
+	}
+
+	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider
+	// name from every other Azure handler, so registration order is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if d.EventGrid != nil {
+		srv.Register(eventgridsrv.New(d.EventGrid))
 	}
 
 	if d.Monitor != nil {
