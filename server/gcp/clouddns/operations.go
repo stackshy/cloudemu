@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	cerrors "github.com/stackshy/cloudemu/errors"
 	"github.com/stackshy/cloudemu/server/wire/gcprest"
 )
 
@@ -89,6 +90,29 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
+	}
+
+	// Cloud DNS applies a change atomically. The dns driver has no batch/
+	// transaction primitive, so validate the whole batch up front — every
+	// deletion must resolve and no addition may already exist — before any
+	// mutation. This makes a bad batch fail cleanly without half-applying it.
+	// (A concurrent writer between validation and apply could still race; a
+	// true fix needs a driver-level transaction — tracked as a follow-up.)
+	for i := range req.Deletions {
+		d := &req.Deletions[i]
+		if _, gerr := h.dns.GetRecord(r.Context(), id, d.Name, d.Type); gerr != nil {
+			gcprest.WriteCErr(w, gerr)
+			return
+		}
+	}
+
+	for i := range req.Additions {
+		a := &req.Additions[i]
+		if _, gerr := h.dns.GetRecord(r.Context(), id, a.Name, a.Type); gerr == nil {
+			gcprest.WriteCErr(w, cerrors.Newf(cerrors.AlreadyExists,
+				"record set %q %s already exists", a.Name, a.Type))
+			return
+		}
 	}
 
 	for i := range req.Deletions {

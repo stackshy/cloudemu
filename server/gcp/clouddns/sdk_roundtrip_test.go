@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	dns "google.golang.org/api/dns/v1"
@@ -57,6 +58,15 @@ func TestSDKCloudDNSZoneLifecycle(t *testing.T) {
 
 	if created.Id == 0 {
 		t.Fatalf("Create returned zero zone id: %+v", created)
+	}
+
+	// Cloud DNS lets a zone be addressed by its numeric id as well as its name.
+	byID, err := svc.ManagedZones.Get(testProject, strconv.FormatUint(created.Id, 10)).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("ManagedZones.Get(by numeric id): %v", err)
+	}
+	if byID.Name != "example-zone" {
+		t.Fatalf("Get(by id) = %q, want example-zone", byID.Name)
 	}
 
 	got, err := svc.ManagedZones.Get(testProject, "example-zone").Context(ctx).Do()

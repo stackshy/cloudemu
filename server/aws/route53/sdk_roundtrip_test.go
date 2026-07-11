@@ -58,6 +58,12 @@ func TestSDKRoute53ZoneLifecycle(t *testing.T) {
 		t.Fatalf("CreateHostedZone = %+v, want name example.com.", created.HostedZone)
 	}
 
+	// The caller's CallerReference must round-trip, not be replaced with an
+	// internal id.
+	if got := aws.ToString(created.HostedZone.CallerReference); got != "ref-1" {
+		t.Fatalf("CallerReference = %q, want ref-1", got)
+	}
+
 	zoneID := aws.ToString(created.HostedZone.Id)
 	if zoneID == "" {
 		t.Fatal("CreateHostedZone returned empty zone id")
@@ -233,5 +239,62 @@ func TestSDKRoute53Errors(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("ChangeResourceRecordSets(missing zone): want error, got nil")
+	}
+
+	// A record-level conflict on an existing zone must surface as
+	// InvalidChangeBatch, not the zone-level HostedZoneAlreadyExists.
+	created, err := client.CreateHostedZone(ctx, &awsr53.CreateHostedZoneInput{
+		Name:            aws.String("dup.com."),
+		CallerReference: aws.String("dup-ref"),
+	})
+	if err != nil {
+		t.Fatalf("CreateHostedZone: %v", err)
+	}
+
+	zoneID := aws.ToString(created.HostedZone.Id)
+	rec := r53types.Change{
+		Action: r53types.ChangeActionCreate,
+		ResourceRecordSet: &r53types.ResourceRecordSet{
+			Name:            aws.String("a.dup.com."),
+			Type:            r53types.RRTypeA,
+			TTL:             aws.Int64(60),
+			ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("1.2.3.4")}},
+		},
+	}
+
+	change := &awsr53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch:  &r53types.ChangeBatch{Changes: []r53types.Change{rec}},
+	}
+	if _, err = client.ChangeResourceRecordSets(ctx, change); err != nil {
+		t.Fatalf("ChangeResourceRecordSets(create): %v", err)
+	}
+
+	// Duplicate CREATE of the same record.
+	_, err = client.ChangeResourceRecordSets(ctx, change)
+
+	var badBatch *r53types.InvalidChangeBatch
+	if !errors.As(err, &badBatch) {
+		t.Fatalf("duplicate record CREATE: got %v, want InvalidChangeBatch", err)
+	}
+
+	// DELETE of a record that doesn't exist, on an existing zone → also
+	// InvalidChangeBatch (not NoSuchHostedZone).
+	missDelete := &awsr53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch: &r53types.ChangeBatch{Changes: []r53types.Change{{
+			Action: r53types.ChangeActionDelete,
+			ResourceRecordSet: &r53types.ResourceRecordSet{
+				Name:            aws.String("ghost.dup.com."),
+				Type:            r53types.RRTypeA,
+				TTL:             aws.Int64(60),
+				ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("9.9.9.9")}},
+			},
+		}}},
+	}
+
+	_, err = client.ChangeResourceRecordSets(ctx, missDelete)
+	if !errors.As(err, &badBatch) {
+		t.Fatalf("delete missing record: got %v, want InvalidChangeBatch", err)
 	}
 }

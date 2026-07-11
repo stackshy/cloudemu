@@ -31,9 +31,16 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Echo the caller's CallerReference back faithfully (the driver doesn't
+	// persist it, so this is only recoverable on the create response).
+	hz := toHostedZoneXML(info)
+	if req.CallerReference != "" {
+		hz.CallerReference = req.CallerReference
+	}
+
 	wire.WriteXML(w, http.StatusCreated, createHostedZoneResponse{
 		Xmlns:      xmlns,
-		HostedZone: toHostedZoneXML(info),
+		HostedZone: hz,
 		ChangeInfo: newChangeInfo(),
 	})
 }
@@ -97,7 +104,7 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 
 	for i := range req.ChangeBatch.Changes {
 		if err := h.applyChange(r, zoneID, &req.ChangeBatch.Changes[i]); err != nil {
-			writeErr(w, err)
+			writeChangeErr(w, err)
 			return
 		}
 	}
@@ -127,16 +134,21 @@ func (h *Handler) applyChange(r *http.Request, zoneID string, ch *changeItem) er
 }
 
 // upsertRecord updates the record if it already exists, otherwise creates it —
-// Route 53's UPSERT semantics.
+// Route 53's UPSERT semantics. Only a genuine not-found routes to create; any
+// other GetRecord error (e.g. an injected/transient failure) is propagated so
+// an existing record isn't misrouted into a create → spurious conflict.
 func (h *Handler) upsertRecord(r *http.Request, cfg dnsdriver.RecordConfig) error {
-	if _, err := h.dns.GetRecord(r.Context(), cfg.ZoneID, cfg.Name, cfg.Type); err == nil {
+	_, err := h.dns.GetRecord(r.Context(), cfg.ZoneID, cfg.Name, cfg.Type)
+	switch {
+	case err == nil:
 		_, uerr := h.dns.UpdateRecord(r.Context(), cfg)
 		return uerr
+	case cerrors.IsNotFound(err):
+		_, cerr := h.dns.CreateRecord(r.Context(), cfg)
+		return cerr
+	default:
+		return err
 	}
-
-	_, err := h.dns.CreateRecord(r.Context(), cfg)
-
-	return err
 }
 
 func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request, id string) {
@@ -215,6 +227,8 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // writeErr maps a canonical cloudemu error to a Route 53 XML error response.
+// It is for zone-level operations (Get/Delete/CreateHostedZone), where a
+// missing or duplicate resource is the zone itself.
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
@@ -225,6 +239,21 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
 	case cerrors.IsFailedPrecondition(err):
 		writeError(w, http.StatusBadRequest, "InvalidChangeBatch", err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+	}
+}
+
+// writeChangeErr maps a driver error from a ChangeResourceRecordSets batch. The
+// zone is known to exist here, so a missing/duplicate *record* is a bad change
+// batch — real Route 53 returns InvalidChangeBatch (400), not the zone-level
+// NoSuchHostedZone/HostedZoneAlreadyExists codes.
+func writeChangeErr(w http.ResponseWriter, err error) {
+	switch {
+	case cerrors.IsNotFound(err), cerrors.IsAlreadyExists(err), cerrors.IsFailedPrecondition(err):
+		writeError(w, http.StatusBadRequest, "InvalidChangeBatch", err.Error())
+	case cerrors.IsInvalidArgument(err):
+		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
 	}

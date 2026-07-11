@@ -111,20 +111,22 @@ func toRecordSetJSON(rec *dnsdriver.RecordInfo) resourceRecordSetJSON {
 	}
 }
 
-// resolveZoneID maps the SDK-facing managed-zone name to the driver's internal
-// zone id by scanning the zone list. Returns a NotFound error if no zone with
-// that name exists.
-func (h *Handler) resolveZoneID(ctx context.Context, name string) (string, error) {
+// resolveZoneID maps the SDK-facing {managedZone} URL segment to the driver's
+// internal zone id by scanning the zone list. Cloud DNS accepts either the zone
+// name or its numeric id there, so both are matched (the numeric id is the
+// FNV-folded value this handler hands back as ManagedZone.Id). Returns NotFound
+// if no zone matches.
+func (h *Handler) resolveZoneID(ctx context.Context, nameOrID string) (string, error) {
 	zones, err := h.dns.ListZones(ctx)
 	if err != nil {
 		return "", err
 	}
 
 	for i := range zones {
-		if zones[i].Name == name {
+		if zones[i].Name == nameOrID || numericID(zones[i].ID) == nameOrID {
 			return zones[i].ID, nil
 		}
 	}
 
-	return "", cerrors.Newf(cerrors.NotFound, "managed zone %q not found", name)
+	return "", cerrors.Newf(cerrors.NotFound, "managed zone %q not found", nameOrID)
 }

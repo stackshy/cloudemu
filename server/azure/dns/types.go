@@ -134,7 +134,7 @@ func recordValues(recordType string, props *recordSetProperties) []string {
 	case "AAAA":
 		return mapStrings(props.AaaaRecords, func(a aaaaRecordJSON) string { return a.IPv6Address })
 	case "CNAME":
-		if props.CnameRecord != nil {
+		if props.CnameRecord != nil && props.CnameRecord.Cname != "" {
 			return []string{props.CnameRecord.Cname}
 		}
 	case "TXT":
@@ -239,8 +239,10 @@ func (h *Handler) resolveZoneID(ctx context.Context, name string) (string, error
 		return "", err
 	}
 
+	// Azure treats DNS zone names case-insensitively (and lowercases them on
+	// some URL paths), so match without regard to case.
 	for i := range zones {
-		if zones[i].Name == name {
+		if strings.EqualFold(zones[i].Name, name) {
 			return zones[i].ID, nil
 		}
 	}
