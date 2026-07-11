@@ -16,6 +16,7 @@ import (
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	logdriver "github.com/stackshy/cloudemu/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -27,6 +28,7 @@ import (
 	"github.com/stackshy/cloudemu/server"
 	"github.com/stackshy/cloudemu/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
+	cloudwatchlogssrv "github.com/stackshy/cloudemu/server/aws/cloudwatchlogs"
 	"github.com/stackshy/cloudemu/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/server/aws/ec2"
 	"github.com/stackshy/cloudemu/server/aws/ecr"
@@ -69,6 +71,9 @@ type Drivers struct {
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
+	// CloudWatchLogs serves the CloudWatch Logs JSON 1.1 protocol against the
+	// logging driver.
+	CloudWatchLogs logdriver.Logging
 	// Route53 serves the Route 53 REST/XML protocol against the dns driver.
 	Route53 dnsdriver.DNS
 	// ELB serves the Elastic Load Balancing v2 (ALB/NLB) query protocol
@@ -164,6 +169,13 @@ func New(d Drivers) *server.Server {
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.EventBridge != nil {
 		srv.Register(eventbridge.New(d.EventBridge))
+	}
+
+	// CloudWatch Logs matches the X-Amz-Target prefix "Logs_20140328." —
+	// disjoint from DynamoDB, SQS, Secrets Manager, ECR, SageMaker, and the
+	// tagging API, so registration order relative to them is unconstrained.
+	if d.CloudWatchLogs != nil {
+		srv.Register(cloudwatchlogssrv.New(d.CloudWatchLogs))
 	}
 
 	// Redshift sits with the other query-protocol handlers before the EC2

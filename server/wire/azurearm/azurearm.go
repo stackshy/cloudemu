@@ -83,9 +83,11 @@ func ParsePath(urlPath string) (ResourcePath, bool) {
 }
 
 // parseResourceGroup advances past an optional resourceGroups/{rg} pair and
-// records the group on rp. Returns the next index to inspect.
+// records the group on rp. Returns the next index to inspect. The keyword match
+// is case-insensitive: armdns emits "resourceGroups" while other SDKs (e.g.
+// armoperationalinsights) emit the lowercase "resourcegroups".
 func parseResourceGroup(parts []string, i int, rp *ResourcePath) int {
-	if i >= len(parts) || parts[i] != "resourceGroups" {
+	if i >= len(parts) || !strings.EqualFold(parts[i], "resourceGroups") {
 		return i
 	}
 

@@ -15,6 +15,7 @@ import (
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	logdriver "github.com/stackshy/cloudemu/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -27,6 +28,7 @@ import (
 	"github.com/stackshy/cloudemu/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/server/gcp/cloudfunctions"
+	cloudloggingsrv "github.com/stackshy/cloudemu/server/gcp/cloudlogging"
 	"github.com/stackshy/cloudemu/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
 	"github.com/stackshy/cloudemu/server/gcp/eventarc"
@@ -65,6 +67,9 @@ type Drivers struct {
 	// LB serves the Cloud Load Balancing REST API (backendServices +
 	// forwardingRules on the compute API) against the loadbalancer driver.
 	LB lbdriver.LoadBalancer
+	// CloudLogging serves the logging.googleapis.com v2 REST API
+	// (entries:write/list, logs list/delete) against the logging driver.
+	CloudLogging logdriver.Logging
 	// SecretManager serves the secretmanager.googleapis.com v1 REST API
 	// against the secrets driver.
 	SecretManager secretsdriver.Secrets
@@ -199,6 +204,14 @@ func New(d Drivers) *server.Server {
 	// GCS fallback for consistency with the other handlers.
 	if d.CloudDNS != nil {
 		srv.Register(clouddns.New(d.CloudDNS))
+	}
+
+	// Cloud Logging matches /v2/entries:{write,list} and /v2/projects/{p}/logs
+	// — the logging.googleapis.com v2 URL space, disjoint from the /v1/projects/
+	// family, /compute/v1/, and /dns/v1/, so registration order relative to them
+	// is unconstrained. Registered before the GCS fallback for consistency.
+	if d.CloudLogging != nil {
+		srv.Register(cloudloggingsrv.New(d.CloudLogging))
 	}
 
 	if d.Firestore != nil {
