@@ -12,6 +12,7 @@ import (
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
@@ -31,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/ecr"
 	"github.com/stackshy/cloudemu/server/aws/eks"
 	"github.com/stackshy/cloudemu/server/aws/elbv2"
+	"github.com/stackshy/cloudemu/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/server/aws/iam"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/rds"
@@ -72,6 +74,9 @@ type Drivers struct {
 	// ELB serves the Elastic Load Balancing v2 (ALB/NLB) query protocol
 	// against the loadbalancer driver.
 	ELB lbdriver.LoadBalancer
+	// EventBridge serves the EventBridge JSON 1.1 protocol against the eventbus
+	// driver.
+	EventBridge ebdriver.EventBus
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -153,6 +158,12 @@ func New(d Drivers) *server.Server {
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, and the tagging API.
 	if d.SecretsManager != nil {
 		srv.Register(secretsmanagersrv.New(d.SecretsManager))
+	}
+
+	// EventBridge matches the X-Amz-Target prefix "AWSEvents." — disjoint from
+	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
+	if d.EventBridge != nil {
+		srv.Register(eventbridge.New(d.EventBridge))
 	}
 
 	// Redshift sits with the other query-protocol handlers before the EC2

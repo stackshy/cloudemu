@@ -11,6 +11,7 @@ import (
 	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
@@ -28,6 +29,7 @@ import (
 	"github.com/stackshy/cloudemu/server/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/server/gcp/compute"
+	"github.com/stackshy/cloudemu/server/gcp/eventarc"
 	"github.com/stackshy/cloudemu/server/gcp/firestore"
 	"github.com/stackshy/cloudemu/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/server/gcp/gke"
@@ -66,6 +68,9 @@ type Drivers struct {
 	// SecretManager serves the secretmanager.googleapis.com v1 REST API
 	// against the secrets driver.
 	SecretManager secretsdriver.Secrets
+	// Eventarc serves the eventarc.googleapis.com v1 REST API against the
+	// eventbus driver, mapping triggers to rules under a per-location bus.
+	Eventarc ebdriver.EventBus
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and azureserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -178,6 +183,14 @@ func New(d Drivers) *server.Server {
 	// of the /v1/projects/ family. Registered before Firestore's catch-all.
 	if d.SecretManager != nil {
 		srv.Register(secretmanagersrv.New(d.SecretManager))
+	}
+
+	// Eventarc matches /v1/projects/{p}/locations/{l}/triggers[/…] — a
+	// resource-type guard disjoint from IAM, Artifact Registry, Secret Manager,
+	// GKE, and the rest of the /v1/projects/ family. Registered before
+	// Firestore's catch-all.
+	if d.Eventarc != nil {
+		srv.Register(eventarc.New(d.Eventarc))
 	}
 
 	// Cloud DNS matches /dns/v1/projects/{p}/managedZones[...] — a distinct
