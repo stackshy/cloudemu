@@ -13,6 +13,7 @@ import (
 	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -31,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/server/gcp/gke"
 	"github.com/stackshy/cloudemu/server/gcp/iam"
+	lbsrv "github.com/stackshy/cloudemu/server/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/server/gcp/networks"
 	"github.com/stackshy/cloudemu/server/gcp/pubsub"
@@ -58,6 +60,9 @@ type Drivers struct {
 	// CloudDNS serves the dns.googleapis.com v1 REST API against the dns
 	// driver.
 	CloudDNS dnsdriver.DNS
+	// LB serves the Cloud Load Balancing REST API (backendServices +
+	// forwardingRules on the compute API) against the loadbalancer driver.
+	LB lbdriver.LoadBalancer
 	// SecretManager serves the secretmanager.googleapis.com v1 REST API
 	// against the secrets driver.
 	SecretManager secretsdriver.Secrets
@@ -94,6 +99,19 @@ func New(d Drivers) *server.Server {
 
 	if d.Networking != nil {
 		srv.Register(networks.New(d.Networking))
+	}
+
+	// Cloud Load Balancing shares the /compute/v1/projects/… URL space with the
+	// compute and networks handlers above but claims a disjoint set of resource
+	// types — backendServices / forwardingRules — whereas compute claims
+	// instances / operations / disks / snapshots / images and networks claims
+	// networks / subnetworks / firewalls. gcprest.ParsePath keys dispatch on the
+	// resource-type segment, so first-match-wins routing is unambiguous and
+	// registration order relative to those two is unconstrained. Mutating LB ops
+	// return operation envelopes the SDK polls via the compute handler's
+	// /global/operations route.
+	if d.LB != nil {
+		srv.Register(lbsrv.New(d.LB))
 	}
 
 	// CloudFunctions matches /v1/projects/{p}/locations/{l}/functions paths

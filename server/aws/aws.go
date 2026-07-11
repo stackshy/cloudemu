@@ -14,6 +14,7 @@ import (
 	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -29,6 +30,7 @@ import (
 	"github.com/stackshy/cloudemu/server/aws/ec2"
 	"github.com/stackshy/cloudemu/server/aws/ecr"
 	"github.com/stackshy/cloudemu/server/aws/eks"
+	"github.com/stackshy/cloudemu/server/aws/elbv2"
 	"github.com/stackshy/cloudemu/server/aws/iam"
 	"github.com/stackshy/cloudemu/server/aws/lambda"
 	"github.com/stackshy/cloudemu/server/aws/rds"
@@ -67,6 +69,9 @@ type Drivers struct {
 	SecretsManager secretsdriver.Secrets
 	// Route53 serves the Route 53 REST/XML protocol against the dns driver.
 	Route53 dnsdriver.DNS
+	// ELB serves the Elastic Load Balancing v2 (ALB/NLB) query protocol
+	// against the loadbalancer driver.
+	ELB lbdriver.LoadBalancer
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -156,6 +161,14 @@ func New(d Drivers) *server.Server {
 	// and from EC2's (RunInstances, …), so no shadowing occurs.
 	if d.Redshift != nil {
 		srv.Register(redshift.New(d.Redshift))
+	}
+
+	// ELBv2 also speaks AWS query-protocol; its action set (CreateLoadBalancer,
+	// CreateTargetGroup, CreateListener, RegisterTargets, …) is disjoint from
+	// RDS, IAM, Redshift, and EC2. It must register before the EC2 catch-all so
+	// the EC2 handler doesn't claim ELBv2 form bodies first.
+	if d.ELB != nil {
+		srv.Register(elbv2.New(d.ELB))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {

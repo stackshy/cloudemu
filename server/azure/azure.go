@@ -14,6 +14,7 @@ import (
 	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -47,6 +48,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/iam"
 	"github.com/stackshy/cloudemu/server/azure/images"
 	keyvaultsrv "github.com/stackshy/cloudemu/server/azure/keyvault"
+	lbsrv "github.com/stackshy/cloudemu/server/azure/loadbalancer"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/server/azure/network"
@@ -90,7 +92,10 @@ type Drivers struct {
 	KeyVault secretsdriver.Secrets
 	// DNS serves the Azure DNS (Microsoft.Network/dnsZones) ARM API against the
 	// dns driver.
-	DNS                 dnsdriver.DNS
+	DNS dnsdriver.DNS
+	// LB serves the Azure Load Balancer (Microsoft.Network/loadBalancers) ARM
+	// API against the loadbalancer driver.
+	LB                  lbdriver.LoadBalancer
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -154,6 +159,15 @@ func New(d Drivers) *server.Server {
 	// fallback.
 	if d.DNS != nil {
 		srv.Register(dnssrv.New(d.DNS))
+	}
+
+	// Azure Load Balancer shares the Microsoft.Network ARM provider with the
+	// network handler above and the DNS handler, but claims a disjoint resource
+	// type (loadBalancers vs virtualNetworks / networkSecurityGroups /
+	// locations / dnsZones), so registration order relative to them is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if d.LB != nil {
+		srv.Register(lbsrv.New(d.LB))
 	}
 
 	if d.Monitor != nil {
