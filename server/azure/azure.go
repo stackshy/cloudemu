@@ -16,6 +16,7 @@ import (
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	logdriver "github.com/stackshy/cloudemu/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
@@ -51,6 +52,7 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/images"
 	keyvaultsrv "github.com/stackshy/cloudemu/server/azure/keyvault"
 	lbsrv "github.com/stackshy/cloudemu/server/azure/loadbalancer"
+	loganalyticssrv "github.com/stackshy/cloudemu/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/server/azure/network"
@@ -100,7 +102,12 @@ type Drivers struct {
 	LB lbdriver.LoadBalancer
 	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
 	// against the eventbus driver, mapping topics to event buses.
-	EventGrid           ebdriver.EventBus
+	EventGrid ebdriver.EventBus
+	// LogAnalytics serves the Log Analytics
+	// (Microsoft.OperationalInsights/workspaces) ARM API against the logging
+	// driver. The workspace lifecycle maps onto the driver's log-group
+	// lifecycle; the data-plane log-query API is out of scope.
+	LogAnalytics        logdriver.Logging
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
@@ -180,6 +187,13 @@ func New(d Drivers) *server.Server {
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.EventGrid != nil {
 		srv.Register(eventgridsrv.New(d.EventGrid))
+	}
+
+	// Log Analytics matches on Microsoft.OperationalInsights/workspaces — a
+	// distinct ARM provider name from every other Azure handler, so registration
+	// order is unconstrained. Registered before the BlobStorage fallback.
+	if d.LogAnalytics != nil {
+		srv.Register(loganalyticssrv.New(d.LogAnalytics))
 	}
 
 	if d.Monitor != nil {
