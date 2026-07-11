@@ -25,6 +25,8 @@ type mockDriver struct {
 	userPolicies     map[string][]string // userName -> []policyARN
 	rolePolicies     map[string][]string // roleName -> []policyARN
 	groupUsers       map[string]map[string]bool
+	policyVersions   map[string][]*driver.PolicyVersionInfo
+	versionSeq       map[string]int
 	seq              int
 }
 
@@ -39,6 +41,8 @@ func newMockDriver() *mockDriver {
 		userPolicies:     make(map[string][]string),
 		rolePolicies:     make(map[string][]string),
 		groupUsers:       make(map[string]map[string]bool),
+		policyVersions:   make(map[string][]*driver.PolicyVersionInfo),
+		versionSeq:       make(map[string]int),
 	}
 }
 
@@ -197,6 +201,69 @@ func (m *mockDriver) ListPolicies(_ context.Context) ([]driver.PolicyInfo, error
 	}
 
 	return result, nil
+}
+
+func (m *mockDriver) CreatePolicyVersion(
+	_ context.Context, cfg driver.PolicyVersionConfig,
+) (*driver.PolicyVersionInfo, error) {
+	if _, ok := m.policies[cfg.PolicyARN]; !ok {
+		return nil, fmt.Errorf("policy not found")
+	}
+
+	m.versionSeq[cfg.PolicyARN]++
+	v := &driver.PolicyVersionInfo{
+		VersionID:        fmt.Sprintf("v%d", m.versionSeq[cfg.PolicyARN]),
+		PolicyDocument:   cfg.PolicyDocument,
+		IsDefaultVersion: cfg.SetAsDefault,
+	}
+	m.policyVersions[cfg.PolicyARN] = append(m.policyVersions[cfg.PolicyARN], v)
+
+	return v, nil
+}
+
+func (m *mockDriver) GetPolicyVersion(_ context.Context, policyARN, versionID string) (*driver.PolicyVersionInfo, error) {
+	for _, v := range m.policyVersions[policyARN] {
+		if v.VersionID == versionID {
+			return v, nil
+		}
+	}
+
+	return nil, fmt.Errorf("version not found")
+}
+
+func (m *mockDriver) ListPolicyVersions(_ context.Context, policyARN string) ([]driver.PolicyVersionInfo, error) {
+	if _, ok := m.policies[policyARN]; !ok {
+		return nil, fmt.Errorf("policy not found")
+	}
+
+	result := make([]driver.PolicyVersionInfo, 0, len(m.policyVersions[policyARN]))
+	for _, v := range m.policyVersions[policyARN] {
+		result = append(result, *v)
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) DeletePolicyVersion(_ context.Context, policyARN, versionID string) error {
+	versions := m.policyVersions[policyARN]
+	for idx, v := range versions {
+		if v.VersionID == versionID {
+			m.policyVersions[policyARN] = append(versions[:idx], versions[idx+1:]...)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("version not found")
+}
+
+func (m *mockDriver) SetDefaultPolicyVersion(_ context.Context, policyARN, versionID string) error {
+	for _, v := range m.policyVersions[policyARN] {
+		if v.VersionID == versionID {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("version not found")
 }
 
 func (m *mockDriver) AttachUserPolicy(_ context.Context, userName, policyARN string) error {
@@ -668,6 +735,49 @@ func TestCreatePolicy(t *testing.T) {
 		_, err := i.CreatePolicy(ctx, driver.PolicyConfig{})
 		require.Error(t, err)
 	})
+}
+
+func TestPolicyVersions(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	p, err := i.CreatePolicy(ctx, driver.PolicyConfig{Name: "my-policy", PolicyDocument: "{}"})
+	require.NoError(t, err)
+
+	v, err := i.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{
+		PolicyARN: p.ARN, PolicyDocument: `{"doc":2}`, SetAsDefault: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "v1", v.VersionID)
+	assert.True(t, v.IsDefaultVersion)
+
+	got, err := i.GetPolicyVersion(ctx, p.ARN, v.VersionID)
+	require.NoError(t, err)
+	assert.Equal(t, `{"doc":2}`, got.PolicyDocument)
+
+	versions, err := i.ListPolicyVersions(ctx, p.ARN)
+	require.NoError(t, err)
+	assert.Len(t, versions, 1)
+
+	require.NoError(t, i.SetDefaultPolicyVersion(ctx, p.ARN, v.VersionID))
+	require.NoError(t, i.DeletePolicyVersion(ctx, p.ARN, v.VersionID))
+
+	_, err = i.GetPolicyVersion(ctx, p.ARN, v.VersionID)
+	require.Error(t, err)
+}
+
+func TestPolicyVersionErrorsPropagate(t *testing.T) {
+	i := newTestIAM()
+	ctx := context.Background()
+
+	_, err := i.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{PolicyARN: "missing"})
+	require.Error(t, err)
+	_, err = i.GetPolicyVersion(ctx, "missing", "v1")
+	require.Error(t, err)
+	_, err = i.ListPolicyVersions(ctx, "missing")
+	require.Error(t, err)
+	require.Error(t, i.DeletePolicyVersion(ctx, "missing", "v1"))
+	require.Error(t, i.SetDefaultPolicyVersion(ctx, "missing", "v1"))
 }
 
 func TestDeletePolicy(t *testing.T) {

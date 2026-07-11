@@ -9,22 +9,32 @@ package azure
 import (
 	azureaidriver "github.com/stackshy/cloudemu/azureai/driver"
 	azuresearchdriver "github.com/stackshy/cloudemu/azuresearch/driver"
+	cachedriver "github.com/stackshy/cloudemu/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
+	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/kubernetes"
+	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	logdriver "github.com/stackshy/cloudemu/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/notification/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
+	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
 	"github.com/stackshy/cloudemu/server"
+	"github.com/stackshy/cloudemu/server/azure/acr"
 	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
 	azureaiserver "github.com/stackshy/cloudemu/server/azure/azureai"
 	azuresearchserver "github.com/stackshy/cloudemu/server/azure/azuresearch"
 	"github.com/stackshy/cloudemu/server/azure/azuresql"
 	"github.com/stackshy/cloudemu/server/azure/blob"
+	cachesrv "github.com/stackshy/cloudemu/server/azure/cache"
 	"github.com/stackshy/cloudemu/server/azure/cosmos"
 	"github.com/stackshy/cloudemu/server/azure/databricks"
 	"github.com/stackshy/cloudemu/server/azure/databricks/dbfs"
@@ -42,12 +52,18 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/databricks/unitycatalog"
 	"github.com/stackshy/cloudemu/server/azure/databricks/wsfs"
 	"github.com/stackshy/cloudemu/server/azure/disks"
+	dnssrv "github.com/stackshy/cloudemu/server/azure/dns"
+	eventgridsrv "github.com/stackshy/cloudemu/server/azure/eventgrid"
 	"github.com/stackshy/cloudemu/server/azure/functions"
 	"github.com/stackshy/cloudemu/server/azure/iam"
 	"github.com/stackshy/cloudemu/server/azure/images"
+	keyvaultsrv "github.com/stackshy/cloudemu/server/azure/keyvault"
+	lbsrv "github.com/stackshy/cloudemu/server/azure/loadbalancer"
+	loganalyticssrv "github.com/stackshy/cloudemu/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/server/azure/monitor"
 	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/server/azure/network"
+	notificationhubssrv "github.com/stackshy/cloudemu/server/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/server/azure/postgresflex"
 	"github.com/stackshy/cloudemu/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/server/azure/servicebus"
@@ -66,22 +82,46 @@ import (
 // compute driver — the driver's Volume*/Snapshot*/Image* methods back the
 // corresponding resources.
 type Drivers struct {
-	VirtualMachines     computedriver.Compute
-	Disks               computedriver.Compute
-	Snapshots           computedriver.Compute
-	Images              computedriver.Compute
-	SSHPublicKeys       computedriver.Compute
-	BlobStorage         storagedriver.Bucket
-	CosmosDB            dbdriver.Database
-	Network             netdriver.Networking
-	Monitor             mondriver.Monitoring
-	Functions           sdrv.Serverless
-	ServiceBus          mqdriver.MessageQueue
-	SQL                 rdbdriver.RelationalDB
-	PostgresFlex        rdbdriver.RelationalDB
-	MySQLFlex           rdbdriver.RelationalDB
-	AKS                 aksserver.Backend
-	IAM                 iamdriver.IAM
+	VirtualMachines computedriver.Compute
+	Disks           computedriver.Compute
+	Snapshots       computedriver.Compute
+	Images          computedriver.Compute
+	SSHPublicKeys   computedriver.Compute
+	BlobStorage     storagedriver.Bucket
+	CosmosDB        dbdriver.Database
+	Network         netdriver.Networking
+	Monitor         mondriver.Monitoring
+	Functions       sdrv.Serverless
+	ServiceBus      mqdriver.MessageQueue
+	SQL             rdbdriver.RelationalDB
+	PostgresFlex    rdbdriver.RelationalDB
+	MySQLFlex       rdbdriver.RelationalDB
+	AKS             aksserver.Backend
+	IAM             iamdriver.IAM
+	ACR             crdriver.ContainerRegistry
+	// KeyVault serves the Key Vault secrets data-plane API (/secrets/…)
+	// against the secrets driver.
+	KeyVault secretsdriver.Secrets
+	// DNS serves the Azure DNS (Microsoft.Network/dnsZones) ARM API against the
+	// dns driver.
+	DNS dnsdriver.DNS
+	// LB serves the Azure Load Balancer (Microsoft.Network/loadBalancers) ARM
+	// API against the loadbalancer driver.
+	LB lbdriver.LoadBalancer
+	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
+	// against the eventbus driver, mapping topics to event buses.
+	EventGrid ebdriver.EventBus
+	// LogAnalytics serves the Log Analytics
+	// (Microsoft.OperationalInsights/workspaces) ARM API against the logging
+	// driver. The workspace lifecycle maps onto the driver's log-group
+	// lifecycle; the data-plane log-query API is out of scope.
+	LogAnalytics logdriver.Logging
+	// Cache serves the Azure Cache for Redis (Microsoft.Cache/redis) ARM API
+	// against the cache driver's cluster control plane.
+	Cache cachedriver.Cache
+	// NotificationHubs serves the Microsoft.NotificationHubs ARM API against the
+	// notification driver.
+	NotificationHubs    notifdriver.Notification
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
 	CognitiveServices   azureaidriver.CognitiveServices
@@ -141,6 +181,53 @@ func New(d Drivers) *server.Server {
 
 	if d.Network != nil {
 		srv.Register(network.New(d.Network))
+	}
+
+	// Azure DNS shares the Microsoft.Network ARM provider with the network
+	// handler above, but claims a disjoint resource type (dnsZones vs
+	// virtualNetworks / networkSecurityGroups / locations), so registration
+	// order relative to it is unconstrained. Registered before the BlobStorage
+	// fallback.
+	if d.DNS != nil {
+		srv.Register(dnssrv.New(d.DNS))
+	}
+
+	// Azure Load Balancer shares the Microsoft.Network ARM provider with the
+	// network handler above and the DNS handler, but claims a disjoint resource
+	// type (loadBalancers vs virtualNetworks / networkSecurityGroups /
+	// locations / dnsZones), so registration order relative to them is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if d.LB != nil {
+		srv.Register(lbsrv.New(d.LB))
+	}
+
+	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider
+	// name from every other Azure handler, so registration order is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if d.EventGrid != nil {
+		srv.Register(eventgridsrv.New(d.EventGrid))
+	}
+
+	// Log Analytics matches on Microsoft.OperationalInsights/workspaces — a
+	// distinct ARM provider name from every other Azure handler, so registration
+	// order is unconstrained. Registered before the BlobStorage fallback.
+	if d.LogAnalytics != nil {
+		srv.Register(loganalyticssrv.New(d.LogAnalytics))
+	}
+
+	// Azure Cache for Redis matches on the Microsoft.Cache ARM provider — a
+	// unique provider name among Azure handlers, so registration order is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if d.Cache != nil {
+		srv.Register(cachesrv.New(d.Cache))
+	}
+
+	// Notification Hubs matches on the Microsoft.NotificationHubs provider — a
+	// distinct ARM provider name from every other Azure handler, so
+	// registration order is unconstrained. Registered before the BlobStorage
+	// fallback.
+	if d.NotificationHubs != nil {
+		srv.Register(notificationhubssrv.New(d.NotificationHubs))
 	}
 
 	if d.Monitor != nil {
@@ -239,6 +326,19 @@ func New(d Drivers) *server.Server {
 	// registration order is unconstrained.
 	if d.IAM != nil {
 		srv.Register(iam.New(d.IAM))
+	}
+
+	// ACR data-plane catalog API matches /acr/v1/… — disjoint from ARM and
+	// must register before the permissive BlobStorage fallback below.
+	if d.ACR != nil {
+		srv.Register(acr.New(d.ACR))
+	}
+
+	// Key Vault secrets data-plane API matches /secrets/… — disjoint from ARM
+	// and from the Databricks secrets API (/api/{ver}/secrets), and must
+	// register before the permissive BlobStorage fallback below.
+	if d.KeyVault != nil {
+		srv.Register(keyvaultsrv.New(d.KeyVault))
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It

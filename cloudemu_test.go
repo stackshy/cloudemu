@@ -942,6 +942,64 @@ func TestFIFODeduplication(t *testing.T) {
 	}
 }
 
+func TestIAMPolicyVersions(t *testing.T) {
+	ctx := context.Background()
+
+	providers := []struct {
+		name string
+		iam  iamdriver.IAM
+	}{
+		{"aws", NewAWS().IAM},
+		{"azure", NewAzure().IAM},
+		{"gcp", NewGCP().IAM},
+	}
+
+	for _, tc := range providers {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := tc.iam.CreatePolicy(ctx, iamdriver.PolicyConfig{Name: "vpol", PolicyDocument: `{"v":1}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// CreatePolicy auto-seeds a default v1.
+			versions, err := tc.iam.ListPolicyVersions(ctx, p.ARN)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(versions) != 1 || versions[0].VersionID != "v1" || !versions[0].IsDefaultVersion {
+				t.Fatalf("expected seeded default v1, got %+v", versions)
+			}
+
+			// A new default version updates the policy's effective document.
+			v2, err := tc.iam.CreatePolicyVersion(ctx, iamdriver.PolicyVersionConfig{
+				PolicyARN: p.ARN, PolicyDocument: `{"v":2}`, SetAsDefault: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !v2.IsDefaultVersion {
+				t.Error("expected v2 to be the default version")
+			}
+
+			got, err := tc.iam.GetPolicy(ctx, p.ARN)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.PolicyDocument != `{"v":2}` {
+				t.Errorf("expected effective document to follow default, got %q", got.PolicyDocument)
+			}
+
+			// The default version cannot be deleted; a non-default one can.
+			if err := tc.iam.DeletePolicyVersion(ctx, p.ARN, "v2"); err == nil {
+				t.Error("expected error deleting the default version")
+			}
+			if err := tc.iam.DeletePolicyVersion(ctx, p.ARN, "v1"); err != nil {
+				t.Fatalf("unexpected error deleting non-default version: %v", err)
+			}
+		})
+	}
+}
+
 func TestIAMCheckPermission(t *testing.T) {
 	ctx := context.Background()
 	p := NewAWS()

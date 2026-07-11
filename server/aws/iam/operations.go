@@ -1,6 +1,7 @@
 package iam
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -8,6 +9,9 @@ import (
 	iamdriver "github.com/stackshy/cloudemu/iam/driver"
 	"github.com/stackshy/cloudemu/server/wire/awsquery"
 )
+
+// defaultPolicyVersionID is the version a freshly created policy starts with.
+const defaultPolicyVersionID = "v1"
 
 // parseIAMTags parses Tags.member.N.{Key,Value} pairs (the shape the
 // aws-sdk-go-v2/service/iam client emits for tagged-create requests).
@@ -184,7 +188,7 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, createPolicyResponse{
 		Xmlns:    Namespace,
-		Result:   createPolicyResult{Policy: toPolicyXML(p)},
+		Result:   createPolicyResult{Policy: toPolicyXML(p, defaultPolicyVersionID)},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -210,12 +214,11 @@ func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, getPolicyResponse{
 		Xmlns:    Namespace,
-		Result:   getPolicyResult{Policy: toPolicyXML(p)},
+		Result:   getPolicyResult{Policy: toPolicyXML(p, h.defaultVersionID(r.Context(), p.ARN))},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
 
-//nolint:dupl // list handlers share shape but operate on different driver types and response envelopes.
 func (h *Handler) listPolicies(w http.ResponseWriter, r *http.Request) {
 	policies, err := h.iam.ListPolicies(r.Context())
 	if err != nil {
@@ -225,12 +228,106 @@ func (h *Handler) listPolicies(w http.ResponseWriter, r *http.Request) {
 
 	out := policiesListXML{Member: make([]policyXML, 0, len(policies))}
 	for i := range policies {
-		out.Member = append(out.Member, toPolicyXML(&policies[i]))
+		out.Member = append(out.Member, toPolicyXML(&policies[i], h.defaultVersionID(r.Context(), policies[i].ARN)))
 	}
 
 	awsquery.WriteXMLResponse(w, listPoliciesResponse{
 		Xmlns:    Namespace,
 		Result:   listPoliciesResult{Policies: out, IsTruncated: false},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// defaultVersionID returns the version ID currently marked default for the
+// policy, falling back to "v1" if the versions cannot be read.
+func (h *Handler) defaultVersionID(ctx context.Context, policyARN string) string {
+	versions, err := h.iam.ListPolicyVersions(ctx, policyARN)
+	if err != nil {
+		return defaultPolicyVersionID
+	}
+
+	for i := range versions {
+		if versions[i].IsDefaultVersion {
+			return versions[i].VersionID
+		}
+	}
+
+	return defaultPolicyVersionID
+}
+
+func (h *Handler) createPolicyVersion(w http.ResponseWriter, r *http.Request) {
+	cfg := iamdriver.PolicyVersionConfig{
+		PolicyARN:      r.Form.Get("PolicyArn"),
+		PolicyDocument: r.Form.Get("PolicyDocument"),
+		SetAsDefault:   r.Form.Get("SetAsDefault") == "true",
+	}
+
+	v, err := h.iam.CreatePolicyVersion(r.Context(), cfg)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, createPolicyVersionResponse{
+		Xmlns:    Namespace,
+		Result:   createPolicyVersionResult{PolicyVersion: toPolicyVersionXML(v, true)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) getPolicyVersion(w http.ResponseWriter, r *http.Request) {
+	v, err := h.iam.GetPolicyVersion(r.Context(), r.Form.Get("PolicyArn"), r.Form.Get("VersionId"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, getPolicyVersionResponse{
+		Xmlns:    Namespace,
+		Result:   getPolicyVersionResult{PolicyVersion: toPolicyVersionXML(v, true)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) listPolicyVersions(w http.ResponseWriter, r *http.Request) {
+	versions, err := h.iam.ListPolicyVersions(r.Context(), r.Form.Get("PolicyArn"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := policyVersionsListXML{Member: make([]policyVersionXML, 0, len(versions))}
+	for i := range versions {
+		out.Member = append(out.Member, toPolicyVersionXML(&versions[i], false))
+	}
+
+	awsquery.WriteXMLResponse(w, listPolicyVersionsResponse{
+		Xmlns:    Namespace,
+		Result:   listPolicyVersionsResult{Versions: out, IsTruncated: false},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) deletePolicyVersion(w http.ResponseWriter, r *http.Request) {
+	if err := h.iam.DeletePolicyVersion(r.Context(), r.Form.Get("PolicyArn"), r.Form.Get("VersionId")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, deletePolicyVersionResponse{
+		Xmlns:    Namespace,
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) setDefaultPolicyVersion(w http.ResponseWriter, r *http.Request) {
+	if err := h.iam.SetDefaultPolicyVersion(r.Context(), r.Form.Get("PolicyArn"), r.Form.Get("VersionId")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, setDefaultPolicyVersionResponse{
+		Xmlns:    Namespace,
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

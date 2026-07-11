@@ -98,17 +98,45 @@ type policyXML struct {
 //   - IsAttachable is always true. Real AWS distinguishes
 //     customer-managed (attachable) from AWS-managed policies; we only
 //     emit customer-managed, so true is correct.
-func toPolicyXML(p *iamdriver.PolicyInfo) policyXML {
+func toPolicyXML(p *iamdriver.PolicyInfo, defaultVersionID string) policyXML {
 	return policyXML{
 		PolicyName:       p.Name,
 		PolicyID:         p.ID,
 		Arn:              p.ARN,
 		Path:             p.Path,
-		DefaultVersionID: "v1",
+		DefaultVersionID: defaultVersionID,
 		AttachmentCount:  0,
 		IsAttachable:     true,
 		Description:      p.Description,
 	}
+}
+
+type policyVersionXML struct {
+	Document         string `xml:"Document,omitempty"`
+	VersionID        string `xml:"VersionId"`
+	IsDefaultVersion bool   `xml:"IsDefaultVersion"`
+	CreateDate       string `xml:"CreateDate,omitempty"`
+}
+
+type policyVersionsListXML struct {
+	Member []policyVersionXML `xml:"member,omitempty"`
+}
+
+// toPolicyVersionXML maps a driver version to its wire shape. The real IAM API
+// omits the document body from ListPolicyVersions, so includeDocument is false
+// there and true for Create/GetPolicyVersion.
+func toPolicyVersionXML(v *iamdriver.PolicyVersionInfo, includeDocument bool) policyVersionXML {
+	out := policyVersionXML{
+		VersionID:        v.VersionID,
+		IsDefaultVersion: v.IsDefaultVersion,
+		CreateDate:       v.CreatedAt,
+	}
+
+	if includeDocument {
+		out.Document = v.PolicyDocument
+	}
+
+	return out
 }
 
 type groupXML struct {
@@ -351,6 +379,52 @@ type listPoliciesResponse struct {
 type listPoliciesResult struct {
 	Policies    policiesListXML `xml:"Policies"`
 	IsTruncated bool            `xml:"IsTruncated"`
+}
+
+type createPolicyVersionResponse struct {
+	XMLName  xml.Name                  `xml:"CreatePolicyVersionResponse"`
+	Xmlns    string                    `xml:"xmlns,attr"`
+	Result   createPolicyVersionResult `xml:"CreatePolicyVersionResult"`
+	Metadata responseMetadata          `xml:"ResponseMetadata"`
+}
+
+type createPolicyVersionResult struct {
+	PolicyVersion policyVersionXML `xml:"PolicyVersion"`
+}
+
+type getPolicyVersionResponse struct {
+	XMLName  xml.Name               `xml:"GetPolicyVersionResponse"`
+	Xmlns    string                 `xml:"xmlns,attr"`
+	Result   getPolicyVersionResult `xml:"GetPolicyVersionResult"`
+	Metadata responseMetadata       `xml:"ResponseMetadata"`
+}
+
+type getPolicyVersionResult struct {
+	PolicyVersion policyVersionXML `xml:"PolicyVersion"`
+}
+
+type listPolicyVersionsResponse struct {
+	XMLName  xml.Name                 `xml:"ListPolicyVersionsResponse"`
+	Xmlns    string                   `xml:"xmlns,attr"`
+	Result   listPolicyVersionsResult `xml:"ListPolicyVersionsResult"`
+	Metadata responseMetadata         `xml:"ResponseMetadata"`
+}
+
+type listPolicyVersionsResult struct {
+	Versions    policyVersionsListXML `xml:"Versions"`
+	IsTruncated bool                  `xml:"IsTruncated"`
+}
+
+type deletePolicyVersionResponse struct {
+	XMLName  xml.Name         `xml:"DeletePolicyVersionResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type setDefaultPolicyVersionResponse struct {
+	XMLName  xml.Name         `xml:"SetDefaultPolicyVersionResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
 type attachUserPolicyResponse struct {
