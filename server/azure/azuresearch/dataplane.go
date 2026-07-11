@@ -44,7 +44,34 @@ func splitPath(p string) []string {
 		return nil
 	}
 
-	return strings.Split(p, "/")
+	raw := strings.Split(p, "/")
+	out := make([]string, 0, len(raw))
+
+	for _, seg := range raw {
+		out = append(out, expandKeySegment(seg)...)
+	}
+
+	return out
+}
+
+// expandKeySegment normalizes the OData key-form the search SDKs emit, so the
+// fused segments route identically to their slash-separated equivalents:
+//
+//	indexes('products') → [indexes products]
+//	docs('42')          → [docs 42]
+//	('42')              → [42]
+func expandKeySegment(seg string) []string {
+	i := strings.Index(seg, "('")
+	if i < 0 || !strings.HasSuffix(seg, "')") {
+		return []string{seg}
+	}
+
+	coll, docKey := seg[:i], seg[i+2:len(seg)-2]
+	if coll == "" {
+		return []string{docKey}
+	}
+
+	return []string{coll, docKey}
 }
 
 // serviceFromHost extracts the service name from {service}.search.windows.net,

@@ -89,6 +89,23 @@ func TestSearchFilterTopSelect(t *testing.T) {
 	assert.False(t, hasName, "$select=id should drop name")
 }
 
+func TestODataParenFormRouting(t *testing.T) {
+	url := newServer(t)
+	makeProductsIndex(t, url)
+
+	do(t, http.MethodPost, url+"/indexes/products/docs/index", map[string]any{
+		"value": []any{map[string]any{"@search.action": "upload", "id": "1", "name": "red widget"}},
+	})
+
+	// The fused OData key forms the real search SDKs emit must route identically
+	// to their slash-separated equivalents.
+	doc := do(t, http.MethodGet, url+"/indexes('products')/docs('1')", nil)
+	assert.Equal(t, "red widget", doc["name"])
+
+	res := do(t, http.MethodPost, url+"/indexes('products')/docs/search", map[string]any{"search": "*", "count": true})
+	assert.EqualValues(t, 1, res["@odata.count"])
+}
+
 func TestKeylessDocRejectedAndPartialBatch207(t *testing.T) {
 	url := newServer(t)
 	makeProductsIndex(t, url)

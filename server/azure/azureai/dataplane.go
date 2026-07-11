@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	csdriver "github.com/stackshy/cloudemu/azureai/driver"
@@ -207,7 +208,10 @@ func (h *DataPlaneHandler) embeddings(w http.ResponseWriter, r *http.Request, ac
 	})
 }
 
-// parseEmbeddingInput accepts either a JSON string or an array of strings.
+// parseEmbeddingInput accepts any of the shapes the embeddings API allows: a
+// string, an array of strings, a single token array ([]int), or an array of
+// token arrays ([][]int). Token arrays are rendered to a synthetic string so
+// each input still yields exactly one embedding row.
 func parseEmbeddingInput(raw json.RawMessage) []string {
 	var single string
 	if json.Unmarshal(raw, &single) == nil {
@@ -215,9 +219,36 @@ func parseEmbeddingInput(raw json.RawMessage) []string {
 	}
 
 	var many []string
-	_ = json.Unmarshal(raw, &many)
+	if json.Unmarshal(raw, &many) == nil {
+		return many
+	}
 
-	return many
+	var tokens []int
+	if json.Unmarshal(raw, &tokens) == nil {
+		return []string{tokenKey(tokens)}
+	}
+
+	var tokenLists [][]int
+	if json.Unmarshal(raw, &tokenLists) == nil {
+		out := make([]string, 0, len(tokenLists))
+		for _, t := range tokenLists {
+			out = append(out, tokenKey(t))
+		}
+
+		return out
+	}
+
+	return nil
+}
+
+// tokenKey renders a token-ID array to a stable string so it can be embedded.
+func tokenKey(tokens []int) string {
+	parts := make([]string, len(tokens))
+	for i, n := range tokens {
+		parts[i] = strconv.Itoa(n)
+	}
+
+	return strings.Join(parts, " ")
 }
 
 func usageJSON(u csdriver.TokenUsage) map[string]any {

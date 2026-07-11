@@ -1,10 +1,15 @@
 package azureai_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/ai/azopenai"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -140,4 +145,48 @@ func TestListMessagesOrdered(t *testing.T) {
 
 		assert.Equal(t, want, got)
 	}
+}
+
+// --- real azopenai SDK roundtrip ---
+
+func newAOAIClient(t *testing.T) *azopenai.Client {
+	t.Helper()
+
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{AzureAIDataPlane: cloudP.AzureAI})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	c, err := azopenai.NewClient(ts.URL, fakeCred{}, &azopenai.ClientOptions{
+		ClientOptions: azcore.ClientOptions{Transport: ts.Client(), Retry: policy.RetryOptions{MaxRetries: -1}},
+	})
+	require.NoError(t, err)
+
+	return c
+}
+
+func TestSDKAzureOpenAIInference(t *testing.T) {
+	c := newAOAIClient(t)
+	ctx := context.Background()
+
+	chat, err := c.GetChatCompletions(ctx, azopenai.ChatCompletionsOptions{
+		DeploymentName: to.Ptr("gpt4o"),
+		Messages: []azopenai.ChatRequestMessageClassification{
+			&azopenai.ChatRequestUserMessage{Content: azopenai.NewChatRequestUserMessageContent("hello there world")},
+		},
+		MaxTokens: to.Ptr(int32(16)),
+	}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, chat.Choices)
+	require.NotNil(t, chat.Choices[0].Message)
+	require.NotNil(t, chat.Choices[0].Message.Content)
+	assert.NotEmpty(t, *chat.Choices[0].Message.Content)
+
+	emb, err := c.GetEmbeddings(ctx, azopenai.EmbeddingsOptions{
+		DeploymentName: to.Ptr("text-embedding-3-large"),
+		Input:          []string{"alpha", "beta"},
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, emb.Data, 2)
+	assert.NotEmpty(t, emb.Data[0].Embedding)
 }

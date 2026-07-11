@@ -2,18 +2,48 @@ package azuresearch_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/search/armsearch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu"
 	azureserver "github.com/stackshy/cloudemu/server/azure"
 )
+
+// fakeCred is a no-op bearer-token credential for driving real ARM SDK clients.
+type fakeCred struct{}
+
+func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
+}
+
+func armClientOptions(ts *httptest.Server) *arm.ClientOptions {
+	return &arm.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			Cloud: cloud.Configuration{
+				ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
+				Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+					cloud.ResourceManager: {Endpoint: ts.URL, Audience: "https://management.azure.com"},
+				},
+			},
+			Transport: ts.Client(),
+			Retry:     policy.RetryOptions{MaxRetries: -1},
+		},
+	}
+}
 
 const (
 	sub  = "sub-1"
@@ -164,4 +194,78 @@ func TestServiceNotFound(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// --- real armsearch (Microsoft.Search control-plane) SDK roundtrip ---
+//
+// Azure ships no Go data-plane search SDK (no azsearch/azsearchindex module),
+// so wire compatibility for the {service}.search.windows.net data plane is
+// covered by the explicit paren-form tests in dataplane_roundtrip_test.go.
+
+func newSearchClientFactory(t *testing.T) *armsearch.ClientFactory {
+	t.Helper()
+
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{SearchControl: cloudP.AzureSearch})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	cf, err := armsearch.NewClientFactory(sub, fakeCred{}, armClientOptions(ts))
+	require.NoError(t, err)
+
+	return cf
+}
+
+func TestSDKSearchServiceAndKeys(t *testing.T) {
+	cf := newSearchClientFactory(t)
+	ctx := context.Background()
+	services := cf.NewServicesClient()
+
+	poller, err := services.BeginCreateOrUpdate(ctx, rg, svcN, armsearch.Service{
+		Location: to.Ptr("eastus"),
+		SKU:      &armsearch.SKU{Name: to.Ptr(armsearch.SKUNameStandard)},
+	}, nil, nil)
+	require.NoError(t, err)
+
+	created, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, created.Name)
+	assert.Equal(t, svcN, *created.Name)
+
+	got, err := services.Get(ctx, rg, svcN, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "eastus", *got.Location)
+
+	// Admin-key rotation must be observable via the real client.
+	admin := cf.NewAdminKeysClient()
+
+	orig, err := admin.Get(ctx, rg, svcN, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, orig.PrimaryKey)
+
+	regen, err := admin.Regenerate(ctx, rg, svcN, armsearch.AdminKeyKindPrimary, nil, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, *orig.PrimaryKey, *regen.PrimaryKey)
+
+	after, err := admin.Get(ctx, rg, svcN, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, *regen.PrimaryKey, *after.PrimaryKey, "rotation must persist")
+
+	// Query keys create + list.
+	query := cf.NewQueryKeysClient()
+
+	qk, err := query.Create(ctx, rg, svcN, "reader", nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, qk.Key)
+
+	qpage, err := query.NewListBySearchServicePager(rg, svcN, nil, nil).NextPage(ctx)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(qpage.Value), 2)
+
+	page, err := services.NewListByResourceGroupPager(rg, nil, nil).NextPage(ctx)
+	require.NoError(t, err)
+	assert.Len(t, page.Value, 1)
+
+	_, err = services.Delete(ctx, rg, svcN, nil, nil)
+	require.NoError(t, err)
 }

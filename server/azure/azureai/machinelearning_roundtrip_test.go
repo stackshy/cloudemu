@@ -1,10 +1,13 @@
 package azureai_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/machinelearning/armmachinelearning/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -155,4 +158,71 @@ func TestMLDatastoresConnectionsSchedulesRegistries(t *testing.T) {
 	assert.Len(t, regs["value"], 1)
 
 	require.NotEmpty(t, ds["id"])
+}
+
+// --- real armmachinelearning SDK roundtrip ---
+
+func newMLClientFactory(t *testing.T) *armmachinelearning.ClientFactory {
+	t.Helper()
+
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{MachineLearning: cloudP.AzureAI})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	cf, err := armmachinelearning.NewClientFactory(sub, fakeCred{}, armClientOptions(ts))
+	require.NoError(t, err)
+
+	return cf
+}
+
+func TestSDKMachineLearningWorkspaceAndAssets(t *testing.T) {
+	cf := newMLClientFactory(t)
+	ctx := context.Background()
+	ws := cf.NewWorkspacesClient()
+
+	poller, err := ws.BeginCreateOrUpdate(ctx, rg, "ws1", armmachinelearning.Workspace{
+		Location: to.Ptr("eastus"),
+	}, nil)
+	require.NoError(t, err)
+
+	created, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, created.Workspace.Name)
+	assert.Equal(t, "ws1", *created.Workspace.Name)
+
+	got, err := ws.Get(ctx, rg, "ws1", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "eastus", *got.Workspace.Location)
+
+	// Register versions 1, 2, 10; the latest must be the numeric max, not "9"/lexical.
+	mv := cf.NewModelVersionsClient()
+	for _, v := range []string{"1", "2", "10"} {
+		_, cerr := mv.CreateOrUpdate(ctx, rg, "ws1", "m", v, armmachinelearning.ModelVersion{
+			Properties: &armmachinelearning.ModelVersionProperties{Description: to.Ptr("v" + v)},
+		}, nil)
+		require.NoError(t, cerr)
+	}
+
+	versions := mv.NewListPager(rg, "ws1", "m", nil)
+	vpage, err := versions.NextPage(ctx)
+	require.NoError(t, err)
+	assert.Len(t, vpage.Value, 3)
+
+	mc := cf.NewModelContainersClient()
+	cpage, err := mc.NewListPager(rg, "ws1", nil).NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, cpage.Value, 1)
+	require.NotNil(t, cpage.Value[0].Properties)
+	require.NotNil(t, cpage.Value[0].Properties.LatestVersion)
+	assert.Equal(t, "10", *cpage.Value[0].Properties.LatestVersion)
+
+	page, err := ws.NewListByResourceGroupPager(rg, nil).NextPage(ctx)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(page.Value), 1)
+
+	delPoller, err := ws.BeginDelete(ctx, rg, "ws1", nil)
+	require.NoError(t, err)
+	_, err = delPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
 }

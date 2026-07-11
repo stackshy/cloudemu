@@ -2,18 +2,50 @@ package azureai_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cognitiveservices/armcognitiveservices"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu"
 	azureserver "github.com/stackshy/cloudemu/server/azure"
 )
+
+// fakeCred is a no-op bearer-token credential for driving real ARM SDK clients
+// against the in-memory server.
+type fakeCred struct{}
+
+func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
+}
+
+// armClientOptions points a real ARM client at the in-memory TLS server.
+func armClientOptions(ts *httptest.Server) *arm.ClientOptions {
+	return &arm.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			Cloud: cloud.Configuration{
+				ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
+				Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+					cloud.ResourceManager: {Endpoint: ts.URL, Audience: "https://management.azure.com"},
+				},
+			},
+			Transport: ts.Client(),
+			Retry:     policy.RetryOptions{MaxRetries: -1},
+		},
+	}
+}
 
 const (
 	sub  = "sub-1"
@@ -179,4 +211,68 @@ func TestAccountNotFound(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// --- real armcognitiveservices SDK roundtrip ---
+
+func newCSAccountsClient(t *testing.T) *armcognitiveservices.AccountsClient {
+	t.Helper()
+
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{CognitiveServices: cloudP.AzureAI})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	c, err := armcognitiveservices.NewAccountsClient(sub, fakeCred{}, armClientOptions(ts))
+	require.NoError(t, err)
+
+	return c
+}
+
+func TestSDKCognitiveServicesAccountLifecycle(t *testing.T) {
+	c := newCSAccountsClient(t)
+	ctx := context.Background()
+
+	poller, err := c.BeginCreate(ctx, rg, acct, armcognitiveservices.Account{
+		Location: to.Ptr("eastus"),
+		Kind:     to.Ptr("AIServices"),
+		SKU:      &armcognitiveservices.SKU{Name: to.Ptr("S0")},
+	}, nil)
+	require.NoError(t, err)
+
+	created, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, created.Account.Name)
+	assert.Equal(t, acct, *created.Account.Name)
+
+	got, err := c.Get(ctx, rg, acct, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "eastus", *got.Account.Location)
+	require.NotNil(t, got.Account.Properties)
+	require.NotNil(t, got.Account.Properties.Endpoint)
+	assert.NotEmpty(t, *got.Account.Properties.Endpoint)
+
+	keys, err := c.ListKeys(ctx, rg, acct, nil)
+	require.NoError(t, err)
+	require.NotNil(t, keys.Key1)
+
+	regen, err := c.RegenerateKey(ctx, rg, acct, armcognitiveservices.RegenerateKeyParameters{
+		KeyName: to.Ptr(armcognitiveservices.KeyNameKey1),
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, regen.Key1)
+	assert.NotEqual(t, *keys.Key1, *regen.Key1, "rotated key must differ")
+
+	pager := c.NewListByResourceGroupPager(rg, nil)
+	page, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	assert.Len(t, page.Value, 1)
+
+	delPoller, err := c.BeginDelete(ctx, rg, acct, nil)
+	require.NoError(t, err)
+	_, err = delPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	_, err = c.Get(ctx, rg, acct, nil)
+	assert.Error(t, err, "account should be gone after delete")
 }
