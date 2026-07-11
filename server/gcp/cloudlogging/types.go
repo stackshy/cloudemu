@@ -111,13 +111,40 @@ func projectFromPath(p string) string {
 func logIDFromFilter(filter string) string {
 	const key = "logName"
 
-	i := strings.Index(filter, key)
+	// Find "logName" as a whole token, not as a substring of e.g.
+	// "logName_suffix": the char after the key must be a separator (space,
+	// '=' or ':'), and the char before it must not be an identifier char.
+	i := -1
+	for from := 0; ; {
+		j := strings.Index(filter[from:], key)
+		if j < 0 {
+			break
+		}
+		at := from + j
+		before := byte(' ')
+		if at > 0 {
+			before = filter[at-1]
+		}
+		after := byte(' ')
+		if at+len(key) < len(filter) {
+			after = filter[at+len(key)]
+		}
+		isIdent := func(b byte) bool {
+			return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+		}
+		if !isIdent(before) && (after == ' ' || after == '\t' || after == '=' || after == ':') {
+			i = at
+			break
+		}
+		from = at + len(key)
+	}
 	if i < 0 {
 		return ""
 	}
 
 	rest := strings.TrimSpace(filter[i+len(key):])
 	rest = strings.TrimPrefix(rest, "=")
+	rest = strings.TrimPrefix(rest, ":")
 	rest = strings.TrimSpace(rest)
 	rest = strings.Trim(rest, `"`)
 
