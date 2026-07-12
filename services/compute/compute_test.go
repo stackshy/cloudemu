@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/compute/driver"
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/inject"
-	"github.com/stackshy/cloudemu/metrics"
-	"github.com/stackshy/cloudemu/ratelimit"
-	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/ratelimit"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1789,7 +1789,7 @@ func (mc *mockCompute) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig
 		Name:        cfg.Name,
 		Fingerprint: "fp-" + cfg.Name,
 		KeyType:     keyType,
-		PublicKey:    "mock-public-key-" + cfg.Name,
+		PublicKey:   "mock-public-key-" + cfg.Name,
 		PrivateKey:  "mock-private-key-" + cfg.Name,
 		Tags:        cfg.Tags,
 	}
