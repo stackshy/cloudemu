@@ -3,7 +3,7 @@ package serverless
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/serverless/driver"
+	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 // PublishLayerVersion publishes a new version of a layer.

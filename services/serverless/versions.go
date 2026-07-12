@@ -3,7 +3,7 @@ package serverless
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/serverless/driver"
+	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 // PublishVersion publishes a new immutable version of a function.
