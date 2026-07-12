@@ -393,7 +393,7 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 
 	part, err := h.bucket.UploadPart(r.Context(), bucket, key, uploadID, partNumber, data)
 	if err != nil {
-		writeErr(w, err)
+		writeMultipartErr(w, err)
 		return
 	}
 
@@ -408,6 +408,11 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if len(req.Parts) == 0 {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "the CompleteMultipartUpload request must contain at least one part")
+		return
+	}
+
 	parts := make([]driver.UploadPart, 0, len(req.Parts))
 	for _, p := range req.Parts {
 		parts = append(parts, driver.UploadPart{
@@ -417,7 +422,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.bucket.CompleteMultipartUpload(r.Context(), bucket, key, uploadID, parts); err != nil {
-		writeErr(w, err)
+		writeMultipartErr(w, err)
 		return
 	}
 
@@ -438,7 +443,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	if err := h.bucket.AbortMultipartUpload(r.Context(), bucket, key, uploadID); err != nil {
-		writeErr(w, err)
+		writeMultipartErr(w, err)
 		return
 	}
 
@@ -676,6 +681,16 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // writeErr maps CloudEmu errors to S3 HTTP error responses.
+// writeMultipartErr maps a driver error from a multipart operation, where a
+// missing resource is the upload (NoSuchUpload), not the object key.
+func writeMultipartErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) {
+		writeError(w, http.StatusNotFound, "NoSuchUpload", err.Error())
+		return
+	}
+	writeErr(w, err)
+}
+
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
