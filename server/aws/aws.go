@@ -22,6 +22,7 @@ import (
 	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/notification/driver"
+	ssmdriver "github.com/stackshy/cloudemu/parameterstore/driver"
 	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
 	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
 	"github.com/stackshy/cloudemu/resourcediscovery"
@@ -50,6 +51,7 @@ import (
 	secretsmanagersrv "github.com/stackshy/cloudemu/server/aws/secretsmanager"
 	"github.com/stackshy/cloudemu/server/aws/sns"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
+	ssmsrv "github.com/stackshy/cloudemu/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/server/aws/sts"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
@@ -76,6 +78,9 @@ type Drivers struct {
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
+	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
+	// the parameterstore driver.
+	SSM ssmdriver.ParameterStore
 	// CloudWatchLogs serves the CloudWatch Logs JSON 1.1 protocol against the
 	// logging driver.
 	CloudWatchLogs logdriver.Logging
@@ -178,6 +183,13 @@ func New(d Drivers) *server.Server {
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, and the tagging API.
 	if d.SecretsManager != nil {
 		srv.Register(secretsmanagersrv.New(d.SecretsManager))
+	}
+
+	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —
+	// disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, EventBridge,
+	// CloudWatch Logs, and the tagging API.
+	if d.SSM != nil {
+		srv.Register(ssmsrv.New(d.SSM))
 	}
 
 	// EventBridge matches the X-Amz-Target prefix "AWSEvents." — disjoint from
