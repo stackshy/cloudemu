@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // Limiter implements a token bucket rate limiter.
