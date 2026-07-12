@@ -26,9 +26,9 @@ import (
 	"net/http"
 	"strconv"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 const (

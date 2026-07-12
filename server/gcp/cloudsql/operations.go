@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // instanceFromBody decodes a Cloud SQL instance request and converts it to

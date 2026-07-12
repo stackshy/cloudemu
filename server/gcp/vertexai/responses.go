@@ -3,8 +3,8 @@ package vertexai
 import (
 	"net/http"
 
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -3,7 +3,7 @@ package gke
 import (
 	"net/http"
 
-	"github.com/stackshy/cloudemu/providers/gcp/gke"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 )
 
 func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *gkePath) {

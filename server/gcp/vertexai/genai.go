@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 // wireContent is the JSON shape of a generateContent content turn.

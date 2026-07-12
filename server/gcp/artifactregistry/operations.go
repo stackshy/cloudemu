@@ -3,8 +3,8 @@ package artifactregistry
 import (
 	"net/http"
 
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
 func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *route) {

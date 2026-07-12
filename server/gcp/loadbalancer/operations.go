@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
 // --- backend services (target groups) ---

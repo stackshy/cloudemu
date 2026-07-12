@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 const base = "/v1/projects/mock-project/locations/us-central1"

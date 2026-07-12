@@ -10,8 +10,8 @@ import (
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"google.golang.org/api/option"
 
-	"github.com/stackshy/cloudemu"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 // newSDKInstancesClient builds a real google-cloud-go InstancesRESTClient

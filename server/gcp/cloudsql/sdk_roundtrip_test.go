@@ -8,8 +8,8 @@ import (
 	"google.golang.org/api/option"
 	sqladmin "google.golang.org/api/sqladmin/v1"
 
-	"github.com/stackshy/cloudemu"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 func newSDKClient(t *testing.T) (*sqladmin.Service, string) {

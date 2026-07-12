@@ -3,7 +3,7 @@ package vertexai
 import (
 	"net/http"
 
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 // --- Hyperparameter tuning jobs ---

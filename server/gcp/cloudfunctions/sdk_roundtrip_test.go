@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	"google.golang.org/api/cloudfunctions/v1"
 	"google.golang.org/api/option"
 )
