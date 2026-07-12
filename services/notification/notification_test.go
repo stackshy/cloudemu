@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/inject"
-	"github.com/stackshy/cloudemu/metrics"
-	"github.com/stackshy/cloudemu/notification/driver"
-	"github.com/stackshy/cloudemu/providers/aws/sns"
-	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
+	"github.com/stackshy/cloudemu/v2/services/notification/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
