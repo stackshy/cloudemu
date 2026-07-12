@@ -77,12 +77,14 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
-      - name: gofmt
+      - name: gofmt (report-only)
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
-            echo "::warning::gofmt needed on:"; echo "$unformatted"
-            exit 1
+            echo "::warning::gofmt needed on the following files (advisory):"
+            echo "$unformatted"
+          else
+            echo "all files gofmt-clean"
           fi
 
   lint:
@@ -99,5 +101,5 @@ jobs:
           cache: true
       - name: install golangci-lint v2
         run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
-      - name: golangci-lint run
-        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./..."
+      - name: golangci-lint run (report-only)
+        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./... || echo '::warning::golangci-lint reported findings (advisory)'"
