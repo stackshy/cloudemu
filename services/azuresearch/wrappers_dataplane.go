@@ -3,7 +3,7 @@ package azuresearch
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/azuresearch/driver"
+	"github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 func (a *AzureSearch) CreateOrUpdateIndex(ctx context.Context, service string, idx driver.Index) (*driver.Index, error) {

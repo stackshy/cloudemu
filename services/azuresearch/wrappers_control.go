@@ -3,7 +3,7 @@ package azuresearch
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/azuresearch/driver"
+	"github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 //nolint:gocritic // cfg matches the driver signature; forwarded unchanged.

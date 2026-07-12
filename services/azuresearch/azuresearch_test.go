@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu/azuresearch"
-	"github.com/stackshy/cloudemu/azuresearch/driver"
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/inject"
-	"github.com/stackshy/cloudemu/metrics"
-	provsearch "github.com/stackshy/cloudemu/providers/azure/azuresearch"
-	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	provsearch "github.com/stackshy/cloudemu/v2/providers/azure/azuresearch"
+	"github.com/stackshy/cloudemu/v2/services/azuresearch"
+	"github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 func newPortable(opts ...azuresearch.Option) *azuresearch.AzureSearch {
