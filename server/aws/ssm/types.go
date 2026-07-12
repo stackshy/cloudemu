@@ -3,7 +3,7 @@ package ssm
 import (
 	"time"
 
-	ssmdriver "github.com/stackshy/cloudemu/parameterstore/driver"
+	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
 // parameterJSON is the wire shape for a Parameter, matching the fields the AWS

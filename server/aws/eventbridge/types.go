@@ -3,7 +3,7 @@ package eventbridge
 import (
 	"time"
 
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
 // defaultBusName is the implicit bus EventBridge routes to when a request omits

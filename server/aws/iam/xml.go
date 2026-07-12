@@ -3,7 +3,7 @@ package iam
 import (
 	"encoding/xml"
 
-	iamdriver "github.com/stackshy/cloudemu/iam/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // Every IAM query-protocol response is wrapped in <FooResponse xmlns="..."> with a

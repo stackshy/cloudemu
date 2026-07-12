@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	sdrv "github.com/stackshy/cloudemu/serverless/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 // pathPrefix is the Lambda API version prefix every control-plane URL starts

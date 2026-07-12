@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strconv"
 
-	iamdriver "github.com/stackshy/cloudemu/iam/driver"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // defaultPolicyVersionID is the version a freshly created policy starts with.

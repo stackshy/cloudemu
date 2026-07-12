@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strconv"
 
-	cachedriver "github.com/stackshy/cloudemu/cache/driver"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
 // parseTags parses ElastiCache-style Tags.Tag.N.{Key,Value} entries.

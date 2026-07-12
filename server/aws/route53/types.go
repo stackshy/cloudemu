@@ -4,7 +4,7 @@ import (
 	"encoding/xml"
 	"strings"
 
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
 
 // xmlns is the Route 53 XML namespace stamped on every response root element.

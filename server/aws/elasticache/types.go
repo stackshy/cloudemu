@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	cachedriver "github.com/stackshy/cloudemu/cache/driver"
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
 // All ElastiCache query-protocol responses are wrapped in <FooResponse> with a

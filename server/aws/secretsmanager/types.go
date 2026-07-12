@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 // Version stage labels, matching real Secrets Manager staging semantics: the

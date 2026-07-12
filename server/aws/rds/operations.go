@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strconv"
 
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // instanceFromForm pulls the common DBInstance fields out of a form. Used by

@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 )
 
 // Namespace is the XML namespace for AWS STS responses.

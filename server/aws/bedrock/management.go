@@ -3,7 +3,7 @@ package bedrock
 import (
 	"net/http"
 
-	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
+	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
 
 // --- wire types ---

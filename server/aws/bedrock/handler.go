@@ -26,7 +26,7 @@ import (
 	"net/http"
 	"strings"
 
-	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
+	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
 
 const (

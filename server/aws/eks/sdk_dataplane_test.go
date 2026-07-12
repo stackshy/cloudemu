@@ -23,9 +23,9 @@ import (
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
-	"github.com/stackshy/cloudemu"
-	cloudkube "github.com/stackshy/cloudemu/kubernetes"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	cloudkube "github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
 // TestSDKEKSDataPlane_NamespaceAndConfigMap drives the full path:

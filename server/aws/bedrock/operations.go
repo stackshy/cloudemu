@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
+	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
 
 func (h *Handler) listFoundationModels(w http.ResponseWriter, r *http.Request) {

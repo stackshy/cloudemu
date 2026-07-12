@@ -3,8 +3,8 @@ package ssm
 import (
 	"net/http"
 
-	ssmdriver "github.com/stackshy/cloudemu/parameterstore/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
 func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {

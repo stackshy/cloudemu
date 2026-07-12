@@ -14,9 +14,9 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	ssmdriver "github.com/stackshy/cloudemu/parameterstore/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
 const targetPrefix = "AmazonSSM."

@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strconv"
 
-	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // clusterConfigFromForm pulls the relevant Cluster fields out of a form. Used
