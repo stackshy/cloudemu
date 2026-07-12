@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-go get github.com/stackshy/cloudemu
+go get github.com/stackshy/cloudemu/v2
 ```
 
 Requires Go 1.25.0 or later.
@@ -20,7 +20,7 @@ package main
 import (
     "context"
 
-    "github.com/stackshy/cloudemu"
+    "github.com/stackshy/cloudemu/v2"
 )
 
 func main() {
@@ -71,7 +71,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/stackshy/cloudemu"
+    "github.com/stackshy/cloudemu/v2"
 )
 
 func main() {
@@ -114,8 +114,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/stackshy/cloudemu"
-    cdriver "github.com/stackshy/cloudemu/compute/driver"
+    "github.com/stackshy/cloudemu/v2"
+    cdriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 func main() {
@@ -162,8 +162,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/stackshy/cloudemu"
-    ddriver "github.com/stackshy/cloudemu/database/driver"
+    "github.com/stackshy/cloudemu/v2"
+    ddriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
 
 func main() {
@@ -228,8 +228,8 @@ All three factory functions accept `config.Option` values for customization.
 import (
     "time"
 
-    "github.com/stackshy/cloudemu"
-    "github.com/stackshy/cloudemu/config"
+    "github.com/stackshy/cloudemu/v2"
+    "github.com/stackshy/cloudemu/v2/config"
 )
 
 // Custom region
@@ -272,7 +272,7 @@ CloudEmu uses canonical error codes from the `errors` package. Use the helper fu
 
 ```go
 import (
-    cerrors "github.com/stackshy/cloudemu/errors"
+    cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // Try to get a non-existent bucket
@@ -377,9 +377,9 @@ import (
     "testing"
     "time"
 
-    "github.com/stackshy/cloudemu"
-    "github.com/stackshy/cloudemu/config"
-    sdriver "github.com/stackshy/cloudemu/storage/driver"
+    "github.com/stackshy/cloudemu/v2"
+    "github.com/stackshy/cloudemu/v2/config"
+    sdriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
 )

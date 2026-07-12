@@ -16,8 +16,8 @@ import (
 
     "github.com/aws/aws-sdk-go-v2/aws"
     "github.com/aws/aws-sdk-go-v2/service/s3"
-    "github.com/stackshy/cloudemu"
-    awsserver "github.com/stackshy/cloudemu/server/aws"
+    "github.com/stackshy/cloudemu/v2"
+    awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 cloud := cloudemu.NewAWS()
@@ -53,8 +53,8 @@ import (
     "github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
     "github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
     "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v5"
-    "github.com/stackshy/cloudemu"
-    azureserver "github.com/stackshy/cloudemu/server/azure"
+    "github.com/stackshy/cloudemu/v2"
+    azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 cp := cloudemu.NewAzure()
@@ -91,8 +91,8 @@ client, _ := armcompute.NewVirtualMachinesClient("sub-1", fakeCred{}, opts)
 ```go
 import (
     gcpcompute "cloud.google.com/go/compute/apiv1"
-    "github.com/stackshy/cloudemu"
-    gcpserver "github.com/stackshy/cloudemu/server/gcp"
+    "github.com/stackshy/cloudemu/v2"
+    gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
     "google.golang.org/api/option"
 )
 
@@ -129,8 +129,8 @@ import (
     databricks "github.com/databricks/databricks-sdk-go"
     "github.com/databricks/databricks-sdk-go/config"
     "github.com/databricks/databricks-sdk-go/service/compute"
-    "github.com/stackshy/cloudemu"
-    azureserver "github.com/stackshy/cloudemu/server/azure"
+    "github.com/stackshy/cloudemu/v2"
+    azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 cp := cloudemu.NewAzure()
