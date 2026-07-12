@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/errors"
-	driver "github.com/stackshy/cloudemu/tablestorage/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/errors"
+	driver "github.com/stackshy/cloudemu/v2/services/tablestorage/driver"
 )
 
 // Compile-time check that Mock implements driver.TableStorage.

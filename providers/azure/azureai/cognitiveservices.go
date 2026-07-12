@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/stackshy/cloudemu/azureai/driver"
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )
 
 // subResourceID builds the ARM ID for a child resource of an account.

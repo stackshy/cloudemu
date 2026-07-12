@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 func newTestMock() *Mock {

@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stackshy/cloudemu/azuresearch/driver"
-	"github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 // maxSearchTop bounds the number of documents a single search returns so an

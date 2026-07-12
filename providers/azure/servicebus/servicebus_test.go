@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/messagequeue/driver"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -511,8 +511,8 @@ func TestSetQueueAttributes(t *testing.T) {
 
 	t.Run("update attributes", func(t *testing.T) {
 		err := m.SetQueueAttributes(ctx, url, map[string]int{
-			"DelaySeconds":      5,
-			"VisibilityTimeout": 60,
+			"DelaySeconds":       5,
+			"VisibilityTimeout":  60,
 			"MaximumMessageSize": 1024,
 		})
 		require.NoError(t, err)

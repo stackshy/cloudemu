@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stackshy/cloudemu/databricks/driver"
+	"github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
 
 func TestClusterResizePinMetadata(t *testing.T) {
