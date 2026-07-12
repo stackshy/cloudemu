@@ -3,8 +3,8 @@ package vertexai
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 func (m *Mock) CreateEndpoint(_ context.Context, cfg driver.EndpointConfig) (*driver.Operation, *driver.Endpoint, error) {

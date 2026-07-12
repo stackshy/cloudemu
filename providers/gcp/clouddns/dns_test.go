@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/dns/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/services/dns/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -172,12 +172,12 @@ func TestDeleteRecord(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name       string
-		zoneID     string
-		recName    string
-		recType    string
-		wantErr    bool
-		errSubstr  string
+		name      string
+		zoneID    string
+		recName   string
+		recType   string
+		wantErr   bool
+		errSubstr string
 	}{
 		{name: "success", zoneID: zone.ID, recName: "www.example.com", recType: "A"},
 		{name: "zone not found", zoneID: "missing", recName: "www.example.com", recType: "A", wantErr: true, errSubstr: "not found"},

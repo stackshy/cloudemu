@@ -1,6 +1,6 @@
 package vertexai
 
-import "github.com/stackshy/cloudemu/vertexai/driver"
+import "github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 
 // copyLabels deep-copies a label map so stored resources never alias a caller's
 // map (and vice-versa on return).

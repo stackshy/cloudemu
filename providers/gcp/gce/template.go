@@ -4,9 +4,9 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/stackshy/cloudemu/compute/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 //nolint:gochecknoglobals // atomic counter for template versioning

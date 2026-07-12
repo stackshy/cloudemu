@@ -4,8 +4,8 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 func (m *Mock) CreateIndex(_ context.Context, cfg driver.IndexConfig) (*driver.Operation, *driver.Index, error) {
