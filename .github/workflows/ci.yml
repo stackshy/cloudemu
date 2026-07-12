@@ -1,9 +1,9 @@
 name: CI
 
-# Public repo → GitHub-hosted Actions minutes are free/unlimited. Kept lean
-# anyway: one run per PR (pull_request only; feature-branch pushes are covered
-# by their PR), plus push to master to verify releases. Superseded runs cancel,
-# and the Go build/module cache keeps runs short.
+# Public repo → GitHub-hosted Actions are free. Every check is its own job so
+# they run in parallel; each restores the Go build/module cache to stay fast.
+# One run per PR (feature-branch pushes are covered by their PR) plus push to
+# master. Superseded runs cancel automatically.
 on:
   pull_request:
   push:
@@ -13,26 +13,91 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-test:
-    name: build · vet · test
+  build:
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
           cache: true
+      - run: go build ./...
 
-      - name: go build
-        run: go build ./...
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - run: go vet ./...
 
-      - name: go vet
-        run: go vet ./...
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - run: go test ./...
 
-      - name: go test
-        run: go test ./...
+  tidy:
+    name: Tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    # Advisory: some pre-existing _test.go files are not gofmt-clean (the repo's
+    # golangci config skips tests). Reports without blocking; flip to blocking
+    # after a one-time `gofmt -w`.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::warning::gofmt needed on:"; echo "$unformatted"
+            exit 1
+          fi
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    # Advisory: the repo's strict golangci-lint v2 config was never enforced in
+    # CI. Reports findings without blocking; flip to blocking once clean.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: install golangci-lint v2
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+      - name: golangci-lint run
+        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./..."
