@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // AWS service identifiers as they appear in ARNs.

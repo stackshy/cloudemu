@@ -3,12 +3,12 @@ package resourcediscovery
 import (
 	"context"
 
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	dbdriver "github.com/stackshy/cloudemu/database/driver"
-	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	serverlessdriver "github.com/stackshy/cloudemu/serverless/driver"
-	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	serverlessdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 // Drivers bundles the per-service drivers the engine reads from. Any field

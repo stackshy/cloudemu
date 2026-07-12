@@ -3,7 +3,7 @@ package resourcediscovery
 import (
 	"fmt"
 
-	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 )
 
 // Per-provider ARN/URN builders. These produce best-effort canonical

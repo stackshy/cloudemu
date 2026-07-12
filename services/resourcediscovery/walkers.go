@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // Provider name constants used for routing per-provider ARN construction.
