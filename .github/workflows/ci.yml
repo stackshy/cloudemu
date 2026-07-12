@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [development, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build · vet · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  lint:
+    name: golangci-lint (advisory)
+    runs-on: ubuntu-latest
+    # Advisory for now: the repo's strict golangci-lint v2 config has not been
+    # enforced in CI before, so this reports findings without blocking merges.
+    # Flip continue-on-error to false once the tree is lint-clean.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.1.6
+          args: --timeout=9m
