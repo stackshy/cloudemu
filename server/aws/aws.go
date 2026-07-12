@@ -50,6 +50,7 @@ import (
 	secretsmanagersrv "github.com/stackshy/cloudemu/server/aws/secretsmanager"
 	"github.com/stackshy/cloudemu/server/aws/sns"
 	"github.com/stackshy/cloudemu/server/aws/sqs"
+	stssrv "github.com/stackshy/cloudemu/server/aws/sts"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
 )
@@ -91,6 +92,11 @@ type Drivers struct {
 	ElastiCache cachedriver.Cache
 	// SNS serves the SNS query protocol against the notification driver.
 	SNS notifdriver.Notification
+	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
+	// GetSessionToken). It has no backing driver — identity is derived from
+	// AccountID and Region — so it is gated on this bool. Enable it so SDK code
+	// paths that call sts:GetCallerIdentity or sts:AssumeRole on init succeed.
+	STS bool
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -216,6 +222,14 @@ func New(d Drivers) *server.Server {
 	// no shadowing occurs. Registered before the EC2 catch-all.
 	if d.SNS != nil {
 		srv.Register(sns.New(d.SNS))
+	}
+
+	// STS also speaks the AWS query protocol; its action set (GetCallerIdentity,
+	// AssumeRole, GetSessionToken) is disjoint from RDS, Redshift, IAM, ELBv2,
+	// ElastiCache, SNS, and EC2, so no shadowing occurs. It has no driver, so
+	// it's gated on the STS bool. Registered before the EC2 catch-all.
+	if d.STS {
+		srv.Register(stssrv.New(d.AccountID, d.Region))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
