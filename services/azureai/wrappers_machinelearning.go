@@ -3,7 +3,7 @@ package azureai
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/azureai/driver"
+	"github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )
 
 //nolint:gocritic // cfg matches the driver signature; forwarded unchanged.

@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu/azureai"
-	"github.com/stackshy/cloudemu/azureai/driver"
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/inject"
-	"github.com/stackshy/cloudemu/metrics"
-	provazureai "github.com/stackshy/cloudemu/providers/azure/azureai"
-	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	provazureai "github.com/stackshy/cloudemu/v2/providers/azure/azureai"
+	"github.com/stackshy/cloudemu/v2/services/azureai"
+	"github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )
 
 func newPortable(opts ...azureai.Option) *azureai.AzureAI {
