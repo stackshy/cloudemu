@@ -21,7 +21,7 @@ package cloudasset
 import (
 	"strings"
 
-	"github.com/stackshy/cloudemu/resourcediscovery"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
 // GCP service identifiers as they appear in Cloud Asset assetType strings.

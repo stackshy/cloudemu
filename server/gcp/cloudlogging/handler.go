@@ -29,8 +29,8 @@ import (
 	"net/http"
 	"strings"
 
-	logdriver "github.com/stackshy/cloudemu/logging/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
 const (

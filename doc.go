@@ -1,19 +1,24 @@
 // Package cloudemu provides zero-cost, in-memory cloud emulation of
 // AWS, Azure, and GCP cloud services for Go.
 //
-// cloudemu follows a three-layer architecture:
+// The repository is organized by role so new services and features slot into
+// predictable places:
 //
-//   - Portable API: High-level types (storage.Bucket, compute.Compute, etc.)
-//     that wrap drivers with cross-cutting concerns like recording, metrics,
-//     rate limiting, and error injection.
+//   - services/<name>: the emulated cloud services. Each holds the Portable API
+//     type (e.g. services/storage's storage.Bucket) plus its driver interface
+//     under services/<name>/driver.
 //
-//   - Driver Interfaces: Minimal contracts (storage/driver, compute/driver, etc.)
-//     that each provider must implement.
+//   - providers/{aws,azure,gcp}: in-memory backends implementing the drivers.
 //
-//   - Provider Implementations: In-memory backends (providers/aws/s3, providers/azure/blobstorage,
-//     providers/gcp/gcs, etc.) powered by a generic memstore.
+//   - server/{aws,azure,gcp}: SDK-compat HTTP servers that speak each cloud's
+//     real wire protocol, so unmodified SDK clients drive the backends.
 //
-// 10 cloud services are covered across all three providers: Storage, Compute,
-// Database, Serverless, Networking, Monitoring, IAM, DNS, Load Balancer,
-// and Message Queue.
+//   - features/<name>: cross-cutting capabilities you wrap drivers with —
+//     chaos, recorder, metrics, inject, ratelimit, and topology.
+//
+//   - config, errors: foundational options and the canonical error type.
+//
+// The three surfaces build on the same drivers: the SDK-compat server (the
+// primary entrypoint), the Portable API (services/<name>), and the cross-cutting
+// features, so a behavior implemented in a driver lights up across all of them.
 package cloudemu

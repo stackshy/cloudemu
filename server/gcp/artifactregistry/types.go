@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
 // repositoryJSON is the artifactregistry.googleapis.com v1 Repository shape.

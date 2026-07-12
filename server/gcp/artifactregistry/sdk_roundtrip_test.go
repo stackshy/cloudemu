@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/stackshy/cloudemu"
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	ar "google.golang.org/api/artifactregistry/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"

@@ -1,0 +1,83 @@
+name: Security
+
+# Security scanning, separate from CI so it runs in parallel and is easy to
+# read. Each scanner is its own cached job. Runs on PRs, on push to master, and
+# weekly (so newly-disclosed CVEs are caught even without a push).
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    name: Vulnerabilities (govulncheck)
+    runs-on: ubuntu-latest
+    # Advisory to start: flags known CVEs in dependencies the code reaches.
+    # Flip to blocking once the baseline is confirmed clean.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck (report-only)
+        run: "$(go env GOPATH)/bin/govulncheck ./... || echo '::warning::govulncheck reported findings (advisory)'"
+
+  gosec:
+    name: SAST (gosec)
+    runs-on: ubuntu-latest
+    # Advisory to start: static security analysis (hardcoded creds, weak crypto,
+    # unsafe patterns). Reports without blocking until the baseline is triaged.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: gosec (report-only)
+        run: "$(go env GOPATH)/bin/gosec -exclude-generated ./... || echo '::warning::gosec reported findings (advisory)'"
+
+  codeql:
+    name: CodeQL (SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: go
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Review dependency changes for known vulnerabilities
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

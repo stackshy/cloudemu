@@ -3,8 +3,8 @@ package sagemaker
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/sagemaker/driver"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 // --- Model ---

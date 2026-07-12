@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	awsec2 "github.com/stackshy/cloudemu/providers/aws/ec2"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	awsec2 "github.com/stackshy/cloudemu/v2/providers/aws/ec2"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 // newHandler returns a Handler wired to a fresh in-memory provider. Phase-1

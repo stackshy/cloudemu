@@ -4,14 +4,17 @@
 package s3
 
 import (
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/server/wire"
-	"github.com/stackshy/cloudemu/storage/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 const (
@@ -108,6 +111,26 @@ func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string) {
+	q := r.URL.Query()
+
+	switch {
+	case q.Has("versioning"):
+		h.bucketVersioningOp(w, r, bucket)
+		return
+	case q.Has("uploads"):
+		// GET /{bucket}?uploads => ListMultipartUploads.
+		if r.Method == http.MethodGet {
+			h.listMultipartUploads(w, r, bucket)
+			return
+		}
+	case q.Has("versions"):
+		// GET /{bucket}?versions => ListObjectVersions.
+		if r.Method == http.MethodGet {
+			h.listObjectVersions(w, r, bucket)
+			return
+		}
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createBucket(w, r, bucket)
@@ -184,6 +207,23 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 }
 
 func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	q := r.URL.Query()
+
+	switch {
+	case q.Has("tagging"):
+		h.objectTaggingOp(w, r, bucket, key)
+		return
+	case q.Has("uploads"):
+		// POST /{bucket}/{key}?uploads => CreateMultipartUpload.
+		if r.Method == http.MethodPost {
+			h.createMultipartUpload(w, r, bucket, key)
+			return
+		}
+	case q.Has("uploadId"):
+		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		if r.Header.Get("X-Amz-Copy-Source") != "" {
@@ -299,6 +339,323 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 	})
 }
 
+// multipartUploadOp dispatches operations on an in-progress multipart upload
+// (those carrying an ?uploadId=... sub-resource).
+func (h *Handler) multipartUploadOp(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	switch r.Method {
+	case http.MethodPut:
+		h.uploadPart(w, r, bucket, key, uploadID)
+	case http.MethodPost:
+		h.completeMultipartUpload(w, r, bucket, key, uploadID)
+	case http.MethodDelete:
+		h.abortMultipartUpload(w, r, bucket, key, uploadID)
+	case http.MethodGet:
+		h.listParts(w, r, bucket, key, uploadID)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	}
+}
+
+func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	mp, err := h.bucket.CreateMultipartUpload(r.Context(), bucket, key, contentType)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteXML(w, http.StatusOK, initiateMultipartUploadResult{
+		Xmlns:    xmlns,
+		Bucket:   bucket,
+		Key:      key,
+		UploadID: mp.UploadID,
+	})
+}
+
+func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	partNumber, err := strconv.Atoi(r.URL.Query().Get("partNumber"))
+	if err != nil || partNumber < 1 {
+		writeError(w, http.StatusBadRequest, "InvalidArgument", "invalid partNumber")
+		return
+	}
+
+	limited := http.MaxBytesReader(w, r.Body, maxPutObjectSize)
+
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "IncompleteBody", "could not read body")
+		return
+	}
+
+	part, err := h.bucket.UploadPart(r.Context(), bucket, key, uploadID, partNumber, data)
+	if err != nil {
+		writeMultipartErr(w, err)
+		return
+	}
+
+	w.Header().Set("ETag", fmt.Sprintf("%q", part.ETag))
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	var req completeMultipartUpload
+	if err := xml.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "could not parse request body")
+		return
+	}
+
+	if len(req.Parts) == 0 {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "the CompleteMultipartUpload request must contain at least one part")
+		return
+	}
+
+	parts := make([]driver.UploadPart, 0, len(req.Parts))
+	for _, p := range req.Parts {
+		parts = append(parts, driver.UploadPart{
+			PartNumber: p.PartNumber,
+			ETag:       strings.Trim(p.ETag, `"`),
+		})
+	}
+
+	if err := h.bucket.CompleteMultipartUpload(r.Context(), bucket, key, uploadID, parts); err != nil {
+		writeMultipartErr(w, err)
+		return
+	}
+
+	info, err := h.bucket.HeadObject(r.Context(), bucket, key)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteXML(w, http.StatusOK, completeMultipartUploadResult{
+		Xmlns:    xmlns,
+		Location: "/" + bucket + "/" + key,
+		Bucket:   bucket,
+		Key:      key,
+		ETag:     fmt.Sprintf("%q", info.ETag),
+	})
+}
+
+func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	if err := h.bucket.AbortMultipartUpload(r.Context(), bucket, key, uploadID); err != nil {
+		writeMultipartErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listParts lists the parts uploaded so far for a multipart upload. The driver
+// exposes uploads but not their individual parts, so this returns the upload's
+// existence with an empty part list rather than fabricating part data.
+func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	uploads, err := h.bucket.ListMultipartUploads(r.Context(), bucket)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	found := false
+	for _, u := range uploads {
+		if u.UploadID == uploadID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		writeError(w, http.StatusNotFound, "NoSuchUpload", "the specified upload does not exist")
+		return
+	}
+
+	wire.WriteXML(w, http.StatusOK, listPartsResult{
+		Xmlns:       xmlns,
+		Bucket:      bucket,
+		Key:         key,
+		UploadID:    uploadID,
+		IsTruncated: false,
+	})
+}
+
+func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, bucket string) {
+	uploads, err := h.bucket.ListMultipartUploads(r.Context(), bucket)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	resp := listMultipartUploadsResult{Xmlns: xmlns, Bucket: bucket}
+	for _, u := range uploads {
+		resp.Uploads = append(resp.Uploads, multipartUploadXML{
+			Key:       u.Key,
+			UploadID:  u.UploadID,
+			Initiated: u.CreatedAt,
+		})
+	}
+
+	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// objectTaggingOp dispatches PUT/GET/DELETE for the ?tagging sub-resource.
+func (h *Handler) objectTaggingOp(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	switch r.Method {
+	case http.MethodPut:
+		h.putObjectTagging(w, r, bucket, key)
+	case http.MethodGet:
+		h.getObjectTagging(w, r, bucket, key)
+	case http.MethodDelete:
+		h.deleteObjectTagging(w, r, bucket, key)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	}
+}
+
+func (h *Handler) putObjectTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	var body tagging
+	if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "could not parse request body")
+		return
+	}
+
+	tags := make(map[string]string, len(body.TagSet))
+	for _, t := range body.TagSet {
+		tags[t.Key] = t.Value
+	}
+
+	if err := h.bucket.PutObjectTagging(r.Context(), bucket, key, tags); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) getObjectTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	tags, err := h.bucket.GetObjectTagging(r.Context(), bucket, key)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	resp := tagging{Xmlns: xmlns}
+	// Sort keys for a deterministic response ordering.
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		resp.TagSet = append(resp.TagSet, tagXML{Key: k, Value: tags[k]})
+	}
+
+	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+func (h *Handler) deleteObjectTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if err := h.bucket.DeleteObjectTagging(r.Context(), bucket, key); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// bucketVersioningOp dispatches PUT/GET for the ?versioning sub-resource.
+func (h *Handler) bucketVersioningOp(w http.ResponseWriter, r *http.Request, bucket string) {
+	switch r.Method {
+	case http.MethodPut:
+		h.putBucketVersioning(w, r, bucket)
+	case http.MethodGet:
+		h.getBucketVersioning(w, r, bucket)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	}
+}
+
+func (h *Handler) putBucketVersioning(w http.ResponseWriter, r *http.Request, bucket string) {
+	var body versioningConfiguration
+	if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "could not parse request body")
+		return
+	}
+
+	enabled := body.Status == "Enabled"
+
+	if err := h.bucket.SetBucketVersioning(r.Context(), bucket, enabled); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) getBucketVersioning(w http.ResponseWriter, r *http.Request, bucket string) {
+	enabled, err := h.bucket.GetBucketVersioning(r.Context(), bucket)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// The driver tracks versioning as a boolean only. Enabled reports "Enabled";
+	// a disabled bucket returns an empty <VersioningConfiguration/> (matching a
+	// never-versioned bucket) since "Suspended" vs. never-set isn't tracked.
+	resp := versioningConfiguration{Xmlns: xmlns}
+	if enabled {
+		resp.Status = "Enabled"
+	}
+
+	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// listObjectVersions handles GET /{bucket}?versions. The storage driver tracks
+// bucket-level versioning as a boolean flag only and does NOT retain per-object
+// version history, so no versionId-addressable versions exist. We return the
+// current objects as the sole (null) version rather than fabricating history.
+func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, bucket string) {
+	opts := driver.ListOptions{
+		Prefix:    r.URL.Query().Get("prefix"),
+		Delimiter: r.URL.Query().Get("delimiter"),
+	}
+
+	result, err := h.bucket.ListObjects(r.Context(), bucket, opts)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	resp := listVersionsResult{
+		Xmlns:     xmlns,
+		Name:      bucket,
+		Prefix:    opts.Prefix,
+		Delimiter: opts.Delimiter,
+		MaxKeys:   defaultMaxKeys,
+	}
+
+	for _, obj := range result.Objects {
+		resp.Versions = append(resp.Versions, objectVersionXML{
+			Key:          obj.Key,
+			VersionID:    "null",
+			IsLatest:     true,
+			LastModified: obj.LastModified,
+			ETag:         fmt.Sprintf("%q", obj.ETag),
+			Size:         obj.Size,
+			StorageClass: "STANDARD",
+		})
+	}
+
+	for _, p := range result.CommonPrefixes {
+		resp.CommonPrefixes = append(resp.CommonPrefixes, prefixXML{Prefix: p})
+	}
+
+	wire.WriteXML(w, http.StatusOK, resp)
+}
+
 // extractMetadata pulls x-amz-meta-* headers into a map.
 func extractMetadata(h http.Header) map[string]string {
 	meta := make(map[string]string)
@@ -324,6 +681,16 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // writeErr maps CloudEmu errors to S3 HTTP error responses.
+// writeMultipartErr maps a driver error from a multipart operation, where a
+// missing resource is the upload (NoSuchUpload), not the object key.
+func writeMultipartErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) {
+		writeError(w, http.StatusNotFound, "NoSuchUpload", err.Error())
+		return
+	}
+	writeErr(w, err)
+}
+
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):

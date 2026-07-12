@@ -21,9 +21,9 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/stackshy/cloudemu"
-	cloudkube "github.com/stackshy/cloudemu/kubernetes"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	cloudkube "github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
 // TestSDKEKSDataPlane_InformerObservesAddAndDelete drives a Phase-4

@@ -3,8 +3,8 @@ package secretsmanager
 import (
 	"net/http"
 
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {

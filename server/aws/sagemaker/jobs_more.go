@@ -3,8 +3,8 @@ package sagemaker
 import (
 	"net/http"
 
-	"github.com/stackshy/cloudemu/sagemaker/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 //nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.

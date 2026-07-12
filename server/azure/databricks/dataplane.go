@@ -18,8 +18,8 @@ import (
 	"net/http"
 	"strings"
 
-	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
 
 const dpMaxBodyBytes = 5 << 20

@@ -9,9 +9,9 @@ import (
 	"google.golang.org/api/container/v1"
 	"google.golang.org/api/option"
 
-	"github.com/stackshy/cloudemu"
-	gkeprov "github.com/stackshy/cloudemu/providers/gcp/gke"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 func newSDKClient(t *testing.T) (*container.Service, string) {

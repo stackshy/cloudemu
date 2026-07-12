@@ -6,7 +6,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // putMetricDataInput mirrors the AWS wire shape for the operation. Field

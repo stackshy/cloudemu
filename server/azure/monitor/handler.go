@@ -7,9 +7,9 @@ import (
 	"context"
 	"net/http"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 const (

@@ -10,10 +10,10 @@ Wrap any driver with the chaos engine before handing it to the portable API or t
 
 ```go
 import (
-    "github.com/stackshy/cloudemu"
-    "github.com/stackshy/cloudemu/chaos"
-    "github.com/stackshy/cloudemu/config"
-    awsserver "github.com/stackshy/cloudemu/server/aws"
+    "github.com/stackshy/cloudemu/v2"
+    "github.com/stackshy/cloudemu/v2/features/chaos"
+    "github.com/stackshy/cloudemu/v2/config"
+    awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 cloud  := cloudemu.NewAWS()

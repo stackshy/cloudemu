@@ -9,8 +9,8 @@ import (
 	logging "google.golang.org/api/logging/v2"
 	"google.golang.org/api/option"
 
-	"github.com/stackshy/cloudemu"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 const testProject = "demo"

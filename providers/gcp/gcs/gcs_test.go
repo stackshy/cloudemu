@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -212,13 +212,13 @@ func TestListObjects(t *testing.T) {
 	require.NoError(t, m.PutObject(ctx, "b1", "images/c.jpg", []byte("c"), "", nil))
 
 	tests := []struct {
-		name           string
-		bucket         string
-		opts           driver.ListOptions
-		wantCount      int
-		wantPrefixes   int
-		wantErr        bool
-		wantTruncated  bool
+		name          string
+		bucket        string
+		opts          driver.ListOptions
+		wantCount     int
+		wantPrefixes  int
+		wantErr       bool
+		wantTruncated bool
 	}{
 		{name: "all objects", bucket: "b1", opts: driver.ListOptions{}, wantCount: 3},
 		{name: "with prefix", bucket: "b1", opts: driver.ListOptions{Prefix: "docs/"}, wantCount: 2},

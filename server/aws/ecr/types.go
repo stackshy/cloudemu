@@ -3,7 +3,7 @@ package ecr
 import (
 	"time"
 
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
 type tagJSON struct {

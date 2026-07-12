@@ -18,11 +18,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu"
-	dbdriver "github.com/stackshy/cloudemu/database/driver"
-	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	azureserver "github.com/stackshy/cloudemu/server/azure"
+	"github.com/stackshy/cloudemu/v2"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 type fakeCred struct{}

@@ -20,8 +20,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/stackshy/cloudemu"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -322,7 +322,7 @@ func TestEC2StartInstancesUnknownIDReturnsError(t *testing.T) {
 // behavior: calling StartInstances on an already-running instance returns
 // 200 with currentState=running rather than IncorrectInstanceState.
 //
-// Issue: https://github.com/stackshy/cloudemu/issues/152
+// Issue: https://github.com/stackshy/cloudemu/v2/issues/152
 func TestEC2StartInstancesIdempotentOnRunning(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := context.Background()

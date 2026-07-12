@@ -5,8 +5,8 @@ import (
 	"hash/fnv"
 	"strconv"
 
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
 
 // Kind values Cloud DNS stamps on its resources; the SDK tolerates them being

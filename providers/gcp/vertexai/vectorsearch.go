@@ -4,8 +4,8 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 func (m *Mock) CreateIndex(_ context.Context, cfg driver.IndexConfig) (*driver.Operation, *driver.Index, error) {
@@ -191,7 +191,8 @@ func (m *Mock) FindNeighbors(_ context.Context, indexEndpoint, _ string, _ []flo
 		count = maxNeighbors
 	}
 
-	out := make([]driver.Neighbor, 0, count)
+	// count is already clamped to [0, maxNeighbors] above; grow the slice via append.
+	out := make([]driver.Neighbor, 0)
 	for i := 0; i < count; i++ {
 		out = append(out, driver.Neighbor{DatapointID: "dp-" + strconv.Itoa(i), Distance: float64(i) * 0.1})
 	}

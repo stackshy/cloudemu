@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	dbdriver "github.com/stackshy/cloudemu/database/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
 
 // Path-segment values used in Firestore REST URLs.

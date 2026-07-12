@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
 func TestParsePathSubscriptionOnly(t *testing.T) {

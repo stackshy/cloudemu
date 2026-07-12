@@ -35,7 +35,7 @@ Keep CloudEmu in `_test.go` only — never import it from production code.
 ## Tell your AI agent (paste into your repo's `AGENTS.md`)
 
 ```markdown
-CloudEmu (github.com/stackshy/cloudemu) is an in-memory cloud emulator. To integrate it:
+CloudEmu (github.com/stackshy/cloudemu/v2) is an in-memory cloud emulator. To integrate it:
 do NOT create a demo main.go — wire it into the real code so existing tests exercise it.
 Make the SDK endpoint injectable however this codebase prefers (an env var, a config field,
 or set directly in the test — your choice) and point it at CloudEmu: AWS o.BaseEndpoint,

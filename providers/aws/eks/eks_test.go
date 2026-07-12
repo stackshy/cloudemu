@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 )
 
 func newTestMock() *Mock {

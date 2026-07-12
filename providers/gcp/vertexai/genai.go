@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 // approxTokens is a deterministic, whitespace-based token estimate.

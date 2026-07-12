@@ -18,13 +18,13 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
-	"github.com/stackshy/cloudemu/internal/memstore"
-	"github.com/stackshy/cloudemu/kubernetes"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
+	"github.com/stackshy/cloudemu/v2/services/kubernetes"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // Wave 1 placeholder for the cluster API server endpoint. Wave 2 will swap

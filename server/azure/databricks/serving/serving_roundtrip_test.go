@@ -9,8 +9,8 @@ import (
 	"github.com/databricks/databricks-sdk-go/config"
 	dbserving "github.com/databricks/databricks-sdk-go/service/serving"
 
-	"github.com/stackshy/cloudemu/server"
-	"github.com/stackshy/cloudemu/server/azure/databricks/serving"
+	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/serving"
 )
 
 func newServingClient(t *testing.T) *databricks.WorkspaceClient {

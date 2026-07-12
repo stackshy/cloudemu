@@ -3,7 +3,7 @@ package eventarc
 import (
 	"encoding/json"
 
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
 // destinationTargetID is the fixed target id under which a trigger's

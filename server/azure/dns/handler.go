@@ -33,8 +33,8 @@ import (
 	"net/http"
 	"strings"
 
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
 
 const (

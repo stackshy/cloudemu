@@ -42,8 +42,8 @@ import (
 	"net/http"
 	"strings"
 
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
 const (

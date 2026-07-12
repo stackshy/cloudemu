@@ -3,8 +3,8 @@ package mysqlflex
 import (
 	"net/http"
 
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // ---- Server lifecycle ----

@@ -26,8 +26,8 @@ import (
 	"strings"
 	"time"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 const (

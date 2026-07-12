@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu/config"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	awsec2 "github.com/stackshy/cloudemu/providers/aws/ec2"
-	awsvpc "github.com/stackshy/cloudemu/providers/aws/vpc"
+	"github.com/stackshy/cloudemu/v2/config"
+	awsec2 "github.com/stackshy/cloudemu/v2/providers/aws/ec2"
+	awsvpc "github.com/stackshy/cloudemu/v2/providers/aws/vpc"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // newFullHandler wires compute and VPC drivers for Phase-2 tests (no monitoring).
@@ -69,11 +69,11 @@ func TestRouteVPCDispatchesAllActions(t *testing.T) {
 
 	// Authorize an ingress rule.
 	rr = do(t, h, http.MethodPost, "/", url.Values{
-		"Action":                       {"AuthorizeSecurityGroupIngress"},
-		"GroupId":                      {sgID},
-		"IpPermissions.1.IpProtocol":   {"tcp"},
-		"IpPermissions.1.FromPort":     {"80"},
-		"IpPermissions.1.ToPort":       {"80"},
+		"Action":                            {"AuthorizeSecurityGroupIngress"},
+		"GroupId":                           {sgID},
+		"IpPermissions.1.IpProtocol":        {"tcp"},
+		"IpPermissions.1.FromPort":          {"80"},
+		"IpPermissions.1.ToPort":            {"80"},
 		"IpPermissions.1.IpRanges.1.CidrIp": {"0.0.0.0/0"},
 	})
 	if rr.Code != http.StatusOK {
@@ -82,10 +82,10 @@ func TestRouteVPCDispatchesAllActions(t *testing.T) {
 
 	// Egress, Revoke variants use the same parser path.
 	rr = do(t, h, http.MethodPost, "/", url.Values{
-		"Action":                              {"AuthorizeSecurityGroupEgress"},
-		"GroupId":                             {sgID},
-		"IpPermissions.1.IpProtocol":          {"-1"},
-		"IpPermissions.1.IpRanges.1.CidrIp":   {"0.0.0.0/0"},
+		"Action":                            {"AuthorizeSecurityGroupEgress"},
+		"GroupId":                           {sgID},
+		"IpPermissions.1.IpProtocol":        {"-1"},
+		"IpPermissions.1.IpRanges.1.CidrIp": {"0.0.0.0/0"},
 	})
 	if rr.Code != http.StatusOK {
 		t.Errorf("AuthorizeSecurityGroupEgress = %d", rr.Code)
@@ -187,7 +187,7 @@ func TestVPCOpsUnknownIDReturnError(t *testing.T) {
 		{
 			"AttachInternetGateway",
 			url.Values{
-				"Action": {"AttachInternetGateway"},
+				"Action":            {"AttachInternetGateway"},
 				"InternetGatewayId": {"igw-ghost"}, "VpcId": {"vpc-ghost"},
 			},
 		},
@@ -232,7 +232,7 @@ func TestAuthorizeSecurityGroupEmptyRulesReturns400(t *testing.T) {
 	vpcID := between(vpc.Body.String(), "<vpcId>", "</vpcId>")
 
 	create := do(t, h, http.MethodPost, "/", url.Values{
-		"Action": {"CreateSecurityGroup"},
+		"Action":    {"CreateSecurityGroup"},
 		"GroupName": {"x"}, "GroupDescription": {"x"}, "VpcId": {vpcID},
 	})
 

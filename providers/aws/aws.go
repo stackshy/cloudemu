@@ -2,29 +2,30 @@
 package aws
 
 import (
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/providers/aws/awsiam"
-	"github.com/stackshy/cloudemu/providers/aws/bedrock"
-	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
-	"github.com/stackshy/cloudemu/providers/aws/cloudwatchlogs"
-	"github.com/stackshy/cloudemu/providers/aws/dynamodb"
-	"github.com/stackshy/cloudemu/providers/aws/ec2"
-	"github.com/stackshy/cloudemu/providers/aws/ecr"
-	"github.com/stackshy/cloudemu/providers/aws/eks"
-	"github.com/stackshy/cloudemu/providers/aws/elasticache"
-	"github.com/stackshy/cloudemu/providers/aws/elb"
-	"github.com/stackshy/cloudemu/providers/aws/eventbridge"
-	"github.com/stackshy/cloudemu/providers/aws/lambda"
-	"github.com/stackshy/cloudemu/providers/aws/rds"
-	"github.com/stackshy/cloudemu/providers/aws/redshift"
-	"github.com/stackshy/cloudemu/providers/aws/route53"
-	"github.com/stackshy/cloudemu/providers/aws/s3"
-	"github.com/stackshy/cloudemu/providers/aws/sagemaker"
-	"github.com/stackshy/cloudemu/providers/aws/secretsmanager"
-	"github.com/stackshy/cloudemu/providers/aws/sns"
-	"github.com/stackshy/cloudemu/providers/aws/sqs"
-	"github.com/stackshy/cloudemu/providers/aws/vpc"
-	"github.com/stackshy/cloudemu/resourcediscovery"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/aws/awsiam"
+	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
+	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
+	"github.com/stackshy/cloudemu/v2/providers/aws/ecr"
+	"github.com/stackshy/cloudemu/v2/providers/aws/eks"
+	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
+	"github.com/stackshy/cloudemu/v2/providers/aws/elb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
+	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
+	"github.com/stackshy/cloudemu/v2/providers/aws/redshift"
+	"github.com/stackshy/cloudemu/v2/providers/aws/route53"
+	"github.com/stackshy/cloudemu/v2/providers/aws/s3"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
+	"github.com/stackshy/cloudemu/v2/providers/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
+	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
+	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
 // Provider holds all AWS mock services.
@@ -50,6 +51,7 @@ type Provider struct {
 	EKS               *eks.Mock
 	Bedrock           *bedrock.Mock
 	SageMaker         *sagemaker.Mock
+	SSM               *ssm.Mock
 	ResourceDiscovery *resourcediscovery.Engine
 }
 
@@ -78,6 +80,7 @@ func New(opts ...config.Option) *Provider {
 		EKS:            eks.New(o),
 		Bedrock:        bedrock.New(o),
 		SageMaker:      sagemaker.New(o),
+		SSM:            ssm.New(o),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
 	p.S3.SetMonitoring(p.CloudWatch)

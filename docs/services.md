@@ -23,17 +23,18 @@ This document lists every service and operation available in CloudEmu across all
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
-| 18 | Kubernetes | `eks` + shared `kubernetes/` | `aks` + shared `kubernetes/` | `gke` + shared `kubernetes/` |
+| 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
-| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | _(planned: Azure ML / AI Foundry)_ | `vertexai` |
+| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
+| 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
 
 ---
 
 ## 1. Storage
 
-**Driver interface:** `storage/driver/driver.go`
+**Driver interface:** `services/storage/driver/driver.go`
 **AWS:** S3 | **Azure:** Blob Storage | **GCP:** GCS
 
 ### Bucket Operations
@@ -131,7 +132,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 2. Compute
 
-**Driver interface:** `compute/driver/driver.go`
+**Driver interface:** `services/compute/driver/driver.go`
 **AWS:** EC2 | **Azure:** Virtual Machines | **GCP:** GCE
 
 ### Instance Operations
@@ -222,7 +223,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 3. Database
 
-**Driver interface:** `database/driver/driver.go`
+**Driver interface:** `services/database/driver/driver.go`
 **AWS:** DynamoDB | **Azure:** Cosmos DB | **GCP:** Firestore
 
 ### Table Operations
@@ -287,7 +288,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 4. Serverless
 
-**Driver interface:** `serverless/driver/driver.go`
+**Driver interface:** `services/serverless/driver/driver.go`
 **AWS:** Lambda | **Azure:** Functions | **GCP:** Cloud Functions
 
 ### Function Operations
@@ -353,7 +354,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 5. Networking
 
-**Driver interface:** `networking/driver/driver.go`
+**Driver interface:** `services/networking/driver/driver.go`
 **AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC
 
 ### VPC Operations
@@ -473,7 +474,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 6. Monitoring
 
-**Driver interface:** `monitoring/driver/driver.go`
+**Driver interface:** `services/monitoring/driver/driver.go`
 **AWS:** CloudWatch | **Azure:** Azure Monitor | **GCP:** Cloud Monitoring
 
 ### Metric Operations
@@ -514,7 +515,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 7. IAM
 
-**Driver interface:** `iam/driver/driver.go`
+**Driver interface:** `services/iam/driver/driver.go`
 **AWS:** IAM | **Azure:** Azure IAM | **GCP:** GCP IAM
 
 ### Users
@@ -598,7 +599,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 8. DNS
 
-**Driver interface:** `dns/driver/driver.go`
+**Driver interface:** `services/dns/driver/driver.go`
 **AWS:** Route 53 | **Azure:** Azure DNS | **GCP:** Cloud DNS
 
 ### Zone Operations
@@ -637,7 +638,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 9. Load Balancer
 
-**Driver interface:** `loadbalancer/driver/driver.go`
+**Driver interface:** `services/loadbalancer/driver/driver.go`
 **AWS:** ELB | **Azure:** Azure LB | **GCP:** GCP LB
 
 ### Load Balancer Operations
@@ -695,7 +696,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 10. Message Queue
 
-**Driver interface:** `messagequeue/driver/driver.go`
+**Driver interface:** `services/messagequeue/driver/driver.go`
 **AWS:** SQS | **Azure:** Service Bus | **GCP:** Pub/Sub
 
 ### Queue Operations
@@ -748,7 +749,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 11. Cache
 
-**Driver interface:** `cache/driver/driver.go`
+**Driver interface:** `services/cache/driver/driver.go`
 **AWS:** ElastiCache | **Azure:** Azure Cache | **GCP:** Memorystore
 
 ### Cache Instance Operations
@@ -793,7 +794,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 12. Secrets
 
-**Driver interface:** `secrets/driver/driver.go`
+**Driver interface:** `services/secrets/driver/driver.go`
 **AWS:** Secrets Manager | **Azure:** Key Vault | **GCP:** Secret Manager
 
 ### Secret Operations
@@ -819,7 +820,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 13. Logging
 
-**Driver interface:** `logging/driver/driver.go`
+**Driver interface:** `services/logging/driver/driver.go`
 **AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging
 
 ### Log Group Operations
@@ -861,7 +862,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 14. Notification
 
-**Driver interface:** `notification/driver/driver.go`
+**Driver interface:** `services/notification/driver/driver.go`
 **AWS:** SNS | **Azure:** Notification Hubs | **GCP:** FCM
 
 ### Topic Operations
@@ -893,7 +894,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 15. Container Registry
 
-**Driver interface:** `containerregistry/driver/driver.go`
+**Driver interface:** `services/containerregistry/driver/driver.go`
 **AWS:** ECR | **Azure:** ACR | **GCP:** Artifact Registry
 
 ### Repository Management
@@ -936,7 +937,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 16. Event Bus
 
-**Driver interface:** `eventbus/driver/driver.go`
+**Driver interface:** `services/eventbus/driver/driver.go`
 **AWS:** EventBridge | **Azure:** Event Grid | **GCP:** Eventarc
 
 ### Bus Management
@@ -985,7 +986,7 @@ This document lists every service and operation available in CloudEmu across all
 
 ## 17. Relational Database
 
-**Driver interface:** `relationaldb/driver/driver.go`
+**Driver interface:** `services/relationaldb/driver/driver.go`
 **AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `azuresql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`
 
 A single portable interface backs every RDBMS handler. Engine selection (MySQL / PostgreSQL / Aurora / Neptune / DocumentDB / Redshift / Cloud SQL / Azure SQL / …) is a field on the input config, not a separate driver.
@@ -1038,7 +1039,7 @@ A single portable interface backs every RDBMS handler. Engine selection (MySQL /
 ## 18. Kubernetes
 
 **Control plane:** AWS `eks`, Azure `aks`, GCP `gke` — cluster, node-pool, and addon / Fargate-profile / maintenance-config lifecycle, driven by the real cloud SDKs.
-**Data plane:** shared `kubernetes/` package — an in-memory Kubernetes API server registered by every cluster across all three providers. Kubeconfigs returned by the control plane point at `<base>/k8s/<cluster-uid>` so `client-go` and `kubectl` operate end-to-end.
+**Data plane:** shared `services/kubernetes/` package — an in-memory Kubernetes API server registered by every cluster across all three providers. Kubeconfigs returned by the control plane point at `<base>/k8s/<cluster-uid>` so `client-go` and `kubectl` operate end-to-end.
 
 Each provider exposes its native control-plane API. The data plane has no portable driver — clients connect via the kubeconfig the control plane hands out, then talk standard Kubernetes REST.
 
@@ -1074,7 +1075,7 @@ Operations: **18**
 
 Operations: **26**
 
-### Data plane (`kubernetes/`)
+### Data plane (`services/kubernetes/`)
 
 Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Anonymous auth (kubeconfigs use `insecure-skip-tls-verify: true`).
 
@@ -1099,11 +1100,11 @@ Shared in-memory K8s API server registered by every cluster from any provider. U
 
 ## 19. Resource Discovery
 
-**Engine:** `resourcediscovery/` — a cross-service inventory engine that walks the Compute, Networking, Storage, Database, and Serverless drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
+**Engine:** `services/resourcediscovery/` — a cross-service inventory engine that walks the Compute, Networking, Storage, Database, and Serverless drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
 
 **SDK-compat handlers:** AWS Resource Explorer Two + Resource Groups Tagging API, Azure Resource Graph, and GCP Cloud Asset Inventory. All three sit on top of the same engine, so a tag written through any one path is visible through the others.
 
-### Engine (`resourcediscovery/`)
+### Engine (`services/resourcediscovery/`)
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1154,7 +1155,7 @@ Operations: **Engine 8** + **AWS Resource Explorer 1** + **AWS Resource Groups T
 
 ## 20. Generative AI
 
-**Driver interface:** `bedrock/driver/driver.go`
+**Driver interface:** `services/bedrock/driver/driver.go`
 **AWS:** `bedrock` (+ `bedrock-runtime`) | **Azure:** — | **GCP:** —
 
 AWS-only. Backs the real `aws-sdk-go-v2/service/bedrock` and `.../bedrockruntime` clients against the in-memory backend.
@@ -1222,7 +1223,7 @@ AWS-only. Backs the real `aws-sdk-go-v2/service/bedrock` and `.../bedrockruntime
 
 ## 21. Databricks
 
-**Driver interfaces:** `databricks/driver/driver.go` (control plane), `databricks/driver/dataplane.go` (data plane)
+**Driver interfaces:** `services/databricks/driver/driver.go` (control plane), `services/databricks/driver/dataplane.go` (data plane)
 **AWS:** — | **Azure:** `databricks` | **GCP:** —
 
 Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane backs the real `databricks-sdk-go` WorkspaceClient. The SDK-compat-only workspace families (secrets, tokens, git credentials, repos, DBFS, workspace files, SQL warehouses, pipelines, serving endpoints, SCIM identity, Unity Catalog) have no portable Go API — see [sdk-server.md](sdk-server.md).
@@ -1327,7 +1328,7 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 
 ### AWS — SageMaker AI
 
-**Driver interface:** `sagemaker/driver/driver.go` (control plane + `Runtime`)
+**Driver interface:** `services/sagemaker/driver/driver.go` (control plane + `Runtime`)
 
 The control plane speaks awsJson1_1 (`X-Amz-Target: SageMaker.*`); the runtime speaks
 restJson1 (`POST /endpoints/{name}/invocations`). Asynchronous jobs complete synchronously
@@ -1353,7 +1354,7 @@ clients. **Total: 121 operations.**
 
 ### GCP — Vertex AI
 
-**Driver interface:** `vertexai/driver/` — `aiplatform.googleapis.com`
+**Driver interface:** `services/vertexai/driver/` — `aiplatform.googleapis.com`
 
 REST rooted at `/v1/projects/{p}/locations/{l}/...` with the Model Garden `generateContent`
 surface at `/v1/publishers/...`. Control-plane mutations return done
@@ -1381,6 +1382,72 @@ tensorboards, schedules, notebook runtimes, and `generateContent`/`countTokens`.
 Layer-1 wrapper (`vertexai/vertexai.go`), chaos injection (`chaos.WrapVertexAI`), and cost
 rates integrate Vertex with the cross-cutting layers like every other service.
 **Total: 128 operations** (Go API/driver).
+
+### Azure — Azure AI
+
+**Driver interface:** `services/azureai/driver/` — spans both ARM providers plus the data planes.
+**Azure:** Azure AI Foundry / AI Studio / Azure OpenAI (`Microsoft.CognitiveServices`) and
+Azure Machine Learning (`Microsoft.MachineLearningServices`).
+
+ARM control-plane PUT returns the resource inline with a terminal `provisioningState` so the
+SDK LRO poller terminates on the first response. The data plane is host/path-routed
+(`*.openai.azure.com/openai/...`, `*.inference.ml.azure.com/score`). Auto-metrics push to
+Azure Monitor via `SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| AI Services accounts | accounts CRUD, list by RG/sub, listKeys, regenerateKey, listModels, listSkus, listUsages |
+| Model deployments | accounts/deployments CRUD + list (gpt-4o, embeddings, …) |
+| AI Foundry projects | accounts/projects CRUD + list |
+| Responsible AI | accounts/raiPolicies CRUD + list |
+| Commitment plans | accounts/commitmentPlans CRUD + list |
+| Private endpoints | accounts/privateEndpointConnections CRUD + list |
+| Azure OpenAI inference | chat/completions, completions, embeddings |
+| Agents / Assistants | assistants, threads, messages, runs (CRUD/list) |
+| AML workspaces | workspaces (Default/Hub/Project/FeatureStore) CRUD, list by RG/sub |
+| AML compute | computes CRUD + list, start/stop/restart (state machine) |
+| AML endpoints | online/batchEndpoints CRUD + list, deployments CRUD + list |
+| AML jobs | jobs create/get/list/cancel |
+| AML assets | models, data, environments, components, featuresets — versioned CRUD + list (container/versions) |
+| AML datastores / connections / schedules | CRUD + list |
+| AML registries | cross-workspace registries CRUD + list |
+| AML scoring | online-endpoint `/score` data plane |
+
+Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
+Layer-1 wrapper (`azureai/azureai.go`), chaos injection (`chaos.WrapAzureAI`), and cost rates
+integrate Azure AI with the cross-cutting layers like every other service.
+**Total: 92 operations** (Go API/driver) — 31 CognitiveServices + 46 MachineLearningServices
++ 15 data plane — all exposed over the SDK-compat HTTP server.
+
+---
+
+## 23. AI Search
+
+**Driver interface:** `services/azuresearch/driver/` — `Microsoft.Search/searchServices` (ARM control
+plane) plus the `{service}.search.windows.net` data plane.
+**Azure:** Azure AI Search (the RAG / retrieval backbone). **AWS / GCP:** _not applicable_.
+
+ARM PUT returns the resource inline with a terminal `provisioningState`; the data plane is
+host/path-routed (service name from the `{service}.search.windows.net` subdomain). Auto-metrics
+push to Azure Monitor via `SetMonitoring`.
+
+| Family | Resources / Operations |
+|--------|------------------------|
+| Services (control) | searchServices CRUD, list by RG/sub, update; listAdminKeys, regenerateAdminKey, listQueryKeys, createQueryKey, deleteQueryKey |
+| Private networking | sharedPrivateLinkResources CRUD+list, privateEndpointConnections CRUD+list |
+| Indexes | create-or-update, get, list, delete |
+| Documents | index (upload/merge/mergeOrUpload/delete), search (+count), suggest, autocomplete, count, get-by-key |
+| Indexers | create-or-update, get, list, delete, run, reset, status |
+| Data sources | create-or-update, get, list, delete |
+| Skillsets | create-or-update, get, list, delete |
+| Synonym maps | create-or-update, get, list, delete |
+| Aliases | create-or-update, get, list, delete |
+| Service statistics | counts + storage usage |
+
+Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
+Layer-1 wrapper (`azuresearch/azuresearch.go`), chaos injection (`chaos.WrapAzureSearch`), and
+cost rates integrate Azure AI Search with the cross-cutting layers like every other service.
+**Total: 53 operations** (Go API/driver) — 19 control plane + 34 data plane.
 
 ---
 
@@ -1413,5 +1480,7 @@ rates integrate Vertex with the cross-cutting layers like every other service.
 | Generative AI — AWS Bedrock | 22 |
 | Databricks — Azure (control + data plane) | 52 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
+| Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
-| **Grand Total** | **821** |
+| AI Search — Azure AI Search (control + data plane) | 53 |
+| **Grand Total** | **966** |

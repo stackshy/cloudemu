@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/sagemaker/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 // wireFeatureDef is the JSON shape of a feature definition.

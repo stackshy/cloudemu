@@ -14,9 +14,9 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	iamdriver "github.com/stackshy/cloudemu/iam/driver"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // Namespace is the XML namespace for AWS IAM responses. Matches the real

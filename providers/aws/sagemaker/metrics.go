@@ -3,7 +3,7 @@ package sagemaker
 import (
 	"context"
 
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // nominalLatencyMs is the synthetic per-invocation ModelLatency the emulator

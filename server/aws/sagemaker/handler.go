@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stackshy/cloudemu/sagemaker/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 const targetPrefix = "SageMaker."

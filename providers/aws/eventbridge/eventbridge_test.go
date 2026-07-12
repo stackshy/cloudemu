@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/eventbus/driver"
-	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
+	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,8 +61,8 @@ func TestCreateEventBus(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "duplicate default bus",
-			cfg:  driver.EventBusConfig{Name: "default"},
+			name:      "duplicate default bus",
+			cfg:       driver.EventBusConfig{Name: "default"},
 			expectErr: true,
 		},
 		{
@@ -562,63 +562,63 @@ func TestPutEvents(t *testing.T) {
 
 func TestEventPatternMatching(t *testing.T) {
 	tests := []struct {
-		name         string
-		pattern      string
-		event        driver.Event
-		shouldMatch  bool
+		name        string
+		pattern     string
+		event       driver.Event
+		shouldMatch bool
 	}{
 		{
-			name:    "match by source",
-			pattern: `{"source":["aws.ec2"]}`,
-			event:   driver.Event{Source: "aws.ec2", DetailType: "EC2 Instance State-change"},
+			name:        "match by source",
+			pattern:     `{"source":["aws.ec2"]}`,
+			event:       driver.Event{Source: "aws.ec2", DetailType: "EC2 Instance State-change"},
 			shouldMatch: true,
 		},
 		{
-			name:    "no match by source",
-			pattern: `{"source":["aws.ec2"]}`,
-			event:   driver.Event{Source: "aws.s3", DetailType: "Object Created"},
+			name:        "no match by source",
+			pattern:     `{"source":["aws.ec2"]}`,
+			event:       driver.Event{Source: "aws.s3", DetailType: "Object Created"},
 			shouldMatch: false,
 		},
 		{
-			name:    "match by detail-type",
-			pattern: `{"detail-type":["OrderCreated"]}`,
-			event:   driver.Event{Source: "my.app", DetailType: "OrderCreated"},
+			name:        "match by detail-type",
+			pattern:     `{"detail-type":["OrderCreated"]}`,
+			event:       driver.Event{Source: "my.app", DetailType: "OrderCreated"},
 			shouldMatch: true,
 		},
 		{
-			name:    "no match by detail-type",
-			pattern: `{"detail-type":["OrderCreated"]}`,
-			event:   driver.Event{Source: "my.app", DetailType: "OrderShipped"},
+			name:        "no match by detail-type",
+			pattern:     `{"detail-type":["OrderCreated"]}`,
+			event:       driver.Event{Source: "my.app", DetailType: "OrderShipped"},
 			shouldMatch: false,
 		},
 		{
-			name:    "match by source and detail-type",
-			pattern: `{"source":["aws.ec2"],"detail-type":["EC2 Instance State-change"]}`,
-			event:   driver.Event{Source: "aws.ec2", DetailType: "EC2 Instance State-change"},
+			name:        "match by source and detail-type",
+			pattern:     `{"source":["aws.ec2"],"detail-type":["EC2 Instance State-change"]}`,
+			event:       driver.Event{Source: "aws.ec2", DetailType: "EC2 Instance State-change"},
 			shouldMatch: true,
 		},
 		{
-			name:    "source matches but detail-type does not",
-			pattern: `{"source":["aws.ec2"],"detail-type":["EC2 Instance State-change"]}`,
-			event:   driver.Event{Source: "aws.ec2", DetailType: "Other Event"},
+			name:        "source matches but detail-type does not",
+			pattern:     `{"source":["aws.ec2"],"detail-type":["EC2 Instance State-change"]}`,
+			event:       driver.Event{Source: "aws.ec2", DetailType: "Other Event"},
 			shouldMatch: false,
 		},
 		{
-			name:    "empty pattern matches all",
-			pattern: "",
-			event:   driver.Event{Source: "anything", DetailType: "anything"},
+			name:        "empty pattern matches all",
+			pattern:     "",
+			event:       driver.Event{Source: "anything", DetailType: "anything"},
 			shouldMatch: true,
 		},
 		{
-			name:    "multiple sources",
-			pattern: `{"source":["aws.ec2","aws.s3"]}`,
-			event:   driver.Event{Source: "aws.s3", DetailType: "Object Created"},
+			name:        "multiple sources",
+			pattern:     `{"source":["aws.ec2","aws.s3"]}`,
+			event:       driver.Event{Source: "aws.s3", DetailType: "Object Created"},
 			shouldMatch: true,
 		},
 		{
-			name:    "invalid json pattern",
-			pattern: "not json",
-			event:   driver.Event{Source: "anything"},
+			name:        "invalid json pattern",
+			pattern:     "not json",
+			event:       driver.Event{Source: "anything"},
 			shouldMatch: false,
 		},
 	}

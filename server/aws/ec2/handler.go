@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"strings"
 
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // formContentType is the request Content-Type AWS SDKs use for the query

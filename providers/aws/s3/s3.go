@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
-	"github.com/stackshy/cloudemu/internal/memstore"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/pagination"
-	"github.com/stackshy/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 const (
@@ -540,8 +540,14 @@ func (m *Mock) CompleteMultipartUpload(_ context.Context, bucket, key, uploadID 
 }
 
 func assemblePartsInOrder(allParts map[int][]byte, parts []driver.UploadPart) []byte {
+	// S3 assembles parts by ascending PartNumber regardless of the order the
+	// client lists them in CompleteMultipartUpload; sort so an out-of-order
+	// (or unsorted-SDK) Complete doesn't corrupt the object.
+	ordered := append([]driver.UploadPart(nil), parts...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].PartNumber < ordered[j].PartNumber })
+
 	var data []byte
-	for _, p := range parts {
+	for _, p := range ordered {
 		data = append(data, allParts[p.PartNumber]...)
 	}
 

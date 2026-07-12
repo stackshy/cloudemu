@@ -11,9 +11,9 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 const targetPrefix = "secretsmanager."

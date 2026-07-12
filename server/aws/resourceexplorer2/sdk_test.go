@@ -16,10 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu"
-	dbdriver "github.com/stackshy/cloudemu/database/driver"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 func TestSDKResourceExplorer2(t *testing.T) {

@@ -7,67 +7,74 @@
 package azure
 
 import (
-	cachedriver "github.com/stackshy/cloudemu/cache/driver"
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
-	dbdriver "github.com/stackshy/cloudemu/database/driver"
-	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
-	iamdriver "github.com/stackshy/cloudemu/iam/driver"
-	"github.com/stackshy/cloudemu/kubernetes"
-	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
-	logdriver "github.com/stackshy/cloudemu/logging/driver"
-	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	notifdriver "github.com/stackshy/cloudemu/notification/driver"
-	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
-	"github.com/stackshy/cloudemu/resourcediscovery"
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
-	"github.com/stackshy/cloudemu/server"
-	"github.com/stackshy/cloudemu/server/azure/acr"
-	aksserver "github.com/stackshy/cloudemu/server/azure/aks"
-	"github.com/stackshy/cloudemu/server/azure/azuresql"
-	"github.com/stackshy/cloudemu/server/azure/blob"
-	cachesrv "github.com/stackshy/cloudemu/server/azure/cache"
-	"github.com/stackshy/cloudemu/server/azure/cosmos"
-	"github.com/stackshy/cloudemu/server/azure/databricks"
-	"github.com/stackshy/cloudemu/server/azure/databricks/dbfs"
-	"github.com/stackshy/cloudemu/server/azure/databricks/gitcredentials"
-	"github.com/stackshy/cloudemu/server/azure/databricks/hostmeta"
-	"github.com/stackshy/cloudemu/server/azure/databricks/pipelines"
-	"github.com/stackshy/cloudemu/server/azure/databricks/queryhistory"
-	"github.com/stackshy/cloudemu/server/azure/databricks/repos"
-	"github.com/stackshy/cloudemu/server/azure/databricks/scim"
-	"github.com/stackshy/cloudemu/server/azure/databricks/secrets"
-	"github.com/stackshy/cloudemu/server/azure/databricks/serving"
-	"github.com/stackshy/cloudemu/server/azure/databricks/sqlwarehouses"
-	"github.com/stackshy/cloudemu/server/azure/databricks/token"
-	"github.com/stackshy/cloudemu/server/azure/databricks/ucstorage"
-	"github.com/stackshy/cloudemu/server/azure/databricks/unitycatalog"
-	"github.com/stackshy/cloudemu/server/azure/databricks/wsfs"
-	"github.com/stackshy/cloudemu/server/azure/disks"
-	dnssrv "github.com/stackshy/cloudemu/server/azure/dns"
-	eventgridsrv "github.com/stackshy/cloudemu/server/azure/eventgrid"
-	"github.com/stackshy/cloudemu/server/azure/functions"
-	"github.com/stackshy/cloudemu/server/azure/iam"
-	"github.com/stackshy/cloudemu/server/azure/images"
-	keyvaultsrv "github.com/stackshy/cloudemu/server/azure/keyvault"
-	lbsrv "github.com/stackshy/cloudemu/server/azure/loadbalancer"
-	loganalyticssrv "github.com/stackshy/cloudemu/server/azure/loganalytics"
-	"github.com/stackshy/cloudemu/server/azure/monitor"
-	"github.com/stackshy/cloudemu/server/azure/mysqlflex"
-	"github.com/stackshy/cloudemu/server/azure/network"
-	notificationhubssrv "github.com/stackshy/cloudemu/server/azure/notificationhubs"
-	"github.com/stackshy/cloudemu/server/azure/postgresflex"
-	"github.com/stackshy/cloudemu/server/azure/resourcegraph"
-	"github.com/stackshy/cloudemu/server/azure/servicebus"
-	"github.com/stackshy/cloudemu/server/azure/snapshots"
-	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
-	"github.com/stackshy/cloudemu/server/azure/virtualmachines"
-	sdrv "github.com/stackshy/cloudemu/serverless/driver"
-	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/acr"
+	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
+	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/azureai"
+	azuresearchserver "github.com/stackshy/cloudemu/v2/server/azure/azuresearch"
+	"github.com/stackshy/cloudemu/v2/server/azure/azuresql"
+	"github.com/stackshy/cloudemu/v2/server/azure/blob"
+	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
+	"github.com/stackshy/cloudemu/v2/server/azure/cosmos"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/dbfs"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/gitcredentials"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/hostmeta"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/pipelines"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/queryhistory"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/repos"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/scim"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/secrets"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/serving"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/sqlwarehouses"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/token"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/ucstorage"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/unitycatalog"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/wsfs"
+	"github.com/stackshy/cloudemu/v2/server/azure/disks"
+	dnssrv "github.com/stackshy/cloudemu/v2/server/azure/dns"
+	eventgridsrv "github.com/stackshy/cloudemu/v2/server/azure/eventgrid"
+	"github.com/stackshy/cloudemu/v2/server/azure/functions"
+	"github.com/stackshy/cloudemu/v2/server/azure/iam"
+	"github.com/stackshy/cloudemu/v2/server/azure/images"
+	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
+	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
+	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
+	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
+	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
+	"github.com/stackshy/cloudemu/v2/server/azure/network"
+	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
+	"github.com/stackshy/cloudemu/v2/server/azure/postgresflex"
+	"github.com/stackshy/cloudemu/v2/server/azure/queue"
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
+	"github.com/stackshy/cloudemu/v2/server/azure/servicebus"
+	"github.com/stackshy/cloudemu/v2/server/azure/snapshots"
+	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
+	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/table"
+	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
+	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
+	azuresearchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
+	"github.com/stackshy/cloudemu/v2/services/kubernetes"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
+	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
+	tabledriver "github.com/stackshy/cloudemu/v2/services/tablestorage/driver"
 )
 
 // Drivers bundles the driver interfaces the Azure server can expose. Leave a
@@ -84,17 +91,23 @@ type Drivers struct {
 	Images          computedriver.Compute
 	SSHPublicKeys   computedriver.Compute
 	BlobStorage     storagedriver.Bucket
-	CosmosDB        dbdriver.Database
-	Network         netdriver.Networking
-	Monitor         mondriver.Monitoring
-	Functions       sdrv.Serverless
-	ServiceBus      mqdriver.MessageQueue
-	SQL             rdbdriver.RelationalDB
-	PostgresFlex    rdbdriver.RelationalDB
-	MySQLFlex       rdbdriver.RelationalDB
-	AKS             aksserver.Backend
-	IAM             iamdriver.IAM
-	ACR             crdriver.ContainerRegistry
+	// QueueStorage serves the Azure Queue Storage data-plane REST API against
+	// the messagequeue driver.
+	QueueStorage mqdriver.MessageQueue
+	// TableStorage serves the Azure Table Storage data-plane REST API against
+	// the tablestorage driver.
+	TableStorage tabledriver.TableStorage
+	CosmosDB     dbdriver.Database
+	Network      netdriver.Networking
+	Monitor      mondriver.Monitoring
+	Functions    sdrv.Serverless
+	ServiceBus   mqdriver.MessageQueue
+	SQL          rdbdriver.RelationalDB
+	PostgresFlex rdbdriver.RelationalDB
+	MySQLFlex    rdbdriver.RelationalDB
+	AKS          aksserver.Backend
+	IAM          iamdriver.IAM
+	ACR          crdriver.ContainerRegistry
 	// KeyVault serves the Key Vault secrets data-plane API (/secrets/…)
 	// against the secrets driver.
 	KeyVault secretsdriver.Secrets
@@ -120,6 +133,11 @@ type Drivers struct {
 	NotificationHubs    notifdriver.Notification
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
+	CognitiveServices   azureaidriver.CognitiveServices
+	MachineLearning     azureaidriver.MachineLearning
+	AzureAIDataPlane    azureaidriver.DataPlane
+	SearchControl       azuresearchdriver.SearchControl
+	SearchDataPlane     azuresearchdriver.SearchDataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -266,6 +284,35 @@ func New(d Drivers) *server.Server {
 
 	registerDatabricksDataPlane(srv, &d)
 
+	// Cognitive Services matches on Microsoft.CognitiveServices/accounts — a
+	// distinct ARM provider name, so registration order is unconstrained.
+	if d.CognitiveServices != nil {
+		srv.Register(azureaiserver.NewCognitiveServices(d.CognitiveServices))
+	}
+
+	// Azure ML matches on Microsoft.MachineLearningServices — a distinct ARM
+	// provider name, so registration order is unconstrained.
+	if d.MachineLearning != nil {
+		srv.Register(azureaiserver.NewMachineLearning(d.MachineLearning))
+	}
+
+	// Azure AI data plane (Azure OpenAI inference + Assistants, AML scoring).
+	// Matches on /openai/ and /score — disjoint from the ARM /subscriptions/
+	// prefix, so registration order is unconstrained.
+	if d.AzureAIDataPlane != nil {
+		srv.Register(azureaiserver.NewDataPlane(d.AzureAIDataPlane))
+	}
+
+	// Azure AI Search — ARM control plane on Microsoft.Search, plus the
+	// host/path-routed search data plane (/indexes, /indexers, …).
+	if d.SearchControl != nil {
+		srv.Register(azuresearchserver.NewControl(d.SearchControl))
+	}
+
+	if d.SearchDataPlane != nil {
+		srv.Register(azuresearchserver.NewDataPlane(d.SearchDataPlane))
+	}
+
 	if d.VirtualMachines != nil {
 		srv.Register(virtualmachines.New(d.VirtualMachines))
 	}
@@ -301,6 +348,24 @@ func New(d Drivers) *server.Server {
 	// register before the permissive BlobStorage fallback below.
 	if d.KeyVault != nil {
 		srv.Register(keyvaultsrv.New(d.KeyVault))
+	}
+
+	// Table Storage matches the OData table surface (/Tables, /Tables('name'),
+	// /{table}(…) entity predicates, and POST /{table} inserts) — path shapes
+	// that contain parentheses or a bare JSON POST, disjoint from Blob's
+	// container/blob paths and Queue's /messages surface. Registered before the
+	// permissive Blob fallback.
+	if d.TableStorage != nil {
+		srv.Register(tablesrv.New(d.TableStorage))
+	}
+
+	// Queue Storage matches the queue data-plane surface (/{queue}/messages,
+	// bare PUT/DELETE /{queue} without restype=container). These shapes are
+	// disjoint from Blob (which carries restype=container) and Table (which
+	// carries OData parentheses). Registered before the permissive Blob
+	// fallback.
+	if d.QueueStorage != nil {
+		srv.Register(queue.New(d.QueueStorage))
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It

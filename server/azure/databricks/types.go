@@ -1,6 +1,6 @@
 package databricks
 
-import dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
+import dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 
 // JSON wire shapes for the Microsoft.Databricks ARM REST API. Field names match
 // what the real armdatabricks client emits and expects.

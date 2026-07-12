@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/serverless/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 // mappingCounter is used to generate unique UUIDs for event source mappings.

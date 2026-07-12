@@ -289,12 +289,12 @@ import (
     "time"
     "errors"
 
-    "github.com/stackshy/cloudemu/storage"
-    "github.com/stackshy/cloudemu/recorder"
-    "github.com/stackshy/cloudemu/metrics"
-    "github.com/stackshy/cloudemu/ratelimit"
-    "github.com/stackshy/cloudemu/inject"
-    cerrors "github.com/stackshy/cloudemu/errors"
+    "github.com/stackshy/cloudemu/v2/services/storage"
+    "github.com/stackshy/cloudemu/v2/features/recorder"
+    "github.com/stackshy/cloudemu/v2/features/metrics"
+    "github.com/stackshy/cloudemu/v2/features/ratelimit"
+    "github.com/stackshy/cloudemu/v2/features/inject"
+    cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 rec := recorder.New()
@@ -374,7 +374,7 @@ clock.Set(time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC))
 
 ## 10. Cross-Service Resource Discovery
 
-CloudEmu ships a cross-service inventory engine (`resourcediscovery/`) that walks every service driver a provider holds and returns a single normalized view of what exists. It sits next to the `topology/` engine as a peer of the portable API — it owns no state, constructs from driver interfaces, and is purely query-driven.
+CloudEmu ships a cross-service inventory engine (`services/resourcediscovery/`) that walks every service driver a provider holds and returns a single normalized view of what exists. It sits next to the `features/topology/` engine as a peer of the portable API — it owns no state, constructs from driver interfaces, and is purely query-driven.
 
 The engine is the foundation for three SDK-compat handlers that speak the real cloud inventory APIs: **AWS Resource Explorer 2 + Resource Groups Tagging API**, **Azure Resource Graph**, and **GCP Cloud Asset Inventory**. A tag set through any one of those paths is immediately visible through the others, and through the engine's own `SearchByTag`.
 

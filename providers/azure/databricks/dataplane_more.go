@@ -3,9 +3,9 @@ package databricks
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/databricks/driver"
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
 
 // --- job runs ---

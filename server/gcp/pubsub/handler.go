@@ -30,8 +30,8 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 )
 
 const (

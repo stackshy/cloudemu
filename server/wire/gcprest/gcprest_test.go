@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
 func TestParsePathRejectsNonComputePrefix(t *testing.T) {

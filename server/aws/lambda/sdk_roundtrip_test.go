@@ -12,9 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
-	"github.com/stackshy/cloudemu"
-	awsprovider "github.com/stackshy/cloudemu/providers/aws"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 func newSDKClient(t *testing.T) (*awslambda.Client, *awsprovider.Provider) {

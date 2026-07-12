@@ -9,9 +9,9 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
-	"github.com/stackshy/cloudemu"
-	dbdriver "github.com/stackshy/cloudemu/database/driver"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
 
 const testProject = "p1"
@@ -50,8 +50,8 @@ func TestSDKFirestoreRoundTrip(t *testing.T) {
 	// Set (create) a document.
 	docRef := coll.Doc("u1")
 	if _, err := docRef.Set(ctx, map[string]any{
-		"name": "Alice",
-		"age":  30,
+		"name":   "Alice",
+		"age":    30,
 		"active": true,
 	}); err != nil {
 		t.Fatalf("Set: %v", err)

@@ -3,8 +3,8 @@ package databricks
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/databricks/driver"
-	"github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
 
 // ResizeCluster changes a cluster's worker count or autoscale bounds.

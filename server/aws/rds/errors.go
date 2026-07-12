@@ -1,7 +1,7 @@
 package rds
 
 import (
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 func errInstanceNotFound(id string) error {

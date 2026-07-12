@@ -22,8 +22,8 @@ import (
 	"net/http"
 	"strings"
 
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
 
 const (

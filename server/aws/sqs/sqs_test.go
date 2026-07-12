@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu"
-	"github.com/stackshy/cloudemu/server/aws/sqs"
+	"github.com/stackshy/cloudemu/v2"
+	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
 )
 
 func newServer(t *testing.T) (*httptest.Server, mqHandle) {

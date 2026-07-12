@@ -7,34 +7,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/compute"
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/cost"
-	"github.com/stackshy/cloudemu/database/driver"
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	iamdriver "github.com/stackshy/cloudemu/iam/driver"
-	"github.com/stackshy/cloudemu/inject"
-	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
-	"github.com/stackshy/cloudemu/metrics"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	"github.com/stackshy/cloudemu/ratelimit"
-	"github.com/stackshy/cloudemu/recorder"
-	serverlessdriver "github.com/stackshy/cloudemu/serverless/driver"
-	"github.com/stackshy/cloudemu/storage"
-	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/ratelimit"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	"github.com/stackshy/cloudemu/v2/services/compute"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	"github.com/stackshy/cloudemu/v2/services/cost"
+	"github.com/stackshy/cloudemu/v2/services/database/driver"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	serverlessdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 
-	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 
-	cachedriver "github.com/stackshy/cloudemu/cache/driver"
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
-	loggingdriver "github.com/stackshy/cloudemu/logging/driver"
-	notifdriver "github.com/stackshy/cloudemu/notification/driver"
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
-	"github.com/stackshy/cloudemu/topology"
+	"github.com/stackshy/cloudemu/v2/features/topology"
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	loggingdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 func TestStorageLifecycle(t *testing.T) {
@@ -8229,6 +8229,7 @@ func testGSIOperations(t *testing.T, ctx context.Context, d driver.Database) {
 		t.Errorf("expected NotFound for missing table, got %v", err)
 	}
 }
+
 // Event Source Mapping Tests
 func testEventSourceMapping(t *testing.T, ctx context.Context, d serverlessdriver.Serverless) {
 	t.Helper()
@@ -8423,6 +8424,7 @@ func TestEventSourceMappingGCP(t *testing.T) {
 	p := NewGCP()
 	testEventSourceMapping(t, ctx, p.CloudFunctions)
 }
+
 // ─── VPC Endpoints ────────────────────────────────────────────
 
 func TestVPCEndpointAWS(t *testing.T) {

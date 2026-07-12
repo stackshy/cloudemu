@@ -4,8 +4,8 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/sagemaker/driver"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 // maxClusterInstancesPerGroup bounds the per-group instance count so an

@@ -3,8 +3,8 @@ package sagemaker
 import (
 	"net/http"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/server/wire"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 // writeDriverError maps a driver error to the closest SageMaker exception and

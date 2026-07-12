@@ -13,9 +13,9 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
 const targetPrefix = "AWSEvents."

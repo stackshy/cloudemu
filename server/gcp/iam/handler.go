@@ -37,7 +37,7 @@ import (
 	"net/http"
 	"strings"
 
-	iamdriver "github.com/stackshy/cloudemu/iam/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 const (

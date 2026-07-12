@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // errorBody is the JSON body shape Bedrock returns for failures. The SDK reads

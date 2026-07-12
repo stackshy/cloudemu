@@ -3,9 +3,9 @@ package azuredns
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/dns/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
 
 const (

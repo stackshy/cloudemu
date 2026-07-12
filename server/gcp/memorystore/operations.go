@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	cachedriver "github.com/stackshy/cloudemu/cache/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
 // createInstance handles POST .../instances?instanceId={i} — Create. The

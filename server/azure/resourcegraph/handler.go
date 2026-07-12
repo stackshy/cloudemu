@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/stackshy/cloudemu/resourcediscovery"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
 // Path prefixes this handler serves. The Resource Graph provider sits at a

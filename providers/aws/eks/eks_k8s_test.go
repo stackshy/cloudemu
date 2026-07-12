@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu/kubernetes"
-	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
+	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
+	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
 func TestSetK8sAPI_CreateClusterRegistersWithAPIServer(t *testing.T) {

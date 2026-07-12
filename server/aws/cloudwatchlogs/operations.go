@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	logdriver "github.com/stackshy/cloudemu/logging/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
 // --- log groups ---

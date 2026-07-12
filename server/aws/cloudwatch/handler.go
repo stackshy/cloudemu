@@ -19,8 +19,8 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 const (

@@ -7,51 +7,54 @@
 package aws
 
 import (
-	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
-	cachedriver "github.com/stackshy/cloudemu/cache/driver"
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
-	dbdriver "github.com/stackshy/cloudemu/database/driver"
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
-	iamdriver "github.com/stackshy/cloudemu/iam/driver"
-	"github.com/stackshy/cloudemu/kubernetes"
-	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
-	logdriver "github.com/stackshy/cloudemu/logging/driver"
-	mqdriver "github.com/stackshy/cloudemu/messagequeue/driver"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	notifdriver "github.com/stackshy/cloudemu/notification/driver"
-	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
-	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
-	"github.com/stackshy/cloudemu/resourcediscovery"
-	sagemakerdriver "github.com/stackshy/cloudemu/sagemaker/driver"
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
-	"github.com/stackshy/cloudemu/server"
-	"github.com/stackshy/cloudemu/server/aws/bedrock"
-	"github.com/stackshy/cloudemu/server/aws/cloudwatch"
-	cloudwatchlogssrv "github.com/stackshy/cloudemu/server/aws/cloudwatchlogs"
-	"github.com/stackshy/cloudemu/server/aws/dynamodb"
-	"github.com/stackshy/cloudemu/server/aws/ec2"
-	"github.com/stackshy/cloudemu/server/aws/ecr"
-	"github.com/stackshy/cloudemu/server/aws/eks"
-	"github.com/stackshy/cloudemu/server/aws/elasticache"
-	"github.com/stackshy/cloudemu/server/aws/elbv2"
-	"github.com/stackshy/cloudemu/server/aws/eventbridge"
-	"github.com/stackshy/cloudemu/server/aws/iam"
-	"github.com/stackshy/cloudemu/server/aws/lambda"
-	"github.com/stackshy/cloudemu/server/aws/rds"
-	"github.com/stackshy/cloudemu/server/aws/redshift"
-	"github.com/stackshy/cloudemu/server/aws/resourceexplorer2"
-	"github.com/stackshy/cloudemu/server/aws/resourcegroupstaggingapi"
-	"github.com/stackshy/cloudemu/server/aws/route53"
-	"github.com/stackshy/cloudemu/server/aws/s3"
-	sagemakersrv "github.com/stackshy/cloudemu/server/aws/sagemaker"
-	secretsmanagersrv "github.com/stackshy/cloudemu/server/aws/secretsmanager"
-	"github.com/stackshy/cloudemu/server/aws/sns"
-	"github.com/stackshy/cloudemu/server/aws/sqs"
-	sdrv "github.com/stackshy/cloudemu/serverless/driver"
-	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
+	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
+	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
+	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
+	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
+	"github.com/stackshy/cloudemu/v2/server/aws/ec2"
+	"github.com/stackshy/cloudemu/v2/server/aws/ecr"
+	"github.com/stackshy/cloudemu/v2/server/aws/eks"
+	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
+	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
+	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/server/aws/iam"
+	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
+	"github.com/stackshy/cloudemu/v2/server/aws/rds"
+	"github.com/stackshy/cloudemu/v2/server/aws/redshift"
+	"github.com/stackshy/cloudemu/v2/server/aws/resourceexplorer2"
+	"github.com/stackshy/cloudemu/v2/server/aws/resourcegroupstaggingapi"
+	"github.com/stackshy/cloudemu/v2/server/aws/route53"
+	"github.com/stackshy/cloudemu/v2/server/aws/s3"
+	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
+	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/v2/server/aws/sns"
+	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
+	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
+	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
+	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
+	"github.com/stackshy/cloudemu/v2/services/kubernetes"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
+	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
+	sagemakerdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
+	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 // Drivers bundles the driver interfaces the AWS server can expose. Leave a
@@ -75,6 +78,9 @@ type Drivers struct {
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
+	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
+	// the parameterstore driver.
+	SSM ssmdriver.ParameterStore
 	// CloudWatchLogs serves the CloudWatch Logs JSON 1.1 protocol against the
 	// logging driver.
 	CloudWatchLogs logdriver.Logging
@@ -91,6 +97,11 @@ type Drivers struct {
 	ElastiCache cachedriver.Cache
 	// SNS serves the SNS query protocol against the notification driver.
 	SNS notifdriver.Notification
+	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
+	// GetSessionToken). It has no backing driver — identity is derived from
+	// AccountID and Region — so it is gated on this bool. Enable it so SDK code
+	// paths that call sts:GetCallerIdentity or sts:AssumeRole on init succeed.
+	STS bool
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -174,6 +185,13 @@ func New(d Drivers) *server.Server {
 		srv.Register(secretsmanagersrv.New(d.SecretsManager))
 	}
 
+	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —
+	// disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, EventBridge,
+	// CloudWatch Logs, and the tagging API.
+	if d.SSM != nil {
+		srv.Register(ssmsrv.New(d.SSM))
+	}
+
 	// EventBridge matches the X-Amz-Target prefix "AWSEvents." — disjoint from
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.EventBridge != nil {
@@ -216,6 +234,14 @@ func New(d Drivers) *server.Server {
 	// no shadowing occurs. Registered before the EC2 catch-all.
 	if d.SNS != nil {
 		srv.Register(sns.New(d.SNS))
+	}
+
+	// STS also speaks the AWS query protocol; its action set (GetCallerIdentity,
+	// AssumeRole, GetSessionToken) is disjoint from RDS, Redshift, IAM, ELBv2,
+	// ElastiCache, SNS, and EC2, so no shadowing occurs. It has no driver, so
+	// it's gated on the STS bool. Registered before the EC2 catch-all.
+	if d.STS {
+		srv.Register(stssrv.New(d.AccountID, d.Region))
 	}
 
 	if d.EC2 != nil || d.VPC != nil {

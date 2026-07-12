@@ -8,8 +8,8 @@
 </p>
 
 <p align="center">
-  <a href="https://pkg.go.dev/github.com/stackshy/cloudemu"><img src="https://pkg.go.dev/badge/github.com/stackshy/cloudemu.svg" alt="Go Reference"></a>
-  <a href="https://goreportcard.com/report/github.com/stackshy/cloudemu"><img src="https://goreportcard.com/badge/github.com/stackshy/cloudemu" alt="Go Report Card"></a>
+  <a href="https://pkg.go.dev/github.com/stackshy/cloudemu/v2"><img src="https://pkg.go.dev/badge/github.com/stackshy/cloudemu/v2.svg" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/stackshy/cloudemu/v2"><img src="https://goreportcard.com/badge/github.com/stackshy/cloudemu/v2" alt="Go Report Card"></a>
   <a href="https://github.com/stackshy/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go Version">
   <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP-orange" alt="Providers">
@@ -30,7 +30,7 @@ It ships two surfaces you can mix and match:
 ## Install
 
 ```bash
-go get github.com/stackshy/cloudemu
+go get github.com/stackshy/cloudemu/v2
 ```
 
 Requires Go 1.25+.
@@ -45,8 +45,8 @@ import (
 
     "github.com/aws/aws-sdk-go-v2/aws"
     "github.com/aws/aws-sdk-go-v2/service/s3"
-    "github.com/stackshy/cloudemu"
-    awsserver "github.com/stackshy/cloudemu/server/aws"
+    "github.com/stackshy/cloudemu/v2"
+    awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 cloud := cloudemu.NewAWS()

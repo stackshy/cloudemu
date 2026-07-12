@@ -28,7 +28,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 const (
