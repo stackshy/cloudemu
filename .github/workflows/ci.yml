@@ -1,9 +1,11 @@
 name: CI
 
-# Public repo → GitHub-hosted Actions are free. Every check is its own job so
-# they run in parallel; each restores the Go build/module cache to stay fast.
-# One run per PR (feature-branch pushes are covered by their PR) plus push to
-# master. Superseded runs cancel automatically.
+# Public repo → GitHub-hosted Actions are free. Kept fast: Build and Vet share
+# one job so `go vet` reuses the compile cache `go build` just populated
+# (standalone `go vet ./...` recompiles everything and is slow). Test runs in
+# parallel; the quick checks (Tidy/Format) give sub-minute feedback. Every job
+# restores the Go build+module cache. One run per PR (+ push to master);
+# superseded runs cancel.
 on:
   pull_request:
   push:
@@ -17,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build
+  build-vet:
+    name: Build & Vet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,18 +28,10 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
-      - run: go build ./...
-
-  vet:
-    name: Vet
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache: true
-      - run: go vet ./...
+      - name: go build
+        run: go build ./...
+      - name: go vet (reuses the build cache)
+        run: go vet ./...
 
   test:
     name: Test
@@ -67,10 +61,6 @@ jobs:
   format:
     name: Format
     runs-on: ubuntu-latest
-    # Advisory: some pre-existing _test.go files are not gofmt-clean (the repo's
-    # golangci config skips tests). Reports without blocking; flip to blocking
-    # after a one-time `gofmt -w`.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -90,9 +80,6 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    # Advisory: the repo's strict golangci-lint v2 config was never enforced in
-    # CI. Reports findings without blocking; flip to blocking once clean.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

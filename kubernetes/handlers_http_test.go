@@ -496,7 +496,10 @@ func TestConfigMap_PatchBadContentTypeReturns400(t *testing.T) {
 		base+"/api/v1/namespaces/default/configmaps/p", bytes.NewReader([]byte(`[]`)))
 	req.Header.Set("Content-Type", "application/strategic-merge-patch+json")
 
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -595,7 +598,10 @@ func TestConfigMap_PatchBadJSONReturns400(t *testing.T) {
 	)
 	req.Header.Set("Content-Type", "application/merge-patch+json")
 
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -618,7 +624,10 @@ func TestConfigMap_PatchTypeIncompatibleReturns400(t *testing.T) {
 	)
 	req.Header.Set("Content-Type", "application/merge-patch+json")
 
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -636,7 +645,10 @@ func TestNamespace_PatchOnMissingReturns404(t *testing.T) {
 	)
 	req.Header.Set("Content-Type", "application/merge-patch+json")
 
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
