@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu"
-	azureserver "github.com/stackshy/cloudemu/server/azure"
+	"github.com/stackshy/cloudemu/v2"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 // armBasePath returns the per-test ARM resource URL for a given VM name.

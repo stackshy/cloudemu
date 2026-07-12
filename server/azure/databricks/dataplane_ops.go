@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
+	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
 
 // --- wire types ---

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	iamdriver "github.com/stackshy/cloudemu/iam/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 const maxBodyBytes = 1 << 20

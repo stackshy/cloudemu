@@ -9,8 +9,8 @@ import (
 	"github.com/databricks/databricks-sdk-go/config"
 	"github.com/databricks/databricks-sdk-go/service/settings"
 
-	"github.com/stackshy/cloudemu/server"
-	"github.com/stackshy/cloudemu/server/azure/databricks/token"
+	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/token"
 )
 
 func newWorkspace(t *testing.T) *databricks.WorkspaceClient {

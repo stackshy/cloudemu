@@ -9,8 +9,8 @@ import (
 	"github.com/databricks/databricks-sdk-go/common/environment"
 	"github.com/databricks/databricks-sdk-go/config"
 
-	"github.com/stackshy/cloudemu/server"
-	"github.com/stackshy/cloudemu/server/azure/databricks/hostmeta"
+	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/hostmeta"
 )
 
 func newServer(t *testing.T) *httptest.Server {

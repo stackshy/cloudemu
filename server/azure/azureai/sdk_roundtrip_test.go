@@ -19,8 +19,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu"
-	azureserver "github.com/stackshy/cloudemu/server/azure"
+	"github.com/stackshy/cloudemu/v2"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 // fakeCred is a no-op bearer-token credential for driving real ARM SDK clients

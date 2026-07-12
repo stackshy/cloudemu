@@ -3,8 +3,8 @@ package azureai
 import (
 	"net/http"
 
-	csdriver "github.com/stackshy/cloudemu/azureai/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	csdriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )
 
 // armAccountBody is the ARM request body for an account PUT.

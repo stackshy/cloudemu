@@ -3,8 +3,8 @@ package azuresearch
 import (
 	"net/http"
 
-	srchdriver "github.com/stackshy/cloudemu/azuresearch/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	srchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 // actionMethods is the HTTP method each key action requires, matching the real

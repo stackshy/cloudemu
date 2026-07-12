@@ -3,7 +3,7 @@ package azureai
 import (
 	"net/http"
 
-	csdriver "github.com/stackshy/cloudemu/azureai/driver"
+	csdriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )
 
 func assistantJSON(a *csdriver.Assistant) map[string]any {

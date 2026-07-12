@@ -40,8 +40,8 @@ import (
 	"net/http"
 	"strings"
 
-	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
 // Handler serves Microsoft.Network/loadBalancers ARM requests against a

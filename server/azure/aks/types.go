@@ -1,7 +1,7 @@
 package aks
 
 import (
-	"github.com/stackshy/cloudemu/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 )
 
 // ARM resource type identifiers.

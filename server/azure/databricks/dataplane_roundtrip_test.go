@@ -11,8 +11,8 @@ import (
 	"github.com/databricks/databricks-sdk-go/service/iam"
 	"github.com/databricks/databricks-sdk-go/service/jobs"
 
-	"github.com/stackshy/cloudemu"
-	azureserver "github.com/stackshy/cloudemu/server/azure"
+	"github.com/stackshy/cloudemu/v2"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 func newWorkspace(t *testing.T) *databricks.WorkspaceClient {

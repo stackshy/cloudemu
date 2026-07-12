@@ -9,8 +9,8 @@ import (
 	"github.com/databricks/databricks-sdk-go/config"
 	"github.com/databricks/databricks-sdk-go/service/pipelines"
 
-	"github.com/stackshy/cloudemu/server"
-	pipelineshandler "github.com/stackshy/cloudemu/server/azure/databricks/pipelines"
+	"github.com/stackshy/cloudemu/v2/server"
+	pipelineshandler "github.com/stackshy/cloudemu/v2/server/azure/databricks/pipelines"
 )
 
 func newPipelineClient(t *testing.T) *databricks.WorkspaceClient {

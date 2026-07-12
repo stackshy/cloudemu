@@ -26,8 +26,8 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 const pathPrefix = "/secrets"

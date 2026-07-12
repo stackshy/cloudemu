@@ -1,7 +1,7 @@
 package azuresql
 
 import (
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // Azure SQL Database.status enum values used in ARM responses.

@@ -1,8 +1,8 @@
 package notificationhubs
 
 import (
-	notifdriver "github.com/stackshy/cloudemu/notification/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 )
 
 // ARM resource type strings stamped on responses.

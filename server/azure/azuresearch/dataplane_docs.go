@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	srchdriver "github.com/stackshy/cloudemu/azuresearch/driver"
+	srchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 // atoiOr parses s as an int, returning def on failure or empty input.

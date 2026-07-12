@@ -23,8 +23,8 @@ import (
 	"net/http"
 	"strings"
 
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
 const pathPrefix = "/acr/v1/"

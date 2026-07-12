@@ -3,7 +3,7 @@ package acr
 import (
 	"strings"
 
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
 // registryLoginServer is the synthetic login server reported for this mock
