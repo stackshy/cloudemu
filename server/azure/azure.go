@@ -67,11 +67,14 @@ import (
 	"github.com/stackshy/cloudemu/server/azure/postgresflex"
 	"github.com/stackshy/cloudemu/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/server/azure/servicebus"
+	"github.com/stackshy/cloudemu/server/azure/queue"
 	"github.com/stackshy/cloudemu/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/server/azure/sshpublickeys"
+	tablesrv "github.com/stackshy/cloudemu/server/azure/table"
 	"github.com/stackshy/cloudemu/server/azure/virtualmachines"
 	sdrv "github.com/stackshy/cloudemu/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+	tabledriver "github.com/stackshy/cloudemu/tablestorage/driver"
 )
 
 // Drivers bundles the driver interfaces the Azure server can expose. Leave a
@@ -88,7 +91,13 @@ type Drivers struct {
 	Images          computedriver.Compute
 	SSHPublicKeys   computedriver.Compute
 	BlobStorage     storagedriver.Bucket
-	CosmosDB        dbdriver.Database
+	// QueueStorage serves the Azure Queue Storage data-plane REST API against
+	// the messagequeue driver.
+	QueueStorage mqdriver.MessageQueue
+	// TableStorage serves the Azure Table Storage data-plane REST API against
+	// the tablestorage driver.
+	TableStorage tabledriver.TableStorage
+	CosmosDB     dbdriver.Database
 	Network         netdriver.Networking
 	Monitor         mondriver.Monitoring
 	Functions       sdrv.Serverless
@@ -339,6 +348,24 @@ func New(d Drivers) *server.Server {
 	// register before the permissive BlobStorage fallback below.
 	if d.KeyVault != nil {
 		srv.Register(keyvaultsrv.New(d.KeyVault))
+	}
+
+	// Table Storage matches the OData table surface (/Tables, /Tables('name'),
+	// /{table}(…) entity predicates, and POST /{table} inserts) — path shapes
+	// that contain parentheses or a bare JSON POST, disjoint from Blob's
+	// container/blob paths and Queue's /messages surface. Registered before the
+	// permissive Blob fallback.
+	if d.TableStorage != nil {
+		srv.Register(tablesrv.New(d.TableStorage))
+	}
+
+	// Queue Storage matches the queue data-plane surface (/{queue}/messages,
+	// bare PUT/DELETE /{queue} without restype=container). These shapes are
+	// disjoint from Blob (which carries restype=container) and Table (which
+	// carries OData parentheses). Registered before the permissive Blob
+	// fallback.
+	if d.QueueStorage != nil {
+		srv.Register(queue.New(d.QueueStorage))
 	}
 
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It

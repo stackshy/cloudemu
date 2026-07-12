@@ -24,6 +24,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/providers/azure/postgresflex"
 	"github.com/stackshy/cloudemu/providers/azure/servicebus"
+	"github.com/stackshy/cloudemu/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/providers/azure/vnet"
 	"github.com/stackshy/cloudemu/resourcediscovery"
@@ -41,6 +42,12 @@ type Provider struct {
 	DNS              *azuredns.Mock
 	LB               *azurelb.Mock
 	ServiceBus       *servicebus.Mock
+	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
+	// the messagequeue provider, but is a distinct instance from ServiceBus so
+	// the two services keep separate queue namespaces.
+	QueueStorage *servicebus.Mock
+	// TableStorage backs the Azure Table Storage data-plane handler.
+	TableStorage     *tablestorage.Mock
 	Cache            *azurecache.Mock
 	KeyVault         *keyvault.Mock
 	LogAnalytics     *loganalytics.Mock
@@ -72,6 +79,8 @@ func New(opts ...config.Option) *Provider {
 		DNS:              azuredns.New(o),
 		LB:               azurelb.New(o),
 		ServiceBus:       servicebus.New(o),
+		QueueStorage:     servicebus.New(o),
+		TableStorage:     tablestorage.New(o),
 		Cache:            azurecache.New(o),
 		KeyVault:         keyvault.New(o),
 		LogAnalytics:     loganalytics.New(o),
