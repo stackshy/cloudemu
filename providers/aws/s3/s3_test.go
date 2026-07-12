@@ -692,7 +692,7 @@ func TestCompleteMultipartUploadPartsValidation(t *testing.T) {
 		assertEqual(t, "AAAA", string(obj.Data))
 	})
 
-	t.Run("reversed order yields part2+part1 data", func(t *testing.T) {
+	t.Run("parts listed out of order still assemble by PartNumber", func(t *testing.T) {
 		mp, err := m.CreateMultipartUpload(ctx, "bkt", "file2.bin", "application/octet-stream")
 		requireNoError(t, err)
 
@@ -701,12 +701,14 @@ func TestCompleteMultipartUploadPartsValidation(t *testing.T) {
 		part2, err := m.UploadPart(ctx, "bkt", "file2.bin", mp.UploadID, 2, []byte("BBBB"))
 		requireNoError(t, err)
 
+		// Parts passed to Complete in reverse order; S3 assembles by ascending
+		// PartNumber, so the object is part1||part2 regardless of list order.
 		err = m.CompleteMultipartUpload(ctx, "bkt", "file2.bin", mp.UploadID, []driver.UploadPart{*part2, *part1})
 		requireNoError(t, err)
 
 		obj, err := m.GetObject(ctx, "bkt", "file2.bin")
 		requireNoError(t, err)
-		assertEqual(t, "BBBBAAAA", string(obj.Data))
+		assertEqual(t, "AAAABBBB", string(obj.Data))
 	})
 
 	t.Run("non-existent part 99 returns error", func(t *testing.T) {
