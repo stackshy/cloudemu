@@ -95,8 +95,14 @@ func roleNameFromArn(arn string) string {
 		name = after
 	}
 
-	if i := strings.LastIndex(name, "/"); i >= 0 && i+1 < len(name) {
-		return name[i+1:]
+	// Trim any trailing slash(es) so a stray "MyRole/" doesn't yield an empty
+	// last segment.
+	name = strings.TrimRight(name, "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if name == "" {
+		return "cloudemu-role"
 	}
 
 	return name

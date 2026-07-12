@@ -48,9 +48,9 @@ type assumeRoleResponse struct {
 }
 
 type assumeRoleResult struct {
-	Credentials     credentials     `xml:"Credentials"`
-	AssumedRoleUser assumedRoleUser `xml:"AssumedRoleUser"`
-	PackedPolicySize int            `xml:"PackedPolicySize"`
+	Credentials      credentials     `xml:"Credentials"`
+	AssumedRoleUser  assumedRoleUser `xml:"AssumedRoleUser"`
+	PackedPolicySize int             `xml:"PackedPolicySize"`
 }
 
 // GetSessionToken -----------------------------------------------------------
