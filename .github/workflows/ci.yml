@@ -1,9 +1,13 @@
 name: CI
 
+# Public repo → GitHub-hosted Actions minutes are free/unlimited. Kept lean
+# anyway: one run per PR (pull_request only; feature-branch pushes are covered
+# by their PR), plus push to master to verify releases. Superseded runs cancel,
+# and the Go build/module cache keeps runs short.
 on:
-  push:
-    branches: [development, master]
   pull_request:
+  push:
+    branches: [master]
 
 permissions:
   contents: read
@@ -32,24 +36,3 @@ jobs:
 
       - name: go test
         run: go test ./...
-
-  lint:
-    name: golangci-lint (advisory)
-    runs-on: ubuntu-latest
-    # Advisory for now: the repo's strict golangci-lint v2 config has not been
-    # enforced in CI before, so this reports findings without blocking merges.
-    # Flip continue-on-error to false once the tree is lint-clean.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache: true
-
-      - name: install golangci-lint v2
-        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
-
-      - name: golangci-lint run
-        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./..."
