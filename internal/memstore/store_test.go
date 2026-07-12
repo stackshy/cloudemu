@@ -62,11 +62,11 @@ func TestStore_Has(t *testing.T) {
 
 func TestStore_Delete(t *testing.T) {
 	tests := []struct {
-		name       string
-		setup      map[string]string
-		deleteKey  string
-		expectDel  bool
-		expectLen  int
+		name      string
+		setup     map[string]string
+		deleteKey string
+		expectDel bool
+		expectLen int
 	}{
 		{name: "delete existing key", setup: map[string]string{"a": "1", "b": "2"}, deleteKey: "a", expectDel: true, expectLen: 1},
 		{name: "delete missing key", setup: map[string]string{"a": "1"}, deleteKey: "z", expectDel: false, expectLen: 1},
@@ -235,9 +235,9 @@ func TestStore_Filter(t *testing.T) {
 		expect map[string]int
 	}{
 		{
-			name:  "filter even values",
-			setup: map[string]int{"a": 1, "b": 2, "c": 3, "d": 4},
-			pred:  func(_ string, v int) bool { return v%2 == 0 },
+			name:   "filter even values",
+			setup:  map[string]int{"a": 1, "b": 2, "c": 3, "d": 4},
+			pred:   func(_ string, v int) bool { return v%2 == 0 },
 			expect: map[string]int{"b": 2, "d": 4},
 		},
 		{
