@@ -33,11 +33,11 @@ CloudEmu follows a three-layer architecture that separates portable API concerns
 
 ### Layer 1: Portable API
 
-The top layer lives in service-specific packages (`storage/`, `compute/`, `database/`, etc.). Each portable API type wraps a driver with cross-cutting concerns. For example, `storage.Bucket` wraps `driver.Bucket` and adds call recording, metrics collection, rate limiting, error injection, and simulated latency to every operation. This layer is provider-agnostic -- the same `storage.Bucket` works with S3, Blob Storage, or GCS.
+The top layer lives in service-specific packages (`services/storage/`, `services/compute/`, `services/database/`, etc.). Each portable API type wraps a driver with cross-cutting concerns. For example, `storage.Bucket` wraps `driver.Bucket` and adds call recording, metrics collection, rate limiting, error injection, and simulated latency to every operation. This layer is provider-agnostic -- the same `storage.Bucket` works with S3, Blob Storage, or GCS.
 
 ### Layer 2: Driver Interfaces
 
-Each service defines a minimal Go interface in `<service>/driver/driver.go`. These interfaces specify the operations that every provider must implement. For example, `storage/driver/driver.go` defines the `Bucket` interface with methods like `CreateBucket`, `PutObject`, `GetObject`, etc. Driver interfaces use plain Go types (no cloud SDK dependencies).
+Each service defines a minimal Go interface in `<service>/driver/driver.go`. These interfaces specify the operations that every provider must implement. For example, `services/storage/driver/driver.go` defines the `Bucket` interface with methods like `CreateBucket`, `PutObject`, `GetObject`, etc. Driver interfaces use plain Go types (no cloud SDK dependencies).
 
 ### Layer 3: Provider Implementations
 
@@ -47,7 +47,7 @@ The bottom layer contains the actual mock implementations for each cloud provide
 
 Sitting above Layer 2 (driver interfaces) are **cross-service engines** that consume driver interfaces directly without going through the portable API. They're peers of each other, not layers in the three-layer stack. Two exist today:
 
-- `topology/` -- reads from compute, networking, and DNS drivers to simulate real network connectivity (`CanConnect`, `TraceRoute`, `Resolve`, security-group and NACL evaluation). See [topology.md](topology.md).
+- `features/topology/` -- reads from compute, networking, and DNS drivers to simulate real network connectivity (`CanConnect`, `TraceRoute`, `Resolve`, security-group and NACL evaluation). See [topology.md](topology.md).
 - `server/` -- exposes driver interfaces over HTTP in each cloud's native SDK wire format, so real `aws-sdk-go-v2`, `azure-sdk-for-go`, and `cloud.google.com/go` clients work against CloudEmu by only changing the endpoint. Covers Storage, Compute, Database, Networking, Monitoring, Serverless, and Message Queue across all 3 providers (AWS S3/EC2/DynamoDB/Lambda/SQS/CloudWatch + sibling Azure ARM and GCP REST handlers). Uses a pluggable `Handler` registry so new services drop in as self-contained packages without touching the core. See [sdk-server.md](sdk-server.md).
 
 Both engines depend only on Layer 2 interfaces -- never on concrete provider types -- so they work uniformly across AWS, Azure, and GCP backends.
@@ -126,53 +126,25 @@ errors/
 internal/
     memstore/                         # Generic Store[V]
     idgen/                            # ID generators (ARNs, Azure IDs, GCP IDs)
-statemachine/
-    machine.go                        # Generic FSM
-    transitions.go                    # Transition map
-pagination/                           # Generic Paginate[T]
-recorder/                             # Call recording for assertions
-metrics/                              # In-memory metrics collection
-ratelimit/                            # Token bucket rate limiter
-inject/                               # Error injection (policies + injector)
-cost/
-    cost.go                           # Cost tracker with default rates
-storage/
-    storage.go                        # Portable storage API
-    driver/driver.go                  # Bucket interface
-compute/
-    driver/driver.go                  # Compute interface
-database/
-    driver/driver.go                  # Database interface
-serverless/
-    driver/driver.go                  # Serverless interface
-networking/
-    driver/driver.go                  # Networking interface
-monitoring/
-    driver/driver.go                  # Monitoring interface
-iam/
-    driver/driver.go                  # IAM interface
-dns/
-    driver/driver.go                  # DNS interface
-loadbalancer/
-    driver/driver.go                  # LoadBalancer interface
-messagequeue/
-    driver/driver.go                  # MessageQueue interface
-cache/
-    driver/driver.go                  # Cache interface
-secrets/
-    driver/driver.go                  # Secrets interface
-logging/
-    driver/driver.go                  # Logging interface
-notification/
-    driver/driver.go                  # Notification interface
-containerregistry/
-    driver/driver.go                  # ContainerRegistry interface
-eventbus/
-    driver/driver.go                  # EventBus interface
-relationaldb/
-    driver/driver.go                  # Relational DB interface (RDS, Aurora, Neptune,
-                                      # DocumentDB, Redshift, Azure SQL, Postgres/MySQL
-                                      # Flexible Server, Cloud SQL)
+    statemachine/                     # Generic FSM
+    pagination/                       # Generic Paginate[T]
+services/                             # emulated cloud services (portable API + driver interface)
+    storage/
+        storage.go                    # Portable storage API
+        driver/driver.go              # Bucket interface
+    compute/  database/  relationaldb/  serverless/  networking/  monitoring/
+    iam/  dns/  loadbalancer/  messagequeue/  cache/  secrets/  logging/
+    notification/  eventbus/  containerregistry/  kubernetes/  resourcediscovery/
+    bedrock/  sagemaker/  vertexai/  databricks/  azureai/  azuresearch/
+    parameterstore/  tablestorage/  cost/
+                                      # each: <name>.go (portable API) + driver/ (interface)
+features/                             # cross-cutting capabilities you wrap drivers with
+    chaos/                            # fault / latency / throttle injection
+    recorder/                         # call recording for assertions
+    metrics/                          # in-memory metrics collection
+    ratelimit/                        # token-bucket rate limiter
+    inject/                           # error injection (policies + injector)
+    topology/                         # network reachability (CanConnect / TraceRoute / Resolve)
 providers/
     aws/
         aws.go                        # AWS factory (wires all services)
