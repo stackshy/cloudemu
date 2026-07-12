@@ -5,11 +5,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/stackshy/cloudemu/eventbus/driver"
-	"github.com/stackshy/cloudemu/inject"
-	"github.com/stackshy/cloudemu/metrics"
-	"github.com/stackshy/cloudemu/ratelimit"
-	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/ratelimit"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
 // EventBus is the portable event bus type wrapping a driver with cross-cutting concerns.
