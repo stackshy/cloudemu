@@ -3,7 +3,7 @@ package sagemaker
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/sagemaker/driver"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 //nolint:gocritic // cfg/in matches the driver signature; forwarded unchanged.

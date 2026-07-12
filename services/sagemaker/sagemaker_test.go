@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/inject"
-	"github.com/stackshy/cloudemu/metrics"
-	awssm "github.com/stackshy/cloudemu/providers/aws/sagemaker"
-	"github.com/stackshy/cloudemu/recorder"
-	"github.com/stackshy/cloudemu/sagemaker"
-	"github.com/stackshy/cloudemu/sagemaker/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	awssm "github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 func newPortable(opts ...sagemaker.Option) *sagemaker.SageMaker {
