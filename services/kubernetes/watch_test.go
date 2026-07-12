@@ -43,7 +43,7 @@ type nonFlushingWriter struct {
 	rec *httptest.ResponseRecorder
 }
 
-func (n *nonFlushingWriter) Header() http.Header        { return n.rec.Header() }
+func (n *nonFlushingWriter) Header() http.Header         { return n.rec.Header() }
 func (n *nonFlushingWriter) Write(b []byte) (int, error) { return n.rec.Write(b) }
 func (n *nonFlushingWriter) WriteHeader(code int)        { n.rec.WriteHeader(code) }
 
@@ -446,4 +446,3 @@ func tryReceive(sub *subscriber, deadline time.Duration) (watchEvent, bool) {
 		return watchEvent{}, false
 	}
 }
-

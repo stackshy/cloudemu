@@ -177,4 +177,3 @@ func mustHaveItems(t *testing.T, base, path string, want int) {
 		t.Fatalf("mustHaveItems: unknown path suffix %s", path)
 	}
 }
-

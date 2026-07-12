@@ -15,7 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/stackshy/cloudemu/kubernetes"
+	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
 // newFixture spins up an APIServer with one registered cluster and returns
