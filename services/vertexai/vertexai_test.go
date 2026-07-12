@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/inject"
-	"github.com/stackshy/cloudemu/metrics"
-	gcpvertex "github.com/stackshy/cloudemu/providers/gcp/vertexai"
-	"github.com/stackshy/cloudemu/recorder"
-	"github.com/stackshy/cloudemu/vertexai"
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	gcpvertex "github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
+	"github.com/stackshy/cloudemu/v2/services/vertexai"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 func newPortable(opts ...vertexai.Option) *vertexai.VertexAI {
