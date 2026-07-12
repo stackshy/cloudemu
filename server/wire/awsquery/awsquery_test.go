@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 )
 
 func TestListStrings(t *testing.T) {
@@ -112,13 +112,13 @@ func TestFlatTags(t *testing.T) {
 
 func TestCollectIndices(t *testing.T) {
 	form := url.Values{
-		"Foo.1":         {"a"},
-		"Foo.2.Bar":     {"b"},
-		"Foo.10":        {"j"},
-		"Foo.3.Baz.1":   {"c"},
-		"Other.1":       {"x"},
-		"NotIndexed":    {"y"},
-		"Foo.notanint":  {"z"},
+		"Foo.1":        {"a"},
+		"Foo.2.Bar":    {"b"},
+		"Foo.10":       {"j"},
+		"Foo.3.Baz.1":  {"c"},
+		"Other.1":      {"x"},
+		"NotIndexed":   {"y"},
+		"Foo.notanint": {"z"},
 	}
 
 	got := awsquery.CollectIndices(form, "Foo")
