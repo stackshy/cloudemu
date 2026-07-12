@@ -1,4 +1,4 @@
-module github.com/stackshy/cloudemu
+module github.com/stackshy/cloudemu/v2
 
 go 1.25.0
 
