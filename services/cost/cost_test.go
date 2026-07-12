@@ -9,20 +9,29 @@ import (
 
 func TestTracker_Record_And_TotalCost(t *testing.T) {
 	tests := []struct {
-		name      string
-		records   []struct{ svc, op string; qty int }
-		expectGt  float64
+		name    string
+		records []struct {
+			svc, op string
+			qty     int
+		}
+		expectGt float64
 	}{
 		{
 			name: "single storage put",
-			records: []struct{ svc, op string; qty int }{
+			records: []struct {
+				svc, op string
+				qty     int
+			}{
 				{"storage", "PutObject", 1000},
 			},
 			expectGt: 0,
 		},
 		{
 			name: "unknown operation has zero cost",
-			records: []struct{ svc, op string; qty int }{
+			records: []struct {
+				svc, op string
+				qty     int
+			}{
 				{"unknown", "DoSomething", 100},
 			},
 			expectGt: -1, // total should be 0
