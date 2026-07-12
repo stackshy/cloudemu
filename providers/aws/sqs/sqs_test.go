@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/messagequeue/driver"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
+	"github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 func newTestMock() (*Mock, *config.FakeClock) {

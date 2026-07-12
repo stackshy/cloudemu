@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
+	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
 
 func newGuardrail(t *testing.T, m *Mock, name string) *bedrockdriver.Guardrail {

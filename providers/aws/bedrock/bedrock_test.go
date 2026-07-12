@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	bedrockdriver "github.com/stackshy/cloudemu/bedrock/driver"
-	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/v2/config"
+	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
 
 const titanModel = "amazon.titan-text-express-v1"

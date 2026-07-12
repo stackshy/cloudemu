@@ -3,9 +3,9 @@ package route53
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/dns/driver"
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
 
 const (

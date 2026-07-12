@@ -18,11 +18,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
-	"github.com/stackshy/cloudemu/internal/memstore"
-	"github.com/stackshy/cloudemu/parameterstore/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
 // Compile-time check that Mock implements driver.ParameterStore.
