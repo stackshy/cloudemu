@@ -61,10 +61,10 @@ func TestMachine_GetState_NotFound(t *testing.T) {
 
 func TestMachine_Transition_Valid(t *testing.T) {
 	tests := []struct {
-		name       string
-		initial    string
-		target     string
-		expectSt   string
+		name     string
+		initial  string
+		target   string
+		expectSt string
 	}{
 		{name: "pending to running", initial: "pending", target: "running", expectSt: "running"},
 		{name: "running to stopped", initial: "running", target: "stopped", expectSt: "stopped"},

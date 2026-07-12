@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // Callback is called when a state transition occurs.
