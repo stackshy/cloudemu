@@ -23,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/providers/aws/secretsmanager"
 	"github.com/stackshy/cloudemu/providers/aws/sns"
 	"github.com/stackshy/cloudemu/providers/aws/sqs"
+	"github.com/stackshy/cloudemu/providers/aws/ssm"
 	"github.com/stackshy/cloudemu/providers/aws/vpc"
 	"github.com/stackshy/cloudemu/resourcediscovery"
 )
@@ -50,6 +51,7 @@ type Provider struct {
 	EKS               *eks.Mock
 	Bedrock           *bedrock.Mock
 	SageMaker         *sagemaker.Mock
+	SSM               *ssm.Mock
 	ResourceDiscovery *resourcediscovery.Engine
 }
 
@@ -78,6 +80,7 @@ func New(opts ...config.Option) *Provider {
 		EKS:            eks.New(o),
 		Bedrock:        bedrock.New(o),
 		SageMaker:      sagemaker.New(o),
+		SSM:            ssm.New(o),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
 	p.S3.SetMonitoring(p.CloudWatch)
