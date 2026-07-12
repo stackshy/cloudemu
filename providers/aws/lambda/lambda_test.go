@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
-	"github.com/stackshy/cloudemu/serverless/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 func newTestMock() *Mock {

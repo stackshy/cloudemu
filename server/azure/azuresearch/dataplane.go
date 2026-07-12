@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	srchdriver "github.com/stackshy/cloudemu/azuresearch/driver"
-	"github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/v2/errors"
+	srchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 const maxDPBody = 8 << 20

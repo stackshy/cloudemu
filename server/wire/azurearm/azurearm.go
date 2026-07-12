@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // ContentType is the JSON content type used by all ARM responses.

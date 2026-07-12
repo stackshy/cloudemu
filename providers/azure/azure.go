@@ -2,46 +2,46 @@
 package azure
 
 import (
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/providers/azure/acr"
-	"github.com/stackshy/cloudemu/providers/azure/aks"
-	"github.com/stackshy/cloudemu/providers/azure/azureai"
-	"github.com/stackshy/cloudemu/providers/azure/azurecache"
-	"github.com/stackshy/cloudemu/providers/azure/azuredns"
-	"github.com/stackshy/cloudemu/providers/azure/azureiam"
-	"github.com/stackshy/cloudemu/providers/azure/azurelb"
-	"github.com/stackshy/cloudemu/providers/azure/azuremonitor"
-	"github.com/stackshy/cloudemu/providers/azure/azuresearch"
-	"github.com/stackshy/cloudemu/providers/azure/azuresql"
-	"github.com/stackshy/cloudemu/providers/azure/blobstorage"
-	"github.com/stackshy/cloudemu/providers/azure/cosmosdb"
-	"github.com/stackshy/cloudemu/providers/azure/databricks"
-	"github.com/stackshy/cloudemu/providers/azure/eventgrid"
-	"github.com/stackshy/cloudemu/providers/azure/functions"
-	"github.com/stackshy/cloudemu/providers/azure/keyvault"
-	"github.com/stackshy/cloudemu/providers/azure/loganalytics"
-	"github.com/stackshy/cloudemu/providers/azure/mysqlflex"
-	"github.com/stackshy/cloudemu/providers/azure/notificationhubs"
-	"github.com/stackshy/cloudemu/providers/azure/postgresflex"
-	"github.com/stackshy/cloudemu/providers/azure/servicebus"
-	"github.com/stackshy/cloudemu/providers/azure/tablestorage"
-	"github.com/stackshy/cloudemu/providers/azure/virtualmachines"
-	"github.com/stackshy/cloudemu/providers/azure/vnet"
-	"github.com/stackshy/cloudemu/resourcediscovery"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
+	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azureai"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azurecache"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azuredns"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azureiam"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azurelb"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azuremonitor"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azuresearch"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azuresql"
+	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
+	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
+	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
+	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
+	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
+	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
+	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
+	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
+	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
+	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
+	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
+	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
 // Provider holds all Azure mock services.
 type Provider struct {
-	BlobStorage      *blobstorage.Mock
-	VirtualMachines  *virtualmachines.Mock
-	CosmosDB         *cosmosdb.Mock
-	Functions        *functions.Mock
-	VNet             *vnet.Mock
-	Monitor          *azuremonitor.Mock
-	IAM              *azureiam.Mock
-	DNS              *azuredns.Mock
-	LB               *azurelb.Mock
-	ServiceBus       *servicebus.Mock
+	BlobStorage     *blobstorage.Mock
+	VirtualMachines *virtualmachines.Mock
+	CosmosDB        *cosmosdb.Mock
+	Functions       *functions.Mock
+	VNet            *vnet.Mock
+	Monitor         *azuremonitor.Mock
+	IAM             *azureiam.Mock
+	DNS             *azuredns.Mock
+	LB              *azurelb.Mock
+	ServiceBus      *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
 	// the two services keep separate queue namespaces.

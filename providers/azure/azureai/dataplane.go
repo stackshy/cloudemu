@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stackshy/cloudemu/azureai/driver"
-	"github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )
 
 // Compile-time check that Mock implements the data-plane surface.

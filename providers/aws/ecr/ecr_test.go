@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/containerregistry/driver"
-	"github.com/stackshy/cloudemu/providers/aws/cloudwatch"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
+	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -547,9 +547,9 @@ func TestTagImageEmptyTagRejected(t *testing.T) {
 
 func TestImageTagMutability(t *testing.T) {
 	tests := []struct {
-		name      string
+		name       string
 		mutability string
-		expectErr bool
+		expectErr  bool
 	}{
 		{
 			name:       "MUTABLE allows duplicate tags",

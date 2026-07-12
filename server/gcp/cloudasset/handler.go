@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/resourcediscovery"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
 // Path prefix shared by every Cloud Asset operation.

@@ -1,8 +1,8 @@
 package postgresflex
 
 import (
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // Postgres Flex ServerState enum values used in ARM responses. Real Azure

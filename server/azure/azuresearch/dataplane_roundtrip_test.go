@@ -113,7 +113,7 @@ func TestKeylessDocRejectedAndPartialBatch207(t *testing.T) {
 	status, out := rawStatus(t, http.MethodPost, url+"/indexes/products/docs/index", map[string]any{
 		"value": []any{
 			map[string]any{"@search.action": "upload", "id": "1", "name": "ok"},
-			map[string]any{"@search.action": "upload", "name": "no-key"},   // missing key
+			map[string]any{"@search.action": "upload", "name": "no-key"},       // missing key
 			map[string]any{"@search.action": "merge", "id": "99", "name": "x"}, // merge missing doc
 		},
 	})

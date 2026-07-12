@@ -289,12 +289,12 @@ import (
     "time"
     "errors"
 
-    "github.com/stackshy/cloudemu/storage"
-    "github.com/stackshy/cloudemu/recorder"
-    "github.com/stackshy/cloudemu/metrics"
-    "github.com/stackshy/cloudemu/ratelimit"
-    "github.com/stackshy/cloudemu/inject"
-    cerrors "github.com/stackshy/cloudemu/errors"
+    "github.com/stackshy/cloudemu/v2/services/storage"
+    "github.com/stackshy/cloudemu/v2/features/recorder"
+    "github.com/stackshy/cloudemu/v2/features/metrics"
+    "github.com/stackshy/cloudemu/v2/features/ratelimit"
+    "github.com/stackshy/cloudemu/v2/features/inject"
+    cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 rec := recorder.New()

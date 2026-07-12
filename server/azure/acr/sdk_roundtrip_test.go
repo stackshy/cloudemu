@@ -11,9 +11,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	azacr "github.com/Azure/azure-sdk-for-go/sdk/containers/azcontainerregistry"
 
-	"github.com/stackshy/cloudemu"
-	crdriver "github.com/stackshy/cloudemu/containerregistry/driver"
-	azureserver "github.com/stackshy/cloudemu/server/azure"
+	"github.com/stackshy/cloudemu/v2"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
 type fakeCred struct{}

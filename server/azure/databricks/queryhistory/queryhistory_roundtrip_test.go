@@ -9,8 +9,8 @@ import (
 	"github.com/databricks/databricks-sdk-go/config"
 	"github.com/databricks/databricks-sdk-go/service/sql"
 
-	"github.com/stackshy/cloudemu/server"
-	"github.com/stackshy/cloudemu/server/azure/databricks/queryhistory"
+	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/queryhistory"
 )
 
 func newClient(t *testing.T) *databricks.WorkspaceClient {

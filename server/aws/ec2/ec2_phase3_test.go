@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 func TestRouteVolumesDispatch(t *testing.T) {

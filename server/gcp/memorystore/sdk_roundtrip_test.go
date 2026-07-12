@@ -10,8 +10,8 @@ import (
 	"google.golang.org/api/option"
 	redis "google.golang.org/api/redis/v1"
 
-	"github.com/stackshy/cloudemu"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 const (

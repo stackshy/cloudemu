@@ -3,9 +3,9 @@ package fcm
 import (
 	"net/http"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	notifdriver "github.com/stackshy/cloudemu/notification/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 )
 
 // sendMessageRequest is the FCM messages:send request body. Only the fields the

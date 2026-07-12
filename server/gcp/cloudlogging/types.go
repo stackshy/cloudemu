@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	logdriver "github.com/stackshy/cloudemu/logging/driver"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
 // logEntryJSON is the subset of the Cloud Logging LogEntry resource we model:

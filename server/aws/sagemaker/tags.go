@@ -3,7 +3,7 @@ package sagemaker
 import (
 	"net/http"
 
-	"github.com/stackshy/cloudemu/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 func (h *Handler) addTags(w http.ResponseWriter, r *http.Request) {

@@ -14,12 +14,12 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
-	"github.com/stackshy/cloudemu/internal/memstore"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 const (

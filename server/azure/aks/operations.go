@@ -3,8 +3,8 @@ package aks
 import (
 	"net/http"
 
-	"github.com/stackshy/cloudemu/providers/azure/aks"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
 // ---- Managed Cluster ops ----

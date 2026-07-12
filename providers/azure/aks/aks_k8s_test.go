@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu/kubernetes"
+	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
 func TestSetK8sAPI_CreateRegistersWithAPIServer(t *testing.T) {

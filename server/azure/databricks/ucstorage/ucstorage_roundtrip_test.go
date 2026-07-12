@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stackshy/cloudemu/server"
-	"github.com/stackshy/cloudemu/server/azure/databricks/ucstorage"
+	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/ucstorage"
 )
 
 func newWorkspace(t *testing.T) *databricks.WorkspaceClient {

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/databricks/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
 
 func newTestMock() *Mock {

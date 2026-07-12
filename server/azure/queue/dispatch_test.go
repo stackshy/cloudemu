@@ -11,8 +11,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
 
-	"github.com/stackshy/cloudemu"
-	azureserver "github.com/stackshy/cloudemu/server/azure"
+	"github.com/stackshy/cloudemu/v2"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 // TestNoShadowing registers Blob, Queue and Table on the same server and

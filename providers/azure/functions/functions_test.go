@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/serverless/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -389,11 +389,11 @@ func TestDeleteAlias(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name     string
-		fnName   string
-		alias    string
-		wantErr  bool
-		errMsg   string
+		name    string
+		fnName  string
+		alias   string
+		wantErr bool
+		errMsg  string
 	}{
 		{name: "success", fnName: "fn1", alias: "prod"},
 		{name: "alias not found", fnName: "fn1", alias: "missing", wantErr: true, errMsg: "not found"},

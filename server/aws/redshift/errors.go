@@ -1,7 +1,7 @@
 package redshift
 
 import (
-	cerrors "github.com/stackshy/cloudemu/errors"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 func errClusterNotFound(id string) error {

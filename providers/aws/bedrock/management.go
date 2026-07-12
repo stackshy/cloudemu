@@ -3,9 +3,9 @@ package bedrock
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/bedrock/driver"
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
 
 // guardrailDraftVersion is the working version assigned to a freshly created

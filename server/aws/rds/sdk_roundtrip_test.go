@@ -11,8 +11,8 @@ import (
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	awsrds "github.com/aws/aws-sdk-go-v2/service/rds"
 
-	"github.com/stackshy/cloudemu"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 func newSDKClient(t *testing.T) *awsrds.Client {

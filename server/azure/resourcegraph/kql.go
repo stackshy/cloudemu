@@ -28,7 +28,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stackshy/cloudemu/resourcediscovery"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
 // Canonical Azure resource type strings used by Resource Graph query syntax

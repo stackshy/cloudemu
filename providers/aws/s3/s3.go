@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
-	"github.com/stackshy/cloudemu/internal/memstore"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/pagination"
-	"github.com/stackshy/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 const (

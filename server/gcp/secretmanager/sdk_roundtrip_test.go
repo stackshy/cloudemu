@@ -11,8 +11,8 @@ import (
 	"google.golang.org/api/option"
 	sm "google.golang.org/api/secretmanager/v1"
 
-	"github.com/stackshy/cloudemu"
-	gcpserver "github.com/stackshy/cloudemu/server/gcp"
+	"github.com/stackshy/cloudemu/v2"
+	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 )
 
 const testParent = "projects/demo"

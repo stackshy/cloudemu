@@ -3,9 +3,9 @@ package eventarc
 import (
 	"net/http"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
 func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *route) {

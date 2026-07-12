@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -221,13 +221,13 @@ func TestListBlobs(t *testing.T) {
 	require.NoError(t, m.PutObject(ctx, "bucket", "root.txt", []byte("r"), "text/plain", nil))
 
 	tests := []struct {
-		name           string
-		bucket         string
-		opts           driver.ListOptions
-		wantErr        bool
-		wantCount      int
-		wantPrefixes   []string
-		errMsg         string
+		name         string
+		bucket       string
+		opts         driver.ListOptions
+		wantErr      bool
+		wantCount    int
+		wantPrefixes []string
+		errMsg       string
 	}{
 		{name: "all objects", bucket: "bucket", opts: driver.ListOptions{}, wantCount: 3},
 		{name: "prefix filter", bucket: "bucket", opts: driver.ListOptions{Prefix: "dir/"}, wantCount: 2},

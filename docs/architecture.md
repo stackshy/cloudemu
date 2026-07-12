@@ -117,7 +117,7 @@ aws.DynamoDB.CreateTable(ctx, tableConfig)
 cloudemu.go                           # Entry point: NewAWS(), NewAzure(), NewGCP()
 cloudemu_test.go                      # All tests
 doc.go                                # Package documentation
-go.mod                                # Module: github.com/stackshy/cloudemu
+go.mod                                # Module: github.com/stackshy/cloudemu/v2
 config/
     options.go                        # Options, WithClock, WithRegion, etc.
     clock.go                          # Clock, RealClock, FakeClock

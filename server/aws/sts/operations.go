@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 )
 
 // callerUserName is the synthetic IAM user name reported by GetCallerIdentity.

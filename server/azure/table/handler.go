@@ -27,8 +27,8 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	driver "github.com/stackshy/cloudemu/tablestorage/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	driver "github.com/stackshy/cloudemu/v2/services/tablestorage/driver"
 )
 
 const (

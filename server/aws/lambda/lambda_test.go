@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu"
-	awsprov "github.com/stackshy/cloudemu/providers/aws"
-	"github.com/stackshy/cloudemu/server/aws/lambda"
-	sdrv "github.com/stackshy/cloudemu/serverless/driver"
+	"github.com/stackshy/cloudemu/v2"
+	awsprov "github.com/stackshy/cloudemu/v2/providers/aws"
+	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
+	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 func newServer(t *testing.T) (*httptest.Server, *awsprov.Provider) {

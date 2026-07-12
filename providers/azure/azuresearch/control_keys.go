@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stackshy/cloudemu/azuresearch/driver"
-	"github.com/stackshy/cloudemu/errors"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 // svcChildID builds the ARM ID for a resource nested under a search service.

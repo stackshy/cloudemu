@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/internal/idgen"
-	"github.com/stackshy/cloudemu/internal/memstore"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/sagemaker/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 // Compile-time checks that Mock implements the driver interfaces.

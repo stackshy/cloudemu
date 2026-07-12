@@ -3,7 +3,7 @@ package azuresearch
 import (
 	"net/http"
 
-	srchdriver "github.com/stackshy/cloudemu/azuresearch/driver"
+	srchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
 // --- Indexers ---

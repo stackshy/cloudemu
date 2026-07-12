@@ -9,8 +9,8 @@ import (
 	"github.com/databricks/databricks-sdk-go/config"
 	"github.com/databricks/databricks-sdk-go/service/sql"
 
-	"github.com/stackshy/cloudemu/server"
-	"github.com/stackshy/cloudemu/server/azure/databricks/sqlwarehouses"
+	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/databricks/sqlwarehouses"
 )
 
 func newWarehouseClient(t *testing.T) *databricks.WorkspaceClient {

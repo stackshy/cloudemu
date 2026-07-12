@@ -33,7 +33,7 @@ import (
 	"net/http"
 	"strings"
 
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 const (

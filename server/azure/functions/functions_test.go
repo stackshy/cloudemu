@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu"
-	azureserver "github.com/stackshy/cloudemu/server/azure"
+	"github.com/stackshy/cloudemu/v2"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 const (
@@ -267,4 +267,3 @@ func readBody(t *testing.T, resp *http.Response) string {
 
 	return strings.TrimSpace(string(b))
 }
-

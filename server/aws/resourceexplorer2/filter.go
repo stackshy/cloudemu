@@ -3,7 +3,7 @@ package resourceexplorer2
 import (
 	"strings"
 
-	"github.com/stackshy/cloudemu/resourcediscovery"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
 // parseFilter parses Resource Explorer's documented query subset into a

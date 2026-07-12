@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 type attributesJSON struct {

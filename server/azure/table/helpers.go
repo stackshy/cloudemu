@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	driver "github.com/stackshy/cloudemu/tablestorage/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	driver "github.com/stackshy/cloudemu/v2/services/tablestorage/driver"
 )
 
 // tableNameFromDelete extracts "name" from a "Tables('name')" path.

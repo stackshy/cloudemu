@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/parameterstore/driver"
-	"github.com/stackshy/cloudemu/providers/aws/ssm"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
+	"github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
 func newMock() *ssm.Mock {

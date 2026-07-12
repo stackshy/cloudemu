@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/loadbalancer/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
 func newTestMock() *Mock {

@@ -1,7 +1,7 @@
 package mysqlflex
 
 import (
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // MySQL Flexible Server state enum values surfaced in ARM responses.

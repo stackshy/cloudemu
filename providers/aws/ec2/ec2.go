@@ -6,14 +6,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/stackshy/cloudemu/compute"
-	"github.com/stackshy/cloudemu/compute/driver"
-	"github.com/stackshy/cloudemu/config"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
-	"github.com/stackshy/cloudemu/internal/memstore"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	"github.com/stackshy/cloudemu/statemachine"
+	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/statemachine"
+	"github.com/stackshy/cloudemu/v2/services/compute"
+	"github.com/stackshy/cloudemu/v2/services/compute/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 var _ driver.Compute = (*Mock)(nil)
@@ -209,6 +209,13 @@ func toInstance(d *instanceData) driver.Instance {
 func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, count int) ([]driver.Instance, error) {
 	if count <= 0 {
 		return nil, cerrors.New(cerrors.InvalidArgument, "count must be greater than 0")
+	}
+
+	// Bound the requested count so an oversized MaxCount can't drive an
+	// unbounded slice allocation (real providers cap instances per call).
+	const maxRunInstances = 1000
+	if count > maxRunInstances {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "count %d exceeds the maximum of %d per call", count, maxRunInstances)
 	}
 
 	results := make([]driver.Instance, 0, count)

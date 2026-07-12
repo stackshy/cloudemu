@@ -5,9 +5,9 @@ import (
 	"net/url"
 	"strconv"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	notifdriver "github.com/stackshy/cloudemu/notification/driver"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 )
 
 // createTopic maps CreateTopic to Notification.CreateTopic. SNS CreateTopic is

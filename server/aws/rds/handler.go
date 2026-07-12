@@ -14,9 +14,9 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
-	"github.com/stackshy/cloudemu/server/wire/awsquery"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // Namespace is the XML namespace for AWS RDS responses.

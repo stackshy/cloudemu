@@ -22,8 +22,8 @@ import (
 	"net/http"
 	"strings"
 
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 // Resource type names used in URL routing.

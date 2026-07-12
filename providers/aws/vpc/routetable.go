@@ -3,9 +3,9 @@ package vpc
 import (
 	"context"
 
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/idgen"
-	"github.com/stackshy/cloudemu/networking/driver"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Route target type constants.

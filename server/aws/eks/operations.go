@@ -4,7 +4,7 @@ import (
 	"math"
 	"net/http"
 
-	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
+	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 )
 
 // safeInt32 narrows an int to int32, clamping at math.MaxInt32 / math.MinInt32.

@@ -3,8 +3,8 @@ package eventbridge
 import (
 	"net/http"
 
-	ebdriver "github.com/stackshy/cloudemu/eventbus/driver"
-	"github.com/stackshy/cloudemu/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire"
+	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
 
 // --- event buses ---

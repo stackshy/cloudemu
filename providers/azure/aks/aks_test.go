@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
+	"github.com/stackshy/cloudemu/v2/config"
 )
 
 func newTestMock() *Mock {

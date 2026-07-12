@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	sdrv "github.com/stackshy/cloudemu/serverless/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 const (

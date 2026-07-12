@@ -12,8 +12,8 @@ import (
 	awseb "github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	ebtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 
-	"github.com/stackshy/cloudemu"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 func newEventBridgeClient(t *testing.T) *awseb.Client {

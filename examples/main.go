@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/stackshy/cloudemu"
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
-	storagedriver "github.com/stackshy/cloudemu/storage/driver"
+	"github.com/stackshy/cloudemu/v2"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 func main() {

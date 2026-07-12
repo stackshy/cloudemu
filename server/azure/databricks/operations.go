@@ -3,8 +3,8 @@ package databricks
 import (
 	"net/http"
 
-	dbxdriver "github.com/stackshy/cloudemu/databricks/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
 
 func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

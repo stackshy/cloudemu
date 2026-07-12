@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	rdsdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // Cloud SQL activation policy values. Real Cloud SQL exposes a third

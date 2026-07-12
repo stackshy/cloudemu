@@ -3,8 +3,8 @@ package azureai
 import (
 	"net/http"
 
-	mldriver "github.com/stackshy/cloudemu/azureai/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	mldriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )
 
 func endpointKind(collection string) string {

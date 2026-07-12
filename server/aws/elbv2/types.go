@@ -3,7 +3,7 @@ package elbv2
 import (
 	"encoding/xml"
 
-	lbdriver "github.com/stackshy/cloudemu/loadbalancer/driver"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
 // All ELBv2 query-protocol responses are wrapped in <FooResponse> with a

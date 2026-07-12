@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/stackshy/cloudemu/cache/driver"
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/internal/memstore"
-	mondriver "github.com/stackshy/cloudemu/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/services/cache/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 const defaultRedisPort = 6379

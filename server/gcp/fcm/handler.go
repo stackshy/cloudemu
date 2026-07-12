@@ -28,8 +28,8 @@ import (
 	"net/http"
 	"strings"
 
-	notifdriver "github.com/stackshy/cloudemu/notification/driver"
-	"github.com/stackshy/cloudemu/server/wire/gcprest"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 )
 
 const (

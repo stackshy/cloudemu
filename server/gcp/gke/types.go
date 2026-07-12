@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	"github.com/stackshy/cloudemu/providers/gcp/gke"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 )
 
 // gkeCluster mirrors google.golang.org/api/container/v1.Cluster's wire shape

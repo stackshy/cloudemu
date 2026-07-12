@@ -3,8 +3,8 @@ package loganalytics
 import (
 	"net/http"
 
-	logdriver "github.com/stackshy/cloudemu/logging/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
 // createOrUpdateWorkspace maps Workspaces.CreateOrUpdate onto the logging

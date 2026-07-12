@@ -12,8 +12,8 @@ import (
 	awsr53 "github.com/aws/aws-sdk-go-v2/service/route53"
 	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 
-	"github.com/stackshy/cloudemu"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 func newRoute53Client(t *testing.T) *awsr53.Client {

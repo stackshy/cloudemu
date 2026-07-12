@@ -1,7 +1,7 @@
 package secretmanager
 
 import (
-	secretsdriver "github.com/stackshy/cloudemu/secrets/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 // stateEnabled is the lifecycle state reported for every version — the mock

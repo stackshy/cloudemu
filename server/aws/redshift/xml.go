@@ -4,7 +4,7 @@ import (
 	"encoding/xml"
 	"strconv"
 
-	rdbdriver "github.com/stackshy/cloudemu/relationaldb/driver"
+	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 // Redshift query-protocol responses are wrapped in <FooResponse> with a

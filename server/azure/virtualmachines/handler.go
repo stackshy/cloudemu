@@ -22,8 +22,8 @@ import (
 	"net/http"
 	"strings"
 
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	"github.com/stackshy/cloudemu/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
 // providerName is the ARM provider this handler serves.

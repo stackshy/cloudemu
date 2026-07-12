@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"strings"
 
-	eksdriver "github.com/stackshy/cloudemu/providers/aws/eks/driver"
+	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 )
 
 const (

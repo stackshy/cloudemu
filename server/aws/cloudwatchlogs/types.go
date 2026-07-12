@@ -3,7 +3,7 @@ package cloudwatchlogs
 import (
 	"time"
 
-	logdriver "github.com/stackshy/cloudemu/logging/driver"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
 // --- request envelopes ---

@@ -22,9 +22,9 @@ import (
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/stackshy/cloudemu"
-	cloudkube "github.com/stackshy/cloudemu/kubernetes"
-	azureserver "github.com/stackshy/cloudemu/server/azure"
+	"github.com/stackshy/cloudemu/v2"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
+	cloudkube "github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
 // TestSDKAKSDataPlane_FullWorkloadStack drives the end-to-end path:

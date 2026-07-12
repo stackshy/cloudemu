@@ -16,8 +16,8 @@ import (
 	runtimetypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/aws/smithy-go"
 
-	"github.com/stackshy/cloudemu"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 const claudeModel = "anthropic.claude-3-sonnet-20240229-v1:0"

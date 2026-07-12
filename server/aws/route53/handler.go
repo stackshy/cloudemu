@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"strings"
 
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
 
 // pathPrefix roots every Route 53 REST URL. The version segment is fixed.

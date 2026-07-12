@@ -1,0 +1,833 @@
+package loadbalancer
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/ratelimit"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	"github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// mockDriver implements driver.LoadBalancer for testing the portable wrapper.
+type mockDriver struct {
+	lbs          map[string]*driver.LBInfo
+	targetGroups map[string]*driver.TargetGroupInfo
+	listeners    map[string]*driver.ListenerInfo
+	rules        map[string]*driver.RuleInfo
+	targets      map[string][]driver.TargetHealth
+	attrs        map[string]driver.LBAttributes
+	seq          int
+}
+
+func newMockDriver() *mockDriver {
+	return &mockDriver{
+		lbs:          make(map[string]*driver.LBInfo),
+		targetGroups: make(map[string]*driver.TargetGroupInfo),
+		listeners:    make(map[string]*driver.ListenerInfo),
+		rules:        make(map[string]*driver.RuleInfo),
+		targets:      make(map[string][]driver.TargetHealth),
+		attrs:        make(map[string]driver.LBAttributes),
+	}
+}
+
+func (m *mockDriver) nextID(prefix string) string {
+	m.seq++
+
+	return fmt.Sprintf("%s-%d", prefix, m.seq)
+}
+
+func (m *mockDriver) CreateLoadBalancer(_ context.Context, config driver.LBConfig) (*driver.LBInfo, error) {
+	if config.Name == "" {
+		return nil, fmt.Errorf("name required")
+	}
+
+	arn := "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/" + m.nextID("lb")
+	info := &driver.LBInfo{ARN: arn, Name: config.Name, Type: config.Type, Scheme: config.Scheme, State: "active", DNSName: config.Name + ".elb.amazonaws.com"}
+	m.lbs[arn] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteLoadBalancer(_ context.Context, arn string) error {
+	if _, ok := m.lbs[arn]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.lbs, arn)
+
+	return nil
+}
+
+func (m *mockDriver) DescribeLoadBalancers(_ context.Context, arns []string) ([]driver.LBInfo, error) {
+	if len(arns) == 0 {
+		result := make([]driver.LBInfo, 0, len(m.lbs))
+		for _, lb := range m.lbs {
+			result = append(result, *lb)
+		}
+
+		return result, nil
+	}
+
+	var result []driver.LBInfo
+
+	for _, arn := range arns {
+		if lb, ok := m.lbs[arn]; ok {
+			result = append(result, *lb)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) CreateTargetGroup(_ context.Context, config driver.TargetGroupConfig) (*driver.TargetGroupInfo, error) {
+	if config.Name == "" {
+		return nil, fmt.Errorf("name required")
+	}
+
+	arn := "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/" + m.nextID("tg")
+	info := &driver.TargetGroupInfo{ARN: arn, Name: config.Name, Protocol: config.Protocol, Port: config.Port, VPCID: config.VPCID}
+	m.targetGroups[arn] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteTargetGroup(_ context.Context, arn string) error {
+	if _, ok := m.targetGroups[arn]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.targetGroups, arn)
+
+	return nil
+}
+
+func (m *mockDriver) DescribeTargetGroups(_ context.Context, arns []string) ([]driver.TargetGroupInfo, error) {
+	if len(arns) == 0 {
+		result := make([]driver.TargetGroupInfo, 0, len(m.targetGroups))
+		for _, tg := range m.targetGroups {
+			result = append(result, *tg)
+		}
+
+		return result, nil
+	}
+
+	var result []driver.TargetGroupInfo
+
+	for _, arn := range arns {
+		if tg, ok := m.targetGroups[arn]; ok {
+			result = append(result, *tg)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) CreateListener(_ context.Context, config driver.ListenerConfig) (*driver.ListenerInfo, error) {
+	if _, ok := m.lbs[config.LBARN]; !ok {
+		return nil, fmt.Errorf("lb not found")
+	}
+
+	arn := "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/" + m.nextID("lis")
+	info := &driver.ListenerInfo{ARN: arn, LBARN: config.LBARN, Protocol: config.Protocol, Port: config.Port, TargetGroupARN: config.TargetGroupARN}
+	m.listeners[arn] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteListener(_ context.Context, arn string) error {
+	if _, ok := m.listeners[arn]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.listeners, arn)
+
+	return nil
+}
+
+func (m *mockDriver) DescribeListeners(_ context.Context, lbARN string) ([]driver.ListenerInfo, error) {
+	var result []driver.ListenerInfo
+
+	for _, lis := range m.listeners {
+		if lis.LBARN == lbARN {
+			result = append(result, *lis)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) RegisterTargets(_ context.Context, tgARN string, targets []driver.Target) error {
+	if _, ok := m.targetGroups[tgARN]; !ok {
+		return fmt.Errorf("target group not found")
+	}
+
+	for _, t := range targets {
+		m.targets[tgARN] = append(m.targets[tgARN], driver.TargetHealth{Target: t, State: "healthy"})
+	}
+
+	return nil
+}
+
+func (m *mockDriver) DeregisterTargets(_ context.Context, tgARN string, _ []driver.Target) error {
+	if _, ok := m.targetGroups[tgARN]; !ok {
+		return fmt.Errorf("target group not found")
+	}
+
+	return nil
+}
+
+func (m *mockDriver) DescribeTargetHealth(_ context.Context, tgARN string) ([]driver.TargetHealth, error) {
+	if _, ok := m.targetGroups[tgARN]; !ok {
+		return nil, fmt.Errorf("target group not found")
+	}
+
+	return m.targets[tgARN], nil
+}
+
+func (m *mockDriver) SetTargetHealth(_ context.Context, tgARN, targetID, state string) error {
+	if _, ok := m.targetGroups[tgARN]; !ok {
+		return fmt.Errorf("target group not found")
+	}
+
+	for idx := range m.targets[tgARN] {
+		if m.targets[tgARN][idx].Target.ID == targetID {
+			m.targets[tgARN][idx].State = state
+			return nil
+		}
+	}
+
+	return fmt.Errorf("target not found")
+}
+
+func (m *mockDriver) CreateRule(_ context.Context, config driver.RuleConfig) (*driver.RuleInfo, error) {
+	if _, ok := m.listeners[config.ListenerARN]; !ok {
+		return nil, fmt.Errorf("listener not found")
+	}
+
+	arn := "arn:rule/" + m.nextID("rule")
+	info := &driver.RuleInfo{
+		ARN: arn, ListenerARN: config.ListenerARN, Priority: config.Priority,
+		Conditions: config.Conditions, Actions: config.Actions,
+	}
+	m.rules[arn] = info
+
+	return info, nil
+}
+
+func (m *mockDriver) DeleteRule(_ context.Context, ruleARN string) error {
+	if _, ok := m.rules[ruleARN]; !ok {
+		return fmt.Errorf("rule not found")
+	}
+
+	delete(m.rules, ruleARN)
+
+	return nil
+}
+
+func (m *mockDriver) DescribeRules(_ context.Context, listenerARN string) ([]driver.RuleInfo, error) {
+	var result []driver.RuleInfo
+
+	for _, r := range m.rules {
+		if r.ListenerARN == listenerARN {
+			result = append(result, *r)
+		}
+	}
+
+	return result, nil
+}
+
+func (m *mockDriver) ModifyListener(_ context.Context, input driver.ModifyListenerInput) error {
+	li, ok := m.listeners[input.ListenerARN]
+	if !ok {
+		return fmt.Errorf("listener not found")
+	}
+
+	if input.Port != 0 {
+		li.Port = input.Port
+	}
+
+	if input.Protocol != "" {
+		li.Protocol = input.Protocol
+	}
+
+	return nil
+}
+
+func (m *mockDriver) GetLBAttributes(_ context.Context, lbARN string) (*driver.LBAttributes, error) {
+	if _, ok := m.lbs[lbARN]; !ok {
+		return nil, fmt.Errorf("lb not found")
+	}
+
+	attrs, ok := m.attrs[lbARN]
+	if !ok {
+		attrs = driver.LBAttributes{IdleTimeout: 60}
+	}
+
+	return &attrs, nil
+}
+
+func (m *mockDriver) PutLBAttributes(_ context.Context, lbARN string, attrs driver.LBAttributes) error {
+	if _, ok := m.lbs[lbARN]; !ok {
+		return fmt.Errorf("lb not found")
+	}
+
+	m.attrs[lbARN] = attrs
+
+	return nil
+}
+
+func newTestLB(opts ...Option) *LB {
+	return NewLB(newMockDriver(), opts...)
+}
+
+func TestNewLB(t *testing.T) {
+	lb := newTestLB()
+	require.NotNil(t, lb)
+	require.NotNil(t, lb.driver)
+}
+
+func TestCreateLoadBalancer(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		info, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "my-lb", Type: "application"})
+		require.NoError(t, err)
+		assert.Equal(t, "my-lb", info.Name)
+		assert.NotEmpty(t, info.ARN)
+		assert.Equal(t, "active", info.State)
+	})
+
+	t.Run("empty name error", func(t *testing.T) {
+		_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteLoadBalancer(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	info, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "del-lb"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := lb.DeleteLoadBalancer(ctx, info.ARN)
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := lb.DeleteLoadBalancer(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestDescribeLoadBalancers(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "lb-a"})
+	require.NoError(t, err)
+
+	_, err = lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "lb-b"})
+	require.NoError(t, err)
+
+	lbs, err := lb.DescribeLoadBalancers(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(lbs))
+}
+
+func TestCreateTargetGroup(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		info, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "my-tg", Protocol: "HTTP", Port: 80})
+		require.NoError(t, err)
+		assert.Equal(t, "my-tg", info.Name)
+	})
+
+	t.Run("empty name error", func(t *testing.T) {
+		_, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteTargetGroup(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	tg, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "del-tg"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := lb.DeleteTargetGroup(ctx, tg.ARN)
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := lb.DeleteTargetGroup(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestDescribeTargetGroups(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	_, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "tg-a"})
+	require.NoError(t, err)
+
+	_, err = lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "tg-b"})
+	require.NoError(t, err)
+
+	tgs, err := lb.DescribeTargetGroups(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(tgs))
+}
+
+func TestCreateListener(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "lis-lb"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		info, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+		require.NoError(t, err)
+		assert.Equal(t, lbInfo.ARN, info.LBARN)
+	})
+
+	t.Run("lb not found", func(t *testing.T) {
+		_, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: "nonexistent"})
+		require.Error(t, err)
+	})
+}
+
+func TestDeleteListener(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "dellis-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := lb.DeleteListener(ctx, lis.ARN)
+		require.NoError(t, err)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		err := lb.DeleteListener(ctx, "nonexistent")
+		require.Error(t, err)
+	})
+}
+
+func TestDescribeListeners(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "desclis-lb"})
+	require.NoError(t, err)
+
+	_, err = lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	listeners, err := lb.DescribeListeners(ctx, lbInfo.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(listeners))
+}
+
+func TestRegisterAndDescribeTargets(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	tg, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "reg-tg"})
+	require.NoError(t, err)
+
+	targets := []driver.Target{{ID: "i-1234", Port: 80}}
+
+	err = lb.RegisterTargets(ctx, tg.ARN, targets)
+	require.NoError(t, err)
+
+	health, err := lb.DescribeTargetHealth(ctx, tg.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(health))
+	assert.Equal(t, "healthy", health[0].State)
+}
+
+func TestDeregisterTargets(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	tg, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "dereg-tg"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := lb.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1234", Port: 80}})
+		require.NoError(t, err)
+	})
+
+	t.Run("tg not found", func(t *testing.T) {
+		err := lb.DeregisterTargets(ctx, "nonexistent", []driver.Target{{ID: "i-1234"}})
+		require.Error(t, err)
+	})
+}
+
+func TestSetTargetHealth(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	tg, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "health-tg"})
+	require.NoError(t, err)
+
+	err = lb.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1234", Port: 80}})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		err := lb.SetTargetHealth(ctx, tg.ARN, "i-1234", "unhealthy")
+		require.NoError(t, err)
+	})
+
+	t.Run("target not found", func(t *testing.T) {
+		err := lb.SetTargetHealth(ctx, tg.ARN, "nonexistent", "unhealthy")
+		require.Error(t, err)
+	})
+}
+
+func TestLBWithRecorder(t *testing.T) {
+	rec := recorder.New()
+	lb := newTestLB(WithRecorder(rec))
+	ctx := context.Background()
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "rec-lb"})
+	require.NoError(t, err)
+
+	totalCalls := rec.CallCount()
+	assert.GreaterOrEqual(t, totalCalls, 1)
+
+	createCalls := rec.CallCountFor("loadbalancer", "CreateLoadBalancer")
+	assert.Equal(t, 1, createCalls)
+}
+
+func TestLBWithRecorderOnError(t *testing.T) {
+	rec := recorder.New()
+	lb := newTestLB(WithRecorder(rec))
+	ctx := context.Background()
+
+	_ = lb.DeleteLoadBalancer(ctx, "nonexistent")
+
+	totalCalls := rec.CallCount()
+	assert.Equal(t, 1, totalCalls)
+
+	last := rec.LastCall()
+	require.NotNil(t, last)
+	assert.NotNil(t, last.Error)
+}
+
+func TestLBWithMetrics(t *testing.T) {
+	mc := metrics.NewCollector()
+	lb := newTestLB(WithMetrics(mc))
+	ctx := context.Background()
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "met-lb"})
+	require.NoError(t, err)
+
+	q := metrics.NewQuery(mc)
+
+	callsCount := q.ByName("calls_total").Count()
+	assert.GreaterOrEqual(t, callsCount, 1)
+
+	durCount := q.ByName("call_duration").Count()
+	assert.GreaterOrEqual(t, durCount, 1)
+}
+
+func TestLBWithMetricsOnError(t *testing.T) {
+	mc := metrics.NewCollector()
+	lb := newTestLB(WithMetrics(mc))
+	ctx := context.Background()
+
+	_ = lb.DeleteLoadBalancer(ctx, "nonexistent")
+
+	q := metrics.NewQuery(mc)
+
+	errCount := q.ByName("errors_total").Count()
+	assert.Equal(t, 1, errCount)
+}
+
+func TestLBWithErrorInjection(t *testing.T) {
+	inj := inject.NewInjector()
+	lb := newTestLB(WithErrorInjection(inj))
+	ctx := context.Background()
+
+	injectedErr := fmt.Errorf("injected failure")
+	inj.Set("loadbalancer", "CreateLoadBalancer", injectedErr, inject.Always{})
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "fail-lb"})
+	require.Error(t, err)
+	assert.Equal(t, injectedErr, err)
+}
+
+func TestLBWithErrorInjectionRecorded(t *testing.T) {
+	rec := recorder.New()
+	inj := inject.NewInjector()
+	lb := newTestLB(WithErrorInjection(inj), WithRecorder(rec))
+	ctx := context.Background()
+
+	injectedErr := fmt.Errorf("boom")
+	inj.Set("loadbalancer", "DeleteLoadBalancer", injectedErr, inject.Always{})
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "inj-lb"})
+	require.NoError(t, err)
+
+	err = lb.DeleteLoadBalancer(ctx, "some-arn")
+	require.Error(t, err)
+
+	delCalls := rec.CallsFor("loadbalancer", "DeleteLoadBalancer")
+	assert.Equal(t, 1, len(delCalls))
+	assert.NotNil(t, delCalls[0].Error)
+}
+
+func TestLBWithErrorInjectionRemoved(t *testing.T) {
+	inj := inject.NewInjector()
+	lb := newTestLB(WithErrorInjection(inj))
+	ctx := context.Background()
+
+	injectedErr := fmt.Errorf("fail")
+	inj.Set("loadbalancer", "CreateLoadBalancer", injectedErr, inject.Always{})
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "test"})
+	require.Error(t, err)
+
+	inj.Remove("loadbalancer", "CreateLoadBalancer")
+
+	_, err = lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "test"})
+	require.NoError(t, err)
+}
+
+func TestLBWithLatency(t *testing.T) {
+	latency := 1 * time.Millisecond
+	lb := newTestLB(WithLatency(latency))
+	ctx := context.Background()
+
+	info, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "lat-lb"})
+	require.NoError(t, err)
+	assert.Equal(t, "lat-lb", info.Name)
+}
+
+func TestCreateRulePortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "rule-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		rule, ruleErr := lb.CreateRule(ctx, driver.RuleConfig{
+			ListenerARN: lis.ARN,
+			Priority:    10,
+			Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/api/*"}}},
+			Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: "tg-arn"}},
+		})
+		require.NoError(t, ruleErr)
+		assert.NotEmpty(t, rule.ARN)
+		assert.Equal(t, lis.ARN, rule.ListenerARN)
+		assert.Equal(t, 10, rule.Priority)
+	})
+
+	t.Run("listener not found", func(t *testing.T) {
+		_, ruleErr := lb.CreateRule(ctx, driver.RuleConfig{ListenerARN: "nonexistent"})
+		require.Error(t, ruleErr)
+	})
+}
+
+func TestDeleteRulePortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "delrule-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	rule, err := lb.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: lis.ARN,
+		Priority:    1,
+		Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/"}}},
+		Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: "tg-arn"}},
+	})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		delErr := lb.DeleteRule(ctx, rule.ARN)
+		require.NoError(t, delErr)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		delErr := lb.DeleteRule(ctx, "nonexistent")
+		require.Error(t, delErr)
+	})
+}
+
+func TestDescribeRulesPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "descrule-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	_, err = lb.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: lis.ARN,
+		Priority:    1,
+		Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/api"}}},
+		Actions:     []driver.RuleAction{{Type: "forward", TargetGroupARN: "tg-arn"}},
+	})
+	require.NoError(t, err)
+
+	rules, err := lb.DescribeRules(ctx, lis.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(rules))
+	assert.Equal(t, 1, rules[0].Priority)
+}
+
+func TestModifyListenerPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "modlis-lb"})
+	require.NoError(t, err)
+
+	lis, err := lb.CreateListener(ctx, driver.ListenerConfig{LBARN: lbInfo.ARN, Protocol: "HTTP", Port: 80})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		modErr := lb.ModifyListener(ctx, driver.ModifyListenerInput{ListenerARN: lis.ARN, Port: 8080, Protocol: "HTTPS"})
+		require.NoError(t, modErr)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		modErr := lb.ModifyListener(ctx, driver.ModifyListenerInput{ListenerARN: "nonexistent", Port: 8080})
+		require.Error(t, modErr)
+	})
+}
+
+func TestGetLBAttributesPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "attr-lb"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		attrs, getErr := lb.GetLBAttributes(ctx, lbInfo.ARN)
+		require.NoError(t, getErr)
+		assert.Equal(t, 60, attrs.IdleTimeout)
+	})
+
+	t.Run("lb not found", func(t *testing.T) {
+		_, getErr := lb.GetLBAttributes(ctx, "nonexistent")
+		require.Error(t, getErr)
+	})
+}
+
+func TestPutLBAttributesPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	lbInfo, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "putattr-lb"})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		putErr := lb.PutLBAttributes(ctx, lbInfo.ARN, driver.LBAttributes{IdleTimeout: 120, DeletionProtection: true})
+		require.NoError(t, putErr)
+
+		attrs, getErr := lb.GetLBAttributes(ctx, lbInfo.ARN)
+		require.NoError(t, getErr)
+		assert.Equal(t, 120, attrs.IdleTimeout)
+		assert.True(t, attrs.DeletionProtection)
+	})
+
+	t.Run("lb not found", func(t *testing.T) {
+		putErr := lb.PutLBAttributes(ctx, "nonexistent", driver.LBAttributes{IdleTimeout: 60})
+		require.Error(t, putErr)
+	})
+}
+
+func TestDescribeTargetHealthPortable(t *testing.T) {
+	lb := newTestLB()
+	ctx := context.Background()
+
+	tg, err := lb.CreateTargetGroup(ctx, driver.TargetGroupConfig{Name: "health-tg2"})
+	require.NoError(t, err)
+
+	err = lb.RegisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-1", Port: 80}, {ID: "i-2", Port: 80}})
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		health, healthErr := lb.DescribeTargetHealth(ctx, tg.ARN)
+		require.NoError(t, healthErr)
+		assert.Equal(t, 2, len(health))
+	})
+
+	t.Run("tg not found", func(t *testing.T) {
+		_, healthErr := lb.DescribeTargetHealth(ctx, "nonexistent")
+		require.Error(t, healthErr)
+	})
+}
+
+func TestLBWithRateLimiter(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	limiter := ratelimit.New(1, 1, fc)
+	lb := NewLB(newMockDriver(), WithRateLimiter(limiter))
+	ctx := context.Background()
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "rl-lb"})
+	require.NoError(t, err)
+
+	_, err = lb.DescribeLoadBalancers(ctx, nil)
+	require.Error(t, err, "expected rate limit error on second call without time advance")
+}
+
+func TestLBAllOptionsComposed(t *testing.T) {
+	rec := recorder.New()
+	mc := metrics.NewCollector()
+	inj := inject.NewInjector()
+	latency := 1 * time.Millisecond
+
+	lb := NewLB(newMockDriver(),
+		WithRecorder(rec),
+		WithMetrics(mc),
+		WithErrorInjection(inj),
+		WithLatency(latency),
+	)
+	ctx := context.Background()
+
+	_, err := lb.CreateLoadBalancer(ctx, driver.LBConfig{Name: "all-opts"})
+	require.NoError(t, err)
+
+	_, err = lb.DescribeLoadBalancers(ctx, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, rec.CallCount())
+
+	q := metrics.NewQuery(mc)
+	assert.Equal(t, 2, q.ByName("calls_total").Count())
+}

@@ -46,7 +46,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/stackshy/cloudemu/providers/gcp/gke"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 )
 
 const (

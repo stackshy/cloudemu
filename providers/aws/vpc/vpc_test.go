@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackshy/cloudemu/config"
-	"github.com/stackshy/cloudemu/networking/driver"
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 func newTestMock() *Mock {
@@ -104,8 +104,8 @@ func TestCreateSubnet(t *testing.T) {
 		{name: "empty VPC ID", cfg: driver.SubnetConfig{CIDRBlock: "10.0.1.0/24"}, expectErr: true},
 		{name: "empty CIDR", cfg: driver.SubnetConfig{VPCID: v.ID}, expectErr: true},
 		{
-			name: "VPC not found",
-			cfg:  driver.SubnetConfig{VPCID: "vpc-nope", CIDRBlock: "10.0.1.0/24"},
+			name:      "VPC not found",
+			cfg:       driver.SubnetConfig{VPCID: "vpc-nope", CIDRBlock: "10.0.1.0/24"},
 			expectErr: true,
 		},
 	}

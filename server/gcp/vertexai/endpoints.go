@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/stackshy/cloudemu/vertexai/driver"
+	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 func endpointJSON(e *driver.Endpoint) map[string]any {

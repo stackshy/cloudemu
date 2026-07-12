@@ -12,8 +12,8 @@ import (
 	awseks "github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 
-	"github.com/stackshy/cloudemu"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 func newSDKClient(t *testing.T) *awseks.Client {

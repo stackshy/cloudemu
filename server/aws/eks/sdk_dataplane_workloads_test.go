@@ -18,9 +18,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/stackshy/cloudemu"
-	cloudkube "github.com/stackshy/cloudemu/kubernetes"
-	awsserver "github.com/stackshy/cloudemu/server/aws"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	cloudkube "github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
 // TestSDKEKSDataPlane_FullWorkloadStack walks through the resources a real
