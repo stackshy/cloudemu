@@ -93,7 +93,7 @@ func defaultType(t string) string {
 
 // PutParameter creates a new parameter or, when Overwrite is set, appends a new
 // version to an existing one.
-func (m *Mock) PutParameter(_ context.Context, cfg driver.PutConfig) (int64, string, error) {
+func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
 	if cfg.Name == "" {
 		return 0, "", errors.New(errors.InvalidArgument, "parameter name is required")
 	}
@@ -158,7 +158,7 @@ func (m *Mock) PutParameter(_ context.Context, cfg driver.PutConfig) (int64, str
 
 		cfg.Overwrite = true
 
-		return m.PutParameter(context.Background(), cfg)
+		return m.PutParameter(ctx, cfg)
 	}
 
 	return 1, tier, nil
@@ -437,7 +437,18 @@ func (m *Mock) LabelParameterVersion(_ context.Context, name string, ver int64, 
 		return 0, nil, errors.Newf(errors.NotFound, "parameter %q version %d not found", name, ver)
 	}
 
+	var invalid []string
+
 	for _, label := range labels {
+		// Real SSM rejects labels that begin with a digit or with "aws"/"ssm"
+		// (case-insensitive). Rejecting them here also prevents a numeric label
+		// like "5" from being attached and then shadowed by version-number
+		// resolution in pick().
+		if !validLabel(label) {
+			invalid = append(invalid, label)
+			continue
+		}
+
 		// Detach the label from any other version first.
 		for _, v := range pd.versions {
 			if v == target {
@@ -452,7 +463,24 @@ func (m *Mock) LabelParameterVersion(_ context.Context, name string, ver int64, 
 		}
 	}
 
-	return ver, nil, nil
+	return ver, invalid, nil
+}
+
+// validLabel reports whether a parameter label is acceptable to real SSM: it
+// must be non-empty, must not start with a digit, and must not start with
+// "aws" or "ssm" (case-insensitive).
+func validLabel(label string) bool {
+	if label == "" {
+		return false
+	}
+
+	if label[0] >= '0' && label[0] <= '9' {
+		return false
+	}
+
+	lower := strings.ToLower(label)
+
+	return !strings.HasPrefix(lower, "aws") && !strings.HasPrefix(lower, "ssm")
 }
 
 func containsString(ss []string, s string) bool {
