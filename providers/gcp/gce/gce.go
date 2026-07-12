@@ -216,6 +216,13 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		return nil, cerrors.New(cerrors.InvalidArgument, "count must be greater than 0")
 	}
 
+	// Bound the requested count so an oversized MaxCount can't drive an
+	// unbounded slice allocation (real providers cap instances per call).
+	const maxRunInstances = 1000
+	if count > maxRunInstances {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "count %d exceeds the maximum of %d per call", count, maxRunInstances)
+	}
+
 	results := make([]driver.Instance, 0, count)
 
 	for i := 0; i < count; i++ {
