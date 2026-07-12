@@ -33,7 +33,7 @@ CloudEmu follows a three-layer architecture that separates portable API concerns
 
 ### Layer 1: Portable API
 
-The top layer lives in service-specific packages (`storage/`, `compute/`, `database/`, etc.). Each portable API type wraps a driver with cross-cutting concerns. For example, `storage.Bucket` wraps `driver.Bucket` and adds call recording, metrics collection, rate limiting, error injection, and simulated latency to every operation. This layer is provider-agnostic -- the same `storage.Bucket` works with S3, Blob Storage, or GCS.
+The top layer lives in service-specific packages (`services/storage/`, `services/compute/`, `services/database/`, etc.). Each portable API type wraps a driver with cross-cutting concerns. For example, `storage.Bucket` wraps `driver.Bucket` and adds call recording, metrics collection, rate limiting, error injection, and simulated latency to every operation. This layer is provider-agnostic -- the same `storage.Bucket` works with S3, Blob Storage, or GCS.
 
 ### Layer 2: Driver Interfaces
 

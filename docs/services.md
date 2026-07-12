@@ -23,7 +23,7 @@ This document lists every service and operation available in CloudEmu across all
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
-| 18 | Kubernetes | `eks` + shared `kubernetes/` | `aks` + shared `kubernetes/` | `gke` + shared `kubernetes/` |
+| 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
@@ -1039,7 +1039,7 @@ A single portable interface backs every RDBMS handler. Engine selection (MySQL /
 ## 18. Kubernetes
 
 **Control plane:** AWS `eks`, Azure `aks`, GCP `gke` — cluster, node-pool, and addon / Fargate-profile / maintenance-config lifecycle, driven by the real cloud SDKs.
-**Data plane:** shared `kubernetes/` package — an in-memory Kubernetes API server registered by every cluster across all three providers. Kubeconfigs returned by the control plane point at `<base>/k8s/<cluster-uid>` so `client-go` and `kubectl` operate end-to-end.
+**Data plane:** shared `services/kubernetes/` package — an in-memory Kubernetes API server registered by every cluster across all three providers. Kubeconfigs returned by the control plane point at `<base>/k8s/<cluster-uid>` so `client-go` and `kubectl` operate end-to-end.
 
 Each provider exposes its native control-plane API. The data plane has no portable driver — clients connect via the kubeconfig the control plane hands out, then talk standard Kubernetes REST.
 
@@ -1075,7 +1075,7 @@ Operations: **18**
 
 Operations: **26**
 
-### Data plane (`kubernetes/`)
+### Data plane (`services/kubernetes/`)
 
 Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Anonymous auth (kubeconfigs use `insecure-skip-tls-verify: true`).
 
