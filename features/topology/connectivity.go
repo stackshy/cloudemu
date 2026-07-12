@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	cerrors "github.com/stackshy/cloudemu/errors"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // CanConnect evaluates whether two instances can communicate on the given

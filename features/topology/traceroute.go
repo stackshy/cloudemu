@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // TraceRoute returns the network path from a source instance to a destination IP.

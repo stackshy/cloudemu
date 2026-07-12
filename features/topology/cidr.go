@@ -4,7 +4,7 @@ import (
 	"net"
 	"sort"
 
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // ipInCIDR checks whether the given IP address is contained in the CIDR block.

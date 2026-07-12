@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	cerrors "github.com/stackshy/cloudemu/errors"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // EvaluateSecurityGroups checks whether traffic from srcSG to dstSG is allowed

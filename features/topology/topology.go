@@ -1,9 +1,9 @@
 package topology
 
 import (
-	computedriver "github.com/stackshy/cloudemu/compute/driver"
-	dnsdriver "github.com/stackshy/cloudemu/dns/driver"
-	netdriver "github.com/stackshy/cloudemu/networking/driver"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Engine evaluates network topology and connectivity between cloud resources.
