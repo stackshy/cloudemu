@@ -15,8 +15,9 @@
 //	DELETE /{table}(PartitionKey='p',RowKey='r')          — delete entity
 //	GET    /{table}()?$filter=…                           — query entities
 //
-// Access policies, transactional batches, and merge-on-insert (upsert via
-// PUT/MERGE without an existing row) are out of scope.
+// Access policies and transactional batches are out of scope. Upsert (a PUT or
+// MERGE with no If-Match header against a missing row) is supported as an
+// insert-or-replace/merge, matching aztables UpsertEntity.
 package table
 
 import (
@@ -26,6 +27,7 @@ import (
 	"net/http"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/errors"
 	driver "github.com/stackshy/cloudemu/tablestorage/driver"
 )
 
@@ -310,6 +312,21 @@ func (h *Handler) updateEntity(
 	ent["RowKey"] = rk
 
 	if err := h.ts.UpdateEntity(r.Context(), table, pk, rk, driver.Entity(ent), mode); err != nil {
+		// aztables UpdateEntity sends an If-Match header; UpsertEntity does not.
+		// With no If-Match, a PUT/MERGE against a missing row is an insert
+		// (insert-or-replace/merge), so create it instead of returning 404.
+		if cerrors.IsNotFound(err) && r.Header.Get("If-Match") == "" {
+			if ierr := h.ts.InsertEntity(r.Context(), table, pk, rk, driver.Entity(ent)); ierr != nil {
+				writeErr(w, ierr)
+				return
+			}
+
+			w.Header().Set("ETag", entityETag())
+			w.WriteHeader(http.StatusNoContent)
+
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}

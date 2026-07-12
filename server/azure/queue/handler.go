@@ -61,15 +61,22 @@ func New(mq mqdriver.MessageQueue) *Handler {
 // the Blob fallback:
 //
 //   - /{queue}/messages and /{queue}/messages/{id} — the "/messages" segment
-//     is the queue data-plane marker; Blob never uses it. Fully disjoint.
+//     is the queue data-plane marker. NOTE: this is not strictly disjoint from
+//     Blob — a blob literally named "messages" (or under a "messages/" prefix)
+//     has the same shape. Azure separates them only by the {account}.queue vs
+//     {account}.blob hostname, invisible behind a shared endpoint. When both
+//     handlers are wired, the Queue handler owns this shape; a blob named
+//     "messages" is a known collision.
 //   - PUT|DELETE /{queue} with no restype=container query — Blob container ops
 //     always carry restype=container, so a bare PUT/DELETE on a single path
-//     segment is a queue create/delete. Fully disjoint.
+//     segment is a queue create/delete. Disjoint from Blob container ops.
 //   - GET /?comp=list (list queues) — this shape is byte-for-byte identical to
-//     Blob's list-containers; Azure disambiguates only by the {account}.queue
-//     vs {account}.blob hostname, which is invisible behind a shared endpoint.
-//     When both handlers are registered, the Queue handler (registered first)
-//     owns this one shape. This is the sole non-disjoint case.
+//     Blob's list-containers; Azure disambiguates only by hostname. When both
+//     handlers are registered, the Queue handler (registered first) owns it.
+//
+// The two shared-hostname shapes above are inherent to serving Queue and Blob
+// on one endpoint (real Azure uses distinct hostnames); documented, not fixable
+// without host-based routing.
 //
 // Registered before the permissive Blob fallback so these shapes win.
 func (*Handler) Matches(r *http.Request) bool {
