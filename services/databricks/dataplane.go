@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/stackshy/cloudemu/databricks/driver"
-	"github.com/stackshy/cloudemu/inject"
-	"github.com/stackshy/cloudemu/metrics"
-	"github.com/stackshy/cloudemu/ratelimit"
-	"github.com/stackshy/cloudemu/recorder"
+	"github.com/stackshy/cloudemu/v2/features/inject"
+	"github.com/stackshy/cloudemu/v2/features/metrics"
+	"github.com/stackshy/cloudemu/v2/features/ratelimit"
+	"github.com/stackshy/cloudemu/v2/features/recorder"
+	"github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
 
 // DataPlane is the portable wrapper for the Databricks workspace data plane
