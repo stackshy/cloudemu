@@ -19,8 +19,10 @@
 package gcs
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -602,7 +604,7 @@ func extractBoundary(ct string) string {
 	for _, part := range strings.Split(ct, ";") {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "boundary=") {
-			return strings.TrimPrefix(part, "boundary=")
+			return strings.Trim(strings.TrimPrefix(part, "boundary="), `"`)
 		}
 	}
 
@@ -617,65 +619,44 @@ type uploadMetadata struct {
 }
 
 // parseMultipart extracts metadata, payload, and payload content-type from a
-// multipart/related body. ok=false if either part is missing.
+// multipart/related body. ok=false if either part is missing. The payload is
+// framed by RFC 2046 boundary delimiters ("\r\n--boundary"); using the stdlib
+// reader keeps the payload byte-exact even when it ends in '-', '\r', or '\n'.
 func parseMultipart(raw []byte, boundary string) (
 	meta uploadMetadata, payload []byte, payloadContentType string, ok bool,
 ) {
-	delim := []byte("--" + boundary)
-	rawStr := string(raw)
+	mr := multipart.NewReader(bytes.NewReader(raw), boundary)
 
-	const minPartsForMetaAndPayload = 3
-
-	parts := strings.Split(rawStr, string(delim))
-	if len(parts) < minPartsForMetaAndPayload {
+	// First part: JSON object metadata.
+	metaPart, err := mr.NextRawPart()
+	if err != nil {
 		return uploadMetadata{}, nil, "", false
 	}
 
-	// parts[0] is preamble (often empty), parts[1] is JSON metadata,
-	// parts[2] is the payload.
-	_, body := splitHeaderBody(parts[1])
-
-	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &meta); err != nil {
+	metaBody, err := io.ReadAll(metaPart)
+	if err != nil {
 		return uploadMetadata{}, nil, "", false
 	}
 
-	pHeaders, pBody := splitHeaderBody(parts[2])
+	if err := json.Unmarshal(bytes.TrimSpace(metaBody), &meta); err != nil {
+		return uploadMetadata{}, nil, "", false
+	}
 
-	payloadContentType = lookupHeader(pHeaders, "Content-Type")
+	// Second part: raw object payload.
+	payloadPart, err := mr.NextRawPart()
+	if err != nil {
+		return uploadMetadata{}, nil, "", false
+	}
+
+	payload, err = io.ReadAll(payloadPart)
+	if err != nil {
+		return uploadMetadata{}, nil, "", false
+	}
+
+	payloadContentType = payloadPart.Header.Get("Content-Type")
 	if payloadContentType == "" {
 		payloadContentType = meta.ContentType
 	}
 
-	// Strip trailing CRLF that precedes the next boundary.
-	payload = []byte(strings.TrimRight(pBody, "\r\n-"))
-
 	return meta, payload, payloadContentType, true
-}
-
-func splitHeaderBody(part string) (header, body string) {
-	part = strings.TrimLeft(part, "\r\n")
-
-	const headerBodySep = "\r\n\r\n"
-
-	idx := strings.Index(part, headerBodySep)
-	if idx < 0 {
-		return "", part
-	}
-
-	return part[:idx], part[idx+len(headerBodySep):]
-}
-
-func lookupHeader(headers, key string) string {
-	for _, line := range strings.Split(headers, "\r\n") {
-		k, v, found := strings.Cut(line, ":")
-		if !found {
-			continue
-		}
-
-		if strings.EqualFold(strings.TrimSpace(k), key) {
-			return strings.TrimSpace(v)
-		}
-	}
-
-	return ""
 }
