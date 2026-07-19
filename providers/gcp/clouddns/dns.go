@@ -103,7 +103,7 @@ func (m *Mock) GetZone(_ context.Context, id string) (*driver.ZoneInfo, error) {
 
 // ListZones returns all Cloud DNS managed zones.
 func (m *Mock) ListZones(_ context.Context) ([]driver.ZoneInfo, error) {
-	all := m.zones.All()
+	all := m.zones.SortedValues()
 
 	zones := make([]driver.ZoneInfo, 0, len(all))
 	for _, z := range all {

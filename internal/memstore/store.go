@@ -1,7 +1,10 @@
 // Package memstore provides a generic thread-safe in-memory key-value store.
 package memstore
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // Store is a generic thread-safe in-memory key-value store.
 type Store[V any] struct {
@@ -142,4 +145,24 @@ func (s *Store[V]) Filter(fn func(key string, value V) bool) map[string]V {
 	}
 
 	return result
+}
+
+// SortedValues returns the values ordered by their keys. List endpoints
+// must iterate this instead of All(): map iteration order is random, and
+// real cloud APIs return deterministic list ordering.
+func (s *Store[V]) SortedValues() []V {
+	s.mu.RLock()
+	keys := make([]string, 0, len(s.items))
+	for k := range s.items {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([]V, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, s.items[k])
+	}
+	s.mu.RUnlock()
+
+	return out
 }
