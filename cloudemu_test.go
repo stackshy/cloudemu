@@ -2,6 +2,7 @@ package cloudemu
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"sort"
 	"sync/atomic"
 	"testing"
@@ -1996,7 +1997,7 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 	}
 
 	// List log groups
-	groups, err := d.ListLogGroups(ctx)
+	groups, err := d.ListLogGroups(ctx, scope.Scope{})
 	if err != nil {
 		t.Fatalf("ListLogGroups: %v", err)
 	}

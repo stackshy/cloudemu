@@ -2,6 +2,7 @@ package chaos
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
@@ -46,12 +47,12 @@ func (c *chaosLogging) GetLogGroup(ctx context.Context, name string) (*logdriver
 	return c.Logging.GetLogGroup(ctx, name)
 }
 
-func (c *chaosLogging) ListLogGroups(ctx context.Context) ([]logdriver.LogGroupInfo, error) {
+func (c *chaosLogging) ListLogGroups(ctx context.Context, filter scope.Scope) ([]logdriver.LogGroupInfo, error) {
 	if err := applyChaos(ctx, c.engine, "logging", "ListLogGroups"); err != nil {
 		return nil, err
 	}
 
-	return c.Logging.ListLogGroups(ctx)
+	return c.Logging.ListLogGroups(ctx, filter)
 }
 
 func (c *chaosLogging) PutLogEvents(

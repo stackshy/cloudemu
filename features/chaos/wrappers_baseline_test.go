@@ -2,6 +2,7 @@ package chaos_test
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"testing"
 	"time"
 
@@ -182,7 +183,7 @@ func TestWrapLoggingBaseline(t *testing.T) {
 
 	_, _ = l.CreateLogGroup(ctx, logdriver.LogGroupConfig{Name: "b"})
 	_, _ = l.GetLogGroup(ctx, "b")
-	_, _ = l.ListLogGroups(ctx)
+	_, _ = l.ListLogGroups(ctx, scope.Scope{})
 	_, _ = l.CreateLogStream(ctx, "b", "s")
 	_ = l.PutLogEvents(ctx, "b", "s", []logdriver.LogEvent{{Timestamp: time.Now(), Message: "x"}})
 	_, _ = l.GetLogEvents(ctx, &logdriver.LogQueryInput{
