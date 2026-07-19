@@ -122,7 +122,7 @@ func (m *Mock) CreateFunction(_ context.Context, cfg driver.FunctionConfig) (*dr
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
 		Memory: cfg.Memory, Timeout: cfg.Timeout, State: "ACTIVE",
 		Environment: env, Tags: tags,
-		LastModified: time.Now().UTC().Format(time.RFC3339),
+		LastModified: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 	}
 
 	m.handlersMu.RLock()
@@ -181,7 +181,7 @@ func (m *Mock) UpdateFunction(_ context.Context, name string, cfg driver.Functio
 
 	info := fd.info
 	applyConfigUpdates(&info, cfg)
-	info.LastModified = time.Now().UTC().Format(time.RFC3339)
+	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
 	fd.info = info
 	m.funcs.Set(name, fd)
 

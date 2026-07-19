@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -180,7 +181,7 @@ func (m *Mock) PutObject(_ context.Context, bucket, key string, data []byte, con
 		ContentType:  contentType,
 		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified: m.opts.Clock.Now().UTC().Format(blobTimeFormat),
-		Metadata:     metadata,
+		Metadata:     maps.Clone(metadata),
 	})
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(len(data))})
@@ -208,7 +209,7 @@ func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object,
 	return &driver.Object{
 		Info: driver.ObjectInfo{
 			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
+			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		},
 		Data: dataCopy,
 	}, nil
@@ -246,7 +247,7 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 
 	return &driver.ObjectInfo{
 		Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
-		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
+		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 	}, nil
 }
 
@@ -286,7 +287,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 
 		matchedObjects = append(matchedObjects, driver.ObjectInfo{
 			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
+			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		})
 	}
 

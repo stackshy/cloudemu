@@ -4,6 +4,7 @@ package driver
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -361,7 +362,7 @@ func PageOrdered(
 			return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid ExclusiveStartKey")
 		}
 
-		res := &QueryResult{Items: items, Count: len(items)}
+		res := &QueryResult{Items: cloneItems(items), Count: len(items)}
 		if more && len(items) > 0 {
 			res.LastEvaluatedKey = KeyAttributes(items[len(items)-1], keyFields...)
 		}
@@ -373,9 +374,19 @@ func PageOrdered(
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
 	}
 
-	res := &QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}
+	res := &QueryResult{Items: cloneItems(page.Items), Count: len(page.Items), NextPageToken: page.NextPageToken}
 	if page.HasMore && len(page.Items) > 0 {
 		res.LastEvaluatedKey = KeyAttributes(page.Items[len(page.Items)-1], keyFields...)
 	}
 	return res, nil
+}
+
+// cloneItems shallow-copies each result item so callers can mutate what
+// they receive without corrupting the store.
+func cloneItems(items []map[string]any) []map[string]any {
+	out := make([]map[string]any, len(items))
+	for i, it := range items {
+		out[i] = maps.Clone(it)
+	}
+	return out
 }

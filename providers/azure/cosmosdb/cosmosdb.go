@@ -4,6 +4,7 @@ package cosmosdb
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -170,6 +171,7 @@ func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) err
 
 	key := itemKey(td.config, item)
 	oldItem, hadOld := td.items.Get(key)
+	item = maps.Clone(item)
 	td.items.Set(key, item)
 	m.recordStreamEvent(td, oldItem, item, hadOld)
 	m.mu.Unlock()
@@ -203,7 +205,7 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 
 	m.emitMetric(table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": 1})
 
-	return item, nil
+	return maps.Clone(item), nil
 }
 
 // UpdateItem applies partial updates to an existing document in a container.
@@ -388,6 +390,7 @@ func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string
 	for _, item := range items {
 		key := itemKey(td.config, item)
 		oldItem, hadOld := td.items.Get(key)
+		item = maps.Clone(item)
 		td.items.Set(key, item)
 		m.recordStreamEvent(td, oldItem, item, hadOld)
 	}
@@ -411,7 +414,7 @@ func (m *Mock) BatchGetItems(_ context.Context, table string, keys []map[string]
 
 	for _, key := range keys {
 		if item, ok := td.items.Get(itemKey(td.config, key)); ok {
-			results = append(results, item)
+			results = append(results, maps.Clone(item))
 		}
 	}
 
@@ -656,6 +659,7 @@ func (m *Mock) applyTransactPuts(td *tableData, puts []map[string]any) {
 	for _, item := range puts {
 		key := itemKey(td.config, item)
 		oldItem, hadOld := td.items.Get(key)
+		item = maps.Clone(item)
 		td.items.Set(key, item)
 		m.recordStreamEvent(td, oldItem, item, hadOld)
 	}

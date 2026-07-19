@@ -4,6 +4,7 @@ package firestore
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -159,6 +160,7 @@ func (m *Mock) PutItem(ctx context.Context, table string, item map[string]any) e
 
 	key := docKey(cd.config, item)
 	oldItem, hadOld := cd.items.Get(key)
+	item = maps.Clone(item)
 	cd.items.Set(key, item)
 	m.recordStreamEvent(cd, oldItem, item, hadOld)
 	m.mu.Unlock()
@@ -191,7 +193,7 @@ func (m *Mock) GetItem(ctx context.Context, table string, key map[string]any) (m
 
 	m.emitMetric(ctx, "document/read_count", 1, map[string]string{"collection_id": table})
 
-	return item, nil
+	return maps.Clone(item), nil
 }
 
 // UpdateItem applies partial updates to an existing document in a collection.
@@ -403,6 +405,7 @@ func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string
 	for _, item := range items {
 		key := docKey(cd.config, item)
 		oldItem, hadOld := cd.items.Get(key)
+		item = maps.Clone(item)
 		cd.items.Set(key, item)
 		m.recordStreamEvent(cd, oldItem, item, hadOld)
 	}
@@ -425,7 +428,7 @@ func (m *Mock) BatchGetItems(_ context.Context, table string, keys []map[string]
 
 	for _, key := range keys {
 		if item, ok := cd.items.Get(docKey(cd.config, key)); ok {
-			results = append(results, item)
+			results = append(results, maps.Clone(item))
 		}
 	}
 
@@ -638,6 +641,7 @@ func (m *Mock) applyTransactPuts(cd *collectionData, puts []map[string]any) {
 	for _, item := range puts {
 		key := docKey(cd.config, item)
 		oldItem, hadOld := cd.items.Get(key)
+		item = maps.Clone(item)
 		cd.items.Set(key, item)
 		m.recordStreamEvent(cd, oldItem, item, hadOld)
 	}
