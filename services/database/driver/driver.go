@@ -3,8 +3,13 @@ package driver
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
+
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 )
 
 // TTLConfig configures TTL for a table.
@@ -90,7 +95,19 @@ type QueryInput struct {
 	KeyCondition KeyCondition
 	Limit        int
 	PageToken    string
-	ScanForward  bool
+
+	// ExclusiveStartKey selects key-based continuation (DynamoDB-style):
+	// the page starts after the item with these key attributes. Mutually
+	// exclusive with PageToken.
+	ExclusiveStartKey map[string]any
+
+	// SortDescending reverses the stable key ordering before paging.
+	// The zero value (ascending) matches the historical behavior.
+	SortDescending bool
+
+	// Deprecated: never implemented; use SortDescending. Retained so
+	// existing constructors keep compiling.
+	ScanForward bool
 }
 
 // ScanInput configures a scan operation.
@@ -99,6 +116,9 @@ type ScanInput struct {
 	Filters   []ScanFilter
 	Limit     int
 	PageToken string
+
+	// ExclusiveStartKey selects key-based continuation; see QueryInput.
+	ExclusiveStartKey map[string]any
 }
 
 // QueryResult is the result of a query or scan.
@@ -106,6 +126,10 @@ type QueryResult struct {
 	Items         []map[string]any
 	Count         int
 	NextPageToken string
+
+	// LastEvaluatedKey holds the key attributes of the last returned item
+	// whenever more items remain, enabling DynamoDB-style continuation.
+	LastEvaluatedKey map[string]any
 }
 
 // IndexInfo describes a Global Secondary Index.
@@ -156,23 +180,202 @@ type Database interface {
 	ListTagsOfResource(ctx context.Context, table string) (map[string]string, error)
 }
 
-// SortStableByKey orders items by a caller-derived key so offset-based page
-// tokens from internal/pagination stay valid across calls (map iteration
-// order is random). Keys are computed once per item, not per comparison.
-func SortStableByKey(items []map[string]any, key func(map[string]any) string) {
-	type keyed struct {
-		k    string
-		item map[string]any
+// CompareValues orders two attribute values the way the real services do:
+// numbers numerically, strings lexically, bools false<true. Mixed types
+// order by a fixed type rank so the ordering stays total and deterministic
+// (numbers < strings < bools < everything else).
+func CompareValues(a, b any) int {
+	an, aIsNum := toFloat(a)
+	bn, bIsNum := toFloat(b)
+
+	switch {
+	case aIsNum && bIsNum:
+		switch {
+		case an < bn:
+			return -1
+		case an > bn:
+			return 1
+		}
+		return 0
+	case aIsNum:
+		return -1
+	case bIsNum:
+		return 1
 	}
 
-	decorated := make([]keyed, len(items))
-	for i, it := range items {
-		decorated[i] = keyed{k: key(it), item: it}
+	as, aIsStr := a.(string)
+	bs, bIsStr := b.(string)
+
+	switch {
+	case aIsStr && bIsStr:
+		return strings.Compare(as, bs)
+	case aIsStr:
+		return -1
+	case bIsStr:
+		return 1
 	}
 
-	sort.Slice(decorated, func(i, j int) bool { return decorated[i].k < decorated[j].k })
+	ab, aIsBool := a.(bool)
+	bb, bIsBool := b.(bool)
 
-	for i := range decorated {
-		items[i] = decorated[i].item
+	switch {
+	case aIsBool && bIsBool:
+		switch {
+		case !ab && bb:
+			return -1
+		case ab && !bb:
+			return 1
+		}
+		return 0
+	case aIsBool:
+		return -1
+	case bIsBool:
+		return 1
 	}
+
+	return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+}
+
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// SortByFields stably orders items by the given attribute fields in order
+// (typically partition key, then sort key), comparing values type-aware via
+// CompareValues. A stable, deterministic ordering is what keeps offset-based
+// page tokens from internal/pagination valid across calls.
+func SortByFields(items []map[string]any, fields ...string) {
+	sort.SliceStable(items, func(i, j int) bool {
+		for _, f := range fields {
+			if f == "" {
+				continue
+			}
+			if c := CompareValues(items[i][f], items[j][f]); c != 0 {
+				return c < 0
+			}
+		}
+		return false
+	})
+}
+
+// PageByKey slices one page out of a stably-ordered result set using
+// key-based continuation: the page starts after the item whose identity
+// matches startKey. A startKey that matches no item is an error — silently
+// restarting from the beginning would re-serve consumed items.
+func PageByKey(
+	items []map[string]any,
+	startKey map[string]any,
+	limit int,
+	identity func(map[string]any) string,
+) (page []map[string]any, more bool, err error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	start := 0
+	if len(startKey) > 0 {
+		want := identity(startKey)
+		found := false
+		for i, it := range items {
+			if identity(it) == want {
+				start = i + 1
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, false, fmt.Errorf("start key matches no item")
+		}
+	}
+
+	end := start + limit
+	if end > len(items) {
+		end = len(items)
+	}
+
+	return items[start:end], end < len(items), nil
+}
+
+// KeyAttributes extracts the named fields from an item — the shape handed
+// back as LastEvaluatedKey. Empty field names are skipped.
+func KeyAttributes(item map[string]any, fields ...string) map[string]any {
+	out := make(map[string]any, len(fields))
+	for _, f := range fields {
+		if f == "" {
+			continue
+		}
+		if v, ok := item[f]; ok {
+			out[f] = v
+		}
+	}
+	return out
+}
+
+// PageOrdered is the one paging path for query/scan results: it stably
+// orders matched items by the table keys, optionally reverses for
+// descending queries, then slices one page — key-based continuation when
+// startKey is set, offset tokens otherwise. LastEvaluatedKey is populated
+// whenever more items remain, on both paths.
+// orderPK/orderSK are the fields to order by (the index keys for GSI
+// queries); keyFields is the LastEvaluatedKey shape (base table keys, plus
+// the index keys for GSI queries, matching real DynamoDB).
+func PageOrdered(
+	matched []map[string]any,
+	orderPK, orderSK string,
+	keyFields []string,
+	limit int,
+	pageToken string,
+	startKey map[string]any,
+	descending bool,
+	identity func(map[string]any) string,
+) (*QueryResult, error) {
+	SortByFields(matched, orderPK, orderSK)
+
+	if descending {
+		for i, j := 0, len(matched)-1; i < j; i, j = i+1, j-1 {
+			matched[i], matched[j] = matched[j], matched[i]
+		}
+	}
+
+	if len(startKey) > 0 {
+		items, more, err := PageByKey(matched, startKey, limit, identity)
+		if err != nil {
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid ExclusiveStartKey")
+		}
+
+		res := &QueryResult{Items: items, Count: len(items)}
+		if more && len(items) > 0 {
+			res.LastEvaluatedKey = KeyAttributes(items[len(items)-1], keyFields...)
+		}
+		return res, nil
+	}
+
+	page, err := pagination.Paginate(matched, pageToken, limit)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
+
+	res := &QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}
+	if page.HasMore && len(page.Items) > 0 {
+		res.LastEvaluatedKey = KeyAttributes(page.Items[len(page.Items)-1], keyFields...)
+	}
+	return res, nil
 }

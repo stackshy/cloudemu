@@ -232,36 +232,28 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	filters := parseFilterExpression(req.FilterExpression, vals, req.ExpressionAttributeNames)
 
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
-		Table:   req.TableName,
-		Filters: filters,
-		Limit:   fetchAll,
+		Table:             req.TableName,
+		Filters:           filters,
+		Limit:             req.Limit,
+		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	page, lastKey, err := h.paginateWire(
-		r.Context(), req.TableName, result.Items,
-		fromWireItem(req.ExclusiveStartKey), req.Limit,
-	)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	items := make([]map[string]any, 0, len(page))
-	for _, item := range page {
+	items := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
 		items = append(items, toWireItem(item))
 	}
 
 	resp := map[string]any{
 		"Items":        items,
 		"Count":        len(items),
-		"ScannedCount": result.Count,
+		"ScannedCount": len(items),
 	}
-	if lastKey != nil {
-		resp["LastEvaluatedKey"] = toWireItem(lastKey)
+	if result.LastEvaluatedKey != nil {
+		resp["LastEvaluatedKey"] = toWireItem(result.LastEvaluatedKey)
 	}
 
 	wire.WriteJSON(w, resp)

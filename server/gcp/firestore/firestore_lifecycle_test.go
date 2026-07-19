@@ -511,10 +511,9 @@ func TestDatabaseConditionalWrites(t *testing.T) {
 	}
 }
 
-// TestDatabaseUpdateReplaceSemantics documents the emulator's
-// survey-listed divergence: field-masked Update (and PATCH) fully REPLACE
-// the stored document instead of merging, so unmentioned fields are lost.
-func TestDatabaseUpdateReplaceSemantics(t *testing.T) {
+// TestDatabaseUpdateMergeSemantics asserts field-masked Update merges
+// like real Firestore: masked paths are written, everything else kept.
+func TestDatabaseUpdateMergeSemantics(t *testing.T) {
 	ctx, client, _ := newDBClient(t, "merge")
 
 	doc := client.Collection("merge").Doc("m1")
@@ -539,18 +538,15 @@ func TestDatabaseUpdateReplaceSemantics(t *testing.T) {
 	}
 
 	// DIVERGENCE (survey: "PATCH and :commit Set fully REPLACE the document,
-	// no field-mask merge semantics"): real Firestore would preserve "keep";
-	// the emulator drops it. Assert the documented emulator behavior.
-	if v, present := got["keep"]; present {
-		t.Logf("NOTE: 'keep'=%v survived Update — emulator gained merge semantics? Survey says full replace.", v)
-		t.Errorf("expected survey-documented full-replace behavior (keep dropped), but keep=%v is present", v)
+	// Real Firestore merge semantics: unmasked fields survive the update.
+	if got["keep"] != "original" {
+		t.Errorf("keep=%v want original (masked update must preserve unmentioned fields)", got["keep"])
 	}
 }
 
-// TestDatabaseQueryFiltersIgnored documents the survey-listed
-// behavior that documents:runQuery only honors from.collectionId — where
-// clauses are ignored and every document comes back (full scan).
-func TestDatabaseQueryFiltersIgnored(t *testing.T) {
+// TestDatabaseQueryFilters asserts documents:runQuery honors
+// structuredQuery.where and limit like real Firestore.
+func TestDatabaseQueryFilters(t *testing.T) {
 	ctx, client, _ := newDBClient(t, "accts")
 
 	coll := client.Collection("accts")
@@ -561,13 +557,19 @@ func TestDatabaseQueryFiltersIgnored(t *testing.T) {
 		}
 	}
 
-	// Real Firestore would return 1 doc (age > 25); the emulator's runQuery
-	// ignores structuredQuery.where entirely → full scan of 3 docs.
-	it := coll.Where("age", ">", 25).Documents(ctx)
+	got := dbCollectAll(t, coll.Where("age", ">", 25).Documents(ctx))
+	if len(got) != 1 {
+		t.Errorf("age>25 returned %d docs (%v), want 1", len(got), keysOfDB(got))
+	}
 
-	got := dbCollectAll(t, it)
-	if len(got) != 3 {
-		t.Errorf("filtered query returned %d docs (%v); survey documents filters-ignored full scan of 3", len(got), keysOfDB(got))
+	got = dbCollectAll(t, coll.Where("age", ">=", 20).Where("age", "<", 30).Documents(ctx))
+	if len(got) != 1 {
+		t.Errorf("20<=age<30 returned %d docs (%v), want 1", len(got), keysOfDB(got))
+	}
+
+	got = dbCollectAll(t, coll.Limit(2).Documents(ctx))
+	if len(got) != 2 {
+		t.Errorf("limit 2 returned %d docs, want 2", len(got))
 	}
 }
 

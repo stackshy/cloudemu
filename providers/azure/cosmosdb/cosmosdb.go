@@ -12,7 +12,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -298,15 +297,22 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		limit = 100
 	}
 
-	driver.SortStableByKey(matched, func(it map[string]any) string { return itemKey(td.config, it) })
-	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	// Order by the queried keys (index keys for GSI queries); the
+	// continuation key carries base + index keys like the real service.
+	keyFields := []string{td.config.PartitionKey, td.config.SortKey}
+	if input.IndexName != "" {
+		keyFields = append(keyFields, pkField, skField)
+	}
+	result, err := driver.PageOrdered(matched, pkField, skField, keyFields,
+		limit, input.PageToken, input.ExclusiveStartKey, input.SortDescending,
+		func(it map[string]any) string { return itemKey(td.config, it) })
 	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+		return nil, err
 	}
 
-	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(page.Items))})
+	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(result.Items))})
 
-	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
+	return result, nil
 }
 
 func resolveKeyFields(td *tableData, indexName string) (pkField, skField string, err error) {
@@ -355,15 +361,18 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		limit = 100
 	}
 
-	driver.SortStableByKey(matched, func(it map[string]any) string { return itemKey(td.config, it) })
-	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	result, err := driver.PageOrdered(matched,
+		td.config.PartitionKey, td.config.SortKey,
+		[]string{td.config.PartitionKey, td.config.SortKey},
+		limit, input.PageToken, input.ExclusiveStartKey, false,
+		func(it map[string]any) string { return itemKey(td.config, it) })
 	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+		return nil, err
 	}
 
-	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(page.Items))})
+	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(result.Items))})
 
-	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
+	return result, nil
 }
 
 // BatchPutItems stores multiple items in a container.

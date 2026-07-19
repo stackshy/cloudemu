@@ -288,7 +288,10 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		maxKeys = s3DefaultMaxKeys
 	}
 
-	page, _ := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	dims := map[string]string{"BucketName": bucket}
 	m.emitMetric("AllRequests", 1, "Count", dims)

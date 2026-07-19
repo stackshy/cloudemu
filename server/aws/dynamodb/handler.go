@@ -6,7 +6,6 @@ package dynamodb
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -360,73 +359,6 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
-// fetchAll asks the driver for the entire result set so the handler can
-// implement DynamoDB-style key pagination over a stable ordering.
-const fetchAll = 1 << 30
-
-// paginateWire implements ExclusiveStartKey/LastEvaluatedKey semantics over
-// the driver's stably-ordered full result set. Returns the page and, when
-// more items remain, the key attributes of the last returned item.
-func (h *Handler) paginateWire(
-	ctx context.Context,
-	table string,
-	items []map[string]any,
-	startKey map[string]any,
-	limit int,
-) ([]map[string]any, map[string]any, error) {
-	cfg, err := h.db.DescribeTable(ctx, table)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Same composite scheme as the driver's itemKey so the two layers can
-	// never disagree about identity.
-	keyOf := func(it map[string]any) string {
-		k := fmt.Sprintf("%v", it[cfg.PartitionKey])
-		if cfg.SortKey != "" {
-			k += ":" + fmt.Sprintf("%v", it[cfg.SortKey])
-		}
-		return k
-	}
-
-	start := 0
-	if len(startKey) > 0 {
-		want := keyOf(startKey)
-		found := false
-		for i, it := range items {
-			if keyOf(it) == want {
-				start = i + 1
-				found = true
-				break
-			}
-		}
-		// A start key that matches nothing (deleted anchor item, foreign
-		// token) must not silently restart from page 1 — that re-serves
-		// items the client already consumed.
-		if !found {
-			return nil, nil, cerrors.Newf(cerrors.InvalidArgument,
-				"invalid ExclusiveStartKey")
-		}
-	}
-
-	end := len(items)
-	if limit > 0 && start+limit < end {
-		end = start + limit
-	}
-	page := items[start:end]
-
-	var lastKey map[string]any
-	if end < len(items) && len(page) > 0 {
-		last := page[len(page)-1]
-		lastKey = map[string]any{cfg.PartitionKey: last[cfg.PartitionKey]}
-		if cfg.SortKey != "" {
-			lastKey[cfg.SortKey] = last[cfg.SortKey]
-		}
-	}
-
-	return page, lastKey, nil
-}
-
 func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
@@ -452,36 +384,20 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.db.Query(r.Context(), dbdriver.QueryInput{
-		Table:        req.TableName,
-		IndexName:    req.IndexName,
-		KeyCondition: kc,
-		Limit:        fetchAll,
-		ScanForward:  forward,
+		Table:             req.TableName,
+		IndexName:         req.IndexName,
+		KeyCondition:      kc,
+		Limit:             req.Limit,
+		SortDescending:    !forward,
+		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	// The driver returns a stable ascending order; apply ScanIndexForward
-	// here so descending queries page in the right direction too.
-	if !forward {
-		for i, j := 0, len(result.Items)-1; i < j; i, j = i+1, j-1 {
-			result.Items[i], result.Items[j] = result.Items[j], result.Items[i]
-		}
-	}
-
-	page, lastKey, err := h.paginateWire(
-		r.Context(), req.TableName, result.Items,
-		fromWireItem(req.ExclusiveStartKey), req.Limit,
-	)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	items := make([]map[string]any, 0, len(page))
-	for _, item := range page {
+	items := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
 		items = append(items, toWireItem(item))
 	}
 
@@ -489,8 +405,8 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		"Items": items,
 		"Count": len(items),
 	}
-	if lastKey != nil {
-		resp["LastEvaluatedKey"] = toWireItem(lastKey)
+	if result.LastEvaluatedKey != nil {
+		resp["LastEvaluatedKey"] = toWireItem(result.LastEvaluatedKey)
 	}
 
 	wire.WriteJSON(w, resp)

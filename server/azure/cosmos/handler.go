@@ -306,7 +306,20 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, _, coll
 }
 
 func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll string) {
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: coll})
+	// Same paging contract as the query path: x-ms-max-item-count is the
+	// page size, x-ms-continuation round-trips the driver page token.
+	limit := 100
+	if v := r.Header.Get("X-Ms-Max-Item-Count"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
+		Table:     coll,
+		Limit:     limit,
+		PageToken: r.Header.Get("X-Ms-Continuation"),
+	})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -314,6 +327,10 @@ func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll str
 
 	for i := range result.Items {
 		addSystemProps(result.Items[i])
+	}
+
+	if result.NextPageToken != "" {
+		w.Header().Set("X-Ms-Continuation", result.NextPageToken)
 	}
 
 	writeJSON(w, http.StatusOK, documentsList{
