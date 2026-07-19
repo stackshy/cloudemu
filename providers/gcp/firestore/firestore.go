@@ -282,8 +282,14 @@ func (m *Mock) Query(ctx context.Context, input driver.QueryInput) (*driver.Quer
 		limit = 100
 	}
 
-	result, err := driver.PageOrdered(cd.config, matched, limit, input.PageToken,
-		input.ExclusiveStartKey, input.SortDescending,
+	// Order by the queried keys (index keys for GSI queries); the
+	// continuation key carries base + index keys like the real service.
+	keyFields := []string{cd.config.PartitionKey, cd.config.SortKey}
+	if input.IndexName != "" {
+		keyFields = append(keyFields, pkField, skField)
+	}
+	result, err := driver.PageOrdered(matched, pkField, skField, keyFields,
+		limit, input.PageToken, input.ExclusiveStartKey, input.SortDescending,
 		func(it map[string]any) string { return docKey(cd.config, it) })
 	if err != nil {
 		return nil, err
@@ -371,8 +377,10 @@ func (m *Mock) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryR
 		limit = 100
 	}
 
-	result, err := driver.PageOrdered(cd.config, matched, limit, input.PageToken,
-		input.ExclusiveStartKey, false,
+	result, err := driver.PageOrdered(matched,
+		cd.config.PartitionKey, cd.config.SortKey,
+		[]string{cd.config.PartitionKey, cd.config.SortKey},
+		limit, input.PageToken, input.ExclusiveStartKey, false,
 		func(it map[string]any) string { return docKey(cd.config, it) })
 	if err != nil {
 		return nil, err

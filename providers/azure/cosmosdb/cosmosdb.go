@@ -297,8 +297,14 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		limit = 100
 	}
 
-	result, err := driver.PageOrdered(td.config, matched, limit, input.PageToken,
-		input.ExclusiveStartKey, input.SortDescending,
+	// Order by the queried keys (index keys for GSI queries); the
+	// continuation key carries base + index keys like the real service.
+	keyFields := []string{td.config.PartitionKey, td.config.SortKey}
+	if input.IndexName != "" {
+		keyFields = append(keyFields, pkField, skField)
+	}
+	result, err := driver.PageOrdered(matched, pkField, skField, keyFields,
+		limit, input.PageToken, input.ExclusiveStartKey, input.SortDescending,
 		func(it map[string]any) string { return itemKey(td.config, it) })
 	if err != nil {
 		return nil, err
@@ -355,8 +361,10 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		limit = 100
 	}
 
-	result, err := driver.PageOrdered(td.config, matched, limit, input.PageToken,
-		input.ExclusiveStartKey, false,
+	result, err := driver.PageOrdered(matched,
+		td.config.PartitionKey, td.config.SortKey,
+		[]string{td.config.PartitionKey, td.config.SortKey},
+		limit, input.PageToken, input.ExclusiveStartKey, false,
 		func(it map[string]any) string { return itemKey(td.config, it) })
 	if err != nil {
 		return nil, err

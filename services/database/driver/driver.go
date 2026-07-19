@@ -334,16 +334,20 @@ func KeyAttributes(item map[string]any, fields ...string) map[string]any {
 // descending queries, then slices one page — key-based continuation when
 // startKey is set, offset tokens otherwise. LastEvaluatedKey is populated
 // whenever more items remain, on both paths.
+// orderPK/orderSK are the fields to order by (the index keys for GSI
+// queries); keyFields is the LastEvaluatedKey shape (base table keys, plus
+// the index keys for GSI queries, matching real DynamoDB).
 func PageOrdered(
-	cfg TableConfig,
 	matched []map[string]any,
+	orderPK, orderSK string,
+	keyFields []string,
 	limit int,
 	pageToken string,
 	startKey map[string]any,
 	descending bool,
 	identity func(map[string]any) string,
 ) (*QueryResult, error) {
-	SortByFields(matched, cfg.PartitionKey, cfg.SortKey)
+	SortByFields(matched, orderPK, orderSK)
 
 	if descending {
 		for i, j := 0, len(matched)-1; i < j; i, j = i+1, j-1 {
@@ -359,7 +363,7 @@ func PageOrdered(
 
 		res := &QueryResult{Items: items, Count: len(items)}
 		if more && len(items) > 0 {
-			res.LastEvaluatedKey = KeyAttributes(items[len(items)-1], cfg.PartitionKey, cfg.SortKey)
+			res.LastEvaluatedKey = KeyAttributes(items[len(items)-1], keyFields...)
 		}
 		return res, nil
 	}
@@ -371,7 +375,7 @@ func PageOrdered(
 
 	res := &QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}
 	if page.HasMore && len(page.Items) > 0 {
-		res.LastEvaluatedKey = KeyAttributes(page.Items[len(page.Items)-1], cfg.PartitionKey, cfg.SortKey)
+		res.LastEvaluatedKey = KeyAttributes(page.Items[len(page.Items)-1], keyFields...)
 	}
 	return res, nil
 }
