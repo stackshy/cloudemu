@@ -3,7 +3,9 @@ package driver
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -156,23 +158,98 @@ type Database interface {
 	ListTagsOfResource(ctx context.Context, table string) (map[string]string, error)
 }
 
-// SortStableByKey orders items by a caller-derived key so offset-based page
-// tokens from internal/pagination stay valid across calls (map iteration
-// order is random). Keys are computed once per item, not per comparison.
-func SortStableByKey(items []map[string]any, key func(map[string]any) string) {
-	type keyed struct {
-		k    string
-		item map[string]any
+// CompareValues orders two attribute values the way the real services do:
+// numbers numerically, strings lexically, bools false<true. Mixed types
+// order by a fixed type rank so the ordering stays total and deterministic
+// (numbers < strings < bools < everything else).
+func CompareValues(a, b any) int {
+	an, aIsNum := toFloat(a)
+	bn, bIsNum := toFloat(b)
+
+	switch {
+	case aIsNum && bIsNum:
+		switch {
+		case an < bn:
+			return -1
+		case an > bn:
+			return 1
+		}
+		return 0
+	case aIsNum:
+		return -1
+	case bIsNum:
+		return 1
 	}
 
-	decorated := make([]keyed, len(items))
-	for i, it := range items {
-		decorated[i] = keyed{k: key(it), item: it}
+	as, aIsStr := a.(string)
+	bs, bIsStr := b.(string)
+
+	switch {
+	case aIsStr && bIsStr:
+		return strings.Compare(as, bs)
+	case aIsStr:
+		return -1
+	case bIsStr:
+		return 1
 	}
 
-	sort.Slice(decorated, func(i, j int) bool { return decorated[i].k < decorated[j].k })
+	ab, aIsBool := a.(bool)
+	bb, bIsBool := b.(bool)
 
-	for i := range decorated {
-		items[i] = decorated[i].item
+	switch {
+	case aIsBool && bIsBool:
+		switch {
+		case !ab && bb:
+			return -1
+		case ab && !bb:
+			return 1
+		}
+		return 0
+	case aIsBool:
+		return -1
+	case bIsBool:
+		return 1
 	}
+
+	return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+}
+
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// SortByFields stably orders items by the given attribute fields in order
+// (typically partition key, then sort key), comparing values type-aware via
+// CompareValues. A stable, deterministic ordering is what keeps offset-based
+// page tokens from internal/pagination valid across calls.
+func SortByFields(items []map[string]any, fields ...string) {
+	sort.SliceStable(items, func(i, j int) bool {
+		for _, f := range fields {
+			if f == "" {
+				continue
+			}
+			if c := CompareValues(items[i][f], items[j][f]); c != 0 {
+				return c < 0
+			}
+		}
+		return false
+	})
 }

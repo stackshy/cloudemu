@@ -283,7 +283,7 @@ func (m *Mock) Query(ctx context.Context, input driver.QueryInput) (*driver.Quer
 		limit = 100
 	}
 
-	driver.SortStableByKey(matched, func(it map[string]any) string { return docKey(cd.config, it) })
+	driver.SortByFields(matched, cd.config.PartitionKey, cd.config.SortKey)
 	page, err := pagination.Paginate(matched, input.PageToken, limit)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
@@ -371,7 +371,7 @@ func (m *Mock) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryR
 		limit = 100
 	}
 
-	driver.SortStableByKey(matched, func(it map[string]any) string { return docKey(cd.config, it) })
+	driver.SortByFields(matched, cd.config.PartitionKey, cd.config.SortKey)
 	page, err := pagination.Paginate(matched, input.PageToken, limit)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)

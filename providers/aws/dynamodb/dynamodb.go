@@ -283,7 +283,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		limit = 100
 	}
 
-	driver.SortStableByKey(matched, func(it map[string]any) string { return itemKey(td.config, it) })
+	driver.SortByFields(matched, td.config.PartitionKey, td.config.SortKey)
 	page, err := pagination.Paginate(matched, input.PageToken, limit)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
@@ -373,7 +373,7 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		limit = 100
 	}
 
-	driver.SortStableByKey(matched, func(it map[string]any) string { return itemKey(td.config, it) })
+	driver.SortByFields(matched, td.config.PartitionKey, td.config.SortKey)
 	page, err := pagination.Paginate(matched, input.PageToken, limit)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
