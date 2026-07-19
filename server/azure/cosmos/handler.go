@@ -332,7 +332,9 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 
 	// Honor Cosmos paging: x-ms-max-item-count is the page size and
 	// x-ms-continuation carries the driver page token between requests.
-	limit := 1 << 30
+	// Default page size matches real Cosmos (and the driver default);
+	// callers page onward via the x-ms-continuation round-trip below.
+	limit := 100
 	if v := r.Header.Get("X-Ms-Max-Item-Count"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n

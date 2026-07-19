@@ -189,7 +189,8 @@ func TestFullObjectLifecycle(t *testing.T) {
 
 	env.clock.Advance(1 * time.Hour)
 
-	e2eRequireNoErr(t, m.CopyObject(ctx, dstBucket, "copied/config.json", driver.CopySource{Bucket: bucket, Key: "data/config.json"}), "CopyObject")
+	e2eRequireNoErr(t, m.CopyObject(ctx, dstBucket, "copied/config.json",
+		driver.CopySource{Bucket: bucket, Key: "data/config.json"}), "CopyObject")
 
 	copied, err := m.GetObject(ctx, dstBucket, "copied/config.json")
 	e2eRequireNoErr(t, err, "GetObject copied")
@@ -280,9 +281,12 @@ func TestEdgeCases(t *testing.T) {
 	// Copy error triage: src bucket vs src key vs dst bucket, all NotFound.
 	e2eRequireNoErr(t, m.PutObject(ctx, bucket, "real-key", []byte("data"), "text/plain", nil), "PutObject real-key")
 
-	e2eRequireCode(t, m.CopyObject(ctx, bucket, "d", driver.CopySource{Bucket: "ghost", Key: "real-key"}), cerrors.NotFound, "Copy missing src bucket")
-	e2eRequireCode(t, m.CopyObject(ctx, bucket, "d", driver.CopySource{Bucket: bucket, Key: "ghost-key"}), cerrors.NotFound, "Copy missing src key")
-	e2eRequireCode(t, m.CopyObject(ctx, "ghost", "d", driver.CopySource{Bucket: bucket, Key: "real-key"}), cerrors.NotFound, "Copy missing dst bucket")
+	e2eRequireCode(t, m.CopyObject(ctx, bucket, "d",
+		driver.CopySource{Bucket: "ghost", Key: "real-key"}), cerrors.NotFound, "Copy missing src bucket")
+	e2eRequireCode(t, m.CopyObject(ctx, bucket, "d",
+		driver.CopySource{Bucket: bucket, Key: "ghost-key"}), cerrors.NotFound, "Copy missing src key")
+	e2eRequireCode(t, m.CopyObject(ctx, "ghost", "d",
+		driver.CopySource{Bucket: bucket, Key: "real-key"}), cerrors.NotFound, "Copy missing dst bucket")
 
 	// Deleting a non-empty bucket -> FailedPrecondition.
 	e2eRequireCode(t, m.DeleteBucket(ctx, bucket), cerrors.FailedPrecondition, "DeleteBucket non-empty")
@@ -788,7 +792,8 @@ func TestTaggingAndBucketConfigs(t *testing.T) {
 	_, err = m.GetEncryptionConfig(ctx, bucket)
 	e2eRequireCode(t, err, cerrors.NotFound, "GetEncryptionConfig unset")
 
-	e2eRequireNoErr(t, m.PutEncryptionConfig(ctx, bucket, driver.EncryptionConfig{Enabled: true, Algorithm: "aws:kms", KeyID: "key-123"}), "PutEncryptionConfig")
+	e2eRequireNoErr(t, m.PutEncryptionConfig(ctx, bucket,
+		driver.EncryptionConfig{Enabled: true, Algorithm: "aws:kms", KeyID: "key-123"}), "PutEncryptionConfig")
 
 	enc, err := m.GetEncryptionConfig(ctx, bucket)
 	e2eRequireNoErr(t, err, "GetEncryptionConfig")

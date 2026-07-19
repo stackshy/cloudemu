@@ -211,9 +211,10 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName           string         `json:"TableName"`
-		Item                map[string]any `json:"Item"`
-		ConditionExpression string         `json:"ConditionExpression"`
+		TableName                string            `json:"TableName"`
+		Item                     map[string]any    `json:"Item"`
+		ConditionExpression      string            `json:"ConditionExpression"`
+		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -222,7 +223,7 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 
 	item := fromWireItem(req.Item)
 
-	if ok, err := h.checkCondition(r.Context(), req.TableName, item, req.ConditionExpression); err != nil {
+	if ok, err := h.checkCondition(r.Context(), req.TableName, item, req.ConditionExpression, req.ExpressionAttributeNames); err != nil {
 		writeErr(w, err)
 		return
 	} else if !ok {
@@ -243,18 +244,42 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 // attribute_not_exists(field) and attribute_exists(field) — against the
 // current stored item, keyed by the incoming item's key attributes.
 // Real DynamoDB users lean on attribute_not_exists(pk) for create-if-absent.
-func (h *Handler) checkCondition(ctx context.Context, table string, item map[string]any, expr string) (bool, error) {
+func (h *Handler) checkCondition(
+	ctx context.Context,
+	table string,
+	item map[string]any,
+	expr string,
+	names map[string]string,
+) (bool, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return true, nil
 	}
 
-	wantAbsent := strings.HasPrefix(expr, "attribute_not_exists(")
-	wantPresent := strings.HasPrefix(expr, "attribute_exists(")
-	if !wantAbsent && !wantPresent {
+	var (
+		rest       string
+		wantAbsent bool
+	)
+	switch {
+	case strings.HasPrefix(expr, "attribute_not_exists("):
+		rest = strings.TrimPrefix(expr, "attribute_not_exists(")
+		wantAbsent = true
+	case strings.HasPrefix(expr, "attribute_exists("):
+		rest = strings.TrimPrefix(expr, "attribute_exists(")
+	default:
 		return false, cerrors.Newf(cerrors.InvalidArgument,
 			"unsupported ConditionExpression: %s", expr)
 	}
+
+	rest, ok := strings.CutSuffix(rest, ")")
+	field := strings.TrimSpace(rest)
+	// Reject compound expressions and malformed input rather than
+	// mis-evaluating them (only the single-function forms are supported).
+	if !ok || field == "" || strings.ContainsAny(field, " ()") {
+		return false, cerrors.Newf(cerrors.InvalidArgument,
+			"unsupported ConditionExpression: %s", expr)
+	}
+	field = resolveAttrName(field, names)
 
 	cfg, err := h.db.DescribeTable(ctx, table)
 	if err != nil {
@@ -270,10 +295,6 @@ func (h *Handler) checkCondition(ctx context.Context, table string, item map[str
 	if err != nil && !cerrors.IsNotFound(err) {
 		return false, err
 	}
-
-	field := strings.TrimSuffix(
-		expr[strings.Index(expr, "(")+1:], ")")
-	field = strings.TrimSpace(field)
 
 	var hasAttr bool
 	if existing != nil {
@@ -358,10 +379,12 @@ func (h *Handler) paginateWire(
 		return nil, nil, err
 	}
 
+	// Same composite scheme as the driver's itemKey so the two layers can
+	// never disagree about identity.
 	keyOf := func(it map[string]any) string {
 		k := fmt.Sprintf("%v", it[cfg.PartitionKey])
 		if cfg.SortKey != "" {
-			k += "|" + fmt.Sprintf("%v", it[cfg.SortKey])
+			k += ":" + fmt.Sprintf("%v", it[cfg.SortKey])
 		}
 		return k
 	}
@@ -369,11 +392,20 @@ func (h *Handler) paginateWire(
 	start := 0
 	if len(startKey) > 0 {
 		want := keyOf(startKey)
+		found := false
 		for i, it := range items {
 			if keyOf(it) == want {
 				start = i + 1
+				found = true
 				break
 			}
+		}
+		// A start key that matches nothing (deleted anchor item, foreign
+		// token) must not silently restart from page 1 — that re-serves
+		// items the client already consumed.
+		if !found {
+			return nil, nil, cerrors.Newf(cerrors.InvalidArgument,
+				"invalid ExclusiveStartKey")
 		}
 	}
 
@@ -429,6 +461,14 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+
+	// The driver returns a stable ascending order; apply ScanIndexForward
+	// here so descending queries page in the right direction too.
+	if !forward {
+		for i, j := 0, len(result.Items)-1; i < j; i, j = i+1, j-1 {
+			result.Items[i], result.Items[j] = result.Items[j], result.Items[i]
+		}
 	}
 
 	page, lastKey, err := h.paginateWire(

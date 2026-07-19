@@ -3,7 +3,6 @@ package dynamodb
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -88,14 +87,6 @@ func itemKey(cfg driver.TableConfig, item map[string]any) string {
 	}
 
 	return pk
-}
-
-// sortByItemKey gives matched results a stable order so offset-based
-// page tokens stay valid across calls (map iteration order is random).
-func sortByItemKey(cfg driver.TableConfig, items []map[string]any) {
-	sort.Slice(items, func(i, j int) bool {
-		return itemKey(cfg, items[i]) < itemKey(cfg, items[j])
-	})
 }
 
 func (m *Mock) CreateTable(_ context.Context, cfg driver.TableConfig) error {
@@ -292,8 +283,11 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		limit = 100
 	}
 
-	sortByItemKey(td.config, matched)
-	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+	driver.SortStableByKey(matched, func(it map[string]any) string { return itemKey(td.config, it) })
+	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	dims := map[string]string{"TableName": input.Table}
 	m.emitMetric("ConsumedReadCapacityUnits", float64(len(page.Items)), dims)
@@ -379,8 +373,11 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		limit = 100
 	}
 
-	sortByItemKey(td.config, matched)
-	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+	driver.SortStableByKey(matched, func(it map[string]any) string { return itemKey(td.config, it) })
+	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	dims := map[string]string{"TableName": input.Table}
 	m.emitMetric("ConsumedReadCapacityUnits", float64(len(page.Items)), dims)

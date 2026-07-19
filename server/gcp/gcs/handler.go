@@ -653,9 +653,11 @@ func parseMultipart(raw []byte, boundary string) (
 		return uploadMetadata{}, nil, "", false
 	}
 
-	payloadContentType = payloadPart.Header.Get("Content-Type")
+	// Real GCS gives metadata.contentType precedence over the media part's
+	// Content-Type header (SDKs often send application/octet-stream there).
+	payloadContentType = meta.ContentType
 	if payloadContentType == "" {
-		payloadContentType = meta.ContentType
+		payloadContentType = payloadPart.Header.Get("Content-Type")
 	}
 
 	return meta, payload, payloadContentType, true
