@@ -547,10 +547,9 @@ func TestDatabaseUpdateReplaceSemantics(t *testing.T) {
 	}
 }
 
-// TestDatabaseQueryFiltersIgnored documents the survey-listed
-// behavior that documents:runQuery only honors from.collectionId — where
-// clauses are ignored and every document comes back (full scan).
-func TestDatabaseQueryFiltersIgnored(t *testing.T) {
+// TestDatabaseQueryFilters asserts documents:runQuery honors
+// structuredQuery.where and limit like real Firestore.
+func TestDatabaseQueryFilters(t *testing.T) {
 	ctx, client, _ := newDBClient(t, "accts")
 
 	coll := client.Collection("accts")
@@ -561,13 +560,19 @@ func TestDatabaseQueryFiltersIgnored(t *testing.T) {
 		}
 	}
 
-	// Real Firestore would return 1 doc (age > 25); the emulator's runQuery
-	// ignores structuredQuery.where entirely → full scan of 3 docs.
-	it := coll.Where("age", ">", 25).Documents(ctx)
+	got := dbCollectAll(t, coll.Where("age", ">", 25).Documents(ctx))
+	if len(got) != 1 {
+		t.Errorf("age>25 returned %d docs (%v), want 1", len(got), keysOfDB(got))
+	}
 
-	got := dbCollectAll(t, it)
-	if len(got) != 3 {
-		t.Errorf("filtered query returned %d docs (%v); survey documents filters-ignored full scan of 3", len(got), keysOfDB(got))
+	got = dbCollectAll(t, coll.Where("age", ">=", 20).Where("age", "<", 30).Documents(ctx))
+	if len(got) != 1 {
+		t.Errorf("20<=age<30 returned %d docs (%v), want 1", len(got), keysOfDB(got))
+	}
+
+	got = dbCollectAll(t, coll.Limit(2).Documents(ctx))
+	if len(got) != 2 {
+		t.Errorf("limit 2 returned %d docs, want 2", len(got))
 	}
 }
 

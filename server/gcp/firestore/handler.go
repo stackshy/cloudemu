@@ -282,12 +282,136 @@ func (h *Handler) batchGet(w http.ResponseWriter, r *http.Request, _ string) {
 }
 
 // runQuery handles POST .../documents:runQuery — for collection scans.
+// allResults asks the driver for the entire matched set (runQuery streams
+// rather than pages; the driver's zero-limit default is 100).
+const allResults = 1 << 30
+
 type runQueryRequest struct {
 	StructuredQuery struct {
 		From []struct {
 			CollectionID string `json:"collectionId"`
 		} `json:"from"`
+		Where *queryFilter `json:"where"`
+		Limit int          `json:"limit"`
 	} `json:"structuredQuery"`
+}
+
+// queryFilter mirrors StructuredQuery.Filter: either a single fieldFilter
+// or a compositeFilter AND of nested filters.
+type queryFilter struct {
+	FieldFilter *struct {
+		Field struct {
+			FieldPath string `json:"fieldPath"`
+		} `json:"field"`
+		Op    fieldOp `json:"op"`
+		Value value   `json:"value"`
+	} `json:"fieldFilter"`
+	CompositeFilter *struct {
+		Op      compositeOp   `json:"op"`
+		Filters []queryFilter `json:"filters"`
+	} `json:"compositeFilter"`
+}
+
+// fieldOp decodes a FieldFilter operator sent either as its enum name
+// ("EQUAL") or its protobuf number (5), as the REST client does.
+type fieldOp string
+
+var fieldOpNames = map[int]fieldOp{
+	1: "LESS_THAN",
+	2: "LESS_THAN_OR_EQUAL",
+	3: "GREATER_THAN",
+	4: "GREATER_THAN_OR_EQUAL",
+	5: "EQUAL",
+	6: "NOT_EQUAL",
+}
+
+func (o *fieldOp) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*o = fieldOp(v)
+		return nil
+	}
+
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*o = fieldOpNames[n] // unknown numbers stay "" and fail downstream
+	return nil
+}
+
+// compositeOp decodes a CompositeFilter operator name or number (AND=1).
+type compositeOp string
+
+func (o *compositeOp) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*o = compositeOp(v)
+		return nil
+	}
+
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	if n == 1 {
+		*o = "AND"
+	}
+	return nil
+}
+
+// firestoreOps maps StructuredQuery operators onto driver scan filter ops.
+var firestoreOps = map[string]string{
+	"EQUAL":                 "=",
+	"NOT_EQUAL":             "!=",
+	"LESS_THAN":             "<",
+	"LESS_THAN_OR_EQUAL":    "<=",
+	"GREATER_THAN":          ">",
+	"GREATER_THAN_OR_EQUAL": ">=",
+}
+
+// filtersFromQuery flattens a where clause into driver scan filters.
+// Only AND composites are supported; anything else is an error so queries
+// are never silently answered with the wrong result set.
+func filtersFromQuery(f *queryFilter) ([]dbdriver.ScanFilter, error) {
+	if f == nil {
+		return nil, nil
+	}
+
+	if f.FieldFilter != nil {
+		op, ok := firestoreOps[string(f.FieldFilter.Op)]
+		if !ok {
+			return nil, fmt.Errorf("unsupported filter op %q", f.FieldFilter.Op)
+		}
+		return []dbdriver.ScanFilter{{
+			Field: f.FieldFilter.Field.FieldPath,
+			Op:    op,
+			Value: firestoreValueToGo(f.FieldFilter.Value),
+		}}, nil
+	}
+
+	if f.CompositeFilter != nil {
+		if f.CompositeFilter.Op != "AND" {
+			return nil, fmt.Errorf("unsupported composite op %q", f.CompositeFilter.Op)
+		}
+		var out []dbdriver.ScanFilter
+		for i := range f.CompositeFilter.Filters {
+			sub, err := filtersFromQuery(&f.CompositeFilter.Filters[i])
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, sub...)
+		}
+		return out, nil
+	}
+
+	return nil, nil
 }
 
 type runQueryResponseEntry struct {
@@ -313,7 +437,24 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 	p, _ := parseFirestorePath(base)
 	p.collection = collection
 
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: collection})
+	filters, ferr := filtersFromQuery(req.StructuredQuery.Where)
+	if ferr != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", ferr.Error())
+		return
+	}
+
+	// runQuery is not paged: honor an explicit limit, otherwise stream the
+	// full result set (the driver treats limit<=0 as a 100-item default).
+	limit := req.StructuredQuery.Limit
+	if limit <= 0 {
+		limit = allResults
+	}
+
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
+		Table:   collection,
+		Filters: filters,
+		Limit:   limit,
+	})
 	if err != nil {
 		writeErr(w, err)
 		return
