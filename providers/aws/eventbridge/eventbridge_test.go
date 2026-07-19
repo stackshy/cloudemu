@@ -8,6 +8,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -173,7 +174,7 @@ func TestListEventBuses(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("includes default bus", func(t *testing.T) {
-		buses, err := m.ListEventBuses(ctx)
+		buses, err := m.ListEventBuses(ctx, scope.Scope{})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(buses), 1)
 
@@ -190,7 +191,7 @@ func TestListEventBuses(t *testing.T) {
 	createTestBus(t, m, "bus-b")
 
 	t.Run("default plus two custom", func(t *testing.T) {
-		buses, err := m.ListEventBuses(ctx)
+		buses, err := m.ListEventBuses(ctx, scope.Scope{})
 		require.NoError(t, err)
 		assert.Equal(t, 3, len(buses))
 	})

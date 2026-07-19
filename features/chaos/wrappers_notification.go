@@ -4,6 +4,7 @@ import (
 	"context"
 
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // chaosNotification wraps a notification driver. All ops are wrapped — the
@@ -45,12 +46,12 @@ func (c *chaosNotification) GetTopic(ctx context.Context, id string) (*notifdriv
 	return c.Notification.GetTopic(ctx, id)
 }
 
-func (c *chaosNotification) ListTopics(ctx context.Context) ([]notifdriver.TopicInfo, error) {
+func (c *chaosNotification) ListTopics(ctx context.Context, filter scope.Scope) ([]notifdriver.TopicInfo, error) {
 	if err := applyChaos(ctx, c.engine, "notification", "ListTopics"); err != nil {
 		return nil, err
 	}
 
-	return c.Notification.ListTopics(ctx)
+	return c.Notification.ListTopics(ctx, filter)
 }
 
 func (c *chaosNotification) Subscribe(

@@ -4,6 +4,7 @@ package azurecache
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path"
 	"strconv"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const defaultRedisSSLPort = 6380
@@ -102,6 +104,7 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	info := driver.CacheInfo{
 		Name:      cfg.Name,
+		Scope:     cfg.Scope,
 		NodeType:  nodeType,
 		Engine:    engine,
 		Status:    "Running",
@@ -144,15 +147,44 @@ func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, erro
 }
 
 // ListCaches lists all Azure Cache for Redis instances.
-func (m *Mock) ListCaches(_ context.Context) ([]driver.CacheInfo, error) {
+func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.CacheInfo, error) {
 	all := m.caches.SortedValues()
 
 	caches := make([]driver.CacheInfo, 0, len(all))
 	for _, cd := range all {
+		if !cd.info.Scope.Matches(filter) {
+			continue
+		}
 		caches = append(caches, cd.info)
 	}
 
 	return caches, nil
+}
+
+// UpdateCache replaces the mutable fields of an existing cache — ARM
+// CreateOrUpdate-on-existing semantics (node type and tags come from the
+// request; identity, endpoint, and CreatedAt are preserved).
+func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
+	cd, ok := m.caches.Get(cfg.Name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
+	}
+
+	if cfg.NodeType != "" {
+		cd.info.NodeType = cfg.NodeType
+	}
+	if cfg.Tags != nil {
+		cd.info.Tags = maps.Clone(cfg.Tags)
+	}
+	if !cfg.Scope.IsZero() {
+		cd.info.Scope = cfg.Scope
+	}
+
+	m.caches.Set(cfg.Name, cd)
+
+	result := cd.info
+
+	return &result, nil
 }
 
 // Set stores a value in the cache with an optional TTL.

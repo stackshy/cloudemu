@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -92,7 +94,17 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 		return nil, errors.Newf(errors.AlreadyExists, "topic %q already exists", cfg.Name)
 	}
 
-	topicID := idgen.AzureID(m.opts.AccountID, m.opts.Region, resourceProvider, resourceType, cfg.Name)
+	rg := cfg.Scope.ResourceGroup
+	if rg == "" {
+		rg = m.opts.Region
+	}
+
+	sub := cfg.Scope.Subscription
+	if sub == "" {
+		sub = m.opts.AccountID
+	}
+
+	topicID := idgen.AzureID(sub, rg, resourceProvider, resourceType, cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -101,6 +113,7 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 
 	info := driver.EventBusInfo{
 		Name:      cfg.Name,
+		Scope:     cfg.Scope,
 		ARN:       topicID,
 		State:     activeTopicState,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
@@ -142,11 +155,14 @@ func (m *Mock) GetEventBus(_ context.Context, name string) (*driver.EventBusInfo
 }
 
 // ListEventBuses lists all Event Grid topics.
-func (m *Mock) ListEventBuses(_ context.Context) ([]driver.EventBusInfo, error) {
+func (m *Mock) ListEventBuses(_ context.Context, filter scope.Scope) ([]driver.EventBusInfo, error) {
 	all := m.buses.SortedValues()
 
 	buses := make([]driver.EventBusInfo, 0, len(all))
 	for _, bd := range all {
+		if !bd.info.Scope.Matches(filter) {
+			continue
+		}
 		buses = append(buses, bd.info)
 	}
 
@@ -500,6 +516,29 @@ func matchesField(value string, allowed any) bool {
 	}
 
 	return false
+}
+
+// UpdateEventBus replaces the mutable fields of an existing topic — ARM
+// CreateOrUpdate-on-existing semantics (tags come from the request; identity
+// and CreatedAt are preserved).
+func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*driver.EventBusInfo, error) {
+	bd, ok := m.buses.Get(cfg.Name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "topic %q not found", cfg.Name)
+	}
+
+	if cfg.Tags != nil {
+		bd.info.Tags = maps.Clone(cfg.Tags)
+	}
+	if !cfg.Scope.IsZero() {
+		bd.info.Scope = cfg.Scope
+	}
+
+	m.buses.Set(cfg.Name, bd)
+
+	result := bd.info
+
+	return &result, nil
 }
 
 // MatchedRules returns all subscriptions that match the given event (exported for testing).

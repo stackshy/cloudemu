@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/ratelimit"
 	"github.com/stackshy/cloudemu/v2/features/recorder"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // EventBus is the portable event bus type wrapping a driver with cross-cutting concerns.
@@ -131,7 +132,7 @@ func (eb *EventBus) GetEventBus(ctx context.Context, name string) (*driver.Event
 // ListEventBuses lists all event buses.
 func (eb *EventBus) ListEventBuses(ctx context.Context) ([]driver.EventBusInfo, error) {
 	out, err := eb.do(ctx, "ListEventBuses", nil, func() (any, error) {
-		return eb.driver.ListEventBuses(ctx)
+		return eb.driver.ListEventBuses(ctx, scope.Scope{})
 	})
 	if err != nil {
 		return nil, err

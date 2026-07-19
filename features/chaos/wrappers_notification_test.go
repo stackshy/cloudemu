@@ -9,6 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/features/chaos"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func newChaosNotification(t *testing.T) (notifdriver.Notification, *chaos.Engine) {
@@ -65,7 +66,7 @@ func TestWrapNotificationListTopicsChaos(t *testing.T) {
 
 	e.Apply(chaos.ServiceOutage("notification", time.Hour))
 
-	if _, err := n.ListTopics(ctx); err == nil {
+	if _, err := n.ListTopics(ctx, scope.Scope{}); err == nil {
 		t.Error("expected chaos error on ListTopics")
 	}
 }

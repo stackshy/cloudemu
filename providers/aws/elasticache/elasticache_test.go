@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -141,7 +142,7 @@ func TestListCaches(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty list", func(t *testing.T) {
-		caches, err := m.ListCaches(ctx)
+		caches, err := m.ListCaches(ctx, scope.Scope{})
 		require.NoError(t, err)
 		assert.Equal(t, 0, len(caches))
 	})
@@ -150,7 +151,7 @@ func TestListCaches(t *testing.T) {
 	createTestCache(t, m, "cache-b")
 
 	t.Run("two caches", func(t *testing.T) {
-		caches, err := m.ListCaches(ctx)
+		caches, err := m.ListCaches(ctx, scope.Scope{})
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(caches))
 	})

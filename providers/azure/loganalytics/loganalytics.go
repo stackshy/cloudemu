@@ -3,6 +3,8 @@ package loganalytics
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -92,7 +94,15 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		retentionDays = defaultRetentionDays
 	}
 
-	resourceID := idgen.AzureID(m.opts.AccountID, "rg-default", "Microsoft.OperationalInsights", "workspaces", cfg.Name)
+	rg := cfg.Scope.ResourceGroup
+	if rg == "" {
+		rg = "rg-default"
+	}
+	sub := cfg.Scope.Subscription
+	if sub == "" {
+		sub = m.opts.AccountID
+	}
+	resourceID := idgen.AzureID(sub, rg, "Microsoft.OperationalInsights", "workspaces", cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -101,6 +111,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 
 	info := driver.LogGroupInfo{
 		Name:          cfg.Name,
+		Scope:         cfg.Scope,
 		ResourceID:    resourceID,
 		RetentionDays: retentionDays,
 		CreatedAt:     m.opts.Clock.Now().UTC().Format(time.RFC3339),
@@ -143,11 +154,14 @@ func (m *Mock) GetLogGroup(_ context.Context, name string) (*driver.LogGroupInfo
 }
 
 // ListLogGroups lists all Log Analytics workspaces.
-func (m *Mock) ListLogGroups(_ context.Context) ([]driver.LogGroupInfo, error) {
+func (m *Mock) ListLogGroups(_ context.Context, filter scope.Scope) ([]driver.LogGroupInfo, error) {
 	all := m.groups.SortedValues()
 
 	groups := make([]driver.LogGroupInfo, 0, len(all))
 	for _, g := range all {
+		if !g.info.Scope.Matches(filter) {
+			continue
+		}
 		groups = append(groups, g.info)
 	}
 
@@ -503,4 +517,30 @@ func (m *Mock) DescribeMetricFilters(
 	}
 
 	return results, nil
+}
+
+// UpdateLogGroup replaces the mutable fields of an existing log group —
+// ARM CreateOrUpdate-on-existing semantics (retention and tags come from
+// the request; identity and CreatedAt are preserved).
+func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
+	g, ok := m.groups.Get(cfg.Name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "log group %q not found", cfg.Name)
+	}
+
+	if cfg.RetentionDays != 0 {
+		g.info.RetentionDays = cfg.RetentionDays
+	}
+	if cfg.Tags != nil {
+		g.info.Tags = maps.Clone(cfg.Tags)
+	}
+	if !cfg.Scope.IsZero() {
+		g.info.Scope = cfg.Scope
+	}
+
+	m.groups.Set(cfg.Name, g)
+
+	result := g.info
+
+	return &result, nil
 }

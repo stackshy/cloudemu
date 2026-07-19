@@ -2,6 +2,7 @@ package cloudemu
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"sort"
 	"sync/atomic"
 	"testing"
@@ -1860,7 +1861,7 @@ func testCacheWithDriver(t *testing.T, ctx context.Context, d cachedriver.Cache)
 	}
 
 	// List caches
-	caches, err := d.ListCaches(ctx)
+	caches, err := d.ListCaches(ctx, scope.Scope{})
 	if err != nil {
 		t.Fatalf("ListCaches: %v", err)
 	}
@@ -1996,7 +1997,7 @@ func testLoggingWithDriver(t *testing.T, ctx context.Context, d loggingdriver.Lo
 	}
 
 	// List log groups
-	groups, err := d.ListLogGroups(ctx)
+	groups, err := d.ListLogGroups(ctx, scope.Scope{})
 	if err != nil {
 		t.Fatalf("ListLogGroups: %v", err)
 	}
@@ -2402,7 +2403,7 @@ func testNotificationWithDriver(t *testing.T, ctx context.Context, d notifdriver
 	}
 
 	// List topics
-	topics, err := d.ListTopics(ctx)
+	topics, err := d.ListTopics(ctx, scope.Scope{})
 	if err != nil {
 		t.Fatalf("ListTopics: %v", err)
 	}
@@ -2580,7 +2581,7 @@ func TestCacheTagsPersistence(t *testing.T) {
 			}
 
 			// Verify tags appear in ListCaches
-			caches, err := p.d.ListCaches(ctx)
+			caches, err := p.d.ListCaches(ctx, scope.Scope{})
 			if err != nil {
 				t.Fatalf("ListCaches: %v", err)
 			}
@@ -3016,7 +3017,7 @@ func TestEventBusOperations(t *testing.T) {
 			}
 
 			// ListEventBuses
-			buses, err := p.d.ListEventBuses(ctx)
+			buses, err := p.d.ListEventBuses(ctx, scope.Scope{})
 			if err != nil {
 				t.Fatalf("ListEventBuses: %v", err)
 			}

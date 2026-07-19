@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // parseTags parses ElastiCache-style Tags.Tag.N.{Key,Value} entries.
@@ -67,7 +68,7 @@ func (h *Handler) describeCacheClusters(w http.ResponseWriter, r *http.Request) 
 
 		infos = []cachedriver.CacheInfo{*info}
 	} else {
-		all, err := h.cache.ListCaches(r.Context())
+		all, err := h.cache.ListCaches(r.Context(), scope.Scope{})
 		if err != nil {
 			writeErr(w, err)
 			return

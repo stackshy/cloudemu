@@ -1,6 +1,7 @@
 package cloudwatchlogs
 
 import (
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"net/http"
 	"strings"
 
@@ -34,7 +35,7 @@ func (h *Handler) describeLogGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	infos, err := h.logs.ListLogGroups(r.Context())
+	infos, err := h.logs.ListLogGroups(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
 		return

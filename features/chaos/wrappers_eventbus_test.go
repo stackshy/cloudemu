@@ -9,6 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/features/chaos"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func newChaosEventBus(t *testing.T) (ebdriver.EventBus, *chaos.Engine) {
@@ -65,7 +66,7 @@ func TestWrapEventBusListEventBusesChaos(t *testing.T) {
 
 	e.Apply(chaos.ServiceOutage("eventbus", time.Hour))
 
-	if _, err := b.ListEventBuses(ctx); err == nil {
+	if _, err := b.ListEventBuses(ctx, scope.Scope{}); err == nil {
 		t.Error("expected chaos error on ListEventBuses")
 	}
 }
