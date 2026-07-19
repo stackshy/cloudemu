@@ -143,7 +143,7 @@ func (m *Mock) GetEventBus(_ context.Context, name string) (*driver.EventBusInfo
 
 // ListEventBuses lists all Event Grid topics.
 func (m *Mock) ListEventBuses(_ context.Context) ([]driver.EventBusInfo, error) {
-	all := m.buses.All()
+	all := m.buses.SortedValues()
 
 	buses := make([]driver.EventBusInfo, 0, len(all))
 	for _, bd := range all {
@@ -255,7 +255,7 @@ func (m *Mock) ListRules(_ context.Context, eventBus string) ([]driver.Rule, err
 		return nil, errors.Newf(errors.NotFound, "topic %q not found", eventBus)
 	}
 
-	all := bd.rules.All()
+	all := bd.rules.SortedValues()
 
 	rules := make([]driver.Rule, 0, len(all))
 	for _, rd := range all {

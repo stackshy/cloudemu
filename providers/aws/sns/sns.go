@@ -124,7 +124,7 @@ func (m *Mock) GetTopic(_ context.Context, id string) (*driver.TopicInfo, error)
 
 // ListTopics lists all SNS topics.
 func (m *Mock) ListTopics(_ context.Context) ([]driver.TopicInfo, error) {
-	all := m.topics.All()
+	all := m.topics.SortedValues()
 
 	topics := make([]driver.TopicInfo, 0, len(all))
 
@@ -190,7 +190,7 @@ func (m *Mock) ListSubscriptions(_ context.Context, topicID string) ([]driver.Su
 		return nil, errors.Newf(errors.NotFound, "topic %q not found", topicID)
 	}
 
-	all := td.subscriptions.All()
+	all := td.subscriptions.SortedValues()
 
 	subs := make([]driver.SubscriptionInfo, 0, len(all))
 	for _, s := range all {

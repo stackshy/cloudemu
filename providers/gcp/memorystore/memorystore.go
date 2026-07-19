@@ -143,7 +143,7 @@ func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, erro
 
 // ListCaches lists all Memorystore instances.
 func (m *Mock) ListCaches(_ context.Context) ([]driver.CacheInfo, error) {
-	all := m.caches.All()
+	all := m.caches.SortedValues()
 
 	caches := make([]driver.CacheInfo, 0, len(all))
 	for _, cd := range all {

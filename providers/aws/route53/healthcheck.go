@@ -82,7 +82,7 @@ func (m *Mock) GetHealthCheck(_ context.Context, id string) (*driver.HealthCheck
 
 // ListHealthChecks returns all Route 53 health checks.
 func (m *Mock) ListHealthChecks(_ context.Context) ([]driver.HealthCheckInfo, error) {
-	all := m.healthChecks.All()
+	all := m.healthChecks.SortedValues()
 
 	checks := make([]driver.HealthCheckInfo, 0, len(all))
 	for _, hc := range all {

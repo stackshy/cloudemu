@@ -144,7 +144,7 @@ func (m *Mock) GetLogGroup(_ context.Context, name string) (*driver.LogGroupInfo
 
 // ListLogGroups lists all Log Analytics workspaces.
 func (m *Mock) ListLogGroups(_ context.Context) ([]driver.LogGroupInfo, error) {
-	all := m.groups.All()
+	all := m.groups.SortedValues()
 
 	groups := make([]driver.LogGroupInfo, 0, len(all))
 	for _, g := range all {
@@ -207,7 +207,7 @@ func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogS
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
 
-	all := g.streams.All()
+	all := g.streams.SortedValues()
 
 	streams := make([]driver.LogStreamInfo, 0, len(all))
 
