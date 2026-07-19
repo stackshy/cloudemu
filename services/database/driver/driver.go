@@ -381,8 +381,10 @@ func PageOrdered(
 	return res, nil
 }
 
-// cloneItems shallow-copies each result item so callers can mutate what
-// they receive without corrupting the store.
+// cloneItems shallow-copies each result item so callers mutating top-level
+// keys of what they receive cannot corrupt the store. Nested map/slice
+// values are still shared — deep-copying arbitrary attribute trees is a
+// deliberate non-goal (documented limitation).
 func cloneItems(items []map[string]any) []map[string]any {
 	out := make([]map[string]any, len(items))
 	for i, it := range items {

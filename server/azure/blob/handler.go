@@ -20,6 +20,7 @@
 package blob
 
 import (
+	"crypto/sha256"
 	"encoding/xml"
 	"fmt"
 	"hash/crc32"
@@ -162,7 +163,7 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
 			Name: b.Name,
 			Properties: containerPropsXML{
 				LastModified: httpDate(b.CreatedAt),
-				ETag:         containerETag(b.CreatedAt),
+				ETag:         containerETag(b.Name, b.CreatedAt),
 			},
 		})
 	}
@@ -176,31 +177,32 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, contai
 		return
 	}
 
-	created := h.containerCreatedAt(r, container)
-	w.Header().Set("ETag", containerETag(created))
+	created, _ := h.containerCreatedAt(r, container)
+	w.Header().Set("ETag", containerETag(container, created))
 	w.Header().Set("Last-Modified", httpDate(created))
 	w.WriteHeader(http.StatusCreated)
 }
 
-// containerCreatedAt looks up a container's creation time from the driver;
-// falls back to the zero string (httpDate then serves the current time).
-func (h *Handler) containerCreatedAt(r *http.Request, container string) string {
+// containerCreatedAt looks up a container's creation time from the driver.
+func (h *Handler) containerCreatedAt(r *http.Request, container string) (string, bool) {
 	buckets, err := h.bucket.ListBuckets(r.Context())
 	if err != nil {
-		return ""
+		return "", false
 	}
 	for _, b := range buckets {
 		if b.Name == container {
-			return b.CreatedAt
+			return b.CreatedAt, true
 		}
 	}
-	return ""
+	return "", false
 }
 
-// containerETag derives a stable per-container ETag from its creation time,
-// replacing the old shared hard-coded value.
-func containerETag(createdAt string) string {
-	return fmt.Sprintf("%q", "0x"+strings.ToUpper(fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte(createdAt)))))
+// containerETag derives a stable per-container ETag from the container's
+// name and creation time — unique even for containers created within the
+// same clock second (which is every container under a pinned fake clock).
+func containerETag(name, createdAt string) string {
+	sum := crc32.ChecksumIEEE([]byte(name + "|" + createdAt))
+	return fmt.Sprintf("%q", "0x"+strings.ToUpper(fmt.Sprintf("%x", sum)))
 }
 
 func (h *Handler) deleteContainer(w http.ResponseWriter, r *http.Request, container string) {
@@ -223,9 +225,12 @@ func (h *Handler) deleteContainer(w http.ResponseWriter, r *http.Request, contai
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// emptyContainer deletes every blob in the container.
+// emptyContainer deletes every blob in the container. A blob that vanishes
+// between list and delete (concurrent deletes) is fine; the pass budget
+// bounds the loop so a racing writer cannot spin it forever.
 func (h *Handler) emptyContainer(r *http.Request, container string) error {
-	for {
+	const maxPasses = 1000
+	for range maxPasses {
 		list, err := h.bucket.ListObjects(r.Context(), container, storagedriver.ListOptions{})
 		if err != nil {
 			return err
@@ -234,16 +239,24 @@ func (h *Handler) emptyContainer(r *http.Request, container string) error {
 			return nil
 		}
 		for _, obj := range list.Objects {
-			if err := h.bucket.DeleteObject(r.Context(), container, obj.Key); err != nil {
+			err := h.bucket.DeleteObject(r.Context(), container, obj.Key)
+			if err != nil && !cerrors.IsNotFound(err) {
 				return err
 			}
 		}
 	}
+	return cerrors.Newf(cerrors.FailedPrecondition,
+		"container %q kept receiving blobs during delete", container)
 }
 
 func (h *Handler) getContainerProperties(w http.ResponseWriter, r *http.Request, container string) {
-	created := h.containerCreatedAt(r, container)
-	w.Header().Set("ETag", containerETag(created))
+	created, ok := h.containerCreatedAt(r, container)
+	if !ok {
+		writeError(w, http.StatusNotFound, "ContainerNotFound",
+			"container "+container+" not found")
+		return
+	}
+	w.Header().Set("ETag", containerETag(container, created))
 	w.Header().Set("Last-Modified", httpDate(created))
 	w.WriteHeader(http.StatusOK)
 }
@@ -328,13 +341,17 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 		return
 	}
 
-	info, err := h.bucket.HeadObject(r.Context(), container, blob)
-	if err != nil {
-		writeErr(w, err)
-		return
+	// The driver's ETag is the hex sha256 of the body; if a concurrent
+	// delete races the read-back, fall back to computing it — a successful
+	// PUT must never answer 404.
+	etag := fmt.Sprintf("%x", sha256.Sum256(data))
+	lastModified := ""
+	if info, err := h.bucket.HeadObject(r.Context(), container, blob); err == nil {
+		etag = info.ETag
+		lastModified = info.LastModified
 	}
-	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
-	w.Header().Set("Last-Modified", httpDate(info.LastModified))
+	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
+	w.Header().Set("Last-Modified", httpDate(lastModified))
 	w.Header().Set("X-Ms-Request-Server-Encrypted", "true")
 	w.WriteHeader(http.StatusCreated)
 }
@@ -401,8 +418,10 @@ func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, bl
 
 	w.Header().Set("X-Ms-Copy-Id", "00000000-0000-0000-0000-000000000001")
 	w.Header().Set("X-Ms-Copy-Status", "success")
-	w.Header().Set("ETag", "\"0x8DAB0\"")
-	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+	if info, err := h.bucket.HeadObject(r.Context(), container, blob); err == nil {
+		w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
+		w.Header().Set("Last-Modified", httpDate(info.LastModified))
+	}
 	w.WriteHeader(http.StatusAccepted)
 }
 

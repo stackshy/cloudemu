@@ -273,7 +273,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 
 		matchedObjects = append(matchedObjects, driver.ObjectInfo{
 			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
+			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
 		})
 	}
 
@@ -292,6 +292,12 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
+
+	// Clone metadata only for the page actually returned — cloning every
+	// match would make a paged scan O(bucket) allocations per request.
+	for i := range page.Items {
+		page.Items[i].Metadata = maps.Clone(page.Items[i].Metadata)
 	}
 
 	dims := map[string]string{"BucketName": bucket}

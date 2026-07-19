@@ -247,7 +247,7 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 
 	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": 1})
 
-	return updated, nil
+	return maps.Clone(updated), nil
 }
 
 // DeleteItem deletes an item from a container by key.

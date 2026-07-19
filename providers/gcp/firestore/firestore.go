@@ -235,7 +235,7 @@ func (m *Mock) UpdateItem(ctx context.Context, input driver.UpdateItemInput) (ma
 
 	m.emitMetric(ctx, "document/write_count", 1, map[string]string{"collection_id": input.Table})
 
-	return updated, nil
+	return maps.Clone(updated), nil
 }
 
 func (m *Mock) DeleteItem(ctx context.Context, table string, key map[string]any) error {

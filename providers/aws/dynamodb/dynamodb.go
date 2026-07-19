@@ -233,7 +233,7 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
 	m.emitMetric("SuccessfulRequestCount", 1, dims)
 
-	return updated, nil
+	return maps.Clone(updated), nil
 }
 
 func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) error {

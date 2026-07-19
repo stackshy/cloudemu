@@ -4,6 +4,7 @@
 package s3
 
 import (
+	"crypto/sha256"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -266,13 +267,14 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	// Real S3 always returns the object's ETag on PutObject. Read it back
 	// from the driver so there is a single source of truth for the ETag
-	// algorithm.
-	info, err := h.bucket.HeadObject(r.Context(), bucket, key)
-	if err != nil {
-		writeErr(w, err)
-		return
+	// algorithm; if a concurrent delete races the read-back, fall back to
+	// computing it from the body we just stored — a successful PUT must
+	// never answer 404.
+	etag := fmt.Sprintf("%x", sha256.Sum256(data))
+	if info, err := h.bucket.HeadObject(r.Context(), bucket, key); err == nil {
+		etag = info.ETag
 	}
-	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
+	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -704,11 +706,20 @@ func writeMultipartErr(w http.ResponseWriter, err error) {
 	writeErr(w, err)
 }
 
-// bucketMissing reports whether a NotFound error names the bucket itself
-// (the driver formats bucket misses as `bucket ... not found`).
+// bucketMissing reports whether a NotFound error names a bucket rather
+// than an object. The driver formats object misses as `object ... not
+// found in bucket ...` and bucket misses as `[source |destination ]bucket
+// ... not found`, so exclude the object form first, then require the word
+// bucket — robust to the source/destination copy variants.
 func bucketMissing(err error) bool {
 	var ce *cerrors.Error
-	return errors.As(err, &ce) && strings.HasPrefix(ce.Message, "bucket ")
+	if !errors.As(err, &ce) {
+		return false
+	}
+	if strings.HasPrefix(ce.Message, "object ") {
+		return false
+	}
+	return strings.Contains(ce.Message, "bucket ")
 }
 
 func writeErr(w http.ResponseWriter, err error) {
