@@ -283,7 +283,11 @@ func (m *Mock) Query(ctx context.Context, input driver.QueryInput) (*driver.Quer
 		limit = 100
 	}
 
-	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+	driver.SortStableByKey(matched, func(it map[string]any) string { return docKey(cd.config, it) })
+	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	m.emitMetric(ctx, "document/read_count", float64(len(page.Items)), map[string]string{"collection_id": input.Table})
 
@@ -367,7 +371,11 @@ func (m *Mock) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryR
 		limit = 100
 	}
 
-	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+	driver.SortStableByKey(matched, func(it map[string]any) string { return docKey(cd.config, it) })
+	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	m.emitMetric(ctx, "document/read_count", float64(len(page.Items)), map[string]string{"collection_id": input.Table})
 

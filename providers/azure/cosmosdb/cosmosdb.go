@@ -298,7 +298,11 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		limit = 100
 	}
 
-	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+	driver.SortStableByKey(matched, func(it map[string]any) string { return itemKey(td.config, it) })
+	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(page.Items))})
 
@@ -351,7 +355,11 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		limit = 100
 	}
 
-	page, _ := pagination.Paginate(matched, input.PageToken, limit)
+	driver.SortStableByKey(matched, func(it map[string]any) string { return itemKey(td.config, it) })
+	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(page.Items))})
 

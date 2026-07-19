@@ -152,8 +152,14 @@ type commitRequest struct {
 }
 
 type writeOp struct {
-	Update *document `json:"update,omitempty"`
-	Delete string    `json:"delete,omitempty"`
+	Update          *document     `json:"update,omitempty"`
+	Delete          string        `json:"delete,omitempty"`
+	CurrentDocument *precondition `json:"currentDocument,omitempty"`
+}
+
+// precondition mirrors google.firestore.v1.Precondition (exists only).
+type precondition struct {
+	Exists *bool `json:"exists,omitempty"`
 }
 
 type commitResponse struct {
@@ -188,6 +194,22 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 
 			item := fieldsToMap(op.Update.Fields)
 			item["id"] = id
+
+			if op.CurrentDocument != nil && op.CurrentDocument.Exists != nil {
+				_, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
+				exists := gerr == nil
+
+				if !*op.CurrentDocument.Exists && exists {
+					writeError(w, http.StatusConflict, "ALREADY_EXISTS",
+						"document already exists: "+op.Update.Name)
+					return
+				}
+				if *op.CurrentDocument.Exists && !exists {
+					writeError(w, http.StatusNotFound, "NOT_FOUND",
+						"no document to update: "+op.Update.Name)
+					return
+				}
+			}
 
 			if perr := h.db.PutItem(r.Context(), p.collection, item); perr != nil {
 				writeErr(w, perr)
@@ -234,28 +256,29 @@ func (h *Handler) batchGet(w http.ResponseWriter, r *http.Request, _ string) {
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
-	w.Header().Set("Content-Type", contentTypeJSON)
-	w.WriteHeader(http.StatusOK)
-	enc := json.NewEncoder(w)
+	// REST batchGet returns ONE JSON array containing an entry per requested
+	// document; emitting separate arrays would truncate the client's decode
+	// to the first entry.
+	entries := make([]batchGetResponseEntry, 0, len(req.Documents))
 
-	// REST batchGet returns a JSON array of response entries (newline-
-	// delimited objects in the streaming HTTP response).
 	for _, docName := range req.Documents {
 		p, id, err := splitDocumentName(docName)
 		if err != nil {
-			_ = enc.Encode([]batchGetResponseEntry{{Missing: docName, ReadTime: now}})
+			entries = append(entries, batchGetResponseEntry{Missing: docName, ReadTime: now})
 			continue
 		}
 
 		item, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
 		if gerr != nil {
-			_ = enc.Encode([]batchGetResponseEntry{{Missing: docName, ReadTime: now}})
+			entries = append(entries, batchGetResponseEntry{Missing: docName, ReadTime: now})
 			continue
 		}
 
 		doc := mapToDocument(item, p, id)
-		_ = enc.Encode([]batchGetResponseEntry{{Found: &doc, ReadTime: now}})
+		entries = append(entries, batchGetResponseEntry{Found: &doc, ReadTime: now})
 	}
+
+	writeJSON(w, http.StatusOK, entries)
 }
 
 // runQuery handles POST .../documents:runQuery — for collection scans.

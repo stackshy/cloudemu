@@ -4,6 +4,7 @@
 package s3
 
 import (
+	"crypto/sha256"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -263,6 +264,10 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		return
 	}
 
+	// Real S3 always returns the object's ETag on PutObject. The driver
+	// computes the ETag as the hex SHA-256 of the data (see
+	// providers/aws/s3), so mirror that here.
+	w.Header().Set("ETag", fmt.Sprintf("%q", fmt.Sprintf("%x", sha256.Sum256(data))))
 	w.WriteHeader(http.StatusOK)
 }
 

@@ -3,6 +3,7 @@ package driver
 
 import (
 	"context"
+	"sort"
 	"time"
 )
 
@@ -153,4 +154,25 @@ type Database interface {
 	TagResource(ctx context.Context, table string, tags map[string]string) error
 	UntagResource(ctx context.Context, table string, tagKeys []string) error
 	ListTagsOfResource(ctx context.Context, table string) (map[string]string, error)
+}
+
+// SortStableByKey orders items by a caller-derived key so offset-based page
+// tokens from internal/pagination stay valid across calls (map iteration
+// order is random). Keys are computed once per item, not per comparison.
+func SortStableByKey(items []map[string]any, key func(map[string]any) string) {
+	type keyed struct {
+		k    string
+		item map[string]any
+	}
+
+	decorated := make([]keyed, len(items))
+	for i, it := range items {
+		decorated[i] = keyed{k: key(it), item: it}
+	}
+
+	sort.Slice(decorated, func(i, j int) bool { return decorated[i].k < decorated[j].k })
+
+	for i := range decorated {
+		items[i] = decorated[i].item
+	}
 }

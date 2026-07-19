@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -329,7 +330,22 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 	body, _ := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	_ = body
 
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: coll})
+	// Honor Cosmos paging: x-ms-max-item-count is the page size and
+	// x-ms-continuation carries the driver page token between requests.
+	// Default page size matches real Cosmos (and the driver default);
+	// callers page onward via the x-ms-continuation round-trip below.
+	limit := 100
+	if v := r.Header.Get("X-Ms-Max-Item-Count"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
+		Table:     coll,
+		Limit:     limit,
+		PageToken: r.Header.Get("X-Ms-Continuation"),
+	})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -337,6 +353,10 @@ func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll st
 
 	for i := range result.Items {
 		addSystemProps(result.Items[i])
+	}
+
+	if result.NextPageToken != "" {
+		w.Header().Set("X-Ms-Continuation", result.NextPageToken)
 	}
 
 	writeJSON(w, http.StatusOK, documentsList{
@@ -393,8 +413,12 @@ func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, _, co
 // isQuery returns true when the request is a Cosmos query (POST /docs with
 // the documentdb-isquery flag).
 func isQuery(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("X-Ms-Documentdb-Isquery"), "true") ||
-		strings.EqualFold(r.Header.Get("X-Ms-Documentdb-Isquery"), "True")
+	if strings.EqualFold(r.Header.Get("X-Ms-Documentdb-Isquery"), "true") {
+		return true
+	}
+	// The SDK marks continuation-page requests with the query media type
+	// rather than repeating the isquery header.
+	return strings.HasPrefix(r.Header.Get("Content-Type"), "application/query+json")
 }
 
 // docPartitionKey extracts the partition-key value from the
