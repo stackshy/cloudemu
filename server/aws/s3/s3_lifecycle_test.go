@@ -385,13 +385,10 @@ func TestS3HeadMissingObjectTypedError(t *testing.T) {
 	assert.True(t, errors.As(err, &nf), "want *types.NotFound, got %T: %v", err, err)
 }
 
-// TestS3DeleteMissingObjectError documents the emulator's behavior
-// for deleting an absent key: it returns 404 NoSuchKey. NOTE: real S3
-// DeleteObject is idempotent and returns 204 for a missing key, so SDK code
-// that deletes defensively behaves differently against the emulator. The
-// survey documents "DeleteObject — NotFound if key absent" as intended driver
-// semantics, so this asserts the documented mapping.
-func TestS3DeleteMissingObjectError(t *testing.T) {
+// TestS3DeleteMissingObjectIdempotent asserts real-S3 semantics: deleting
+// an absent key succeeds (204) so defensive-delete SDK code just works,
+// while a missing BUCKET is still NoSuchBucket.
+func TestS3DeleteMissingObjectIdempotent(t *testing.T) {
 	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
@@ -402,30 +399,34 @@ func TestS3DeleteMissingObjectError(t *testing.T) {
 		Bucket: aws.String(bucket),
 		Key:    aws.String("never-put"),
 	})
-	require.Error(t, err, "emulator returns NotFound for deleting an absent key")
+	require.NoError(t, err, "real S3 DeleteObject is idempotent for a missing key")
+
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String("ghost-bucket"),
+		Key:    aws.String("k"),
+	})
+	require.Error(t, err, "missing bucket must still fail")
 
 	var apiErr smithy.APIError
 	require.True(t, errors.As(err, &apiErr), "want smithy.APIError, got %T: %v", err, err)
-	assert.Equal(t, "NoSuchKey", apiErr.ErrorCode())
+	assert.Equal(t, "NoSuchBucket", apiErr.ErrorCode())
 }
 
 // TestS3MissingBucketError asserts GetObject against a bucket that
-// was never created fails with NoSuchKey. NOTE: real S3 would return
-// NoSuchBucket here; the emulator's writeErr maps every NotFound to NoSuchKey
-// (documented in the survey).
+// was never created fails with NoSuchBucket, matching real S3.
 func TestS3MissingBucketError(t *testing.T) {
 	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	_, err := client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String("bucket-never-created"),
-		Key:    aws.String("any-key"),
+		Bucket: aws.String("never-created"),
+		Key:    aws.String("any"),
 	})
 	require.Error(t, err)
 
-	var nsk *types.NoSuchKey
-	assert.True(t, errors.As(err, &nsk),
-		"emulator maps missing bucket to NoSuchKey (real S3: NoSuchBucket); got %T: %v", err, err)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr), "want smithy.APIError, got %T: %v", err, err)
+	assert.Equal(t, "NoSuchBucket", apiErr.ErrorCode())
 }
 
 // TestS3DuplicateBucketTypedError asserts the second CreateBucket
@@ -448,9 +449,8 @@ func TestS3DuplicateBucketTypedError(t *testing.T) {
 }
 
 // TestS3DeleteNonEmptyBucketError asserts deleting a non-empty
-// bucket fails and the bucket's contents survive. NOTE: the emulator maps the
-// driver's FailedPrecondition to 500 InternalError (documented in the survey);
-// real S3 returns 409 BucketNotEmpty.
+// bucket fails with 409 BucketNotEmpty (real-S3 semantics) and the
+// bucket's contents survive.
 func TestS3DeleteNonEmptyBucketError(t *testing.T) {
 	client := newSuiteS3Client(t)
 	ctx := context.Background()
@@ -466,8 +466,7 @@ func TestS3DeleteNonEmptyBucketError(t *testing.T) {
 
 	var apiErr smithy.APIError
 	require.True(t, errors.As(err, &apiErr), "want smithy.APIError, got %T: %v", err, err)
-	assert.Equal(t, "InternalError", apiErr.ErrorCode(),
-		"emulator maps FailedPrecondition to InternalError (real S3: BucketNotEmpty)")
+	assert.Equal(t, "BucketNotEmpty", apiErr.ErrorCode())
 
 	// Bucket and object survive the failed delete.
 	body, _ := suiteGetBody(t, client, bucket, "keep.txt")

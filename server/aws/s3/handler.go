@@ -4,8 +4,8 @@
 package s3
 
 import (
-	"crypto/sha256"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -264,10 +264,15 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		return
 	}
 
-	// Real S3 always returns the object's ETag on PutObject. The driver
-	// computes the ETag as the hex SHA-256 of the data (see
-	// providers/aws/s3), so mirror that here.
-	w.Header().Set("ETag", fmt.Sprintf("%q", fmt.Sprintf("%x", sha256.Sum256(data))))
+	// Real S3 always returns the object's ETag on PutObject. Read it back
+	// from the driver so there is a single source of truth for the ETag
+	// algorithm.
+	info, err := h.bucket.HeadObject(r.Context(), bucket, key)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -306,7 +311,10 @@ func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int
 }
 
 func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	if err := h.bucket.DeleteObject(r.Context(), bucket, key); err != nil {
+	err := h.bucket.DeleteObject(r.Context(), bucket, key)
+	// Real S3 DeleteObject is idempotent: deleting a missing KEY succeeds
+	// with 204. A missing BUCKET is still NoSuchBucket.
+	if err != nil && (!cerrors.IsNotFound(err) || bucketMissing(err)) {
 		writeErr(w, err)
 		return
 	}
@@ -696,14 +704,30 @@ func writeMultipartErr(w http.ResponseWriter, err error) {
 	writeErr(w, err)
 }
 
+// bucketMissing reports whether a NotFound error names the bucket itself
+// (the driver formats bucket misses as `bucket ... not found`).
+func bucketMissing(err error) bool {
+	var ce *cerrors.Error
+	return errors.As(err, &ce) && strings.HasPrefix(ce.Message, "bucket ")
+}
+
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
+		// Real S3 distinguishes NoSuchBucket from NoSuchKey.
+		if bucketMissing(err) {
+			writeError(w, http.StatusNotFound, "NoSuchBucket", err.Error())
+			return
+		}
 		writeError(w, http.StatusNotFound, "NoSuchKey", err.Error())
 	case cerrors.IsAlreadyExists(err):
 		writeError(w, http.StatusConflict, "BucketAlreadyOwnedByYou", err.Error())
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+	case cerrors.IsFailedPrecondition(err):
+		// Deleting a non-empty bucket is a client error in real S3, not a
+		// server fault — and a 5xx would trigger SDK retry backoff.
+		writeError(w, http.StatusConflict, "BucketNotEmpty", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
 	}

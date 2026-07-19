@@ -22,6 +22,7 @@ package blob
 import (
 	"encoding/xml"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/url"
@@ -161,7 +162,7 @@ func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
 			Name: b.Name,
 			Properties: containerPropsXML{
 				LastModified: httpDate(b.CreatedAt),
-				ETag:         "\"0x8DAB0\"",
+				ETag:         containerETag(b.CreatedAt),
 			},
 		})
 	}
@@ -175,13 +176,46 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, contai
 		return
 	}
 
-	w.Header().Set("ETag", "\"0x8DAB0\"")
-	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+	created := h.containerCreatedAt(r, container)
+	w.Header().Set("ETag", containerETag(created))
+	w.Header().Set("Last-Modified", httpDate(created))
 	w.WriteHeader(http.StatusCreated)
 }
 
+// containerCreatedAt looks up a container's creation time from the driver;
+// falls back to the zero string (httpDate then serves the current time).
+func (h *Handler) containerCreatedAt(r *http.Request, container string) string {
+	buckets, err := h.bucket.ListBuckets(r.Context())
+	if err != nil {
+		return ""
+	}
+	for _, b := range buckets {
+		if b.Name == container {
+			return b.CreatedAt
+		}
+	}
+	return ""
+}
+
+// containerETag derives a stable per-container ETag from its creation time,
+// replacing the old shared hard-coded value.
+func containerETag(createdAt string) string {
+	return fmt.Sprintf("%q", "0x"+strings.ToUpper(fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte(createdAt)))))
+}
+
 func (h *Handler) deleteContainer(w http.ResponseWriter, r *http.Request, container string) {
-	if err := h.bucket.DeleteBucket(r.Context(), container); err != nil {
+	err := h.bucket.DeleteBucket(r.Context(), container)
+
+	// Real Azure deletes a container together with its blobs; the portable
+	// driver refuses non-empty deletes, so empty it here and retry.
+	if err != nil && cerrors.IsFailedPrecondition(err) {
+		if derr := h.emptyContainer(r, container); derr != nil {
+			writeErr(w, derr)
+			return
+		}
+		err = h.bucket.DeleteBucket(r.Context(), container)
+	}
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -189,9 +223,28 @@ func (h *Handler) deleteContainer(w http.ResponseWriter, r *http.Request, contai
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (*Handler) getContainerProperties(w http.ResponseWriter, _ *http.Request, _ string) {
-	w.Header().Set("ETag", "\"0x8DAB0\"")
-	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+// emptyContainer deletes every blob in the container.
+func (h *Handler) emptyContainer(r *http.Request, container string) error {
+	for {
+		list, err := h.bucket.ListObjects(r.Context(), container, storagedriver.ListOptions{})
+		if err != nil {
+			return err
+		}
+		if len(list.Objects) == 0 {
+			return nil
+		}
+		for _, obj := range list.Objects {
+			if err := h.bucket.DeleteObject(r.Context(), container, obj.Key); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (h *Handler) getContainerProperties(w http.ResponseWriter, r *http.Request, container string) {
+	created := h.containerCreatedAt(r, container)
+	w.Header().Set("ETag", containerETag(created))
+	w.Header().Set("Last-Modified", httpDate(created))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -275,8 +328,13 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 		return
 	}
 
-	w.Header().Set("ETag", "\"0x8DAB0\"")
-	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+	info, err := h.bucket.HeadObject(r.Context(), container, blob)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
+	w.Header().Set("Last-Modified", httpDate(info.LastModified))
 	w.Header().Set("X-Ms-Request-Server-Encrypted", "true")
 	w.WriteHeader(http.StatusCreated)
 }
@@ -408,6 +466,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "ContainerAlreadyExists", err.Error())
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+	case cerrors.IsFailedPrecondition(err):
+		writeError(w, http.StatusConflict, "Conflict", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
 	}

@@ -14,14 +14,12 @@ package blob_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
@@ -533,25 +531,18 @@ func TestErrorCases(t *testing.T) {
 		t.Errorf("duplicate create: err=%v want ContainerAlreadyExists", err)
 	}
 
-	// Delete non-empty container. The driver returns FailedPrecondition,
-	// which the handler maps to 500 InternalError (real Azure deletes
-	// containers recursively, so this whole failure mode is emulator-only).
+	// Delete non-empty container: real Azure deletes containers together
+	// with their blobs, and the emulator now matches.
 	if _, err := env.client.UploadBuffer(ctx, "errs", "occupant", []byte("x"), nil); err != nil {
 		t.Fatalf("UploadBuffer: %v", err)
 	}
 
-	_, err := env.client.DeleteContainer(ctx, "errs", nil)
-	if err == nil {
-		t.Fatalf("delete non-empty container succeeded, want error")
+	if _, err := env.client.DeleteContainer(ctx, "errs", nil); err != nil {
+		t.Fatalf("delete non-empty container: %v (real Azure deletes recursively)", err)
 	}
 
-	var respErr *azcore.ResponseError
-	if !errors.As(err, &respErr) {
-		t.Fatalf("delete non-empty container: err=%T want *azcore.ResponseError", err)
-	}
-
-	if respErr.StatusCode != 500 || respErr.ErrorCode != "InternalError" {
-		t.Errorf("delete non-empty container: status=%d code=%q want 500 InternalError", respErr.StatusCode, respErr.ErrorCode)
+	if _, err := env.client.CreateContainer(ctx, "errs", nil); err != nil {
+		t.Fatalf("recreate container after recursive delete: %v", err)
 	}
 
 	// Copy from a missing source blob.
