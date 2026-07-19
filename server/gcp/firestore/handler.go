@@ -155,6 +155,9 @@ type writeOp struct {
 	Update          *document     `json:"update,omitempty"`
 	Delete          string        `json:"delete,omitempty"`
 	CurrentDocument *precondition `json:"currentDocument,omitempty"`
+	UpdateMask      *struct {
+		FieldPaths []string `json:"fieldPaths"`
+	} `json:"updateMask,omitempty"`
 }
 
 // precondition mirrors google.firestore.v1.Precondition (exists only).
@@ -194,6 +197,29 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 
 			item := fieldsToMap(op.Update.Fields)
 			item["id"] = id
+
+			// updateMask selects merge semantics: masked paths written (or
+			// deleted when absent from the body), all other fields kept.
+			if op.UpdateMask != nil && len(op.UpdateMask.FieldPaths) > 0 {
+				existing, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
+				if gerr != nil && !cerrors.IsNotFound(gerr) {
+					writeErr(w, gerr)
+					return
+				}
+
+				merged := map[string]any{"id": id}
+				for k, v := range existing {
+					merged[k] = v
+				}
+				for _, path := range op.UpdateMask.FieldPaths {
+					if v, ok := item[path]; ok {
+						merged[path] = v
+					} else {
+						delete(merged, path)
+					}
+				}
+				item = merged
+			}
 
 			if op.CurrentDocument != nil && op.CurrentDocument.Exists != nil {
 				_, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
@@ -621,6 +647,31 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 
 	item := fieldsToMap(inDoc.Fields)
 	item["id"] = p.documentID
+
+	// With an updateMask, real Firestore merges: only the masked field
+	// paths are written; every other stored field is preserved. A masked
+	// path absent from the body is a field delete. Without a mask, the
+	// document is replaced wholesale.
+	if mask := r.URL.Query()["updateMask.fieldPaths"]; len(mask) > 0 {
+		existing, err := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": p.documentID})
+		if err != nil && !cerrors.IsNotFound(err) {
+			writeErr(w, err)
+			return
+		}
+
+		merged := map[string]any{"id": p.documentID}
+		for k, v := range existing {
+			merged[k] = v
+		}
+		for _, path := range mask {
+			if v, ok := item[path]; ok {
+				merged[path] = v
+			} else {
+				delete(merged, path)
+			}
+		}
+		item = merged
+	}
 
 	if err := h.db.PutItem(r.Context(), p.collection, item); err != nil {
 		writeErr(w, err)

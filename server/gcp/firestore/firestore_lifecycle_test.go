@@ -511,10 +511,9 @@ func TestDatabaseConditionalWrites(t *testing.T) {
 	}
 }
 
-// TestDatabaseUpdateReplaceSemantics documents the emulator's
-// survey-listed divergence: field-masked Update (and PATCH) fully REPLACE
-// the stored document instead of merging, so unmentioned fields are lost.
-func TestDatabaseUpdateReplaceSemantics(t *testing.T) {
+// TestDatabaseUpdateMergeSemantics asserts field-masked Update merges
+// like real Firestore: masked paths are written, everything else kept.
+func TestDatabaseUpdateMergeSemantics(t *testing.T) {
 	ctx, client, _ := newDBClient(t, "merge")
 
 	doc := client.Collection("merge").Doc("m1")
@@ -539,11 +538,9 @@ func TestDatabaseUpdateReplaceSemantics(t *testing.T) {
 	}
 
 	// DIVERGENCE (survey: "PATCH and :commit Set fully REPLACE the document,
-	// no field-mask merge semantics"): real Firestore would preserve "keep";
-	// the emulator drops it. Assert the documented emulator behavior.
-	if v, present := got["keep"]; present {
-		t.Logf("NOTE: 'keep'=%v survived Update — emulator gained merge semantics? Survey says full replace.", v)
-		t.Errorf("expected survey-documented full-replace behavior (keep dropped), but keep=%v is present", v)
+	// Real Firestore merge semantics: unmasked fields survive the update.
+	if got["keep"] != "original" {
+		t.Errorf("keep=%v want original (masked update must preserve unmentioned fields)", got["keep"])
 	}
 }
 
