@@ -221,6 +221,7 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		Limit                     int               `json:"Limit"`
+		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -231,9 +232,10 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	filters := parseFilterExpression(req.FilterExpression, vals, req.ExpressionAttributeNames)
 
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
-		Table:   req.TableName,
-		Filters: filters,
-		Limit:   req.Limit,
+		Table:             req.TableName,
+		Filters:           filters,
+		Limit:             req.Limit,
+		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -245,11 +247,16 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toWireItem(item))
 	}
 
-	wire.WriteJSON(w, map[string]any{
+	resp := map[string]any{
 		"Items":        items,
-		"Count":        result.Count,
-		"ScannedCount": result.Count,
-	})
+		"Count":        len(items),
+		"ScannedCount": len(items),
+	}
+	if result.LastEvaluatedKey != nil {
+		resp["LastEvaluatedKey"] = toWireItem(result.LastEvaluatedKey)
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 // parseFilterExpression turns "a = :v AND b > :w" into driver ScanFilters.

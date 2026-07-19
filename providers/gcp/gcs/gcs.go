@@ -298,7 +298,10 @@ func (m *Mock) ListObjects(ctx context.Context, bucket string, opts driver.ListO
 		maxKeys = gcsDefaultMaxKeys
 	}
 
-	page, _ := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
 

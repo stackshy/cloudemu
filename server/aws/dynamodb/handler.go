@@ -5,6 +5,7 @@
 package dynamodb
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -209,8 +210,10 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string         `json:"TableName"`
-		Item      map[string]any `json:"Item"`
+		TableName                string            `json:"TableName"`
+		Item                     map[string]any    `json:"Item"`
+		ConditionExpression      string            `json:"ConditionExpression"`
+		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -219,12 +222,88 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 
 	item := fromWireItem(req.Item)
 
+	if ok, err := h.checkCondition(r.Context(), req.TableName, item, req.ConditionExpression, req.ExpressionAttributeNames); err != nil {
+		writeErr(w, err)
+		return
+	} else if !ok {
+		wire.WriteJSONError(w, http.StatusBadRequest,
+			"ConditionalCheckFailedException", "The conditional request failed")
+		return
+	}
+
 	if err := h.db.PutItem(r.Context(), req.TableName, item); err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	wire.WriteJSON(w, map[string]any{})
+}
+
+// checkCondition evaluates the supported ConditionExpression forms —
+// attribute_not_exists(field) and attribute_exists(field) — against the
+// current stored item, keyed by the incoming item's key attributes.
+// Real DynamoDB users lean on attribute_not_exists(pk) for create-if-absent.
+func (h *Handler) checkCondition(
+	ctx context.Context,
+	table string,
+	item map[string]any,
+	expr string,
+	names map[string]string,
+) (bool, error) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return true, nil
+	}
+
+	var (
+		rest       string
+		wantAbsent bool
+	)
+	switch {
+	case strings.HasPrefix(expr, "attribute_not_exists("):
+		rest = strings.TrimPrefix(expr, "attribute_not_exists(")
+		wantAbsent = true
+	case strings.HasPrefix(expr, "attribute_exists("):
+		rest = strings.TrimPrefix(expr, "attribute_exists(")
+	default:
+		return false, cerrors.Newf(cerrors.InvalidArgument,
+			"unsupported ConditionExpression: %s", expr)
+	}
+
+	rest, ok := strings.CutSuffix(rest, ")")
+	field := strings.TrimSpace(rest)
+	// Reject compound expressions and malformed input rather than
+	// mis-evaluating them (only the single-function forms are supported).
+	if !ok || field == "" || strings.ContainsAny(field, " ()") {
+		return false, cerrors.Newf(cerrors.InvalidArgument,
+			"unsupported ConditionExpression: %s", expr)
+	}
+	field = resolveAttrName(field, names)
+
+	cfg, err := h.db.DescribeTable(ctx, table)
+	if err != nil {
+		return false, err
+	}
+
+	key := map[string]any{cfg.PartitionKey: item[cfg.PartitionKey]}
+	if cfg.SortKey != "" {
+		key[cfg.SortKey] = item[cfg.SortKey]
+	}
+
+	existing, err := h.db.GetItem(ctx, table, key)
+	if err != nil && !cerrors.IsNotFound(err) {
+		return false, err
+	}
+
+	var hasAttr bool
+	if existing != nil {
+		_, hasAttr = existing[field]
+	}
+
+	if wantAbsent {
+		return !hasAttr, nil
+	}
+	return hasAttr, nil
 }
 
 func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +368,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		Limit                     int               `json:"Limit"`
 		ScanIndexForward          *bool             `json:"ScanIndexForward"`
 		IndexName                 string            `json:"IndexName"`
+		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -304,11 +384,12 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.db.Query(r.Context(), dbdriver.QueryInput{
-		Table:        req.TableName,
-		IndexName:    req.IndexName,
-		KeyCondition: kc,
-		Limit:        req.Limit,
-		ScanForward:  forward,
+		Table:             req.TableName,
+		IndexName:         req.IndexName,
+		KeyCondition:      kc,
+		Limit:             req.Limit,
+		SortDescending:    !forward,
+		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -320,10 +401,15 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toWireItem(item))
 	}
 
-	wire.WriteJSON(w, map[string]any{
+	resp := map[string]any{
 		"Items": items,
-		"Count": result.Count,
-	})
+		"Count": len(items),
+	}
+	if result.LastEvaluatedKey != nil {
+		resp["LastEvaluatedKey"] = toWireItem(result.LastEvaluatedKey)
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 // parseKeyCondition extracts a KeyCondition from a simple expression.

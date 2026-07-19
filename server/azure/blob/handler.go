@@ -256,7 +256,14 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 		return
 	}
 
-	contentType := r.Header.Get("Content-Type")
+	// Per the Azure Put Blob spec, x-ms-blob-content-type sets the blob's
+	// content type (the azblob SDK sends HTTPHeaders.BlobContentType there);
+	// the request's own Content-Type header is only a fallback.
+	contentType := r.Header.Get("x-ms-blob-content-type")
+	if contentType == "" {
+		contentType = r.Header.Get("Content-Type")
+	}
+
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}

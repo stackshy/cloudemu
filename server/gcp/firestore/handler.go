@@ -152,8 +152,17 @@ type commitRequest struct {
 }
 
 type writeOp struct {
-	Update *document `json:"update,omitempty"`
-	Delete string    `json:"delete,omitempty"`
+	Update          *document     `json:"update,omitempty"`
+	Delete          string        `json:"delete,omitempty"`
+	CurrentDocument *precondition `json:"currentDocument,omitempty"`
+	UpdateMask      *struct {
+		FieldPaths []string `json:"fieldPaths"`
+	} `json:"updateMask,omitempty"`
+}
+
+// precondition mirrors google.firestore.v1.Precondition (exists only).
+type precondition struct {
+	Exists *bool `json:"exists,omitempty"`
 }
 
 type commitResponse struct {
@@ -188,6 +197,45 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 
 			item := fieldsToMap(op.Update.Fields)
 			item["id"] = id
+
+			// updateMask selects merge semantics: masked paths written (or
+			// deleted when absent from the body), all other fields kept.
+			if op.UpdateMask != nil && len(op.UpdateMask.FieldPaths) > 0 {
+				existing, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
+				if gerr != nil && !cerrors.IsNotFound(gerr) {
+					writeErr(w, gerr)
+					return
+				}
+
+				merged := map[string]any{"id": id}
+				for k, v := range existing {
+					merged[k] = v
+				}
+				for _, path := range op.UpdateMask.FieldPaths {
+					if v, ok := item[path]; ok {
+						merged[path] = v
+					} else {
+						delete(merged, path)
+					}
+				}
+				item = merged
+			}
+
+			if op.CurrentDocument != nil && op.CurrentDocument.Exists != nil {
+				_, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
+				exists := gerr == nil
+
+				if !*op.CurrentDocument.Exists && exists {
+					writeError(w, http.StatusConflict, "ALREADY_EXISTS",
+						"document already exists: "+op.Update.Name)
+					return
+				}
+				if *op.CurrentDocument.Exists && !exists {
+					writeError(w, http.StatusNotFound, "NOT_FOUND",
+						"no document to update: "+op.Update.Name)
+					return
+				}
+			}
 
 			if perr := h.db.PutItem(r.Context(), p.collection, item); perr != nil {
 				writeErr(w, perr)
@@ -234,37 +282,162 @@ func (h *Handler) batchGet(w http.ResponseWriter, r *http.Request, _ string) {
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
-	w.Header().Set("Content-Type", contentTypeJSON)
-	w.WriteHeader(http.StatusOK)
-	enc := json.NewEncoder(w)
+	// REST batchGet returns ONE JSON array containing an entry per requested
+	// document; emitting separate arrays would truncate the client's decode
+	// to the first entry.
+	entries := make([]batchGetResponseEntry, 0, len(req.Documents))
 
-	// REST batchGet returns a JSON array of response entries (newline-
-	// delimited objects in the streaming HTTP response).
 	for _, docName := range req.Documents {
 		p, id, err := splitDocumentName(docName)
 		if err != nil {
-			_ = enc.Encode([]batchGetResponseEntry{{Missing: docName, ReadTime: now}})
+			entries = append(entries, batchGetResponseEntry{Missing: docName, ReadTime: now})
 			continue
 		}
 
 		item, gerr := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": id})
 		if gerr != nil {
-			_ = enc.Encode([]batchGetResponseEntry{{Missing: docName, ReadTime: now}})
+			entries = append(entries, batchGetResponseEntry{Missing: docName, ReadTime: now})
 			continue
 		}
 
 		doc := mapToDocument(item, p, id)
-		_ = enc.Encode([]batchGetResponseEntry{{Found: &doc, ReadTime: now}})
+		entries = append(entries, batchGetResponseEntry{Found: &doc, ReadTime: now})
 	}
+
+	writeJSON(w, http.StatusOK, entries)
 }
 
 // runQuery handles POST .../documents:runQuery — for collection scans.
+// allResults asks the driver for the entire matched set (runQuery streams
+// rather than pages; the driver's zero-limit default is 100).
+const allResults = 1 << 30
+
 type runQueryRequest struct {
 	StructuredQuery struct {
 		From []struct {
 			CollectionID string `json:"collectionId"`
 		} `json:"from"`
+		Where *queryFilter `json:"where"`
+		Limit int          `json:"limit"`
 	} `json:"structuredQuery"`
+}
+
+// queryFilter mirrors StructuredQuery.Filter: either a single fieldFilter
+// or a compositeFilter AND of nested filters.
+type queryFilter struct {
+	FieldFilter *struct {
+		Field struct {
+			FieldPath string `json:"fieldPath"`
+		} `json:"field"`
+		Op    fieldOp `json:"op"`
+		Value value   `json:"value"`
+	} `json:"fieldFilter"`
+	CompositeFilter *struct {
+		Op      compositeOp   `json:"op"`
+		Filters []queryFilter `json:"filters"`
+	} `json:"compositeFilter"`
+}
+
+// fieldOp decodes a FieldFilter operator sent either as its enum name
+// ("EQUAL") or its protobuf number (5), as the REST client does.
+type fieldOp string
+
+var fieldOpNames = map[int]fieldOp{
+	1: "LESS_THAN",
+	2: "LESS_THAN_OR_EQUAL",
+	3: "GREATER_THAN",
+	4: "GREATER_THAN_OR_EQUAL",
+	5: "EQUAL",
+	6: "NOT_EQUAL",
+}
+
+func (o *fieldOp) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*o = fieldOp(v)
+		return nil
+	}
+
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*o = fieldOpNames[n] // unknown numbers stay "" and fail downstream
+	return nil
+}
+
+// compositeOp decodes a CompositeFilter operator name or number (AND=1).
+type compositeOp string
+
+func (o *compositeOp) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*o = compositeOp(v)
+		return nil
+	}
+
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	if n == 1 {
+		*o = "AND"
+	}
+	return nil
+}
+
+// firestoreOps maps StructuredQuery operators onto driver scan filter ops.
+var firestoreOps = map[string]string{
+	"EQUAL":                 "=",
+	"NOT_EQUAL":             "!=",
+	"LESS_THAN":             "<",
+	"LESS_THAN_OR_EQUAL":    "<=",
+	"GREATER_THAN":          ">",
+	"GREATER_THAN_OR_EQUAL": ">=",
+}
+
+// filtersFromQuery flattens a where clause into driver scan filters.
+// Only AND composites are supported; anything else is an error so queries
+// are never silently answered with the wrong result set.
+func filtersFromQuery(f *queryFilter) ([]dbdriver.ScanFilter, error) {
+	if f == nil {
+		return nil, nil
+	}
+
+	if f.FieldFilter != nil {
+		op, ok := firestoreOps[string(f.FieldFilter.Op)]
+		if !ok {
+			return nil, fmt.Errorf("unsupported filter op %q", f.FieldFilter.Op)
+		}
+		return []dbdriver.ScanFilter{{
+			Field: f.FieldFilter.Field.FieldPath,
+			Op:    op,
+			Value: firestoreValueToGo(f.FieldFilter.Value),
+		}}, nil
+	}
+
+	if f.CompositeFilter != nil {
+		if f.CompositeFilter.Op != "AND" {
+			return nil, fmt.Errorf("unsupported composite op %q", f.CompositeFilter.Op)
+		}
+		var out []dbdriver.ScanFilter
+		for i := range f.CompositeFilter.Filters {
+			sub, err := filtersFromQuery(&f.CompositeFilter.Filters[i])
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, sub...)
+		}
+		return out, nil
+	}
+
+	return nil, nil
 }
 
 type runQueryResponseEntry struct {
@@ -290,7 +463,24 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 	p, _ := parseFirestorePath(base)
 	p.collection = collection
 
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: collection})
+	filters, ferr := filtersFromQuery(req.StructuredQuery.Where)
+	if ferr != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", ferr.Error())
+		return
+	}
+
+	// runQuery is not paged: honor an explicit limit, otherwise stream the
+	// full result set (the driver treats limit<=0 as a 100-item default).
+	limit := req.StructuredQuery.Limit
+	if limit <= 0 {
+		limit = allResults
+	}
+
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
+		Table:   collection,
+		Filters: filters,
+		Limit:   limit,
+	})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -457,6 +647,31 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 
 	item := fieldsToMap(inDoc.Fields)
 	item["id"] = p.documentID
+
+	// With an updateMask, real Firestore merges: only the masked field
+	// paths are written; every other stored field is preserved. A masked
+	// path absent from the body is a field delete. Without a mask, the
+	// document is replaced wholesale.
+	if mask := r.URL.Query()["updateMask.fieldPaths"]; len(mask) > 0 {
+		existing, err := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": p.documentID})
+		if err != nil && !cerrors.IsNotFound(err) {
+			writeErr(w, err)
+			return
+		}
+
+		merged := map[string]any{"id": p.documentID}
+		for k, v := range existing {
+			merged[k] = v
+		}
+		for _, path := range mask {
+			if v, ok := item[path]; ok {
+				merged[path] = v
+			} else {
+				delete(merged, path)
+			}
+		}
+		item = merged
+	}
 
 	if err := h.db.PutItem(r.Context(), p.collection, item); err != nil {
 		writeErr(w, err)
