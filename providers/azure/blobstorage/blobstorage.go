@@ -302,7 +302,10 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		maxKeys = blobDefaultMaxKeys
 	}
 
-	page, _ := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+	page, err := pagination.Paginate(matchedObjects, opts.PageToken, maxKeys)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+	}
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
 

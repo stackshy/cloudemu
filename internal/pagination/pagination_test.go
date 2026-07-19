@@ -159,3 +159,31 @@ func TestPaginate_InvalidToken(t *testing.T) {
 	_, err := Paginate([]string{"a"}, "bad-token", 10)
 	assert.Error(t, err)
 }
+
+func TestPaginateSorted_StableAcrossShuffledInput(t *testing.T) {
+	// Same logical set presented in different orders must yield identical
+	// pages — the invariant PaginateSorted exists to enforce.
+	a := []string{"c", "a", "e", "b", "d"}
+	b := []string{"e", "d", "c", "b", "a"}
+	less := func(x, y string) bool { return x < y }
+
+	p1, err := PaginateSorted(a, less, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := PaginateSorted(b, less, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Items[0] != p2.Items[0] || p1.Items[1] != p2.Items[1] {
+		t.Fatalf("pages differ across input orders: %v vs %v", p1.Items, p2.Items)
+	}
+
+	p3, err := PaginateSorted(b, less, p2.NextPageToken, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p3.Items[0] != "c" || p3.Items[1] != "d" {
+		t.Fatalf("page 2 = %v, want [c d]", p3.Items)
+	}
+}
