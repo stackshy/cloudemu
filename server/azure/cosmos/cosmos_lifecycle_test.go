@@ -19,7 +19,7 @@
 //   - Item identity is the partition-key value only, so two docs with the
 //     same pk but different ids collide (real Cosmos keys on (pk, id)).
 //   - PATCH (PatchItem) is not routed at all (405 MethodNotAllowed).
-package azure_test
+package cosmos_test
 
 import (
 	"context"

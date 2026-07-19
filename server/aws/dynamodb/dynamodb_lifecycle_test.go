@@ -1,5 +1,4 @@
-// e2e_suite_database_test.go — suite cell DATABASE / aws / sdk-compat.
-//
+// dynamodb_lifecycle_test.go — //
 // Real-user-journey  tests that drive the genuine aws-sdk-go-v2 DynamoDB
 // client against the emulator's HTTP server (httptest). Assertions are made
 // on SDK-decoded responses and SDK-visible typed errors, not raw HTTP.
@@ -8,7 +7,7 @@
 // returns UnknownOperationException for UpdateTimeToLive etc.), so those
 // journeys configure TTL/stream settings on the driver directly while item
 // traffic still flows through the real SDK.
-package aws_test
+package dynamodb_test
 
 import (
 	"context"
@@ -35,10 +34,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newSuiteDDBEnv builds a real DynamoDB SDK client pointed at a fresh
-// emulator instance and also returns the backing provider so driver-only
-// features (TTL config, streams, GSIs) can be arranged for SDK journeys.
-// Retries are disabled so error-path assertions observe exactly one attempt.
 func newSuiteDDBEnv(t *testing.T, opts ...emuconfig.Option) (*dynamodb.Client, *awsprovider.Provider) {
 	t.Helper()
 

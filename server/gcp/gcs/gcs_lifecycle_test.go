@@ -8,7 +8,7 @@
 // not-found errors, duplicate buckets, non-empty bucket deletion, unusual
 // key names) and provider-specific behaviors from the suite survey
 // (sha256 ETags, copy preserves ETag, versioning being driver-only).
-package gcp_test
+package gcs_test
 
 import (
 	"bytes"

@@ -15,7 +15,7 @@
 // are called out inline; tests that assert real-Firestore semantics the
 // emulator does not implement are expected to FAIL and are left in place as
 // suite findings.
-package gcp_test
+package firestore_test
 
 import (
 	"context"

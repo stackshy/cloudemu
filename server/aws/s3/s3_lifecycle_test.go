@@ -1,9 +1,8 @@
-// e2e_suite_storage_test.go — suite cell STORAGE / aws / sdk-compat.
-//
+// s3_lifecycle_test.go — //
 // Real-user-journey  tests that drive the genuine aws-sdk-go-v2 S3 client
 // against the emulator's HTTP server (httptest). Assertions are made on
 // SDK-decoded responses and SDK-visible error types, not raw HTTP.
-package aws_test
+package s3_test
 
 import (
 	"bytes"
@@ -21,7 +20,38 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"net/http/httptest"
+
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
+
+// newTestServer stands up the emulator's AWS server with the drivers this
+// suite exercises and returns its URL plus a ready SDK config.
+func newTestServer(t *testing.T) (string, aws.Config) {
+	t.Helper()
+
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{
+		S3:       provider.S3,
+		DynamoDB: provider.DynamoDB,
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("test", "test", ""),
+		),
+	)
+	require.NoError(t, err)
+
+	return ts.URL, cfg
+}
 
 // newSuiteS3Client builds a real S3 SDK client pointed at a fresh emulator
 // instance. Retries are disabled so error-path assertions observe exactly one

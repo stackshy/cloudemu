@@ -9,7 +9,7 @@
 // x-ms-copy-source. Versioning, lifecycle, tags, leases, snapshots, and block
 // lists are driver-only and not exposed over HTTP, so they are not exercised
 // here.
-package azure_test
+package blob_test
 
 import (
 	"bytes"
