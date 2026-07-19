@@ -11,7 +11,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -283,17 +282,18 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		limit = 100
 	}
 
-	driver.SortByFields(matched, td.config.PartitionKey, td.config.SortKey)
-	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	result, err := driver.PageOrdered(td.config, matched, limit, input.PageToken,
+		input.ExclusiveStartKey, input.SortDescending,
+		func(it map[string]any) string { return itemKey(td.config, it) })
 	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+		return nil, err
 	}
 
 	dims := map[string]string{"TableName": input.Table}
-	m.emitMetric("ConsumedReadCapacityUnits", float64(len(page.Items)), dims)
+	m.emitMetric("ConsumedReadCapacityUnits", float64(len(result.Items)), dims)
 	m.emitMetric("SuccessfulRequestCount", 1, dims)
 
-	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
+	return result, nil
 }
 
 func resolveKeyFields(td *tableData, indexName string) (pkField, skField string, err error) {
@@ -373,17 +373,18 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		limit = 100
 	}
 
-	driver.SortByFields(matched, td.config.PartitionKey, td.config.SortKey)
-	page, err := pagination.Paginate(matched, input.PageToken, limit)
+	result, err := driver.PageOrdered(td.config, matched, limit, input.PageToken,
+		input.ExclusiveStartKey, false,
+		func(it map[string]any) string { return itemKey(td.config, it) })
 	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid page token: %v", err)
+		return nil, err
 	}
 
 	dims := map[string]string{"TableName": input.Table}
-	m.emitMetric("ConsumedReadCapacityUnits", float64(len(page.Items)), dims)
+	m.emitMetric("ConsumedReadCapacityUnits", float64(len(result.Items)), dims)
 	m.emitMetric("SuccessfulRequestCount", 1, dims)
 
-	return &driver.QueryResult{Items: page.Items, Count: len(page.Items), NextPageToken: page.NextPageToken}, nil
+	return result, nil
 }
 
 func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string]any) error {
