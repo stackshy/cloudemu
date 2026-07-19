@@ -1,8 +1,8 @@
 package s3
 
-// e2e_campaign_storage_test.go — campaign cell STORAGE/aws/portable.
+// e2e_suite_storage_test.go — suite cell STORAGE/aws/portable.
 //
-// Real-user-journey E2E tests exercising the portable driver.Bucket API of the
+// Real-user-journey  tests exercising the portable driver.Bucket API of the
 // AWS S3 mock directly (no HTTP layer). Covers full object lifecycle, typed
 // error edge cases, pagination continuation tokens, multipart assembly order,
 // copy semantics, versioning flag, lifecycle evaluation, presigned URLs and
@@ -28,7 +28,7 @@ type e2eEnv struct {
 	clock *config.FakeClock
 }
 
-func newE2EEnv() *e2eEnv {
+func newEnv() *e2eEnv {
 	fc := config.NewFakeClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
 
@@ -59,11 +59,11 @@ func sha256Hex(data []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-// TestE2ECampaign_FullObjectLifecycle walks a complete user journey:
+// TestFullObjectLifecycle walks a complete user journey:
 // bucket create -> put varied objects -> get -> head -> list (prefix,
 // delimiter, pagination) -> copy -> delete objects -> delete bucket.
-func TestE2ECampaign_FullObjectLifecycle(t *testing.T) {
-	env := newE2EEnv()
+func TestFullObjectLifecycle(t *testing.T) {
+	env := newEnv()
 	m := env.mock
 	ctx := context.Background()
 
@@ -240,10 +240,10 @@ func TestE2ECampaign_FullObjectLifecycle(t *testing.T) {
 	}
 }
 
-// TestE2ECampaign_EdgeCases asserts the typed cerrors codes for the standard
+// TestEdgeCases asserts the typed cerrors codes for the standard
 // misuse paths plus exotic key names (slashes, unicode).
-func TestE2ECampaign_EdgeCases(t *testing.T) {
-	env := newE2EEnv()
+func TestEdgeCases(t *testing.T) {
+	env := newEnv()
 	m := env.mock
 	ctx := context.Background()
 
@@ -329,10 +329,10 @@ func TestE2ECampaign_EdgeCases(t *testing.T) {
 	}
 }
 
-// TestE2ECampaign_PaginationTokens drives a multi-page listing via opaque
+// TestPaginationTokens drives a multi-page listing via opaque
 // continuation tokens the way an SDK paginator would.
-func TestE2ECampaign_PaginationTokens(t *testing.T) {
-	env := newE2EEnv()
+func TestPaginationTokens(t *testing.T) {
+	env := newEnv()
 	m := env.mock
 	ctx := context.Background()
 
@@ -411,11 +411,11 @@ func TestE2ECampaign_PaginationTokens(t *testing.T) {
 	}
 }
 
-// TestE2ECampaign_MultipartJourney covers create -> out-of-order part upload ->
+// TestMultipartJourney covers create -> out-of-order part upload ->
 // complete (with parts listed out of order) -> assembled object, plus abort,
 // list-uploads, and the InvalidArgument for completing with a missing part.
-func TestE2ECampaign_MultipartJourney(t *testing.T) {
-	env := newE2EEnv()
+func TestMultipartJourney(t *testing.T) {
+	env := newEnv()
 	m := env.mock
 	ctx := context.Background()
 
@@ -512,10 +512,10 @@ func TestE2ECampaign_MultipartJourney(t *testing.T) {
 	e2eRequireCode(t, err, cerrors.NotFound, "UploadPart unknown id")
 }
 
-// TestE2ECampaign_VersioningFlag exercises the boolean-only versioning
+// TestVersioningFlag exercises the boolean-only versioning
 // behavior: default false, toggle round-trip, NotFound on missing bucket.
-func TestE2ECampaign_VersioningFlag(t *testing.T) {
-	env := newE2EEnv()
+func TestVersioningFlag(t *testing.T) {
+	env := newEnv()
 	m := env.mock
 	ctx := context.Background()
 
@@ -564,10 +564,10 @@ func TestE2ECampaign_VersioningFlag(t *testing.T) {
 	e2eRequireCode(t, err, cerrors.NotFound, "GetBucketVersioning missing bucket")
 }
 
-// TestE2ECampaign_PresignedURLs checks method restriction, the 7-day expiry
+// TestPresignedURLs checks method restriction, the 7-day expiry
 // cap and the amazonaws.com URL shape with X-Amz-Expires.
-func TestE2ECampaign_PresignedURLs(t *testing.T) {
-	env := newE2EEnv()
+func TestPresignedURLs(t *testing.T) {
+	env := newEnv()
 	m := env.mock
 	ctx := context.Background()
 
@@ -610,10 +610,10 @@ func TestE2ECampaign_PresignedURLs(t *testing.T) {
 	e2eRequireCode(t, err, cerrors.NotFound, "Presign missing bucket")
 }
 
-// TestE2ECampaign_LifecycleEvaluation stores rules, ages objects with the fake
+// TestLifecycleEvaluation stores rules, ages objects with the fake
 // clock and asserts EvaluateLifecycle reports (but never deletes) expired keys.
-func TestE2ECampaign_LifecycleEvaluation(t *testing.T) {
-	env := newE2EEnv()
+func TestLifecycleEvaluation(t *testing.T) {
+	env := newEnv()
 	m := env.mock
 	ctx := context.Background()
 
@@ -669,11 +669,11 @@ func TestE2ECampaign_LifecycleEvaluation(t *testing.T) {
 	}
 }
 
-// TestE2ECampaign_TaggingAndBucketConfigs walks tagging (object + bucket) and
+// TestTaggingAndBucketConfigs walks tagging (object + bucket) and
 // the policy/CORS/encryption config surfaces including their unset-NotFound
 // and clear semantics.
-func TestE2ECampaign_TaggingAndBucketConfigs(t *testing.T) {
-	env := newE2EEnv()
+func TestTaggingAndBucketConfigs(t *testing.T) {
+	env := newEnv()
 	m := env.mock
 	ctx := context.Background()
 

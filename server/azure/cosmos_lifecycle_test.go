@@ -1,4 +1,4 @@
-// This file contains E2E campaign tests for the DATABASE cell
+// This file contains  suite tests for the DATABASE cell
 // (azure / sdk-compat): real-user journeys driving the official
 // azure-sdk-for-go azcosmos client against the CloudEmu Azure server mounted
 // in an httptest TLS server.
@@ -8,7 +8,7 @@
 // create/list/read/replace/delete, and query (SQL body ignored — full scan).
 // TTL and the change feed are driver-level only (no HTTP endpoint), so those
 // journeys mix SDK writes with direct driver calls on the same provider, per
-// the campaign SDK-test-setup notes.
+// the suite SDK-test-setup notes.
 //
 // Emulator divergences from real Cosmos that these tests pin down (asserting
 // the emulator's actual, documented behavior, marked DIVERGENCE below):
@@ -42,8 +42,8 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
 
-// cosmosCampaignKey is a dummy base64 master key; the handler ignores auth.
-const cosmosCampaignKey = "Y2FtcGFpZ24ta2V5" // base64("campaign-key")
+// cosmosSuiteKey is a dummy base64 master key; the handler ignores auth.
+const cosmosSuiteKey = "Y2FtcGFpZ24ta2V5" // base64("suite-key")
 
 // cosmosEnv bundles a fresh emulator provider (for driver-level TTL/feed
 // calls) with a real azcosmos client pointed at the httptest server.
@@ -65,7 +65,7 @@ func newCosmosEnv(t *testing.T, opts ...config.Option) *cosmosEnv {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
-	cred, err := azcosmos.NewKeyCredential(cosmosCampaignKey)
+	cred, err := azcosmos.NewKeyCredential(cosmosSuiteKey)
 	if err != nil {
 		t.Fatalf("NewKeyCredential: %v", err)
 	}
@@ -168,12 +168,12 @@ func wantRespErr(t *testing.T, err error, status int, op string) {
 	}
 }
 
-// TestE2ECampaignCosmosLifecycle walks the full happy path a real user
+// TestCosmosLifecycle walks the full happy path a real user
 // follows: database → container → put documents with varied attribute types
 // (strings, numbers, bool, null, nested object, array, empty string,
 // large-ish value) → point reads → upsert-update → replace → delete document
 // → delete container.
-func TestE2ECampaignCosmosLifecycle(t *testing.T) {
+func TestCosmosLifecycle(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
 	cc := env.container(ctx, t, "shopdb", "orders")
@@ -292,10 +292,10 @@ func TestE2ECampaignCosmosLifecycle(t *testing.T) {
 	wantRespErr(t, err, 404, "ReadItem after container delete")
 }
 
-// TestE2ECampaignCosmosTypedErrors exercises the SDK-visible typed error
+// TestCosmosTypedErrors exercises the SDK-visible typed error
 // paths: missing documents, missing containers, duplicate container create,
 // and a document without the mandatory id field.
-func TestE2ECampaignCosmosTypedErrors(t *testing.T) {
+func TestCosmosTypedErrors(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
 	cc := env.container(ctx, t, "errdb", "things")
@@ -341,12 +341,12 @@ func TestE2ECampaignCosmosTypedErrors(t *testing.T) {
 	wantRespErr(t, err, 400, "CreateItem without id")
 }
 
-// TestE2ECampaignCosmosWriteDivergences pins down the emulator's write
+// TestCosmosWriteDivergences pins down the emulator's write
 // semantics where they knowingly diverge from real Cosmos (see file header):
 // duplicate create succeeds, etag preconditions are ignored, deleting a
 // missing document succeeds, PATCH is not routed, and item identity collides
 // on the partition-key value alone.
-func TestE2ECampaignCosmosWriteDivergences(t *testing.T) {
+func TestCosmosWriteDivergences(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
 	cc := env.container(ctx, t, "divdb", "users")
@@ -417,11 +417,11 @@ func TestE2ECampaignCosmosWriteDivergences(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignCosmosQueryAndPagination drives the SDK query pager: empty
+// TestCosmosQueryAndPagination drives the SDK query pager: empty
 // container first, then 30 documents across two partitions. The emulator
 // ignores the SQL text and the partition key (full scan, DIVERGENCE) and
 // never emits a continuation token, so everything arrives in one page.
-func TestE2ECampaignCosmosQueryAndPagination(t *testing.T) {
+func TestCosmosQueryAndPagination(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
 	cc := env.container(ctx, t, "querydb", "events")
@@ -515,9 +515,9 @@ func TestE2ECampaignCosmosQueryAndPagination(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignCosmosUnicode round-trips unicode container content: ids,
+// TestCosmosUnicode round-trips unicode container content: ids,
 // partition keys, and values containing CJK, Greek, and emoji.
-func TestE2ECampaignCosmosUnicode(t *testing.T) {
+func TestCosmosUnicode(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
 	cc := env.container(ctx, t, "unidb", "translations")
@@ -558,12 +558,12 @@ func TestE2ECampaignCosmosUnicode(t *testing.T) {
 	wantRespErr(t, err, 404, "ReadItem deleted unicode doc")
 }
 
-// TestE2ECampaignCosmosTTL exercises TTL expiry deterministically with the
+// TestCosmosTTL exercises TTL expiry deterministically with the
 // injectable fake clock. TTL configuration is driver-only (no Cosmos HTTP
 // endpoint), so the config calls go through provider.CosmosDB directly, while
 // document writes/reads flow through the real SDK — expiry is SDK-visible as
 // a 404. Also pins BatchGetItems skipping the TTL check (documented).
-func TestE2ECampaignCosmosTTL(t *testing.T) {
+func TestCosmosTTL(t *testing.T) {
 	ctx := context.Background()
 	start := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	clk := config.NewFakeClock(start)
@@ -637,12 +637,12 @@ func TestE2ECampaignCosmosTTL(t *testing.T) {
 	wantRespErr(t, err, 404, "ReadItem expired s2")
 }
 
-// TestE2ECampaignCosmosChangeFeed exercises the driver-level change feed
+// TestCosmosChangeFeed exercises the driver-level change feed
 // (there is no Cosmos HTTP change-feed endpoint) fed by REAL SDK writes:
 // enable the feed, then create/upsert/delete through azcosmos, and verify
 // INSERT/MODIFY/REMOVE records, sequence numbers, the 'lease-000' shard,
 // fake-clock timestamps, and token-based resumption.
-func TestE2ECampaignCosmosChangeFeed(t *testing.T) {
+func TestCosmosChangeFeed(t *testing.T) {
 	ctx := context.Background()
 	start := time.Date(2026, 7, 2, 8, 30, 0, 0, time.UTC)
 	clk := config.NewFakeClock(start)

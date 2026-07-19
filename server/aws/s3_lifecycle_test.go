@@ -1,6 +1,6 @@
-// e2e_campaign_storage_test.go — campaign cell STORAGE / aws / sdk-compat.
+// e2e_suite_storage_test.go — suite cell STORAGE / aws / sdk-compat.
 //
-// Real-user-journey E2E tests that drive the genuine aws-sdk-go-v2 S3 client
+// Real-user-journey  tests that drive the genuine aws-sdk-go-v2 S3 client
 // against the emulator's HTTP server (httptest). Assertions are made on
 // SDK-decoded responses and SDK-visible error types, not raw HTTP.
 package aws_test
@@ -23,11 +23,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newCampaignS3Client builds a real S3 SDK client pointed at a fresh emulator
+// newSuiteS3Client builds a real S3 SDK client pointed at a fresh emulator
 // instance. Retries are disabled so error-path assertions observe exactly one
 // attempt (the emulator maps some driver errors to HTTP 500, which the default
 // retryer would otherwise retry with backoff).
-func newCampaignS3Client(t *testing.T) *s3.Client {
+func newSuiteS3Client(t *testing.T) *s3.Client {
 	t.Helper()
 
 	url, cfg := newTestServer(t)
@@ -39,7 +39,7 @@ func newCampaignS3Client(t *testing.T) *s3.Client {
 	})
 }
 
-func campaignCreateBucket(t *testing.T, client *s3.Client, bucket string) {
+func suiteCreateBucket(t *testing.T, client *s3.Client, bucket string) {
 	t.Helper()
 
 	_, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{
@@ -48,7 +48,7 @@ func campaignCreateBucket(t *testing.T, client *s3.Client, bucket string) {
 	require.NoError(t, err, "CreateBucket %q", bucket)
 }
 
-func campaignPut(t *testing.T, client *s3.Client, bucket, key string, body []byte, contentType string) {
+func suitePut(t *testing.T, client *s3.Client, bucket, key string, body []byte, contentType string) {
 	t.Helper()
 
 	in := &s3.PutObjectInput{
@@ -64,7 +64,7 @@ func campaignPut(t *testing.T, client *s3.Client, bucket, key string, body []byt
 	require.NoError(t, err, "PutObject %s/%s", bucket, key)
 }
 
-func campaignGetBody(t *testing.T, client *s3.Client, bucket, key string) ([]byte, *s3.GetObjectOutput) {
+func suiteGetBody(t *testing.T, client *s3.Client, bucket, key string) ([]byte, *s3.GetObjectOutput) {
 	t.Helper()
 
 	out, err := client.GetObject(context.Background(), &s3.GetObjectInput{
@@ -86,19 +86,19 @@ func quotedSHA256(data []byte) string {
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
 
-// TestE2ECampaignS3FullLifecycle walks the full user journey: create bucket,
+// TestS3FullLifecycle walks the full user journey: create bucket,
 // put objects with varied content types (including an empty body and a ~1MB
 // binary payload), get, head, list, copy to a second bucket, delete objects,
 // delete both buckets, and verify the buckets are gone.
-func TestE2ECampaignS3FullLifecycle(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3ObjectJourney(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-lifecycle"
 	const copyBucket = "e2e-lifecycle-copy"
 
-	campaignCreateBucket(t, client, bucket)
-	campaignCreateBucket(t, client, copyBucket)
+	suiteCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, copyBucket)
 
 	oneMB := bytes.Repeat([]byte("cloudemu-1mb-payload!"), (1<<20)/21+1)[:1<<20]
 
@@ -107,20 +107,20 @@ func TestE2ECampaignS3FullLifecycle(t *testing.T) {
 		body        []byte
 		contentType string
 	}{
-		{"docs/readme.txt", []byte("hello e2e campaign"), "text/plain"},
+		{"docs/readme.txt", []byte("hello e2e suite"), "text/plain"},
 		{"docs/config.json", []byte(`{"a":1}`), "application/json"},
 		{"blobs/empty.bin", []byte{}, "application/octet-stream"},
 		{"blobs/big.bin", oneMB, "application/octet-stream"},
 	}
 
 	for _, obj := range objects {
-		campaignPut(t, client, bucket, obj.key, obj.body, obj.contentType)
+		suitePut(t, client, bucket, obj.key, obj.body, obj.contentType)
 	}
 
 	// Get: bodies, content types, and the emulator's sha256-hex ETag (note:
 	// real S3 uses MD5-based ETags; the emulator documents sha256).
 	for _, obj := range objects {
-		data, out := campaignGetBody(t, client, bucket, obj.key)
+		data, out := suiteGetBody(t, client, bucket, obj.key)
 		assert.Equal(t, obj.body, data, "body %s", obj.key)
 		assert.Equal(t, obj.contentType, aws.ToString(out.ContentType), "content-type %s", obj.key)
 		assert.Equal(t, quotedSHA256(obj.body), aws.ToString(out.ETag), "etag %s", obj.key)
@@ -169,8 +169,8 @@ func TestE2ECampaignS3FullLifecycle(t *testing.T) {
 	assert.Equal(t, aws.ToString(src.ETag), aws.ToString(copied.CopyObjectResult.ETag),
 		"copy must preserve source ETag")
 
-	copyBody, _ := campaignGetBody(t, client, copyBucket, "copied/readme.txt")
-	assert.Equal(t, []byte("hello e2e campaign"), copyBody)
+	copyBody, _ := suiteGetBody(t, client, copyBucket, "copied/readme.txt")
+	assert.Equal(t, []byte("hello e2e suite"), copyBody)
 
 	// Delete all objects, then the buckets.
 	for _, obj := range objects {
@@ -202,14 +202,14 @@ func TestE2ECampaignS3FullLifecycle(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignS3ListPrefixDelimiter exercises prefix + delimiter roll-up
+// TestS3ListPrefixDelimiter exercises prefix + delimiter roll-up
 // into CommonPrefixes, the way a console-style folder browser would.
-func TestE2ECampaignS3ListPrefixDelimiter(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3ListPrefixDelimiter(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-prefix-delim"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	keys := []string{
 		"logs/2025/app.log",
@@ -219,7 +219,7 @@ func TestE2ECampaignS3ListPrefixDelimiter(t *testing.T) {
 		"top.txt",
 	}
 	for _, k := range keys {
-		campaignPut(t, client, bucket, k, []byte(k), "text/plain")
+		suitePut(t, client, bucket, k, []byte(k), "text/plain")
 	}
 
 	// Root listing with "/": two folders plus one top-level file.
@@ -265,21 +265,21 @@ func TestE2ECampaignS3ListPrefixDelimiter(t *testing.T) {
 	assert.Empty(t, none.CommonPrefixes)
 }
 
-// TestE2ECampaignS3PaginationContinuationTokens uploads more than the default
+// TestS3PaginationContinuationTokens uploads more than the default
 // page size (1000) and pages through with the SDK's continuation token. The
 // handler does not parse max-keys, so the only way to trigger truncation is to
 // exceed the 1000-key default page.
-func TestE2ECampaignS3PaginationContinuationTokens(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3PaginationContinuationTokens(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-pagination"
 	const total = 1005
 
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	for i := 0; i < total; i++ {
-		campaignPut(t, client, bucket, fmt.Sprintf("obj-%04d", i), []byte{byte(i)}, "")
+		suitePut(t, client, bucket, fmt.Sprintf("obj-%04d", i), []byte{byte(i)}, "")
 	}
 
 	page1, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
@@ -316,14 +316,14 @@ func TestE2ECampaignS3PaginationContinuationTokens(t *testing.T) {
 	assert.Len(t, seen, total)
 }
 
-// TestE2ECampaignS3GetMissingObjectTypedError asserts GetObject on an absent
+// TestS3GetMissingObjectTypedError asserts GetObject on an absent
 // key surfaces the SDK's typed *types.NoSuchKey error.
-func TestE2ECampaignS3GetMissingObjectTypedError(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3GetMissingObjectTypedError(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-err-get"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	_, err := client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
@@ -335,15 +335,15 @@ func TestE2ECampaignS3GetMissingObjectTypedError(t *testing.T) {
 	assert.True(t, errors.As(err, &nsk), "want *types.NoSuchKey, got %T: %v", err, err)
 }
 
-// TestE2ECampaignS3HeadMissingObjectTypedError asserts HeadObject on an absent
+// TestS3HeadMissingObjectTypedError asserts HeadObject on an absent
 // key surfaces *types.NotFound (HEAD has no body, so the SDK maps the 404
 // status).
-func TestE2ECampaignS3HeadMissingObjectTypedError(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3HeadMissingObjectTypedError(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-err-head"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	_, err := client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
@@ -355,18 +355,18 @@ func TestE2ECampaignS3HeadMissingObjectTypedError(t *testing.T) {
 	assert.True(t, errors.As(err, &nf), "want *types.NotFound, got %T: %v", err, err)
 }
 
-// TestE2ECampaignS3DeleteMissingObjectError documents the emulator's behavior
+// TestS3DeleteMissingObjectError documents the emulator's behavior
 // for deleting an absent key: it returns 404 NoSuchKey. NOTE: real S3
 // DeleteObject is idempotent and returns 204 for a missing key, so SDK code
 // that deletes defensively behaves differently against the emulator. The
 // survey documents "DeleteObject — NotFound if key absent" as intended driver
 // semantics, so this asserts the documented mapping.
-func TestE2ECampaignS3DeleteMissingObjectError(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3DeleteMissingObjectError(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-err-del"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
@@ -379,12 +379,12 @@ func TestE2ECampaignS3DeleteMissingObjectError(t *testing.T) {
 	assert.Equal(t, "NoSuchKey", apiErr.ErrorCode())
 }
 
-// TestE2ECampaignS3MissingBucketError asserts GetObject against a bucket that
+// TestS3MissingBucketError asserts GetObject against a bucket that
 // was never created fails with NoSuchKey. NOTE: real S3 would return
 // NoSuchBucket here; the emulator's writeErr maps every NotFound to NoSuchKey
 // (documented in the survey).
-func TestE2ECampaignS3MissingBucketError(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3MissingBucketError(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	_, err := client.GetObject(ctx, &s3.GetObjectInput{
@@ -398,14 +398,14 @@ func TestE2ECampaignS3MissingBucketError(t *testing.T) {
 		"emulator maps missing bucket to NoSuchKey (real S3: NoSuchBucket); got %T: %v", err, err)
 }
 
-// TestE2ECampaignS3DuplicateBucketTypedError asserts the second CreateBucket
+// TestS3DuplicateBucketTypedError asserts the second CreateBucket
 // for the same name surfaces *types.BucketAlreadyOwnedByYou.
-func TestE2ECampaignS3DuplicateBucketTypedError(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3DuplicateBucketTypedError(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-dup-bucket"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(bucket),
@@ -417,17 +417,17 @@ func TestE2ECampaignS3DuplicateBucketTypedError(t *testing.T) {
 		"want *types.BucketAlreadyOwnedByYou, got %T: %v", err, err)
 }
 
-// TestE2ECampaignS3DeleteNonEmptyBucketError asserts deleting a non-empty
+// TestS3DeleteNonEmptyBucketError asserts deleting a non-empty
 // bucket fails and the bucket's contents survive. NOTE: the emulator maps the
 // driver's FailedPrecondition to 500 InternalError (documented in the survey);
 // real S3 returns 409 BucketNotEmpty.
-func TestE2ECampaignS3DeleteNonEmptyBucketError(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3DeleteNonEmptyBucketError(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-nonempty"
-	campaignCreateBucket(t, client, bucket)
-	campaignPut(t, client, bucket, "keep.txt", []byte("still here"), "text/plain")
+	suiteCreateBucket(t, client, bucket)
+	suitePut(t, client, bucket, "keep.txt", []byte("still here"), "text/plain")
 
 	_, err := client.DeleteBucket(ctx, &s3.DeleteBucketInput{
 		Bucket: aws.String(bucket),
@@ -440,18 +440,18 @@ func TestE2ECampaignS3DeleteNonEmptyBucketError(t *testing.T) {
 		"emulator maps FailedPrecondition to InternalError (real S3: BucketNotEmpty)")
 
 	// Bucket and object survive the failed delete.
-	body, _ := campaignGetBody(t, client, bucket, "keep.txt")
+	body, _ := suiteGetBody(t, client, bucket, "keep.txt")
 	assert.Equal(t, []byte("still here"), body)
 }
 
-// TestE2ECampaignS3ListEmptyBucket asserts listing a freshly created bucket
+// TestS3ListEmptyBucket asserts listing a freshly created bucket
 // succeeds with zero contents and zero common prefixes.
-func TestE2ECampaignS3ListEmptyBucket(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3ListEmptyBucket(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-empty-list"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	out, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
@@ -463,15 +463,15 @@ func TestE2ECampaignS3ListEmptyBucket(t *testing.T) {
 	assert.Equal(t, int32(0), aws.ToInt32(out.KeyCount))
 }
 
-// TestE2ECampaignS3KeysWithSlashesAndUnicode round-trips keys containing
+// TestS3KeysWithSlashesAndUnicode round-trips keys containing
 // nested slashes, unicode (CJK, accents, emoji), spaces, and '+' through
 // put/head/get/list/delete via the real SDK's URL escaping.
-func TestE2ECampaignS3KeysWithSlashesAndUnicode(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3KeysWithSlashesAndUnicode(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-fancy-keys"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	keys := []string{
 		"deep/nested/path/file.txt",
@@ -482,7 +482,7 @@ func TestE2ECampaignS3KeysWithSlashesAndUnicode(t *testing.T) {
 	}
 
 	for i, k := range keys {
-		campaignPut(t, client, bucket, k, []byte(fmt.Sprintf("payload-%d", i)), "text/plain")
+		suitePut(t, client, bucket, k, []byte(fmt.Sprintf("payload-%d", i)), "text/plain")
 	}
 
 	for i, k := range keys {
@@ -492,7 +492,7 @@ func TestE2ECampaignS3KeysWithSlashesAndUnicode(t *testing.T) {
 		require.NoError(t, err, "HeadObject %q", k)
 		assert.Equal(t, int64(len(fmt.Sprintf("payload-%d", i))), aws.ToInt64(head.ContentLength))
 
-		body, _ := campaignGetBody(t, client, bucket, k)
+		body, _ := suiteGetBody(t, client, bucket, k)
 		assert.Equal(t, []byte(fmt.Sprintf("payload-%d", i)), body, "body for key %q", k)
 	}
 
@@ -521,20 +521,20 @@ func TestE2ECampaignS3KeysWithSlashesAndUnicode(t *testing.T) {
 	assert.Empty(t, after.Contents)
 }
 
-// TestE2ECampaignS3MetadataContentTypeRoundTrip verifies x-amz-meta-* user
+// TestS3MetadataContentTypeRoundTrip verifies x-amz-meta-* user
 // metadata and Content-Type survive PutObject -> HeadObject/GetObject. Keys
 // are lowercase because HTTP header canonicalization lowercases them anyway.
-func TestE2ECampaignS3MetadataContentTypeRoundTrip(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3MetadataContentTypeRoundTrip(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-metadata"
 	const key = "with-meta.csv"
 
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	meta := map[string]string{
-		"owner":    "campaign",
+		"owner":    "suite",
 		"pipeline": "e2e-full-matrix",
 	}
 
@@ -554,22 +554,22 @@ func TestE2ECampaignS3MetadataContentTypeRoundTrip(t *testing.T) {
 	assert.Equal(t, "text/csv", aws.ToString(head.ContentType))
 	assert.Equal(t, meta, head.Metadata, "HeadObject metadata round-trip")
 
-	_, get := campaignGetBody(t, client, bucket, key)
+	_, get := suiteGetBody(t, client, bucket, key)
 	assert.Equal(t, meta, get.Metadata, "GetObject metadata round-trip")
 }
 
-// TestE2ECampaignS3CopyObjectSemantics verifies the survey-documented copy
+// TestS3CopyObjectSemantics verifies the survey-documented copy
 // behavior end-to-end: ETag and metadata are preserved, tags are NOT copied,
 // and copying from a missing source key fails with NoSuchKey.
-func TestE2ECampaignS3CopyObjectSemantics(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3CopyObjectSemantics(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const srcBucket = "e2e-copy-src"
 	const dstBucket = "e2e-copy-dst"
 
-	campaignCreateBucket(t, client, srcBucket)
-	campaignCreateBucket(t, client, dstBucket)
+	suiteCreateBucket(t, client, srcBucket)
+	suiteCreateBucket(t, client, dstBucket)
 
 	body := []byte("copy me")
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
@@ -597,7 +597,7 @@ func TestE2ECampaignS3CopyObjectSemantics(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	gotBody, get := campaignGetBody(t, client, dstBucket, "dst.txt")
+	gotBody, get := suiteGetBody(t, client, dstBucket, "dst.txt")
 	assert.Equal(t, body, gotBody)
 	assert.Equal(t, quotedSHA256(body), aws.ToString(get.ETag), "copy preserves ETag")
 	assert.Equal(t, "text/plain", aws.ToString(get.ContentType), "copy preserves content type")
@@ -618,18 +618,18 @@ func TestE2ECampaignS3CopyObjectSemantics(t *testing.T) {
 	require.Error(t, err, "copying a missing source key must fail")
 }
 
-// TestE2ECampaignS3OverwriteResetsTags verifies overwriting a key via
+// TestS3OverwriteResetsTags verifies overwriting a key via
 // PutObject replaces the whole object — new body, new content type, and the
 // previous tag set is dropped (fresh object, Tags nil).
-func TestE2ECampaignS3OverwriteResetsTags(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3OverwriteResetsTags(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-overwrite"
 	const key = "mutable.txt"
 
-	campaignCreateBucket(t, client, bucket)
-	campaignPut(t, client, bucket, key, []byte("v1"), "text/plain")
+	suiteCreateBucket(t, client, bucket)
+	suitePut(t, client, bucket, key, []byte("v1"), "text/plain")
 
 	_, err := client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{
 		Bucket: aws.String(bucket),
@@ -640,9 +640,9 @@ func TestE2ECampaignS3OverwriteResetsTags(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	campaignPut(t, client, bucket, key, []byte("v2 body is longer"), "application/json")
+	suitePut(t, client, bucket, key, []byte("v2 body is longer"), "application/json")
 
-	body, get := campaignGetBody(t, client, bucket, key)
+	body, get := suiteGetBody(t, client, bucket, key)
 	assert.Equal(t, []byte("v2 body is longer"), body)
 	assert.Equal(t, "application/json", aws.ToString(get.ContentType))
 	assert.Equal(t, quotedSHA256([]byte("v2 body is longer")), aws.ToString(get.ETag))
@@ -654,16 +654,16 @@ func TestE2ECampaignS3OverwriteResetsTags(t *testing.T) {
 	assert.Empty(t, tags.TagSet, "overwrite must drop the old tag set")
 }
 
-// TestE2ECampaignS3VersioningAndListVersions verifies the boolean-flag
+// TestS3VersioningAndListVersions verifies the boolean-flag
 // versioning model over the SDK: fresh bucket reports empty status, enabling
 // flips it to Enabled, and ListObjectVersions exposes only the latest state of
 // each key as a single "null" version (the driver keeps no history).
-func TestE2ECampaignS3VersioningAndListVersions(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3VersioningAndListVersions(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-versioning"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	initial, err := client.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{
 		Bucket: aws.String(bucket),
@@ -687,8 +687,8 @@ func TestE2ECampaignS3VersioningAndListVersions(t *testing.T) {
 
 	// Even with versioning "enabled", overwrites keep no history: a key has
 	// exactly one version with the null version id.
-	campaignPut(t, client, bucket, "doc.txt", []byte("v1"), "text/plain")
-	campaignPut(t, client, bucket, "doc.txt", []byte("v2"), "text/plain")
+	suitePut(t, client, bucket, "doc.txt", []byte("v1"), "text/plain")
+	suitePut(t, client, bucket, "doc.txt", []byte("v2"), "text/plain")
 
 	versions, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucket),
@@ -704,14 +704,14 @@ func TestE2ECampaignS3VersioningAndListVersions(t *testing.T) {
 		"the sole version reflects the latest overwrite")
 }
 
-// TestE2ECampaignS3ListBucketsSorted verifies ListBuckets returns all buckets
+// TestS3ListBucketsSorted verifies ListBuckets returns all buckets
 // sorted by name regardless of creation order.
-func TestE2ECampaignS3ListBucketsSorted(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3ListBucketsSorted(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	for _, b := range []string{"zeta-bucket", "alpha-bucket", "mid-bucket"} {
-		campaignCreateBucket(t, client, b)
+		suiteCreateBucket(t, client, b)
 	}
 
 	out, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
@@ -726,18 +726,18 @@ func TestE2ECampaignS3ListBucketsSorted(t *testing.T) {
 	assert.Equal(t, []string{"alpha-bucket", "mid-bucket", "zeta-bucket"}, names)
 }
 
-// TestE2ECampaignS3PutObjectReturnsETag asserts the S3-standard contract that
+// TestS3PutObjectReturnsETag asserts the S3-standard contract that
 // a PutObject response carries the object's ETag. Real S3 always returns an
 // ETag header on PUT, and SDK users routinely read resp.ETag to verify or
 // record uploads. The emulator's putObject handler responds 200 with no ETag
 // header, so this is expected to FAIL until the handler sets it
 // (server/aws/s3/handler.go putObject).
-func TestE2ECampaignS3PutObjectReturnsETag(t *testing.T) {
-	client := newCampaignS3Client(t)
+func TestS3PutObjectReturnsETag(t *testing.T) {
+	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
 	const bucket = "e2e-put-etag"
-	campaignCreateBucket(t, client, bucket)
+	suiteCreateBucket(t, client, bucket)
 
 	body := []byte("etag please")
 

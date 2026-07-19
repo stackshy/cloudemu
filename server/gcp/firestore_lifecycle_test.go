@@ -1,4 +1,4 @@
-// E2E campaign cell DATABASE / gcp / sdk-compat.
+//	suite cell DATABASE / gcp / sdk-compat.
 //
 // These tests drive the REAL cloud.google.com/go/firestore SDK (REST client)
 // against the emulator's GCP HTTP server (httptest), asserting SDK-decoded
@@ -9,12 +9,12 @@
 // conditional writes (Create/Update preconditions), pagination through 30
 // docs, and typed error paths. TTL and streams are driver-level only (no
 // HTTP surface), so those are exercised on provider.Firestore directly with
-// a fake clock per the campaign survey.
+// a fake clock per the suite survey.
 //
-// Known divergences from real Firestore (documented in the campaign survey)
+// Known divergences from real Firestore (documented in the suite survey)
 // are called out inline; tests that assert real-Firestore semantics the
 // emulator does not implement are expected to FAIL and are left in place as
-// campaign findings.
+// suite findings.
 package gcp_test
 
 import (
@@ -41,13 +41,13 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
 
-const dbE2EProject = "e2e-db-project"
+const dbProject = "e2e-db-project"
 
-// newDBE2EClient boots a fresh emulator + GCP server, pre-creates the given
+// newDBClient boots a fresh emulator + GCP server, pre-creates the given
 // collections as driver tables (required by the Firestore handler), and
 // returns a real Firestore REST SDK client pointed at it plus the underlying
 // provider for driver-level assertions.
-func newDBE2EClient(t *testing.T, colls ...string) (context.Context, *gcpfirestore.Client, *cloudemuGCPHandle) {
+func newDBClient(t *testing.T, colls ...string) (context.Context, *gcpfirestore.Client, *cloudemuGCPHandle) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -64,7 +64,7 @@ func newDBE2EClient(t *testing.T, colls ...string) (context.Context, *gcpfiresto
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
-	client, err := gcpfirestore.NewRESTClient(ctx, dbE2EProject,
+	client, err := gcpfirestore.NewRESTClient(ctx, dbProject,
 		option.WithEndpoint(ts.URL),
 		option.WithoutAuthentication(),
 		option.WithHTTPClient(ts.Client()),
@@ -139,12 +139,12 @@ func dbCollectAll(t *testing.T, it *gcpfirestore.DocumentIterator) map[string]ma
 	return out
 }
 
-// TestE2ECampaignDatabaseLifecycle is the core user journey: create the
+// TestDatabaseLifecycle is the core user journey: create the
 // collection, put a document with every supported attribute shape, read it
 // back through the SDK, list, overwrite (Set = full replace), delete the
 // document, then delete the table and observe SDK-visible NotFound.
-func TestE2ECampaignDatabaseLifecycle(t *testing.T) {
-	ctx, client, h := newDBE2EClient(t, "users")
+func TestDatabaseLifecycle(t *testing.T) {
+	ctx, client, h := newDBClient(t, "users")
 
 	big := strings.Repeat("x", 64*1024) // 64 KiB value, well under the 5MB body cap
 
@@ -276,11 +276,11 @@ func keysOfDB(m map[string]map[string]any) []string {
 	return out
 }
 
-// TestE2ECampaignDatabaseTypedErrors covers the SDK-visible error surface:
+// TestDatabaseTypedErrors covers the SDK-visible error surface:
 // missing document, missing collection (never pre-created as a table), and
 // idempotent delete of a missing document.
-func TestE2ECampaignDatabaseTypedErrors(t *testing.T) {
-	ctx, client, h := newDBE2EClient(t, "orders")
+func TestDatabaseTypedErrors(t *testing.T) {
+	ctx, client, h := newDBClient(t, "orders")
 
 	// Missing document in an existing collection.
 	snap, err := client.Collection("orders").Doc("nope").Get(ctx)
@@ -327,10 +327,10 @@ func TestE2ECampaignDatabaseTypedErrors(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseEmptyCollectionQuery: querying a pre-created but
+// TestDatabaseEmptyCollectionQuery: querying a pre-created but
 // empty collection yields an immediately-done iterator, no error.
-func TestE2ECampaignDatabaseEmptyCollectionQuery(t *testing.T) {
-	ctx, client, _ := newDBE2EClient(t, "empty")
+func TestDatabaseEmptyCollectionQuery(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "empty")
 
 	all := dbCollectAll(t, client.Collection("empty").Documents(ctx))
 	if len(all) != 0 {
@@ -338,10 +338,10 @@ func TestE2ECampaignDatabaseEmptyCollectionQuery(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabasePagination30Docs writes 30 documents and iterates
+// TestDatabasePagination30Docs writes 30 documents and iterates
 // the whole collection through the SDK (runQuery streams all items).
-func TestE2ECampaignDatabasePagination30Docs(t *testing.T) {
-	ctx, client, _ := newDBE2EClient(t, "bulk")
+func TestDatabasePagination30Docs(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "bulk")
 
 	const n = 30
 
@@ -372,10 +372,10 @@ func TestE2ECampaignDatabasePagination30Docs(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseUnicode: unicode document IDs, field names, and
+// TestDatabaseUnicode: unicode document IDs, field names, and
 // values must round-trip through the REST wire format.
-func TestE2ECampaignDatabaseUnicode(t *testing.T) {
-	ctx, client, _ := newDBE2EClient(t, "i18n")
+func TestDatabaseUnicode(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "i18n")
 
 	const docID = "café-日本語-🚀"
 
@@ -409,11 +409,11 @@ func TestE2ECampaignDatabaseUnicode(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseBatchWriteAndGetAll exercises the batched paths the
+// TestDatabaseBatchWriteAndGetAll exercises the batched paths the
 // SDK actually uses: WriteBatch → documents:commit with multiple writes, and
 // GetAll → documents:batchGet with found + missing entries.
-func TestE2ECampaignDatabaseBatchWriteAndGetAll(t *testing.T) {
-	ctx, client, _ := newDBE2EClient(t, "batch")
+func TestDatabaseBatchWriteAndGetAll(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "batch")
 
 	coll := client.Collection("batch")
 
@@ -481,14 +481,14 @@ func TestE2ECampaignDatabaseBatchWriteAndGetAll(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseConditionalWrites asserts real-Firestore
-// precondition semantics through the SDK. KNOWN DIVERGENCE (campaign
+// TestDatabaseConditionalWrites asserts real-Firestore
+// precondition semantics through the SDK. KNOWN DIVERGENCE (suite
 // survey: "No conditional writes anywhere"): the emulator's :commit handler
 // drops currentDocument preconditions and PutItem is a blind upsert, so the
 // failure-path assertions below are EXPECTED TO FAIL against the emulator.
-// Left in place as a campaign finding.
-func TestE2ECampaignDatabaseConditionalWrites(t *testing.T) {
-	ctx, client, _ := newDBE2EClient(t, "cond")
+// Documents current emulator behavior.
+func TestDatabaseConditionalWrites(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "cond")
 
 	doc := client.Collection("cond").Doc("c1")
 
@@ -511,11 +511,11 @@ func TestE2ECampaignDatabaseConditionalWrites(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseUpdateReplaceSemantics documents the emulator's
+// TestDatabaseUpdateReplaceSemantics documents the emulator's
 // survey-listed divergence: field-masked Update (and PATCH) fully REPLACE
 // the stored document instead of merging, so unmentioned fields are lost.
-func TestE2ECampaignDatabaseUpdateReplaceSemantics(t *testing.T) {
-	ctx, client, _ := newDBE2EClient(t, "merge")
+func TestDatabaseUpdateReplaceSemantics(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "merge")
 
 	doc := client.Collection("merge").Doc("m1")
 
@@ -547,11 +547,11 @@ func TestE2ECampaignDatabaseUpdateReplaceSemantics(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseQueryFiltersIgnored documents the survey-listed
+// TestDatabaseQueryFiltersIgnored documents the survey-listed
 // behavior that documents:runQuery only honors from.collectionId — where
 // clauses are ignored and every document comes back (full scan).
-func TestE2ECampaignDatabaseQueryFiltersIgnored(t *testing.T) {
-	ctx, client, _ := newDBE2EClient(t, "accts")
+func TestDatabaseQueryFiltersIgnored(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "accts")
 
 	coll := client.Collection("accts")
 	for i, age := range []int{10, 20, 30} {
@@ -571,12 +571,12 @@ func TestE2ECampaignDatabaseQueryFiltersIgnored(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseNumericRoundTrip pins the wire-format numeric
+// TestDatabaseNumericRoundTrip pins the wire-format numeric
 // behaviors: ints stay int64, non-integer floats stay float64, and — per the
 // survey — integer-valued float64s are re-encoded as integerValue, so a Go
 // float64(2) comes back as int64(2) through the SDK.
-func TestE2ECampaignDatabaseNumericRoundTrip(t *testing.T) {
-	ctx, client, _ := newDBE2EClient(t, "nums")
+func TestDatabaseNumericRoundTrip(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "nums")
 
 	doc := client.Collection("nums").Doc("n1")
 
@@ -620,11 +620,11 @@ func TestE2ECampaignDatabaseNumericRoundTrip(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseTTLFakeClock exercises TTL deterministically at the
+// TestDatabaseTTLFakeClock exercises TTL deterministically at the
 // driver level (TTL has no Firestore HTTP surface) using the injectable
 // clock: items past their absolute unix-seconds TTL are invisible to
 // GetItem/Scan (lazy delete), while BatchGetItems skips the TTL check.
-func TestE2ECampaignDatabaseTTLFakeClock(t *testing.T) {
+func TestDatabaseTTLFakeClock(t *testing.T) {
 	ctx := context.Background()
 	base := time.Unix(1_700_000_000, 0).UTC()
 	fc := config.NewFakeClock(base)
@@ -703,11 +703,11 @@ func TestE2ECampaignDatabaseTTLFakeClock(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignDatabaseStreams exercises the driver-level change feed
+// TestDatabaseStreams exercises the driver-level change feed
 // (no HTTP surface): FailedPrecondition until enabled, INSERT/MODIFY/REMOVE
 // events with monotonic sequence numbers, view-type image capture,
 // fake-clock timestamps, and sequence-number token pagination.
-func TestE2ECampaignDatabaseStreams(t *testing.T) {
+func TestDatabaseStreams(t *testing.T) {
 	ctx := context.Background()
 	base := time.Unix(1_700_000_000, 0).UTC()
 	fc := config.NewFakeClock(base)

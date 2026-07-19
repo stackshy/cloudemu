@@ -14,21 +14,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// e2eCampaignMock builds a Cosmos DB mock with a fake clock so TTL and stream
+// e2eSuiteMock builds a Cosmos DB mock with a fake clock so TTL and stream
 // timestamps are deterministic.
-func e2eCampaignMock() (*Mock, *config.FakeClock) {
+func e2eSuiteMock() (*Mock, *config.FakeClock) {
 	clk := config.NewFakeClock(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(clk))
 
 	return New(opts), clk
 }
 
-// TestE2ECampaignLifecycle walks a full user journey: create container, write
+// TestLifecycle walks a full user journey: create container, write
 // items with varied attribute types, read, query with sort conditions, update
 // (the driver's conditional path), batch ops, delete items, delete container.
-func TestE2ECampaignLifecycle(t *testing.T) {
+func TestLifecycle(t *testing.T) {
 	ctx := context.Background()
-	m, _ := e2eCampaignMock()
+	m, _ := e2eSuiteMock()
 
 	// Create container with partition + sort key.
 	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{
@@ -230,11 +230,11 @@ func TestE2ECampaignLifecycle(t *testing.T) {
 	assert.True(t, cerrors.IsNotFound(err))
 }
 
-// TestE2ECampaignEdgeCases covers typed errors on missing resources, duplicate
+// TestEdgeCases covers typed errors on missing resources, duplicate
 // creation, empty-table queries, unicode data, and key-coercion quirks.
-func TestE2ECampaignEdgeCases(t *testing.T) {
+func TestEdgeCases(t *testing.T) {
 	ctx := context.Background()
-	m, _ := e2eCampaignMock()
+	m, _ := e2eSuiteMock()
 
 	t.Run("operations on missing container return NotFound", func(t *testing.T) {
 		_, err := m.GetItem(ctx, "ghost", map[string]any{"pk": "x"})
@@ -351,11 +351,11 @@ func TestE2ECampaignEdgeCases(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignPagination pages through 30 items with driver-level
+// TestPagination pages through 30 items with driver-level
 // offset tokens on both Scan and Query.
-func TestE2ECampaignPagination(t *testing.T) {
+func TestPagination(t *testing.T) {
 	ctx := context.Background()
-	m, _ := e2eCampaignMock()
+	m, _ := e2eSuiteMock()
 
 	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{
 		Name: "paged", PartitionKey: "pk", SortKey: "sk",
@@ -441,10 +441,10 @@ func TestE2ECampaignPagination(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignScanFilters exercises the AND-combined scan filter operators.
-func TestE2ECampaignScanFilters(t *testing.T) {
+// TestScanFilters exercises the AND-combined scan filter operators.
+func TestScanFilters(t *testing.T) {
 	ctx := context.Background()
-	m, _ := e2eCampaignMock()
+	m, _ := e2eSuiteMock()
 
 	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "flt", PartitionKey: "pk"}))
 
@@ -481,11 +481,11 @@ func TestE2ECampaignScanFilters(t *testing.T) {
 	assert.Zero(t, scan(driver.ScanFilter{Field: "kind", Op: "OR", Value: "fruit"}).Count)
 }
 
-// TestE2ECampaignTTL exercises deterministic lazy TTL expiry using the fake
+// TestTTL exercises deterministic lazy TTL expiry using the fake
 // clock, including the BatchGetItems no-TTL-check divergence.
-func TestE2ECampaignTTL(t *testing.T) {
+func TestTTL(t *testing.T) {
 	ctx := context.Background()
-	m, clk := e2eCampaignMock()
+	m, clk := e2eSuiteMock()
 
 	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "sessions", PartitionKey: "pk"}))
 
@@ -567,12 +567,12 @@ func TestE2ECampaignTTL(t *testing.T) {
 	require.NoError(t, err, "TTL disabled, nothing should expire")
 }
 
-// TestE2ECampaignChangeFeed exercises the Cosmos change-feed emulation:
+// TestChangeFeed exercises the Cosmos change-feed emulation:
 // enablement gating, INSERT/MODIFY/REMOVE events, image capture per view
 // type, sequence-number tokens, and the lease-000 shard id.
-func TestE2ECampaignChangeFeed(t *testing.T) {
+func TestChangeFeed(t *testing.T) {
 	ctx := context.Background()
-	m, clk := e2eCampaignMock()
+	m, clk := e2eSuiteMock()
 
 	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "feed", PartitionKey: "pk"}))
 
@@ -664,11 +664,11 @@ func TestE2ECampaignChangeFeed(t *testing.T) {
 	assert.Equal(t, map[string]any{"pk": "doc2"}, it.Records[0].Keys)
 }
 
-// TestE2ECampaignIndexesAndTags exercises GSI lifecycle, GSI-backed queries,
+// TestIndexesAndTags exercises GSI lifecycle, GSI-backed queries,
 // and the tagging surface.
-func TestE2ECampaignIndexesAndTags(t *testing.T) {
+func TestIndexesAndTags(t *testing.T) {
 	ctx := context.Background()
-	m, _ := e2eCampaignMock()
+	m, _ := e2eSuiteMock()
 
 	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{
 		Name: "prods", PartitionKey: "pk", SortKey: "sk",

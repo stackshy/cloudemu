@@ -1,6 +1,6 @@
-// e2e_campaign_storage_test.go — campaign cell STORAGE/azure/portable.
+// e2e_suite_storage_test.go — suite cell STORAGE/azure/portable.
 //
-// Real-user-journey E2E tests that exercise the Azure Blob Storage mock
+// Real-user-journey  tests that exercise the Azure Blob Storage mock
 // through the portable driver.Bucket API directly.
 package blobstorage
 
@@ -22,9 +22,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
-// newE2EMock builds a mock with a controllable fake clock so tests can
+// newMock builds a mock with a controllable fake clock so tests can
 // advance time (LastModified, lifecycle evaluation).
-func newE2EMock() (*Mock, *config.FakeClock) {
+func newMock() (*Mock, *config.FakeClock) {
 	clk := config.NewFakeClock(time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(clk), config.WithRegion("eastus"))
 
@@ -35,12 +35,12 @@ func sha256Hex(data []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-// TestE2ECampaign_FullLifecycle walks a complete user journey:
+// TestFullLifecycle walks a complete user journey:
 // create container -> put varied blobs -> get -> head -> list -> copy ->
 // delete blobs -> delete container.
-func TestE2ECampaign_FullLifecycle(t *testing.T) {
+func TestFullLifecycle(t *testing.T) {
 	ctx := context.Background()
-	m, clk := newE2EMock()
+	m, clk := newMock()
 
 	const bucket = "journey-container"
 
@@ -164,11 +164,11 @@ func TestE2ECampaign_FullLifecycle(t *testing.T) {
 	assert.Empty(t, buckets)
 }
 
-// TestE2ECampaign_EdgeCases covers typed-error behavior for the common
+// TestEdgeCases covers typed-error behavior for the common
 // mistakes a real user makes.
-func TestE2ECampaign_EdgeCases(t *testing.T) {
+func TestEdgeCases(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "edge-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -249,11 +249,11 @@ func TestE2ECampaign_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_SpecialKeyNames verifies slash-, unicode-, and
+// TestSpecialKeyNames verifies slash-, unicode-, and
 // space-containing keys survive the round trip.
-func TestE2ECampaign_SpecialKeyNames(t *testing.T) {
+func TestSpecialKeyNames(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "keys-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -291,10 +291,10 @@ func TestE2ECampaign_SpecialKeyNames(t *testing.T) {
 	require.NoError(t, m.DeleteBucket(ctx, bucket))
 }
 
-// TestE2ECampaign_Pagination walks pages via opaque continuation tokens.
-func TestE2ECampaign_Pagination(t *testing.T) {
+// TestPagination walks pages via opaque continuation tokens.
+func TestPagination(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "page-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -344,11 +344,11 @@ func TestE2ECampaign_Pagination(t *testing.T) {
 	assert.False(t, res.IsTruncated)
 }
 
-// TestE2ECampaign_DelimiterRollup verifies survey behavior: common prefixes
+// TestDelimiterRollup verifies survey behavior: common prefixes
 // are rolled up but NOT paginated — the full prefix set is always returned.
-func TestE2ECampaign_DelimiterRollup(t *testing.T) {
+func TestDelimiterRollup(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "delim-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -388,11 +388,11 @@ func TestE2ECampaign_DelimiterRollup(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_OverwriteSemantics verifies overwriting a key replaces
+// TestOverwriteSemantics verifies overwriting a key replaces
 // everything, including tags.
-func TestE2ECampaign_OverwriteSemantics(t *testing.T) {
+func TestOverwriteSemantics(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "overwrite-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -417,11 +417,11 @@ func TestE2ECampaign_OverwriteSemantics(t *testing.T) {
 	assert.Empty(t, tags, "overwrite creates a fresh object with no tags")
 }
 
-// TestE2ECampaign_CopyEdgeCases covers the three distinct NotFound copy
+// TestCopyEdgeCases covers the three distinct NotFound copy
 // failures and the tags-not-copied behavior.
-func TestE2ECampaign_CopyEdgeCases(t *testing.T) {
+func TestCopyEdgeCases(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	require.NoError(t, m.CreateBucket(ctx, "src"))
 	require.NoError(t, m.CreateBucket(ctx, "dst"))
@@ -458,11 +458,11 @@ func TestE2ECampaign_CopyEdgeCases(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_Multipart drives the full multipart journey including the
+// TestMultipart drives the full multipart journey including the
 // Azure-specific caller-order assembly behavior noted in the survey.
-func TestE2ECampaign_Multipart(t *testing.T) {
+func TestMultipart(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "mp-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -595,10 +595,10 @@ func TestE2ECampaign_Multipart(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_Versioning verifies the boolean-flag-only versioning model.
-func TestE2ECampaign_Versioning(t *testing.T) {
+// TestVersioning verifies the boolean-flag-only versioning model.
+func TestVersioning(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "ver-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -632,11 +632,11 @@ func TestE2ECampaign_Versioning(t *testing.T) {
 	assert.True(t, cerrors.IsNotFound(err))
 }
 
-// TestE2ECampaign_LifecycleEvaluation drives lifecycle config plus fake-clock
+// TestLifecycleEvaluation drives lifecycle config plus fake-clock
 // based expiry evaluation (report-only, no deletion).
-func TestE2ECampaign_LifecycleEvaluation(t *testing.T) {
+func TestLifecycleEvaluation(t *testing.T) {
 	ctx := context.Background()
-	m, clk := newE2EMock()
+	m, clk := newMock()
 
 	const bucket = "lc-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -690,11 +690,11 @@ func TestE2ECampaign_LifecycleEvaluation(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_PresignedURL verifies the Azure SAS-shaped URL and typed
+// TestPresignedURL verifies the Azure SAS-shaped URL and typed
 // errors for unsupported methods.
-func TestE2ECampaign_PresignedURL(t *testing.T) {
+func TestPresignedURL(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "sas-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -746,10 +746,10 @@ func TestE2ECampaign_PresignedURL(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_Tagging verifies object- and bucket-level tag journeys.
-func TestE2ECampaign_Tagging(t *testing.T) {
+// TestTagging verifies object- and bucket-level tag journeys.
+func TestTagging(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "tag-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -812,11 +812,11 @@ func TestE2ECampaign_Tagging(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_BucketConfigs covers policy, CORS, and encryption config
+// TestBucketConfigs covers policy, CORS, and encryption config
 // journeys including NotFound-when-unset and idempotent deletes.
-func TestE2ECampaign_BucketConfigs(t *testing.T) {
+func TestBucketConfigs(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "cfg-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -893,11 +893,11 @@ func TestE2ECampaign_BucketConfigs(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_DataIsolation verifies stored data is decoupled from
+// TestDataIsolation verifies stored data is decoupled from
 // caller buffers (a real-user footgun with reused buffers).
-func TestE2ECampaign_DataIsolation(t *testing.T) {
+func TestDataIsolation(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	const bucket = "iso-container"
 	require.NoError(t, m.CreateBucket(ctx, bucket))

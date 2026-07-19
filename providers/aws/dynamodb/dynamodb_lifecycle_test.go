@@ -1,4 +1,4 @@
-// Package dynamodb e2e campaign tests: DATABASE / aws / portable driver API.
+// Package dynamodb e2e suite tests: DATABASE / aws / portable driver API.
 //
 // These tests exercise realistic user journeys against the portable
 // driver.Database API implemented by the DynamoDB mock. They intentionally
@@ -28,8 +28,8 @@ import (
 // e2eEpoch is the deterministic start time for every fake clock in this file.
 var e2eEpoch = time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 
-// newE2EMock returns a mock wired to a fake clock plus the clock for advancing.
-func newE2EMock() (*Mock, *config.FakeClock) {
+// newMock returns a mock wired to a fake clock plus the clock for advancing.
+func newMock() (*Mock, *config.FakeClock) {
 	fc := config.NewFakeClock(e2eEpoch)
 	return New(config.NewOptions(config.WithClock(fc))), fc
 }
@@ -54,12 +54,12 @@ func e2eRequireCode(t *testing.T, err error, want cerrors.Code) {
 	}
 }
 
-// TestE2ECampaignLifecycle walks the full journey: create table -> put items
+// TestLifecycle walks the full journey: create table -> put items
 // with varied attribute types -> get -> query -> update -> "conditional"
 // analogs -> batch ops -> delete items -> delete table.
-func TestE2ECampaignLifecycle(t *testing.T) {
+func TestLifecycle(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	// Create table with composite key.
 	cfg := driver.TableConfig{Name: "orders", PartitionKey: "pk", SortKey: "sk"}
@@ -94,16 +94,16 @@ func TestE2ECampaignLifecycle(t *testing.T) {
 	// list, map, and a large-ish (64KB) value.
 	large := strings.Repeat("x", 64*1024)
 	item := map[string]any{
-		"pk":       "user#1",
-		"sk":       "order#001",
-		"note":     "",
-		"total":    99.5,
-		"count":    3,
-		"shipped":  true,
-		"coupon":   nil,
-		"lines":    []any{"a", 2.0, false},
-		"address":  map[string]any{"city": "Berlin", "zip": "10115"},
-		"blob":     large,
+		"pk":      "user#1",
+		"sk":      "order#001",
+		"note":    "",
+		"total":   99.5,
+		"count":   3,
+		"shipped": true,
+		"coupon":  nil,
+		"lines":   []any{"a", 2.0, false},
+		"address": map[string]any{"city": "Berlin", "zip": "10115"},
+		"blob":    large,
 	}
 
 	t.Run("put and get roundtrip", func(t *testing.T) {
@@ -295,11 +295,11 @@ func TestE2ECampaignLifecycle(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignEdgeCases covers typed errors for missing resources,
+// TestEdgeCases covers typed errors for missing resources,
 // duplicate creates, and queries on empty tables.
-func TestE2ECampaignEdgeCases(t *testing.T) {
+func TestEdgeCases(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	t.Run("operations on nonexistent table", func(t *testing.T) {
 		_, err := m.GetItem(ctx, "nope", map[string]any{"pk": "x"})
@@ -373,12 +373,12 @@ func TestE2ECampaignEdgeCases(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignPagination pushes 30 items through token-based pagination on
+// TestPagination pushes 30 items through token-based pagination on
 // both Scan and Query and verifies completeness (no missed or duplicated
 // items across pages).
-func TestE2ECampaignPagination(t *testing.T) {
+func TestPagination(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	e2eRequireNoErr(t, m.CreateTable(ctx, driver.TableConfig{
 		Name: "pages", PartitionKey: "pk", SortKey: "sk",
@@ -505,10 +505,10 @@ func TestE2ECampaignPagination(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignUnicode uses non-ASCII partition/sort keys and values.
-func TestE2ECampaignUnicode(t *testing.T) {
+// TestUnicode uses non-ASCII partition/sort keys and values.
+func TestUnicode(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	e2eRequireNoErr(t, m.CreateTable(ctx, driver.TableConfig{
 		Name: "unicode", PartitionKey: "pk", SortKey: "sk",
@@ -558,12 +558,12 @@ func TestE2ECampaignUnicode(t *testing.T) {
 	e2eRequireCode(t, err, cerrors.NotFound)
 }
 
-// TestE2ECampaignTTL exercises lazy TTL expiry deterministically via the fake
+// TestTTL exercises lazy TTL expiry deterministically via the fake
 // clock: config, pre-expiry reads, post-expiry lazy deletion on Get/Query/Scan,
 // boundary semantics, and the documented BatchGetItems TTL gap.
-func TestE2ECampaignTTL(t *testing.T) {
+func TestTTL(t *testing.T) {
 	ctx := context.Background()
-	m, fc := newE2EMock()
+	m, fc := newMock()
 
 	e2eRequireNoErr(t, m.CreateTable(ctx, driver.TableConfig{Name: "sessions", PartitionKey: "pk"}))
 
@@ -655,12 +655,12 @@ func TestE2ECampaignTTL(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignStreams covers the change-stream journey: enable, generate
+// TestStreams covers the change-stream journey: enable, generate
 // INSERT/MODIFY/REMOVE events, image capture per view type, sequence tokens,
 // limits, and the FailedPrecondition guard.
-func TestE2ECampaignStreams(t *testing.T) {
+func TestStreams(t *testing.T) {
 	ctx := context.Background()
-	m, fc := newE2EMock()
+	m, fc := newMock()
 
 	e2eRequireNoErr(t, m.CreateTable(ctx, driver.TableConfig{Name: "events", PartitionKey: "pk"}))
 
@@ -674,17 +674,17 @@ func TestE2ECampaignStreams(t *testing.T) {
 	}))
 
 	// Writes before enabling produce no events; these four all do.
-	e2eRequireNoErr(t, m.PutItem(ctx, "events", map[string]any{"pk": "e1", "v": 1}))       // INSERT
+	e2eRequireNoErr(t, m.PutItem(ctx, "events", map[string]any{"pk": "e1", "v": 1})) // INSERT
 	fc.Advance(time.Second)
-	e2eRequireNoErr(t, m.PutItem(ctx, "events", map[string]any{"pk": "e1", "v": 2}))       // MODIFY
-	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{                                    // MODIFY
+	e2eRequireNoErr(t, m.PutItem(ctx, "events", map[string]any{"pk": "e1", "v": 2})) // MODIFY
+	_, err := m.UpdateItem(ctx, driver.UpdateItemInput{                              // MODIFY
 		Table:   "events",
 		Key:     map[string]any{"pk": "e1"},
 		Actions: []driver.UpdateAction{{Action: "SET", Field: "v", Value: 3}},
 	})
 	e2eRequireNoErr(t, err)
-	e2eRequireNoErr(t, m.DeleteItem(ctx, "events", map[string]any{"pk": "e1"}))            // REMOVE
-	e2eRequireNoErr(t, m.DeleteItem(ctx, "events", map[string]any{"pk": "e1"}))            // no event (miss)
+	e2eRequireNoErr(t, m.DeleteItem(ctx, "events", map[string]any{"pk": "e1"})) // REMOVE
+	e2eRequireNoErr(t, m.DeleteItem(ctx, "events", map[string]any{"pk": "e1"})) // no event (miss)
 
 	t.Run("event sequence and images", func(t *testing.T) {
 		it, err := m.GetStreamRecords(ctx, "events", 100, "")
@@ -773,11 +773,11 @@ func TestE2ECampaignStreams(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignScanFilters covers AND-combined scan filters including
+// TestScanFilters covers AND-combined scan filters including
 // numeric vs lexicographic comparison behavior.
-func TestE2ECampaignScanFilters(t *testing.T) {
+func TestScanFilters(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	e2eRequireNoErr(t, m.CreateTable(ctx, driver.TableConfig{Name: "products", PartitionKey: "pk"}))
 
@@ -834,12 +834,12 @@ func TestE2ECampaignScanFilters(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignNumericSortAndKeyCollision documents two key-handling
+// TestNumericSortAndKeyCollision documents two key-handling
 // behaviors from the survey: numeric-aware sort comparisons on Query, and the
 // %v-format key collision between numeric 25 and string "25".
-func TestE2ECampaignNumericSortAndKeyCollision(t *testing.T) {
+func TestNumericSortAndKeyCollision(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	t.Run("numeric sort key comparison", func(t *testing.T) {
 		e2eRequireNoErr(t, m.CreateTable(ctx, driver.TableConfig{
@@ -900,11 +900,11 @@ func TestE2ECampaignNumericSortAndKeyCollision(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignGSILifecycle covers index create/query/describe/list/delete
+// TestGSILifecycle covers index create/query/describe/list/delete
 // plus typed errors.
-func TestE2ECampaignGSILifecycle(t *testing.T) {
+func TestGSILifecycle(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	e2eRequireNoErr(t, m.CreateTable(ctx, driver.TableConfig{
 		Name: "users", PartitionKey: "pk",
@@ -972,11 +972,11 @@ func TestE2ECampaignGSILifecycle(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignTransactAndTags covers TransactWriteItems ordering (puts
+// TestTransactAndTags covers TransactWriteItems ordering (puts
 // before deletes) and the tagging lifecycle.
-func TestE2ECampaignTransactAndTags(t *testing.T) {
+func TestTransactAndTags(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock()
+	m, _ := newMock()
 
 	e2eRequireNoErr(t, m.CreateTable(ctx, driver.TableConfig{Name: "tx", PartitionKey: "pk"}))
 	e2eRequireNoErr(t, m.PutItem(ctx, "tx", map[string]any{"pk": "old", "v": 0}))

@@ -1,4 +1,4 @@
-// Package gcp_test — E2E campaign cell STORAGE / gcp / sdk-compat.
+// Package gcp_test —  suite cell STORAGE / gcp / sdk-compat.
 //
 // These tests drive the REAL cloud.google.com/go/storage SDK against the
 // emulator's GCP HTTP server (httptest), asserting on SDK-decoded responses
@@ -6,7 +6,7 @@
 // journeys (bucket lifecycle, uploads of varied shapes, listing with
 // prefix/delimiter/pagination, copy, deletes) plus edge cases (typed
 // not-found errors, duplicate buckets, non-empty bucket deletion, unusual
-// key names) and provider-specific behaviors from the campaign survey
+// key names) and provider-specific behaviors from the suite survey
 // (sha256 ETags, copy preserves ETag, versioning being driver-only).
 package gcp_test
 
@@ -33,10 +33,10 @@ import (
 
 const e2eProject = "e2e-project"
 
-// newStorageE2EClient boots a fresh emulator + GCP server per test and
+// newStorageClient boots a fresh emulator + GCP server per test and
 // returns a real GCS SDK client pointed at it. Retries are disabled so
 // error-path assertions fail fast instead of backing off on 5xx.
-func newStorageE2EClient(t *testing.T) (context.Context, *storage.Client) {
+func newStorageClient(t *testing.T) (context.Context, *storage.Client) {
 	t.Helper()
 
 	cloudP := cloudemu.NewGCP()
@@ -151,12 +151,12 @@ func sha256Hex(data []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-// TestE2ECampaignStorageFullLifecycle covers the primary user journey:
+// TestStorageFullLifecycle covers the primary user journey:
 // create bucket -> upload objects of varied content types and sizes
 // (including empty and ~1MB) -> stat -> download -> list -> copy across
 // buckets -> delete objects -> delete buckets.
-func TestE2ECampaignStorageFullLifecycle(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStorageFullLifecycle(t *testing.T) {
+	ctx, client := newStorageClient(t)
 
 	src := mustCreateBucket(t, ctx, client, "e2e-lifecycle-src")
 	dst := mustCreateBucket(t, ctx, client, "e2e-lifecycle-dst")
@@ -203,10 +203,10 @@ func TestE2ECampaignStorageFullLifecycle(t *testing.T) {
 		big[i] = byte(i % 251)
 	}
 	// Avoid trailing '-', '\r', '\n' bytes here; that edge is covered (and
-	// currently broken) in TestE2ECampaignStorageTrailingBoundaryBytes.
+	// currently broken) in TestStorageTrailingBoundaryBytes.
 	big[len(big)-1] = 'Z'
 
-	putObject(t, ctx, src, "docs/hello.txt", "text/plain", textBody, map[string]string{"team": "e2e", "run": "campaign"})
+	putObject(t, ctx, src, "docs/hello.txt", "text/plain", textBody, map[string]string{"team": "e2e", "run": "suite"})
 	putObject(t, ctx, src, "empty.bin", "application/octet-stream", empty, nil)
 	putObject(t, ctx, src, "blobs/big.bin", "application/octet-stream", big, nil)
 
@@ -224,8 +224,8 @@ func TestE2ECampaignStorageFullLifecycle(t *testing.T) {
 		t.Errorf("Attrs.ContentType = %q, want text/plain", attrs.ContentType)
 	}
 
-	if attrs.Metadata["team"] != "e2e" || attrs.Metadata["run"] != "campaign" {
-		t.Errorf("Attrs.Metadata = %v, want team=e2e run=campaign", attrs.Metadata)
+	if attrs.Metadata["team"] != "e2e" || attrs.Metadata["run"] != "suite" {
+		t.Errorf("Attrs.Metadata = %v, want team=e2e run=suite", attrs.Metadata)
 	}
 
 	// Survey: ETag is hex sha256 of the body (not MD5 like real GCS/S3).
@@ -316,11 +316,11 @@ func TestE2ECampaignStorageFullLifecycle(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignStorageListPrefixDelimiter verifies prefix filtering and
+// TestStorageListPrefixDelimiter verifies prefix filtering and
 // delimiter roll-up into common prefixes, as the SDK exposes them (entries
 // with only Prefix set).
-func TestE2ECampaignStorageListPrefixDelimiter(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStorageListPrefixDelimiter(t *testing.T) {
+	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-listing")
 
 	for _, k := range []string{
@@ -373,11 +373,11 @@ func TestE2ECampaignStorageListPrefixDelimiter(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignStoragePagination pushes the iterator through multiple
+// TestStoragePagination pushes the iterator through multiple
 // pages (maxResults + pageToken + nextPageToken on the wire) via
 // iterator.NewPager.
-func TestE2ECampaignStoragePagination(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStoragePagination(t *testing.T) {
+	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-paging")
 
 	const total = 5
@@ -437,10 +437,10 @@ func TestE2ECampaignStoragePagination(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignStorageNotFoundErrors asserts the SDK-visible typed errors
+// TestStorageNotFoundErrors asserts the SDK-visible typed errors
 // for reads/stats/deletes of nonexistent objects and buckets.
-func TestE2ECampaignStorageNotFoundErrors(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStorageNotFoundErrors(t *testing.T) {
+	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-errors")
 
 	// Get (download) missing object.
@@ -480,11 +480,11 @@ func TestE2ECampaignStorageNotFoundErrors(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignStorageBucketEdgeCases covers duplicate creation, empty
+// TestStorageBucketEdgeCases covers duplicate creation, empty
 // bucket names, deleting non-empty buckets, deleting missing buckets, and
 // listing an empty bucket.
-func TestE2ECampaignStorageBucketEdgeCases(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStorageBucketEdgeCases(t *testing.T) {
+	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-edge")
 
 	// Duplicate create -> 409 conflict, surfaced as *googleapi.Error.
@@ -543,11 +543,11 @@ func TestE2ECampaignStorageBucketEdgeCases(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignStorageKeysSlashesUnicode round-trips object keys
+// TestStorageKeysSlashesUnicode round-trips object keys
 // containing slashes, spaces, and non-ASCII characters through upload,
 // stat, download, list, and delete.
-func TestE2ECampaignStorageKeysSlashesUnicode(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStorageKeysSlashesUnicode(t *testing.T) {
+	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-keys")
 
 	keys := []string{
@@ -599,11 +599,11 @@ func TestE2ECampaignStorageKeysSlashesUnicode(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignStorageOverwriteSemantics verifies that re-uploading a key
+// TestStorageOverwriteSemantics verifies that re-uploading a key
 // fully replaces content, content type, and ETag (survey: overwrite creates
 // a fresh object).
-func TestE2ECampaignStorageOverwriteSemantics(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStorageOverwriteSemantics(t *testing.T) {
+	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-overwrite")
 
 	v1 := []byte("version one")
@@ -644,13 +644,13 @@ func TestE2ECampaignStorageOverwriteSemantics(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignStorageTrailingBoundaryBytes uploads payloads whose final
+// TestStorageTrailingBoundaryBytes uploads payloads whose final
 // bytes are '-', '\n', or '\r\n' through the SDK's standard Writer
 // (uploadType=multipart). The handler's parseMultipart trims trailing
 // "\r\n-" characters off the payload to strip the boundary framing, which
 // eats legitimate trailing bytes of the object itself.
-func TestE2ECampaignStorageTrailingBoundaryBytes(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStorageTrailingBoundaryBytes(t *testing.T) {
+	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-trailing")
 
 	cases := map[string][]byte{
@@ -678,12 +678,12 @@ func TestE2ECampaignStorageTrailingBoundaryBytes(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignStorageVersioningSurface documents the provider-specific
+// TestStorageVersioningSurface documents the provider-specific
 // surface: versioning is a driver-level boolean only. The bucket resource
 // reports it disabled, and the JSON API exposes no PATCH endpoint, so the
 // SDK cannot enable it over HTTP.
-func TestE2ECampaignStorageVersioningSurface(t *testing.T) {
-	ctx, client := newStorageE2EClient(t)
+func TestStorageVersioningSurface(t *testing.T) {
+	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-versioning")
 
 	attrs, err := bkt.Attrs(ctx)

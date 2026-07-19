@@ -1,4 +1,4 @@
-// Package azure_test contains E2E campaign tests for the STORAGE cell
+// Package azure_test contains  suite tests for the STORAGE cell
 // (azure / sdk-compat): real-user journeys driving the official
 // azure-sdk-for-go azblob client against the CloudEmu Azure server mounted in
 // an httptest.Server.
@@ -32,18 +32,18 @@ import (
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
-// campaignEnv bundles the emulator-backed test server and a real azblob
+// suiteEnv bundles the emulator-backed test server and a real azblob
 // client pointed at it.
-type campaignEnv struct {
+type suiteEnv struct {
 	ts     *httptest.Server
 	client *azblob.Client
 }
 
-// newCampaignEnv builds a fresh emulator, mounts only the blob-storage
+// newSuiteEnv builds a fresh emulator, mounts only the blob-storage
 // driver, and returns a real SDK client. Anonymous access avoids forging
 // SharedKey signatures; MaxRetries: -1 disables retries so error assertions
 // see the first response.
-func newCampaignEnv(t *testing.T) *campaignEnv {
+func newSuiteEnv(t *testing.T) *suiteEnv {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -64,13 +64,13 @@ func newCampaignEnv(t *testing.T) *campaignEnv {
 		t.Fatalf("NewClientWithNoCredential: %v", err)
 	}
 
-	return &campaignEnv{ts: ts, client: client}
+	return &suiteEnv{ts: ts, client: client}
 }
 
 func ptr[T any](v T) *T { return &v }
 
 // download fetches a blob and returns its full body.
-func (e *campaignEnv) download(ctx context.Context, t *testing.T, c, k string) []byte {
+func (e *suiteEnv) download(ctx context.Context, t *testing.T, c, k string) []byte {
 	t.Helper()
 
 	resp, err := e.client.DownloadStream(ctx, c, k, nil)
@@ -101,12 +101,12 @@ func metaGet(meta map[string]*string, key string) (string, bool) {
 	return "", false
 }
 
-// TestE2ECampaignFullLifecycle walks a complete user journey: create
+// TestFullLifecycle walks a complete user journey: create
 // container, upload blobs with varied content types (including empty and
 // ~1MB payloads), download, stat, list, copy, delete blobs, delete
 // container, and confirm the blob is gone.
-func TestE2ECampaignFullLifecycle(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestFullLifecycle(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 	cName := "lifecycle"
 
@@ -134,7 +134,7 @@ func TestE2ECampaignFullLifecycle(t *testing.T) {
 	for _, b := range blobs {
 		_, err := env.client.UploadBuffer(ctx, cName, b.key, b.body, &azblob.UploadBufferOptions{
 			HTTPHeaders: &blob.HTTPHeaders{BlobContentType: ptr(b.contentType)},
-			Metadata:    map[string]*string{"origin": ptr("campaign")},
+			Metadata:    map[string]*string{"origin": ptr("suite")},
 		})
 		if err != nil {
 			t.Fatalf("UploadBuffer(%s): %v", b.key, err)
@@ -171,8 +171,8 @@ func TestE2ECampaignFullLifecycle(t *testing.T) {
 			t.Errorf("%s: ContentType=%q want %q", b.key, gotCT, b.contentType)
 		}
 
-		if v, ok := metaGet(props.Metadata, "origin"); !ok || v != "campaign" {
-			t.Errorf("%s: metadata origin=%q ok=%v want campaign", b.key, v, ok)
+		if v, ok := metaGet(props.Metadata, "origin"); !ok || v != "suite" {
+			t.Errorf("%s: metadata origin=%q ok=%v want suite", b.key, v, ok)
 		}
 	}
 
@@ -245,10 +245,10 @@ func TestE2ECampaignFullLifecycle(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignOverwriteReplacesBlob verifies a second upload to the same
+// TestOverwriteReplacesBlob verifies a second upload to the same
 // key fully replaces content and produces a new ETag (sha256 of body).
-func TestE2ECampaignOverwriteReplacesBlob(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestOverwriteReplacesBlob(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 
 	if _, err := env.client.CreateContainer(ctx, "ow", nil); err != nil {
@@ -284,11 +284,11 @@ func TestE2ECampaignOverwriteReplacesBlob(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignListPrefixDelimiterPagination covers hierarchical listing
+// TestListPrefixDelimiterPagination covers hierarchical listing
 // (delimiter roll-up into BlobPrefixes), prefix filtering, and marker-based
 // pagination with maxresults.
-func TestE2ECampaignListPrefixDelimiterPagination(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestListPrefixDelimiterPagination(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 	cName := "listing"
 
@@ -430,10 +430,10 @@ func TestE2ECampaignListPrefixDelimiterPagination(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignEmptyContainerList verifies listing a freshly created
+// TestEmptyContainerList verifies listing a freshly created
 // container yields zero blobs and a terminating pager.
-func TestE2ECampaignEmptyContainerList(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestEmptyContainerList(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 
 	if _, err := env.client.CreateContainer(ctx, "empty-c", nil); err != nil {
@@ -458,10 +458,10 @@ func TestE2ECampaignEmptyContainerList(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignListContainersSorted verifies the service-level container
+// TestListContainersSorted verifies the service-level container
 // list returns all containers sorted by name.
-func TestE2ECampaignListContainersSorted(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestListContainersSorted(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 
 	for _, name := range []string{"zeta", "alpha", "mid"} {
@@ -489,11 +489,11 @@ func TestE2ECampaignListContainersSorted(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignErrorCases covers the typed-error surface the SDK sees:
+// TestErrorCases covers the typed-error surface the SDK sees:
 // missing blob/container reads and deletes, duplicate container creation,
 // deleting a non-empty container, and copying from a missing source.
-func TestE2ECampaignErrorCases(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestErrorCases(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 
 	if _, err := env.client.CreateContainer(ctx, "errs", nil); err != nil {
@@ -561,11 +561,11 @@ func TestE2ECampaignErrorCases(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignKeyNamesSlashesUnicode verifies blob names containing
+// TestKeyNamesSlashesUnicode verifies blob names containing
 // slashes, unicode, and spaces survive the SDK's URL escaping and round-trip
 // through upload, list, download, and delete.
-func TestE2ECampaignKeyNamesSlashesUnicode(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestKeyNamesSlashesUnicode(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 	cName := "names"
 
@@ -620,11 +620,11 @@ func TestE2ECampaignKeyNamesSlashesUnicode(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignMetadataRoundTrip verifies multi-key metadata survives
+// TestMetadataRoundTrip verifies multi-key metadata survives
 // upload -> HEAD and upload -> GET (headers on both paths), with the
 // emulator's lowercasing of x-ms-meta-* names.
-func TestE2ECampaignMetadataRoundTrip(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestMetadataRoundTrip(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 
 	if _, err := env.client.CreateContainer(ctx, "meta", nil); err != nil {
@@ -669,11 +669,11 @@ func TestE2ECampaignMetadataRoundTrip(t *testing.T) {
 	}
 }
 
-// TestE2ECampaignCrossContainerCopy verifies copying between two containers
+// TestCrossContainerCopy verifies copying between two containers
 // preserves content and metadata (driver deep-copies both) and that the
 // source remains intact.
-func TestE2ECampaignCrossContainerCopy(t *testing.T) {
-	env := newCampaignEnv(t)
+func TestCrossContainerCopy(t *testing.T) {
+	env := newSuiteEnv(t)
 	ctx := context.Background()
 
 	for _, c := range []string{"src-c", "dst-c"} {

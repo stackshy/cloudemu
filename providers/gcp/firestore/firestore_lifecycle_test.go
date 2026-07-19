@@ -15,7 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 )
 
-// E2E campaign cell: DATABASE / gcp / portable.
+//  suite cell: DATABASE / gcp / portable.
 //
 // These tests exercise the Firestore mock exclusively through the portable
 // driver.Database API (no HTTP/SDK layer), simulating a realistic user
@@ -29,7 +29,7 @@ import (
 //   - UpdateItem requires the document to exist (success vs NotFound),
 //   - CreateTable / CreateIndex fail with AlreadyExists on duplicates.
 
-func newE2EMock(t *testing.T) (*Mock, *config.FakeClock) {
+func newMock(t *testing.T) (*Mock, *config.FakeClock) {
 	t.Helper()
 
 	clk := config.NewFakeClock(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
@@ -41,9 +41,9 @@ func newE2EMock(t *testing.T) (*Mock, *config.FakeClock) {
 // asDatabase guarantees we only use the portable interface surface.
 func asDatabase(m *Mock) driver.Database { return m }
 
-func TestE2ECampaign_Lifecycle(t *testing.T) {
+func TestLifecycle(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "orders"
@@ -214,9 +214,9 @@ func TestE2ECampaign_Lifecycle(t *testing.T) {
 	assert.True(t, cerrors.IsNotFound(err))
 }
 
-func TestE2ECampaign_EdgeCases(t *testing.T) {
+func TestEdgeCases(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "edge"
@@ -295,9 +295,9 @@ func TestE2ECampaign_EdgeCases(t *testing.T) {
 
 // Survey-documented quirk: item identity is fmt.Sprintf("%v", pk), so
 // numeric 25 and string "25" collide on the same document key.
-func TestE2ECampaign_NumericStringKeyCollision(t *testing.T) {
+func TestNumericStringKeyCollision(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "collide"
@@ -316,9 +316,9 @@ func TestE2ECampaign_NumericStringKeyCollision(t *testing.T) {
 	assert.Equal(t, 1, sres.Count)
 }
 
-func TestE2ECampaign_PaginationThrough30Items(t *testing.T) {
+func TestPaginationThrough30Items(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "feed"
@@ -411,9 +411,9 @@ func TestE2ECampaign_PaginationThrough30Items(t *testing.T) {
 	assert.Empty(t, res.NextPageToken)
 }
 
-func TestE2ECampaign_ScanFilters(t *testing.T) {
+func TestScanFilters(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "products"
@@ -472,9 +472,9 @@ func TestE2ECampaign_ScanFilters(t *testing.T) {
 	assert.Equal(t, "a-1", res.Items[0]["sku"])
 }
 
-func TestE2ECampaign_TTLWithFakeClock(t *testing.T) {
+func TestTTLWithFakeClock(t *testing.T) {
 	ctx := context.Background()
-	m, clk := newE2EMock(t)
+	m, clk := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "sessions"
@@ -570,9 +570,9 @@ func TestE2ECampaign_TTLWithFakeClock(t *testing.T) {
 	assert.NotNil(t, got)
 }
 
-func TestE2ECampaign_Streams(t *testing.T) {
+func TestStreams(t *testing.T) {
 	ctx := context.Background()
-	m, clk := newE2EMock(t)
+	m, clk := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "audited"
@@ -658,9 +658,9 @@ func TestE2ECampaign_Streams(t *testing.T) {
 	assert.Equal(t, "REMOVE", it.Records[2].EventType) // transact delete d2
 }
 
-func TestE2ECampaign_TransactWriteItems(t *testing.T) {
+func TestTransactPutsThenDeletes(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "accounts"
@@ -698,9 +698,9 @@ func TestE2ECampaign_TransactWriteItems(t *testing.T) {
 	assert.True(t, cerrors.IsNotFound(err))
 }
 
-func TestE2ECampaign_Indexes(t *testing.T) {
+func TestIndexes(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "tickets"
@@ -777,9 +777,9 @@ func TestE2ECampaign_Indexes(t *testing.T) {
 	assert.Empty(t, list)
 }
 
-func TestE2ECampaign_Labels(t *testing.T) {
+func TestLabels(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 	db := asDatabase(m)
 
 	const coll = "labeled"

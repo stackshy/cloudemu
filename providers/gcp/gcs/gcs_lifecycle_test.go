@@ -1,4 +1,4 @@
-// Package gcs e2e campaign tests: STORAGE / gcp / portable.
+// Package gcs e2e suite tests: STORAGE / gcp / portable.
 //
 // These tests exercise the portable driver.Bucket API of the GCS mock as a
 // real user would: full bucket/object lifecycles, listing with prefixes,
@@ -23,15 +23,15 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
-// newE2EMock returns a GCS mock with a controllable fake clock.
-func newE2EMock(t *testing.T) (*Mock, *config.FakeClock) {
+// newMock returns a GCS mock with a controllable fake clock.
+func newMock(t *testing.T) (*Mock, *config.FakeClock) {
 	t.Helper()
 
 	clk := config.NewFakeClock(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(
 		config.WithClock(clk),
 		config.WithRegion("us-central1"),
-		config.WithProjectID("e2e-campaign"),
+		config.WithProjectID("e2e-suite"),
 	)
 
 	return New(opts), clk
@@ -47,12 +47,12 @@ func sha256Hex(data []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-// TestE2ECampaign_FullObjectLifecycle walks a complete user journey:
+// TestFullObjectLifecycle walks a complete user journey:
 // create bucket -> put objects of varied shapes -> get -> head -> list ->
 // copy -> delete objects -> delete bucket.
-func TestE2ECampaign_FullObjectLifecycle(t *testing.T) {
+func TestFullObjectLifecycle(t *testing.T) {
 	ctx := context.Background()
-	m, clk := newE2EMock(t)
+	m, clk := newMock(t)
 
 	const bucket = "e2e-journey"
 
@@ -191,11 +191,11 @@ func TestE2ECampaign_FullObjectLifecycle(t *testing.T) {
 	assert.Empty(t, buckets)
 }
 
-// TestE2ECampaign_EdgeCases asserts the typed error surface for the usual
+// TestEdgeCases asserts the typed error surface for the usual
 // user mistakes.
-func TestE2ECampaign_EdgeCases(t *testing.T) {
+func TestEdgeCases(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 
 	const bucket = "e2e-edge"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -272,11 +272,11 @@ func TestE2ECampaign_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestE2ECampaign_KeyNamesSlashesUnicode stores keys with slashes, unicode
+// TestKeyNamesSlashesUnicode stores keys with slashes, unicode
 // and awkward characters, and gets them all back byte-identical.
-func TestE2ECampaign_KeyNamesSlashesUnicode(t *testing.T) {
+func TestKeyNamesSlashesUnicode(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 
 	const bucket = "e2e-keys"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -319,11 +319,11 @@ func TestE2ECampaign_KeyNamesSlashesUnicode(t *testing.T) {
 	}
 }
 
-// TestE2ECampaign_PaginationTokens pages through a large listing with opaque
+// TestPaginationTokens pages through a large listing with opaque
 // continuation tokens and checks CommonPrefixes are NOT paginated.
-func TestE2ECampaign_PaginationTokens(t *testing.T) {
+func TestPaginationTokens(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 
 	const bucket = "e2e-pages"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -386,12 +386,12 @@ func TestE2ECampaign_PaginationTokens(t *testing.T) {
 	assert.Len(t, res.CommonPrefixes, 5, "common prefixes are never paginated")
 }
 
-// TestE2ECampaign_MultipartLifecycle drives create -> upload -> list ->
+// TestMultipartLifecycle drives create -> upload -> list ->
 // complete and abort paths, including the GCS-mock-specific caller-order
 // assembly.
-func TestE2ECampaign_MultipartLifecycle(t *testing.T) {
+func TestMultipartLifecycle(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 
 	const bucket = "e2e-multipart"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -475,11 +475,11 @@ func TestE2ECampaign_MultipartLifecycle(t *testing.T) {
 	assert.Equal(t, []byte("kept"), obj.Data)
 }
 
-// TestE2ECampaign_VersioningFlag checks the boolean-flag-only versioning
+// TestVersioningFlag checks the boolean-flag-only versioning
 // surface (no version history is kept by the mock).
-func TestE2ECampaign_VersioningFlag(t *testing.T) {
+func TestVersioningFlag(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 
 	const bucket = "e2e-versioning"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -512,11 +512,11 @@ func TestE2ECampaign_VersioningFlag(t *testing.T) {
 	requireCode(t, err, cerrors.NotFound)
 }
 
-// TestE2ECampaign_LifecycleEvaluation stores rules and evaluates expiry
+// TestLifecycleEvaluation stores rules and evaluates expiry
 // against the fake clock; evaluation reports but never deletes.
-func TestE2ECampaign_LifecycleEvaluation(t *testing.T) {
+func TestLifecycleEvaluation(t *testing.T) {
 	ctx := context.Background()
-	m, clk := newE2EMock(t)
+	m, clk := newMock(t)
 
 	const bucket = "e2e-lifecycle"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -562,11 +562,11 @@ func TestE2ECampaign_LifecycleEvaluation(t *testing.T) {
 	require.NoError(t, err, "EvaluateLifecycle must not delete objects")
 }
 
-// TestE2ECampaign_PresignedURLs verifies method validation, expiry cap, and
+// TestPresignedURLs verifies method validation, expiry cap, and
 // the GCS-shaped URL.
-func TestE2ECampaign_PresignedURLs(t *testing.T) {
+func TestPresignedURLs(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 
 	const bucket = "e2e-presign"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -609,11 +609,11 @@ func TestE2ECampaign_PresignedURLs(t *testing.T) {
 	requireCode(t, err, cerrors.NotFound)
 }
 
-// TestE2ECampaign_TaggingJourney covers object and bucket tagging semantics:
+// TestTaggingJourney covers object and bucket tagging semantics:
 // empty non-nil map when unset, full replacement on Put, cleared on Delete.
-func TestE2ECampaign_TaggingJourney(t *testing.T) {
+func TestTaggingJourney(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 
 	const bucket = "e2e-tagging"
 	require.NoError(t, m.CreateBucket(ctx, bucket))
@@ -671,11 +671,11 @@ func TestE2ECampaign_TaggingJourney(t *testing.T) {
 	assert.Empty(t, btags)
 }
 
-// TestE2ECampaign_BucketConfigSurfaces covers policy, CORS and encryption
+// TestBucketConfigSurfaces covers policy, CORS and encryption
 // config round-trips including their NotFound-when-unset contract.
-func TestE2ECampaign_BucketConfigSurfaces(t *testing.T) {
+func TestBucketConfigSurfaces(t *testing.T) {
 	ctx := context.Background()
-	m, _ := newE2EMock(t)
+	m, _ := newMock(t)
 
 	const bucket = "e2e-configs"
 	require.NoError(t, m.CreateBucket(ctx, bucket))

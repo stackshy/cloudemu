@@ -1,6 +1,6 @@
-// e2e_campaign_database_test.go — campaign cell DATABASE / aws / sdk-compat.
+// e2e_suite_database_test.go — suite cell DATABASE / aws / sdk-compat.
 //
-// Real-user-journey E2E tests that drive the genuine aws-sdk-go-v2 DynamoDB
+// Real-user-journey  tests that drive the genuine aws-sdk-go-v2 DynamoDB
 // client against the emulator's HTTP server (httptest). Assertions are made
 // on SDK-decoded responses and SDK-visible typed errors, not raw HTTP.
 //
@@ -35,11 +35,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newCampaignDDBEnv builds a real DynamoDB SDK client pointed at a fresh
+// newSuiteDDBEnv builds a real DynamoDB SDK client pointed at a fresh
 // emulator instance and also returns the backing provider so driver-only
 // features (TTL config, streams, GSIs) can be arranged for SDK journeys.
 // Retries are disabled so error-path assertions observe exactly one attempt.
-func newCampaignDDBEnv(t *testing.T, opts ...emuconfig.Option) (*dynamodb.Client, *awsprovider.Provider) {
+func newSuiteDDBEnv(t *testing.T, opts ...emuconfig.Option) (*dynamodb.Client, *awsprovider.Provider) {
 	t.Helper()
 
 	provider := cloudemu.NewAWS(opts...)
@@ -63,9 +63,9 @@ func newCampaignDDBEnv(t *testing.T, opts ...emuconfig.Option) (*dynamodb.Client
 	return client, provider
 }
 
-// campaignDDBCreateTable creates a table with a string HASH key and an
+// suiteDDBCreateTable creates a table with a string HASH key and an
 // optional string RANGE key through the real SDK.
-func campaignDDBCreateTable(t *testing.T, client *dynamodb.Client, table, pk, sk string) {
+func suiteDDBCreateTable(t *testing.T, client *dynamodb.Client, table, pk, sk string) {
 	t.Helper()
 
 	in := &dynamodb.CreateTableInput{
@@ -90,7 +90,7 @@ func campaignDDBCreateTable(t *testing.T, client *dynamodb.Client, table, pk, sk
 	require.NoError(t, err, "CreateTable %q", table)
 }
 
-func campaignDDBPut(t *testing.T, client *dynamodb.Client, table string, item map[string]ddbtypes.AttributeValue) {
+func suiteDDBPut(t *testing.T, client *dynamodb.Client, table string, item map[string]ddbtypes.AttributeValue) {
 	t.Helper()
 
 	_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
@@ -100,7 +100,7 @@ func campaignDDBPut(t *testing.T, client *dynamodb.Client, table string, item ma
 	require.NoError(t, err, "PutItem into %q", table)
 }
 
-func campaignDDBGet(t *testing.T, client *dynamodb.Client, table string, key map[string]ddbtypes.AttributeValue) *dynamodb.GetItemOutput {
+func suiteDDBGet(t *testing.T, client *dynamodb.Client, table string, key map[string]ddbtypes.AttributeValue) *dynamodb.GetItemOutput {
 	t.Helper()
 
 	out, err := client.GetItem(context.Background(), &dynamodb.GetItemInput{
@@ -133,13 +133,13 @@ func attrN(t *testing.T, item map[string]ddbtypes.AttributeValue, field string) 
 	return v.Value
 }
 
-// TestE2ECampaignDDBTableLifecycle: create a composite-key table, describe it,
+// TestDDBTableLifecycle: create a composite-key table, describe it,
 // see it in ListTables, delete it, and observe the typed error once gone.
-func TestE2ECampaignDDBTableLifecycle(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBTableLifecycle(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "journeys", "pk", "sk")
+	suiteDDBCreateTable(t, client, "journeys", "pk", "sk")
 
 	desc, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String("journeys"),
@@ -173,19 +173,19 @@ func TestE2ECampaignDDBTableLifecycle(t *testing.T) {
 	require.ErrorAs(t, err, &rnf, "DescribeTable on a deleted table should be ResourceNotFoundException")
 }
 
-// TestE2ECampaignDDBItemJourney: put an item with varied attribute types
+// TestDDBItemJourney: put an item with varied attribute types
 // (S, N incl. negative decimal, BOOL, NULL, L, M, empty string, ~100KB blob),
 // read it back through the SDK, update with SET+REMOVE (ReturnValues ALL_NEW),
 // then delete and confirm the miss surfaces as Item == nil, not an error.
-func TestE2ECampaignDDBItemJourney(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBItemJourney(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "profiles", "id", "")
+	suiteDDBCreateTable(t, client, "profiles", "id", "")
 
 	blob := strings.Repeat("x", 100*1024)
 
-	campaignDDBPut(t, client, "profiles", map[string]ddbtypes.AttributeValue{
+	suiteDDBPut(t, client, "profiles", map[string]ddbtypes.AttributeValue{
 		"id":       sAttr("user-1"),
 		"name":     sAttr("Amélie"),
 		"age":      nAttr("34"),
@@ -203,7 +203,7 @@ func TestE2ECampaignDDBItemJourney(t *testing.T) {
 		}},
 	})
 
-	got := campaignDDBGet(t, client, "profiles", map[string]ddbtypes.AttributeValue{"id": sAttr("user-1")})
+	got := suiteDDBGet(t, client, "profiles", map[string]ddbtypes.AttributeValue{"id": sAttr("user-1")})
 	require.NotNil(t, got.Item)
 
 	assert.Equal(t, "Amélie", attrS(t, got.Item, "name"))
@@ -247,7 +247,7 @@ func TestE2ECampaignDDBItemJourney(t *testing.T) {
 	assert.Equal(t, "Lyon", attrS(t, upd.Attributes, "city"))
 	assert.NotContains(t, upd.Attributes, "nickname")
 
-	got = campaignDDBGet(t, client, "profiles", map[string]ddbtypes.AttributeValue{"id": sAttr("user-1")})
+	got = suiteDDBGet(t, client, "profiles", map[string]ddbtypes.AttributeValue{"id": sAttr("user-1")})
 	require.NotNil(t, got.Item)
 	assert.Equal(t, "35", attrN(t, got.Item, "age"))
 	assert.NotContains(t, got.Item, "nickname")
@@ -260,22 +260,22 @@ func TestE2ECampaignDDBItemJourney(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got = campaignDDBGet(t, client, "profiles", map[string]ddbtypes.AttributeValue{"id": sAttr("user-1")})
+	got = suiteDDBGet(t, client, "profiles", map[string]ddbtypes.AttributeValue{"id": sAttr("user-1")})
 	assert.Nil(t, got.Item)
 
 	_, err = client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String("profiles")})
 	require.NoError(t, err)
 }
 
-// TestE2ECampaignDDBQueryPartitionAndSort: query by partition key with sort
+// TestDDBQueryPartitionAndSort: query by partition key with sort
 // conditions =, >, <=, >= and an ExpressionAttributeNames alias. Note the
 // emulator wire parser only accepts token-form "pk = :v AND sk <op> :v2"
 // (no begins_with()/BETWEEN function syntax).
-func TestE2ECampaignDDBQueryPartitionAndSort(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBQueryPartitionAndSort(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "orders", "customer", "orderDate")
+	suiteDDBCreateTable(t, client, "orders", "customer", "orderDate")
 
 	for _, o := range []struct{ cust, date, total string }{
 		{"alice", "2024-01-01", "10"},
@@ -283,7 +283,7 @@ func TestE2ECampaignDDBQueryPartitionAndSort(t *testing.T) {
 		{"alice", "2024-03-10", "40"},
 		{"bob", "2024-01-05", "99"},
 	} {
-		campaignDDBPut(t, client, "orders", map[string]ddbtypes.AttributeValue{
+		suiteDDBPut(t, client, "orders", map[string]ddbtypes.AttributeValue{
 			"customer":  sAttr(o.cust),
 			"orderDate": sAttr(o.date),
 			"total":     nAttr(o.total),
@@ -339,13 +339,13 @@ func TestE2ECampaignDDBQueryPartitionAndSort(t *testing.T) {
 	assert.Equal(t, "99", attrN(t, out.Items[0], "total"))
 }
 
-// TestE2ECampaignDDBQueryEdges: query on an empty table returns zero items;
+// TestDDBQueryEdges: query on an empty table returns zero items;
 // query against a missing table or unknown index yields the typed error.
-func TestE2ECampaignDDBQueryEdges(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBQueryEdges(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "empty", "pk", "")
+	suiteDDBCreateTable(t, client, "empty", "pk", "")
 
 	out, err := client.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String("empty"),
@@ -380,13 +380,13 @@ func TestE2ECampaignDDBQueryEdges(t *testing.T) {
 	require.ErrorAs(t, err, &rnf, "Query with unknown IndexName")
 }
 
-// TestE2ECampaignDDBScanWithFilters: AND-combined scan filters with =, !=,
+// TestDDBScanWithFilters: AND-combined scan filters with =, !=,
 // numeric >, <= and the emulator's infix CONTAINS dialect.
-func TestE2ECampaignDDBScanWithFilters(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBScanWithFilters(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "products", "sku", "")
+	suiteDDBCreateTable(t, client, "products", "sku", "")
 
 	for _, p := range []struct {
 		sku, cat, name string
@@ -398,7 +398,7 @@ func TestE2ECampaignDDBScanWithFilters(t *testing.T) {
 		{"sku-4", "books", "Go in Action", "35"},
 		{"sku-5", "books", "Widget Design Patterns", "9"},
 	} {
-		campaignDDBPut(t, client, "products", map[string]ddbtypes.AttributeValue{
+		suiteDDBPut(t, client, "products", map[string]ddbtypes.AttributeValue{
 			"sku":      sAttr(p.sku),
 			"category": sAttr(p.cat),
 			"name":     sAttr(p.name),
@@ -441,16 +441,16 @@ func TestE2ECampaignDDBScanWithFilters(t *testing.T) {
 		map[string]ddbtypes.AttributeValue{":s": sAttr("Widget")}).Count)
 }
 
-// TestE2ECampaignDDBScanDefaultReturnsAll: 30 items fit within the driver's
+// TestDDBScanDefaultReturnsAll: 30 items fit within the driver's
 // default limit of 100, so a single unfiltered scan sees every item.
-func TestE2ECampaignDDBScanDefaultReturnsAll(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBScanDefaultReturnsAll(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "bulk", "id", "")
+	suiteDDBCreateTable(t, client, "bulk", "id", "")
 
 	for i := 0; i < 30; i++ {
-		campaignDDBPut(t, client, "bulk", map[string]ddbtypes.AttributeValue{
+		suiteDDBPut(t, client, "bulk", map[string]ddbtypes.AttributeValue{
 			"id":  sAttr(fmt.Sprintf("item-%02d", i)),
 			"idx": nAttr(fmt.Sprintf("%d", i)),
 		})
@@ -477,21 +477,21 @@ func TestE2ECampaignDDBScanDefaultReturnsAll(t *testing.T) {
 	assert.Len(t, limited.Items, 10)
 }
 
-// TestE2ECampaignDDBScanPaginationContinuation: a real SDK user pages through
+// TestDDBScanPaginationContinuation: a real SDK user pages through
 // 30 items with Limit=10 by following LastEvaluatedKey / ExclusiveStartKey
 // until exhaustion — the standard DynamoDB pagination contract.
 //
 // NOTE: the emulator's DynamoDB handler never emits LastEvaluatedKey and
 // ignores ExclusiveStartKey (driver-level PageTokens are not wired to the
 // HTTP surface), so this journey is expected to surface that divergence.
-func TestE2ECampaignDDBScanPaginationContinuation(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBScanPaginationContinuation(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "paged", "id", "")
+	suiteDDBCreateTable(t, client, "paged", "id", "")
 
 	for i := 0; i < 30; i++ {
-		campaignDDBPut(t, client, "paged", map[string]ddbtypes.AttributeValue{
+		suiteDDBPut(t, client, "paged", map[string]ddbtypes.AttributeValue{
 			"id": sAttr(fmt.Sprintf("row-%02d", i)),
 		})
 	}
@@ -523,13 +523,13 @@ func TestE2ECampaignDDBScanPaginationContinuation(t *testing.T) {
 		"paging Limit=10 via LastEvaluatedKey should eventually visit all 30 items")
 }
 
-// TestE2ECampaignDDBUnicode: unicode partition keys, sort keys, and values
+// TestDDBUnicode: unicode partition keys, sort keys, and values
 // round-trip through put/get/query/delete.
-func TestE2ECampaignDDBUnicode(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBUnicode(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "i18n", "pk", "sk")
+	suiteDDBCreateTable(t, client, "i18n", "pk", "sk")
 
 	rows := []struct{ pk, sk, val string }{
 		{"user-😀", "профиль", "héllo wörld 🌍"},
@@ -538,14 +538,14 @@ func TestE2ECampaignDDBUnicode(t *testing.T) {
 	}
 
 	for _, r := range rows {
-		campaignDDBPut(t, client, "i18n", map[string]ddbtypes.AttributeValue{
+		suiteDDBPut(t, client, "i18n", map[string]ddbtypes.AttributeValue{
 			"pk":  sAttr(r.pk),
 			"sk":  sAttr(r.sk),
 			"val": sAttr(r.val),
 		})
 	}
 
-	got := campaignDDBGet(t, client, "i18n", map[string]ddbtypes.AttributeValue{
+	got := suiteDDBGet(t, client, "i18n", map[string]ddbtypes.AttributeValue{
 		"pk": sAttr("用户-一"), "sk": sAttr("ソート#1"),
 	})
 	require.NotNil(t, got.Item)
@@ -569,19 +569,19 @@ func TestE2ECampaignDDBUnicode(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got = campaignDDBGet(t, client, "i18n", map[string]ddbtypes.AttributeValue{
+	got = suiteDDBGet(t, client, "i18n", map[string]ddbtypes.AttributeValue{
 		"pk": sAttr("user-😀"), "sk": sAttr("профиль"),
 	})
 	assert.Nil(t, got.Item)
 }
 
-// TestE2ECampaignDDBBatchOps: BatchWriteItem puts, BatchGetItem with a
+// TestDDBBatchOps: BatchWriteItem puts, BatchGetItem with a
 // missing key (silently skipped), then BatchWriteItem deletes.
-func TestE2ECampaignDDBBatchOps(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBBatchOps(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "batch", "id", "")
+	suiteDDBCreateTable(t, client, "batch", "id", "")
 
 	var puts []ddbtypes.WriteRequest
 	for i := 1; i <= 5; i++ {
@@ -627,16 +627,16 @@ func TestE2ECampaignDDBBatchOps(t *testing.T) {
 	assert.Equal(t, int32(3), scan.Count)
 }
 
-// TestE2ECampaignDDBTransactAcrossTables: a single TransactWriteItems mixing
+// TestDDBTransactAcrossTables: a single TransactWriteItems mixing
 // puts and a delete across two tables.
-func TestE2ECampaignDDBTransactAcrossTables(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBTransactAcrossTables(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "accounts", "id", "")
-	campaignDDBCreateTable(t, client, "audit", "id", "")
+	suiteDDBCreateTable(t, client, "accounts", "id", "")
+	suiteDDBCreateTable(t, client, "audit", "id", "")
 
-	campaignDDBPut(t, client, "accounts", map[string]ddbtypes.AttributeValue{
+	suiteDDBPut(t, client, "accounts", map[string]ddbtypes.AttributeValue{
 		"id": sAttr("stale"), "state": sAttr("old"),
 	})
 
@@ -662,24 +662,24 @@ func TestE2ECampaignDDBTransactAcrossTables(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got := campaignDDBGet(t, client, "accounts", map[string]ddbtypes.AttributeValue{"id": sAttr("acct-1")})
+	got := suiteDDBGet(t, client, "accounts", map[string]ddbtypes.AttributeValue{"id": sAttr("acct-1")})
 	require.NotNil(t, got.Item)
 	assert.Equal(t, "500", attrN(t, got.Item, "balance"))
 
-	got = campaignDDBGet(t, client, "audit", map[string]ddbtypes.AttributeValue{"id": sAttr("evt-1")})
+	got = suiteDDBGet(t, client, "audit", map[string]ddbtypes.AttributeValue{"id": sAttr("evt-1")})
 	require.NotNil(t, got.Item)
 
-	got = campaignDDBGet(t, client, "accounts", map[string]ddbtypes.AttributeValue{"id": sAttr("stale")})
+	got = suiteDDBGet(t, client, "accounts", map[string]ddbtypes.AttributeValue{"id": sAttr("stale")})
 	assert.Nil(t, got.Item, "delete inside transaction applied")
 }
 
-// TestE2ECampaignDDBTypedErrors: the SDK-visible typed errors on the main
+// TestDDBTypedErrors: the SDK-visible typed errors on the main
 // failure paths, plus emulator-specific quirks that diverge from AWS.
-func TestE2ECampaignDDBTypedErrors(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBTypedErrors(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "errs", "pk", "")
+	suiteDDBCreateTable(t, client, "errs", "pk", "")
 
 	var (
 		rnf   *ddbtypes.ResourceNotFoundException
@@ -772,18 +772,18 @@ func TestE2ECampaignDDBTypedErrors(t *testing.T) {
 	})
 }
 
-// TestE2ECampaignDDBConditionalWrites: a conditional put succeeds when the
+// TestDDBConditionalWrites: a conditional put succeeds when the
 // item is absent, and violating the condition must yield
 // ConditionalCheckFailedException like real DynamoDB.
 //
 // NOTE: the emulator does not parse ConditionExpression at all (PutItem is a
 // blind upsert with no ConditionalCheckFailedException path), so the
 // violation subtest is expected to surface that divergence.
-func TestE2ECampaignDDBConditionalWrites(t *testing.T) {
-	client, _ := newCampaignDDBEnv(t)
+func TestDDBConditionalWrites(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "cond", "pk", "")
+	suiteDDBCreateTable(t, client, "cond", "pk", "")
 
 	t.Run("condition passes on absent item", func(t *testing.T) {
 		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
@@ -807,28 +807,28 @@ func TestE2ECampaignDDBConditionalWrites(t *testing.T) {
 			"PutItem with attribute_not_exists on an existing item must fail")
 
 		// The original item must be untouched by the rejected write.
-		got := campaignDDBGet(t, client, "cond", map[string]ddbtypes.AttributeValue{"pk": sAttr("c1")})
+		got := suiteDDBGet(t, client, "cond", map[string]ddbtypes.AttributeValue{"pk": sAttr("c1")})
 		require.NotNil(t, got.Item)
 		assert.Equal(t, "1", attrN(t, got.Item, "v"))
 	})
 }
 
-// TestE2ECampaignDDBTTLExpiry: deterministic TTL expiry with the injectable
+// TestDDBTTLExpiry: deterministic TTL expiry with the injectable
 // fake clock. TTL configuration is driver-only (no HTTP surface), so it is
 // set on the provider directly; all item traffic uses the real SDK.
-func TestE2ECampaignDDBTTLExpiry(t *testing.T) {
+func TestDDBTTLExpiry(t *testing.T) {
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	clock := emuconfig.NewFakeClock(base)
-	client, provider := newCampaignDDBEnv(t, emuconfig.WithClock(clock))
+	client, provider := newSuiteDDBEnv(t, emuconfig.WithClock(clock))
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "sessions", "id", "")
+	suiteDDBCreateTable(t, client, "sessions", "id", "")
 
-	campaignDDBPut(t, client, "sessions", map[string]ddbtypes.AttributeValue{
+	suiteDDBPut(t, client, "sessions", map[string]ddbtypes.AttributeValue{
 		"id":        sAttr("sess-1"),
 		"expiresAt": nAttr(fmt.Sprintf("%d", base.Add(5*time.Minute).Unix())),
 	})
-	campaignDDBPut(t, client, "sessions", map[string]ddbtypes.AttributeValue{
+	suiteDDBPut(t, client, "sessions", map[string]ddbtypes.AttributeValue{
 		"id": sAttr("sess-forever"), // no TTL attribute: never expires
 	})
 
@@ -843,16 +843,16 @@ func TestE2ECampaignDDBTTLExpiry(t *testing.T) {
 	assert.Equal(t, "expiresAt", ttlCfg.AttributeName)
 
 	// Before expiry, the item is visible through the SDK.
-	got := campaignDDBGet(t, client, "sessions", map[string]ddbtypes.AttributeValue{"id": sAttr("sess-1")})
+	got := suiteDDBGet(t, client, "sessions", map[string]ddbtypes.AttributeValue{"id": sAttr("sess-1")})
 	require.NotNil(t, got.Item, "not yet expired")
 
 	// Advance the fake clock past the TTL.
 	clock.Advance(10 * time.Minute)
 
-	got = campaignDDBGet(t, client, "sessions", map[string]ddbtypes.AttributeValue{"id": sAttr("sess-1")})
+	got = suiteDDBGet(t, client, "sessions", map[string]ddbtypes.AttributeValue{"id": sAttr("sess-1")})
 	assert.Nil(t, got.Item, "expired item reads as a miss")
 
-	got = campaignDDBGet(t, client, "sessions", map[string]ddbtypes.AttributeValue{"id": sAttr("sess-forever")})
+	got = suiteDDBGet(t, client, "sessions", map[string]ddbtypes.AttributeValue{"id": sAttr("sess-forever")})
 	assert.NotNil(t, got.Item, "item without TTL attribute survives")
 
 	// Scan also skips expired items.
@@ -864,21 +864,21 @@ func TestE2ECampaignDDBTTLExpiry(t *testing.T) {
 	// it stays gone.
 	require.NoError(t, provider.DynamoDB.UpdateTTL(ctx, "sessions", dbdriver.TTLConfig{Enabled: false}))
 
-	got = campaignDDBGet(t, client, "sessions", map[string]ddbtypes.AttributeValue{"id": sAttr("sess-1")})
+	got = suiteDDBGet(t, client, "sessions", map[string]ddbtypes.AttributeValue{"id": sAttr("sess-1")})
 	assert.Nil(t, got.Item, "lazy deletion is physical")
 }
 
-// TestE2ECampaignDDBStreams: SDK writes produce driver-level stream records
+// TestDDBStreams: SDK writes produce driver-level stream records
 // (INSERT/MODIFY/REMOVE) with monotonic sequence numbers, clock-driven
 // timestamps, view-type images, and token-based continuation. Streams have no
 // HTTP surface, so records are read from the driver.
-func TestE2ECampaignDDBStreams(t *testing.T) {
+func TestDDBStreams(t *testing.T) {
 	base := time.Date(2026, 2, 2, 8, 0, 0, 0, time.UTC)
 	clock := emuconfig.NewFakeClock(base)
-	client, provider := newCampaignDDBEnv(t, emuconfig.WithClock(clock))
+	client, provider := newSuiteDDBEnv(t, emuconfig.WithClock(clock))
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "events", "id", "")
+	suiteDDBCreateTable(t, client, "events", "id", "")
 
 	// Streams disabled: reading records is a failed precondition.
 	_, err := provider.DynamoDB.GetStreamRecords(ctx, "events", 10, "")
@@ -891,10 +891,10 @@ func TestE2ECampaignDDBStreams(t *testing.T) {
 	}))
 
 	// SDK traffic: insert, overwrite, update, delete.
-	campaignDDBPut(t, client, "events", map[string]ddbtypes.AttributeValue{
+	suiteDDBPut(t, client, "events", map[string]ddbtypes.AttributeValue{
 		"id": sAttr("e1"), "v": nAttr("1"),
 	})
-	campaignDDBPut(t, client, "events", map[string]ddbtypes.AttributeValue{
+	suiteDDBPut(t, client, "events", map[string]ddbtypes.AttributeValue{
 		"id": sAttr("e1"), "v": nAttr("2"),
 	})
 
@@ -955,15 +955,15 @@ func TestE2ECampaignDDBStreams(t *testing.T) {
 	assert.Empty(t, page2.NextToken, "no more records after the last page")
 }
 
-// TestE2ECampaignDDBQueryGSI: query through a Global Secondary Index. GSI
+// TestDDBQueryGSI: query through a Global Secondary Index. GSI
 // creation has no HTTP surface (CreateTable ignores
 // GlobalSecondaryIndexes), so the index is created on the driver; queries go
 // through the real SDK with IndexName.
-func TestE2ECampaignDDBQueryGSI(t *testing.T) {
-	client, provider := newCampaignDDBEnv(t)
+func TestDDBQueryGSI(t *testing.T) {
+	client, provider := newSuiteDDBEnv(t)
 	ctx := context.Background()
 
-	campaignDDBCreateTable(t, client, "users", "id", "")
+	suiteDDBCreateTable(t, client, "users", "id", "")
 
 	info, err := provider.DynamoDB.CreateIndex(ctx, "users", dbdriver.GSIConfig{
 		Name:         "by-email",
@@ -977,7 +977,7 @@ func TestE2ECampaignDDBQueryGSI(t *testing.T) {
 		{"u2", "shared@example.com"},
 		{"u3", "solo@example.com"},
 	} {
-		campaignDDBPut(t, client, "users", map[string]ddbtypes.AttributeValue{
+		suiteDDBPut(t, client, "users", map[string]ddbtypes.AttributeValue{
 			"id": sAttr(u.id), "email": sAttr(u.email),
 		})
 	}
