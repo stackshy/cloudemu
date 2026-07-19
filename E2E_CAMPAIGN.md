@@ -29,7 +29,7 @@ Legend: [ ] pending · [~] in progress · [x] done (tested, issues fixed, review
 
 ### Domains
 - [x] storage (S3 / BlobStorage / GCS) — iter 1: 49 e2e tests, 3 product bugs fixed, full suite green
-- [~] database (DynamoDB / CosmosDB / Firestore) — iteration 2
+- [x] database (DynamoDB / CosmosDB / Firestore) — iter 2: ~60 e2e tests, 1 systemic driver bug + 5 wire bugs fixed, full suite green
 - [ ] messagequeue (SQS / ServiceBus / PubSub)
 - [ ] compute (EC2 / VirtualMachines / GCE)
 - [ ] serverless (Lambda / Functions / CloudFunctions)
@@ -72,9 +72,20 @@ Iteration 1 — storage (49 new e2e tests across 6 cells; all fixed and reviewed
 - [storage/azure/sdk-compat] Put Blob ignored `x-ms-blob-content-type`, storing application/octet-stream for SDK uploads → handler honors the header (request Content-Type kept as fallback for direct-HTTP callers).
 - [storage/gcp/sdk-compat] Multipart upload parser used strings.TrimRight which ate legitimate trailing `-`/`\r\n` bytes from payloads → replaced with byte-exact mime/multipart parsing (RFC 2046).
 
+Iteration 2 — database (portable + SDK cells across all 3 providers):
+- [database/all/portable] SYSTEMIC: Scan/Query iterated a freshly-copied map (randomized order per call) then applied offset page tokens — multi-page reads duplicated and dropped items on ALL THREE drivers → stable sort by item key before pagination (dynamodb, cosmosdb, firestore drivers).
+- [database/aws/sdk-compat] DynamoDB wire handler had no ExclusiveStartKey/LastEvaluatedKey support — SDK users could never page past page 1 → implemented key-based wire pagination over the driver's stable ordering (Query + Scan).
+- [database/aws/sdk-compat] PutItem ignored ConditionExpression — attribute_not_exists create-if-absent silently overwrote → attribute_exists/attribute_not_exists enforced with ConditionalCheckFailedException; unsupported expressions return ValidationException.
+- [database/azure/sdk-compat] Continuation-page query requests (marked only by Content-Type application/query+json) were misrouted as document creates → 400 "item must contain an id field"; and the query path had no x-ms-max-item-count / x-ms-continuation support → both fixed.
+- [database/gcp/sdk-compat] batchGet emitted one JSON array PER entry — clients decoded only the first document → single-array response.
+- [database/gcp/sdk-compat] :commit dropped currentDocument preconditions — Create on existing doc succeeded, Update on missing doc upserted → exists preconditions enforced (409 ALREADY_EXISTS / 404 NOT_FOUND).
+- [test-helper] REST transport folds HTTP 409 into gRPC Aborted; dbSDKCode now prefers the concrete googleapi HTTP status.
+
 ## Human decisions needed (deviations locked in as documented behavior, flagged by review)
 - S3 DeleteObject on a missing key returns 404 NoSuchKey; real S3 is idempotent 204 — breaks defensive-delete code.
 - Missing bucket maps to NoSuchKey; real S3 returns NoSuchBucket.
 - Deleting a non-empty bucket/container returns 500 InternalError (AWS + Azure); real clouds return 409 — and 5xx triggers SDK retry backoff.
 - Azure putBlob returns a hard-coded ETag ("0x8DAB0") and wall-clock LastModified.
 - server/aws/s3 putObject recomputes sha256 inline, duplicating the driver's ETag algorithm (drift risk).
+- Database driver QueryInput.ScanForward is accepted but never applied (no descending order support in any provider driver).
+- Azure Cosmos multipart-order asymmetry: Azure/GCP mocks assemble multipart parts in caller order; S3 sorts by part number.

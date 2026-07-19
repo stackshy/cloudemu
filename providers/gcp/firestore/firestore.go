@@ -4,6 +4,7 @@ package firestore
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,6 +96,14 @@ func docKey(cfg driver.TableConfig, item map[string]any) string {
 	}
 
 	return pk
+}
+
+// sortByItemKey gives matched results a stable order so offset-based
+// page tokens stay valid across calls (map iteration order is random).
+func sortByItemKey(cfg driver.TableConfig, items []map[string]any) {
+	sort.Slice(items, func(i, j int) bool {
+		return docKey(cfg, items[i]) < docKey(cfg, items[j])
+	})
 }
 
 func (m *Mock) CreateTable(_ context.Context, cfg driver.TableConfig) error {
@@ -283,6 +292,7 @@ func (m *Mock) Query(ctx context.Context, input driver.QueryInput) (*driver.Quer
 		limit = 100
 	}
 
+	sortByItemKey(cd.config, matched)
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
 
 	m.emitMetric(ctx, "document/read_count", float64(len(page.Items)), map[string]string{"collection_id": input.Table})
@@ -367,6 +377,7 @@ func (m *Mock) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryR
 		limit = 100
 	}
 
+	sortByItemKey(cd.config, matched)
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
 
 	m.emitMetric(ctx, "document/read_count", float64(len(page.Items)), map[string]string{"collection_id": input.Table})

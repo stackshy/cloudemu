@@ -4,6 +4,7 @@ package cosmosdb
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -100,6 +101,14 @@ func itemKey(cfg driver.TableConfig, item map[string]any) string {
 	}
 
 	return pk
+}
+
+// sortByItemKey gives matched results a stable order so offset-based
+// page tokens stay valid across calls (map iteration order is random).
+func sortByItemKey(cfg driver.TableConfig, items []map[string]any) {
+	sort.Slice(items, func(i, j int) bool {
+		return itemKey(cfg, items[i]) < itemKey(cfg, items[j])
+	})
 }
 
 // CreateTable creates a new container (table) in Cosmos DB.
@@ -298,6 +307,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		limit = 100
 	}
 
+	sortByItemKey(td.config, matched)
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
 
 	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(page.Items))})
@@ -351,6 +361,7 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		limit = 100
 	}
 
+	sortByItemKey(td.config, matched)
 	page, _ := pagination.Paginate(matched, input.PageToken, limit)
 
 	m.emitMetric(input.Table, map[string]float64{"TotalRequests": 1, "TotalRequestUnits": float64(len(page.Items))})
