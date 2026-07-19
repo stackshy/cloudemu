@@ -1,0 +1,103 @@
+package eventgrid_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/eventgrid/armeventgrid/v2"
+)
+
+func createTopic(t *testing.T, client *armeventgrid.TopicsClient, rg, name string, tags map[string]*string) armeventgrid.Topic {
+	t.Helper()
+	ctx := context.Background()
+
+	poller, err := client.BeginCreateOrUpdate(ctx, rg, name, armeventgrid.Topic{
+		Location: to.Ptr("global"),
+		Tags:     tags,
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate %s/%s: %v", rg, name, err)
+	}
+	res, err := poller.PollUntilDone(ctx, nil)
+	if err != nil {
+		t.Fatalf("poll %s/%s: %v", rg, name, err)
+	}
+	return res.Topic
+}
+
+// TestSDKScopedListing asserts #259 item 1 through the real SDK: topics
+// created in one resource group must not appear in another group's list.
+func TestSDKScopedListing(t *testing.T) {
+	client := newTopicsClient(t)
+	ctx := context.Background()
+
+	createTopic(t, client, "rg-team-a", "topic-a1", nil)
+	createTopic(t, client, "rg-team-a", "topic-a2", nil)
+	createTopic(t, client, "rg-team-b", "topic-b1", nil)
+
+	listRG := func(rg string) []string {
+		var names []string
+		pager := client.NewListByResourceGroupPager(rg, nil)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				t.Fatalf("list %s: %v", rg, err)
+			}
+			for _, tp := range page.Value {
+				names = append(names, *tp.Name)
+			}
+		}
+		return names
+	}
+
+	gotA := listRG("rg-team-a")
+	if len(gotA) != 2 {
+		t.Fatalf("rg-team-a listed %v, want exactly its own 2 topics", gotA)
+	}
+	gotB := listRG("rg-team-b")
+	if len(gotB) != 1 || gotB[0] != "topic-b1" {
+		t.Fatalf("rg-team-b listed %v, want [topic-b1]", gotB)
+	}
+}
+
+// TestSDKUpsertAppliesUpdates asserts #259 item 2 through the real SDK:
+// CreateOrUpdate on an existing topic must apply the request's tags, not
+// echo the stale resource.
+func TestSDKUpsertAppliesUpdates(t *testing.T) {
+	client := newTopicsClient(t)
+	ctx := context.Background()
+
+	createTopic(t, client, testRG, "topic-upsert", map[string]*string{"env": to.Ptr("dev")})
+
+	updated := createTopic(t, client, testRG, "topic-upsert",
+		map[string]*string{"env": to.Ptr("prod"), "team": to.Ptr("core")})
+	if updated.Tags["env"] == nil || *updated.Tags["env"] != "prod" {
+		t.Fatalf("upsert response tags = %v, want env=prod applied", updated.Tags)
+	}
+
+	got, err := client.Get(ctx, testRG, "topic-upsert", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tags["env"] == nil || *got.Tags["env"] != "prod" || got.Tags["team"] == nil {
+		t.Fatalf("stored tags = %v, want env=prod team=core (CreateOrUpdate must not discard updates)", got.Tags)
+	}
+}
+
+// TestSDKResourceIDMatchesRequestScope asserts #259 item 4 through the real
+// SDK: the returned ARM id carries the request's subscription and resource
+// group, not a hardcoded default.
+func TestSDKResourceIDMatchesRequestScope(t *testing.T) {
+	client := newTopicsClient(t)
+
+	tp := createTopic(t, client, "rg-id-check", "topic-id", nil)
+	if tp.ID == nil {
+		t.Fatal("topic response has no id")
+	}
+	id := *tp.ID
+	if !strings.Contains(id, "/subscriptions/"+testSub+"/") || !strings.Contains(id, "/resourceGroups/rg-id-check/") {
+		t.Fatalf("id = %q, want it under subscription %q and resource group rg-id-check", id, testSub)
+	}
+}

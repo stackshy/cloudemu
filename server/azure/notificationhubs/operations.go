@@ -6,27 +6,43 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
+
+// rpScope is the resource scope carried by the request path.
+func rpScope(rp *azurearm.ResourcePath) scope.Scope {
+	return scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
+}
 
 // --- namespaces ---
 
-// createOrUpdateNamespace maps Namespaces.CreateOrUpdate to the driver.
-// CreateOrUpdate is idempotent: if the namespace already exists, echo it back.
+// createOrUpdateNamespace maps Namespaces.CreateOrUpdate onto the driver:
+// create when absent, otherwise apply the request's mutable fields (tags) via
+// UpdateTopic — ARM PUT semantics, so the caller's changes are never silently
+// discarded.
 func (h *Handler) createOrUpdateNamespace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body putBody
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
 
-	if info, err := h.notif.GetTopic(r.Context(), rp.ResourceName); err == nil {
+	cfg := notifdriver.TopicConfig{
+		Name:  rp.ResourceName,
+		Tags:  body.Tags,
+		Scope: rpScope(rp),
+	}
+
+	if _, err := h.notif.GetTopic(r.Context(), rp.ResourceName); err == nil {
+		info, uerr := h.notif.UpdateTopic(r.Context(), cfg)
+		if uerr != nil {
+			azurearm.WriteCErr(w, uerr)
+			return
+		}
 		azurearm.WriteJSON(w, http.StatusOK, toNamespaceJSON(rp, info))
 		return
 	}
 
-	info, err := h.notif.CreateTopic(r.Context(), notifdriver.TopicConfig{
-		Name: rp.ResourceName,
-		Tags: body.Tags,
-	})
+	info, err := h.notif.CreateTopic(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -55,7 +71,7 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, r *http.Request, rp *az
 	}
 
 	// Best-effort cleanup of nested hub topics.
-	for _, name := range h.hubTopicNames(r, rp.ResourceName) {
+	for _, name := range h.hubTopicNames(r, rp) {
 		_ = h.notif.DeleteTopic(r.Context(), name)
 	}
 
@@ -63,7 +79,7 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, r *http.Request, rp *az
 }
 
 func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	topics, err := h.notif.ListTopics(r.Context())
+	topics, err := h.notif.ListTopics(r.Context(), rpScope(rp))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -98,16 +114,24 @@ func (h *Handler) createOrUpdateHub(w http.ResponseWriter, r *http.Request, rp *
 		ttl = body.Properties.RegistrationTTL
 	}
 
-	if info, err := h.notif.GetTopic(r.Context(), key); err == nil {
+	cfg := notifdriver.TopicConfig{
+		Name:        key,
+		DisplayName: ttl,
+		Tags:        body.Tags,
+		Scope:       rpScope(rp),
+	}
+
+	if _, err := h.notif.GetTopic(r.Context(), key); err == nil {
+		info, uerr := h.notif.UpdateTopic(r.Context(), cfg)
+		if uerr != nil {
+			azurearm.WriteCErr(w, uerr)
+			return
+		}
 		azurearm.WriteJSON(w, http.StatusOK, toHubJSON(rp, rp.ResourceName, rp.SubResourceName, info))
 		return
 	}
 
-	info, err := h.notif.CreateTopic(r.Context(), notifdriver.TopicConfig{
-		Name:        key,
-		DisplayName: ttl,
-		Tags:        body.Tags,
-	})
+	info, err := h.notif.CreateTopic(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -136,7 +160,7 @@ func (h *Handler) deleteHub(w http.ResponseWriter, r *http.Request, rp *azurearm
 }
 
 func (h *Handler) listHubs(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	topics, err := h.notif.ListTopics(r.Context())
+	topics, err := h.notif.ListTopics(r.Context(), rpScope(rp))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -159,14 +183,14 @@ func (h *Handler) listHubs(w http.ResponseWriter, r *http.Request, rp *azurearm.
 }
 
 // hubTopicNames returns the driver topic keys of every hub nested under the
-// given namespace.
-func (h *Handler) hubTopicNames(r *http.Request, namespace string) []string {
-	topics, err := h.notif.ListTopics(r.Context())
+// namespace named by the request path.
+func (h *Handler) hubTopicNames(r *http.Request, rp *azurearm.ResourcePath) []string {
+	topics, err := h.notif.ListTopics(r.Context(), rpScope(rp))
 	if err != nil {
 		return nil
 	}
 
-	prefix := namespace + hubKeySep
+	prefix := rp.ResourceName + hubKeySep
 
 	var names []string
 	for i := range topics {

@@ -88,13 +88,24 @@ func hostAndSSLPort(endpoint string) (string, int) {
 	return host, port
 }
 
-// toRedisJSON converts a driver CacheInfo into its ARM element for the given
-// path scope.
+// toRedisJSON converts a driver CacheInfo into its ARM element. The id carries
+// the scope the cache was created in; resources without a recorded scope
+// (portable-API creations) fall back to the request path's scope.
 func toRedisJSON(rp *azurearm.ResourcePath, info *cachedriver.CacheInfo) redisJSON {
 	host, sslPort := hostAndSSLPort(info.Endpoint)
 
+	sub := info.Scope.Subscription
+	if sub == "" {
+		sub = rp.Subscription
+	}
+
+	rg := info.Scope.ResourceGroup
+	if rg == "" {
+		rg = rp.ResourceGroup
+	}
+
 	return redisJSON{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeRedis, info.Name),
+		ID:       azurearm.BuildResourceID(sub, rg, providerName, typeRedis, info.Name),
 		Name:     info.Name,
 		Type:     redisResourceType,
 		Location: defaultLocation,

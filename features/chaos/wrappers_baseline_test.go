@@ -200,7 +200,7 @@ func TestWrapNotificationBaseline(t *testing.T) {
 	ctx := context.Background()
 
 	tp, _ := n.CreateTopic(ctx, notifdriver.TopicConfig{Name: "b"})
-	_, _ = n.ListTopics(ctx)
+	_, _ = n.ListTopics(ctx, scope.Scope{})
 	if tp != nil {
 		_, _ = n.GetTopic(ctx, tp.ID)
 		sub, _ := n.Subscribe(ctx, notifdriver.SubscriptionConfig{TopicID: tp.ID, Protocol: "email", Endpoint: "x@y.z"})
@@ -233,7 +233,7 @@ func TestWrapEventBusBaseline(t *testing.T) {
 
 	_, _ = b.CreateEventBus(ctx, ebdriver.EventBusConfig{Name: "b"})
 	_, _ = b.GetEventBus(ctx, "b")
-	_, _ = b.ListEventBuses(ctx)
+	_, _ = b.ListEventBuses(ctx, scope.Scope{})
 	cfg := &ebdriver.RuleConfig{Name: "rule", EventBus: "b", EventPattern: `{"source":["x"]}`, State: "ENABLED"}
 	_, _ = b.PutRule(ctx, cfg)
 	_, _ = b.GetRule(ctx, "b", "rule")

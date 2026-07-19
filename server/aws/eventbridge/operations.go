@@ -5,6 +5,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // --- event buses ---
@@ -50,7 +51,7 @@ func (h *Handler) describeEventBus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listEventBuses(w http.ResponseWriter, r *http.Request) {
-	infos, err := h.bus.ListEventBuses(r.Context())
+	infos, err := h.bus.ListEventBuses(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
 		return

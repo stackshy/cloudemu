@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	driver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // TestListOrderingDeterministic locks the #259 ordering guarantee: list
@@ -20,7 +21,7 @@ func TestListOrderingDeterministic(t *testing.T) {
 		}
 	}
 
-	first, err := m.ListEventBuses(ctx)
+	first, err := m.ListEventBuses(ctx, scope.Scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +30,7 @@ func TestListOrderingDeterministic(t *testing.T) {
 	}
 
 	for range 5 {
-		again, err := m.ListEventBuses(ctx)
+		again, err := m.ListEventBuses(ctx, scope.Scope{})
 		if err != nil {
 			t.Fatal(err)
 		}

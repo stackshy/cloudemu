@@ -4,6 +4,7 @@ package notificationhubs
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -12,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/notification/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Compile-time check that Mock implements driver.Notification.
@@ -80,7 +82,15 @@ func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 		return nil, errors.New(errors.InvalidArgument, "topic name is required")
 	}
 
-	resourceID := idgen.AzureID(m.opts.AccountID, "rg-default", "Microsoft.NotificationHubs", "namespaces/default/notificationHubs", cfg.Name)
+	rg := cfg.Scope.ResourceGroup
+	if rg == "" {
+		rg = "rg-default"
+	}
+	sub := cfg.Scope.Subscription
+	if sub == "" {
+		sub = m.opts.AccountID
+	}
+	resourceID := idgen.AzureID(sub, rg, "Microsoft.NotificationHubs", "namespaces/default/notificationHubs", cfg.Name)
 
 	if m.topics.Has(cfg.Name) {
 		return nil, errors.Newf(errors.AlreadyExists, "topic %q already exists", cfg.Name)
@@ -94,6 +104,7 @@ func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	info := driver.TopicInfo{
 		ID:                idgen.GenerateID("topic-"),
 		Name:              cfg.Name,
+		Scope:             cfg.Scope,
 		ResourceID:        resourceID,
 		DisplayName:       cfg.DisplayName,
 		SubscriptionCount: 0,
@@ -134,19 +145,50 @@ func (m *Mock) GetTopic(_ context.Context, id string) (*driver.TopicInfo, error)
 	return &result, nil
 }
 
-// ListTopics lists all notification hubs.
-func (m *Mock) ListTopics(_ context.Context) ([]driver.TopicInfo, error) {
+// ListTopics lists all notification hubs visible under the given scope filter.
+func (m *Mock) ListTopics(_ context.Context, filter scope.Scope) ([]driver.TopicInfo, error) {
 	all := m.topics.SortedValues()
 
 	topics := make([]driver.TopicInfo, 0, len(all))
 
 	for _, td := range all {
+		if !td.info.Scope.Matches(filter) {
+			continue
+		}
+
 		info := td.info
 		info.SubscriptionCount = td.subscriptions.Len()
 		topics = append(topics, info)
 	}
 
 	return topics, nil
+}
+
+// UpdateTopic replaces the mutable fields of an existing topic — ARM
+// CreateOrUpdate-on-existing semantics (display name and tags come from the
+// request; identity is preserved).
+func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.TopicInfo, error) {
+	td, ok := m.topics.Get(cfg.Name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "topic %q not found", cfg.Name)
+	}
+
+	if cfg.DisplayName != "" {
+		td.info.DisplayName = cfg.DisplayName
+	}
+	if cfg.Tags != nil {
+		td.info.Tags = maps.Clone(cfg.Tags)
+	}
+	if !cfg.Scope.IsZero() {
+		td.info.Scope = cfg.Scope
+	}
+
+	m.topics.Set(cfg.Name, td)
+
+	result := td.info
+	result.SubscriptionCount = td.subscriptions.Len()
+
+	return &result, nil
 }
 
 // Subscribe creates a subscription to a notification hub.
