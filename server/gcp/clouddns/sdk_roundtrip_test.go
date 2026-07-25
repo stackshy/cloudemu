@@ -193,3 +193,20 @@ func TestSDKCloudDNSErrors(t *testing.T) {
 		t.Fatalf("Changes.Create(missing zone): got %v, want 404", err)
 	}
 }
+
+// TestSDKCloudDNSDuplicateZoneName asserts a managed-zone name must be unique
+// within a project: creating the same name twice fails the second time.
+func TestSDKCloudDNSDuplicateZoneName(t *testing.T) {
+	svc := newDNSService(t)
+	ctx := context.Background()
+
+	zone := &dns.ManagedZone{Name: "dup-zone", DnsName: "dup.example.com.", Visibility: "public"}
+	if _, err := svc.ManagedZones.Create(testProject, zone).Context(ctx).Do(); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	_, err := svc.ManagedZones.Create(testProject, zone).Context(ctx).Do()
+	if err == nil {
+		t.Fatal("second Create of the same managed-zone name returned nil error, want a conflict")
+	}
+}

@@ -277,3 +277,17 @@ func TestStore_OverwriteValue(t *testing.T) {
 	assert.Equal(t, "second", val)
 	assert.Equal(t, 1, s.Len())
 }
+
+func TestSortedValues(t *testing.T) {
+	s := New[string]()
+	s.Set("zebra", "z")
+	s.Set("apple", "a")
+	s.Set("mango", "m")
+
+	for range 5 {
+		got := s.SortedValues()
+		if len(got) != 3 || got[0] != "a" || got[1] != "m" || got[2] != "z" {
+			t.Fatalf("SortedValues = %v, want [a m z] (key order, stable across calls)", got)
+		}
+	}
+}

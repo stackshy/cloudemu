@@ -9,6 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/features/chaos"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func newChaosDNS(t *testing.T) (dnsdriver.DNS, *chaos.Engine) {
@@ -65,7 +66,7 @@ func TestWrapDNSListZonesChaos(t *testing.T) {
 
 	e.Apply(chaos.ServiceOutage("dns", time.Hour))
 
-	if _, err := d.ListZones(ctx); err == nil {
+	if _, err := d.ListZones(ctx, scope.Scope{}); err == nil {
 		t.Error("expected chaos error on ListZones")
 	}
 }

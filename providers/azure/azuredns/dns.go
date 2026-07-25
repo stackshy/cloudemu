@@ -3,6 +3,7 @@ package azuredns
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -10,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Compile-time check that Mock implements driver.DNS.
@@ -50,7 +52,17 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		return nil, cerrors.New(cerrors.InvalidArgument, "zone name is required")
 	}
 
-	id := idgen.AzureID(m.opts.AccountID, "cloud-mock", "Microsoft.Network", "dnsZones", cfg.Name)
+	// Derive the ARM id's subscription/resource group from the request scope,
+	// falling back to the account default and "cloud-mock" when unscoped.
+	sub := cfg.Scope.Subscription
+	if sub == "" {
+		sub = m.opts.AccountID
+	}
+	rg := cfg.Scope.ResourceGroup
+	if rg == "" {
+		rg = "cloud-mock"
+	}
+	id := idgen.AzureID(sub, rg, "Microsoft.Network", "dnsZones", cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -63,6 +75,7 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		Private:     cfg.Private,
 		RecordCount: 0,
 		Tags:        tags,
+		Scope:       cfg.Scope,
 	}
 
 	m.zones.Set(id, zone)
@@ -100,16 +113,47 @@ func (m *Mock) GetZone(_ context.Context, id string) (*driver.ZoneInfo, error) {
 	return &result, nil
 }
 
-// ListZones returns all Azure DNS zones.
-func (m *Mock) ListZones(_ context.Context) ([]driver.ZoneInfo, error) {
-	all := m.zones.All()
+// ListZones returns the Azure DNS zones visible under filter. Iterating the
+// store's SortedValues keeps the order deterministic (#259).
+func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneInfo, error) {
+	all := m.zones.SortedValues()
 
 	zones := make([]driver.ZoneInfo, 0, len(all))
 	for _, z := range all {
+		if !z.Scope.Matches(filter) {
+			continue
+		}
 		zones = append(zones, z)
 	}
 
 	return zones, nil
+}
+
+// UpdateZone applies the mutable fields (tags, scope) of an existing zone,
+// matching it by name — ARM CreateOrUpdate-on-existing semantics. Identity
+// and record count are preserved.
+func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
+	for _, z := range m.zones.SortedValues() {
+		// Match on name AND scope: the same zone name can exist in different
+		// resource groups, and an update must not reach across into another.
+		if z.Name != cfg.Name || !z.Scope.Matches(cfg.Scope) {
+			continue
+		}
+
+		if cfg.Tags != nil {
+			z.Tags = maps.Clone(cfg.Tags)
+		}
+		if !cfg.Scope.IsZero() {
+			z.Scope = cfg.Scope
+		}
+
+		m.zones.Set(z.ID, z)
+		result := z
+
+		return &result, nil
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "zone %q not found", cfg.Name)
 }
 
 // CreateRecord creates a new DNS record set in the specified zone.
@@ -219,12 +263,12 @@ func (m *Mock) GetRecord(_ context.Context, zoneID, name, recordType string) (*d
 		return &result, nil
 	}
 
-	// Search for weighted records with a set ID.
-	prefix := zoneID + ":" + name + ":" + recordType + ":"
-
-	all := m.records.All()
-	for k, r := range all {
-		if strings.HasPrefix(k, prefix) {
+	// Search for weighted records (same name+type with a set ID). Iterate in
+	// sorted-key order and return the lowest set ID, so a name+type with
+	// several weighted records resolves to the same record every call rather
+	// than a map-order-random one (#259).
+	for _, r := range m.records.SortedValues() {
+		if r.ZoneID == zoneID && r.Name == name && r.Type == recordType && r.SetID != "" {
 			result := r
 			return &result, nil
 		}
@@ -239,13 +283,16 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 		return nil, cerrors.Newf(cerrors.NotFound, "zone %q not found", zoneID)
 	}
 
-	filtered := m.records.Filter(func(_ string, rec driver.RecordInfo) bool {
-		return rec.ZoneID == zoneID
-	})
+	// SortedValues gives a stable order keyed by zoneID:name:type[:setID];
+	// filter to this zone in that order so ListRecords is deterministic
+	// (map iteration order must never reach the wire — #259).
+	all := m.records.SortedValues()
 
-	records := make([]driver.RecordInfo, 0, len(filtered))
-	for _, rec := range filtered {
-		records = append(records, rec)
+	records := make([]driver.RecordInfo, 0, len(all))
+	for _, rec := range all {
+		if rec.ZoneID == zoneID {
+			records = append(records, rec)
+		}
 	}
 
 	return records, nil

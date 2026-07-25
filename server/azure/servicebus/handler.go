@@ -27,12 +27,15 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -46,12 +49,13 @@ const (
 
 // Handler serves ARM Service Bus + raw-HTTP data-plane requests.
 type Handler struct {
-	mq mqdriver.MessageQueue
+	mq         mqdriver.MessageQueue
+	namespaces *memstore.Store[namespaceState]
 }
 
 // New returns a Service Bus handler backed by mq.
 func New(mq mqdriver.MessageQueue) *Handler {
-	return &Handler{mq: mq}
+	return &Handler{mq: mq, namespaces: memstore.New[namespaceState]()}
 }
 
 // Matches accepts ARM Microsoft.ServiceBus/namespaces[...] paths plus
@@ -84,7 +88,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// /providers/Microsoft.ServiceBus/namespaces (subscription-level list)
 	if rp.ResourceName == "" {
-		h.listNamespaces(w, r)
+		h.listNamespaces(w, rp)
 		return
 	}
 
@@ -146,7 +150,7 @@ func (h *Handler) serveQueue(w http.ResponseWriter, r *http.Request, rp azurearm
 // ---------- Namespace control plane ----------
 
 //nolint:gocritic // rp is a request-scoped value
-func (*Handler) createNamespace(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
 	var req createNamespaceRequest
@@ -160,45 +164,91 @@ func (*Handler) createNamespace(w http.ResponseWriter, r *http.Request, rp azure
 		location = "eastus"
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, namespaceResource{
-		ID: azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup,
-			providerName, resourceType, rp.ResourceName),
-		Name:     rp.ResourceName,
-		Type:     providerName + "/" + resourceType,
-		Location: location,
-		Properties: namespaceProperties{
-			ProvisioningState:  "Succeeded",
-			ServiceBusEndpoint: "https://" + rp.ResourceName + ".servicebus.windows.net:443/",
-		},
-		SKU: req.SKU,
-	})
+	// PUT is create-or-update: store (and thus overwrite) the record so the
+	// request's tags and SKU are applied, mirroring ARM CreateOrUpdate.
+	ns := namespaceState{
+		Name:          rp.ResourceName,
+		Location:      location,
+		Subscription:  rp.Subscription,
+		ResourceGroup: rp.ResourceGroup,
+		Tags:          maps.Clone(req.Tags),
+		SKU:           cloneSKU(req.SKU),
+	}
+	h.namespaces.Set(rp.ResourceName, ns)
+
+	azurearm.WriteJSON(w, http.StatusOK, toNamespaceResource(ns))
 }
 
 //nolint:gocritic // rp is a request-scoped value
-func (*Handler) getNamespace(w http.ResponseWriter, _ *http.Request, rp azurearm.ResourcePath) {
-	// Namespaces are virtual — there's no driver state. Always return Succeeded.
-	azurearm.WriteJSON(w, http.StatusOK, namespaceResource{
-		ID: azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup,
-			providerName, resourceType, rp.ResourceName),
-		Name:     rp.ResourceName,
-		Type:     providerName + "/" + resourceType,
-		Location: "eastus",
-		Properties: namespaceProperties{
-			ProvisioningState:  "Succeeded",
-			ServiceBusEndpoint: "https://" + rp.ResourceName + ".servicebus.windows.net:443/",
-		},
-	})
+func (h *Handler) getNamespace(w http.ResponseWriter, _ *http.Request, rp azurearm.ResourcePath) {
+	ns, ok := h.namespaces.Get(rp.ResourceName)
+	if !ok || !namespaceInScope(ns, rp) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"namespace not found: "+rp.ResourceName)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toNamespaceResource(ns))
 }
 
 //nolint:gocritic // rp is a request-scoped value
-func (*Handler) deleteNamespace(w http.ResponseWriter, _ azurearm.ResourcePath) {
-	// Virtual namespace: nothing to free.
+func (h *Handler) deleteNamespace(w http.ResponseWriter, rp azurearm.ResourcePath) {
+	// Delete only if the namespace actually lives under the path's
+	// subscription/resource group — a wrong-scope delete must not remove it.
+	if ns, ok := h.namespaces.Get(rp.ResourceName); ok && namespaceInScope(ns, rp) {
+		h.namespaces.Delete(rp.ResourceName)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
-func (*Handler) listNamespaces(w http.ResponseWriter, _ *http.Request) {
-	// We don't track namespaces in the driver; return an empty list.
-	azurearm.WriteJSON(w, http.StatusOK, listResponse{Value: []any{}})
+// cloneSKU copies the SKU so stored state never aliases the decoded request.
+func cloneSKU(s *sbSKU) *sbSKU {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	return &c
+}
+
+// namespaceInScope reports whether the stored namespace belongs to the
+// subscription and resource group named in the request path. A named-resource
+// path always carries both, so this is an exact match.
+func namespaceInScope(ns namespaceState, rp azurearm.ResourcePath) bool {
+	nsScope := scope.Scope{Subscription: ns.Subscription, ResourceGroup: ns.ResourceGroup}
+	return nsScope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup})
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) listNamespaces(w http.ResponseWriter, rp azurearm.ResourcePath) {
+	// The same route serves subscription-level and resource-group-level lists;
+	// filter by whatever the request path carries (an empty resource group
+	// matches every group in the subscription).
+	out := listResponse{Value: []any{}}
+	for _, ns := range h.namespaces.SortedValues() {
+		if !namespaceInScope(ns, rp) {
+			continue
+		}
+		out.Value = append(out.Value, toNamespaceResource(ns))
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, out)
+}
+
+// toNamespaceResource renders stored namespace state as the ARM JSON shape.
+func toNamespaceResource(ns namespaceState) namespaceResource {
+	return namespaceResource{
+		ID: azurearm.BuildResourceID(ns.Subscription, ns.ResourceGroup,
+			providerName, resourceType, ns.Name),
+		Name:     ns.Name,
+		Type:     providerName + "/" + resourceType,
+		Location: ns.Location,
+		Tags:     ns.Tags,
+		Properties: namespaceProperties{
+			ProvisioningState:  "Succeeded",
+			ServiceBusEndpoint: "https://" + ns.Name + ".servicebus.windows.net:443/",
+		},
+		SKU: ns.SKU,
+	}
 }
 
 // ---------- Queue control plane ----------

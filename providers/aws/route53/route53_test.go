@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func newTestMock() *Mock {
@@ -81,13 +82,13 @@ func TestListZones(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	zones, err := m.ListZones(ctx)
+	zones, err := m.ListZones(ctx, scope.Scope{})
 	requireNoError(t, err)
 	assertEqual(t, 0, len(zones))
 
 	createTestZone(m)
 
-	zones, err = m.ListZones(ctx)
+	zones, err = m.ListZones(ctx, scope.Scope{})
 	requireNoError(t, err)
 	assertEqual(t, 1, len(zones))
 }

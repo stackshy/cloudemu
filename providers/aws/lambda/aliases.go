@@ -36,7 +36,7 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		Description:     cfg.Description,
 		RoutingConfig:   copyRoutingConfig(cfg.RoutingConfig),
 		AliasARN:        aliasARN,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
 	}
 
 	fd.aliases.Set(cfg.Name, &aliasData{alias: a})

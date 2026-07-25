@@ -7,6 +7,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // ARM resource type strings stamped on responses.
@@ -59,6 +60,30 @@ type cnameRecordJSON struct {
 
 type txtRecordJSON struct {
 	Value []string `json:"value,omitempty"`
+}
+
+// txtChunkSize is the maximum length of a single DNS TXT character-string.
+// Azure represents a TXT record as an array of these ≤255-byte chunks.
+const txtChunkSize = 255
+
+// chunkTXT splits a logical TXT value into ≤255-byte character-strings, as the
+// TXT wire format (and Azure's TxtRecords value array) requires. A value that
+// already fits returns a single chunk; the input side rejoins them.
+func chunkTXT(s string) []string {
+	if len(s) <= txtChunkSize {
+		return []string{s}
+	}
+
+	chunks := make([]string, 0, len(s)/txtChunkSize+1)
+	for len(s) > txtChunkSize {
+		chunks = append(chunks, s[:txtChunkSize])
+		s = s[txtChunkSize:]
+	}
+	if len(s) > 0 {
+		chunks = append(chunks, s)
+	}
+
+	return chunks
 }
 
 type nsRecordJSON struct {
@@ -174,7 +199,7 @@ func toRecordSetProperties(rec *dnsdriver.RecordInfo) *recordSetProperties {
 		}
 	case "TXT":
 		for _, v := range rec.Values {
-			props.TxtRecords = append(props.TxtRecords, txtRecordJSON{Value: []string{v}})
+			props.TxtRecords = append(props.TxtRecords, txtRecordJSON{Value: chunkTXT(v)})
 		}
 	case "NS":
 		for _, v := range rec.Values {
@@ -231,10 +256,14 @@ func recordTypeSegment(s string) string {
 }
 
 // resolveZoneID maps the SDK-facing zone name to the driver's internal zone id
-// by scanning the zone list. Returns a NotFound error if no zone with that name
-// exists.
-func (h *Handler) resolveZoneID(ctx context.Context, name string) (string, error) {
-	zones, err := h.dns.ListZones(ctx)
+// by scanning the zone list, scoped to the request's subscription and resource
+// group. Scoping matters because the same zone name can exist in more than one
+// resource group — a name-only scan could resolve to a zone in a different
+// group. Returns a NotFound error if no such zone exists in this scope.
+func (h *Handler) resolveZoneID(ctx context.Context, rp *azurearm.ResourcePath) (string, error) {
+	filter := scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
+
+	zones, err := h.dns.ListZones(ctx, filter)
 	if err != nil {
 		return "", err
 	}
@@ -242,10 +271,10 @@ func (h *Handler) resolveZoneID(ctx context.Context, name string) (string, error
 	// Azure treats DNS zone names case-insensitively (and lowercases them on
 	// some URL paths), so match without regard to case.
 	for i := range zones {
-		if strings.EqualFold(zones[i].Name, name) {
+		if strings.EqualFold(zones[i].Name, rp.ResourceName) {
 			return zones[i].ID, nil
 		}
 	}
 
-	return "", cerrors.Newf(cerrors.NotFound, "dns zone %q not found", name)
+	return "", cerrors.Newf(cerrors.NotFound, "dns zone %q not found", rp.ResourceName)
 }

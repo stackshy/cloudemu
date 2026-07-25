@@ -8,6 +8,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -127,7 +128,7 @@ func TestListEventBuses(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty list", func(t *testing.T) {
-		buses, err := m.ListEventBuses(ctx)
+		buses, err := m.ListEventBuses(ctx, scope.Scope{})
 		require.NoError(t, err)
 		assert.Equal(t, 0, len(buses))
 	})
@@ -136,7 +137,7 @@ func TestListEventBuses(t *testing.T) {
 	createTestTopic(t, m, "topic-b")
 
 	t.Run("two topics", func(t *testing.T) {
-		buses, err := m.ListEventBuses(ctx)
+		buses, err := m.ListEventBuses(ctx, scope.Scope{})
 		require.NoError(t, err)
 		assert.Equal(t, 2, len(buses))
 	})

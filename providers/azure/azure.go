@@ -63,6 +63,13 @@ type Provider struct {
 	AzureSearch      *azuresearch.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
+
+	// SubscriptionID is the Azure subscription id this provider serves. Azure
+	// uses the account id as the subscription id (see the resourcediscovery.New
+	// call below, which passes o.AccountID as the subscription).
+	SubscriptionID string
+	// Region is the Azure location this provider serves.
+	Region string
 }
 
 // New creates a new Azure provider with all mock services.
@@ -94,6 +101,8 @@ func New(opts ...config.Option) *Provider {
 		Databricks:       databricks.New(o),
 		AzureAI:          azureai.New(o),
 		AzureSearch:      azuresearch.New(o),
+		SubscriptionID:   o.AccountID,
+		Region:           o.Region,
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.BlobStorage.SetMonitoring(p.Monitor)

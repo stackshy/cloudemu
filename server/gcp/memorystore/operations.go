@@ -6,6 +6,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // createInstance handles POST .../instances?instanceId={i} — Create. The
@@ -28,6 +29,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 		Engine:   "redis",
 		NodeType: body.Tier,
 		Tags:     body.Labels,
+		Scope:    scope.Scope{Project: rt.project},
 	})
 	if err != nil {
 		gcprest.WriteCErr(w, err)
@@ -58,9 +60,10 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, rt route) 
 	gcprest.WriteJSON(w, http.StatusOK, toInstanceJSON(rt.project, rt.location, rt.name, info))
 }
 
-// listInstances handles GET .../instances — List.
+// listInstances handles GET .../instances — List, scoped to the request's
+// project.
 func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rt route) {
-	infos, err := h.cache.ListCaches(r.Context())
+	infos, err := h.cache.ListCaches(r.Context(), scope.Scope{Project: rt.project})
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return

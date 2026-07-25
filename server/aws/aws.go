@@ -7,6 +7,7 @@
 package aws
 
 import (
+	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
@@ -114,6 +115,49 @@ type Drivers struct {
 	ResourceDiscovery *resourcediscovery.Engine
 	AccountID         string
 	Region            string
+}
+
+// DriversFrom builds a Drivers bundle wiring every service handler to the
+// matching mock on p, so a standalone binary can serve a fully-constructed
+// provider without hand-mapping each field. STS is enabled (identity is
+// derived from AccountID/Region and is safe in standalone). K8sAPI is left
+// nil for the caller to inject when a shared cluster is desired.
+func DriversFrom(p *awsprovider.Provider) Drivers {
+	return Drivers{
+		S3:                p.S3,
+		DynamoDB:          p.DynamoDB,
+		EC2:               p.EC2,
+		VPC:               p.VPC,
+		CloudWatch:        p.CloudWatch,
+		Lambda:            p.Lambda,
+		SQS:               p.SQS,
+		RDS:               p.RDS,
+		Redshift:          p.Redshift,
+		EKS:               p.EKS,
+		IAM:               p.IAM,
+		ECR:               p.ECR,
+		Bedrock:           p.Bedrock,
+		SageMaker:         p.SageMaker,
+		SecretsManager:    p.SecretsManager,
+		SSM:               p.SSM,
+		CloudWatchLogs:    p.CloudWatchLogs,
+		Route53:           p.Route53,
+		ELB:               p.ELB,
+		EventBridge:       p.EventBridge,
+		ElastiCache:       p.ElastiCache,
+		SNS:               p.SNS,
+		STS:               true,
+		K8sAPI:            nil, // injected by the caller when a shared cluster is desired
+		ResourceDiscovery: p.ResourceDiscovery,
+		AccountID:         p.AccountID,
+		Region:            p.Region,
+	}
+}
+
+// NewFromProvider returns a server serving every service on p, using the
+// wiring built by DriversFrom.
+func NewFromProvider(p *awsprovider.Provider) *server.Server {
+	return New(DriversFrom(p))
 }
 
 // New returns a server that speaks the AWS SDK wire protocols for every

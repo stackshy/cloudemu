@@ -4,6 +4,8 @@ package driver
 import (
 	"context"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // LogGroupConfig describes a log group to create.
@@ -11,6 +13,10 @@ type LogGroupConfig struct {
 	Name          string
 	RetentionDays int
 	Tags          map[string]string
+
+	// Scope records where the resource lives (Azure subscription/resource
+	// group, GCP project). Zero for AWS and unscoped portable callers.
+	Scope scope.Scope
 }
 
 // LogGroupInfo describes a log group.
@@ -21,6 +27,7 @@ type LogGroupInfo struct {
 	CreatedAt     string
 	StoredBytes   int64
 	Tags          map[string]string
+	Scope         scope.Scope
 }
 
 // LogStreamInfo describes a log stream within a log group.
@@ -87,9 +94,13 @@ type MetricFilterInfo struct {
 // Logging is the interface that logging provider implementations must satisfy.
 type Logging interface {
 	CreateLogGroup(ctx context.Context, config LogGroupConfig) (*LogGroupInfo, error)
+
+	// UpdateLogGroup replaces the mutable fields (retention, tags) of an
+	// existing log group, mirroring ARM CreateOrUpdate-on-existing.
+	UpdateLogGroup(ctx context.Context, config LogGroupConfig) (*LogGroupInfo, error)
 	DeleteLogGroup(ctx context.Context, name string) error
 	GetLogGroup(ctx context.Context, name string) (*LogGroupInfo, error)
-	ListLogGroups(ctx context.Context) ([]LogGroupInfo, error)
+	ListLogGroups(ctx context.Context, filter scope.Scope) ([]LogGroupInfo, error)
 
 	CreateLogStream(ctx context.Context, logGroup, streamName string) (*LogStreamInfo, error)
 	DeleteLogStream(ctx context.Context, logGroup, streamName string) error

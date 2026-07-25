@@ -4,6 +4,8 @@ package driver
 import (
 	"context"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // EventBusInfo describes an event bus.
@@ -13,12 +15,17 @@ type EventBusInfo struct {
 	State     string // "ACTIVE", "INACTIVE"
 	CreatedAt string
 	Tags      map[string]string
+	Scope     scope.Scope
 }
 
 // EventBusConfig configures a new event bus.
 type EventBusConfig struct {
 	Name string
 	Tags map[string]string
+
+	// Scope records where the resource lives (Azure subscription/resource
+	// group, GCP project). Zero for AWS and unscoped portable callers.
+	Scope scope.Scope
 }
 
 // Rule defines an event routing rule with filtering.
@@ -70,9 +77,13 @@ type PublishResult struct {
 type EventBus interface {
 	// Bus management
 	CreateEventBus(ctx context.Context, config EventBusConfig) (*EventBusInfo, error)
+
+	// UpdateEventBus replaces the mutable fields (tags) of an existing
+	// event bus, mirroring ARM CreateOrUpdate-on-existing.
+	UpdateEventBus(ctx context.Context, config EventBusConfig) (*EventBusInfo, error)
 	DeleteEventBus(ctx context.Context, name string) error
 	GetEventBus(ctx context.Context, name string) (*EventBusInfo, error)
-	ListEventBuses(ctx context.Context) ([]EventBusInfo, error)
+	ListEventBuses(ctx context.Context, filter scope.Scope) ([]EventBusInfo, error)
 
 	// Rule management
 	PutRule(ctx context.Context, config *RuleConfig) (*Rule, error)

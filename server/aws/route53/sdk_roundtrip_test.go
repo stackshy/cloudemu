@@ -298,3 +298,61 @@ func TestSDKRoute53Errors(t *testing.T) {
 		t.Fatalf("delete missing record: got %v, want InvalidChangeBatch", err)
 	}
 }
+
+// TestSDKRoute53ChangeBatchAtomic asserts a ChangeResourceRecordSets batch is
+// all-or-nothing: a valid CREATE followed by an invalid DELETE rejects the
+// whole batch, and the CREATE must not have been applied.
+func TestSDKRoute53ChangeBatchAtomic(t *testing.T) {
+	client := newRoute53Client(t)
+	ctx := context.Background()
+
+	created, err := client.CreateHostedZone(ctx, &awsr53.CreateHostedZoneInput{
+		Name:            aws.String("atomic.com."),
+		CallerReference: aws.String("ref-atomic"),
+	})
+	if err != nil {
+		t.Fatalf("CreateHostedZone: %v", err)
+	}
+	zoneID := aws.ToString(created.HostedZone.Id)
+
+	_, err = client.ChangeResourceRecordSets(ctx, &awsr53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch: &r53types.ChangeBatch{
+			Changes: []r53types.Change{
+				{
+					Action: r53types.ChangeActionCreate,
+					ResourceRecordSet: &r53types.ResourceRecordSet{
+						Name:            aws.String("keep.atomic.com."),
+						Type:            r53types.RRTypeA,
+						TTL:             aws.Int64(300),
+						ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("192.0.2.1")}},
+					},
+				},
+				{
+					Action: r53types.ChangeActionDelete,
+					ResourceRecordSet: &r53types.ResourceRecordSet{
+						Name:            aws.String("ghost.atomic.com."),
+						Type:            r53types.RRTypeA,
+						TTL:             aws.Int64(300),
+						ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("192.0.2.9")}},
+					},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("ChangeResourceRecordSets with an invalid change returned nil error, want the batch rejected")
+	}
+
+	sets, lerr := client.ListResourceRecordSets(ctx, &awsr53.ListResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+	})
+	if lerr != nil {
+		t.Fatalf("ListResourceRecordSets: %v", lerr)
+	}
+	for _, rr := range sets.ResourceRecordSets {
+		if aws.ToString(rr.Name) == "keep.atomic.com." {
+			t.Fatal("keep.atomic.com. was applied despite the batch being rejected — batch is not atomic")
+		}
+	}
+}

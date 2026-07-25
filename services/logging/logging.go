@@ -3,6 +3,7 @@ package logging
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/features/inject"
@@ -123,7 +124,7 @@ func (l *Logging) GetLogGroup(ctx context.Context, name string) (*driver.LogGrou
 
 // ListLogGroups lists all log groups.
 func (l *Logging) ListLogGroups(ctx context.Context) ([]driver.LogGroupInfo, error) {
-	out, err := l.do(ctx, "ListLogGroups", nil, func() (any, error) { return l.driver.ListLogGroups(ctx) })
+	out, err := l.do(ctx, "ListLogGroups", nil, func() (any, error) { return l.driver.ListLogGroups(ctx, scope.Scope{}) })
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // chaosEventBus wraps an event bus driver. Hot-path: bus CRUD, rule CRUD,
@@ -45,12 +46,12 @@ func (c *chaosEventBus) GetEventBus(ctx context.Context, name string) (*ebdriver
 	return c.EventBus.GetEventBus(ctx, name)
 }
 
-func (c *chaosEventBus) ListEventBuses(ctx context.Context) ([]ebdriver.EventBusInfo, error) {
+func (c *chaosEventBus) ListEventBuses(ctx context.Context, filter scope.Scope) ([]ebdriver.EventBusInfo, error) {
 	if err := applyChaos(ctx, c.engine, "eventbus", "ListEventBuses"); err != nil {
 		return nil, err
 	}
 
-	return c.EventBus.ListEventBuses(ctx)
+	return c.EventBus.ListEventBuses(ctx, filter)
 }
 
 func (c *chaosEventBus) PutRule(ctx context.Context, cfg *ebdriver.RuleConfig) (*ebdriver.Rule, error) {

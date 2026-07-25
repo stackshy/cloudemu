@@ -594,6 +594,10 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+	case cerrors.IsFailedPrecondition(err):
+		// Real GCS refuses to delete a non-empty bucket with 409 conflict,
+		// not a 5xx (which would trigger client retry backoff).
+		writeError(w, http.StatusConflict, "conflict", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internalError", err.Error())
 	}

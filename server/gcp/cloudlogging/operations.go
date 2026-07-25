@@ -2,6 +2,7 @@ package cloudlogging
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"net/http"
 	"time"
 
@@ -115,7 +116,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listLogs(w http.ResponseWriter, r *http.Request) {
 	project := projectFromPath(r.URL.Path)
 
-	infos, err := h.logs.ListLogGroups(r.Context())
+	infos, err := h.logs.ListLogGroups(r.Context(), scope.Scope{Project: project})
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return

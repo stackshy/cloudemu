@@ -27,7 +27,7 @@ func (m *Mock) PublishVersion(_ context.Context, functionName, description strin
 
 	verStr := strconv.Itoa(verNum)
 	sha := codeSHA(&fd.info)
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
 
 	vd := &versionData{
 		config:    snapshotConfig(&fd.info),

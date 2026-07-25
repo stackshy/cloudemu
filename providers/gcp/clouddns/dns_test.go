@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +87,7 @@ func TestListHostedZones(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
 
-	zones, err := m.ListZones(ctx)
+	zones, err := m.ListZones(ctx, scope.Scope{})
 	require.NoError(t, err)
 	assert.Empty(t, zones)
 
@@ -95,7 +96,7 @@ func TestListHostedZones(t *testing.T) {
 	_, err = m.CreateZone(ctx, driver.ZoneConfig{Name: "b.com"})
 	require.NoError(t, err)
 
-	zones, err = m.ListZones(ctx)
+	zones, err = m.ListZones(ctx, scope.Scope{})
 	require.NoError(t, err)
 	assert.Len(t, zones, 2)
 }

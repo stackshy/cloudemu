@@ -1,6 +1,7 @@
 package loganalytics
 
 import (
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -8,25 +9,33 @@ import (
 )
 
 // createOrUpdateWorkspace maps Workspaces.CreateOrUpdate onto the logging
-// driver's log-group create. It is idempotent: if the workspace already exists
-// it is echoed back (the driver has no update primitive for retention/tags, so
-// this mirrors CreateOrUpdate's upsert contract for the fields we model).
+// driver: create when absent, otherwise apply the request's mutable fields
+// (retention, tags) via UpdateLogGroup — ARM PUT semantics, so the caller's
+// changes are never silently discarded.
 func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var req workspaceRequest
 	if !azurearm.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	if info, err := h.logs.GetLogGroup(r.Context(), rp.ResourceName); err == nil {
+	cfg := logdriver.LogGroupConfig{
+		Name:          rp.ResourceName,
+		RetentionDays: req.retentionDays(),
+		Tags:          req.Tags,
+		Scope:         scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	}
+
+	if _, err := h.logs.GetLogGroup(r.Context(), rp.ResourceName); err == nil {
+		info, uerr := h.logs.UpdateLogGroup(r.Context(), cfg)
+		if uerr != nil {
+			azurearm.WriteCErr(w, uerr)
+			return
+		}
 		azurearm.WriteJSON(w, http.StatusOK, toWorkspaceJSON(rp, info, req.Location))
 		return
 	}
 
-	info, err := h.logs.CreateLogGroup(r.Context(), logdriver.LogGroupConfig{
-		Name:          rp.ResourceName,
-		RetentionDays: req.retentionDays(),
-		Tags:          req.Tags,
-	})
+	info, err := h.logs.CreateLogGroup(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -57,7 +66,8 @@ func (h *Handler) deleteWorkspace(w http.ResponseWriter, r *http.Request, rp *az
 }
 
 func (h *Handler) listWorkspaces(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	infos, err := h.logs.ListLogGroups(r.Context())
+	infos, err := h.logs.ListLogGroups(r.Context(),
+		scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

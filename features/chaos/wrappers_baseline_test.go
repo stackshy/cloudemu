@@ -2,6 +2,7 @@ package chaos_test
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"testing"
 	"time"
 
@@ -103,7 +104,7 @@ func TestWrapDNSBaseline(t *testing.T) {
 
 	z, _ := d.CreateZone(ctx, dnsdriver.ZoneConfig{Name: "b.test."})
 	_, _ = d.GetZone(ctx, z.ID)
-	_, _ = d.ListZones(ctx)
+	_, _ = d.ListZones(ctx, scope.Scope{})
 	rec := dnsdriver.RecordConfig{ZoneID: z.ID, Name: "x.b.test.", Type: "A", TTL: 300, Values: []string{"1.2.3.4"}}
 	_, _ = d.CreateRecord(ctx, rec)
 	_, _ = d.GetRecord(ctx, z.ID, "x.b.test.", "A")
@@ -182,7 +183,7 @@ func TestWrapLoggingBaseline(t *testing.T) {
 
 	_, _ = l.CreateLogGroup(ctx, logdriver.LogGroupConfig{Name: "b"})
 	_, _ = l.GetLogGroup(ctx, "b")
-	_, _ = l.ListLogGroups(ctx)
+	_, _ = l.ListLogGroups(ctx, scope.Scope{})
 	_, _ = l.CreateLogStream(ctx, "b", "s")
 	_ = l.PutLogEvents(ctx, "b", "s", []logdriver.LogEvent{{Timestamp: time.Now(), Message: "x"}})
 	_, _ = l.GetLogEvents(ctx, &logdriver.LogQueryInput{
@@ -199,7 +200,7 @@ func TestWrapNotificationBaseline(t *testing.T) {
 	ctx := context.Background()
 
 	tp, _ := n.CreateTopic(ctx, notifdriver.TopicConfig{Name: "b"})
-	_, _ = n.ListTopics(ctx)
+	_, _ = n.ListTopics(ctx, scope.Scope{})
 	if tp != nil {
 		_, _ = n.GetTopic(ctx, tp.ID)
 		sub, _ := n.Subscribe(ctx, notifdriver.SubscriptionConfig{TopicID: tp.ID, Protocol: "email", Endpoint: "x@y.z"})
@@ -232,7 +233,7 @@ func TestWrapEventBusBaseline(t *testing.T) {
 
 	_, _ = b.CreateEventBus(ctx, ebdriver.EventBusConfig{Name: "b"})
 	_, _ = b.GetEventBus(ctx, "b")
-	_, _ = b.ListEventBuses(ctx)
+	_, _ = b.ListEventBuses(ctx, scope.Scope{})
 	cfg := &ebdriver.RuleConfig{Name: "rule", EventBus: "b", EventPattern: `{"source":["x"]}`, State: "ENABLED"}
 	_, _ = b.PutRule(ctx, cfg)
 	_, _ = b.GetRule(ctx, "b", "rule")

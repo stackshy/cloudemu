@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/services/notification/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -156,7 +157,7 @@ func TestDeleteTopicRemovesFromList(t *testing.T) {
 	err := m.DeleteTopic(ctx, info.Name)
 	require.NoError(t, err)
 
-	topics, err := m.ListTopics(ctx)
+	topics, err := m.ListTopics(ctx, scope.Scope{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(topics))
 }
@@ -241,7 +242,7 @@ func TestListTopics(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	topics, err := m.ListTopics(ctx)
+	topics, err := m.ListTopics(ctx, scope.Scope{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(topics))
 
@@ -249,7 +250,7 @@ func TestListTopics(t *testing.T) {
 	createTestTopic(t, m, "hub-2")
 	createTestTopic(t, m, "hub-3")
 
-	topics, err = m.ListTopics(ctx)
+	topics, err = m.ListTopics(ctx, scope.Scope{})
 	require.NoError(t, err)
 	assert.Equal(t, 3, len(topics))
 }

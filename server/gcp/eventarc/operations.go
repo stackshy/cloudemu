@@ -6,6 +6,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *route) {
@@ -24,7 +25,7 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 
 	// Auto-provision the location's backing event bus on first use. Ignore an
 	// already-exists error so concurrent/repeat creates are idempotent.
-	if err := h.ensureChannel(r, bus); err != nil {
+	if err := h.ensureChannel(r, rt, bus); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -109,13 +110,17 @@ func (h *Handler) deleteTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 }
 
 // ensureChannel creates the location's backing event bus if it does not already
-// exist. An already-exists result is treated as success.
-func (h *Handler) ensureChannel(r *http.Request, bus string) error {
+// exist, recording the request's project as its scope. An already-exists result
+// is treated as success.
+func (h *Handler) ensureChannel(r *http.Request, rt *route, bus string) error {
 	if _, err := h.bus.GetEventBus(r.Context(), bus); err == nil {
 		return nil
 	}
 
-	_, err := h.bus.CreateEventBus(r.Context(), ebdriver.EventBusConfig{Name: bus})
+	_, err := h.bus.CreateEventBus(r.Context(), ebdriver.EventBusConfig{
+		Name:  bus,
+		Scope: scope.Scope{Project: rt.project},
+	})
 	if err != nil && !cerrors.IsAlreadyExists(err) {
 		return err
 	}
