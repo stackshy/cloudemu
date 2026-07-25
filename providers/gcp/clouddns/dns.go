@@ -52,6 +52,18 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		return nil, cerrors.New(cerrors.InvalidArgument, "zone name is required")
 	}
 
+	// Managed-zone names are unique within a project. Reject a duplicate in the
+	// same project (the wire always carries one); the portable API, which
+	// creates with a zero scope, is unaffected.
+	if cfg.Scope.Project != "" {
+		for _, z := range m.zones.SortedValues() {
+			if z.Name == cfg.Name && z.Scope.Project == cfg.Scope.Project {
+				return nil, cerrors.Newf(cerrors.AlreadyExists,
+					"managed zone %q already exists in project %q", cfg.Name, cfg.Scope.Project)
+			}
+		}
+	}
+
 	id := idgen.GenerateID("zone-")
 
 	tags := make(map[string]string, len(cfg.Tags))
