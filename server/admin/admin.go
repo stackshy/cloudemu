@@ -15,6 +15,7 @@ package admin
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -23,6 +24,9 @@ import (
 // Prefix is the reserved path space for the control plane. No emulated cloud
 // API uses it, so it never collides with a real SDK request.
 const Prefix = "/_cloudemu/"
+
+// maxFixtureBytes caps a seed request body.
+const maxFixtureBytes = 32 << 20 // 32 MiB
 
 // Backend is a hot-swappable http.Handler. Requests read the current handler
 // under a read lock; Swap replaces it under a write lock. A zero Backend is not
@@ -56,15 +60,18 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Control fronts a Backend with the /_cloudemu control plane. Requests outside
 // the control prefix pass through to the backend unchanged. reset is shared
 // across every provider's Control so a single call rebuilds the whole emulator.
+// seed applies a fixture body to this provider's drivers and returns how many
+// top-level resources it created; a nil seed disables the seed endpoint (501).
 type Control struct {
 	backend *Backend
 	reset   func()
+	seed    func(fixture []byte) (int, error)
 }
 
 // NewControl wraps backend with the control plane. reset must rebuild every
-// backend (including this one) to a clean state.
-func NewControl(backend *Backend, reset func()) *Control {
-	return &Control{backend: backend, reset: reset}
+// backend (including this one) to a clean state. seed may be nil.
+func NewControl(backend *Backend, reset func(), seed func(fixture []byte) (int, error)) *Control {
+	return &Control{backend: backend, reset: reset, seed: seed}
 }
 
 // ServeHTTP routes control-plane paths to the control handler and everything
@@ -89,10 +96,25 @@ func (c *Control) serveControl(w http.ResponseWriter, r *http.Request) {
 	case "health":
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case "seed":
-		// Seeding needs the cross-service fixture loader tracked in #250.
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"error": "seed is not implemented yet (tracked in #250); create resources with your SDK client after reset",
-		})
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "seed requires POST"})
+			return
+		}
+		if c.seed == nil {
+			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "seeding is not available on this server"})
+			return
+		}
+		fixture, err := io.ReadAll(io.LimitReader(r.Body, maxFixtureBytes))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "read fixture: " + err.Error()})
+			return
+		}
+		applied, err := c.seed(fixture)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "seeded", "applied": applied})
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown control endpoint"})
 	}

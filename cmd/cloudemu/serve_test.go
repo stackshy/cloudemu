@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -245,6 +247,38 @@ func TestServeOutOfProcess(t *testing.T) {
 		})
 		if _, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("post-storm")}); err != nil {
 			t.Fatalf("server unusable after concurrent resets: %v", err)
+		}
+	})
+
+	// #244 seed: POST a fixture and read the seeded resource back via the SDK.
+	t.Run("admin-seed-loads-fixtures", func(t *testing.T) {
+		ctx := context.Background()
+		http.Post(awsEndpoint+"/_cloudemu/reset", "application/json", nil) //nolint:errcheck // clean slate
+
+		fixture := `{"buckets":[{"name":"seeded-bucket","objects":[{"key":"hello.txt","body":"hi from seed"}]}]}`
+		resp, err := http.Post(awsEndpoint+"/_cloudemu/seed", "application/json", strings.NewReader(fixture))
+		if err != nil {
+			t.Fatalf("POST /_cloudemu/seed: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("seed status = %d, want 200", resp.StatusCode)
+		}
+
+		cfg, _ := awsconfig.LoadDefaultConfig(ctx,
+			awsconfig.WithRegion("us-east-1"),
+			awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("t", "t", "")))
+		client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(awsEndpoint)
+			o.UsePathStyle = true
+		})
+		obj, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String("seeded-bucket"), Key: aws.String("hello.txt")})
+		if err != nil {
+			t.Fatalf("seeded object not readable via SDK: %v", err)
+		}
+		body, _ := io.ReadAll(obj.Body)
+		if string(body) != "hi from seed" {
+			t.Fatalf("seeded object body = %q, want %q", body, "hi from seed")
 		}
 	})
 }

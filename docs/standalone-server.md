@@ -142,6 +142,9 @@ this (on by default; disable with `--admin=false`):
 # wipe all emulator state — every provider back to empty
 curl -X POST http://127.0.0.1:4566/_cloudemu/reset
 
+# load a fixture of resources into the provider on this port
+curl -X POST http://127.0.0.1:4566/_cloudemu/seed --data @fixtures.json
+
 # liveness check
 curl http://127.0.0.1:4566/_cloudemu/health
 ```
@@ -152,10 +155,38 @@ state, new requests see the fresh one. Call it from your suite's setup/teardown
 so each test starts clean without restarting the process. A `POST` to any
 provider's port resets the whole emulator.
 
+`seed` bulk-loads a declarative fixture into the provider on that port. The
+fixture is provider-agnostic — the same file seeds S3, Azure Blob, or GCS
+depending on which port you POST it to:
+
+```json
+{
+  "buckets": [
+    { "name": "app-data", "objects": [{ "key": "config.yaml", "body": "port: 8080" }] }
+  ],
+  "tables": [
+    { "name": "users", "partitionKey": "id", "items": [{ "id": "u1", "name": "Ada" }] }
+  ],
+  "secrets": [{ "name": "db-password", "value": "s3cr3t" }],
+  "instances": [{ "imageId": "ami-123", "instanceType": "t3.micro", "count": 2 }]
+}
+```
+
+In-process (or embedded) tests can load the same fixtures directly with the
+[`seed`](https://pkg.go.dev/github.com/stackshy/cloudemu/v2/seed) package and
+`go:embed`:
+
+```go
+//go:embed testdata/fixtures.json
+var fixtures embed.FS
+
+f, _ := seed.LoadFS(fixtures, "testdata/fixtures.json")
+seed.Apply(ctx, f, seed.Target{Storage: aws.S3, Database: aws.DynamoDB})
+```
+
 ## Not yet included
 
-`seed` is reserved on the control plane but not implemented yet — for now,
-create the resources a test needs with your SDK client after `reset`. Bulk
-**seeding** and **persistence** across restarts need a cross-service
-state-import loader (tracked in #250). Docker packaging (#247) and a
-Testcontainers module (#248) build directly on this binary.
+**Persistence** across restarts and **snapshot/restore** aren't part of this
+mode yet — snapshot/restore needs the state model tracked in #107. Docker
+packaging (#247) and a Testcontainers module (#248) build directly on this
+binary.

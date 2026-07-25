@@ -1,8 +1,10 @@
 package admin_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -59,7 +61,7 @@ func TestBackendConcurrentSwap(t *testing.T) {
 func TestControlReset(t *testing.T) {
 	resets := 0
 	b := admin.NewBackend(handler("backend"))
-	c := admin.NewControl(b, func() { resets++; b.Swap(handler("rebuilt")) })
+	c := admin.NewControl(b, func() { resets++; b.Swap(handler("rebuilt")) }, nil)
 
 	// Non-control paths pass through to the backend.
 	if got := do(t, c, http.MethodGet, "/some/aws/request"); got != "backend" {
@@ -82,16 +84,17 @@ func TestControlReset(t *testing.T) {
 
 func TestControlRoutes(t *testing.T) {
 	b := admin.NewBackend(handler("backend"))
-	c := admin.NewControl(b, func() {})
+	c := admin.NewControl(b, func() {}, nil) // nil seed → seed endpoint disabled
 
 	cases := []struct {
 		method, path string
 		want         int
 	}{
 		{http.MethodGet, admin.Prefix + "reset", http.StatusMethodNotAllowed}, // reset is POST-only
-		{http.MethodGet, admin.Prefix + "health", http.StatusOK},
-		{http.MethodPost, admin.Prefix + "seed", http.StatusNotImplemented}, // #250
-		{http.MethodGet, admin.Prefix + "bogus", http.StatusNotFound},
+		{http.MethodGet, admin.Prefix + "health", http.StatusOK},              //
+		{http.MethodGet, admin.Prefix + "seed", http.StatusMethodNotAllowed},  // seed is POST-only
+		{http.MethodPost, admin.Prefix + "seed", http.StatusNotImplemented},   // nil seed → 501
+		{http.MethodGet, admin.Prefix + "bogus", http.StatusNotFound},         //
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()
@@ -101,6 +104,39 @@ func TestControlRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestControlSeed(t *testing.T) {
+	var gotFixture string
+	b := admin.NewBackend(handler("backend"))
+	c := admin.NewControl(b, func() {}, func(fixture []byte) (int, error) {
+		gotFixture = string(fixture)
+		return 4, nil
+	})
+
+	rec := httptest.NewRecorder()
+	c.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, admin.Prefix+"seed", strings.NewReader(`{"buckets":[]}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed status = %d, want 200", rec.Code)
+	}
+	if gotFixture != `{"buckets":[]}` {
+		t.Fatalf("seed received fixture %q", gotFixture)
+	}
+	if !strings.Contains(rec.Body.String(), `"applied":4`) {
+		t.Fatalf("seed body = %s, want applied:4", rec.Body.String())
+	}
+
+	// A seeder error surfaces as 400.
+	cErr := admin.NewControl(b, func() {}, func([]byte) (int, error) {
+		return 0, errFixture
+	})
+	rec = httptest.NewRecorder()
+	cErr.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, admin.Prefix+"seed", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("seed error status = %d, want 400", rec.Code)
+	}
+}
+
+var errFixture = fmt.Errorf("bad fixture")
 
 func do(t *testing.T, h http.Handler, method, path string) string {
 	t.Helper()
