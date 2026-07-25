@@ -132,9 +132,30 @@ app at the whole emulated cloud at once:
 }
 ```
 
+## Resetting state between tests (`/_cloudemu`)
+
+A long-lived server keeps state across requests, so a shared or parallel test
+suite needs a way to get a clean slate. The control plane at `/_cloudemu` does
+this (on by default; disable with `--admin=false`):
+
+```sh
+# wipe all emulator state — every provider back to empty
+curl -X POST http://127.0.0.1:4566/_cloudemu/reset
+
+# liveness check
+curl http://127.0.0.1:4566/_cloudemu/health
+```
+
+`reset` rebuilds every provider (and the shared Kubernetes data-plane) to empty
+state and swaps it in atomically — in-flight requests finish against the old
+state, new requests see the fresh one. Call it from your suite's setup/teardown
+so each test starts clean without restarting the process. A `POST` to any
+provider's port resets the whole emulator.
+
 ## Not yet included
 
-State **seeding** and **persistence** across restarts are not in this mode yet —
-they need a cross-service state-import loader (tracked in #250). Today the server
-starts empty each run. Docker packaging (#247) and a Testcontainers module (#248)
-build directly on this binary and are the natural next steps.
+`seed` is reserved on the control plane but not implemented yet — for now,
+create the resources a test needs with your SDK client after `reset`. Bulk
+**seeding** and **persistence** across restarts need a cross-service
+state-import loader (tracked in #250). Docker packaging (#247) and a
+Testcontainers module (#248) build directly on this binary.

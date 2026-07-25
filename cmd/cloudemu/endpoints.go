@@ -26,7 +26,7 @@ func (e endpointSet) writeFile(path string) error {
 
 // printBanner writes the startup summary: the live endpoints and copy-paste
 // snippets for pointing each SDK at them.
-func printBanner(w io.Writer, e endpointSet) {
+func printBanner(w io.Writer, e endpointSet, adminOn bool) {
 	fmt.Fprintln(w, "cloudemu — standalone server")
 	fmt.Fprintln(w, "────────────────────────────")
 	if e.AWS != "" {
@@ -51,6 +51,10 @@ func printBanner(w io.Writer, e endpointSet) {
 	}
 	if e.Azure != "" {
 		fmt.Fprintf(w, "  Azure cloud.Configuration ResourceManager endpoint = %q (trust the cert or skip verify)\n", e.Azure)
+	}
+	if adminOn {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Reset state between tests: POST /_cloudemu/reset")
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Press Ctrl-C to stop.")
