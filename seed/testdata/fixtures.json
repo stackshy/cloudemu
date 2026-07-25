@@ -1,0 +1,25 @@
+{
+  "buckets": [
+    {
+      "name": "app-data",
+      "objects": [
+        { "key": "config.yaml", "body": "port: 8080", "contentType": "text/yaml" }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "name": "users",
+      "partitionKey": "id",
+      "items": [
+        { "id": "u1", "name": "Ada" }
+      ]
+    }
+  ],
+  "secrets": [
+    { "name": "db-password", "value": "s3cr3t", "description": "seeded" }
+  ],
+  "instances": [
+    { "imageId": "ami-123", "instanceType": "t3.micro", "name": "web", "count": 2 }
+  ]
+}

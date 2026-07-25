@@ -17,6 +17,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/seed"
 	"github.com/stackshy/cloudemu/v2/server/admin"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
@@ -120,7 +121,10 @@ func runServe(args []string) error {
 		k8sBackend = admin.NewBackend(nil)
 	}
 
-	var rebuildMu sync.Mutex
+	var (
+		rebuildMu sync.Mutex
+		targets   map[string]seed.Target // provider → current drivers, for seeding
+	)
 	rebuild := func() {
 		// Serialise resets so two concurrent /_cloudemu/reset calls can't
 		// interleave and leave providers wired to different Kubernetes
@@ -137,20 +141,27 @@ func runServe(args []string) error {
 			k8s = kubernetes.NewAPIServer()
 		}
 		fresh := make(map[string]http.Handler, len(sel))
+		freshTargets := make(map[string]seed.Target, len(sel))
 		for _, p := range sel {
 			switch p {
 			case "aws":
-				d := awsserver.DriversFrom(cloudemu.NewAWS(opts...))
+				cloud := cloudemu.NewAWS(opts...)
+				d := awsserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
 				fresh["aws"] = wrap(awsserver.New(d), "aws", c.logReqs)
+				freshTargets["aws"] = seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2}
 			case "gcp":
-				d := gcpserver.DriversFrom(cloudemu.NewGCP(opts...))
+				cloud := cloudemu.NewGCP(opts...)
+				d := gcpserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
 				fresh["gcp"] = wrap(gcpserver.New(d), "gcp", c.logReqs)
+				freshTargets["gcp"] = seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE}
 			case "azure":
-				d := azureserver.DriversFrom(cloudemu.NewAzure(opts...))
+				cloud := cloudemu.NewAzure(opts...)
+				d := azureserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
 				fresh["azure"] = wrap(azureserver.New(d), "azure", c.logReqs)
+				freshTargets["azure"] = seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines}
 			}
 		}
 		if k8sBackend != nil {
@@ -159,8 +170,31 @@ func runServe(args []string) error {
 		for p, h := range fresh {
 			backends[p].Swap(h)
 		}
+		targets = freshTargets
 	}
 	rebuild() // populate the backends before serving
+
+	// seedFor applies a fixture body to a provider's current drivers. It shares
+	// rebuildMu with reset so a seed and a reset can't run against each other's
+	// half-built state.
+	seedFor := func(provider string) func([]byte) (int, error) {
+		return func(fixture []byte) (int, error) {
+			f, err := seed.Load(fixture)
+			if err != nil {
+				return 0, err
+			}
+			// Read the current Target under the lock, but run Apply outside it:
+			// a large fixture (especially with --latency) must not hold the
+			// shared reset mutex for its whole duration.
+			rebuildMu.Lock()
+			t := targets[provider]
+			rebuildMu.Unlock()
+			if err := seed.Apply(context.Background(), f, t); err != nil {
+				return 0, err
+			}
+			return f.ResourceCount(), nil
+		}
+	}
 
 	// reset wipes all state, so warn if it's reachable off the loopback — e.g.
 	// a shared instance bound with --host 0.0.0.0, where anyone on the network
@@ -173,10 +207,11 @@ func runServe(args []string) error {
 
 	// handlerFor fronts a backend with the /_cloudemu control plane. With the
 	// admin API off the backend serves directly, so control paths fall through
-	// to the wire handlers (whatever they return for an unrouted path).
-	handlerFor := func(b *admin.Backend) http.Handler {
+	// to the wire handlers (whatever they return for an unrouted path). seedFn
+	// may be nil (e.g. the Kubernetes port), which disables the seed endpoint.
+	handlerFor := func(b *admin.Backend, seedFn func([]byte) (int, error)) http.Handler {
 		if c.admin {
-			return admin.NewControl(b, rebuild)
+			return admin.NewControl(b, rebuild, seedFn)
 		}
 		return b
 	}
@@ -205,14 +240,14 @@ func runServe(args []string) error {
 		}
 		servers = append(servers, &namedServer{
 			name: p,
-			srv:  &http.Server{Addr: addr, Handler: handlerFor(backends[p]), TLSConfig: tlsCfg},
+			srv:  &http.Server{Addr: addr, Handler: handlerFor(backends[p], seedFor(p)), TLSConfig: tlsCfg},
 			tls:  isTLS,
 		})
 	}
 
 	if k8sBackend != nil {
 		addr := net.JoinHostPort(c.host, c.k8sPort)
-		servers = append(servers, &namedServer{name: "kubernetes", srv: &http.Server{Addr: addr, Handler: handlerFor(k8sBackend)}})
+		servers = append(servers, &namedServer{name: "kubernetes", srv: &http.Server{Addr: addr, Handler: handlerFor(k8sBackend, nil)}})
 		eps.Kubernetes = fmt.Sprintf("http://%s", addr)
 	}
 
