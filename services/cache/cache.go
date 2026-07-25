@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/ratelimit"
 	"github.com/stackshy/cloudemu/v2/features/recorder"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Cache is the portable cache type wrapping a driver with cross-cutting concerns.
@@ -123,7 +124,7 @@ func (c *Cache) GetCache(ctx context.Context, name string) (*driver.CacheInfo, e
 
 // ListCaches lists all cache instances.
 func (c *Cache) ListCaches(ctx context.Context) ([]driver.CacheInfo, error) {
-	out, err := c.do(ctx, "ListCaches", nil, func() (any, error) { return c.driver.ListCaches(ctx) })
+	out, err := c.do(ctx, "ListCaches", nil, func() (any, error) { return c.driver.ListCaches(ctx, scope.Scope{}) })
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/ratelimit"
 	"github.com/stackshy/cloudemu/v2/features/recorder"
 	"github.com/stackshy/cloudemu/v2/services/notification/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Notification is the portable notification type wrapping a driver with cross-cutting concerns.
@@ -123,7 +124,7 @@ func (n *Notification) GetTopic(ctx context.Context, id string) (*driver.TopicIn
 
 // ListTopics lists all topics.
 func (n *Notification) ListTopics(ctx context.Context) ([]driver.TopicInfo, error) {
-	out, err := n.do(ctx, "ListTopics", nil, func() (any, error) { return n.driver.ListTopics(ctx) })
+	out, err := n.do(ctx, "ListTopics", nil, func() (any, error) { return n.driver.ListTopics(ctx, scope.Scope{}) })
 	if err != nil {
 		return nil, err
 	}

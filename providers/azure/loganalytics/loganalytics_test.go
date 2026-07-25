@@ -2,6 +2,7 @@ package loganalytics
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"testing"
 	"time"
 
@@ -155,7 +156,7 @@ func TestListLogGroups(t *testing.T) {
 	t.Run("empty list", func(t *testing.T) {
 		m := newTestMock()
 
-		groups, err := m.ListLogGroups(ctx)
+		groups, err := m.ListLogGroups(ctx, scope.Scope{})
 		require.NoError(t, err)
 
 		assert.Equal(t, 0, len(groups))
@@ -170,7 +171,7 @@ func TestListLogGroups(t *testing.T) {
 		_, err = m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "g2"})
 		require.NoError(t, err)
 
-		groups, err := m.ListLogGroups(ctx)
+		groups, err := m.ListLogGroups(ctx, scope.Scope{})
 		require.NoError(t, err)
 
 		assert.Equal(t, 2, len(groups))

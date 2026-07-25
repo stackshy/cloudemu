@@ -8,6 +8,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // createTopic maps CreateTopic to Notification.CreateTopic. SNS CreateTopic is
@@ -87,7 +88,7 @@ func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request) {
-	topics, err := h.notif.ListTopics(r.Context())
+	topics, err := h.notif.ListTopics(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -139,7 +140,7 @@ func (h *Handler) unsubscribe(w http.ResponseWriter, r *http.Request) {
 // ListSubscriptions aggregated across every topic, since the driver has no
 // global subscription index.
 func (h *Handler) listSubscriptions(w http.ResponseWriter, r *http.Request) {
-	topics, err := h.notif.ListTopics(r.Context())
+	topics, err := h.notif.ListTopics(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
 		return

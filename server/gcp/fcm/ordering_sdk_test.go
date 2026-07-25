@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // newFCMServiceWithDriver mirrors newFCMService but also returns the backing
@@ -59,7 +60,7 @@ func TestSDKListOrderingDeterministic(t *testing.T) {
 	}
 
 	listTopics := func() []string {
-		topics, err := driver.ListTopics(ctx)
+		topics, err := driver.ListTopics(ctx, scope.Scope{})
 		if err != nil {
 			t.Fatalf("ListTopics: %v", err)
 		}

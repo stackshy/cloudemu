@@ -2,6 +2,7 @@ package cloudlogging
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"testing"
 
 	driver "github.com/stackshy/cloudemu/v2/services/logging/driver"
@@ -20,7 +21,7 @@ func TestListOrderingDeterministic(t *testing.T) {
 		}
 	}
 
-	first, err := m.ListLogGroups(ctx)
+	first, err := m.ListLogGroups(ctx, scope.Scope{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +30,7 @@ func TestListOrderingDeterministic(t *testing.T) {
 	}
 
 	for range 5 {
-		again, err := m.ListLogGroups(ctx)
+		again, err := m.ListLogGroups(ctx, scope.Scope{})
 		if err != nil {
 			t.Fatal(err)
 		}

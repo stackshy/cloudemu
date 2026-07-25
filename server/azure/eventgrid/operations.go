@@ -5,24 +5,38 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
+// createOrUpdateTopic maps Topics.CreateOrUpdate onto the eventbus driver:
+// create when absent, otherwise apply the request's mutable fields (tags) via
+// UpdateEventBus — ARM PUT semantics, so the caller's changes are never
+// silently discarded.
 func (h *Handler) createOrUpdateTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body topicJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
 
-	// CreateOrUpdate is idempotent: if the topic already exists, echo it back.
-	if info, err := h.bus.GetEventBus(r.Context(), rp.ResourceName); err == nil {
+	cfg := ebdriver.EventBusConfig{
+		Name:  rp.ResourceName,
+		Tags:  tagsFromPtr(body.Tags),
+		Scope: scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	}
+
+	if _, err := h.bus.GetEventBus(r.Context(), rp.ResourceName); err == nil {
+		info, uerr := h.bus.UpdateEventBus(r.Context(), cfg)
+		if uerr != nil {
+			azurearm.WriteCErr(w, uerr)
+			return
+		}
+		// The armeventgrid SDK accepts only 201 for Topics.CreateOrUpdate,
+		// so the update path answers 201 as well.
 		azurearm.WriteJSON(w, http.StatusCreated, toTopicJSON(rp, info))
 		return
 	}
 
-	info, err := h.bus.CreateEventBus(r.Context(), ebdriver.EventBusConfig{
-		Name: rp.ResourceName,
-		Tags: tagsFromPtr(body.Tags),
-	})
+	info, err := h.bus.CreateEventBus(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -56,7 +70,8 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, rp *azurea
 }
 
 func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	infos, err := h.bus.ListEventBuses(r.Context())
+	infos, err := h.bus.ListEventBuses(r.Context(),
+		scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

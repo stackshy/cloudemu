@@ -6,20 +6,17 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // createOrUpdateCache handles PUT — Redis.BeginCreate. The LRO completes inline:
 // returning 201/200 with the resource body terminates the SDK's poller on the
-// first response.
+// first response. Create when absent, otherwise apply the request's mutable
+// fields (SKU, tags) via UpdateCache — ARM PUT semantics, so the caller's
+// changes are never silently discarded.
 func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body redisJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
-		return
-	}
-
-	// CreateOrUpdate is idempotent: if the cache already exists, echo it back.
-	if info, err := h.cache.GetCache(r.Context(), rp.ResourceName); err == nil {
-		azurearm.WriteJSON(w, http.StatusOK, toRedisJSON(rp, info))
 		return
 	}
 
@@ -28,6 +25,17 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 		Engine:   "redis",
 		NodeType: nodeTypeFromBody(&body),
 		Tags:     body.Tags,
+		Scope:    scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	}
+
+	if _, err := h.cache.GetCache(r.Context(), rp.ResourceName); err == nil {
+		info, uerr := h.cache.UpdateCache(r.Context(), cfg)
+		if uerr != nil {
+			azurearm.WriteCErr(w, uerr)
+			return
+		}
+		azurearm.WriteJSON(w, http.StatusOK, toRedisJSON(rp, info))
+		return
 	}
 
 	info, err := h.cache.CreateCache(r.Context(), cfg)
@@ -83,10 +91,12 @@ func (h *Handler) deleteCache(w http.ResponseWriter, r *http.Request, rp *azurea
 }
 
 // listCaches handles GET on the collection — Redis.ListByResourceGroup /
-// ListBySubscription. The cache driver is not scope-aware, so both list the
-// same set.
+// ListBySubscription. The filter carries the path's subscription and, for
+// RG-level lists, its resource group; subscription-level lists leave the
+// resource group empty so the filter spans the subscription's groups.
 func (h *Handler) listCaches(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	infos, err := h.cache.ListCaches(r.Context())
+	infos, err := h.cache.ListCaches(r.Context(),
+		scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

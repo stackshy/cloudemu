@@ -2,6 +2,7 @@ package chaos_test
 
 import (
 	"context"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"testing"
 	"time"
 
@@ -65,7 +66,7 @@ func TestWrapLoggingListLogGroupsChaos(t *testing.T) {
 
 	e.Apply(chaos.ServiceOutage("logging", time.Hour))
 
-	if _, err := l.ListLogGroups(ctx); err == nil {
+	if _, err := l.ListLogGroups(ctx, scope.Scope{}); err == nil {
 		t.Error("expected chaos error on ListLogGroups")
 	}
 }
