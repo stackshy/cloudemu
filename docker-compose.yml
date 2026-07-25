@@ -1,0 +1,17 @@
+# Run the whole emulated cloud with one command:
+#
+#   docker compose up
+#
+# Then point your SDKs at the published ports (AWS_ENDPOINT_URL=http://localhost:4566,
+# etc.). Reset state between tests with:  curl -X POST http://localhost:4566/_cloudemu/reset
+services:
+  cloudemu:
+    image: ghcr.io/stackshy/cloudemu:latest
+    # Or build locally instead of pulling:
+    # build: .
+    ports:
+      - "4566:4566" # AWS
+      - "4568:4568" # Azure (HTTPS, self-signed)
+      - "4569:4569" # GCP
+      - "4570:4570" # Kubernetes data-plane
+    # command: ["serve", "--host", "0.0.0.0", "--admin=false"]  # disable the control plane
