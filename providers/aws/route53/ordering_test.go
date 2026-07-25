@@ -40,3 +40,48 @@ func TestListOrderingDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestListRecordsOrderingDeterministic locks the #259 ordering guarantee for
+// record listing: ListRecords must return the same, defined order on every
+// call (map iteration randomness must never reach the wire).
+func TestListRecordsOrderingDeterministic(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	zone, err := m.CreateZone(ctx, driver.ZoneConfig{Name: "example.com"})
+	if err != nil {
+		t.Fatalf("create zone: %v", err)
+	}
+
+	for _, name := range []string{"zeta", "alpha", "mid", "beta", "omega"} {
+		if _, err := m.CreateRecord(ctx, driver.RecordConfig{
+			ZoneID: zone.ID, Name: name + ".example.com", Type: "A", TTL: 300,
+			Values: []string{"192.0.2.1"},
+		}); err != nil {
+			t.Fatalf("create record %s: %v", name, err)
+		}
+	}
+
+	first, err := m.ListRecords(ctx, zone.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) < 5 {
+		t.Fatalf("list returned %d records, want >=5", len(first))
+	}
+
+	for range 5 {
+		again, err := m.ListRecords(ctx, zone.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(again) != len(first) {
+			t.Fatalf("list length changed: %d vs %d", len(again), len(first))
+		}
+		for i := range first {
+			if again[i].Name != first[i].Name || again[i].Type != first[i].Type {
+				t.Fatalf("record order changed between calls at %d: %v vs %v", i, again[i], first[i])
+			}
+		}
+	}
+}

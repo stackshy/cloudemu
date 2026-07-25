@@ -245,13 +245,16 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 		return nil, cerrors.Newf(cerrors.NotFound, "managed zone %q not found", zoneID)
 	}
 
-	filtered := m.records.Filter(func(_ string, rec driver.RecordInfo) bool {
-		return rec.ZoneID == zoneID
-	})
+	// SortedValues gives a stable order keyed by zoneID:name:type[:setID];
+	// filter to this zone in that order so ListRecords is deterministic
+	// (map iteration order must never reach the wire — #259).
+	all := m.records.SortedValues()
 
-	records := make([]driver.RecordInfo, 0, len(filtered))
-	for _, rec := range filtered {
-		records = append(records, rec)
+	records := make([]driver.RecordInfo, 0, len(all))
+	for _, rec := range all {
+		if rec.ZoneID == zoneID {
+			records = append(records, rec)
+		}
 	}
 
 	return records, nil
