@@ -48,6 +48,12 @@ type Provider struct {
 	VertexAI         *vertexai.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
+
+	// ProjectID and Region record the identity this provider was created with,
+	// so callers (e.g. a standalone server) can wire them without re-reading
+	// the options.
+	ProjectID string
+	Region    string
 }
 
 // New creates a new GCP provider with all mock services.
@@ -73,6 +79,8 @@ func New(opts ...config.Option) *Provider {
 		CloudSQL:         cloudsql.New(o),
 		GKE:              gke.New(o),
 		VertexAI:         vertexai.New(o),
+		ProjectID:        o.ProjectID,
+		Region:           o.Region,
 	}
 	p.GCE.SetMonitoring(p.CloudMonitoring)
 	p.GCS.SetMonitoring(p.CloudMonitoring)

@@ -70,6 +70,20 @@ client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory bac
 
 Equivalent setups for Azure (`azureserver.New`) and GCP (`gcpserver.New`) are in [docs/sdk-server.md](docs/sdk-server.md).
 
+### Standalone server
+
+Prefer a long-lived process you point out-of-process apps at? Run the emulator
+as a server and point any SDK — any language — at the printed endpoints:
+
+```sh
+go run ./cmd/cloudemu serve
+#   AWS         http://127.0.0.1:4566
+#   Azure       https://127.0.0.1:4568   (self-signed TLS)
+#   GCP         http://127.0.0.1:4569
+```
+
+Full flags, port scheme, and per-SDK wiring: [docs/standalone-server.md](docs/standalone-server.md).
+
 The snippet above is a quick taste. To adopt cloudemu in a real app, don't write a demo — wire it into your existing client and tests so your real code runs against it. See [docs/integration.md](docs/integration.md).
 
 ## Or use the Go API directly
