@@ -82,6 +82,51 @@ func TestSDKUpsertAppliesTags(t *testing.T) {
 	}
 }
 
+// TestSDKSameNameZonesStayIndependent asserts that CreateOrUpdate for a zone
+// name that already exists in a different resource group creates a distinct
+// zone rather than hijacking the existing one — the same name legitimately
+// exists in more than one group.
+func TestSDKSameNameZonesStayIndependent(t *testing.T) {
+	zones, _ := newDNSClients(t)
+	ctx := context.Background()
+
+	mk := func(rg, env string) {
+		if _, err := zones.CreateOrUpdate(ctx, rg, "shared.com", armdns.Zone{
+			Location: to.Ptr("global"),
+			Tags:     map[string]*string{"env": to.Ptr(env)},
+		}, nil); err != nil {
+			t.Fatalf("CreateOrUpdate %s: %v", rg, err)
+		}
+	}
+	mk("rg-shared-a", "a")
+	mk("rg-shared-b", "b")
+
+	// Each group must still own its own shared.com with its own tag; the
+	// second create must not have moved or overwritten the first.
+	tagInRG := func(rg string) string {
+		var out string
+		pager := zones.NewListByResourceGroupPager(rg, nil)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				t.Fatalf("list %s: %v", rg, err)
+			}
+			for _, z := range page.Value {
+				if z.Name != nil && *z.Name == "shared.com" && z.Tags["env"] != nil {
+					out = *z.Tags["env"]
+				}
+			}
+		}
+		return out
+	}
+	if got := tagInRG("rg-shared-a"); got != "a" {
+		t.Fatalf("rg-shared-a shared.com env = %q, want a (not hijacked by the rg-b create)", got)
+	}
+	if got := tagInRG("rg-shared-b"); got != "b" {
+		t.Fatalf("rg-shared-b shared.com env = %q, want b", got)
+	}
+}
+
 // TestSDKZoneIDMatchesRequestScope asserts through the real SDK that the
 // returned ARM id carries the request's subscription and resource group.
 func TestSDKZoneIDMatchesRequestScope(t *testing.T) {

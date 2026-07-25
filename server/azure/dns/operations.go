@@ -22,33 +22,26 @@ func (h *Handler) createOrUpdateZone(w http.ResponseWriter, r *http.Request, rp 
 		private = privateFromZoneType(body.Properties.ZoneType)
 	}
 
-	sc := scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
-
-	// CreateOrUpdate is upsert: if the zone already exists, apply the request's
-	// mutable fields (tags, scope) via UpdateZone rather than echoing it back.
-	if _, err := h.resolveZoneID(r.Context(), rp.ResourceName); err == nil {
-		info, uerr := h.dns.UpdateZone(r.Context(), dnsdriver.ZoneConfig{
-			Name:    rp.ResourceName,
-			Private: private,
-			Tags:    body.Tags,
-			Scope:   sc,
-		})
-		if uerr != nil {
-			azurearm.WriteCErr(w, uerr)
-			return
-		}
-
-		azurearm.WriteJSON(w, http.StatusOK, toZoneJSON(rp, info))
-
-		return
-	}
-
-	info, err := h.dns.CreateZone(r.Context(), dnsdriver.ZoneConfig{
+	cfg := dnsdriver.ZoneConfig{
 		Name:    rp.ResourceName,
 		Private: private,
 		Tags:    body.Tags,
-		Scope:   sc,
-	})
+		Scope:   scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	}
+
+	// CreateOrUpdate is upsert. Try to update a zone that already exists in
+	// THIS scope; only create when none does. Matching by scope (not just
+	// name) means a same-named zone in another resource group is never
+	// hijacked — it stays a distinct zone.
+	if info, uerr := h.dns.UpdateZone(r.Context(), cfg); uerr == nil {
+		azurearm.WriteJSON(w, http.StatusOK, toZoneJSON(rp, info))
+		return
+	} else if !cerrors.IsNotFound(uerr) {
+		azurearm.WriteCErr(w, uerr)
+		return
+	}
+
+	info, err := h.dns.CreateZone(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

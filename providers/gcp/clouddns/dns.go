@@ -125,7 +125,9 @@ func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneIn
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	for _, z := range m.zones.SortedValues() {
-		if z.Name != cfg.Name {
+		// Match on name AND scope: the same zone name can exist in different
+		// projects, and an update must not reach across into another.
+		if z.Name != cfg.Name || !z.Scope.Matches(cfg.Scope) {
 			continue
 		}
 
