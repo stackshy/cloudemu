@@ -225,12 +225,12 @@ func (m *Mock) GetRecord(_ context.Context, zoneID, name, recordType string) (*d
 		return &result, nil
 	}
 
-	// Search for weighted records with a set ID.
-	prefix := zoneID + ":" + name + ":" + recordType + ":"
-	all := m.records.All()
-
-	for k, r := range all {
-		if strings.HasPrefix(k, prefix) {
+	// Search for weighted records (same name+type with a set ID). Iterate in
+	// sorted-key order and return the lowest set ID, so a name+type with
+	// several weighted records resolves to the same record every call rather
+	// than a map-order-random one (#259).
+	for _, r := range m.records.SortedValues() {
+		if r.ZoneID == zoneID && r.Name == name && r.Type == recordType && r.SetID != "" {
 			result := r
 			return &result, nil
 		}

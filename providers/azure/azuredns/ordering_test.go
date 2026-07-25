@@ -85,3 +85,43 @@ func TestListRecordsOrderingDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestGetRecordWeightedDeterministic locks that GetRecord resolves a name+type
+// with several weighted records to the same one every call — the lowest set ID
+// in sorted order — instead of a map-order-random pick (#259).
+func TestGetRecordWeightedDeterministic(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	zone, err := m.CreateZone(ctx, driver.ZoneConfig{Name: "example.com"})
+	if err != nil {
+		t.Fatalf("create zone: %v", err)
+	}
+
+	weight := 10
+	for _, sid := range []string{"west", "east", "central"} {
+		if _, err := m.CreateRecord(ctx, driver.RecordConfig{
+			ZoneID: zone.ID, Name: "api.example.com", Type: "A", TTL: 60,
+			Values: []string{"192.0.2.1"}, SetID: sid, Weight: &weight,
+		}); err != nil {
+			t.Fatalf("create weighted %s: %v", sid, err)
+		}
+	}
+
+	first, err := m.GetRecord(ctx, zone.ID, "api.example.com", "A")
+	if err != nil {
+		t.Fatalf("GetRecord: %v", err)
+	}
+	for range 5 {
+		again, err := m.GetRecord(ctx, zone.ID, "api.example.com", "A")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if again.SetID != first.SetID {
+			t.Fatalf("GetRecord returned different weighted record across calls: %q vs %q", again.SetID, first.SetID)
+		}
+	}
+	if first.SetID != "central" {
+		t.Fatalf("GetRecord set ID = %q, want lowest in sorted order (central)", first.SetID)
+	}
+}
