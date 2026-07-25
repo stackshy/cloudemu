@@ -3,6 +3,7 @@ package route53
 import (
 	"encoding/xml"
 	"net/http"
+	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -93,9 +94,11 @@ func (h *Handler) deleteHostedZone(w http.ResponseWriter, r *http.Request, id st
 }
 
 // changeResourceRecordSets applies a CREATE/UPSERT/DELETE batch against the
-// zone. Changes are applied in order; the whole batch shares one INSYNC
-// ChangeInfo, matching Route 53's atomic-batch semantics closely enough for
-// the SDK's change poller.
+// zone. Route 53 validates the whole batch and applies nothing if any change is
+// invalid (InvalidChangeBatch), so we validate every change against the zone's
+// current state — tracking intra-batch effects so a DELETE followed by a CREATE
+// of the same record set is allowed — before mutating anything. The batch then
+// shares one INSYNC ChangeInfo for the SDK's change poller.
 func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Request, id string) {
 	var req changeResourceRecordSetsRequest
 	if !decodeXML(w, r, &req) {
@@ -103,6 +106,11 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 	}
 
 	zoneID := trimZonePrefix(id)
+
+	if err := h.validateChangeBatch(r, zoneID, req.ChangeBatch.Changes); err != nil {
+		writeChangeErr(w, err)
+		return
+	}
 
 	for i := range req.ChangeBatch.Changes {
 		if err := h.applyChange(r, zoneID, &req.ChangeBatch.Changes[i]); err != nil {
@@ -115,6 +123,61 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 		Xmlns:      xmlns,
 		ChangeInfo: newChangeInfo(),
 	})
+}
+
+// rrSetKey identifies a record set for batch validation, matching the driver's
+// identity (name is case-insensitive, type is case-insensitive, set ID
+// distinguishes weighted records at the same name+type).
+func rrSetKey(name, rtype, setID string) string {
+	return strings.ToLower(name) + "|" + strings.ToUpper(rtype) + "|" + setID
+}
+
+// validateChangeBatch checks every change would apply cleanly before any is
+// applied, so an invalid batch is rejected whole (nothing half-applied). It
+// simulates the batch against the zone's current record sets, folding in each
+// change's effect so ordering within the batch is respected.
+func (h *Handler) validateChangeBatch(r *http.Request, zoneID string, changes []changeItem) error {
+	existing, err := h.dns.ListRecords(r.Context(), zoneID)
+	if err != nil {
+		return err
+	}
+
+	present := make(map[string]bool, len(existing))
+	for i := range existing {
+		present[rrSetKey(existing[i].Name, existing[i].Type, existing[i].SetID)] = true
+	}
+
+	for i := range changes {
+		rr := &changes[i].ResourceRecordSet
+
+		if rr.Name == "" || rr.Type == "" {
+			return cerrors.New(cerrors.InvalidArgument, "record set name and type are required")
+		}
+
+		key := rrSetKey(rr.Name, rr.Type, rr.SetIdentifier)
+
+		switch changes[i].Action {
+		case actionCreate:
+			if present[key] {
+				return cerrors.Newf(cerrors.AlreadyExists,
+					"record set %q %s already exists", rr.Name, rr.Type)
+			}
+			present[key] = true
+		case actionDelete:
+			if !present[key] {
+				return cerrors.Newf(cerrors.NotFound,
+					"record set %q %s not found", rr.Name, rr.Type)
+			}
+			present[key] = false
+		case actionUpsert:
+			present[key] = true
+		default:
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"unsupported change action %q", changes[i].Action)
+		}
+	}
+
+	return nil
 }
 
 // applyChange executes a single record change against the driver.
