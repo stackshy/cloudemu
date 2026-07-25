@@ -53,6 +53,8 @@ type Provider struct {
 	SageMaker         *sagemaker.Mock
 	SSM               *ssm.Mock
 	ResourceDiscovery *resourcediscovery.Engine
+	AccountID         string
+	Region            string
 }
 
 // New creates a new AWS provider with all mock services.
@@ -81,6 +83,8 @@ func New(opts ...config.Option) *Provider {
 		Bedrock:        bedrock.New(o),
 		SageMaker:      sagemaker.New(o),
 		SSM:            ssm.New(o),
+		AccountID:      o.AccountID,
+		Region:         o.Region,
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
 	p.S3.SetMonitoring(p.CloudWatch)
