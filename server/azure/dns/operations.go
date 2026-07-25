@@ -6,6 +6,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // --- zones ---
@@ -21,11 +22,19 @@ func (h *Handler) createOrUpdateZone(w http.ResponseWriter, r *http.Request, rp 
 		private = privateFromZoneType(body.Properties.ZoneType)
 	}
 
-	// CreateOrUpdate is idempotent: if the zone already exists, echo it back.
-	if id, err := h.resolveZoneID(r.Context(), rp.ResourceName); err == nil {
-		info, gerr := h.dns.GetZone(r.Context(), id)
-		if gerr != nil {
-			azurearm.WriteCErr(w, gerr)
+	sc := scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
+
+	// CreateOrUpdate is upsert: if the zone already exists, apply the request's
+	// mutable fields (tags, scope) via UpdateZone rather than echoing it back.
+	if _, err := h.resolveZoneID(r.Context(), rp.ResourceName); err == nil {
+		info, uerr := h.dns.UpdateZone(r.Context(), dnsdriver.ZoneConfig{
+			Name:    rp.ResourceName,
+			Private: private,
+			Tags:    body.Tags,
+			Scope:   sc,
+		})
+		if uerr != nil {
+			azurearm.WriteCErr(w, uerr)
 			return
 		}
 
@@ -38,6 +47,7 @@ func (h *Handler) createOrUpdateZone(w http.ResponseWriter, r *http.Request, rp 
 		Name:    rp.ResourceName,
 		Private: private,
 		Tags:    body.Tags,
+		Scope:   sc,
 	})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -81,7 +91,8 @@ func (h *Handler) deleteZone(w http.ResponseWriter, r *http.Request, rp *azurear
 }
 
 func (h *Handler) listZones(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	infos, err := h.dns.ListZones(r.Context())
+	infos, err := h.dns.ListZones(r.Context(),
+		scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

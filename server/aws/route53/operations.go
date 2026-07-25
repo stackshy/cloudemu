@@ -8,6 +8,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // listMaxItems is the fixed page size echoed back to the SDK; the mock never
@@ -59,7 +60,8 @@ func (h *Handler) getHostedZone(w http.ResponseWriter, r *http.Request, id strin
 }
 
 func (h *Handler) listHostedZones(w http.ResponseWriter, r *http.Request) {
-	infos, err := h.dns.ListZones(r.Context())
+	// Route 53 hosted zones are account-global, so list them unscoped.
+	infos, err := h.dns.ListZones(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
 		return

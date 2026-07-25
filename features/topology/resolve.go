@@ -3,11 +3,13 @@ package topology
 import (
 	"context"
 	"strings"
+
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Resolve walks through DNS zones and returns matching record values for the hostname.
 func (e *Engine) Resolve(ctx context.Context, hostname string) ([]string, error) {
-	zones, err := e.dns.ListZones(ctx)
+	zones, err := e.dns.ListZones(ctx, scope.Scope{})
 	if err != nil {
 		return nil, err
 	}
