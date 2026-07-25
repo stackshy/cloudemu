@@ -6,8 +6,22 @@ type namespaceResource struct {
 	Name       string              `json:"name"`
 	Type       string              `json:"type"`
 	Location   string              `json:"location"`
+	Tags       map[string]string   `json:"tags,omitempty"`
 	Properties namespaceProperties `json:"properties"`
 	SKU        *sbSKU              `json:"sku,omitempty"`
+}
+
+// namespaceState is the stored control-plane record for a namespace. Namespaces
+// are Azure-only ARM containers with no portable-driver equivalent, so their
+// state lives here on the handler. Keyed by name (namespace names are globally
+// unique in Azure).
+type namespaceState struct {
+	Name          string
+	Location      string
+	Subscription  string
+	ResourceGroup string
+	Tags          map[string]string
+	SKU           *sbSKU
 }
 
 type namespaceProperties struct {
@@ -52,6 +66,7 @@ type createQueueRequest struct {
 
 // createNamespaceRequest is what we read from a PUT /namespaces/{ns} body.
 type createNamespaceRequest struct {
-	Location string `json:"location"`
-	SKU      *sbSKU `json:"sku,omitempty"`
+	Location string            `json:"location"`
+	Tags     map[string]string `json:"tags,omitempty"`
+	SKU      *sbSKU            `json:"sku,omitempty"`
 }
