@@ -2,6 +2,7 @@
 .git
 .github
 .claude
+contrib
 docs
 *.md
 Dockerfile

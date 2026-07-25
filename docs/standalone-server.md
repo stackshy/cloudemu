@@ -36,6 +36,20 @@ Or bring up the whole emulated cloud with the example compose file:
 docker compose up
 ```
 
+### Testcontainers (Go)
+
+Go test suites can start and stop the container automatically with the
+[Testcontainers module](https://github.com/stackshy/cloudemu/tree/master/contrib/testcontainers)
+(a separate module, so it doesn't add Docker deps to your app):
+
+```go
+ctr, _ := cloudemu.Run(ctx)
+defer ctr.Terminate(ctx)
+
+endpoint, _ := ctr.AWSEndpoint(ctx) // point aws-sdk-go-v2 here
+ctr.Reset(ctx)                      // clean slate between tests
+```
+
 On start it prints the live endpoints:
 
 ```
