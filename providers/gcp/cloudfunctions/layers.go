@@ -44,7 +44,7 @@ func (m *Mock) PublishLayerVersion(_ context.Context, cfg driver.LayerConfig) (*
 		ContentSHA256:      shaStr,
 		ContentSize:        int64(len(cfg.Content)),
 		CompatibleRuntimes: cfg.CompatibleRuntimes,
-		CreatedAt:          time.Now().UTC().Format(time.RFC3339),
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		ARN:                arn,
 	}
 

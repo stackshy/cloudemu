@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -116,8 +117,8 @@ func (m *Mock) CreateFunction(_ context.Context, cfg driver.FunctionConfig) (*dr
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: resourceID, Runtime: cfg.Runtime, Handler: cfg.Handler,
 		Memory: cfg.Memory, Timeout: cfg.Timeout, State: "Active",
-		Environment: cfg.Environment, Tags: cfg.Tags,
-		LastModified: time.Now().UTC().Format(time.RFC3339),
+		Environment: maps.Clone(cfg.Environment), Tags: maps.Clone(cfg.Tags),
+		LastModified: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 	}
 
 	m.handlersMu.RLock()
@@ -154,6 +155,8 @@ func (m *Mock) GetFunction(_ context.Context, name string) (*driver.FunctionInfo
 	}
 
 	info := fd.info
+	info.Environment = maps.Clone(info.Environment)
+	info.Tags = maps.Clone(info.Tags)
 
 	return &info, nil
 }
@@ -181,7 +184,7 @@ func (m *Mock) UpdateFunction(_ context.Context, name string, cfg driver.Functio
 
 	info := fd.info
 	applyConfigUpdates(&info, cfg)
-	info.LastModified = time.Now().UTC().Format(time.RFC3339)
+	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
 	fd.info = info
 	m.funcs.Set(name, fd)
 
@@ -257,11 +260,11 @@ func applyConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
 	}
 
 	if cfg.Environment != nil {
-		info.Environment = cfg.Environment
+		info.Environment = maps.Clone(cfg.Environment)
 	}
 
 	if cfg.Tags != nil {
-		info.Tags = cfg.Tags
+		info.Tags = maps.Clone(cfg.Tags)
 	}
 }
 
