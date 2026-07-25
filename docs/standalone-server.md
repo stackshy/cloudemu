@@ -22,6 +22,20 @@ Or from a checkout:
 go run ./cmd/cloudemu serve
 ```
 
+### Docker
+
+No Go toolchain needed — pull the published image (it runs `serve --host 0.0.0.0`):
+
+```sh
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 ghcr.io/stackshy/cloudemu:latest
+```
+
+Or bring up the whole emulated cloud with the example compose file:
+
+```sh
+docker compose up
+```
+
 On start it prints the live endpoints:
 
 ```
