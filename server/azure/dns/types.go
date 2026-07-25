@@ -232,10 +232,14 @@ func recordTypeSegment(s string) string {
 }
 
 // resolveZoneID maps the SDK-facing zone name to the driver's internal zone id
-// by scanning the zone list. Returns a NotFound error if no zone with that name
-// exists.
-func (h *Handler) resolveZoneID(ctx context.Context, name string) (string, error) {
-	zones, err := h.dns.ListZones(ctx, scope.Scope{})
+// by scanning the zone list, scoped to the request's subscription and resource
+// group. Scoping matters because the same zone name can exist in more than one
+// resource group — a name-only scan could resolve to a zone in a different
+// group. Returns a NotFound error if no such zone exists in this scope.
+func (h *Handler) resolveZoneID(ctx context.Context, rp *azurearm.ResourcePath) (string, error) {
+	filter := scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
+
+	zones, err := h.dns.ListZones(ctx, filter)
 	if err != nil {
 		return "", err
 	}
@@ -243,10 +247,10 @@ func (h *Handler) resolveZoneID(ctx context.Context, name string) (string, error
 	// Azure treats DNS zone names case-insensitively (and lowercases them on
 	// some URL paths), so match without regard to case.
 	for i := range zones {
-		if strings.EqualFold(zones[i].Name, name) {
+		if strings.EqualFold(zones[i].Name, rp.ResourceName) {
 			return zones[i].ID, nil
 		}
 	}
 
-	return "", cerrors.Newf(cerrors.NotFound, "dns zone %q not found", name)
+	return "", cerrors.Newf(cerrors.NotFound, "dns zone %q not found", rp.ResourceName)
 }

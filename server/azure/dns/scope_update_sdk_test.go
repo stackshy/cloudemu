@@ -127,6 +127,42 @@ func TestSDKSameNameZonesStayIndependent(t *testing.T) {
 	}
 }
 
+// TestSDKGetResolvesWithinRequestScope asserts that when the same zone name
+// exists in two resource groups, a Get resolves to the zone in the request's
+// group — not an arbitrary same-named zone in another group.
+func TestSDKGetResolvesWithinRequestScope(t *testing.T) {
+	zones, _ := newDNSClients(t)
+	ctx := context.Background()
+
+	mk := func(rg, env string) {
+		if _, err := zones.CreateOrUpdate(ctx, rg, "dup.com", armdns.Zone{
+			Location: to.Ptr("global"),
+			Tags:     map[string]*string{"env": to.Ptr(env)},
+		}, nil); err != nil {
+			t.Fatalf("CreateOrUpdate %s: %v", rg, err)
+		}
+	}
+	mk("rg-get-a", "a")
+	mk("rg-get-b", "b")
+
+	getEnv := func(rg string) string {
+		z, err := zones.Get(ctx, rg, "dup.com", nil)
+		if err != nil {
+			t.Fatalf("Get %s: %v", rg, err)
+		}
+		if z.Tags["env"] == nil {
+			t.Fatalf("Get %s: no env tag", rg)
+		}
+		return *z.Tags["env"]
+	}
+	if got := getEnv("rg-get-a"); got != "a" {
+		t.Fatalf("Get rg-get-a/dup.com env = %q, want a (must resolve within the request's group)", got)
+	}
+	if got := getEnv("rg-get-b"); got != "b" {
+		t.Fatalf("Get rg-get-b/dup.com env = %q, want b", got)
+	}
+}
+
 // TestSDKZoneIDMatchesRequestScope asserts through the real SDK that the
 // returned ARM id carries the request's subscription and resource group.
 func TestSDKZoneIDMatchesRequestScope(t *testing.T) {

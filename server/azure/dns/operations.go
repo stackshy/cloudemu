@@ -51,7 +51,7 @@ func (h *Handler) createOrUpdateZone(w http.ResponseWriter, r *http.Request, rp 
 }
 
 func (h *Handler) getZone(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	id, err := h.resolveZoneID(r.Context(), rp.ResourceName)
+	id, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -69,7 +69,7 @@ func (h *Handler) getZone(w http.ResponseWriter, r *http.Request, rp *azurearm.R
 // deleteZone removes the zone. Zones.Delete is an LRO in the SDK; returning
 // 200 with an empty body completes the poller on the first response.
 func (h *Handler) deleteZone(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	id, err := h.resolveZoneID(r.Context(), rp.ResourceName)
+	id, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -107,7 +107,7 @@ func (h *Handler) createOrUpdateRecordSet(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	zoneID, err := h.resolveZoneID(r.Context(), rp.ResourceName)
+	zoneID, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -144,7 +144,7 @@ func (h *Handler) upsertRecord(r *http.Request, cfg dnsdriver.RecordConfig) (*dn
 }
 
 func (h *Handler) getRecordSet(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	zoneID, err := h.resolveZoneID(r.Context(), rp.ResourceName)
+	zoneID, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -160,7 +160,7 @@ func (h *Handler) getRecordSet(w http.ResponseWriter, r *http.Request, rp *azure
 }
 
 func (h *Handler) deleteRecordSet(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	zoneID, err := h.resolveZoneID(r.Context(), rp.ResourceName)
+	zoneID, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -183,7 +183,7 @@ func (h *Handler) deleteRecordSet(w http.ResponseWriter, r *http.Request, rp *az
 }
 
 func (h *Handler) listRecordSets(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	zoneID, err := h.resolveZoneID(r.Context(), rp.ResourceName)
+	zoneID, err := h.resolveZoneID(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
