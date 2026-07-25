@@ -94,10 +94,84 @@ func LoadFS(fsys fs.FS, name string) (Fixtures, error) {
 	return Load(data)
 }
 
-// Apply writes every fixture in f through t's drivers, in a fixed order
-// (buckets, tables, secrets, instances). It stops at the first error and
-// returns it; seeding a freshly-reset backend avoids already-exists conflicts.
+// ResourceCount is the number of individual resources the fixtures describe
+// (each object, item, and instance counts, not just top-level entries).
+func (f Fixtures) ResourceCount() int {
+	n := 0
+	for _, b := range f.Buckets {
+		n += 1 + len(b.Objects)
+	}
+	for _, tb := range f.Tables {
+		n += 1 + len(tb.Items)
+	}
+	n += len(f.Secrets)
+	for _, in := range f.Instances {
+		c := in.Count
+		if c < 1 {
+			c = 1
+		}
+		n += c
+	}
+	return n
+}
+
+// Validate checks that every fixture has the fields it needs and that a driver
+// exists for every kind it uses, so Apply can't silently create broken
+// resources (e.g. a table with no partition key, whose items would all collapse
+// to one key) or half-seed and then fail.
+func (f Fixtures) Validate(t Target) error {
+	if len(f.Buckets) > 0 && t.Storage == nil {
+		return fmt.Errorf("fixtures declare buckets but Target.Storage is nil")
+	}
+	for _, b := range f.Buckets {
+		if b.Name == "" {
+			return fmt.Errorf("bucket: name is required")
+		}
+		for _, o := range b.Objects {
+			if o.Key == "" {
+				return fmt.Errorf("bucket %q: object key is required", b.Name)
+			}
+		}
+	}
+	if len(f.Tables) > 0 && t.Database == nil {
+		return fmt.Errorf("fixtures declare tables but Target.Database is nil")
+	}
+	for _, tb := range f.Tables {
+		if tb.Name == "" {
+			return fmt.Errorf("table: name is required")
+		}
+		if tb.PartitionKey == "" {
+			return fmt.Errorf("table %q: partitionKey is required", tb.Name)
+		}
+	}
+	if len(f.Secrets) > 0 && t.Secrets == nil {
+		return fmt.Errorf("fixtures declare secrets but Target.Secrets is nil")
+	}
+	for _, s := range f.Secrets {
+		if s.Name == "" {
+			return fmt.Errorf("secret: name is required")
+		}
+	}
+	if len(f.Instances) > 0 && t.Compute == nil {
+		return fmt.Errorf("fixtures declare instances but Target.Compute is nil")
+	}
+	for _, in := range f.Instances {
+		if in.ImageID == "" {
+			return fmt.Errorf("instance: imageId is required")
+		}
+	}
+	return nil
+}
+
+// Apply validates the whole fixture set, then writes it through t's drivers in
+// a fixed order (buckets, tables, secrets, instances). Validation runs first so
+// an invalid fixture is rejected before anything is created. Writes are not
+// transactional: on a mid-write failure (e.g. seeding a backend that isn't
+// empty), earlier resources remain — reset and retry against a fresh backend.
 func Apply(ctx context.Context, f Fixtures, t Target) error {
+	if err := f.Validate(t); err != nil {
+		return err
+	}
 	if err := applyBuckets(ctx, f.Buckets, t.Storage); err != nil {
 		return err
 	}
@@ -111,12 +185,6 @@ func Apply(ctx context.Context, f Fixtures, t Target) error {
 }
 
 func applyBuckets(ctx context.Context, buckets []Bucket, d storagedriver.Bucket) error {
-	if len(buckets) == 0 {
-		return nil
-	}
-	if d == nil {
-		return fmt.Errorf("fixtures declare buckets but Target.Storage is nil")
-	}
 	for _, b := range buckets {
 		if err := d.CreateBucket(ctx, b.Name); err != nil {
 			return fmt.Errorf("seed bucket %q: %w", b.Name, err)
@@ -135,12 +203,6 @@ func applyBuckets(ctx context.Context, buckets []Bucket, d storagedriver.Bucket)
 }
 
 func applyTables(ctx context.Context, tables []Table, d dbdriver.Database) error {
-	if len(tables) == 0 {
-		return nil
-	}
-	if d == nil {
-		return fmt.Errorf("fixtures declare tables but Target.Database is nil")
-	}
 	for _, tb := range tables {
 		if err := d.CreateTable(ctx, dbdriver.TableConfig{
 			Name:         tb.Name,
@@ -159,12 +221,6 @@ func applyTables(ctx context.Context, tables []Table, d dbdriver.Database) error
 }
 
 func applySecrets(ctx context.Context, secrets []Secret, d secretsdriver.Secrets) error {
-	if len(secrets) == 0 {
-		return nil
-	}
-	if d == nil {
-		return fmt.Errorf("fixtures declare secrets but Target.Secrets is nil")
-	}
 	for _, s := range secrets {
 		if _, err := d.CreateSecret(ctx, secretsdriver.SecretConfig{
 			Name:        s.Name,
@@ -177,12 +233,6 @@ func applySecrets(ctx context.Context, secrets []Secret, d secretsdriver.Secrets
 }
 
 func applyInstances(ctx context.Context, instances []Instance, d computedriver.Compute) error {
-	if len(instances) == 0 {
-		return nil
-	}
-	if d == nil {
-		return fmt.Errorf("fixtures declare instances but Target.Compute is nil")
-	}
 	for _, in := range instances {
 		count := in.Count
 		if count < 1 {

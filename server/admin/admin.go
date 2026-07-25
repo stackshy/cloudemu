@@ -104,9 +104,15 @@ func (c *Control) serveControl(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "seeding is not available on this server"})
 			return
 		}
-		fixture, err := io.ReadAll(io.LimitReader(r.Body, maxFixtureBytes))
+		// Read one byte past the cap so an over-limit body is a clear 413
+		// rather than a silently-truncated body that fails JSON parsing.
+		fixture, err := io.ReadAll(io.LimitReader(r.Body, maxFixtureBytes+1))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "read fixture: " + err.Error()})
+			return
+		}
+		if len(fixture) > maxFixtureBytes {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "fixture exceeds 32 MiB"})
 			return
 		}
 		applied, err := c.seed(fixture)

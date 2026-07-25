@@ -183,12 +183,16 @@ func runServe(args []string) error {
 			if err != nil {
 				return 0, err
 			}
+			// Read the current Target under the lock, but run Apply outside it:
+			// a large fixture (especially with --latency) must not hold the
+			// shared reset mutex for its whole duration.
 			rebuildMu.Lock()
-			defer rebuildMu.Unlock()
-			if err := seed.Apply(context.Background(), f, targets[provider]); err != nil {
+			t := targets[provider]
+			rebuildMu.Unlock()
+			if err := seed.Apply(context.Background(), f, t); err != nil {
 				return 0, err
 			}
-			return len(f.Buckets) + len(f.Tables) + len(f.Secrets) + len(f.Instances), nil
+			return f.ResourceCount(), nil
 		}
 	}
 

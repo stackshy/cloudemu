@@ -92,3 +92,55 @@ func TestSeedAWSReadViaSDK(t *testing.T) {
 		t.Fatalf("seeded instances = %d, want 2", len(insts))
 	}
 }
+
+func TestLoadMalformed(t *testing.T) {
+	if _, err := seed.Load([]byte(`{not json`)); err == nil {
+		t.Fatal("Load of malformed JSON returned nil error")
+	}
+}
+
+// TestApplyValidationRejectsBeforeWriting is the important guard: an invalid
+// fixture (here, a table with no partition key — whose items would otherwise
+// silently collapse to one key) must be rejected, and nothing created.
+func TestApplyValidationRejectsBeforeWriting(t *testing.T) {
+	ctx := context.Background()
+	cloud := cloudemu.NewAWS()
+	target := seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB}
+
+	f := seed.Fixtures{
+		Buckets: []seed.Bucket{{Name: "made-first"}},
+		Tables:  []seed.Table{{Name: "no-pk" /* PartitionKey omitted */, Items: []map[string]any{{"a": 1}}}},
+	}
+	if err := seed.Apply(ctx, f, target); err == nil {
+		t.Fatal("Apply accepted a table with no partitionKey")
+	}
+	// Validation runs before any writes, so the earlier bucket must NOT exist.
+	buckets, err := cloud.S3.ListBuckets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buckets) != 0 {
+		t.Fatalf("a bucket was created despite the fixture being invalid (%d buckets) — validation should precede writes", len(buckets))
+	}
+}
+
+func TestApplyNilDriver(t *testing.T) {
+	ctx := context.Background()
+	// Buckets declared but Storage is nil → clear error, not a panic.
+	err := seed.Apply(ctx, seed.Fixtures{Buckets: []seed.Bucket{{Name: "b"}}}, seed.Target{})
+	if err == nil {
+		t.Fatal("Apply with buckets but nil Storage returned nil error")
+	}
+}
+
+func TestResourceCount(t *testing.T) {
+	f := seed.Fixtures{
+		Buckets:   []seed.Bucket{{Name: "b", Objects: []seed.Object{{Key: "1"}, {Key: "2"}}}},          // 1 + 2
+		Tables:    []seed.Table{{Name: "t", PartitionKey: "id", Items: []map[string]any{{"id": "x"}}}}, // 1 + 1
+		Secrets:   []seed.Secret{{Name: "s"}},                                                          // 1
+		Instances: []seed.Instance{{ImageID: "ami", Count: 3}},                                         // 3
+	}
+	if got := f.ResourceCount(); got != 9 {
+		t.Fatalf("ResourceCount = %d, want 9", got)
+	}
+}
