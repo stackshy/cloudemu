@@ -3,6 +3,7 @@ package azuredns
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -10,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Compile-time check that Mock implements driver.DNS.
@@ -50,7 +52,17 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		return nil, cerrors.New(cerrors.InvalidArgument, "zone name is required")
 	}
 
-	id := idgen.AzureID(m.opts.AccountID, "cloud-mock", "Microsoft.Network", "dnsZones", cfg.Name)
+	// Derive the ARM id's subscription/resource group from the request scope,
+	// falling back to the account default and "cloud-mock" when unscoped.
+	sub := cfg.Scope.Subscription
+	if sub == "" {
+		sub = m.opts.AccountID
+	}
+	rg := cfg.Scope.ResourceGroup
+	if rg == "" {
+		rg = "cloud-mock"
+	}
+	id := idgen.AzureID(sub, rg, "Microsoft.Network", "dnsZones", cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -63,6 +75,7 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		Private:     cfg.Private,
 		RecordCount: 0,
 		Tags:        tags,
+		Scope:       cfg.Scope,
 	}
 
 	m.zones.Set(id, zone)
@@ -100,16 +113,47 @@ func (m *Mock) GetZone(_ context.Context, id string) (*driver.ZoneInfo, error) {
 	return &result, nil
 }
 
-// ListZones returns all Azure DNS zones.
-func (m *Mock) ListZones(_ context.Context) ([]driver.ZoneInfo, error) {
+// ListZones returns the Azure DNS zones visible under filter. Iterating the
+// store's SortedValues keeps the order deterministic (#259).
+func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneInfo, error) {
 	all := m.zones.SortedValues()
 
 	zones := make([]driver.ZoneInfo, 0, len(all))
 	for _, z := range all {
+		if !z.Scope.Matches(filter) {
+			continue
+		}
 		zones = append(zones, z)
 	}
 
 	return zones, nil
+}
+
+// UpdateZone applies the mutable fields (tags, scope) of an existing zone,
+// matching it by name — ARM CreateOrUpdate-on-existing semantics. Identity
+// and record count are preserved.
+func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
+	for _, z := range m.zones.SortedValues() {
+		// Match on name AND scope: the same zone name can exist in different
+		// resource groups, and an update must not reach across into another.
+		if z.Name != cfg.Name || !z.Scope.Matches(cfg.Scope) {
+			continue
+		}
+
+		if cfg.Tags != nil {
+			z.Tags = maps.Clone(cfg.Tags)
+		}
+		if !cfg.Scope.IsZero() {
+			z.Scope = cfg.Scope
+		}
+
+		m.zones.Set(z.ID, z)
+		result := z
+
+		return &result, nil
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "zone %q not found", cfg.Name)
 }
 
 // CreateRecord creates a new DNS record set in the specified zone.

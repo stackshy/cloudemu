@@ -7,6 +7,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // ARM resource type strings stamped on responses.
@@ -234,7 +235,7 @@ func recordTypeSegment(s string) string {
 // by scanning the zone list. Returns a NotFound error if no zone with that name
 // exists.
 func (h *Handler) resolveZoneID(ctx context.Context, name string) (string, error) {
-	zones, err := h.dns.ListZones(ctx)
+	zones, err := h.dns.ListZones(ctx, scope.Scope{})
 	if err != nil {
 		return "", err
 	}

@@ -104,7 +104,7 @@ func TestWrapDNSBaseline(t *testing.T) {
 
 	z, _ := d.CreateZone(ctx, dnsdriver.ZoneConfig{Name: "b.test."})
 	_, _ = d.GetZone(ctx, z.ID)
-	_, _ = d.ListZones(ctx)
+	_, _ = d.ListZones(ctx, scope.Scope{})
 	rec := dnsdriver.RecordConfig{ZoneID: z.ID, Name: "x.b.test.", Type: "A", TTL: 300, Values: []string{"1.2.3.4"}}
 	_, _ = d.CreateRecord(ctx, rec)
 	_, _ = d.GetRecord(ctx, z.ID, "x.b.test.", "A")

@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/metrics"
 	"github.com/stackshy/cloudemu/v2/features/recorder"
 	"github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,13 +74,28 @@ func (m *mockDriver) GetZone(_ context.Context, id string) (*driver.ZoneInfo, er
 	return info, nil
 }
 
-func (m *mockDriver) ListZones(_ context.Context) ([]driver.ZoneInfo, error) {
+func (m *mockDriver) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneInfo, error) {
 	result := make([]driver.ZoneInfo, 0, len(m.zones))
 	for _, info := range m.zones {
+		if !info.Scope.Matches(filter) {
+			continue
+		}
 		result = append(result, *info)
 	}
 
 	return result, nil
+}
+
+func (m *mockDriver) UpdateZone(_ context.Context, config driver.ZoneConfig) (*driver.ZoneInfo, error) {
+	for _, info := range m.zones {
+		if info.Name == config.Name {
+			if config.Tags != nil {
+				info.Tags = config.Tags
+			}
+			return info, nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
 }
 
 func (m *mockDriver) CreateRecord(_ context.Context, config driver.RecordConfig) (*driver.RecordInfo, error) {

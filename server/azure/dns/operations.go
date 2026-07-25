@@ -6,6 +6,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // --- zones ---
@@ -21,24 +22,26 @@ func (h *Handler) createOrUpdateZone(w http.ResponseWriter, r *http.Request, rp 
 		private = privateFromZoneType(body.Properties.ZoneType)
 	}
 
-	// CreateOrUpdate is idempotent: if the zone already exists, echo it back.
-	if id, err := h.resolveZoneID(r.Context(), rp.ResourceName); err == nil {
-		info, gerr := h.dns.GetZone(r.Context(), id)
-		if gerr != nil {
-			azurearm.WriteCErr(w, gerr)
-			return
-		}
-
-		azurearm.WriteJSON(w, http.StatusOK, toZoneJSON(rp, info))
-
-		return
-	}
-
-	info, err := h.dns.CreateZone(r.Context(), dnsdriver.ZoneConfig{
+	cfg := dnsdriver.ZoneConfig{
 		Name:    rp.ResourceName,
 		Private: private,
 		Tags:    body.Tags,
-	})
+		Scope:   scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	}
+
+	// CreateOrUpdate is upsert. Try to update a zone that already exists in
+	// THIS scope; only create when none does. Matching by scope (not just
+	// name) means a same-named zone in another resource group is never
+	// hijacked — it stays a distinct zone.
+	if info, uerr := h.dns.UpdateZone(r.Context(), cfg); uerr == nil {
+		azurearm.WriteJSON(w, http.StatusOK, toZoneJSON(rp, info))
+		return
+	} else if !cerrors.IsNotFound(uerr) {
+		azurearm.WriteCErr(w, uerr)
+		return
+	}
+
+	info, err := h.dns.CreateZone(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -81,7 +84,8 @@ func (h *Handler) deleteZone(w http.ResponseWriter, r *http.Request, rp *azurear
 }
 
 func (h *Handler) listZones(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	infos, err := h.dns.ListZones(r.Context())
+	infos, err := h.dns.ListZones(r.Context(),
+		scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

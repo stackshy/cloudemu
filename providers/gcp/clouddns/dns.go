@@ -3,6 +3,7 @@ package clouddns
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -10,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Compile-time check that Mock implements driver.DNS.
@@ -63,6 +65,7 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		Private:     cfg.Private,
 		RecordCount: 0,
 		Tags:        tags,
+		Scope:       cfg.Scope,
 	}
 
 	m.zones.Set(id, zone)
@@ -101,16 +104,48 @@ func (m *Mock) GetZone(_ context.Context, id string) (*driver.ZoneInfo, error) {
 	return &result, nil
 }
 
-// ListZones returns all Cloud DNS managed zones.
-func (m *Mock) ListZones(_ context.Context) ([]driver.ZoneInfo, error) {
+// ListZones returns the Cloud DNS managed zones visible under filter.
+func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneInfo, error) {
 	all := m.zones.SortedValues()
 
 	zones := make([]driver.ZoneInfo, 0, len(all))
 	for _, z := range all {
+		if !z.Scope.Matches(filter) {
+			continue
+		}
 		zones = append(zones, z)
 	}
 
 	return zones, nil
+}
+
+// UpdateZone applies the mutable fields (tags, scope) of an existing zone,
+// mirroring CreateOrUpdate-on-existing. It matches the zone by name.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
+	for _, z := range m.zones.SortedValues() {
+		// Match on name AND scope: the same zone name can exist in different
+		// projects, and an update must not reach across into another.
+		if z.Name != cfg.Name || !z.Scope.Matches(cfg.Scope) {
+			continue
+		}
+
+		if cfg.Tags != nil {
+			z.Tags = maps.Clone(cfg.Tags)
+		}
+		if !cfg.Scope.IsZero() {
+			z.Scope = cfg.Scope
+		}
+
+		m.zones.Set(z.ID, z)
+
+		result := z
+
+		return &result, nil
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "managed zone %q not found", cfg.Name)
 }
 
 // CreateRecord creates a new resource record set in the specified managed zone.

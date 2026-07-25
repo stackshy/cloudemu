@@ -1,13 +1,20 @@
 // Package driver defines the interface for DNS service implementations.
 package driver
 
-import "context"
+import (
+	"context"
+
+	"github.com/stackshy/cloudemu/v2/services/scope"
+)
 
 // ZoneConfig describes a DNS zone to create.
 type ZoneConfig struct {
 	Name    string
 	Private bool
 	Tags    map[string]string
+	// Scope records the cloud-side container the zone was created in (Azure
+	// subscription/resource group or GCP project). The zero value is unscoped.
+	Scope scope.Scope
 }
 
 // ZoneInfo describes a DNS zone.
@@ -17,6 +24,9 @@ type ZoneInfo struct {
 	Private     bool
 	RecordCount int
 	Tags        map[string]string
+	// Scope is the container the zone lives in; scoped list endpoints filter
+	// on it. The zero value is unscoped and visible everywhere.
+	Scope scope.Scope
 }
 
 // RecordConfig describes a DNS record.
@@ -70,7 +80,10 @@ type DNS interface {
 	CreateZone(ctx context.Context, config ZoneConfig) (*ZoneInfo, error)
 	DeleteZone(ctx context.Context, id string) error
 	GetZone(ctx context.Context, id string) (*ZoneInfo, error)
-	ListZones(ctx context.Context) ([]ZoneInfo, error)
+	ListZones(ctx context.Context, filter scope.Scope) ([]ZoneInfo, error)
+	// UpdateZone applies the mutable fields (tags) of an existing zone,
+	// mirroring ARM CreateOrUpdate-on-existing. It matches the zone by name.
+	UpdateZone(ctx context.Context, config ZoneConfig) (*ZoneInfo, error)
 
 	CreateRecord(ctx context.Context, config RecordConfig) (*RecordInfo, error)
 	DeleteRecord(ctx context.Context, zoneID, name, recordType string) error

@@ -3,6 +3,7 @@ package route53
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -10,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Compile-time check that Mock implements driver.DNS.
@@ -64,6 +66,7 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		Private:     cfg.Private,
 		RecordCount: 0,
 		Tags:        tags,
+		Scope:       cfg.Scope,
 	}
 
 	m.zones.Set(id, zone)
@@ -102,16 +105,59 @@ func (m *Mock) GetZone(_ context.Context, id string) (*driver.ZoneInfo, error) {
 	return &result, nil
 }
 
-// ListZones returns all DNS hosted zones.
-func (m *Mock) ListZones(_ context.Context) ([]driver.ZoneInfo, error) {
+// ListZones returns all DNS hosted zones matching the scope filter. Route 53
+// hosted zones are account-global, so zones are created unscoped and a zero
+// filter (the AWS default) returns everything.
+func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneInfo, error) {
 	all := m.zones.SortedValues()
 
 	zones := make([]driver.ZoneInfo, 0, len(all))
 	for _, z := range all {
+		if !z.Scope.Matches(filter) {
+			continue
+		}
 		zones = append(zones, z)
 	}
 
 	return zones, nil
+}
+
+// UpdateZone applies the mutable fields (tags, scope) of an existing hosted
+// zone, matching the zone by name — ARM CreateOrUpdate-on-existing semantics.
+func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
+	var (
+		id    string
+		found bool
+	)
+
+	for zid, z := range m.zones.All() {
+		if z.Name == cfg.Name {
+			id = zid
+			found = true
+
+			break
+		}
+	}
+
+	if !found {
+		return nil, errors.Newf(errors.NotFound, "zone %q not found", cfg.Name)
+	}
+
+	m.zones.Update(id, func(z driver.ZoneInfo) driver.ZoneInfo {
+		if cfg.Tags != nil {
+			z.Tags = maps.Clone(cfg.Tags)
+		}
+		if !cfg.Scope.IsZero() {
+			z.Scope = cfg.Scope
+		}
+
+		return z
+	})
+
+	updated, _ := m.zones.Get(id)
+	result := updated
+
+	return &result, nil
 }
 
 // CreateRecord creates a new DNS record in the specified zone.

@@ -6,9 +6,10 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-func (h *Handler) createZone(w http.ResponseWriter, r *http.Request, _ route) {
+func (h *Handler) createZone(w http.ResponseWriter, r *http.Request, rt route) {
 	var req managedZoneJSON
 	if !gcprest.DecodeJSON(w, r, &req) {
 		return
@@ -18,6 +19,7 @@ func (h *Handler) createZone(w http.ResponseWriter, r *http.Request, _ route) {
 		Name:    req.Name,
 		Private: privateFor(req.Visibility),
 		Tags:    req.Labels,
+		Scope:   scope.Scope{Project: rt.project},
 	})
 	if err != nil {
 		gcprest.WriteCErr(w, err)
@@ -28,7 +30,7 @@ func (h *Handler) createZone(w http.ResponseWriter, r *http.Request, _ route) {
 }
 
 func (h *Handler) getZone(w http.ResponseWriter, r *http.Request, rt route) {
-	id, err := h.resolveZoneID(r.Context(), rt.zone)
+	id, err := h.resolveZoneID(r.Context(), rt.project, rt.zone)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -43,8 +45,8 @@ func (h *Handler) getZone(w http.ResponseWriter, r *http.Request, rt route) {
 	gcprest.WriteJSON(w, http.StatusOK, toManagedZoneJSON(info))
 }
 
-func (h *Handler) listZones(w http.ResponseWriter, r *http.Request, _ route) {
-	infos, err := h.dns.ListZones(r.Context())
+func (h *Handler) listZones(w http.ResponseWriter, r *http.Request, rt route) {
+	infos, err := h.dns.ListZones(r.Context(), scope.Scope{Project: rt.project})
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -62,7 +64,7 @@ func (h *Handler) listZones(w http.ResponseWriter, r *http.Request, _ route) {
 }
 
 func (h *Handler) deleteZone(w http.ResponseWriter, r *http.Request, rt route) {
-	id, err := h.resolveZoneID(r.Context(), rt.zone)
+	id, err := h.resolveZoneID(r.Context(), rt.project, rt.zone)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -86,7 +88,7 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 		return
 	}
 
-	id, err := h.resolveZoneID(r.Context(), rt.zone)
+	id, err := h.resolveZoneID(r.Context(), rt.project, rt.zone)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -149,7 +151,7 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 }
 
 func (h *Handler) listRRSets(w http.ResponseWriter, r *http.Request, rt route) {
-	id, err := h.resolveZoneID(r.Context(), rt.zone)
+	id, err := h.resolveZoneID(r.Context(), rt.project, rt.zone)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return

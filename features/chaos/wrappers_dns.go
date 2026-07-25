@@ -4,6 +4,7 @@ import (
 	"context"
 
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // chaosDNS wraps a DNS driver. Hot-path: zone and record CRUD.
@@ -42,12 +43,12 @@ func (c *chaosDNS) GetZone(ctx context.Context, id string) (*dnsdriver.ZoneInfo,
 	return c.DNS.GetZone(ctx, id)
 }
 
-func (c *chaosDNS) ListZones(ctx context.Context) ([]dnsdriver.ZoneInfo, error) {
+func (c *chaosDNS) ListZones(ctx context.Context, filter scope.Scope) ([]dnsdriver.ZoneInfo, error) {
 	if err := applyChaos(ctx, c.engine, "dns", "ListZones"); err != nil {
 		return nil, err
 	}
 
-	return c.DNS.ListZones(ctx)
+	return c.DNS.ListZones(ctx, filter)
 }
 
 //nolint:gocritic // cfg is a value type by interface contract

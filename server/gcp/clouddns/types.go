@@ -7,6 +7,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Kind values Cloud DNS stamps on its resources; the SDK tolerates them being
@@ -116,8 +117,8 @@ func toRecordSetJSON(rec *dnsdriver.RecordInfo) resourceRecordSetJSON {
 // name or its numeric id there, so both are matched (the numeric id is the
 // FNV-folded value this handler hands back as ManagedZone.Id). Returns NotFound
 // if no zone matches.
-func (h *Handler) resolveZoneID(ctx context.Context, nameOrID string) (string, error) {
-	zones, err := h.dns.ListZones(ctx)
+func (h *Handler) resolveZoneID(ctx context.Context, project, nameOrID string) (string, error) {
+	zones, err := h.dns.ListZones(ctx, scope.Scope{Project: project})
 	if err != nil {
 		return "", err
 	}

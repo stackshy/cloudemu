@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/ratelimit"
 	"github.com/stackshy/cloudemu/v2/features/recorder"
 	"github.com/stackshy/cloudemu/v2/services/dns/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 type DNS struct {
@@ -107,7 +108,7 @@ func (d *DNS) GetZone(ctx context.Context, id string) (*driver.ZoneInfo, error) 
 }
 
 func (d *DNS) ListZones(ctx context.Context) ([]driver.ZoneInfo, error) {
-	out, err := d.do(ctx, "ListZones", nil, func() (any, error) { return d.driver.ListZones(ctx) })
+	out, err := d.do(ctx, "ListZones", nil, func() (any, error) { return d.driver.ListZones(ctx, scope.Scope{}) })
 	if err != nil {
 		return nil, err
 	}
