@@ -127,6 +127,53 @@ func TestSDKSameNameZonesStayIndependent(t *testing.T) {
 	}
 }
 
+// TestSDKTXTRecordChunking asserts that a TXT value longer than 255 bytes is
+// returned as valid ≤255-byte character-strings whose concatenation preserves
+// the original value — Azure rejects a single oversized chunk.
+func TestSDKTXTRecordChunking(t *testing.T) {
+	zones, records := newDNSClients(t)
+	ctx := context.Background()
+
+	if _, err := zones.CreateOrUpdate(ctx, testRG, "txt.com", armdns.Zone{Location: to.Ptr("global")}, nil); err != nil {
+		t.Fatalf("Zones.CreateOrUpdate: %v", err)
+	}
+
+	chunkA := strings.Repeat("a", 255)
+	chunkB := strings.Repeat("b", 100)
+	want := chunkA + chunkB // 355-byte logical value
+
+	if _, err := records.CreateOrUpdate(ctx, testRG, "txt.com", "long", armdns.RecordTypeTXT, armdns.RecordSet{
+		Properties: &armdns.RecordSetProperties{
+			TTL:        to.Ptr(int64(300)),
+			TxtRecords: []*armdns.TxtRecord{{Value: []*string{to.Ptr(chunkA), to.Ptr(chunkB)}}},
+		},
+	}, nil); err != nil {
+		t.Fatalf("RecordSets.CreateOrUpdate: %v", err)
+	}
+
+	got, err := records.Get(ctx, testRG, "txt.com", "long", armdns.RecordTypeTXT, nil)
+	if err != nil {
+		t.Fatalf("RecordSets.Get: %v", err)
+	}
+	if got.Properties == nil || len(got.Properties.TxtRecords) != 1 {
+		t.Fatalf("TxtRecords = %+v, want exactly one record", got.Properties)
+	}
+
+	var joined string
+	for _, c := range got.Properties.TxtRecords[0].Value {
+		if c == nil {
+			t.Fatal("nil TXT chunk")
+		}
+		if len(*c) > 255 {
+			t.Fatalf("TXT chunk length %d exceeds the 255-byte limit", len(*c))
+		}
+		joined += *c
+	}
+	if joined != want {
+		t.Fatalf("reassembled TXT = %d bytes, want the original %d-byte value", len(joined), len(want))
+	}
+}
+
 // TestSDKGetResolvesWithinRequestScope asserts that when the same zone name
 // exists in two resource groups, a Get resolves to the zone in the request's
 // group — not an arbitrary same-named zone in another group.

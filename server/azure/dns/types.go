@@ -62,6 +62,30 @@ type txtRecordJSON struct {
 	Value []string `json:"value,omitempty"`
 }
 
+// txtChunkSize is the maximum length of a single DNS TXT character-string.
+// Azure represents a TXT record as an array of these ≤255-byte chunks.
+const txtChunkSize = 255
+
+// chunkTXT splits a logical TXT value into ≤255-byte character-strings, as the
+// TXT wire format (and Azure's TxtRecords value array) requires. A value that
+// already fits returns a single chunk; the input side rejoins them.
+func chunkTXT(s string) []string {
+	if len(s) <= txtChunkSize {
+		return []string{s}
+	}
+
+	chunks := make([]string, 0, len(s)/txtChunkSize+1)
+	for len(s) > txtChunkSize {
+		chunks = append(chunks, s[:txtChunkSize])
+		s = s[txtChunkSize:]
+	}
+	if len(s) > 0 {
+		chunks = append(chunks, s)
+	}
+
+	return chunks
+}
+
 type nsRecordJSON struct {
 	Nsdname string `json:"nsdname,omitempty"`
 }
@@ -175,7 +199,7 @@ func toRecordSetProperties(rec *dnsdriver.RecordInfo) *recordSetProperties {
 		}
 	case "TXT":
 		for _, v := range rec.Values {
-			props.TxtRecords = append(props.TxtRecords, txtRecordJSON{Value: []string{v}})
+			props.TxtRecords = append(props.TxtRecords, txtRecordJSON{Value: chunkTXT(v)})
 		}
 	case "NS":
 		for _, v := range rec.Values {
