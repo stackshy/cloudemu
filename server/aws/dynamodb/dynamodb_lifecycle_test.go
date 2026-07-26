@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -34,6 +35,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// retryClosedNetConn marks the transient "use of closed network connection"
+// that httptest surfaces during response-body reads under parallel load as
+// retryable; every other error defers to the standard retryer's classifiers.
+type retryClosedNetConn struct{}
+
+func (retryClosedNetConn) IsErrorRetryable(err error) aws.Ternary {
+	if err != nil && strings.Contains(err.Error(), "use of closed network connection") {
+		return aws.TrueTernary
+	}
+
+	return aws.UnknownTernary
+}
 
 func newSuiteDDBEnv(t *testing.T, opts ...emuconfig.Option) (*dynamodb.Client, *awsprovider.Provider) {
 	t.Helper()
@@ -53,11 +67,16 @@ func newSuiteDDBEnv(t *testing.T, opts ...emuconfig.Option) (*dynamodb.Client, *
 
 	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)
-		o.Retryer = aws.NopRetryer{}
-		// Fresh connection per request. Retries are off (so error semantics are
-		// observed on one attempt), which means a reused keep-alive connection
-		// the httptest server has since closed would surface as a hard
-		// "use of closed network connection" under CI load instead of a retry.
+		// httptest servers under parallel CI load occasionally close the TCP
+		// connection while the SDK is still reading a (200) response body,
+		// surfacing as "use of closed network connection". Retry ONLY that
+		// transient transport error — the retryables list is replaced (not
+		// extended), so API errors and the emulator's 500s are still observed on
+		// exactly one attempt, as the negative-path assertions expect.
+		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
+			so.Retryables = []retry.IsErrorRetryable{retryClosedNetConn{}}
+		})
+		// Fresh connection per request avoids reusing a since-closed keep-alive.
 		o.HTTPClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	})
 
