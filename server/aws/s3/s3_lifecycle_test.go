@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"net/http"
 	"net/http/httptest"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -66,6 +67,10 @@ func newSuiteS3Client(t *testing.T) *s3.Client {
 		o.BaseEndpoint = aws.String(url)
 		o.UsePathStyle = true
 		o.Retryer = aws.NopRetryer{}
+		// Fresh connection per request: with retries off, a reused keep-alive
+		// connection the httptest server has closed would surface as a hard
+		// "use of closed network connection" under CI load instead of a retry.
+		o.HTTPClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	})
 }
 
