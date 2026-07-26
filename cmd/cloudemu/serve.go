@@ -139,6 +139,15 @@ func runServe(args []string) error {
 		var k8s *kubernetes.APIServer
 		if k8sBackend != nil {
 			k8s = kubernetes.NewAPIServer()
+			// Tell the data plane the address it is reachable on, so the
+			// managed-Kubernetes control planes can advertise an endpoint that
+			// actually answers. Without this BaseURL() is "", every
+			// withK8sEndpoint bails, and DescribeCluster / GetCluster hand back
+			// the Wave 1 sentinel — which a real client-go tool cannot resolve.
+			//
+			// The data-plane listener binds c.host:c.k8sPort below; this must
+			// stay in step with it.
+			k8s.SetBaseURL("http://" + net.JoinHostPort(c.host, c.k8sPort))
 		}
 		fresh := make(map[string]http.Handler, len(sel))
 		freshTargets := make(map[string]seed.Target, len(sel))
@@ -148,18 +157,25 @@ func runServe(args []string) error {
 				cloud := cloudemu.NewAWS(opts...)
 				d := awsserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
+				// Drivers.K8sAPI is only the server's PATH ROUTING for
+				// /k8s/{uid}/...; the control-plane mock keeps its own
+				// reference and needs it separately, or EKS still advertises
+				// the sentinel.
+				cloud.EKS.SetK8sAPI(k8s)
 				fresh["aws"] = wrap(awsserver.New(d), "aws", c.logReqs)
 				freshTargets["aws"] = seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2}
 			case "gcp":
 				cloud := cloudemu.NewGCP(opts...)
 				d := gcpserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
+				cloud.GKE.SetK8sAPI(k8s)
 				fresh["gcp"] = wrap(gcpserver.New(d), "gcp", c.logReqs)
 				freshTargets["gcp"] = seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE}
 			case "azure":
 				cloud := cloudemu.NewAzure(opts...)
 				d := azureserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
+				cloud.AKS.SetK8sAPI(k8s)
 				fresh["azure"] = wrap(azureserver.New(d), "azure", c.logReqs)
 				freshTargets["azure"] = seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines}
 			}
