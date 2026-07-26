@@ -250,7 +250,10 @@ func (m *Mock) GetParameter(_ context.Context, name string, _ bool) (*driver.Par
 
 	v, ok := pd.pick(selector)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "parameter %q version/label %q not found", base, selector)
+		// Parameter exists but this version/label doesn't — distinct from the
+		// parameter being absent, so the handler can return the specific
+		// ParameterVersionNotFound wire error.
+		return nil, driver.ErrVersionNotFound
 	}
 
 	p := m.toParameter(pd, v, selector)

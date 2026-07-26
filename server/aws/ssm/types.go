@@ -58,6 +58,13 @@ type getParametersByPathRequest struct {
 	Path           string `json:"Path"`
 	Recursive      bool   `json:"Recursive"`
 	WithDecryption bool   `json:"WithDecryption"`
+	MaxResults     int32  `json:"MaxResults"`
+	NextToken      string `json:"NextToken"`
+}
+
+type describeParametersRequest struct {
+	MaxResults int32  `json:"MaxResults"`
+	NextToken  string `json:"NextToken"`
 }
 
 type nameRequest struct {
@@ -92,6 +99,7 @@ type getParametersResponse struct {
 
 type getParametersByPathResponse struct {
 	Parameters []parameterJSON `json:"Parameters"`
+	NextToken  string          `json:"NextToken,omitempty"`
 }
 
 type deleteParametersResponse struct {
@@ -101,6 +109,7 @@ type deleteParametersResponse struct {
 
 type describeParametersResponse struct {
 	Parameters []parameterMetadataJSON `json:"Parameters"`
+	NextToken  string                  `json:"NextToken,omitempty"`
 }
 
 type labelParameterVersionResponse struct {
