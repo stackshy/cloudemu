@@ -3,11 +3,16 @@ package s3_test
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 // TestSDKListParts covers #266: ListParts now reports the parts buffered so
@@ -93,5 +98,39 @@ func TestSDKUploadPartNumberOutOfRange(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "InvalidArgument") {
 		t.Fatalf("error = %v, want InvalidArgument", err)
+	}
+}
+
+// TestSubResourceMethodNotAllowed covers #266: a non-GET request carrying the
+// ?uploads/?versions sub-resource must be rejected (405), not silently routed
+// to create/delete-bucket (which ignored the sub-resource).
+func TestSubResourceMethodNotAllowed(t *testing.T) {
+	cloud := cloudemu.NewAWS()
+	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{S3: cloud.S3}))
+	t.Cleanup(ts.Close)
+
+	status := func(method, path string) int {
+		req, err := http.NewRequest(method, ts.URL+path, nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("do request: %v", err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// PUT /{bucket}?uploads previously fell through to CreateBucket (200).
+	if code := status(http.MethodPut, "/b?uploads"); code != http.StatusMethodNotAllowed {
+		t.Fatalf("PUT ?uploads status = %d, want 405", code)
+	}
+	if code := status(http.MethodDelete, "/b?versions"); code != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE ?versions status = %d, want 405", code)
+	}
+	// The bucket must NOT have been created by the misrouted PUT above.
+	if code := status(http.MethodGet, "/b"); code == http.StatusOK {
+		t.Fatal("bucket 'b' exists — a ?uploads PUT was misrouted to CreateBucket")
 	}
 }

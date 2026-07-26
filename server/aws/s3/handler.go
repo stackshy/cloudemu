@@ -122,17 +122,23 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 		h.bucketVersioningOp(w, r, bucket)
 		return
 	case q.Has("uploads"):
-		// GET /{bucket}?uploads => ListMultipartUploads.
+		// GET /{bucket}?uploads => ListMultipartUploads. Any other method on the
+		// sub-resource is rejected rather than falling through to create/delete
+		// the bucket (which would ignore the ?uploads sub-resource entirely).
 		if r.Method == http.MethodGet {
 			h.listMultipartUploads(w, r, bucket)
 			return
 		}
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?uploads")
+		return
 	case q.Has("versions"):
-		// GET /{bucket}?versions => ListObjectVersions.
+		// GET /{bucket}?versions => ListObjectVersions (see note above re: fallthrough).
 		if r.Method == http.MethodGet {
 			h.listObjectVersions(w, r, bucket)
 			return
 		}
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?versions")
+		return
 	}
 
 	switch r.Method {
@@ -218,11 +224,14 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key s
 		h.objectTaggingOp(w, r, bucket, key)
 		return
 	case q.Has("uploads"):
-		// POST /{bucket}/{key}?uploads => CreateMultipartUpload.
+		// POST /{bucket}/{key}?uploads => CreateMultipartUpload. Any other method
+		// is rejected rather than falling through to a plain object PUT/GET/DELETE.
 		if r.Method == http.MethodPost {
 			h.createMultipartUpload(w, r, bucket, key)
 			return
 		}
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?uploads")
+		return
 	case q.Has("uploadId"):
 		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
 		return
