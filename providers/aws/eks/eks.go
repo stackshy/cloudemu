@@ -13,10 +13,16 @@ package eks
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -113,13 +119,62 @@ func addonKey(clusterName, addonName string) string {
 	return clusterName + "/" + addonName
 }
 
-// stubCertificate returns a placeholder base64 CA blob. Real EKS returns a
-// PEM-encoded x509 cert; SDK clients only base64-decode it for the
-// kubeconfig, so a deterministic stub is enough for Wave 1.
+// stubCertificate returns the base64 PEM CA blob DescribeCluster advertises.
+//
+// It is a REAL self-signed certificate, not a placeholder string. The previous
+// stub assumed "SDK clients only base64-decode it for the kubeconfig", which
+// holds for the raw SDK but not for anything that then builds a TLS config:
+// client-go calls AppendCertsFromPEM and fails with "unable to parse bytes as
+// PEM block" — an error raised at kubernetes.NewForConfig, far from EKS, that
+// gives no hint the CA was synthetic. Any tool deriving a kubeconfig from
+// DescribeCluster (which is the documented way to reach an EKS cluster) hits
+// this immediately.
+//
+// Generated once per process and cached: certificate generation is not free,
+// and a stable CA across calls matches real EKS, where a cluster's CA does not
+// change between DescribeCluster invocations.
 func stubCertificate() string {
-	const placeholder = "-----BEGIN CERTIFICATE-----\nMIICloudemuStubCertificate\n-----END CERTIFICATE-----\n"
+	caOnce.Do(func() {
+		caPEM = generateSelfSignedCA()
+	})
 
-	return base64.StdEncoding.EncodeToString([]byte(placeholder))
+	return caPEM
+}
+
+var (
+	caOnce sync.Once
+	caPEM  string
+)
+
+// generateSelfSignedCA builds a throwaway CA certificate and returns it
+// base64-encoded, matching the shape real EKS returns. Failure falls back to
+// an empty string rather than panicking: an empty CA makes client-go use the
+// system roots, which is a recoverable state, whereas a panic would take down
+// an emulator whose whole purpose is to keep tests running.
+func generateSelfSignedCA() string {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return ""
+	}
+
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "cloudemu-eks-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().AddDate(10, 0, 0),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return ""
+	}
+
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+
+	return base64.StdEncoding.EncodeToString(pemBytes)
 }
 
 func newUpdateID() string {
