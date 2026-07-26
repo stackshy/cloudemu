@@ -24,6 +24,8 @@ const (
 	xmlns          = "http://s3.amazonaws.com/doc/2006-03-01/"
 	// maxPutObjectSize caps PutObject bodies at 5 GiB (S3 single-PUT limit).
 	maxPutObjectSize = 5 << 30
+	// maxUploadPartNumber is S3's upper bound on multipart part numbers.
+	maxUploadPartNumber = 10000
 )
 
 // Handler serves S3 REST requests against a storage.Bucket driver.
@@ -393,8 +395,9 @@ func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, 
 
 func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	partNumber, err := strconv.Atoi(r.URL.Query().Get("partNumber"))
-	if err != nil || partNumber < 1 {
-		writeError(w, http.StatusBadRequest, "InvalidArgument", "invalid partNumber")
+	if err != nil || partNumber < 1 || partNumber > maxUploadPartNumber {
+		writeError(w, http.StatusBadRequest, "InvalidArgument",
+			"Part number must be an integer between 1 and 10000, inclusive")
 		return
 	}
 
@@ -465,36 +468,31 @@ func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, b
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// listParts lists the parts uploaded so far for a multipart upload. The driver
-// exposes uploads but not their individual parts, so this returns the upload's
-// existence with an empty part list rather than fabricating part data.
+// listParts lists the parts uploaded so far for a multipart upload, so
+// resumable-upload tooling can read back the parts it has already sent.
 func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	uploads, err := h.bucket.ListMultipartUploads(r.Context(), bucket)
+	parts, err := h.bucket.ListParts(r.Context(), bucket, key, uploadID)
 	if err != nil {
-		writeErr(w, err)
+		writeMultipartErr(w, err)
 		return
 	}
 
-	found := false
-	for _, u := range uploads {
-		if u.UploadID == uploadID {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		writeError(w, http.StatusNotFound, "NoSuchUpload", "the specified upload does not exist")
-		return
-	}
-
-	wire.WriteXML(w, http.StatusOK, listPartsResult{
+	result := listPartsResult{
 		Xmlns:       xmlns,
 		Bucket:      bucket,
 		Key:         key,
 		UploadID:    uploadID,
 		IsTruncated: false,
-	})
+	}
+	for _, p := range parts {
+		result.Parts = append(result.Parts, partXML{
+			PartNumber: p.PartNumber,
+			ETag:       fmt.Sprintf("%q", p.ETag),
+			Size:       p.Size,
+		})
+	}
+
+	wire.WriteXML(w, http.StatusOK, result)
 }
 
 func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, bucket string) {

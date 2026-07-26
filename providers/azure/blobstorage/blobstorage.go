@@ -527,6 +527,38 @@ func (m *Mock) UploadPart(
 	}, nil
 }
 
+// ListParts returns the parts buffered so far for an in-progress upload,
+// ordered by part number.
+func (m *Mock) ListParts(_ context.Context, bucket, _, uploadID string) ([]driver.UploadPart, error) {
+	ctr, ok := m.containers.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
+	}
+
+	mp, ok := ctr.multiparts.Get(uploadID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
+	}
+
+	nums := make([]int, 0, len(mp.parts))
+	for n := range mp.parts {
+		nums = append(nums, n)
+	}
+	sort.Ints(nums)
+
+	out := make([]driver.UploadPart, 0, len(nums))
+	for _, n := range nums {
+		data := mp.parts[n]
+		out = append(out, driver.UploadPart{
+			PartNumber: n,
+			ETag:       fmt.Sprintf("%x", sha256.Sum256(data)),
+			Size:       int64(len(data)),
+		})
+	}
+
+	return out, nil
+}
+
 func (m *Mock) CompleteMultipartUpload(
 	_ context.Context, bucket, key, uploadID string, parts []driver.UploadPart,
 ) error {
