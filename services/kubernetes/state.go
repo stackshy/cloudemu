@@ -114,6 +114,12 @@ func newClusterState() *ClusterState {
 // prefix by APIServer.ServeHTTP, so r.URL.Path here starts with /api/v1/...
 // or /apis/<group>/<version>/...
 func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Discovery first: /api, /apis and the group-version lists are not
+	// resource paths and parseRoute cannot represent them.
+	if s.serveDiscovery(w, r) {
+		return
+	}
+
 	route := parseRoute(r.URL.Path)
 	if route == nil {
 		writeNotFound(w, "k8s api: unrecognized path "+r.URL.Path)
