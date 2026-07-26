@@ -203,10 +203,13 @@ func (m *Mock) QueryEntities(_ context.Context, table string, opts driver.QueryO
 		return nil, err
 	}
 
+	conds, err := parseFilter(opts.Filter)
+	if err != nil {
+		return nil, err
+	}
+
 	td.mu.RLock()
 	defer td.mu.RUnlock()
-
-	conds := parseFilter(opts.Filter)
 
 	results := make([]driver.Entity, 0, len(td.entities))
 
@@ -240,30 +243,80 @@ type eqCond struct {
 	val  string
 }
 
-// parseFilter extracts the equality conditions from a simple OData $filter of
-// the form "Prop eq 'val' and Prop2 eq 'val2'". Anything it can't parse is
-// dropped, so an unsupported filter degrades to "match all" rather than an
-// error — adequate for the common query-by-partition case.
-func parseFilter(filter string) []eqCond {
+// errUnsupportedFilter marks an OData $filter cloudemu can't evaluate. Rather
+// than silently matching everything (a data-correctness hazard — a client that
+// asked for a subset would get the whole table), QueryEntities surfaces it so
+// the handler returns 400 InvalidInput.
+var errUnsupportedFilter = errors.New(errors.InvalidArgument,
+	"unsupported $filter: only \"Prop eq 'value'\" clauses joined by \"and\" are supported")
+
+// parseFilter extracts equality conditions from an OData $filter of the form
+// "Prop eq 'val' and Prop2 eq 'val2'". Only eq clauses joined by "and" are
+// supported; any other operator (ne/gt/ge/lt/le/or, grouping, functions) —
+// or a value literal containing " and "/" or " — returns errUnsupportedFilter
+// rather than degrading to match-all.
+func parseFilter(filter string) ([]eqCond, error) {
 	filter = strings.TrimSpace(filter)
 	if filter == "" {
-		return nil
+		return nil, nil
+	}
+
+	if hasUnsupportedFilterToken(filter) {
+		return nil, errUnsupportedFilter
 	}
 
 	var conds []eqCond
 
 	for _, clause := range strings.Split(filter, " and ") {
-		fields := strings.Fields(strings.TrimSpace(clause))
-
-		const eqParts = 3
-		if len(fields) != eqParts || !strings.EqualFold(fields[1], "eq") {
-			continue
+		prop, val, ok := parseEqClause(clause)
+		if !ok {
+			return nil, errUnsupportedFilter
 		}
 
-		conds = append(conds, eqCond{prop: fields[0], val: unquote(fields[2])})
+		conds = append(conds, eqCond{prop: prop, val: val})
 	}
 
-	return conds
+	return conds, nil
+}
+
+// hasUnsupportedFilterToken reports whether the filter uses an operator or
+// construct beyond eq/and. Tokens are matched space-delimited so they don't
+// trip on substrings inside identifiers or quoted values (e.g. "coordinator").
+func hasUnsupportedFilterToken(filter string) bool {
+	padded := " " + strings.ToLower(filter) + " "
+	for _, tok := range []string{" or ", " ne ", " gt ", " ge ", " lt ", " le ", " not ", " and and "} {
+		if strings.Contains(padded, tok) {
+			return true
+		}
+	}
+
+	return strings.ContainsAny(filter, "()")
+}
+
+// parseEqClause parses one "Prop eq 'value'" clause. The value may be a quoted
+// string literal or a bare token; a leftover quote or extra tokens (the sign of
+// a value we couldn't parse cleanly) make it unsupported.
+func parseEqClause(clause string) (prop, val string, ok bool) {
+	const eqParts = 3
+
+	fields := strings.SplitN(strings.TrimSpace(clause), " ", eqParts)
+	if len(fields) != eqParts || !strings.EqualFold(fields[1], "eq") {
+		return "", "", false
+	}
+
+	prop = fields[0]
+	if strings.ContainsAny(prop, "'()") {
+		return "", "", false
+	}
+
+	raw := strings.TrimSpace(fields[2])
+	// A quoted literal must be well-formed: a lone or unbalanced quote means we
+	// split through a value (e.g. it contained " and ") — reject it.
+	if strings.HasPrefix(raw, "'") && !(len(raw) >= 2 && strings.HasSuffix(raw, "'")) {
+		return "", "", false
+	}
+
+	return prop, unquote(raw), true
 }
 
 func matchesConds(ent driver.Entity, conds []eqCond) bool {
