@@ -49,6 +49,7 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 			"apiVersion": "v1",
 			"groups": []map[string]any{
 				apiGroup("apps", "v1"),
+				apiGroup("policy", "v1"),
 			},
 		})
 
@@ -61,6 +62,38 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 
 	case "/apis/apps/v1":
 		writeJSON(w, http.StatusOK, apiResourceList("apps", "apps/v1", appsResources()))
+
+		return true
+
+	case "/apis/policy/v1":
+		writeJSON(w, http.StatusOK, apiResourceList("policy", "policy/v1", policyResources()))
+
+		return true
+
+	// helm validates rendered manifests against the server's OpenAPI schema
+	// unless the caller passes --disable-openapi-validation. Without this
+	// endpoint `helm install` fails at "failed to download openapi: the server
+	// could not find the requested resource" — after successfully rendering
+	// the chart, which makes it look like a chart problem rather than a
+	// missing server capability.
+	//
+	// The document is intentionally MINIMAL: a valid Swagger 2.0 envelope with
+	// no definitions. helm's validator skips kinds it finds no schema for, so
+	// an empty definitions map means "nothing to contradict" rather than
+	// "everything is invalid". Publishing hand-written partial schemas would be
+	// worse — a subtly wrong schema rejects valid manifests, and the emulator
+	// would be asserting API shapes it does not actually enforce.
+	case "/openapi/v2":
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(w, http.StatusOK, map[string]any{
+			"swagger": "2.0",
+			"info": map[string]any{
+				"title":   "cloudemu-kubernetes",
+				"version": "v1.29.0-cloudemu",
+			},
+			"paths":       map[string]any{},
+			"definitions": map[string]any{},
+		})
 
 		return true
 
@@ -144,6 +177,12 @@ func coreResources() []apiResource {
 		{"secrets", "secret", "Secret", true, rwVerbs(), nil},
 		{"serviceaccounts", "serviceaccount", "ServiceAccount", true, rwVerbs(), []string{"sa"}},
 		{"services", "service", "Service", true, rwVerbs(), []string{"svc"}},
+	}
+}
+
+func policyResources() []apiResource {
+	return []apiResource{
+		{"poddisruptionbudgets", "poddisruptionbudget", "PodDisruptionBudget", true, rwVerbs(), []string{"pdb"}},
 	}
 }
 

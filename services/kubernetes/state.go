@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	appsv1 "k8s.io/api/apps/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -40,6 +41,8 @@ type ClusterState struct {
 
 	// deployments lives under apps/v1 — keyed by "<namespace>/<name>".
 	deployments map[string]*appsv1.Deployment
+	// pdbs lives under policy/v1 — keyed by "<namespace>/<name>".
+	pdbs map[string]*policyv1.PodDisruptionBudget
 
 	// endpoints — keyed by "<namespace>/<name>". Real apiserver populates
 	// Subsets[].Addresses from Pods that match the Service selector via the
@@ -85,6 +88,7 @@ func newClusterState() *ClusterState {
 		serviceAccounts:  make(map[string]*corev1.ServiceAccount),
 		services:         make(map[string]*corev1.Service),
 		deployments:      make(map[string]*appsv1.Deployment),
+		pdbs:             make(map[string]*policyv1.PodDisruptionBudget),
 		endpoints:        make(map[string]*corev1.Endpoints),
 		nextClusterIP:    firstClusterIPOffset,
 		wNamespaces:      newBroadcaster(),
@@ -142,6 +146,8 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveServices(w, r, route)
 	case "deployments":
 		s.serveDeployments(w, r, route)
+	case "poddisruptionbudgets":
+		s.servePDBs(w, r, route)
 	case "endpoints":
 		s.serveEndpoints(w, r, route)
 	default:
