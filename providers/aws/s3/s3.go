@@ -28,7 +28,10 @@ const (
 	hoursPerDay            = 24
 )
 
-var _ driver.Bucket = (*Mock)(nil)
+var (
+	_ driver.Bucket          = (*Mock)(nil)
+	_ driver.VersionedBucket = (*Mock)(nil)
+)
 
 type s3Object struct {
 	Key          string
@@ -38,6 +41,21 @@ type s3Object struct {
 	LastModified string
 	Metadata     map[string]string
 	Tags         map[string]string
+	// VersionID is the version id of the current object on a versioned bucket
+	// ("null" when suspended, empty when the bucket never had versioning).
+	VersionID string
+}
+
+// s3Version is one entry in a key's version history (a stored object or a
+// delete marker), oldest-first within bucketMeta.versions.
+type s3Version struct {
+	versionID    string
+	data         []byte
+	contentType  string
+	etag         string
+	lastModified string
+	metadata     map[string]string
+	deleteMarker bool
 }
 
 type multipartUpload struct {
@@ -58,11 +76,16 @@ type bucketMeta struct {
 	objects    *memstore.Store[*s3Object]
 	lifecycle  *driver.LifecycleConfig
 	multiparts *memstore.Store[*multipartUpload]
-	versioning bool
-	policy     *driver.BucketPolicy
-	corsConfig *driver.CORSConfig
-	encryption *driver.EncryptionConfig
-	tags       map[string]string
+	// versionStatus is "" (never configured), "Enabled", or "Suspended".
+	// versionsMu guards versionStatus and the versions history map; versions
+	// maps a key to its ordered (oldest-first) version chain.
+	versionStatus string
+	versionsMu    sync.Mutex
+	versions      map[string][]*s3Version
+	policy        *driver.BucketPolicy
+	corsConfig    *driver.CORSConfig
+	encryption    *driver.EncryptionConfig
+	tags          map[string]string
 }
 
 // Mock is an in-memory mock implementation of the AWS S3 service.
@@ -161,7 +184,7 @@ func (m *Mock) PutObject(_ context.Context, bucket, key string, data []byte, con
 
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
-	bkt.objects.Set(key, &s3Object{
+	m.storeObject(bkt, key, &s3Object{
 		Key:          key,
 		Data:         dataCopy,
 		ContentType:  contentType,
@@ -176,6 +199,69 @@ func (m *Mock) PutObject(_ context.Context, bucket, key string, data []byte, con
 	m.emitMetric("BytesUploaded", float64(len(data)), "Bytes", dims)
 
 	return nil
+}
+
+// Versioning status constants and the reserved id for the pre-/non-versioned
+// object version.
+const (
+	versioningEnabled   = "Enabled"
+	versioningSuspended = "Suspended"
+	nullVersionID       = "null"
+)
+
+func newVersionID() string { return idgen.GenerateID("") }
+
+// storeObject sets key's current object and, on a versioned bucket, records the
+// new version in history (stamping obj.VersionID). Enabled appends a fresh
+// version; Suspended overwrites the reusable "null" version; an unversioned
+// bucket keeps no history.
+func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) {
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	switch bkt.versionStatus {
+	case versioningEnabled:
+		obj.VersionID = newVersionID()
+		bkt.appendVersion(key, versionFromObject(obj))
+	case versioningSuspended:
+		obj.VersionID = nullVersionID
+		bkt.replaceNullVersion(key, versionFromObject(obj))
+	}
+
+	bkt.objects.Set(key, obj)
+}
+
+func versionFromObject(obj *s3Object) *s3Version {
+	return &s3Version{
+		versionID:    obj.VersionID,
+		data:         obj.Data,
+		contentType:  obj.ContentType,
+		etag:         obj.ETag,
+		lastModified: obj.LastModified,
+		metadata:     obj.Metadata,
+	}
+}
+
+// appendVersion / replaceNullVersion mutate the history map; callers hold
+// versionsMu.
+func (b *bucketMeta) appendVersion(key string, v *s3Version) {
+	if b.versions == nil {
+		b.versions = make(map[string][]*s3Version)
+	}
+	b.versions[key] = append(b.versions[key], v)
+}
+
+func (b *bucketMeta) replaceNullVersion(key string, v *s3Version) {
+	if b.versions == nil {
+		b.versions = make(map[string][]*s3Version)
+	}
+	kept := make([]*s3Version, 0, len(b.versions[key])+1)
+	for _, ex := range b.versions[key] {
+		if ex.versionID != nullVersionID {
+			kept = append(kept, ex)
+		}
+	}
+	b.versions[key] = append(kept, v)
 }
 
 func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object, error) {
@@ -201,6 +287,7 @@ func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object,
 		Info: driver.ObjectInfo{
 			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
+			VersionID: obj.VersionID,
 		},
 		Data: dataCopy,
 	}, nil
@@ -212,17 +299,50 @@ func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	if !bkt.objects.Has(key) {
+	bkt.versionsMu.Lock()
+	_, _, existed := m.deleteTopLevelLocked(bkt, key)
+	bkt.versionsMu.Unlock()
+
+	// On an unversioned bucket, deleting a missing key is NotFound (the wire
+	// handler maps that to an idempotent 204). A versioned bucket always records
+	// a delete marker, so existed is true there.
+	if !existed {
 		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
-
-	bkt.objects.Delete(key)
 
 	dims := map[string]string{"BucketName": bucket}
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("DeleteRequests", 1, "Count", dims)
 
 	return nil
+}
+
+// deleteTopLevelLocked applies a top-level (no versionId) delete. On Enabled it
+// appends a delete marker; on Suspended it overwrites the null version with a
+// null delete marker; unversioned removes the current object. Returns the
+// affected version id, whether a delete marker was created, and whether
+// anything existed to delete (always true when a marker is recorded). Callers
+// hold versionsMu.
+func (m *Mock) deleteTopLevelLocked(bkt *bucketMeta, key string) (versionID string, deleteMarker, existed bool) {
+	now := m.opts.Clock.Now().UTC().Format(s3TimeFormat)
+
+	switch bkt.versionStatus {
+	case versioningEnabled:
+		vid := newVersionID()
+		bkt.appendVersion(key, &s3Version{versionID: vid, deleteMarker: true, lastModified: now})
+		bkt.objects.Delete(key)
+		return vid, true, true
+	case versioningSuspended:
+		bkt.replaceNullVersion(key, &s3Version{versionID: nullVersionID, deleteMarker: true, lastModified: now})
+		bkt.objects.Delete(key)
+		return nullVersionID, true, true
+	default:
+		if !bkt.objects.Has(key) {
+			return "", false, false
+		}
+		bkt.objects.Delete(key)
+		return "", false, true
+	}
 }
 
 func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.ObjectInfo, error) {
@@ -239,6 +359,7 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	return &driver.ObjectInfo{
 		Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
+		VersionID: obj.VersionID,
 	}, nil
 }
 
@@ -340,7 +461,7 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 		meta[k] = v
 	}
 
-	dstBkt.objects.Set(dstKey, &s3Object{
+	m.storeObject(dstBkt, dstKey, &s3Object{
 		Key: dstKey, Data: dataCopy, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata: meta,
@@ -649,26 +770,272 @@ func (m *Mock) ListMultipartUploads(_ context.Context, bucket string) ([]driver.
 	return result, nil
 }
 
-// SetBucketVersioning enables or disables versioning on a bucket.
-// Note: this sets the flag but does not maintain object version history — mock limitation.
+// SetBucketVersioning enables (Enabled) or, when disabled, suspends versioning.
+// Real S3 has no "off" once configured, only Suspended. Prefer
+// SetVersioningStatus for the full tri-state.
 func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled bool) error {
+	status := versioningSuspended
+	if enabled {
+		status = versioningEnabled
+	}
+
+	return m.SetVersioningStatus(context.Background(), bucket, status)
+}
+
+func (m *Mock) GetBucketVersioning(_ context.Context, bucket string) (bool, error) {
+	status, err := m.VersioningStatus(context.Background(), bucket)
+	if err != nil {
+		return false, err
+	}
+
+	return status == versioningEnabled, nil
+}
+
+// SetVersioningStatus sets the bucket versioning status ("Enabled" or
+// "Suspended"), retaining any existing version history.
+func (m *Mock) SetVersioningStatus(_ context.Context, bucket, status string) error {
+	if status != versioningEnabled && status != versioningSuspended {
+		return cerrors.Newf(cerrors.InvalidArgument, "invalid versioning status %q", status)
+	}
+
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	bkt.versioning = enabled
+	bkt.versionsMu.Lock()
+	bkt.versionStatus = status
+	bkt.versionsMu.Unlock()
 
 	return nil
 }
 
-func (m *Mock) GetBucketVersioning(_ context.Context, bucket string) (bool, error) {
+// VersioningStatus returns "Enabled", "Suspended", or "" (never configured).
+func (m *Mock) VersioningStatus(_ context.Context, bucket string) (string, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
-		return false, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+		return "", cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	return bkt.versioning, nil
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	return bkt.versionStatus, nil
+}
+
+// GetObjectVersion returns a specific version (versionID != "") or the current
+// object (versionID == ""). A delete-marker version is reported as NotFound.
+func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID string) (*driver.Object, error) {
+	if versionID == "" {
+		return m.GetObject(ctx, bucket, key)
+	}
+
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	v := findVersion(bkt, key, versionID)
+	bkt.versionsMu.Unlock()
+
+	if v == nil || v.deleteMarker {
+		return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+	}
+
+	dataCopy := make([]byte, len(v.data))
+	copy(dataCopy, v.data)
+
+	return &driver.Object{Info: infoFromVersion(key, v), Data: dataCopy}, nil
+}
+
+// HeadObjectVersion returns metadata for a specific version.
+func (m *Mock) HeadObjectVersion(ctx context.Context, bucket, key, versionID string) (*driver.ObjectInfo, error) {
+	if versionID == "" {
+		return m.HeadObject(ctx, bucket, key)
+	}
+
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	v := findVersion(bkt, key, versionID)
+	bkt.versionsMu.Unlock()
+
+	if v == nil || v.deleteMarker {
+		return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+	}
+
+	info := infoFromVersion(key, v)
+
+	return &info, nil
+}
+
+// DeleteObjectVersion removes a specific version, or (versionID == "") performs
+// a top-level delete (delete marker on Enabled). Returns the affected version
+// id and whether it was/created a delete marker.
+func (m *Mock) DeleteObjectVersion(_ context.Context, bucket, key, versionID string) (string, bool, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return "", false, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	if versionID == "" {
+		vid, marker, _ := m.deleteTopLevelLocked(bkt, key)
+		return vid, marker, nil
+	}
+
+	chain := bkt.versions[key]
+	idx := -1
+
+	var removed *s3Version
+
+	for i, v := range chain {
+		if v.versionID == versionID {
+			idx, removed = i, v
+			break
+		}
+	}
+
+	if idx < 0 {
+		return "", false, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+	}
+
+	bkt.versions[key] = append(chain[:idx], chain[idx+1:]...)
+	if len(bkt.versions[key]) == 0 {
+		delete(bkt.versions, key)
+	}
+
+	m.recomputeCurrentLocked(bkt, key)
+
+	return versionID, removed.deleteMarker, nil
+}
+
+// ListObjectVersions returns the full version history matching opts, newest
+// version first within each key.
+func (m *Mock) ListObjectVersions(_ context.Context, bucket string, opts driver.ListOptions) (*driver.VersionListResult, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	// Union of keys with history and keys present only as current objects
+	// (written before versioning was enabled → reported as the "null" version).
+	keySet := make(map[string]struct{})
+	for k := range bkt.versions {
+		keySet[k] = struct{}{}
+	}
+
+	for _, k := range bkt.objects.Keys() {
+		keySet[k] = struct{}{}
+	}
+
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	result := &driver.VersionListResult{}
+	prefixSet := make(map[string]struct{})
+
+	for _, k := range keys {
+		if opts.Prefix != "" && !strings.HasPrefix(k, opts.Prefix) {
+			continue
+		}
+
+		if opts.Delimiter != "" {
+			rest := k[len(opts.Prefix):]
+			if idx := strings.Index(rest, opts.Delimiter); idx >= 0 {
+				prefixSet[opts.Prefix+rest[:idx+len(opts.Delimiter)]] = struct{}{}
+				continue
+			}
+		}
+
+		chain := bkt.versions[k]
+		if len(chain) == 0 {
+			if obj, has := bkt.objects.Get(k); has {
+				result.Versions = append(result.Versions, driver.ObjectVersion{
+					Key: k, VersionID: nullVersionID, IsLatest: true,
+					Size: int64(len(obj.Data)), ETag: obj.ETag,
+					ContentType: obj.ContentType, LastModified: obj.LastModified,
+				})
+			}
+
+			continue
+		}
+
+		for i := len(chain) - 1; i >= 0; i-- {
+			v := chain[i]
+			result.Versions = append(result.Versions, driver.ObjectVersion{
+				Key: k, VersionID: v.versionID, IsLatest: i == len(chain)-1,
+				DeleteMarker: v.deleteMarker, Size: int64(len(v.data)), ETag: v.etag,
+				ContentType: v.contentType, LastModified: v.lastModified,
+			})
+		}
+	}
+
+	for p := range prefixSet {
+		result.CommonPrefixes = append(result.CommonPrefixes, p)
+	}
+
+	sort.Strings(result.CommonPrefixes)
+
+	return result, nil
+}
+
+// recomputeCurrentLocked resets key's current object to its newest non-delete
+// version, or removes it if the newest is a delete marker (or none remain).
+// Callers hold versionsMu.
+func (m *Mock) recomputeCurrentLocked(bkt *bucketMeta, key string) {
+	chain := bkt.versions[key]
+	if len(chain) == 0 {
+		bkt.objects.Delete(key)
+		return
+	}
+
+	latest := chain[len(chain)-1]
+	if latest.deleteMarker {
+		bkt.objects.Delete(key)
+		return
+	}
+
+	bkt.objects.Set(key, objectFromVersion(key, latest))
+}
+
+func findVersion(bkt *bucketMeta, key, versionID string) *s3Version {
+	for _, v := range bkt.versions[key] {
+		if v.versionID == versionID {
+			return v
+		}
+	}
+
+	return nil
+}
+
+func objectFromVersion(key string, v *s3Version) *s3Object {
+	return &s3Object{
+		Key: key, Data: v.data, ContentType: v.contentType,
+		ETag: v.etag, LastModified: v.lastModified, Metadata: v.metadata,
+		VersionID: v.versionID,
+	}
+}
+
+func infoFromVersion(key string, v *s3Version) driver.ObjectInfo {
+	return driver.ObjectInfo{
+		Key: key, Size: int64(len(v.data)), ContentType: v.contentType,
+		ETag: v.etag, LastModified: v.lastModified, Metadata: maps.Clone(v.metadata),
+		VersionID: v.versionID, DeleteMarker: v.deleteMarker,
+	}
 }
 
 // PutBucketPolicy sets the bucket policy.

@@ -31,11 +31,19 @@ const (
 // Handler serves S3 REST requests against a storage.Bucket driver.
 type Handler struct {
 	bucket driver.Bucket
+	// versioned is set when the driver retains per-object version history; the
+	// handler then honors versioning status, ?versionId, and ListObjectVersions.
+	versioned driver.VersionedBucket
 }
 
 // New returns an S3 handler backed by b.
 func New(b driver.Bucket) *Handler {
-	return &Handler{bucket: b}
+	h := &Handler{bucket: b}
+	if vb, ok := b.(driver.VersionedBucket); ok {
+		h.versioned = vb
+	}
+
+	return h
 }
 
 // Matches returns true for requests that look like S3 REST calls: no
@@ -282,15 +290,29 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// computing it from the body we just stored — a successful PUT must
 	// never answer 404.
 	etag := fmt.Sprintf("%x", sha256.Sum256(data))
+
+	var versionID string
 	if info, err := h.bucket.HeadObject(r.Context(), bucket, key); err == nil {
 		etag = info.ETag
+		versionID = info.VersionID
 	}
 	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
+	if versionID != "" {
+		w.Header().Set("x-amz-version-id", versionID)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	obj, err := h.bucket.GetObject(r.Context(), bucket, key)
+	var (
+		obj *driver.Object
+		err error
+	)
+	if versionID := r.URL.Query().Get("versionId"); versionID != "" && h.versioned != nil {
+		obj, err = h.versioned.GetObjectVersion(r.Context(), bucket, key, versionID)
+	} else {
+		obj, err = h.bucket.GetObject(r.Context(), bucket, key)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -302,7 +324,15 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 }
 
 func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	info, err := h.bucket.HeadObject(r.Context(), bucket, key)
+	var (
+		info *driver.ObjectInfo
+		err  error
+	)
+	if versionID := r.URL.Query().Get("versionId"); versionID != "" && h.versioned != nil {
+		info, err = h.versioned.HeadObjectVersion(r.Context(), bucket, key, versionID)
+	} else {
+		info, err = h.bucket.HeadObject(r.Context(), bucket, key)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -318,12 +348,40 @@ func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int
 	w.Header().Set("Last-Modified", wire.ToHTTPDate(info.LastModified))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 
+	if info.VersionID != "" {
+		w.Header().Set("x-amz-version-id", info.VersionID)
+	}
+
+	if info.DeleteMarker {
+		w.Header().Set("x-amz-delete-marker", "true")
+	}
+
 	for k, v := range info.Metadata {
 		w.Header().Set("X-Amz-Meta-"+k, v)
 	}
 }
 
 func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	versionID := r.URL.Query().Get("versionId")
+
+	if h.versioned != nil {
+		// Versioned driver: a top-level delete (no versionId) appends a delete
+		// marker on an Enabled bucket; ?versionId permanently removes a version.
+		vid, marker, err := h.versioned.DeleteObjectVersion(r.Context(), bucket, key, versionID)
+		if err != nil && (!cerrors.IsNotFound(err) || bucketMissing(err)) {
+			writeErr(w, err)
+			return
+		}
+		if vid != "" {
+			w.Header().Set("x-amz-version-id", vid)
+		}
+		if marker {
+			w.Header().Set("x-amz-delete-marker", "true")
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	err := h.bucket.DeleteObject(r.Context(), bucket, key)
 	// Real S3 DeleteObject is idempotent: deleting a missing KEY succeeds
 	// with 204. A missing BUCKET is still NoSuchBucket.
@@ -607,9 +665,19 @@ func (h *Handler) putBucketVersioning(w http.ResponseWriter, r *http.Request, bu
 		return
 	}
 
-	enabled := body.Status == "Enabled"
+	if body.Status != "Enabled" && body.Status != "Suspended" {
+		writeError(w, http.StatusBadRequest, "IllegalVersioningConfigurationException",
+			"the versioning status must be Enabled or Suspended")
+		return
+	}
 
-	if err := h.bucket.SetBucketVersioning(r.Context(), bucket, enabled); err != nil {
+	var err error
+	if h.versioned != nil {
+		err = h.versioned.SetVersioningStatus(r.Context(), bucket, body.Status)
+	} else {
+		err = h.bucket.SetBucketVersioning(r.Context(), bucket, body.Status == "Enabled")
+	}
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -618,37 +686,38 @@ func (h *Handler) putBucketVersioning(w http.ResponseWriter, r *http.Request, bu
 }
 
 func (h *Handler) getBucketVersioning(w http.ResponseWriter, r *http.Request, bucket string) {
-	enabled, err := h.bucket.GetBucketVersioning(r.Context(), bucket)
-	if err != nil {
-		writeErr(w, err)
-		return
+	// Status is "Enabled", "Suspended", or "" (never configured → empty
+	// <VersioningConfiguration/>, matching real S3).
+	var status string
+
+	if h.versioned != nil {
+		s, err := h.versioned.VersioningStatus(r.Context(), bucket)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		status = s
+	} else {
+		enabled, err := h.bucket.GetBucketVersioning(r.Context(), bucket)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if enabled {
+			status = "Enabled"
+		}
 	}
 
-	// The driver tracks versioning as a boolean only. Enabled reports "Enabled";
-	// a disabled bucket returns an empty <VersioningConfiguration/> (matching a
-	// never-versioned bucket) since "Suspended" vs. never-set isn't tracked.
-	resp := versioningConfiguration{Xmlns: xmlns}
-	if enabled {
-		resp.Status = "Enabled"
-	}
-
-	wire.WriteXML(w, http.StatusOK, resp)
+	wire.WriteXML(w, http.StatusOK, versioningConfiguration{Xmlns: xmlns, Status: status})
 }
 
-// listObjectVersions handles GET /{bucket}?versions. The storage driver tracks
-// bucket-level versioning as a boolean flag only and does NOT retain per-object
-// version history, so no versionId-addressable versions exist. We return the
-// current objects as the sole (null) version rather than fabricating history.
+// listObjectVersions handles GET /{bucket}?versions. When the driver retains
+// version history it returns the full history (versions + delete markers);
+// otherwise it falls back to listing current objects as the sole "null" version.
 func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, bucket string) {
 	opts := driver.ListOptions{
 		Prefix:    r.URL.Query().Get("prefix"),
 		Delimiter: r.URL.Query().Get("delimiter"),
-	}
-
-	result, err := h.bucket.ListObjects(r.Context(), bucket, opts)
-	if err != nil {
-		writeErr(w, err)
-		return
 	}
 
 	resp := listVersionsResult{
@@ -659,15 +728,47 @@ func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, buc
 		MaxKeys:   defaultMaxKeys,
 	}
 
+	if h.versioned != nil {
+		result, err := h.versioned.ListObjectVersions(r.Context(), bucket, opts)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		for _, v := range result.Versions {
+			if v.DeleteMarker {
+				resp.DeleteMarkers = append(resp.DeleteMarkers, deleteMarkerXML{
+					Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
+				})
+				continue
+			}
+
+			resp.Versions = append(resp.Versions, objectVersionXML{
+				Key: v.Key, VersionID: v.VersionID, IsLatest: v.IsLatest, LastModified: v.LastModified,
+				ETag: fmt.Sprintf("%q", v.ETag), Size: v.Size, StorageClass: "STANDARD",
+			})
+		}
+
+		for _, p := range result.CommonPrefixes {
+			resp.CommonPrefixes = append(resp.CommonPrefixes, prefixXML{Prefix: p})
+		}
+
+		wire.WriteXML(w, http.StatusOK, resp)
+
+		return
+	}
+
+	// Fallback: no version history — list current objects as the "null" version.
+	result, err := h.bucket.ListObjects(r.Context(), bucket, opts)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	for _, obj := range result.Objects {
 		resp.Versions = append(resp.Versions, objectVersionXML{
-			Key:          obj.Key,
-			VersionID:    "null",
-			IsLatest:     true,
-			LastModified: obj.LastModified,
-			ETag:         fmt.Sprintf("%q", obj.ETag),
-			Size:         obj.Size,
-			StorageClass: "STANDARD",
+			Key: obj.Key, VersionID: "null", IsLatest: true, LastModified: obj.LastModified,
+			ETag: fmt.Sprintf("%q", obj.ETag), Size: obj.Size, StorageClass: "STANDARD",
 		})
 	}
 
