@@ -696,7 +696,9 @@ func (m *Mock) CompleteMultipartUpload(_ context.Context, bucket, key, uploadID 
 	data := assemblePartsInOrder(mp.parts, parts)
 	mp.mu.Unlock()
 
-	bkt.objects.Set(key, &s3Object{
+	// storeObject (not a bare objects.Set) so a completed multipart upload is
+	// versioned like a PutObject on a versioning-enabled bucket.
+	m.storeObject(bkt, key, &s3Object{
 		Key:          key,
 		Data:         data,
 		ContentType:  mp.contentType,
@@ -1025,7 +1027,7 @@ func findVersion(bkt *bucketMeta, key, versionID string) *s3Version {
 func objectFromVersion(key string, v *s3Version) *s3Object {
 	return &s3Object{
 		Key: key, Data: v.data, ContentType: v.contentType,
-		ETag: v.etag, LastModified: v.lastModified, Metadata: v.metadata,
+		ETag: v.etag, LastModified: v.lastModified, Metadata: maps.Clone(v.metadata),
 		VersionID: v.versionID,
 	}
 }
