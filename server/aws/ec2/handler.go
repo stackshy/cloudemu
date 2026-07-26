@@ -428,6 +428,12 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 		h.associateRouteTable(w, r)
 	case "DisassociateRouteTable":
 		h.disassociateRouteTable(w, r)
+	case "DescribeNetworkInterfaces":
+		h.describeNetworkInterfaces(w, r)
+	case "DetachNetworkInterface":
+		h.detachNetworkInterface(w, r)
+	case "DeleteNetworkInterface":
+		h.deleteNetworkInterface(w, r)
 	default:
 		return false
 	}

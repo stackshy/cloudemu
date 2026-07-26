@@ -61,6 +61,7 @@ type Mock struct {
 	igws           *memstore.Store[*igwData]
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
+	enis           *memstore.Store[*eniData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
 	opts           *config.Options
 }
@@ -79,6 +80,7 @@ func New(opts *config.Options) *Mock {
 		igws:           memstore.New[*igwData](),
 		eips:           memstore.New[*eipData](),
 		rtAssocs:       memstore.New[*rtAssocData](),
+		enis:           memstore.New[*eniData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
 		opts:           opts,
 	}

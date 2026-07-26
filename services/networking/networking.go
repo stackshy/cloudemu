@@ -602,6 +602,41 @@ func (n *Networking) DisassociateRouteTable(
 	return err
 }
 
+// DescribeNetworkInterfaces returns network interfaces matching the given IDs,
+// or all of them when no IDs are supplied.
+func (n *Networking) DescribeNetworkInterfaces(
+	ctx context.Context, ids []string,
+) ([]driver.NetworkInterface, error) {
+	out, err := n.do(ctx, "DescribeNetworkInterfaces", ids, func() (any, error) {
+		return n.driver.DescribeNetworkInterfaces(ctx, ids)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.NetworkInterface), nil
+}
+
+// DetachNetworkInterface detaches a network interface from its attachment.
+func (n *Networking) DetachNetworkInterface(
+	ctx context.Context, attachmentID string, force bool,
+) error {
+	_, err := n.do(ctx, "DetachNetworkInterface", attachmentID, func() (any, error) {
+		return nil, n.driver.DetachNetworkInterface(ctx, attachmentID, force)
+	})
+
+	return err
+}
+
+// DeleteNetworkInterface deletes a network interface.
+func (n *Networking) DeleteNetworkInterface(ctx context.Context, id string) error {
+	_, err := n.do(ctx, "DeleteNetworkInterface", id, func() (any, error) {
+		return nil, n.driver.DeleteNetworkInterface(ctx, id)
+	})
+
+	return err
+}
+
 // CreateVPCEndpoint creates a VPC endpoint.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.

@@ -30,6 +30,7 @@ type mockDriver struct {
 	igws           map[string]*driver.InternetGateway
 	eips           map[string]*driver.ElasticIP
 	rtAssocs       map[string]*driver.RouteTableAssociation
+	enis           map[string]*driver.NetworkInterface
 	endpoints      map[string]*driver.VPCEndpoint
 	seq            int
 }
@@ -47,6 +48,7 @@ func newMockDriver() *mockDriver {
 		igws:           make(map[string]*driver.InternetGateway),
 		eips:           make(map[string]*driver.ElasticIP),
 		rtAssocs:       make(map[string]*driver.RouteTableAssociation),
+		enis:           make(map[string]*driver.NetworkInterface),
 		endpoints:      make(map[string]*driver.VPCEndpoint),
 	}
 }
@@ -637,6 +639,57 @@ func (m *mockDriver) DisassociateAddress(
 	}
 
 	return fmt.Errorf("not found")
+}
+
+func (m *mockDriver) DescribeNetworkInterfaces(
+	_ context.Context, ids []string,
+) ([]driver.NetworkInterface, error) {
+	out := make([]driver.NetworkInterface, 0, len(m.enis))
+
+	for id, eni := range m.enis {
+		if len(ids) > 0 && !containsID(ids, id) {
+			continue
+		}
+
+		out = append(out, *eni)
+	}
+
+	return out, nil
+}
+
+func (m *mockDriver) DetachNetworkInterface(
+	_ context.Context, attachmentID string, _ bool,
+) error {
+	for _, eni := range m.enis {
+		if eni.AttachmentID == attachmentID {
+			eni.AttachmentID = ""
+			eni.Status = "available"
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("not found")
+}
+
+func (m *mockDriver) DeleteNetworkInterface(_ context.Context, id string) error {
+	if _, ok := m.enis[id]; !ok {
+		return fmt.Errorf("not found")
+	}
+
+	delete(m.enis, id)
+
+	return nil
+}
+
+func containsID(ids []string, want string) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *mockDriver) AssociateRouteTable(

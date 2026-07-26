@@ -215,6 +215,22 @@ type RouteTableAssociation struct {
 	Main bool
 }
 
+// NetworkInterface represents an elastic network interface.
+//
+// Managed services (NAT gateways, load balancers, managed databases) attach
+// interfaces of their own, and those interfaces outlive the parent resource
+// briefly. A caller deleting a VPC has to drain them first or the delete is
+// refused, so they have to be observable.
+type NetworkInterface struct {
+	ID           string
+	VPCID        string
+	SubnetID     string
+	Status       string // "available", "in-use"
+	AttachmentID string
+	Description  string
+	Tags         map[string]string
+}
+
 // VPCEndpointConfig describes a VPC endpoint to create.
 type VPCEndpointConfig struct {
 	VPCID            string
@@ -309,6 +325,11 @@ type Networking interface {
 	// Route Table Associations
 	AssociateRouteTable(ctx context.Context, routeTableID, subnetID string) (*RouteTableAssociation, error)
 	DisassociateRouteTable(ctx context.Context, associationID string) error
+
+	// Network Interfaces
+	DescribeNetworkInterfaces(ctx context.Context, ids []string) ([]NetworkInterface, error)
+	DetachNetworkInterface(ctx context.Context, attachmentID string, force bool) error
+	DeleteNetworkInterface(ctx context.Context, id string) error
 
 	// VPC Endpoints
 	CreateVPCEndpoint(ctx context.Context, config VPCEndpointConfig) (*VPCEndpoint, error)
