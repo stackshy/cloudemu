@@ -342,6 +342,12 @@ func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, actio
 		h.describeVpcs(w, r)
 	case "DescribeAvailabilityZones":
 		h.describeAvailabilityZones(w, r)
+	case "AllocateAddress":
+		h.allocateAddress(w, r)
+	case "ReleaseAddress":
+		h.releaseAddress(w, r)
+	case "DescribeAddresses":
+		h.describeAddresses(w, r)
 	default:
 		return false
 	}
