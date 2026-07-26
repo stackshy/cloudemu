@@ -294,22 +294,27 @@ func hasUnsupportedFilterToken(filter string) bool {
 }
 
 // parseEqClause parses one "Prop eq 'value'" clause. The value may be a quoted
-// string literal or a bare token; a leftover quote or extra tokens (the sign of
-// a value we couldn't parse cleanly) make it unsupported.
+// string literal (which can contain spaces) or a bare token; a leftover quote
+// or a non-eq operator makes it unsupported. Runs of whitespace between the
+// property, operator, and value are tolerated.
 func parseEqClause(clause string) (prop, val string, ok bool) {
-	const eqParts = 3
-
-	fields := strings.SplitN(strings.TrimSpace(clause), " ", eqParts)
-	if len(fields) != eqParts || !strings.EqualFold(fields[1], "eq") {
+	// property = first token; then the operator; then the (possibly quoted,
+	// space-containing) value is whatever remains. Splitting token-by-token
+	// with TrimSpace tolerates extra spaces that a fixed SplitN would not.
+	prop, rest, found := cutToken(strings.TrimSpace(clause))
+	if !found {
 		return "", "", false
 	}
 
-	prop = fields[0]
+	op, raw, found := cutToken(rest)
+	if !found || !strings.EqualFold(op, "eq") {
+		return "", "", false
+	}
+
 	if strings.ContainsAny(prop, "'()") {
 		return "", "", false
 	}
 
-	raw := strings.TrimSpace(fields[2])
 	// A quoted literal must be well-formed: a lone or unbalanced quote means we
 	// split through a value (e.g. it contained " and ") — reject it.
 	if strings.HasPrefix(raw, "'") && !(len(raw) >= 2 && strings.HasSuffix(raw, "'")) {
@@ -317,6 +322,17 @@ func parseEqClause(clause string) (prop, val string, ok bool) {
 	}
 
 	return prop, unquote(raw), true
+}
+
+// cutToken splits the first whitespace-delimited token off s, returning it and
+// the trimmed remainder. found is false when s has no token or no remainder.
+func cutToken(s string) (token, rest string, found bool) {
+	i := strings.IndexByte(s, ' ')
+	if i < 0 {
+		return "", "", false
+	}
+
+	return s[:i], strings.TrimSpace(s[i+1:]), true
 }
 
 func matchesConds(ent driver.Entity, conds []eqCond) bool {

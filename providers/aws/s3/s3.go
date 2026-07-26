@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -43,8 +44,11 @@ type multipartUpload struct {
 	id          string
 	key         string
 	contentType string
-	parts       map[int][]byte
-	createdAt   string
+	// mu guards parts: the SDK uploader sends parts concurrently (UploadPart
+	// writes) while ListParts/CompleteMultipartUpload read them.
+	mu        sync.Mutex
+	parts     map[int][]byte
+	createdAt string
 }
 
 type bucketMeta struct {
@@ -502,7 +506,10 @@ func (m *Mock) UploadPart(_ context.Context, bucket, _, uploadID string, partNum
 
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
+
+	mp.mu.Lock()
 	mp.parts[partNumber] = dataCopy
+	mp.mu.Unlock()
 
 	etag := fmt.Sprintf("%x", sha256.Sum256(data))
 
@@ -524,6 +531,9 @@ func (m *Mock) ListParts(_ context.Context, bucket, _, uploadID string) ([]drive
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
 	}
+
+	mp.mu.Lock()
+	defer mp.mu.Unlock()
 
 	nums := make([]int, 0, len(mp.parts))
 	for n := range mp.parts {
@@ -555,13 +565,15 @@ func (m *Mock) CompleteMultipartUpload(_ context.Context, bucket, key, uploadID 
 		return cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
 	}
 
+	mp.mu.Lock()
 	for _, p := range parts {
 		if _, exists := mp.parts[p.PartNumber]; !exists {
+			mp.mu.Unlock()
 			return cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
 		}
 	}
-
 	data := assemblePartsInOrder(mp.parts, parts)
+	mp.mu.Unlock()
 
 	bkt.objects.Set(key, &s3Object{
 		Key:          key,

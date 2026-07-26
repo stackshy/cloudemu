@@ -98,6 +98,15 @@ func TestQueryFilterActuallyFilters(t *testing.T) {
 	if len(rks) != 0 {
 		t.Fatalf("no-match filter = %v, want []", rks)
 	}
+
+	// Extra whitespace between tokens is tolerated (not rejected as unsupported).
+	rks, err = listRowKeys(t, client, "PartitionKey  eq  'org'")
+	if err != nil {
+		t.Fatalf("whitespace filter: %v", err)
+	}
+	if len(rks) != 2 {
+		t.Fatalf("whitespace filter = %v, want 2 rows", rks)
+	}
 }
 
 // TestQueryUnsupportedFilterRejected covers #266: an unsupported operator must
