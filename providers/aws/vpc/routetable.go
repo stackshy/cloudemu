@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -62,8 +63,30 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 }
 
 // DescribeRouteTables returns route tables matching the given IDs, or all if empty.
+//
+// Associations are joined in here rather than kept on the route table itself:
+// they live in their own store (a subnet can be re-pointed at another table),
+// and Describe is the only channel through which a caller can learn an
+// association ID — which it must have before it can disassociate.
 func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.RouteTable, error) {
-	return describeResources(m.routeTables, ids, toRouteTableInfo), nil
+	tables := describeResources(m.routeTables, ids, toRouteTableInfo)
+
+	byTable := make(map[string][]driver.RouteTableAssociation)
+
+	for _, a := range m.rtAssocs.All() {
+		byTable[a.RouteTableID] = append(byTable[a.RouteTableID], toRTAssocInfo(a))
+	}
+
+	for i := range tables {
+		assocs := byTable[tables[i].ID]
+		// Stable order: the backing store is a map, and a caller diffing
+		// successive Describe calls should not see phantom churn.
+		sort.Slice(assocs, func(x, y int) bool { return assocs[x].ID < assocs[y].ID })
+
+		tables[i].Associations = assocs
+	}
+
+	return tables, nil
 }
 
 // CreateRoute adds a route to the specified route table.

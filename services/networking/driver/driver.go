@@ -135,6 +135,10 @@ type RouteTable struct {
 	VPCID  string
 	Routes []Route
 	Tags   map[string]string
+	// Associations lists the subnet associations pointing at this route
+	// table. Describe is the only way a caller can discover association IDs,
+	// and it needs them to disassociate before deleting the table.
+	Associations []RouteTableAssociation
 }
 
 // Route represents a route in a route table.
@@ -204,6 +208,11 @@ type RouteTableAssociation struct {
 	ID           string
 	RouteTableID string
 	SubnetID     string
+	// Main reports whether this is the VPC's main-route-table association.
+	// Callers tearing a VPC down disassociate every non-main association and
+	// leave the main one to die with the VPC, so the distinction has to
+	// survive the projection.
+	Main bool
 }
 
 // VPCEndpointConfig describes a VPC endpoint to create.

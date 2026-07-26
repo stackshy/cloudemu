@@ -401,6 +401,8 @@ func (h *Handler) routeVPCInternetGateway(w http.ResponseWriter, r *http.Request
 		h.attachInternetGateway(w, r)
 	case "DetachInternetGateway":
 		h.detachInternetGateway(w, r)
+	case "DeleteInternetGateway":
+		h.deleteInternetGateway(w, r)
 	case "DescribeInternetGateways":
 		h.describeInternetGateways(w, r)
 	default:
@@ -414,10 +416,18 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 	switch action {
 	case "CreateRouteTable":
 		h.createRouteTable(w, r)
+	case "DeleteRouteTable":
+		h.deleteRouteTable(w, r)
 	case "DescribeRouteTables":
 		h.describeRouteTables(w, r)
 	case "CreateRoute":
 		h.createRoute(w, r)
+	case "DeleteRoute":
+		h.deleteRoute(w, r)
+	case "AssociateRouteTable":
+		h.associateRouteTable(w, r)
+	case "DisassociateRouteTable":
+		h.disassociateRouteTable(w, r)
 	default:
 		return false
 	}

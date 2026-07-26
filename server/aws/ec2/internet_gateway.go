@@ -47,6 +47,13 @@ type detachInternetGatewayResponseXML struct {
 	Return    bool     `xml:"return"`
 }
 
+type deleteInternetGatewayResponseXML struct {
+	XMLName   xml.Name `xml:"DeleteInternetGatewayResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
 func (h *Handler) createInternetGateway(w http.ResponseWriter, r *http.Request) {
 	cfg := netdriver.InternetGatewayConfig{
 		Tags: mergeTagSpecs(awsquery.TagSpecs(r.Form), "internet-gateway"),
@@ -87,6 +94,19 @@ func (h *Handler) detachInternetGateway(w http.ResponseWriter, r *http.Request) 
 	}
 
 	awsquery.WriteXMLResponse(w, detachInternetGatewayResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
+func (h *Handler) deleteInternetGateway(w http.ResponseWriter, r *http.Request) {
+	if err := h.vpc.DeleteInternetGateway(r.Context(), r.Form.Get("InternetGatewayId")); err != nil {
+		writeIGWErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, deleteInternetGatewayResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
 		Return:    true,
