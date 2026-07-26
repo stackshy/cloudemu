@@ -39,7 +39,7 @@ docker compose up
 ### Testcontainers (Go)
 
 Go test suites can start and stop the container automatically with the
-[Testcontainers module](https://github.com/stackshy/cloudemu/tree/master/contrib/testcontainers)
+[Testcontainers module](https://github.com/stackshy/cloudemu/tree/development/contrib/testcontainers)
 (a separate module, so it doesn't add Docker deps to your app):
 
 ```go
