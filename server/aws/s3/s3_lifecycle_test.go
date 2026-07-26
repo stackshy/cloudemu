@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"testing"
 
@@ -88,7 +89,12 @@ func newSuiteS3Client(t *testing.T) *s3.Client {
 type retryClosedNetConn struct{}
 
 func (retryClosedNetConn) IsErrorRetryable(err error) aws.Ternary {
-	if err != nil && strings.Contains(err.Error(), "use of closed network connection") {
+	// The teardown race surfaces as net.ErrClosed ("use of closed network
+	// connection"), wrapped by the SDK's deserialization layer. Match the typed
+	// sentinel (robust to wording changes) with a string fallback (robust to a
+	// wrapper that breaks the Unwrap chain).
+	if err != nil && (errors.Is(err, net.ErrClosed) ||
+		strings.Contains(err.Error(), "use of closed network connection")) {
 		return aws.TrueTernary
 	}
 
