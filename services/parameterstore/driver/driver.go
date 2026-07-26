@@ -1,7 +1,19 @@
 // Package driver defines the interface for SSM Parameter Store service implementations.
 package driver
 
-import "context"
+import (
+	"context"
+
+	"github.com/stackshy/cloudemu/v2/errors"
+)
+
+// ErrVersionNotFound is returned by GetParameter when the parameter itself
+// exists but the requested version or label does not — distinct from the
+// parameter being absent. It carries the NotFound code so generic handling
+// still treats it as not-found, while the SDK-compat layer can match it with
+// errors.Is to return AWS's distinct ParameterVersionNotFound error instead of
+// ParameterNotFound.
+var ErrVersionNotFound = errors.New(errors.NotFound, "requested parameter version or label not found")
 
 // Parameter types, matching AWS SSM Parameter Store.
 const (

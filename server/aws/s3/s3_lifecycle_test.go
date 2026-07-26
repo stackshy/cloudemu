@@ -12,9 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -66,12 +69,36 @@ func newSuiteS3Client(t *testing.T) *s3.Client {
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(url)
 		o.UsePathStyle = true
-		o.Retryer = aws.NopRetryer{}
-		// Fresh connection per request: with retries off, a reused keep-alive
-		// connection the httptest server has closed would surface as a hard
-		// "use of closed network connection" under CI load instead of a retry.
+		// httptest servers under parallel CI load occasionally close the TCP
+		// connection while the SDK is still reading a (200) response body,
+		// surfacing as "use of closed network connection". Retry ONLY that
+		// transient transport error — the retryables list is replaced (not
+		// extended), so API errors and the emulator's 500s are still observed on
+		// exactly one attempt, as the negative-path assertions expect.
+		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
+			so.Retryables = []retry.IsErrorRetryable{retryClosedNetConn{}}
+		})
+		// Fresh connection per request avoids reusing a since-closed keep-alive.
 		o.HTTPClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	})
+}
+
+// retryClosedNetConn marks the transient "use of closed network connection"
+// that httptest surfaces during response-body reads under parallel load as
+// retryable; every other error is left non-retryable.
+type retryClosedNetConn struct{}
+
+func (retryClosedNetConn) IsErrorRetryable(err error) aws.Ternary {
+	// The teardown race surfaces as net.ErrClosed ("use of closed network
+	// connection"), wrapped by the SDK's deserialization layer. Match the typed
+	// sentinel (robust to wording changes) with a string fallback (robust to a
+	// wrapper that breaks the Unwrap chain).
+	if err != nil && (errors.Is(err, net.ErrClosed) ||
+		strings.Contains(err.Error(), "use of closed network connection")) {
+		return aws.TrueTernary
+	}
+
+	return aws.UnknownTernary
 }
 
 func suiteCreateBucket(t *testing.T, client *s3.Client, bucket string) {

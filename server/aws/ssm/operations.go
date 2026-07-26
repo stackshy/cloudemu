@@ -1,6 +1,7 @@
 package ssm
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -38,6 +39,12 @@ func (h *Handler) getParameter(w http.ResponseWriter, r *http.Request) {
 
 	p, err := h.store.GetParameter(r.Context(), req.Name, req.WithDecryption)
 	if err != nil {
+		// The parameter existed but the requested version/label didn't — AWS
+		// returns the distinct ParameterVersionNotFound, not ParameterNotFound.
+		if errors.Is(err, ssmdriver.ErrVersionNotFound) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", err.Error())
+			return
+		}
 		writeErr(w, err)
 		return
 	}
@@ -81,12 +88,20 @@ func (h *Handler) getParametersByPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := make([]parameterJSON, 0, len(found))
-	for _, p := range found {
+	// The driver returns the full matching set sorted by name; paginate here so
+	// MaxResults/NextToken (and the SDK's paginator) work over a stable order.
+	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, maxResultsByPath, len(found))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	params := make([]parameterJSON, 0, end-start)
+	for _, p := range found[start:end] {
 		params = append(params, toParameterJSON(p))
 	}
 
-	wire.WriteJSON(w, getParametersByPathResponse{Parameters: params})
+	wire.WriteJSON(w, getParametersByPathResponse{Parameters: params, NextToken: next})
 }
 
 func (h *Handler) deleteParameter(w http.ResponseWriter, r *http.Request) {
@@ -119,14 +134,26 @@ func (h *Handler) deleteParameters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
+	var req describeParametersRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
 	metas, err := h.store.DescribeParameters(r.Context())
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	out := make([]parameterMetadataJSON, 0, len(metas))
-	for _, md := range metas {
+	// Sorted-by-name from the driver; paginate here (MaxResults/NextToken).
+	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, maxResultsDescribe, len(metas))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := make([]parameterMetadataJSON, 0, end-start)
+	for _, md := range metas[start:end] {
 		out = append(out, parameterMetadataJSON{
 			ARN:              md.ARN,
 			DataType:         md.DataType,
@@ -140,7 +167,7 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	wire.WriteJSON(w, describeParametersResponse{Parameters: out})
+	wire.WriteJSON(w, describeParametersResponse{Parameters: out, NextToken: next})
 }
 
 func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {

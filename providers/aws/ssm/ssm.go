@@ -250,7 +250,10 @@ func (m *Mock) GetParameter(_ context.Context, name string, _ bool) (*driver.Par
 
 	v, ok := pd.pick(selector)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "parameter %q version/label %q not found", base, selector)
+		// Parameter exists but this version/label doesn't — distinct from the
+		// parameter being absent, so the handler can return the specific
+		// ParameterVersionNotFound wire error.
+		return nil, driver.ErrVersionNotFound
 	}
 
 	p := m.toParameter(pd, v, selector)
@@ -335,10 +338,13 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 	return out, nil
 }
 
-// DeleteParameter removes a parameter and all its versions.
+// DeleteParameter removes a parameter and all its versions. A ":version"/
+// ":label" selector is stripped first, matching the read paths — SSM has no
+// per-version delete, so a selector addresses the base parameter.
 func (m *Mock) DeleteParameter(_ context.Context, name string) error {
-	if !m.params.Delete(name) {
-		return errors.Newf(errors.NotFound, "parameter %q not found", name)
+	base, _ := resolveSelector(name)
+	if !m.params.Delete(base) {
+		return errors.Newf(errors.NotFound, "parameter %q not found", base)
 	}
 
 	return nil
@@ -350,7 +356,8 @@ func (m *Mock) DeleteParameters(_ context.Context, names []string) ([]string, []
 	var deleted, invalid []string
 
 	for _, name := range names {
-		if m.params.Delete(name) {
+		base, _ := resolveSelector(name)
+		if m.params.Delete(base) {
 			deleted = append(deleted, name)
 		} else {
 			invalid = append(invalid, name)

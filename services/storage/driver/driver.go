@@ -160,6 +160,9 @@ type Bucket interface {
 	CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []UploadPart) error
 	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 	ListMultipartUploads(ctx context.Context, bucket string) ([]MultipartUpload, error)
+	// ListParts returns the parts buffered so far for an in-progress upload,
+	// ordered by part number. It errors with NotFound if the upload is unknown.
+	ListParts(ctx context.Context, bucket, key, uploadID string) ([]UploadPart, error)
 
 	// Versioning
 	SetBucketVersioning(ctx context.Context, bucket string, enabled bool) error

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -43,8 +44,11 @@ type multipartUpload struct {
 	id          string
 	key         string
 	contentType string
-	parts       map[int][]byte
-	createdAt   string
+	// mu guards parts: the SDK uploader sends parts concurrently (UploadPart
+	// writes) while ListParts/CompleteMultipartUpload read them.
+	mu        sync.Mutex
+	parts     map[int][]byte
+	createdAt string
 }
 
 type bucketMeta struct {
@@ -502,13 +506,52 @@ func (m *Mock) UploadPart(_ context.Context, bucket, _, uploadID string, partNum
 
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
+
+	mp.mu.Lock()
 	mp.parts[partNumber] = dataCopy
+	mp.mu.Unlock()
 
 	etag := fmt.Sprintf("%x", sha256.Sum256(data))
 
 	return &driver.UploadPart{
 		PartNumber: partNumber, ETag: etag, Size: int64(len(data)),
 	}, nil
+}
+
+// ListParts returns the parts buffered so far for an in-progress upload,
+// ordered by part number (the driver keeps each part's bytes, so ETag and Size
+// are reported exactly as UploadPart returned them).
+func (m *Mock) ListParts(_ context.Context, bucket, _, uploadID string) ([]driver.UploadPart, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	mp, ok := bkt.multiparts.Get(uploadID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
+	}
+
+	mp.mu.Lock()
+	defer mp.mu.Unlock()
+
+	nums := make([]int, 0, len(mp.parts))
+	for n := range mp.parts {
+		nums = append(nums, n)
+	}
+	sort.Ints(nums)
+
+	out := make([]driver.UploadPart, 0, len(nums))
+	for _, n := range nums {
+		data := mp.parts[n]
+		out = append(out, driver.UploadPart{
+			PartNumber: n,
+			ETag:       fmt.Sprintf("%x", sha256.Sum256(data)),
+			Size:       int64(len(data)),
+		})
+	}
+
+	return out, nil
 }
 
 func (m *Mock) CompleteMultipartUpload(_ context.Context, bucket, key, uploadID string, parts []driver.UploadPart) error {
@@ -522,13 +565,15 @@ func (m *Mock) CompleteMultipartUpload(_ context.Context, bucket, key, uploadID 
 		return cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
 	}
 
+	mp.mu.Lock()
 	for _, p := range parts {
 		if _, exists := mp.parts[p.PartNumber]; !exists {
+			mp.mu.Unlock()
 			return cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
 		}
 	}
-
 	data := assemblePartsInOrder(mp.parts, parts)
+	mp.mu.Unlock()
 
 	bkt.objects.Set(key, &s3Object{
 		Key:          key,
