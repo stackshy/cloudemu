@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -53,6 +54,11 @@ func newSuiteDDBEnv(t *testing.T, opts ...emuconfig.Option) (*dynamodb.Client, *
 	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)
 		o.Retryer = aws.NopRetryer{}
+		// Fresh connection per request. Retries are off (so error semantics are
+		// observed on one attempt), which means a reused keep-alive connection
+		// the httptest server has since closed would surface as a hard
+		// "use of closed network connection" under CI load instead of a retry.
+		o.HTTPClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	})
 
 	return client, provider
