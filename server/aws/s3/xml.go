@@ -141,6 +141,7 @@ type listVersionsResult struct {
 	MaxKeys        int                `xml:"MaxKeys"`
 	IsTruncated    bool               `xml:"IsTruncated"`
 	Versions       []objectVersionXML `xml:"Version"`
+	DeleteMarkers  []deleteMarkerXML  `xml:"DeleteMarker"`
 	CommonPrefixes []prefixXML        `xml:"CommonPrefixes,omitempty"`
 }
 
@@ -152,6 +153,14 @@ type objectVersionXML struct {
 	ETag         string `xml:"ETag"`
 	Size         int64  `xml:"Size"`
 	StorageClass string `xml:"StorageClass"`
+}
+
+// deleteMarkerXML is a <DeleteMarker> entry in a ListObjectVersions response.
+type deleteMarkerXML struct {
+	Key          string `xml:"Key"`
+	VersionID    string `xml:"VersionId"`
+	IsLatest     bool   `xml:"IsLatest"`
+	LastModified string `xml:"LastModified"`
 }
 
 // versioningConfiguration is the XML request/response body for bucket versioning.

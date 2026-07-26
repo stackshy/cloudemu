@@ -21,6 +21,12 @@ type ObjectInfo struct {
 	ETag         string
 	LastModified string
 	Metadata     map[string]string
+	// VersionID is the object's version identifier on a versioning-enabled
+	// bucket ("null" on a suspended/unversioned bucket, empty when the bucket
+	// never had versioning). Providers without versioning leave it empty.
+	VersionID string
+	// DeleteMarker reports whether this version is a delete marker.
+	DeleteMarker bool
 }
 
 // Object is an object with its data.
@@ -43,6 +49,57 @@ type ListResult struct {
 	CommonPrefixes []string
 	NextPageToken  string
 	IsTruncated    bool
+}
+
+// ObjectVersion is one version (or delete marker) of a key, as reported by
+// ListObjectVersions.
+type ObjectVersion struct {
+	Key          string
+	VersionID    string
+	IsLatest     bool
+	DeleteMarker bool
+	Size         int64
+	ETag         string
+	ContentType  string
+	LastModified string
+}
+
+// VersionListResult is the result of a ListObjectVersions operation: every
+// version and delete marker matching the options, newest-first within each key.
+type VersionListResult struct {
+	Versions       []ObjectVersion
+	CommonPrefixes []string
+}
+
+// VersionedBucket is an optional extension a storage provider implements when
+// it retains per-object version history (real S3 semantics). The S3 handler
+// uses it, when present, to honor bucket versioning status, version-addressable
+// GET/HEAD/DELETE, and ListObjectVersions. Providers that don't implement it
+// keep the flat single-version behavior of Bucket.
+type VersionedBucket interface {
+	Bucket
+
+	// SetVersioningStatus sets the bucket's versioning status: "Enabled" or
+	// "Suspended". VersioningStatus returns "Enabled", "Suspended", or "" (never
+	// configured).
+	SetVersioningStatus(ctx context.Context, bucket, status string) error
+	VersioningStatus(ctx context.Context, bucket string) (string, error)
+
+	// GetObjectVersion / HeadObjectVersion fetch a specific version by ID. A
+	// delete-marker version yields a NotFound (with DeleteMarker set on the
+	// returned info where applicable).
+	GetObjectVersion(ctx context.Context, bucket, key, versionID string) (*Object, error)
+	HeadObjectVersion(ctx context.Context, bucket, key, versionID string) (*ObjectInfo, error)
+
+	// DeleteObjectVersion removes a specific version when versionID != "".
+	// With versionID == "" it performs a top-level delete: on an Enabled bucket
+	// that appends a delete marker (deleteMarker=true) and returns its new ID;
+	// otherwise it removes the current object. deletedVersionID is the affected
+	// version's ID (empty when nothing was deleted on an unversioned bucket).
+	DeleteObjectVersion(ctx context.Context, bucket, key, versionID string) (deletedVersionID string, deleteMarker bool, err error)
+
+	// ListObjectVersions returns the full version history matching opts.
+	ListObjectVersions(ctx context.Context, bucket string, opts ListOptions) (*VersionListResult, error)
 }
 
 // CopySource identifies the source for a copy operation.
