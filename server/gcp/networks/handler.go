@@ -36,6 +36,7 @@ const (
 	resourceSubnetworks = "subnetworks"
 	resourceFirewalls   = "firewalls"
 	resourceRouters     = "routers"
+	resourceAddresses   = "addresses"
 	netNameTag          = "cloudemu:gcpNetName"
 	subnetNameTag       = "cloudemu:gcpSubnetName"
 	firewallNameTag     = "cloudemu:gcpFwName"
@@ -43,13 +44,14 @@ const (
 
 // Handler serves the GCP networking REST surface.
 type Handler struct {
-	net     netdriver.Networking
-	routers *routerStore
+	net       netdriver.Networking
+	routers   *routerStore
+	addresses *addressStore
 }
 
 // New returns a networks handler.
 func New(n netdriver.Networking) *Handler {
-	return &Handler{net: n, routers: newRouterStore()}
+	return &Handler{net: n, routers: newRouterStore(), addresses: newAddressStore()}
 }
 
 // Matches returns true for /compute/v1/.../networks|subnetworks|firewalls URLs.
@@ -60,7 +62,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceNetworks, resourceSubnetworks, resourceFirewalls, resourceRouters:
+	case resourceNetworks, resourceSubnetworks, resourceFirewalls, resourceRouters, resourceAddresses:
 		return true
 	}
 
@@ -84,6 +86,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeFirewalls(w, r, rp)
 	case resourceRouters:
 		h.routeRouters(w, r, rp)
+	case resourceAddresses:
+		h.routeAddresses(w, r, rp)
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unknown resource type")
 	}
