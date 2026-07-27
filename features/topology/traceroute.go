@@ -23,7 +23,7 @@ func (e *Engine) TraceRoute(
 		{Type: "subnet", ResourceID: src.SubnetID},
 	}
 
-	rt, err := e.findRouteTableForVPC(ctx, src.VPCID)
+	rt, err := e.findRouteTableForSubnet(ctx, src.VPCID, src.SubnetID)
 	if err != nil {
 		return nil, err
 	}
