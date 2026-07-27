@@ -30,6 +30,9 @@ const (
 // rdsActions is the set of Action values this handler recognizes. Matches uses
 // it to decide whether to claim a request.
 var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"CreateDBSubnetGroup":             {},
+	"DescribeDBSubnetGroups":          {},
+	"DeleteDBSubnetGroup":             {},
 	"CreateDBInstance":                {},
 	"DescribeDBInstances":             {},
 	"ModifyDBInstance":                {},
@@ -97,6 +100,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	action := r.Form.Get("Action")
 
 	switch action {
+	case "CreateDBSubnetGroup":
+		h.createDBSubnetGroup(w, r)
+	case "DescribeDBSubnetGroups":
+		h.describeDBSubnetGroups(w, r)
+	case "DeleteDBSubnetGroup":
+		h.deleteDBSubnetGroup(w, r)
 	case "CreateDBInstance":
 		h.createDBInstance(w, r)
 	case "DescribeDBInstances":

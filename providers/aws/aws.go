@@ -97,6 +97,7 @@ func New(opts ...config.Option) *Provider {
 	p.ECR.SetMonitoring(p.CloudWatch)
 	p.EventBridge.SetMonitoring(p.CloudWatch)
 	p.RDS.SetMonitoring(p.CloudWatch)
+	p.RDS.SetSubnetResolver(p.VPC)
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	p.SageMaker.SetMonitoring(p.CloudWatch)
