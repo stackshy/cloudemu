@@ -8,6 +8,10 @@ import (
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
+// stateAttached is the attachment state shared by internet gateways and
+// network interfaces.
+const stateAttached = "attached"
+
 type igwAttachmentXML struct {
 	VpcID string `xml:"vpcId"`
 	State string `xml:"state"`
@@ -144,7 +148,7 @@ func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 	if igw.VpcID != "" {
 		state := igw.State
 		if state == "" {
-			state = "attached"
+			state = stateAttached
 		}
 
 		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: state}}

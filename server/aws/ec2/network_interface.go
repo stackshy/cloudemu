@@ -151,7 +151,7 @@ func containsString(values []string, want string) bool {
 }
 
 func (h *Handler) detachNetworkInterface(w http.ResponseWriter, r *http.Request) {
-	force := r.Form.Get("Force") == "true"
+	force := r.Form.Get("Force") == formTrue
 
 	store, ok := h.networkInterfaces()
 	if !ok {
@@ -201,7 +201,7 @@ func toNetworkInterfaceXML(e *netdriver.NetworkInterface) networkInterfaceXML {
 	}
 
 	if e.AttachmentID != "" {
-		x.Attachment = &eniAttachmentXML{AttachmentID: e.AttachmentID, Status: "attached"}
+		x.Attachment = &eniAttachmentXML{AttachmentID: e.AttachmentID, Status: stateAttached}
 	}
 
 	return x
