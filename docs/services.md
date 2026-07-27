@@ -711,6 +711,10 @@ DNS hostnames off.
 | `GetLBAttributes` | `(ctx, lbARN) (*LBAttributes, error)` |
 | `PutLBAttributes` | `(ctx, lbARN, attrs) error` |
 
+These two were always in the driver; they are listed here because the ELBv2
+handler now exposes them as ModifyLoadBalancerAttributes and
+DescribeLoadBalancerAttributes.
+
 ### Targets
 
 | Operation | Signature |
@@ -727,12 +731,16 @@ DNS hostnames off.
 | `GetLBAttributes` | `(ctx, lbARN) (*LBAttributes, error)` |
 | `PutLBAttributes` | `(ctx, lbARN, attrs) error` |
 
+These two were always in the driver; they are listed here because the ELBv2
+handler now exposes them as ModifyLoadBalancerAttributes and
+DescribeLoadBalancerAttributes.
+
 `LBAttributes.Extra` carries attributes outside the typed set, keyed by their
 provider attribute name (`load_balancing.cross_zone.enabled` and friends).
 Providers model attributes as open key/value pairs and add new ones over time, so
 a fixed struct would silently drop whatever it had not been taught.
 
-**Total: 19 operations**
+**Total: 21 operations**
 
 ---
 
@@ -1533,6 +1541,41 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 
 ---
 
+## Handler-level resources
+
+Some provider resources have no driver behind them. They are containers,
+records, or provider-specific shapes with nothing portable to abstract, so they
+live in the server handler that serves them rather than in a service driver.
+They are listed here because they are part of the emulated surface even though
+they do not appear in the tables above.
+
+| Provider | Resource | Served by | Why no driver |
+|---|---|---|---|
+| AWS | SSM Run Command | `server/aws/ssm` | Optional `RunCommand` capability on the parameter-store driver; nothing executes — see below |
+| AWS | Published `/aws/service/.../ami-id` parameters | `providers/aws/ssm` | Materialised on read from the trees AWS publishes; the id is derived from the name, so it is stable per parameter |
+| AWS | AWS-managed IAM policies | `providers/aws/awsiam` | Materialised on reference from a catalogue of real policy names |
+| GCP | Cloud Routers | `server/gcp/networks` | A router carrying embedded NAT blocks is this provider's REST shape |
+| GCP | Global / regional addresses | `server/gcp/networks` | A reserved range with a purpose and prefix length is provider-specific |
+| GCP | Service Networking connections | `server/gcp/servicenetworking` | A connection is a record; nothing routes the peering it stands for |
+| Azure | Resource groups | `server/azure/resourcegroups` | Containers; membership is already carried by the ids resources hold |
+| Azure | Subscriptions list | `server/azure/subscriptions` | No tenant model, so the list is empty rather than invented |
+
+### SSM Run Command
+
+| Operation | Signature |
+|---|---|
+| `SendCommand` | `(ctx, CommandConfig) (commandID string, error)` |
+| `GetCommandInvocation` | `(ctx, commandID, instanceID) (*CommandInvocation, error)` |
+
+Discovered by type assertion on the parameter-store driver, like the subnet and
+replication group capabilities.
+
+**Nothing executes.** An emulated instance has no guest operating system, so
+invocations report success with empty output. Targets *are* validated — sending
+to an instance that does not exist is `InvalidInstanceId`, the most common Run
+Command failure during bring-up — but the script itself is not. A caller whose
+bootstrap script is wrong still sees success.
+
 ## Summary
 
 | Service | Operations |
@@ -1545,7 +1588,7 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 | Monitoring | 12 |
 | IAM | 35 |
 | DNS | 15 |
-| Load Balancer | 19 |
+| Load Balancer | 21 |
 | Message Queue | 14 |
 | Cache | 16 (+7 optional) |
 | Secrets | 7 |
@@ -1565,8 +1608,12 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| **Grand Total** | **970** (+10 optional) |
+| **Grand Total** | **972** (+12 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
-to — see the "optional capability" sections above. They are counted separately
-because a driver without them is still complete.
+to — see the "optional capability" sections above, plus SSM Run Command under
+"Handler-level resources". They are counted separately because a driver without
+them is still complete.
+
+Handler-level resources are not counted at all: they have no driver operations
+to count.
