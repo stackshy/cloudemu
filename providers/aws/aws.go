@@ -99,6 +99,7 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetMonitoring(p.CloudWatch)
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
+	p.SSM.SetInstanceResolver(p.EC2)
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	p.SageMaker.SetMonitoring(p.CloudWatch)

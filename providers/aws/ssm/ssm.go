@@ -50,9 +50,10 @@ type paramData struct {
 
 // Mock is an in-memory mock implementation of SSM Parameter Store.
 type Mock struct {
-	params   *memstore.Store[*paramData]
-	commands *memstore.Store[driver.CommandInvocation]
-	opts     *config.Options
+	params           *memstore.Store[*paramData]
+	commands         *memstore.Store[driver.CommandInvocation]
+	instanceResolver InstanceResolver
+	opts             *config.Options
 }
 
 // New creates a new SSM Parameter Store mock.

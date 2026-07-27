@@ -5,21 +5,42 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	"github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
+
+// InstanceResolver is the slice of the compute mock this package needs to
+// check that a Run Command target exists.
+type InstanceResolver interface {
+	DescribeInstances(ctx context.Context, instanceIDs []string,
+		filters []computedriver.DescribeFilter) ([]computedriver.Instance, error)
+}
+
+// SetInstanceResolver wires the compute mock in so SendCommand can reject a
+// target that does not exist. Without it, targets are not validated.
+func (m *Mock) SetInstanceResolver(r InstanceResolver) {
+	m.instanceResolver = r
+}
 
 // SendCommand records a Run Command send and returns its command id.
 //
 // Nothing executes: an emulated instance has no guest operating system. The
 // invocation is recorded as successful so a caller's send/poll loop runs to
 // completion, but the script itself is never validated — see driver.RunCommand.
-func (m *Mock) SendCommand(_ context.Context, cfg driver.CommandConfig) (string, error) {
+func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (string, error) {
 	if len(cfg.InstanceIDs) == 0 {
 		return "", errors.New(errors.InvalidArgument, "at least one instance id is required")
 	}
 
 	if cfg.DocumentName == "" {
 		return "", errors.New(errors.InvalidArgument, "DocumentName is required")
+	}
+
+	// Real SSM answers InvalidInstanceId when a target is not a managed
+	// instance, and that is the single most common Run Command failure during
+	// bring-up. Accepting any id hides it until the caller runs for real.
+	if err := m.checkTargets(ctx, cfg.InstanceIDs); err != nil {
+		return "", err
 	}
 
 	commandID := idgen.GenerateID("")
@@ -53,6 +74,33 @@ func (m *Mock) GetCommandInvocation(
 	}
 
 	return &inv, nil
+}
+
+// checkTargets rejects instance ids the compute mock does not know.
+func (m *Mock) checkTargets(ctx context.Context, instanceIDs []string) error {
+	if m.instanceResolver == nil {
+		return nil
+	}
+
+	found, err := m.instanceResolver.DescribeInstances(ctx, instanceIDs, nil)
+	if err != nil {
+		return errors.Newf(errors.NotFound,
+			"InvalidInstanceId: %v", err)
+	}
+
+	known := make(map[string]bool, len(found))
+	for i := range found {
+		known[found[i].ID] = true
+	}
+
+	for _, id := range instanceIDs {
+		if !known[id] {
+			return errors.Newf(errors.NotFound,
+				"InvalidInstanceId: instance %q is not a managed instance", id)
+		}
+	}
+
+	return nil
 }
 
 func commandKey(commandID, instanceID string) string {

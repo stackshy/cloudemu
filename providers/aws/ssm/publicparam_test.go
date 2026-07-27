@@ -108,3 +108,44 @@ func TestGetParametersResolvesPublicAMI(t *testing.T) {
 		t.Errorf("invalid = %v, want [/not/published]", invalid)
 	}
 }
+
+// AWS answers ParameterNotFound for a path it does not publish. Resolving
+// anything that ends in /ami-id would accept typos and invented distros, and
+// the caller would launch from an image that exists nowhere but here.
+func TestUnpublishedAMIPathIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := New(config.NewOptions())
+
+	for _, name := range []string{
+		"/aws/service/canonicl/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id",
+		"/aws/service/totally-invented/distro/ami-id",
+	} {
+		if _, err := m.GetParameter(ctx, name, false); err == nil {
+			t.Errorf("unpublished path %q should be NotFound", name)
+		}
+	}
+}
+
+// The published trees callers actually read from all resolve.
+func TestPublishedAMITreesResolve(t *testing.T) {
+	ctx := context.Background()
+	m := New(config.NewOptions())
+
+	for _, name := range []string{
+		ubuntu2204AMIParam,
+		"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64/ami-id",
+		"/aws/service/ami-windows-latest/Windows_Server-2022-English-Full-Base/ami-id",
+		"/aws/service/bottlerocket/aws-k8s-1.29/x86_64/latest/ami-id",
+		"/aws/service/eks/optimized-ami/1.29/amazon-linux-2/recommended/ami-id",
+	} {
+		p, err := m.GetParameter(ctx, name, false)
+		if err != nil {
+			t.Errorf("published path %q should resolve: %v", name, err)
+			continue
+		}
+
+		if !strings.HasPrefix(p.Value, "ami-") {
+			t.Errorf("%q resolved to %q, want an ami- id", name, p.Value)
+		}
+	}
+}

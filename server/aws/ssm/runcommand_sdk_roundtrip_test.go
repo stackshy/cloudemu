@@ -3,11 +3,13 @@ package ssm_test
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	awsssm "github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 
@@ -15,7 +17,7 @@ import (
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
-func newRunCommandClient(t *testing.T) *awsssm.Client {
+func newRunCommandClient(t *testing.T) (*awsssm.Client, *awsec2.Client) {
 	t.Helper()
 
 	cloud := cloudemu.NewAWS()
@@ -33,7 +35,28 @@ func newRunCommandClient(t *testing.T) *awsssm.Client {
 
 	cfg.BaseEndpoint = aws.String(ts.URL)
 
-	return awsssm.NewFromConfig(cfg)
+	return awsssm.NewFromConfig(cfg), awsec2.NewFromConfig(cfg)
+}
+
+// runInstances launches n instances and returns their ids, so Run Command has
+// real targets rather than fabricated ones.
+func runInstances(t *testing.T, ec2c *awsec2.Client, n int32) []string {
+	t.Helper()
+
+	out, err := ec2c.RunInstances(context.Background(), &awsec2.RunInstancesInput{
+		ImageId: aws.String("ami-test"), InstanceType: "t3.micro",
+		MinCount: aws.Int32(n), MaxCount: aws.Int32(n),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+
+	ids := make([]string, 0, len(out.Instances))
+	for i := range out.Instances {
+		ids = append(ids, aws.ToString(out.Instances[i].InstanceId))
+	}
+
+	return ids
 }
 
 // A caller sends a bootstrap script then polls until the invocation reaches a
@@ -42,10 +65,11 @@ func newRunCommandClient(t *testing.T) *awsssm.Client {
 // script.
 func TestRunCommandSendAndPoll(t *testing.T) {
 	ctx := context.Background()
-	c := newRunCommandClient(t)
+	c, ec2c := newRunCommandClient(t)
+	ids := runInstances(t, ec2c, 1)
 
 	sent, err := c.SendCommand(ctx, &awsssm.SendCommandInput{
-		InstanceIds:  []string{"i-0123456789abcdef0"},
+		InstanceIds:  ids,
 		DocumentName: aws.String("AWS-RunShellScript"),
 		Parameters:   map[string][]string{"commands": {"echo hello"}},
 	})
@@ -59,7 +83,7 @@ func TestRunCommandSendAndPoll(t *testing.T) {
 
 	inv, err := c.GetCommandInvocation(ctx, &awsssm.GetCommandInvocationInput{
 		CommandId:  sent.Command.CommandId,
-		InstanceId: aws.String("i-0123456789abcdef0"),
+		InstanceId: aws.String(ids[0]),
 	})
 	if err != nil {
 		t.Fatalf("GetCommandInvocation: %v", err)
@@ -80,9 +104,9 @@ func TestRunCommandSendAndPoll(t *testing.T) {
 // a caller polls per instance and would hang on the ones that were dropped.
 func TestRunCommandRegistersEveryTargetInstance(t *testing.T) {
 	ctx := context.Background()
-	c := newRunCommandClient(t)
+	c, ec2c := newRunCommandClient(t)
 
-	ids := []string{"i-aaa", "i-bbb", "i-ccc"}
+	ids := runInstances(t, ec2c, 3)
 
 	sent, err := c.SendCommand(ctx, &awsssm.SendCommandInput{
 		InstanceIds:  ids,
@@ -105,7 +129,7 @@ func TestRunCommandRegistersEveryTargetInstance(t *testing.T) {
 // Polling a command that was never sent is a caller bug; answering Success
 // would bury it.
 func TestGetCommandInvocationUnknownFails(t *testing.T) {
-	c := newRunCommandClient(t)
+	c, _ := newRunCommandClient(t)
 
 	_, err := c.GetCommandInvocation(context.Background(), &awsssm.GetCommandInvocationInput{
 		CommandId:  aws.String("never-sent"),
@@ -117,12 +141,31 @@ func TestGetCommandInvocationUnknownFails(t *testing.T) {
 }
 
 func TestSendCommandRequiresInstances(t *testing.T) {
-	c := newRunCommandClient(t)
+	c, _ := newRunCommandClient(t)
 
 	_, err := c.SendCommand(context.Background(), &awsssm.SendCommandInput{
 		DocumentName: aws.String("AWS-RunShellScript"),
 	})
 	if err == nil {
 		t.Error("SendCommand with no instances should fail")
+	}
+}
+
+// Real SSM answers InvalidInstanceId for a target that is not a managed
+// instance. It is the most common Run Command failure during bring-up, so
+// accepting any id would hide it until the caller runs for real.
+func TestSendCommandRejectsUnknownInstance(t *testing.T) {
+	c, _ := newRunCommandClient(t)
+
+	_, err := c.SendCommand(context.Background(), &awsssm.SendCommandInput{
+		InstanceIds:  []string{"i-doesnotexist"},
+		DocumentName: aws.String("AWS-RunShellScript"),
+	})
+	if err == nil {
+		t.Fatal("SendCommand to an unknown instance should fail")
+	}
+
+	if !strings.Contains(err.Error(), "InvalidInstanceId") {
+		t.Errorf("error must name InvalidInstanceId, got: %v", err)
 	}
 }

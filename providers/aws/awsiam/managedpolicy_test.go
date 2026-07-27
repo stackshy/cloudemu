@@ -50,20 +50,42 @@ func TestAttachAWSManagedPolicyWithoutCreate(t *testing.T) {
 	}
 }
 
-// Any well-formed managed ARN is honoured — seeding a fixed list would just
-// move the failure to the first policy nobody thought to enumerate.
-func TestAttachArbitraryAWSManagedPolicies(t *testing.T) {
+// The catalogue covers the policies real callers attach, pathed ones included.
+func TestAttachCataloguedAWSManagedPolicies(t *testing.T) {
 	ctx := context.Background()
 	m := newIAM(t)
 	mkRole(t, m, "r")
 
 	for _, arn := range []string{
 		"arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+		"arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+		"arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
 		"arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+		"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+		"arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy",
 		"arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM",
 	} {
 		if err := m.AttachRolePolicy(ctx, "r", arn); err != nil {
 			t.Errorf("AttachRolePolicy(%s): %v", arn, err)
+		}
+	}
+}
+
+// AWS publishes a fixed set, so a name outside it is NoSuchEntity in a real
+// account. Accepting anything well-formed would let a typo through — the
+// emulator would attach AmazonEKSClusterPolicyy and the caller would only find
+// out in production.
+func TestAttachUnknownAWSManagedPolicyFails(t *testing.T) {
+	ctx := context.Background()
+	m := newIAM(t)
+	mkRole(t, m, "r")
+
+	for _, arn := range []string{
+		"arn:aws:iam::aws:policy/AmazonEKSClusterPolicyy",
+		"arn:aws:iam::aws:policy/TotallyInvented",
+	} {
+		if err := m.AttachRolePolicy(ctx, "r", arn); err == nil {
+			t.Errorf("attaching %s should fail — no such AWS managed policy", arn)
 		}
 	}
 }
@@ -73,15 +95,15 @@ func TestManagedPolicyPathIsPreserved(t *testing.T) {
 	ctx := context.Background()
 	m := newIAM(t)
 
-	const arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM"
+	const arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 
 	got, err := m.GetPolicy(ctx, arn)
 	if err != nil {
 		t.Fatalf("GetPolicy: %v", err)
 	}
 
-	if got.Name != "AmazonEC2RoleforSSM" {
-		t.Errorf("name = %q, want AmazonEC2RoleforSSM", got.Name)
+	if got.Name != "AmazonEBSCSIDriverPolicy" {
+		t.Errorf("name = %q, want AmazonEBSCSIDriverPolicy", got.Name)
 	}
 
 	if got.Path != "/service-role/" {

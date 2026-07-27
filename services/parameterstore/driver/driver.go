@@ -109,6 +109,9 @@ type CommandConfig struct {
 
 // RunCommand is an OPTIONAL capability, discovered by type assertion.
 //
+// Targets are validated — sending to an instance that does not exist is
+// InvalidInstanceId, as it is against the real service.
+//
 // IMPORTANT: an emulated instance has no guest operating system, so nothing
 // executes. Invocations report success and empty output. This exercises a
 // caller's send/poll orchestration — that it waits for a terminal status, reads
