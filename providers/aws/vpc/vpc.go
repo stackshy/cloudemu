@@ -19,8 +19,15 @@ const (
 	defaultFlowLogRecordLimit = 10
 )
 
-// Compile-time check that Mock implements driver.Networking.
-var _ driver.Networking = (*Mock)(nil)
+// Compile-time checks. The optional capabilities are asserted too: without
+// this a signature drifting out of shape would silently stop satisfying the
+// interface and every call would answer InvalidAction at runtime instead of
+// failing the build.
+var (
+	_ driver.Networking        = (*Mock)(nil)
+	_ driver.NetworkInterfaces = (*Mock)(nil)
+	_ driver.VPCAttributes     = (*Mock)(nil)
+)
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
 type Mock struct {

@@ -3,6 +3,7 @@ package networking
 
 import (
 	"context"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/features/inject"
@@ -602,53 +603,6 @@ func (n *Networking) DisassociateRouteTable(
 	return err
 }
 
-// ModifyVPCAttribute sets the DNS attributes of a VPC. A nil pointer leaves
-// that attribute unchanged.
-func (n *Networking) ModifyVPCAttribute(
-	ctx context.Context, id string, enableDNSSupport, enableDNSHostnames *bool,
-) error {
-	_, err := n.do(ctx, "ModifyVPCAttribute", id, func() (any, error) {
-		return nil, n.driver.ModifyVPCAttribute(ctx, id, enableDNSSupport, enableDNSHostnames)
-	})
-
-	return err
-}
-
-// DescribeNetworkInterfaces returns network interfaces matching the given IDs,
-// or all of them when no IDs are supplied.
-func (n *Networking) DescribeNetworkInterfaces(
-	ctx context.Context, ids []string,
-) ([]driver.NetworkInterface, error) {
-	out, err := n.do(ctx, "DescribeNetworkInterfaces", ids, func() (any, error) {
-		return n.driver.DescribeNetworkInterfaces(ctx, ids)
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return out.([]driver.NetworkInterface), nil
-}
-
-// DetachNetworkInterface detaches a network interface from its attachment.
-func (n *Networking) DetachNetworkInterface(
-	ctx context.Context, attachmentID string, force bool,
-) error {
-	_, err := n.do(ctx, "DetachNetworkInterface", attachmentID, func() (any, error) {
-		return nil, n.driver.DetachNetworkInterface(ctx, attachmentID, force)
-	})
-
-	return err
-}
-
-// DeleteNetworkInterface deletes a network interface.
-func (n *Networking) DeleteNetworkInterface(ctx context.Context, id string) error {
-	_, err := n.do(ctx, "DeleteNetworkInterface", id, func() (any, error) {
-		return nil, n.driver.DeleteNetworkInterface(ctx, id)
-	})
-
-	return err
-}
-
 // CreateVPCEndpoint creates a VPC endpoint.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
@@ -753,4 +707,78 @@ func (n *Networking) RemoveSecurityGroupTags(ctx context.Context, id string, key
 	})
 
 	return err
+}
+
+// The wrapper forwards the optional networking capabilities so a caller
+// holding a *Networking sees the same capability set as the driver beneath it.
+// Without this the wrapper would hide them and every optional capability would
+// look unimplemented.
+
+// ModifyVPCAttribute sets the DNS attributes of a VPC.
+func (n *Networking) ModifyVPCAttribute(
+	ctx context.Context, id string, update driver.VPCAttributeUpdate,
+) error {
+	attrs, ok := n.driver.(driver.VPCAttributes)
+	if !ok {
+		return errUnsupportedCapability("VPC attributes")
+	}
+
+	_, err := n.do(ctx, "ModifyVPCAttribute", id, func() (any, error) {
+		return nil, attrs.ModifyVPCAttribute(ctx, id, update)
+	})
+
+	return err
+}
+
+// DescribeNetworkInterfaces returns interfaces matching the given IDs.
+func (n *Networking) DescribeNetworkInterfaces(
+	ctx context.Context, ids []string,
+) ([]driver.NetworkInterface, error) {
+	enis, ok := n.driver.(driver.NetworkInterfaces)
+	if !ok {
+		return nil, errUnsupportedCapability("network interfaces")
+	}
+
+	out, err := n.do(ctx, "DescribeNetworkInterfaces", ids, func() (any, error) {
+		return enis.DescribeNetworkInterfaces(ctx, ids)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.NetworkInterface), nil
+}
+
+// DetachNetworkInterface detaches an interface from its attachment.
+func (n *Networking) DetachNetworkInterface(
+	ctx context.Context, attachmentID string, force bool,
+) error {
+	enis, ok := n.driver.(driver.NetworkInterfaces)
+	if !ok {
+		return errUnsupportedCapability("network interfaces")
+	}
+
+	_, err := n.do(ctx, "DetachNetworkInterface", attachmentID, func() (any, error) {
+		return nil, enis.DetachNetworkInterface(ctx, attachmentID, force)
+	})
+
+	return err
+}
+
+// DeleteNetworkInterface deletes an interface.
+func (n *Networking) DeleteNetworkInterface(ctx context.Context, id string) error {
+	enis, ok := n.driver.(driver.NetworkInterfaces)
+	if !ok {
+		return errUnsupportedCapability("network interfaces")
+	}
+
+	_, err := n.do(ctx, "DeleteNetworkInterface", id, func() (any, error) {
+		return nil, enis.DeleteNetworkInterface(ctx, id)
+	})
+
+	return err
+}
+
+func errUnsupportedCapability(what string) error {
+	return cerrors.Newf(cerrors.InvalidArgument, "this driver does not model %s", what)
 }

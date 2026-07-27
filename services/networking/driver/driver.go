@@ -331,15 +331,6 @@ type Networking interface {
 	AssociateRouteTable(ctx context.Context, routeTableID, subnetID string) (*RouteTableAssociation, error)
 	DisassociateRouteTable(ctx context.Context, associationID string) error
 
-	// VPC attributes. A nil pointer leaves that attribute unchanged, matching
-	// ModifyVpcAttribute, which accepts one attribute per call.
-	ModifyVPCAttribute(ctx context.Context, id string, enableDNSSupport, enableDNSHostnames *bool) error
-
-	// Network Interfaces
-	DescribeNetworkInterfaces(ctx context.Context, ids []string) ([]NetworkInterface, error)
-	DetachNetworkInterface(ctx context.Context, attachmentID string, force bool) error
-	DeleteNetworkInterface(ctx context.Context, id string) error
-
 	// VPC Endpoints
 	CreateVPCEndpoint(ctx context.Context, config VPCEndpointConfig) (*VPCEndpoint, error)
 	DeleteVPCEndpoint(ctx context.Context, id string) error
@@ -355,4 +346,36 @@ type Networking interface {
 	RemoveSubnetTags(ctx context.Context, id string, keys []string) error
 	UpdateSecurityGroupTags(ctx context.Context, id string, tags map[string]string) error
 	RemoveSecurityGroupTags(ctx context.Context, id string, keys []string) error
+}
+
+// VPCAttributeUpdate carries the attributes a caller wants changed. A nil
+// pointer leaves that attribute alone, matching an API that accepts one
+// attribute per call — a caller enabling DNS hostnames must not have its
+// DNS-support setting reset as a side effect.
+//
+// A struct rather than positional pointers so a new attribute can be added
+// without breaking every implementation.
+type VPCAttributeUpdate struct {
+	EnableDNSSupport   *bool
+	EnableDNSHostnames *bool
+}
+
+// VPCAttributes is an OPTIONAL capability, discovered by type assertion.
+// Per-VPC DNS attributes are an AWS concept; other clouds configure name
+// resolution elsewhere, so this is kept out of the Networking interface rather
+// than forcing them to carry a method they cannot implement meaningfully.
+type VPCAttributes interface {
+	ModifyVPCAttribute(ctx context.Context, id string, update VPCAttributeUpdate) error
+}
+
+// NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.
+//
+// Kept out of the Networking interface for the same reason as VPCAttributes:
+// requiring it would have every provider carry an implementation, and the two
+// that do not model interfaces would carry identical copies of one that does
+// nothing for them.
+type NetworkInterfaces interface {
+	DescribeNetworkInterfaces(ctx context.Context, ids []string) ([]NetworkInterface, error)
+	DetachNetworkInterface(ctx context.Context, attachmentID string, force bool) error
+	DeleteNetworkInterface(ctx context.Context, id string) error
 }

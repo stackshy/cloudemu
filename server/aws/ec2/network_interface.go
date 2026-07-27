@@ -57,7 +57,13 @@ func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	enis, err := h.vpc.DescribeNetworkInterfaces(r.Context(), ids)
+	store, ok := h.networkInterfaces()
+	if !ok {
+		writeUnsupportedENI(w)
+		return
+	}
+
+	enis, err := store.DescribeNetworkInterfaces(r.Context(), ids)
 	if err != nil {
 		writeENIErr(w, err)
 		return
@@ -147,7 +153,13 @@ func containsString(values []string, want string) bool {
 func (h *Handler) detachNetworkInterface(w http.ResponseWriter, r *http.Request) {
 	force := r.Form.Get("Force") == "true"
 
-	if err := h.vpc.DetachNetworkInterface(r.Context(), r.Form.Get("AttachmentId"), force); err != nil {
+	store, ok := h.networkInterfaces()
+	if !ok {
+		writeUnsupportedENI(w)
+		return
+	}
+
+	if err := store.DetachNetworkInterface(r.Context(), r.Form.Get("AttachmentId"), force); err != nil {
 		writeENIErr(w, err)
 		return
 	}
@@ -160,7 +172,13 @@ func (h *Handler) detachNetworkInterface(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) deleteNetworkInterface(w http.ResponseWriter, r *http.Request) {
-	if err := h.vpc.DeleteNetworkInterface(r.Context(), r.Form.Get("NetworkInterfaceId")); err != nil {
+	store, ok := h.networkInterfaces()
+	if !ok {
+		writeUnsupportedENI(w)
+		return
+	}
+
+	if err := store.DeleteNetworkInterface(r.Context(), r.Form.Get("NetworkInterfaceId")); err != nil {
 		writeENIErr(w, err)
 		return
 	}
@@ -191,4 +209,19 @@ func toNetworkInterfaceXML(e *netdriver.NetworkInterface) networkInterfaceXML {
 
 func writeENIErr(w http.ResponseWriter, err error) {
 	writeErrWithNotFound(w, err, "InvalidNetworkInterfaceID.NotFound", "DependencyViolation")
+}
+
+// networkInterfaces reports whether the configured driver models interfaces.
+// They are an optional capability, so a driver for a cloud that does not model
+// them answers InvalidAction rather than being forced to carry an empty
+// implementation.
+func (h *Handler) networkInterfaces() (netdriver.NetworkInterfaces, bool) {
+	enis, ok := h.vpc.(netdriver.NetworkInterfaces)
+
+	return enis, ok
+}
+
+func writeUnsupportedENI(w http.ResponseWriter) {
+	awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
+		"this driver does not model network interfaces")
 }

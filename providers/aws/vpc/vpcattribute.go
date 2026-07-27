@@ -4,6 +4,7 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // ModifyVPCAttribute sets the DNS attributes of a VPC.
@@ -12,19 +13,19 @@ import (
 // one attribute per call, so a caller enabling DNS hostnames must not have its
 // DNS-support setting reset as a side effect.
 func (m *Mock) ModifyVPCAttribute(
-	_ context.Context, id string, enableDNSSupport, enableDNSHostnames *bool,
+	_ context.Context, id string, update driver.VPCAttributeUpdate,
 ) error {
 	v, ok := m.vpcs.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "vpc %q not found", id)
 	}
 
-	if enableDNSSupport != nil {
-		v.EnableDNSSupport = *enableDNSSupport
+	if update.EnableDNSSupport != nil {
+		v.EnableDNSSupport = *update.EnableDNSSupport
 	}
 
-	if enableDNSHostnames != nil {
-		v.EnableDNSHostnames = *enableDNSHostnames
+	if update.EnableDNSHostnames != nil {
+		v.EnableDNSHostnames = *update.EnableDNSHostnames
 	}
 
 	return nil

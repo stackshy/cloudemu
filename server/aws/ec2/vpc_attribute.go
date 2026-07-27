@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 type modifyVpcAttributeResponseXML struct {
@@ -24,7 +25,19 @@ func (h *Handler) modifyVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	support := boolAttributeValue(r, "EnableDnsSupport")
 	hostnames := boolAttributeValue(r, "EnableDnsHostnames")
 
-	err := h.vpc.ModifyVPCAttribute(r.Context(), r.Form.Get("VpcId"), support, hostnames)
+	attrs, ok := h.vpc.(netdriver.VPCAttributes)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
+			"this driver does not model VPC attributes")
+
+		return
+	}
+
+	err := attrs.ModifyVPCAttribute(r.Context(), r.Form.Get("VpcId"),
+		netdriver.VPCAttributeUpdate{
+			EnableDNSSupport:   support,
+			EnableDNSHostnames: hostnames,
+		})
 	if err != nil {
 		writeVPCErr(w, err)
 		return

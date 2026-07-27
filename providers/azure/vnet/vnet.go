@@ -23,12 +23,10 @@ const (
 var _ driver.Networking = (*Mock)(nil)
 
 type vpcData struct {
-	ID                 string
-	CIDRBlock          string
-	State              string
-	Tags               map[string]string
-	EnableDNSSupport   bool
-	EnableDNSHostnames bool
+	ID        string
+	CIDRBlock string
+	State     string
+	Tags      map[string]string
 }
 
 type subnetData struct {
@@ -63,7 +61,6 @@ type Mock struct {
 	igws           *memstore.Store[*igwData]
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
-	enis           *memstore.Store[*eniData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
 	opts           *config.Options
 }
@@ -82,7 +79,6 @@ func New(opts *config.Options) *Mock {
 		igws:           memstore.New[*igwData](),
 		eips:           memstore.New[*eipData](),
 		rtAssocs:       memstore.New[*rtAssocData](),
-		enis:           memstore.New[*eniData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
 		opts:           opts,
 	}
@@ -130,8 +126,6 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 		CIDRBlock: cfg.CIDRBlock,
 		State:     "available",
 		Tags:      tags,
-		// EC2 defaults DNS support on and DNS hostnames off for a new VPC.
-		EnableDNSSupport: true,
 	}
 	m.vpcs.Set(id, v)
 
@@ -438,12 +432,10 @@ func copyTags(tags map[string]string) map[string]string {
 
 func toVPCInfo(v *vpcData) driver.VPCInfo {
 	return driver.VPCInfo{
-		ID:                 v.ID,
-		CIDRBlock:          v.CIDRBlock,
-		State:              v.State,
-		Tags:               copyTags(v.Tags),
-		EnableDNSSupport:   v.EnableDNSSupport,
-		EnableDNSHostnames: v.EnableDNSHostnames,
+		ID:        v.ID,
+		CIDRBlock: v.CIDRBlock,
+		State:     v.State,
+		Tags:      copyTags(v.Tags),
 	}
 }
 

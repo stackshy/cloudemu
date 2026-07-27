@@ -46,8 +46,6 @@ func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) 
 	}
 	m.natGateways.Set(id, nat)
 
-	m.attachManagedENI(subnet.VPCID, cfg.SubnetID, natENIDescription(id))
-
 	info := toNATGatewayInfo(nat)
 
 	return &info, nil
@@ -58,8 +56,6 @@ func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
 	if !m.natGateways.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "NAT gateway %q not found", id)
 	}
-
-	m.releaseManagedENIs(natENIDescription(id))
 
 	return nil
 }

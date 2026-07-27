@@ -642,19 +642,19 @@ func (m *mockDriver) DisassociateAddress(
 }
 
 func (m *mockDriver) ModifyVPCAttribute(
-	_ context.Context, id string, enableDNSSupport, enableDNSHostnames *bool,
+	_ context.Context, id string, update driver.VPCAttributeUpdate,
 ) error {
 	v, ok := m.vpcs[id]
 	if !ok {
 		return fmt.Errorf("not found")
 	}
 
-	if enableDNSSupport != nil {
-		v.EnableDNSSupport = *enableDNSSupport
+	if update.EnableDNSSupport != nil {
+		v.EnableDNSSupport = *update.EnableDNSSupport
 	}
 
-	if enableDNSHostnames != nil {
-		v.EnableDNSHostnames = *enableDNSHostnames
+	if update.EnableDNSHostnames != nil {
+		v.EnableDNSHostnames = *update.EnableDNSHostnames
 	}
 
 	return nil

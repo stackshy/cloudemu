@@ -26,7 +26,9 @@ func TestModifyVPCAttributePartialUpdate(t *testing.T) {
 	// The real API takes one attribute per call, so setting hostnames must not
 	// disturb DNS support — a nil pointer means "unchanged", not "false".
 	on := true
-	if err := m.ModifyVPCAttribute(ctx, v.ID, nil, &on); err != nil {
+	if err := m.ModifyVPCAttribute(ctx, v.ID, driver.VPCAttributeUpdate{
+		EnableDNSHostnames: &on,
+	}); err != nil {
 		t.Fatalf("ModifyVPCAttribute: %v", err)
 	}
 
@@ -47,7 +49,8 @@ func TestModifyVPCAttributePartialUpdate(t *testing.T) {
 func TestModifyVPCAttributeUnknownVPC(t *testing.T) {
 	on := true
 	if err := New(config.NewOptions()).
-		ModifyVPCAttribute(context.Background(), "vpc-nope", &on, nil); err == nil {
+		ModifyVPCAttribute(context.Background(), "vpc-nope",
+			driver.VPCAttributeUpdate{EnableDNSSupport: &on}); err == nil {
 		t.Error("modifying an unknown VPC should fail")
 	}
 }
