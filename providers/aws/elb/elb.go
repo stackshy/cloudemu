@@ -105,7 +105,19 @@ func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
 
 // DescribeLoadBalancers returns load balancers matching the given ARNs.
 // If arns is empty, all load balancers are returned.
+//
+// Naming an ARN that does not exist is LoadBalancerNotFound, not an empty
+// list. Callers waiting for a delete to settle poll this until it errors, so
+// answering "no error, nothing found" leaves them polling to their timeout
+// over a load balancer that is already gone.
 func (m *Mock) DescribeLoadBalancers(_ context.Context, arns []string) ([]driver.LBInfo, error) {
+	for _, arn := range arns {
+		if !m.lbs.Has(arn) {
+			return nil, errors.Newf(errors.NotFound,
+				"LoadBalancerNotFound: load balancer %q not found", arn)
+		}
+	}
+
 	return describeResources(m.lbs, arns), nil
 }
 

@@ -2,6 +2,7 @@ package elbv2_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awselbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -166,5 +168,47 @@ func TestDescribeTagsReturnsLoadBalancerTags(t *testing.T) {
 
 	if !found {
 		t.Errorf("tag not returned: %+v", got.TagDescriptions[0].Tags)
+	}
+}
+
+// A caller waiting for a delete to settle polls DescribeLoadBalancers with the
+// ARN until it errors. An empty list with no error leaves it polling to its
+// timeout over a load balancer that is already gone — which is exactly what a
+// teardown reports as "still present".
+func TestDescribeDeletedLoadBalancerIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	c := newELBClient(t)
+	arn := mkLB(t, c, "nlb-gone", nil)
+
+	if _, err := c.DeleteLoadBalancer(ctx,
+		&awselbv2.DeleteLoadBalancerInput{LoadBalancerArn: aws.String(arn)}); err != nil {
+		t.Fatalf("DeleteLoadBalancer: %v", err)
+	}
+
+	_, err := c.DescribeLoadBalancers(ctx, &awselbv2.DescribeLoadBalancersInput{
+		LoadBalancerArns: []string{arn},
+	})
+	if err == nil {
+		t.Fatal("describing a deleted load balancer by ARN must error, not return an empty list")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "LoadBalancerNotFound" {
+		t.Errorf("error code = %v, want LoadBalancerNotFound", err)
+	}
+}
+
+// An unfiltered describe still reports whatever exists, including nothing.
+func TestDescribeAllLoadBalancersEmptyIsNotAnError(t *testing.T) {
+	c := newELBClient(t)
+
+	out, err := c.DescribeLoadBalancers(context.Background(),
+		&awselbv2.DescribeLoadBalancersInput{})
+	if err != nil {
+		t.Fatalf("unfiltered describe should not error: %v", err)
+	}
+
+	if len(out.LoadBalancers) != 0 {
+		t.Errorf("expected no load balancers, got %d", len(out.LoadBalancers))
 	}
 }
