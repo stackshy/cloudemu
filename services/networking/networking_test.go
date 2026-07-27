@@ -641,6 +641,25 @@ func (m *mockDriver) DisassociateAddress(
 	return fmt.Errorf("not found")
 }
 
+func (m *mockDriver) ModifyVPCAttribute(
+	_ context.Context, id string, enableDNSSupport, enableDNSHostnames *bool,
+) error {
+	v, ok := m.vpcs[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
+
+	if enableDNSSupport != nil {
+		v.EnableDNSSupport = *enableDNSSupport
+	}
+
+	if enableDNSHostnames != nil {
+		v.EnableDNSHostnames = *enableDNSHostnames
+	}
+
+	return nil
+}
+
 func (m *mockDriver) DescribeNetworkInterfaces(
 	_ context.Context, ids []string,
 ) ([]driver.NetworkInterface, error) {

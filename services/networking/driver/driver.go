@@ -15,6 +15,10 @@ type VPCInfo struct {
 	CIDRBlock string
 	State     string
 	Tags      map[string]string
+	// DNS attributes, settable after creation via ModifyVPCAttribute. Real
+	// EC2 defaults DNS support on and DNS hostnames off for a new VPC.
+	EnableDNSSupport   bool
+	EnableDNSHostnames bool
 }
 
 // SubnetConfig describes a subnet to create.
@@ -325,6 +329,10 @@ type Networking interface {
 	// Route Table Associations
 	AssociateRouteTable(ctx context.Context, routeTableID, subnetID string) (*RouteTableAssociation, error)
 	DisassociateRouteTable(ctx context.Context, associationID string) error
+
+	// VPC attributes. A nil pointer leaves that attribute unchanged, matching
+	// ModifyVpcAttribute, which accepts one attribute per call.
+	ModifyVPCAttribute(ctx context.Context, id string, enableDNSSupport, enableDNSHostnames *bool) error
 
 	// Network Interfaces
 	DescribeNetworkInterfaces(ctx context.Context, ids []string) ([]NetworkInterface, error)

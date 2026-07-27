@@ -602,6 +602,18 @@ func (n *Networking) DisassociateRouteTable(
 	return err
 }
 
+// ModifyVPCAttribute sets the DNS attributes of a VPC. A nil pointer leaves
+// that attribute unchanged.
+func (n *Networking) ModifyVPCAttribute(
+	ctx context.Context, id string, enableDNSSupport, enableDNSHostnames *bool,
+) error {
+	_, err := n.do(ctx, "ModifyVPCAttribute", id, func() (any, error) {
+		return nil, n.driver.ModifyVPCAttribute(ctx, id, enableDNSSupport, enableDNSHostnames)
+	})
+
+	return err
+}
+
 // DescribeNetworkInterfaces returns network interfaces matching the given IDs,
 // or all of them when no IDs are supplied.
 func (n *Networking) DescribeNetworkInterfaces(

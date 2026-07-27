@@ -23,10 +23,12 @@ const (
 var _ driver.Networking = (*Mock)(nil)
 
 type vpcData struct {
-	ID        string
-	CIDRBlock string
-	State     string
-	Tags      map[string]string
+	ID                 string
+	CIDRBlock          string
+	State              string
+	Tags               map[string]string
+	EnableDNSSupport   bool
+	EnableDNSHostnames bool
 }
 
 type subnetData struct {
@@ -433,10 +435,12 @@ func copyTags(tags map[string]string) map[string]string {
 
 func toVPCInfo(v *vpcData) driver.VPCInfo {
 	return driver.VPCInfo{
-		ID:        v.ID,
-		CIDRBlock: v.CIDRBlock,
-		State:     v.State,
-		Tags:      copyTags(v.Tags),
+		ID:                 v.ID,
+		CIDRBlock:          v.CIDRBlock,
+		State:              v.State,
+		Tags:               copyTags(v.Tags),
+		EnableDNSSupport:   v.EnableDNSSupport,
+		EnableDNSHostnames: v.EnableDNSHostnames,
 	}
 }
 

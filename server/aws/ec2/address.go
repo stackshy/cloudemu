@@ -4,8 +4,8 @@ import (
 	"encoding/xml"
 	"net/http"
 
-	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Elastic IP query-protocol handlers.
