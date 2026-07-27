@@ -50,6 +50,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
+	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
 	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/table"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
@@ -162,6 +163,10 @@ type Drivers struct {
 //nolint:gocritic,gocyclo // Drivers is all interface fields; one if-per-driver is the simplest expression
 func New(d Drivers) *server.Server {
 	srv := server.New()
+
+	// The subscriptions collection has no driver behind it — see the package
+	// doc for why the list is empty rather than invented.
+	srv.Register(subscriptions.New())
 
 	// Register more-specific compute resource handlers first so their
 	// resourceType match wins over virtualMachines (which also accepts the
