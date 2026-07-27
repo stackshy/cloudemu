@@ -108,6 +108,12 @@ type LBAttributes struct {
 	DeletionProtection bool
 	AccessLogsEnabled  bool
 	AccessLogsBucket   string
+	// Extra holds attributes outside the typed set above, keyed by their AWS
+	// attribute name (load_balancing.cross_zone.enabled and friends). AWS
+	// models attributes as open key/value pairs and adds new ones over time,
+	// so a fixed struct silently drops whatever it has not been taught — and a
+	// caller reading back its own write would get a wrong answer.
+	Extra map[string]string
 }
 
 // Target identifies a target (e.g., instance) in a target group.
