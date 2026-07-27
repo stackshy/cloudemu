@@ -19,6 +19,9 @@ type routeTableData struct {
 	VPCID  string
 	Routes []driver.Route
 	Tags   map[string]string
+	// IsMain marks the route table EC2 creates alongside the VPC. It cannot be
+	// deleted on its own and disappears with the VPC.
+	IsMain bool
 }
 
 // CreateRouteTable creates a route table for the specified VPC.
@@ -54,10 +57,22 @@ func (m *Mock) CreateRouteTable(_ context.Context, cfg driver.RouteTableConfig) 
 }
 
 // DeleteRouteTable deletes the route table with the given ID.
+//
+// The VPC's main route table cannot be deleted on its own — real EC2 refuses
+// it, and a caller sweeping a VPC's route tables must skip it rather than
+// treat the failure as a broken teardown.
 func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
-	if !m.routeTables.Delete(id) {
+	rt, ok := m.routeTables.Get(id)
+	if !ok {
 		return errors.Newf(errors.NotFound, "route table %q not found", id)
 	}
+
+	if rt.IsMain {
+		return errors.Newf(errors.InvalidArgument,
+			"cannot delete the main route table %q of vpc %q", id, rt.VPCID)
+	}
+
+	m.routeTables.Delete(id)
 
 	return nil
 }

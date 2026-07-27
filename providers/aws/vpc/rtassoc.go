@@ -12,6 +12,9 @@ type rtAssocData struct {
 	ID           string
 	RouteTableID string
 	SubnetID     string
+	// Main marks the VPC's implicit main-route-table association. It carries
+	// no subnet and cannot be disassociated.
+	Main bool
 }
 
 // AssociateRouteTable associates a route table with a subnet.
@@ -50,13 +53,23 @@ func (m *Mock) AssociateRouteTable(
 func (m *Mock) DisassociateRouteTable(
 	_ context.Context, associationID string,
 ) error {
-	if !m.rtAssocs.Delete(associationID) {
+	assoc, ok := m.rtAssocs.Get(associationID)
+	if !ok {
 		return errors.Newf(
 			errors.NotFound,
 			"route table association %q not found",
 			associationID,
 		)
 	}
+
+	// Real EC2 refuses to disassociate the main association; it is implicit in
+	// the VPC rather than something the caller created.
+	if assoc.Main {
+		return errors.Newf(errors.InvalidArgument,
+			"cannot disassociate the main route table association %q", associationID)
+	}
+
+	m.rtAssocs.Delete(associationID)
 
 	return nil
 }
@@ -66,5 +79,6 @@ func toRTAssocInfo(a *rtAssocData) driver.RouteTableAssociation {
 		ID:           a.ID,
 		RouteTableID: a.RouteTableID,
 		SubnetID:     a.SubnetID,
+		Main:         a.Main,
 	}
 }

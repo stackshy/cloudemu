@@ -107,15 +107,62 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 	}
 	m.vpcs.Set(id, v)
 
+	m.createMainRouteTable(id, cfg.CIDRBlock)
+
 	info := toVPCInfo(v)
 
 	return &info, nil
 }
 
+// createMainRouteTable gives the new VPC the route table EC2 creates for it,
+// carrying the local route and an implicit main association. Callers list a
+// VPC's route tables during teardown and skip the main one, so its absence is
+// visible: it makes every VPC look like it has one fewer table than it does.
+func (m *Mock) createMainRouteTable(vpcID, cidr string) {
+	rtID := idgen.GenerateID("rtb-")
+
+	m.routeTables.Set(rtID, &routeTableData{
+		ID:    rtID,
+		VPCID: vpcID,
+		Routes: []driver.Route{{
+			DestinationCIDR: cidr,
+			TargetID:        RouteTargetLocal,
+			TargetType:      RouteTargetLocal,
+			State:           "active",
+		}},
+		IsMain: true,
+	})
+
+	assocID := idgen.GenerateID("rtbassoc-")
+	m.rtAssocs.Set(assocID, &rtAssocData{
+		ID:           assocID,
+		RouteTableID: rtID,
+		Main:         true,
+	})
+}
+
 // DeleteVPC deletes the VPC with the given ID.
+//
+// The main route table and its association are implicit in the VPC, so they
+// go with it. Leaving them behind would strand rows no caller can address:
+// the main table refuses a direct delete.
 func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 	if !m.vpcs.Delete(id) {
 		return errors.Newf(errors.NotFound, "vpc %q not found", id)
+	}
+
+	for rtID, rt := range m.routeTables.All() {
+		if rt.VPCID != id || !rt.IsMain {
+			continue
+		}
+
+		m.routeTables.Delete(rtID)
+
+		for assocID, assoc := range m.rtAssocs.All() {
+			if assoc.RouteTableID == rtID {
+				m.rtAssocs.Delete(assocID)
+			}
+		}
 	}
 
 	return nil
