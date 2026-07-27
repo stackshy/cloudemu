@@ -459,6 +459,36 @@ This document lists every service and operation available in CloudEmu across all
 | `AssociateRouteTable` | `(ctx, routeTableID, subnetID) (*RouteTableAssociation, error)` |
 | `DisassociateRouteTable` | `(ctx, associationID) error` |
 
+Every VPC is created with a main route table, carrying the local route and an
+association with `Main: true` and no subnet. It cannot be deleted or
+disassociated on its own and disappears with the VPC. A subnet with no explicit
+association is governed by it.
+
+`DescribeRouteTables` populates `RouteTable.Associations`; it is the only way a
+caller can discover an association ID in order to disassociate.
+
+### Network Interfaces (ENI)
+
+| Operation | Signature |
+|-----------|-----------|
+| `DescribeNetworkInterfaces` | `(ctx, ids) ([]NetworkInterface, error)` |
+| `DetachNetworkInterface` | `(ctx, attachmentID, force) error` |
+| `DeleteNetworkInterface` | `(ctx, id) error` |
+
+Managed resources attach interfaces of their own — a NAT gateway holds one for
+as long as it lives. An attached interface cannot be deleted, which is how a
+caller draining a VPC before deleting it learns the drain is not finished.
+
+### VPC Attributes
+
+| Operation | Signature |
+|-----------|-----------|
+| `ModifyVPCAttribute` | `(ctx, id, enableDNSSupport, enableDNSHostnames) error` |
+
+Both attributes are pointers: `nil` leaves that attribute unchanged, matching an
+API that accepts one attribute per call. New VPCs default to DNS support on and
+DNS hostnames off.
+
 ### VPC Endpoints
 
 | Operation | Signature |
@@ -690,6 +720,18 @@ This document lists every service and operation available in CloudEmu across all
 | `DescribeTargetHealth` | `(ctx, targetGroupARN) ([]TargetHealth, error)` |
 | `SetTargetHealth` | `(ctx, targetGroupARN, targetID, state) error` |
 
+### Attributes
+
+| Operation | Signature |
+|-----------|-----------|
+| `GetLBAttributes` | `(ctx, lbARN) (*LBAttributes, error)` |
+| `PutLBAttributes` | `(ctx, lbARN, attrs) error` |
+
+`LBAttributes.Extra` carries attributes outside the typed set, keyed by their
+provider attribute name (`load_balancing.cross_zone.enabled` and friends).
+Providers model attributes as open key/value pairs and add new ones over time, so
+a fixed struct would silently drop whatever it had not been taught.
+
 **Total: 19 operations**
 
 ---
@@ -788,7 +830,30 @@ This document lists every service and operation available in CloudEmu across all
 | `Decr` | `(ctx, cacheName, key) (int64, error)` |
 | `DecrBy` | `(ctx, cacheName, key, delta) (int64, error)` |
 
-**Total: 16 operations**
+### Subnet Groups (optional capability)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateCacheSubnetGroup` | `(ctx, SubnetGroupConfig) (*SubnetGroup, error)` |
+| `DescribeCacheSubnetGroups` | `(ctx, names) ([]SubnetGroup, error)` |
+| `DeleteCacheSubnetGroup` | `(ctx, name) error` |
+
+### Replication Groups (optional capability)
+
+A primary node plus replicas, addressed through one primary endpoint. Callers
+build a connection string from it, so the endpoint is always populated — a group
+without one is indistinguishable from a broken provision.
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateReplicationGroup` | `(ctx, ReplicationGroupConfig) (*ReplicationGroup, error)` |
+| `DescribeReplicationGroups` | `(ctx, ids) ([]ReplicationGroup, error)` |
+| `ModifyReplicationGroup` | `(ctx, id, numCacheNodes) (*ReplicationGroup, error)` |
+| `DeleteReplicationGroup` | `(ctx, id) error` |
+
+Both interfaces are AWS-only concepts, discovered by type assertion.
+
+**Total: 16 operations (+7 optional)**
 
 ---
 
@@ -1032,7 +1097,24 @@ A single portable interface backs every RDBMS handler. Engine selection (MySQL /
 | `DeleteClusterSnapshot` | `(ctx, id) error` |
 | `RestoreClusterFromSnapshot` | `(ctx, RestoreClusterInput) (*Cluster, error)` |
 
-**Total: 21 operations**
+### Subnet Groups (optional capability)
+
+DB subnet groups are an AWS concept — Azure and GCP place managed databases with
+vnet integration instead. The `SubnetGroups` interface is therefore kept out of
+`RelationalDB` and discovered by type assertion; drivers that do not implement it
+answer `InvalidAction`.
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateDBSubnetGroup` | `(ctx, SubnetGroupConfig) (*SubnetGroup, error)` |
+| `DescribeDBSubnetGroups` | `(ctx, names) ([]SubnetGroup, error)` |
+| `DeleteDBSubnetGroup` | `(ctx, name) error` |
+
+`VPCID` is derived from the member subnets rather than supplied by the caller,
+matching the real service. Callers tearing down a VPC list subnet groups and
+match on it.
+
+**Total: 21 operations (+3 optional)**
 
 ---
 
@@ -1459,19 +1541,19 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 | Compute | 35 |
 | Database | 21 |
 | Serverless | 26 |
-| Networking | 47 |
+| Networking | 51 |
 | Monitoring | 12 |
 | IAM | 35 |
 | DNS | 15 |
 | Load Balancer | 19 |
 | Message Queue | 14 |
-| Cache | 16 |
+| Cache | 16 (+7 optional) |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
-| Relational Database | 21 |
+| Relational Database | 21 (+3 optional) |
 | Kubernetes — AWS EKS (control plane) | 21 |
 | Kubernetes — Azure AKS (control plane) | 18 |
 | Kubernetes — GCP GKE (control plane) | 26 |
@@ -1483,4 +1565,8 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| **Grand Total** | **966** |
+| **Grand Total** | **970** (+10 optional) |
+
+Optional operations are capabilities a driver may implement but is not required
+to — see the "optional capability" sections above. They are counted separately
+because a driver without them is still complete.
