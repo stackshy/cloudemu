@@ -47,6 +47,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/postgresflex"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
@@ -167,6 +168,10 @@ func New(d Drivers) *server.Server {
 	// The subscriptions collection has no driver behind it — see the package
 	// doc for why the list is empty rather than invented.
 	srv.Register(subscriptions.New())
+
+	// Resource groups have no driver: they are containers, and the emulator
+	// tracks membership by the ids resources already carry.
+	srv.Register(resourcegroups.New())
 
 	// Register more-specific compute resource handlers first so their
 	// resourceType match wins over virtualMachines (which also accepts the
