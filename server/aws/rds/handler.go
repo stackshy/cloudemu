@@ -177,6 +177,10 @@ func notFoundCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	// "db subnet group" first: it is the only one whose message does not start
+	// with "DB ", and checking it late would let a broader case claim it.
+	case strings.Contains(msg, "db subnet group"):
+		return "DBSubnetGroupNotFoundFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceNotFound"
 	case strings.Contains(msg, "DB cluster snapshot"):
@@ -194,6 +198,8 @@ func alreadyExistsCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	case strings.Contains(msg, "db subnet group"):
+		return "DBSubnetGroupAlreadyExists"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceAlreadyExists"
 	case strings.Contains(msg, "DB cluster snapshot"):

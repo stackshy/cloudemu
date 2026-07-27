@@ -2,6 +2,7 @@ package elasticache_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awselasticache "github.com/aws/aws-sdk-go-v2/service/elasticache"
+	cachetypes "github.com/aws/aws-sdk-go-v2/service/elasticache/types"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -158,5 +160,35 @@ func TestModifyReplicationGroup(t *testing.T) {
 		ReplicationGroupId: aws.String("nope"),
 	}); err == nil {
 		t.Error("modifying an unknown group should fail")
+	}
+}
+
+// Same reasoning as RDS: the SDK matches on the error CODE, not the message.
+// A caller checking for ReplicationGroupAlreadyExistsFault would not have
+// matched a generic CacheClusterAlreadyExists.
+func TestReplicationGroupErrorsAreTyped(t *testing.T) {
+	ctx := context.Background()
+	c := newReplicationGroupClient(t)
+
+	in := &awselasticache.CreateReplicationGroupInput{
+		ReplicationGroupId:          aws.String("typed-rg"),
+		ReplicationGroupDescription: aws.String("first"),
+		NumCacheClusters:            aws.Int32(1),
+	}
+
+	if _, err := c.CreateReplicationGroup(ctx, in); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+
+	var exists *cachetypes.ReplicationGroupAlreadyExistsFault
+	if _, err := c.CreateReplicationGroup(ctx, in); !errors.As(err, &exists) {
+		t.Errorf("duplicate must surface ReplicationGroupAlreadyExistsFault, got %T: %v", err, err)
+	}
+
+	var missing *cachetypes.ReplicationGroupNotFoundFault
+	if _, err := c.DeleteReplicationGroup(ctx, &awselasticache.DeleteReplicationGroupInput{
+		ReplicationGroupId: aws.String("never-made"),
+	}); !errors.As(err, &missing) {
+		t.Errorf("missing group must surface ReplicationGroupNotFoundFault, got %T: %v", err, err)
 	}
 }

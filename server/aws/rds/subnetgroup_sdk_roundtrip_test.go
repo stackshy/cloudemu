@@ -2,6 +2,7 @@ package rds_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	awsrds "github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -163,5 +165,36 @@ func TestDeleteUnknownSubnetGroupFails(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("deleting an unknown subnet group should fail")
+	}
+}
+
+// The SDK surfaces the error CODE as a typed error; a caller matching on
+// types.DBSubnetGroupAlreadyExistsFault never sees the message. A generic code
+// therefore breaks idempotent re-runs even when the message reads correctly.
+func TestSubnetGroupErrorsAreTyped(t *testing.T) {
+	ctx := context.Background()
+	rdsc, ec2c := newSubnetGroupClients(t)
+	_, subnetIDs := mkSubnets(t, ec2c)
+
+	in := &awsrds.CreateDBSubnetGroupInput{
+		DBSubnetGroupName:        aws.String("typed-sng"),
+		DBSubnetGroupDescription: aws.String("first"),
+		SubnetIds:                subnetIDs,
+	}
+
+	if _, err := rdsc.CreateDBSubnetGroup(ctx, in); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+
+	var exists *rdstypes.DBSubnetGroupAlreadyExistsFault
+	if _, err := rdsc.CreateDBSubnetGroup(ctx, in); !errors.As(err, &exists) {
+		t.Errorf("duplicate must surface DBSubnetGroupAlreadyExistsFault, got %T: %v", err, err)
+	}
+
+	var missing *rdstypes.DBSubnetGroupNotFoundFault
+	if _, err := rdsc.DeleteDBSubnetGroup(ctx, &awsrds.DeleteDBSubnetGroupInput{
+		DBSubnetGroupName: aws.String("never-made"),
+	}); !errors.As(err, &missing) {
+		t.Errorf("missing group must surface DBSubnetGroupNotFoundFault, got %T: %v", err, err)
 	}
 }

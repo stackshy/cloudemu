@@ -121,14 +121,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, "CacheClusterNotFound", err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), err.Error())
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "CacheClusterAlreadyExists", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), err.Error())
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidCacheClusterState", err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+	}
+}
+
+// notFoundCode picks the AWS-shaped error code for the resource the message
+// names. A caller matching the SDK's typed errors sees the code, not the
+// message, so a generic one leaves it unable to tell a missing replication
+// group from a missing cache cluster.
+//
+// Order matters: "cache subnet group" also contains "cache", so the more
+// specific resources are checked first.
+func notFoundCode(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "replication group"):
+		return "ReplicationGroupNotFoundFault"
+	case strings.Contains(msg, "cache subnet group"):
+		return "CacheSubnetGroupNotFoundFault"
+	default:
+		return "CacheClusterNotFound"
+	}
+}
+
+// alreadyExistsCode is the create-side counterpart of notFoundCode. Callers
+// treat the specific already-exists code as "already provisioned, carry on",
+// so collapsing it turns an idempotent re-run into a hard failure.
+func alreadyExistsCode(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "replication group"):
+		return "ReplicationGroupAlreadyExists"
+	case strings.Contains(msg, "cache subnet group"):
+		return "CacheSubnetGroupAlreadyExists"
+	default:
+		return "CacheClusterAlreadyExists"
 	}
 }
