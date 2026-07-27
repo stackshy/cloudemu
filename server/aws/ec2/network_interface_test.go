@@ -145,3 +145,32 @@ func TestDetachUnknownAttachmentFails(t *testing.T) {
 		t.Errorf("detaching an unknown attachment should fail, got 200: %s", resp.Body.String())
 	}
 }
+
+// Real EC2 answers InvalidParameterValue for a filter it does not recognise.
+// Silently returning nothing would tell a caller draining a VPC that there is
+// nothing left to drain, and it would proceed to a delete that then fails with
+// DependencyViolation.
+func TestDescribeNetworkInterfacesRejectsUnknownFilter(t *testing.T) {
+	h := newFullHandler()
+	vpcID, subnetID := mkVPCAndSubnet(t, h)
+
+	do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateNatGateway"}, "SubnetId": {subnetID},
+	})
+
+	resp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action":        {"DescribeNetworkInterfaces"},
+		"Filter.1.Name": {"attachment.instance-id"}, "Filter.1.Value.1": {"i-whatever"},
+	})
+	if resp.Code == http.StatusOK {
+		t.Errorf("an unimplemented filter must not be silently ignored: %s", resp.Body.String())
+	}
+
+	// A supported filter still works.
+	ok := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"DescribeNetworkInterfaces"}, "Filter.1.Name": {"vpc-id"}, "Filter.1.Value.1": {vpcID},
+	})
+	if ok.Code != http.StatusOK {
+		t.Errorf("supported filter = %d: %s", ok.Code, ok.Body.String())
+	}
+}

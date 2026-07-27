@@ -60,7 +60,7 @@ func TestCacheSubnetGroupSDKRoundTrip(t *testing.T) {
 	subnetID := aws.ToString(sub.Subnet.SubnetId)
 
 	created, err := cachec.CreateCacheSubnetGroup(ctx, &awselasticache.CreateCacheSubnetGroupInput{
-		CacheSubnetGroupName:        aws.String("zop-cache-sng"),
+		CacheSubnetGroupName:        aws.String("cache-sng-1"),
 		CacheSubnetGroupDescription: aws.String("test"),
 		SubnetIds:                   []string{subnetID},
 	})
@@ -88,7 +88,7 @@ func TestCacheSubnetGroupSDKRoundTrip(t *testing.T) {
 
 	if _, err := cachec.DeleteCacheSubnetGroup(ctx,
 		&awselasticache.DeleteCacheSubnetGroupInput{
-			CacheSubnetGroupName: aws.String("zop-cache-sng"),
+			CacheSubnetGroupName: aws.String("cache-sng-1"),
 		}); err != nil {
 		t.Fatalf("DeleteCacheSubnetGroup: %v", err)
 	}

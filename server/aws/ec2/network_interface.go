@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -44,13 +45,17 @@ type deleteNetworkInterfaceResponseXML struct {
 	Return    bool     `xml:"return"`
 }
 
-// describeNetworkInterfaces answers by id, and honours the vpc-id and
-// subnet-id filters. Callers draining a VPC before deleting it filter by
-// vpc-id and act on whatever comes back, so an unrecognised filter must
-// narrow rather than be ignored — returning every ENI in the account would
-// make a caller delete interfaces belonging to another network.
+// describeNetworkInterfaces answers by id and by the filters listed in
+// eniFilterField. Filters it does not implement are rejected rather than
+// ignored — see validateENIFilters.
 func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "NetworkInterfaceId")
+	filters := awsquery.Filters(r.Form)
+
+	if err := validateENIFilters(filters); err != nil {
+		writeENIErr(w, err)
+		return
+	}
 
 	enis, err := h.vpc.DescribeNetworkInterfaces(r.Context(), ids)
 	if err != nil {
@@ -61,7 +66,7 @@ func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 	out := make([]networkInterfaceXML, 0, len(enis))
 
 	for i := range enis {
-		if !eniMatchesFilters(&enis[i], awsquery.Filters(r.Form)) {
+		if !eniMatchesFilters(&enis[i], filters) {
 			continue
 		}
 
@@ -75,20 +80,49 @@ func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// eniFilterField maps a supported filter name to the field it selects on.
+// The second result reports whether the filter is recognised at all.
+func eniFilterField(eni *netdriver.NetworkInterface, name string) (string, bool) {
+	switch name {
+	case "vpc-id":
+		return eni.VPCID, true
+	case "subnet-id":
+		return eni.SubnetID, true
+	case "status":
+		return eni.Status, true
+	case "network-interface-id":
+		return eni.ID, true
+	case "description":
+		return eni.Description, true
+	default:
+		return "", false
+	}
+}
+
+// validateENIFilters rejects filter names this emulator does not implement.
+//
+// Real EC2 answers InvalidParameterValue for an unrecognised filter, and that
+// is the safe behaviour to copy: silently returning nothing would tell a
+// caller draining a VPC that there is nothing left to drain, so it would
+// proceed to a VPC delete that then fails with DependencyViolation. Matching
+// everything instead is equally bad — it hands back interfaces the caller
+// never asked for and may delete. An explicit error is the only answer that
+// cannot be mistaken for a result.
+func validateENIFilters(filters []awsquery.Filter) error {
+	for _, f := range filters {
+		if _, ok := eniFilterField(&netdriver.NetworkInterface{}, f.Name); !ok {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"The filter '%s' is invalid", f.Name)
+		}
+	}
+
+	return nil
+}
+
 func eniMatchesFilters(eni *netdriver.NetworkInterface, filters []awsquery.Filter) bool {
 	for _, f := range filters {
-		var field string
-
-		switch f.Name {
-		case "vpc-id":
-			field = eni.VPCID
-		case "subnet-id":
-			field = eni.SubnetID
-		case "status":
-			field = eni.Status
-		default:
-			// An unknown filter is not a match-everything: refusing to
-			// narrow would hand the caller interfaces it did not ask for.
+		field, ok := eniFilterField(eni, f.Name)
+		if !ok {
 			return false
 		}
 

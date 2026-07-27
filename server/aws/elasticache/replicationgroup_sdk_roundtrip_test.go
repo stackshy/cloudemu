@@ -45,8 +45,8 @@ func TestReplicationGroupSDKRoundTrip(t *testing.T) {
 	c := newReplicationGroupClient(t)
 
 	created, err := c.CreateReplicationGroup(ctx, &awselasticache.CreateReplicationGroupInput{
-		ReplicationGroupId:          aws.String("zop-redis"),
-		ReplicationGroupDescription: aws.String("zopdev redis"),
+		ReplicationGroupId:          aws.String("repl-1"),
+		ReplicationGroupDescription: aws.String("primary with replicas"),
 		CacheNodeType:               aws.String("cache.t3.micro"),
 		Engine:                      aws.String("redis"),
 		NumCacheClusters:            aws.Int32(2),
@@ -55,12 +55,12 @@ func TestReplicationGroupSDKRoundTrip(t *testing.T) {
 		t.Fatalf("CreateReplicationGroup: %v", err)
 	}
 
-	if got := aws.ToString(created.ReplicationGroup.ReplicationGroupId); got != "zop-redis" {
-		t.Errorf("id = %q, want zop-redis", got)
+	if got := aws.ToString(created.ReplicationGroup.ReplicationGroupId); got != "repl-1" {
+		t.Errorf("id = %q, want repl-1", got)
 	}
 
 	desc, err := c.DescribeReplicationGroups(ctx, &awselasticache.DescribeReplicationGroupsInput{
-		ReplicationGroupId: aws.String("zop-redis"),
+		ReplicationGroupId: aws.String("repl-1"),
 	})
 	if err != nil {
 		t.Fatalf("DescribeReplicationGroups: %v", err)
@@ -93,14 +93,14 @@ func TestReplicationGroupSDKRoundTrip(t *testing.T) {
 	}
 
 	if _, err := c.DeleteReplicationGroup(ctx, &awselasticache.DeleteReplicationGroupInput{
-		ReplicationGroupId: aws.String("zop-redis"),
+		ReplicationGroupId: aws.String("repl-1"),
 	}); err != nil {
 		t.Fatalf("DeleteReplicationGroup: %v", err)
 	}
 
 	if _, err := c.DescribeReplicationGroups(ctx,
 		&awselasticache.DescribeReplicationGroupsInput{
-			ReplicationGroupId: aws.String("zop-redis"),
+			ReplicationGroupId: aws.String("repl-1"),
 		}); err == nil {
 		t.Error("describe after delete should fail")
 	}

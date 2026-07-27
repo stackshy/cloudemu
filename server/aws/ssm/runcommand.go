@@ -74,10 +74,14 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Real SSM reports the command as Pending here — it has been accepted, not
+	// finished — and the caller learns the outcome from GetCommandInvocation.
+	// Reporting Success would invite a caller to skip the poll it would need
+	// against the real service.
 	wire.WriteJSON(w, sendCommandResponse{Command: commandJSON{
 		CommandId:    commandID,
 		DocumentName: req.DocumentName,
-		Status:       "Success",
+		Status:       "Pending",
 		InstanceIds:  req.InstanceIds,
 		Comment:      req.Comment,
 	}})

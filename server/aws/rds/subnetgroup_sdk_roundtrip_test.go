@@ -75,7 +75,7 @@ func TestSubnetGroupSDKRoundTrip(t *testing.T) {
 	vpcID, subnetIDs := mkSubnets(t, ec2c)
 
 	created, err := rdsc.CreateDBSubnetGroup(ctx, &awsrds.CreateDBSubnetGroupInput{
-		DBSubnetGroupName:        aws.String("zopdev-sng"),
+		DBSubnetGroupName:        aws.String("db-sng-1"),
 		DBSubnetGroupDescription: aws.String("test group"),
 		SubnetIds:                subnetIDs,
 	})
@@ -83,8 +83,8 @@ func TestSubnetGroupSDKRoundTrip(t *testing.T) {
 		t.Fatalf("CreateDBSubnetGroup: %v", err)
 	}
 
-	if got := aws.ToString(created.DBSubnetGroup.DBSubnetGroupName); got != "zopdev-sng" {
-		t.Errorf("name = %q, want zopdev-sng", got)
+	if got := aws.ToString(created.DBSubnetGroup.DBSubnetGroupName); got != "db-sng-1" {
+		t.Errorf("name = %q, want db-sng-1", got)
 	}
 
 	// VpcId is derived from the member subnets, never supplied by the caller.
@@ -112,7 +112,7 @@ func TestSubnetGroupSDKRoundTrip(t *testing.T) {
 	}
 
 	if _, err := rdsc.DeleteDBSubnetGroup(ctx, &awsrds.DeleteDBSubnetGroupInput{
-		DBSubnetGroupName: aws.String("zopdev-sng"),
+		DBSubnetGroupName: aws.String("db-sng-1"),
 	}); err != nil {
 		t.Fatalf("DeleteDBSubnetGroup: %v", err)
 	}

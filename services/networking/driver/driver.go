@@ -216,6 +216,13 @@ type RouteTableAssociation struct {
 	// Callers tearing a VPC down disassociate every non-main association and
 	// leave the main one to die with the VPC, so the distinction has to
 	// survive the projection.
+	//
+	// KNOWN GAP: real EC2 gives every VPC a main route table at creation, with
+	// an association carrying main=true and no subnet. This emulator does not
+	// create one, so today no association is ever main and the field is always
+	// false. That is self-consistent — there is no main route table for an
+	// association to point at — but it means a caller relying on a main
+	// association being present will not find one.
 	Main bool
 }
 

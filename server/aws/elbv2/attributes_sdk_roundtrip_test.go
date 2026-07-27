@@ -142,7 +142,7 @@ func TestDescribeTagsReturnsLoadBalancerTags(t *testing.T) {
 	c := newELBClient(t)
 
 	arn := mkLB(t, c, "nlb-tagged", []elbv2types.Tag{
-		{Key: aws.String("zopdev:managed"), Value: aws.String("true")},
+		{Key: aws.String("managed-by"), Value: aws.String("true")},
 	})
 
 	got, err := c.DescribeTags(ctx, &awselbv2.DescribeTagsInput{ResourceArns: []string{arn}})
@@ -161,7 +161,7 @@ func TestDescribeTagsReturnsLoadBalancerTags(t *testing.T) {
 	found := false
 
 	for _, tag := range got.TagDescriptions[0].Tags {
-		if aws.ToString(tag.Key) == "zopdev:managed" && aws.ToString(tag.Value) == "true" {
+		if aws.ToString(tag.Key) == "managed-by" && aws.ToString(tag.Value) == "true" {
 			found = true
 		}
 	}
@@ -210,5 +210,57 @@ func TestDescribeAllLoadBalancersEmptyIsNotAnError(t *testing.T) {
 
 	if len(out.LoadBalancers) != 0 {
 		t.Errorf("expected no load balancers, got %d", len(out.LoadBalancers))
+	}
+}
+
+// DescribeTags takes load balancers and target groups in one call and does not
+// care which is which. Resolving every ARN as a load balancer made a target
+// group ARN report LoadBalancerNotFound instead of its tags.
+func TestDescribeTagsResolvesTargetGroups(t *testing.T) {
+	ctx := context.Background()
+	c := newELBClient(t)
+
+	lbARN := mkLB(t, c, "mixed-lb", []elbv2types.Tag{
+		{Key: aws.String("owner"), Value: aws.String("lb")},
+	})
+
+	tg, err := c.CreateTargetGroup(ctx, &awselbv2.CreateTargetGroupInput{
+		Name:     aws.String("mixed-tg"),
+		Port:     aws.Int32(80),
+		Protocol: elbv2types.ProtocolEnumTcp,
+		VpcId:    aws.String("vpc-1"),
+		Tags: []elbv2types.Tag{
+			{Key: aws.String("owner"), Value: aws.String("tg")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTargetGroup: %v", err)
+	}
+
+	tgARN := aws.ToString(tg.TargetGroups[0].TargetGroupArn)
+
+	got, err := c.DescribeTags(ctx, &awselbv2.DescribeTagsInput{
+		ResourceArns: []string{lbARN, tgARN},
+	})
+	if err != nil {
+		t.Fatalf("DescribeTags across kinds: %v", err)
+	}
+
+	owners := map[string]string{}
+
+	for _, td := range got.TagDescriptions {
+		for _, tag := range td.Tags {
+			if aws.ToString(tag.Key) == "owner" {
+				owners[aws.ToString(td.ResourceArn)] = aws.ToString(tag.Value)
+			}
+		}
+	}
+
+	if owners[lbARN] != "lb" {
+		t.Errorf("load balancer tags missing: %+v", owners)
+	}
+
+	if owners[tgARN] != "tg" {
+		t.Errorf("target group tags missing: %+v", owners)
 	}
 }
