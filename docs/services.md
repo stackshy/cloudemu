@@ -1541,26 +1541,58 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 
 ---
 
-## Handler-level resources
+## Provider-specific resources
 
-Some provider resources have no driver behind them. They are containers,
-records, or provider-specific shapes with nothing portable to abstract, so they
-live in the server handler that serves them rather than in a service driver.
-They are listed here because they are part of the emulated surface even though
-they do not appear in the tables above.
+Resources below are served for one provider only, because the concept exists in
+one cloud and has no counterpart to abstract. They are reached through the same
+endpoints as everything else; the difference is that no portable driver
+interface covers them.
 
-| Provider | Resource | Served by | Why no driver |
-|---|---|---|---|
-| AWS | SSM Run Command | `server/aws/ssm` | Optional `RunCommand` capability on the parameter-store driver; nothing executes — see below |
-| AWS | Published `/aws/service/.../ami-id` parameters | `providers/aws/ssm` | Materialised on read from the trees AWS publishes; the id is derived from the name, so it is stable per parameter |
-| AWS | AWS-managed IAM policies | `providers/aws/awsiam` | Materialised on reference from a catalogue of real policy names |
-| GCP | Cloud Routers | `server/gcp/networks` | A router carrying embedded NAT blocks is this provider's REST shape |
-| GCP | Global / regional addresses | `server/gcp/networks` | A reserved range with a purpose and prefix length is provider-specific |
-| GCP | Service Networking connections | `server/gcp/servicenetworking` | A connection is a record; nothing routes the peering it stands for |
-| Azure | Resource groups | `server/azure/resourcegroups` | Containers; membership is already carried by the ids resources hold |
-| Azure | Subscriptions list | `server/azure/subscriptions` | No tenant model, so the list is empty rather than invented |
+### GCP — networking
 
-### SSM Run Command
+| Resource | Operations |
+|---|---|
+| Cloud Routers | insert · get · list · patch · delete |
+| Addresses (global and regional) | insert · get · list · delete |
+| Service Networking connections | list · create · patch · delete |
+
+Cloud NAT is configured by patching a router, and private services access
+reserves a global address and opens a connection. A caller building a private
+network uses all three, and releases them when the network goes away.
+
+Addresses are keyed by the scope they were reserved in, so a global address and
+a regional one sharing a name stay distinct.
+
+### Azure — Resource Manager
+
+| Resource | Operations |
+|---|---|
+| Resource groups | create · get · list · delete |
+| Subscriptions | list |
+
+Every Azure resource lives in a resource group, so one is created before
+anything else and deleted last. A group is usable as soon as it exists;
+deleting one that is already gone succeeds, since that is the caller's desired
+end state and a teardown retry must not fail on its second pass.
+
+The subscriptions list is empty. This emulator has no tenant model, so it
+cannot say which subscriptions a credential reaches, and inventing some would
+fabricate an authorization boundary that does not exist here.
+
+## Behavior of published AWS resources
+
+Two families exist in every real AWS account without anyone creating them, so
+callers reference them directly. Both are materialized on first reference,
+matched against the sets AWS actually publishes — an unrecognized name is
+rejected, because accepting anything would let a typo through here and fail
+only in production.
+
+| Family | Recognized |
+|---|---|
+| IAM managed policies (`arn:aws:iam::aws:policy/…`) | A catalog of real policy names, pathed ones included |
+| SSM parameters (`/aws/service/…/ami-id`) | The published image trees; the id is derived from the parameter name, so it is stable per parameter and distinct across distros |
+
+## Parameter Store — Run Command (optional capability)
 
 | Operation | Signature |
 |---|---|
@@ -1570,11 +1602,15 @@ they do not appear in the tables above.
 Discovered by type assertion on the parameter-store driver, like the subnet and
 replication group capabilities.
 
+Targets are validated: sending to an instance that does not exist is
+`InvalidInstanceId`, which is the most common Run Command failure during
+bring-up.
+
 **Nothing executes.** An emulated instance has no guest operating system, so
-invocations report success with empty output. Targets *are* validated — sending
-to an instance that does not exist is `InvalidInstanceId`, the most common Run
-Command failure during bring-up — but the script itself is not. A caller whose
-bootstrap script is wrong still sees success.
+invocations report success with empty output. This exercises a caller's
+send-and-poll orchestration — that it waits for a terminal status and reads the
+response code — but not the script. A caller whose bootstrap script is wrong
+still sees success.
 
 ## Summary
 
@@ -1611,9 +1647,8 @@ bootstrap script is wrong still sees success.
 | **Grand Total** | **972** (+12 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
-to — see the "optional capability" sections above, plus SSM Run Command under
-"Handler-level resources". They are counted separately because a driver without
-them is still complete.
+to; see the sections marked "optional capability". They are counted separately
+because a driver without them is still complete.
 
-Handler-level resources are not counted at all: they have no driver operations
-to count.
+Provider-specific resources are not counted: no driver interface covers them,
+so there are no driver operations to count.
