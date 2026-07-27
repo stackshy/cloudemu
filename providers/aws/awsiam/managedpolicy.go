@@ -17,12 +17,12 @@ const awsManagedPolicyPrefix = "arn:aws:iam::aws:policy/"
 // an explicit placeholder rather than a plausible-looking guess.
 const awsManagedPolicyDocument = `{"Version":"2012-10-17","Statement":[]}`
 
-// awsManagedPolicies is the catalogue of AWS-published policies this emulator
-// recognises, keyed by the part of the ARN after the prefix (so the path is
+// awsManagedPolicies is the catalog of AWS-published policies this emulator
+// recognizes, keyed by the part of the ARN after the prefix (so the path is
 // included where the real policy has one).
 //
 // AWS publishes a finite, fixed set, and an ARN outside it is NoSuchEntity in
-// a real account. Honouring any well-formed ARN would accept typos and
+// a real account. Honoring any well-formed ARN would accept typos and
 // invented names — the emulator would happily attach
 // AmazonEKSClusterPolicyy — so unknown names are rejected. That makes a
 // missing entry a loud, one-line fix here rather than a silent divergence
@@ -96,7 +96,7 @@ var awsManagedPolicies = map[string]bool{
 }
 
 // isAWSManagedPolicyARN reports whether the ARN names a policy in the
-// catalogue above.
+// catalog above.
 func isAWSManagedPolicyARN(arn string) bool {
 	if !strings.HasPrefix(arn, awsManagedPolicyPrefix) {
 		return false
@@ -105,12 +105,12 @@ func isAWSManagedPolicyARN(arn string) bool {
 	return awsManagedPolicies[strings.TrimPrefix(arn, awsManagedPolicyPrefix)]
 }
 
-// ensureAWSManagedPolicy materialises a recognised AWS-managed policy on first
+// ensureAWSManagedPolicy materializes a recognized AWS-managed policy on first
 // reference and reports whether the ARN is now known.
 //
 // Real accounts already have these, so requiring CreatePolicy first turns an
-// ordinary AttachRolePolicy into NoSuchEntity. Materialising on demand keeps
-// the catalogue cheap — no policy exists until something asks for it.
+// ordinary AttachRolePolicy into NoSuchEntity. Materializing on demand keeps
+// the catalog cheap — no policy exists until something asks for it.
 func (m *Mock) ensureAWSManagedPolicy(arn string) bool {
 	if m.policies.Has(arn) {
 		return true

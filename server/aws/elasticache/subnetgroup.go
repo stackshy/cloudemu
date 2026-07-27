@@ -82,6 +82,7 @@ func (h *Handler) createCacheSubnetGroup(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+//nolint:dupl // per-resource describe pattern; the sibling reads the other collection
 func (h *Handler) describeCacheSubnetGroups(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.subnetGroups()
 	if !ok {

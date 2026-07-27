@@ -13,7 +13,7 @@ const awsPublicParamPrefix = "/aws/service/"
 
 // awsPublicAMIParamPrefixes are the published parameter trees whose leaves
 // carry an AMI id. A path under one of these ending in /ami-id resolves; the
-// value is synthesised because a real AMI id changes as the publisher rebuilds
+// value is synthesized because a real AMI id changes as the publisher rebuilds
 // the image, so there is no fixed answer to copy.
 //
 // Restricting to known trees matters: AWS answers ParameterNotFound for a path
@@ -52,11 +52,11 @@ func isPublicAMIParam(name string) bool {
 	return false
 }
 
-// ensurePublicParameter materialises an AWS-published parameter on first read
+// ensurePublicParameter materializes an AWS-published parameter on first read
 // and reports whether the name is now known.
 //
-// Only the AMI-id family is synthesised. Other published parameters carry
-// payloads that cannot be derived — the ECS-optimised family holds a JSON blob
+// Only the AMI-id family is synthesized. Other published parameters carry
+// payloads that cannot be derived — the ECS-optimized family holds a JSON blob
 // — and inventing those would be fiction presented as fact, so they stay
 // NotFound.
 func (m *Mock) ensurePublicParameter(name string) bool {

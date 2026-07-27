@@ -50,7 +50,7 @@ func TestAttachAWSManagedPolicyWithoutCreate(t *testing.T) {
 	}
 }
 
-// The catalogue covers the policies real callers attach, pathed ones included.
+// The catalog covers the policies real callers attach, pathed ones included.
 func TestAttachCataloguedAWSManagedPolicies(t *testing.T) {
 	ctx := context.Background()
 	m := newIAM(t)
@@ -112,7 +112,7 @@ func TestManagedPolicyPathIsPreserved(t *testing.T) {
 }
 
 // A customer-managed ARN that was never created must still be NotFound —
-// materialising those on demand would hide a genuine caller bug.
+// materializing those on demand would hide a genuine caller bug.
 func TestNonManagedPolicyStillNotFound(t *testing.T) {
 	ctx := context.Background()
 	m := newIAM(t)

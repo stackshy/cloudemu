@@ -18,7 +18,7 @@ type SubnetResolver interface {
 
 // SetSubnetResolver wires the networking mock in. Without it a subnet group
 // still stores its members, but its VPCID is empty and a VPC teardown will
-// not recognise the group as its own.
+// not recognize the group as its own.
 func (m *Mock) SetSubnetResolver(r SubnetResolver) {
 	m.subnetResolver = r
 }

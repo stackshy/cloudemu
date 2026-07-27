@@ -98,6 +98,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+//nolint:dupl // per-resource describe pattern; the sibling reads the other collection
 func (h *Handler) describeReplicationGroups(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
 	if !ok {

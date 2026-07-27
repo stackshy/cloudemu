@@ -60,7 +60,7 @@ type describeAZResponseXML struct {
 // Provisioning a VPC is the first step of almost every datastore plan, and
 // picking subnets requires knowing the region's zones — so without this action
 // the very first step of a datastore job fails with "unknown action", before
-// any of the VPC/subnet/RDS behaviour the emulator does implement is reached.
+// any of the VPC/subnet/RDS behavior the emulator does implement is reached.
 //
 // Zones are derived from the requested region (us-east-1 -> us-east-1a/b/c)
 // rather than served from a fixed table, so any region a caller uses behaves

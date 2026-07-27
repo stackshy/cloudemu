@@ -81,7 +81,7 @@ func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Reque
 }
 
 // eniFilterField maps a supported filter name to the field it selects on.
-// The second result reports whether the filter is recognised at all.
+// The second result reports whether the filter is recognized at all.
 func eniFilterField(eni *netdriver.NetworkInterface, name string) (string, bool) {
 	switch name {
 	case "vpc-id":
@@ -101,8 +101,8 @@ func eniFilterField(eni *netdriver.NetworkInterface, name string) (string, bool)
 
 // validateENIFilters rejects filter names this emulator does not implement.
 //
-// Real EC2 answers InvalidParameterValue for an unrecognised filter, and that
-// is the safe behaviour to copy: silently returning nothing would tell a
+// Real EC2 answers InvalidParameterValue for an unrecognized filter, and that
+// is the safe behavior to copy: silently returning nothing would tell a
 // caller draining a VPC that there is nothing left to drain, so it would
 // proceed to a VPC delete that then fails with DependencyViolation. Matching
 // everything instead is equally bad — it hands back interfaces the caller

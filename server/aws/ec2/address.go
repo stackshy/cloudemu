@@ -12,7 +12,7 @@ import (
 //
 // The driver already implemented Allocate/Release/Describe/Associate/
 // Disassociate — only the wire layer was missing, so these actions returned
-// "unknown action" despite the behaviour existing underneath. A NAT gateway
+// "unknown action" despite the behavior existing underneath. A NAT gateway
 // cannot be created without first allocating an EIP, which makes this the
 // first hard stop in every VPC-with-private-subnets plan.
 

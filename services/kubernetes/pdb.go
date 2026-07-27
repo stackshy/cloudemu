@@ -109,7 +109,7 @@ func (s *ClusterState) createPDB(w http.ResponseWriter, r *http.Request, route *
 
 	// Real PDB status is computed by the disruption controller from live pods.
 	// There is no controller here, so report the shape a client expects without
-	// inventing eviction semantics the emulator cannot honour.
+	// inventing eviction semantics the emulator cannot honor.
 	in.Status = policyv1.PodDisruptionBudgetStatus{ObservedGeneration: 1}
 
 	s.pdbs[pdbKey(in.Namespace, in.Name)] = &in

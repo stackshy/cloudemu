@@ -7,7 +7,7 @@
 // removes it while tearing the network down, so an unimplemented API blocks
 // the teardown rather than just the feature.
 //
-// Connections are stored per network. The peering itself is not modelled:
+// Connections are stored per network. The peering itself is not modeled:
 // nothing in the emulator routes packets, so a connection is a record that
 // exists or does not.
 package servicenetworking

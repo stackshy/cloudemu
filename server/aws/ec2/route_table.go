@@ -214,7 +214,7 @@ func (h *Handler) disassociateRouteTable(w http.ResponseWriter, r *http.Request)
 
 // resolveRouteTarget picks the first non-empty target the caller supplied and
 // maps it to the driver's target-type string. Transit gateways and the rarer
-// target types are not modelled.
+// target types are not modeled.
 func resolveRouteTarget(r *http.Request) (target, targetType string) {
 	if id := r.Form.Get("GatewayId"); id != "" {
 		return id, targetTypeGateway

@@ -92,7 +92,7 @@ func (h *Handler) describeLoadBalancerAttributes(w http.ResponseWriter, r *http.
 }
 
 // parseAttributeMembers reads the Attributes.member.N.Key/Value pairs the SDK
-// serialises.
+// serializes.
 func parseAttributeMembers(r *http.Request) map[string]string {
 	out := map[string]string{}
 

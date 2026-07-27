@@ -27,12 +27,12 @@ func (m *Mock) CreateReplicationGroup(
 
 	engine := cfg.Engine
 	if engine == "" {
-		engine = "redis"
+		engine = defaultEngine
 	}
 
 	nodeType := cfg.NodeType
 	if nodeType == "" {
-		nodeType = "cache.t3.micro"
+		nodeType = defaultNodeType
 	}
 
 	nodes := cfg.NumCacheNodes
@@ -43,7 +43,7 @@ func (m *Mock) CreateReplicationGroup(
 	rg := cachedriver.ReplicationGroup{
 		ID:            cfg.ID,
 		Description:   cfg.Description,
-		Status:        "available",
+		Status:        statusAvailable,
 		Engine:        engine,
 		EngineVersion: cfg.EngineVersion,
 		NodeType:      nodeType,

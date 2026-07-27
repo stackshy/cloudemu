@@ -68,7 +68,7 @@ func TestDifferentAMIParametersDiffer(t *testing.T) {
 	}
 }
 
-// Only the ami-id family is synthesised. Other public parameters carry
+// Only the ami-id family is synthesized. Other public parameters carry
 // payloads that cannot be derived, and returning an invented value would be
 // worse than saying it is not there.
 func TestNonAMIPublicParameterStillNotFound(t *testing.T) {

@@ -33,6 +33,14 @@ type cacheData struct {
 	items *memstore.Store[cacheItem]
 }
 
+// Defaults applied when a caller omits them, shared by cache clusters and
+// replication groups so the two cannot drift apart.
+const (
+	defaultEngine   = "redis"
+	defaultNodeType = "cache.t3.micro"
+	statusAvailable = "available"
+)
+
 // Mock is an in-memory mock implementation of the AWS ElastiCache service.
 type Mock struct {
 	caches            *memstore.Store[*cacheData]
@@ -82,12 +90,12 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	engine := cfg.Engine
 	if engine == "" {
-		engine = "redis"
+		engine = defaultEngine
 	}
 
 	nodeType := cfg.NodeType
 	if nodeType == "" {
-		nodeType = "cache.t3.micro"
+		nodeType = defaultNodeType
 	}
 
 	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
@@ -102,7 +110,7 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		Scope:     cfg.Scope,
 		NodeType:  nodeType,
 		Engine:    engine,
-		Status:    "available",
+		Status:    statusAvailable,
 		Endpoint:  endpoint,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		Tags:      tags,

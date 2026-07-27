@@ -55,7 +55,7 @@ func mkLB(t *testing.T, c *awselbv2.Client, name string, tags []elbv2types.Tag) 
 }
 
 // Cross-zone is not one of the attributes the emulator models as a typed
-// field, so this also pins that an unrecognised key is genuinely stored rather
+// field, so this also pins that an unrecognized key is genuinely stored rather
 // than echoed back and dropped.
 func TestModifyLoadBalancerAttributesPersistsUnknownKey(t *testing.T) {
 	ctx := context.Background()

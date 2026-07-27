@@ -9,7 +9,7 @@ import (
 
 // A NAT gateway holds an ENI for as long as it lives. A caller deleting a VPC
 // drains ENIs first precisely because that interface would otherwise refuse
-// the delete, so the NAT->ENI link is the behaviour under test, not an
+// the delete, so the NAT->ENI link is the behavior under test, not an
 // incidental detail of the emulator.
 func TestNATGatewayHoldsENIUntilDeleted(t *testing.T) {
 	h := newFullHandler()
@@ -146,7 +146,7 @@ func TestDetachUnknownAttachmentFails(t *testing.T) {
 	}
 }
 
-// Real EC2 answers InvalidParameterValue for a filter it does not recognise.
+// Real EC2 answers InvalidParameterValue for a filter it does not recognize.
 // Silently returning nothing would tell a caller draining a VPC that there is
 // nothing left to drain, and it would proceed to a delete that then fails with
 // DependencyViolation.
