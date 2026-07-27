@@ -35,11 +35,12 @@ type cacheData struct {
 
 // Mock is an in-memory mock implementation of the AWS ElastiCache service.
 type Mock struct {
-	caches         *memstore.Store[*cacheData]
-	subnetGroups   *memstore.Store[driver.SubnetGroup]
-	subnetResolver SubnetResolver
-	opts           *config.Options
-	monitoring     mondriver.Monitoring
+	caches            *memstore.Store[*cacheData]
+	subnetGroups      *memstore.Store[driver.SubnetGroup]
+	replicationGroups *memstore.Store[driver.ReplicationGroup]
+	subnetResolver    SubnetResolver
+	opts              *config.Options
+	monitoring        mondriver.Monitoring
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -62,9 +63,10 @@ func (m *Mock) emitMetric(metricName string, value float64, dims map[string]stri
 // New creates a new ElastiCache mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		caches:       memstore.New[*cacheData](),
-		subnetGroups: memstore.New[driver.SubnetGroup](),
-		opts:         opts,
+		caches:            memstore.New[*cacheData](),
+		subnetGroups:      memstore.New[driver.SubnetGroup](),
+		replicationGroups: memstore.New[driver.ReplicationGroup](),
+		opts:              opts,
 	}
 }
 

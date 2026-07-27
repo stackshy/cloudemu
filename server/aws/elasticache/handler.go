@@ -45,6 +45,10 @@ var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // stati
 	"CreateCacheCluster":        {},
 	"DescribeCacheClusters":     {},
 	"DeleteCacheCluster":        {},
+	"CreateReplicationGroup":    {},
+	"DescribeReplicationGroups": {},
+	"ModifyReplicationGroup":    {},
+	"DeleteReplicationGroup":    {},
 }
 
 // Handler serves ElastiCache query-protocol requests against a cache driver.
@@ -97,6 +101,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createCacheCluster(w, r)
 	case "DescribeCacheClusters":
 		h.describeCacheClusters(w, r)
+	case "CreateReplicationGroup":
+		h.createReplicationGroup(w, r)
+	case "DescribeReplicationGroups":
+		h.describeReplicationGroups(w, r)
+	case "ModifyReplicationGroup":
+		h.modifyReplicationGroup(w, r)
+	case "DeleteReplicationGroup":
+		h.deleteReplicationGroup(w, r)
 	case "DeleteCacheCluster":
 		h.deleteCacheCluster(w, r)
 	default:

@@ -94,3 +94,41 @@ type SubnetGroups interface {
 	DescribeCacheSubnetGroups(ctx context.Context, names []string) ([]SubnetGroup, error)
 	DeleteCacheSubnetGroup(ctx context.Context, name string) error
 }
+
+// ReplicationGroup is a primary cache node plus its replicas, addressed
+// through a single primary endpoint.
+type ReplicationGroup struct {
+	ID              string
+	Description     string
+	Status          string
+	Engine          string
+	EngineVersion   string
+	NodeType        string
+	NumCacheNodes   int
+	PrimaryAddress  string
+	PrimaryPort     int
+	SubnetGroupName string
+	ARN             string
+}
+
+// ReplicationGroupConfig describes a replication group to create.
+type ReplicationGroupConfig struct {
+	ID               string
+	Description      string
+	Engine           string
+	EngineVersion    string
+	NodeType         string
+	NumCacheNodes    int
+	SubnetGroupName  string
+	SecurityGroupIDs []string
+}
+
+// ReplicationGroups is an OPTIONAL capability, discovered by type assertion.
+// Replication groups are an AWS ElastiCache concept; drivers for other clouds
+// do not model them.
+type ReplicationGroups interface {
+	CreateReplicationGroup(ctx context.Context, cfg ReplicationGroupConfig) (*ReplicationGroup, error)
+	DescribeReplicationGroups(ctx context.Context, ids []string) ([]ReplicationGroup, error)
+	ModifyReplicationGroup(ctx context.Context, id string, numCacheNodes int) (*ReplicationGroup, error)
+	DeleteReplicationGroup(ctx context.Context, id string) error
+}
