@@ -13,16 +13,9 @@ package eks
 import (
 	"context"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"sync"
-	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -133,49 +126,12 @@ func addonKey(clusterName, addonName string) string {
 // Generated once per process and cached: certificate generation is not free,
 // and a stable CA across calls matches real EKS, where a cluster's CA does not
 // change between DescribeCluster invocations.
-func stubCertificate() string {
-	caOnce.Do(func() {
-		caPEM = generateSelfSignedCA()
-	})
-
-	return caPEM
-}
-
-var (
-	caOnce sync.Once
-	caPEM  string
-)
 
 // generateSelfSignedCA builds a throwaway CA certificate and returns it
 // base64-encoded, matching the shape real EKS returns. Failure falls back to
 // an empty string rather than panicking: an empty CA makes client-go use the
 // system roots, which is a recoverable state, whereas a panic would take down
 // an emulator whose whole purpose is to keep tests running.
-func generateSelfSignedCA() string {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return ""
-	}
-
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "cloudemu-eks-ca"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
-		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return ""
-	}
-
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-
-	return base64.StdEncoding.EncodeToString(pemBytes)
-}
 
 func newUpdateID() string {
 	var b [16]byte
@@ -349,16 +305,8 @@ func (m *Mock) withK8sEndpoint(c *eksdriver.Cluster) {
 
 	c.Endpoint = base + "/k8s/" + uid
 
-	// KNOWN MISMATCH: the data plane listens on plain HTTP while the cluster
-	// still advertises a parseable CA. A caller building a rest.Config from
-	// Endpoint plus CertificateAuthority alone would dial HTTP with a TLS
-	// config and fail the handshake.
-	//
-	// Clearing the CA was tried and is worse: callers that build a kubeconfig
-	// need a parseable CA to construct one at all, and they break before they
-	// ever reach the endpoint. Resolving this properly means serving the data
-	// plane over TLS with this CA, which is a larger change than suppressing
-	// the field.
+	// The advertised CA certifies this endpoint when the data plane is served
+	// with ServingTLSConfig, so a caller can validate what it dials.
 }
 
 // DescribeCluster looks up a cluster by name.
