@@ -70,11 +70,15 @@ func (h *Handler) replicationGroups() (cachedriver.ReplicationGroups, bool) {
 func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
 	if !ok {
-		writeErr(w, errUnsupportedReplicationGroups())
+		writeUnsupported(w, "replication groups")
 		return
 	}
 
-	nodes, _ := strconv.Atoi(r.Form.Get("NumCacheClusters"))
+	nodes, err := parseNodeCount(r.Form.Get("NumCacheClusters"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	rg, err := store.CreateReplicationGroup(r.Context(), cachedriver.ReplicationGroupConfig{
 		ID:               r.Form.Get("ReplicationGroupId"),
@@ -102,7 +106,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 func (h *Handler) describeReplicationGroups(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
 	if !ok {
-		writeErr(w, errUnsupportedReplicationGroups())
+		writeUnsupported(w, "replication groups")
 		return
 	}
 
@@ -132,11 +136,15 @@ func (h *Handler) describeReplicationGroups(w http.ResponseWriter, r *http.Reque
 func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
 	if !ok {
-		writeErr(w, errUnsupportedReplicationGroups())
+		writeUnsupported(w, "replication groups")
 		return
 	}
 
-	nodes, _ := strconv.Atoi(r.Form.Get("NumCacheClusters"))
+	nodes, err := parseNodeCount(r.Form.Get("NumCacheClusters"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	rg, err := store.ModifyReplicationGroup(r.Context(), r.Form.Get("ReplicationGroupId"), nodes)
 	if err != nil {
@@ -157,7 +165,7 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 func (h *Handler) deleteReplicationGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
 	if !ok {
-		writeErr(w, errUnsupportedReplicationGroups())
+		writeUnsupported(w, "replication groups")
 		return
 	}
 
@@ -185,9 +193,22 @@ func (h *Handler) deleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func errUnsupportedReplicationGroups() error {
-	return cerrors.New(cerrors.InvalidArgument,
-		"InvalidAction: this driver does not model replication groups")
+// parseNodeCount reads NumCacheClusters. Absent means "unspecified" and the
+// driver picks a default; present-but-unparseable is a caller error, and
+// coercing it to a node count silently builds something other than what was
+// asked for.
+func parseNodeCount(raw string) (int, error) {
+	if raw == "" {
+		return 0, nil
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, cerrors.Newf(cerrors.InvalidArgument,
+			"NumCacheClusters must be a number, got %q", raw)
+	}
+
+	return n, nil
 }
 
 func toReplicationGroupXML(rg *cachedriver.ReplicationGroup) replicationGroupXML {

@@ -181,8 +181,14 @@ func coreResources() []apiResource {
 }
 
 func policyResources() []apiResource {
+	// Only the verbs pdb.go implements. Advertising watch would have client-go
+	// reflectors open a watch that returns a list and never streams, and
+	// advertising patch would have kubectl and helm send a PATCH that 405s —
+	// both failures land in the caller, far from the discovery document that
+	// promised them.
 	return []apiResource{
-		{"poddisruptionbudgets", "poddisruptionbudget", "PodDisruptionBudget", true, rwVerbs(), []string{"pdb"}},
+		{"poddisruptionbudgets", "poddisruptionbudget", "PodDisruptionBudget", true,
+			[]string{"get", "list", "create", "update", "delete"}, []string{"pdb"}},
 	}
 }
 

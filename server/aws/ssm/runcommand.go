@@ -3,6 +3,8 @@ package ssm
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
@@ -70,7 +72,17 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 		Parameters:   req.Parameters,
 	})
 	if err != nil {
+		// A rejected target is InvalidInstanceId, not the parameter-store
+		// not-found the generic mapping would produce. Callers branch on this
+		// code — it is the ordinary Run Command bring-up failure — and
+		// ParameterNotFound would send them looking at the wrong subsystem.
+		if cerrors.IsNotFound(err) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidInstanceId", err.Error())
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 

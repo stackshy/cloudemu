@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"net/http"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
@@ -61,7 +60,7 @@ func (h *Handler) subnetGroups() (cachedriver.SubnetGroups, bool) {
 func (h *Handler) createCacheSubnetGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.subnetGroups()
 	if !ok {
-		writeErr(w, errUnsupportedSubnetGroups())
+		writeUnsupported(w, "cache subnet groups")
 		return
 	}
 
@@ -86,7 +85,7 @@ func (h *Handler) createCacheSubnetGroup(w http.ResponseWriter, r *http.Request)
 func (h *Handler) describeCacheSubnetGroups(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.subnetGroups()
 	if !ok {
-		writeErr(w, errUnsupportedSubnetGroups())
+		writeUnsupported(w, "cache subnet groups")
 		return
 	}
 
@@ -116,7 +115,7 @@ func (h *Handler) describeCacheSubnetGroups(w http.ResponseWriter, r *http.Reque
 func (h *Handler) deleteCacheSubnetGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.subnetGroups()
 	if !ok {
-		writeErr(w, errUnsupportedSubnetGroups())
+		writeUnsupported(w, "cache subnet groups")
 		return
 	}
 
@@ -129,11 +128,6 @@ func (h *Handler) deleteCacheSubnetGroup(w http.ResponseWriter, r *http.Request)
 		Xmlns:    Namespace,
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
-}
-
-func errUnsupportedSubnetGroups() error {
-	return cerrors.New(cerrors.InvalidArgument,
-		"InvalidAction: this driver does not model cache subnet groups")
 }
 
 func toCacheSubnetGroupXML(sg *cachedriver.SubnetGroup) cacheSubnetGroupXML {
@@ -149,4 +143,15 @@ func toCacheSubnetGroupXML(sg *cachedriver.SubnetGroup) cacheSubnetGroupXML {
 	}
 
 	return x
+}
+
+// writeUnsupported reports a capability this driver does not implement.
+//
+// The code is InvalidAction because that is what the service answers for an
+// operation it does not serve — and because a caller matching on the code sees
+// this, not the message. Routing it through the generic error mapping would
+// have produced InvalidParameterValue while the message claimed otherwise.
+func writeUnsupported(w http.ResponseWriter, what string) {
+	awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
+		"this driver does not model "+what)
 }

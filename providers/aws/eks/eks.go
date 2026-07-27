@@ -348,6 +348,17 @@ func (m *Mock) withK8sEndpoint(c *eksdriver.Cluster) {
 	}
 
 	c.Endpoint = base + "/k8s/" + uid
+
+	// KNOWN MISMATCH: the data plane listens on plain HTTP while the cluster
+	// still advertises a parseable CA. A caller building a rest.Config from
+	// Endpoint plus CertificateAuthority alone would dial HTTP with a TLS
+	// config and fail the handshake.
+	//
+	// Clearing the CA was tried and is worse: callers that build a kubeconfig
+	// need a parseable CA to construct one at all, and they break before they
+	// ever reach the endpoint. Resolving this properly means serving the data
+	// plane over TLS with this CA, which is a larger change than suppressing
+	// the field.
 }
 
 // DescribeCluster looks up a cluster by name.
@@ -485,6 +496,12 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 
 	m.clusters.Delete(name)
 
+	// Resolve the endpoint before deregistering: the response describes the
+	// cluster as it was, and reading afterwards yields the not-implemented
+	// sentinel instead of the endpoint the caller had been using.
+	out := c
+	m.withK8sEndpoint(&out)
+
 	// Wave 2: tear down the cluster's Kubernetes data-plane state too. The
 	// UID map entry is dropped after deregister so subsequent describes find
 	// nothing — matching the real cluster going away.
@@ -492,9 +509,6 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 		m.k8sAPI.DeregisterCluster(uid)
 		delete(m.k8sUIDs, name)
 	}
-
-	out := c
-	m.withK8sEndpoint(&out)
 
 	return &out, nil
 }
