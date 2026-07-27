@@ -141,3 +141,56 @@ func TestNonMainRouteTableIsUnaffected(t *testing.T) {
 		t.Errorf("DeleteRouteTable: %v", err)
 	}
 }
+
+// The drain a caller performs before deleting a network is only meaningful if
+// skipping it fails. Real EC2 refuses a VPC delete while an interface is still
+// attached, and accepting it here would let a broken drain pass unnoticed —
+// the emulator agreeing with a caller the cloud would reject.
+func TestDeleteRefusedWhileAnInterfaceIsAttached(t *testing.T) {
+	ctx := context.Background()
+	m := New(config.NewOptions())
+	v := mkVPC(t, m)
+
+	sub, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
+	if err != nil {
+		t.Fatalf("CreateSubnet: %v", err)
+	}
+
+	// A NAT gateway holds an interface for as long as it lives.
+	if _, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: sub.ID}); err != nil {
+		t.Fatalf("CreateNATGateway: %v", err)
+	}
+
+	if err := m.DeleteSubnet(ctx, sub.ID); err == nil {
+		t.Error("subnet delete should be refused while an interface is attached")
+	}
+
+	if err := m.DeleteVPC(ctx, v.ID); err == nil {
+		t.Error("vpc delete should be refused while an interface is attached")
+	}
+
+	// Draining releases the interface, and the deletes then succeed — the
+	// refusal has to be recoverable or it is just a wall.
+	enis, err := m.DescribeNetworkInterfaces(ctx, nil)
+	if err != nil {
+		t.Fatalf("DescribeNetworkInterfaces: %v", err)
+	}
+
+	for i := range enis {
+		if err := m.DetachNetworkInterface(ctx, enis[i].AttachmentID, true); err != nil {
+			t.Fatalf("DetachNetworkInterface: %v", err)
+		}
+
+		if err := m.DeleteNetworkInterface(ctx, enis[i].ID); err != nil {
+			t.Fatalf("DeleteNetworkInterface: %v", err)
+		}
+	}
+
+	if err := m.DeleteSubnet(ctx, sub.ID); err != nil {
+		t.Errorf("subnet delete after drain: %v", err)
+	}
+
+	if err := m.DeleteVPC(ctx, v.ID); err != nil {
+		t.Errorf("vpc delete after drain: %v", err)
+	}
+}

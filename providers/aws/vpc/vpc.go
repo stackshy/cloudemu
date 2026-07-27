@@ -147,9 +147,20 @@ func (m *Mock) createMainRouteTable(vpcID, cidr string) {
 // go with it. Leaving them behind would strand rows no caller can address:
 // the main table refuses a direct delete.
 func (m *Mock) DeleteVPC(_ context.Context, id string) error {
-	if !m.vpcs.Delete(id) {
+	if !m.vpcs.Has(id) {
 		return errors.Newf(errors.NotFound, "vpc %q not found", id)
 	}
+
+	// An interface still attached inside the VPC blocks the delete, which is
+	// what makes the drain a caller performs beforehand load-bearing rather
+	// than ceremonial. Without this the emulator accepts a delete real EC2
+	// refuses, and a caller whose drain is broken never finds out.
+	if eni, blocked := m.attachedENIIn(id, ""); blocked {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: network interface %q is still attached in vpc %q", eni, id)
+	}
+
+	m.vpcs.Delete(id)
 
 	for rtID, rt := range m.routeTables.All() {
 		if rt.VPCID != id || !rt.IsMain {
@@ -207,11 +218,40 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 
 // DeleteSubnet deletes the subnet with the given ID.
 func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
-	if !m.subnets.Delete(id) {
+	sub, ok := m.subnets.Get(id)
+	if !ok {
 		return errors.Newf(errors.NotFound, "subnet %q not found", id)
 	}
 
+	// Same contract as DeleteVPC, one level down: a managed resource holding
+	// an interface in this subnet keeps it alive.
+	if eni, blocked := m.attachedENIIn(sub.VPCID, id); blocked {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: network interface %q is still attached in subnet %q", eni, id)
+	}
+
+	m.subnets.Delete(id)
+
 	return nil
+}
+
+// attachedENIIn reports an interface still attached within the given VPC, and
+// within the given subnet when one is named. An interface that has been
+// detached no longer blocks anything — that is the whole point of detaching it.
+func (m *Mock) attachedENIIn(vpcID, subnetID string) (string, bool) {
+	for _, eni := range m.enis.All() {
+		if eni.VPCID != vpcID || eni.AttachmentID == "" {
+			continue
+		}
+
+		if subnetID != "" && eni.SubnetID != subnetID {
+			continue
+		}
+
+		return eni.ID, true
+	}
+
+	return "", false
 }
 
 // DescribeSubnets returns subnets matching the given IDs, or all subnets if ids is empty.

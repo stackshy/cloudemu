@@ -92,7 +92,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
 //
-//nolint:gocyclo // 15 cases for one-shot dispatch; splitting into sub-routers would be more complex than the switch.
+//nolint:gocyclo // one case per action; the switch grows with the surface for one-shot dispatch; splitting into sub-routers would be more complex than the switch.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	action := r.Form.Get("Action")
 

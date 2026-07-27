@@ -114,7 +114,7 @@ func (m *Mock) DescribeLoadBalancers(_ context.Context, arns []string) ([]driver
 	for _, arn := range arns {
 		if !m.lbs.Has(arn) {
 			return nil, errors.Newf(errors.NotFound,
-				"LoadBalancerNotFound: load balancer %q not found", arn)
+				"load balancer %q not found", arn)
 		}
 	}
 
@@ -176,7 +176,19 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 
 // DescribeTargetGroups returns target groups matching the given ARNs.
 // If arns is empty, all target groups are returned.
+//
+// Naming an ARN that does not exist is TargetGroupNotFound, for the same
+// reason DescribeLoadBalancers above answers LoadBalancerNotFound: a caller
+// waiting on a delete polls until it errors, and an empty list with no error
+// leaves it polling to its timeout over something already gone.
 func (m *Mock) DescribeTargetGroups(_ context.Context, arns []string) ([]driver.TargetGroupInfo, error) {
+	for _, arn := range arns {
+		if !m.tgs.Has(arn) {
+			return nil, errors.Newf(errors.NotFound,
+				"target group %q not found", arn)
+		}
+	}
+
 	return describeResources(m.tgs, arns), nil
 }
 

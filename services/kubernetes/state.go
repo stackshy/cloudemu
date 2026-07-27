@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	appsv1 "k8s.io/api/apps/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 )
 
 // ClusterState is the in-memory backing store for one Kubernetes cluster's

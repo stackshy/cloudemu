@@ -25,7 +25,19 @@ type eniData struct {
 }
 
 // DescribeNetworkInterfaces returns ENIs matching the given IDs, or all if empty.
+//
+// An explicitly named ID that does not exist is NotFound rather than an empty
+// list: a caller draining a VPC reads an empty answer as "already gone" and
+// moves on, which is the wrong conclusion when it asked about one specific
+// interface.
 func (m *Mock) DescribeNetworkInterfaces(_ context.Context, ids []string) ([]driver.NetworkInterface, error) {
+	for _, id := range ids {
+		if !m.enis.Has(id) {
+			return nil, errors.Newf(errors.NotFound,
+				"InvalidNetworkInterfaceID.NotFound: network interface %q not found", id)
+		}
+	}
+
 	return describeResources(m.enis, ids, toENIInfo), nil
 }
 

@@ -90,7 +90,6 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-
 // protobufMagic is the 4-byte prefix on every Kubernetes protobuf frame
 // (k8s.io/apimachinery/pkg/runtime.protoEncodingPrefix).
 var protobufMagic = []byte{'k', '8', 's', 0x00}

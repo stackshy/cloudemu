@@ -9,7 +9,7 @@ import (
 )
 
 // Route target types understood by the driver; mirror the AWS route-target
-// taxonomy. Phase 2 wires gateway (IGW) + nat-gateway + peering targets.
+// taxonomy.
 const (
 	targetTypeGateway    = "gateway"
 	targetTypeNatGateway = "nat-gateway"
@@ -130,8 +130,8 @@ func (h *Handler) describeRouteTables(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) {
-	// Real EC2 accepts many target types; Phase 2 wires only IGW. Other
-	// targets return a 400 until the later phases land them.
+	// Real EC2 accepts many target types; gateway, NAT gateway and peering are
+	// wired. Anything else is a 400 rather than a silently dropped route.
 	target, targetType := resolveRouteTarget(r)
 	if target == "" {
 		writeRouteTableErr(w, newInvalidParameterErr(
@@ -213,8 +213,8 @@ func (h *Handler) disassociateRouteTable(w http.ResponseWriter, r *http.Request)
 }
 
 // resolveRouteTarget picks the first non-empty target the caller supplied and
-// maps it to the driver's target-type string. Phase 2 supports IGW and NAT;
-// peering, transit gateways, and others come in later phases.
+// maps it to the driver's target-type string. Transit gateways and the rarer
+// target types are not modelled.
 func resolveRouteTarget(r *http.Request) (target, targetType string) {
 	if id := r.Form.Get("GatewayId"); id != "" {
 		return id, targetTypeGateway
