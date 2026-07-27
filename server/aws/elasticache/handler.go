@@ -39,9 +39,12 @@ const (
 // elastiCacheActions is the set of Action values this handler recognizes.
 // Matches uses it to decide whether to claim a request.
 var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateCacheCluster":    {},
-	"DescribeCacheClusters": {},
-	"DeleteCacheCluster":    {},
+	"CreateCacheSubnetGroup":    {},
+	"DescribeCacheSubnetGroups": {},
+	"DeleteCacheSubnetGroup":    {},
+	"CreateCacheCluster":        {},
+	"DescribeCacheClusters":     {},
+	"DeleteCacheCluster":        {},
 }
 
 // Handler serves ElastiCache query-protocol requests against a cache driver.
@@ -84,6 +87,12 @@ func (*Handler) Matches(r *http.Request) bool {
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Form.Get("Action") {
+	case "CreateCacheSubnetGroup":
+		h.createCacheSubnetGroup(w, r)
+	case "DescribeCacheSubnetGroups":
+		h.describeCacheSubnetGroups(w, r)
+	case "DeleteCacheSubnetGroup":
+		h.deleteCacheSubnetGroup(w, r)
 	case "CreateCacheCluster":
 		h.createCacheCluster(w, r)
 	case "DescribeCacheClusters":
