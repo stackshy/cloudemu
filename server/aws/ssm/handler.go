@@ -60,6 +60,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getParameterHistory(w, r)
 	case "LabelParameterVersion":
 		h.labelParameterVersion(w, r)
+	case "SendCommand":
+		h.sendCommand(w, r)
+	case "GetCommandInvocation":
+		h.getCommandInvocation(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown SSM operation: "+op)

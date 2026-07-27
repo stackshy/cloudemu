@@ -50,15 +50,17 @@ type paramData struct {
 
 // Mock is an in-memory mock implementation of SSM Parameter Store.
 type Mock struct {
-	params *memstore.Store[*paramData]
-	opts   *config.Options
+	params   *memstore.Store[*paramData]
+	commands *memstore.Store[driver.CommandInvocation]
+	opts     *config.Options
 }
 
 // New creates a new SSM Parameter Store mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		params: memstore.New[*paramData](),
-		opts:   opts,
+		params:   memstore.New[*paramData](),
+		commands: memstore.New[driver.CommandInvocation](),
+		opts:     opts,
 	}
 }
 
