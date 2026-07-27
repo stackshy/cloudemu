@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	"net"
 	"net/http"
 	"os"
@@ -64,7 +65,7 @@ func runServe(args []string) error {
 	fs.StringVar(&c.awsPort, "aws-port", "4566", "port for the AWS endpoint (HTTP)")
 	fs.StringVar(&c.azurePort, "azure-port", "4568", "port for the Azure endpoint (HTTPS)")
 	fs.StringVar(&c.gcpPort, "gcp-port", "4569", "port for the GCP endpoint (HTTP)")
-	fs.StringVar(&c.k8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTP); empty to disable")
+	fs.StringVar(&c.k8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTPS); empty to disable")
 	fs.StringVar(&c.accountID, "account-id", "000000000000", "AWS account ID / Azure subscription ID reported by the emulator")
 	fs.StringVar(&c.region, "region", "us-east-1", "default region reported by the emulator")
 	fs.StringVar(&c.projectID, "project-id", "cloudemu-local", "GCP project ID reported by the emulator")
@@ -147,7 +148,12 @@ func runServe(args []string) error {
 			//
 			// The data-plane listener binds c.host:c.k8sPort below; this must
 			// stay in step with it.
-			k8s.SetBaseURL("http://" + net.JoinHostPort(c.host, c.k8sPort))
+			// https, because the listener below is served with a certificate
+			// signed by the CA DescribeCluster advertises. A caller building a
+			// rest.Config from Endpoint plus CertificateAuthority can then
+			// validate what it dials; over plain HTTP that CA certifies
+			// nothing and the handshake fails.
+			k8s.SetBaseURL("https://" + net.JoinHostPort(c.host, c.k8sPort))
 		}
 		fresh := make(map[string]http.Handler, len(sel))
 		freshTargets := make(map[string]seed.Target, len(sel))
@@ -263,8 +269,18 @@ func runServe(args []string) error {
 
 	if k8sBackend != nil {
 		addr := net.JoinHostPort(c.host, c.k8sPort)
-		servers = append(servers, &namedServer{name: "kubernetes", srv: &http.Server{Addr: addr, Handler: handlerFor(k8sBackend, nil)}})
-		eps.Kubernetes = fmt.Sprintf("http://%s", addr)
+
+		k8sTLS, err := eksprov.ServingTLSConfig([]string{c.host, "localhost", "127.0.0.1"})
+		if err != nil {
+			return fmt.Errorf("kubernetes data-plane TLS: %w", err)
+		}
+
+		servers = append(servers, &namedServer{
+			name: "kubernetes",
+			srv:  &http.Server{Addr: addr, Handler: handlerFor(k8sBackend, nil), TLSConfig: k8sTLS},
+			tls:  true,
+		})
+		eps.Kubernetes = fmt.Sprintf("https://%s", addr)
 	}
 
 	// Bind every listener before serving so a port clash fails fast, before

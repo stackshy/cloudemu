@@ -22,17 +22,22 @@ import (
 //
 // The CA private key is therefore retained rather than discarded, so
 // ServingTLSConfig can mint a leaf for whoever serves the data plane.
-var (
-	caOnce sync.Once
-	caPEM  string
-	caCert *x509.Certificate
-	caKey  *rsa.PrivateKey
-)
+// caMaterial is generated once and reused. Generation failure is carried
+// rather than swallowed: a silently empty CA is the placeholder-that-breaks-
+// client-go failure this change exists to remove, and it would surface as an
+// unexplained handshake error far from here.
+var loadCA = sync.OnceValues(initCA)
 
-func initCA() {
+type caMaterial struct {
+	pem  string
+	cert *x509.Certificate
+	key  *rsa.PrivateKey
+}
+
+func initCA() (caMaterial, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return
+		return caMaterial{}, fmt.Errorf("generate CA key: %w", err)
 	}
 
 	tmpl := &x509.Certificate{
@@ -47,26 +52,31 @@ func initCA() {
 
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return
+		return caMaterial{}, fmt.Errorf("create CA certificate: %w", err)
 	}
 
 	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		return
+		return caMaterial{}, fmt.Errorf("parse CA certificate: %w", err)
 	}
 
-	caKey = key
-	caCert = cert
-	caPEM = base64.StdEncoding.EncodeToString(
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return caMaterial{
+		key:  key,
+		cert: cert,
+		pem: base64.StdEncoding.EncodeToString(
+			pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+	}, nil
 }
 
 // stubCertificate returns the base64 PEM a cluster advertises as its
 // certificate authority.
 func stubCertificate() string {
-	caOnce.Do(initCA)
+	ca, err := loadCA()
+	if err != nil {
+		return ""
+	}
 
-	return caPEM
+	return ca.pem
 }
 
 // ServingTLSConfig returns a TLS configuration for the Kubernetes data plane,
@@ -77,10 +87,9 @@ func stubCertificate() string {
 // cluster description does. Serving plain HTTP instead leaves the CA describing
 // a TLS server that does not exist.
 func ServingTLSConfig(hosts []string) (*tls.Config, error) {
-	caOnce.Do(initCA)
-
-	if caKey == nil || caCert == nil {
-		return nil, fmt.Errorf("certificate authority unavailable")
+	ca, err := loadCA()
+	if err != nil {
+		return nil, fmt.Errorf("certificate authority unavailable: %w", err)
 	}
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -106,7 +115,7 @@ func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 		tmpl.DNSNames = append(tmpl.DNSNames, h)
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)
 	if err != nil {
 		return nil, fmt.Errorf("sign serving certificate: %w", err)
 	}
@@ -114,7 +123,7 @@ func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		Certificates: []tls.Certificate{{
-			Certificate: [][]byte{der, caCert.Raw},
+			Certificate: [][]byte{der, ca.cert.Raw},
 			PrivateKey:  key,
 		}},
 	}, nil
