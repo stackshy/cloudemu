@@ -240,6 +240,10 @@ func selectorFor(requested, base string) string {
 func (m *Mock) GetParameter(_ context.Context, name string, _ bool) (*driver.Parameter, error) {
 	base, selector := resolveSelector(name)
 
+	// AWS-published parameters are readable from every account without having
+	// been put, so resolving one must not answer NotFound.
+	m.ensurePublicParameter(base)
+
 	pd, ok := m.params.Get(base)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "parameter %q not found", base)
@@ -270,6 +274,8 @@ func (m *Mock) GetParameters(_ context.Context, names []string, _ bool) ([]drive
 
 	for _, name := range names {
 		base, selector := resolveSelector(name)
+
+		m.ensurePublicParameter(base)
 
 		pd, ok := m.params.Get(base)
 		if !ok {
