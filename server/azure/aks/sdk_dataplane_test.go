@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/stackshy/cloudemu/v2"
+	"github.com/stackshy/cloudemu/v2/internal/k8spki"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 	cloudkube "github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
@@ -50,7 +51,17 @@ func TestSDKAKSDataPlane_FullWorkloadStack(t *testing.T) {
 		AKS:    cloudP.AKS,
 		K8sAPI: k8sAPI,
 	})
-	ts := httptest.NewTLSServer(srv)
+
+	// Serve the data plane with the shared k8spki serving certificate so the CA
+	// the AKS kubeconfig advertises actually validates the endpoint — the real
+	// end-to-end TLS path, no skip-verify.
+	ts := httptest.NewUnstartedServer(srv)
+	tlsCfg, err := k8spki.ServingTLSConfig([]string{"127.0.0.1", "localhost"})
+	if err != nil {
+		t.Fatalf("k8spki.ServingTLSConfig: %v", err)
+	}
+	ts.TLS = tlsCfg
+	ts.StartTLS()
 
 	t.Cleanup(ts.Close)
 
@@ -221,9 +232,9 @@ func newAKSClusterClient(t *testing.T, ts *httptest.Server) *armcontainerservice
 }
 
 // mustClientsetFromKubeconfig parses kubeconfig YAML and returns a Clientset
-// ready to drive the in-memory K8s server. The kubeconfig embeds
-// insecure-skip-tls-verify so the httptest self-signed cert doesn't trip
-// client-go's TLS validation.
+// ready to drive the in-memory K8s server. The kubeconfig advertises the shared
+// k8spki CA, and the data plane is served with a cert that CA signs, so
+// client-go validates the endpoint end-to-end (no skip-verify).
 func mustClientsetFromKubeconfig(t *testing.T, kubeconfig []byte) *kubernetes.Clientset {
 	t.Helper()
 

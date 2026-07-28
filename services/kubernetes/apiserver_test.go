@@ -12,6 +12,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/stackshy/cloudemu/v2/internal/k8spki"
+
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
@@ -196,7 +198,9 @@ func TestRenderKubeconfig_HasExpectedFields(t *testing.T) {
 
 	for _, want := range []string{
 		"server: http://127.0.0.1:1234/k8s/abc123",
-		"insecure-skip-tls-verify: true",
+		// The rendered kubeconfig advertises the real shared CA (parity with
+		// EKS/GKE) so the HTTPS serve endpoint validates.
+		"certificate-authority-data: " + k8spki.CertificatePEM(),
 		"token: " + kubernetes.StubToken,
 		"current-context: my-cluster",
 		"cluster: my-cluster",
@@ -204,6 +208,10 @@ func TestRenderKubeconfig_HasExpectedFields(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("kubeconfig missing %q\n\n%s", want, got)
 		}
+	}
+
+	if strings.Contains(got, "insecure-skip-tls-verify") {
+		t.Fatalf("kubeconfig should no longer skip TLS verification:\n\n%s", got)
 	}
 }
 

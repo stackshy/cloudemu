@@ -29,7 +29,6 @@ import (
 // arrives in Wave 2.
 const (
 	StubEndpoint    = "GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
-	StubCACert      = "MIIBkTCB+wIJAOdjUjcyKZUyMA0GCSqGSIb3DQEBBQUAMA0xCzAJBgNVBAYTAlVT" // dummy base64 blob
 	StubMasterVer   = "1.30.0-gke.0"
 	stubNodeVersion = "1.30.0-gke.0"
 )
