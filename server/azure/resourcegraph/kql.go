@@ -45,6 +45,8 @@ const (
 	azureTypeCosmosC   = "microsoft.documentdb/databaseaccounts/sqldatabases/containers"
 	azureTypeWebSite   = "microsoft.web/sites"
 	azureTypeDatabrick = "microsoft.databricks/workspaces"
+	azureTypeAKS       = "microsoft.containerservice/managedclusters"
+	azureTypeAgentPool = "microsoft.containerservice/managedclusters/agentpools"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -55,6 +57,7 @@ const (
 	portableDatabase   = "database"
 	portableServerless = "serverless"
 	portableDatabricks = "databricks"
+	portableKubernetes = "kubernetes"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -282,29 +285,33 @@ func addTag(out *parsedKQL, key, value string) {
 	out.Query.Tags[key] = value
 }
 
+// portableResourceType is a portable (service, type) pair.
+type portableResourceType struct{ service, typ string }
+
+// azureToPortableType maps a fully-qualified Azure resource type to the portable
+// pair the engine uses. A map lookup rather than a switch keeps gocyclo under
+// the gate as the type list grows.
+var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
+	azureTypeVM:        {portableCompute, "Instance"},
+	azureTypeVNet:      {portableNetworking, "VPC"},
+	azureTypeSubnet:    {portableNetworking, "Subnet"},
+	azureTypeSubnetN:   {portableNetworking, "Subnet"},
+	azureTypeNSG:       {portableNetworking, "SecurityGroup"},
+	azureTypeStorage:   {portableStorage, "Bucket"},
+	azureTypeStoCnt:    {portableStorage, "Bucket"},
+	azureTypeCosmos:    {portableDatabase, "Table"},
+	azureTypeCosmosC:   {portableDatabase, "Table"},
+	azureTypeWebSite:   {portableServerless, "Function"},
+	azureTypeDatabrick: {portableDatabricks, "Workspace"},
+	azureTypeAKS:       {portableKubernetes, "Cluster"},
+	azureTypeAgentPool: {portableKubernetes, "NodeGroup"},
+}
+
 // mapAzureType translates a fully-qualified Azure resource type to the
 // portable (service, type) pair the engine uses. Returns ("", "") for
 // unmapped types so the filter is treated as match-none rather than
 // match-all.
 func mapAzureType(azureType string) (service, typ string) {
-	switch azureType {
-	case azureTypeVM:
-		return portableCompute, "Instance"
-	case azureTypeVNet:
-		return portableNetworking, "VPC"
-	case azureTypeSubnet, azureTypeSubnetN:
-		return portableNetworking, "Subnet"
-	case azureTypeNSG:
-		return portableNetworking, "SecurityGroup"
-	case azureTypeStorage, azureTypeStoCnt:
-		return portableStorage, "Bucket"
-	case azureTypeCosmos, azureTypeCosmosC:
-		return portableDatabase, "Table"
-	case azureTypeWebSite:
-		return portableServerless, "Function"
-	case azureTypeDatabrick:
-		return portableDatabricks, "Workspace"
-	default:
-		return "", ""
-	}
+	p := azureToPortableType[azureType]
+	return p.service, p.typ
 }

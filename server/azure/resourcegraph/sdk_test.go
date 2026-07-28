@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2"
+	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
@@ -232,6 +233,90 @@ func TestSDKResourceGraph_DatabricksIndexing(t *testing.T) {
 		}, nil)
 		require.NoError(t, err)
 		assert.EqualValues(t, 0, *out.TotalRecords, "an unmapped type must not widen to the whole inventory")
+	})
+
+	t.Run("type == an unmodeled type matches none, not all", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type == 'microsoft.keyvault/vaults'"),
+		}, nil)
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, *out.TotalRecords)
+	})
+}
+
+// TestSDKResourceGraph_KubernetesIndexing mirrors the Databricks precedent for
+// the AKS types added in this PR: a managed cluster and its agent pool must be
+// retrievable through the real Resource Graph query handler, and a
+// `type ==`/`in~` predicate on the ARM container-service types must actually
+// filter to them rather than return every row (or none).
+func TestSDKResourceGraph_KubernetesIndexing(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	_, err := cloudP.AKS.CreateOrUpdateCluster(ctx, aks.ClusterInput{
+		ResourceGroup: "rg-1", Name: "prod", Location: "eastus",
+		Tags: map[string]string{"env": "prod"},
+	})
+	require.NoError(t, err)
+
+	_, err = cloudP.AKS.CreateOrUpdateAgentPool(ctx, "rg-1", "prod", aks.AgentPoolInput{
+		Name: "ap-1", Count: 1,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, cloudP.BlobStorage.CreateBucket(ctx, "control-bucket"))
+
+	srv := azureserver.New(azureserver.Drivers{
+		BlobStorage:       cloudP.BlobStorage,
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		SubscriptionID:    "123456789012",
+	})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newResourceGraphClient(t, ts)
+
+	t.Run("cluster + agent pool appear in bare Resources query", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources"),
+		}, nil)
+		require.NoError(t, err)
+
+		data := out.Data.([]any)
+		assert.Len(t, data, 3, "control bucket + AKS cluster + agent pool")
+		assert.True(t, rowsHaveType(data, "microsoft.containerservice/managedclusters"),
+			"AKS cluster must be indexed")
+		assert.True(t, rowsHaveType(data, "microsoft.containerservice/managedclusters/agentpools"),
+			"AKS agent pool must be indexed")
+	})
+
+	t.Run("type == managedclusters narrows to the cluster", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type == 'microsoft.containerservice/managedclusters' | project id, name, type"),
+		}, nil)
+		require.NoError(t, err)
+
+		data := out.Data.([]any)
+		require.Len(t, data, 1, "must narrow to the one cluster, not all rows")
+
+		row := data[0].(map[string]any)
+		assert.Equal(t, "prod", row["name"])
+		assert.Equal(t, "microsoft.containerservice/managedclusters", row["type"])
+	})
+
+	t.Run("cluster id is ARM-shaped with its own resource group", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type == 'microsoft.containerservice/managedclusters'"),
+		}, nil)
+		require.NoError(t, err)
+
+		data := out.Data.([]any)
+		require.Len(t, data, 1)
+
+		id := data[0].(map[string]any)["id"].(string)
+		assert.Contains(t, id, "/subscriptions/123456789012/")
+		assert.Contains(t, id, "resourceGroups/rg-1/")
+		assert.Contains(t, id, "Microsoft.ContainerService")
 	})
 
 	t.Run("type == an unmodeled type matches none, not all", func(t *testing.T) {

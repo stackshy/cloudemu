@@ -44,6 +44,8 @@ const (
 	atFirestoreColl   = "firestore.googleapis.com/Collection"
 	atCloudFunction   = "cloudfunctions.googleapis.com/Function"
 	atCloudFunctionV1 = "cloudfunctions.googleapis.com/CloudFunction"
+	atGKECluster      = "container.googleapis.com/Cluster"
+	atGKENodePool     = "container.googleapis.com/NodePool"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -53,6 +55,7 @@ const (
 	portableStorage    = "storage"
 	portableDatabase   = "database"
 	portableServerless = "serverless"
+	portableKubernetes = "kubernetes"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -244,6 +247,10 @@ func mapGCPAssetType(assetType string) (service, typ string) {
 		return portableDatabase, "Table"
 	case atCloudFunction, atCloudFunctionV1:
 		return portableServerless, "Function"
+	case atGKECluster:
+		return portableKubernetes, "Cluster"
+	case atGKENodePool:
+		return portableKubernetes, "NodeGroup"
 	default:
 		return "", ""
 	}
@@ -267,6 +274,10 @@ func portableToGCPAssetType(service, typ string) string {
 		return atFirestoreDB
 	case portableServerless + "/Function":
 		return atCloudFunction
+	case portableKubernetes + "/Cluster":
+		return atGKECluster
+	case portableKubernetes + "/NodeGroup":
+		return atGKENodePool
 	default:
 		return service + "/" + typ
 	}

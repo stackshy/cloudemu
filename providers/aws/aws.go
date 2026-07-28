@@ -2,7 +2,11 @@
 package aws
 
 import (
+	"context"
+	"strings"
+
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/awsiam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
@@ -11,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ecr"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eks"
+	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
@@ -27,6 +32,81 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
+
+// eksClusters is the slice of the EKS mock that discovery reads — an interface
+// so the vanished-cluster (NotFound) skip can be tested with a fake.
+type eksClusters interface {
+	ListClusters(ctx context.Context) ([]string, error)
+	DescribeCluster(ctx context.Context, name string) (*eksdriver.Cluster, error)
+	ListNodegroups(ctx context.Context, clusterName string) ([]string, error)
+}
+
+// eksDiscovery adapts the EKS mock to the resourcediscovery KubernetesClusters
+// capability, so EKS clusters and their node groups surface in Resource
+// Explorer. Kept in the provider package (not services/) to avoid inverting
+// the layering — the discovery engine stays free of provider imports.
+type eksDiscovery struct{ m eksClusters }
+
+func (a eksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery.DiscoveredCluster, error) {
+	names, err := a.m.ListClusters(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredCluster, 0, len(names))
+
+	for _, name := range names {
+		// Discovery is a shared, polled surface, so a DeleteCluster can race
+		// between ListClusters and these per-cluster reads. A vanished cluster
+		// (NotFound) is correct to omit — skip it rather than fail the whole
+		// walk, which engine.List would propagate into every provider's
+		// inventory. Any other error is real and propagates.
+		c, err := a.m.DescribeCluster(ctx, name)
+		if cerrors.IsNotFound(err) {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		ngs, err := a.m.ListNodegroups(ctx, name)
+		if cerrors.IsNotFound(err) {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		dc := resourcediscovery.DiscoveredCluster{Name: name, NodeGroups: ngs}
+		if c != nil {
+			dc.ARN = c.ARN // use the EKS mock's own ARN verbatim
+			// Keep Region in step with the verbatim ARN so the node-group ARN
+			// (built from Region) and Resource.Region can't diverge from it.
+			dc.Region = eksRegionFromARN(c.ARN)
+			dc.Tags = c.Tags
+		}
+
+		out = append(out, dc)
+	}
+
+	return out, nil
+}
+
+// eksRegionFromARN pulls the region out of an EKS ARN
+// (arn:aws:eks:<region>:<account>:cluster/<name>). Returns "" if unparseable,
+// which leaves the walker to fall back to the engine's default region.
+func eksRegionFromARN(arn string) string {
+	const regionField = 3
+
+	parts := strings.Split(arn, ":")
+	if len(parts) <= regionField {
+		return ""
+	}
+
+	return parts[regionField]
+}
 
 // Provider holds all AWS mock services.
 type Provider struct {
@@ -112,6 +192,7 @@ func New(opts ...config.Option) *Provider {
 			Storage:    p.S3,
 			Database:   p.DynamoDB,
 			Serverless: p.Lambda,
+			Kubernetes: eksDiscovery{p.EKS},
 		},
 	)
 

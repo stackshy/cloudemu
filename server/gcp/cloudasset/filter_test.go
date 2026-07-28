@@ -162,6 +162,8 @@ func TestMapGCPAssetType(t *testing.T) {
 		{"storage.googleapis.com/Bucket", "storage", "Bucket"},
 		{"firestore.googleapis.com/Database", "database", "Table"},
 		{"cloudfunctions.googleapis.com/Function", "serverless", "Function"},
+		{"container.googleapis.com/Cluster", "kubernetes", "Cluster"},
+		{"container.googleapis.com/NodePool", "kubernetes", "NodeGroup"},
 		{"unknown.googleapis.com/Widget", "", ""},
 	}
 
@@ -187,6 +189,8 @@ func TestPortableToGCPAssetType_Roundtrip(t *testing.T) {
 		{"storage", "Bucket", "storage.googleapis.com/Bucket"},
 		{"database", "Table", "firestore.googleapis.com/Database"},
 		{"serverless", "Function", "cloudfunctions.googleapis.com/Function"},
+		{"kubernetes", "Cluster", "container.googleapis.com/Cluster"},
+		{"kubernetes", "NodeGroup", "container.googleapis.com/NodePool"},
 	}
 
 	for _, c := range cases {

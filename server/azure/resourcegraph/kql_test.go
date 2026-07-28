@@ -111,6 +111,8 @@ func TestMapAzureType(t *testing.T) {
 		{"microsoft.storage/storageaccounts", "storage", "Bucket"},
 		{"microsoft.documentdb/databaseaccounts", "database", "Table"},
 		{"microsoft.web/sites", "serverless", "Function"},
+		{"microsoft.containerservice/managedclusters", "kubernetes", "Cluster"},
+		{"microsoft.containerservice/managedclusters/agentpools", "kubernetes", "NodeGroup"},
 		{"microsoft.unknown/widgets", "", ""},
 	}
 

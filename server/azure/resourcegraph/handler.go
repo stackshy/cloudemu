@@ -249,30 +249,30 @@ func extractSubscription(arn string) string {
 	return rest
 }
 
-// portableToAzureType is the inverse of mapAzureType — it turns the engine's
-// (service, type) pair back into the dotted Azure type string a real ARG
-// response carries.
+// portableToAzureTypeMap is the inverse of mapAzureType's mapping — the engine's
+// (service, type) pair back to the dotted Azure type string a real ARG response
+// carries. A map lookup rather than a switch keeps gocyclo under the gate as the
+// pairs grow.
+var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
+	"compute/Instance":         "microsoft.compute/virtualmachines",
+	"networking/VPC":           "microsoft.network/virtualnetworks",
+	"networking/Subnet":        "microsoft.network/subnets",
+	"networking/SecurityGroup": "microsoft.network/networksecuritygroups",
+	"storage/Bucket":           "microsoft.storage/storageaccounts",
+	"database/Table":           "microsoft.documentdb/databaseaccounts",
+	"serverless/Function":      "microsoft.web/sites",
+	"databricks/Workspace":     "microsoft.databricks/workspaces",
+	"kubernetes/Cluster":       "microsoft.containerservice/managedclusters",
+	"kubernetes/NodeGroup":     "microsoft.containerservice/managedclusters/agentpools",
+}
+
 func portableToAzureType(service, typ string) string {
-	switch service + "/" + typ {
-	case "compute/Instance":
-		return "microsoft.compute/virtualmachines"
-	case "networking/VPC":
-		return "microsoft.network/virtualnetworks"
-	case "networking/Subnet":
-		return "microsoft.network/subnets"
-	case "networking/SecurityGroup":
-		return "microsoft.network/networksecuritygroups"
-	case "storage/Bucket":
-		return "microsoft.storage/storageaccounts"
-	case "database/Table":
-		return "microsoft.documentdb/databaseaccounts"
-	case "serverless/Function":
-		return "microsoft.web/sites"
-	case "databricks/Workspace":
-		return "microsoft.databricks/workspaces"
-	default:
-		return strings.ToLower(service + "/" + typ)
+	key := service + "/" + typ
+	if azureType, ok := portableToAzureTypeMap[key]; ok {
+		return azureType
 	}
+
+	return strings.ToLower(key)
 }
 
 // Compile-time check that Handler implements the Matches+ServeHTTP pair the
