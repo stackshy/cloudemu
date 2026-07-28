@@ -1179,7 +1179,7 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 **Other groups** (registry-backed CRUD + list/watch/patch/delete): `batch/v1` Job (→ Succeeded Pods) / CronJob; `networking.k8s.io/v1` Ingress (→ load-balancer IP) / IngressClass / NetworkPolicy; `rbac.authorization.k8s.io/v1` Role / RoleBinding / ClusterRole / ClusterRoleBinding; `storage.k8s.io/v1` StorageClass; `autoscaling/v2` HorizontalPodAutoscaler; `discovery.k8s.io/v1` EndpointSlice; `policy/v1` PodDisruptionBudget.
 
-**Selectors & pagination**: label and field selectors on list, plus `limit`/`continue` pagination.
+**Selectors**: label selectors on list, and field selectors for the fields the store can answer (`metadata.name`, `metadata.namespace`, Pod `status.phase` / `spec.nodeName`). List responses are unpaginated — `limit`/`continue` are not honored (an emulation simplification; every list returns the full set in one response).
 
 **Patch**: JSON-merge-patch. Strategic-merge and server-side-apply are accepted but applied as a merge (an emulation simplification — array merge keys and apply field-ownership are not honored).
 

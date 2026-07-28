@@ -200,6 +200,12 @@ func podMatchesFields(p *corev1.Pod, fields map[string]string) bool {
 			if string(p.Status.Phase) != v {
 				return false
 			}
+		case "spec.nodeName":
+			// Every reconciler-materialized Pod is scheduled to the single
+			// synthetic node, so this is a common and answerable selector.
+			if p.Spec.NodeName != v {
+				return false
+			}
 		default:
 			return false
 		}

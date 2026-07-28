@@ -14,24 +14,40 @@ import (
 // covers both registry-backed children and the typed Pod store. Callers hold
 // s.mu.
 func (s *ClusterState) garbageCollectLocked(owner types.UID) {
-	for _, st := range s.reg.stores {
-		for key, obj := range st.items {
-			if !ownedBy(obj.GetOwnerReferences(), owner) {
-				continue
-			}
+	// Collect the registry objects owned (transitively) by `owner` before
+	// deleting any, so we never mutate a store's map while ranging it and the
+	// result is independent of Go's randomized map iteration order. A registry
+	// child may own further registry children, so this is a breadth-first walk.
+	// owners accumulates every UID whose direct children must be reaped —
+	// `owner` plus each collected registry object — so Pods owned by an
+	// intermediate controller (not just the root) are garbage-collected too.
+	owners := map[types.UID]bool{owner: true}
+	queue := []types.UID{owner}
 
-			childUID := obj.GetUID()
-			delete(st.items, key)
-			st.bumpRVLocked()
-			st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
-			s.garbageCollectLocked(childUID)
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		for _, st := range s.reg.stores {
+			for key, obj := range st.items {
+				if !ownedBy(obj.GetOwnerReferences(), cur) {
+					continue
+				}
+
+				uid := obj.GetUID()
+				owners[uid] = true
+				queue = append(queue, uid)
+				delete(st.items, key)
+				st.bumpRVLocked()
+				st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
+			}
 		}
 	}
 
 	touched := map[string]bool{}
 
 	for key, pod := range s.pods {
-		if ownedBy(pod.OwnerReferences, owner) {
+		if ownedByAny(pod.OwnerReferences, owners) {
 			delete(s.pods, key)
 			touched[pod.Namespace] = true
 			s.wPods.publish(EventDeleted, pod.Namespace, *pod.DeepCopy())
@@ -48,6 +64,16 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 func ownedBy(refs []metav1.OwnerReference, owner types.UID) bool {
 	for _, ref := range refs {
 		if ref.UID == owner {
+			return true
+		}
+	}
+
+	return false
+}
+
+func ownedByAny(refs []metav1.OwnerReference, owners map[types.UID]bool) bool {
+	for _, ref := range refs {
+		if owners[ref.UID] {
 			return true
 		}
 	}
@@ -141,8 +167,14 @@ func (s *ClusterState) registryScale(w http.ResponseWriter, r *http.Request, st 
 			return
 		}
 
+		prev, _, _ := unstructured.NestedInt64(cur.Object, "spec", "replicas")
 		_ = unstructured.SetNestedField(cur.Object, replicas, "spec", "replicas")
-		cur.SetGeneration(cur.GetGeneration() + 1)
+		// Only bump generation on an actual spec change, matching registryUpdate/
+		// registryPatch — an idempotent scale to the current count must not make
+		// a controller see a spurious generation != observedGeneration.
+		if replicas != prev {
+			cur.SetGeneration(cur.GetGeneration() + 1)
+		}
 		st.stampRVLocked(cur)
 
 		if st.def.reconcile != nil {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"reflect"
 	"sort"
 	"strconv"
 	"time"
@@ -256,19 +257,29 @@ func (s *ClusterState) reconcileServiceEndpointsLocked(svc *corev1.Service) {
 
 	sort.Slice(addrs, func(i, j int) bool { return addrs[i].IP < addrs[j].IP })
 
+	var subsets []corev1.EndpointSubset
+	if len(addrs) > 0 {
+		subsets = []corev1.EndpointSubset{{Addresses: addrs, Ports: endpointPorts(svc)}}
+	}
+
 	key := endpointsKey(svc.Namespace, svc.Name)
 
 	ep := s.endpoints[key]
-	if ep == nil {
+	existed := ep != nil
+	if !existed {
 		ep = newEndpointsObject(svc.Namespace, svc.Name)
 	}
 
-	if len(addrs) == 0 {
-		ep.Subsets = nil
-	} else {
-		ep.Subsets = []corev1.EndpointSubset{{Addresses: addrs, Ports: endpointPorts(svc)}}
+	// resyncEndpointsForNamespaceLocked reconciles every Service in a namespace
+	// on any Pod change, so most calls are no-ops. Only bump ResourceVersion and
+	// publish a MODIFIED event when the address set actually changed — otherwise
+	// an informer on Endpoints would see a spurious event (with a climbing RV)
+	// for every Service on every unrelated Pod churn in the namespace.
+	if existed && reflect.DeepEqual(ep.Subsets, subsets) {
+		return
 	}
 
+	ep.Subsets = subsets
 	ep.ResourceVersion = bumpResourceVersion(ep.ResourceVersion)
 	s.endpoints[key] = ep
 	s.wEndpoints.publish(EventModified, svc.Namespace, *ep.DeepCopy())
@@ -404,7 +415,7 @@ func reconcileIngress(_ *ClusterState, obj *unstructured.Unstructured) {
 // 1) that go straight to Succeeded, and marks the Job Complete.
 func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 	completions := int64(1)
-	if c, found, _ := unstructured.NestedInt64(obj.Object, "spec", "completions"); found {
+	if c, found, _ := unstructured.NestedInt64(obj.Object, "spec", "completions"); found && c > 0 {
 		completions = c
 	}
 
@@ -464,7 +475,6 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 		}
 
 		tmplName, _, _ := unstructured.NestedString(tmpl, "metadata", "name")
-		spec, _, _ := unstructured.NestedMap(tmpl, "spec")
 
 		for i := range replicas {
 			name := fmt.Sprintf("%s-%s-%d", tmplName, sts.GetName(), i)
@@ -472,6 +482,10 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 			if _, exists := store.items[key]; exists {
 				continue
 			}
+
+			// Fresh deep copy per ordinal — NestedMap copies once, so hoisting it
+			// out of the loop would alias one spec map across every PVC.
+			spec, _, _ := unstructured.NestedMap(tmpl, "spec")
 
 			pvc := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "v1",

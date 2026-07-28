@@ -74,6 +74,20 @@ func TestSDKEKSDataPlane_WorkloadRuntime(t *testing.T) {
 	assertRunningPods(t, cs, ns, "app=web", 4)
 	assertEndpointAddresses(t, cs, ns, "web", 4) // endpoints track the new Pods
 
+	// --- Field selector on spec.nodeName resolves ----------------------------
+	// Every materialized Pod is scheduled to the synthetic node, so a
+	// `--field-selector spec.nodeName=...` query (common in node-drain / kubelet
+	// tooling) must return them, not an empty list.
+	byNode, err := cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=web", FieldSelector: "spec.nodeName=cloudemu-node-0",
+	})
+	if err != nil {
+		t.Fatalf("list pods by node: %v", err)
+	}
+	if len(byNode.Items) != 4 {
+		t.Fatalf("pods on node cloudemu-node-0 = %d, want 4", len(byNode.Items))
+	}
+
 	// --- Rolling update: new image replaces the Pods --------------------------
 	before := assertRunningPods(t, cs, ns, "app=web", 4)
 	beforeUIDs := podUIDSet(before)
