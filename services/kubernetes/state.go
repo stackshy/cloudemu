@@ -57,6 +57,15 @@ type ClusterState struct {
 	// monotonic counter is enough for tests.
 	nextClusterIP uint32
 
+	// nextPodIP is the monotonic counter for synthetic Pod IPs out of
+	// 10.244.0.0/16 (the kubeadm/Flannel default pod CIDR), handed out by the
+	// reconciler when it brings a controller's Pods up Running.
+	nextPodIP uint32
+
+	// reg is the generic resource registry backing the kinds that don't have a
+	// hand-written handler (ReplicaSet, StatefulSet, DaemonSet, …).
+	reg *registry
+
 	// Per-resource Watch broadcasters. Handlers publish on Create/Update/
 	// Patch/Delete; ?watch=true requests subscribe via streamWatch.
 	wNamespaces      *broadcaster
@@ -91,6 +100,8 @@ func newClusterState() *ClusterState {
 		pdbs:             make(map[string]*policyv1.PodDisruptionBudget),
 		endpoints:        make(map[string]*corev1.Endpoints),
 		nextClusterIP:    firstClusterIPOffset,
+		nextPodIP:        1,
+		reg:              newRegistry(registeredResources()),
 		wNamespaces:      newBroadcaster(),
 		wConfigMaps:      newBroadcaster(),
 		wPods:            newBroadcaster(),
@@ -131,11 +142,17 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Subresources (/status, /scale, …) are handled separately; the object
-	// handlers below only serve the resource itself. Implemented in the
-	// reconcile phase — until then a subresource path is a clean 404 rather
-	// than a mis-parsed write against the parent object.
+	// Subresources (/status, /scale, …) are handled separately so the object
+	// handlers below never mis-parse them as a write against the parent.
+	// Registry-backed kinds serve their own subresources; typed kinds go
+	// through serveSubresource.
 	if route.Subresource != "" {
+		if st := s.reg.lookup(route); st != nil {
+			s.serveRegistry(w, r, route, st)
+
+			return
+		}
+
 		s.serveSubresource(w, r, route)
 
 		return
@@ -161,6 +178,12 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "endpoints":
 		s.serveEndpoints(w, r, route)
 	default:
+		if st := s.reg.lookup(route); st != nil {
+			s.serveRegistry(w, r, route, st)
+
+			return
+		}
+
 		writeNotFound(w, "k8s api: resource not implemented: "+route.Resource)
 	}
 }

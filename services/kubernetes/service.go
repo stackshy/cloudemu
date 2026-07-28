@@ -148,13 +148,14 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 	svc := in
 	s.services[key] = &svc
 
-	// Auto-create an empty Endpoints stub so kubectl get endpoints returns
-	// rows. Subsets stays nil — no scheduler / Pod IPs in Wave 2.
+	// Auto-create the Endpoints object, then let the endpoints controller fill
+	// its Subsets from Running Pods that match the Service selector.
 	ep := newEndpointsObject(namespace, svc.Name)
 	s.endpoints[endpointsKey(namespace, svc.Name)] = ep
 
 	s.wServices.publish(EventAdded, namespace, *svc.DeepCopy())
 	s.wEndpoints.publish(EventAdded, namespace, *ep.DeepCopy())
+	s.reconcileServiceEndpointsLocked(&svc)
 
 	writeJSON(w, http.StatusCreated, &svc)
 }

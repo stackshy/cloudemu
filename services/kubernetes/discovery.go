@@ -170,7 +170,7 @@ func rwVerbs() []string {
 }
 
 func coreResources() []apiResource {
-	return []apiResource{
+	res := []apiResource{
 		{"namespaces", "namespace", "Namespace", false, rwVerbs(), []string{"ns"}},
 		{"configmaps", "configmap", "ConfigMap", true, rwVerbs(), []string{"cm"}},
 		{"pods", "pod", "Pod", true, rwVerbs(), []string{"po"}},
@@ -178,7 +178,41 @@ func coreResources() []apiResource {
 		{"serviceaccounts", "serviceaccount", "ServiceAccount", true, rwVerbs(), []string{"sa"}},
 		{"services", "service", "Service", true, rwVerbs(), []string{"svc"}},
 	}
+
+	return append(res, registryAPIResources("", "v1")...)
 }
+
+// registryAPIResources expands the registry-backed kinds of a group/version
+// into discovery entries (the resource plus its /status and /scale
+// subresources), so discovery is derived from the registry and can't drift
+// from what the server actually serves.
+func registryAPIResources(group, version string) []apiResource {
+	var out []apiResource
+
+	for _, d := range registeredResources() {
+		if d.group != group || d.version != version {
+			continue
+		}
+
+		out = append(out, apiResource{d.plural, strings.ToLower(d.kind), d.kind, d.namespaced, rwVerbs(), nil})
+
+		if d.hasStatus {
+			out = append(out, apiResource{
+				d.plural + "/status", "", d.kind, d.namespaced, subresourceVerbs(), nil,
+			})
+		}
+
+		if d.hasScale {
+			out = append(out, apiResource{
+				d.plural + "/scale", "", "Scale", d.namespaced, subresourceVerbs(), nil,
+			})
+		}
+	}
+
+	return out
+}
+
+func subresourceVerbs() []string { return []string{"get", "patch", "update"} }
 
 func policyResources() []apiResource {
 	// Only the verbs pdb.go implements. Advertising watch would have client-go
@@ -193,7 +227,11 @@ func policyResources() []apiResource {
 }
 
 func appsResources() []apiResource {
-	return []apiResource{
+	res := []apiResource{
 		{"deployments", "deployment", "Deployment", true, rwVerbs(), []string{"deploy"}},
+		{"deployments/status", "", "Deployment", true, subresourceVerbs(), nil},
+		{"deployments/scale", "", "Scale", true, subresourceVerbs(), nil},
 	}
+
+	return append(res, registryAPIResources("apps", "v1")...)
 }

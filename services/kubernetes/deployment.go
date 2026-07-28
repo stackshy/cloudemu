@@ -124,14 +124,11 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 	stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
 
-	// No controller-manager in Wave 2 — mirror spec.replicas straight onto
-	// status so basic "is my deployment 'ready'?" checks pass. Real
-	// apiserver leaves status empty; the deployment controller fills it in
-	// after observing ReplicaSets and Pods.
-	mirrorDeploymentReplicas(&in)
-
 	dep := in
 	s.deployments[key] = &dep
+	// Reconcile: materialize Running Pods and populate status + Service
+	// endpoints so the deployment is actually "up", not just stored.
+	s.reconcileDeploymentLocked(&dep)
 	s.wDeployments.publish(EventAdded, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusCreated, &dep)
 }
@@ -221,10 +218,9 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
 
-	mirrorDeploymentReplicas(&in)
-
 	dep := in
 	s.deployments[key] = &dep
+	s.reconcileDeploymentLocked(&dep)
 	s.wDeployments.publish(EventModified, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusOK, &dep)
 }
@@ -248,8 +244,8 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
-	mirrorDeploymentReplicas(patched)
 	s.deployments[key] = patched
+	s.reconcileDeploymentLocked(patched)
 	s.wDeployments.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
@@ -268,27 +264,12 @@ func (s *ClusterState) deleteDeployment(w http.ResponseWriter, namespace, name s
 	}
 
 	delete(s.deployments, key)
+	// Cascade: garbage-collect the Pods this Deployment owns.
+	s.garbageCollectLocked(dep.UID)
 	s.wDeployments.publish(EventDeleted, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusOK, dep.DeepCopy())
 }
 
 func deploymentKey(namespace, name string) string {
 	return namespace + "/" + name
-}
-
-// mirrorDeploymentReplicas copies spec.replicas onto status. There is no
-// controller in Wave 2 to drive a real reconcile loop, so we synthesize the
-// terminal-state status fields tests typically assert on. Spec.Replicas of
-// nil is treated as 1 (real k8s default).
-func mirrorDeploymentReplicas(d *appsv1.Deployment) {
-	var replicas int32 = 1
-	if d.Spec.Replicas != nil {
-		replicas = *d.Spec.Replicas
-	}
-
-	d.Status.Replicas = replicas
-	d.Status.ReadyReplicas = replicas
-	d.Status.AvailableReplicas = replicas
-	d.Status.UpdatedReplicas = replicas
-	d.Status.ObservedGeneration = d.Generation
 }

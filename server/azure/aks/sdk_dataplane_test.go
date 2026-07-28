@@ -182,8 +182,8 @@ func TestSDKAKSDataPlane_FullWorkloadStack(t *testing.T) {
 		t.Fatalf("CreatePod: %v", err)
 	}
 
-	if pod.Status.Phase != corev1.PodPending {
-		t.Fatalf("Pod phase: got %q, want Pending", pod.Status.Phase)
+	if pod.Status.Phase != corev1.PodRunning {
+		t.Fatalf("Pod phase: got %q, want Running", pod.Status.Phase)
 	}
 
 	// Delete the cluster — the K8s state must go with it.

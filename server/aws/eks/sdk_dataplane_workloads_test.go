@@ -169,8 +169,8 @@ func TestSDKEKSDataPlane_FullWorkloadStack(t *testing.T) {
 		t.Fatalf("CreatePod: %v", err)
 	}
 
-	if pod.Status.Phase != corev1.PodPending {
-		t.Fatalf("Pod phase on create: got %q, want Pending", pod.Status.Phase)
+	if pod.Status.Phase != corev1.PodRunning {
+		t.Fatalf("Pod phase on create: got %q, want Running", pod.Status.Phase)
 	}
 
 	// Cascade verification: delete the cluster, every endpoint must go away.
