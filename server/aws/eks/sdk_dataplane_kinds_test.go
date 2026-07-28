@@ -194,6 +194,7 @@ func TestSDKEKSDataPlane_SupportingKinds(t *testing.T) {
 		}
 	})
 
+	assertGroupDiscoverable(t, cs, "v1", "endpoints")
 	assertGroupDiscoverable(t, cs, "batch/v1", "jobs")
 	assertGroupDiscoverable(t, cs, "networking.k8s.io/v1", "ingresses")
 	assertGroupDiscoverable(t, cs, "rbac.authorization.k8s.io/v1", "clusterroles")

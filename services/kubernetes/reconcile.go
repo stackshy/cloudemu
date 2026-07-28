@@ -1,8 +1,11 @@
 package kubernetes
 
 import (
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"sort"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -84,6 +87,15 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 func (s *ClusterState) buildControllerPod(
 	namespace, name string, tmpl corev1.PodTemplateSpec, owner metav1.OwnerReference,
 ) *corev1.Pod {
+	// Copy the template labels so stamping pod-template-hash can't mutate the
+	// caller's (the controller's) shared template map, and record the hash so a
+	// later template change is detected as a rolling update.
+	labels := make(map[string]string, len(tmpl.Labels)+1)
+	for k, v := range tmpl.Labels {
+		labels[k] = v
+	}
+	labels[podTemplateHashLabel] = podTemplateHash(tmpl)
+
 	pod := &corev1.Pod{
 		TypeMeta: metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -92,7 +104,7 @@ func (s *ClusterState) buildControllerPod(
 			UID:               types.UID(newUID()),
 			CreationTimestamp: metav1.NewTime(time.Now()),
 			ResourceVersion:   "1",
-			Labels:            tmpl.Labels,
+			Labels:            labels,
 			Annotations:       tmpl.Annotations,
 			OwnerReferences:   []metav1.OwnerReference{owner},
 		},
@@ -101,6 +113,26 @@ func (s *ClusterState) buildControllerPod(
 	s.markPodRunningLocked(pod)
 
 	return pod
+}
+
+// podTemplateHashLabel mirrors the upstream label a ReplicaSet stamps on its
+// Pods; a change to the pod template changes the hash, which the reconciler
+// treats as a rolling update — stale-hash Pods are replaced.
+const podTemplateHashLabel = "pod-template-hash"
+
+func podTemplateHash(tmpl corev1.PodTemplateSpec) string {
+	// Hash only the spec: label/annotation churn that doesn't change what runs
+	// should not trigger a rollout, matching upstream's collision-avoidance
+	// intent closely enough for an emulator.
+	b, err := json.Marshal(tmpl.Spec)
+	if err != nil {
+		return "0"
+	}
+
+	h := fnv.New32a()
+	_, _ = h.Write(b)
+
+	return strconv.FormatUint(uint64(h.Sum32()), 16)
 }
 
 // podsOwnedByLocked returns namespace Pods controlled by owner, sorted by name.
@@ -124,6 +156,17 @@ func (s *ClusterState) podsOwnedByLocked(namespace string, owner types.UID) []*c
 func (s *ClusterState) syncScaledPods(
 	namespace, baseName string, owner metav1.OwnerReference, tmpl corev1.PodTemplateSpec, desired int,
 ) int {
+	// Rolling update: drop Pods whose template hash no longer matches the
+	// controller's current template, so the top-up below recreates them on the
+	// new template. cloudemu converges instantly (no surge/unavailable pacing).
+	hash := podTemplateHash(tmpl)
+	for _, pod := range s.podsOwnedByLocked(namespace, owner.UID) {
+		if pod.Labels[podTemplateHashLabel] != hash {
+			delete(s.pods, podKey(namespace, pod.Name))
+			s.wPods.publish(EventDeleted, namespace, *pod.DeepCopy())
+		}
+	}
+
 	owned := s.podsOwnedByLocked(namespace, owner.UID)
 
 	for len(owned) > desired {
@@ -153,8 +196,11 @@ func (s *ClusterState) syncStablePods(
 		want[n] = true
 	}
 
+	hash := podTemplateHash(tmpl)
 	for _, pod := range s.podsOwnedByLocked(namespace, owner.UID) {
-		if !want[pod.Name] {
+		// Delete Pods that are no longer wanted (scale-down) OR whose template
+		// hash is stale (rolling update) so the loop below recreates them.
+		if !want[pod.Name] || pod.Labels[podTemplateHashLabel] != hash {
 			delete(s.pods, podKey(namespace, pod.Name))
 			s.wPods.publish(EventDeleted, namespace, *pod.DeepCopy())
 		}

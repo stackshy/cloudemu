@@ -74,6 +74,27 @@ func TestSDKEKSDataPlane_WorkloadRuntime(t *testing.T) {
 	assertRunningPods(t, cs, ns, "app=web", 4)
 	assertEndpointAddresses(t, cs, ns, "web", 4) // endpoints track the new Pods
 
+	// --- Rolling update: new image replaces the Pods --------------------------
+	before := assertRunningPods(t, cs, ns, "app=web", 4)
+	beforeUIDs := podUIDSet(before)
+
+	upd := workloadDeployment("web", 4)
+	upd.Spec.Template.Spec.Containers[0].Image = "nginx:1.28"
+	if _, err := cs.AppsV1().Deployments(ns).Update(ctx, upd, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("rolling update: %v", err)
+	}
+
+	after := assertRunningPods(t, cs, ns, "app=web", 4)
+	for _, p := range after {
+		if got := p.Spec.Containers[0].Image; got != "nginx:1.28" {
+			t.Fatalf("pod %s image = %q, want nginx:1.28 after rollout", p.Name, got)
+		}
+		if beforeUIDs[string(p.UID)] {
+			t.Fatalf("pod %s survived the rollout; template change must replace Pods", p.Name)
+		}
+	}
+	assertEndpointAddresses(t, cs, ns, "web", 4) // endpoints re-point at the new Pods
+
 	// --- StatefulSet -> stable Pods + Bound PVCs ------------------------------
 	if _, err := cs.AppsV1().StatefulSets(ns).Create(ctx, workloadStatefulSet("db", 3), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create statefulset: %v", err)
@@ -147,6 +168,15 @@ func runtimeClientset(t *testing.T) *kubernetes.Clientset {
 	}
 
 	return mustClientset(t, aws.ToString(out.Cluster.Endpoint))
+}
+
+func podUIDSet(pods []corev1.Pod) map[string]bool {
+	set := make(map[string]bool, len(pods))
+	for _, p := range pods {
+		set[string(p.UID)] = true
+	}
+
+	return set
 }
 
 func assertRunningPods(t *testing.T, cs *kubernetes.Clientset, ns, selector string, want int) []corev1.Pod {

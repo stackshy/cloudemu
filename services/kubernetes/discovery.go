@@ -227,6 +227,11 @@ func coreResources() []apiResource {
 		{"secrets", "secret", "Secret", true, rwVerbs(), nil},
 		{"serviceaccounts", "serviceaccount", "ServiceAccount", true, rwVerbs(), []string{"sa"}},
 		{"services", "service", "Service", true, rwVerbs(), []string{"svc"}},
+		// Endpoints are managed by the emulator (auto-created per Service and torn
+		// down with it), so only the read verbs serveEndpoints implements are
+		// advertised — promising create/update/delete would have kubectl and
+		// client-go issue writes that 405.
+		{"endpoints", "endpoints", "Endpoints", true, []string{"get", "list", "watch"}, []string{"ep"}},
 	}
 
 	return append(res, registryAPIResources("", "v1")...)
