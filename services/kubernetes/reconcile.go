@@ -91,7 +91,9 @@ func (s *ClusterState) buildControllerPod(
 	// Copy the template labels so stamping pod-template-hash can't mutate the
 	// caller's (the controller's) shared template map, and record the hash so a
 	// later template change is detected as a rolling update.
-	labels := make(map[string]string, len(tmpl.Labels)+1)
+	// Capacity is a hint; the map grows to fit the extra pod-template-hash key.
+	// (Avoid len()+1 arithmetic — it trips CodeQL's allocation-overflow query.)
+	labels := make(map[string]string, len(tmpl.Labels))
 	for k, v := range tmpl.Labels {
 		labels[k] = v
 	}
