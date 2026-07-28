@@ -402,14 +402,19 @@ func (s *ClusterState) applyUnstructuredPatch(
 		return nil, false
 	}
 
-	var m map[string]any
-	if err := json.Unmarshal(merged, &m); err != nil {
+	// Decode via Unstructured (not plain json.Unmarshal into a map): the
+	// unstructured scheme preserves whole-number JSON as int64, whereas
+	// encoding/json yields float64. unstructured.NestedInt64 accepts only int64,
+	// so a float64 would make every integer field (notably spec.replicas) read
+	// as 0 — a merge-patch to scale up would silently scale the workload to zero.
+	out := &unstructured.Unstructured{}
+	if err := out.UnmarshalJSON(merged); err != nil {
 		writeBadRequest(w, "k8s api: decode patched object: "+err.Error())
 
 		return nil, false
 	}
 
-	return &unstructured.Unstructured{Object: m}, true
+	return out, true
 }
 
 // specChanged reports whether the two objects' spec differ (used to decide
