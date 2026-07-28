@@ -131,6 +131,16 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Subresources (/status, /scale, …) are handled separately; the object
+	// handlers below only serve the resource itself. Implemented in the
+	// reconcile phase — until then a subresource path is a clean 404 rather
+	// than a mis-parsed write against the parent object.
+	if route.Subresource != "" {
+		s.serveSubresource(w, r, route)
+
+		return
+	}
+
 	switch route.Resource {
 	case "namespaces":
 		s.serveNamespaces(w, r, route)
