@@ -270,6 +270,10 @@ func portableToAzureType(service, typ string) string {
 		return "microsoft.web/sites"
 	case "databricks/Workspace":
 		return "microsoft.databricks/workspaces"
+	case "kubernetes/Cluster":
+		return "microsoft.containerservice/managedclusters"
+	case "kubernetes/NodeGroup":
+		return "microsoft.containerservice/managedclusters/agentpools"
 	default:
 		return strings.ToLower(service + "/" + typ)
 	}

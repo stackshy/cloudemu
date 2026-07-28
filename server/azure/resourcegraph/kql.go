@@ -45,6 +45,8 @@ const (
 	azureTypeCosmosC   = "microsoft.documentdb/databaseaccounts/sqldatabases/containers"
 	azureTypeWebSite   = "microsoft.web/sites"
 	azureTypeDatabrick = "microsoft.databricks/workspaces"
+	azureTypeAKS       = "microsoft.containerservice/managedclusters"
+	azureTypeAgentPool = "microsoft.containerservice/managedclusters/agentpools"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -55,6 +57,7 @@ const (
 	portableDatabase   = "database"
 	portableServerless = "serverless"
 	portableDatabricks = "databricks"
+	portableKubernetes = "kubernetes"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -304,6 +307,10 @@ func mapAzureType(azureType string) (service, typ string) {
 		return portableServerless, "Function"
 	case azureTypeDatabrick:
 		return portableDatabricks, "Workspace"
+	case azureTypeAKS:
+		return portableKubernetes, "Cluster"
+	case azureTypeAgentPool:
+		return portableKubernetes, "NodeGroup"
 	default:
 		return "", ""
 	}

@@ -25,6 +25,7 @@ const (
 	ServiceDatabase   = "database"
 	ServiceServerless = "serverless"
 	ServiceDatabricks = "databricks"
+	ServiceKubernetes = "kubernetes"
 )
 
 // Resource type constants emitted by the walkers.
@@ -39,6 +40,8 @@ const (
 	TypeTable         = "Table"
 	TypeFunction      = "Function"
 	TypeWorkspace     = "Workspace"
+	TypeCluster       = "Cluster"
+	TypeNodeGroup     = "NodeGroup"
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
@@ -284,6 +287,47 @@ func (e *Engine) walkDatabricks(ctx context.Context) ([]Resource, error) {
 			ARN:    workspaces[i].ID,
 			Region: region, Tags: copyTags(workspaces[i].Tags),
 		})
+	}
+
+	return out, nil
+}
+
+// walkKubernetes surfaces managed Kubernetes clusters (EKS/GKE/AKS) and their
+// node groups. The provider supplies a DiscoverClusters adapter; each cluster
+// becomes a Cluster resource and each node group / node pool / agent pool a
+// NodeGroup resource, so a client enumerating inventory sees them the way real
+// RE2 / Resource Graph / Cloud Asset would.
+func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
+	clusters, err := e.drivers.Kubernetes.DiscoverClusters(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkKubernetes: %w", err)
+	}
+
+	out := []Resource{}
+
+	for i := range clusters {
+		c := clusters[i]
+
+		region := c.Region
+		if region == "" {
+			region = e.region
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceKubernetes, Type: TypeCluster,
+			ID:     c.Name,
+			ARN:    e.kubernetesClusterARN(c.Name),
+			Region: region, Tags: copyTags(c.Tags),
+		})
+
+		for _, ng := range c.NodeGroups {
+			out = append(out, Resource{
+				Provider: e.provider, Service: ServiceKubernetes, Type: TypeNodeGroup,
+				ID:     ng,
+				ARN:    e.kubernetesNodeGroupARN(c.Name, ng),
+				Region: region,
+			})
+		}
 	}
 
 	return out, nil

@@ -2,6 +2,8 @@
 package gcp
 
 import (
+	"context"
+
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
@@ -24,6 +26,32 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
+
+// gkeDiscovery adapts the GKE mock to the resourcediscovery KubernetesClusters
+// capability, so GKE clusters and node pools surface in Cloud Asset Inventory.
+type gkeDiscovery struct{ m *gke.Mock }
+
+func (a gkeDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery.DiscoveredCluster, error) {
+	// Empty location lists clusters across all regions.
+	clusters, err := a.m.ListClusters(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredCluster, 0, len(clusters))
+
+	for i := range clusters {
+		c := clusters[i]
+		out = append(out, resourcediscovery.DiscoveredCluster{
+			Name:       c.Name,
+			Region:     c.Location,
+			Tags:       c.ResourceLabels,
+			NodeGroups: c.NodePoolNames,
+		})
+	}
+
+	return out, nil
+}
 
 // Provider holds all GCP mock services.
 type Provider struct {
@@ -104,6 +132,7 @@ func New(opts ...config.Option) *Provider {
 			Storage:    p.GCS,
 			Database:   p.Firestore,
 			Serverless: p.CloudFunctions,
+			Kubernetes: gkeDiscovery{p.GKE},
 		},
 	)
 

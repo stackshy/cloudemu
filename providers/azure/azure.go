@@ -2,6 +2,8 @@
 package azure
 
 import (
+	"context"
+
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
@@ -29,6 +31,32 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
+
+// aksDiscovery adapts the AKS mock to the resourcediscovery KubernetesClusters
+// capability, so AKS managed clusters and agent pools surface in Resource
+// Graph.
+type aksDiscovery struct{ m *aks.Mock }
+
+func (a aksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery.DiscoveredCluster, error) {
+	clusters, err := a.m.ListClusters(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredCluster, 0, len(clusters))
+
+	for i := range clusters {
+		c := clusters[i]
+		out = append(out, resourcediscovery.DiscoveredCluster{
+			Name:       c.Name,
+			Region:     c.Location,
+			Tags:       c.Tags,
+			NodeGroups: c.AgentPoolNames,
+		})
+	}
+
+	return out, nil
+}
 
 // Provider holds all Azure mock services.
 type Provider struct {
@@ -130,6 +158,7 @@ func New(opts ...config.Option) *Provider {
 			Database:   p.CosmosDB,
 			Serverless: p.Functions,
 			Databricks: p.Databricks,
+			Kubernetes: aksDiscovery{p.AKS},
 		},
 	)
 

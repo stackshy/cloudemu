@@ -22,6 +22,29 @@ type Drivers struct {
 	Database   dbdriver.Database
 	Serverless serverlessdriver.Serverless
 	Databricks dbxdriver.Databricks
+	Kubernetes KubernetesClusters
+}
+
+// KubernetesClusters is the discovery capability for managed Kubernetes —
+// EKS, GKE, and AKS. Each cloud's cluster mock lives in its provider package
+// (there is no shared services/*/driver for it, unlike the portable services),
+// so rather than import providers here — which would invert the package
+// layering — each provider wires in a thin adapter that projects its clusters
+// onto DiscoveredCluster.
+type KubernetesClusters interface {
+	DiscoverClusters(ctx context.Context) ([]DiscoveredCluster, error)
+}
+
+// DiscoveredCluster is a provider-neutral projection of a managed Kubernetes
+// cluster for the inventory walk. Region and Tags may be empty (the walker
+// falls back to the engine's default region); NodeGroups holds the cluster's
+// node-group / node-pool / agent-pool names, each surfaced as its own
+// resource.
+type DiscoveredCluster struct {
+	Name       string
+	Region     string
+	Tags       map[string]string
+	NodeGroups []string
 }
 
 // Engine walks all configured service drivers and returns a normalized
@@ -124,6 +147,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.Databricks != nil {
 		ws = append(ws, e.walkDatabricks)
+	}
+
+	if e.drivers.Kubernetes != nil {
+		ws = append(ws, e.walkKubernetes)
 	}
 
 	return ws

@@ -112,6 +112,34 @@ func (e *Engine) databaseTableARN(name string) string {
 	}
 }
 
+func (e *Engine) kubernetesClusterARN(name string) string {
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("eks", e.region, e.accountID, "cluster/"+name)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureDefaultResourceGroup,
+			"Microsoft.ContainerService", "managedClusters", name)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "locations/"+e.region+"/clusters", name)
+	default:
+		return name
+	}
+}
+
+func (e *Engine) kubernetesNodeGroupARN(cluster, name string) string {
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("eks", e.region, e.accountID, "nodegroup/"+cluster+"/"+name)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureDefaultResourceGroup,
+			"Microsoft.ContainerService", "managedClusters/"+cluster+"/agentPools", name)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "locations/"+e.region+"/clusters/"+cluster+"/nodePools", name)
+	default:
+		return name
+	}
+}
+
 func (e *Engine) serverlessFunctionARN(name string) string {
 	switch e.provider {
 	case ProviderAWS:

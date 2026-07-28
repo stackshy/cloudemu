@@ -2,6 +2,8 @@
 package aws
 
 import (
+	"context"
+
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/aws/awsiam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
@@ -27,6 +29,37 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
+
+// eksDiscovery adapts the EKS mock to the resourcediscovery KubernetesClusters
+// capability, so EKS clusters and their node groups surface in Resource
+// Explorer. Kept in the provider package (not services/) to avoid inverting
+// the layering — the discovery engine stays free of provider imports.
+type eksDiscovery struct{ m *eks.Mock }
+
+func (a eksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery.DiscoveredCluster, error) {
+	names, err := a.m.ListClusters(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredCluster, 0, len(names))
+
+	for _, name := range names {
+		dc := resourcediscovery.DiscoveredCluster{Name: name}
+
+		if c, cerr := a.m.DescribeCluster(ctx, name); cerr == nil && c != nil {
+			dc.Tags = c.Tags
+		}
+
+		if ngs, ngErr := a.m.ListNodegroups(ctx, name); ngErr == nil {
+			dc.NodeGroups = ngs
+		}
+
+		out = append(out, dc)
+	}
+
+	return out, nil
+}
 
 // Provider holds all AWS mock services.
 type Provider struct {
@@ -112,6 +145,7 @@ func New(opts ...config.Option) *Provider {
 			Storage:    p.S3,
 			Database:   p.DynamoDB,
 			Serverless: p.Lambda,
+			Kubernetes: eksDiscovery{p.EKS},
 		},
 	)
 

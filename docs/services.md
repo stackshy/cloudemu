@@ -1190,9 +1190,24 @@ Shared in-memory K8s API server registered by every cluster from any provider. U
 
 ## 19. Resource Discovery
 
-**Engine:** `services/resourcediscovery/` — a cross-service inventory engine that walks the Compute, Networking, Storage, Database, and Serverless drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
+**Engine:** `services/resourcediscovery/` — a cross-service inventory engine that walks the Compute, Networking, Storage, Database, Serverless, Databricks, and Kubernetes drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
 
 **SDK-compat handlers:** AWS Resource Explorer Two + Resource Groups Tagging API, Azure Resource Graph, and GCP Cloud Asset Inventory. All three sit on top of the same engine, so a tag written through any one path is visible through the others.
+
+**Surfaced resource types** (portable `service/Type` → per-provider inventory string):
+
+| Portable | AWS RE2 | Azure Resource Graph | GCP Cloud Asset |
+|---|---|---|---|
+| `compute/Instance` | `compute:instance` | `microsoft.compute/virtualmachines` | `compute.googleapis.com/Instance` |
+| `networking/VPC` · `Subnet` · `SecurityGroup` · `NetworkInterface` · `ElasticIP` | `networking:*` | `microsoft.network/*` | `compute.googleapis.com/*` |
+| `storage/Bucket` | `storage:bucket` | `microsoft.storage/storageaccounts` | `storage.googleapis.com/Bucket` |
+| `database/Table` | `database:table` | `microsoft.documentdb/databaseaccounts` | `firestore.googleapis.com/Database` |
+| `serverless/Function` | `serverless:function` | `microsoft.web/sites` | `cloudfunctions.googleapis.com/Function` |
+| `databricks/Workspace` | — | `microsoft.databricks/workspaces` | — |
+| `kubernetes/Cluster` | `kubernetes:cluster` | `microsoft.containerservice/managedclusters` | `container.googleapis.com/Cluster` |
+| `kubernetes/NodeGroup` | `kubernetes:nodegroup` | `microsoft.containerservice/managedclusters/agentpools` | `container.googleapis.com/NodePool` |
+
+Kubernetes clusters (EKS/GKE/AKS) and their node groups (nodegroups / node pools / agent pools) are surfaced via a `KubernetesClusters` discovery adapter each provider wires in over its cluster mock.
 
 ### Engine (`services/resourcediscovery/`)
 
