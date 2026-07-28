@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2"
+	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -201,6 +202,79 @@ func TestSDKResourceExplorer2_BugFixes(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "123456789012", aws.ToString(got.View.Owner))
 	})
+}
+
+// TestSDKResourceExplorer2_KubernetesIndexing mirrors the Databricks/Azure/GCP
+// precedent for the EKS types added in this PR: a cluster and its node group
+// must be retrievable through the real Resource Explorer Search handler, and a
+// service filter must actually narrow to them.
+func TestSDKResourceExplorer2_KubernetesIndexing(t *testing.T) {
+	ctx := context.Background()
+	cloud := cloudemu.NewAWS()
+
+	_, err := cloud.EKS.CreateCluster(ctx, eksdriver.ClusterConfig{
+		Name: "prod", Tags: map[string]string{"env": "prod"},
+	})
+	require.NoError(t, err)
+
+	_, err = cloud.EKS.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
+		ClusterName: "prod", NodegroupName: "ng-1",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, cloud.S3.CreateBucket(ctx, "control-bucket"))
+
+	srv := awsserver.New(awsserver.Drivers{
+		S3:                cloud.S3,
+		ResourceDiscovery: cloud.ResourceDiscovery,
+		AccountID:         "123456789012",
+		Region:            "us-east-1",
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newREXClient(t, ts.URL)
+
+	t.Run("cluster + node group appear in unscoped Search", func(t *testing.T) {
+		out, err := client.Search(ctx, &rex.SearchInput{QueryString: aws.String("")})
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, len(out.Resources), 3, "control bucket + EKS cluster + node group")
+		assert.True(t, rexHasResourceType(out.Resources, "kubernetes:cluster"),
+			"EKS cluster must be indexed")
+		assert.True(t, rexHasResourceType(out.Resources, "kubernetes:nodegroup"),
+			"EKS node group must be indexed")
+	})
+
+	t.Run("service:kubernetes narrows to the EKS resources", func(t *testing.T) {
+		out, err := client.Search(ctx, &rex.SearchInput{QueryString: aws.String("service:kubernetes")})
+		require.NoError(t, err)
+		assert.Len(t, out.Resources, 2, "cluster + node group, not the bucket")
+	})
+
+	t.Run("cluster ARN is EKS-shaped", func(t *testing.T) {
+		out, err := client.Search(ctx, &rex.SearchInput{QueryString: aws.String("service:kubernetes")})
+		require.NoError(t, err)
+
+		var clusterARN string
+		for _, r := range out.Resources {
+			if aws.ToString(r.ResourceType) == "kubernetes:cluster" {
+				clusterARN = aws.ToString(r.Arn)
+			}
+		}
+
+		assert.Contains(t, clusterARN, ":eks:")
+		assert.Contains(t, clusterARN, ":cluster/prod")
+	})
+}
+
+func rexHasResourceType(resources []rextypes.Resource, want string) bool {
+	for i := range resources {
+		if aws.ToString(resources[i].ResourceType) == want {
+			return true
+		}
+	}
+
+	return false
 }
 
 func newREXClient(t *testing.T, baseURL string) *rex.Client {
