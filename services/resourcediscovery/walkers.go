@@ -122,9 +122,12 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		})
 	}
 
-	out = append(out, e.walkNetworkInterfaces(ctx)...)
+	ifaces, err := e.walkNetworkInterfaces(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking interfaces: %w", err)
+	}
 
-	return out, nil
+	return append(out, ifaces...), nil
 }
 
 // walkNetworkInterfaces adds interfaces when the driver models them.
@@ -132,15 +135,18 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 // They are an optional capability, so a driver without them contributes
 // nothing rather than failing the whole walk — a cloud that has no interfaces
 // has none to discover, which is not an error.
-func (e *Engine) walkNetworkInterfaces(ctx context.Context) []Resource {
+func (e *Engine) walkNetworkInterfaces(ctx context.Context) ([]Resource, error) {
 	enisDriver, ok := e.drivers.Networking.(netdriver.NetworkInterfaces)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
+	// A driver that models interfaces and then fails to list them has a real
+	// problem, and swallowing it would report a complete inventory that is
+	// missing whatever the walk could not read.
 	enis, err := enisDriver.DescribeNetworkInterfaces(ctx, nil)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	out := make([]Resource, 0, len(enis))
@@ -154,7 +160,7 @@ func (e *Engine) walkNetworkInterfaces(ctx context.Context) []Resource {
 		})
 	}
 
-	return out
+	return out, nil
 }
 
 func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
