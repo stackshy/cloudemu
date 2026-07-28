@@ -207,9 +207,7 @@ func (h *Handler) deleteRouter(w http.ResponseWriter, r *http.Request, rp gcpres
 // store and the fields this handler acts on.
 func decodeRouter(w http.ResponseWriter, r *http.Request) (json.RawMessage, routerBody, bool) {
 	var raw json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed body")
-
+	if !gcprest.DecodeJSON(w, r, &raw) {
 		return nil, routerBody{}, false
 	}
 

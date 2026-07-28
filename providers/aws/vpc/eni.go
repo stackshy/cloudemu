@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -13,6 +14,11 @@ const (
 	ENIStatusAvailable = "available"
 	ENIStatusInUse     = "in-use"
 )
+
+// eniMu guards the fields of stored interfaces. memstore copies the map on
+// All() but the values are pointers, so a detach mutating one races every
+// concurrent read of the same interface.
+var eniMu sync.RWMutex
 
 type eniData struct {
 	ID           string
@@ -46,6 +52,9 @@ func (m *Mock) DescribeNetworkInterfaces(_ context.Context, ids []string) ([]dri
 // force is accepted and ignored: the emulator has no in-flight traffic for a
 // forced detach to interrupt, so the distinction has no observable effect.
 func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, _ bool) error {
+	eniMu.Lock()
+	defer eniMu.Unlock()
+
 	for _, eni := range m.enis.All() {
 		if eni.AttachmentID != attachmentID {
 			continue
@@ -71,7 +80,11 @@ func (m *Mock) DeleteNetworkInterface(_ context.Context, id string) error {
 		return errors.Newf(errors.NotFound, "network interface %q not found", id)
 	}
 
-	if eni.AttachmentID != "" {
+	eniMu.RLock()
+	attached := eni.AttachmentID != ""
+	eniMu.RUnlock()
+
+	if attached {
 		return errors.Newf(errors.FailedPrecondition,
 			"network interface %q is still attached", id)
 	}
@@ -114,6 +127,9 @@ func (m *Mock) releaseManagedENIs(description string) {
 }
 
 func toENIInfo(e *eniData) driver.NetworkInterface {
+	eniMu.RLock()
+	defer eniMu.RUnlock()
+
 	return driver.NetworkInterface{
 		ID:           e.ID,
 		VPCID:        e.VPCID,

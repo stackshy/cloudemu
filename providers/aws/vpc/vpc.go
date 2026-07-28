@@ -246,6 +246,9 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 // within the given subnet when one is named. An interface that has been
 // detached no longer blocks anything — that is the whole point of detaching it.
 func (m *Mock) attachedENIIn(vpcID, subnetID string) (string, bool) {
+	eniMu.RLock()
+	defer eniMu.RUnlock()
+
 	for _, eni := range m.enis.All() {
 		if eni.VPCID != vpcID || eni.AttachmentID == "" {
 			continue

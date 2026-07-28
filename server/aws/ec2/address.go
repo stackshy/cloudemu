@@ -72,12 +72,13 @@ func (h *Handler) allocateAddress(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) releaseAddress(w http.ResponseWriter, r *http.Request) {
-	// AWS accepts either AllocationId (VPC) or PublicIp (Classic). Only the
-	// former is meaningful post-EC2-Classic, but callers still send whichever
-	// their SDK version prefers, so both are read.
+	// Addresses are stored by allocation id, so a PublicIp value resolves
+	// against them by lookup rather than being passed through as if it were
+	// one — passing it through always missed, while the comment claimed both
+	// forms worked.
 	id := r.Form.Get("AllocationId")
 	if id == "" {
-		id = r.Form.Get("PublicIp")
+		id = h.allocationIDForPublicIP(r, r.Form.Get("PublicIp"))
 	}
 
 	if err := h.vpc.ReleaseAddress(r.Context(), id); err != nil {
@@ -115,4 +116,26 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, describeAddressesResponseXML{
 		Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, AddressSet: out,
 	})
+}
+
+// allocationIDForPublicIP resolves a public address back to its allocation id.
+// Returns the input unchanged when it cannot be resolved, so the caller still
+// gets a not-found naming what it asked for.
+func (h *Handler) allocationIDForPublicIP(r *http.Request, publicIP string) string {
+	if publicIP == "" {
+		return ""
+	}
+
+	addrs, err := h.vpc.DescribeAddresses(r.Context(), nil)
+	if err != nil {
+		return publicIP
+	}
+
+	for i := range addrs {
+		if addrs[i].PublicIP == publicIP {
+			return addrs[i].AllocationID
+		}
+	}
+
+	return publicIP
 }

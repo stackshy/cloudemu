@@ -33,13 +33,28 @@ var awsPublicAMIParamPrefixes = []string{
 	"/aws/service/eks/optimized-ami/",
 }
 
-// amiIDLeaf is the trailing segment of the parameters that carry an AMI id.
-const amiIDLeaf = "/ami-id"
+// The trailing segments that carry an image id. The EKS-optimized tree names
+// its leaf image_id rather than ami-id, so matching only the latter would leave
+// every EKS AMI lookup unresolved.
+var amiIDLeaves = []string{"/ami-id", "/image_id"} //nolint:gochecknoglobals // static lookup table
 
 // isPublicAMIParam reports whether the name is an AMI-id parameter in a tree
 // AWS publishes.
 func isPublicAMIParam(name string) bool {
-	if !strings.HasPrefix(name, awsPublicParamPrefix) || !strings.HasSuffix(name, amiIDLeaf) {
+	if !strings.HasPrefix(name, awsPublicParamPrefix) {
+		return false
+	}
+
+	leaf := false
+
+	for _, suffix := range amiIDLeaves {
+		if strings.HasSuffix(name, suffix) {
+			leaf = true
+			break
+		}
+	}
+
+	if !leaf {
 		return false
 	}
 

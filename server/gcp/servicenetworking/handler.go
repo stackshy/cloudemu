@@ -102,12 +102,20 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
-	h.mu.Lock()
-	if n := network(r); n == "-" {
-		h.connections = map[string]json.RawMessage{}
-	} else {
-		delete(h.connections, n)
+	// A delete has to name the network it targets. Treating an absent
+	// parameter as "all of them" means a request with no query string destroys
+	// every connection in the process, including ones belonging to networks
+	// the caller has nothing to do with.
+	n := r.URL.Query().Get("network")
+	if n == "" || n == "-" {
+		writeError(w, http.StatusBadRequest, "required",
+			"the network query parameter is required to delete a connection")
+
+		return
 	}
+
+	h.mu.Lock()
+	delete(h.connections, n)
 	h.mu.Unlock()
 
 	writeDoneOperation(w)

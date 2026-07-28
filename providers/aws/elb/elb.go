@@ -364,7 +364,29 @@ func (m *Mock) GetLBAttributes(_ context.Context, lbARN string) (*driver.LBAttri
 		attrs = driver.LBAttributes{IdleTimeout: defaultIdleTimeoutSec}
 	}
 
+	// Extra is a map, so the struct copy above still aliases the stored one.
+	// A caller reading attributes, mutating Extra, and writing them back —
+	// which is what a partial attribute update does — would otherwise write
+	// into the shared map outside this lock, and two overlapping updates on
+	// one load balancer crash the process with a concurrent map write.
+	attrs.Extra = copyStringMap(attrs.Extra)
+
 	return &attrs, nil
+}
+
+// copyStringMap returns an independent copy, or nil for an empty input so an
+// absent map does not become an empty one.
+func copyStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+
+	return out
 }
 
 // PutLBAttributes sets the attributes for a load balancer.
@@ -372,6 +394,11 @@ func (m *Mock) PutLBAttributes(_ context.Context, lbARN string, attrs driver.LBA
 	if _, ok := m.lbs.Get(lbARN); !ok {
 		return errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
 	}
+
+	// Copy on the way in for the same reason as on the way out: the caller
+	// keeps its reference to Extra and must not be able to mutate stored state
+	// after the write returns.
+	attrs.Extra = copyStringMap(attrs.Extra)
 
 	m.attrsMu.Lock()
 	m.attrs[lbARN] = attrs

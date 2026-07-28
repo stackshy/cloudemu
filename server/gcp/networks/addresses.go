@@ -116,8 +116,7 @@ func (h *Handler) routeAddresses(w http.ResponseWriter, r *http.Request, rp gcpr
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) insertAddress(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	var raw json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed body")
+	if !gcprest.DecodeJSON(w, r, &raw) {
 		return
 	}
 

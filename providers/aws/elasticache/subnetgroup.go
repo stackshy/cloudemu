@@ -92,7 +92,7 @@ func (m *Mock) resolveVPCID(ctx context.Context, subnetIDs []string) string {
 	}
 
 	subnets, err := m.subnetResolver.DescribeSubnets(ctx, subnetIDs)
-	if err != nil {
+	if err != nil || len(subnets) == 0 {
 		return ""
 	}
 
