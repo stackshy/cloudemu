@@ -291,7 +291,7 @@ type portableResourceType struct{ service, typ string }
 // azureToPortableType maps a fully-qualified Azure resource type to the portable
 // pair the engine uses. A map lookup rather than a switch keeps gocyclo under
 // the gate as the type list grows.
-var azureToPortableType = map[string]portableResourceType{
+var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
 	azureTypeVM:        {portableCompute, "Instance"},
 	azureTypeVNet:      {portableNetworking, "VPC"},
 	azureTypeSubnet:    {portableNetworking, "Subnet"},

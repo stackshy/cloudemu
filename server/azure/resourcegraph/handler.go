@@ -253,7 +253,7 @@ func extractSubscription(arn string) string {
 // (service, type) pair back to the dotted Azure type string a real ARG response
 // carries. A map lookup rather than a switch keeps gocyclo under the gate as the
 // pairs grow.
-var portableToAzureTypeMap = map[string]string{
+var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	"compute/Instance":         "microsoft.compute/virtualmachines",
 	"networking/VPC":           "microsoft.network/virtualnetworks",
 	"networking/Subnet":        "microsoft.network/subnets",
