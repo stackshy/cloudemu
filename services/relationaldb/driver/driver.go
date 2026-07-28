@@ -206,3 +206,31 @@ type RelationalDB interface {
 	DeleteClusterSnapshot(ctx context.Context, id string) error
 	RestoreClusterFromSnapshot(ctx context.Context, input RestoreClusterInput) (*Cluster, error)
 }
+
+// SubnetGroup is a named set of subnets a managed database is placed into.
+type SubnetGroup struct {
+	Name        string
+	Description string
+	VPCID       string
+	SubnetIDs   []string
+	Status      string
+	ARN         string
+}
+
+// SubnetGroupConfig describes a subnet group to create.
+type SubnetGroupConfig struct {
+	Name        string
+	Description string
+	SubnetIDs   []string
+}
+
+// SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —
+// Azure and GCP place managed databases with vnet integration instead — so
+// this is deliberately kept out of the RelationalDB interface and discovered
+// by type assertion. Drivers that do not implement it answer InvalidAction,
+// which is the truthful response for a cloud that has no such resource.
+type SubnetGroups interface {
+	CreateDBSubnetGroup(ctx context.Context, cfg SubnetGroupConfig) (*SubnetGroup, error)
+	DescribeDBSubnetGroups(ctx context.Context, names []string) ([]SubnetGroup, error)
+	DeleteDBSubnetGroup(ctx context.Context, name string) error
+}

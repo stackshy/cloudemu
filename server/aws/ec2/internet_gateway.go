@@ -8,6 +8,10 @@ import (
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
+// stateAttached is the attachment state shared by internet gateways and
+// network interfaces.
+const stateAttached = "attached"
+
 type igwAttachmentXML struct {
 	VpcID string `xml:"vpcId"`
 	State string `xml:"state"`
@@ -42,6 +46,13 @@ type attachInternetGatewayResponseXML struct {
 
 type detachInternetGatewayResponseXML struct {
 	XMLName   xml.Name `xml:"DetachInternetGatewayResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type deleteInternetGatewayResponseXML struct {
+	XMLName   xml.Name `xml:"DeleteInternetGatewayResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
@@ -93,6 +104,19 @@ func (h *Handler) detachInternetGateway(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (h *Handler) deleteInternetGateway(w http.ResponseWriter, r *http.Request) {
+	if err := h.vpc.DeleteInternetGateway(r.Context(), r.Form.Get("InternetGatewayId")); err != nil {
+		writeIGWErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, deleteInternetGatewayResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
 //nolint:dupl // per-resource describe pattern; siblings in vpc/subnet/sg/route_table
 func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "InternetGatewayId")
@@ -124,7 +148,7 @@ func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 	if igw.VpcID != "" {
 		state := igw.State
 		if state == "" {
-			state = "attached"
+			state = stateAttached
 		}
 
 		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: state}}

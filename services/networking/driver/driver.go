@@ -15,6 +15,10 @@ type VPCInfo struct {
 	CIDRBlock string
 	State     string
 	Tags      map[string]string
+	// DNS attributes, settable after creation via ModifyVPCAttribute. Real
+	// EC2 defaults DNS support on and DNS hostnames off for a new VPC.
+	EnableDNSSupport   bool
+	EnableDNSHostnames bool
 }
 
 // SubnetConfig describes a subnet to create.
@@ -135,6 +139,10 @@ type RouteTable struct {
 	VPCID  string
 	Routes []Route
 	Tags   map[string]string
+	// Associations lists the subnet associations pointing at this route
+	// table. Describe is the only way a caller can discover association IDs,
+	// and it needs them to disassociate before deleting the table.
+	Associations []RouteTableAssociation
 }
 
 // Route represents a route in a route table.
@@ -204,6 +212,28 @@ type RouteTableAssociation struct {
 	ID           string
 	RouteTableID string
 	SubnetID     string
+	// Main reports whether this is the VPC's main-route-table association —
+	// the implicit one EC2 creates with the VPC, carrying no subnet. Callers
+	// tearing a VPC down disassociate every non-main association and leave the
+	// main one to die with the VPC, so the distinction has to survive the
+	// projection.
+	Main bool
+}
+
+// NetworkInterface represents an elastic network interface.
+//
+// Managed services (NAT gateways, load balancers, managed databases) attach
+// interfaces of their own, and those interfaces outlive the parent resource
+// briefly. A caller deleting a VPC has to drain them first or the delete is
+// refused, so they have to be observable.
+type NetworkInterface struct {
+	ID           string
+	VPCID        string
+	SubnetID     string
+	Status       string // "available", "in-use"
+	AttachmentID string
+	Description  string
+	Tags         map[string]string
 }
 
 // VPCEndpointConfig describes a VPC endpoint to create.
@@ -316,4 +346,36 @@ type Networking interface {
 	RemoveSubnetTags(ctx context.Context, id string, keys []string) error
 	UpdateSecurityGroupTags(ctx context.Context, id string, tags map[string]string) error
 	RemoveSecurityGroupTags(ctx context.Context, id string, keys []string) error
+}
+
+// VPCAttributeUpdate carries the attributes a caller wants changed. A nil
+// pointer leaves that attribute alone, matching an API that accepts one
+// attribute per call — a caller enabling DNS hostnames must not have its
+// DNS-support setting reset as a side effect.
+//
+// A struct rather than positional pointers so a new attribute can be added
+// without breaking every implementation.
+type VPCAttributeUpdate struct {
+	EnableDNSSupport   *bool
+	EnableDNSHostnames *bool
+}
+
+// VPCAttributes is an OPTIONAL capability, discovered by type assertion.
+// Per-VPC DNS attributes are an AWS concept; other clouds configure name
+// resolution elsewhere, so this is kept out of the Networking interface rather
+// than forcing them to carry a method they cannot implement meaningfully.
+type VPCAttributes interface {
+	ModifyVPCAttribute(ctx context.Context, id string, update VPCAttributeUpdate) error
+}
+
+// NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.
+//
+// Kept out of the Networking interface for the same reason as VPCAttributes:
+// requiring it would have every provider carry an implementation, and the two
+// that do not model interfaces would carry identical copies of one that does
+// nothing for them.
+type NetworkInterfaces interface {
+	DescribeNetworkInterfaces(ctx context.Context, ids []string) ([]NetworkInterface, error)
+	DetachNetworkInterface(ctx context.Context, attachmentID string, force bool) error
+	DeleteNetworkInterface(ctx context.Context, id string) error
 }

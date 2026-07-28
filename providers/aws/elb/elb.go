@@ -105,7 +105,19 @@ func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
 
 // DescribeLoadBalancers returns load balancers matching the given ARNs.
 // If arns is empty, all load balancers are returned.
+//
+// Naming an ARN that does not exist is LoadBalancerNotFound, not an empty
+// list. Callers waiting for a delete to settle poll this until it errors, so
+// answering "no error, nothing found" leaves them polling to their timeout
+// over a load balancer that is already gone.
 func (m *Mock) DescribeLoadBalancers(_ context.Context, arns []string) ([]driver.LBInfo, error) {
+	for _, arn := range arns {
+		if !m.lbs.Has(arn) {
+			return nil, errors.Newf(errors.NotFound,
+				"load balancer %q not found", arn)
+		}
+	}
+
 	return describeResources(m.lbs, arns), nil
 }
 
@@ -164,7 +176,19 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 
 // DescribeTargetGroups returns target groups matching the given ARNs.
 // If arns is empty, all target groups are returned.
+//
+// Naming an ARN that does not exist is TargetGroupNotFound, for the same
+// reason DescribeLoadBalancers above answers LoadBalancerNotFound: a caller
+// waiting on a delete polls until it errors, and an empty list with no error
+// leaves it polling to its timeout over something already gone.
 func (m *Mock) DescribeTargetGroups(_ context.Context, arns []string) ([]driver.TargetGroupInfo, error) {
+	for _, arn := range arns {
+		if !m.tgs.Has(arn) {
+			return nil, errors.Newf(errors.NotFound,
+				"target group %q not found", arn)
+		}
+	}
+
 	return describeResources(m.tgs, arns), nil
 }
 
@@ -340,7 +364,29 @@ func (m *Mock) GetLBAttributes(_ context.Context, lbARN string) (*driver.LBAttri
 		attrs = driver.LBAttributes{IdleTimeout: defaultIdleTimeoutSec}
 	}
 
+	// Extra is a map, so the struct copy above still aliases the stored one.
+	// A caller reading attributes, mutating Extra, and writing them back —
+	// which is what a partial attribute update does — would otherwise write
+	// into the shared map outside this lock, and two overlapping updates on
+	// one load balancer crash the process with a concurrent map write.
+	attrs.Extra = copyStringMap(attrs.Extra)
+
 	return &attrs, nil
+}
+
+// copyStringMap returns an independent copy, or nil for an empty input so an
+// absent map does not become an empty one.
+func copyStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+
+	return out
 }
 
 // PutLBAttributes sets the attributes for a load balancer.
@@ -349,11 +395,51 @@ func (m *Mock) PutLBAttributes(_ context.Context, lbARN string, attrs driver.LBA
 		return errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
 	}
 
+	// Copy on the way in for the same reason as on the way out: the caller
+	// keeps its reference to Extra and must not be able to mutate stored state
+	// after the write returns.
+	attrs.Extra = copyStringMap(attrs.Extra)
+
 	m.attrsMu.Lock()
 	m.attrs[lbARN] = attrs
 	m.attrsMu.Unlock()
 
 	return nil
+}
+
+// UpdateLBAttributes applies a partial update without releasing the lock
+// between the read and the write, so concurrent modifications compose instead
+// of overwriting one another.
+func (m *Mock) UpdateLBAttributes(
+	_ context.Context, lbARN string, apply func(*driver.LBAttributes),
+) (*driver.LBAttributes, error) {
+	if _, ok := m.lbs.Get(lbARN); !ok {
+		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
+	}
+
+	m.attrsMu.Lock()
+	defer m.attrsMu.Unlock()
+
+	attrs, ok := m.attrs[lbARN]
+	if !ok {
+		attrs = driver.LBAttributes{IdleTimeout: defaultIdleTimeoutSec}
+	}
+
+	// Work on a private copy of Extra so the caller's mutations land on the
+	// copy this method stores, never on a map another reader still holds.
+	attrs.Extra = copyStringMap(attrs.Extra)
+	if attrs.Extra == nil {
+		attrs.Extra = map[string]string{}
+	}
+
+	apply(&attrs)
+
+	m.attrs[lbARN] = attrs
+
+	out := attrs
+	out.Extra = copyStringMap(attrs.Extra)
+
+	return &out, nil
 }
 
 // RegisterTargets registers targets with a target group.

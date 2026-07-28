@@ -33,21 +33,24 @@ const (
 // elbActions is the set of Action values this handler recognizes. Matches uses
 // it to decide whether to claim a request.
 var elbActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateLoadBalancer":    {},
-	"DescribeLoadBalancers": {},
-	"DeleteLoadBalancer":    {},
-	"CreateTargetGroup":     {},
-	"DescribeTargetGroups":  {},
-	"DeleteTargetGroup":     {},
-	"CreateListener":        {},
-	"DescribeListeners":     {},
-	"DeleteListener":        {},
-	"CreateRule":            {},
-	"DescribeRules":         {},
-	"DeleteRule":            {},
-	"RegisterTargets":       {},
-	"DeregisterTargets":     {},
-	"DescribeTargetHealth":  {},
+	"CreateLoadBalancer":             {},
+	"ModifyLoadBalancerAttributes":   {},
+	"DescribeLoadBalancerAttributes": {},
+	"DescribeTags":                   {},
+	"DescribeLoadBalancers":          {},
+	"DeleteLoadBalancer":             {},
+	"CreateTargetGroup":              {},
+	"DescribeTargetGroups":           {},
+	"DeleteTargetGroup":              {},
+	"CreateListener":                 {},
+	"DescribeListeners":              {},
+	"DeleteListener":                 {},
+	"CreateRule":                     {},
+	"DescribeRules":                  {},
+	"DeleteRule":                     {},
+	"RegisterTargets":                {},
+	"DeregisterTargets":              {},
+	"DescribeTargetHealth":           {},
 }
 
 // Handler serves ELBv2 query-protocol requests.
@@ -89,7 +92,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
 //
-//nolint:gocyclo // 15 cases for one-shot dispatch; splitting into sub-routers would be more complex than the switch.
+//nolint:gocyclo // one case per action; the switch grows with the surface for one-shot dispatch; splitting into sub-routers would be more complex than the switch.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	action := r.Form.Get("Action")
 
@@ -98,6 +101,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createLoadBalancer(w, r)
 	case "DescribeLoadBalancers":
 		h.describeLoadBalancers(w, r)
+	case "ModifyLoadBalancerAttributes":
+		h.modifyLoadBalancerAttributes(w, r)
+	case "DescribeLoadBalancerAttributes":
+		h.describeLoadBalancerAttributes(w, r)
+	case "DescribeTags":
+		h.describeTags(w, r)
 	case "DeleteLoadBalancer":
 		h.deleteLoadBalancer(w, r)
 	case "CreateTargetGroup":

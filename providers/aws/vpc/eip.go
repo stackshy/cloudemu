@@ -38,6 +38,9 @@ func (m *Mock) AllocateAddress(
 func (m *Mock) ReleaseAddress(
 	_ context.Context, allocationID string,
 ) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	eip, ok := m.eips.Get(allocationID)
 	if !ok {
 		return errors.Newf(
@@ -63,6 +66,9 @@ func (m *Mock) ReleaseAddress(
 func (m *Mock) DescribeAddresses(
 	_ context.Context, ids []string,
 ) ([]driver.ElasticIP, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.eips, ids, toEIPInfo), nil
 }
 
@@ -70,6 +76,9 @@ func (m *Mock) DescribeAddresses(
 func (m *Mock) AssociateAddress(
 	_ context.Context, allocationID, instanceID string,
 ) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	eip, ok := m.eips.Get(allocationID)
 	if !ok {
 		return "", errors.Newf(
@@ -96,6 +105,9 @@ func (m *Mock) AssociateAddress(
 func (m *Mock) DisassociateAddress(
 	_ context.Context, associationID string,
 ) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, eip := range m.eips.All() {
 		if eip.AssociationID == associationID {
 			eip.AssociationID = ""

@@ -9,7 +9,7 @@ import (
 )
 
 // Route target types understood by the driver; mirror the AWS route-target
-// taxonomy. Phase 2 wires gateway (IGW) + nat-gateway + peering targets.
+// taxonomy.
 const (
 	targetTypeGateway    = "gateway"
 	targetTypeNatGateway = "nat-gateway"
@@ -24,11 +24,19 @@ type routeXML struct {
 	State                string `xml:"state"`
 }
 
+type rtAssociationXML struct {
+	AssociationID string `xml:"routeTableAssociationId"`
+	RouteTableID  string `xml:"routeTableId"`
+	SubnetID      string `xml:"subnetId,omitempty"`
+	Main          bool   `xml:"main"`
+}
+
 type routeTableXML struct {
-	RouteTableID string     `xml:"routeTableId"`
-	VpcID        string     `xml:"vpcId"`
-	Routes       []routeXML `xml:"routeSet>item,omitempty"`
-	Tags         []tagItem  `xml:"tagSet>item,omitempty"`
+	RouteTableID string             `xml:"routeTableId"`
+	VpcID        string             `xml:"vpcId"`
+	Routes       []routeXML         `xml:"routeSet>item,omitempty"`
+	Associations []rtAssociationXML `xml:"associationSet>item,omitempty"`
+	Tags         []tagItem          `xml:"tagSet>item,omitempty"`
 }
 
 type createRouteTableResponseXML struct {
@@ -47,6 +55,34 @@ type describeRouteTablesResponseXML struct {
 
 type createRouteResponseXML struct {
 	XMLName   xml.Name `xml:"CreateRouteResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type deleteRouteResponseXML struct {
+	XMLName   xml.Name `xml:"DeleteRouteResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type deleteRouteTableResponseXML struct {
+	XMLName   xml.Name `xml:"DeleteRouteTableResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type associateRouteTableResponseXML struct {
+	XMLName       xml.Name `xml:"AssociateRouteTableResponse"`
+	Xmlns         string   `xml:"xmlns,attr"`
+	RequestID     string   `xml:"requestId"`
+	AssociationID string   `xml:"associationId"`
+}
+
+type disassociateRouteTableResponseXML struct {
+	XMLName   xml.Name `xml:"DisassociateRouteTableResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
@@ -94,8 +130,8 @@ func (h *Handler) describeRouteTables(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) {
-	// Real EC2 accepts many target types; Phase 2 wires only IGW. Other
-	// targets return a 400 until the later phases land them.
+	// Real EC2 accepts many target types; gateway, NAT gateway and peering are
+	// wired. Anything else is a 400 rather than a silently dropped route.
 	target, targetType := resolveRouteTarget(r)
 	if target == "" {
 		writeRouteTableErr(w, newInvalidParameterErr(
@@ -120,9 +156,65 @@ func (h *Handler) createRoute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
+	err := h.vpc.DeleteRoute(r.Context(),
+		r.Form.Get("RouteTableId"), r.Form.Get("DestinationCidrBlock"))
+	if err != nil {
+		writeRouteTableErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, deleteRouteResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
+func (h *Handler) deleteRouteTable(w http.ResponseWriter, r *http.Request) {
+	if err := h.vpc.DeleteRouteTable(r.Context(), r.Form.Get("RouteTableId")); err != nil {
+		writeRouteTableErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, deleteRouteTableResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
+func (h *Handler) associateRouteTable(w http.ResponseWriter, r *http.Request) {
+	assoc, err := h.vpc.AssociateRouteTable(r.Context(),
+		r.Form.Get("RouteTableId"), r.Form.Get("SubnetId"))
+	if err != nil {
+		writeRouteTableErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, associateRouteTableResponseXML{
+		Xmlns:         awsquery.Namespace,
+		RequestID:     awsquery.RequestID,
+		AssociationID: assoc.ID,
+	})
+}
+
+func (h *Handler) disassociateRouteTable(w http.ResponseWriter, r *http.Request) {
+	if err := h.vpc.DisassociateRouteTable(r.Context(), r.Form.Get("AssociationId")); err != nil {
+		writeRouteTableErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, disassociateRouteTableResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
 // resolveRouteTarget picks the first non-empty target the caller supplied and
-// maps it to the driver's target-type string. Phase 2 supports IGW and NAT;
-// peering, transit gateways, and others come in later phases.
+// maps it to the driver's target-type string. Transit gateways and the rarer
+// target types are not modeled.
 func resolveRouteTarget(r *http.Request) (target, targetType string) {
 	if id := r.Form.Get("GatewayId"); id != "" {
 		return id, targetTypeGateway
@@ -144,6 +236,15 @@ func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 		RouteTableID: rt.ID,
 		VpcID:        rt.VPCID,
 		Tags:         toTagItems(rt.Tags),
+	}
+
+	for _, a := range rt.Associations {
+		x.Associations = append(x.Associations, rtAssociationXML{
+			AssociationID: a.ID,
+			RouteTableID:  nonEmpty(a.RouteTableID, rt.ID),
+			SubnetID:      a.SubnetID,
+			Main:          a.Main,
+		})
 	}
 
 	for _, route := range rt.Routes {

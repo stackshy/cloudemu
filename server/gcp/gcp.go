@@ -28,6 +28,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/networks"
 	"github.com/stackshy/cloudemu/v2/server/gcp/pubsub"
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
+	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -120,6 +121,10 @@ func New(d Drivers) *server.Server {
 	if d.Networking != nil {
 		srv.Register(networks.New(d.Networking))
 	}
+
+	// Service Networking has no driver: a private-services connection is a
+	// record, and nothing in the emulator routes the peering it stands for.
+	srv.Register(servicenetworking.New())
 
 	// Cloud Load Balancing shares the /compute/v1/projects/… URL space with the
 	// compute and networks handlers above but claims a disjoint set of resource

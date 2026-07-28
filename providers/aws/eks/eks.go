@@ -13,7 +13,6 @@ package eks
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"sync"
@@ -113,14 +112,26 @@ func addonKey(clusterName, addonName string) string {
 	return clusterName + "/" + addonName
 }
 
-// stubCertificate returns a placeholder base64 CA blob. Real EKS returns a
-// PEM-encoded x509 cert; SDK clients only base64-decode it for the
-// kubeconfig, so a deterministic stub is enough for Wave 1.
-func stubCertificate() string {
-	const placeholder = "-----BEGIN CERTIFICATE-----\nMIICloudemuStubCertificate\n-----END CERTIFICATE-----\n"
+// stubCertificate returns the base64 PEM CA blob DescribeCluster advertises.
+//
+// It is a REAL self-signed certificate, not a placeholder string. The previous
+// stub assumed "SDK clients only base64-decode it for the kubeconfig", which
+// holds for the raw SDK but not for anything that then builds a TLS config:
+// client-go calls AppendCertsFromPEM and fails with "unable to parse bytes as
+// PEM block" — an error raised at kubernetes.NewForConfig, far from EKS, that
+// gives no hint the CA was synthetic. Any tool deriving a kubeconfig from
+// DescribeCluster (which is the documented way to reach an EKS cluster) hits
+// this immediately.
+//
+// Generated once per process and cached: certificate generation is not free,
+// and a stable CA across calls matches real EKS, where a cluster's CA does not
+// change between DescribeCluster invocations.
 
-	return base64.StdEncoding.EncodeToString([]byte(placeholder))
-}
+// generateSelfSignedCA builds a throwaway CA certificate and returns it
+// base64-encoded, matching the shape real EKS returns. Failure falls back to
+// an empty string rather than panicking: an empty CA makes client-go use the
+// system roots, which is a recoverable state, whereas a panic would take down
+// an emulator whose whole purpose is to keep tests running.
 
 func newUpdateID() string {
 	var b [16]byte
@@ -293,6 +304,9 @@ func (m *Mock) withK8sEndpoint(c *eksdriver.Cluster) {
 	}
 
 	c.Endpoint = base + "/k8s/" + uid
+
+	// The advertised CA certifies this endpoint when the data plane is served
+	// with ServingTLSConfig, so a caller can validate what it dials.
 }
 
 // DescribeCluster looks up a cluster by name.
@@ -430,6 +444,12 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 
 	m.clusters.Delete(name)
 
+	// Resolve the endpoint before deregistering: the response describes the
+	// cluster as it was, and reading afterwards yields the not-implemented
+	// sentinel instead of the endpoint the caller had been using.
+	out := c
+	m.withK8sEndpoint(&out)
+
 	// Wave 2: tear down the cluster's Kubernetes data-plane state too. The
 	// UID map entry is dropped after deregister so subsequent describes find
 	// nothing — matching the real cluster going away.
@@ -437,9 +457,6 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 		m.k8sAPI.DeregisterCluster(uid)
 		delete(m.k8sUIDs, name)
 	}
-
-	out := c
-	m.withK8sEndpoint(&out)
 
 	return &out, nil
 }

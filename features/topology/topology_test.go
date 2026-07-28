@@ -565,6 +565,13 @@ func TestTraceRoute(t *testing.T) {
 	err = vpcMock.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-123", "gateway")
 	require.NoError(t, err)
 
+	// The subnet has to be associated with this table for its routes to
+	// govern the subnet's traffic. Without the association the subnet uses the
+	// VPC's main route table, which carries only the local route — so 8.8.8.8
+	// would be genuinely unroutable, exactly as it would be in the real cloud.
+	_, err = vpcMock.AssociateRouteTable(ctx, rt.ID, subnet.ID)
+	require.NoError(t, err)
+
 	sg, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
 		VPCID: v.ID, Name: "trace-sg", Description: "trace test",
 	})
@@ -633,4 +640,48 @@ func TestResolveNotFound(t *testing.T) {
 	values, err := engine.Resolve(ctx, "missing.example.com")
 	require.NoError(t, err)
 	assert.Nil(t, values)
+}
+
+// A subnet with no explicit association uses the VPC's main route table, which
+// carries only the local route. Traffic off the VPC is then genuinely
+// unroutable — and reporting otherwise would tell a caller a path exists that
+// the real cloud would drop.
+func TestTraceRouteUnassociatedSubnetUsesMainTable(t *testing.T) {
+	engine, ec2Mock, vpcMock, _ := newTestEngine()
+	ctx := context.Background()
+
+	v, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	subnet, err := vpcMock.CreateSubnet(ctx, netdriver.SubnetConfig{
+		VPCID: v.ID, CIDRBlock: "10.0.1.0/24", AvailabilityZone: "us-east-1a",
+	})
+	require.NoError(t, err)
+
+	// A table with a default route exists, but nothing associates the subnet
+	// with it, so it does not govern this subnet's traffic.
+	rt, err := vpcMock.CreateRouteTable(ctx, netdriver.RouteTableConfig{VPCID: v.ID})
+	require.NoError(t, err)
+	require.NoError(t, vpcMock.CreateRoute(ctx, rt.ID, "0.0.0.0/0", "igw-123", "gateway"))
+
+	sg, err := vpcMock.CreateSecurityGroup(ctx, netdriver.SecurityGroupConfig{
+		VPCID: v.ID, Name: "unassoc-sg", Description: "unassociated subnet",
+	})
+	require.NoError(t, err)
+
+	instances, err := ec2Mock.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-test", InstanceType: "t2.micro",
+		SubnetID: subnet.ID, SecurityGroups: []string{sg.ID},
+	}, 1)
+	require.NoError(t, err)
+	require.NoError(t, ec2Mock.SetInstanceVPC(instances[0].ID, v.ID))
+
+	hops, err := engine.TraceRoute(ctx, instances[0].ID, "8.8.8.8")
+	require.NoError(t, err)
+	require.NotEmpty(t, hops)
+
+	assert.NotEqual(t, rt.ID, hops[2].ResourceID,
+		"an unassociated table must not govern the subnet")
+	assert.Equal(t, "blocked", hops[len(hops)-1].Type,
+		"main table carries only the local route, so 8.8.8.8 is unroutable")
 }

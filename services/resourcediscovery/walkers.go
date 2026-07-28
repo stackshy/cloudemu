@@ -3,6 +3,7 @@ package resourcediscovery
 import (
 	"context"
 	"fmt"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
@@ -32,6 +33,8 @@ const (
 	TypeVPC           = "VPC"
 	TypeSubnet        = "Subnet"
 	TypeSecurityGroup = "SecurityGroup"
+	TypeNetworkIface  = "NetworkInterface"
+	TypeElasticIP     = "ElasticIP"
 	TypeBucket        = "Bucket"
 	TypeTable         = "Table"
 	TypeFunction      = "Function"
@@ -102,6 +105,58 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 			ID:     sg.ID,
 			ARN:    e.networkARN(netKindSecurityGroup, sg.ID),
 			Region: e.region, Tags: copyTags(sg.Tags),
+		})
+	}
+
+	eips, err := e.drivers.Networking.DescribeAddresses(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking addresses: %w", err)
+	}
+
+	for _, eip := range eips {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeElasticIP,
+			ID:     eip.AllocationID,
+			ARN:    e.networkARN(netKindElasticIP, eip.AllocationID),
+			Region: e.region, Tags: copyTags(eip.Tags),
+		})
+	}
+
+	ifaces, err := e.walkNetworkInterfaces(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking interfaces: %w", err)
+	}
+
+	return append(out, ifaces...), nil
+}
+
+// walkNetworkInterfaces adds interfaces when the driver models them.
+//
+// They are an optional capability, so a driver without them contributes
+// nothing rather than failing the whole walk — a cloud that has no interfaces
+// has none to discover, which is not an error.
+func (e *Engine) walkNetworkInterfaces(ctx context.Context) ([]Resource, error) {
+	enisDriver, ok := e.drivers.Networking.(netdriver.NetworkInterfaces)
+	if !ok {
+		return nil, nil
+	}
+
+	// A driver that models interfaces and then fails to list them has a real
+	// problem, and swallowing it would report a complete inventory that is
+	// missing whatever the walk could not read.
+	enis, err := enisDriver.DescribeNetworkInterfaces(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]Resource, 0, len(enis))
+
+	for _, eni := range enis {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeNetworkIface,
+			ID:     eni.ID,
+			ARN:    e.networkARN(netKindNetworkIface, eni.ID),
+			Region: e.region, Tags: copyTags(eni.Tags),
 		})
 	}
 

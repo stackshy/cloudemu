@@ -2,6 +2,8 @@
 package vpc
 
 import (
+	"sync"
+
 	"context"
 	"time"
 
@@ -19,11 +21,25 @@ const (
 	defaultFlowLogRecordLimit = 10
 )
 
-// Compile-time check that Mock implements driver.Networking.
-var _ driver.Networking = (*Mock)(nil)
+// Compile-time checks. The optional capabilities are asserted too: without
+// this a signature drifting out of shape would silently stop satisfying the
+// interface and every call would answer InvalidAction at runtime instead of
+// failing the build.
+var (
+	_ driver.Networking        = (*Mock)(nil)
+	_ driver.NetworkInterfaces = (*Mock)(nil)
+	_ driver.VPCAttributes     = (*Mock)(nil)
+)
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
 type Mock struct {
+	// mu guards the *fields* of stored records, not the maps holding them.
+	// memstore copies its map on All(), but the values are pointers, so a
+	// mutation through one handle races every concurrent read of the same
+	// record. The stores handle their own map-level locking; this covers the
+	// read-modify-write the callers do on top.
+	mu sync.RWMutex
+
 	vpcs           *memstore.Store[*vpcData]
 	subnets        *memstore.Store[*subnetData]
 	securityGroups *memstore.Store[*sgData]
@@ -35,15 +51,18 @@ type Mock struct {
 	igws           *memstore.Store[*igwData]
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
+	enis           *memstore.Store[*eniData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
 	opts           *config.Options
 }
 
 type vpcData struct {
-	ID        string
-	CIDRBlock string
-	State     string
-	Tags      map[string]string
+	ID                 string
+	CIDRBlock          string
+	State              string
+	Tags               map[string]string
+	EnableDNSSupport   bool
+	EnableDNSHostnames bool
 }
 
 type subnetData struct {
@@ -79,6 +98,7 @@ func New(opts *config.Options) *Mock {
 		igws:           memstore.New[*igwData](),
 		eips:           memstore.New[*eipData](),
 		rtAssocs:       memstore.New[*rtAssocData](),
+		enis:           memstore.New[*eniData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
 		opts:           opts,
 	}
@@ -98,18 +118,80 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 		CIDRBlock: cfg.CIDRBlock,
 		State:     "available",
 		Tags:      tags,
+		// EC2 defaults DNS support on and DNS hostnames off for a new VPC.
+		EnableDNSSupport: true,
 	}
 	m.vpcs.Set(id, v)
 
+	m.createMainRouteTable(id, cfg.CIDRBlock)
+
+	m.mu.RLock()
 	info := toVPCInfo(v)
+	m.mu.RUnlock()
 
 	return &info, nil
 }
 
+// createMainRouteTable gives the new VPC the route table EC2 creates for it,
+// carrying the local route and an implicit main association. Callers list a
+// VPC's route tables during teardown and skip the main one, so its absence is
+// visible: it makes every VPC look like it has one fewer table than it does.
+func (m *Mock) createMainRouteTable(vpcID, cidr string) {
+	rtID := idgen.GenerateID("rtb-")
+
+	m.routeTables.Set(rtID, &routeTableData{
+		ID:    rtID,
+		VPCID: vpcID,
+		Routes: []driver.Route{{
+			DestinationCIDR: cidr,
+			TargetID:        RouteTargetLocal,
+			TargetType:      RouteTargetLocal,
+			State:           "active",
+		}},
+		IsMain: true,
+	})
+
+	assocID := idgen.GenerateID("rtbassoc-")
+	m.rtAssocs.Set(assocID, &rtAssocData{
+		ID:           assocID,
+		RouteTableID: rtID,
+		Main:         true,
+	})
+}
+
 // DeleteVPC deletes the VPC with the given ID.
+//
+// The main route table and its association are implicit in the VPC, so they
+// go with it. Leaving them behind would strand rows no caller can address:
+// the main table refuses a direct delete.
 func (m *Mock) DeleteVPC(_ context.Context, id string) error {
-	if !m.vpcs.Delete(id) {
+	if !m.vpcs.Has(id) {
 		return errors.Newf(errors.NotFound, "vpc %q not found", id)
+	}
+
+	// An interface still attached inside the VPC blocks the delete, which is
+	// what makes the drain a caller performs beforehand load-bearing rather
+	// than ceremonial. Without this the emulator accepts a delete real EC2
+	// refuses, and a caller whose drain is broken never finds out.
+	if eni, blocked := m.attachedENIIn(id, ""); blocked {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: network interface %q is still attached in vpc %q", eni, id)
+	}
+
+	m.vpcs.Delete(id)
+
+	for rtID, rt := range m.routeTables.All() {
+		if rt.VPCID != id || !rt.IsMain {
+			continue
+		}
+
+		m.routeTables.Delete(rtID)
+
+		for assocID, assoc := range m.rtAssocs.All() {
+			if assoc.RouteTableID == rtID {
+				m.rtAssocs.Delete(assocID)
+			}
+		}
 	}
 
 	return nil
@@ -117,6 +199,9 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 
 // DescribeVPCs returns VPCs matching the given IDs, or all VPCs if ids is empty.
 func (m *Mock) DescribeVPCs(_ context.Context, ids []string) ([]driver.VPCInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.vpcs, ids, toVPCInfo), nil
 }
 
@@ -154,11 +239,43 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 
 // DeleteSubnet deletes the subnet with the given ID.
 func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
-	if !m.subnets.Delete(id) {
+	sub, ok := m.subnets.Get(id)
+	if !ok {
 		return errors.Newf(errors.NotFound, "subnet %q not found", id)
 	}
 
+	// Same contract as DeleteVPC, one level down: a managed resource holding
+	// an interface in this subnet keeps it alive.
+	if eni, blocked := m.attachedENIIn(sub.VPCID, id); blocked {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: network interface %q is still attached in subnet %q", eni, id)
+	}
+
+	m.subnets.Delete(id)
+
 	return nil
+}
+
+// attachedENIIn reports an interface still attached within the given VPC, and
+// within the given subnet when one is named. An interface that has been
+// detached no longer blocks anything — that is the whole point of detaching it.
+func (m *Mock) attachedENIIn(vpcID, subnetID string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, eni := range m.enis.All() {
+		if eni.VPCID != vpcID || eni.AttachmentID == "" {
+			continue
+		}
+
+		if subnetID != "" && eni.SubnetID != subnetID {
+			continue
+		}
+
+		return eni.ID, true
+	}
+
+	return "", false
 }
 
 // DescribeSubnets returns subnets matching the given IDs, or all subnets if ids is empty.
@@ -432,10 +549,12 @@ func copyTags(tags map[string]string) map[string]string {
 
 func toVPCInfo(v *vpcData) driver.VPCInfo {
 	return driver.VPCInfo{
-		ID:        v.ID,
-		CIDRBlock: v.CIDRBlock,
-		State:     v.State,
-		Tags:      copyTags(v.Tags),
+		ID:                 v.ID,
+		CIDRBlock:          v.CIDRBlock,
+		State:              v.State,
+		Tags:               copyTags(v.Tags),
+		EnableDNSSupport:   v.EnableDNSSupport,
+		EnableDNSHostnames: v.EnableDNSHostnames,
 	}
 }
 
