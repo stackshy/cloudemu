@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
 // basePrefix identifies a Service Networking request.
@@ -88,6 +90,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
+	// Capped like every sibling handler. The decode stays tolerant — a
+	// connection removal legitimately sends no body — but an unbounded read
+	// is not the way to accept that.
+	r.Body = http.MaxBytesReader(w, r.Body, gcprest.MaxBodyBytes)
+
 	var body json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		// A connection removal sends no body; that is not an error.

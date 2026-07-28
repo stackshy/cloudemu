@@ -198,15 +198,6 @@ func (*Engine) buildPath(
 	return buildPath(src, dst)
 }
 
-// findRouteTableForVPC resolves the route table governing a VPC when no
-// particular subnet is in question.
-func (e *Engine) findRouteTableForVPC(
-	ctx context.Context,
-	vpcID string,
-) (*netdriver.RouteTable, error) {
-	return e.findRouteTableForSubnet(ctx, vpcID, "")
-}
-
 // findRouteTableForSubnet resolves the route table that actually governs a
 // subnet, the way the cloud does: an explicit association wins, and a subnet
 // without one falls back to the VPC's main route table.

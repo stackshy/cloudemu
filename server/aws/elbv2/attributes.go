@@ -49,6 +49,27 @@ type describeLBAttributesResponse struct {
 // are read first and only the supplied keys are overwritten.
 func (h *Handler) modifyLoadBalancerAttributes(w http.ResponseWriter, r *http.Request) {
 	arn := r.Form.Get("LoadBalancerArn")
+	updates := parseAttributeMembers(r)
+
+	if updater, ok := h.lb.(lbdriver.LBAttributeUpdater); ok {
+		merged, err := updater.UpdateLBAttributes(r.Context(), arn, func(a *lbdriver.LBAttributes) {
+			for key, value := range updates {
+				applyLBAttribute(a, key, value)
+			}
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		awsquery.WriteXMLResponse(w, modifyLBAttributesResponse{
+			Xmlns:    Namespace,
+			Result:   lbAttributesResult{Attributes: toAttributeXML(merged)},
+			Metadata: responseMetadata{RequestID: awsquery.RequestID},
+		})
+
+		return
+	}
 
 	current, err := h.lb.GetLBAttributes(r.Context(), arn)
 	if err != nil {
@@ -61,7 +82,7 @@ func (h *Handler) modifyLoadBalancerAttributes(w http.ResponseWriter, r *http.Re
 		attrs.Extra = map[string]string{}
 	}
 
-	for key, value := range parseAttributeMembers(r) {
+	for key, value := range updates {
 		applyLBAttribute(&attrs, key, value)
 	}
 

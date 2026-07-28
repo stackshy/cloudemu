@@ -352,6 +352,10 @@ func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, actio
 		h.releaseAddress(w, r)
 	case "DescribeAddresses":
 		h.describeAddresses(w, r)
+	case "AssociateAddress":
+		h.associateAddress(w, r)
+	case "DisassociateAddress":
+		h.disassociateAddress(w, r)
 	default:
 		return false
 	}

@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
 // Handler serves the resource-group collection and its members.
@@ -87,6 +89,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request, sub, name string) {
+	// Capped like every sibling ARM handler; the decode stays tolerant
+	// because a bare resource-group PUT carries no body.
+	r.Body = http.MaxBytesReader(w, r.Body, azurearm.MaxBodyBytes)
+
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		body = map[string]any{}

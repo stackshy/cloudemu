@@ -130,6 +130,10 @@ func (m *Mock) ensureAWSManagedPolicy(arn string) bool {
 		name = name[i+1:]
 	}
 
+	// SetIfAbsent rather than Set: two concurrent first-references would
+	// otherwise each materialize the policy and the second would overwrite the
+	// first, handing out an ARN whose ID no longer matches what the earlier
+	// caller was told.
 	p := &policyData{
 		Name:           name,
 		ID:             idgen.GenerateID("ANPA"),
@@ -140,7 +144,7 @@ func (m *Mock) ensureAWSManagedPolicy(arn string) bool {
 	}
 	seedInitialVersion(p, awsManagedPolicyDocument, m.opts.Clock.Now().UTC().Format(timeFormat))
 
-	m.policies.Set(arn, p)
+	m.policies.SetIfAbsent(arn, p)
 
 	return true
 }

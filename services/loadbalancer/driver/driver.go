@@ -157,3 +157,17 @@ type LoadBalancer interface {
 	DescribeTargetHealth(ctx context.Context, targetGroupARN string) ([]TargetHealth, error)
 	SetTargetHealth(ctx context.Context, targetGroupARN string, targetID string, state string) error
 }
+
+// LBAttributeUpdater is implemented by drivers that can apply a partial
+// attribute update atomically.
+//
+// Attribute modification is a read-modify-write, and doing it as a Get
+// followed by a Put drops the lock in between: two overlapping updates on one
+// load balancer each read the same base and the second write silently
+// discards the first. A driver that can hold the lock across both halves
+// implements this; callers fall back to Get/Put when it does not.
+type LBAttributeUpdater interface {
+	UpdateLBAttributes(
+		ctx context.Context, lbARN string, apply func(*LBAttributes),
+	) (*LBAttributes, error)
+}

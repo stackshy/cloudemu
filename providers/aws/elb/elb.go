@@ -407,6 +407,41 @@ func (m *Mock) PutLBAttributes(_ context.Context, lbARN string, attrs driver.LBA
 	return nil
 }
 
+// UpdateLBAttributes applies a partial update without releasing the lock
+// between the read and the write, so concurrent modifications compose instead
+// of overwriting one another.
+func (m *Mock) UpdateLBAttributes(
+	_ context.Context, lbARN string, apply func(*driver.LBAttributes),
+) (*driver.LBAttributes, error) {
+	if _, ok := m.lbs.Get(lbARN); !ok {
+		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
+	}
+
+	m.attrsMu.Lock()
+	defer m.attrsMu.Unlock()
+
+	attrs, ok := m.attrs[lbARN]
+	if !ok {
+		attrs = driver.LBAttributes{IdleTimeout: defaultIdleTimeoutSec}
+	}
+
+	// Work on a private copy of Extra so the caller's mutations land on the
+	// copy this method stores, never on a map another reader still holds.
+	attrs.Extra = copyStringMap(attrs.Extra)
+	if attrs.Extra == nil {
+		attrs.Extra = map[string]string{}
+	}
+
+	apply(&attrs)
+
+	m.attrs[lbARN] = attrs
+
+	out := attrs
+	out.Extra = copyStringMap(attrs.Extra)
+
+	return &out, nil
+}
+
 // RegisterTargets registers targets with a target group.
 func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets []driver.Target) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {

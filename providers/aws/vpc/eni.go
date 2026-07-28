@@ -2,7 +2,6 @@ package vpc
 
 import (
 	"context"
-	"sync"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -14,11 +13,6 @@ const (
 	ENIStatusAvailable = "available"
 	ENIStatusInUse     = "in-use"
 )
-
-// eniMu guards the fields of stored interfaces. memstore copies the map on
-// All() but the values are pointers, so a detach mutating one races every
-// concurrent read of the same interface.
-var eniMu sync.RWMutex
 
 type eniData struct {
 	ID           string
@@ -37,6 +31,9 @@ type eniData struct {
 // moves on, which is the wrong conclusion when it asked about one specific
 // interface.
 func (m *Mock) DescribeNetworkInterfaces(_ context.Context, ids []string) ([]driver.NetworkInterface, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for _, id := range ids {
 		if !m.enis.Has(id) {
 			return nil, errors.Newf(errors.NotFound,
@@ -52,8 +49,8 @@ func (m *Mock) DescribeNetworkInterfaces(_ context.Context, ids []string) ([]dri
 // force is accepted and ignored: the emulator has no in-flight traffic for a
 // forced detach to interrupt, so the distinction has no observable effect.
 func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, _ bool) error {
-	eniMu.Lock()
-	defer eniMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	for _, eni := range m.enis.All() {
 		if eni.AttachmentID != attachmentID {
@@ -75,16 +72,15 @@ func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, _ 
 // and callers rely on that to know a drain is still in progress rather than
 // complete.
 func (m *Mock) DeleteNetworkInterface(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	eni, ok := m.enis.Get(id)
 	if !ok {
 		return errors.Newf(errors.NotFound, "network interface %q not found", id)
 	}
 
-	eniMu.RLock()
-	attached := eni.AttachmentID != ""
-	eniMu.RUnlock()
-
-	if attached {
+	if eni.AttachmentID != "" {
 		return errors.Newf(errors.FailedPrecondition,
 			"network interface %q is still attached", id)
 	}
@@ -127,9 +123,6 @@ func (m *Mock) releaseManagedENIs(description string) {
 }
 
 func toENIInfo(e *eniData) driver.NetworkInterface {
-	eniMu.RLock()
-	defer eniMu.RUnlock()
-
 	return driver.NetworkInterface{
 		ID:           e.ID,
 		VPCID:        e.VPCID,

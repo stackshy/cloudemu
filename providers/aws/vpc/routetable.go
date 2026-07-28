@@ -51,7 +51,9 @@ func (m *Mock) CreateRouteTable(_ context.Context, cfg driver.RouteTableConfig) 
 	}
 	m.routeTables.Set(id, rt)
 
+	m.mu.RLock()
 	info := toRouteTableInfo(rt)
+	m.mu.RUnlock()
 
 	return &info, nil
 }
@@ -84,7 +86,9 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 // and Describe is the only channel through which a caller can learn an
 // association ID — which it must have before it can disassociate.
 func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.RouteTable, error) {
+	m.mu.RLock()
 	tables := describeResources(m.routeTables, ids, toRouteTableInfo)
+	m.mu.RUnlock()
 
 	byTable := make(map[string][]driver.RouteTableAssociation)
 
@@ -108,6 +112,9 @@ func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.Ro
 func (m *Mock) CreateRoute(
 	_ context.Context, routeTableID, destinationCIDR, targetID, targetType string,
 ) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rt, ok := m.routeTables.Get(routeTableID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "route table %q not found", routeTableID)
@@ -132,6 +139,9 @@ func (m *Mock) CreateRoute(
 
 // DeleteRoute removes a route from the specified route table.
 func (m *Mock) DeleteRoute(_ context.Context, routeTableID, destinationCIDR string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rt, ok := m.routeTables.Get(routeTableID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "route table %q not found", routeTableID)

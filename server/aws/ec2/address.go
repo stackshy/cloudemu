@@ -139,3 +139,76 @@ func (h *Handler) allocationIDForPublicIP(r *http.Request, publicIP string) stri
 
 	return publicIP
 }
+
+type associateAddressResponseXML struct {
+	XMLName       xml.Name `xml:"AssociateAddressResponse"`
+	Xmlns         string   `xml:"xmlns,attr"`
+	RequestID     string   `xml:"requestId"`
+	AssociationID string   `xml:"associationId"`
+}
+
+type disassociateAddressResponseXML struct {
+	XMLName   xml.Name `xml:"DisassociateAddressResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+// associateAddress binds an allocated EIP to an instance.
+//
+// AWS accepts the EIP by AllocationId and, for callers that never held one,
+// by PublicIp; the allocation ID is resolved from the public IP so both spell
+// the same association.
+func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
+	allocationID := r.Form.Get("AllocationId")
+
+	if allocationID == "" {
+		allocationID = h.allocationIDForPublicIP(r, r.Form.Get("PublicIp"))
+	}
+
+	assocID, err := h.vpc.AssociateAddress(r.Context(), allocationID, r.Form.Get("InstanceId"))
+	if err != nil {
+		writeVPCErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, associateAddressResponseXML{
+		Xmlns:         awsquery.Namespace,
+		RequestID:     awsquery.RequestID,
+		AssociationID: assocID,
+	})
+}
+
+// disassociateAddress releases an association, addressed either by
+// AssociationId or — as AWS also allows — by the PublicIp holding it.
+func (h *Handler) disassociateAddress(w http.ResponseWriter, r *http.Request) {
+	assocID := r.Form.Get("AssociationId")
+
+	if assocID == "" {
+		if publicIP := r.Form.Get("PublicIp"); publicIP != "" {
+			addrs, err := h.vpc.DescribeAddresses(r.Context(), nil)
+			if err != nil {
+				writeVPCErr(w, err)
+				return
+			}
+
+			for i := range addrs {
+				if addrs[i].PublicIP == publicIP {
+					assocID = addrs[i].AssociationID
+					break
+				}
+			}
+		}
+	}
+
+	if err := h.vpc.DisassociateAddress(r.Context(), assocID); err != nil {
+		writeVPCErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, disassociateAddressResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}

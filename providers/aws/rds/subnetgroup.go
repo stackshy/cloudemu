@@ -89,8 +89,14 @@ func (m *Mock) DescribeDBSubnetGroups(
 
 // DeleteDBSubnetGroup deletes a DB subnet group.
 func (m *Mock) DeleteDBSubnetGroup(_ context.Context, name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// Real RDS refuses while anything is still placed in the group, and a
+	// caller tearing a VPC down depends on that: deleting the group out from
+	// under a live instance would strand the instance in a group that no
+	// longer exists instead of surfacing the ordering mistake.
+	if user, ok := m.subnetGroupInUseBy(name); ok {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"InvalidDBSubnetGroupStateFault: db subnet group %q is in use by %q", name, user)
+	}
 
 	if !m.subnetGroups.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound,
@@ -98,6 +104,23 @@ func (m *Mock) DeleteDBSubnetGroup(_ context.Context, name string) error {
 	}
 
 	return nil
+}
+
+// subnetGroupInUseBy names a resource still placed in the given subnet group.
+func (m *Mock) subnetGroupInUseBy(name string) (string, bool) {
+	for _, inst := range m.instances.All() {
+		if inst.SubnetGroupName == name {
+			return inst.ID, true
+		}
+	}
+
+	for _, c := range m.clusters.All() {
+		if c.SubnetGroupName == name {
+			return c.ID, true
+		}
+	}
+
+	return "", false
 }
 
 // resolveVPCID reports the VPC the member subnets belong to. Subnets spanning

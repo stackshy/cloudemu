@@ -2,6 +2,8 @@
 package vpc
 
 import (
+	"sync"
+
 	"context"
 	"time"
 
@@ -31,6 +33,13 @@ var (
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
 type Mock struct {
+	// mu guards the *fields* of stored records, not the maps holding them.
+	// memstore copies its map on All(), but the values are pointers, so a
+	// mutation through one handle races every concurrent read of the same
+	// record. The stores handle their own map-level locking; this covers the
+	// read-modify-write the callers do on top.
+	mu sync.RWMutex
+
 	vpcs           *memstore.Store[*vpcData]
 	subnets        *memstore.Store[*subnetData]
 	securityGroups *memstore.Store[*sgData]
@@ -116,7 +125,9 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 
 	m.createMainRouteTable(id, cfg.CIDRBlock)
 
+	m.mu.RLock()
 	info := toVPCInfo(v)
+	m.mu.RUnlock()
 
 	return &info, nil
 }
@@ -188,6 +199,9 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 
 // DescribeVPCs returns VPCs matching the given IDs, or all VPCs if ids is empty.
 func (m *Mock) DescribeVPCs(_ context.Context, ids []string) ([]driver.VPCInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.vpcs, ids, toVPCInfo), nil
 }
 
@@ -246,8 +260,8 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 // within the given subnet when one is named. An interface that has been
 // detached no longer blocks anything — that is the whole point of detaching it.
 func (m *Mock) attachedENIIn(vpcID, subnetID string) (string, bool) {
-	eniMu.RLock()
-	defer eniMu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	for _, eni := range m.enis.All() {
 		if eni.VPCID != vpcID || eni.AttachmentID == "" {

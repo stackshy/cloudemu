@@ -15,6 +15,9 @@ import (
 func (m *Mock) ModifyVPCAttribute(
 	_ context.Context, id string, update driver.VPCAttributeUpdate,
 ) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	v, ok := m.vpcs.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "vpc %q not found", id)
