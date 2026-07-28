@@ -66,7 +66,7 @@ func (m *Mock) GetInferenceProfile(_ context.Context, identifier string) (*drive
 
 // ListInferenceProfiles lists all inference profiles.
 func (m *Mock) ListInferenceProfiles(_ context.Context) ([]driver.InferenceProfile, error) {
-	all := m.inferenceProfiles.All()
+	all := m.inferenceProfiles.SortedValues()
 	out := make([]driver.InferenceProfile, 0, len(all))
 
 	for _, p := range all {
@@ -113,6 +113,12 @@ func (m *Mock) CreatePromptRouter(_ context.Context, cfg driver.PromptRouterConf
 		return nil, errors.New(errors.InvalidArgument, "fallbackModel.modelArn is required")
 	}
 
+	for _, existing := range m.promptRouters.SortedValues() {
+		if existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists, "prompt router %q already exists", cfg.Name)
+		}
+	}
+
 	now := m.now()
 	id := idgen.GenerateID("")
 	arn := idgen.AWSARN("bedrock", m.opts.Region, m.opts.AccountID, "prompt-router/"+id)
@@ -151,7 +157,7 @@ func (m *Mock) GetPromptRouter(_ context.Context, promptRouterARN string) (*driv
 
 // ListPromptRouters lists all prompt routers.
 func (m *Mock) ListPromptRouters(_ context.Context) ([]driver.PromptRouter, error) {
-	all := m.promptRouters.All()
+	all := m.promptRouters.SortedValues()
 	out := make([]driver.PromptRouter, 0, len(all))
 
 	for _, router := range all {
@@ -196,7 +202,7 @@ func (m *Mock) CreateAutomatedReasoningPolicy(
 		Version:          driver.AutomatedReasoningPolicyVersionDraft,
 		DefinitionHash:   definitionHash(cfg.PolicyDefinition),
 		Description:      cfg.Description,
-		PolicyDefinition: cfg.PolicyDefinition,
+		PolicyDefinition: copyBytes(cfg.PolicyDefinition),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -226,7 +232,7 @@ func (m *Mock) GetAutomatedReasoningPolicy(_ context.Context, policyARN string) 
 
 // ListAutomatedReasoningPolicies lists all automated reasoning policies.
 func (m *Mock) ListAutomatedReasoningPolicies(_ context.Context) ([]driver.AutomatedReasoningPolicy, error) {
-	all := m.arPolicies.All()
+	all := m.arPolicies.SortedValues()
 	out := make([]driver.AutomatedReasoningPolicy, 0, len(all))
 
 	for _, policy := range all {
@@ -241,10 +247,14 @@ func (m *Mock) ListAutomatedReasoningPolicies(_ context.Context) ([]driver.Autom
 func (m *Mock) UpdateAutomatedReasoningPolicy(
 	_ context.Context, policyARN string, upd driver.AutomatedReasoningPolicyUpdate,
 ) (*driver.AutomatedReasoningPolicy, error) {
-	policy, ok := m.arPolicies.Get(policyARN)
+	stored, ok := m.arPolicies.Get(policyARN)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "automated reasoning policy %q not found", policyARN)
 	}
+
+	// Copy-on-write: mutate a copy, not the stored pointer, so concurrent
+	// Get/List readers never race the write.
+	policy := *stored
 
 	if upd.Name != "" {
 		policy.Name = upd.Name
@@ -255,14 +265,14 @@ func (m *Mock) UpdateAutomatedReasoningPolicy(
 	}
 
 	if len(upd.PolicyDefinition) != 0 {
-		policy.PolicyDefinition = upd.PolicyDefinition
+		policy.PolicyDefinition = copyBytes(upd.PolicyDefinition)
 	}
 
 	policy.DefinitionHash = definitionHash(policy.PolicyDefinition)
 	policy.UpdatedAt = m.now()
-	m.arPolicies.Set(policyARN, policy)
+	m.arPolicies.Set(policyARN, &policy)
 
-	result := *policy
+	result := policy
 
 	return &result, nil
 }

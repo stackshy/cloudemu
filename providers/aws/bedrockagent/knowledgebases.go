@@ -30,8 +30,8 @@ func (m *Mock) CreateKnowledgeBase(_ context.Context, cfg driver.KnowledgeBaseCo
 		RoleArn:                    cfg.RoleArn,
 		Description:                cfg.Description,
 		Status:                     driver.KnowledgeBaseActive,
-		KnowledgeBaseConfiguration: cfg.KnowledgeBaseConfiguration,
-		StorageConfiguration:       cfg.StorageConfiguration,
+		KnowledgeBaseConfiguration: copyRaw(cfg.KnowledgeBaseConfiguration),
+		StorageConfiguration:       copyRaw(cfg.StorageConfiguration),
 		CreatedAt:                  now,
 		UpdatedAt:                  now,
 	}
@@ -82,11 +82,11 @@ func (m *Mock) UpdateKnowledgeBase(_ context.Context, id string, cfg driver.Know
 	updated.UpdatedAt = m.now()
 
 	if len(cfg.KnowledgeBaseConfiguration) != 0 {
-		updated.KnowledgeBaseConfiguration = cfg.KnowledgeBaseConfiguration
+		updated.KnowledgeBaseConfiguration = copyRaw(cfg.KnowledgeBaseConfiguration)
 	}
 
 	if len(cfg.StorageConfiguration) != 0 {
-		updated.StorageConfiguration = cfg.StorageConfiguration
+		updated.StorageConfiguration = copyRaw(cfg.StorageConfiguration)
 	}
 
 	m.knowledge.Set(id, &updated)

@@ -179,6 +179,7 @@ func (m *Mock) CreateModelCustomizationJob(_ context.Context, cfg driver.Customi
 func (m *Mock) GetModelCustomizationJob(_ context.Context, jobIdentifier string) (*driver.CustomizationJob, error) {
 	if job, ok := m.jobs.Get(jobIdentifier); ok {
 		result := *job
+		result.HyperParameters = copyMap(job.HyperParameters)
 
 		return &result, nil
 	}
@@ -186,6 +187,7 @@ func (m *Mock) GetModelCustomizationJob(_ context.Context, jobIdentifier string)
 	for _, job := range m.jobs.All() {
 		if job.JobARN == jobIdentifier {
 			result := *job
+			result.HyperParameters = copyMap(job.HyperParameters)
 
 			return &result, nil
 		}
@@ -200,7 +202,9 @@ func (m *Mock) ListModelCustomizationJobs(_ context.Context) ([]driver.Customiza
 	out := make([]driver.CustomizationJob, 0, len(all))
 
 	for _, job := range all {
-		out = append(out, *job)
+		result := *job
+		result.HyperParameters = copyMap(job.HyperParameters)
+		out = append(out, result)
 	}
 
 	return out, nil
@@ -212,7 +216,9 @@ func (m *Mock) ListCustomModels(_ context.Context) ([]driver.CustomModel, error)
 	out := make([]driver.CustomModel, 0, len(all))
 
 	for _, cm := range all {
-		out = append(out, *cm)
+		result := *cm
+		result.HyperParameters = copyMap(cm.HyperParameters)
+		out = append(out, result)
 	}
 
 	return out, nil
@@ -226,6 +232,7 @@ func (m *Mock) GetCustomModel(_ context.Context, modelIdentifier string) (*drive
 	}
 
 	result := *cm
+	result.HyperParameters = copyMap(cm.HyperParameters)
 
 	return &result, nil
 }

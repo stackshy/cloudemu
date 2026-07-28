@@ -63,7 +63,7 @@ func (m *Mock) GetAsyncInvoke(_ context.Context, invocationARN string) (*driver.
 
 // ListAsyncInvokes lists all async invocations.
 func (m *Mock) ListAsyncInvokes(_ context.Context) ([]driver.AsyncInvoke, error) {
-	all := m.asyncInvokes.All()
+	all := m.asyncInvokes.SortedValues()
 	out := make([]driver.AsyncInvoke, 0, len(all))
 
 	for _, inv := range all {

@@ -78,7 +78,7 @@ func (m *Mock) GetModelImportJob(_ context.Context, jobIdentifier string) (*driv
 
 // ListModelImportJobs lists all import jobs.
 func (m *Mock) ListModelImportJobs(_ context.Context) ([]driver.ModelImportJob, error) {
-	all := m.importJobs.All()
+	all := m.importJobs.SortedValues()
 	out := make([]driver.ModelImportJob, 0, len(all))
 
 	for _, job := range all {
@@ -136,7 +136,7 @@ func (m *Mock) GetModelCopyJob(_ context.Context, jobARN string) (*driver.ModelC
 
 // ListModelCopyJobs lists all copy jobs.
 func (m *Mock) ListModelCopyJobs(_ context.Context) ([]driver.ModelCopyJob, error) {
-	all := m.copyJobs.All()
+	all := m.copyJobs.SortedValues()
 	out := make([]driver.ModelCopyJob, 0, len(all))
 
 	for _, job := range all {
@@ -179,8 +179,8 @@ func (m *Mock) CreateEvaluationJob(_ context.Context, cfg driver.EvaluationJobCo
 		JobType:                 evaluationJobType(cfg.EvaluationConfig),
 		ApplicationType:         cfg.ApplicationType,
 		RoleARN:                 cfg.RoleARN,
-		EvaluationConfig:        cfg.EvaluationConfig,
-		InferenceConfig:         cfg.InferenceConfig,
+		EvaluationConfig:        copyBytes(cfg.EvaluationConfig),
+		InferenceConfig:         copyBytes(cfg.InferenceConfig),
 		OutputDataS3URI:         cfg.OutputDataS3URI,
 		JobDescription:          cfg.JobDescription,
 		CustomerEncryptionKeyID: cfg.CustomerEncryptionKeyID,
@@ -210,7 +210,7 @@ func (m *Mock) GetEvaluationJob(_ context.Context, jobIdentifier string) (*drive
 
 // ListEvaluationJobs lists all evaluation jobs.
 func (m *Mock) ListEvaluationJobs(_ context.Context) ([]driver.EvaluationJob, error) {
-	all := m.evalJobs.All()
+	all := m.evalJobs.SortedValues()
 	out := make([]driver.EvaluationJob, 0, len(all))
 
 	for _, job := range all {
@@ -227,9 +227,12 @@ func (m *Mock) StopEvaluationJob(_ context.Context, jobIdentifier string) error 
 		return errors.Newf(errors.NotFound, "evaluation job %q not found", jobIdentifier)
 	}
 
-	job.Status = driver.JobStopped
-	job.LastModifiedTime = m.now()
-	m.evalJobs.Set(job.JobName, job)
+	// Copy-on-write: never mutate the stored pointer in place, so concurrent
+	// Get/List readers (which copy the stored value) can't race the write.
+	updated := *job
+	updated.Status = driver.JobStopped
+	updated.LastModifiedTime = m.now()
+	m.evalJobs.Set(updated.JobName, &updated)
 
 	return nil
 }

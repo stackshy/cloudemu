@@ -11,7 +11,6 @@ import (
 // Agent lifecycle status values (UPPER_SNAKE, per AgentStatus).
 const (
 	AgentNotPrepared = "NOT_PREPARED"
-	AgentPreparing   = "PREPARING"
 	AgentPrepared    = "PREPARED"
 )
 
@@ -38,7 +37,6 @@ const (
 // Flow status values (PascalCase, per FlowStatus).
 const (
 	FlowNotPrepared = "NotPrepared"
-	FlowPreparing   = "Preparing"
 	FlowPrepared    = "Prepared"
 )
 

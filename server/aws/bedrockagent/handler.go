@@ -81,10 +81,17 @@ func New(drv badriver.BedrockAgent) *Handler {
 func (*Handler) Matches(r *http.Request) bool {
 	p := r.URL.Path
 
-	return strings.HasPrefix(p, prefixAgents+"/") ||
-		strings.HasPrefix(p, prefixKB) ||
-		strings.HasPrefix(p, prefixFlows) ||
-		strings.HasPrefix(p, prefixPrompts)
+	return underPrefix(p, prefixAgents) ||
+		underPrefix(p, prefixKB) ||
+		underPrefix(p, prefixFlows) ||
+		underPrefix(p, prefixPrompts)
+}
+
+// underPrefix reports whether p equals pre or is a child path of pre. It
+// anchors bare prefixes so bucket-style paths (e.g. "/flows-prod") fall
+// through to later handlers instead of being swallowed here.
+func underPrefix(p, pre string) bool {
+	return p == pre || strings.HasPrefix(p, pre+"/")
 }
 
 // ServeHTTP routes by URL prefix.
@@ -92,13 +99,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 
 	switch {
-	case strings.HasPrefix(p, prefixAgents+"/"):
+	case underPrefix(p, prefixAgents):
 		h.serveAgents(w, r, segments(p, prefixAgents))
-	case strings.HasPrefix(p, prefixKB):
+	case underPrefix(p, prefixKB):
 		h.serveKnowledgeBases(w, r, segments(p, prefixKB))
-	case strings.HasPrefix(p, prefixFlows):
+	case underPrefix(p, prefixFlows):
 		h.serveFlows(w, r, segments(p, prefixFlows))
-	case strings.HasPrefix(p, prefixPrompts):
+	case underPrefix(p, prefixPrompts):
 		h.servePrompts(w, r, segments(p, prefixPrompts))
 	default:
 		notFound(w, p)

@@ -26,7 +26,7 @@ func (m *Mock) CreatePrompt(_ context.Context, cfg driver.PromptConfig) (*driver
 		Version:                  driver.DraftVersion,
 		DefaultVariant:           cfg.DefaultVariant,
 		CustomerEncryptionKeyArn: cfg.CustomerEncryptionKeyArn,
-		Variants:                 cfg.Variants,
+		Variants:                 copyRaw(cfg.Variants),
 		CreatedAt:                now,
 		UpdatedAt:                now,
 	}
@@ -77,7 +77,7 @@ func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfi
 	updated.UpdatedAt = m.now()
 
 	if len(cfg.Variants) != 0 {
-		updated.Variants = cfg.Variants
+		updated.Variants = copyRaw(cfg.Variants)
 	}
 
 	m.prompts.Set(id, &updated)

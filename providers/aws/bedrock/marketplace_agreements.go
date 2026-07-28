@@ -30,6 +30,10 @@ func (m *Mock) CreateMarketplaceModelEndpoint(
 	now := m.now()
 	arn := idgen.AWSARN("sagemaker", m.opts.Region, m.opts.AccountID, "endpoint/"+cfg.EndpointName)
 
+	if m.marketplaceEndpoints.Has(arn) {
+		return nil, errors.Newf(errors.AlreadyExists, "marketplace model endpoint %q already exists", cfg.EndpointName)
+	}
+
 	endpoint := &driver.MarketplaceEndpoint{
 		EndpointARN:           arn,
 		ModelSourceIdentifier: cfg.ModelSourceIdentifier,
@@ -61,7 +65,7 @@ func (m *Mock) GetMarketplaceModelEndpoint(_ context.Context, endpointARN string
 
 // ListMarketplaceModelEndpoints lists all marketplace model endpoints.
 func (m *Mock) ListMarketplaceModelEndpoints(_ context.Context) ([]driver.MarketplaceEndpoint, error) {
-	all := m.marketplaceEndpoints.All()
+	all := m.marketplaceEndpoints.SortedValues()
 	out := make([]driver.MarketplaceEndpoint, 0, len(all))
 
 	for _, endpoint := range all {
@@ -75,7 +79,7 @@ func (m *Mock) ListMarketplaceModelEndpoints(_ context.Context) ([]driver.Market
 func (m *Mock) UpdateMarketplaceModelEndpoint(
 	_ context.Context, endpointARN string, endpointConfig []byte,
 ) (*driver.MarketplaceEndpoint, error) {
-	endpoint, ok := m.marketplaceEndpoints.Get(endpointARN)
+	stored, ok := m.marketplaceEndpoints.Get(endpointARN)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "marketplace model endpoint %q not found", endpointARN)
 	}
@@ -84,11 +88,13 @@ func (m *Mock) UpdateMarketplaceModelEndpoint(
 		return nil, errors.New(errors.InvalidArgument, "endpointConfig is required")
 	}
 
-	endpoint.EndpointConfig = copyBytes(endpointConfig)
-	endpoint.UpdatedAt = m.now()
-	m.marketplaceEndpoints.Set(endpointARN, endpoint)
+	// Copy-on-write: mutate a copy so concurrent readers never race the write.
+	updated := *stored
+	updated.EndpointConfig = copyBytes(endpointConfig)
+	updated.UpdatedAt = m.now()
+	m.marketplaceEndpoints.Set(endpointARN, &updated)
 
-	result := *endpoint
+	result := updated
 
 	return &result, nil
 }
@@ -113,17 +119,19 @@ func (m *Mock) RegisterMarketplaceModelEndpoint(
 		return nil, errors.New(errors.InvalidArgument, "modelSourceIdentifier is required")
 	}
 
-	endpoint, ok := m.marketplaceEndpoints.Get(endpointIdentifier)
+	stored, ok := m.marketplaceEndpoints.Get(endpointIdentifier)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "marketplace model endpoint %q not found", endpointIdentifier)
 	}
 
-	endpoint.ModelSourceIdentifier = modelSourceIdentifier
-	endpoint.Status = driver.MarketplaceEndpointStatusRegistered
-	endpoint.UpdatedAt = m.now()
-	m.marketplaceEndpoints.Set(endpointIdentifier, endpoint)
+	// Copy-on-write: mutate a copy so concurrent readers never race the write.
+	updated := *stored
+	updated.ModelSourceIdentifier = modelSourceIdentifier
+	updated.Status = driver.MarketplaceEndpointStatusRegistered
+	updated.UpdatedAt = m.now()
+	m.marketplaceEndpoints.Set(endpointIdentifier, &updated)
 
-	result := *endpoint
+	result := updated
 
 	return &result, nil
 }

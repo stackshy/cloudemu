@@ -33,7 +33,7 @@ func (m *Mock) CreateDataSource(_ context.Context, cfg driver.DataSourceConfig) 
 		Description:             cfg.Description,
 		Status:                  driver.DataSourceAvailable,
 		DataDeletionPolicy:      cfg.DataDeletionPolicy,
-		DataSourceConfiguration: cfg.DataSourceConfiguration,
+		DataSourceConfiguration: copyRaw(cfg.DataSourceConfiguration),
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}
@@ -86,7 +86,7 @@ func (m *Mock) UpdateDataSource(_ context.Context, cfg driver.DataSourceConfig, 
 	updated.UpdatedAt = m.now()
 
 	if len(cfg.DataSourceConfiguration) != 0 {
-		updated.DataSourceConfiguration = cfg.DataSourceConfiguration
+		updated.DataSourceConfiguration = copyRaw(cfg.DataSourceConfiguration)
 	}
 
 	m.dataSource.Set(dsID, &updated)

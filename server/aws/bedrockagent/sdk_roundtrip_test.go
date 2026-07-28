@@ -3,6 +3,7 @@ package bedrockagent_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -342,6 +343,41 @@ func TestSDKPromptLifecycle(t *testing.T) {
 
 	_, err = client.GetPrompt(ctx, &awsba.GetPromptInput{PromptIdentifier: aws.String(promptID)})
 	assertNotFound(t, err)
+}
+
+// TestMatchesAnchorsPrefixes guards the M2 fix: bucket-style paths that merely
+// share a prefix (e.g. "/flows-prod") must NOT be claimed by the Bedrock Agent
+// handler, so they fall through to the S3 catch-all, while the documented
+// collection/item shapes still match.
+func TestMatchesAnchorsPrefixes(t *testing.T) {
+	h := serverba.New(providerba.New(config.NewOptions()))
+
+	cases := []struct {
+		path string
+		want bool
+	}{
+		// Bucket-style paths must fall through to S3.
+		{"/flows-prod", false},
+		{"/promptsdb", false},
+		{"/knowledgebases-archive", false},
+		{"/agents-backup", false},
+		// Documented collection and item shapes must still be claimed.
+		{"/agents/", true},
+		{"/knowledgebases", true},
+		{"/knowledgebases/kb-123", true},
+		{"/knowledgebases/kb-123/datasources/ds-1", true},
+		{"/flows/", true},
+		{"/flows/flow-1/", true},
+		{"/prompts/", true},
+		{"/prompts/prompt-1/", true},
+	}
+
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		if got := h.Matches(req); got != tc.want {
+			t.Errorf("Matches(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
 }
 
 func assertNotFound(t *testing.T, err error) {

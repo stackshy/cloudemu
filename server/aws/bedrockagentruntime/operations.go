@@ -2,6 +2,8 @@ package bedrockagentruntime
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
@@ -117,7 +119,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 func decodeJSONAllowEmpty(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil && err.Error() != "EOF" {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "invalid JSON: "+err.Error())
 
 		return false

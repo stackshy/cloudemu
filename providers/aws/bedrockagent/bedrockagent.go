@@ -5,6 +5,7 @@
 package bedrockagent
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -50,4 +51,17 @@ func New(opts *config.Options) *Mock {
 
 func (m *Mock) now() string {
 	return m.opts.Clock.Now().UTC().Format(time.RFC3339)
+}
+
+// copyRaw returns a defensive copy of a json.RawMessage so stored resources do
+// not alias caller-owned buffers. nil maps to nil.
+func copyRaw(b json.RawMessage) json.RawMessage {
+	if b == nil {
+		return nil
+	}
+
+	out := make(json.RawMessage, len(b))
+	copy(out, b)
+
+	return out
 }

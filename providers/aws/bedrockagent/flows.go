@@ -30,7 +30,7 @@ func (m *Mock) CreateFlow(_ context.Context, cfg driver.FlowConfig) (*driver.Flo
 		Status:                   driver.FlowNotPrepared,
 		Version:                  driver.DraftVersion,
 		CustomerEncryptionKeyArn: cfg.CustomerEncryptionKeyArn,
-		Definition:               cfg.Definition,
+		Definition:               copyRaw(cfg.Definition),
 		CreatedAt:                now,
 		UpdatedAt:                now,
 	}
@@ -82,7 +82,7 @@ func (m *Mock) UpdateFlow(_ context.Context, id string, cfg driver.FlowConfig) (
 	updated.UpdatedAt = m.now()
 
 	if len(cfg.Definition) != 0 {
-		updated.Definition = cfg.Definition
+		updated.Definition = copyRaw(cfg.Definition)
 	}
 
 	m.flows.Set(id, &updated)

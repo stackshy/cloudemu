@@ -39,7 +39,7 @@ func (m *Mock) CreateGuardrail(_ context.Context, cfg driver.GuardrailConfig) (*
 		BlockedOutputsMessaging: cfg.BlockedOutputsMessaging,
 		CreatedAt:               now,
 		UpdatedAt:               now,
-		GuardrailPolicies:       cfg.GuardrailPolicies,
+		GuardrailPolicies:       deepCopyGuardrailPolicies(cfg.GuardrailPolicies),
 	}
 
 	if cfg.KMSKeyID != "" {
@@ -62,14 +62,16 @@ func (m *Mock) GetGuardrail(_ context.Context, identifier, version string) (*dri
 		return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
 	}
 
-	g := rec.draft
 	if version != "" && version != guardrailDraftVersion {
-		if g = rec.version(version); g == nil {
+		result, ok := rec.versionSnapshot(version)
+		if !ok {
 			return nil, errors.Newf(errors.NotFound, "guardrail %q version %q not found", identifier, version)
 		}
+
+		return &result, nil
 	}
 
-	result := *g
+	result := rec.draftSnapshot()
 
 	return &result, nil
 }
@@ -84,21 +86,14 @@ func (m *Mock) ListGuardrails(_ context.Context, identifier string) ([]driver.Gu
 			return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
 		}
 
-		out := make([]driver.Guardrail, 0, len(rec.versions)+1)
-		out = append(out, *rec.draft)
-
-		for _, v := range rec.versions {
-			out = append(out, *v)
-		}
-
-		return out, nil
+		return rec.allSnapshots(), nil
 	}
 
 	all := m.guardrails.All()
 	out := make([]driver.Guardrail, 0, len(all))
 
 	for _, rec := range all {
-		out = append(out, *rec.draft)
+		out = append(out, rec.draftSnapshot())
 	}
 
 	return out, nil
@@ -114,23 +109,25 @@ func (m *Mock) UpdateGuardrail(_ context.Context, identifier string, cfg driver.
 		return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
 	}
 
+	rec.mu.Lock()
 	g := rec.draft
 	oldName := g.Name
 	g.Name = orDefault(cfg.Name, g.Name)
 	g.Description = cfg.Description
 	g.BlockedInputMessaging = orDefault(cfg.BlockedInputMessaging, g.BlockedInputMessaging)
 	g.BlockedOutputsMessaging = orDefault(cfg.BlockedOutputsMessaging, g.BlockedOutputsMessaging)
-	g.GuardrailPolicies = cfg.GuardrailPolicies
+	g.GuardrailPolicies = deepCopyGuardrailPolicies(cfg.GuardrailPolicies)
 	g.UpdatedAt = m.now()
+	newName := g.Name
+	result := cloneGuardrail(g)
+	rec.mu.Unlock()
 
 	// Records are keyed by name; re-key when an update renames one so lookups
 	// by the new name keep working.
-	if g.Name != oldName {
+	if newName != oldName {
 		m.guardrails.Delete(oldName)
-		m.guardrails.Set(g.Name, rec)
+		m.guardrails.Set(newName, rec)
 	}
-
-	result := *g
 
 	return &result, nil
 }
@@ -145,10 +142,17 @@ func (m *Mock) DeleteGuardrail(_ context.Context, identifier, version string) er
 	}
 
 	if version == "" {
-		m.guardrails.Delete(rec.draft.Name)
+		rec.mu.RLock()
+		name := rec.draft.Name
+		rec.mu.RUnlock()
+
+		m.guardrails.Delete(name)
 
 		return nil
 	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
 
 	for i, v := range rec.versions {
 		if v.Version == version {
