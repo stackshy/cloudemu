@@ -48,10 +48,11 @@ func (a aksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 	for i := range clusters {
 		c := clusters[i]
 		out = append(out, resourcediscovery.DiscoveredCluster{
-			Name:       c.Name,
-			Region:     c.Location,
-			Tags:       c.Tags,
-			NodeGroups: c.AgentPoolNames,
+			Name:          c.Name,
+			Region:        c.Location,
+			ResourceGroup: c.ResourceGroup,
+			Tags:          c.Tags,
+			NodeGroups:    c.AgentPoolNames,
 		})
 	}
 

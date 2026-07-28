@@ -45,14 +45,23 @@ func (a eksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 	out := make([]resourcediscovery.DiscoveredCluster, 0, len(names))
 
 	for _, name := range names {
-		dc := resourcediscovery.DiscoveredCluster{Name: name}
-
-		if c, cerr := a.m.DescribeCluster(ctx, name); cerr == nil && c != nil {
-			dc.Tags = c.Tags
+		// Fail loud: a Describe/list error for a cluster ListClusters just
+		// returned would otherwise silently drop it (or its node groups) from
+		// the inventory — the "silent-empty hides inventory" pattern.
+		c, err := a.m.DescribeCluster(ctx, name)
+		if err != nil {
+			return nil, err
 		}
 
-		if ngs, ngErr := a.m.ListNodegroups(ctx, name); ngErr == nil {
-			dc.NodeGroups = ngs
+		ngs, err := a.m.ListNodegroups(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+
+		dc := resourcediscovery.DiscoveredCluster{Name: name, NodeGroups: ngs}
+		if c != nil {
+			dc.ARN = c.ARN // use the EKS mock's own ARN verbatim
+			dc.Tags = c.Tags
 		}
 
 		out = append(out, dc)

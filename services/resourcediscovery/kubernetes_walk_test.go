@@ -41,7 +41,9 @@ func TestWalkKubernetesSurfacesClustersAndNodeGroups(t *testing.T) {
 		arnSubstr string
 	}{
 		{ProviderAWS, "eks"},
-		{ProviderGCP, "clusters/prod"},
+		// exact: the GCP self-link must embed the cluster's own region
+		// (us-west-2), not the engine default (us-east-1).
+		{ProviderGCP, "projects/acct-1/locations/us-west-2/clusters/prod"},
 		{ProviderAzure, "Microsoft.ContainerService"},
 	}
 

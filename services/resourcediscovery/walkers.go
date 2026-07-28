@@ -313,10 +313,15 @@ func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
 			region = e.region
 		}
 
+		clusterARN := c.ARN
+		if clusterARN == "" {
+			clusterARN = e.kubernetesClusterARN(region, c.ResourceGroup, c.Name)
+		}
+
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceKubernetes, Type: TypeCluster,
 			ID:     c.Name,
-			ARN:    e.kubernetesClusterARN(c.Name),
+			ARN:    clusterARN,
 			Region: region, Tags: copyTags(c.Tags),
 		})
 
@@ -324,7 +329,7 @@ func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
 			out = append(out, Resource{
 				Provider: e.provider, Service: ServiceKubernetes, Type: TypeNodeGroup,
 				ID:     ng,
-				ARN:    e.kubernetesNodeGroupARN(c.Name, ng),
+				ARN:    e.kubernetesNodeGroupARN(region, c.ResourceGroup, c.Name, ng),
 				Region: region,
 			})
 		}

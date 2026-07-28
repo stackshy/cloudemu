@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
@@ -41,6 +42,11 @@ func TestResourceDiscoverySurfacesAKS(t *testing.T) {
 			cluster = true
 			if r.Region != "eastus" {
 				t.Errorf("cluster region = %q, want eastus", r.Region)
+			}
+			// The ARM ID must carry the cluster's real resource group, not
+			// the discovery default.
+			if !strings.Contains(r.ARN, "resourceGroups/rg-1/") {
+				t.Errorf("cluster ARN %q missing real resource group rg-1", r.ARN)
 			}
 		case r.Type == resourcediscovery.TypeNodeGroup && r.ID == "ap-1":
 			agentPool = true

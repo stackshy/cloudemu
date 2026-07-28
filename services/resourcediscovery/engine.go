@@ -36,15 +36,23 @@ type KubernetesClusters interface {
 }
 
 // DiscoveredCluster is a provider-neutral projection of a managed Kubernetes
-// cluster for the inventory walk. Region and Tags may be empty (the walker
-// falls back to the engine's default region); NodeGroups holds the cluster's
-// node-group / node-pool / agent-pool names, each surfaced as its own
-// resource.
+// cluster for the inventory walk. NodeGroups holds the cluster's node-group /
+// node-pool / agent-pool names, each surfaced as its own resource.
+//
+// Region and ResourceGroup feed the per-provider ARN/ID so the identifier
+// matches the resource's real location rather than the engine default (GCP
+// self-links embed the region; Azure IDs embed the resource group). Both may
+// be empty — the walker then falls back to the engine's defaults.
+//
+// ARN, when set, is used verbatim as the cluster's identifier (e.g. the EKS
+// mock's own ARN) instead of a rebuilt best-effort one; empty means build it.
 type DiscoveredCluster struct {
-	Name       string
-	Region     string
-	Tags       map[string]string
-	NodeGroups []string
+	Name          string
+	Region        string
+	ResourceGroup string
+	ARN           string
+	Tags          map[string]string
+	NodeGroups    []string
 }
 
 // Engine walks all configured service drivers and returns a normalized
