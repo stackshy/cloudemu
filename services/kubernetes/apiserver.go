@@ -2,10 +2,14 @@
 //
 // Each cluster created via cloudemu's EKS, AKS, or GKE control-plane handlers
 // registers a fresh ClusterState with a shared APIServer. Clients connect via
-// kubeconfigs that point at <base-url>/k8s/<uid>, and the upstream Kubernetes
-// REST surface (/api/v1/...  and /apis/apps/v1/...) is served below that
-// prefix. This makes a `client-go` round-trip against a cloudemu-emulated
-// EKS/AKS/GKE cluster work end-to-end.
+// kubeconfigs that point at <base-url>/k8s/<uid> over validated TLS, and the
+// upstream Kubernetes REST surface (core /api/v1 plus the apps, batch,
+// networking, rbac, storage, autoscaling, discovery, and policy groups under
+// /apis) is served below that prefix, with /scale and /status subresources and
+// ?watch=true streaming. A synchronous reconcile engine runs on every write so
+// controllers materialize Running Pods, Services get Endpoints, and PVCs bind —
+// a minikube-like always-converged cluster. This makes a `client-go` round-trip
+// against a cloudemu-emulated EKS/AKS/GKE cluster work end-to-end.
 package kubernetes
 
 import (
