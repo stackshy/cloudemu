@@ -1169,6 +1169,8 @@ Operations: **26**
 
 Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Served over **real TLS**: the control plane advertises a shared CA (`internal/k8spki`) that certifies the serving cert, so `client-go` and `kubectl` validate the connection normally — kubeconfigs carry `certificate-authority-data`, not `insecure-skip-tls-verify`.
 
+**Real `kubectl` works end-to-end**, not just `client-go`: the server decodes the **protobuf** request bodies kubectl sends on writes (it accepts protobuf and replies JSON, which kubectl's `Accept` allows), and serves an **OpenAPI v3** discovery document (plus a protobuf **v2** for the legacy path) carrying every served GVK so `kubectl apply` validation passes. Verified against `kubectl` v1.36 across all three providers: `create/apply/scale/set image/patch/rollout/delete`, `get` with short names (`pvc`, `hpa`, `sts`, …), and cascade teardown.
+
 It behaves like a tiny always-converged cluster (minikube-like) rather than a bare object store: a **synchronous reconcile engine** runs on every write — there are no controller goroutines, so results are immediate and deterministic. Controllers materialize Running Pods, Services get Endpoints, PVCs bind, Jobs complete.
 
 **Discovery** is derived from the resource registry (`registeredResources()`), so `/api`, `/apis`, and every `/apis/<group>/<version>` list exactly the resources the server serves — discovery can't promise a kind that 404s.
@@ -1181,7 +1183,7 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 **Selectors**: label selectors on list, and field selectors for the fields the store can answer (`metadata.name`, `metadata.namespace`, Pod `status.phase` / `spec.nodeName`). List responses are unpaginated — `limit`/`continue` are not honored (an emulation simplification; every list returns the full set in one response).
 
-**Patch**: JSON-merge-patch. Strategic-merge and server-side-apply are accepted but applied as a merge (an emulation simplification — array merge keys and apply field-ownership are not honored).
+**Patch**: all four content types — JSON-merge-patch, JSONPatch (RFC 6902), and strategic-merge-patch (real strategic merge against the typed struct for core/apps kinds, so `kubectl set image` merges the container list by name). Server-side-apply is accepted and applied as a merge (an emulation simplification — apply field-ownership is not tracked).
 
 **Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) just works.
 
