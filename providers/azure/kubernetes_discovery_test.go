@@ -57,3 +57,51 @@ func TestResourceDiscoverySurfacesAKS(t *testing.T) {
 		t.Fatalf("AKS not fully surfaced: cluster=%v agentPool=%v (%d resources)", cluster, agentPool, len(res))
 	}
 }
+
+// Two clusters with the same name in different resource groups must get
+// distinct canonical ARNs — each embedding its own resource group, not the
+// discovery default. The AKS mock keys on rg+name, so this is a real case.
+func TestResourceDiscoveryAKSSameNameDistinctARNs(t *testing.T) {
+	ctx := context.Background()
+	p := New()
+
+	for _, rg := range []string{"rg-a", "rg-b"} {
+		if _, err := p.AKS.CreateOrUpdateCluster(ctx, aks.ClusterInput{
+			ResourceGroup: rg, Name: "prod", Location: "eastus",
+		}); err != nil {
+			t.Fatalf("CreateOrUpdateCluster %s: %v", rg, err)
+		}
+	}
+
+	res, err := p.ResourceDiscovery.List(ctx, resourcediscovery.Query{
+		Services: []string{resourcediscovery.ServiceKubernetes},
+		Type:     resourcediscovery.TypeCluster,
+	})
+	if err != nil {
+		t.Fatalf("discovery List: %v", err)
+	}
+
+	arns := map[string]bool{}
+	for _, r := range res {
+		if r.ID == "prod" {
+			arns[r.ARN] = true
+		}
+	}
+
+	if len(arns) != 2 {
+		t.Fatalf("same-name clusters in two resource groups collapsed to %d distinct ARNs, want 2: %v", len(arns), arns)
+	}
+
+	for _, rg := range []string{"rg-a", "rg-b"} {
+		found := false
+		for arn := range arns {
+			if strings.Contains(arn, "resourceGroups/"+rg+"/") {
+				found = true
+			}
+		}
+
+		if !found {
+			t.Errorf("no cluster ARN embeds resource group %q: %v", rg, arns)
+		}
+	}
+}
