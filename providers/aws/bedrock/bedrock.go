@@ -24,9 +24,23 @@ type Mock struct {
 	foundation  []driver.FoundationModel
 	jobs        *memstore.Store[*driver.CustomizationJob]
 	models      *memstore.Store[*driver.CustomModel]
-	guardrails  *memstore.Store[*driver.Guardrail]
+	guardrails  *memstore.Store[*guardrailRecord]
 	provisioned *memstore.Store[*driver.ProvisionedThroughput]
-	opts        *config.Options
+	tags        *memstore.Store[[]driver.Tag] // keyed by resource ARN
+
+	asyncInvokes *memstore.Store[*driver.AsyncInvoke]    // keyed by invocation ARN
+	importJobs   *memstore.Store[*driver.ModelImportJob] // keyed by job name
+	copyJobs     *memstore.Store[*driver.ModelCopyJob]   // keyed by job ARN
+	evalJobs     *memstore.Store[*driver.EvaluationJob]  // keyed by job name
+
+	inferenceProfiles *memstore.Store[*driver.InferenceProfile]         // keyed by profile ID
+	promptRouters     *memstore.Store[*driver.PromptRouter]             // keyed by router ARN
+	arPolicies        *memstore.Store[*driver.AutomatedReasoningPolicy] // keyed by policy ARN
+
+	marketplaceEndpoints *memstore.Store[*driver.MarketplaceEndpoint] // keyed by endpoint ARN
+	fmAgreements         *memstore.Store[bool]                        // set of accepted agreements keyed by modelId
+
+	opts *config.Options
 
 	logMu   sync.RWMutex
 	logging *driver.LoggingConfig
@@ -39,9 +53,23 @@ func New(opts *config.Options) *Mock {
 		foundation:  seedFoundationModels(opts.Region),
 		jobs:        memstore.New[*driver.CustomizationJob](),
 		models:      memstore.New[*driver.CustomModel](),
-		guardrails:  memstore.New[*driver.Guardrail](),
+		guardrails:  memstore.New[*guardrailRecord](),
 		provisioned: memstore.New[*driver.ProvisionedThroughput](),
-		opts:        opts,
+		tags:        memstore.New[[]driver.Tag](),
+
+		asyncInvokes: memstore.New[*driver.AsyncInvoke](),
+		importJobs:   memstore.New[*driver.ModelImportJob](),
+		copyJobs:     memstore.New[*driver.ModelCopyJob](),
+		evalJobs:     memstore.New[*driver.EvaluationJob](),
+
+		inferenceProfiles: memstore.New[*driver.InferenceProfile](),
+		promptRouters:     memstore.New[*driver.PromptRouter](),
+		arPolicies:        memstore.New[*driver.AutomatedReasoningPolicy](),
+
+		marketplaceEndpoints: memstore.New[*driver.MarketplaceEndpoint](),
+		fmAgreements:         memstore.New[bool](),
+
+		opts: opts,
 	}
 }
 

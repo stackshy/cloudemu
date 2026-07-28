@@ -170,3 +170,89 @@ type converseResponse struct {
 	Usage      converseUsage       `json:"usage"`
 	Metrics    converseMetrics     `json:"metrics"`
 }
+
+// Tagging wire shapes. tagPair (json "key"/"value") is defined in management.go.
+
+type tagResourceRequest struct {
+	ResourceARN string    `json:"resourceARN"`
+	Tags        []tagPair `json:"tags"`
+}
+
+type untagResourceRequest struct {
+	ResourceARN string   `json:"resourceARN"`
+	TagKeys     []string `json:"tagKeys"`
+}
+
+type listTagsRequest struct {
+	ResourceARN string `json:"resourceARN"`
+}
+
+type listTagsResponse struct {
+	Tags []tagPair `json:"tags"`
+}
+
+// CountTokens wire shapes. The input is a union carrying exactly one of
+// converse or invokeModel.
+
+type countTokensConverse struct {
+	Messages []converseMessage   `json:"messages"`
+	System   []converseTextBlock `json:"system"`
+}
+
+type countTokensInvokeModel struct {
+	// Body is the model-native InvokeModel payload. The SDK serializes it as a
+	// base64 blob (a JSON string), so it is typed []byte — encoding/json
+	// base64-decodes it back to the raw bytes on unmarshal.
+	Body []byte `json:"body"`
+}
+
+type countTokensRequest struct {
+	Converse    *countTokensConverse    `json:"converse"`
+	InvokeModel *countTokensInvokeModel `json:"invokeModel"`
+}
+
+type countTokensResponse struct {
+	InputTokens int `json:"inputTokens"`
+}
+
+// ApplyGuardrail wire shapes. guardrailIdentifier and guardrailVersion are path
+// parameters; the body carries source, content, and outputScope.
+
+type applyGuardrailTextBlock struct {
+	Text       string   `json:"text"`
+	Qualifiers []string `json:"qualifiers,omitempty"`
+}
+
+type applyGuardrailContentBlock struct {
+	Text *applyGuardrailTextBlock `json:"text,omitempty"`
+}
+
+type applyGuardrailRequest struct {
+	Source      string                       `json:"source"`
+	Content     []applyGuardrailContentBlock `json:"content"`
+	OutputScope string                       `json:"outputScope,omitempty"`
+}
+
+type applyGuardrailUsage struct {
+	TopicPolicyUnits                    int `json:"topicPolicyUnits"`
+	ContentPolicyUnits                  int `json:"contentPolicyUnits"`
+	WordPolicyUnits                     int `json:"wordPolicyUnits"`
+	SensitiveInformationPolicyUnits     int `json:"sensitiveInformationPolicyUnits"`
+	SensitiveInformationPolicyFreeUnits int `json:"sensitiveInformationPolicyFreeUnits"`
+	ContextualGroundingPolicyUnits      int `json:"contextualGroundingPolicyUnits"`
+}
+
+type applyGuardrailOutputContent struct {
+	Text string `json:"text"`
+}
+
+// applyGuardrailAssessment is emitted as an empty object list; the emulator
+// performs no policy assessments.
+type applyGuardrailAssessment struct{}
+
+type applyGuardrailResponse struct {
+	Usage       applyGuardrailUsage           `json:"usage"`
+	Action      string                        `json:"action"`
+	Outputs     []applyGuardrailOutputContent `json:"outputs"`
+	Assessments []applyGuardrailAssessment    `json:"assessments"`
+}

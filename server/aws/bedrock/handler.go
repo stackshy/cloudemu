@@ -17,6 +17,11 @@
 //	DELETE /custom-models/{modelIdentifier}            — DeleteCustomModel
 //	POST   /model/{modelId}/invoke                     — InvokeModel
 //	POST   /model/{modelId}/converse                   — Converse
+//	POST   /model/{modelId}/count-tokens               — CountTokens
+//	POST   /guardrail/{id}/version/{version}/apply     — ApplyGuardrail
+//	POST   /tagResource                                — TagResource
+//	POST   /untagResource                              — UntagResource
+//	POST   /listTagsForResource                        — ListTagsForResource
 //
 // The Matches predicate is rooted at these prefixes so it does not shadow the
 // catch-all S3 handler that may be registered alongside.
@@ -43,8 +48,40 @@ const (
 	pathProvisionedList = "/provisioned-model-throughputs"
 	pathLogging         = "/logging/modelinvocations"
 
-	actionInvoke   = "invoke"
-	actionConverse = "converse"
+	pathTagResource   = "/tagResource"
+	pathUntagResource = "/untagResource"
+	pathListTags      = "/listTagsForResource"
+
+	// prefixApplyGuardrail is the singular /guardrail/ runtime prefix, distinct
+	// from the plural /guardrails control-plane collection.
+	prefixApplyGuardrail = "/guardrail/"
+
+	prefixAsyncInvoke = "/async-invoke"
+	prefixImportJobs  = "/model-import-jobs"
+	prefixCopyJobs    = "/model-copy-jobs"
+	prefixEvalJobs    = "/evaluation-jobs"
+	// prefixEvalJobStop is the singular /evaluation-job/ prefix used only by
+	// StopEvaluationJob (POST /evaluation-job/{id}/stop), distinct from the
+	// plural /evaluation-jobs collection.
+	prefixEvalJobStop = "/evaluation-job/"
+
+	prefixInferenceProfiles = "/inference-profiles"
+	prefixPromptRouters     = "/prompt-routers"
+	prefixARPolicies        = "/automated-reasoning-policies"
+
+	prefixMarketplaceEndpoints  = "/marketplace-model/endpoints"
+	prefixListFMAgreementOffers = "/list-foundation-model-agreement-offers"
+	prefixFMAvailability        = "/foundation-model-availability"
+	pathCreateFMAgreement       = "/create-foundation-model-agreement"
+	pathDeleteFMAgreement       = "/delete-foundation-model-agreement"
+
+	suffixRegistration = "/registration"
+
+	actionInvoke         = "invoke"
+	actionConverse       = "converse"
+	actionCountTokens    = "count-tokens"
+	actionConverseStream = "converse-stream"
+	actionInvokeStream   = "invoke-with-response-stream"
 )
 
 // Handler serves AWS Bedrock restJson1 requests against a Bedrock driver.
@@ -63,15 +100,88 @@ func New(drv bedrockdriver.Bedrock) *Handler {
 //nolint:gochecknoglobals // immutable routing table shared by Matches and ServeHTTP
 var collectionPrefixes = []string{prefixFoundation, prefixJobs, prefixCustom, prefixGuardrails, prefixProvisioned}
 
+// underPrefix reports whether p equals pre or is a child path of pre.
+func underPrefix(p, pre string) bool {
+	return p == pre || strings.HasPrefix(p, pre+"/")
+}
+
 // claims reports whether path p belongs to this handler.
 func claims(p string) bool {
 	for _, pre := range collectionPrefixes {
+		if underPrefix(p, pre) {
+			return true
+		}
+	}
+
+	if strings.HasPrefix(p, prefixRuntime) || strings.HasPrefix(p, prefixApplyGuardrail) {
+		return true
+	}
+
+	return claimsExtra(p)
+}
+
+// claimsExtra reports whether p belongs to a singleton or predicate-routed
+// surface not covered by the collection prefixes. Split from claims to keep
+// each function's cyclomatic complexity small.
+func claimsExtra(p string) bool {
+	return p == pathProvisionedList || p == pathLogging || isTagPath(p) ||
+		isAsyncOrJobPath(p) || isRegistryPath(p) || isMarketplaceOrAgreementPath(p)
+}
+
+// marketplaceAgreementPrefixes are the collection/action prefixes for the
+// marketplace-model-endpoint and foundation-model-agreement surfaces.
+//
+//nolint:gochecknoglobals // immutable routing table shared by claims and ServeHTTP
+var marketplaceAgreementPrefixes = []string{prefixMarketplaceEndpoints, prefixListFMAgreementOffers, prefixFMAvailability}
+
+// isMarketplaceOrAgreementPath reports whether p belongs to the
+// marketplace-model-endpoint or foundation-model-agreement surface.
+func isMarketplaceOrAgreementPath(p string) bool {
+	if p == pathCreateFMAgreement || p == pathDeleteFMAgreement {
+		return true
+	}
+
+	for _, pre := range marketplaceAgreementPrefixes {
 		if p == pre || strings.HasPrefix(p, pre+"/") {
 			return true
 		}
 	}
 
-	return strings.HasPrefix(p, prefixRuntime) || p == pathProvisionedList || p == pathLogging
+	return false
+}
+
+// registryPrefixes are the collection prefixes for the inference-profile,
+// prompt-router, and automated-reasoning-policy control-plane surfaces.
+//
+//nolint:gochecknoglobals // immutable routing table shared by claims and ServeHTTP
+var registryPrefixes = []string{prefixInferenceProfiles, prefixPromptRouters, prefixARPolicies}
+
+// isRegistryPath reports whether p belongs to a control-plane registry surface.
+func isRegistryPath(p string) bool {
+	for _, pre := range registryPrefixes {
+		if p == pre || strings.HasPrefix(p, pre+"/") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// asyncJobPrefixes are the collection prefixes for the async-invoke and
+// control-plane job surfaces.
+//
+//nolint:gochecknoglobals // immutable routing table shared by claims and ServeHTTP
+var asyncJobPrefixes = []string{prefixAsyncInvoke, prefixImportJobs, prefixCopyJobs, prefixEvalJobs}
+
+// isAsyncOrJobPath reports whether p belongs to the async-invoke or job surface.
+func isAsyncOrJobPath(p string) bool {
+	for _, pre := range asyncJobPrefixes {
+		if p == pre || strings.HasPrefix(p, pre+"/") {
+			return true
+		}
+	}
+
+	return strings.HasPrefix(p, prefixEvalJobStop)
 }
 
 // Matches claims the Bedrock control-plane and runtime URL prefixes.
@@ -84,17 +194,80 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 
 	switch {
-	case p == prefixFoundation || strings.HasPrefix(p, prefixFoundation+"/"):
+	case underPrefix(p, prefixFoundation):
 		h.serveFoundation(w, r, strings.TrimPrefix(strings.TrimPrefix(p, prefixFoundation), "/"))
-	case p == prefixJobs || strings.HasPrefix(p, prefixJobs+"/"):
+	case underPrefix(p, prefixJobs):
 		h.serveJobs(w, r, strings.TrimPrefix(strings.TrimPrefix(p, prefixJobs), "/"))
-	case p == prefixCustom || strings.HasPrefix(p, prefixCustom+"/"):
+	case underPrefix(p, prefixCustom):
 		h.serveCustomModels(w, r, strings.TrimPrefix(strings.TrimPrefix(p, prefixCustom), "/"))
 	case strings.HasPrefix(p, prefixRuntime):
 		h.serveRuntime(w, r, strings.TrimPrefix(p, prefixRuntime))
+	case isAsyncOrJobPath(p):
+		h.serveAsyncJobs(w, r, p)
+	case isRegistryPath(p):
+		h.serveRegistries(w, r, p)
+	case isMarketplaceOrAgreementPath(p):
+		h.serveMarketplaceAgreements(w, r, p)
 	default:
 		h.serveManagement(w, r, p)
 	}
+}
+
+// isTagPath reports whether p is one of the resource-tagging endpoints.
+func isTagPath(p string) bool {
+	return p == pathTagResource || p == pathUntagResource || p == pathListTags
+}
+
+// serveTags routes the resource-tagging surface. Each path is POST-only.
+func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, p string) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+
+		return
+	}
+
+	switch p {
+	case pathTagResource:
+		h.tagResource(w, r)
+	case pathUntagResource:
+		h.untagResource(w, r)
+	case pathListTags:
+		h.listTagsForResource(w, r)
+	default:
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported path: "+p)
+	}
+}
+
+// serveApplyGuardrail handles POST
+// /guardrail/{guardrailIdentifier}/version/{guardrailVersion}/apply. rest is the
+// path with the /guardrail/ prefix already trimmed.
+func (h *Handler) serveApplyGuardrail(w http.ResponseWriter, r *http.Request, rest string) {
+	// Shape: {guardrailIdentifier}/version/{guardrailVersion}/apply. The
+	// identifier may be an ARN containing slashes, so anchor on the fixed
+	// "/version/" separator and the "/apply" suffix rather than a fixed split.
+	body, ok := strings.CutSuffix(rest, "/apply")
+	if !ok {
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported guardrail path")
+
+		return
+	}
+
+	idx := strings.LastIndex(body, "/version/")
+	if idx < 0 {
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported guardrail path")
+
+		return
+	}
+
+	identifier, version := body[:idx], body[idx+len("/version/"):]
+
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+
+		return
+	}
+
+	h.applyGuardrail(w, r, identifier, version)
 }
 
 // serveManagement routes the guardrail, provisioned-throughput, and invocation
@@ -109,6 +282,10 @@ func (h *Handler) serveManagement(w http.ResponseWriter, r *http.Request, p stri
 		h.serveGuardrails(w, r, strings.TrimPrefix(strings.TrimPrefix(p, prefixGuardrails), "/"))
 	case p == pathLogging:
 		h.serveLogging(w, r)
+	case isTagPath(p):
+		h.serveTags(w, r, p)
+	case strings.HasPrefix(p, prefixApplyGuardrail):
+		h.serveApplyGuardrail(w, r, strings.TrimPrefix(p, prefixApplyGuardrail))
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported path: "+p)
 	}
@@ -130,6 +307,8 @@ func (h *Handler) serveGuardrails(w http.ResponseWriter, r *http.Request, id str
 	}
 
 	switch r.Method {
+	case http.MethodPost:
+		h.createGuardrailVersion(w, r, id)
 	case http.MethodGet:
 		h.getGuardrail(w, r, id)
 	case http.MethodPut:
@@ -280,6 +459,12 @@ func (h *Handler) serveRuntime(w http.ResponseWriter, r *http.Request, rest stri
 		h.invokeModel(w, r, modelID)
 	case actionConverse:
 		h.converse(w, r, modelID)
+	case actionConverseStream:
+		h.converseStream(w, r, modelID)
+	case actionInvokeStream:
+		h.invokeModelStream(w, r, modelID)
+	case actionCountTokens:
+		h.countTokens(w, r, modelID)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unknown runtime action: "+action)
 	}

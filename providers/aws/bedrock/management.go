@@ -39,25 +39,34 @@ func (m *Mock) CreateGuardrail(_ context.Context, cfg driver.GuardrailConfig) (*
 		BlockedOutputsMessaging: cfg.BlockedOutputsMessaging,
 		CreatedAt:               now,
 		UpdatedAt:               now,
+		GuardrailPolicies:       cfg.GuardrailPolicies,
 	}
 
 	if cfg.KMSKeyID != "" {
 		g.KMSKeyARN = cfg.KMSKeyID
 	}
 
-	m.guardrails.Set(cfg.Name, g)
+	m.guardrails.Set(cfg.Name, &guardrailRecord{draft: g, nextVer: 1})
+	m.setTags(g.ARN, m.tagsFromMap(cfg.Tags))
 
 	result := *g
 
 	return &result, nil
 }
 
-// GetGuardrail returns a guardrail by name or ARN. version is ignored (only
-// the working version is modeled).
-func (m *Mock) GetGuardrail(_ context.Context, identifier, _ string) (*driver.Guardrail, error) {
-	g := m.findGuardrail(identifier)
-	if g == nil {
+// GetGuardrail returns a guardrail by name or ARN. An empty or "DRAFT" version
+// returns the working copy; a numbered version returns that snapshot.
+func (m *Mock) GetGuardrail(_ context.Context, identifier, version string) (*driver.Guardrail, error) {
+	rec := m.findGuardrailRecord(identifier)
+	if rec == nil {
 		return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
+	}
+
+	g := rec.draft
+	if version != "" && version != guardrailDraftVersion {
+		if g = rec.version(version); g == nil {
+			return nil, errors.Newf(errors.NotFound, "guardrail %q version %q not found", identifier, version)
+		}
 	}
 
 	result := *g
@@ -65,67 +74,101 @@ func (m *Mock) GetGuardrail(_ context.Context, identifier, _ string) (*driver.Gu
 	return &result, nil
 }
 
-// ListGuardrails lists all guardrails.
-func (m *Mock) ListGuardrails(_ context.Context) ([]driver.Guardrail, error) {
+// ListGuardrails lists guardrails. When identifier is set, it returns one
+// summary per version (DRAFT plus each numbered snapshot) of that guardrail;
+// otherwise it returns one summary per guardrail (its DRAFT).
+func (m *Mock) ListGuardrails(_ context.Context, identifier string) ([]driver.Guardrail, error) {
+	if identifier != "" {
+		rec := m.findGuardrailRecord(identifier)
+		if rec == nil {
+			return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
+		}
+
+		out := make([]driver.Guardrail, 0, len(rec.versions)+1)
+		out = append(out, *rec.draft)
+
+		for _, v := range rec.versions {
+			out = append(out, *v)
+		}
+
+		return out, nil
+	}
+
 	all := m.guardrails.All()
 	out := make([]driver.Guardrail, 0, len(all))
 
-	for _, g := range all {
-		out = append(out, *g)
+	for _, rec := range all {
+		out = append(out, *rec.draft)
 	}
 
 	return out, nil
 }
 
-// UpdateGuardrail updates a guardrail's mutable fields.
+// UpdateGuardrail updates a guardrail's mutable DRAFT working copy. Numbered
+// version snapshots are immutable and left untouched.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdateGuardrail(_ context.Context, identifier string, cfg driver.GuardrailConfig) (*driver.Guardrail, error) {
-	g := m.findGuardrail(identifier)
-	if g == nil {
+	rec := m.findGuardrailRecord(identifier)
+	if rec == nil {
 		return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
 	}
 
-	updated := *g
-	updated.Name = orDefault(cfg.Name, g.Name)
-	updated.Description = cfg.Description
-	updated.BlockedInputMessaging = orDefault(cfg.BlockedInputMessaging, g.BlockedInputMessaging)
-	updated.BlockedOutputsMessaging = orDefault(cfg.BlockedOutputsMessaging, g.BlockedOutputsMessaging)
-	updated.UpdatedAt = m.now()
+	g := rec.draft
+	oldName := g.Name
+	g.Name = orDefault(cfg.Name, g.Name)
+	g.Description = cfg.Description
+	g.BlockedInputMessaging = orDefault(cfg.BlockedInputMessaging, g.BlockedInputMessaging)
+	g.BlockedOutputsMessaging = orDefault(cfg.BlockedOutputsMessaging, g.BlockedOutputsMessaging)
+	g.GuardrailPolicies = cfg.GuardrailPolicies
+	g.UpdatedAt = m.now()
 
-	// Guardrails are keyed by name; re-key when an update renames one so
-	// lookups by the new name keep working.
-	if updated.Name != g.Name {
-		m.guardrails.Delete(g.Name)
+	// Records are keyed by name; re-key when an update renames one so lookups
+	// by the new name keep working.
+	if g.Name != oldName {
+		m.guardrails.Delete(oldName)
+		m.guardrails.Set(g.Name, rec)
 	}
 
-	m.guardrails.Set(updated.Name, &updated)
-
-	result := updated
+	result := *g
 
 	return &result, nil
 }
 
-// DeleteGuardrail deletes a guardrail by name or ARN.
-func (m *Mock) DeleteGuardrail(_ context.Context, identifier string) error {
-	g := m.findGuardrail(identifier)
-	if g == nil {
+// DeleteGuardrail deletes a guardrail by name or ARN. An empty version deletes
+// the whole guardrail (DRAFT and all snapshots); a specific version deletes
+// just that numbered snapshot.
+func (m *Mock) DeleteGuardrail(_ context.Context, identifier, version string) error {
+	rec := m.findGuardrailRecord(identifier)
+	if rec == nil {
 		return errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
 	}
 
-	m.guardrails.Delete(g.Name)
+	if version == "" {
+		m.guardrails.Delete(rec.draft.Name)
 
-	return nil
-}
-
-func (m *Mock) findGuardrail(id string) *driver.Guardrail {
-	if g, ok := m.guardrails.Get(id); ok {
-		return g
+		return nil
 	}
 
-	for _, g := range m.guardrails.All() {
-		if g.ID == id || g.ARN == id {
-			return g
+	for i, v := range rec.versions {
+		if v.Version == version {
+			rec.versions = append(rec.versions[:i], rec.versions[i+1:]...)
+
+			return nil
+		}
+	}
+
+	return errors.Newf(errors.NotFound, "guardrail %q version %q not found", identifier, version)
+}
+
+func (m *Mock) findGuardrailRecord(id string) *guardrailRecord {
+	if rec, ok := m.guardrails.Get(id); ok {
+		return rec
+	}
+
+	for _, rec := range m.guardrails.All() {
+		if rec.draft.ID == id || rec.draft.ARN == id {
+			return rec
 		}
 	}
 
@@ -187,6 +230,7 @@ func (m *Mock) CreateProvisionedModelThroughput(
 		LastModifiedTime:   now,
 	}
 	m.provisioned.Set(cfg.ProvisionedModelName, pt)
+	m.setTags(pt.ARN, m.tagsFromMap(cfg.Tags))
 
 	result := *pt
 
