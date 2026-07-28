@@ -19,6 +19,8 @@ const (
 	netKindVPC           = "vpc"
 	netKindSubnet        = "subnet"
 	netKindSecurityGroup = "security-group"
+	netKindNetworkIface  = "network-interface"
+	netKindElasticIP     = "elastic-ip"
 )
 
 func (e *Engine) computeInstanceARN(id string) string {
@@ -56,6 +58,10 @@ func azureNetworkType(kind string) string {
 		return "subnets"
 	case netKindSecurityGroup:
 		return "networkSecurityGroups"
+	case netKindNetworkIface:
+		return "networkInterfaces"
+	case netKindElasticIP:
+		return "publicIPAddresses"
 	default:
 		return kind
 	}
@@ -69,6 +75,10 @@ func gcpNetworkCollection(kind string) string {
 		return "subnetworks"
 	case netKindSecurityGroup:
 		return "firewalls"
+	case netKindNetworkIface:
+		return "networkInterfaces"
+	case netKindElasticIP:
+		return "addresses"
 	default:
 		return kind
 	}

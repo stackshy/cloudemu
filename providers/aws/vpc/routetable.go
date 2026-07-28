@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -18,6 +19,9 @@ type routeTableData struct {
 	VPCID  string
 	Routes []driver.Route
 	Tags   map[string]string
+	// IsMain marks the route table EC2 creates alongside the VPC. It cannot be
+	// deleted on its own and disappears with the VPC.
+	IsMain bool
 }
 
 // CreateRouteTable creates a route table for the specified VPC.
@@ -47,29 +51,70 @@ func (m *Mock) CreateRouteTable(_ context.Context, cfg driver.RouteTableConfig) 
 	}
 	m.routeTables.Set(id, rt)
 
+	m.mu.RLock()
 	info := toRouteTableInfo(rt)
+	m.mu.RUnlock()
 
 	return &info, nil
 }
 
 // DeleteRouteTable deletes the route table with the given ID.
+//
+// The VPC's main route table cannot be deleted on its own — real EC2 refuses
+// it, and a caller sweeping a VPC's route tables must skip it rather than
+// treat the failure as a broken teardown.
 func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
-	if !m.routeTables.Delete(id) {
+	rt, ok := m.routeTables.Get(id)
+	if !ok {
 		return errors.Newf(errors.NotFound, "route table %q not found", id)
 	}
+
+	if rt.IsMain {
+		return errors.Newf(errors.InvalidArgument,
+			"cannot delete the main route table %q of vpc %q", id, rt.VPCID)
+	}
+
+	m.routeTables.Delete(id)
 
 	return nil
 }
 
 // DescribeRouteTables returns route tables matching the given IDs, or all if empty.
+//
+// Associations are joined in here rather than kept on the route table itself:
+// they live in their own store (a subnet can be re-pointed at another table),
+// and Describe is the only channel through which a caller can learn an
+// association ID — which it must have before it can disassociate.
 func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.RouteTable, error) {
-	return describeResources(m.routeTables, ids, toRouteTableInfo), nil
+	m.mu.RLock()
+	tables := describeResources(m.routeTables, ids, toRouteTableInfo)
+	m.mu.RUnlock()
+
+	byTable := make(map[string][]driver.RouteTableAssociation)
+
+	for _, a := range m.rtAssocs.All() {
+		byTable[a.RouteTableID] = append(byTable[a.RouteTableID], toRTAssocInfo(a))
+	}
+
+	for i := range tables {
+		assocs := byTable[tables[i].ID]
+		// Stable order: the backing store is a map, and a caller diffing
+		// successive Describe calls should not see phantom churn.
+		sort.Slice(assocs, func(x, y int) bool { return assocs[x].ID < assocs[y].ID })
+
+		tables[i].Associations = assocs
+	}
+
+	return tables, nil
 }
 
 // CreateRoute adds a route to the specified route table.
 func (m *Mock) CreateRoute(
 	_ context.Context, routeTableID, destinationCIDR, targetID, targetType string,
 ) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rt, ok := m.routeTables.Get(routeTableID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "route table %q not found", routeTableID)
@@ -94,6 +139,9 @@ func (m *Mock) CreateRoute(
 
 // DeleteRoute removes a route from the specified route table.
 func (m *Mock) DeleteRoute(_ context.Context, routeTableID, destinationCIDR string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rt, ok := m.routeTables.Get(routeTableID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "route table %q not found", routeTableID)

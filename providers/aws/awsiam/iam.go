@@ -293,6 +293,10 @@ func (m *Mock) DeletePolicy(_ context.Context, arn string) error {
 
 // GetPolicy returns the IAM policy with the given ARN.
 func (m *Mock) GetPolicy(_ context.Context, arn string) (*driver.PolicyInfo, error) {
+	// Same reasoning as attachPolicy: an AWS-managed policy is readable in
+	// every real account without having been created.
+	m.ensureAWSManagedPolicy(arn)
+
 	p, ok := m.policies.Get(arn)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "policy %q not found", arn)
@@ -496,7 +500,10 @@ func (m *Mock) attachPolicy(
 		return errors.Newf(errors.NotFound, "%s %q not found", entityType, principalName)
 	}
 
-	if !m.policies.Has(policyARN) {
+	// AWS-managed policies are never created by the caller — they already
+	// exist in every account — so attaching one must not require a preceding
+	// CreatePolicy.
+	if !m.ensureAWSManagedPolicy(policyARN) {
 		return errors.Newf(errors.NotFound, "policy %q not found", policyARN)
 	}
 

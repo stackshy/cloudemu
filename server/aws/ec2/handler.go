@@ -225,6 +225,7 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
+//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateAutoScalingGroup":
@@ -332,14 +333,29 @@ func (h *Handler) routeVPC(w http.ResponseWriter, r *http.Request, action string
 	return h.routeVPCRouteTable(w, r, action)
 }
 
+//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateVpc":
 		h.createVpc(w, r)
 	case "DeleteVpc":
 		h.deleteVpc(w, r)
+	case "ModifyVpcAttribute":
+		h.modifyVpcAttribute(w, r)
 	case "DescribeVpcs":
 		h.describeVpcs(w, r)
+	case "DescribeAvailabilityZones":
+		h.describeAvailabilityZones(w, r)
+	case "AllocateAddress":
+		h.allocateAddress(w, r)
+	case "ReleaseAddress":
+		h.releaseAddress(w, r)
+	case "DescribeAddresses":
+		h.describeAddresses(w, r)
+	case "AssociateAddress":
+		h.associateAddress(w, r)
+	case "DisassociateAddress":
+		h.disassociateAddress(w, r)
 	default:
 		return false
 	}
@@ -393,6 +409,8 @@ func (h *Handler) routeVPCInternetGateway(w http.ResponseWriter, r *http.Request
 		h.attachInternetGateway(w, r)
 	case "DetachInternetGateway":
 		h.detachInternetGateway(w, r)
+	case "DeleteInternetGateway":
+		h.deleteInternetGateway(w, r)
 	case "DescribeInternetGateways":
 		h.describeInternetGateways(w, r)
 	default:
@@ -406,10 +424,24 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 	switch action {
 	case "CreateRouteTable":
 		h.createRouteTable(w, r)
+	case "DeleteRouteTable":
+		h.deleteRouteTable(w, r)
 	case "DescribeRouteTables":
 		h.describeRouteTables(w, r)
 	case "CreateRoute":
 		h.createRoute(w, r)
+	case "DeleteRoute":
+		h.deleteRoute(w, r)
+	case "AssociateRouteTable":
+		h.associateRouteTable(w, r)
+	case "DisassociateRouteTable":
+		h.disassociateRouteTable(w, r)
+	case "DescribeNetworkInterfaces":
+		h.describeNetworkInterfaces(w, r)
+	case "DetachNetworkInterface":
+		h.detachNetworkInterface(w, r)
+	case "DeleteNetworkInterface":
+		h.deleteNetworkInterface(w, r)
 	default:
 		return false
 	}

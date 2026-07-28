@@ -60,9 +60,11 @@ type Mock struct {
 	clusters         *memstore.Store[rdsdriver.Cluster]
 	snapshots        *memstore.Store[rdsdriver.Snapshot]
 	clusterSnapshots *memstore.Store[rdsdriver.ClusterSnapshot]
+	subnetGroups     *memstore.Store[rdsdriver.SubnetGroup]
 
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	opts           *config.Options
+	subnetResolver SubnetResolver
+	monitoring     mondriver.Monitoring
 }
 
 // New creates a new AWS RDS mock.
@@ -72,6 +74,7 @@ func New(opts *config.Options) *Mock {
 		clusters:         memstore.New[rdsdriver.Cluster](),
 		snapshots:        memstore.New[rdsdriver.Snapshot](),
 		clusterSnapshots: memstore.New[rdsdriver.ClusterSnapshot](),
+		subnetGroups:     memstore.New[rdsdriver.SubnetGroup](),
 		opts:             opts,
 	}
 }

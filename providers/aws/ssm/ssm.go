@@ -50,15 +50,18 @@ type paramData struct {
 
 // Mock is an in-memory mock implementation of SSM Parameter Store.
 type Mock struct {
-	params *memstore.Store[*paramData]
-	opts   *config.Options
+	params           *memstore.Store[*paramData]
+	commands         *memstore.Store[driver.CommandInvocation]
+	instanceResolver InstanceResolver
+	opts             *config.Options
 }
 
 // New creates a new SSM Parameter Store mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		params: memstore.New[*paramData](),
-		opts:   opts,
+		params:   memstore.New[*paramData](),
+		commands: memstore.New[driver.CommandInvocation](),
+		opts:     opts,
 	}
 }
 
@@ -240,6 +243,10 @@ func selectorFor(requested, base string) string {
 func (m *Mock) GetParameter(_ context.Context, name string, _ bool) (*driver.Parameter, error) {
 	base, selector := resolveSelector(name)
 
+	// AWS-published parameters are readable from every account without having
+	// been put, so resolving one must not answer NotFound.
+	m.ensurePublicParameter(base)
+
 	pd, ok := m.params.Get(base)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "parameter %q not found", base)
@@ -270,6 +277,8 @@ func (m *Mock) GetParameters(_ context.Context, names []string, _ bool) ([]drive
 
 	for _, name := range names {
 		base, selector := resolveSelector(name)
+
+		m.ensurePublicParameter(base)
 
 		pd, ok := m.params.Get(base)
 		if !ok {

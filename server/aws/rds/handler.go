@@ -30,6 +30,9 @@ const (
 // rdsActions is the set of Action values this handler recognizes. Matches uses
 // it to decide whether to claim a request.
 var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"CreateDBSubnetGroup":             {},
+	"DescribeDBSubnetGroups":          {},
+	"DeleteDBSubnetGroup":             {},
 	"CreateDBInstance":                {},
 	"DescribeDBInstances":             {},
 	"ModifyDBInstance":                {},
@@ -97,6 +100,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	action := r.Form.Get("Action")
 
 	switch action {
+	case "CreateDBSubnetGroup":
+		h.createDBSubnetGroup(w, r)
+	case "DescribeDBSubnetGroups":
+		h.describeDBSubnetGroups(w, r)
+	case "DeleteDBSubnetGroup":
+		h.deleteDBSubnetGroup(w, r)
 	case "CreateDBInstance":
 		h.createDBInstance(w, r)
 	case "DescribeDBInstances":
@@ -168,6 +177,10 @@ func notFoundCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	// "db subnet group" first: it is the only one whose message does not start
+	// with "DB ", and checking it late would let a broader case claim it.
+	case strings.Contains(msg, "db subnet group"):
+		return "DBSubnetGroupNotFoundFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceNotFound"
 	case strings.Contains(msg, "DB cluster snapshot"):
@@ -185,6 +198,8 @@ func alreadyExistsCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	case strings.Contains(msg, "db subnet group"):
+		return "DBSubnetGroupAlreadyExists"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceAlreadyExists"
 	case strings.Contains(msg, "DB cluster snapshot"):

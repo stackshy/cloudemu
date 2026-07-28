@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	"net"
 	"net/http"
 	"os"
@@ -64,7 +65,7 @@ func runServe(args []string) error {
 	fs.StringVar(&c.awsPort, "aws-port", "4566", "port for the AWS endpoint (HTTP)")
 	fs.StringVar(&c.azurePort, "azure-port", "4568", "port for the Azure endpoint (HTTPS)")
 	fs.StringVar(&c.gcpPort, "gcp-port", "4569", "port for the GCP endpoint (HTTP)")
-	fs.StringVar(&c.k8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTP); empty to disable")
+	fs.StringVar(&c.k8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTPS); empty to disable")
 	fs.StringVar(&c.accountID, "account-id", "000000000000", "AWS account ID / Azure subscription ID reported by the emulator")
 	fs.StringVar(&c.region, "region", "us-east-1", "default region reported by the emulator")
 	fs.StringVar(&c.projectID, "project-id", "cloudemu-local", "GCP project ID reported by the emulator")
@@ -139,6 +140,20 @@ func runServe(args []string) error {
 		var k8s *kubernetes.APIServer
 		if k8sBackend != nil {
 			k8s = kubernetes.NewAPIServer()
+			// Tell the data plane the address it is reachable on, so the
+			// managed-Kubernetes control planes can advertise an endpoint that
+			// actually answers. Without this BaseURL() is "", every
+			// withK8sEndpoint bails, and DescribeCluster / GetCluster hand back
+			// the Wave 1 sentinel — which a real client-go tool cannot resolve.
+			//
+			// The data-plane listener binds c.host:c.k8sPort below; this must
+			// stay in step with it.
+			// https, because the listener below is served with a certificate
+			// signed by the CA DescribeCluster advertises. A caller building a
+			// rest.Config from Endpoint plus CertificateAuthority can then
+			// validate what it dials; over plain HTTP that CA certifies
+			// nothing and the handshake fails.
+			k8s.SetBaseURL("https://" + net.JoinHostPort(c.host, c.k8sPort))
 		}
 		fresh := make(map[string]http.Handler, len(sel))
 		freshTargets := make(map[string]seed.Target, len(sel))
@@ -148,18 +163,25 @@ func runServe(args []string) error {
 				cloud := cloudemu.NewAWS(opts...)
 				d := awsserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
+				// Drivers.K8sAPI is only the server's PATH ROUTING for
+				// /k8s/{uid}/...; the control-plane mock keeps its own
+				// reference and needs it separately, or EKS still advertises
+				// the sentinel.
+				cloud.EKS.SetK8sAPI(k8s)
 				fresh["aws"] = wrap(awsserver.New(d), "aws", c.logReqs)
 				freshTargets["aws"] = seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2}
 			case "gcp":
 				cloud := cloudemu.NewGCP(opts...)
 				d := gcpserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
+				cloud.GKE.SetK8sAPI(k8s)
 				fresh["gcp"] = wrap(gcpserver.New(d), "gcp", c.logReqs)
 				freshTargets["gcp"] = seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE}
 			case "azure":
 				cloud := cloudemu.NewAzure(opts...)
 				d := azureserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
+				cloud.AKS.SetK8sAPI(k8s)
 				fresh["azure"] = wrap(azureserver.New(d), "azure", c.logReqs)
 				freshTargets["azure"] = seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines}
 			}
@@ -247,8 +269,18 @@ func runServe(args []string) error {
 
 	if k8sBackend != nil {
 		addr := net.JoinHostPort(c.host, c.k8sPort)
-		servers = append(servers, &namedServer{name: "kubernetes", srv: &http.Server{Addr: addr, Handler: handlerFor(k8sBackend, nil)}})
-		eps.Kubernetes = fmt.Sprintf("http://%s", addr)
+
+		k8sTLS, err := eksprov.ServingTLSConfig([]string{c.host, "localhost", "127.0.0.1"})
+		if err != nil {
+			return fmt.Errorf("kubernetes data-plane TLS: %w", err)
+		}
+
+		servers = append(servers, &namedServer{
+			name: "kubernetes",
+			srv:  &http.Server{Addr: addr, Handler: handlerFor(k8sBackend, nil), TLSConfig: k8sTLS},
+			tls:  true,
+		})
+		eps.Kubernetes = fmt.Sprintf("https://%s", addr)
 	}
 
 	// Bind every listener before serving so a port clash fails fast, before

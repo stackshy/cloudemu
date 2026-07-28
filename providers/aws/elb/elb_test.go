@@ -94,10 +94,15 @@ func TestDescribeLoadBalancers(t *testing.T) {
 		assertEqual(t, 1, len(lbs))
 	})
 
+	// Real ELBv2 answers LoadBalancerNotFound when an explicitly named ARN does
+	// not exist, rather than quietly returning an empty list. Callers waiting
+	// for a delete to settle poll this until it errors, so the empty-list
+	// answer left them polling to their timeout over a load balancer that was
+	// already gone.
 	t.Run("not found", func(t *testing.T) {
-		lbs, err := m.DescribeLoadBalancers(ctx, []string{"arn:nope"})
-		requireNoError(t, err)
-		assertEqual(t, 0, len(lbs))
+		if _, err := m.DescribeLoadBalancers(ctx, []string{"arn:nope"}); err == nil {
+			t.Fatal("describing an unknown ARN should report LoadBalancerNotFound")
+		}
 	})
 }
 
