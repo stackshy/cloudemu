@@ -335,6 +335,69 @@ func reconcilePVC(_ *ClusterState, obj *unstructured.Unstructured) {
 	}
 }
 
+// reconcilePV marks a PersistentVolume Available (there is no real storage
+// backend to bind against unless a claim already references it).
+func reconcilePV(_ *ClusterState, obj *unstructured.Unstructured) {
+	if phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase"); phase == "" {
+		_ = unstructured.SetNestedField(obj.Object, "Available", "status", "phase")
+	}
+}
+
+// ingressLBIP is the synthetic external IP every emulated Ingress and
+// LoadBalancer Service is assigned (TEST-NET-3, RFC 5737).
+const ingressLBIP = "203.0.113.10"
+
+// reconcileIngress assigns the Ingress a load-balancer address so
+// status.loadBalancer.ingress is populated, as a real ingress controller would.
+func reconcileIngress(_ *ClusterState, obj *unstructured.Unstructured) {
+	_ = unstructured.SetNestedSlice(obj.Object,
+		[]any{map[string]any{"ip": ingressLBIP}}, "status", "loadBalancer", "ingress")
+}
+
+// reconcileJob runs a Job to completion: it creates `completions` Pods (default
+// 1) that go straight to Succeeded, and marks the Job Complete.
+func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
+	completions := int64(1)
+	if c, found, _ := unstructured.NestedInt64(obj.Object, "spec", "completions"); found {
+		completions = c
+	}
+
+	ns := obj.GetNamespace()
+	owner := ownerRefOf(obj)
+	tmpl := podTemplateFromUnstructured(obj)
+
+	for len(s.podsOwnedByLocked(ns, owner.UID)) < int(completions) {
+		pod := s.buildControllerPod(ns, obj.GetName()+"-"+shortID(), tmpl, owner)
+		s.markPodSucceededLocked(pod)
+		s.pods[podKey(ns, pod.Name)] = pod
+		s.wPods.publish(EventAdded, ns, *pod.DeepCopy())
+	}
+
+	succeeded := int64(len(s.podsOwnedByLocked(ns, owner.UID)))
+	_ = unstructured.SetNestedField(obj.Object, succeeded, "status", "succeeded")
+	_ = unstructured.SetNestedField(obj.Object, int64(0), "status", "active")
+	_ = unstructured.SetNestedSlice(obj.Object,
+		[]any{map[string]any{"type": "Complete", "status": "True"}}, "status", "conditions")
+}
+
+// markPodSucceededLocked drives a Pod to the completed (Succeeded) terminal
+// state used by Job pods. Callers hold s.mu.
+func (s *ClusterState) markPodSucceededLocked(pod *corev1.Pod) {
+	s.markPodRunningLocked(pod)
+
+	now := metav1.NewTime(time.Now())
+	pod.Status.Phase = corev1.PodSucceeded
+
+	for i := range pod.Status.ContainerStatuses {
+		pod.Status.ContainerStatuses[i].Ready = false
+		pod.Status.ContainerStatuses[i].State = corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 0, Reason: "Completed", StartedAt: now, FinishedAt: now,
+			},
+		}
+	}
+}
+
 // syncStatefulSetPVCsLocked creates a Bound PVC per (volumeClaimTemplate,
 // ordinal) named "<template>-<sts>-<ordinal>", owned by the StatefulSet.
 func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured, replicas int) {

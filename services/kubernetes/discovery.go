@@ -44,29 +44,21 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 		return true
 
 	case "/apis":
+		groups := make([]map[string]any, 0)
+		for _, gv := range discoveryGroups() {
+			groups = append(groups, apiGroup(gv.group, gv.version))
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
 			"kind":       "APIGroupList",
 			"apiVersion": "v1",
-			"groups": []map[string]any{
-				apiGroup("apps", "v1"),
-				apiGroup("policy", "v1"),
-			},
+			"groups":     groups,
 		})
 
 		return true
 
 	case "/api/v1":
 		writeJSON(w, http.StatusOK, apiResourceList("", "v1", coreResources()))
-
-		return true
-
-	case "/apis/apps/v1":
-		writeJSON(w, http.StatusOK, apiResourceList("apps", "apps/v1", appsResources()))
-
-		return true
-
-	case "/apis/policy/v1":
-		writeJSON(w, http.StatusOK, apiResourceList("policy", "policy/v1", policyResources()))
 
 		return true
 
@@ -109,7 +101,65 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 		return true
 	}
 
+	// Group-version discovery: /apis/<group>/<version>. Derived from the
+	// registry (plus the typed apps/policy groups) so every served group and
+	// its resources — including subresources — are advertised.
+	if res, gv, group, ok := groupVersionDiscovery(r.URL.Path); ok {
+		writeJSON(w, http.StatusOK, apiResourceList(group, gv, res))
+
+		return true
+	}
+
 	return false
+}
+
+// groupVersion pairs an API group with the version this server serves it at.
+type groupVersion struct {
+	group   string
+	version string
+}
+
+// discoveryGroups lists the non-core API groups the server serves, each with a
+// representative version, built from the typed handlers (apps, policy) plus the
+// registry so new groups surface automatically.
+func discoveryGroups() []groupVersion {
+	seen := map[string]bool{"apps": true, "policy": true}
+	out := []groupVersion{{"apps", "v1"}, {"policy", "v1"}}
+
+	for _, d := range registeredResources() {
+		if d.group == "" || seen[d.group] {
+			continue
+		}
+		seen[d.group] = true
+		out = append(out, groupVersion{d.group, d.version})
+	}
+
+	return out
+}
+
+// groupVersionDiscovery returns the resource list for a /apis/<group>/<version>
+// path, or ok=false if the path isn't a served group-version.
+func groupVersionDiscovery(path string) (res []apiResource, groupVersionStr, group string, ok bool) {
+	parts := splitPath(strings.TrimSuffix(path, "/"))
+	if len(parts) != 3 || parts[0] != "apis" {
+		return nil, "", "", false
+	}
+
+	group, version := parts[1], parts[2]
+
+	switch {
+	case group == "apps" && version == "v1":
+		return appsResources(), "apps/v1", "apps", true
+	case group == "policy" && version == "v1":
+		return policyResources(), "policy/v1", "policy", true
+	default:
+		r := registryAPIResources(group, version)
+		if len(r) == 0 {
+			return nil, "", "", false
+		}
+
+		return r, group + "/" + version, group, true
+	}
 }
 
 func apiGroup(name, version string) map[string]any {
