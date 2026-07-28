@@ -106,6 +106,13 @@ func (*APIServer) Matches(r *http.Request) bool {
 // into the matching ClusterState's handler. Unknown UIDs return 404 in the
 // Kubernetes Status shape so client-go decodes the error correctly.
 func (s *APIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// OpenAPI is cluster-independent and its v3 serverRelativeURL follow-ups
+	// arrive without the /k8s/<uid> prefix, so answer them here before the UID
+	// dispatch (which would 404 on the missing cluster segment).
+	if serveOpenAPI(w, r) {
+		return
+	}
+
 	rest := strings.TrimPrefix(r.URL.Path, pathPrefix)
 
 	slash := strings.IndexByte(rest, '/')

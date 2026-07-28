@@ -62,32 +62,9 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 
 		return true
 
-	// helm validates rendered manifests against the server's OpenAPI schema
-	// unless the caller passes --disable-openapi-validation. Without this
-	// endpoint `helm install` fails at "failed to download openapi: the server
-	// could not find the requested resource" — after successfully rendering
-	// the chart, which makes it look like a chart problem rather than a
-	// missing server capability.
-	//
-	// The document is intentionally MINIMAL: a valid Swagger 2.0 envelope with
-	// no definitions. helm's validator skips kinds it finds no schema for, so
-	// an empty definitions map means "nothing to contradict" rather than
-	// "everything is invalid". Publishing hand-written partial schemas would be
-	// worse — a subtly wrong schema rejects valid manifests, and the emulator
-	// would be asserting API shapes it does not actually enforce.
-	case "/openapi/v2":
-		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w, http.StatusOK, map[string]any{
-			"swagger": "2.0",
-			"info": map[string]any{
-				"title":   "cloudemu-kubernetes",
-				"version": "v1.29.0-cloudemu",
-			},
-			"paths":       map[string]any{},
-			"definitions": map[string]any{},
-		})
-
-		return true
+	// OpenAPI (v2 JSON/protobuf and v3) is served cluster-independently by
+	// serveOpenAPI, intercepted in APIServer.ServeHTTP before this handler —
+	// helm and kubectl both validate rendered manifests against it.
 
 	// /version is not discovery proper, but kubectl and helm both probe it and
 	// some code paths refuse to proceed without a parseable server version.
@@ -249,7 +226,7 @@ func registryAPIResources(group, version string) []apiResource {
 			continue
 		}
 
-		out = append(out, apiResource{d.plural, strings.ToLower(d.kind), d.kind, d.namespaced, rwVerbs(), nil})
+		out = append(out, apiResource{d.plural, strings.ToLower(d.kind), d.kind, d.namespaced, rwVerbs(), registryShortNames[d.plural]})
 
 		if d.hasStatus {
 			out = append(out, apiResource{
@@ -268,6 +245,25 @@ func registryAPIResources(group, version string) []apiResource {
 }
 
 func subresourceVerbs() []string { return []string{"get", "patch", "update"} }
+
+// registryShortNames maps a registry resource's plural to the kubectl short
+// names real clusters advertise, so `kubectl get pvc/hpa/sts/...` resolves.
+var registryShortNames = map[string][]string{
+	"persistentvolumeclaims":   {"pvc"},
+	"persistentvolumes":        {"pv"},
+	"horizontalpodautoscalers": {"hpa"},
+	"statefulsets":             {"sts"},
+	"replicasets":              {"rs"},
+	"daemonsets":               {"ds"},
+	"cronjobs":                 {"cj"},
+	"ingresses":                {"ing"},
+	"networkpolicies":          {"netpol"},
+	"storageclasses":           {"sc"},
+	"resourcequotas":           {"quota"},
+	"limitranges":              {"limits"},
+	"events":                   {"ev"},
+	"nodes":                    {"no"},
+}
 
 func policyResources() []apiResource {
 	// Only the verbs pdb.go implements. Advertising watch would have client-go

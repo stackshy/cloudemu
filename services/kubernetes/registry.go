@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -370,17 +371,6 @@ func (st *registryStore) bumpRVLocked() { st.rv++ }
 func (s *ClusterState) applyUnstructuredPatch(
 	w http.ResponseWriter, r *http.Request, cur *unstructured.Unstructured,
 ) (*unstructured.Unstructured, bool) {
-	switch ct := r.Header.Get("Content-Type"); ct {
-	case "", contentTypeJSON, contentTypeJSONMergePatch,
-		"application/strategic-merge-patch+json", "application/apply-patch+yaml":
-		// strategic-merge and apply are accepted and applied as an RFC 7396
-		// merge — the mock has no strategic metadata or field managers.
-	default:
-		writeBadRequest(w, "k8s api: unsupported patch content-type: "+ct)
-
-		return nil, false
-	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeBadRequest(w, "k8s api: read patch body: "+err.Error())
@@ -395,18 +385,42 @@ func (s *ClusterState) applyUnstructuredPatch(
 		return nil, false
 	}
 
-	merged, err := mergePatch(curBytes, body)
-	if err != nil {
-		writeBadRequest(w, "k8s api: apply patch: "+err.Error())
+	// JSONPatch (RFC 6902) is op-based; everything else (merge, strategic-merge,
+	// apply) is applied as an RFC 7396 merge — unstructured has no struct tags
+	// for real strategic merging, so strategic degrades to merge (documented).
+	var merged []byte
+	switch ct := r.Header.Get("Content-Type"); ct {
+	case contentTypeJSONPatch:
+		merged, ok := applyRFC6902(w, curBytes, body)
+		if !ok {
+			return nil, false
+		}
+
+		return decodeUnstructured(w, merged)
+	case "", contentTypeJSON, contentTypeJSONMergePatch,
+		contentTypeStrategicMerge, contentTypeApplyPatch:
+		merged, err = mergePatch(curBytes, body)
+		if err != nil {
+			writeBadRequest(w, "k8s api: apply patch: "+err.Error())
+
+			return nil, false
+		}
+	default:
+		writeBadRequest(w, "k8s api: unsupported patch content-type: "+ct)
 
 		return nil, false
 	}
 
-	// Decode via Unstructured (not plain json.Unmarshal into a map): the
-	// unstructured scheme preserves whole-number JSON as int64, whereas
-	// encoding/json yields float64. unstructured.NestedInt64 accepts only int64,
-	// so a float64 would make every integer field (notably spec.replicas) read
-	// as 0 — a merge-patch to scale up would silently scale the workload to zero.
+	return decodeUnstructured(w, merged)
+}
+
+// decodeUnstructured decodes patched JSON via Unstructured (not plain
+// json.Unmarshal into a map): the unstructured scheme preserves whole-number
+// JSON as int64, whereas encoding/json yields float64. unstructured.NestedInt64
+// accepts only int64, so a float64 would make every integer field (notably
+// spec.replicas) read as 0 — a merge-patch to scale up would silently scale the
+// workload to zero.
+func decodeUnstructured(w http.ResponseWriter, merged []byte) (*unstructured.Unstructured, bool) {
 	out := &unstructured.Unstructured{}
 	if err := out.UnmarshalJSON(merged); err != nil {
 		writeBadRequest(w, "k8s api: decode patched object: "+err.Error())
@@ -415,6 +429,25 @@ func (s *ClusterState) applyUnstructuredPatch(
 	}
 
 	return out, true
+}
+
+// applyRFC6902 applies a JSONPatch (RFC 6902) op array to curBytes.
+func applyRFC6902(w http.ResponseWriter, curBytes, patch []byte) ([]byte, bool) {
+	p, err := jsonpatch.DecodePatch(patch)
+	if err != nil {
+		writeBadRequest(w, "k8s api: decode json patch: "+err.Error())
+
+		return nil, false
+	}
+
+	merged, err := p.Apply(curBytes)
+	if err != nil {
+		writeBadRequest(w, "k8s api: apply json patch: "+err.Error())
+
+		return nil, false
+	}
+
+	return merged, true
 }
 
 // specChanged reports whether the two objects' spec differ (used to decide
