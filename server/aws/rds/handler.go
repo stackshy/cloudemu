@@ -88,6 +88,12 @@ var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DeregisterDBProxyTargets":         {},
 	"DescribeDBProxyTargets":           {},
 	"DescribeDBProxyTargetGroups":      {},
+	"CreateEventSubscription":          {},
+	"DescribeEventSubscriptions":       {},
+	"ModifyEventSubscription":          {},
+	"DeleteEventSubscription":          {},
+	"DescribeEvents":                   {},
+	"DescribeEventCategories":          {},
 }
 
 // Handler serves RDS query-protocol requests.
@@ -250,6 +256,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeDBProxyTargets(w, r)
 	case "DescribeDBProxyTargetGroups":
 		h.describeDBProxyTargetGroups(w, r)
+	case "CreateEventSubscription":
+		h.createEventSubscription(w, r)
+	case "DescribeEventSubscriptions":
+		h.describeEventSubscriptions(w, r)
+	case "ModifyEventSubscription":
+		h.modifyEventSubscription(w, r)
+	case "DeleteEventSubscription":
+		h.deleteEventSubscription(w, r)
+	case "DescribeEvents":
+		h.describeEvents(w, r)
+	case "DescribeEventCategories":
+		h.describeEventCategories(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown RDS action: "+action)
@@ -292,6 +310,8 @@ func notFoundCode(err error) string {
 		return "OptionGroupNotFoundFault"
 	case strings.Contains(msg, "DB proxy"):
 		return "DBProxyNotFoundFault"
+	case strings.Contains(msg, "event subscription"):
+		return "SubscriptionNotFoundFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceNotFound"
 	case strings.Contains(msg, "DB cluster snapshot"):
@@ -317,6 +337,8 @@ func alreadyExistsCode(err error) string {
 		return "OptionGroupAlreadyExistsFault"
 	case strings.Contains(msg, "DB proxy"):
 		return "DBProxyAlreadyExistsFault"
+	case strings.Contains(msg, "event subscription"):
+		return "SubscriptionAlreadyExistFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceAlreadyExists"
 	case strings.Contains(msg, "DB cluster snapshot"):

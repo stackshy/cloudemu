@@ -464,6 +464,66 @@ type DBProxy struct {
 	Targets             []ProxyTarget
 }
 
+// EventSubscriptionConfig configures a new RDS event subscription.
+type EventSubscriptionConfig struct {
+	Name            string
+	SnsTopicARN     string
+	SourceType      string // "db-instance", "db-cluster", "db-snapshot", …
+	EventCategories []string
+	SourceIDs       []string
+	Enabled         bool
+	Tags            map[string]string
+}
+
+// EventSubscription is an RDS event notification subscription.
+type EventSubscription struct {
+	Name            string
+	ARN             string
+	CustomerAWSID   string
+	SnsTopicARN     string
+	SourceType      string
+	Status          string
+	EventCategories []string
+	SourceIDs       []string
+	Enabled         bool
+	CreatedAt       time.Time
+}
+
+// ModifyEventSubscriptionInput holds modifiable subscription attributes; nil /
+// zero fields mean "no change".
+type ModifyEventSubscriptionInput struct {
+	SnsTopicARN     string
+	SourceType      string
+	EventCategories []string
+	Enabled         *bool
+}
+
+// Event is a single RDS event.
+type Event struct {
+	SourceIdentifier string
+	SourceType       string
+	Message          string
+	EventCategories  []string
+	Date             time.Time
+}
+
+// EventCategoryGroup lists the event categories available for a source type.
+type EventCategoryGroup struct {
+	SourceType      string
+	EventCategories []string
+}
+
+// EventSubscriptions is an OPTIONAL capability for RDS event subscriptions and
+// event queries, discovered by type assertion.
+type EventSubscriptions interface {
+	CreateEventSubscription(ctx context.Context, cfg EventSubscriptionConfig) (*EventSubscription, error)
+	DescribeEventSubscriptions(ctx context.Context, names []string) ([]EventSubscription, error)
+	ModifyEventSubscription(ctx context.Context, name string, input ModifyEventSubscriptionInput) (*EventSubscription, error)
+	DeleteEventSubscription(ctx context.Context, name string) (*EventSubscription, error)
+	DescribeEvents(ctx context.Context, sourceType, sourceIdentifier string, categories []string) ([]Event, error)
+	DescribeEventCategories(ctx context.Context, sourceType string) ([]EventCategoryGroup, error)
+}
+
 // DBProxies is an OPTIONAL capability for RDS Proxy, discovered by type
 // assertion. A proxy has a single implicit "default" target group.
 type DBProxies interface {
