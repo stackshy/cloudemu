@@ -77,7 +77,12 @@ func (m *Mock) DescribeEventSubscriptions(_ context.Context, names []string) ([]
 	defer m.mu.RUnlock()
 
 	if len(names) == 0 {
-		return m.eventSubs.SortedValues(), nil
+		all := m.eventSubs.SortedValues()
+		for i := range all {
+			all[i] = cloneEventSub(all[i])
+		}
+
+		return all, nil
 	}
 
 	out := make([]rdsdriver.EventSubscription, 0, len(names))
@@ -88,10 +93,21 @@ func (m *Mock) DescribeEventSubscriptions(_ context.Context, names []string) ([]
 			return nil, errEventSubscriptionNotFound(name)
 		}
 
-		out = append(out, sub)
+		out = append(out, cloneEventSub(sub))
 	}
 
 	return out, nil
+}
+
+// cloneEventSub copies the subscription's slice fields so a returned value
+// never aliases the store.
+//
+//nolint:gocritic // takes a value on purpose: it returns an independent copy.
+func cloneEventSub(s rdsdriver.EventSubscription) rdsdriver.EventSubscription {
+	s.EventCategories = cloneSlice(s.EventCategories)
+	s.SourceIDs = cloneSlice(s.SourceIDs)
+
+	return s
 }
 
 func (m *Mock) ModifyEventSubscription(

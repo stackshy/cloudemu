@@ -3,6 +3,7 @@ package rds
 import (
 	"context"
 	"sort"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -10,6 +11,19 @@ import (
 )
 
 var _ rdsdriver.OptionGroups = (*Mock)(nil)
+
+// optionGroupInUseBy names an instance still attached to the given option
+// group, if any.
+func (m *Mock) optionGroupInUseBy(name string) (string, bool) {
+	instances := m.instances.All()
+	for id := range instances {
+		if instances[id].OptionGroupName == name {
+			return id, true
+		}
+	}
+
+	return "", false
+}
 
 func optionGroupARN(region, accountID, name string) string {
 	return idgen.AWSARN("rds", region, accountID, "og:"+name)
@@ -71,16 +85,15 @@ func (m *Mock) DescribeOptionGroups(_ context.Context, names []string, engineNam
 	if len(names) == 0 {
 		all := m.optionGroups.SortedValues()
 
-		if engineName == "" {
-			return all, nil
-		}
-
 		filtered := make([]rdsdriver.OptionGroup, 0, len(all))
 
 		for _, og := range all {
-			if og.EngineName == engineName {
-				filtered = append(filtered, og)
+			if engineName != "" && og.EngineName != engineName {
+				continue
 			}
+
+			og.Options = cloneSlice(og.Options)
+			filtered = append(filtered, og)
 		}
 
 		return filtered, nil
@@ -94,6 +107,7 @@ func (m *Mock) DescribeOptionGroups(_ context.Context, names []string, engineNam
 			return nil, errOptionGroupNotFound(name)
 		}
 
+		og.Options = cloneSlice(og.Options)
 		out = append(out, og)
 	}
 
@@ -143,6 +157,15 @@ func (m *Mock) ModifyOptionGroup(
 func (m *Mock) DeleteOptionGroup(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// AWS names default option groups "default:<engine>-<major>-<minor>".
+	if strings.HasPrefix(name, "default:") {
+		return cerrors.Newf(cerrors.FailedPrecondition, "option group %q is a default group and cannot be deleted", name)
+	}
+
+	if user, ok := m.optionGroupInUseBy(name); ok {
+		return cerrors.Newf(cerrors.FailedPrecondition, "option group %q is in use by DB instance %q", name, user)
+	}
 
 	if !m.optionGroups.Delete(name) {
 		return errOptionGroupNotFound(name)

@@ -92,6 +92,26 @@ func TestDBProxyLifecycle(t *testing.T) {
 	}
 }
 
+func TestDescribeDBProxiesReturnsIndependentCopies(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateDBProxy(ctx, rdsdriver.DBProxyConfig{
+		Name: "px", EngineFamily: "MYSQL", VPCSubnetIDs: []string{"s1", "s2"},
+	}); err != nil {
+		t.Fatalf("CreateDBProxy: %v", err)
+	}
+
+	// Mutating a returned slice must not corrupt the store (copy-on-read).
+	got, _ := m.DescribeDBProxies(ctx, []string{"px"})
+	got[0].VPCSubnetIDs[0] = "MUTATED"
+
+	again, _ := m.DescribeDBProxies(ctx, []string{"px"})
+	if again[0].VPCSubnetIDs[0] != "s1" {
+		t.Fatalf("returned slice aliased the store: %v", again[0].VPCSubnetIDs)
+	}
+}
+
 func TestDBProxyErrors(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

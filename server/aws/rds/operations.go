@@ -13,23 +13,25 @@ import (
 // CreateDBInstance and as the basis for ModifyDBInstance.
 func instanceConfigFromForm(form url.Values) rdsdriver.InstanceConfig {
 	return rdsdriver.InstanceConfig{
-		ID:                 form.Get("DBInstanceIdentifier"),
-		Engine:             form.Get("Engine"),
-		EngineVersion:      form.Get("EngineVersion"),
-		InstanceClass:      form.Get("DBInstanceClass"),
-		AllocatedStorage:   formInt(form.Get("AllocatedStorage")),
-		StorageType:        form.Get("StorageType"),
-		MasterUsername:     form.Get("MasterUsername"),
-		MasterUserPassword: form.Get("MasterUserPassword"),
-		DBName:             form.Get("DBName"),
-		Port:               formInt(form.Get("Port")),
-		MultiAZ:            formBool(form.Get("MultiAZ")),
-		PubliclyAccessible: formBool(form.Get("PubliclyAccessible")),
-		VPCSecurityGroups:  awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
-		SubnetGroupName:    form.Get("DBSubnetGroupName"),
-		ClusterID:          form.Get("DBClusterIdentifier"),
-		AvailabilityZone:   form.Get("AvailabilityZone"),
-		Tags:               parseRDSTags(form),
+		ID:                   form.Get("DBInstanceIdentifier"),
+		Engine:               form.Get("Engine"),
+		EngineVersion:        form.Get("EngineVersion"),
+		InstanceClass:        form.Get("DBInstanceClass"),
+		AllocatedStorage:     formInt(form.Get("AllocatedStorage")),
+		StorageType:          form.Get("StorageType"),
+		MasterUsername:       form.Get("MasterUsername"),
+		MasterUserPassword:   form.Get("MasterUserPassword"),
+		DBName:               form.Get("DBName"),
+		Port:                 formInt(form.Get("Port")),
+		MultiAZ:              formBool(form.Get("MultiAZ")),
+		PubliclyAccessible:   formBool(form.Get("PubliclyAccessible")),
+		VPCSecurityGroups:    awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
+		SubnetGroupName:      form.Get("DBSubnetGroupName"),
+		DBParameterGroupName: form.Get("DBParameterGroupName"),
+		OptionGroupName:      form.Get("OptionGroupName"),
+		ClusterID:            form.Get("DBClusterIdentifier"),
+		AvailabilityZone:     form.Get("AvailabilityZone"),
+		Tags:                 parseRDSTags(form),
 	}
 }
 
@@ -235,16 +237,17 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
 	cfg := rdsdriver.ClusterConfig{
-		ID:                 form.Get("DBClusterIdentifier"),
-		Engine:             form.Get("Engine"),
-		EngineVersion:      form.Get("EngineVersion"),
-		MasterUsername:     form.Get("MasterUsername"),
-		MasterUserPassword: form.Get("MasterUserPassword"),
-		DatabaseName:       form.Get("DatabaseName"),
-		Port:               formInt(form.Get("Port")),
-		VPCSecurityGroups:  awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
-		SubnetGroupName:    form.Get("DBSubnetGroupName"),
-		Tags:               parseRDSTags(form),
+		ID:                          form.Get("DBClusterIdentifier"),
+		Engine:                      form.Get("Engine"),
+		EngineVersion:               form.Get("EngineVersion"),
+		MasterUsername:              form.Get("MasterUsername"),
+		MasterUserPassword:          form.Get("MasterUserPassword"),
+		DatabaseName:                form.Get("DatabaseName"),
+		Port:                        formInt(form.Get("Port")),
+		VPCSecurityGroups:           awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
+		SubnetGroupName:             form.Get("DBSubnetGroupName"),
+		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
+		Tags:                        parseRDSTags(form),
 	}
 
 	cluster, err := h.db.CreateCluster(r.Context(), cfg)

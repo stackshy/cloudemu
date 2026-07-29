@@ -70,23 +70,33 @@ func (m *Mock) DescribeDBClusterEndpoints(_ context.Context, clusterID, endpoint
 			return nil, cerrors.Newf(cerrors.NotFound, "DB cluster endpoint %q not found", endpointID)
 		}
 
-		return []rdsdriver.ClusterEndpoint{ep}, nil
+		return []rdsdriver.ClusterEndpoint{cloneEndpoint(ep)}, nil
 	}
 
 	all := m.clusterEndpoints.SortedValues()
-	if clusterID == "" {
-		return all, nil
-	}
 
 	out := make([]rdsdriver.ClusterEndpoint, 0, len(all))
 
 	for i := range all {
-		if all[i].ClusterID == clusterID {
-			out = append(out, all[i])
+		if clusterID != "" && all[i].ClusterID != clusterID {
+			continue
 		}
+
+		out = append(out, cloneEndpoint(all[i]))
 	}
 
 	return out, nil
+}
+
+// cloneEndpoint copies the endpoint's member slices so a returned endpoint
+// never aliases the store.
+//
+//nolint:gocritic // takes a value on purpose: it returns an independent copy.
+func cloneEndpoint(ep rdsdriver.ClusterEndpoint) rdsdriver.ClusterEndpoint {
+	ep.StaticMembers = cloneSlice(ep.StaticMembers)
+	ep.ExcludedMembers = cloneSlice(ep.ExcludedMembers)
+
+	return ep
 }
 
 func (m *Mock) ModifyDBClusterEndpoint(
@@ -225,7 +235,12 @@ func (m *Mock) DescribeGlobalClusters(_ context.Context, ids []string) ([]rdsdri
 	defer m.mu.RUnlock()
 
 	if len(ids) == 0 {
-		return m.globalClusters.SortedValues(), nil
+		all := m.globalClusters.SortedValues()
+		for i := range all {
+			all[i].Members = cloneSlice(all[i].Members)
+		}
+
+		return all, nil
 	}
 
 	out := make([]rdsdriver.GlobalCluster, 0, len(ids))
@@ -236,6 +251,7 @@ func (m *Mock) DescribeGlobalClusters(_ context.Context, ids []string) ([]rdsdri
 			return nil, cerrors.Newf(cerrors.NotFound, "global cluster %q not found", id)
 		}
 
+		gc.Members = cloneSlice(gc.Members)
 		out = append(out, gc)
 	}
 

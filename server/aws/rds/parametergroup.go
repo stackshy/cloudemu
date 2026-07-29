@@ -435,6 +435,7 @@ func (h *Handler) createDBClusterParameterGroup(w http.ResponseWriter, r *http.R
 	})
 }
 
+//nolint:dupl // structurally mirrors the other describe-list wire handlers by design.
 func (h *Handler) describeDBClusterParameterGroups(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {

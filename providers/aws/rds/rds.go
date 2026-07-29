@@ -178,6 +178,17 @@ func clusterSnapshotARN(region, accountID, id string) string {
 	return idgen.AWSARN("rds", region, accountID, "cluster-snapshot:"+id)
 }
 
+// cloneSlice returns a shallow copy of s (nil for empty), so a slice returned
+// by a Describe call never aliases the store's backing array — a caller
+// mutating the result can't corrupt internal state.
+func cloneSlice[T any](s []T) []T {
+	if len(s) == 0 {
+		return nil
+	}
+
+	return append([]T(nil), s...)
+}
+
 func copyTags(src map[string]string) map[string]string {
 	if src == nil {
 		return nil
@@ -237,26 +248,28 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 	}
 
 	inst := rdsdriver.Instance{
-		ID:                 cfg.ID,
-		ARN:                instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:             cfg.Engine,
-		EngineVersion:      cfg.EngineVersion,
-		InstanceClass:      instanceClass,
-		AllocatedStorage:   storage,
-		StorageType:        storageType,
-		MasterUsername:     cfg.MasterUsername,
-		DBName:             cfg.DBName,
-		Endpoint:           endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
-		Port:               port,
-		State:              rdsdriver.StateAvailable,
-		MultiAZ:            cfg.MultiAZ,
-		PubliclyAccessible: cfg.PubliclyAccessible,
-		VPCSecurityGroups:  append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:    cfg.SubnetGroupName,
-		ClusterID:          cfg.ClusterID,
-		AvailabilityZone:   cfg.AvailabilityZone,
-		CreatedAt:          m.opts.Clock.Now().UTC(),
-		Tags:               copyTags(cfg.Tags),
+		ID:                   cfg.ID,
+		ARN:                  instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:               cfg.Engine,
+		EngineVersion:        cfg.EngineVersion,
+		InstanceClass:        instanceClass,
+		AllocatedStorage:     storage,
+		StorageType:          storageType,
+		MasterUsername:       cfg.MasterUsername,
+		DBName:               cfg.DBName,
+		Endpoint:             endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
+		Port:                 port,
+		State:                rdsdriver.StateAvailable,
+		MultiAZ:              cfg.MultiAZ,
+		PubliclyAccessible:   cfg.PubliclyAccessible,
+		VPCSecurityGroups:    append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:      cfg.SubnetGroupName,
+		DBParameterGroupName: cfg.DBParameterGroupName,
+		OptionGroupName:      cfg.OptionGroupName,
+		ClusterID:            cfg.ClusterID,
+		AvailabilityZone:     cfg.AvailabilityZone,
+		CreatedAt:            m.opts.Clock.Now().UTC(),
+		Tags:                 copyTags(cfg.Tags),
 	}
 
 	m.instances.Set(cfg.ID, inst)
@@ -471,20 +484,21 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 	}
 
 	cluster := rdsdriver.Cluster{
-		ID:                cfg.ID,
-		ARN:               clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:            cfg.Engine,
-		EngineVersion:     cfg.EngineVersion,
-		MasterUsername:    cfg.MasterUsername,
-		DatabaseName:      cfg.DatabaseName,
-		Endpoint:          endpointFor(cfg.ID, m.opts.Region, "cluster"),
-		ReaderEndpoint:    endpointFor(cfg.ID, m.opts.Region, "cluster-ro"),
-		Port:              port,
-		State:             rdsdriver.StateAvailable,
-		VPCSecurityGroups: append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:   cfg.SubnetGroupName,
-		CreatedAt:         m.opts.Clock.Now().UTC(),
-		Tags:              copyTags(cfg.Tags),
+		ID:                          cfg.ID,
+		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:                      cfg.Engine,
+		EngineVersion:               cfg.EngineVersion,
+		MasterUsername:              cfg.MasterUsername,
+		DatabaseName:                cfg.DatabaseName,
+		Endpoint:                    endpointFor(cfg.ID, m.opts.Region, "cluster"),
+		ReaderEndpoint:              endpointFor(cfg.ID, m.opts.Region, "cluster-ro"),
+		Port:                        port,
+		State:                       rdsdriver.StateAvailable,
+		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:             cfg.SubnetGroupName,
+		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
+		CreatedAt:                   m.opts.Clock.Now().UTC(),
+		Tags:                        copyTags(cfg.Tags),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)

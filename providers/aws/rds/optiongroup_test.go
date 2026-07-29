@@ -74,6 +74,27 @@ func TestOptionGroupLifecycle(t *testing.T) {
 	}
 }
 
+func TestDeleteOptionGroupGuards(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateOptionGroup(ctx, rdsdriver.OptionGroupConfig{Name: "og", EngineName: "mysql"}); err != nil {
+		t.Fatalf("CreateOptionGroup: %v", err)
+	}
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "db", Engine: "mysql", OptionGroupName: "og"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if err := m.DeleteOptionGroup(ctx, "og"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete in-use option group: want FailedPrecondition, got %v", err)
+	}
+
+	if err := m.DeleteOptionGroup(ctx, "default:mysql-8-0"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete default option group: want FailedPrecondition, got %v", err)
+	}
+}
+
 func TestOptionGroupCopyAndOptions(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

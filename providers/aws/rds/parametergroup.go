@@ -3,6 +3,7 @@ package rds
 import (
 	"context"
 	"sort"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -10,6 +11,32 @@ import (
 )
 
 var _ rdsdriver.ParameterGroups = (*Mock)(nil)
+
+// dbParameterGroupInUseBy names an instance still attached to the given DB
+// parameter group, if any.
+func (m *Mock) dbParameterGroupInUseBy(name string) (string, bool) {
+	instances := m.instances.All()
+	for id := range instances {
+		if instances[id].DBParameterGroupName == name {
+			return id, true
+		}
+	}
+
+	return "", false
+}
+
+// clusterParameterGroupInUseBy names a cluster still attached to the given DB
+// cluster parameter group, if any.
+func (m *Mock) clusterParameterGroupInUseBy(name string) (string, bool) {
+	clusters := m.clusters.All()
+	for id := range clusters {
+		if clusters[id].DBClusterParameterGroupName == name {
+			return id, true
+		}
+	}
+
+	return "", false
+}
 
 func parameterGroupARN(region, accountID, name string) string {
 	return idgen.AWSARN("rds", region, accountID, "pg:"+name)
@@ -116,13 +143,17 @@ func (m *Mock) CreateDBParameterGroup(_ context.Context, cfg rdsdriver.Parameter
 	return &out, nil
 }
 
-//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) DescribeDBParameterGroups(_ context.Context, names []string) ([]rdsdriver.ParameterGroup, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if len(names) == 0 {
-		return m.paramGroups.SortedValues(), nil
+		all := m.paramGroups.SortedValues()
+		for i := range all {
+			all[i].Parameters = copyParams(all[i].Parameters)
+		}
+
+		return all, nil
 	}
 
 	out := make([]rdsdriver.ParameterGroup, 0, len(names))
@@ -133,6 +164,7 @@ func (m *Mock) DescribeDBParameterGroups(_ context.Context, names []string) ([]r
 			return nil, errParameterGroupNotFound(name)
 		}
 
+		pg.Parameters = copyParams(pg.Parameters)
 		out = append(out, pg)
 	}
 
@@ -159,6 +191,14 @@ func (m *Mock) ModifyDBParameterGroup(_ context.Context, name string, params []r
 func (m *Mock) DeleteDBParameterGroup(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if strings.HasPrefix(name, "default.") {
+		return cerrors.Newf(cerrors.FailedPrecondition, "DB parameter group %q is a default group and cannot be deleted", name)
+	}
+
+	if user, ok := m.dbParameterGroupInUseBy(name); ok {
+		return cerrors.Newf(cerrors.FailedPrecondition, "DB parameter group %q is in use by DB instance %q", name, user)
+	}
 
 	if !m.paramGroups.Delete(name) {
 		return errParameterGroupNotFound(name)
@@ -272,13 +312,17 @@ func (m *Mock) CreateDBClusterParameterGroup(
 	return &out, nil
 }
 
-//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) DescribeDBClusterParameterGroups(_ context.Context, names []string) ([]rdsdriver.ClusterParameterGroup, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if len(names) == 0 {
-		return m.clusterParamGroups.SortedValues(), nil
+		all := m.clusterParamGroups.SortedValues()
+		for i := range all {
+			all[i].Parameters = copyParams(all[i].Parameters)
+		}
+
+		return all, nil
 	}
 
 	out := make([]rdsdriver.ClusterParameterGroup, 0, len(names))
@@ -289,6 +333,7 @@ func (m *Mock) DescribeDBClusterParameterGroups(_ context.Context, names []strin
 			return nil, errClusterParameterGroupNotFound(name)
 		}
 
+		pg.Parameters = copyParams(pg.Parameters)
 		out = append(out, pg)
 	}
 
@@ -317,6 +362,14 @@ func (m *Mock) ModifyDBClusterParameterGroup(
 func (m *Mock) DeleteDBClusterParameterGroup(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if strings.HasPrefix(name, "default.") {
+		return cerrors.Newf(cerrors.FailedPrecondition, "DB cluster parameter group %q is a default group and cannot be deleted", name)
+	}
+
+	if user, ok := m.clusterParameterGroupInUseBy(name); ok {
+		return cerrors.Newf(cerrors.FailedPrecondition, "DB cluster parameter group %q is in use by DB cluster %q", name, user)
+	}
 
 	if !m.clusterParamGroups.Delete(name) {
 		return errClusterParameterGroupNotFound(name)

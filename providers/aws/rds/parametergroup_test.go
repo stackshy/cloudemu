@@ -145,6 +145,55 @@ func TestDBParameterGroupCopy(t *testing.T) {
 	}
 }
 
+func TestParameterGroupDeleteGuards(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateDBParameterGroup(ctx, rdsdriver.ParameterGroupConfig{Name: "pg", Family: "mysql8.0"}); err != nil {
+		t.Fatalf("CreateDBParameterGroup: %v", err)
+	}
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "db", Engine: "mysql", DBParameterGroupName: "pg"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// In use by an instance → refused.
+	if err := m.DeleteDBParameterGroup(ctx, "pg"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete in-use group: want FailedPrecondition, got %v", err)
+	}
+
+	// A default group is protected.
+	if err := m.DeleteDBParameterGroup(ctx, "default.mysql8.0"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete default group: want FailedPrecondition, got %v", err)
+	}
+
+	// Once the instance is gone, the group deletes cleanly.
+	if err := m.DeleteInstance(ctx, "db"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	if err := m.DeleteDBParameterGroup(ctx, "pg"); err != nil {
+		t.Fatalf("delete after detach: %v", err)
+	}
+}
+
+func TestClusterParameterGroupDeleteGuard(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateDBClusterParameterGroup(ctx, rdsdriver.ParameterGroupConfig{Name: "cpg", Family: "aurora-mysql8.0"}); err != nil {
+		t.Fatalf("CreateDBClusterParameterGroup: %v", err)
+	}
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "cl", Engine: "aurora-mysql", DBClusterParameterGroupName: "cpg"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if err := m.DeleteDBClusterParameterGroup(ctx, "cpg"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete in-use cluster group: want FailedPrecondition, got %v", err)
+	}
+}
+
 func TestDBClusterParameterGroupLifecycle(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

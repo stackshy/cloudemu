@@ -33,47 +33,51 @@ const (
 
 // InstanceConfig configures a managed database instance.
 type InstanceConfig struct {
-	ID                 string
-	Engine             string // "mysql", "postgres", "aurora-mysql", "aurora-postgresql", …
-	EngineVersion      string
-	InstanceClass      string // "db.t3.micro", …
-	AllocatedStorage   int    // GiB
-	StorageType        string // "gp2", "io1", …
-	MasterUsername     string
-	MasterUserPassword string
-	DBName             string // optional initial DB name
-	Port               int
-	MultiAZ            bool
-	PubliclyAccessible bool
-	VPCSecurityGroups  []string
-	SubnetGroupName    string
-	ClusterID          string // empty for standalone, set for Aurora cluster members
-	AvailabilityZone   string
-	Tags               map[string]string
+	ID                   string
+	Engine               string // "mysql", "postgres", "aurora-mysql", "aurora-postgresql", …
+	EngineVersion        string
+	InstanceClass        string // "db.t3.micro", …
+	AllocatedStorage     int    // GiB
+	StorageType          string // "gp2", "io1", …
+	MasterUsername       string
+	MasterUserPassword   string
+	DBName               string // optional initial DB name
+	Port                 int
+	MultiAZ              bool
+	PubliclyAccessible   bool
+	VPCSecurityGroups    []string
+	SubnetGroupName      string
+	DBParameterGroupName string
+	OptionGroupName      string
+	ClusterID            string // empty for standalone, set for Aurora cluster members
+	AvailabilityZone     string
+	Tags                 map[string]string
 }
 
 // Instance describes a managed database instance.
 type Instance struct {
-	ID                 string
-	ARN                string
-	Engine             string
-	EngineVersion      string
-	InstanceClass      string
-	AllocatedStorage   int
-	StorageType        string
-	MasterUsername     string
-	DBName             string
-	Endpoint           string
-	Port               int
-	State              string
-	MultiAZ            bool
-	PubliclyAccessible bool
-	VPCSecurityGroups  []string
-	SubnetGroupName    string
-	ClusterID          string
-	AvailabilityZone   string
-	CreatedAt          time.Time
-	Tags               map[string]string
+	ID                   string
+	ARN                  string
+	Engine               string
+	EngineVersion        string
+	InstanceClass        string
+	AllocatedStorage     int
+	StorageType          string
+	MasterUsername       string
+	DBName               string
+	Endpoint             string
+	Port                 int
+	State                string
+	MultiAZ              bool
+	PubliclyAccessible   bool
+	VPCSecurityGroups    []string
+	SubnetGroupName      string
+	DBParameterGroupName string
+	OptionGroupName      string
+	ClusterID            string
+	AvailabilityZone     string
+	CreatedAt            time.Time
+	Tags                 map[string]string
 	// ReadReplicaSource is the identifier of the primary this instance
 	// replicates from; empty for a primary. ReadReplicaTargets lists the
 	// replica identifiers reading from this instance.
@@ -95,35 +99,37 @@ type ModifyInstanceInput struct {
 // ClusterConfig configures an Aurora-style cluster. Members are added by
 // calling CreateInstance with ClusterID set.
 type ClusterConfig struct {
-	ID                 string
-	Engine             string // "aurora-mysql" or "aurora-postgresql"
-	EngineVersion      string
-	MasterUsername     string
-	MasterUserPassword string
-	DatabaseName       string
-	Port               int
-	VPCSecurityGroups  []string
-	SubnetGroupName    string
-	Tags               map[string]string
+	ID                          string
+	Engine                      string // "aurora-mysql" or "aurora-postgresql"
+	EngineVersion               string
+	MasterUsername              string
+	MasterUserPassword          string
+	DatabaseName                string
+	Port                        int
+	VPCSecurityGroups           []string
+	SubnetGroupName             string
+	DBClusterParameterGroupName string
+	Tags                        map[string]string
 }
 
 // Cluster describes an Aurora-style database cluster.
 type Cluster struct {
-	ID                string
-	ARN               string
-	Engine            string
-	EngineVersion     string
-	MasterUsername    string
-	DatabaseName      string
-	Endpoint          string
-	ReaderEndpoint    string
-	Port              int
-	State             string
-	Members           []string // instance IDs
-	VPCSecurityGroups []string
-	SubnetGroupName   string
-	CreatedAt         time.Time
-	Tags              map[string]string
+	ID                          string
+	ARN                         string
+	Engine                      string
+	EngineVersion               string
+	MasterUsername              string
+	DatabaseName                string
+	Endpoint                    string
+	ReaderEndpoint              string
+	Port                        int
+	State                       string
+	Members                     []string // instance IDs
+	VPCSecurityGroups           []string
+	SubnetGroupName             string
+	DBClusterParameterGroupName string
+	CreatedAt                   time.Time
+	Tags                        map[string]string
 }
 
 // SnapshotConfig configures an instance snapshot.

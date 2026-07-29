@@ -70,7 +70,12 @@ func (m *Mock) DescribeDBProxies(_ context.Context, names []string) ([]rdsdriver
 	defer m.mu.RUnlock()
 
 	if len(names) == 0 {
-		return m.proxies.SortedValues(), nil
+		all := m.proxies.SortedValues()
+		for i := range all {
+			all[i] = cloneProxy(all[i])
+		}
+
+		return all, nil
 	}
 
 	out := make([]rdsdriver.DBProxy, 0, len(names))
@@ -81,10 +86,23 @@ func (m *Mock) DescribeDBProxies(_ context.Context, names []string) ([]rdsdriver
 			return nil, errProxyNotFound(name)
 		}
 
-		out = append(out, p)
+		out = append(out, cloneProxy(p))
 	}
 
 	return out, nil
+}
+
+// cloneProxy copies the proxy's slice fields so a returned proxy never aliases
+// the store.
+//
+//nolint:gocritic // takes a value on purpose: it returns an independent copy.
+func cloneProxy(p rdsdriver.DBProxy) rdsdriver.DBProxy {
+	p.Targets = cloneSlice(p.Targets)
+	p.Auth = cloneSlice(p.Auth)
+	p.VPCSubnetIDs = cloneSlice(p.VPCSubnetIDs)
+	p.VPCSecurityGroupIDs = cloneSlice(p.VPCSecurityGroupIDs)
+
+	return p
 }
 
 func (m *Mock) ModifyDBProxy(_ context.Context, name string, input rdsdriver.ModifyDBProxyInput) (*rdsdriver.DBProxy, error) {
