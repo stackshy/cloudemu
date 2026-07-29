@@ -184,9 +184,12 @@ func (m *Mock) CreateEvaluationJob(_ context.Context, cfg driver.EvaluationJobCo
 		OutputDataS3URI:         cfg.OutputDataS3URI,
 		JobDescription:          cfg.JobDescription,
 		CustomerEncryptionKeyID: cfg.CustomerEncryptionKeyID,
-		Status:                  driver.JobCompleted,
-		CreationTime:            now,
-		LastModifiedTime:        now,
+		// Unlike import/copy jobs (which produce an artifact synchronously),
+		// evaluation is long-running, so it starts InProgress and stays there
+		// until StopEvaluationJob transitions it — making Stop a meaningful op.
+		Status:           driver.JobInProgress,
+		CreationTime:     now,
+		LastModifiedTime: now,
 	}
 	m.evalJobs.Set(cfg.JobName, job)
 	m.setTags(jobARN, m.tagsFromMap(cfg.JobTags))
@@ -225,6 +228,13 @@ func (m *Mock) StopEvaluationJob(_ context.Context, jobIdentifier string) error 
 	job := m.findEvalJob(jobIdentifier)
 	if job == nil {
 		return errors.Newf(errors.NotFound, "evaluation job %q not found", jobIdentifier)
+	}
+
+	// Real AWS rejects stopping a job that is no longer in progress with a
+	// ConflictException.
+	if job.Status != driver.JobInProgress {
+		return errors.Newf(errors.FailedPrecondition,
+			"evaluation job %q is in terminal state %q and cannot be stopped", jobIdentifier, job.Status)
 	}
 
 	// Copy-on-write: never mutate the stored pointer in place, so concurrent

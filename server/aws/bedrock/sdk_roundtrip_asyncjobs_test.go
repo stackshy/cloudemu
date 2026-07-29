@@ -237,8 +237,8 @@ func TestSDKEvaluationJobLifecycle(t *testing.T) {
 		t.Fatalf("GetEvaluationJob: %v", err)
 	}
 
-	if got.Status != bedrocktypes.EvaluationJobStatusCompleted {
-		t.Fatalf("got status %q, want Completed", got.Status)
+	if got.Status != bedrocktypes.EvaluationJobStatusInProgress {
+		t.Fatalf("got status %q, want InProgress", got.Status)
 	}
 
 	if got.JobType != bedrocktypes.EvaluationJobTypeAutomated {

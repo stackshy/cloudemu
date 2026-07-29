@@ -35,7 +35,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		// A resource in a conflicting state (e.g. stopping a terminal job) maps
+		// to Bedrock's ConflictException, matching real AWS.
+		writeError(w, http.StatusConflict, "ConflictException", err.Error())
 	case cerrors.IsThrottled(err):
 		writeError(w, http.StatusTooManyRequests, "ThrottlingException", err.Error())
 	default:

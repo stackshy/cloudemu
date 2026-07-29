@@ -97,16 +97,11 @@ func TestSDKMarketplaceModelEndpointLifecycle(t *testing.T) {
 		t.Fatalf("got status %q after register, want REGISTERED", reg.MarketplaceModelEndpoint.Status)
 	}
 
+	// Deregister removes the Bedrock registration: a subsequent Get is NotFound.
 	if _, err = client.DeregisterMarketplaceModelEndpoint(ctx, &awsbedrock.DeregisterMarketplaceModelEndpointInput{
 		EndpointArn: aws.String(arn),
 	}); err != nil {
 		t.Fatalf("DeregisterMarketplaceModelEndpoint: %v", err)
-	}
-
-	if _, err = client.DeleteMarketplaceModelEndpoint(ctx, &awsbedrock.DeleteMarketplaceModelEndpointInput{
-		EndpointArn: aws.String(arn),
-	}); err != nil {
-		t.Fatalf("DeleteMarketplaceModelEndpoint: %v", err)
 	}
 
 	_, err = client.GetMarketplaceModelEndpoint(ctx, &awsbedrock.GetMarketplaceModelEndpointInput{
@@ -115,7 +110,28 @@ func TestSDKMarketplaceModelEndpointLifecycle(t *testing.T) {
 
 	var nfe *bedrocktypes.ResourceNotFoundException
 	if !errors.As(err, &nfe) {
-		t.Fatalf("expected ResourceNotFoundException, got %T: %v", err, err)
+		t.Fatalf("expected ResourceNotFoundException after deregister, got %T: %v", err, err)
+	}
+
+	// Delete also removes an endpoint (exercised over the SDK on a fresh one).
+	create2, err := client.CreateMarketplaceModelEndpoint(ctx, &awsbedrock.CreateMarketplaceModelEndpointInput{
+		EndpointConfig: cfg, EndpointName: aws.String("endpoint-2"), ModelSourceIdentifier: aws.String(source), AcceptEula: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateMarketplaceModelEndpoint(2): %v", err)
+	}
+
+	if _, err = client.DeleteMarketplaceModelEndpoint(ctx, &awsbedrock.DeleteMarketplaceModelEndpointInput{
+		EndpointArn: create2.MarketplaceModelEndpoint.EndpointArn,
+	}); err != nil {
+		t.Fatalf("DeleteMarketplaceModelEndpoint: %v", err)
+	}
+
+	_, err = client.GetMarketplaceModelEndpoint(ctx, &awsbedrock.GetMarketplaceModelEndpointInput{
+		EndpointArn: create2.MarketplaceModelEndpoint.EndpointArn,
+	})
+	if !errors.As(err, &nfe) {
+		t.Fatalf("expected ResourceNotFoundException after delete, got %T: %v", err, err)
 	}
 }
 

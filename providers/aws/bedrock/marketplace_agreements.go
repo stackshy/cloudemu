@@ -136,13 +136,16 @@ func (m *Mock) RegisterMarketplaceModelEndpoint(
 	return &result, nil
 }
 
-// DeregisterMarketplaceModelEndpoint removes the Bedrock registration for an
-// endpoint while leaving the endpoint record (and the underlying, unmodeled
-// SageMaker endpoint) in place, so it can still be described or deleted.
+// DeregisterMarketplaceModelEndpoint removes an endpoint's Bedrock registration.
+// The endpoint is no longer tracked as a marketplace model endpoint, so a
+// subsequent Get returns NotFound (the underlying, unmodeled SageMaker endpoint
+// is unaffected), matching real AWS.
 func (m *Mock) DeregisterMarketplaceModelEndpoint(_ context.Context, endpointARN string) error {
 	if !m.marketplaceEndpoints.Has(endpointARN) {
 		return errors.Newf(errors.NotFound, "marketplace model endpoint %q not found", endpointARN)
 	}
+
+	m.marketplaceEndpoints.Delete(endpointARN)
 
 	return nil
 }

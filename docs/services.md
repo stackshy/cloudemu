@@ -25,7 +25,7 @@ This document lists every service and operation available in CloudEmu across all
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
-| 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
+| 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
 | 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
@@ -1638,13 +1638,14 @@ still sees success.
 | Kubernetes — GCP GKE (control plane) | 26 |
 | Kubernetes — data plane (8 resources × 7 verbs incl. Watch) | 56 |
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
-| Generative AI — AWS Bedrock | 22 |
+| Generative AI — AWS Bedrock (control plane + runtime) | 65 |
+| Generative AI — AWS Bedrock Agent (control plane + runtime) | 32 |
 | Databricks — Azure (control + data plane) | 52 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| **Grand Total** | **972** (+12 optional) |
+| **Grand Total** | **1047** (+12 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

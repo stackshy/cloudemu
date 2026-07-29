@@ -139,7 +139,7 @@ func TestEvaluationJobLifecycle(t *testing.T) {
 	})
 	requireNoError(t, err)
 	assertNotEmpty(t, job.JobARN)
-	assertEqual(t, bedrockdriver.JobCompleted, job.Status)
+	assertEqual(t, bedrockdriver.JobInProgress, job.Status)
 	assertEqual(t, bedrockdriver.EvaluationTypeAutomated, job.JobType)
 
 	got, err := m.GetEvaluationJob(ctx, "eval-1")
@@ -159,6 +159,9 @@ func TestEvaluationJobLifecycle(t *testing.T) {
 	stopped, err := m.GetEvaluationJob(ctx, "eval-1")
 	requireNoError(t, err)
 	assertEqual(t, bedrockdriver.JobStopped, stopped.Status)
+
+	// Stopping a job that is no longer in progress is rejected.
+	assertError(t, m.StopEvaluationJob(ctx, "eval-1"), true)
 
 	assertError(t, m.StopEvaluationJob(ctx, "missing"), true)
 }

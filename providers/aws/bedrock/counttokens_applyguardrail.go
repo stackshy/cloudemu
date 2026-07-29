@@ -37,8 +37,17 @@ func (m *Mock) ApplyGuardrail(_ context.Context, in driver.ApplyGuardrailInput) 
 		return nil, errors.New(errors.InvalidArgument, "guardrailIdentifier is required")
 	}
 
-	if m.findGuardrailRecord(in.GuardrailIdentifier) == nil {
+	rec := m.findGuardrailRecord(in.GuardrailIdentifier)
+	if rec == nil {
 		return nil, errors.Newf(errors.NotFound, "guardrail %q not found", in.GuardrailIdentifier)
+	}
+
+	// A specific numbered version must exist; "" and "DRAFT" resolve to the
+	// working draft, which always exists.
+	if v := in.GuardrailVersion; v != "" && v != guardrailDraftVersion {
+		if _, ok := rec.versionSnapshot(v); !ok {
+			return nil, errors.Newf(errors.NotFound, "guardrail %q version %q not found", in.GuardrailIdentifier, v)
+		}
 	}
 
 	if in.Source != driver.GuardrailSourceInput && in.Source != driver.GuardrailSourceOutput {

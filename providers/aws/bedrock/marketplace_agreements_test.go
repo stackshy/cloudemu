@@ -46,11 +46,22 @@ func TestMarketplaceEndpointLifecycle(t *testing.T) {
 	assertEqual(t, bedrockdriver.MarketplaceEndpointStatusRegistered, reg.Status)
 	assertEqual(t, "arn:model/source-2", reg.ModelSourceIdentifier)
 
+	// Deregister removes the Bedrock registration: a subsequent Get is NotFound.
 	requireNoError(t, m.DeregisterMarketplaceModelEndpoint(ctx, endpoint.EndpointARN))
 
-	requireNoError(t, m.DeleteMarketplaceModelEndpoint(ctx, endpoint.EndpointARN))
-
 	_, err = m.GetMarketplaceModelEndpoint(ctx, endpoint.EndpointARN)
+	assertError(t, err, true)
+
+	// Delete also removes an endpoint (exercised on a fresh one).
+	ep2, err := m.CreateMarketplaceModelEndpoint(ctx, bedrockdriver.MarketplaceEndpointConfig{
+		EndpointName:          "endpoint-2",
+		ModelSourceIdentifier: "arn:aws:sagemaker:us-east-1:aws:hub-content/model/2",
+		EndpointConfig:        []byte(`{"sageMaker":{"instanceType":"ml.m5.large"}}`),
+	})
+	requireNoError(t, err)
+	requireNoError(t, m.DeleteMarketplaceModelEndpoint(ctx, ep2.EndpointARN))
+
+	_, err = m.GetMarketplaceModelEndpoint(ctx, ep2.EndpointARN)
 	assertError(t, err, true)
 }
 

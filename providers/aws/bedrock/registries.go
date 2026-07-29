@@ -48,14 +48,14 @@ func (m *Mock) CreateInferenceProfile(_ context.Context, cfg driver.InferencePro
 // GetInferenceProfile returns an inference profile by ID or ARN.
 func (m *Mock) GetInferenceProfile(_ context.Context, identifier string) (*driver.InferenceProfile, error) {
 	if p, ok := m.inferenceProfiles.Get(identifier); ok {
-		result := *p
+		result := cloneInferenceProfile(p)
 
 		return &result, nil
 	}
 
 	for _, p := range m.inferenceProfiles.All() {
 		if p.ARN == identifier {
-			result := *p
+			result := cloneInferenceProfile(p)
 
 			return &result, nil
 		}
@@ -70,7 +70,7 @@ func (m *Mock) ListInferenceProfiles(_ context.Context) ([]driver.InferenceProfi
 	out := make([]driver.InferenceProfile, 0, len(all))
 
 	for _, p := range all {
-		out = append(out, *p)
+		out = append(out, cloneInferenceProfile(p))
 	}
 
 	return out, nil
@@ -150,7 +150,7 @@ func (m *Mock) GetPromptRouter(_ context.Context, promptRouterARN string) (*driv
 		return nil, errors.Newf(errors.NotFound, "prompt router %q not found", promptRouterARN)
 	}
 
-	result := *router
+	result := clonePromptRouter(router)
 
 	return &result, nil
 }
@@ -161,7 +161,7 @@ func (m *Mock) ListPromptRouters(_ context.Context) ([]driver.PromptRouter, erro
 	out := make([]driver.PromptRouter, 0, len(all))
 
 	for _, router := range all {
-		out = append(out, *router)
+		out = append(out, clonePromptRouter(router))
 	}
 
 	return out, nil
@@ -225,7 +225,7 @@ func (m *Mock) GetAutomatedReasoningPolicy(_ context.Context, policyARN string) 
 		return nil, errors.Newf(errors.NotFound, "automated reasoning policy %q not found", policyARN)
 	}
 
-	result := *policy
+	result := cloneARPolicy(policy)
 
 	return &result, nil
 }
@@ -236,7 +236,7 @@ func (m *Mock) ListAutomatedReasoningPolicies(_ context.Context) ([]driver.Autom
 	out := make([]driver.AutomatedReasoningPolicy, 0, len(all))
 
 	for _, policy := range all {
-		out = append(out, *policy)
+		out = append(out, cloneARPolicy(policy))
 	}
 
 	return out, nil
@@ -294,4 +294,31 @@ func definitionHash(def []byte) string {
 	sum := sha256.Sum256(def)
 
 	return hex.EncodeToString(sum[:])
+}
+
+// cloneInferenceProfile returns a value copy whose Models slice does not alias
+// the stored profile, so callers can't mutate internal state via the result.
+func cloneInferenceProfile(p *driver.InferenceProfile) driver.InferenceProfile {
+	out := *p
+	out.Models = append([]string(nil), p.Models...)
+
+	return out
+}
+
+// clonePromptRouter returns a value copy whose Models slice does not alias the
+// stored router.
+func clonePromptRouter(p *driver.PromptRouter) driver.PromptRouter {
+	out := *p
+	out.Models = append([]string(nil), p.Models...)
+
+	return out
+}
+
+// cloneARPolicy returns a value copy whose PolicyDefinition does not alias the
+// stored policy.
+func cloneARPolicy(p *driver.AutomatedReasoningPolicy) driver.AutomatedReasoningPolicy {
+	out := *p
+	out.PolicyDefinition = copyBytes(p.PolicyDefinition)
+
+	return out
 }
