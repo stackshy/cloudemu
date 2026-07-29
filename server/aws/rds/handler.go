@@ -94,6 +94,16 @@ var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DeleteEventSubscription":          {},
 	"DescribeEvents":                   {},
 	"DescribeEventCategories":          {},
+	"CreateDBClusterEndpoint":          {},
+	"DescribeDBClusterEndpoints":       {},
+	"ModifyDBClusterEndpoint":          {},
+	"DeleteDBClusterEndpoint":          {},
+	"FailoverDBCluster":                {},
+	"CreateGlobalCluster":              {},
+	"DescribeGlobalClusters":           {},
+	"ModifyGlobalCluster":              {},
+	"DeleteGlobalCluster":              {},
+	"RemoveFromGlobalCluster":          {},
 }
 
 // Handler serves RDS query-protocol requests.
@@ -268,6 +278,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeEvents(w, r)
 	case "DescribeEventCategories":
 		h.describeEventCategories(w, r)
+	case "CreateDBClusterEndpoint":
+		h.createDBClusterEndpoint(w, r)
+	case "DescribeDBClusterEndpoints":
+		h.describeDBClusterEndpoints(w, r)
+	case "ModifyDBClusterEndpoint":
+		h.modifyDBClusterEndpoint(w, r)
+	case "DeleteDBClusterEndpoint":
+		h.deleteDBClusterEndpoint(w, r)
+	case "FailoverDBCluster":
+		h.failoverDBCluster(w, r)
+	case "CreateGlobalCluster":
+		h.createGlobalCluster(w, r)
+	case "DescribeGlobalClusters":
+		h.describeGlobalClusters(w, r)
+	case "ModifyGlobalCluster":
+		h.modifyGlobalCluster(w, r)
+	case "DeleteGlobalCluster":
+		h.deleteGlobalCluster(w, r)
+	case "RemoveFromGlobalCluster":
+		h.removeFromGlobalCluster(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown RDS action: "+action)
@@ -312,6 +342,10 @@ func notFoundCode(err error) string {
 		return "DBProxyNotFoundFault"
 	case strings.Contains(msg, "event subscription"):
 		return "SubscriptionNotFoundFault"
+	case strings.Contains(msg, "DB cluster endpoint"):
+		return "DBClusterEndpointNotFoundFault"
+	case strings.Contains(msg, "global cluster"):
+		return "GlobalClusterNotFoundFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceNotFound"
 	case strings.Contains(msg, "DB cluster snapshot"):
@@ -339,6 +373,10 @@ func alreadyExistsCode(err error) string {
 		return "DBProxyAlreadyExistsFault"
 	case strings.Contains(msg, "event subscription"):
 		return "SubscriptionAlreadyExistFault"
+	case strings.Contains(msg, "DB cluster endpoint"):
+		return "DBClusterEndpointAlreadyExistsFault"
+	case strings.Contains(msg, "global cluster"):
+		return "GlobalClusterAlreadyExistsFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceAlreadyExists"
 	case strings.Contains(msg, "DB cluster snapshot"):

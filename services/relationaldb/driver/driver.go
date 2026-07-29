@@ -536,3 +536,82 @@ type DBProxies interface {
 	DescribeDBProxyTargets(ctx context.Context, name, targetGroup string) ([]ProxyTarget, error)
 	DescribeDBProxyTargetGroups(ctx context.Context, name string) ([]ProxyTargetGroup, error)
 }
+
+// ClusterEndpointConfig configures a custom Aurora cluster endpoint.
+type ClusterEndpointConfig struct {
+	EndpointID      string
+	ClusterID       string
+	EndpointType    string // "READER" | "ANY"
+	StaticMembers   []string
+	ExcludedMembers []string
+}
+
+// ModifyClusterEndpointInput holds modifiable custom-endpoint attributes.
+type ModifyClusterEndpointInput struct {
+	EndpointType    string
+	StaticMembers   []string
+	ExcludedMembers []string
+}
+
+// ClusterEndpoint is a custom Aurora cluster endpoint.
+type ClusterEndpoint struct {
+	EndpointID         string
+	ClusterID          string
+	ARN                string
+	Endpoint           string
+	Status             string
+	EndpointType       string // always "CUSTOM" for user-created endpoints
+	CustomEndpointType string // "READER" | "ANY"
+	StaticMembers      []string
+	ExcludedMembers    []string
+}
+
+// ClusterEndpoints is an OPTIONAL capability for Aurora custom cluster
+// endpoints, discovered by type assertion.
+type ClusterEndpoints interface {
+	CreateDBClusterEndpoint(ctx context.Context, cfg ClusterEndpointConfig) (*ClusterEndpoint, error)
+	DescribeDBClusterEndpoints(ctx context.Context, clusterID, endpointID string) ([]ClusterEndpoint, error)
+	ModifyDBClusterEndpoint(ctx context.Context, endpointID string, input ModifyClusterEndpointInput) (*ClusterEndpoint, error)
+	DeleteDBClusterEndpoint(ctx context.Context, endpointID string) (*ClusterEndpoint, error)
+}
+
+// ClusterFailover is an OPTIONAL capability to fail a cluster over to a
+// specific member, discovered by type assertion.
+type ClusterFailover interface {
+	FailoverDBCluster(ctx context.Context, clusterID, targetInstanceID string) (*Cluster, error)
+}
+
+// GlobalClusterMember is a cluster participating in an Aurora global cluster.
+type GlobalClusterMember struct {
+	DBClusterARN string
+	IsWriter     bool
+}
+
+// GlobalClusterConfig configures a new Aurora global cluster.
+type GlobalClusterConfig struct {
+	ID                string
+	Engine            string
+	EngineVersion     string
+	SourceDBClusterID string // optional primary cluster
+	Tags              map[string]string
+}
+
+// GlobalCluster is an Aurora global (multi-region) cluster.
+type GlobalCluster struct {
+	ID            string
+	ARN           string
+	Engine        string
+	EngineVersion string
+	Status        string
+	Members       []GlobalClusterMember
+}
+
+// GlobalClusters is an OPTIONAL capability for Aurora global clusters,
+// discovered by type assertion.
+type GlobalClusters interface {
+	CreateGlobalCluster(ctx context.Context, cfg GlobalClusterConfig) (*GlobalCluster, error)
+	DescribeGlobalClusters(ctx context.Context, ids []string) ([]GlobalCluster, error)
+	ModifyGlobalCluster(ctx context.Context, id, newID, engineVersion string) (*GlobalCluster, error)
+	DeleteGlobalCluster(ctx context.Context, id string) (*GlobalCluster, error)
+	RemoveFromGlobalCluster(ctx context.Context, id, clusterARN string) (*GlobalCluster, error)
+}
