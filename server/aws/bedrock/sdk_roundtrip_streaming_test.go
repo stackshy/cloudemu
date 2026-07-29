@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsruntime "github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -70,6 +71,90 @@ func TestSDKConverseStream(t *testing.T) {
 
 	if inTokens <= 0 {
 		t.Fatalf("expected positive input token usage, got %d", inTokens)
+	}
+}
+
+// TestSDKConverseStreamMultibyteRuneBoundary streams a completion built from a
+// prompt dense with multi-byte UTF-8 runes and long enough that the delta split
+// point falls in the middle of a multi-byte rune. It asserts the reassembled
+// streamed text is valid UTF-8, carries no U+FFFD replacement characters, and
+// contains the multi-byte prompt substring byte-for-byte. It also compares the
+// streamed text against the non-streaming Converse text for the same prompt.
+func TestSDKConverseStreamMultibyteRuneBoundary(t *testing.T) {
+	client := newRuntimeClient(t)
+
+	// Repeated five times so the byte midpoint of the echoed completion lands
+	// mid-rune, exercising the rune-boundary split (a raw byte split here would
+	// corrupt both halves into U+FFFD).
+	prompt := strings.Repeat("café ☕ 日本語 🎉 naïve résumé ", 5)
+
+	msg := []runtimetypes.Message{
+		{
+			Role:    runtimetypes.ConversationRoleUser,
+			Content: []runtimetypes.ContentBlock{&runtimetypes.ContentBlockMemberText{Value: prompt}},
+		},
+	}
+
+	streamOut, err := client.ConverseStream(context.Background(), &awsruntime.ConverseStreamInput{
+		ModelId:  aws.String(claudeModel),
+		Messages: msg,
+	})
+	if err != nil {
+		t.Fatalf("ConverseStream: %v", err)
+	}
+
+	stream := streamOut.GetStream()
+	defer stream.Close()
+
+	var streamed strings.Builder
+
+	for ev := range stream.Events() {
+		if d, ok := ev.(*runtimetypes.ConverseStreamOutputMemberContentBlockDelta); ok {
+			if td, ok := d.Value.Delta.(*runtimetypes.ContentBlockDeltaMemberText); ok {
+				streamed.WriteString(td.Value)
+			}
+		}
+	}
+
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	got := streamed.String()
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("streamed text is not valid UTF-8: %q", got)
+	}
+
+	if strings.ContainsRune(got, '�') {
+		t.Fatalf("streamed text contains U+FFFD replacement character: %q", got)
+	}
+
+	if !strings.Contains(got, prompt) {
+		t.Fatalf("streamed text does not contain the multi-byte prompt substring\n got: %q\nwant substring: %q", got, prompt)
+	}
+
+	// The non-streaming Converse of the same prompt must yield identical text.
+	convOut, err := client.Converse(context.Background(), &awsruntime.ConverseInput{
+		ModelId:  aws.String(claudeModel),
+		Messages: msg,
+	})
+	if err != nil {
+		t.Fatalf("Converse: %v", err)
+	}
+
+	var nonStreamed strings.Builder
+
+	if out, ok := convOut.Output.(*runtimetypes.ConverseOutputMemberMessage); ok {
+		for _, block := range out.Value.Content {
+			if tb, ok := block.(*runtimetypes.ContentBlockMemberText); ok {
+				nonStreamed.WriteString(tb.Value)
+			}
+		}
+	}
+
+	if got != nonStreamed.String() {
+		t.Fatalf("streamed text != non-streamed text\nstreamed:    %q\nnon-streamed: %q", got, nonStreamed.String())
 	}
 }
 

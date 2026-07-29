@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi"
@@ -135,12 +136,24 @@ func metadataPayload(out *bedrockdriver.ConverseOutput) []byte {
 // chunkText splits s into up to two contentBlockDelta chunks so the emulated
 // stream delivers more than one delta when the text is long enough. It always
 // returns at least one chunk.
+//
+// The split point is advanced to a UTF-8 rune boundary so neither half can
+// contain a truncated multi-byte rune. Splitting on a raw byte offset would
+// leave both halves as invalid UTF-8, which encoding/json then marshals as the
+// U+FFFD replacement character, corrupting the streamed text.
 func chunkText(s string) []string {
 	if len(s) < minSplitLen {
 		return []string{s}
 	}
 
 	mid := len(s) / 2
+	for mid < len(s) && !utf8.RuneStart(s[mid]) {
+		mid++
+	}
+
+	if mid == 0 || mid >= len(s) {
+		return []string{s}
+	}
 
 	return []string{s[:mid], s[mid:]}
 }

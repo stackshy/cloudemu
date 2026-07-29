@@ -89,7 +89,7 @@ func (m *Mock) ListGuardrails(_ context.Context, identifier string) ([]driver.Gu
 		return rec.allSnapshots(), nil
 	}
 
-	all := m.guardrails.All()
+	all := m.guardrails.SortedValues()
 	out := make([]driver.Guardrail, 0, len(all))
 
 	for _, rec := range all {
@@ -112,13 +112,20 @@ func (m *Mock) UpdateGuardrail(_ context.Context, identifier string, cfg driver.
 	rec.mu.Lock()
 	g := rec.draft
 	oldName := g.Name
-	g.Name = orDefault(cfg.Name, g.Name)
+
+	newName := orDefault(cfg.Name, oldName)
+	if newName != oldName && m.guardrails.Has(newName) {
+		rec.mu.Unlock()
+
+		return nil, errors.Newf(errors.AlreadyExists, "guardrail %q already exists", newName)
+	}
+
+	g.Name = newName
 	g.Description = cfg.Description
 	g.BlockedInputMessaging = orDefault(cfg.BlockedInputMessaging, g.BlockedInputMessaging)
 	g.BlockedOutputsMessaging = orDefault(cfg.BlockedOutputsMessaging, g.BlockedOutputsMessaging)
 	g.GuardrailPolicies = deepCopyGuardrailPolicies(cfg.GuardrailPolicies)
 	g.UpdatedAt = m.now()
-	newName := g.Name
 	result := cloneGuardrail(g)
 	rec.mu.Unlock()
 
@@ -255,7 +262,7 @@ func (m *Mock) GetProvisionedModelThroughput(_ context.Context, identifier strin
 
 // ListProvisionedModelThroughputs lists all provisioned throughputs.
 func (m *Mock) ListProvisionedModelThroughputs(_ context.Context) ([]driver.ProvisionedThroughput, error) {
-	all := m.provisioned.All()
+	all := m.provisioned.SortedValues()
 	out := make([]driver.ProvisionedThroughput, 0, len(all))
 
 	for _, pt := range all {
@@ -309,13 +316,38 @@ func (m *Mock) resolveModelARN(id string) string {
 
 // PutModelInvocationLoggingConfiguration sets the invocation logging config.
 func (m *Mock) PutModelInvocationLoggingConfiguration(_ context.Context, cfg driver.LoggingConfig) error {
-	stored := cfg
+	stored := deepCopyLoggingConfig(cfg)
 
 	m.logMu.Lock()
 	m.logging = &stored
 	m.logMu.Unlock()
 
 	return nil
+}
+
+// deepCopyLoggingConfig returns a copy of cfg with its nested pointer fields
+// freshly allocated, so stored and returned configs never alias a caller's
+// pointers. Nil pointers stay nil.
+func deepCopyLoggingConfig(cfg driver.LoggingConfig) driver.LoggingConfig {
+	out := cfg
+
+	if cfg.S3 != nil {
+		s3 := *cfg.S3
+		out.S3 = &s3
+	}
+
+	if cfg.CloudWatch != nil {
+		cw := *cfg.CloudWatch
+
+		if cfg.CloudWatch.LargeDataDeliveryS3 != nil {
+			ldd := *cfg.CloudWatch.LargeDataDeliveryS3
+			cw.LargeDataDeliveryS3 = &ldd
+		}
+
+		out.CloudWatch = &cw
+	}
+
+	return out
 }
 
 // GetModelInvocationLoggingConfiguration returns the invocation logging config,
@@ -328,7 +360,7 @@ func (m *Mock) GetModelInvocationLoggingConfiguration(_ context.Context) (*drive
 		return nil, nil //nolint:nilnil // an unset logging config is a valid, non-error result
 	}
 
-	result := *m.logging
+	result := deepCopyLoggingConfig(*m.logging)
 
 	return &result, nil
 }

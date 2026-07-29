@@ -90,11 +90,39 @@ func TestMarketplaceEndpointValidationAndErrors(t *testing.T) {
 	_, err = m.UpdateMarketplaceModelEndpoint(ctx, "arn:missing", []byte(`{}`))
 	assertError(t, err, true)
 
-	_, err = m.RegisterMarketplaceModelEndpoint(ctx, "arn:missing", "arn:model/s")
+	// Register requires a model source identifier.
+	_, err = m.RegisterMarketplaceModelEndpoint(ctx, "arn:some-endpoint", "")
 	assertError(t, err, true)
 
 	assertError(t, m.DeregisterMarketplaceModelEndpoint(ctx, "arn:missing"), true)
 	assertError(t, m.DeleteMarketplaceModelEndpoint(ctx, "arn:missing"), true)
+}
+
+// TestRegisterMarketplaceEndpointUpsert verifies that registering a brand-new
+// (untracked) endpoint identifier creates a REGISTERED record retrievable by Get.
+func TestRegisterMarketplaceEndpointUpsert(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	const arn = "arn:aws:sagemaker:us-east-1:123456789012:endpoint/external-endpoint"
+
+	reg, err := m.RegisterMarketplaceModelEndpoint(ctx, arn, "arn:model/source-1")
+	requireNoError(t, err)
+	assertEqual(t, arn, reg.EndpointARN)
+	assertEqual(t, "arn:model/source-1", reg.ModelSourceIdentifier)
+	assertEqual(t, bedrockdriver.MarketplaceEndpointStatusRegistered, reg.Status)
+	assertEqual(t, bedrockdriver.MarketplaceEndpointStatusInService, reg.EndpointStatus)
+
+	got, err := m.GetMarketplaceModelEndpoint(ctx, arn)
+	requireNoError(t, err)
+	assertEqual(t, arn, got.EndpointARN)
+	assertEqual(t, "arn:model/source-1", got.ModelSourceIdentifier)
+	assertEqual(t, bedrockdriver.MarketplaceEndpointStatusRegistered, got.Status)
+
+	// Re-registering the now-tracked endpoint updates its model source.
+	reg2, err := m.RegisterMarketplaceModelEndpoint(ctx, arn, "arn:model/source-2")
+	requireNoError(t, err)
+	assertEqual(t, "arn:model/source-2", reg2.ModelSourceIdentifier)
 }
 
 // TestMarketplaceEndpointCopyOut verifies that mutating the EndpointConfig
@@ -165,6 +193,22 @@ func TestFoundationModelAgreementValidation(t *testing.T) {
 
 	_, err = m.CreateFoundationModelAgreement(ctx, titanModel, "")
 	assertError(t, err, true)
+
+	// A model that is not in the catalog is rejected.
+	_, err = m.CreateFoundationModelAgreement(ctx, "bogus.nonexistent-model-v1", "token")
+	assertError(t, err, true)
+
+	// A real catalog model (fetched from ListFoundationModels) succeeds.
+	models, err := m.ListFoundationModels(ctx)
+	requireNoError(t, err)
+
+	if len(models) == 0 {
+		t.Fatal("expected a non-empty foundation model catalog")
+	}
+
+	modelID, err := m.CreateFoundationModelAgreement(ctx, models[0].ModelID, "token")
+	requireNoError(t, err)
+	assertEqual(t, models[0].ModelID, modelID)
 
 	_, err = m.ListFoundationModelAgreementOffers(ctx, "", "ALL")
 	assertError(t, err, true)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/errors"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
 
@@ -79,6 +80,39 @@ func TestGuardrailRenameRekeys(t *testing.T) {
 	list, err := m.ListGuardrails(ctx, "")
 	requireNoError(t, err)
 	assertEqual(t, 1, len(list))
+}
+
+func TestGuardrailRenameCollision(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	a := newGuardrail(t, m, "gr-a")
+	newGuardrail(t, m, "gr-b")
+
+	// Renaming A onto B's name must fail with AlreadyExists and leave both intact.
+	_, err := m.UpdateGuardrail(ctx, a.ID, bedrockdriver.GuardrailConfig{
+		Name:                    "gr-b",
+		BlockedInputMessaging:   "in",
+		BlockedOutputsMessaging: "out",
+	})
+	assertError(t, err, true)
+	if !errors.IsAlreadyExists(err) {
+		t.Fatalf("expected AlreadyExists, got %v", err)
+	}
+
+	// A still exists under its original name, unmodified.
+	gotA, err := m.GetGuardrail(ctx, a.ID, "")
+	requireNoError(t, err)
+	assertEqual(t, "gr-a", gotA.Name)
+
+	// B is intact.
+	gotB, err := m.GetGuardrail(ctx, "gr-b", "")
+	requireNoError(t, err)
+	assertEqual(t, "gr-b", gotB.Name)
+
+	list, err := m.ListGuardrails(ctx, "")
+	requireNoError(t, err)
+	assertEqual(t, 2, len(list))
 }
 
 func TestGuardrailValidation(t *testing.T) {
@@ -276,4 +310,32 @@ func TestModelInvocationLogging(t *testing.T) {
 	if cfg != nil {
 		t.Fatalf("expected nil after delete, got %+v", cfg)
 	}
+}
+
+func TestModelInvocationLoggingCopyOut(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	// The stored config must not alias the caller's nested pointers.
+	in := bedrockdriver.LoggingConfig{
+		S3: &bedrockdriver.S3LoggingConfig{BucketName: "logs", KeyPrefix: "p/"},
+	}
+	requireNoError(t, m.PutModelInvocationLoggingConfiguration(ctx, in))
+
+	// Mutating the caller's config after Put must not change stored state.
+	in.S3.BucketName = "caller-mutated"
+
+	cfg, err := m.GetModelInvocationLoggingConfiguration(ctx)
+	requireNoError(t, err)
+	if cfg == nil || cfg.S3 == nil {
+		t.Fatal("expected logging config with S3")
+	}
+	assertEqual(t, "logs", cfg.S3.BucketName)
+
+	// Mutating a returned config must not corrupt state for the next reader.
+	cfg.S3.BucketName = "reader-mutated"
+
+	again, err := m.GetModelInvocationLoggingConfiguration(ctx)
+	requireNoError(t, err)
+	assertEqual(t, "logs", again.S3.BucketName)
 }

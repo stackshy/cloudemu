@@ -110,8 +110,10 @@ func (m *Mock) DeleteMarketplaceModelEndpoint(_ context.Context, endpointARN str
 	return nil
 }
 
-// RegisterMarketplaceModelEndpoint registers an existing endpoint, marking it
-// REGISTERED.
+// RegisterMarketplaceModelEndpoint registers an externally-created SageMaker
+// endpoint with Bedrock, marking it REGISTERED. This is an upsert: if the
+// endpoint is not already tracked it is created as a new REGISTERED record keyed
+// by endpointIdentifier; if it exists, its model source and status are updated.
 func (m *Mock) RegisterMarketplaceModelEndpoint(
 	_ context.Context, endpointIdentifier, modelSourceIdentifier string,
 ) (*driver.MarketplaceEndpoint, error) {
@@ -119,16 +121,32 @@ func (m *Mock) RegisterMarketplaceModelEndpoint(
 		return nil, errors.New(errors.InvalidArgument, "modelSourceIdentifier is required")
 	}
 
+	now := m.now()
+
 	stored, ok := m.marketplaceEndpoints.Get(endpointIdentifier)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "marketplace model endpoint %q not found", endpointIdentifier)
+		// Not tracked yet: register the externally-created endpoint as a new
+		// REGISTERED record keyed by its identifier.
+		endpoint := &driver.MarketplaceEndpoint{
+			EndpointARN:           endpointIdentifier,
+			ModelSourceIdentifier: modelSourceIdentifier,
+			EndpointStatus:        driver.MarketplaceEndpointStatusInService,
+			Status:                driver.MarketplaceEndpointStatusRegistered,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		}
+		m.marketplaceEndpoints.Set(endpointIdentifier, endpoint)
+
+		result := cloneMarketplaceEndpoint(endpoint)
+
+		return &result, nil
 	}
 
 	// Copy-on-write: mutate a copy so concurrent readers never race the write.
 	updated := *stored
 	updated.ModelSourceIdentifier = modelSourceIdentifier
 	updated.Status = driver.MarketplaceEndpointStatusRegistered
-	updated.UpdatedAt = m.now()
+	updated.UpdatedAt = now
 	m.marketplaceEndpoints.Set(endpointIdentifier, &updated)
 
 	result := cloneMarketplaceEndpoint(&updated)
@@ -159,6 +177,10 @@ func (m *Mock) CreateFoundationModelAgreement(_ context.Context, modelID, offerT
 		return "", errors.New(errors.InvalidArgument, "modelId is required")
 	case offerToken == "":
 		return "", errors.New(errors.InvalidArgument, "offerToken is required")
+	}
+
+	if m.findFoundation(modelID) == nil {
+		return "", errors.Newf(errors.InvalidArgument, "foundation model %q not found", modelID)
 	}
 
 	m.fmAgreements.Set(modelID, true)

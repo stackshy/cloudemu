@@ -52,6 +52,45 @@ func TestGetFoundationModel(t *testing.T) {
 	assertError(t, err, true)
 }
 
+func TestFoundationModelCopyOut(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	// Mutating a returned model's slice must not corrupt the shared seed.
+	fm, err := m.GetFoundationModel(ctx, titanModel)
+	requireNoError(t, err)
+	if len(fm.InputModalities) == 0 {
+		t.Fatal("expected seeded input modalities")
+	}
+	fm.InputModalities[0] = "MUTATED"
+
+	again, err := m.GetFoundationModel(ctx, titanModel)
+	requireNoError(t, err)
+	assertEqual(t, "TEXT", again.InputModalities[0])
+
+	// A different model sharing the same backing seed slice is also unaffected.
+	other, err := m.GetFoundationModel(ctx, "anthropic.claude-3-sonnet-20240229-v1:0")
+	requireNoError(t, err)
+	assertEqual(t, "TEXT", other.InputModalities[0])
+
+	// ListFoundationModels returns independent copies too.
+	list, err := m.ListFoundationModels(ctx)
+	requireNoError(t, err)
+	for i := range list {
+		if len(list[i].InputModalities) > 0 {
+			list[i].InputModalities[0] = "MUTATED"
+		}
+	}
+
+	relist, err := m.ListFoundationModels(ctx)
+	requireNoError(t, err)
+	for i := range relist {
+		if len(relist[i].InputModalities) > 0 {
+			assertEqual(t, "TEXT", relist[i].InputModalities[0])
+		}
+	}
+}
+
 func TestCreateModelCustomizationJob(t *testing.T) {
 	tests := []struct {
 		name      string

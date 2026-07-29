@@ -22,6 +22,12 @@ func (m *Mock) CreateInferenceProfile(_ context.Context, cfg driver.InferencePro
 		return nil, errors.New(errors.InvalidArgument, "modelSource.copyFrom is required")
 	}
 
+	for _, existing := range m.inferenceProfiles.SortedValues() {
+		if existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists, "inference profile %q already exists", cfg.Name)
+		}
+	}
+
 	now := m.now()
 	id := idgen.GenerateID("")
 	arn := idgen.AWSARN("bedrock", m.opts.Region, m.opts.AccountID, "application-inference-profile/"+id)
@@ -189,6 +195,12 @@ func (m *Mock) CreateAutomatedReasoningPolicy(
 ) (*driver.AutomatedReasoningPolicy, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "name is required")
+	}
+
+	for _, existing := range m.arPolicies.SortedValues() {
+		if existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists, "automated reasoning policy %q already exists", cfg.Name)
+		}
 	}
 
 	now := m.now()

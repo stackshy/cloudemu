@@ -61,6 +61,24 @@ func TestInferenceProfileValidation(t *testing.T) {
 	assertError(t, m.DeleteInferenceProfile(ctx, "missing"), true)
 }
 
+// TestInferenceProfileDuplicateName verifies a second create with the same name
+// returns AlreadyExists.
+func TestInferenceProfileDuplicateName(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cfg := bedrockdriver.InferenceProfileConfig{
+		Name:                "dup-profile",
+		ModelSourceCopyFrom: "arn:aws:bedrock:us-east-1:123456789012:foundation-model/" + titanModel,
+	}
+
+	_, err := m.CreateInferenceProfile(ctx, cfg)
+	requireNoError(t, err)
+
+	_, err = m.CreateInferenceProfile(ctx, cfg)
+	assertError(t, err, true)
+}
+
 func TestPromptRouterLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -178,4 +196,22 @@ func TestAutomatedReasoningPolicyValidationAndErrors(t *testing.T) {
 	assertError(t, err, true)
 
 	assertError(t, m.DeleteAutomatedReasoningPolicy(ctx, "arn:missing"), true)
+}
+
+// TestAutomatedReasoningPolicyDuplicateName verifies a second create with the
+// same name returns AlreadyExists.
+func TestAutomatedReasoningPolicyDuplicateName(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cfg := bedrockdriver.AutomatedReasoningPolicyConfig{
+		Name:             "dup-policy",
+		PolicyDefinition: []byte(`{"rules":[]}`),
+	}
+
+	_, err := m.CreateAutomatedReasoningPolicy(ctx, cfg)
+	requireNoError(t, err)
+
+	_, err = m.CreateAutomatedReasoningPolicy(ctx, cfg)
+	assertError(t, err, true)
 }

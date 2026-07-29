@@ -78,6 +78,14 @@ func New(drv badriver.BedrockAgent) *Handler {
 }
 
 // Matches claims the Bedrock Agent authoring URL prefixes.
+//
+// The claimed REST roots /agents, /knowledgebases, /flows, and /prompts are
+// anchored via underPrefix. As with the sibling /custom-models and EKS
+// /clusters handlers, this means an S3 bucket named EXACTLY agents,
+// knowledgebases, flows, or prompts under path-style addressing is claimed
+// here before reaching the S3 catch-all. This is the accepted REST-vs-catch-all
+// tradeoff; callers needing those exact bucket names should use
+// virtual-host-style addressing.
 func (*Handler) Matches(r *http.Request) bool {
 	p := r.URL.Path
 

@@ -80,7 +80,9 @@ func (m *Mock) now() string {
 // ListFoundationModels returns the seeded foundation-model catalog.
 func (m *Mock) ListFoundationModels(_ context.Context) ([]driver.FoundationModel, error) {
 	out := make([]driver.FoundationModel, len(m.foundation))
-	copy(out, m.foundation)
+	for i := range m.foundation {
+		out[i] = cloneFoundationModel(m.foundation[i])
+	}
 
 	return out, nil
 }
@@ -92,9 +94,22 @@ func (m *Mock) GetFoundationModel(_ context.Context, modelID string) (*driver.Fo
 		return nil, errors.Newf(errors.NotFound, "foundation model %q not found", modelID)
 	}
 
-	result := *fm
+	result := cloneFoundationModel(*fm)
 
 	return &result, nil
+}
+
+// cloneFoundationModel returns a copy of fm with its slice fields deep-copied so
+// callers cannot mutate the shared seed catalog through the returned value.
+//
+//nolint:gocritic // fm is copied intentionally so slice fields can be reassigned to fresh backing arrays.
+func cloneFoundationModel(fm driver.FoundationModel) driver.FoundationModel {
+	fm.InputModalities = append([]string(nil), fm.InputModalities...)
+	fm.OutputModalities = append([]string(nil), fm.OutputModalities...)
+	fm.CustomizationsSupported = append([]string(nil), fm.CustomizationsSupported...)
+	fm.InferenceTypesSupported = append([]string(nil), fm.InferenceTypesSupported...)
+
+	return fm
 }
 
 // findFoundation returns the seeded model matching id by ModelID or ModelARN.
@@ -198,7 +213,7 @@ func (m *Mock) GetModelCustomizationJob(_ context.Context, jobIdentifier string)
 
 // ListModelCustomizationJobs lists all customization jobs.
 func (m *Mock) ListModelCustomizationJobs(_ context.Context) ([]driver.CustomizationJob, error) {
-	all := m.jobs.All()
+	all := m.jobs.SortedValues()
 	out := make([]driver.CustomizationJob, 0, len(all))
 
 	for _, job := range all {
@@ -212,7 +227,7 @@ func (m *Mock) ListModelCustomizationJobs(_ context.Context) ([]driver.Customiza
 
 // ListCustomModels lists all custom models.
 func (m *Mock) ListCustomModels(_ context.Context) ([]driver.CustomModel, error) {
-	all := m.models.All()
+	all := m.models.SortedValues()
 	out := make([]driver.CustomModel, 0, len(all))
 
 	for _, cm := range all {

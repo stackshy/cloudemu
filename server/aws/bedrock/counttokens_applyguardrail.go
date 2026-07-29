@@ -21,6 +21,12 @@ func (h *Handler) countTokens(w http.ResponseWriter, r *http.Request, modelID st
 	}
 
 	req := body.Input
+	if req.InvokeModel == nil && req.Converse == nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", "input must specify either converse or invokeModel")
+
+		return
+	}
+
 	in := bedrockdriver.CountTokensInput{ModelID: modelID}
 
 	switch {
