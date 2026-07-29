@@ -68,6 +68,12 @@ var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DescribeDBClusterParameters":      {},
 	"ResetDBClusterParameterGroup":     {},
 	"CopyDBClusterParameterGroup":      {},
+	"CreateOptionGroup":                {},
+	"DescribeOptionGroups":             {},
+	"ModifyOptionGroup":                {},
+	"DeleteOptionGroup":                {},
+	"CopyOptionGroup":                  {},
+	"DescribeOptionGroupOptions":       {},
 }
 
 // Handler serves RDS query-protocol requests.
@@ -190,6 +196,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.resetDBClusterParameterGroup(w, r)
 	case "CopyDBClusterParameterGroup":
 		h.copyDBClusterParameterGroup(w, r)
+	case "CreateOptionGroup":
+		h.createOptionGroup(w, r)
+	case "DescribeOptionGroups":
+		h.describeOptionGroups(w, r)
+	case "ModifyOptionGroup":
+		h.modifyOptionGroup(w, r)
+	case "DeleteOptionGroup":
+		h.deleteOptionGroup(w, r)
+	case "CopyOptionGroup":
+		h.copyOptionGroup(w, r)
+	case "DescribeOptionGroupOptions":
+		h.describeOptionGroupOptions(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown RDS action: "+action)
@@ -228,6 +246,8 @@ func notFoundCode(err error) string {
 	// Real AWS reuses the DBParameterGroup fault for both DB and cluster groups.
 	case strings.Contains(msg, "parameter group"):
 		return "DBParameterGroupNotFound"
+	case strings.Contains(msg, "option group"):
+		return "OptionGroupNotFoundFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceNotFound"
 	case strings.Contains(msg, "DB cluster snapshot"):
@@ -249,6 +269,8 @@ func alreadyExistsCode(err error) string {
 		return "DBSubnetGroupAlreadyExists"
 	case strings.Contains(msg, "parameter group"):
 		return "DBParameterGroupAlreadyExists"
+	case strings.Contains(msg, "option group"):
+		return "OptionGroupAlreadyExistsFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceAlreadyExists"
 	case strings.Contains(msg, "DB cluster snapshot"):

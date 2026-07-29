@@ -295,3 +295,52 @@ type ParameterGroups interface {
 	ResetDBClusterParameterGroup(ctx context.Context, name string, params []string, resetAll bool) (*ClusterParameterGroup, error)
 	CopyDBClusterParameterGroup(ctx context.Context, source, target, description string) (*ClusterParameterGroup, error)
 }
+
+// OptionGroupConfig configures a new option group.
+type OptionGroupConfig struct {
+	Name               string
+	EngineName         string
+	MajorEngineVersion string
+	Description        string
+	Tags               map[string]string
+}
+
+// Option is an option included in an option group.
+type Option struct {
+	Name     string
+	Port     int
+	Version  string
+	Settings map[string]string
+}
+
+// OptionGroup is a named set of engine options applied to instances.
+type OptionGroup struct {
+	Name               string
+	EngineName         string
+	MajorEngineVersion string
+	Description        string
+	ARN                string
+	Options            []Option
+}
+
+// OptionGroupOption is an option available to include in an option group for a
+// given engine (metadata, returned by DescribeOptionGroupOptions).
+type OptionGroupOption struct {
+	Name               string
+	Description        string
+	EngineName         string
+	MajorEngineVersion string
+	Persistent         bool
+	Permanent          bool
+}
+
+// OptionGroups is an OPTIONAL capability. Option groups are an AWS-only
+// concept, discovered by type assertion like SubnetGroups.
+type OptionGroups interface {
+	CreateOptionGroup(ctx context.Context, cfg OptionGroupConfig) (*OptionGroup, error)
+	DescribeOptionGroups(ctx context.Context, names []string, engineName string) ([]OptionGroup, error)
+	ModifyOptionGroup(ctx context.Context, name string, include []Option, remove []string) (*OptionGroup, error)
+	DeleteOptionGroup(ctx context.Context, name string) error
+	CopyOptionGroup(ctx context.Context, source, target, description string) (*OptionGroup, error)
+	DescribeOptionGroupOptions(ctx context.Context, engineName, majorEngineVersion string) ([]OptionGroupOption, error)
+}
