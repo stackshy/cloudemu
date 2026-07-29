@@ -22,6 +22,11 @@ const (
 	ipSegmentSize  = 256
 	stateAvailable = "available"
 	stateInUse     = "in-use"
+
+	// visibilityHidden and visibilityVisible are the account-level
+	// managed-resource-visibility settings.
+	visibilityHidden  = "hidden"
+	visibilityVisible = "visible"
 )
 
 type lifecycleTransition struct {
@@ -81,6 +86,13 @@ type instanceData struct {
 	SecurityGroups []string
 	Tags           map[string]string
 	LaunchTime     string
+	Operator       *operatorData
+}
+
+// operatorData records service-provider managed-resource ownership.
+type operatorData struct {
+	Managed   bool
+	Principal string
 }
 
 type asgData struct {
@@ -105,6 +117,10 @@ type Mock struct {
 	snapCounter  atomic.Int64
 	amiCounter   atomic.Int64
 	monitoring   mondriver.Monitoring
+	// managedResourceVisibility is "visible" or "hidden". When "hidden",
+	// service-provider-managed instances are omitted from DescribeInstances
+	// unless the request opts in with IncludeManagedResources.
+	managedResourceVisibility string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -180,6 +196,8 @@ func New(opts *config.Options) *Mock {
 		keyPairs:     memstore.New[*driver.KeyPairInfo](),
 		sm:           statemachine.New(compute.VMTransitions()),
 		opts:         opts,
+
+		managedResourceVisibility: visibilityVisible,
 	}
 }
 
@@ -188,7 +206,7 @@ func (m *Mock) nextIP() string {
 	return fmt.Sprintf("10.0.%d.%d", n/ipSegmentSize, n%ipSegmentSize)
 }
 
-func toInstance(d *instanceData) driver.Instance {
+func (m *Mock) toInstance(d *instanceData) driver.Instance {
 	sg := make([]string, len(d.SecurityGroups))
 	copy(sg, d.SecurityGroups)
 
@@ -198,10 +216,19 @@ func toInstance(d *instanceData) driver.Instance {
 		tags[k] = v
 	}
 
+	var operator *driver.OperatorInfo
+	if d.Operator != nil {
+		operator = &driver.OperatorInfo{
+			Managed:         d.Operator.Managed,
+			Principal:       d.Operator.Principal,
+			HiddenByDefault: m.managedResourceVisibility == visibilityHidden,
+		}
+	}
+
 	return driver.Instance{
 		ID: d.ID, ImageID: d.ImageID, InstanceType: d.InstanceType, State: d.State,
 		PrivateIP: d.PrivateIP, PublicIP: d.PublicIP, SubnetID: d.SubnetID, VPCID: d.VPCID,
-		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime,
+		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime, Operator: operator,
 	}
 }
 
@@ -238,11 +265,16 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		}
+
+		if cfg.Managed {
+			inst.Operator = &operatorData{Managed: true, Principal: cfg.Principal}
+		}
+
 		m.instances.Set(id, inst)
 		m.sm.SetState(id, compute.StatePending)
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
-		results = append(results, toInstance(inst))
+		results = append(results, m.toInstance(inst))
 		m.emitInstanceMetrics(ctx, id, inst.LaunchTime)
 	}
 
@@ -304,7 +336,14 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	return m.transitionInstances(ctx, instanceIDs, terminateTransition)
 }
 
-func (m *Mock) DescribeInstances(_ context.Context, instanceIDs []string, filters []driver.DescribeFilter) ([]driver.Instance, error) {
+func (m *Mock) DescribeInstances(
+	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, opts ...driver.DescribeInstancesOptions,
+) ([]driver.Instance, error) {
+	var includeManaged bool
+	if len(opts) > 0 {
+		includeManaged = opts[0].IncludeManagedResources
+	}
+
 	var candidates []*instanceData
 
 	if len(instanceIDs) > 0 {
@@ -322,12 +361,26 @@ func (m *Mock) DescribeInstances(_ context.Context, instanceIDs []string, filter
 	results := make([]driver.Instance, 0)
 
 	for _, inst := range candidates {
+		if m.hiddenManaged(inst, includeManaged) {
+			continue
+		}
+
 		if matchesFilters(inst, filters) {
-			results = append(results, toInstance(inst))
+			results = append(results, m.toInstance(inst))
 		}
 	}
 
 	return results, nil
+}
+
+// hiddenManaged reports whether a managed instance must be omitted from a
+// describe result. Managed instances are hidden when the account's
+// managed-resource-visibility is "hidden" and the caller did not opt in with
+// IncludeManagedResources. This applies to list, filtered, and explicit-ID
+// describes alike, matching real EC2 behavior.
+func (m *Mock) hiddenManaged(inst *instanceData, includeManaged bool) bool {
+	return inst.Operator != nil && inst.Operator.Managed &&
+		m.managedResourceVisibility == visibilityHidden && !includeManaged
 }
 
 func matchesFilters(inst *instanceData, filters []driver.DescribeFilter) bool {
@@ -410,6 +463,26 @@ func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
 	inst.VPCID = vpcID
 
 	return nil
+}
+
+// SetManaged marks an existing instance as a service-provider-managed resource.
+// This is a test helper for exercising managed-resource visibility.
+func (m *Mock) SetManaged(instanceID, principal string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	inst.Operator = &operatorData{Managed: true, Principal: principal}
+
+	return nil
+}
+
+// SetManagedResourceVisibility sets the account's managed-resource-visibility
+// ("visible" or "hidden"). When "hidden", managed instances are omitted from
+// DescribeInstances unless the request sets IncludeManagedResources.
+func (m *Mock) SetManagedResourceVisibility(v string) {
+	m.managedResourceVisibility = v
 }
 
 // CreateVolume creates a new EBS volume.

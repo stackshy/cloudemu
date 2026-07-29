@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ecr"
+	"github.com/stackshy/cloudemu/v2/providers/aws/ecs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
@@ -136,6 +137,7 @@ type Provider struct {
 	BedrockAgentRuntime *bedrockagentruntime.Mock
 	SageMaker           *sagemaker.Mock
 	SSM                 *ssm.Mock
+	ECS                 *ecs.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -169,6 +171,7 @@ func New(opts ...config.Option) *Provider {
 		BedrockAgentRuntime: bedrockagentruntime.New(o),
 		SageMaker:           sagemaker.New(o),
 		SSM:                 ssm.New(o),
+		ECS:                 ecs.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}

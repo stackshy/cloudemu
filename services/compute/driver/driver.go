@@ -12,6 +12,10 @@ type InstanceConfig struct {
 	SecurityGroups []string
 	KeyName        string
 	UserData       string
+	// Managed marks the instance as a service-provider-managed resource at
+	// launch time. Principal names the managing service provider.
+	Managed   bool
+	Principal string
 }
 
 // Instance describes a running virtual machine.
@@ -27,6 +31,27 @@ type Instance struct {
 	SecurityGroups []string
 	Tags           map[string]string
 	LaunchTime     string
+	// Operator carries service-provider managed-resource metadata. It is nil
+	// for ordinary (unmanaged) instances.
+	Operator *OperatorInfo
+}
+
+// OperatorInfo describes the service-provider ownership of a managed resource.
+type OperatorInfo struct {
+	// Managed is true when the resource is managed by a service provider.
+	Managed bool
+	// Principal is the service provider managing the resource (set when Managed).
+	Principal string
+	// HiddenByDefault is true when the account's managed-resource-visibility
+	// setting hides this resource from describe calls by default.
+	HiddenByDefault bool
+}
+
+// DescribeInstancesOptions carries optional flags for DescribeInstances.
+type DescribeInstancesOptions struct {
+	// IncludeManagedResources reveals service-provider-managed instances that
+	// would otherwise be hidden by the account's managed-resource-visibility.
+	IncludeManagedResources bool
 }
 
 // ModifyInstanceInput holds modifiable instance attributes.
@@ -198,7 +223,9 @@ type Compute interface {
 	StopInstances(ctx context.Context, instanceIDs []string) error
 	RebootInstances(ctx context.Context, instanceIDs []string) error
 	TerminateInstances(ctx context.Context, instanceIDs []string) error
-	DescribeInstances(ctx context.Context, instanceIDs []string, filters []DescribeFilter) ([]Instance, error)
+	DescribeInstances(
+		ctx context.Context, instanceIDs []string, filters []DescribeFilter, opts ...DescribeInstancesOptions,
+	) ([]Instance, error)
 	ModifyInstance(ctx context.Context, instanceID string, input ModifyInstanceInput) error
 
 	// Auto-Scaling Groups

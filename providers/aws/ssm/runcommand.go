@@ -13,7 +13,7 @@ import (
 // check that a Run Command target exists.
 type InstanceResolver interface {
 	DescribeInstances(ctx context.Context, instanceIDs []string,
-		filters []computedriver.DescribeFilter) ([]computedriver.Instance, error)
+		filters []computedriver.DescribeFilter, opts ...computedriver.DescribeInstancesOptions) ([]computedriver.Instance, error)
 }
 
 // SetInstanceResolver wires the compute mock in so SendCommand can reject a

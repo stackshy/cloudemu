@@ -29,6 +29,7 @@ This document lists every service and operation available in CloudEmu across all
 | 21 | Databricks | — | `databricks` | — |
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
 | 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
+| 24 | Container Orchestration | `ecs` | — | — |
 
 ---
 
@@ -144,8 +145,36 @@ This document lists every service and operation available in CloudEmu across all
 | `StopInstances` | `(ctx, instanceIDs) error` |
 | `RebootInstances` | `(ctx, instanceIDs) error` |
 | `TerminateInstances` | `(ctx, instanceIDs) error` |
-| `DescribeInstances` | `(ctx, instanceIDs, filters) ([]Instance, error)` |
+| `DescribeInstances` | `(ctx, instanceIDs, filters, ...opts) ([]Instance, error)` |
 | `ModifyInstance` | `(ctx, instanceID, input) error` |
+
+#### Managed-resource visibility
+
+EC2 emulates AWS *managed resources* — instances an AWS service (e.g. ECS Managed
+Instances, EKS Auto Mode) provisions on the account's behalf. A managed instance
+carries an `Operator` block (`Managed=true`, `Principal`) and is **hidden from
+`DescribeInstances` by default** once the account's visibility is set to `hidden`,
+reappearing only when the caller opts in with `IncludeManagedResources=true`.
+Non-managed instances are always returned.
+
+```go
+cloud := cloudemu.NewAWS()
+cloud.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+    InstanceType: "m5.large",
+    Managed:      true,                  // Operator.Managed = true
+    Principal:    "ecs.amazonaws.com",   // Operator.Principal
+    Tags:         map[string]string{"aws:ec2:managed-launch": "ecs-managed-instances"},
+}, 1)
+cloud.EC2.SetManagedResourceVisibility("hidden")
+
+// Go API
+cloud.EC2.DescribeInstances(ctx, nil, nil)                                            // managed instance omitted
+cloud.EC2.DescribeInstances(ctx, nil, nil, computedriver.DescribeInstancesOptions{IncludeManagedResources: true}) // included
+
+// SDK-compat: real aws-sdk-go-v2 ec2.Client
+client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})                                // omits managed
+client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResources: aws.Bool(true)}) // includes managed
+```
 
 ### Auto-Scaling Groups (ASG)
 
@@ -1556,6 +1585,29 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 
 ---
 
+## 24. Container Orchestration
+
+**Driver interface:** `services/ecs/driver/driver.go`
+**AWS:** ECS (`AmazonEC2ContainerServiceV20141113.*`, AWS JSON 1.1) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/ecs` clients work against the SDK-compat
+server (`awsserver.Drivers{ECS: cloud.ECS}`). Resources complete synchronously
+(e.g. `RunTask` returns `RUNNING` tasks, `CreateService` reaches `desiredCount`
+immediately). The batch `Describe*` ops and `RunTask` return partial success —
+unresolved ids appear in `failures[]` rather than erroring.
+
+| Family | Operations |
+|--------|-----------|
+| Clusters | CreateCluster, ListClusters, DescribeClusters, DeleteCluster |
+| Task definitions | RegisterTaskDefinition (auto-incrementing revision per family), ListTaskDefinitions, DescribeTaskDefinition, DeregisterTaskDefinition |
+| Tasks | RunTask, StopTask, ListTasks, DescribeTasks |
+| Services | CreateService, UpdateService, ListServices, DescribeServices, DeleteService |
+| Container instances | ListContainerInstances, DescribeContainerInstances |
+
+**Total: 19 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -1660,7 +1712,8 @@ still sees success.
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| **Grand Total** | **1047** (+12 optional) |
+| Container Orchestration — AWS ECS | 19 |
+| **Grand Total** | **1066** (+12 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

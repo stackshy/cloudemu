@@ -1909,3 +1909,168 @@ func TestSetInstanceVPC(t *testing.T) {
 		assertError(t, err, true)
 	})
 }
+
+// hasInstanceID reports whether the described set contains the given id.
+func hasInstanceID(insts []driver.Instance, id string) bool {
+	for i := range insts {
+		if insts[i].ID == id {
+			return true
+		}
+	}
+
+	return false
+}
+
+func TestManagedResourceVisibility(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	// One managed instance (carrying the system launch tag) and one ordinary
+	// instance.
+	managed, err := m.RunInstances(ctx, driver.InstanceConfig{
+		ImageID:      "ami-managed",
+		InstanceType: "t2.micro",
+		Managed:      true,
+		Principal:    "eks.amazonaws.com",
+		Tags:         map[string]string{"aws:ec2:managed-launch": "eks"},
+	}, 1)
+	if err != nil {
+		t.Fatalf("run managed: %v", err)
+	}
+
+	plain, err := m.RunInstances(ctx, defaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("run plain: %v", err)
+	}
+
+	managedID := managed[0].ID
+	plainID := plain[0].ID
+
+	// Default visibility is "visible": both instances are returned, and the
+	// managed one carries Operator metadata plus the system tag.
+	all, err := m.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+
+	if !hasInstanceID(all, managedID) || !hasInstanceID(all, plainID) {
+		t.Fatalf("visible: expected both instances, got %d", len(all))
+	}
+
+	for i := range all {
+		if all[i].ID != managedID {
+			continue
+		}
+
+		if all[i].Operator == nil || !all[i].Operator.Managed {
+			t.Fatalf("managed instance missing Operator.Managed")
+		}
+
+		if all[i].Operator.Principal != "eks.amazonaws.com" {
+			t.Fatalf("principal = %q", all[i].Operator.Principal)
+		}
+
+		if all[i].Tags["aws:ec2:managed-launch"] != "eks" {
+			t.Fatalf("system tag missing")
+		}
+	}
+
+	// Hide managed resources. Without the opt-in flag the managed instance is
+	// gone from list results but the ordinary one remains.
+	m.SetManagedResourceVisibility("hidden")
+
+	hidden, err := m.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("describe hidden: %v", err)
+	}
+
+	if hasInstanceID(hidden, managedID) {
+		t.Fatalf("hidden: managed instance should be absent")
+	}
+
+	if !hasInstanceID(hidden, plainID) {
+		t.Fatalf("hidden: plain instance should be present")
+	}
+
+	// Opt in reveals the managed instance, and HiddenByDefault is reported.
+	revealed, err := m.DescribeInstances(ctx, nil, nil,
+		driver.DescribeInstancesOptions{IncludeManagedResources: true})
+	if err != nil {
+		t.Fatalf("describe revealed: %v", err)
+	}
+
+	if !hasInstanceID(revealed, managedID) {
+		t.Fatalf("revealed: managed instance should be present")
+	}
+
+	for i := range revealed {
+		if revealed[i].ID == managedID && !revealed[i].Operator.HiddenByDefault {
+			t.Fatalf("revealed: HiddenByDefault should be true when hidden")
+		}
+	}
+
+	// Explicit-InstanceIds path also hides the managed instance when hidden and
+	// the flag is unset.
+	byID, err := m.DescribeInstances(ctx, []string{managedID}, nil)
+	if err != nil {
+		t.Fatalf("describe by id: %v", err)
+	}
+
+	if hasInstanceID(byID, managedID) {
+		t.Fatalf("explicit-id: managed instance should be hidden")
+	}
+
+	// ...but is returned by explicit id when the flag is set.
+	byIDOpt, err := m.DescribeInstances(ctx, []string{managedID}, nil,
+		driver.DescribeInstancesOptions{IncludeManagedResources: true})
+	if err != nil {
+		t.Fatalf("describe by id opt: %v", err)
+	}
+
+	if !hasInstanceID(byIDOpt, managedID) {
+		t.Fatalf("explicit-id opt: managed instance should be present")
+	}
+
+	// Back to visible: managed instance returns without any opt-in.
+	m.SetManagedResourceVisibility("visible")
+
+	visibleAgain, err := m.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("describe visible again: %v", err)
+	}
+
+	if !hasInstanceID(visibleAgain, managedID) {
+		t.Fatalf("visible again: managed instance should be present")
+	}
+}
+
+func TestSetManaged(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	insts, err := m.RunInstances(ctx, defaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	id := insts[0].ID
+
+	if err := m.SetManaged(id, "ecs.amazonaws.com"); err != nil {
+		t.Fatalf("set managed: %v", err)
+	}
+
+	m.SetManagedResourceVisibility("hidden")
+
+	got, err := m.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+
+	if hasInstanceID(got, id) {
+		t.Fatalf("instance marked managed should be hidden")
+	}
+
+	if err := m.SetManaged("i-missing", "x"); err == nil {
+		t.Fatalf("SetManaged on missing instance should error")
+	}
+}

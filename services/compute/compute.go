@@ -146,9 +146,11 @@ func (c *Compute) TerminateInstances(ctx context.Context, instanceIDs []string) 
 }
 
 // DescribeInstances describes instances.
-func (c *Compute) DescribeInstances(ctx context.Context, instanceIDs []string, filters []driver.DescribeFilter) ([]driver.Instance, error) {
+func (c *Compute) DescribeInstances(
+	ctx context.Context, instanceIDs []string, filters []driver.DescribeFilter, opts ...driver.DescribeInstancesOptions,
+) ([]driver.Instance, error) {
 	out, err := c.do(ctx, "DescribeInstances", instanceIDs, func() (any, error) {
-		return c.driver.DescribeInstances(ctx, instanceIDs, filters)
+		return c.driver.DescribeInstances(ctx, instanceIDs, filters, opts...)
 	})
 
 	if err != nil {

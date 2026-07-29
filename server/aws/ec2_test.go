@@ -21,7 +21,9 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stackshy/cloudemu/v2"
+	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2149,4 +2151,105 @@ func TestCloudWatchAlarmLifecycle(t *testing.T) {
 		AlarmNames: []string{"HighCPU"},
 	})
 	require.NoError(t, err)
+}
+
+// ec2ClientFromProvider builds an EC2 SDK client against an httptest server
+// backed by the given provider. Callers seed provider state (RunInstances,
+// SetManaged, SetManagedResourceVisibility) before invoking this helper.
+func ec2ClientFromProvider(t *testing.T, provider *awsprovider.Provider) *ec2.Client {
+	t.Helper()
+
+	srv := awsserver.New(awsserver.Drivers{
+		EC2: provider.EC2,
+		VPC: provider.VPC,
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("test", "test", ""),
+		),
+	)
+	require.NoError(t, err)
+
+	return ec2.NewFromConfig(cfg, func(o *ec2.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+}
+
+func TestEC2DescribeInstancesManagedResourceVisibility(t *testing.T) {
+	ctx := context.Background()
+	provider := cloudemu.NewAWS()
+
+	// Seed a managed instance (with the system launch tag) and a plain one,
+	// then hide managed resources — all on the provider before the SDK client
+	// ever makes a request.
+	managed, err := provider.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID:      "ami-managed",
+		InstanceType: "t2.micro",
+		Managed:      true,
+		Principal:    "eks.amazonaws.com",
+		Tags:         map[string]string{"aws:ec2:managed-launch": "eks"},
+	}, 1)
+	require.NoError(t, err)
+	managedID := managed[0].ID
+
+	plain, err := provider.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID:      "ami-plain",
+		InstanceType: "t2.micro",
+	}, 1)
+	require.NoError(t, err)
+	plainID := plain[0].ID
+
+	provider.EC2.SetManagedResourceVisibility("hidden")
+
+	client := ec2ClientFromProvider(t, provider)
+
+	collectIDs := func(out *ec2.DescribeInstancesOutput) map[string]ec2types.Instance {
+		byID := make(map[string]ec2types.Instance)
+		for _, res := range out.Reservations {
+			for _, inst := range res.Instances {
+				byID[aws.ToString(inst.InstanceId)] = inst
+			}
+		}
+
+		return byID
+	}
+
+	// Default request: managed instance is hidden, plain instance present.
+	out, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
+	require.NoError(t, err)
+
+	got := collectIDs(out)
+	assert.NotContains(t, got, managedID, "managed instance must be hidden")
+	assert.Contains(t, got, plainID, "plain instance must be present")
+
+	// Opt in: managed instance appears with Operator + tag round-tripped.
+	out, err = client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		IncludeManagedResources: aws.Bool(true),
+	})
+	require.NoError(t, err)
+
+	got = collectIDs(out)
+	require.Contains(t, got, managedID, "managed instance must appear when opted in")
+
+	inst := got[managedID]
+	require.NotNil(t, inst.Operator, "Operator must round-trip")
+	assert.True(t, aws.ToBool(inst.Operator.Managed), "Operator.Managed must be true")
+	assert.Equal(t, "eks.amazonaws.com", aws.ToString(inst.Operator.Principal))
+	assert.True(t, aws.ToBool(inst.Operator.HiddenByDefault), "HiddenByDefault must be true when hidden")
+
+	var foundTag bool
+
+	for _, tag := range inst.Tags {
+		if aws.ToString(tag.Key) == "aws:ec2:managed-launch" {
+			foundTag = true
+
+			assert.Equal(t, "eks", aws.ToString(tag.Value))
+		}
+	}
+
+	assert.True(t, foundTag, "system launch tag must round-trip")
 }
