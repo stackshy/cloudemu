@@ -615,3 +615,35 @@ type GlobalClusters interface {
 	DeleteGlobalCluster(ctx context.Context, id string) (*GlobalCluster, error)
 	RemoveFromGlobalCluster(ctx context.Context, id, clusterARN string) (*GlobalCluster, error)
 }
+
+// DBEngineVersion describes an available engine version.
+type DBEngineVersion struct {
+	Engine                 string
+	EngineVersion          string
+	DBEngineDescription    string
+	DBParameterGroupFamily string
+}
+
+// OrderableDBInstanceOption describes an orderable instance configuration.
+type OrderableDBInstanceOption struct {
+	Engine          string
+	EngineVersion   string
+	DBInstanceClass string
+	StorageType     string
+	MultiAZCapable  bool
+}
+
+// Metadata is an OPTIONAL capability exposing the engine-version and
+// orderable-instance-option catalogs, discovered by type assertion.
+type Metadata interface {
+	DescribeDBEngineVersions(ctx context.Context, engine, engineVersion string) ([]DBEngineVersion, error)
+	DescribeOrderableDBInstanceOptions(ctx context.Context, engine, engineVersion string) ([]OrderableDBInstanceOption, error)
+}
+
+// Tagging is an OPTIONAL capability for resource-level tag operations,
+// discovered by type assertion. Tags are addressed by resource ARN.
+type Tagging interface {
+	AddTagsToResource(ctx context.Context, resourceARN string, tags map[string]string) error
+	RemoveTagsFromResource(ctx context.Context, resourceARN string, keys []string) error
+	ListTagsForResource(ctx context.Context, resourceARN string) (map[string]string, error)
+}
