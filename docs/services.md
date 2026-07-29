@@ -1231,24 +1231,29 @@ cascade-delete children when their parent server/instance is deleted.
 | `SslCerts` | Create / Get / List / Delete | `cloudsql` |
 | `Clonable` | `CloneInstance` | `cloudsql` |
 | `ReplicaPromotion` | `PromoteReplica` | `cloudsql` |
+| `ManagedInstances` | managed-instance CRUD + Start/Stop/Failover, managed-database CRUD/List | `azuresql` |
 
 Cloud SQL also serves the `startReplica`/`stopReplica` instance actions (mapped
-onto Start/Stop). Managed relational servers surface in cross-service discovery
-(Azure Resource Graph as `microsoft.sql/servers`,
+onto Start/Stop) and the static `tiers` (`/v1/projects/{p}/tiers`) and `flags`
+(`/v1/flags`) reference catalogs. Azure SQL adds the SQL Managed Instance family
+(`Microsoft.Sql/managedInstances` + managed databases) alongside the
+single-database logical server. Managed relational servers surface in
+cross-service discovery (Azure Resource Graph as `microsoft.sql/servers`,
 `microsoft.dbformysql/flexibleservers`,
 `microsoft.dbforpostgresql/flexibleservers`; GCP Cloud Asset as
-`sqladmin.googleapis.com/Instance`) and are billed per instance-hour via the
-`relationaldb:*` cost catalog.
+`sqladmin.googleapis.com/Instance`), are billed per instance-hour via the
+`relationaldb:*` cost catalog, and emit their cloud's monitoring metrics
+(including the `Microsoft.Sql/servers/elasticpools` pool namespace).
 
-**Total: 21 core operations + 98 optional across 24 type-asserted capability
+**Total: 21 core operations + 109 optional across 25 type-asserted capability
 interfaces** — the 12 RDS-oriented ones (`SubnetGroups`, `ParameterGroups`,
 `OptionGroups`, `ReadReplicas`, `AdvancedRestore`, `DBProxies`,
 `EventSubscriptions`, `ClusterEndpoints`, `ClusterFailover`, `GlobalClusters`,
-`Metadata`, `Tagging`) plus the 12 Azure/GCP managed-SQL ones (`Databases`,
+`Metadata`, `Tagging`) plus the 13 Azure/GCP managed-SQL ones (`Databases`,
 `FirewallRules`, `Configurations`, `Failover`, `VNetRules`, `ElasticPools`,
 `FailoverGroups`, `AADAdmins`, `Users`, `SslCerts`, `Clonable`,
-`ReplicaPromotion`). Each cloud implements the subset that maps to a real
-resource and answers `InvalidAction` otherwise.
+`ReplicaPromotion`, `ManagedInstances`). Each cloud implements the subset that
+maps to a real resource and answers `InvalidAction` otherwise.
 
 ---
 
@@ -1775,7 +1780,7 @@ still sees success.
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
-| Relational Database | 21 (+98 optional) |
+| Relational Database | 21 (+109 optional) |
 | Kubernetes — AWS EKS (control plane) | 21 |
 | Kubernetes — Azure AKS (control plane) | 18 |
 | Kubernetes — GCP GKE (control plane) | 26 |
@@ -1788,7 +1793,7 @@ still sees success.
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| **Grand Total** | **1047** (+107 optional) |
+| **Grand Total** | **1047** (+118 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
