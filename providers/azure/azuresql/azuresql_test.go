@@ -355,3 +355,42 @@ func TestElasticPoolEmitsMetrics(t *testing.T) {
 		t.Fatalf("expected cpu_percent on the elastic-pool namespace, got %v", names)
 	}
 }
+
+func TestManagedInstanceLifecycleAndCascade(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateManagedInstance(ctx, rdsdriver.ManagedInstanceConfig{Name: "mi"}); err != nil {
+		t.Fatalf("CreateManagedInstance: %v", err)
+	}
+
+	if _, err := m.CreateManagedInstance(ctx, rdsdriver.ManagedInstanceConfig{Name: "mi"}); err == nil {
+		t.Error("duplicate managed instance: expected AlreadyExists")
+	}
+
+	if _, err := m.CreateManagedDatabase(ctx, rdsdriver.ManagedDatabaseConfig{Instance: "ghost", Name: "db"}); err == nil {
+		t.Error("managed database on missing instance: expected NotFound")
+	}
+
+	if _, err := m.CreateManagedDatabase(ctx, rdsdriver.ManagedDatabaseConfig{Instance: "mi", Name: "db"}); err != nil {
+		t.Fatalf("CreateManagedDatabase: %v", err)
+	}
+
+	if err := m.StopManagedInstance(ctx, "mi"); err != nil {
+		t.Fatalf("StopManagedInstance: %v", err)
+	}
+
+	got, _ := m.GetManagedInstance(ctx, "mi")
+	if got.State != "Stopped" {
+		t.Errorf("state after stop: got %q, want Stopped", got.State)
+	}
+
+	// Deleting the instance cascades to its managed databases.
+	if err := m.DeleteManagedInstance(ctx, "mi"); err != nil {
+		t.Fatalf("DeleteManagedInstance: %v", err)
+	}
+
+	if _, err := m.ListManagedDatabases(ctx, "mi"); err == nil {
+		t.Error("ListManagedDatabases after instance delete: expected NotFound")
+	}
+}

@@ -67,6 +67,10 @@ type Mock struct {
 	// aadAdmins key = server name (a server has at most one)
 	aadAdmins *memstore.Store[rdsdriver.AADAdmin]
 
+	// managed instances key = instance name; managed databases key = "mi/db"
+	managedInstances *memstore.Store[rdsdriver.ManagedInstance]
+	managedDatabases *memstore.Store[rdsdriver.ManagedDatabase]
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -74,15 +78,17 @@ type Mock struct {
 // New creates a new Azure SQL mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:       memstore.New[rdsdriver.Cluster](),
-		instances:      memstore.New[rdsdriver.Instance](),
-		snapshots:      memstore.New[rdsdriver.Snapshot](),
-		firewallRules:  memstore.New[rdsdriver.FirewallRule](),
-		vnetRules:      memstore.New[rdsdriver.VNetRule](),
-		elasticPools:   memstore.New[rdsdriver.ElasticPool](),
-		failoverGroups: memstore.New[rdsdriver.FailoverGroup](),
-		aadAdmins:      memstore.New[rdsdriver.AADAdmin](),
-		opts:           opts,
+		clusters:         memstore.New[rdsdriver.Cluster](),
+		instances:        memstore.New[rdsdriver.Instance](),
+		snapshots:        memstore.New[rdsdriver.Snapshot](),
+		firewallRules:    memstore.New[rdsdriver.FirewallRule](),
+		vnetRules:        memstore.New[rdsdriver.VNetRule](),
+		elasticPools:     memstore.New[rdsdriver.ElasticPool](),
+		failoverGroups:   memstore.New[rdsdriver.FailoverGroup](),
+		aadAdmins:        memstore.New[rdsdriver.AADAdmin](),
+		managedInstances: memstore.New[rdsdriver.ManagedInstance](),
+		managedDatabases: memstore.New[rdsdriver.ManagedDatabase](),
+		opts:             opts,
 	}
 }
 

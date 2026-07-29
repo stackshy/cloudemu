@@ -575,6 +575,7 @@ type armAADAdminCfg struct {
 	TenantID          string `json:"tenantId,omitempty"`
 }
 
+//nolint:dupl // mirrors the sibling sub-resource handler by design.
 func (h *Handler) serveAADAdmin(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	aad, ok := h.aadAdmins()
 	if !ok {

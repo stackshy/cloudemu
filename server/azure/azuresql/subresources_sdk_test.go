@@ -285,3 +285,103 @@ func TestSDKAzureSQLAADAdmin(t *testing.T) {
 		t.Fatalf("aad delete PollUntilDone: %v", err)
 	}
 }
+
+func TestSDKAzureSQLManagedInstances(t *testing.T) {
+	cf := newFactory(t)
+	ctx := context.Background()
+
+	mic := cf.NewManagedInstancesClient()
+
+	poller, err := mic.BeginCreateOrUpdate(ctx, "rg-1", "mi1", armsql.ManagedInstance{
+		Location: to.Ptr("eastus"),
+		SKU:      &armsql.SKU{Name: to.Ptr("GP_Gen5"), Tier: to.Ptr("GeneralPurpose")},
+		Properties: &armsql.ManagedInstanceProperties{
+			AdministratorLogin: to.Ptr("miadmin"),
+			VCores:             to.Ptr(int32(4)),
+			StorageSizeInGB:    to.Ptr(int32(32)),
+			SubnetID:           to.Ptr("/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/virtualNetworks/vn/subnets/mi"),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("MI BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("MI PollUntilDone: %v", err)
+	}
+
+	got, err := mic.Get(ctx, "rg-1", "mi1", nil)
+	if err != nil {
+		t.Fatalf("MI Get: %v", err)
+	}
+
+	if got.Properties == nil || got.Properties.AdministratorLogin == nil || *got.Properties.AdministratorLogin != "miadmin" {
+		t.Fatalf("MI admin login: got %v", got.Properties)
+	}
+
+	page, err := mic.NewListByResourceGroupPager("rg-1", nil).NextPage(ctx)
+	if err != nil {
+		t.Fatalf("MI List: %v", err)
+	}
+
+	if len(page.Value) != 1 {
+		t.Fatalf("got %d managed instances, want 1", len(page.Value))
+	}
+
+	// Failover (the managed-instance lifecycle action this SDK version exposes).
+	foPoller, err := mic.BeginFailover(ctx, "rg-1", "mi1", nil)
+	if err != nil {
+		t.Fatalf("MI BeginFailover: %v", err)
+	}
+
+	if _, err := foPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("MI failover: %v", err)
+	}
+
+	// Managed database.
+	mdc := cf.NewManagedDatabasesClient()
+
+	dbPoller, err := mdc.BeginCreateOrUpdate(ctx, "rg-1", "mi1", "appdb", armsql.ManagedDatabase{
+		Location:   to.Ptr("eastus"),
+		Properties: &armsql.ManagedDatabaseProperties{Collation: to.Ptr("SQL_Latin1_General_CP1_CI_AS")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("MDB BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := dbPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("MDB PollUntilDone: %v", err)
+	}
+
+	gotDB, err := mdc.Get(ctx, "rg-1", "mi1", "appdb", nil)
+	if err != nil {
+		t.Fatalf("MDB Get: %v", err)
+	}
+
+	if gotDB.Name == nil || *gotDB.Name != "appdb" {
+		t.Fatalf("MDB name: got %v", gotDB.Name)
+	}
+
+	dbPage, err := mdc.NewListByInstancePager("rg-1", "mi1", nil).NextPage(ctx)
+	if err != nil {
+		t.Fatalf("MDB List: %v", err)
+	}
+
+	if len(dbPage.Value) != 1 {
+		t.Fatalf("got %d managed databases, want 1", len(dbPage.Value))
+	}
+
+	// Delete the instance; managed databases cascade.
+	delPoller, err := mic.BeginDelete(ctx, "rg-1", "mi1", nil)
+	if err != nil {
+		t.Fatalf("MI BeginDelete: %v", err)
+	}
+
+	if _, err := delPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("MI delete: %v", err)
+	}
+
+	if _, err := mic.Get(ctx, "rg-1", "mi1", nil); err == nil {
+		t.Fatal("expected NotFound after managed instance delete")
+	}
+}

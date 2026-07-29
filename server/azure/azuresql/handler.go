@@ -28,15 +28,20 @@ import (
 )
 
 const (
-	providerName         = "Microsoft.Sql"
-	resourceServers      = "servers"
-	subResourceDatabases = "databases"
+	providerName             = "Microsoft.Sql"
+	resourceServers          = "servers"
+	resourceManagedInstances = "managedInstances"
+	subResourceDatabases     = "databases"
 
 	subFirewallRules  = "firewallRules"
 	subVNetRules      = "virtualNetworkRules"
 	subElasticPools   = "elasticPools"
 	subFailoverGroups = "failoverGroups"
 	subAdministrators = "administrators"
+
+	subMIStart    = "start"
+	subMIStop     = "stop"
+	subMIFailover = "failover"
 )
 
 // Handler serves Microsoft.Sql ARM requests against a relationaldb driver.
@@ -49,14 +54,18 @@ func New(db rdsdriver.RelationalDB) *Handler {
 	return &Handler{db: db}
 }
 
-// Matches returns true for ARM Microsoft.Sql server/database paths.
+// Matches returns true for ARM Microsoft.Sql server and managed-instance paths.
 func (*Handler) Matches(r *http.Request) bool {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		return false
 	}
 
-	return rp.Provider == providerName && rp.ResourceType == resourceServers
+	if rp.Provider != providerName {
+		return false
+	}
+
+	return rp.ResourceType == resourceServers || rp.ResourceType == resourceManagedInstances
 }
 
 // ServeHTTP routes the request based on path shape and method.
@@ -67,25 +76,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rp.ResourceType == resourceManagedInstances {
+		h.serveManagedInstanceRoute(w, r, &rp)
+		return
+	}
+
 	// Child resources: .../servers/{srv}/{type}[/{name}].
 	if rp.SubResource != "" {
-		switch rp.SubResource {
-		case subResourceDatabases:
-			h.serveDatabaseRoute(w, r, &rp)
-		case subFirewallRules:
-			h.serveFirewallRule(w, r, &rp)
-		case subVNetRules:
-			h.serveVNetRule(w, r, &rp)
-		case subElasticPools:
-			h.serveElasticPool(w, r, &rp)
-		case subFailoverGroups:
-			h.serveFailoverGroup(w, r, &rp)
-		case subAdministrators:
-			h.serveAADAdmin(w, r, &rp)
-		default:
-			azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
-		}
-
+		h.serveServerChild(w, r, &rp)
 		return
 	}
 
@@ -96,6 +94,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.serveServer(w, r, &rp)
+}
+
+// serveServerChild dispatches a .../servers/{srv}/{type}[/{name}] path to the
+// matching child-resource handler.
+func (h *Handler) serveServerChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	switch rp.SubResource {
+	case subResourceDatabases:
+		h.serveDatabaseRoute(w, r, rp)
+	case subFirewallRules:
+		h.serveFirewallRule(w, r, rp)
+	case subVNetRules:
+		h.serveVNetRule(w, r, rp)
+	case subElasticPools:
+		h.serveElasticPool(w, r, rp)
+	case subFailoverGroups:
+		h.serveFailoverGroup(w, r, rp)
+	case subAdministrators:
+		h.serveAADAdmin(w, r, rp)
+	default:
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+	}
 }
 
 func (h *Handler) serveServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

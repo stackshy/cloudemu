@@ -461,6 +461,71 @@ type AADAdmins interface {
 	DeleteAADAdmin(ctx context.Context, server, name string) error
 }
 
+// ManagedInstanceConfig describes an Azure SQL Managed Instance to create.
+type ManagedInstanceConfig struct {
+	Name        string
+	Location    string
+	AdminLogin  string
+	SKUName     string
+	SKUTier     string
+	LicenseType string
+	SubnetID    string
+	VCores      int
+	StorageGB   int
+	Tags        map[string]string
+}
+
+// ManagedInstance is a SQL Managed Instance — a fully-managed instance that
+// hosts managed databases, distinct from the single-database logical server.
+type ManagedInstance struct {
+	Name        string
+	Location    string
+	AdminLogin  string
+	SKUName     string
+	SKUTier     string
+	LicenseType string
+	SubnetID    string
+	VCores      int
+	StorageGB   int
+	State       string
+	FQDN        string
+	ARN         string
+	Tags        map[string]string
+}
+
+// ManagedDatabaseConfig describes a database on a managed instance.
+type ManagedDatabaseConfig struct {
+	Instance  string
+	Name      string
+	Collation string
+}
+
+// ManagedDatabase is a database hosted on a managed instance.
+type ManagedDatabase struct {
+	Instance  string
+	Name      string
+	Collation string
+	Status    string
+	ARN       string
+}
+
+// ManagedInstances is an OPTIONAL Azure SQL capability covering SQL Managed
+// Instances and their managed databases, discovered by type assertion.
+type ManagedInstances interface {
+	CreateManagedInstance(ctx context.Context, cfg ManagedInstanceConfig) (*ManagedInstance, error)
+	GetManagedInstance(ctx context.Context, name string) (*ManagedInstance, error)
+	ListManagedInstances(ctx context.Context) ([]ManagedInstance, error)
+	DeleteManagedInstance(ctx context.Context, name string) error
+	StartManagedInstance(ctx context.Context, name string) error
+	StopManagedInstance(ctx context.Context, name string) error
+	FailoverManagedInstance(ctx context.Context, name string) error
+
+	CreateManagedDatabase(ctx context.Context, cfg ManagedDatabaseConfig) (*ManagedDatabase, error)
+	GetManagedDatabase(ctx context.Context, instance, name string) (*ManagedDatabase, error)
+	ListManagedDatabases(ctx context.Context, instance string) ([]ManagedDatabase, error)
+	DeleteManagedDatabase(ctx context.Context, instance, name string) error
+}
+
 // UserConfig describes a database user to create or update (Cloud SQL).
 type UserConfig struct {
 	Instance string
