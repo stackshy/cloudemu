@@ -44,7 +44,21 @@ const (
 	resourceInstances  = "instances"
 	resourceOperations = "operations"
 	resourceBackupRuns = "backupRuns"
+	resourceDatabases  = "databases"
+	resourceUsers      = "users"
+	resourceSslCerts   = "sslCerts"
 )
+
+// isSubResource reports whether seg is an instance-scoped sub-collection; any
+// other trailing segment is treated as an action (restart, clone, …).
+func isSubResource(seg string) bool {
+	switch seg {
+	case resourceBackupRuns, resourceDatabases, resourceUsers, resourceSslCerts:
+		return true
+	default:
+		return false
+	}
+}
 
 // Handler serves Cloud SQL Admin REST requests against a relationaldb driver.
 type Handler struct {
@@ -123,7 +137,7 @@ func parsePath(urlPath string) (sqlPath, bool) {
 	if len(parts) > idxSubResource {
 		// {action} OR {subResource}
 		seg := parts[idxSubResource]
-		if seg == resourceBackupRuns {
+		if isSubResource(seg) {
 			out.subResource = seg
 		} else {
 			out.action = seg
@@ -156,13 +170,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveInstancesRoute(w http.ResponseWriter, r *http.Request, p *sqlPath) {
-	// Sub-resource: backup runs.
-	if p.subResource == resourceBackupRuns {
+	// Instance-scoped sub-collections.
+	switch p.subResource {
+	case resourceBackupRuns:
 		h.serveBackupRunsRoute(w, r, p)
+		return
+	case resourceDatabases:
+		h.serveDatabasesRoute(w, r, p)
+		return
+	case resourceUsers:
+		h.serveUsersRoute(w, r, p)
+		return
+	case resourceSslCerts:
+		h.serveSslCertsRoute(w, r, p)
 		return
 	}
 
-	// Action on an instance: restart, restoreBackup.
+	// Action on an instance: restart, restoreBackup, clone, failover, replicas.
 	if p.action != "" {
 		h.serveInstanceAction(w, r, p)
 		return
@@ -213,6 +237,16 @@ func (h *Handler) serveInstanceAction(w http.ResponseWriter, r *http.Request, p 
 		h.restartInstance(w, r, p)
 	case "restoreBackup":
 		h.restoreInstance(w, r, p)
+	case "clone":
+		h.cloneInstance(w, r, p)
+	case "failover":
+		h.failoverInstance(w, r, p)
+	case "promoteReplica":
+		h.promoteReplica(w, r, p)
+	case "startReplica":
+		h.startReplica(w, r, p)
+	case "stopReplica":
+		h.stopReplica(w, r, p)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported action: "+p.action)
 	}

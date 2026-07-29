@@ -444,3 +444,66 @@ type AADAdmins interface {
 	ListAADAdmins(ctx context.Context, server string) ([]AADAdmin, error)
 	DeleteAADAdmin(ctx context.Context, server, name string) error
 }
+
+// UserConfig describes a database user to create or update (Cloud SQL).
+type UserConfig struct {
+	Instance string
+	Name     string
+	Host     string
+	Password string
+}
+
+// User is a database user account on a server/instance.
+type User struct {
+	Instance string
+	Name     string
+	Host     string
+}
+
+// Users is an OPTIONAL capability for managing database user accounts,
+// discovered by type assertion.
+type Users interface {
+	CreateUser(ctx context.Context, cfg UserConfig) (*User, error)
+	GetUser(ctx context.Context, instance, name string) (*User, error)
+	ListUsers(ctx context.Context, instance string) ([]User, error)
+	UpdateUser(ctx context.Context, cfg UserConfig) (*User, error)
+	DeleteUser(ctx context.Context, instance, name string) error
+}
+
+// SslCertConfig describes a client SSL certificate to create (Cloud SQL).
+type SslCertConfig struct {
+	Instance   string
+	CommonName string
+}
+
+// SslCert is a client SSL certificate for connecting to an instance. The mock
+// derives a deterministic fingerprint from the common name and returns a
+// placeholder PEM so SDK round-trips carry a well-formed shape.
+type SslCert struct {
+	Instance        string
+	CommonName      string
+	Sha1Fingerprint string
+	Cert            string
+	SerialNumber    string
+}
+
+// SslCerts is an OPTIONAL capability for managing client SSL certificates,
+// discovered by type assertion.
+type SslCerts interface {
+	CreateSslCert(ctx context.Context, cfg SslCertConfig) (*SslCert, error)
+	GetSslCert(ctx context.Context, instance, sha1 string) (*SslCert, error)
+	ListSslCerts(ctx context.Context, instance string) ([]SslCert, error)
+	DeleteSslCert(ctx context.Context, instance, sha1 string) error
+}
+
+// Clonable is an OPTIONAL capability that copies an instance to a new one
+// (Cloud SQL), discovered by type assertion.
+type Clonable interface {
+	CloneInstance(ctx context.Context, sourceID, destID string) (*Instance, error)
+}
+
+// ReplicaPromotion is an OPTIONAL capability that promotes a read replica to a
+// standalone primary (Cloud SQL), discovered by type assertion.
+type ReplicaPromotion interface {
+	PromoteReplica(ctx context.Context, id string) error
+}

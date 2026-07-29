@@ -230,3 +230,84 @@ func assertNotEmpty(t *testing.T, s string) {
 		t.Error("expected non-empty string")
 	}
 }
+
+func TestSubResourcesRequireInstance(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "ghost", Name: "db"}); err == nil {
+		t.Error("CreateDatabase on missing instance: expected error")
+	}
+
+	if _, err := m.CreateUser(ctx, rdsdriver.UserConfig{Instance: "ghost", Name: "u"}); err == nil {
+		t.Error("CreateUser on missing instance: expected error")
+	}
+
+	if _, err := m.CreateSslCert(ctx, rdsdriver.SslCertConfig{Instance: "ghost", CommonName: "c"}); err == nil {
+		t.Error("CreateSslCert on missing instance: expected error")
+	}
+}
+
+func TestCloneAndCascade(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "src", Engine: "POSTGRES_15"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "src", Name: "app"}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if _, err := m.CreateUser(ctx, rdsdriver.UserConfig{Instance: "src", Name: "u"}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	clone, err := m.CloneInstance(ctx, "src", "dst")
+	if err != nil {
+		t.Fatalf("CloneInstance: %v", err)
+	}
+
+	if clone.ID != "dst" || clone.Engine != "POSTGRES_15" {
+		t.Errorf("clone: got id=%q engine=%q", clone.ID, clone.Engine)
+	}
+
+	if _, err := m.CloneInstance(ctx, "src", "dst"); err == nil {
+		t.Error("clone onto existing instance: expected AlreadyExists")
+	}
+
+	// Deleting the source cascades to its children but leaves the clone.
+	if err := m.DeleteInstance(ctx, "src"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	if _, err := m.ListDatabases(ctx, "src"); err == nil {
+		t.Error("ListDatabases after instance delete: expected NotFound")
+	}
+
+	if _, err := m.DescribeInstances(ctx, []string{"dst"}); err != nil {
+		t.Errorf("clone should survive source delete: %v", err)
+	}
+}
+
+func TestCloudSQLReplicaAndFailoverActions(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "i", Engine: "POSTGRES_15"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if err := m.FailoverInstance(ctx, "i"); err != nil {
+		t.Errorf("FailoverInstance: %v", err)
+	}
+
+	if err := m.PromoteReplica(ctx, "i"); err != nil {
+		t.Errorf("PromoteReplica: %v", err)
+	}
+
+	if err := m.FailoverInstance(ctx, "ghost"); err == nil {
+		t.Error("FailoverInstance on missing instance: expected NotFound")
+	}
+}

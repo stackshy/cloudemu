@@ -11,6 +11,7 @@ package cloudsql
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -42,6 +43,11 @@ type Mock struct {
 	instances *memstore.Store[rdsdriver.Instance]
 	snapshots *memstore.Store[rdsdriver.Snapshot]
 
+	// child resources keyed "instance/name" (sslCerts keyed "instance/sha1")
+	databases *memstore.Store[rdsdriver.Database]
+	users     *memstore.Store[rdsdriver.User]
+	sslCerts  *memstore.Store[rdsdriver.SslCert]
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -51,6 +57,9 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		instances: memstore.New[rdsdriver.Instance](),
 		snapshots: memstore.New[rdsdriver.Snapshot](),
+		databases: memstore.New[rdsdriver.Database](),
+		users:     memstore.New[rdsdriver.User](),
+		sslCerts:  memstore.New[rdsdriver.SslCert](),
 		opts:      opts,
 	}
 }
@@ -267,7 +276,33 @@ func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
 	}
 
+	m.deleteChildren(id)
+
 	return nil
+}
+
+// deleteChildren removes the databases, users and SSL certs belonging to
+// instance id. The caller already holds the write lock.
+func (m *Mock) deleteChildren(instance string) {
+	prefix := instance + "/"
+
+	for key := range m.databases.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.databases.Delete(key)
+		}
+	}
+
+	for key := range m.users.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.users.Delete(key)
+		}
+	}
+
+	for key := range m.sslCerts.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.sslCerts.Delete(key)
+		}
+	}
 }
 
 // StartInstance moves a stopped instance back to runnable. In Cloud SQL this
