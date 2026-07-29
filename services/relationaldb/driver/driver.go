@@ -324,3 +324,123 @@ type Configurations interface {
 type Failover interface {
 	FailoverInstance(ctx context.Context, id string) error
 }
+
+// VNetRuleConfig describes a virtual-network rule to create (Azure SQL).
+type VNetRuleConfig struct {
+	Server                string
+	Name                  string
+	SubnetID              string
+	IgnoreMissingEndpoint bool
+}
+
+// VNetRule allows traffic from a virtual-network subnet to a server.
+type VNetRule struct {
+	Server                string
+	Name                  string
+	SubnetID              string
+	IgnoreMissingEndpoint bool
+	State                 string
+	ARN                   string
+}
+
+// VNetRules is an OPTIONAL Azure SQL capability, discovered by type assertion.
+type VNetRules interface {
+	CreateVNetRule(ctx context.Context, cfg VNetRuleConfig) (*VNetRule, error)
+	GetVNetRule(ctx context.Context, server, name string) (*VNetRule, error)
+	ListVNetRules(ctx context.Context, server string) ([]VNetRule, error)
+	DeleteVNetRule(ctx context.Context, server, name string) error
+}
+
+// ElasticPoolConfig describes an elastic pool to create (Azure SQL).
+type ElasticPoolConfig struct {
+	Server       string
+	Name         string
+	Location     string
+	SKUName      string
+	SKUTier      string
+	MaxSizeBytes int64
+	MinCapacity  float64
+	MaxCapacity  float64
+}
+
+// ElasticPool is a shared-resource pool that databases on a server draw from.
+type ElasticPool struct {
+	Server       string
+	Name         string
+	Location     string
+	SKUName      string
+	SKUTier      string
+	MaxSizeBytes int64
+	MinCapacity  float64
+	MaxCapacity  float64
+	State        string
+	ARN          string
+}
+
+// ElasticPools is an OPTIONAL Azure SQL capability, discovered by type assertion.
+type ElasticPools interface {
+	CreateElasticPool(ctx context.Context, cfg ElasticPoolConfig) (*ElasticPool, error)
+	GetElasticPool(ctx context.Context, server, name string) (*ElasticPool, error)
+	ListElasticPools(ctx context.Context, server string) ([]ElasticPool, error)
+	DeleteElasticPool(ctx context.Context, server, name string) error
+}
+
+// FailoverGroupConfig describes a failover group to create (Azure SQL).
+type FailoverGroupConfig struct {
+	Server             string
+	Name               string
+	FailoverPolicy     string
+	GracePeriodMinutes int32
+	PartnerServers     []string
+	Databases          []string
+}
+
+// FailoverGroup groups databases that fail over together to a partner server.
+type FailoverGroup struct {
+	Server             string
+	Name               string
+	FailoverPolicy     string
+	GracePeriodMinutes int32
+	PartnerServers     []string
+	Databases          []string
+	ReplicationRole    string
+	ARN                string
+}
+
+// FailoverGroups is an OPTIONAL Azure SQL capability, discovered by type
+// assertion. Failover flips the local replication role between Primary and
+// Secondary.
+type FailoverGroups interface {
+	CreateFailoverGroup(ctx context.Context, cfg FailoverGroupConfig) (*FailoverGroup, error)
+	GetFailoverGroup(ctx context.Context, server, name string) (*FailoverGroup, error)
+	ListFailoverGroups(ctx context.Context, server string) ([]FailoverGroup, error)
+	DeleteFailoverGroup(ctx context.Context, server, name string) error
+	FailoverFailoverGroup(ctx context.Context, server, name string) (*FailoverGroup, error)
+}
+
+// AADAdminConfig sets the Azure AD administrator on a server (Azure SQL).
+type AADAdminConfig struct {
+	Server   string
+	Login    string
+	SID      string
+	TenantID string
+}
+
+// AADAdmin is a server's Azure Active Directory administrator. A server has at
+// most one; Name is always "ActiveDirectory".
+type AADAdmin struct {
+	Server   string
+	Name     string
+	Login    string
+	SID      string
+	TenantID string
+	ARN      string
+}
+
+// AADAdmins is an OPTIONAL Azure SQL capability, discovered by type assertion.
+type AADAdmins interface {
+	SetAADAdmin(ctx context.Context, cfg AADAdminConfig) (*AADAdmin, error)
+	GetAADAdmin(ctx context.Context, server, name string) (*AADAdmin, error)
+	ListAADAdmins(ctx context.Context, server string) ([]AADAdmin, error)
+	DeleteAADAdmin(ctx context.Context, server, name string) error
+}

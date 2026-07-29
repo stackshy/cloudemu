@@ -24,6 +24,7 @@ package azuresql
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -58,6 +59,14 @@ type Mock struct {
 	// snapshots key = snapshot id
 	snapshots *memstore.Store[rdsdriver.Snapshot]
 
+	// child resources keyed "server/name"
+	firewallRules  *memstore.Store[rdsdriver.FirewallRule]
+	vnetRules      *memstore.Store[rdsdriver.VNetRule]
+	elasticPools   *memstore.Store[rdsdriver.ElasticPool]
+	failoverGroups *memstore.Store[rdsdriver.FailoverGroup]
+	// aadAdmins key = server name (a server has at most one)
+	aadAdmins *memstore.Store[rdsdriver.AADAdmin]
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -65,10 +74,15 @@ type Mock struct {
 // New creates a new Azure SQL mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:  memstore.New[rdsdriver.Cluster](),
-		instances: memstore.New[rdsdriver.Instance](),
-		snapshots: memstore.New[rdsdriver.Snapshot](),
-		opts:      opts,
+		clusters:       memstore.New[rdsdriver.Cluster](),
+		instances:      memstore.New[rdsdriver.Instance](),
+		snapshots:      memstore.New[rdsdriver.Snapshot](),
+		firewallRules:  memstore.New[rdsdriver.FirewallRule](),
+		vnetRules:      memstore.New[rdsdriver.VNetRule](),
+		elasticPools:   memstore.New[rdsdriver.ElasticPool](),
+		failoverGroups: memstore.New[rdsdriver.FailoverGroup](),
+		aadAdmins:      memstore.New[rdsdriver.AADAdmin](),
+		opts:           opts,
 	}
 }
 
@@ -484,8 +498,42 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 	}
 
 	m.clusters.Delete(id)
+	m.deleteChildren(id)
 
 	return nil
+}
+
+// deleteChildren removes the firewall rules, vnet rules, elastic pools,
+// failover groups and AAD admin belonging to server id, matching Azure's
+// cascade delete on server removal. The caller already holds the write lock.
+func (m *Mock) deleteChildren(server string) {
+	prefix := server + "/"
+
+	for key := range m.firewallRules.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.firewallRules.Delete(key)
+		}
+	}
+
+	for key := range m.vnetRules.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.vnetRules.Delete(key)
+		}
+	}
+
+	for key := range m.elasticPools.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.elasticPools.Delete(key)
+		}
+	}
+
+	for key := range m.failoverGroups.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.failoverGroups.Delete(key)
+		}
+	}
+
+	m.aadAdmins.Delete(server)
 }
 
 // StartCluster / StopCluster are no-ops on Azure SQL servers. They aren't

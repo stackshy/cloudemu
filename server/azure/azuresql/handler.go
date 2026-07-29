@@ -31,6 +31,12 @@ const (
 	providerName         = "Microsoft.Sql"
 	resourceServers      = "servers"
 	subResourceDatabases = "databases"
+
+	subFirewallRules  = "firewallRules"
+	subVNetRules      = "virtualNetworkRules"
+	subElasticPools   = "elasticPools"
+	subFailoverGroups = "failoverGroups"
+	subAdministrators = "administrators"
 )
 
 // Handler serves Microsoft.Sql ARM requests against a relationaldb driver.
@@ -61,9 +67,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Database-scoped: .../servers/{srv}/databases[/{db}]
-	if rp.SubResource == subResourceDatabases {
-		h.serveDatabaseRoute(w, r, &rp)
+	// Child resources: .../servers/{srv}/{type}[/{name}].
+	if rp.SubResource != "" {
+		switch rp.SubResource {
+		case subResourceDatabases:
+			h.serveDatabaseRoute(w, r, &rp)
+		case subFirewallRules:
+			h.serveFirewallRule(w, r, &rp)
+		case subVNetRules:
+			h.serveVNetRule(w, r, &rp)
+		case subElasticPools:
+			h.serveElasticPool(w, r, &rp)
+		case subFailoverGroups:
+			h.serveFailoverGroup(w, r, &rp)
+		case subAdministrators:
+			h.serveAADAdmin(w, r, &rp)
+		default:
+			azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+		}
+
 		return
 	}
 

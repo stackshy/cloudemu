@@ -23,7 +23,7 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
-func newSDKClients(t *testing.T) (*armsql.ServersClient, *armsql.DatabasesClient) {
+func newFactory(t *testing.T) *armsql.ClientFactory {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -54,6 +54,14 @@ func newSDKClients(t *testing.T) (*armsql.ServersClient, *armsql.DatabasesClient
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	return cf
+}
+
+func newSDKClients(t *testing.T) (*armsql.ServersClient, *armsql.DatabasesClient) {
+	t.Helper()
+
+	cf := newFactory(t)
 
 	return cf.NewServersClient(), cf.NewDatabasesClient()
 }

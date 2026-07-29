@@ -245,3 +245,77 @@ func assertNotEmpty(t *testing.T, s string) {
 		t.Error("expected non-empty string")
 	}
 }
+
+func TestSubResourcesRequireServer(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "ghost", Name: "r"}); err == nil {
+		t.Error("CreateFirewallRule on missing server: expected error")
+	}
+
+	if _, err := m.CreateVNetRule(ctx, rdsdriver.VNetRuleConfig{Server: "ghost", Name: "v"}); err == nil {
+		t.Error("CreateVNetRule on missing server: expected error")
+	}
+
+	if _, err := m.CreateElasticPool(ctx, rdsdriver.ElasticPoolConfig{Server: "ghost", Name: "p"}); err == nil {
+		t.Error("CreateElasticPool on missing server: expected error")
+	}
+
+	if _, err := m.CreateFailoverGroup(ctx, rdsdriver.FailoverGroupConfig{Server: "ghost", Name: "f"}); err == nil {
+		t.Error("CreateFailoverGroup on missing server: expected error")
+	}
+
+	if _, err := m.SetAADAdmin(ctx, rdsdriver.AADAdminConfig{Server: "ghost"}); err == nil {
+		t.Error("SetAADAdmin on missing server: expected error")
+	}
+}
+
+func TestFailoverGroupRoleFlipAndCascade(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	fg, err := m.CreateFailoverGroup(ctx, rdsdriver.FailoverGroupConfig{
+		Server: "srv", Name: "fg", PartnerServers: []string{"partner"}, Databases: []string{"db1"},
+	})
+	if err != nil {
+		t.Fatalf("CreateFailoverGroup: %v", err)
+	}
+
+	if fg.ReplicationRole != "Primary" {
+		t.Errorf("initial role: got %q, want Primary", fg.ReplicationRole)
+	}
+
+	flipped, err := m.FailoverFailoverGroup(ctx, "srv", "fg")
+	if err != nil {
+		t.Fatalf("FailoverFailoverGroup: %v", err)
+	}
+
+	if flipped.ReplicationRole != "Secondary" {
+		t.Errorf("after failover: got %q, want Secondary", flipped.ReplicationRole)
+	}
+
+	// Mutating the returned slice must not affect stored state.
+	flipped.PartnerServers[0] = "tampered"
+
+	reread, _ := m.GetFailoverGroup(ctx, "srv", "fg")
+	if reread.PartnerServers[0] != "partner" {
+		t.Error("returned slice aliased stored state")
+	}
+
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r"}); err != nil {
+		t.Fatalf("CreateFirewallRule: %v", err)
+	}
+
+	if err := m.DeleteCluster(ctx, "srv"); err != nil {
+		t.Fatalf("DeleteCluster: %v", err)
+	}
+
+	if _, err := m.ListFirewallRules(ctx, "srv"); err == nil {
+		t.Error("ListFirewallRules after server delete: expected server NotFound")
+	}
+}
