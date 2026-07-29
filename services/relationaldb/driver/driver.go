@@ -234,3 +234,64 @@ type SubnetGroups interface {
 	DescribeDBSubnetGroups(ctx context.Context, names []string) ([]SubnetGroup, error)
 	DeleteDBSubnetGroup(ctx context.Context, name string) error
 }
+
+// Parameter is a single engine parameter within a parameter group. Only
+// user-set parameters are modeled; the emulator does not fabricate the hundreds
+// of engine defaults real AWS returns.
+type Parameter struct {
+	Name        string
+	Value       string
+	ApplyMethod string // "immediate" | "pending-reboot"
+	Source      string // "user" | "engine-default"
+	ApplyType   string
+	DataType    string
+	Description string
+}
+
+// ParameterGroupConfig configures a new DB (or DB cluster) parameter group.
+type ParameterGroupConfig struct {
+	Name        string
+	Family      string // e.g. "mysql8.0", "aurora-postgresql15"
+	Description string
+	Tags        map[string]string
+}
+
+// ParameterGroup is a named set of engine parameters applied to instances.
+type ParameterGroup struct {
+	Name        string
+	Family      string
+	Description string
+	ARN         string
+	Parameters  map[string]string // user-set name -> value
+}
+
+// ClusterParameterGroup is the cluster-scoped analogue of ParameterGroup.
+type ClusterParameterGroup struct {
+	Name        string
+	Family      string
+	Description string
+	ARN         string
+	Parameters  map[string]string
+}
+
+// ParameterGroups is an OPTIONAL capability covering both DB parameter groups
+// and DB cluster parameter groups, discovered by type assertion like
+// SubnetGroups. Real AWS reuses the same DBParameterGroup fault codes for the
+// cluster variants, so they share error mapping.
+type ParameterGroups interface {
+	CreateDBParameterGroup(ctx context.Context, cfg ParameterGroupConfig) (*ParameterGroup, error)
+	DescribeDBParameterGroups(ctx context.Context, names []string) ([]ParameterGroup, error)
+	ModifyDBParameterGroup(ctx context.Context, name string, params []Parameter) (*ParameterGroup, error)
+	DeleteDBParameterGroup(ctx context.Context, name string) error
+	DescribeDBParameters(ctx context.Context, name string) ([]Parameter, error)
+	ResetDBParameterGroup(ctx context.Context, name string, params []string, resetAll bool) (*ParameterGroup, error)
+	CopyDBParameterGroup(ctx context.Context, source, target, description string) (*ParameterGroup, error)
+
+	CreateDBClusterParameterGroup(ctx context.Context, cfg ParameterGroupConfig) (*ClusterParameterGroup, error)
+	DescribeDBClusterParameterGroups(ctx context.Context, names []string) ([]ClusterParameterGroup, error)
+	ModifyDBClusterParameterGroup(ctx context.Context, name string, params []Parameter) (*ClusterParameterGroup, error)
+	DeleteDBClusterParameterGroup(ctx context.Context, name string) error
+	DescribeDBClusterParameters(ctx context.Context, name string) ([]Parameter, error)
+	ResetDBClusterParameterGroup(ctx context.Context, name string, params []string, resetAll bool) (*ClusterParameterGroup, error)
+	CopyDBClusterParameterGroup(ctx context.Context, source, target, description string) (*ClusterParameterGroup, error)
+}

@@ -56,11 +56,13 @@ var _ rdsdriver.RelationalDB = (*Mock)(nil)
 type Mock struct {
 	mu sync.RWMutex
 
-	instances        *memstore.Store[rdsdriver.Instance]
-	clusters         *memstore.Store[rdsdriver.Cluster]
-	snapshots        *memstore.Store[rdsdriver.Snapshot]
-	clusterSnapshots *memstore.Store[rdsdriver.ClusterSnapshot]
-	subnetGroups     *memstore.Store[rdsdriver.SubnetGroup]
+	instances          *memstore.Store[rdsdriver.Instance]
+	clusters           *memstore.Store[rdsdriver.Cluster]
+	snapshots          *memstore.Store[rdsdriver.Snapshot]
+	clusterSnapshots   *memstore.Store[rdsdriver.ClusterSnapshot]
+	subnetGroups       *memstore.Store[rdsdriver.SubnetGroup]
+	paramGroups        *memstore.Store[rdsdriver.ParameterGroup]
+	clusterParamGroups *memstore.Store[rdsdriver.ClusterParameterGroup]
 
 	opts           *config.Options
 	subnetResolver SubnetResolver
@@ -70,12 +72,14 @@ type Mock struct {
 // New creates a new AWS RDS mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances:        memstore.New[rdsdriver.Instance](),
-		clusters:         memstore.New[rdsdriver.Cluster](),
-		snapshots:        memstore.New[rdsdriver.Snapshot](),
-		clusterSnapshots: memstore.New[rdsdriver.ClusterSnapshot](),
-		subnetGroups:     memstore.New[rdsdriver.SubnetGroup](),
-		opts:             opts,
+		instances:          memstore.New[rdsdriver.Instance](),
+		clusters:           memstore.New[rdsdriver.Cluster](),
+		snapshots:          memstore.New[rdsdriver.Snapshot](),
+		clusterSnapshots:   memstore.New[rdsdriver.ClusterSnapshot](),
+		subnetGroups:       memstore.New[rdsdriver.SubnetGroup](),
+		paramGroups:        memstore.New[rdsdriver.ParameterGroup](),
+		clusterParamGroups: memstore.New[rdsdriver.ClusterParameterGroup](),
+		opts:               opts,
 	}
 }
 

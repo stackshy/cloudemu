@@ -30,30 +30,44 @@ const (
 // rdsActions is the set of Action values this handler recognizes. Matches uses
 // it to decide whether to claim a request.
 var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateDBSubnetGroup":             {},
-	"DescribeDBSubnetGroups":          {},
-	"DeleteDBSubnetGroup":             {},
-	"CreateDBInstance":                {},
-	"DescribeDBInstances":             {},
-	"ModifyDBInstance":                {},
-	"DeleteDBInstance":                {},
-	"StartDBInstance":                 {},
-	"StopDBInstance":                  {},
-	"RebootDBInstance":                {},
-	"CreateDBCluster":                 {},
-	"DescribeDBClusters":              {},
-	"ModifyDBCluster":                 {},
-	"DeleteDBCluster":                 {},
-	"StartDBCluster":                  {},
-	"StopDBCluster":                   {},
-	"CreateDBSnapshot":                {},
-	"DescribeDBSnapshots":             {},
-	"DeleteDBSnapshot":                {},
-	"RestoreDBInstanceFromDBSnapshot": {},
-	"CreateDBClusterSnapshot":         {},
-	"DescribeDBClusterSnapshots":      {},
-	"DeleteDBClusterSnapshot":         {},
-	"RestoreDBClusterFromSnapshot":    {},
+	"CreateDBSubnetGroup":              {},
+	"DescribeDBSubnetGroups":           {},
+	"DeleteDBSubnetGroup":              {},
+	"CreateDBInstance":                 {},
+	"DescribeDBInstances":              {},
+	"ModifyDBInstance":                 {},
+	"DeleteDBInstance":                 {},
+	"StartDBInstance":                  {},
+	"StopDBInstance":                   {},
+	"RebootDBInstance":                 {},
+	"CreateDBCluster":                  {},
+	"DescribeDBClusters":               {},
+	"ModifyDBCluster":                  {},
+	"DeleteDBCluster":                  {},
+	"StartDBCluster":                   {},
+	"StopDBCluster":                    {},
+	"CreateDBSnapshot":                 {},
+	"DescribeDBSnapshots":              {},
+	"DeleteDBSnapshot":                 {},
+	"RestoreDBInstanceFromDBSnapshot":  {},
+	"CreateDBClusterSnapshot":          {},
+	"DescribeDBClusterSnapshots":       {},
+	"DeleteDBClusterSnapshot":          {},
+	"RestoreDBClusterFromSnapshot":     {},
+	"CreateDBParameterGroup":           {},
+	"DescribeDBParameterGroups":        {},
+	"ModifyDBParameterGroup":           {},
+	"DeleteDBParameterGroup":           {},
+	"DescribeDBParameters":             {},
+	"ResetDBParameterGroup":            {},
+	"CopyDBParameterGroup":             {},
+	"CreateDBClusterParameterGroup":    {},
+	"DescribeDBClusterParameterGroups": {},
+	"ModifyDBClusterParameterGroup":    {},
+	"DeleteDBClusterParameterGroup":    {},
+	"DescribeDBClusterParameters":      {},
+	"ResetDBClusterParameterGroup":     {},
+	"CopyDBClusterParameterGroup":      {},
 }
 
 // Handler serves RDS query-protocol requests.
@@ -148,6 +162,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteDBClusterSnapshot(w, r)
 	case "RestoreDBClusterFromSnapshot":
 		h.restoreClusterFromSnapshot(w, r)
+	case "CreateDBParameterGroup":
+		h.createDBParameterGroup(w, r)
+	case "DescribeDBParameterGroups":
+		h.describeDBParameterGroups(w, r)
+	case "ModifyDBParameterGroup":
+		h.modifyDBParameterGroup(w, r)
+	case "DeleteDBParameterGroup":
+		h.deleteDBParameterGroup(w, r)
+	case "DescribeDBParameters":
+		h.describeDBParameters(w, r)
+	case "ResetDBParameterGroup":
+		h.resetDBParameterGroup(w, r)
+	case "CopyDBParameterGroup":
+		h.copyDBParameterGroup(w, r)
+	case "CreateDBClusterParameterGroup":
+		h.createDBClusterParameterGroup(w, r)
+	case "DescribeDBClusterParameterGroups":
+		h.describeDBClusterParameterGroups(w, r)
+	case "ModifyDBClusterParameterGroup":
+		h.modifyDBClusterParameterGroup(w, r)
+	case "DeleteDBClusterParameterGroup":
+		h.deleteDBClusterParameterGroup(w, r)
+	case "DescribeDBClusterParameters":
+		h.describeDBClusterParameters(w, r)
+	case "ResetDBClusterParameterGroup":
+		h.resetDBClusterParameterGroup(w, r)
+	case "CopyDBClusterParameterGroup":
+		h.copyDBClusterParameterGroup(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown RDS action: "+action)
@@ -181,6 +223,11 @@ func notFoundCode(err error) string {
 	// with "DB ", and checking it late would let a broader case claim it.
 	case strings.Contains(msg, "db subnet group"):
 		return "DBSubnetGroupNotFoundFault"
+	// "parameter group" before the DB cluster/instance cases: the cluster
+	// variant's message contains "DB cluster", which would otherwise claim it.
+	// Real AWS reuses the DBParameterGroup fault for both DB and cluster groups.
+	case strings.Contains(msg, "parameter group"):
+		return "DBParameterGroupNotFound"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceNotFound"
 	case strings.Contains(msg, "DB cluster snapshot"):
@@ -200,6 +247,8 @@ func alreadyExistsCode(err error) string {
 	switch {
 	case strings.Contains(msg, "db subnet group"):
 		return "DBSubnetGroupAlreadyExists"
+	case strings.Contains(msg, "parameter group"):
+		return "DBParameterGroupAlreadyExists"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceAlreadyExists"
 	case strings.Contains(msg, "DB cluster snapshot"):
