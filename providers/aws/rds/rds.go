@@ -107,12 +107,27 @@ func (m *Mock) emitInstanceMetrics(instanceID, engine string, cpu, connections f
 	dims := map[string]string{"DBInstanceIdentifier": instanceID}
 	ns := namespaceFor(engine)
 
+	// Latency and network throughput track whether the instance is serving
+	// traffic; cpu is 0 only when the instance is stopped.
+	running := cpu > 0
+
+	var readLatency, writeLatency, rxThroughput, txThroughput float64
+	if running {
+		readLatency, writeLatency = 0.001, 0.002
+		rxThroughput, txThroughput = 1<<20, 1<<19
+	}
+
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{
 		{Namespace: ns, MetricName: "CPUUtilization", Value: cpu, Unit: "Percent", Dimensions: dims, Timestamp: now},
 		{Namespace: ns, MetricName: "DatabaseConnections", Value: connections, Unit: "Count", Dimensions: dims, Timestamp: now},
 		{Namespace: ns, MetricName: "FreeableMemory", Value: 1 << 30, Unit: "Bytes", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "FreeStorageSpace", Value: 10 << 30, Unit: "Bytes", Dimensions: dims, Timestamp: now},
 		{Namespace: ns, MetricName: "ReadIOPS", Value: 10, Unit: "Count/Second", Dimensions: dims, Timestamp: now},
 		{Namespace: ns, MetricName: "WriteIOPS", Value: 5, Unit: "Count/Second", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "ReadLatency", Value: readLatency, Unit: "Seconds", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "WriteLatency", Value: writeLatency, Unit: "Seconds", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "NetworkReceiveThroughput", Value: rxThroughput, Unit: "Bytes/Second", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "NetworkTransmitThroughput", Value: txThroughput, Unit: "Bytes/Second", Dimensions: dims, Timestamp: now},
 	})
 }
 
