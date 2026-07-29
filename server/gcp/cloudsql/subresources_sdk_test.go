@@ -171,3 +171,41 @@ func TestSDKCloudSQLInstanceActions(t *testing.T) {
 		t.Fatalf("Instances.PromoteReplica: %v", err)
 	}
 }
+
+func TestSDKCloudSQLTiersAndFlags(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+
+	tiers, err := svc.Tiers.List(project).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Tiers.List: %v", err)
+	}
+
+	if len(tiers.Items) == 0 {
+		t.Fatal("expected a non-empty tier catalog")
+	}
+
+	if tiers.Items[0].Tier == "" || tiers.Items[0].RAM == 0 {
+		t.Fatalf("tier not populated: %+v", tiers.Items[0])
+	}
+
+	flags, err := svc.Flags.List().Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Flags.List: %v", err)
+	}
+
+	if len(flags.Items) == 0 {
+		t.Fatal("expected a non-empty flag catalog")
+	}
+
+	var sawMaxConns bool
+	for _, f := range flags.Items {
+		if f.Name == "max_connections" {
+			sawMaxConns = true
+		}
+	}
+
+	if !sawMaxConns {
+		t.Error("expected max_connections in the flag catalog")
+	}
+}

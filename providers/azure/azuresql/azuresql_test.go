@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/azure/azuremonitor"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -317,5 +318,40 @@ func TestFailoverGroupRoleFlipAndCascade(t *testing.T) {
 
 	if _, err := m.ListFirewallRules(ctx, "srv"); err == nil {
 		t.Error("ListFirewallRules after server delete: expected server NotFound")
+	}
+}
+
+func TestElasticPoolEmitsMetrics(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("eastus"))
+
+	m := New(opts)
+	mon := azuremonitor.New(opts)
+	m.SetMonitoring(mon)
+
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := m.CreateElasticPool(ctx, rdsdriver.ElasticPoolConfig{Server: "srv", Name: "pool"}); err != nil {
+		t.Fatalf("CreateElasticPool: %v", err)
+	}
+
+	names, err := mon.ListMetrics(ctx, "Microsoft.Sql/servers/elasticpools")
+	if err != nil {
+		t.Fatalf("ListMetrics: %v", err)
+	}
+
+	var sawCPU bool
+	for _, n := range names {
+		if n == "cpu_percent" {
+			sawCPU = true
+		}
+	}
+
+	if !sawCPU {
+		t.Fatalf("expected cpu_percent on the elastic-pool namespace, got %v", names)
 	}
 }

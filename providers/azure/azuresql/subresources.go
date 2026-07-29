@@ -5,6 +5,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -242,9 +243,31 @@ func (m *Mock) CreateElasticPool(_ context.Context, cfg rdsdriver.ElasticPoolCon
 
 	m.elasticPools.Set(subKey(cfg.Server, cfg.Name), pool)
 
+	m.emitElasticPoolMetrics(cfg.Server, cfg.Name)
+
 	out := pool
 
 	return &out, nil
+}
+
+// emitElasticPoolMetrics pushes a representative datapoint set on the
+// Microsoft.Sql/servers/elasticpools namespace, matching the pool-scoped
+// metrics real Azure Monitor surfaces.
+func (m *Mock) emitElasticPoolMetrics(server, name string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	const ns = "Microsoft.Sql/servers/elasticpools"
+
+	now := m.opts.Clock.Now()
+	dims := map[string]string{"resourceId": m.childARN(server, "elasticPools", name)}
+
+	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{
+		{Namespace: ns, MetricName: "cpu_percent", Value: 25, Unit: "Percent", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "storage_percent", Value: 25, Unit: "Percent", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "workers_percent", Value: 10, Unit: "Percent", Dimensions: dims, Timestamp: now},
+	})
 }
 
 // GetElasticPool returns a single elastic pool.

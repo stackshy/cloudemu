@@ -274,6 +274,8 @@ func (m *Mock) lookupInstance(id string) (rdsdriver.Instance, error) {
 }
 
 // ModifyInstance applies the supplied changes to a database.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -456,6 +458,8 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 }
 
 // ModifyCluster updates server-level fields (admin password reset, version).
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyCluster(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Cluster, error) {

@@ -236,6 +236,8 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 }
 
 // ModifyInstance applies the supplied changes.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -385,6 +387,8 @@ func (*Mock) DescribeClusters(_ context.Context, _ []string) ([]rdsdriver.Cluste
 }
 
 // ModifyCluster is unsupported on Postgres Flex.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (*Mock) ModifyCluster(
 	_ context.Context, _ string, _ rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Cluster, error) {

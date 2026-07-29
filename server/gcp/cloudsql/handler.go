@@ -38,6 +38,7 @@ import (
 
 const (
 	pathPrefix      = "/v1/projects/"
+	pathFlags       = "/v1/flags"
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 1 << 20
 
@@ -47,6 +48,7 @@ const (
 	resourceDatabases  = "databases"
 	resourceUsers      = "users"
 	resourceSslCerts   = "sslCerts"
+	resourceTiers      = "tiers"
 )
 
 // isSubResource reports whether seg is an instance-scoped sub-collection; any
@@ -70,11 +72,15 @@ func New(db rdsdriver.RelationalDB) *Handler {
 	return &Handler{db: db}
 }
 
-// Matches accepts /v1/projects/{p}/{instances|operations}/... paths.
-// Other resource types under /v1/projects/ (locations, topics, subscriptions,
-// databases) belong to Cloud Functions, Pub/Sub, or Firestore respectively
-// and must fall through.
+// Matches accepts /v1/projects/{p}/{instances|operations|tiers}/... paths plus
+// the project-less /v1/flags catalog. Other resource types under /v1/projects/
+// (locations, topics, subscriptions, databases) belong to Cloud Functions,
+// Pub/Sub, or Firestore respectively and must fall through.
 func (*Handler) Matches(r *http.Request) bool {
+	if r.URL.Path == pathFlags {
+		return true
+	}
+
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
 		return false
 	}
@@ -88,7 +94,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch parts[idxResource] {
-	case resourceInstances, resourceOperations:
+	case resourceInstances, resourceOperations, resourceTiers:
 		return true
 	}
 
@@ -153,6 +159,12 @@ func parsePath(urlPath string) (sqlPath, bool) {
 
 // ServeHTTP routes the parsed path to the matching operation.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// /v1/flags is project-less, so it bypasses the project path parser.
+	if r.URL.Path == pathFlags {
+		serveFlags(w, r)
+		return
+	}
+
 	p, ok := parsePath(r.URL.Path)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "malformed path")
@@ -164,6 +176,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveOperation(w, r, &p)
 	case resourceInstances:
 		h.serveInstancesRoute(w, r, &p)
+	case resourceTiers:
+		serveTiers(w, r, &p)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported resource: "+p.resource)
 	}
