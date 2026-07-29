@@ -187,12 +187,13 @@ func New(opts ...config.Option) *Provider {
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region,
 		&resourcediscovery.Drivers{
-			Compute:    p.EC2,
-			Networking: p.VPC,
-			Storage:    p.S3,
-			Database:   p.DynamoDB,
-			Serverless: p.Lambda,
-			Kubernetes: eksDiscovery{p.EKS},
+			Compute:      p.EC2,
+			Networking:   p.VPC,
+			Storage:      p.S3,
+			Database:     p.DynamoDB,
+			Serverless:   p.Lambda,
+			Kubernetes:   eksDiscovery{p.EKS},
+			RelationalDB: rdsDiscovery{p.RDS},
 		},
 	)
 

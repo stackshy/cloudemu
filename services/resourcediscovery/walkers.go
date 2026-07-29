@@ -19,13 +19,14 @@ const (
 // portable-API service identifiers, not provider-specific names. Callers
 // translate to per-provider service names at the SDK boundary.
 const (
-	ServiceCompute    = "compute"
-	ServiceNetworking = "networking"
-	ServiceStorage    = "storage"
-	ServiceDatabase   = "database"
-	ServiceServerless = "serverless"
-	ServiceDatabricks = "databricks"
-	ServiceKubernetes = "kubernetes"
+	ServiceCompute      = "compute"
+	ServiceNetworking   = "networking"
+	ServiceStorage      = "storage"
+	ServiceDatabase     = "database"
+	ServiceServerless   = "serverless"
+	ServiceDatabricks   = "databricks"
+	ServiceKubernetes   = "kubernetes"
+	ServiceRelationalDB = "relationaldb"
 )
 
 // Resource type constants emitted by the walkers.
@@ -42,6 +43,9 @@ const (
 	TypeWorkspace     = "Workspace"
 	TypeCluster       = "Cluster"
 	TypeNodeGroup     = "NodeGroup"
+	TypeDBInstance    = "DBInstance"
+	TypeDBCluster     = "DBCluster"
+	TypeDBSnapshot    = "DBSnapshot"
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
@@ -333,6 +337,38 @@ func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
 				Region: region,
 			})
 		}
+	}
+
+	return out, nil
+}
+
+func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
+	dbs, err := e.drivers.RelationalDB.DiscoverDatabases(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkRelationalDB: %w", err)
+	}
+
+	out := []Resource{}
+
+	for i := range dbs {
+		d := dbs[i]
+
+		region := d.Region
+		if region == "" {
+			region = e.region
+		}
+
+		typ := d.Type
+		if typ == "" {
+			typ = TypeDBInstance
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceRelationalDB, Type: typ,
+			ID:     d.Name,
+			ARN:    d.ARN,
+			Region: region, Tags: copyTags(d.Tags),
+		})
 	}
 
 	return out, nil

@@ -35,15 +35,17 @@ const (
 	awsServiceS3       = "s3"
 	awsServiceDynamoDB = "dynamodb"
 	awsServiceLambda   = "lambda"
+	awsServiceRDS      = "rds"
 )
 
 // Portable-API service identifiers as emitted by resourcediscovery walkers.
 const (
-	portableServiceCompute    = "compute"
-	portableServiceNetworking = "networking"
-	portableServiceStorage    = "storage"
-	portableServiceDatabase   = "database"
-	portableServiceServerless = "serverless"
+	portableServiceCompute      = "compute"
+	portableServiceNetworking   = "networking"
+	portableServiceStorage      = "storage"
+	portableServiceDatabase     = "database"
+	portableServiceServerless   = "serverless"
+	portableServiceRelationalDB = "relationaldb"
 )
 
 // Handler serves Resource Explorer 2 REST-JSON requests.
@@ -415,6 +417,8 @@ func portableToAWSService(s string) string {
 		return awsServiceDynamoDB
 	case portableServiceServerless:
 		return awsServiceLambda
+	case portableServiceRelationalDB:
+		return awsServiceRDS
 	default:
 		return s
 	}
