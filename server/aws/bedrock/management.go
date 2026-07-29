@@ -2,6 +2,7 @@ package bedrock
 
 import (
 	"net/http"
+	"strconv"
 
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
@@ -14,13 +15,28 @@ type tagPair struct {
 }
 
 type createGuardrailRequest struct {
-	Name                    string    `json:"name"`
-	Description             string    `json:"description"`
-	BlockedInputMessaging   string    `json:"blockedInputMessaging"`
-	BlockedOutputsMessaging string    `json:"blockedOutputsMessaging"`
-	KMSKeyID                string    `json:"kmsKeyId"`
-	ClientRequestToken      string    `json:"clientRequestToken"`
-	Tags                    []tagPair `json:"tags"`
+	Name                             string                               `json:"name"`
+	Description                      string                               `json:"description"`
+	BlockedInputMessaging            string                               `json:"blockedInputMessaging"`
+	BlockedOutputsMessaging          string                               `json:"blockedOutputsMessaging"`
+	KMSKeyID                         string                               `json:"kmsKeyId"`
+	ClientRequestToken               string                               `json:"clientRequestToken"`
+	Tags                             []tagPair                            `json:"tags"`
+	TopicPolicyConfig                *topicPolicyConfigJSON               `json:"topicPolicyConfig,omitempty"`
+	ContentPolicyConfig              *contentPolicyConfigJSON             `json:"contentPolicyConfig,omitempty"`
+	WordPolicyConfig                 *wordPolicyConfigJSON                `json:"wordPolicyConfig,omitempty"`
+	SensitiveInformationPolicyConfig *sensitiveInfoPolicyConfigJSON       `json:"sensitiveInformationPolicyConfig,omitempty"`
+	ContextualGroundingPolicyConfig  *contextualGroundingPolicyConfigJSON `json:"contextualGroundingPolicyConfig,omitempty"`
+}
+
+type createGuardrailVersionRequest struct {
+	ClientRequestToken string `json:"clientRequestToken"`
+	Description        string `json:"description"`
+}
+
+type createGuardrailVersionResponse struct {
+	GuardrailID string `json:"guardrailId"`
+	Version     string `json:"version"`
 }
 
 type createGuardrailResponse struct {
@@ -31,17 +47,22 @@ type createGuardrailResponse struct {
 }
 
 type guardrailJSON struct {
-	Name                    string `json:"name"`
-	Description             string `json:"description,omitempty"`
-	GuardrailID             string `json:"guardrailId"`
-	GuardrailARN            string `json:"guardrailArn"`
-	Version                 string `json:"version"`
-	Status                  string `json:"status"`
-	BlockedInputMessaging   string `json:"blockedInputMessaging,omitempty"`
-	BlockedOutputsMessaging string `json:"blockedOutputsMessaging,omitempty"`
-	KMSKeyARN               string `json:"kmsKeyArn,omitempty"`
-	CreatedAt               string `json:"createdAt,omitempty"`
-	UpdatedAt               string `json:"updatedAt,omitempty"`
+	Name                       string                         `json:"name"`
+	Description                string                         `json:"description,omitempty"`
+	GuardrailID                string                         `json:"guardrailId"`
+	GuardrailARN               string                         `json:"guardrailArn"`
+	Version                    string                         `json:"version"`
+	Status                     string                         `json:"status"`
+	BlockedInputMessaging      string                         `json:"blockedInputMessaging,omitempty"`
+	BlockedOutputsMessaging    string                         `json:"blockedOutputsMessaging,omitempty"`
+	KMSKeyARN                  string                         `json:"kmsKeyArn,omitempty"`
+	CreatedAt                  string                         `json:"createdAt,omitempty"`
+	UpdatedAt                  string                         `json:"updatedAt,omitempty"`
+	TopicPolicy                *topicPolicyJSON               `json:"topicPolicy,omitempty"`
+	ContentPolicy              *contentPolicyJSON             `json:"contentPolicy,omitempty"`
+	WordPolicy                 *wordPolicyJSON                `json:"wordPolicy,omitempty"`
+	SensitiveInformationPolicy *sensitiveInfoPolicyJSON       `json:"sensitiveInformationPolicy,omitempty"`
+	ContextualGroundingPolicy  *contextualGroundingPolicyJSON `json:"contextualGroundingPolicy,omitempty"`
 }
 
 type guardrailSummaryJSON struct {
@@ -143,6 +164,7 @@ func (h *Handler) createGuardrail(w http.ResponseWriter, r *http.Request) {
 		KMSKeyID:                in.KMSKeyID,
 		ClientRequestToken:      in.ClientRequestToken,
 		Tags:                    tagsToMap(in.Tags),
+		GuardrailPolicies:       toDriverGuardrailPolicies(&in),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -153,6 +175,22 @@ func (h *Handler) createGuardrail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, createGuardrailResponse{
 		GuardrailID: g.ID, GuardrailARN: g.ARN, Version: g.Version, CreatedAt: g.CreatedAt,
 	})
+}
+
+func (h *Handler) createGuardrailVersion(w http.ResponseWriter, r *http.Request, id string) {
+	var in createGuardrailVersionRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+
+	gid, version, err := h.bedrock.CreateGuardrailVersion(r.Context(), id, in.Description)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	writeJSON(w, createGuardrailVersionResponse{GuardrailID: gid, Version: version})
 }
 
 func (h *Handler) getGuardrail(w http.ResponseWriter, r *http.Request, id string) {
@@ -167,19 +205,43 @@ func (h *Handler) getGuardrail(w http.ResponseWriter, r *http.Request, id string
 }
 
 func (h *Handler) listGuardrails(w http.ResponseWriter, r *http.Request) {
-	gs, err := h.bedrock.ListGuardrails(r.Context())
+	q := r.URL.Query()
+
+	gs, err := h.bedrock.ListGuardrails(r.Context(), q.Get("guardrailIdentifier"))
 	if err != nil {
 		writeErr(w, err)
 
 		return
 	}
 
-	out := make([]guardrailSummaryJSON, 0, len(gs))
-	for i := range gs {
-		out = append(out, toGuardrailSummaryJSON(&gs[i]))
+	page, next := paginateGuardrails(gs, q.Get("maxResults"), q.Get("nextToken"))
+
+	out := make([]guardrailSummaryJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toGuardrailSummaryJSON(&page[i]))
 	}
 
-	writeJSON(w, listGuardrailsResponse{Guardrails: out})
+	writeJSON(w, listGuardrailsResponse{Guardrails: out, NextToken: next})
+}
+
+// paginateGuardrails applies optional maxResults/nextToken (a decimal start
+// offset) paging, returning the page and the token for the next page (empty
+// when the page is the last).
+func paginateGuardrails(
+	gs []bedrockdriver.Guardrail, maxResults, nextToken string,
+) (page []bedrockdriver.Guardrail, next string) {
+	start := 0
+	if n, err := strconv.Atoi(nextToken); err == nil && n > 0 {
+		start = min(n, len(gs))
+	}
+
+	gs = gs[start:]
+
+	if n, err := strconv.Atoi(maxResults); err == nil && n > 0 && n < len(gs) {
+		return gs[:n], strconv.Itoa(start + n)
+	}
+
+	return gs, ""
 }
 
 func (h *Handler) updateGuardrail(w http.ResponseWriter, r *http.Request, id string) {
@@ -194,6 +256,7 @@ func (h *Handler) updateGuardrail(w http.ResponseWriter, r *http.Request, id str
 		BlockedInputMessaging:   in.BlockedInputMessaging,
 		BlockedOutputsMessaging: in.BlockedOutputsMessaging,
 		KMSKeyID:                in.KMSKeyID,
+		GuardrailPolicies:       toDriverGuardrailPolicies(&in),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -207,7 +270,7 @@ func (h *Handler) updateGuardrail(w http.ResponseWriter, r *http.Request, id str
 }
 
 func (h *Handler) deleteGuardrail(w http.ResponseWriter, r *http.Request, id string) {
-	if err := h.bedrock.DeleteGuardrail(r.Context(), id); err != nil {
+	if err := h.bedrock.DeleteGuardrail(r.Context(), id, r.URL.Query().Get("guardrailVersion")); err != nil {
 		writeErr(w, err)
 
 		return
@@ -326,7 +389,7 @@ func (h *Handler) deleteLogging(w http.ResponseWriter, r *http.Request) {
 // --- converters ---
 
 func toGuardrailJSON(g *bedrockdriver.Guardrail) guardrailJSON {
-	return guardrailJSON{
+	out := guardrailJSON{
 		Name:                    g.Name,
 		Description:             g.Description,
 		GuardrailID:             g.ID,
@@ -339,6 +402,10 @@ func toGuardrailJSON(g *bedrockdriver.Guardrail) guardrailJSON {
 		CreatedAt:               g.CreatedAt,
 		UpdatedAt:               g.UpdatedAt,
 	}
+
+	fillGuardrailPolicies(&out, &g.GuardrailPolicies)
+
+	return out
 }
 
 func toGuardrailSummaryJSON(g *bedrockdriver.Guardrail) guardrailSummaryJSON {

@@ -207,6 +207,58 @@ func (b *Bedrock) Converse(ctx context.Context, in driver.ConverseInput) (*drive
 	return out.(*driver.ConverseOutput), nil
 }
 
+// CountTokens returns an emulated input-token count for a would-be request.
+//
+//nolint:gocritic // in matches the driver interface signature; read without mutation.
+func (b *Bedrock) CountTokens(ctx context.Context, in driver.CountTokensInput) (int, error) {
+	out, err := b.do(ctx, "CountTokens", in.ModelID, func() (any, error) { return b.driver.CountTokens(ctx, in) })
+	if err != nil {
+		return 0, err
+	}
+
+	return out.(int), nil
+}
+
+// ApplyGuardrail evaluates content against a guardrail.
+func (b *Bedrock) ApplyGuardrail(ctx context.Context, in driver.ApplyGuardrailInput) (*driver.ApplyGuardrailOutput, error) {
+	out, err := b.do(ctx, "ApplyGuardrail", in.GuardrailIdentifier, func() (any, error) { return b.driver.ApplyGuardrail(ctx, in) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ApplyGuardrailOutput), nil
+}
+
+// TagResource attaches tags to a Bedrock resource by ARN.
+func (b *Bedrock) TagResource(ctx context.Context, resourceARN string, tags []driver.Tag) error {
+	_, err := b.do(ctx, "TagResource", resourceARN, func() (any, error) {
+		return nil, b.driver.TagResource(ctx, resourceARN, tags)
+	})
+
+	return err
+}
+
+// UntagResource removes tag keys from a Bedrock resource by ARN.
+func (b *Bedrock) UntagResource(ctx context.Context, resourceARN string, tagKeys []string) error {
+	_, err := b.do(ctx, "UntagResource", resourceARN, func() (any, error) {
+		return nil, b.driver.UntagResource(ctx, resourceARN, tagKeys)
+	})
+
+	return err
+}
+
+// ListTagsForResource lists the tags attached to a Bedrock resource by ARN.
+func (b *Bedrock) ListTagsForResource(ctx context.Context, resourceARN string) ([]driver.Tag, error) {
+	out, err := b.do(ctx, "ListTagsForResource", resourceARN, func() (any, error) {
+		return b.driver.ListTagsForResource(ctx, resourceARN)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.Tag), nil
+}
+
 // CreateGuardrail creates a content guardrail.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
@@ -229,9 +281,10 @@ func (b *Bedrock) GetGuardrail(ctx context.Context, identifier, version string) 
 	return out.(*driver.Guardrail), nil
 }
 
-// ListGuardrails lists all guardrails.
-func (b *Bedrock) ListGuardrails(ctx context.Context) ([]driver.Guardrail, error) {
-	out, err := b.do(ctx, "ListGuardrails", nil, func() (any, error) { return b.driver.ListGuardrails(ctx) })
+// ListGuardrails lists guardrails, optionally scoped to a single identifier
+// (which expands to one entry per version).
+func (b *Bedrock) ListGuardrails(ctx context.Context, identifier string) ([]driver.Guardrail, error) {
+	out, err := b.do(ctx, "ListGuardrails", identifier, func() (any, error) { return b.driver.ListGuardrails(ctx, identifier) })
 	if err != nil {
 		return nil, err
 	}
@@ -251,9 +304,29 @@ func (b *Bedrock) UpdateGuardrail(ctx context.Context, identifier string, cfg dr
 	return out.(*driver.Guardrail), nil
 }
 
-// DeleteGuardrail deletes a guardrail.
-func (b *Bedrock) DeleteGuardrail(ctx context.Context, identifier string) error {
-	_, err := b.do(ctx, "DeleteGuardrail", identifier, func() (any, error) { return nil, b.driver.DeleteGuardrail(ctx, identifier) })
+// CreateGuardrailVersion snapshots a guardrail's DRAFT into a new immutable
+// numbered version, returning the guardrail ID and the assigned version.
+func (b *Bedrock) CreateGuardrailVersion(
+	ctx context.Context, identifier, description string,
+) (guardrailID, version string, err error) {
+	out, err := b.do(ctx, "CreateGuardrailVersion", identifier, func() (any, error) {
+		id, ver, cErr := b.driver.CreateGuardrailVersion(ctx, identifier, description)
+		return [2]string{id, ver}, cErr
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	pair := out.([2]string)
+
+	return pair[0], pair[1], nil
+}
+
+// DeleteGuardrail deletes a guardrail, or a single version when version is set.
+func (b *Bedrock) DeleteGuardrail(ctx context.Context, identifier, version string) error {
+	_, err := b.do(ctx, "DeleteGuardrail", identifier, func() (any, error) {
+		return nil, b.driver.DeleteGuardrail(ctx, identifier, version)
+	})
 
 	return err
 }

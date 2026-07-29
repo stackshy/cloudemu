@@ -24,9 +24,23 @@ type Mock struct {
 	foundation  []driver.FoundationModel
 	jobs        *memstore.Store[*driver.CustomizationJob]
 	models      *memstore.Store[*driver.CustomModel]
-	guardrails  *memstore.Store[*driver.Guardrail]
+	guardrails  *memstore.Store[*guardrailRecord]
 	provisioned *memstore.Store[*driver.ProvisionedThroughput]
-	opts        *config.Options
+	tags        *memstore.Store[[]driver.Tag] // keyed by resource ARN
+
+	asyncInvokes *memstore.Store[*driver.AsyncInvoke]    // keyed by invocation ARN
+	importJobs   *memstore.Store[*driver.ModelImportJob] // keyed by job name
+	copyJobs     *memstore.Store[*driver.ModelCopyJob]   // keyed by job ARN
+	evalJobs     *memstore.Store[*driver.EvaluationJob]  // keyed by job name
+
+	inferenceProfiles *memstore.Store[*driver.InferenceProfile]         // keyed by profile ID
+	promptRouters     *memstore.Store[*driver.PromptRouter]             // keyed by router ARN
+	arPolicies        *memstore.Store[*driver.AutomatedReasoningPolicy] // keyed by policy ARN
+
+	marketplaceEndpoints *memstore.Store[*driver.MarketplaceEndpoint] // keyed by endpoint ARN
+	fmAgreements         *memstore.Store[bool]                        // set of accepted agreements keyed by modelId
+
+	opts *config.Options
 
 	logMu   sync.RWMutex
 	logging *driver.LoggingConfig
@@ -39,9 +53,23 @@ func New(opts *config.Options) *Mock {
 		foundation:  seedFoundationModels(opts.Region),
 		jobs:        memstore.New[*driver.CustomizationJob](),
 		models:      memstore.New[*driver.CustomModel](),
-		guardrails:  memstore.New[*driver.Guardrail](),
+		guardrails:  memstore.New[*guardrailRecord](),
 		provisioned: memstore.New[*driver.ProvisionedThroughput](),
-		opts:        opts,
+		tags:        memstore.New[[]driver.Tag](),
+
+		asyncInvokes: memstore.New[*driver.AsyncInvoke](),
+		importJobs:   memstore.New[*driver.ModelImportJob](),
+		copyJobs:     memstore.New[*driver.ModelCopyJob](),
+		evalJobs:     memstore.New[*driver.EvaluationJob](),
+
+		inferenceProfiles: memstore.New[*driver.InferenceProfile](),
+		promptRouters:     memstore.New[*driver.PromptRouter](),
+		arPolicies:        memstore.New[*driver.AutomatedReasoningPolicy](),
+
+		marketplaceEndpoints: memstore.New[*driver.MarketplaceEndpoint](),
+		fmAgreements:         memstore.New[bool](),
+
+		opts: opts,
 	}
 }
 
@@ -52,7 +80,9 @@ func (m *Mock) now() string {
 // ListFoundationModels returns the seeded foundation-model catalog.
 func (m *Mock) ListFoundationModels(_ context.Context) ([]driver.FoundationModel, error) {
 	out := make([]driver.FoundationModel, len(m.foundation))
-	copy(out, m.foundation)
+	for i := range m.foundation {
+		out[i] = cloneFoundationModel(m.foundation[i])
+	}
 
 	return out, nil
 }
@@ -64,9 +94,22 @@ func (m *Mock) GetFoundationModel(_ context.Context, modelID string) (*driver.Fo
 		return nil, errors.Newf(errors.NotFound, "foundation model %q not found", modelID)
 	}
 
-	result := *fm
+	result := cloneFoundationModel(*fm)
 
 	return &result, nil
+}
+
+// cloneFoundationModel returns a copy of fm with its slice fields deep-copied so
+// callers cannot mutate the shared seed catalog through the returned value.
+//
+//nolint:gocritic // fm is copied intentionally so slice fields can be reassigned to fresh backing arrays.
+func cloneFoundationModel(fm driver.FoundationModel) driver.FoundationModel {
+	fm.InputModalities = append([]string(nil), fm.InputModalities...)
+	fm.OutputModalities = append([]string(nil), fm.OutputModalities...)
+	fm.CustomizationsSupported = append([]string(nil), fm.CustomizationsSupported...)
+	fm.InferenceTypesSupported = append([]string(nil), fm.InferenceTypesSupported...)
+
+	return fm
 }
 
 // findFoundation returns the seeded model matching id by ModelID or ModelARN.
@@ -151,6 +194,7 @@ func (m *Mock) CreateModelCustomizationJob(_ context.Context, cfg driver.Customi
 func (m *Mock) GetModelCustomizationJob(_ context.Context, jobIdentifier string) (*driver.CustomizationJob, error) {
 	if job, ok := m.jobs.Get(jobIdentifier); ok {
 		result := *job
+		result.HyperParameters = copyMap(job.HyperParameters)
 
 		return &result, nil
 	}
@@ -158,6 +202,7 @@ func (m *Mock) GetModelCustomizationJob(_ context.Context, jobIdentifier string)
 	for _, job := range m.jobs.All() {
 		if job.JobARN == jobIdentifier {
 			result := *job
+			result.HyperParameters = copyMap(job.HyperParameters)
 
 			return &result, nil
 		}
@@ -168,11 +213,13 @@ func (m *Mock) GetModelCustomizationJob(_ context.Context, jobIdentifier string)
 
 // ListModelCustomizationJobs lists all customization jobs.
 func (m *Mock) ListModelCustomizationJobs(_ context.Context) ([]driver.CustomizationJob, error) {
-	all := m.jobs.All()
+	all := m.jobs.SortedValues()
 	out := make([]driver.CustomizationJob, 0, len(all))
 
 	for _, job := range all {
-		out = append(out, *job)
+		result := *job
+		result.HyperParameters = copyMap(job.HyperParameters)
+		out = append(out, result)
 	}
 
 	return out, nil
@@ -180,11 +227,13 @@ func (m *Mock) ListModelCustomizationJobs(_ context.Context) ([]driver.Customiza
 
 // ListCustomModels lists all custom models.
 func (m *Mock) ListCustomModels(_ context.Context) ([]driver.CustomModel, error) {
-	all := m.models.All()
+	all := m.models.SortedValues()
 	out := make([]driver.CustomModel, 0, len(all))
 
 	for _, cm := range all {
-		out = append(out, *cm)
+		result := *cm
+		result.HyperParameters = copyMap(cm.HyperParameters)
+		out = append(out, result)
 	}
 
 	return out, nil
@@ -198,6 +247,7 @@ func (m *Mock) GetCustomModel(_ context.Context, modelIdentifier string) (*drive
 	}
 
 	result := *cm
+	result.HyperParameters = copyMap(cm.HyperParameters)
 
 	return &result, nil
 }

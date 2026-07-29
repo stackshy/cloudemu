@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/errors"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
 
@@ -37,7 +38,7 @@ func TestGuardrailLifecycle(t *testing.T) {
 	_, err = m.GetGuardrail(ctx, g.ARN, "")
 	requireNoError(t, err)
 
-	list, err := m.ListGuardrails(ctx)
+	list, err := m.ListGuardrails(ctx, "")
 	requireNoError(t, err)
 	assertEqual(t, 1, len(list))
 
@@ -49,7 +50,7 @@ func TestGuardrailLifecycle(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, "new in", upd.BlockedInputMessaging)
 
-	requireNoError(t, m.DeleteGuardrail(ctx, g.ID))
+	requireNoError(t, m.DeleteGuardrail(ctx, g.ID, ""))
 
 	_, err = m.GetGuardrail(ctx, g.ID, "")
 	assertError(t, err, true)
@@ -76,9 +77,42 @@ func TestGuardrailRenameRekeys(t *testing.T) {
 	_, err = m.GetGuardrail(ctx, "gr-old", "")
 	assertError(t, err, true)
 
-	list, err := m.ListGuardrails(ctx)
+	list, err := m.ListGuardrails(ctx, "")
 	requireNoError(t, err)
 	assertEqual(t, 1, len(list))
+}
+
+func TestGuardrailRenameCollision(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	a := newGuardrail(t, m, "gr-a")
+	newGuardrail(t, m, "gr-b")
+
+	// Renaming A onto B's name must fail with AlreadyExists and leave both intact.
+	_, err := m.UpdateGuardrail(ctx, a.ID, bedrockdriver.GuardrailConfig{
+		Name:                    "gr-b",
+		BlockedInputMessaging:   "in",
+		BlockedOutputsMessaging: "out",
+	})
+	assertError(t, err, true)
+	if !errors.IsAlreadyExists(err) {
+		t.Fatalf("expected AlreadyExists, got %v", err)
+	}
+
+	// A still exists under its original name, unmodified.
+	gotA, err := m.GetGuardrail(ctx, a.ID, "")
+	requireNoError(t, err)
+	assertEqual(t, "gr-a", gotA.Name)
+
+	// B is intact.
+	gotB, err := m.GetGuardrail(ctx, "gr-b", "")
+	requireNoError(t, err)
+	assertEqual(t, "gr-b", gotB.Name)
+
+	list, err := m.ListGuardrails(ctx, "")
+	requireNoError(t, err)
+	assertEqual(t, 2, len(list))
 }
 
 func TestGuardrailValidation(t *testing.T) {
@@ -95,6 +129,107 @@ func TestGuardrailValidation(t *testing.T) {
 	_, err = m.CreateGuardrail(ctx, bedrockdriver.GuardrailConfig{
 		Name: "dup", BlockedInputMessaging: "x", BlockedOutputsMessaging: "y",
 	})
+	assertError(t, err, true)
+}
+
+func TestGuardrailPoliciesRoundTrip(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateGuardrail(ctx, bedrockdriver.GuardrailConfig{
+		Name:                    "gr-pol",
+		BlockedInputMessaging:   "in",
+		BlockedOutputsMessaging: "out",
+		GuardrailPolicies: bedrockdriver.GuardrailPolicies{
+			TopicPolicy: &bedrockdriver.GuardrailTopicPolicy{Topics: []bedrockdriver.GuardrailTopic{
+				{Name: "fiduciary", Definition: "financial advice", Examples: []string{"invest?"}, Type: "DENY"},
+			}},
+			ContentPolicy: &bedrockdriver.GuardrailContentPolicy{Filters: []bedrockdriver.GuardrailContentFilter{
+				{Type: "HATE", InputStrength: "HIGH", OutputStrength: "MEDIUM"},
+			}},
+			SensitiveInformationPolicy: &bedrockdriver.GuardrailSensitiveInformationPolicy{
+				PiiEntities: []bedrockdriver.GuardrailPiiEntity{{Type: "EMAIL", Action: "ANONYMIZE"}},
+			},
+			ContextualGroundingPolicy: &bedrockdriver.GuardrailContextualGroundingPolicy{
+				Filters: []bedrockdriver.GuardrailContextualGroundingFilter{{Type: "GROUNDING", Threshold: 0.7, Action: "BLOCK"}},
+			},
+		},
+	})
+	requireNoError(t, err)
+
+	got, err := m.GetGuardrail(ctx, "gr-pol", "")
+	requireNoError(t, err)
+
+	if got.TopicPolicy == nil || len(got.TopicPolicy.Topics) != 1 || got.TopicPolicy.Topics[0].Name != "fiduciary" {
+		t.Fatalf("topic policy not round-tripped: %+v", got.TopicPolicy)
+	}
+
+	if got.ContentPolicy == nil || got.ContentPolicy.Filters[0].InputStrength != "HIGH" {
+		t.Fatalf("content policy not round-tripped: %+v", got.ContentPolicy)
+	}
+
+	if got.SensitiveInformationPolicy == nil || got.SensitiveInformationPolicy.PiiEntities[0].Action != "ANONYMIZE" {
+		t.Fatalf("sensitive-info policy not round-tripped: %+v", got.SensitiveInformationPolicy)
+	}
+
+	if got.ContextualGroundingPolicy == nil || got.ContextualGroundingPolicy.Filters[0].Threshold != 0.7 {
+		t.Fatalf("contextual-grounding policy not round-tripped: %+v", got.ContextualGroundingPolicy)
+	}
+}
+
+func TestGuardrailVersions(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	g := newGuardrail(t, m, "gr-ver")
+
+	gid, v1, err := m.CreateGuardrailVersion(ctx, g.ID, "first snapshot")
+	requireNoError(t, err)
+	assertEqual(t, g.ID, gid)
+	assertEqual(t, "1", v1)
+
+	// A second version increments.
+	_, v2, err := m.CreateGuardrailVersion(ctx, g.ID, "")
+	requireNoError(t, err)
+	assertEqual(t, "2", v2)
+
+	// The numbered snapshot is retrievable and carries its own description.
+	snap, err := m.GetGuardrail(ctx, g.ID, "1")
+	requireNoError(t, err)
+	assertEqual(t, "1", snap.Version)
+	assertEqual(t, "first snapshot", snap.Description)
+
+	// DRAFT still resolves to the working copy.
+	draft, err := m.GetGuardrail(ctx, g.ID, "DRAFT")
+	requireNoError(t, err)
+	assertEqual(t, "DRAFT", draft.Version)
+
+	// Unknown version → NotFound.
+	_, err = m.GetGuardrail(ctx, g.ID, "99")
+	assertError(t, err, true)
+
+	// Scoped list returns DRAFT + both numbered versions.
+	scoped, err := m.ListGuardrails(ctx, g.ID)
+	requireNoError(t, err)
+	assertEqual(t, 3, len(scoped))
+
+	// Unscoped list returns one entry per guardrail.
+	all, err := m.ListGuardrails(ctx, "")
+	requireNoError(t, err)
+	assertEqual(t, 1, len(all))
+
+	// Deleting a specific version leaves DRAFT and the other version intact.
+	requireNoError(t, m.DeleteGuardrail(ctx, g.ID, "1"))
+	_, err = m.GetGuardrail(ctx, g.ID, "1")
+	assertError(t, err, true)
+
+	scoped, err = m.ListGuardrails(ctx, g.ID)
+	requireNoError(t, err)
+	assertEqual(t, 2, len(scoped))
+
+	// Deleting with no version removes the whole guardrail.
+	requireNoError(t, m.DeleteGuardrail(ctx, g.ID, ""))
+	_, err = m.GetGuardrail(ctx, g.ID, "")
 	assertError(t, err, true)
 }
 
@@ -175,4 +310,32 @@ func TestModelInvocationLogging(t *testing.T) {
 	if cfg != nil {
 		t.Fatalf("expected nil after delete, got %+v", cfg)
 	}
+}
+
+func TestModelInvocationLoggingCopyOut(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	// The stored config must not alias the caller's nested pointers.
+	in := bedrockdriver.LoggingConfig{
+		S3: &bedrockdriver.S3LoggingConfig{BucketName: "logs", KeyPrefix: "p/"},
+	}
+	requireNoError(t, m.PutModelInvocationLoggingConfiguration(ctx, in))
+
+	// Mutating the caller's config after Put must not change stored state.
+	in.S3.BucketName = "caller-mutated"
+
+	cfg, err := m.GetModelInvocationLoggingConfiguration(ctx)
+	requireNoError(t, err)
+	if cfg == nil || cfg.S3 == nil {
+		t.Fatal("expected logging config with S3")
+	}
+	assertEqual(t, "logs", cfg.S3.BucketName)
+
+	// Mutating a returned config must not corrupt state for the next reader.
+	cfg.S3.BucketName = "reader-mutated"
+
+	again, err := m.GetModelInvocationLoggingConfiguration(ctx)
+	requireNoError(t, err)
+	assertEqual(t, "logs", again.S3.BucketName)
 }

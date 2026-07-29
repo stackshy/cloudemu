@@ -39,93 +39,147 @@ func (m *Mock) CreateGuardrail(_ context.Context, cfg driver.GuardrailConfig) (*
 		BlockedOutputsMessaging: cfg.BlockedOutputsMessaging,
 		CreatedAt:               now,
 		UpdatedAt:               now,
+		GuardrailPolicies:       deepCopyGuardrailPolicies(cfg.GuardrailPolicies),
 	}
 
 	if cfg.KMSKeyID != "" {
 		g.KMSKeyARN = cfg.KMSKeyID
 	}
 
-	m.guardrails.Set(cfg.Name, g)
+	m.guardrails.Set(cfg.Name, &guardrailRecord{draft: g, nextVer: 1})
+	m.setTags(g.ARN, m.tagsFromMap(cfg.Tags))
 
 	result := *g
 
 	return &result, nil
 }
 
-// GetGuardrail returns a guardrail by name or ARN. version is ignored (only
-// the working version is modeled).
-func (m *Mock) GetGuardrail(_ context.Context, identifier, _ string) (*driver.Guardrail, error) {
-	g := m.findGuardrail(identifier)
-	if g == nil {
+// GetGuardrail returns a guardrail by name or ARN. An empty or "DRAFT" version
+// returns the working copy; a numbered version returns that snapshot.
+func (m *Mock) GetGuardrail(_ context.Context, identifier, version string) (*driver.Guardrail, error) {
+	rec := m.findGuardrailRecord(identifier)
+	if rec == nil {
 		return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
 	}
 
-	result := *g
+	if version != "" && version != guardrailDraftVersion {
+		result, ok := rec.versionSnapshot(version)
+		if !ok {
+			return nil, errors.Newf(errors.NotFound, "guardrail %q version %q not found", identifier, version)
+		}
+
+		return &result, nil
+	}
+
+	result := rec.draftSnapshot()
 
 	return &result, nil
 }
 
-// ListGuardrails lists all guardrails.
-func (m *Mock) ListGuardrails(_ context.Context) ([]driver.Guardrail, error) {
-	all := m.guardrails.All()
+// ListGuardrails lists guardrails. When identifier is set, it returns one
+// summary per version (DRAFT plus each numbered snapshot) of that guardrail;
+// otherwise it returns one summary per guardrail (its DRAFT).
+func (m *Mock) ListGuardrails(_ context.Context, identifier string) ([]driver.Guardrail, error) {
+	if identifier != "" {
+		rec := m.findGuardrailRecord(identifier)
+		if rec == nil {
+			return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
+		}
+
+		return rec.allSnapshots(), nil
+	}
+
+	all := m.guardrails.SortedValues()
 	out := make([]driver.Guardrail, 0, len(all))
 
-	for _, g := range all {
-		out = append(out, *g)
+	for _, rec := range all {
+		out = append(out, rec.draftSnapshot())
 	}
 
 	return out, nil
 }
 
-// UpdateGuardrail updates a guardrail's mutable fields.
+// UpdateGuardrail updates a guardrail's mutable DRAFT working copy. Numbered
+// version snapshots are immutable and left untouched.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdateGuardrail(_ context.Context, identifier string, cfg driver.GuardrailConfig) (*driver.Guardrail, error) {
-	g := m.findGuardrail(identifier)
-	if g == nil {
+	rec := m.findGuardrailRecord(identifier)
+	if rec == nil {
 		return nil, errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
 	}
 
-	updated := *g
-	updated.Name = orDefault(cfg.Name, g.Name)
-	updated.Description = cfg.Description
-	updated.BlockedInputMessaging = orDefault(cfg.BlockedInputMessaging, g.BlockedInputMessaging)
-	updated.BlockedOutputsMessaging = orDefault(cfg.BlockedOutputsMessaging, g.BlockedOutputsMessaging)
-	updated.UpdatedAt = m.now()
+	rec.mu.Lock()
+	g := rec.draft
+	oldName := g.Name
 
-	// Guardrails are keyed by name; re-key when an update renames one so
-	// lookups by the new name keep working.
-	if updated.Name != g.Name {
-		m.guardrails.Delete(g.Name)
+	newName := orDefault(cfg.Name, oldName)
+	if newName != oldName && m.guardrails.Has(newName) {
+		rec.mu.Unlock()
+
+		return nil, errors.Newf(errors.AlreadyExists, "guardrail %q already exists", newName)
 	}
 
-	m.guardrails.Set(updated.Name, &updated)
+	g.Name = newName
+	g.Description = cfg.Description
+	g.BlockedInputMessaging = orDefault(cfg.BlockedInputMessaging, g.BlockedInputMessaging)
+	g.BlockedOutputsMessaging = orDefault(cfg.BlockedOutputsMessaging, g.BlockedOutputsMessaging)
+	g.GuardrailPolicies = deepCopyGuardrailPolicies(cfg.GuardrailPolicies)
+	g.UpdatedAt = m.now()
+	result := cloneGuardrail(g)
+	rec.mu.Unlock()
 
-	result := updated
+	// Records are keyed by name; re-key when an update renames one so lookups
+	// by the new name keep working.
+	if newName != oldName {
+		m.guardrails.Delete(oldName)
+		m.guardrails.Set(newName, rec)
+	}
 
 	return &result, nil
 }
 
-// DeleteGuardrail deletes a guardrail by name or ARN.
-func (m *Mock) DeleteGuardrail(_ context.Context, identifier string) error {
-	g := m.findGuardrail(identifier)
-	if g == nil {
+// DeleteGuardrail deletes a guardrail by name or ARN. An empty version deletes
+// the whole guardrail (DRAFT and all snapshots); a specific version deletes
+// just that numbered snapshot.
+func (m *Mock) DeleteGuardrail(_ context.Context, identifier, version string) error {
+	rec := m.findGuardrailRecord(identifier)
+	if rec == nil {
 		return errors.Newf(errors.NotFound, "guardrail %q not found", identifier)
 	}
 
-	m.guardrails.Delete(g.Name)
+	if version == "" {
+		rec.mu.RLock()
+		name := rec.draft.Name
+		rec.mu.RUnlock()
 
-	return nil
-}
+		m.guardrails.Delete(name)
 
-func (m *Mock) findGuardrail(id string) *driver.Guardrail {
-	if g, ok := m.guardrails.Get(id); ok {
-		return g
+		return nil
 	}
 
-	for _, g := range m.guardrails.All() {
-		if g.ID == id || g.ARN == id {
-			return g
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+
+	for i, v := range rec.versions {
+		if v.Version == version {
+			rec.versions = append(rec.versions[:i], rec.versions[i+1:]...)
+
+			return nil
+		}
+	}
+
+	return errors.Newf(errors.NotFound, "guardrail %q version %q not found", identifier, version)
+}
+
+func (m *Mock) findGuardrailRecord(id string) *guardrailRecord {
+	if rec, ok := m.guardrails.Get(id); ok {
+		return rec
+	}
+
+	for _, rec := range m.guardrails.All() {
+		if rec.draft.ID == id || rec.draft.ARN == id {
+			return rec
 		}
 	}
 
@@ -187,6 +241,7 @@ func (m *Mock) CreateProvisionedModelThroughput(
 		LastModifiedTime:   now,
 	}
 	m.provisioned.Set(cfg.ProvisionedModelName, pt)
+	m.setTags(pt.ARN, m.tagsFromMap(cfg.Tags))
 
 	result := *pt
 
@@ -207,7 +262,7 @@ func (m *Mock) GetProvisionedModelThroughput(_ context.Context, identifier strin
 
 // ListProvisionedModelThroughputs lists all provisioned throughputs.
 func (m *Mock) ListProvisionedModelThroughputs(_ context.Context) ([]driver.ProvisionedThroughput, error) {
-	all := m.provisioned.All()
+	all := m.provisioned.SortedValues()
 	out := make([]driver.ProvisionedThroughput, 0, len(all))
 
 	for _, pt := range all {
@@ -261,13 +316,38 @@ func (m *Mock) resolveModelARN(id string) string {
 
 // PutModelInvocationLoggingConfiguration sets the invocation logging config.
 func (m *Mock) PutModelInvocationLoggingConfiguration(_ context.Context, cfg driver.LoggingConfig) error {
-	stored := cfg
+	stored := deepCopyLoggingConfig(cfg)
 
 	m.logMu.Lock()
 	m.logging = &stored
 	m.logMu.Unlock()
 
 	return nil
+}
+
+// deepCopyLoggingConfig returns a copy of cfg with its nested pointer fields
+// freshly allocated, so stored and returned configs never alias a caller's
+// pointers. Nil pointers stay nil.
+func deepCopyLoggingConfig(cfg driver.LoggingConfig) driver.LoggingConfig {
+	out := cfg
+
+	if cfg.S3 != nil {
+		s3 := *cfg.S3
+		out.S3 = &s3
+	}
+
+	if cfg.CloudWatch != nil {
+		cw := *cfg.CloudWatch
+
+		if cfg.CloudWatch.LargeDataDeliveryS3 != nil {
+			ldd := *cfg.CloudWatch.LargeDataDeliveryS3
+			cw.LargeDataDeliveryS3 = &ldd
+		}
+
+		out.CloudWatch = &cw
+	}
+
+	return out
 }
 
 // GetModelInvocationLoggingConfiguration returns the invocation logging config,
@@ -280,7 +360,7 @@ func (m *Mock) GetModelInvocationLoggingConfiguration(_ context.Context) (*drive
 		return nil, nil //nolint:nilnil // an unset logging config is a valid, non-error result
 	}
 
-	result := *m.logging
+	result := deepCopyLoggingConfig(*m.logging)
 
 	return &result, nil
 }
