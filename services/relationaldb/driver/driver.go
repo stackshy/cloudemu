@@ -74,6 +74,11 @@ type Instance struct {
 	AvailabilityZone   string
 	CreatedAt          time.Time
 	Tags               map[string]string
+	// ReadReplicaSource is the identifier of the primary this instance
+	// replicates from; empty for a primary. ReadReplicaTargets lists the
+	// replica identifiers reading from this instance.
+	ReadReplicaSource  string
+	ReadReplicaTargets []string
 }
 
 // ModifyInstanceInput holds modifiable instance attributes. Zero-valued fields
@@ -343,4 +348,22 @@ type OptionGroups interface {
 	DeleteOptionGroup(ctx context.Context, name string) error
 	CopyOptionGroup(ctx context.Context, source, target, description string) (*OptionGroup, error)
 	DescribeOptionGroupOptions(ctx context.Context, engineName, majorEngineVersion string) ([]OptionGroupOption, error)
+}
+
+// ReadReplicaConfig configures a new read replica.
+type ReadReplicaConfig struct {
+	ID                 string // new replica instance identifier
+	SourceInstanceID   string
+	InstanceClass      string
+	AvailabilityZone   string
+	Port               int
+	PubliclyAccessible bool
+	Tags               map[string]string
+}
+
+// ReadReplicas is an OPTIONAL capability for creating and promoting read
+// replicas, discovered by type assertion.
+type ReadReplicas interface {
+	CreateDBInstanceReadReplica(ctx context.Context, cfg ReadReplicaConfig) (*Instance, error)
+	PromoteReadReplica(ctx context.Context, id string) (*Instance, error)
 }

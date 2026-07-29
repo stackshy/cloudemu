@@ -40,25 +40,31 @@ type vpcSecurityGroupsXML struct {
 }
 
 type dbInstanceXML struct {
-	DBInstanceIdentifier string                `xml:"DBInstanceIdentifier"`
-	DBInstanceArn        string                `xml:"DBInstanceArn"`
-	Engine               string                `xml:"Engine,omitempty"`
-	EngineVersion        string                `xml:"EngineVersion,omitempty"`
-	DBInstanceClass      string                `xml:"DBInstanceClass,omitempty"`
-	DBInstanceStatus     string                `xml:"DBInstanceStatus"`
-	MasterUsername       string                `xml:"MasterUsername,omitempty"`
-	DBName               string                `xml:"DBName,omitempty"`
-	AllocatedStorage     int                   `xml:"AllocatedStorage,omitempty"`
-	StorageType          string                `xml:"StorageType,omitempty"`
-	Endpoint             *endpointXML          `xml:"Endpoint,omitempty"`
-	MultiAZ              bool                  `xml:"MultiAZ"`
-	PubliclyAccessible   bool                  `xml:"PubliclyAccessible"`
-	AvailabilityZone     string                `xml:"AvailabilityZone,omitempty"`
-	DBClusterIdentifier  string                `xml:"DBClusterIdentifier,omitempty"`
-	DBSubnetGroupName    string                `xml:"DBSubnetGroupName,omitempty"`
-	InstanceCreateTime   string                `xml:"InstanceCreateTime,omitempty"`
-	VpcSecurityGroups    *vpcSecurityGroupsXML `xml:"VpcSecurityGroups,omitempty"`
-	TagList              *tagListXML           `xml:"TagList,omitempty"`
+	DBInstanceIdentifier                  string                `xml:"DBInstanceIdentifier"`
+	DBInstanceArn                         string                `xml:"DBInstanceArn"`
+	Engine                                string                `xml:"Engine,omitempty"`
+	EngineVersion                         string                `xml:"EngineVersion,omitempty"`
+	DBInstanceClass                       string                `xml:"DBInstanceClass,omitempty"`
+	DBInstanceStatus                      string                `xml:"DBInstanceStatus"`
+	MasterUsername                        string                `xml:"MasterUsername,omitempty"`
+	DBName                                string                `xml:"DBName,omitempty"`
+	AllocatedStorage                      int                   `xml:"AllocatedStorage,omitempty"`
+	StorageType                           string                `xml:"StorageType,omitempty"`
+	Endpoint                              *endpointXML          `xml:"Endpoint,omitempty"`
+	MultiAZ                               bool                  `xml:"MultiAZ"`
+	PubliclyAccessible                    bool                  `xml:"PubliclyAccessible"`
+	AvailabilityZone                      string                `xml:"AvailabilityZone,omitempty"`
+	DBClusterIdentifier                   string                `xml:"DBClusterIdentifier,omitempty"`
+	DBSubnetGroupName                     string                `xml:"DBSubnetGroupName,omitempty"`
+	InstanceCreateTime                    string                `xml:"InstanceCreateTime,omitempty"`
+	VpcSecurityGroups                     *vpcSecurityGroupsXML `xml:"VpcSecurityGroups,omitempty"`
+	TagList                               *tagListXML           `xml:"TagList,omitempty"`
+	ReadReplicaSourceDBInstanceIdentifier string                `xml:"ReadReplicaSourceDBInstanceIdentifier,omitempty"`
+	ReadReplicaDBInstanceIdentifiers      *readReplicaIDsXML    `xml:"ReadReplicaDBInstanceIdentifiers,omitempty"`
+}
+
+type readReplicaIDsXML struct {
+	ReadReplicaDBInstanceIdentifier []string `xml:"ReadReplicaDBInstanceIdentifier"`
 }
 
 type dbClusterMemberXML struct {
@@ -326,15 +332,25 @@ func toInstanceXML(inst *rdsdriver.Instance) dbInstanceXML {
 			Address: inst.Endpoint,
 			Port:    inst.Port,
 		},
-		MultiAZ:             inst.MultiAZ,
-		PubliclyAccessible:  inst.PubliclyAccessible,
-		AvailabilityZone:    inst.AvailabilityZone,
-		DBClusterIdentifier: inst.ClusterID,
-		DBSubnetGroupName:   inst.SubnetGroupName,
-		InstanceCreateTime:  inst.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		VpcSecurityGroups:   toVpcSGsXML(inst.VPCSecurityGroups),
-		TagList:             toTagListXML(inst.Tags),
+		MultiAZ:                               inst.MultiAZ,
+		PubliclyAccessible:                    inst.PubliclyAccessible,
+		AvailabilityZone:                      inst.AvailabilityZone,
+		DBClusterIdentifier:                   inst.ClusterID,
+		DBSubnetGroupName:                     inst.SubnetGroupName,
+		InstanceCreateTime:                    inst.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		VpcSecurityGroups:                     toVpcSGsXML(inst.VPCSecurityGroups),
+		TagList:                               toTagListXML(inst.Tags),
+		ReadReplicaSourceDBInstanceIdentifier: inst.ReadReplicaSource,
+		ReadReplicaDBInstanceIdentifiers:      toReadReplicaIDsXML(inst.ReadReplicaTargets),
 	}
+}
+
+func toReadReplicaIDsXML(ids []string) *readReplicaIDsXML {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	return &readReplicaIDsXML{ReadReplicaDBInstanceIdentifier: ids}
 }
 
 func toClusterXML(cluster *rdsdriver.Cluster) dbClusterXML {

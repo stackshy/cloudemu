@@ -74,6 +74,8 @@ var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DeleteOptionGroup":                {},
 	"CopyOptionGroup":                  {},
 	"DescribeOptionGroupOptions":       {},
+	"CreateDBInstanceReadReplica":      {},
+	"PromoteReadReplica":               {},
 }
 
 // Handler serves RDS query-protocol requests.
@@ -208,6 +210,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.copyOptionGroup(w, r)
 	case "DescribeOptionGroupOptions":
 		h.describeOptionGroupOptions(w, r)
+	case "CreateDBInstanceReadReplica":
+		h.createDBInstanceReadReplica(w, r)
+	case "PromoteReadReplica":
+		h.promoteReadReplica(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown RDS action: "+action)
