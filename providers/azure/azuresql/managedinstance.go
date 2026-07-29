@@ -69,6 +69,43 @@ func (m *Mock) CreateManagedInstance(
 	return &out, nil
 }
 
+// UpdateManagedInstance applies the non-zero fields of cfg to an existing
+// managed instance (PATCH merge semantics).
+//
+//nolint:gocritic // cfg matches the ManagedInstances capability interface signature.
+func (m *Mock) UpdateManagedInstance(
+	_ context.Context, cfg rdsdriver.ManagedInstanceConfig,
+) (*rdsdriver.ManagedInstance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	mi, ok := m.managedInstances.Get(cfg.Name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "managed instance %q not found", cfg.Name)
+	}
+
+	// Merge: keep the stored value where the PATCH left the field zero.
+	mi.Location = orDefault(cfg.Location, mi.Location)
+	mi.AdminLogin = orDefault(cfg.AdminLogin, mi.AdminLogin)
+	mi.SKUName = orDefault(cfg.SKUName, mi.SKUName)
+	mi.SKUTier = orDefault(cfg.SKUTier, mi.SKUTier)
+	mi.LicenseType = orDefault(cfg.LicenseType, mi.LicenseType)
+	mi.SubnetID = orDefault(cfg.SubnetID, mi.SubnetID)
+	mi.VCores = orDefaultInt(cfg.VCores, mi.VCores)
+	mi.StorageGB = orDefaultInt(cfg.StorageGB, mi.StorageGB)
+
+	if cfg.Tags != nil {
+		mi.Tags = copyTags(cfg.Tags)
+	}
+
+	m.managedInstances.Set(cfg.Name, mi)
+
+	out := mi
+	out.Tags = copyTags(mi.Tags)
+
+	return &out, nil
+}
+
 // GetManagedInstance returns a managed instance by name.
 func (m *Mock) GetManagedInstance(_ context.Context, name string) (*rdsdriver.ManagedInstance, error) {
 	m.mu.RLock()

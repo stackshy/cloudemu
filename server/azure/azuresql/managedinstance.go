@@ -3,6 +3,7 @@ package azuresql
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -78,7 +79,9 @@ func (h *Handler) serveManagedInstance(
 	switch r.Method {
 	case http.MethodPut:
 		h.putManagedInstance(w, r, rp, mi)
-	case http.MethodGet, http.MethodPatch:
+	case http.MethodPatch:
+		h.patchManagedInstance(w, r, rp, mi)
+	case http.MethodGet:
 		h.getManagedInstance(w, r, rp, mi)
 	case http.MethodDelete:
 		if err := mi.DeleteManagedInstance(r.Context(), rp.ResourceName); err != nil {
@@ -92,14 +95,7 @@ func (h *Handler) serveManagedInstance(
 	}
 }
 
-func (*Handler) putManagedInstance(
-	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, mi rdsdriver.ManagedInstances,
-) {
-	var body armManagedInstance
-	if !azurearm.DecodeJSON(w, r, &body) {
-		return
-	}
-
+func miCfgFromBody(body *armManagedInstance, rp *azurearm.ResourcePath) rdsdriver.ManagedInstanceConfig {
 	cfg := rdsdriver.ManagedInstanceConfig{Name: rp.ResourceName, Location: body.Location, Tags: body.Tags}
 	if body.SKU != nil {
 		cfg.SKUName = body.SKU.Name
@@ -114,15 +110,49 @@ func (*Handler) putManagedInstance(
 		cfg.SubnetID = body.Properties.SubnetID
 	}
 
+	return cfg
+}
+
+func (*Handler) putManagedInstance(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, mi rdsdriver.ManagedInstances,
+) {
+	var body armManagedInstance
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	cfg := miCfgFromBody(&body, rp)
+
 	out, err := mi.CreateManagedInstance(r.Context(), cfg)
 	if err != nil {
-		existing, getErr := mi.GetManagedInstance(r.Context(), rp.ResourceName)
-		if getErr != nil {
+		if !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
 			return
 		}
 
-		out = existing
+		// Upsert: PUT on an existing managed instance applies the body.
+		out, err = mi.UpdateManagedInstance(r.Context(), cfg)
+		if err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toARMManagedInstance(out, rp))
+}
+
+func (*Handler) patchManagedInstance(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, mi rdsdriver.ManagedInstances,
+) {
+	var body armManagedInstance
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	out, err := mi.UpdateManagedInstance(r.Context(), miCfgFromBody(&body, rp))
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toARMManagedInstance(out, rp))

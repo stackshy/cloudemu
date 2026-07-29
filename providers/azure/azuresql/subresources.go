@@ -318,6 +318,52 @@ func (m *Mock) DeleteElasticPool(_ context.Context, server, name string) error {
 	return nil
 }
 
+// UpdateElasticPool applies the non-zero fields of cfg to an existing pool
+// (PATCH merge semantics), leaving unspecified fields untouched.
+//
+//nolint:gocritic // cfg matches the ElasticPools capability interface signature.
+func (m *Mock) UpdateElasticPool(_ context.Context, cfg rdsdriver.ElasticPoolConfig) (*rdsdriver.ElasticPool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := subKey(cfg.Server, cfg.Name)
+
+	pool, ok := m.elasticPools.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "elastic pool %q not found", cfg.Name)
+	}
+
+	if cfg.Location != "" {
+		pool.Location = cfg.Location
+	}
+
+	if cfg.SKUName != "" {
+		pool.SKUName = cfg.SKUName
+	}
+
+	if cfg.SKUTier != "" {
+		pool.SKUTier = cfg.SKUTier
+	}
+
+	if cfg.MaxSizeBytes != 0 {
+		pool.MaxSizeBytes = cfg.MaxSizeBytes
+	}
+
+	if cfg.MinCapacity != 0 {
+		pool.MinCapacity = cfg.MinCapacity
+	}
+
+	if cfg.MaxCapacity != 0 {
+		pool.MaxCapacity = cfg.MaxCapacity
+	}
+
+	m.elasticPools.Set(key, pool)
+
+	out := pool
+
+	return &out, nil
+}
+
 // ---- Failover groups ----
 
 // CreateFailoverGroup creates or replaces a failover group with the local
@@ -432,6 +478,49 @@ func copyFailoverGroup(fg rdsdriver.FailoverGroup) *rdsdriver.FailoverGroup {
 	fg.Databases = cloneStrings(fg.Databases)
 
 	return &fg
+}
+
+// UpdateFailoverGroup applies the non-zero fields of cfg to an existing group
+// (PATCH merge semantics). Partner/database lists are replaced only when the
+// PATCH supplies them.
+//
+//nolint:gocritic // cfg matches the FailoverGroups capability interface signature.
+func (m *Mock) UpdateFailoverGroup(
+	_ context.Context, cfg rdsdriver.FailoverGroupConfig,
+) (*rdsdriver.FailoverGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := subKey(cfg.Server, cfg.Name)
+
+	fg, ok := m.failoverGroups.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "failover group %q not found", cfg.Name)
+	}
+
+	if cfg.FailoverPolicy != "" {
+		fg.FailoverPolicy = cfg.FailoverPolicy
+	}
+
+	if cfg.GracePeriodMinutes != 0 {
+		fg.GracePeriodMinutes = cfg.GracePeriodMinutes
+	}
+
+	if len(cfg.PartnerServers) > 0 {
+		fg.PartnerServers = cloneStrings(cfg.PartnerServers)
+	} else {
+		fg.PartnerServers = cloneStrings(fg.PartnerServers)
+	}
+
+	if len(cfg.Databases) > 0 {
+		fg.Databases = cloneStrings(cfg.Databases)
+	} else {
+		fg.Databases = cloneStrings(fg.Databases)
+	}
+
+	m.failoverGroups.Set(key, fg)
+
+	return copyFailoverGroup(fg), nil
 }
 
 // ---- Azure AD administrator ----

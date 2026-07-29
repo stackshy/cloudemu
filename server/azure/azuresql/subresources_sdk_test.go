@@ -385,3 +385,95 @@ func TestSDKAzureSQLManagedInstances(t *testing.T) {
 		t.Fatal("expected NotFound after managed instance delete")
 	}
 }
+
+func TestSDKAzureSQLElasticPoolPatchMerge(t *testing.T) {
+	cf := newFactory(t)
+	mustCreateSQLServer(t, cf)
+
+	ctx := context.Background()
+	ep := cf.NewElasticPoolsClient()
+
+	poller, err := ep.BeginCreateOrUpdate(ctx, "rg-1", "srv1", "pool1", armsql.ElasticPool{
+		Location:   to.Ptr("eastus"),
+		SKU:        &armsql.SKU{Name: to.Ptr("StandardPool"), Tier: to.Ptr("Standard")},
+		Properties: &armsql.ElasticPoolProperties{MaxSizeBytes: to.Ptr(int64(107374182400))},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("pool create: %v", err)
+	}
+
+	// PATCH only maxSizeBytes — SKU must survive the merge.
+	up, err := ep.BeginUpdate(ctx, "rg-1", "srv1", "pool1", armsql.ElasticPoolUpdate{
+		Properties: &armsql.ElasticPoolUpdateProperties{MaxSizeBytes: to.Ptr(int64(214748364800))},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate: %v", err)
+	}
+
+	if _, err := up.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("pool patch: %v", err)
+	}
+
+	got, err := ep.Get(ctx, "rg-1", "srv1", "pool1", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.SKU == nil || got.SKU.Name == nil || *got.SKU.Name != "StandardPool" {
+		t.Fatalf("PATCH wiped the SKU: %v", got.SKU)
+	}
+
+	if got.Properties == nil || got.Properties.MaxSizeBytes == nil || *got.Properties.MaxSizeBytes != 214748364800 {
+		t.Fatalf("PATCH did not apply maxSizeBytes: %v", got.Properties)
+	}
+}
+
+func TestSDKAzureSQLManagedInstancePatchMerge(t *testing.T) {
+	cf := newFactory(t)
+	ctx := context.Background()
+	mic := cf.NewManagedInstancesClient()
+
+	poller, err := mic.BeginCreateOrUpdate(ctx, "rg-1", "mi1", armsql.ManagedInstance{
+		Location: to.Ptr("eastus"),
+		Properties: &armsql.ManagedInstanceProperties{
+			AdministratorLogin: to.Ptr("miadmin"),
+			VCores:             to.Ptr(int32(4)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("MI create: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("MI create poll: %v", err)
+	}
+
+	// PATCH only vCores — administratorLogin must survive the merge.
+	up, err := mic.BeginUpdate(ctx, "rg-1", "mi1", armsql.ManagedInstanceUpdate{
+		Properties: &armsql.ManagedInstanceProperties{VCores: to.Ptr(int32(8))},
+	}, nil)
+	if err != nil {
+		t.Fatalf("MI BeginUpdate: %v", err)
+	}
+
+	if _, err := up.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("MI patch: %v", err)
+	}
+
+	got, err := mic.Get(ctx, "rg-1", "mi1", nil)
+	if err != nil {
+		t.Fatalf("MI Get: %v", err)
+	}
+
+	if got.Properties == nil || got.Properties.VCores == nil || *got.Properties.VCores != 8 {
+		t.Fatalf("PATCH did not apply vCores: %v", got.Properties)
+	}
+
+	if got.Properties.AdministratorLogin == nil || *got.Properties.AdministratorLogin != "miadmin" {
+		t.Fatalf("PATCH wiped administratorLogin: %v", got.Properties)
+	}
+}

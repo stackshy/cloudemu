@@ -265,6 +265,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"kubernetes/Cluster":                  "microsoft.containerservice/managedclusters",
 	"kubernetes/NodeGroup":                "microsoft.containerservice/managedclusters/agentpools",
 	"relationaldb/SqlServer":              "microsoft.sql/servers",
+	"relationaldb/SqlManagedInstance":     "microsoft.sql/managedinstances",
 	"relationaldb/MySqlFlexibleServer":    "microsoft.dbformysql/flexibleservers",
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 }

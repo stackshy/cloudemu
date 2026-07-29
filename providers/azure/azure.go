@@ -208,6 +208,18 @@ func (d sqlDiscovery) DiscoverDatabases(
 
 	out = appendFlexServers(out, pgInsts, resourcediscovery.TypePostgresFlex)
 
+	mis, err := d.sql.ListManagedInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range mis {
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name: mis[i].Name, Type: resourcediscovery.TypeManagedInstance,
+			Region: mis[i].Location, ARN: mis[i].ARN, Tags: mis[i].Tags,
+		})
+	}
+
 	return out, nil
 }
 

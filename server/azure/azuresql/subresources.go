@@ -304,8 +304,10 @@ func (h *Handler) serveElasticPool(w http.ResponseWriter, r *http.Request, rp *a
 	}
 
 	switch r.Method {
-	case http.MethodPut, http.MethodPatch:
-		h.putElasticPool(w, r, rp, ep)
+	case http.MethodPut:
+		h.writeElasticPool(w, r, rp, ep, false)
+	case http.MethodPatch:
+		h.writeElasticPool(w, r, rp, ep, true)
 	case http.MethodGet:
 		h.getOrListPool(w, r, rp, ep, false)
 	case http.MethodDelete:
@@ -320,8 +322,10 @@ func (h *Handler) serveElasticPool(w http.ResponseWriter, r *http.Request, rp *a
 	}
 }
 
-func (*Handler) putElasticPool(
-	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, ep rdsdriver.ElasticPools,
+// writeElasticPool handles PUT (create-or-replace) and PATCH (merge): merge
+// applies only the fields the request supplied, matching Azure's PATCH.
+func (*Handler) writeElasticPool(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, ep rdsdriver.ElasticPools, merge bool,
 ) {
 	var body armElasticPool
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -342,7 +346,12 @@ func (*Handler) putElasticPool(
 		}
 	}
 
-	out, err := ep.CreateElasticPool(r.Context(), cfg)
+	write := ep.CreateElasticPool
+	if merge {
+		write = ep.UpdateElasticPool
+	}
+
+	out, err := write(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -440,8 +449,10 @@ func (h *Handler) serveFailoverGroup(w http.ResponseWriter, r *http.Request, rp 
 	}
 
 	switch r.Method {
-	case http.MethodPut, http.MethodPatch:
-		h.putFailoverGroup(w, r, rp, fg)
+	case http.MethodPut:
+		h.writeFailoverGroup(w, r, rp, fg, false)
+	case http.MethodPatch:
+		h.writeFailoverGroup(w, r, rp, fg, true)
 	case http.MethodGet:
 		h.getOrListFG(w, r, rp, fg, false)
 	case http.MethodPost: // .../failoverGroups/{name}/failover (and force/tryPlanned variants)
@@ -458,8 +469,9 @@ func (h *Handler) serveFailoverGroup(w http.ResponseWriter, r *http.Request, rp 
 	}
 }
 
-func (*Handler) putFailoverGroup(
-	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, fg rdsdriver.FailoverGroups,
+// writeFailoverGroup handles PUT (create-or-replace) and PATCH (merge).
+func (*Handler) writeFailoverGroup(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, fg rdsdriver.FailoverGroups, merge bool,
 ) {
 	var body armFailoverGroup
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -480,7 +492,12 @@ func (*Handler) putFailoverGroup(
 		}
 	}
 
-	out, err := fg.CreateFailoverGroup(r.Context(), cfg)
+	write := fg.CreateFailoverGroup
+	if merge {
+		write = fg.UpdateFailoverGroup
+	}
+
+	out, err := write(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

@@ -396,6 +396,7 @@ type ElasticPool struct {
 // ElasticPools is an OPTIONAL Azure SQL capability, discovered by type assertion.
 type ElasticPools interface {
 	CreateElasticPool(ctx context.Context, cfg ElasticPoolConfig) (*ElasticPool, error)
+	UpdateElasticPool(ctx context.Context, cfg ElasticPoolConfig) (*ElasticPool, error)
 	GetElasticPool(ctx context.Context, server, name string) (*ElasticPool, error)
 	ListElasticPools(ctx context.Context, server string) ([]ElasticPool, error)
 	DeleteElasticPool(ctx context.Context, server, name string) error
@@ -428,6 +429,7 @@ type FailoverGroup struct {
 // Secondary.
 type FailoverGroups interface {
 	CreateFailoverGroup(ctx context.Context, cfg FailoverGroupConfig) (*FailoverGroup, error)
+	UpdateFailoverGroup(ctx context.Context, cfg FailoverGroupConfig) (*FailoverGroup, error)
 	GetFailoverGroup(ctx context.Context, server, name string) (*FailoverGroup, error)
 	ListFailoverGroups(ctx context.Context, server string) ([]FailoverGroup, error)
 	DeleteFailoverGroup(ctx context.Context, server, name string) error
@@ -513,6 +515,7 @@ type ManagedDatabase struct {
 // Instances and their managed databases, discovered by type assertion.
 type ManagedInstances interface {
 	CreateManagedInstance(ctx context.Context, cfg ManagedInstanceConfig) (*ManagedInstance, error)
+	UpdateManagedInstance(ctx context.Context, cfg ManagedInstanceConfig) (*ManagedInstance, error)
 	GetManagedInstance(ctx context.Context, name string) (*ManagedInstance, error)
 	ListManagedInstances(ctx context.Context) ([]ManagedInstance, error)
 	DeleteManagedInstance(ctx context.Context, name string) error

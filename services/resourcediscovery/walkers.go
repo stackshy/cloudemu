@@ -52,10 +52,11 @@ const (
 // native type strings in Resource Graph (Azure) and Cloud Asset (GCP). AWS RDS
 // uses TypeDBInstance/DBCluster/DBSnapshot above.
 const (
-	TypeSQLServer    = "SqlServer"              // Azure SQL logical server
-	TypeMySQLFlex    = "MySqlFlexibleServer"    // Azure Database for MySQL Flexible Server
-	TypePostgresFlex = "PostgresFlexibleServer" // Azure Database for PostgreSQL Flexible Server
-	TypeSQLInstance  = "SqlInstance"            // GCP Cloud SQL instance
+	TypeSQLServer       = "SqlServer"              // Azure SQL logical server
+	TypeMySQLFlex       = "MySqlFlexibleServer"    // Azure Database for MySQL Flexible Server
+	TypePostgresFlex    = "PostgresFlexibleServer" // Azure Database for PostgreSQL Flexible Server
+	TypeSQLInstance     = "SqlInstance"            // GCP Cloud SQL instance
+	TypeManagedInstance = "SqlManagedInstance"     // Azure SQL Managed Instance
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {

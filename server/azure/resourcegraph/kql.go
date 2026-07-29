@@ -48,6 +48,7 @@ const (
 	azureTypeAKS       = "microsoft.containerservice/managedclusters"
 	azureTypeAgentPool = "microsoft.containerservice/managedclusters/agentpools"
 	azureTypeSQL       = "microsoft.sql/servers"
+	azureTypeSQLMI     = "microsoft.sql/managedinstances"
 	azureTypeMySQLFlex = "microsoft.dbformysql/flexibleservers"
 	azureTypePgFlex    = "microsoft.dbforpostgresql/flexibleservers"
 )
@@ -310,6 +311,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeAKS:       {portableKubernetes, "Cluster"},
 	azureTypeAgentPool: {portableKubernetes, "NodeGroup"},
 	azureTypeSQL:       {portableRelationalDB, "SqlServer"},
+	azureTypeSQLMI:     {portableRelationalDB, "SqlManagedInstance"},
 	azureTypeMySQLFlex: {portableRelationalDB, "MySqlFlexibleServer"},
 	azureTypePgFlex:    {portableRelationalDB, "PostgresFlexibleServer"},
 }

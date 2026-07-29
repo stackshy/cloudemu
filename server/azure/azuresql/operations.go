@@ -3,6 +3,7 @@ package azuresql
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -28,14 +29,21 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 
 	cluster, err := h.db.CreateCluster(r.Context(), cfg)
 	if err != nil {
-		// Idempotent PUT: if the server already exists, treat as a get.
-		existing, getErr := h.db.DescribeClusters(r.Context(), []string{rp.ResourceName})
-		if getErr != nil || len(existing) != 1 {
+		if !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
 			return
 		}
 
-		cluster = &existing[0]
+		// Upsert: PUT on an existing server applies the body (admin/version/tags)
+		// rather than returning the stale record.
+		cluster, err = h.db.ModifyCluster(r.Context(), rp.ResourceName, rdsdriver.ModifyInstanceInput{
+			EngineVersion: cfg.EngineVersion,
+			Tags:          body.Tags,
+		})
+		if err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(cluster, rp.Subscription, rp.ResourceGroup))
@@ -147,14 +155,21 @@ func (h *Handler) createOrUpdateDatabase(w http.ResponseWriter, r *http.Request,
 
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
 	if err != nil {
-		// Idempotent PUT: if the database already exists, fall back to a get.
-		existing, getErr := h.db.DescribeInstances(r.Context(), []string{server + "/" + dbName})
-		if getErr != nil || len(existing) != 1 {
+		if !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
 			return
 		}
 
-		inst = &existing[0]
+		// Upsert: PUT on an existing database applies the body (SKU/maxSize/tags).
+		inst, err = h.db.ModifyInstance(r.Context(), server+"/"+dbName, rdsdriver.ModifyInstanceInput{
+			InstanceClass:    cfg.InstanceClass,
+			AllocatedStorage: cfg.AllocatedStorage,
+			Tags:             body.Tags,
+		})
+		if err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(inst, rp.Subscription, rp.ResourceGroup))
