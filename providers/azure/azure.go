@@ -29,6 +29,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
@@ -153,15 +154,72 @@ func New(opts ...config.Option) *Provider {
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
 		&resourcediscovery.Drivers{
-			Compute:    p.VirtualMachines,
-			Networking: p.VNet,
-			Storage:    p.BlobStorage,
-			Database:   p.CosmosDB,
-			Serverless: p.Functions,
-			Databricks: p.Databricks,
-			Kubernetes: aksDiscovery{p.AKS},
+			Compute:      p.VirtualMachines,
+			Networking:   p.VNet,
+			Storage:      p.BlobStorage,
+			Database:     p.CosmosDB,
+			Serverless:   p.Functions,
+			Databricks:   p.Databricks,
+			Kubernetes:   aksDiscovery{p.AKS},
+			RelationalDB: sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
 		},
 	)
 
 	return p
+}
+
+// sqlDiscovery adapts the Azure relational mocks (SQL logical servers plus
+// MySQL/PostgreSQL Flexible Servers) to the resourcediscovery
+// RelationalDatabases capability, so they surface in Resource Graph.
+type sqlDiscovery struct {
+	sql   *azuresql.Mock
+	mysql *mysqlflex.Mock
+	pg    *postgresflex.Mock
+}
+
+func (d sqlDiscovery) DiscoverDatabases(
+	ctx context.Context,
+) ([]resourcediscovery.DiscoveredDatabase, error) {
+	clusters, err := d.sql.DescribeClusters(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredDatabase, 0, len(clusters))
+
+	for i := range clusters {
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name: clusters[i].ID, Type: resourcediscovery.TypeSQLServer,
+			ARN: clusters[i].ARN, Tags: clusters[i].Tags,
+		})
+	}
+
+	myInsts, err := d.mysql.DescribeInstances(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out = appendFlexServers(out, myInsts, resourcediscovery.TypeMySQLFlex)
+
+	pgInsts, err := d.pg.DescribeInstances(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out = appendFlexServers(out, pgInsts, resourcediscovery.TypePostgresFlex)
+
+	return out, nil
+}
+
+func appendFlexServers(
+	out []resourcediscovery.DiscoveredDatabase, insts []rdsdriver.Instance, typ string,
+) []resourcediscovery.DiscoveredDatabase {
+	for i := range insts {
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name: insts[i].ID, Type: typ, Region: insts[i].AvailabilityZone,
+			ARN: insts[i].ARN, Tags: insts[i].Tags,
+		})
+	}
+
+	return out
 }

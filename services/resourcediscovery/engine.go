@@ -16,13 +16,36 @@ import (
 // engine usable in partial test wirings and during the staged rollout of
 // per-service walkers in later phases.
 type Drivers struct {
-	Compute    computedriver.Compute
-	Networking netdriver.Networking
-	Storage    storagedriver.Bucket
-	Database   dbdriver.Database
-	Serverless serverlessdriver.Serverless
-	Databricks dbxdriver.Databricks
-	Kubernetes KubernetesClusters
+	Compute      computedriver.Compute
+	Networking   netdriver.Networking
+	Storage      storagedriver.Bucket
+	Database     dbdriver.Database
+	Serverless   serverlessdriver.Serverless
+	Databricks   dbxdriver.Databricks
+	Kubernetes   KubernetesClusters
+	RelationalDB RelationalDatabases
+}
+
+// RelationalDatabases is the discovery capability for managed relational
+// database servers/instances — RDS, Azure SQL, Azure MySQL/PostgreSQL Flexible
+// Server, Cloud SQL. Like KubernetesClusters, each cloud's relational mock
+// lives in its provider package, so a thin adapter in the provider projects its
+// servers onto DiscoveredDatabase rather than inverting the package layering.
+type RelationalDatabases interface {
+	DiscoverDatabases(ctx context.Context) ([]DiscoveredDatabase, error)
+}
+
+// DiscoveredDatabase is a provider-neutral projection of a managed relational
+// database server for the inventory walk. Type is the portable resource type
+// (e.g. "SqlServer", "MySqlFlexibleServer", "SqlInstance") that Resource Graph /
+// Cloud Asset translate to the cloud's native type string. ARN, when set, is
+// used verbatim as the identifier; empty means the engine builds one.
+type DiscoveredDatabase struct {
+	Name   string
+	Type   string
+	Region string
+	ARN    string
+	Tags   map[string]string
 }
 
 // KubernetesClusters is the discovery capability for managed Kubernetes —
@@ -159,6 +182,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.Kubernetes != nil {
 		ws = append(ws, e.walkKubernetes)
+	}
+
+	if e.drivers.RelationalDB != nil {
+		ws = append(ws, e.walkRelationalDB)
 	}
 
 	return ws

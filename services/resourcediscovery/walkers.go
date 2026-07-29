@@ -3,9 +3,9 @@ package resourcediscovery
 import (
 	"context"
 	"fmt"
-	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Provider name constants used for routing per-provider ARN construction.
@@ -42,6 +42,16 @@ const (
 	TypeWorkspace     = "Workspace"
 	TypeCluster       = "Cluster"
 	TypeNodeGroup     = "NodeGroup"
+)
+
+// Relational database server types. These portable types map to per-cloud
+// native type strings in Resource Graph (Azure) and Cloud Asset (GCP).
+const (
+	TypeSQLServer    = "SqlServer"              // Azure SQL logical server
+	TypeMySQLFlex    = "MySqlFlexibleServer"    // Azure Database for MySQL Flexible Server
+	TypePostgresFlex = "PostgresFlexibleServer" // Azure Database for PostgreSQL Flexible Server
+	TypeSQLInstance  = "SqlInstance"            // GCP Cloud SQL instance
+	TypeDBInstance   = "DBInstance"             // AWS RDS instance
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
@@ -333,6 +343,36 @@ func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
 				Region: region,
 			})
 		}
+	}
+
+	return out, nil
+}
+
+// walkRelationalDB surfaces managed relational database servers (RDS, Azure
+// SQL, Azure MySQL/PostgreSQL Flexible Server, Cloud SQL). The provider supplies
+// a DiscoverDatabases adapter; each server becomes a database-service resource
+// whose Type carries the per-cloud kind so Resource Graph / Cloud Asset can
+// translate it to the native type string.
+func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
+	dbs, err := e.drivers.RelationalDB.DiscoverDatabases(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkRelationalDB: %w", err)
+	}
+
+	out := make([]Resource, 0, len(dbs))
+
+	for i := range dbs {
+		region := dbs[i].Region
+		if region == "" {
+			region = e.region
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceDatabase, Type: dbs[i].Type,
+			ID:     dbs[i].Name,
+			ARN:    dbs[i].ARN,
+			Region: region, Tags: copyTags(dbs[i].Tags),
+		})
 	}
 
 	return out, nil

@@ -47,6 +47,9 @@ const (
 	azureTypeDatabrick = "microsoft.databricks/workspaces"
 	azureTypeAKS       = "microsoft.containerservice/managedclusters"
 	azureTypeAgentPool = "microsoft.containerservice/managedclusters/agentpools"
+	azureTypeSQL       = "microsoft.sql/servers"
+	azureTypeMySQLFlex = "microsoft.dbformysql/flexibleservers"
+	azureTypePgFlex    = "microsoft.dbforpostgresql/flexibleservers"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -305,6 +308,9 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeDatabrick: {portableDatabricks, "Workspace"},
 	azureTypeAKS:       {portableKubernetes, "Cluster"},
 	azureTypeAgentPool: {portableKubernetes, "NodeGroup"},
+	azureTypeSQL:       {portableDatabase, "SqlServer"},
+	azureTypeMySQLFlex: {portableDatabase, "MySqlFlexibleServer"},
+	azureTypePgFlex:    {portableDatabase, "PostgresFlexibleServer"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

@@ -127,14 +127,39 @@ func New(opts ...config.Option) *Provider {
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderGCP, o.ProjectID, o.Region,
 		&resourcediscovery.Drivers{
-			Compute:    p.GCE,
-			Networking: p.VPC,
-			Storage:    p.GCS,
-			Database:   p.Firestore,
-			Serverless: p.CloudFunctions,
-			Kubernetes: gkeDiscovery{p.GKE},
+			Compute:      p.GCE,
+			Networking:   p.VPC,
+			Storage:      p.GCS,
+			Database:     p.Firestore,
+			Serverless:   p.CloudFunctions,
+			Kubernetes:   gkeDiscovery{p.GKE},
+			RelationalDB: cloudSQLDiscovery{p.CloudSQL},
 		},
 	)
 
 	return p
+}
+
+// cloudSQLDiscovery adapts the Cloud SQL mock to the resourcediscovery
+// RelationalDatabases capability, so instances surface in Cloud Asset Inventory.
+type cloudSQLDiscovery struct{ m *cloudsql.Mock }
+
+func (d cloudSQLDiscovery) DiscoverDatabases(
+	ctx context.Context,
+) ([]resourcediscovery.DiscoveredDatabase, error) {
+	insts, err := d.m.DescribeInstances(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredDatabase, 0, len(insts))
+
+	for i := range insts {
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name: insts[i].ID, Type: resourcediscovery.TypeSQLInstance,
+			Region: insts[i].AvailabilityZone, ARN: insts[i].ARN, Tags: insts[i].Tags,
+		})
+	}
+
+	return out, nil
 }
