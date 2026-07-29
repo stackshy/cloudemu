@@ -157,12 +157,16 @@ func (*Mock) DescribeEventCategories(_ context.Context, sourceType string) ([]rd
 			return []rdsdriver.EventCategoryGroup{}, nil
 		}
 
-		return []rdsdriver.EventCategoryGroup{{SourceType: sourceType, EventCategories: cats}}, nil
+		// Copy the slice so a caller can't mutate the shared catalog table.
+		return []rdsdriver.EventCategoryGroup{{SourceType: sourceType, EventCategories: append([]string(nil), cats...)}}, nil
 	}
 
 	out := make([]rdsdriver.EventCategoryGroup, 0, len(eventCategoryCatalog))
 	for _, st := range eventCategorySourceTypes {
-		out = append(out, rdsdriver.EventCategoryGroup{SourceType: st, EventCategories: eventCategoryCatalog[st]})
+		out = append(out, rdsdriver.EventCategoryGroup{
+			SourceType:      st,
+			EventCategories: append([]string(nil), eventCategoryCatalog[st]...),
+		})
 	}
 
 	return out, nil

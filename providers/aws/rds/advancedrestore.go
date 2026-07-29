@@ -127,6 +127,11 @@ func (m *Mock) RestoreDBInstanceToPointInTime(
 	inst.ReadReplicaSource = ""
 	inst.ReadReplicaTargets = nil
 	inst.Tags = copyTags(input.Tags)
+	// A PITR restore is a standalone instance, not a member of the source's
+	// cluster; copy the security-group slice so it doesn't alias the source's.
+	inst.ClusterID = ""
+
+	inst.VPCSecurityGroups = append([]string(nil), src.VPCSecurityGroups...)
 
 	m.instances.Set(inst.ID, inst)
 

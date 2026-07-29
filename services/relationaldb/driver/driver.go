@@ -262,12 +262,14 @@ type ParameterGroupConfig struct {
 }
 
 // ParameterGroup is a named set of engine parameters applied to instances.
+// Parameters is keyed by parameter name and retains each parameter's apply
+// method.
 type ParameterGroup struct {
 	Name        string
 	Family      string
 	Description string
 	ARN         string
-	Parameters  map[string]string // user-set name -> value
+	Parameters  map[string]Parameter
 }
 
 // ClusterParameterGroup is the cluster-scoped analog of ParameterGroup.
@@ -276,7 +278,7 @@ type ClusterParameterGroup struct {
 	Family      string
 	Description string
 	ARN         string
-	Parameters  map[string]string
+	Parameters  map[string]Parameter
 }
 
 // ParameterGroups is an OPTIONAL capability covering both DB parameter groups

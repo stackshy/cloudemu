@@ -4,9 +4,12 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
+
+var _ rdsdriver.SubnetGroups = (*Mock)(nil)
 
 // SubnetResolver is the slice of the networking mock this package needs to
 // derive a subnet group's VPC. Real RDS infers VpcId from the member subnets
@@ -53,7 +56,7 @@ func (m *Mock) CreateDBSubnetGroup(
 		SubnetIDs:   append([]string(nil), cfg.SubnetIDs...),
 		VPCID:       m.resolveVPCID(ctx, cfg.SubnetIDs),
 		Status:      "Complete",
-		ARN:         "arn:aws:rds:" + m.opts.Region + ":" + m.opts.AccountID + ":subgrp:" + cfg.Name,
+		ARN:         idgen.AWSARN("rds", m.opts.Region, m.opts.AccountID, "subgrp:"+cfg.Name),
 	}
 	m.subnetGroups.Set(cfg.Name, sg)
 
@@ -89,6 +92,11 @@ func (m *Mock) DescribeDBSubnetGroups(
 
 // DeleteDBSubnetGroup deletes a DB subnet group.
 func (m *Mock) DeleteDBSubnetGroup(_ context.Context, name string) error {
+	// Hold the lock across the in-use scan + delete so a concurrent
+	// CreateInstance can't slip an instance into the group between them.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// Real RDS refuses while anything is still placed in the group, and a
 	// caller tearing a VPC down depends on that: deleting the group out from
 	// under a live instance would strand the instance in a group that no
@@ -108,15 +116,17 @@ func (m *Mock) DeleteDBSubnetGroup(_ context.Context, name string) error {
 
 // subnetGroupInUseBy names a resource still placed in the given subnet group.
 func (m *Mock) subnetGroupInUseBy(name string) (string, bool) {
-	for _, inst := range m.instances.All() {
-		if inst.SubnetGroupName == name {
-			return inst.ID, true
+	instances := m.instances.All()
+	for id := range instances {
+		if instances[id].SubnetGroupName == name {
+			return id, true
 		}
 	}
 
-	for _, c := range m.clusters.All() {
-		if c.SubnetGroupName == name {
-			return c.ID, true
+	clusters := m.clusters.All()
+	for id := range clusters {
+		if clusters[id].SubnetGroupName == name {
+			return id, true
 		}
 	}
 

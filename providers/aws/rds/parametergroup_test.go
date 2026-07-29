@@ -84,6 +84,30 @@ func TestDBParameterGroupLifecycle(t *testing.T) {
 	}
 }
 
+func TestDBParameterGroupApplyMethodRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateDBParameterGroup(ctx, rdsdriver.ParameterGroupConfig{Name: "pg", Family: "mysql8.0"}); err != nil {
+		t.Fatalf("CreateDBParameterGroup: %v", err)
+	}
+
+	if _, err := m.ModifyDBParameterGroup(ctx, "pg", []rdsdriver.Parameter{
+		{Name: "max_connections", Value: "200", ApplyMethod: "immediate"},
+	}); err != nil {
+		t.Fatalf("ModifyDBParameterGroup: %v", err)
+	}
+
+	params, err := m.DescribeDBParameters(ctx, "pg")
+	if err != nil {
+		t.Fatalf("DescribeDBParameters: %v", err)
+	}
+
+	if len(params) != 1 || params[0].ApplyMethod != "immediate" {
+		t.Fatalf("ApplyMethod not preserved: %+v", params)
+	}
+}
+
 func TestDBParameterGroupCopy(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

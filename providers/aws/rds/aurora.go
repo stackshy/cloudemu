@@ -282,6 +282,13 @@ func (m *Mock) DeleteGlobalCluster(_ context.Context, id string) (*rdsdriver.Glo
 		return nil, cerrors.Newf(cerrors.NotFound, "global cluster %q not found", id)
 	}
 
+	// AWS refuses to delete a global cluster that still has member clusters
+	// (InvalidGlobalClusterStateFault); remove them first.
+	if len(gc.Members) > 0 {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition,
+			"global cluster %q still has %d member(s); remove them first", id, len(gc.Members))
+	}
+
 	m.globalClusters.Delete(id)
 
 	out := gc
@@ -298,7 +305,9 @@ func (m *Mock) RemoveFromGlobalCluster(_ context.Context, id, clusterARN string)
 		return nil, cerrors.Newf(cerrors.NotFound, "global cluster %q not found", id)
 	}
 
-	kept := gc.Members[:0]
+	// Build a fresh slice rather than filtering in place: a slice handed out by
+	// a prior DescribeGlobalClusters must not be clobbered underneath its caller.
+	kept := make([]rdsdriver.GlobalClusterMember, 0, len(gc.Members))
 
 	for _, mem := range gc.Members {
 		if mem.DBClusterARN != clusterARN {

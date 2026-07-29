@@ -287,6 +287,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
+			v.Tags = copyTags(v.Tags)
 			out = append(out, v)
 		}
 
@@ -301,6 +302,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 		}
 
+		inst.Tags = copyTags(inst.Tags)
 		out = append(out, inst)
 	}
 
@@ -356,11 +358,27 @@ func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 	}
 
+	// Real AWS refuses to delete a source that still has read replicas; the
+	// replicas would otherwise be orphaned with a dangling ReadReplicaSource.
+	if len(inst.ReadReplicaTargets) > 0 {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"DB instance %q has read replicas %v; promote or delete them first", id, inst.ReadReplicaTargets)
+	}
+
 	if inst.ClusterID != "" {
 		cluster, ok := m.clusters.Get(inst.ClusterID)
 		if ok {
 			cluster.Members = removeString(cluster.Members, id)
 			m.clusters.Set(inst.ClusterID, cluster)
+		}
+	}
+
+	// If this instance is itself a replica, detach it from its source so the
+	// source no longer lists a replica that has gone.
+	if inst.ReadReplicaSource != "" {
+		if src, ok := m.instances.Get(inst.ReadReplicaSource); ok {
+			src.ReadReplicaTargets = removeString(src.ReadReplicaTargets, id)
+			m.instances.Set(src.ID, src)
 		}
 	}
 
@@ -489,6 +507,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
+			v.Tags = copyTags(v.Tags)
 			out = append(out, v)
 		}
 
@@ -503,6 +522,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 			return nil, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", id)
 		}
 
+		cluster.Tags = copyTags(cluster.Tags)
 		out = append(out, cluster)
 	}
 
@@ -653,6 +673,7 @@ func (m *Mock) DescribeSnapshots(
 			}
 		}
 
+		snap.Tags = copyTags(snap.Tags)
 		out = append(out, snap)
 	}
 
@@ -786,6 +807,7 @@ func (m *Mock) DescribeClusterSnapshots(
 			}
 		}
 
+		snap.Tags = copyTags(snap.Tags)
 		out = append(out, snap)
 	}
 
@@ -846,14 +868,19 @@ func (m *Mock) RestoreClusterFromSnapshot(
 	return &out, nil
 }
 
+// removeString returns a NEW slice with target removed. It never mutates the
+// input's backing array, so a slice previously handed out by a Describe call
+// is never corrupted by a later membership change.
 func removeString(slice []string, target string) []string {
-	for i, v := range slice {
-		if v == target {
-			return append(slice[:i], slice[i+1:]...)
+	out := make([]string, 0, len(slice))
+
+	for _, v := range slice {
+		if v != target {
+			out = append(out, v)
 		}
 	}
 
-	return slice
+	return out
 }
 
 func stringSet(values []string) map[string]struct{} {

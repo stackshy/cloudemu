@@ -2,6 +2,7 @@ package rds
 
 import (
 	"encoding/xml"
+	"sort"
 	"strconv"
 
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -416,9 +417,16 @@ func toTagListXML(tags map[string]string) *tagListXML {
 		return nil
 	}
 
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
 	out := &tagListXML{Tag: make([]tagXML, 0, len(tags))}
-	for k, v := range tags {
-		out.Tag = append(out.Tag, tagXML{Key: k, Value: v})
+	for _, k := range keys {
+		out.Tag = append(out.Tag, tagXML{Key: k, Value: tags[k]})
 	}
 
 	return out

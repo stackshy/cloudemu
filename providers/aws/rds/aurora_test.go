@@ -115,6 +115,11 @@ func TestGlobalClusterLifecycle(t *testing.T) {
 		t.Fatalf("duplicate: want AlreadyExists, got %v", err)
 	}
 
+	// Deleting a global cluster that still has members is refused.
+	if _, err := m.DeleteGlobalCluster(ctx, "global-1"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete global cluster with members: want FailedPrecondition, got %v", err)
+	}
+
 	// Rename + bump engine version.
 	renamed, err := m.ModifyGlobalCluster(ctx, "global-1", "global-2", "15.5")
 	if err != nil {

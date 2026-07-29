@@ -56,6 +56,39 @@ func TestReadReplicaLifecycle(t *testing.T) {
 	}
 }
 
+func TestDeleteInstanceBlockedByReplica(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "primary", Engine: "mysql"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if _, err := m.CreateDBInstanceReadReplica(ctx, rdsdriver.ReadReplicaConfig{ID: "rep", SourceInstanceID: "primary"}); err != nil {
+		t.Fatalf("CreateDBInstanceReadReplica: %v", err)
+	}
+
+	// Deleting a source that still has replicas is refused.
+	if err := m.DeleteInstance(ctx, "primary"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete source with replicas: want FailedPrecondition, got %v", err)
+	}
+
+	// Deleting the replica strips it from the source's target list.
+	if err := m.DeleteInstance(ctx, "rep"); err != nil {
+		t.Fatalf("DeleteInstance(replica): %v", err)
+	}
+
+	src, _ := m.DescribeInstances(ctx, []string{"primary"})
+	if len(src[0].ReadReplicaTargets) != 0 {
+		t.Fatalf("source still lists deleted replica: %v", src[0].ReadReplicaTargets)
+	}
+
+	// Now the source deletes cleanly.
+	if err := m.DeleteInstance(ctx, "primary"); err != nil {
+		t.Fatalf("DeleteInstance(primary) after replica gone: %v", err)
+	}
+}
+
 func TestReadReplicaErrors(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

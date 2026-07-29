@@ -138,15 +138,19 @@ func (m *Mock) AddTagsToResource(_ context.Context, resourceARN string, tags map
 	defer m.mu.Unlock()
 
 	return m.withResourceTags(resourceARN, func(existing map[string]string) map[string]string {
-		if existing == nil {
-			existing = map[string]string{}
+		// Build a fresh map rather than mutating the stored one in place: a
+		// concurrent Describe may still be reading it (copy-on-read + replace-
+		// on-write, mirroring ModifyInstance).
+		out := copyTags(existing)
+		if out == nil {
+			out = map[string]string{}
 		}
 
 		for k, v := range tags {
-			existing[k] = v
+			out[k] = v
 		}
 
-		return existing
+		return out
 	})
 }
 
@@ -155,11 +159,12 @@ func (m *Mock) RemoveTagsFromResource(_ context.Context, resourceARN string, key
 	defer m.mu.Unlock()
 
 	return m.withResourceTags(resourceARN, func(existing map[string]string) map[string]string {
+		out := copyTags(existing)
 		for _, k := range keys {
-			delete(existing, k)
+			delete(out, k)
 		}
 
-		return existing
+		return out
 	})
 }
 

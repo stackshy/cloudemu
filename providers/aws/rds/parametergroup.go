@@ -27,9 +27,10 @@ func errClusterParameterGroupNotFound(name string) error {
 	return cerrors.Newf(cerrors.NotFound, "DB cluster parameter group %q not found", name)
 }
 
-// paramsToDriver renders a stored name->value map as sorted driver Parameters,
-// tagging each as user-set (the only kind the emulator tracks).
-func paramsToDriver(params map[string]string) []rdsdriver.Parameter {
+// paramsToDriver renders a stored parameter map as sorted driver Parameters,
+// tagging each as user-set (the only kind the emulator tracks) and preserving
+// each parameter's apply method.
+func paramsToDriver(params map[string]rdsdriver.Parameter) []rdsdriver.Parameter {
 	names := make([]string, 0, len(params))
 	for name := range params {
 		names = append(names, name)
@@ -38,11 +39,13 @@ func paramsToDriver(params map[string]string) []rdsdriver.Parameter {
 	sort.Strings(names)
 
 	out := make([]rdsdriver.Parameter, 0, len(names))
+
 	for _, name := range names {
+		p := params[name]
 		out = append(out, rdsdriver.Parameter{
 			Name:        name,
-			Value:       params[name],
-			ApplyMethod: "pending-reboot",
+			Value:       p.Value,
+			ApplyMethod: applyMethodOrDefault(p.ApplyMethod),
 			Source:      "user",
 			ApplyType:   "static",
 			DataType:    "string",
@@ -52,11 +55,33 @@ func paramsToDriver(params map[string]string) []rdsdriver.Parameter {
 	return out
 }
 
-// mergeParams applies the given parameters onto a group's value map.
-func mergeParams(dst map[string]string, params []rdsdriver.Parameter) {
-	for _, p := range params {
-		dst[p.Name] = p.Value
+func applyMethodOrDefault(m string) string {
+	if m == "" {
+		return "pending-reboot"
 	}
+
+	return m
+}
+
+// withParams returns a NEW map: a copy of existing with params applied. Never
+// mutates the input, so a map handed out by a Describe call is never written
+// to concurrently (copy-on-read + replace-on-write).
+func withParams(existing map[string]rdsdriver.Parameter, params []rdsdriver.Parameter) map[string]rdsdriver.Parameter {
+	out := copyParams(existing)
+	for _, p := range params {
+		out[p.Name] = rdsdriver.Parameter{Name: p.Name, Value: p.Value, ApplyMethod: p.ApplyMethod}
+	}
+
+	return out
+}
+
+func copyParams(src map[string]rdsdriver.Parameter) map[string]rdsdriver.Parameter {
+	out := make(map[string]rdsdriver.Parameter, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+
+	return out
 }
 
 // ---- DB parameter groups ----
@@ -82,7 +107,7 @@ func (m *Mock) CreateDBParameterGroup(_ context.Context, cfg rdsdriver.Parameter
 		Family:      cfg.Family,
 		Description: cfg.Description,
 		ARN:         parameterGroupARN(m.opts.Region, m.opts.AccountID, cfg.Name),
-		Parameters:  map[string]string{},
+		Parameters:  map[string]rdsdriver.Parameter{},
 	}
 	m.paramGroups.Set(cfg.Name, pg)
 
@@ -123,7 +148,7 @@ func (m *Mock) ModifyDBParameterGroup(_ context.Context, name string, params []r
 		return nil, errParameterGroupNotFound(name)
 	}
 
-	mergeParams(pg.Parameters, params)
+	pg.Parameters = withParams(pg.Parameters, params)
 	m.paramGroups.Set(name, pg)
 
 	out := pg
@@ -165,11 +190,14 @@ func (m *Mock) ResetDBParameterGroup(_ context.Context, name string, params []st
 	}
 
 	if resetAll {
-		pg.Parameters = map[string]string{}
+		pg.Parameters = map[string]rdsdriver.Parameter{}
 	} else {
+		next := copyParams(pg.Parameters)
 		for _, p := range params {
-			delete(pg.Parameters, p)
+			delete(next, p)
 		}
+
+		pg.Parameters = next
 	}
 
 	m.paramGroups.Set(name, pg)
@@ -201,7 +229,7 @@ func (m *Mock) CopyDBParameterGroup(_ context.Context, source, target, descripti
 		Family:      src.Family,
 		Description: description,
 		ARN:         parameterGroupARN(m.opts.Region, m.opts.AccountID, target),
-		Parameters:  copyTags(src.Parameters),
+		Parameters:  copyParams(src.Parameters),
 	}
 	m.paramGroups.Set(target, pg)
 
@@ -235,7 +263,7 @@ func (m *Mock) CreateDBClusterParameterGroup(
 		Family:      cfg.Family,
 		Description: cfg.Description,
 		ARN:         clusterParameterGroupARN(m.opts.Region, m.opts.AccountID, cfg.Name),
-		Parameters:  map[string]string{},
+		Parameters:  map[string]rdsdriver.Parameter{},
 	}
 	m.clusterParamGroups.Set(cfg.Name, pg)
 
@@ -278,7 +306,7 @@ func (m *Mock) ModifyDBClusterParameterGroup(
 		return nil, errClusterParameterGroupNotFound(name)
 	}
 
-	mergeParams(pg.Parameters, params)
+	pg.Parameters = withParams(pg.Parameters, params)
 	m.clusterParamGroups.Set(name, pg)
 
 	out := pg
@@ -322,11 +350,14 @@ func (m *Mock) ResetDBClusterParameterGroup(
 	}
 
 	if resetAll {
-		pg.Parameters = map[string]string{}
+		pg.Parameters = map[string]rdsdriver.Parameter{}
 	} else {
+		next := copyParams(pg.Parameters)
 		for _, p := range params {
-			delete(pg.Parameters, p)
+			delete(next, p)
 		}
+
+		pg.Parameters = next
 	}
 
 	m.clusterParamGroups.Set(name, pg)
@@ -360,7 +391,7 @@ func (m *Mock) CopyDBClusterParameterGroup(
 		Family:      src.Family,
 		Description: description,
 		ARN:         clusterParameterGroupARN(m.opts.Region, m.opts.AccountID, target),
-		Parameters:  copyTags(src.Parameters),
+		Parameters:  copyParams(src.Parameters),
 	}
 	m.clusterParamGroups.Set(target, pg)
 

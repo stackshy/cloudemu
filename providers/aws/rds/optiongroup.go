@@ -124,12 +124,15 @@ func (m *Mock) ModifyOptionGroup(
 		delete(byName, r)
 	}
 
-	og.Options = og.Options[:0]
+	// Fresh slice, not an in-place []:0 rebuild: a slice returned by a prior
+	// DescribeOptionGroups must not be clobbered underneath its caller.
+	opts := make([]rdsdriver.Option, 0, len(byName))
 	for _, o := range byName {
-		og.Options = append(og.Options, o)
+		opts = append(opts, o)
 	}
 
-	sortOptions(og.Options)
+	sortOptions(opts)
+	og.Options = opts
 	m.optionGroups.Set(name, og)
 
 	out := og

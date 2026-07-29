@@ -150,6 +150,10 @@ func (m *Mock) RegisterDBProxyTargets(
 
 	added := make([]rdsdriver.ProxyTarget, 0, len(instanceIDs)+len(clusterIDs))
 
+	// Append onto a fresh copy so a slice returned by a prior Describe call is
+	// never grown into underneath its caller.
+	p.Targets = append([]rdsdriver.ProxyTarget(nil), p.Targets...)
+
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
@@ -188,7 +192,7 @@ func (m *Mock) DeregisterDBProxyTargets(_ context.Context, name, _ string, insta
 
 	drop := stringSet(append(append([]string(nil), instanceIDs...), clusterIDs...))
 
-	kept := p.Targets[:0]
+	kept := make([]rdsdriver.ProxyTarget, 0, len(p.Targets))
 
 	for _, t := range p.Targets {
 		if _, remove := drop[t.RDSResourceID]; !remove {
