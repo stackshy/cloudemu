@@ -1122,7 +1122,41 @@ answer `InvalidAction`.
 matching the real service. Callers tearing down a VPC list subnet groups and
 match on it.
 
-**Total: 21 operations (+3 optional)**
+### Native sub-resources (optional capabilities)
+
+Each managed-SQL service exposes its cloud's own child resources and actions.
+Like `SubnetGroups`, these are kept out of the core `RelationalDB` interface and
+discovered by type assertion, so a driver only answers for the resources its
+cloud actually has; others return `InvalidAction`. The server handlers reach
+them the same way real SDK clients do (ARM sub-resource routes for Azure,
+sqladmin sub-collections for Cloud SQL), and the mocks cascade-delete children
+when their parent server/instance is deleted.
+
+| Capability | Operations | Implemented by |
+|-----------|-----------|----------------|
+| `Databases` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `cloudsql` |
+| `FirewallRules` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `azuresql` |
+| `Configurations` | Set / Get / List (server parameters) | `mysqlflex`, `postgresflex` |
+| `Failover` | `FailoverInstance` | `mysqlflex`, `cloudsql` |
+| `VNetRules` | Create / Get / List / Delete | `azuresql` |
+| `ElasticPools` | Create / Get / List / Delete | `azuresql` |
+| `FailoverGroups` | Create / Get / List / Delete / Failover | `azuresql` |
+| `AADAdmins` | Set / Get / List / Delete | `azuresql` |
+| `Users` | Create / Get / List / Update / Delete | `cloudsql` |
+| `SslCerts` | Create / Get / List / Delete | `cloudsql` |
+| `Clonable` | `CloneInstance` | `cloudsql` |
+| `ReplicaPromotion` | `PromoteReplica` | `cloudsql` |
+
+Cloud SQL also serves the `startReplica`/`stopReplica` instance actions (mapped
+onto Start/Stop). Managed relational servers surface in cross-service discovery
+(Azure Resource Graph as `microsoft.sql/servers`,
+`microsoft.dbformysql/flexibleservers`,
+`microsoft.dbforpostgresql/flexibleservers`; GCP Cloud Asset as
+`sqladmin.googleapis.com/Instance`) and are billed per instance-hour via the
+`relationaldb:*` cost catalog. Cloud SQL `tiers`/`flags` catalogs are out of
+scope (static reference data on separate path shapes).
+
+**Total: 21 operations (+3 SubnetGroup + 40 native sub-resource, across the 12 optional capabilities above)**
 
 ---
 
@@ -1647,7 +1681,7 @@ still sees success.
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
-| Relational Database | 21 (+3 optional) |
+| Relational Database | 21 (+43 optional) |
 | Kubernetes — AWS EKS (control plane) | 21 |
 | Kubernetes — Azure AKS (control plane) | 18 |
 | Kubernetes — GCP GKE (control plane) | 26 |
@@ -1660,7 +1694,7 @@ still sees success.
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| **Grand Total** | **1047** (+12 optional) |
+| **Grand Total** | **1047** (+52 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
