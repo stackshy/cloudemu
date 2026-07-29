@@ -20,7 +20,7 @@ type eventSubscriptionXML struct {
 	Status                   string   `xml:"Status,omitempty"`
 	SubscriptionCreationTime string   `xml:"SubscriptionCreationTime,omitempty"`
 	EventCategoriesList      []string `xml:"EventCategoriesList>EventCategory,omitempty"`
-	SourceIdsList            []string `xml:"SourceIdsList>SourceId,omitempty"`
+	SourceIDsList            []string `xml:"SourceIdsList>SourceId,omitempty"`
 	Enabled                  bool     `xml:"Enabled"`
 }
 
@@ -113,7 +113,7 @@ func toEventSubscriptionXML(s *rdsdriver.EventSubscription) eventSubscriptionXML
 		Status:                   s.Status,
 		SubscriptionCreationTime: s.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		EventCategoriesList:      s.EventCategories,
-		SourceIdsList:            s.SourceIDs,
+		SourceIDsList:            s.SourceIDs,
 		Enabled:                  s.Enabled,
 	}
 }
@@ -148,6 +148,7 @@ func (h *Handler) createEventSubscription(w http.ResponseWriter, r *http.Request
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) describeEventSubscriptions(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.eventSubscriptionsCap()
 	if !ok {

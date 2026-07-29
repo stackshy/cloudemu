@@ -58,6 +58,7 @@ func parseRestoreTime(v string) time.Time {
 	return t
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) copyDBSnapshot(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.advancedRestoreCap()
 	if !ok {
@@ -81,6 +82,7 @@ func (h *Handler) copyDBSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) copyDBClusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.advancedRestoreCap()
 	if !ok {

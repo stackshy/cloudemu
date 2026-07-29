@@ -270,7 +270,7 @@ type ParameterGroup struct {
 	Parameters  map[string]string // user-set name -> value
 }
 
-// ClusterParameterGroup is the cluster-scoped analogue of ParameterGroup.
+// ClusterParameterGroup is the cluster-scoped analog of ParameterGroup.
 type ClusterParameterGroup struct {
 	Name        string
 	Family      string

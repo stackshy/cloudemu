@@ -3,9 +3,9 @@ package resourcediscovery
 import (
 	"context"
 	"fmt"
-	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Provider name constants used for routing per-provider ARN construction.

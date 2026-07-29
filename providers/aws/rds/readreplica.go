@@ -11,6 +11,8 @@ var _ rdsdriver.ReadReplicas = (*Mock)(nil)
 
 // CreateDBInstanceReadReplica creates a replica reading from an existing
 // primary instance, inheriting the source's engine, version and storage.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
 func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.ReadReplicaConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBInstanceIdentifier is required")

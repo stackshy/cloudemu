@@ -34,7 +34,7 @@ func (a rdsDiscovery) DiscoverDatabases(ctx context.Context) ([]resourcediscover
 	for i := range instances {
 		in := instances[i]
 		out = append(out, resourcediscovery.DiscoveredDatabase{
-			Name: in.ID, ARN: in.ARN, Engine: in.Engine,
+			Name: in.ID, ARN: in.ARN,
 			Type: resourcediscovery.TypeDBInstance, Tags: in.Tags,
 		})
 	}
@@ -42,7 +42,7 @@ func (a rdsDiscovery) DiscoverDatabases(ctx context.Context) ([]resourcediscover
 	for i := range clusters {
 		c := clusters[i]
 		out = append(out, resourcediscovery.DiscoveredDatabase{
-			Name: c.ID, ARN: c.ARN, Engine: c.Engine,
+			Name: c.ID, ARN: c.ARN,
 			Type: resourcediscovery.TypeDBCluster, Tags: c.Tags,
 		})
 	}
@@ -50,7 +50,7 @@ func (a rdsDiscovery) DiscoverDatabases(ctx context.Context) ([]resourcediscover
 	for i := range snapshots {
 		s := snapshots[i]
 		out = append(out, resourcediscovery.DiscoveredDatabase{
-			Name: s.ID, ARN: s.ARN, Engine: s.Engine,
+			Name: s.ID, ARN: s.ARN,
 			Type: resourcediscovery.TypeDBSnapshot, Tags: s.Tags,
 		})
 	}

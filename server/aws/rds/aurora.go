@@ -275,6 +275,7 @@ func (h *Handler) deleteDBClusterEndpoint(w http.ResponseWriter, r *http.Request
 
 // ---- failover handler ----
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) failoverDBCluster(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.clusterFailoverCap()
 	if !ok {
@@ -298,6 +299,7 @@ func (h *Handler) failoverDBCluster(w http.ResponseWriter, r *http.Request) {
 
 // ---- global cluster handlers ----
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) createGlobalCluster(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.globalClustersCap()
 	if !ok {
@@ -324,6 +326,7 @@ func (h *Handler) createGlobalCluster(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) describeGlobalClusters(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.globalClustersCap()
 	if !ok {
@@ -354,6 +357,7 @@ func (h *Handler) describeGlobalClusters(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) modifyGlobalCluster(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.globalClustersCap()
 	if !ok {
@@ -397,6 +401,7 @@ func (h *Handler) deleteGlobalCluster(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) removeFromGlobalCluster(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.globalClustersCap()
 	if !ok {

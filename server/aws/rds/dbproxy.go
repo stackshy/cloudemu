@@ -29,8 +29,8 @@ type dbProxyXML struct {
 	RequireTLS          bool                    `xml:"RequireTLS"`
 	IdleClientTimeout   int                     `xml:"IdleClientTimeout,omitempty"`
 	DebugLogging        bool                    `xml:"DebugLogging"`
-	VpcSubnetIds        []string                `xml:"VpcSubnetIds>member,omitempty"`
-	VpcSecurityGroupIds []string                `xml:"VpcSecurityGroupIds>member,omitempty"`
+	VpcSubnetIDs        []string                `xml:"VpcSubnetIds>member,omitempty"`
+	VpcSecurityGroupIDs []string                `xml:"VpcSecurityGroupIds>member,omitempty"`
 	Auth                []userAuthConfigInfoXML `xml:"Auth>member,omitempty"`
 	CreatedDate         string                  `xml:"CreatedDate,omitempty"`
 }
@@ -168,8 +168,8 @@ func toProxyXML(p *rdsdriver.DBProxy) dbProxyXML {
 		RequireTLS:          p.RequireTLS,
 		IdleClientTimeout:   p.IdleClientTimeout,
 		DebugLogging:        p.DebugLogging,
-		VpcSubnetIds:        p.VPCSubnetIDs,
-		VpcSecurityGroupIds: p.VPCSecurityGroupIDs,
+		VpcSubnetIDs:        p.VPCSubnetIDs,
+		VpcSecurityGroupIDs: p.VPCSecurityGroupIDs,
 		CreatedDate:         p.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 	}
 
@@ -232,6 +232,7 @@ func (h *Handler) createDBProxy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) describeDBProxies(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.dbProxiesCap()
 	if !ok {
@@ -351,6 +352,7 @@ func (h *Handler) deregisterDBProxyTargets(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) describeDBProxyTargets(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.dbProxiesCap()
 	if !ok {

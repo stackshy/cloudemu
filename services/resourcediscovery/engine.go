@@ -42,7 +42,6 @@ type DiscoveredDatabase struct {
 	Name   string
 	ARN    string
 	Region string
-	Engine string
 	Type   string // one of Type{DBInstance,DBCluster,DBSnapshot}
 	Tags   map[string]string
 }

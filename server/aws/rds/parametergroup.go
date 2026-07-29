@@ -270,6 +270,7 @@ func (h *Handler) createDBParameterGroup(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) describeDBParameterGroups(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {
@@ -359,6 +360,7 @@ func (h *Handler) describeDBParameters(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) resetDBParameterGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {
@@ -382,6 +384,7 @@ func (h *Handler) resetDBParameterGroup(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) copyDBParameterGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {
@@ -521,6 +524,7 @@ func (h *Handler) describeDBClusterParameters(w http.ResponseWriter, r *http.Req
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) resetDBClusterParameterGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {
@@ -544,6 +548,7 @@ func (h *Handler) resetDBClusterParameterGroup(w http.ResponseWriter, r *http.Re
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) copyDBClusterParameterGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {

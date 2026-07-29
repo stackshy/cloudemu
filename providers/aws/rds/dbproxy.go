@@ -25,6 +25,7 @@ func errProxyNotFound(name string) error {
 	return cerrors.Newf(cerrors.NotFound, "DB proxy %q not found", name)
 }
 
+//nolint:gocritic // cfg matches the driver interface signature.
 func (m *Mock) CreateDBProxy(_ context.Context, cfg rdsdriver.DBProxyConfig) (*rdsdriver.DBProxy, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBProxyName is required")
@@ -63,6 +64,7 @@ func (m *Mock) CreateDBProxy(_ context.Context, cfg rdsdriver.DBProxyConfig) (*r
 	return &out, nil
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) DescribeDBProxies(_ context.Context, names []string) ([]rdsdriver.DBProxy, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -127,6 +129,7 @@ func (m *Mock) DeleteDBProxy(_ context.Context, name string) (*rdsdriver.DBProxy
 	}
 
 	p.Status = "deleting"
+
 	m.proxies.Delete(name)
 
 	out := p
@@ -134,7 +137,9 @@ func (m *Mock) DeleteDBProxy(_ context.Context, name string) (*rdsdriver.DBProxy
 	return &out, nil
 }
 
-func (m *Mock) RegisterDBProxyTargets(_ context.Context, name, _ string, instanceIDs, clusterIDs []string) ([]rdsdriver.ProxyTarget, error) {
+func (m *Mock) RegisterDBProxyTargets(
+	_ context.Context, name, _ string, instanceIDs, clusterIDs []string,
+) ([]rdsdriver.ProxyTarget, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -184,6 +189,7 @@ func (m *Mock) DeregisterDBProxyTargets(_ context.Context, name, _ string, insta
 	drop := stringSet(append(append([]string(nil), instanceIDs...), clusterIDs...))
 
 	kept := p.Targets[:0]
+
 	for _, t := range p.Targets {
 		if _, remove := drop[t.RDSResourceID]; !remove {
 			kept = append(kept, t)

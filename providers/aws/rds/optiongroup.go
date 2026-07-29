@@ -76,6 +76,7 @@ func (m *Mock) DescribeOptionGroups(_ context.Context, names []string, engineNam
 		}
 
 		filtered := make([]rdsdriver.OptionGroup, 0, len(all))
+
 		for _, og := range all {
 			if og.EngineName == engineName {
 				filtered = append(filtered, og)
@@ -99,7 +100,9 @@ func (m *Mock) DescribeOptionGroups(_ context.Context, names []string, engineNam
 	return out, nil
 }
 
-func (m *Mock) ModifyOptionGroup(_ context.Context, name string, include []rdsdriver.Option, remove []string) (*rdsdriver.OptionGroup, error) {
+func (m *Mock) ModifyOptionGroup(
+	_ context.Context, name string, include []rdsdriver.Option, remove []string,
+) (*rdsdriver.OptionGroup, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -177,7 +180,9 @@ func (m *Mock) CopyOptionGroup(_ context.Context, source, target, description st
 	return &out, nil
 }
 
-func (m *Mock) DescribeOptionGroupOptions(_ context.Context, engineName, majorEngineVersion string) ([]rdsdriver.OptionGroupOption, error) {
+func (*Mock) DescribeOptionGroupOptions(
+	_ context.Context, engineName, majorEngineVersion string,
+) ([]rdsdriver.OptionGroupOption, error) {
 	if engineName == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "EngineName is required")
 	}

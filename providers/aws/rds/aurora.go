@@ -25,6 +25,7 @@ func globalClusterARN(accountID, id string) string {
 
 // ---- custom cluster endpoints ----
 
+//nolint:gocritic // cfg matches the driver interface signature.
 func (m *Mock) CreateDBClusterEndpoint(_ context.Context, cfg rdsdriver.ClusterEndpointConfig) (*rdsdriver.ClusterEndpoint, error) {
 	if cfg.EndpointID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterEndpointIdentifier is required")
@@ -78,16 +79,19 @@ func (m *Mock) DescribeDBClusterEndpoints(_ context.Context, clusterID, endpoint
 	}
 
 	out := make([]rdsdriver.ClusterEndpoint, 0, len(all))
-	for _, ep := range all {
-		if ep.ClusterID == clusterID {
-			out = append(out, ep)
+
+	for i := range all {
+		if all[i].ClusterID == clusterID {
+			out = append(out, all[i])
 		}
 	}
 
 	return out, nil
 }
 
-func (m *Mock) ModifyDBClusterEndpoint(_ context.Context, endpointID string, input rdsdriver.ModifyClusterEndpointInput) (*rdsdriver.ClusterEndpoint, error) {
+func (m *Mock) ModifyDBClusterEndpoint(
+	_ context.Context, endpointID string, input rdsdriver.ModifyClusterEndpointInput,
+) (*rdsdriver.ClusterEndpoint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -125,6 +129,7 @@ func (m *Mock) DeleteDBClusterEndpoint(_ context.Context, endpointID string) (*r
 	}
 
 	ep.Status = rdsdriver.StateDeleting
+
 	m.clusterEndpoints.Delete(endpointID)
 
 	out := ep
@@ -256,6 +261,7 @@ func (m *Mock) ModifyGlobalCluster(_ context.Context, id, newID, engineVersion s
 		}
 
 		m.globalClusters.Delete(id)
+
 		gc.ID = newID
 		gc.ARN = globalClusterARN(m.opts.AccountID, newID)
 	}
@@ -293,6 +299,7 @@ func (m *Mock) RemoveFromGlobalCluster(_ context.Context, id, clusterARN string)
 	}
 
 	kept := gc.Members[:0]
+
 	for _, mem := range gc.Members {
 		if mem.DBClusterARN != clusterARN {
 			kept = append(kept, mem)

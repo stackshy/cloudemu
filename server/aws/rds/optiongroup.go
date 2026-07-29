@@ -150,6 +150,7 @@ func toOptionGroupXML(og *rdsdriver.OptionGroup) optionGroupXML {
 
 // ---- handlers ----
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) createOptionGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.optionGroupsCap()
 	if !ok {
@@ -247,6 +248,7 @@ func (h *Handler) deleteOptionGroup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) copyOptionGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.optionGroupsCap()
 	if !ok {

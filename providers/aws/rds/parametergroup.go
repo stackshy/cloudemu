@@ -91,6 +91,7 @@ func (m *Mock) CreateDBParameterGroup(_ context.Context, cfg rdsdriver.Parameter
 	return &out, nil
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) DescribeDBParameterGroups(_ context.Context, names []string) ([]rdsdriver.ParameterGroup, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -153,6 +154,7 @@ func (m *Mock) DescribeDBParameters(_ context.Context, name string) ([]rdsdriver
 	return paramsToDriver(pg.Parameters), nil
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) ResetDBParameterGroup(_ context.Context, name string, params []string, resetAll bool) (*rdsdriver.ParameterGroup, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -210,7 +212,9 @@ func (m *Mock) CopyDBParameterGroup(_ context.Context, source, target, descripti
 
 // ---- DB cluster parameter groups ----
 
-func (m *Mock) CreateDBClusterParameterGroup(_ context.Context, cfg rdsdriver.ParameterGroupConfig) (*rdsdriver.ClusterParameterGroup, error) {
+func (m *Mock) CreateDBClusterParameterGroup(
+	_ context.Context, cfg rdsdriver.ParameterGroupConfig,
+) (*rdsdriver.ClusterParameterGroup, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterParameterGroupName is required")
 	}
@@ -240,6 +244,7 @@ func (m *Mock) CreateDBClusterParameterGroup(_ context.Context, cfg rdsdriver.Pa
 	return &out, nil
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) DescribeDBClusterParameterGroups(_ context.Context, names []string) ([]rdsdriver.ClusterParameterGroup, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -262,7 +267,9 @@ func (m *Mock) DescribeDBClusterParameterGroups(_ context.Context, names []strin
 	return out, nil
 }
 
-func (m *Mock) ModifyDBClusterParameterGroup(_ context.Context, name string, params []rdsdriver.Parameter) (*rdsdriver.ClusterParameterGroup, error) {
+func (m *Mock) ModifyDBClusterParameterGroup(
+	_ context.Context, name string, params []rdsdriver.Parameter,
+) (*rdsdriver.ClusterParameterGroup, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -302,7 +309,10 @@ func (m *Mock) DescribeDBClusterParameters(_ context.Context, name string) ([]rd
 	return paramsToDriver(pg.Parameters), nil
 }
 
-func (m *Mock) ResetDBClusterParameterGroup(_ context.Context, name string, params []string, resetAll bool) (*rdsdriver.ClusterParameterGroup, error) {
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
+func (m *Mock) ResetDBClusterParameterGroup(
+	_ context.Context, name string, params []string, resetAll bool,
+) (*rdsdriver.ClusterParameterGroup, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -326,7 +336,9 @@ func (m *Mock) ResetDBClusterParameterGroup(_ context.Context, name string, para
 	return &out, nil
 }
 
-func (m *Mock) CopyDBClusterParameterGroup(_ context.Context, source, target, description string) (*rdsdriver.ClusterParameterGroup, error) {
+func (m *Mock) CopyDBClusterParameterGroup(
+	_ context.Context, source, target, description string,
+) (*rdsdriver.ClusterParameterGroup, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

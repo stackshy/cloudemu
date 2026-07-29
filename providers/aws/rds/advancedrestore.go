@@ -10,6 +10,8 @@ import (
 var _ rdsdriver.AdvancedRestore = (*Mock)(nil)
 
 // CopyDBSnapshot clones an existing instance snapshot under a new identifier.
+//
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) CopyDBSnapshot(_ context.Context, source, target string, tags map[string]string) (*rdsdriver.Snapshot, error) {
 	if target == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "TargetDBSnapshotIdentifier is required")
@@ -47,6 +49,8 @@ func (m *Mock) CopyDBSnapshot(_ context.Context, source, target string, tags map
 }
 
 // CopyDBClusterSnapshot clones an existing cluster snapshot under a new identifier.
+//
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) CopyDBClusterSnapshot(_ context.Context, source, target string, tags map[string]string) (*rdsdriver.ClusterSnapshot, error) {
 	if target == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "TargetDBClusterSnapshotIdentifier is required")
@@ -87,7 +91,11 @@ func (m *Mock) CopyDBClusterSnapshot(_ context.Context, source, target string, t
 // instance's current spec. The emulator has no historical timeline, so the
 // restore reflects the source as it is now; RestoreTime is accepted but not
 // replayed.
-func (m *Mock) RestoreDBInstanceToPointInTime(_ context.Context, input rdsdriver.RestoreInstanceToPointInTimeInput) (*rdsdriver.Instance, error) {
+//
+//nolint:gocritic // input matches the driver interface signature.
+func (m *Mock) RestoreDBInstanceToPointInTime(
+	_ context.Context, input rdsdriver.RestoreInstanceToPointInTimeInput,
+) (*rdsdriver.Instance, error) {
 	if input.TargetInstanceID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "TargetDBInstanceIdentifier is required")
 	}
@@ -131,7 +139,9 @@ func (m *Mock) RestoreDBInstanceToPointInTime(_ context.Context, input rdsdriver
 
 // RestoreDBClusterToPointInTime creates a new cluster cloned from a source
 // cluster's current spec (no members; caller adds instances afterward).
-func (m *Mock) RestoreDBClusterToPointInTime(_ context.Context, input rdsdriver.RestoreClusterToPointInTimeInput) (*rdsdriver.Cluster, error) {
+func (m *Mock) RestoreDBClusterToPointInTime(
+	_ context.Context, input rdsdriver.RestoreClusterToPointInTimeInput,
+) (*rdsdriver.Cluster, error) {
 	if input.TargetClusterID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterIdentifier is required")
 	}

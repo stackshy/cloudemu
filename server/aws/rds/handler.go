@@ -150,7 +150,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
 //
-//nolint:gocyclo // 21 cases for one-shot dispatch; splitting into sub-routers would be more complex than the switch.
+//nolint:gocyclo,funlen // flat one-shot Action dispatch; a table of func values would obscure it more than the switch.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	action := r.Form.Get("Action")
 
@@ -335,72 +335,69 @@ func writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// notFoundCode picks the AWS-shaped error code based on the error message.
-// We can't introspect the resource type from cerrors directly; the message
-// always carries the resource keyword.
-func notFoundCode(err error) string {
-	msg := err.Error()
-
-	switch {
-	// "db subnet group" first: it is the only one whose message does not start
-	// with "DB ", and checking it late would let a broader case claim it.
-	case strings.Contains(msg, "db subnet group"):
-		return "DBSubnetGroupNotFoundFault"
-	// "parameter group" before the DB cluster/instance cases: the cluster
-	// variant's message contains "DB cluster", which would otherwise claim it.
-	// Real AWS reuses the DBParameterGroup fault for both DB and cluster groups.
-	case strings.Contains(msg, "parameter group"):
-		return "DBParameterGroupNotFound"
-	case strings.Contains(msg, "option group"):
-		return "OptionGroupNotFoundFault"
-	case strings.Contains(msg, "DB proxy"):
-		return "DBProxyNotFoundFault"
-	case strings.Contains(msg, "event subscription"):
-		return "SubscriptionNotFoundFault"
-	case strings.Contains(msg, "DB cluster endpoint"):
-		return "DBClusterEndpointNotFoundFault"
-	case strings.Contains(msg, "global cluster"):
-		return "GlobalClusterNotFoundFault"
-	case strings.Contains(msg, "DB instance"):
-		return "DBInstanceNotFound"
-	case strings.Contains(msg, "DB cluster snapshot"):
-		return "DBClusterSnapshotNotFoundFault"
-	case strings.Contains(msg, "DB cluster"):
-		return "DBClusterNotFoundFault"
-	case strings.Contains(msg, "DB snapshot"):
-		return "DBSnapshotNotFound"
-	default:
-		return "ResourceNotFoundFault"
-	}
+// faultMapping maps a resource keyword found in an error message to the
+// AWS-shaped fault code for that resource.
+type faultMapping struct {
+	substr string
+	code   string
 }
 
-func alreadyExistsCode(err error) string {
-	msg := err.Error()
-
-	switch {
-	case strings.Contains(msg, "db subnet group"):
-		return "DBSubnetGroupAlreadyExists"
-	case strings.Contains(msg, "parameter group"):
-		return "DBParameterGroupAlreadyExists"
-	case strings.Contains(msg, "option group"):
-		return "OptionGroupAlreadyExistsFault"
-	case strings.Contains(msg, "DB proxy"):
-		return "DBProxyAlreadyExistsFault"
-	case strings.Contains(msg, "event subscription"):
-		return "SubscriptionAlreadyExistFault"
-	case strings.Contains(msg, "DB cluster endpoint"):
-		return "DBClusterEndpointAlreadyExistsFault"
-	case strings.Contains(msg, "global cluster"):
-		return "GlobalClusterAlreadyExistsFault"
-	case strings.Contains(msg, "DB instance"):
-		return "DBInstanceAlreadyExists"
-	case strings.Contains(msg, "DB cluster snapshot"):
-		return "DBClusterSnapshotAlreadyExistsFault"
-	case strings.Contains(msg, "DB cluster"):
-		return "DBClusterAlreadyExistsFault"
-	case strings.Contains(msg, "DB snapshot"):
-		return "DBSnapshotAlreadyExists"
-	default:
-		return "ResourceAlreadyExistsFault"
+// matchFault returns the code of the first mapping whose keyword is contained
+// in msg, or fallback if none match. The caller supplies the table in
+// most-specific-first order (e.g. "DB cluster endpoint" and "parameter group"
+// before "DB cluster", whose keyword they contain).
+func matchFault(msg string, table []faultMapping, fallback string) string {
+	for _, m := range table {
+		if strings.Contains(msg, m.substr) {
+			return m.code
+		}
 	}
+
+	return fallback
+}
+
+// notFoundFaults / alreadyExistsFaults are ordered most-specific-first: an
+// entry whose keyword is a substring of another's must appear first. cerrors
+// carries no resource type, so the resource keyword in the message is the only
+// signal for the AWS-shaped code. Real AWS reuses the DBParameterGroup fault
+// for both DB and cluster parameter groups.
+//
+//nolint:gochecknoglobals // ordered static lookup table
+var notFoundFaults = []faultMapping{
+	{"db subnet group", "DBSubnetGroupNotFoundFault"},
+	{"parameter group", "DBParameterGroupNotFound"},
+	{"option group", "OptionGroupNotFoundFault"},
+	{"DB proxy", "DBProxyNotFoundFault"},
+	{"event subscription", "SubscriptionNotFoundFault"},
+	{"DB cluster endpoint", "DBClusterEndpointNotFoundFault"},
+	{"global cluster", "GlobalClusterNotFoundFault"},
+	{"DB instance", "DBInstanceNotFound"},
+	{"DB cluster snapshot", "DBClusterSnapshotNotFoundFault"},
+	{"DB cluster", "DBClusterNotFoundFault"},
+	{"DB snapshot", "DBSnapshotNotFound"},
+}
+
+//nolint:gochecknoglobals // ordered static lookup table
+var alreadyExistsFaults = []faultMapping{
+	{"db subnet group", "DBSubnetGroupAlreadyExists"},
+	{"parameter group", "DBParameterGroupAlreadyExists"},
+	{"option group", "OptionGroupAlreadyExistsFault"},
+	{"DB proxy", "DBProxyAlreadyExistsFault"},
+	{"event subscription", "SubscriptionAlreadyExistFault"},
+	{"DB cluster endpoint", "DBClusterEndpointAlreadyExistsFault"},
+	{"global cluster", "GlobalClusterAlreadyExistsFault"},
+	{"DB instance", "DBInstanceAlreadyExists"},
+	{"DB cluster snapshot", "DBClusterSnapshotAlreadyExistsFault"},
+	{"DB cluster", "DBClusterAlreadyExistsFault"},
+	{"DB snapshot", "DBSnapshotAlreadyExists"},
+}
+
+// notFoundCode picks the AWS-shaped NotFound fault from the error message.
+func notFoundCode(err error) string {
+	return matchFault(err.Error(), notFoundFaults, "ResourceNotFoundFault")
+}
+
+// alreadyExistsCode picks the AWS-shaped AlreadyExists fault from the message.
+func alreadyExistsCode(err error) string {
+	return matchFault(err.Error(), alreadyExistsFaults, "ResourceAlreadyExistsFault")
 }

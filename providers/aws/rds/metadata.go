@@ -13,6 +13,15 @@ var (
 	_ rdsdriver.Tagging  = (*Mock)(nil)
 )
 
+// ARN resource-kind segments and the fixed RDS ARN field count.
+const (
+	arnKindInstance        = "db"
+	arnKindCluster         = "cluster"
+	arnKindSnapshot        = "snapshot"
+	arnKindClusterSnapshot = "cluster-snapshot"
+	arnFieldCount          = 7
+)
+
 // engineVersionCatalog is a representative set of supported versions per
 // engine. Real AWS returns a far larger, region-specific list; the emulator
 // returns a stable subset.
@@ -50,7 +59,7 @@ var orderableInstanceClasses = []string{
 	"db.r5.large", "db.r5.xlarge", "db.m5.large",
 }
 
-func (m *Mock) DescribeDBEngineVersions(_ context.Context, engine, engineVersion string) ([]rdsdriver.DBEngineVersion, error) {
+func (*Mock) DescribeDBEngineVersions(_ context.Context, engine, engineVersion string) ([]rdsdriver.DBEngineVersion, error) {
 	out := make([]rdsdriver.DBEngineVersion, 0)
 
 	for _, eng := range engineCatalogOrder {
@@ -75,7 +84,9 @@ func (m *Mock) DescribeDBEngineVersions(_ context.Context, engine, engineVersion
 	return out, nil
 }
 
-func (m *Mock) DescribeOrderableDBInstanceOptions(_ context.Context, engine, engineVersion string) ([]rdsdriver.OrderableDBInstanceOption, error) {
+func (*Mock) DescribeOrderableDBInstanceOptions(
+	_ context.Context, engine, engineVersion string,
+) ([]rdsdriver.OrderableDBInstanceOption, error) {
 	if engine == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "Engine is required")
 	}
@@ -114,8 +125,8 @@ var engineCatalogOrder = []string{
 // resourceKind identifies the tagged resource type parsed from an ARN.
 func arnResourceKindID(arn string) (kind, id string) {
 	// arn:aws:rds:<region>:<acct>:<kind>:<id>
-	parts := strings.SplitN(arn, ":", 7) //nolint:mnd // fixed ARN field count
-	if len(parts) < 7 {
+	parts := strings.SplitN(arn, ":", arnFieldCount)
+	if len(parts) < arnFieldCount {
 		return "", ""
 	}
 
@@ -159,19 +170,19 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceARN string) (map[s
 	kind, id := arnResourceKindID(resourceARN)
 
 	switch kind {
-	case "db":
+	case arnKindInstance:
 		if r, ok := m.instances.Get(id); ok {
 			return copyTags(r.Tags), nil
 		}
-	case "cluster":
+	case arnKindCluster:
 		if r, ok := m.clusters.Get(id); ok {
 			return copyTags(r.Tags), nil
 		}
-	case "snapshot":
+	case arnKindSnapshot:
 		if r, ok := m.snapshots.Get(id); ok {
 			return copyTags(r.Tags), nil
 		}
-	case "cluster-snapshot":
+	case arnKindClusterSnapshot:
 		if r, ok := m.clusterSnapshots.Get(id); ok {
 			return copyTags(r.Tags), nil
 		}
@@ -187,7 +198,7 @@ func (m *Mock) withResourceTags(arn string, fn func(map[string]string) map[strin
 	kind, id := arnResourceKindID(arn)
 
 	switch kind {
-	case "db":
+	case arnKindInstance:
 		r, ok := m.instances.Get(id)
 		if !ok {
 			return errUntaggable(arn)
@@ -195,7 +206,7 @@ func (m *Mock) withResourceTags(arn string, fn func(map[string]string) map[strin
 
 		r.Tags = fn(r.Tags)
 		m.instances.Set(id, r)
-	case "cluster":
+	case arnKindCluster:
 		r, ok := m.clusters.Get(id)
 		if !ok {
 			return errUntaggable(arn)
@@ -203,7 +214,7 @@ func (m *Mock) withResourceTags(arn string, fn func(map[string]string) map[strin
 
 		r.Tags = fn(r.Tags)
 		m.clusters.Set(id, r)
-	case "snapshot":
+	case arnKindSnapshot:
 		r, ok := m.snapshots.Get(id)
 		if !ok {
 			return errUntaggable(arn)
@@ -211,7 +222,7 @@ func (m *Mock) withResourceTags(arn string, fn func(map[string]string) map[strin
 
 		r.Tags = fn(r.Tags)
 		m.snapshots.Set(id, r)
-	case "cluster-snapshot":
+	case arnKindClusterSnapshot:
 		r, ok := m.clusterSnapshots.Get(id)
 		if !ok {
 			return errUntaggable(arn)

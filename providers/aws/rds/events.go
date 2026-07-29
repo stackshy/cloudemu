@@ -23,7 +23,10 @@ func errEventSubscriptionNotFound(name string) error {
 //
 //nolint:gochecknoglobals // static lookup table
 var eventCategoryCatalog = map[string][]string{
-	"db-instance":         {"availability", "backup", "configuration change", "creation", "deletion", "failover", "failure", "maintenance", "notification", "recovery", "restoration"},
+	"db-instance": {
+		"availability", "backup", "configuration change", "creation", "deletion",
+		"failover", "failure", "maintenance", "notification", "recovery", "restoration",
+	},
 	"db-cluster":          {"configuration change", "creation", "deletion", "failover", "failure", "maintenance", "notification"},
 	"db-snapshot":         {"creation", "deletion", "notification", "restoration"},
 	"db-cluster-snapshot": {"backup", "notification"},
@@ -32,6 +35,7 @@ var eventCategoryCatalog = map[string][]string{
 	"db-proxy":            {"configuration change", "creation", "deletion"},
 }
 
+//nolint:gocritic // cfg matches the driver interface signature.
 func (m *Mock) CreateEventSubscription(_ context.Context, cfg rdsdriver.EventSubscriptionConfig) (*rdsdriver.EventSubscription, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "SubscriptionName is required")
@@ -67,6 +71,7 @@ func (m *Mock) CreateEventSubscription(_ context.Context, cfg rdsdriver.EventSub
 	return &out, nil
 }
 
+//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) DescribeEventSubscriptions(_ context.Context, names []string) ([]rdsdriver.EventSubscription, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -89,7 +94,9 @@ func (m *Mock) DescribeEventSubscriptions(_ context.Context, names []string) ([]
 	return out, nil
 }
 
-func (m *Mock) ModifyEventSubscription(_ context.Context, name string, input rdsdriver.ModifyEventSubscriptionInput) (*rdsdriver.EventSubscription, error) {
+func (m *Mock) ModifyEventSubscription(
+	_ context.Context, name string, input rdsdriver.ModifyEventSubscriptionInput,
+) (*rdsdriver.EventSubscription, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -139,11 +146,11 @@ func (m *Mock) DeleteEventSubscription(_ context.Context, name string) (*rdsdriv
 
 // DescribeEvents returns an empty list: the emulator does not retain an event
 // timeline, so there are truthfully no events to report for any window.
-func (m *Mock) DescribeEvents(_ context.Context, _, _ string, _ []string) ([]rdsdriver.Event, error) {
+func (*Mock) DescribeEvents(_ context.Context, _, _ string, _ []string) ([]rdsdriver.Event, error) {
 	return []rdsdriver.Event{}, nil
 }
 
-func (m *Mock) DescribeEventCategories(_ context.Context, sourceType string) ([]rdsdriver.EventCategoryGroup, error) {
+func (*Mock) DescribeEventCategories(_ context.Context, sourceType string) ([]rdsdriver.EventCategoryGroup, error) {
 	if sourceType != "" {
 		cats, ok := eventCategoryCatalog[sourceType]
 		if !ok {
