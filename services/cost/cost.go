@@ -129,6 +129,20 @@ func defaultRates() map[string]float64 {
 		"azuresearch:IndexDocuments":        0.0000004,
 		"azuresearch:CreateOrUpdateIndex":   0.0,
 		"azuresearch:CreateOrUpdateIndexer": 0.0,
+
+		// Relational databases (AWS RDS, Azure SQL, Azure MySQL/PostgreSQL
+		// Flexible Server, GCP Cloud SQL). Servers/instances are billed per
+		// instance-hour (proxied at create); lifecycle actions and restores
+		// reuse the instance-hour, snapshots are billed as backup storage
+		// separately. The portable service name is "relationaldb", so one
+		// catalog covers every cloud's managed relational offering.
+		"relationaldb:CreateInstance":              0.017, // db.t3.micro-equivalent instance-hour
+		"relationaldb:CreateCluster":               0.29,  // Aurora-style cluster-hour
+		"relationaldb:RestoreInstanceFromSnapshot": 0.017,
+		"relationaldb:CreateSnapshot":              0.0, // backup storage billed separately
+		"relationaldb:StartInstance":               0.0,
+		"relationaldb:StopInstance":                0.0,
+		"relationaldb:RebootInstance":              0.0,
 	}
 }
 
