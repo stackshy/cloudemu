@@ -65,6 +65,8 @@ func (m *Mock) CreateDBSubnetGroup(
 
 // DescribeDBSubnetGroups returns the named groups, or all of them when no
 // names are given.
+//
+//nolint:dupl // mirrors the other describe-by-name-or-all methods by design.
 func (m *Mock) DescribeDBSubnetGroups(
 	_ context.Context, names []string,
 ) ([]rdsdriver.SubnetGroup, error) {
@@ -72,7 +74,12 @@ func (m *Mock) DescribeDBSubnetGroups(
 	defer m.mu.RUnlock()
 
 	if len(names) == 0 {
-		return m.subnetGroups.SortedValues(), nil
+		all := m.subnetGroups.SortedValues()
+		for i := range all {
+			all[i].SubnetIDs = cloneSlice(all[i].SubnetIDs)
+		}
+
+		return all, nil
 	}
 
 	out := make([]rdsdriver.SubnetGroup, 0, len(names))
@@ -84,6 +91,7 @@ func (m *Mock) DescribeDBSubnetGroups(
 				"DBSubnetGroupNotFoundFault: db subnet group %q not found", n)
 		}
 
+		sg.SubnetIDs = cloneSlice(sg.SubnetIDs)
 		out = append(out, sg)
 	}
 

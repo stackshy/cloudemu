@@ -12,6 +12,17 @@ import (
 
 var _ rdsdriver.OptionGroups = (*Mock)(nil)
 
+// cloneOptions deep-copies each option, including its Settings map, so a
+// returned option group never aliases the store (cloneSlice alone is shallow).
+func cloneOptions(opts []rdsdriver.Option) []rdsdriver.Option {
+	out := cloneSlice(opts)
+	for i := range out {
+		out[i].Settings = copyTags(out[i].Settings)
+	}
+
+	return out
+}
+
 // optionGroupInUseBy names an instance still attached to the given option
 // group, if any.
 func (m *Mock) optionGroupInUseBy(name string) (string, bool) {
@@ -57,6 +68,10 @@ func (m *Mock) CreateOptionGroup(_ context.Context, cfg rdsdriver.OptionGroupCon
 		return nil, cerrors.New(cerrors.InvalidArgument, "EngineName is required")
 	}
 
+	if strings.HasPrefix(cfg.Name, "default:") {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "option group name %q uses the reserved default: prefix", cfg.Name)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -92,7 +107,7 @@ func (m *Mock) DescribeOptionGroups(_ context.Context, names []string, engineNam
 				continue
 			}
 
-			og.Options = cloneSlice(og.Options)
+			og.Options = cloneOptions(og.Options)
 			filtered = append(filtered, og)
 		}
 

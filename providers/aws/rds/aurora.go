@@ -230,6 +230,7 @@ func (m *Mock) CreateGlobalCluster(_ context.Context, cfg rdsdriver.GlobalCluste
 	return &out, nil
 }
 
+//nolint:dupl // mirrors the other describe-by-name-or-all methods by design.
 func (m *Mock) DescribeGlobalClusters(_ context.Context, ids []string) ([]rdsdriver.GlobalCluster, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

@@ -95,6 +95,42 @@ func TestDeleteOptionGroupGuards(t *testing.T) {
 	}
 }
 
+func TestModifyReleasesOptionGroup(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	for _, n := range []string{"og1", "og2"} {
+		if _, err := m.CreateOptionGroup(ctx, rdsdriver.OptionGroupConfig{Name: n, EngineName: "mysql"}); err != nil {
+			t.Fatalf("create %s: %v", n, err)
+		}
+	}
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "db", Engine: "mysql", OptionGroupName: "og1"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if err := m.DeleteOptionGroup(ctx, "og1"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete attached og1: want FailedPrecondition, got %v", err)
+	}
+
+	if _, err := m.ModifyInstance(ctx, "db", rdsdriver.ModifyInstanceInput{OptionGroupName: "og2"}); err != nil {
+		t.Fatalf("ModifyInstance: %v", err)
+	}
+
+	if err := m.DeleteOptionGroup(ctx, "og1"); err != nil {
+		t.Fatalf("delete released og1: %v", err)
+	}
+}
+
+func TestCreateOptionGroupRejectsReservedName(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateOptionGroup(ctx, rdsdriver.OptionGroupConfig{Name: "default:mysql-8-0", EngineName: "mysql"}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("reserved option group name: want InvalidArgument, got %v", err)
+	}
+}
+
 func TestOptionGroupCopyAndOptions(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

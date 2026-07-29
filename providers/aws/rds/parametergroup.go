@@ -122,6 +122,10 @@ func (m *Mock) CreateDBParameterGroup(_ context.Context, cfg rdsdriver.Parameter
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBParameterGroupFamily is required")
 	}
 
+	if strings.HasPrefix(cfg.Name, "default.") {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "DB parameter group name %q uses the reserved default. prefix", cfg.Name)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -289,6 +293,10 @@ func (m *Mock) CreateDBClusterParameterGroup(
 
 	if cfg.Family == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBParameterGroupFamily is required")
+	}
+
+	if strings.HasPrefix(cfg.Name, "default.") {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "DB cluster parameter group name %q uses the reserved default. prefix", cfg.Name)
 	}
 
 	m.mu.Lock()

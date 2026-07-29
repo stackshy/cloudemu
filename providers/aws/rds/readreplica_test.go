@@ -89,6 +89,30 @@ func TestDeleteInstanceBlockedByReplica(t *testing.T) {
 	}
 }
 
+// Describe must return independent copies of the instance slice fields, across
+// both the list-all and named-lookup branches (LOW copy-on-read consistency).
+func TestDescribeInstancesReturnsIndependentCopies(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "db", Engine: "mysql", VPCSecurityGroups: []string{"sg-1", "sg-2"},
+	}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	all, _ := m.DescribeInstances(ctx, nil)
+	all[0].VPCSecurityGroups[0] = "MUTATED"
+
+	named, _ := m.DescribeInstances(ctx, []string{"db"})
+	named[0].VPCSecurityGroups[0] = "MUTATED-TOO"
+
+	again, _ := m.DescribeInstances(ctx, []string{"db"})
+	if again[0].VPCSecurityGroups[0] != "sg-1" {
+		t.Fatalf("returned VPCSecurityGroups aliased the store: %v", again[0].VPCSecurityGroups)
+	}
+}
+
 func TestReadReplicaErrors(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

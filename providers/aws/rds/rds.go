@@ -189,6 +189,27 @@ func cloneSlice[T any](s []T) []T {
 	return append([]T(nil), s...)
 }
 
+// cloneInstance / cloneCluster copy the map + slice fields so a value returned
+// by a Describe call never aliases the store.
+//
+//nolint:gocritic // takes a value on purpose: it returns an independent copy.
+func cloneInstance(in rdsdriver.Instance) rdsdriver.Instance {
+	in.Tags = copyTags(in.Tags)
+	in.VPCSecurityGroups = cloneSlice(in.VPCSecurityGroups)
+	in.ReadReplicaTargets = cloneSlice(in.ReadReplicaTargets)
+
+	return in
+}
+
+//nolint:gocritic // takes a value on purpose: it returns an independent copy.
+func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
+	c.Tags = copyTags(c.Tags)
+	c.Members = cloneSlice(c.Members)
+	c.VPCSecurityGroups = cloneSlice(c.VPCSecurityGroups)
+
+	return c
+}
+
 func copyTags(src map[string]string) map[string]string {
 	if src == nil {
 		return nil
@@ -300,8 +321,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
-			v.Tags = copyTags(v.Tags)
-			out = append(out, v)
+			out = append(out, cloneInstance(v))
 		}
 
 		return out, nil
@@ -315,14 +335,15 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 		}
 
-		inst.Tags = copyTags(inst.Tags)
-		out = append(out, inst)
+		out = append(out, cloneInstance(inst))
 	}
 
 	return out, nil
 }
 
 // ModifyInstance applies the supplied changes.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -348,6 +369,14 @@ func (m *Mock) ModifyInstance(
 
 	if input.MultiAZ != nil {
 		inst.MultiAZ = *input.MultiAZ
+	}
+
+	if input.DBParameterGroupName != "" {
+		inst.DBParameterGroupName = input.DBParameterGroupName
+	}
+
+	if input.OptionGroupName != "" {
+		inst.OptionGroupName = input.OptionGroupName
 	}
 
 	if input.Tags != nil {
@@ -521,8 +550,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
-			v.Tags = copyTags(v.Tags)
-			out = append(out, v)
+			out = append(out, cloneCluster(v))
 		}
 
 		return out, nil
@@ -536,14 +564,15 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 			return nil, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", id)
 		}
 
-		cluster.Tags = copyTags(cluster.Tags)
-		out = append(out, cluster)
+		out = append(out, cloneCluster(cluster))
 	}
 
 	return out, nil
 }
 
 // ModifyCluster applies changes.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyCluster(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Cluster, error) {
@@ -557,6 +586,10 @@ func (m *Mock) ModifyCluster(
 
 	if input.EngineVersion != "" {
 		cluster.EngineVersion = input.EngineVersion
+	}
+
+	if input.DBClusterParameterGroupName != "" {
+		cluster.DBClusterParameterGroupName = input.DBClusterParameterGroupName
 	}
 
 	if input.Tags != nil {

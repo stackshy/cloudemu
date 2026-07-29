@@ -112,11 +112,13 @@ func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
 	id := form.Get("DBInstanceIdentifier")
 
 	input := rdsdriver.ModifyInstanceInput{
-		InstanceClass:      form.Get("DBInstanceClass"),
-		AllocatedStorage:   formInt(form.Get("AllocatedStorage")),
-		EngineVersion:      form.Get("EngineVersion"),
-		MasterUserPassword: form.Get("MasterUserPassword"),
-		Tags:               parseRDSTags(form),
+		InstanceClass:        form.Get("DBInstanceClass"),
+		AllocatedStorage:     formInt(form.Get("AllocatedStorage")),
+		EngineVersion:        form.Get("EngineVersion"),
+		MasterUserPassword:   form.Get("MasterUserPassword"),
+		DBParameterGroupName: form.Get("DBParameterGroupName"),
+		OptionGroupName:      form.Get("OptionGroupName"),
+		Tags:                 parseRDSTags(form),
 	}
 
 	if v := form.Get("MultiAZ"); v != "" {
@@ -296,9 +298,10 @@ func (h *Handler) modifyDBCluster(w http.ResponseWriter, r *http.Request) {
 	id := form.Get("DBClusterIdentifier")
 
 	input := rdsdriver.ModifyInstanceInput{
-		EngineVersion:      form.Get("EngineVersion"),
-		MasterUserPassword: form.Get("MasterUserPassword"),
-		Tags:               parseRDSTags(form),
+		EngineVersion:               form.Get("EngineVersion"),
+		MasterUserPassword:          form.Get("MasterUserPassword"),
+		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
+		Tags:                        parseRDSTags(form),
 	}
 
 	cluster, err := h.db.ModifyCluster(r.Context(), id, input)

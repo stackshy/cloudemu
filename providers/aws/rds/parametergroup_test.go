@@ -177,6 +177,78 @@ func TestParameterGroupDeleteGuards(t *testing.T) {
 	}
 }
 
+func TestModifyReleasesParameterGroup(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	for _, n := range []string{"pg1", "pg2"} {
+		if _, err := m.CreateDBParameterGroup(ctx, rdsdriver.ParameterGroupConfig{Name: n, Family: "mysql8.0"}); err != nil {
+			t.Fatalf("create %s: %v", n, err)
+		}
+	}
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "db", Engine: "mysql", DBParameterGroupName: "pg1"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if err := m.DeleteDBParameterGroup(ctx, "pg1"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete attached pg1: want FailedPrecondition, got %v", err)
+	}
+
+	// Re-point the instance to pg2; pg1 is now released.
+	if _, err := m.ModifyInstance(ctx, "db", rdsdriver.ModifyInstanceInput{DBParameterGroupName: "pg2"}); err != nil {
+		t.Fatalf("ModifyInstance: %v", err)
+	}
+
+	if err := m.DeleteDBParameterGroup(ctx, "pg1"); err != nil {
+		t.Fatalf("delete released pg1: %v", err)
+	}
+
+	if err := m.DeleteDBParameterGroup(ctx, "pg2"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete now-attached pg2: want FailedPrecondition, got %v", err)
+	}
+}
+
+func TestModifyReleasesClusterParameterGroup(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	for _, n := range []string{"cpg1", "cpg2"} {
+		if _, err := m.CreateDBClusterParameterGroup(ctx, rdsdriver.ParameterGroupConfig{Name: n, Family: "aurora-mysql8.0"}); err != nil {
+			t.Fatalf("create %s: %v", n, err)
+		}
+	}
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "cl", Engine: "aurora-mysql", DBClusterParameterGroupName: "cpg1"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if err := m.DeleteDBClusterParameterGroup(ctx, "cpg1"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete attached cpg1: want FailedPrecondition, got %v", err)
+	}
+
+	if _, err := m.ModifyCluster(ctx, "cl", rdsdriver.ModifyInstanceInput{DBClusterParameterGroupName: "cpg2"}); err != nil {
+		t.Fatalf("ModifyCluster: %v", err)
+	}
+
+	if err := m.DeleteDBClusterParameterGroup(ctx, "cpg1"); err != nil {
+		t.Fatalf("delete released cpg1: %v", err)
+	}
+}
+
+func TestCreateParameterGroupRejectsReservedName(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.CreateDBParameterGroup(ctx, rdsdriver.ParameterGroupConfig{Name: "default.mysql8.0", Family: "mysql8.0"}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("reserved DB param group name: want InvalidArgument, got %v", err)
+	}
+
+	if _, err := m.CreateDBClusterParameterGroup(ctx, rdsdriver.ParameterGroupConfig{Name: "default.aurora-mysql8.0", Family: "aurora-mysql8.0"}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("reserved cluster param group name: want InvalidArgument, got %v", err)
+	}
+}
+
 func TestClusterParameterGroupDeleteGuard(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

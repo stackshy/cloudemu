@@ -102,9 +102,14 @@ func TestDescribeDBProxiesReturnsIndependentCopies(t *testing.T) {
 		t.Fatalf("CreateDBProxy: %v", err)
 	}
 
-	// Mutating a returned slice must not corrupt the store (copy-on-read).
+	// Mutating a returned slice must not corrupt the store (copy-on-read),
+	// via the named-lookup branch...
 	got, _ := m.DescribeDBProxies(ctx, []string{"px"})
 	got[0].VPCSubnetIDs[0] = "MUTATED"
+
+	// ...and the list-all (len==0) branch.
+	all, _ := m.DescribeDBProxies(ctx, nil)
+	all[0].VPCSubnetIDs[0] = "MUTATED-TOO"
 
 	again, _ := m.DescribeDBProxies(ctx, []string{"px"})
 	if again[0].VPCSubnetIDs[0] != "s1" {

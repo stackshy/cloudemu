@@ -85,15 +85,20 @@ type Instance struct {
 	ReadReplicaTargets []string
 }
 
-// ModifyInstanceInput holds modifiable instance attributes. Zero-valued fields
-// mean "no change".
+// ModifyInstanceInput holds modifiable instance (and cluster) attributes.
+// Zero-valued fields mean "no change". DBParameterGroupName/OptionGroupName
+// apply to instances; DBClusterParameterGroupName applies to clusters (the
+// same input type backs ModifyInstance and ModifyCluster).
 type ModifyInstanceInput struct {
-	InstanceClass      string
-	AllocatedStorage   int
-	EngineVersion      string
-	MasterUserPassword string
-	MultiAZ            *bool
-	Tags               map[string]string
+	InstanceClass               string
+	AllocatedStorage            int
+	EngineVersion               string
+	MasterUserPassword          string
+	MultiAZ                     *bool
+	DBParameterGroupName        string
+	OptionGroupName             string
+	DBClusterParameterGroupName string
+	Tags                        map[string]string
 }
 
 // ClusterConfig configures an Aurora-style cluster. Members are added by
