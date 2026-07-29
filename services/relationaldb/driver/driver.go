@@ -396,3 +396,83 @@ type AdvancedRestore interface {
 	RestoreDBInstanceToPointInTime(ctx context.Context, input RestoreInstanceToPointInTimeInput) (*Instance, error)
 	RestoreDBClusterToPointInTime(ctx context.Context, input RestoreClusterToPointInTimeInput) (*Cluster, error)
 }
+
+// ProxyAuth is one authentication config entry on a DB proxy.
+type ProxyAuth struct {
+	AuthScheme             string // "SECRETS"
+	SecretARN              string
+	IAMAuth                string // "DISABLED" | "REQUIRED"
+	Description            string
+	ClientPasswordAuthType string
+}
+
+// DBProxyConfig configures a new DB proxy.
+type DBProxyConfig struct {
+	Name                string
+	EngineFamily        string // "MYSQL" | "POSTGRESQL" | "SQLSERVER"
+	RoleARN             string
+	VPCSubnetIDs        []string
+	VPCSecurityGroupIDs []string
+	RequireTLS          bool
+	IdleClientTimeout   int
+	DebugLogging        bool
+	Auth                []ProxyAuth
+	Tags                map[string]string
+}
+
+// ModifyDBProxyInput holds modifiable proxy attributes; nil pointers mean "no
+// change".
+type ModifyDBProxyInput struct {
+	RequireTLS        *bool
+	IdleClientTimeout *int
+	DebugLogging      *bool
+	RoleARN           string
+}
+
+// ProxyTarget is an instance or cluster registered behind a proxy.
+type ProxyTarget struct {
+	Type          string // "RDS_INSTANCE" | "TRACKED_CLUSTER"
+	RDSResourceID string
+	Endpoint      string
+	Port          int
+}
+
+// ProxyTargetGroup is a proxy's connection-pool target group. Each proxy has a
+// single implicit "default" group.
+type ProxyTargetGroup struct {
+	Name      string
+	ProxyName string
+	ARN       string
+	IsDefault bool
+}
+
+// DBProxy is an RDS Proxy in front of one or more instances/clusters.
+type DBProxy struct {
+	Name                string
+	ARN                 string
+	Status              string
+	EngineFamily        string
+	RoleARN             string
+	Endpoint            string
+	VPCSubnetIDs        []string
+	VPCSecurityGroupIDs []string
+	RequireTLS          bool
+	IdleClientTimeout   int
+	DebugLogging        bool
+	Auth                []ProxyAuth
+	CreatedAt           time.Time
+	Targets             []ProxyTarget
+}
+
+// DBProxies is an OPTIONAL capability for RDS Proxy, discovered by type
+// assertion. A proxy has a single implicit "default" target group.
+type DBProxies interface {
+	CreateDBProxy(ctx context.Context, cfg DBProxyConfig) (*DBProxy, error)
+	DescribeDBProxies(ctx context.Context, names []string) ([]DBProxy, error)
+	ModifyDBProxy(ctx context.Context, name string, input ModifyDBProxyInput) (*DBProxy, error)
+	DeleteDBProxy(ctx context.Context, name string) (*DBProxy, error)
+	RegisterDBProxyTargets(ctx context.Context, name, targetGroup string, instanceIDs, clusterIDs []string) ([]ProxyTarget, error)
+	DeregisterDBProxyTargets(ctx context.Context, name, targetGroup string, instanceIDs, clusterIDs []string) error
+	DescribeDBProxyTargets(ctx context.Context, name, targetGroup string) ([]ProxyTarget, error)
+	DescribeDBProxyTargetGroups(ctx context.Context, name string) ([]ProxyTargetGroup, error)
+}

@@ -80,6 +80,14 @@ var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"CopyDBClusterSnapshot":            {},
 	"RestoreDBInstanceToPointInTime":   {},
 	"RestoreDBClusterToPointInTime":    {},
+	"CreateDBProxy":                    {},
+	"DescribeDBProxies":                {},
+	"ModifyDBProxy":                    {},
+	"DeleteDBProxy":                    {},
+	"RegisterDBProxyTargets":           {},
+	"DeregisterDBProxyTargets":         {},
+	"DescribeDBProxyTargets":           {},
+	"DescribeDBProxyTargetGroups":      {},
 }
 
 // Handler serves RDS query-protocol requests.
@@ -226,6 +234,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.restoreDBInstanceToPointInTime(w, r)
 	case "RestoreDBClusterToPointInTime":
 		h.restoreDBClusterToPointInTime(w, r)
+	case "CreateDBProxy":
+		h.createDBProxy(w, r)
+	case "DescribeDBProxies":
+		h.describeDBProxies(w, r)
+	case "ModifyDBProxy":
+		h.modifyDBProxy(w, r)
+	case "DeleteDBProxy":
+		h.deleteDBProxy(w, r)
+	case "RegisterDBProxyTargets":
+		h.registerDBProxyTargets(w, r)
+	case "DeregisterDBProxyTargets":
+		h.deregisterDBProxyTargets(w, r)
+	case "DescribeDBProxyTargets":
+		h.describeDBProxyTargets(w, r)
+	case "DescribeDBProxyTargetGroups":
+		h.describeDBProxyTargetGroups(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown RDS action: "+action)
@@ -266,6 +290,8 @@ func notFoundCode(err error) string {
 		return "DBParameterGroupNotFound"
 	case strings.Contains(msg, "option group"):
 		return "OptionGroupNotFoundFault"
+	case strings.Contains(msg, "DB proxy"):
+		return "DBProxyNotFoundFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceNotFound"
 	case strings.Contains(msg, "DB cluster snapshot"):
@@ -289,6 +315,8 @@ func alreadyExistsCode(err error) string {
 		return "DBParameterGroupAlreadyExists"
 	case strings.Contains(msg, "option group"):
 		return "OptionGroupAlreadyExistsFault"
+	case strings.Contains(msg, "DB proxy"):
+		return "DBProxyAlreadyExistsFault"
 	case strings.Contains(msg, "DB instance"):
 		return "DBInstanceAlreadyExists"
 	case strings.Contains(msg, "DB cluster snapshot"):

@@ -64,6 +64,7 @@ type Mock struct {
 	paramGroups        *memstore.Store[rdsdriver.ParameterGroup]
 	clusterParamGroups *memstore.Store[rdsdriver.ClusterParameterGroup]
 	optionGroups       *memstore.Store[rdsdriver.OptionGroup]
+	proxies            *memstore.Store[rdsdriver.DBProxy]
 
 	opts           *config.Options
 	subnetResolver SubnetResolver
@@ -81,6 +82,7 @@ func New(opts *config.Options) *Mock {
 		paramGroups:        memstore.New[rdsdriver.ParameterGroup](),
 		clusterParamGroups: memstore.New[rdsdriver.ClusterParameterGroup](),
 		optionGroups:       memstore.New[rdsdriver.OptionGroup](),
+		proxies:            memstore.New[rdsdriver.DBProxy](),
 		opts:               opts,
 	}
 }
