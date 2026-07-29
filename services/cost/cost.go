@@ -53,6 +53,19 @@ func defaultRates() map[string]float64 {
 		"database:BatchPutItems": 0.00000125,
 		"database:BatchGetItems": 0.00000025,
 
+		// Relational DB (RDS/Aurora): instances and read replicas per
+		// instance-hour (proxied at create), RDS Proxy per hour; snapshots and
+		// Aurora cluster grouping billed via storage/members, proxied at 0.
+		"relationaldb:CreateInstance":              0.017, // db.t3.micro-equivalent instance-hour
+		"relationaldb:CreateDBInstanceReadReplica": 0.017,
+		"relationaldb:RestoreInstanceFromSnapshot": 0.017,
+		"relationaldb:CreateDBProxy":               0.015, // proxy vCPU-hour proxy
+		"relationaldb:CreateCluster":               0.0,   // Aurora billed per member instance + ACU
+		"relationaldb:CreateSnapshot":              0.0,   // manual snapshot storage
+		"relationaldb:CreateClusterSnapshot":       0.0,
+		"relationaldb:StartInstance":               0.0,
+		"relationaldb:StopInstance":                0.0,
+
 		// Serverless (per invocation)
 		"serverless:Invoke": 0.0000002, // $0.20 per 1M
 
@@ -129,20 +142,6 @@ func defaultRates() map[string]float64 {
 		"azuresearch:IndexDocuments":        0.0000004,
 		"azuresearch:CreateOrUpdateIndex":   0.0,
 		"azuresearch:CreateOrUpdateIndexer": 0.0,
-
-		// Relational databases (AWS RDS, Azure SQL, Azure MySQL/PostgreSQL
-		// Flexible Server, GCP Cloud SQL). Servers/instances are billed per
-		// instance-hour (proxied at create); lifecycle actions and restores
-		// reuse the instance-hour, snapshots are billed as backup storage
-		// separately. The portable service name is "relationaldb", so one
-		// catalog covers every cloud's managed relational offering.
-		"relationaldb:CreateInstance":              0.017, // db.t3.micro-equivalent instance-hour
-		"relationaldb:CreateCluster":               0.29,  // Aurora-style cluster-hour
-		"relationaldb:RestoreInstanceFromSnapshot": 0.017,
-		"relationaldb:CreateSnapshot":              0.0, // backup storage billed separately
-		"relationaldb:StartInstance":               0.0,
-		"relationaldb:StopInstance":                0.0,
-		"relationaldb:RebootInstance":              0.0,
 	}
 }
 

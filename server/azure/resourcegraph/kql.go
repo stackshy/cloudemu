@@ -54,13 +54,14 @@ const (
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
 const (
-	portableCompute    = "compute"
-	portableNetworking = "networking"
-	portableStorage    = "storage"
-	portableDatabase   = "database"
-	portableServerless = "serverless"
-	portableDatabricks = "databricks"
-	portableKubernetes = "kubernetes"
+	portableCompute      = "compute"
+	portableNetworking   = "networking"
+	portableStorage      = "storage"
+	portableDatabase     = "database"
+	portableServerless   = "serverless"
+	portableDatabricks   = "databricks"
+	portableKubernetes   = "kubernetes"
+	portableRelationalDB = "relationaldb"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -308,9 +309,9 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeDatabrick: {portableDatabricks, "Workspace"},
 	azureTypeAKS:       {portableKubernetes, "Cluster"},
 	azureTypeAgentPool: {portableKubernetes, "NodeGroup"},
-	azureTypeSQL:       {portableDatabase, "SqlServer"},
-	azureTypeMySQLFlex: {portableDatabase, "MySqlFlexibleServer"},
-	azureTypePgFlex:    {portableDatabase, "PostgresFlexibleServer"},
+	azureTypeSQL:       {portableRelationalDB, "SqlServer"},
+	azureTypeMySQLFlex: {portableRelationalDB, "MySqlFlexibleServer"},
+	azureTypePgFlex:    {portableRelationalDB, "PostgresFlexibleServer"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

@@ -27,24 +27,26 @@ type Drivers struct {
 }
 
 // RelationalDatabases is the discovery capability for managed relational
-// database servers/instances — RDS, Azure SQL, Azure MySQL/PostgreSQL Flexible
-// Server, Cloud SQL. Like KubernetesClusters, each cloud's relational mock
-// lives in its provider package, so a thin adapter in the provider projects its
-// servers onto DiscoveredDatabase rather than inverting the package layering.
+// database servers/instances — RDS/Aurora, Azure SQL, Azure MySQL/PostgreSQL
+// Flexible Server, Cloud SQL. Like KubernetesClusters, each cloud's relational
+// mock lives in its provider package, so a thin adapter in the provider
+// projects its databases onto DiscoveredDatabase rather than inverting the
+// package layering.
 type RelationalDatabases interface {
 	DiscoverDatabases(ctx context.Context) ([]DiscoveredDatabase, error)
 }
 
 // DiscoveredDatabase is a provider-neutral projection of a managed relational
-// database server for the inventory walk. Type is the portable resource type
-// (e.g. "SqlServer", "MySqlFlexibleServer", "SqlInstance") that Resource Graph /
-// Cloud Asset translate to the cloud's native type string. ARN, when set, is
-// used verbatim as the identifier; empty means the engine builds one.
+// database resource for the inventory walk. Type is the portable resource type
+// (e.g. "DBInstance", "SqlServer", "MySqlFlexibleServer", "SqlInstance") that
+// Resource Explorer / Resource Graph / Cloud Asset translate to the cloud's
+// native type string. ARN is used verbatim as the identifier; Region falls back
+// to the engine default when empty.
 type DiscoveredDatabase struct {
 	Name   string
-	Type   string
-	Region string
 	ARN    string
+	Region string
+	Type   string
 	Tags   map[string]string
 }
 

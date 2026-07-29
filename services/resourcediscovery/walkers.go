@@ -19,13 +19,14 @@ const (
 // portable-API service identifiers, not provider-specific names. Callers
 // translate to per-provider service names at the SDK boundary.
 const (
-	ServiceCompute    = "compute"
-	ServiceNetworking = "networking"
-	ServiceStorage    = "storage"
-	ServiceDatabase   = "database"
-	ServiceServerless = "serverless"
-	ServiceDatabricks = "databricks"
-	ServiceKubernetes = "kubernetes"
+	ServiceCompute      = "compute"
+	ServiceNetworking   = "networking"
+	ServiceStorage      = "storage"
+	ServiceDatabase     = "database"
+	ServiceServerless   = "serverless"
+	ServiceDatabricks   = "databricks"
+	ServiceKubernetes   = "kubernetes"
+	ServiceRelationalDB = "relationaldb"
 )
 
 // Resource type constants emitted by the walkers.
@@ -42,16 +43,19 @@ const (
 	TypeWorkspace     = "Workspace"
 	TypeCluster       = "Cluster"
 	TypeNodeGroup     = "NodeGroup"
+	TypeDBInstance    = "DBInstance"
+	TypeDBCluster     = "DBCluster"
+	TypeDBSnapshot    = "DBSnapshot"
 )
 
-// Relational database server types. These portable types map to per-cloud
-// native type strings in Resource Graph (Azure) and Cloud Asset (GCP).
+// Azure/GCP managed-SQL server types. These portable types map to per-cloud
+// native type strings in Resource Graph (Azure) and Cloud Asset (GCP). AWS RDS
+// uses TypeDBInstance/DBCluster/DBSnapshot above.
 const (
 	TypeSQLServer    = "SqlServer"              // Azure SQL logical server
 	TypeMySQLFlex    = "MySqlFlexibleServer"    // Azure Database for MySQL Flexible Server
 	TypePostgresFlex = "PostgresFlexibleServer" // Azure Database for PostgreSQL Flexible Server
 	TypeSQLInstance  = "SqlInstance"            // GCP Cloud SQL instance
-	TypeDBInstance   = "DBInstance"             // AWS RDS instance
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
@@ -348,30 +352,37 @@ func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
 	return out, nil
 }
 
-// walkRelationalDB surfaces managed relational database servers (RDS, Azure
-// SQL, Azure MySQL/PostgreSQL Flexible Server, Cloud SQL). The provider supplies
-// a DiscoverDatabases adapter; each server becomes a database-service resource
-// whose Type carries the per-cloud kind so Resource Graph / Cloud Asset can
-// translate it to the native type string.
+// walkRelationalDB surfaces managed relational database servers (RDS/Aurora,
+// Azure SQL, Azure MySQL/PostgreSQL Flexible Server, Cloud SQL). The provider
+// supplies a DiscoverDatabases adapter; each server becomes a relational-db
+// resource whose Type carries the per-cloud kind so Resource Explorer /
+// Resource Graph / Cloud Asset can translate it to the native type string.
 func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
 	dbs, err := e.drivers.RelationalDB.DiscoverDatabases(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("walkRelationalDB: %w", err)
 	}
 
-	out := make([]Resource, 0, len(dbs))
+	out := []Resource{}
 
 	for i := range dbs {
-		region := dbs[i].Region
+		d := dbs[i]
+
+		region := d.Region
 		if region == "" {
 			region = e.region
 		}
 
+		typ := d.Type
+		if typ == "" {
+			typ = TypeDBInstance
+		}
+
 		out = append(out, Resource{
-			Provider: e.provider, Service: ServiceDatabase, Type: dbs[i].Type,
-			ID:     dbs[i].Name,
-			ARN:    dbs[i].ARN,
-			Region: region, Tags: copyTags(dbs[i].Tags),
+			Provider: e.provider, Service: ServiceRelationalDB, Type: typ,
+			ID:     d.Name,
+			ARN:    d.ARN,
+			Region: region, Tags: copyTags(d.Tags),
 		})
 	}
 

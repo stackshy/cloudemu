@@ -7,6 +7,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTracker_RelationalDBRates(t *testing.T) {
+	tracker := New()
+
+	// Two instances + one read replica priced at the instance-hour rate; a
+	// proxy at its hourly rate; snapshots and cluster grouping are free.
+	tracker.Record("relationaldb", "CreateInstance", 2)
+	tracker.Record("relationaldb", "CreateDBInstanceReadReplica", 1)
+	tracker.Record("relationaldb", "CreateDBProxy", 1)
+	tracker.Record("relationaldb", "CreateSnapshot", 3)
+	tracker.Record("relationaldb", "CreateCluster", 1)
+
+	want := 0.017*2 + 0.017 + 0.015
+	assert.InDelta(t, want, tracker.CostByService()["relationaldb"], 1e-9)
+}
+
 func TestTracker_Record_And_TotalCost(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -50,25 +65,6 @@ func TestTracker_Record_And_TotalCost(t *testing.T) {
 			assert.GreaterOrEqual(t, total, float64(0))
 		})
 	}
-}
-
-// The relational-database catalog must charge for provisioning a managed
-// server/instance (billed per instance-hour) so cost estimates for RDS, Azure
-// SQL, the Flexible Servers and Cloud SQL are non-zero, while lifecycle actions
-// stay free.
-func TestTracker_RelationalDBRates(t *testing.T) {
-	tracker := New()
-
-	tracker.Record("relationaldb", "CreateInstance", 1)
-	tracker.Record("relationaldb", "CreateCluster", 1)
-	tracker.Record("relationaldb", "StartInstance", 1)
-	tracker.Record("relationaldb", "StopInstance", 1)
-
-	byOp := tracker.CostByOperation()
-	assert.Greater(t, byOp["relationaldb:CreateInstance"], float64(0))
-	assert.Greater(t, byOp["relationaldb:CreateCluster"], float64(0))
-	assert.Equal(t, float64(0), byOp["relationaldb:StartInstance"])
-	assert.Equal(t, float64(0), byOp["relationaldb:StopInstance"])
 }
 
 func TestTracker_SetRate(t *testing.T) {

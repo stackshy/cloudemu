@@ -41,8 +41,8 @@ func TestWalkRelationalDBSurfacesServers(t *testing.T) {
 
 	byName := map[string]Resource{}
 	for i := range got {
-		if got[i].Service != ServiceDatabase {
-			t.Errorf("%s: service = %q, want %q", got[i].ID, got[i].Service, ServiceDatabase)
+		if got[i].Service != ServiceRelationalDB {
+			t.Errorf("%s: service = %q, want %q", got[i].ID, got[i].Service, ServiceRelationalDB)
 		}
 
 		byName[got[i].ID] = got[i]
