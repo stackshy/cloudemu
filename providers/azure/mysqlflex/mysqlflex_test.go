@@ -263,3 +263,79 @@ func assertNotEmpty(t *testing.T, s string) {
 		t.Error("expected non-empty string")
 	}
 }
+
+func TestSubResourcesRequireServer(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "ghost", Name: "db"}); err == nil {
+		t.Error("CreateDatabase on missing server: expected error")
+	}
+
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "ghost", Name: "r"}); err == nil {
+		t.Error("CreateFirewallRule on missing server: expected error")
+	}
+
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "ghost", Name: "k"}); err == nil {
+		t.Error("SetConfiguration on missing server: expected error")
+	}
+}
+
+func TestDatabaseLifecycleAndCascade(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv", Name: "app"}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv", Name: "app"}); err == nil {
+		t.Error("duplicate database: expected AlreadyExists")
+	}
+
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r"}); err != nil {
+		t.Fatalf("CreateFirewallRule: %v", err)
+	}
+
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "k", Value: "v"}); err != nil {
+		t.Fatalf("SetConfiguration: %v", err)
+	}
+
+	// Deleting the server cascades to its children.
+	if err := m.DeleteInstance(ctx, "srv"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	if _, err := m.ListDatabases(ctx, "srv"); err == nil {
+		t.Error("ListDatabases after server delete: expected server NotFound")
+	}
+}
+
+func TestFailoverRequiresRunning(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if err := m.FailoverInstance(ctx, "srv"); err != nil {
+		t.Fatalf("FailoverInstance on running server: %v", err)
+	}
+
+	if err := m.StopInstance(ctx, "srv"); err != nil {
+		t.Fatalf("StopInstance: %v", err)
+	}
+
+	if err := m.FailoverInstance(ctx, "srv"); err == nil {
+		t.Error("FailoverInstance on stopped server: expected FailedPrecondition")
+	}
+
+	if err := m.FailoverInstance(ctx, "ghost"); err == nil {
+		t.Error("FailoverInstance on missing server: expected NotFound")
+	}
+}

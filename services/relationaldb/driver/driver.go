@@ -234,3 +234,93 @@ type SubnetGroups interface {
 	DescribeDBSubnetGroups(ctx context.Context, names []string) ([]SubnetGroup, error)
 	DeleteDBSubnetGroup(ctx context.Context, name string) error
 }
+
+// DatabaseConfig describes a logical database to create inside a server.
+type DatabaseConfig struct {
+	Server    string
+	Name      string
+	Charset   string
+	Collation string
+}
+
+// Database is a logical database hosted by a managed server (Azure MySQL /
+// PostgreSQL Flexible Server, Cloud SQL, Azure SQL).
+type Database struct {
+	Server    string
+	Name      string
+	Charset   string
+	Collation string
+	ARN       string
+}
+
+// Databases is an OPTIONAL capability for managing the logical databases inside
+// a server. It is discovered by type assertion; drivers that do not implement
+// it answer InvalidAction.
+type Databases interface {
+	CreateDatabase(ctx context.Context, cfg DatabaseConfig) (*Database, error)
+	GetDatabase(ctx context.Context, server, name string) (*Database, error)
+	ListDatabases(ctx context.Context, server string) ([]Database, error)
+	DeleteDatabase(ctx context.Context, server, name string) error
+}
+
+// FirewallRuleConfig describes a server firewall rule to create or replace.
+type FirewallRuleConfig struct {
+	Server         string
+	Name           string
+	StartIPAddress string
+	EndIPAddress   string
+}
+
+// FirewallRule is a server-level IP allow rule.
+type FirewallRule struct {
+	Server         string
+	Name           string
+	StartIPAddress string
+	EndIPAddress   string
+	ARN            string
+}
+
+// FirewallRules is an OPTIONAL capability for managing server firewall rules,
+// discovered by type assertion.
+type FirewallRules interface {
+	CreateFirewallRule(ctx context.Context, cfg FirewallRuleConfig) (*FirewallRule, error)
+	GetFirewallRule(ctx context.Context, server, name string) (*FirewallRule, error)
+	ListFirewallRules(ctx context.Context, server string) ([]FirewallRule, error)
+	DeleteFirewallRule(ctx context.Context, server, name string) error
+}
+
+// ConfigurationConfig sets a single server parameter value.
+type ConfigurationConfig struct {
+	Server string
+	Name   string
+	Value  string
+}
+
+// Configuration is a server parameter (engine setting). DefaultValue,
+// DataType and AllowedValues describe the parameter; Source records whether the
+// current value is a user override or the system default.
+type Configuration struct {
+	Server        string
+	Name          string
+	Value         string
+	Source        string
+	DataType      string
+	DefaultValue  string
+	AllowedValues string
+	ARN           string
+}
+
+// Configurations is an OPTIONAL capability for reading and setting server
+// parameters, discovered by type assertion. Parameters have engine defaults, so
+// there is no create/delete — only set (update), get and list.
+type Configurations interface {
+	SetConfiguration(ctx context.Context, cfg ConfigurationConfig) (*Configuration, error)
+	GetConfiguration(ctx context.Context, server, name string) (*Configuration, error)
+	ListConfigurations(ctx context.Context, server string) ([]Configuration, error)
+}
+
+// Failover is an OPTIONAL capability that triggers a server failover to its
+// standby, discovered by type assertion.
+type Failover interface {
+	FailoverInstance(ctx context.Context, id string) error
+}
