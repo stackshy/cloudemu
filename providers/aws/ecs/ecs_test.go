@@ -167,6 +167,32 @@ func TestRunTaskUnresolvedDefinition(t *testing.T) {
 	assert.Equal(t, "MISSING", failures[0].Reason)
 }
 
+func TestRunTaskCountCappedAtMax(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family:               "web",
+		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
+	})
+	require.NoError(t, err)
+
+	// Count at the max is allowed.
+	tasks, _, err := m.RunTask(ctx, driver.RunTaskInput{TaskDefinition: "web", Count: maxRunTaskCount})
+	require.NoError(t, err)
+	assert.Len(t, tasks, maxRunTaskCount)
+
+	// Beyond the max is rejected (bounds the allocation; matches AWS).
+	_, _, err = m.RunTask(ctx, driver.RunTaskInput{TaskDefinition: "web", Count: maxRunTaskCount + 1})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+
+	// An absurd count does not attempt a huge allocation — it errors first.
+	_, _, err = m.RunTask(ctx, driver.RunTaskInput{TaskDefinition: "web", Count: 1 << 30})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+}
+
 func TestServiceLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

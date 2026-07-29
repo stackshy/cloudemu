@@ -8,6 +8,10 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
 
+// maxRunTaskCount is the maximum number of tasks a single RunTask may launch,
+// matching the AWS ECS limit. It also bounds the result-slice allocation.
+const maxRunTaskCount = 10
+
 // RunTask creates count tasks (default 1) from a task definition. An unresolved
 // task definition yields a single failure and no tasks.
 //
@@ -24,6 +28,12 @@ func (m *Mock) RunTask(_ context.Context, in driver.RunTaskInput) ([]driver.Task
 	count := in.Count
 	if count <= 0 {
 		count = 1
+	}
+
+	// AWS RunTask caps count at 10; reject anything larger (also bounds the
+	// allocation below to a constant maximum).
+	if count > maxRunTaskCount {
+		return nil, nil, errors.Newf(errors.InvalidArgument, "count %d exceeds the maximum of %d", count, maxRunTaskCount)
 	}
 
 	tasks := make([]driver.Task, 0, count)
