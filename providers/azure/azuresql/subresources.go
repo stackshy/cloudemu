@@ -107,7 +107,7 @@ func (m *Mock) ListFirewallRules(_ context.Context, server string) ([]rdsdriver.
 
 	out := []rdsdriver.FirewallRule{}
 
-	for _, rule := range m.firewallRules.All() {
+	for _, rule := range m.firewallRules.SortedValues() {
 		if rule.Server == server {
 			out = append(out, rule)
 		}
@@ -185,7 +185,7 @@ func (m *Mock) ListVNetRules(_ context.Context, server string) ([]rdsdriver.VNet
 
 	out := []rdsdriver.VNetRule{}
 
-	for _, rule := range m.vnetRules.All() {
+	for _, rule := range m.vnetRules.SortedValues() {
 		if rule.Server == server {
 			out = append(out, rule)
 		}
@@ -296,10 +296,10 @@ func (m *Mock) ListElasticPools(_ context.Context, server string) ([]rdsdriver.E
 
 	out := []rdsdriver.ElasticPool{}
 
-	//nolint:gocritic // map values materialized into the result slice.
-	for _, pool := range m.elasticPools.All() {
-		if pool.Server == server {
-			out = append(out, pool)
+	pools := m.elasticPools.SortedValues()
+	for i := range pools {
+		if pools[i].Server == server {
+			out = append(out, pools[i])
 		}
 	}
 
@@ -378,10 +378,10 @@ func (m *Mock) ListFailoverGroups(_ context.Context, server string) ([]rdsdriver
 
 	out := []rdsdriver.FailoverGroup{}
 
-	//nolint:gocritic // map values materialized into the result slice.
-	for _, fg := range m.failoverGroups.All() {
-		if fg.Server == server {
-			out = append(out, *copyFailoverGroup(fg))
+	fgs := m.failoverGroups.SortedValues()
+	for i := range fgs {
+		if fgs[i].Server == server {
+			out = append(out, *copyFailoverGroup(fgs[i]))
 		}
 	}
 

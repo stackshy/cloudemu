@@ -110,7 +110,7 @@ func (m *Mock) ListDatabases(_ context.Context, instance string) ([]rdsdriver.Da
 
 	out := []rdsdriver.Database{}
 
-	for _, db := range m.databases.All() {
+	for _, db := range m.databases.SortedValues() {
 		if db.Server == instance {
 			out = append(out, db)
 		}
@@ -190,7 +190,7 @@ func (m *Mock) ListUsers(_ context.Context, instance string) ([]rdsdriver.User, 
 
 	out := []rdsdriver.User{}
 
-	for _, user := range m.users.All() {
+	for _, user := range m.users.SortedValues() {
 		if user.Instance == instance {
 			out = append(out, user)
 		}
@@ -299,7 +299,7 @@ func (m *Mock) ListSslCerts(_ context.Context, instance string) ([]rdsdriver.Ssl
 
 	out := []rdsdriver.SslCert{}
 
-	for _, cert := range m.sslCerts.All() {
+	for _, cert := range m.sslCerts.SortedValues() {
 		if cert.Instance == instance {
 			out = append(out, cert)
 		}

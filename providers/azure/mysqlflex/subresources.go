@@ -103,7 +103,7 @@ func (m *Mock) ListDatabases(_ context.Context, server string) ([]rdsdriver.Data
 
 	out := []rdsdriver.Database{}
 
-	for _, db := range m.databases.All() {
+	for _, db := range m.databases.SortedValues() {
 		if db.Server == server {
 			out = append(out, db)
 		}
@@ -182,7 +182,7 @@ func (m *Mock) ListFirewallRules(_ context.Context, server string) ([]rdsdriver.
 
 	out := []rdsdriver.FirewallRule{}
 
-	for _, rule := range m.firewallRules.All() {
+	for _, rule := range m.firewallRules.SortedValues() {
 		if rule.Server == server {
 			out = append(out, rule)
 		}
@@ -269,10 +269,10 @@ func (m *Mock) ListConfigurations(_ context.Context, server string) ([]rdsdriver
 
 	out := []rdsdriver.Configuration{}
 
-	//nolint:gocritic // map values materialized into the result slice.
-	for _, conf := range m.configurations.All() {
-		if conf.Server == server {
-			out = append(out, conf)
+	confs := m.configurations.SortedValues()
+	for i := range confs {
+		if confs[i].Server == server {
+			out = append(out, confs[i])
 		}
 	}
 

@@ -80,6 +80,7 @@ func (m *Mock) GetManagedInstance(_ context.Context, name string) (*rdsdriver.Ma
 	}
 
 	out := mi
+	out.Tags = copyTags(mi.Tags)
 
 	return &out, nil
 }
@@ -91,8 +92,12 @@ func (m *Mock) ListManagedInstances(_ context.Context) ([]rdsdriver.ManagedInsta
 
 	out := []rdsdriver.ManagedInstance{}
 
-	//nolint:gocritic // map values materialized into the result slice.
-	for _, mi := range m.managedInstances.All() {
+	// SortedValues gives deterministic list ordering; Tags is cloned so a
+	// caller mutating the returned map can't corrupt the store.
+	mis := m.managedInstances.SortedValues()
+	for i := range mis {
+		mi := mis[i]
+		mi.Tags = copyTags(mi.Tags)
 		out = append(out, mi)
 	}
 
@@ -211,7 +216,7 @@ func (m *Mock) ListManagedDatabases(_ context.Context, instance string) ([]rdsdr
 
 	out := []rdsdriver.ManagedDatabase{}
 
-	for _, mdb := range m.managedDatabases.All() {
+	for _, mdb := range m.managedDatabases.SortedValues() {
 		if mdb.Instance == instance {
 			out = append(out, mdb)
 		}
