@@ -16,13 +16,34 @@ import (
 // engine usable in partial test wirings and during the staged rollout of
 // per-service walkers in later phases.
 type Drivers struct {
-	Compute    computedriver.Compute
-	Networking netdriver.Networking
-	Storage    storagedriver.Bucket
-	Database   dbdriver.Database
-	Serverless serverlessdriver.Serverless
-	Databricks dbxdriver.Databricks
-	Kubernetes KubernetesClusters
+	Compute      computedriver.Compute
+	Networking   netdriver.Networking
+	Storage      storagedriver.Bucket
+	Database     dbdriver.Database
+	Serverless   serverlessdriver.Serverless
+	Databricks   dbxdriver.Databricks
+	Kubernetes   KubernetesClusters
+	RelationalDB RelationalDatabases
+}
+
+// RelationalDatabases is the discovery capability for managed relational
+// databases (RDS/Aurora and family). Like KubernetesClusters, the concrete
+// mocks live in provider packages, so each provider wires a thin adapter that
+// projects its databases onto DiscoveredDatabase rather than having services/
+// import providers.
+type RelationalDatabases interface {
+	DiscoverDatabases(ctx context.Context) ([]DiscoveredDatabase, error)
+}
+
+// DiscoveredDatabase is a provider-neutral projection of a managed relational
+// database resource (instance, cluster, or snapshot). ARN is used verbatim as
+// the resource identifier; Region falls back to the engine default when empty.
+type DiscoveredDatabase struct {
+	Name   string
+	ARN    string
+	Region string
+	Type   string // one of Type{DBInstance,DBCluster,DBSnapshot}
+	Tags   map[string]string
 }
 
 // KubernetesClusters is the discovery capability for managed Kubernetes —
@@ -159,6 +180,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.Kubernetes != nil {
 		ws = append(ws, e.walkKubernetes)
+	}
+
+	if e.drivers.RelationalDB != nil {
+		ws = append(ws, e.walkRelationalDB)
 	}
 
 	return ws

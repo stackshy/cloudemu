@@ -7,6 +7,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTracker_RelationalDBRates(t *testing.T) {
+	tracker := New()
+
+	// Two instances + one read replica priced at the instance-hour rate; a
+	// proxy at its hourly rate; snapshots and cluster grouping are free.
+	tracker.Record("relationaldb", "CreateInstance", 2)
+	tracker.Record("relationaldb", "CreateDBInstanceReadReplica", 1)
+	tracker.Record("relationaldb", "CreateDBProxy", 1)
+	tracker.Record("relationaldb", "CreateSnapshot", 3)
+	tracker.Record("relationaldb", "CreateCluster", 1)
+
+	want := 0.017*2 + 0.017 + 0.015
+	assert.InDelta(t, want, tracker.CostByService()["relationaldb"], 1e-9)
+}
+
 func TestTracker_Record_And_TotalCost(t *testing.T) {
 	tests := []struct {
 		name    string

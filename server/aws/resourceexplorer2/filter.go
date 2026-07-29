@@ -76,6 +76,8 @@ func awsToPortableServices(s string) []string {
 		return []string{portableServiceDatabase}
 	case awsServiceLambda:
 		return []string{portableServiceServerless}
+	case awsServiceRDS:
+		return []string{portableServiceRelationalDB}
 	default:
 		return []string{s}
 	}
