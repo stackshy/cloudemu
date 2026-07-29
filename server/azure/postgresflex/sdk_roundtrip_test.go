@@ -23,7 +23,13 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
-func newSDKClient(t *testing.T) *armpostgresqlflexibleservers.ServersClient {
+// subID is the subscription the SDK clients are constructed against.
+const subID = "sub-1"
+
+// newClientOpts wires an in-memory Postgres Flex server and returns SDK client
+// options pointed at it. Postgres Flex has no ClientFactory in this SDK version,
+// so each test constructs the specific client it needs from these options.
+func newClientOpts(t *testing.T) *arm.ClientOptions {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -42,15 +48,19 @@ func newSDKClient(t *testing.T) *armpostgresqlflexibleservers.ServersClient {
 		},
 	}
 
-	opts := &arm.ClientOptions{
+	return &arm.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Cloud:     myCloud,
 			Transport: ts.Client(),
 			Retry:     policy.RetryOptions{MaxRetries: -1},
 		},
 	}
+}
 
-	c, err := armpostgresqlflexibleservers.NewServersClient("sub-1", fakeCred{}, opts)
+func newSDKClient(t *testing.T) *armpostgresqlflexibleservers.ServersClient {
+	t.Helper()
+
+	c, err := armpostgresqlflexibleservers.NewServersClient(subID, fakeCred{}, newClientOpts(t))
 	if err != nil {
 		t.Fatal(err)
 	}
