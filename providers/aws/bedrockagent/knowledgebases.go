@@ -37,7 +37,7 @@ func (m *Mock) CreateKnowledgeBase(_ context.Context, cfg driver.KnowledgeBaseCo
 	}
 	m.knowledge.Set(id, kb)
 
-	result := *kb
+	result := cloneKnowledgeBase(kb)
 
 	return &result, nil
 }
@@ -49,7 +49,7 @@ func (m *Mock) GetKnowledgeBase(_ context.Context, id string) (*driver.Knowledge
 		return nil, errors.Newf(errors.NotFound, "knowledge base %q not found", id)
 	}
 
-	result := *kb
+	result := cloneKnowledgeBase(kb)
 
 	return &result, nil
 }
@@ -60,7 +60,7 @@ func (m *Mock) ListKnowledgeBases(_ context.Context) ([]driver.KnowledgeBase, er
 	out := make([]driver.KnowledgeBase, 0, len(all))
 
 	for _, kb := range all {
-		out = append(out, *kb)
+		out = append(out, cloneKnowledgeBase(kb))
 	}
 
 	return out, nil
@@ -91,18 +91,31 @@ func (m *Mock) UpdateKnowledgeBase(_ context.Context, id string, cfg driver.Know
 
 	m.knowledge.Set(id, &updated)
 
-	result := updated
+	result := cloneKnowledgeBase(&updated)
 
 	return &result, nil
 }
 
-// DeleteKnowledgeBase deletes a knowledge base and returns its terminal status.
+// DeleteKnowledgeBase deletes a knowledge base and, cascading like real AWS,
+// every data source and ingestion job that belongs to it.
 func (m *Mock) DeleteKnowledgeBase(_ context.Context, id string) (string, error) {
 	if !m.knowledge.Has(id) {
 		return "", errors.Newf(errors.NotFound, "knowledge base %q not found", id)
 	}
 
 	m.knowledge.Delete(id)
+	m.deleteDataSourcesForKnowledgeBase(id)
+	m.deleteJobsForKnowledgeBase(id)
 
 	return statusDeleting, nil
+}
+
+// cloneKnowledgeBase returns a value copy whose RawMessage config fields do not
+// alias the stored knowledge base, so callers can't mutate internal state.
+func cloneKnowledgeBase(kb *driver.KnowledgeBase) driver.KnowledgeBase {
+	out := *kb
+	out.KnowledgeBaseConfiguration = copyRaw(kb.KnowledgeBaseConfiguration)
+	out.StorageConfiguration = copyRaw(kb.StorageConfiguration)
+
+	return out
 }

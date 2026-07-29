@@ -36,7 +36,7 @@ func (m *Mock) CreateFlow(_ context.Context, cfg driver.FlowConfig) (*driver.Flo
 	}
 	m.flows.Set(id, flow)
 
-	result := *flow
+	result := cloneFlow(flow)
 
 	return &result, nil
 }
@@ -48,7 +48,7 @@ func (m *Mock) GetFlow(_ context.Context, id string) (*driver.Flow, error) {
 		return nil, errors.Newf(errors.NotFound, "flow %q not found", id)
 	}
 
-	result := *flow
+	result := cloneFlow(flow)
 
 	return &result, nil
 }
@@ -59,7 +59,7 @@ func (m *Mock) ListFlows(_ context.Context) ([]driver.Flow, error) {
 	out := make([]driver.Flow, 0, len(all))
 
 	for _, f := range all {
-		out = append(out, *f)
+		out = append(out, cloneFlow(f))
 	}
 
 	return out, nil
@@ -87,7 +87,7 @@ func (m *Mock) UpdateFlow(_ context.Context, id string, cfg driver.FlowConfig) (
 
 	m.flows.Set(id, &updated)
 
-	result := updated
+	result := cloneFlow(&updated)
 
 	return &result, nil
 }
@@ -115,7 +115,16 @@ func (m *Mock) PrepareFlow(_ context.Context, id string) (*driver.Flow, error) {
 	updated.UpdatedAt = m.now()
 	m.flows.Set(id, &updated)
 
-	result := updated
+	result := cloneFlow(&updated)
 
 	return &result, nil
+}
+
+// cloneFlow returns a value copy whose Definition does not alias the stored
+// flow, so callers can't mutate internal state via the result.
+func cloneFlow(f *driver.Flow) driver.Flow {
+	out := *f
+	out.Definition = copyRaw(f.Definition)
+
+	return out
 }

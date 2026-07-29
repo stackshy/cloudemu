@@ -100,6 +100,118 @@ func TestKnowledgeBaseAndDataSource(t *testing.T) {
 	assert.True(t, cerrors.IsNotFound(err))
 }
 
+func TestDeleteKnowledgeBaseCascade(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	kb, err := m.CreateKnowledgeBase(ctx, driver.KnowledgeBaseConfig{
+		Name:                       "kb1",
+		RoleArn:                    "role",
+		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
+	})
+	require.NoError(t, err)
+
+	ds, err := m.CreateDataSource(ctx, driver.DataSourceConfig{
+		KnowledgeBaseID:         kb.ID,
+		Name:                    "ds1",
+		DataSourceConfiguration: json.RawMessage(`{"type":"S3"}`),
+	})
+	require.NoError(t, err)
+
+	job, err := m.StartIngestionJob(ctx, kb.ID, ds.ID, "reindex")
+	require.NoError(t, err)
+
+	_, err = m.DeleteKnowledgeBase(ctx, kb.ID)
+	require.NoError(t, err)
+
+	_, err = m.GetDataSource(ctx, kb.ID, ds.ID)
+	assert.True(t, cerrors.IsNotFound(err), "data source should be cascade-deleted")
+
+	sources, err := m.ListDataSources(ctx, kb.ID)
+	require.NoError(t, err)
+	assert.Empty(t, sources)
+
+	assert.False(t, m.jobs.Has(job.ID), "ingestion job should be cascade-deleted")
+}
+
+func TestDeleteDataSourceCascadesJobs(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	kb, err := m.CreateKnowledgeBase(ctx, driver.KnowledgeBaseConfig{
+		Name:                       "kb1",
+		RoleArn:                    "role",
+		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
+	})
+	require.NoError(t, err)
+
+	ds, err := m.CreateDataSource(ctx, driver.DataSourceConfig{
+		KnowledgeBaseID:         kb.ID,
+		Name:                    "ds1",
+		DataSourceConfiguration: json.RawMessage(`{"type":"S3"}`),
+	})
+	require.NoError(t, err)
+
+	job, err := m.StartIngestionJob(ctx, kb.ID, ds.ID, "reindex")
+	require.NoError(t, err)
+
+	_, err = m.DeleteDataSource(ctx, kb.ID, ds.ID)
+	require.NoError(t, err)
+
+	assert.False(t, m.jobs.Has(job.ID), "ingestion job should be cascade-deleted")
+	// The knowledge base itself must survive its data source's deletion.
+	assert.True(t, m.knowledge.Has(kb.ID))
+}
+
+func TestDeleteAgentCascadesAliases(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	agent, err := m.CreateAgent(ctx, driver.AgentConfig{Name: "a1", FoundationModel: "fm"})
+	require.NoError(t, err)
+
+	alias, err := m.CreateAgentAlias(ctx, driver.AgentAliasConfig{AgentID: agent.ID, Name: "prod"})
+	require.NoError(t, err)
+	require.True(t, m.aliases.Has(alias.ID))
+
+	_, err = m.DeleteAgent(ctx, agent.ID)
+	require.NoError(t, err)
+
+	assert.False(t, m.aliases.Has(alias.ID), "alias should be cascade-deleted")
+}
+
+func TestDataSourceCopyOutImmutable(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	kb, err := m.CreateKnowledgeBase(ctx, driver.KnowledgeBaseConfig{
+		Name:                       "kb1",
+		RoleArn:                    "role",
+		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
+	})
+	require.NoError(t, err)
+
+	original := `{"type":"S3"}`
+	ds, err := m.CreateDataSource(ctx, driver.DataSourceConfig{
+		KnowledgeBaseID:         kb.ID,
+		Name:                    "ds1",
+		DataSourceConfiguration: json.RawMessage(original),
+	})
+	require.NoError(t, err)
+
+	got, err := m.GetDataSource(ctx, kb.ID, ds.ID)
+	require.NoError(t, err)
+
+	// Mutate the returned config bytes; stored state must not change.
+	for i := range got.DataSourceConfiguration {
+		got.DataSourceConfiguration[i] = 'X'
+	}
+
+	again, err := m.GetDataSource(ctx, kb.ID, ds.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, original, string(again.DataSourceConfiguration))
+}
+
 func TestDataSourceRequiresKnowledgeBase(t *testing.T) {
 	m := newMock()
 

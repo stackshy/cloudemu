@@ -39,7 +39,7 @@ func (m *Mock) CreateDataSource(_ context.Context, cfg driver.DataSourceConfig) 
 	}
 	m.dataSource.Set(id, ds)
 
-	result := *ds
+	result := cloneDataSource(ds)
 
 	return &result, nil
 }
@@ -51,7 +51,7 @@ func (m *Mock) GetDataSource(_ context.Context, kbID, dsID string) (*driver.Data
 		return nil, errors.Newf(errors.NotFound, "data source %q not found", dsID)
 	}
 
-	result := *ds
+	result := cloneDataSource(ds)
 
 	return &result, nil
 }
@@ -63,7 +63,7 @@ func (m *Mock) ListDataSources(_ context.Context, kbID string) ([]driver.DataSou
 
 	for _, ds := range all {
 		if ds.KnowledgeBaseID == kbID {
-			out = append(out, *ds)
+			out = append(out, cloneDataSource(ds))
 		}
 	}
 
@@ -91,18 +91,20 @@ func (m *Mock) UpdateDataSource(_ context.Context, cfg driver.DataSourceConfig, 
 
 	m.dataSource.Set(dsID, &updated)
 
-	result := updated
+	result := cloneDataSource(&updated)
 
 	return &result, nil
 }
 
-// DeleteDataSource deletes a data source and returns its terminal status.
+// DeleteDataSource deletes a data source and, cascading like real AWS, every
+// ingestion job that belongs to it.
 func (m *Mock) DeleteDataSource(_ context.Context, kbID, dsID string) (string, error) {
 	if m.findDataSource(kbID, dsID) == nil {
 		return "", errors.Newf(errors.NotFound, "data source %q not found", dsID)
 	}
 
 	m.dataSource.Delete(dsID)
+	m.deleteJobsForDataSource(dsID)
 
 	return statusDeleting, nil
 }
@@ -139,4 +141,41 @@ func (m *Mock) findDataSource(kbID, dsID string) *driver.DataSource {
 	}
 
 	return ds
+}
+
+// deleteDataSourcesForKnowledgeBase removes every data source belonging to kbID.
+// All() returns a snapshot, so deleting while ranging is safe.
+func (m *Mock) deleteDataSourcesForKnowledgeBase(kbID string) {
+	for id, ds := range m.dataSource.All() {
+		if ds.KnowledgeBaseID == kbID {
+			m.dataSource.Delete(id)
+		}
+	}
+}
+
+// deleteJobsForKnowledgeBase removes every ingestion job belonging to kbID.
+func (m *Mock) deleteJobsForKnowledgeBase(kbID string) {
+	for id, job := range m.jobs.All() {
+		if job.KnowledgeBaseID == kbID {
+			m.jobs.Delete(id)
+		}
+	}
+}
+
+// deleteJobsForDataSource removes every ingestion job belonging to dsID.
+func (m *Mock) deleteJobsForDataSource(dsID string) {
+	for id, job := range m.jobs.All() {
+		if job.DataSourceID == dsID {
+			m.jobs.Delete(id)
+		}
+	}
+}
+
+// cloneDataSource returns a value copy whose RawMessage config field does not
+// alias the stored data source, so callers can't mutate internal state.
+func cloneDataSource(ds *driver.DataSource) driver.DataSource {
+	out := *ds
+	out.DataSourceConfiguration = copyRaw(ds.DataSourceConfiguration)
+
+	return out
 }

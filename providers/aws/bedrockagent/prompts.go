@@ -32,7 +32,7 @@ func (m *Mock) CreatePrompt(_ context.Context, cfg driver.PromptConfig) (*driver
 	}
 	m.prompts.Set(id, prompt)
 
-	result := *prompt
+	result := clonePrompt(prompt)
 
 	return &result, nil
 }
@@ -44,7 +44,7 @@ func (m *Mock) GetPrompt(_ context.Context, id string) (*driver.Prompt, error) {
 		return nil, errors.Newf(errors.NotFound, "prompt %q not found", id)
 	}
 
-	result := *prompt
+	result := clonePrompt(prompt)
 
 	return &result, nil
 }
@@ -55,7 +55,7 @@ func (m *Mock) ListPrompts(_ context.Context) ([]driver.Prompt, error) {
 	out := make([]driver.Prompt, 0, len(all))
 
 	for _, p := range all {
-		out = append(out, *p)
+		out = append(out, clonePrompt(p))
 	}
 
 	return out, nil
@@ -82,7 +82,7 @@ func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfi
 
 	m.prompts.Set(id, &updated)
 
-	result := updated
+	result := clonePrompt(&updated)
 
 	return &result, nil
 }
@@ -96,4 +96,13 @@ func (m *Mock) DeletePrompt(_ context.Context, id string) (string, error) {
 	m.prompts.Delete(id)
 
 	return id, nil
+}
+
+// clonePrompt returns a value copy whose Variants do not alias the stored
+// prompt, so callers can't mutate internal state via the result.
+func clonePrompt(p *driver.Prompt) driver.Prompt {
+	out := *p
+	out.Variants = copyRaw(p.Variants)
+
+	return out
 }

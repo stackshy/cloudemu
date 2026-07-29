@@ -97,6 +97,32 @@ func TestMarketplaceEndpointValidationAndErrors(t *testing.T) {
 	assertError(t, m.DeleteMarketplaceModelEndpoint(ctx, "arn:missing"), true)
 }
 
+// TestMarketplaceEndpointCopyOut verifies that mutating the EndpointConfig
+// bytes of a returned endpoint does not affect the stored value.
+func TestMarketplaceEndpointCopyOut(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	created, err := m.CreateMarketplaceModelEndpoint(ctx, bedrockdriver.MarketplaceEndpointConfig{
+		EndpointName:          "endpoint-copyout",
+		ModelSourceIdentifier: "arn:aws:sagemaker:us-east-1:aws:hub-content/model/1",
+		EndpointConfig:        []byte(`{"sageMaker":{"instanceType":"ml.m5.large"}}`),
+	})
+	requireNoError(t, err)
+
+	got, err := m.GetMarketplaceModelEndpoint(ctx, created.EndpointARN)
+	requireNoError(t, err)
+
+	// Mutate the returned bytes; the store must be unaffected.
+	for i := range got.EndpointConfig {
+		got.EndpointConfig[i] = 'X'
+	}
+
+	again, err := m.GetMarketplaceModelEndpoint(ctx, created.EndpointARN)
+	requireNoError(t, err)
+	assertEqual(t, `{"sageMaker":{"instanceType":"ml.m5.large"}}`, string(again.EndpointConfig))
+}
+
 func TestFoundationModelAgreementLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

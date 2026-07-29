@@ -98,15 +98,27 @@ func (m *Mock) UpdateAgent(_ context.Context, agentID string, cfg driver.AgentCo
 	return &result, nil
 }
 
-// DeleteAgent deletes an agent and returns its terminal status.
+// DeleteAgent deletes an agent and, cascading like real AWS, every alias that
+// belongs to it.
 func (m *Mock) DeleteAgent(_ context.Context, agentID string) (string, error) {
 	if !m.agents.Has(agentID) {
 		return "", errors.Newf(errors.NotFound, "agent %q not found", agentID)
 	}
 
 	m.agents.Delete(agentID)
+	m.deleteAliasesForAgent(agentID)
 
 	return statusDeleting, nil
+}
+
+// deleteAliasesForAgent removes every alias belonging to agentID. All() returns
+// a snapshot, so deleting while ranging is safe.
+func (m *Mock) deleteAliasesForAgent(agentID string) {
+	for id, alias := range m.aliases.All() {
+		if alias.AgentID == agentID {
+			m.aliases.Delete(id)
+		}
+	}
 }
 
 // PrepareAgent prepares an agent, transitioning it to PREPARED.

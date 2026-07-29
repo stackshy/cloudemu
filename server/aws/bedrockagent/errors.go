@@ -38,6 +38,10 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 	case cerrors.IsThrottled(err):
 		writeError(w, http.StatusTooManyRequests, "ThrottlingException", err.Error())
+	case cerrors.IsPermissionDenied(err):
+		writeError(w, http.StatusForbidden, "AccessDeniedException", err.Error())
+	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
+		writeError(w, http.StatusBadRequest, "ServiceQuotaExceededException", err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "InternalServerException", err.Error())
 	}

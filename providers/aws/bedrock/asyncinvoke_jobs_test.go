@@ -166,6 +166,34 @@ func TestEvaluationJobLifecycle(t *testing.T) {
 	assertError(t, m.StopEvaluationJob(ctx, "missing"), true)
 }
 
+// TestEvaluationJobCopyOut verifies that mutating the EvaluationConfig bytes of
+// a returned job does not affect the stored value.
+func TestEvaluationJobCopyOut(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateEvaluationJob(ctx, bedrockdriver.EvaluationJobConfig{
+		JobName:          "eval-copyout",
+		RoleARN:          "arn:aws:iam::123456789012:role/bedrock",
+		EvaluationConfig: []byte(`{"automated":{}}`),
+		InferenceConfig:  []byte(`{"models":[]}`),
+		OutputDataS3URI:  "s3://bucket/eval/",
+	})
+	requireNoError(t, err)
+
+	got, err := m.GetEvaluationJob(ctx, "eval-copyout")
+	requireNoError(t, err)
+
+	// Mutate the returned bytes; the store must be unaffected.
+	for i := range got.EvaluationConfig {
+		got.EvaluationConfig[i] = 'X'
+	}
+
+	again, err := m.GetEvaluationJob(ctx, "eval-copyout")
+	requireNoError(t, err)
+	assertEqual(t, `{"automated":{}}`, string(again.EvaluationConfig))
+}
+
 func TestEvaluationJobTypeHuman(t *testing.T) {
 	m := newTestMock()
 

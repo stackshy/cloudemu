@@ -206,7 +206,7 @@ func (m *Mock) GetEvaluationJob(_ context.Context, jobIdentifier string) (*drive
 		return nil, errors.Newf(errors.NotFound, "evaluation job %q not found", jobIdentifier)
 	}
 
-	result := *job
+	result := cloneEvaluationJob(job)
 
 	return &result, nil
 }
@@ -217,7 +217,7 @@ func (m *Mock) ListEvaluationJobs(_ context.Context) ([]driver.EvaluationJob, er
 	out := make([]driver.EvaluationJob, 0, len(all))
 
 	for _, job := range all {
-		out = append(out, *job)
+		out = append(out, cloneEvaluationJob(job))
 	}
 
 	return out, nil
@@ -259,6 +259,17 @@ func (m *Mock) findEvalJob(id string) *driver.EvaluationJob {
 	}
 
 	return nil
+}
+
+// cloneEvaluationJob returns a value copy whose EvaluationConfig and
+// InferenceConfig do not alias the stored job, so callers can't mutate internal
+// state via the result.
+func cloneEvaluationJob(j *driver.EvaluationJob) driver.EvaluationJob {
+	out := *j
+	out.EvaluationConfig = copyBytes(j.EvaluationConfig)
+	out.InferenceConfig = copyBytes(j.InferenceConfig)
+
+	return out
 }
 
 // evaluationJobType derives the job type from the evaluationConfig document: a

@@ -46,7 +46,7 @@ func (m *Mock) CreateMarketplaceModelEndpoint(
 	m.marketplaceEndpoints.Set(arn, endpoint)
 	m.setTags(arn, m.tagsFromMap(cfg.Tags))
 
-	result := *endpoint
+	result := cloneMarketplaceEndpoint(endpoint)
 
 	return &result, nil
 }
@@ -58,7 +58,7 @@ func (m *Mock) GetMarketplaceModelEndpoint(_ context.Context, endpointARN string
 		return nil, errors.Newf(errors.NotFound, "marketplace model endpoint %q not found", endpointARN)
 	}
 
-	result := *endpoint
+	result := cloneMarketplaceEndpoint(endpoint)
 
 	return &result, nil
 }
@@ -69,7 +69,7 @@ func (m *Mock) ListMarketplaceModelEndpoints(_ context.Context) ([]driver.Market
 	out := make([]driver.MarketplaceEndpoint, 0, len(all))
 
 	for _, endpoint := range all {
-		out = append(out, *endpoint)
+		out = append(out, cloneMarketplaceEndpoint(endpoint))
 	}
 
 	return out, nil
@@ -94,7 +94,7 @@ func (m *Mock) UpdateMarketplaceModelEndpoint(
 	updated.UpdatedAt = m.now()
 	m.marketplaceEndpoints.Set(endpointARN, &updated)
 
-	result := updated
+	result := cloneMarketplaceEndpoint(&updated)
 
 	return &result, nil
 }
@@ -131,7 +131,7 @@ func (m *Mock) RegisterMarketplaceModelEndpoint(
 	updated.UpdatedAt = m.now()
 	m.marketplaceEndpoints.Set(endpointIdentifier, &updated)
 
-	result := updated
+	result := cloneMarketplaceEndpoint(&updated)
 
 	return &result, nil
 }
@@ -211,6 +211,16 @@ func (m *Mock) GetFoundationModelAvailability(
 	}
 
 	return out, nil
+}
+
+// cloneMarketplaceEndpoint returns a value copy whose EndpointConfig does not
+// alias the stored endpoint, so callers can't mutate internal state via the
+// result.
+func cloneMarketplaceEndpoint(e *driver.MarketplaceEndpoint) driver.MarketplaceEndpoint {
+	out := *e
+	out.EndpointConfig = copyBytes(e.EndpointConfig)
+
+	return out
 }
 
 // copyBytes returns a copy of b so stored payloads never alias caller memory.

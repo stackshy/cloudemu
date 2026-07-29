@@ -88,6 +88,10 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-
       - run: go test ./...
+      # Run the Bedrock packages under the race detector so their concurrency
+      # tests (guardrail versions, evaluation-job stop, etc.) actually exercise
+      # -race in CI rather than being inert.
+      - run: go test -race ./providers/aws/bedrock/... ./server/aws/bedrock/... ./providers/aws/bedrockagent/... ./server/aws/bedrockagent/... ./server/aws/bedrockagentruntime/...
 
   tidy:
     name: Tidy
