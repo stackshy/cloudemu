@@ -2,6 +2,7 @@ package azuresql
 
 import (
 	"context"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -306,14 +307,31 @@ func (m *Mock) ListElasticPools(_ context.Context, server string) ([]rdsdriver.E
 	return out, nil
 }
 
-// DeleteElasticPool removes an elastic pool.
+// DeleteElasticPool removes an elastic pool. Like real Azure, it fails with a
+// precondition error while the pool still contains databases.
 func (m *Mock) DeleteElasticPool(_ context.Context, server, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.elasticPools.Delete(subKey(server, name)) {
+	if _, ok := m.elasticPools.Get(subKey(server, name)); !ok {
 		return cerrors.Newf(cerrors.NotFound, "elastic pool %q not found", name)
 	}
+
+	suffix := "/elasticPools/" + name
+
+	insts := m.instances.SortedValues()
+	for i := range insts {
+		if insts[i].ClusterID != server {
+			continue
+		}
+
+		if insts[i].ElasticPoolID == name || strings.HasSuffix(insts[i].ElasticPoolID, suffix) {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"elastic pool %q cannot be deleted while it contains databases", name)
+		}
+	}
+
+	m.elasticPools.Delete(subKey(server, name))
 
 	return nil
 }

@@ -51,7 +51,11 @@ type InstanceConfig struct {
 	OptionGroupName      string
 	ClusterID            string // empty for standalone, set for Aurora cluster members
 	AvailabilityZone     string
-	Tags                 map[string]string
+	// ElasticPoolID is the Azure SQL elastic pool a database belongs to (the
+	// pool's ARM resource ID); empty for standalone databases and non-Azure
+	// engines.
+	ElasticPoolID string
+	Tags          map[string]string
 }
 
 // Instance describes a managed database instance.
@@ -76,6 +80,7 @@ type Instance struct {
 	OptionGroupName      string
 	ClusterID            string
 	AvailabilityZone     string
+	ElasticPoolID        string
 	CreatedAt            time.Time
 	Tags                 map[string]string
 	// ReadReplicaSource is the identifier of the primary this instance
@@ -98,6 +103,7 @@ type ModifyInstanceInput struct {
 	DBParameterGroupName        string
 	OptionGroupName             string
 	DBClusterParameterGroupName string
+	ElasticPoolID               string
 	Tags                        map[string]string
 }
 

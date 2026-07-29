@@ -202,6 +202,7 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		Port:             defaultPort,
 		State:            rdsdriver.StateAvailable,
 		ClusterID:        cfg.ClusterID,
+		ElasticPoolID:    cfg.ElasticPoolID,
 		AvailabilityZone: server.SubnetGroupName, // re-use as region carrier
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(cfg.Tags),
@@ -303,6 +304,10 @@ func (m *Mock) ModifyInstance(
 
 	if input.EngineVersion != "" {
 		inst.EngineVersion = input.EngineVersion
+	}
+
+	if input.ElasticPoolID != "" {
+		inst.ElasticPoolID = input.ElasticPoolID
 	}
 
 	if input.Tags != nil {

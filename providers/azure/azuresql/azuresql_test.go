@@ -394,3 +394,43 @@ func TestManagedInstanceLifecycleAndCascade(t *testing.T) {
 		t.Error("ListManagedDatabases after instance delete: expected NotFound")
 	}
 }
+
+func TestElasticPoolMembershipBlocksDelete(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := m.CreateElasticPool(ctx, rdsdriver.ElasticPoolConfig{Server: "srv", Name: "pool"}); err != nil {
+		t.Fatalf("CreateElasticPool: %v", err)
+	}
+
+	poolID := "/subscriptions/x/resourceGroups/x/providers/Microsoft.Sql/servers/srv/elasticPools/pool"
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "db1", ClusterID: "srv", ElasticPoolID: poolID,
+	}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// The database round-trips its pool membership.
+	got, _ := m.DescribeInstances(ctx, []string{"srv/db1"})
+	if len(got) != 1 || got[0].ElasticPoolID != poolID {
+		t.Fatalf("elasticPoolId not persisted: %+v", got)
+	}
+
+	// A non-empty pool cannot be deleted.
+	if err := m.DeleteElasticPool(ctx, "srv", "pool"); err == nil {
+		t.Error("DeleteElasticPool on non-empty pool: expected FailedPrecondition")
+	}
+
+	// After the database is removed, the pool deletes cleanly.
+	if err := m.DeleteInstance(ctx, "srv/db1"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	if err := m.DeleteElasticPool(ctx, "srv", "pool"); err != nil {
+		t.Errorf("DeleteElasticPool on empty pool: %v", err)
+	}
+}

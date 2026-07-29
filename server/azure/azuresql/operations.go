@@ -149,8 +149,12 @@ func (h *Handler) createOrUpdateDatabase(w http.ResponseWriter, r *http.Request,
 		cfg.InstanceClass = body.SKU.Name
 	}
 
-	if body.Properties != nil && body.Properties.MaxSizeBytes > 0 {
-		cfg.AllocatedStorage = int(body.Properties.MaxSizeBytes / (1 << 30))
+	if body.Properties != nil {
+		if body.Properties.MaxSizeBytes > 0 {
+			cfg.AllocatedStorage = int(body.Properties.MaxSizeBytes / (1 << 30))
+		}
+
+		cfg.ElasticPoolID = body.Properties.ElasticPoolID
 	}
 
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
@@ -164,6 +168,7 @@ func (h *Handler) createOrUpdateDatabase(w http.ResponseWriter, r *http.Request,
 		inst, err = h.db.ModifyInstance(r.Context(), server+"/"+dbName, rdsdriver.ModifyInstanceInput{
 			InstanceClass:    cfg.InstanceClass,
 			AllocatedStorage: cfg.AllocatedStorage,
+			ElasticPoolID:    cfg.ElasticPoolID,
 			Tags:             body.Tags,
 		})
 		if err != nil {
@@ -189,8 +194,12 @@ func (h *Handler) updateDatabase(w http.ResponseWriter, r *http.Request, rp *azu
 		input.InstanceClass = body.SKU.Name
 	}
 
-	if body.Properties != nil && body.Properties.MaxSizeBytes > 0 {
-		input.AllocatedStorage = int(body.Properties.MaxSizeBytes / (1 << 30))
+	if body.Properties != nil {
+		if body.Properties.MaxSizeBytes > 0 {
+			input.AllocatedStorage = int(body.Properties.MaxSizeBytes / (1 << 30))
+		}
+
+		input.ElasticPoolID = body.Properties.ElasticPoolID
 	}
 
 	inst, err := h.db.ModifyInstance(r.Context(), rp.ResourceName+"/"+rp.SubResourceName, input)
