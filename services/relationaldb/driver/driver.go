@@ -367,3 +367,32 @@ type ReadReplicas interface {
 	CreateDBInstanceReadReplica(ctx context.Context, cfg ReadReplicaConfig) (*Instance, error)
 	PromoteReadReplica(ctx context.Context, id string) (*Instance, error)
 }
+
+// RestoreInstanceToPointInTimeInput configures a point-in-time instance restore.
+type RestoreInstanceToPointInTimeInput struct {
+	SourceInstanceID        string
+	TargetInstanceID        string
+	InstanceClass           string
+	UseLatestRestorableTime bool
+	RestoreTime             time.Time
+	Tags                    map[string]string
+}
+
+// RestoreClusterToPointInTimeInput configures a point-in-time cluster restore.
+type RestoreClusterToPointInTimeInput struct {
+	SourceClusterID         string
+	TargetClusterID         string
+	UseLatestRestorableTime bool
+	RestoreTime             time.Time
+	Tags                    map[string]string
+}
+
+// AdvancedRestore is an OPTIONAL capability covering snapshot copy and
+// point-in-time restore for instances and clusters, discovered by type
+// assertion.
+type AdvancedRestore interface {
+	CopyDBSnapshot(ctx context.Context, source, target string, tags map[string]string) (*Snapshot, error)
+	CopyDBClusterSnapshot(ctx context.Context, source, target string, tags map[string]string) (*ClusterSnapshot, error)
+	RestoreDBInstanceToPointInTime(ctx context.Context, input RestoreInstanceToPointInTimeInput) (*Instance, error)
+	RestoreDBClusterToPointInTime(ctx context.Context, input RestoreClusterToPointInTimeInput) (*Cluster, error)
+}

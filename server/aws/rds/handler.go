@@ -76,6 +76,10 @@ var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DescribeOptionGroupOptions":       {},
 	"CreateDBInstanceReadReplica":      {},
 	"PromoteReadReplica":               {},
+	"CopyDBSnapshot":                   {},
+	"CopyDBClusterSnapshot":            {},
+	"RestoreDBInstanceToPointInTime":   {},
+	"RestoreDBClusterToPointInTime":    {},
 }
 
 // Handler serves RDS query-protocol requests.
@@ -214,6 +218,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createDBInstanceReadReplica(w, r)
 	case "PromoteReadReplica":
 		h.promoteReadReplica(w, r)
+	case "CopyDBSnapshot":
+		h.copyDBSnapshot(w, r)
+	case "CopyDBClusterSnapshot":
+		h.copyDBClusterSnapshot(w, r)
+	case "RestoreDBInstanceToPointInTime":
+		h.restoreDBInstanceToPointInTime(w, r)
+	case "RestoreDBClusterToPointInTime":
+		h.restoreDBClusterToPointInTime(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown RDS action: "+action)
