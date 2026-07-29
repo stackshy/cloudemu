@@ -30,30 +30,85 @@ const (
 // rdsActions is the set of Action values this handler recognizes. Matches uses
 // it to decide whether to claim a request.
 var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateDBSubnetGroup":             {},
-	"DescribeDBSubnetGroups":          {},
-	"DeleteDBSubnetGroup":             {},
-	"CreateDBInstance":                {},
-	"DescribeDBInstances":             {},
-	"ModifyDBInstance":                {},
-	"DeleteDBInstance":                {},
-	"StartDBInstance":                 {},
-	"StopDBInstance":                  {},
-	"RebootDBInstance":                {},
-	"CreateDBCluster":                 {},
-	"DescribeDBClusters":              {},
-	"ModifyDBCluster":                 {},
-	"DeleteDBCluster":                 {},
-	"StartDBCluster":                  {},
-	"StopDBCluster":                   {},
-	"CreateDBSnapshot":                {},
-	"DescribeDBSnapshots":             {},
-	"DeleteDBSnapshot":                {},
-	"RestoreDBInstanceFromDBSnapshot": {},
-	"CreateDBClusterSnapshot":         {},
-	"DescribeDBClusterSnapshots":      {},
-	"DeleteDBClusterSnapshot":         {},
-	"RestoreDBClusterFromSnapshot":    {},
+	"CreateDBSubnetGroup":                {},
+	"DescribeDBSubnetGroups":             {},
+	"DeleteDBSubnetGroup":                {},
+	"CreateDBInstance":                   {},
+	"DescribeDBInstances":                {},
+	"ModifyDBInstance":                   {},
+	"DeleteDBInstance":                   {},
+	"StartDBInstance":                    {},
+	"StopDBInstance":                     {},
+	"RebootDBInstance":                   {},
+	"CreateDBCluster":                    {},
+	"DescribeDBClusters":                 {},
+	"ModifyDBCluster":                    {},
+	"DeleteDBCluster":                    {},
+	"StartDBCluster":                     {},
+	"StopDBCluster":                      {},
+	"CreateDBSnapshot":                   {},
+	"DescribeDBSnapshots":                {},
+	"DeleteDBSnapshot":                   {},
+	"RestoreDBInstanceFromDBSnapshot":    {},
+	"CreateDBClusterSnapshot":            {},
+	"DescribeDBClusterSnapshots":         {},
+	"DeleteDBClusterSnapshot":            {},
+	"RestoreDBClusterFromSnapshot":       {},
+	"CreateDBParameterGroup":             {},
+	"DescribeDBParameterGroups":          {},
+	"ModifyDBParameterGroup":             {},
+	"DeleteDBParameterGroup":             {},
+	"DescribeDBParameters":               {},
+	"ResetDBParameterGroup":              {},
+	"CopyDBParameterGroup":               {},
+	"CreateDBClusterParameterGroup":      {},
+	"DescribeDBClusterParameterGroups":   {},
+	"ModifyDBClusterParameterGroup":      {},
+	"DeleteDBClusterParameterGroup":      {},
+	"DescribeDBClusterParameters":        {},
+	"ResetDBClusterParameterGroup":       {},
+	"CopyDBClusterParameterGroup":        {},
+	"CreateOptionGroup":                  {},
+	"DescribeOptionGroups":               {},
+	"ModifyOptionGroup":                  {},
+	"DeleteOptionGroup":                  {},
+	"CopyOptionGroup":                    {},
+	"DescribeOptionGroupOptions":         {},
+	"CreateDBInstanceReadReplica":        {},
+	"PromoteReadReplica":                 {},
+	"CopyDBSnapshot":                     {},
+	"CopyDBClusterSnapshot":              {},
+	"RestoreDBInstanceToPointInTime":     {},
+	"RestoreDBClusterToPointInTime":      {},
+	"CreateDBProxy":                      {},
+	"DescribeDBProxies":                  {},
+	"ModifyDBProxy":                      {},
+	"DeleteDBProxy":                      {},
+	"RegisterDBProxyTargets":             {},
+	"DeregisterDBProxyTargets":           {},
+	"DescribeDBProxyTargets":             {},
+	"DescribeDBProxyTargetGroups":        {},
+	"CreateEventSubscription":            {},
+	"DescribeEventSubscriptions":         {},
+	"ModifyEventSubscription":            {},
+	"DeleteEventSubscription":            {},
+	"DescribeEvents":                     {},
+	"DescribeEventCategories":            {},
+	"CreateDBClusterEndpoint":            {},
+	"DescribeDBClusterEndpoints":         {},
+	"ModifyDBClusterEndpoint":            {},
+	"DeleteDBClusterEndpoint":            {},
+	"FailoverDBCluster":                  {},
+	"CreateGlobalCluster":                {},
+	"DescribeGlobalClusters":             {},
+	"ModifyGlobalCluster":                {},
+	"DeleteGlobalCluster":                {},
+	"RemoveFromGlobalCluster":            {},
+	"DescribeDBEngineVersions":           {},
+	"DescribeOrderableDBInstanceOptions": {},
+	"AddTagsToResource":                  {},
+	"RemoveTagsFromResource":             {},
+	"ListTagsForResource":                {},
 }
 
 // Handler serves RDS query-protocol requests.
@@ -95,7 +150,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
 //
-//nolint:gocyclo // 21 cases for one-shot dispatch; splitting into sub-routers would be more complex than the switch.
+//nolint:gocyclo,funlen // flat one-shot Action dispatch; a table of func values would obscure it more than the switch.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	action := r.Form.Get("Action")
 
@@ -148,6 +203,116 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteDBClusterSnapshot(w, r)
 	case "RestoreDBClusterFromSnapshot":
 		h.restoreClusterFromSnapshot(w, r)
+	case "CreateDBParameterGroup":
+		h.createDBParameterGroup(w, r)
+	case "DescribeDBParameterGroups":
+		h.describeDBParameterGroups(w, r)
+	case "ModifyDBParameterGroup":
+		h.modifyDBParameterGroup(w, r)
+	case "DeleteDBParameterGroup":
+		h.deleteDBParameterGroup(w, r)
+	case "DescribeDBParameters":
+		h.describeDBParameters(w, r)
+	case "ResetDBParameterGroup":
+		h.resetDBParameterGroup(w, r)
+	case "CopyDBParameterGroup":
+		h.copyDBParameterGroup(w, r)
+	case "CreateDBClusterParameterGroup":
+		h.createDBClusterParameterGroup(w, r)
+	case "DescribeDBClusterParameterGroups":
+		h.describeDBClusterParameterGroups(w, r)
+	case "ModifyDBClusterParameterGroup":
+		h.modifyDBClusterParameterGroup(w, r)
+	case "DeleteDBClusterParameterGroup":
+		h.deleteDBClusterParameterGroup(w, r)
+	case "DescribeDBClusterParameters":
+		h.describeDBClusterParameters(w, r)
+	case "ResetDBClusterParameterGroup":
+		h.resetDBClusterParameterGroup(w, r)
+	case "CopyDBClusterParameterGroup":
+		h.copyDBClusterParameterGroup(w, r)
+	case "CreateOptionGroup":
+		h.createOptionGroup(w, r)
+	case "DescribeOptionGroups":
+		h.describeOptionGroups(w, r)
+	case "ModifyOptionGroup":
+		h.modifyOptionGroup(w, r)
+	case "DeleteOptionGroup":
+		h.deleteOptionGroup(w, r)
+	case "CopyOptionGroup":
+		h.copyOptionGroup(w, r)
+	case "DescribeOptionGroupOptions":
+		h.describeOptionGroupOptions(w, r)
+	case "CreateDBInstanceReadReplica":
+		h.createDBInstanceReadReplica(w, r)
+	case "PromoteReadReplica":
+		h.promoteReadReplica(w, r)
+	case "CopyDBSnapshot":
+		h.copyDBSnapshot(w, r)
+	case "CopyDBClusterSnapshot":
+		h.copyDBClusterSnapshot(w, r)
+	case "RestoreDBInstanceToPointInTime":
+		h.restoreDBInstanceToPointInTime(w, r)
+	case "RestoreDBClusterToPointInTime":
+		h.restoreDBClusterToPointInTime(w, r)
+	case "CreateDBProxy":
+		h.createDBProxy(w, r)
+	case "DescribeDBProxies":
+		h.describeDBProxies(w, r)
+	case "ModifyDBProxy":
+		h.modifyDBProxy(w, r)
+	case "DeleteDBProxy":
+		h.deleteDBProxy(w, r)
+	case "RegisterDBProxyTargets":
+		h.registerDBProxyTargets(w, r)
+	case "DeregisterDBProxyTargets":
+		h.deregisterDBProxyTargets(w, r)
+	case "DescribeDBProxyTargets":
+		h.describeDBProxyTargets(w, r)
+	case "DescribeDBProxyTargetGroups":
+		h.describeDBProxyTargetGroups(w, r)
+	case "CreateEventSubscription":
+		h.createEventSubscription(w, r)
+	case "DescribeEventSubscriptions":
+		h.describeEventSubscriptions(w, r)
+	case "ModifyEventSubscription":
+		h.modifyEventSubscription(w, r)
+	case "DeleteEventSubscription":
+		h.deleteEventSubscription(w, r)
+	case "DescribeEvents":
+		h.describeEvents(w, r)
+	case "DescribeEventCategories":
+		h.describeEventCategories(w, r)
+	case "CreateDBClusterEndpoint":
+		h.createDBClusterEndpoint(w, r)
+	case "DescribeDBClusterEndpoints":
+		h.describeDBClusterEndpoints(w, r)
+	case "ModifyDBClusterEndpoint":
+		h.modifyDBClusterEndpoint(w, r)
+	case "DeleteDBClusterEndpoint":
+		h.deleteDBClusterEndpoint(w, r)
+	case "FailoverDBCluster":
+		h.failoverDBCluster(w, r)
+	case "CreateGlobalCluster":
+		h.createGlobalCluster(w, r)
+	case "DescribeGlobalClusters":
+		h.describeGlobalClusters(w, r)
+	case "ModifyGlobalCluster":
+		h.modifyGlobalCluster(w, r)
+	case "DeleteGlobalCluster":
+		h.deleteGlobalCluster(w, r)
+	case "RemoveFromGlobalCluster":
+		h.removeFromGlobalCluster(w, r)
+	case "DescribeDBEngineVersions":
+		h.describeDBEngineVersions(w, r)
+	case "DescribeOrderableDBInstanceOptions":
+		h.describeOrderableDBInstanceOptions(w, r)
+	case "AddTagsToResource":
+		h.addTagsToResource(w, r)
+	case "RemoveTagsFromResource":
+		h.removeTagsFromResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown RDS action: "+action)
@@ -170,45 +335,69 @@ func writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// notFoundCode picks the AWS-shaped error code based on the error message.
-// We can't introspect the resource type from cerrors directly; the message
-// always carries the resource keyword.
-func notFoundCode(err error) string {
-	msg := err.Error()
-
-	switch {
-	// "db subnet group" first: it is the only one whose message does not start
-	// with "DB ", and checking it late would let a broader case claim it.
-	case strings.Contains(msg, "db subnet group"):
-		return "DBSubnetGroupNotFoundFault"
-	case strings.Contains(msg, "DB instance"):
-		return "DBInstanceNotFound"
-	case strings.Contains(msg, "DB cluster snapshot"):
-		return "DBClusterSnapshotNotFoundFault"
-	case strings.Contains(msg, "DB cluster"):
-		return "DBClusterNotFoundFault"
-	case strings.Contains(msg, "DB snapshot"):
-		return "DBSnapshotNotFound"
-	default:
-		return "ResourceNotFoundFault"
-	}
+// faultMapping maps a resource keyword found in an error message to the
+// AWS-shaped fault code for that resource.
+type faultMapping struct {
+	substr string
+	code   string
 }
 
-func alreadyExistsCode(err error) string {
-	msg := err.Error()
-
-	switch {
-	case strings.Contains(msg, "db subnet group"):
-		return "DBSubnetGroupAlreadyExists"
-	case strings.Contains(msg, "DB instance"):
-		return "DBInstanceAlreadyExists"
-	case strings.Contains(msg, "DB cluster snapshot"):
-		return "DBClusterSnapshotAlreadyExistsFault"
-	case strings.Contains(msg, "DB cluster"):
-		return "DBClusterAlreadyExistsFault"
-	case strings.Contains(msg, "DB snapshot"):
-		return "DBSnapshotAlreadyExists"
-	default:
-		return "ResourceAlreadyExistsFault"
+// matchFault returns the code of the first mapping whose keyword is contained
+// in msg, or fallback if none match. The caller supplies the table in
+// most-specific-first order (e.g. "DB cluster endpoint" and "parameter group"
+// before "DB cluster", whose keyword they contain).
+func matchFault(msg string, table []faultMapping, fallback string) string {
+	for _, m := range table {
+		if strings.Contains(msg, m.substr) {
+			return m.code
+		}
 	}
+
+	return fallback
+}
+
+// notFoundFaults / alreadyExistsFaults are ordered most-specific-first: an
+// entry whose keyword is a substring of another's must appear first. cerrors
+// carries no resource type, so the resource keyword in the message is the only
+// signal for the AWS-shaped code. Real AWS reuses the DBParameterGroup fault
+// for both DB and cluster parameter groups.
+//
+//nolint:gochecknoglobals // ordered static lookup table
+var notFoundFaults = []faultMapping{
+	{"db subnet group", "DBSubnetGroupNotFoundFault"},
+	{"parameter group", "DBParameterGroupNotFound"},
+	{"option group", "OptionGroupNotFoundFault"},
+	{"DB proxy", "DBProxyNotFoundFault"},
+	{"event subscription", "SubscriptionNotFoundFault"},
+	{"DB cluster endpoint", "DBClusterEndpointNotFoundFault"},
+	{"global cluster", "GlobalClusterNotFoundFault"},
+	{"DB instance", "DBInstanceNotFound"},
+	{"DB cluster snapshot", "DBClusterSnapshotNotFoundFault"},
+	{"DB cluster", "DBClusterNotFoundFault"},
+	{"DB snapshot", "DBSnapshotNotFound"},
+}
+
+//nolint:gochecknoglobals // ordered static lookup table
+var alreadyExistsFaults = []faultMapping{
+	{"db subnet group", "DBSubnetGroupAlreadyExists"},
+	{"parameter group", "DBParameterGroupAlreadyExists"},
+	{"option group", "OptionGroupAlreadyExistsFault"},
+	{"DB proxy", "DBProxyAlreadyExistsFault"},
+	{"event subscription", "SubscriptionAlreadyExistFault"},
+	{"DB cluster endpoint", "DBClusterEndpointAlreadyExistsFault"},
+	{"global cluster", "GlobalClusterAlreadyExistsFault"},
+	{"DB instance", "DBInstanceAlreadyExists"},
+	{"DB cluster snapshot", "DBClusterSnapshotAlreadyExistsFault"},
+	{"DB cluster", "DBClusterAlreadyExistsFault"},
+	{"DB snapshot", "DBSnapshotAlreadyExists"},
+}
+
+// notFoundCode picks the AWS-shaped NotFound fault from the error message.
+func notFoundCode(err error) string {
+	return matchFault(err.Error(), notFoundFaults, "ResourceNotFoundFault")
+}
+
+// alreadyExistsCode picks the AWS-shaped AlreadyExists fault from the message.
+func alreadyExistsCode(err error) string {
+	return matchFault(err.Error(), alreadyExistsFaults, "ResourceAlreadyExistsFault")
 }

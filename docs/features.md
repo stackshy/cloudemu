@@ -390,7 +390,7 @@ all, _ := aws.ResourceDiscovery.ListAll(ctx)
 // for every bucket, instance, VPC, subnet, security group, table, and function
 ```
 
-The same field exists on Azure and GCP providers (`azure.ResourceDiscovery`, `gcp.ResourceDiscovery`). Internally, the engine reads from the existing Compute, Networking, Storage, Database, and Serverless drivers — any field that's nil is silently skipped, so partial test wirings work.
+The same field exists on Azure and GCP providers (`azure.ResourceDiscovery`, `gcp.ResourceDiscovery`). Internally, the engine reads from the existing Compute, Networking, Storage, Database, Serverless, Databricks, Kubernetes, and Relational Database drivers — any field that's nil is silently skipped, so partial test wirings work.
 
 ### Engine API
 

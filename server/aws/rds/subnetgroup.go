@@ -84,6 +84,7 @@ func (h *Handler) createDBSubnetGroup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally mirrors the other describe-list wire handlers by design.
 func (h *Handler) describeDBSubnetGroups(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.subnetGroups()
 	if !ok {

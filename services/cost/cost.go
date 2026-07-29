@@ -53,6 +53,18 @@ func defaultRates() map[string]float64 {
 		"database:BatchPutItems": 0.00000125,
 		"database:BatchGetItems": 0.00000025,
 
+		// Relational DB (RDS/Aurora): instances and read replicas per
+		// instance-hour (proxied at create), RDS Proxy per hour; snapshots and
+		// Aurora cluster grouping billed via storage/members, proxied at 0.
+		"relationaldb:CreateInstance":              0.017, // db.t3.micro-equivalent instance-hour
+		"relationaldb:CreateDBInstanceReadReplica": 0.017,
+		"relationaldb:CreateDBProxy":               0.015, // proxy vCPU-hour proxy
+		"relationaldb:CreateCluster":               0.0,   // Aurora billed per member instance + ACU
+		"relationaldb:CreateSnapshot":              0.0,   // manual snapshot storage
+		"relationaldb:CreateClusterSnapshot":       0.0,
+		"relationaldb:StartInstance":               0.0,
+		"relationaldb:StopInstance":                0.0,
+
 		// Serverless (per invocation)
 		"serverless:Invoke": 0.0000002, // $0.20 per 1M
 

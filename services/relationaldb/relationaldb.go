@@ -122,6 +122,8 @@ func (db *DB) DescribeInstances(ctx context.Context, ids []string) ([]driver.Ins
 }
 
 // ModifyInstance applies the supplied changes to an instance.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (db *DB) ModifyInstance(
 	ctx context.Context, id string, input driver.ModifyInstanceInput,
 ) (*driver.Instance, error) {
@@ -194,6 +196,8 @@ func (db *DB) DescribeClusters(ctx context.Context, ids []string) ([]driver.Clus
 }
 
 // ModifyCluster applies changes to a cluster.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (db *DB) ModifyCluster(
 	ctx context.Context, id string, input driver.ModifyInstanceInput,
 ) (*driver.Cluster, error) {
