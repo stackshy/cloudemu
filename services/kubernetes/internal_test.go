@@ -62,9 +62,17 @@ func TestParseRoute(t *testing.T) {
 		// Reaches parseGroupRoute() but only carries group+version, no resource.
 		{name: "group_version_only", path: "/apis/apps/v1", want: nil},
 		{
-			name: "namespaced_collection_missing_namespaces_segment",
-			path: "/api/v1/notnamespaces/x/configmaps",
-			want: nil,
+			// A 3-segment cluster path is a subresource request in real k8s
+			// (e.g. /api/v1/nodes/node-1/status); it parses to a subresource
+			// route and the dispatcher 404s an unknown resource.
+			name: "cluster_scoped_subresource",
+			path: "/api/v1/nodes/node-1/status",
+			want: &Route{APIGroup: "", APIVersion: "v1", Resource: "nodes", Name: "node-1", Subresource: "status"},
+		},
+		{
+			name: "cluster_scoped_scale_subresource",
+			path: "/apis/apps/v1/namespaces/demo/deployments/web/scale",
+			want: &Route{APIGroup: "apps", APIVersion: "v1", Namespace: "demo", Resource: "deployments", Name: "web", Subresource: "scale"},
 		},
 		{
 			name: "namespaced_item_missing_namespaces_segment",

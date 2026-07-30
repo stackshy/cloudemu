@@ -66,19 +66,13 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 
 	// Kubernetes protobuf frames begin with the magic prefix "k8s\x00".
-	// kubectl negotiates protobuf for built-in types once discovery advertises
-	// them, so this path became reachable the moment discovery landed — and a
-	// JSON decoder reports it as `invalid character 'k'`, which reads like a
-	// malformed request rather than an encoding the server does not speak.
-	//
-	// 415 is the answer the Kubernetes client libraries are built to handle:
-	// they retry the same request as JSON. Returning 400 instead makes kubectl
-	// give up, which is why writes failed while reads succeeded.
+	// kubectl and client-go send built-in kinds as protobuf on writes (their
+	// Accept header still allows JSON, which is why reads worked while writes
+	// arrived protobuf-framed). Decode them rather than rejecting — kubectl does
+	// NOT retry a write as JSON on 415, it surfaces the error, so a 415 here
+	// means `kubectl create/scale/apply` simply cannot write to the emulator.
 	if bytes.HasPrefix(body, protobufMagic) {
-		writeStatus(w, http.StatusUnsupportedMediaType, metav1.StatusReasonUnsupportedMediaType,
-			"k8s api: protobuf encoding is not supported; retry with application/json")
-
-		return false
+		return decodeProtobufBody(w, body, v)
 	}
 
 	if err := json.Unmarshal(body, v); err != nil {
@@ -92,4 +86,6 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 
 // protobufMagic is the 4-byte prefix on every Kubernetes protobuf frame
 // (k8s.io/apimachinery/pkg/runtime.protoEncodingPrefix).
+//
+//nolint:gochecknoglobals // fixed protocol constant; []byte can't be a const.
 var protobufMagic = []byte{'k', '8', 's', 0x00}

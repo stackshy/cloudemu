@@ -5,35 +5,38 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 )
 
-// JSON-merge-patch content type (RFC 7396). client-go uses this for most
-// Patch() calls when no explicit type is specified, and it's the simplest
-// shape to implement: the body is a partial JSON document merged into the
-// existing object.
-const contentTypeJSONMergePatch = "application/merge-patch+json"
+// Patch content types kubectl and client-go send. JSON-merge-patch (RFC 7396)
+// is client-go's default; strategic-merge-patch is kubectl's default for
+// `set`, `edit`, `label`, etc.; JSONPatch (RFC 6902) is `kubectl patch
+// --type=json`. apply-patch (server-side apply) is treated as a merge.
+const (
+	contentTypeJSONMergePatch = "application/merge-patch+json"
+	contentTypeStrategicMerge = "application/strategic-merge-patch+json"
+	contentTypeJSONPatch      = "application/json-patch+json"
+	contentTypeApplyPatch     = "application/apply-patch+yaml"
+)
 
-// applyJSONPatch reads a JSON-merge-patch (RFC 7396) body, merges it into
-// current, and returns a freshly-decoded T containing the result. The
-// stored object is never mutated; callers swap the returned value into
-// their store explicitly.
+// applyJSONPatch reads a patch body of the request's content type, applies it
+// to current, and returns a freshly-decoded T containing the result. The
+// stored object is never mutated; callers swap the returned value into their
+// store explicitly.
 //
-// Strategic-merge-patch and JSONPatch (RFC 6902) are intentionally not
-// supported in Phase 1; they can be added later if a test scenario needs
-// them. JSON-merge-patch covers the common client-go.Patch case.
+// All four patch content types kubectl and client-go use are supported:
+// JSON-merge-patch (RFC 7396), strategic-merge-patch (real strategic merge
+// against T's struct tags, so `kubectl set image` merges the container list by
+// name rather than replacing it), JSONPatch (RFC 6902), and server-side apply
+// (treated as a merge — the mock has no field managers).
 //
-// On any wire-level failure (bad content-type, body read error, merge
-// error, or final unmarshal mismatch), the function writes a
-// metav1.Status-shaped 400 response to w and returns (nil, false). Callers
-// must early-return without touching w.
+// On any wire-level failure (bad content-type, body read error, patch error,
+// or final unmarshal mismatch), the function writes a metav1.Status-shaped 400
+// response to w and returns (nil, false). Callers must early-return without
+// touching w.
 func applyJSONPatch[T any](w http.ResponseWriter, r *http.Request, current *T) (*T, bool) {
-	ct := r.Header.Get("Content-Type")
-	if ct != "" && ct != contentTypeJSONMergePatch && ct != contentTypeJSON {
-		writeBadRequest(w, "k8s api: only application/merge-patch+json is supported in Wave 2 Phase 1, got "+ct)
-
-		return nil, false
-	}
-
 	patch, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeBadRequest(w, "k8s api: read patch body: "+err.Error())
@@ -48,10 +51,8 @@ func applyJSONPatch[T any](w http.ResponseWriter, r *http.Request, current *T) (
 		return nil, false
 	}
 
-	merged, err := mergePatch(curBytes, patch)
-	if err != nil {
-		writeBadRequest(w, "k8s api: apply merge patch: "+err.Error())
-
+	merged, ok := applyPatchBytes(w, r.Header.Get("Content-Type"), curBytes, patch, current)
+	if !ok {
 		return nil, false
 	}
 
@@ -63,6 +64,55 @@ func applyJSONPatch[T any](w http.ResponseWriter, r *http.Request, current *T) (
 	}
 
 	return &patched, true
+}
+
+// applyPatchBytes applies patch to curBytes per the given content type,
+// returning the patched JSON. dataStruct is a zero value of the target type,
+// used for strategic-merge's struct-tag-aware list/map merging.
+func applyPatchBytes[T any](w http.ResponseWriter, ct string, curBytes, patch []byte, dataStruct *T) ([]byte, bool) {
+	switch ct {
+	case "", contentTypeJSON, contentTypeJSONMergePatch, contentTypeApplyPatch:
+		merged, err := mergePatch(curBytes, patch)
+		if err != nil {
+			writeBadRequest(w, "k8s api: apply merge patch: "+err.Error())
+
+			return nil, false
+		}
+
+		return merged, true
+
+	case contentTypeStrategicMerge:
+		merged, err := strategicpatch.StrategicMergePatch(curBytes, patch, dataStruct)
+		if err != nil {
+			writeBadRequest(w, "k8s api: apply strategic-merge patch: "+err.Error())
+
+			return nil, false
+		}
+
+		return merged, true
+
+	case contentTypeJSONPatch:
+		p, err := jsonpatch.DecodePatch(patch)
+		if err != nil {
+			writeBadRequest(w, "k8s api: decode json patch: "+err.Error())
+
+			return nil, false
+		}
+
+		merged, err := p.Apply(curBytes)
+		if err != nil {
+			writeBadRequest(w, "k8s api: apply json patch: "+err.Error())
+
+			return nil, false
+		}
+
+		return merged, true
+
+	default:
+		writeBadRequest(w, "k8s api: unsupported patch content-type: "+ct)
+
+		return nil, false
+	}
 }
 
 // mergePatch implements RFC 7396 JSON Merge Patch. We avoid pulling in

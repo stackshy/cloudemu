@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/k8spki"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 )
 
@@ -189,8 +190,11 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 		ClusterIpv4Cidr:   c.ClusterIPv4CIDR,
 		Endpoint:          endpoint,
 		MasterAuth: &gkeMasterAuth{
-			Username:             c.MasterUsername,
-			ClusterCaCertificate: gke.StubCACert,
+			Username: c.MasterUsername,
+			// Advertise the real shared CA the data plane is served with, so
+			// gcloud/client-go can validate the endpoint (the previous dummy
+			// blob failed to parse and broke the TLS handshake).
+			ClusterCaCertificate: k8spki.CertificatePEM(),
 		},
 		Status:           c.Status,
 		CurrentMasterVer: gke.StubMasterVer,
