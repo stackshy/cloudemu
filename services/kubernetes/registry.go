@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -139,11 +140,16 @@ func (s *ClusterState) serveRegistry(w http.ResponseWriter, r *http.Request, rou
 
 func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *registryStore, namespace string) {
 	if r.URL.Query().Get("watch") == watchQueryValue {
+		sel, fields := parseListSelectors(r)
+		keep := func(u unstructured.Unstructured) bool {
+			return sel.Matches(labels.Set(u.GetLabels())) && matchesFields(&u, fields)
+		}
+
 		s.mu.RLock()
 		sub := st.watch.subscribe(namespace)
 		items := st.snapshotLocked(namespace, r)
 		s.mu.RUnlock()
-		streamWatch(r.Context(), w, sub, items)
+		streamWatch(r.Context(), w, sub, items, keep)
 
 		return
 	}
@@ -289,6 +295,7 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 	} else {
 		in.SetGeneration(cur.GetGeneration())
 	}
+
 	st.stampRVLocked(in)
 
 	st.items[objKey(namespace, name)] = in
@@ -320,6 +327,7 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 	if specChanged(cur, patched) {
 		patched.SetGeneration(cur.GetGeneration() + 1)
 	}
+
 	st.stampRVLocked(patched)
 
 	st.items[objKey(namespace, name)] = patched
@@ -389,6 +397,7 @@ func (s *ClusterState) applyUnstructuredPatch(
 	// apply) is applied as an RFC 7396 merge — unstructured has no struct tags
 	// for real strategic merging, so strategic degrades to merge (documented).
 	var merged []byte
+
 	switch ct := r.Header.Get("Content-Type"); ct {
 	case contentTypeJSONPatch:
 		merged, ok := applyRFC6902(w, curBytes, body)
@@ -458,7 +467,7 @@ func specChanged(a, b *unstructured.Unstructured) bool {
 	ab, _ := json.Marshal(as)
 	bb, _ := json.Marshal(bs)
 
-	return string(ab) != string(bb)
+	return !bytes.Equal(ab, bb)
 }
 
 // parseFieldSelector parses a comma-separated key=value field selector. Only
@@ -481,18 +490,26 @@ func parseFieldSelector(sel string) map[string]string {
 	return out
 }
 
+// Field selector keys the store can answer. Others fail closed (match nothing).
+const (
+	fieldMetadataName      = "metadata.name"
+	fieldMetadataNamespace = "metadata.namespace"
+	fieldStatusPhase       = "status.phase"
+	fieldSpecNodeName      = "spec.nodeName"
+)
+
 func matchesFields(obj *unstructured.Unstructured, fields map[string]string) bool {
 	for k, v := range fields {
 		switch k {
-		case "metadata.name":
+		case fieldMetadataName:
 			if obj.GetName() != v {
 				return false
 			}
-		case "metadata.namespace":
+		case fieldMetadataNamespace:
 			if obj.GetNamespace() != v {
 				return false
 			}
-		case "status.phase":
+		case fieldStatusPhase:
 			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
 			if phase != v {
 				return false

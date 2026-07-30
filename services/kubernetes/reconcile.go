@@ -54,9 +54,11 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 
 	pod.Status.Phase = corev1.PodRunning
 	pod.Status.HostIP = nodeHostIP
+
 	if pod.Spec.NodeName == "" {
 		pod.Spec.NodeName = nodeName
 	}
+
 	if pod.Status.StartTime == nil {
 		pod.Status.StartTime = &now
 	}
@@ -80,6 +82,7 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 			State:       corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: now}},
 		})
 	}
+
 	pod.Status.ContainerStatuses = statuses
 }
 
@@ -97,6 +100,7 @@ func (s *ClusterState) buildControllerPod(
 	for k, v := range tmpl.Labels {
 		labels[k] = v
 	}
+
 	labels[podTemplateHashLabel] = podTemplateHash(tmpl)
 
 	pod := &corev1.Pod{
@@ -176,6 +180,7 @@ func (s *ClusterState) syncScaledPods(
 		last := owned[len(owned)-1]
 		delete(s.pods, podKey(namespace, last.Name))
 		s.wPods.publish(EventDeleted, namespace, *last.DeepCopy())
+
 		owned = owned[:len(owned)-1]
 	}
 
@@ -245,6 +250,7 @@ func (s *ClusterState) reconcileServiceEndpointsLocked(svc *corev1.Service) {
 		if pod.Namespace != svc.Namespace || pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {
 			continue
 		}
+
 		if !labelsMatch(svc.Spec.Selector, pod.Labels) {
 			continue
 		}
@@ -268,6 +274,7 @@ func (s *ClusterState) reconcileServiceEndpointsLocked(svc *corev1.Service) {
 
 	ep := s.endpoints[key]
 	existed := ep != nil
+
 	if !existed {
 		ep = newEndpointsObject(svc.Namespace, svc.Name)
 	}
@@ -381,6 +388,7 @@ func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
 	set("currentNumberScheduled")
 	set("numberReady")
 	set("numberAvailable")
+
 	_ = unstructured.SetNestedField(obj.Object, obj.GetGeneration(), "status", "observedGeneration")
 
 	s.resyncEndpointsForNamespaceLocked(obj.GetNamespace())
@@ -480,6 +488,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 
 		for i := range replicas {
 			name := fmt.Sprintf("%s-%s-%d", tmplName, sts.GetName(), i)
+
 			key := objKey(sts.GetNamespace(), name)
 			if _, exists := store.items[key]; exists {
 				continue
@@ -548,6 +557,7 @@ func setWorkloadStatus(obj *unstructured.Unstructured, ready int) {
 	for _, f := range []string{"replicas", "readyReplicas", "availableReplicas", "currentReplicas", "updatedReplicas"} {
 		_ = unstructured.SetNestedField(obj.Object, r, "status", f)
 	}
+
 	_ = unstructured.SetNestedField(obj.Object, obj.GetGeneration(), "status", "observedGeneration")
 }
 

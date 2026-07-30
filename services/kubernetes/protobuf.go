@@ -57,6 +57,7 @@ func typedTarget(v any) runtime.Object {
 	if _, ok := v.(*unstructured.Unstructured); ok {
 		return nil
 	}
+
 	if o, ok := v.(runtime.Object); ok {
 		return o
 	}

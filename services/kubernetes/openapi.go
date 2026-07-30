@@ -111,6 +111,7 @@ func openAPIV3Root() map[string]any {
 	paths := map[string]any{
 		"api/v1": groupV3Ref("api/v1"),
 	}
+
 	for _, gv := range discoveryGroups() {
 		p := "apis/" + gv.group + "/" + gv.version
 		paths[p] = groupV3Ref(p)
@@ -154,6 +155,7 @@ func openAPIV3Doc(gvPath string) map[string]any {
 // ("<group>","<version>").
 func parseGVPath(p string) (group, version string) {
 	parts := strings.Split(p, "/")
+
 	switch {
 	case len(parts) == 2 && parts[0] == "api":
 		return "", parts[1]
@@ -169,6 +171,7 @@ func parseGVPath(p string) (group, version string) {
 // can't drift.
 func kindsForGroupVersion(group, version string) []string {
 	var res []apiResource
+
 	switch {
 	case group == "" && version == "v1":
 		res = coreResources()
@@ -181,14 +184,18 @@ func kindsForGroupVersion(group, version string) []string {
 	}
 
 	seen := map[string]bool{}
+
 	var kinds []string
+
 	for _, r := range res {
 		// Skip subresources (name contains '/', e.g. deployments/scale) — they
 		// share their parent's Kind and aren't separately validated.
 		if strings.Contains(r.Name, "/") || seen[r.Kind] {
 			continue
 		}
+
 		seen[r.Kind] = true
+
 		kinds = append(kinds, r.Kind)
 	}
 

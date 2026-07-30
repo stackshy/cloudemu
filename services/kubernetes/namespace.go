@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -62,6 +63,11 @@ func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request
 }
 
 func (s *ClusterState) watchNamespaces(w http.ResponseWriter, r *http.Request) {
+	sel, fields := parseListSelectors(r)
+	keep := func(n corev1.Namespace) bool {
+		return sel.Matches(labels.Set(n.Labels)) && metaFieldsMatch(n.Name, n.Namespace, fields)
+	}
+
 	s.mu.RLock()
 
 	// Subscribe under RLock so any subsequent publisher sees us; the snapshot
@@ -76,7 +82,7 @@ func (s *ClusterState) watchNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.RUnlock()
 
-	streamWatch(r.Context(), w, sub, items)
+	streamWatch(r.Context(), w, sub, items, keep)
 }
 
 func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {

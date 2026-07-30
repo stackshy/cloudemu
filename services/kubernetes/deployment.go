@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // apiGroupApps is the API group Deployments (and other workload controllers)
@@ -74,11 +75,16 @@ func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.
 }
 
 func (s *ClusterState) watchDeployments(w http.ResponseWriter, r *http.Request, namespace string) {
+	sel, fields := parseListSelectors(r)
+	keep := func(d appsv1.Deployment) bool {
+		return sel.Matches(labels.Set(d.Labels)) && metaFieldsMatch(d.Name, d.Namespace, fields)
+	}
+
 	s.mu.RLock()
 	sub := s.wDeployments.subscribe(namespace)
 	items := s.collectDeploymentsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	streamWatch(r.Context(), w, sub, items, keep)
 }
 
 func (s *ClusterState) serveDeploymentItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

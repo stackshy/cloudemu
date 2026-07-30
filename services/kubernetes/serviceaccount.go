@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -76,11 +77,16 @@ func (s *ClusterState) serveServiceAccountCollection(w http.ResponseWriter, r *h
 }
 
 func (s *ClusterState) watchServiceAccounts(w http.ResponseWriter, r *http.Request, namespace string) {
+	sel, fields := parseListSelectors(r)
+	keep := func(sa corev1.ServiceAccount) bool {
+		return sel.Matches(labels.Set(sa.Labels)) && metaFieldsMatch(sa.Name, sa.Namespace, fields)
+	}
+
 	s.mu.RLock()
 	sub := s.wServiceAccounts.subscribe(namespace)
 	items := s.collectServiceAccountsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	streamWatch(r.Context(), w, sub, items, keep)
 }
 
 func (s *ClusterState) serveServiceAccountItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

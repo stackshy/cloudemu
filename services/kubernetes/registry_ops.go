@@ -36,7 +36,9 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 
 				uid := obj.GetUID()
 				owners[uid] = true
+
 				queue = append(queue, uid)
+
 				delete(st.items, key)
 				st.bumpRVLocked()
 				st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
@@ -49,7 +51,9 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 	for key, pod := range s.pods {
 		if ownedByAny(pod.OwnerReferences, owners) {
 			delete(s.pods, key)
+
 			touched[pod.Namespace] = true
+
 			s.wPods.publish(EventDeleted, pod.Namespace, *pod.DeepCopy())
 		}
 	}
@@ -175,6 +179,7 @@ func (s *ClusterState) registryScale(w http.ResponseWriter, r *http.Request, st 
 		if replicas != prev {
 			cur.SetGeneration(cur.GetGeneration() + 1)
 		}
+
 		st.stampRVLocked(cur)
 
 		if st.def.reconcile != nil {

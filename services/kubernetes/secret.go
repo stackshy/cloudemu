@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // serveSecrets dispatches /api/v1/{namespaces/{ns}/secrets|secrets} requests.
@@ -73,11 +74,16 @@ func (s *ClusterState) serveSecretCollection(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *ClusterState) watchSecrets(w http.ResponseWriter, r *http.Request, namespace string) {
+	sel, fields := parseListSelectors(r)
+	keep := func(sec corev1.Secret) bool {
+		return sel.Matches(labels.Set(sec.Labels)) && metaFieldsMatch(sec.Name, sec.Namespace, fields)
+	}
+
 	s.mu.RLock()
 	sub := s.wSecrets.subscribe(namespace)
 	items := s.collectSecretsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	streamWatch(r.Context(), w, sub, items, keep)
 }
 
 func (s *ClusterState) serveSecretItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

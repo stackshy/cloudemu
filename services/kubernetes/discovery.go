@@ -107,7 +107,9 @@ func discoveryGroups() []groupVersion {
 		if d.group == "" || seen[d.group] {
 			continue
 		}
+
 		seen[d.group] = true
+
 		out = append(out, groupVersion{d.group, d.version})
 	}
 

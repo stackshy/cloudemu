@@ -7,7 +7,42 @@ import (
 	"sync"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
+
+// parseListSelectors extracts the labelSelector and fieldSelector from a list
+// or watch request. A malformed labelSelector degrades to match-everything
+// (matching the typed list path's existing behavior).
+func parseListSelectors(r *http.Request) (labels.Selector, map[string]string) {
+	sel, err := labels.Parse(r.URL.Query().Get("labelSelector"))
+	if err != nil {
+		sel = labels.Everything()
+	}
+
+	return sel, parseFieldSelector(r.URL.Query().Get("fieldSelector"))
+}
+
+// metaFieldsMatch answers the metadata.name / metadata.namespace field
+// selectors an object can satisfy from its ObjectMeta alone. Any other field
+// key matches nothing — the same fail-closed convention as matchesFields.
+func metaFieldsMatch(name, namespace string, fields map[string]string) bool {
+	for k, v := range fields {
+		switch k {
+		case fieldMetadataName:
+			if name != v {
+				return false
+			}
+		case fieldMetadataNamespace:
+			if namespace != v {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+
+	return true
+}
 
 // Watch event types per the Kubernetes API contract. Wire format is
 // {"type":"<EventType>","object":{...}} sent as one JSON object per chunk.
@@ -133,11 +168,17 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 //
 // streamWatch closes sub.done on return so broadcaster.publish can prune
 // the subscriber slice on the next publish.
+// keep, when non-nil, filters both the initial snapshot and streamed events to
+// the objects a client's labelSelector/fieldSelector matches. Without it a
+// selective watch (`kubectl get pods -l app=x -w`, or any informer built with a
+// selector) would receive non-matching objects — polluting reflector caches and
+// firing spurious reconciles, which the reconcile engine amplifies.
 func streamWatch[T any](
 	ctx context.Context,
 	w http.ResponseWriter,
 	sub *subscriber,
 	initial []T,
+	keep func(T) bool,
 ) {
 	defer close(sub.done)
 
@@ -156,6 +197,10 @@ func streamWatch[T any](
 	enc := json.NewEncoder(w)
 
 	for _, item := range initial {
+		if keep != nil && !keep(item) {
+			continue
+		}
+
 		if err := enc.Encode(watchEvent{Type: EventAdded, Object: item}); err != nil {
 			return
 		}
@@ -170,6 +215,13 @@ func streamWatch[T any](
 		case ev, ok := <-sub.ch:
 			if !ok {
 				return
+			}
+
+			// Streamed objects are published as the same concrete type as
+			// initial; apply the same selector filter. A type mismatch (never
+			// expected) passes through rather than silently dropping.
+			if obj, ok := ev.Object.(T); ok && keep != nil && !keep(obj) {
+				continue
 			}
 
 			if err := enc.Encode(ev); err != nil {

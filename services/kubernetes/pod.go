@@ -15,7 +15,7 @@ import (
 // Per-resource files share the dispatch shape on purpose; each resource keeps
 // its quirks (Service ClusterIP, Secret StringData merge) close to its type.
 //
-//nolint:dupl // see comment above.
+
 func (s *ClusterState) servePods(w http.ResponseWriter, r *http.Request, route *Route) {
 	if route.APIGroup != "" || route.APIVersion != apiVersionV1 {
 		writeNotFound(w, "k8s api: pods are only served at /api/v1")
@@ -74,11 +74,16 @@ func (s *ClusterState) servePodCollection(w http.ResponseWriter, r *http.Request
 }
 
 func (s *ClusterState) watchPods(w http.ResponseWriter, r *http.Request, namespace string) {
+	sel, fields := parseListSelectors(r)
+	keep := func(p corev1.Pod) bool {
+		return sel.Matches(labels.Set(p.Labels)) && podMatchesFields(&p, fields)
+	}
+
 	s.mu.RLock()
 	sub := s.wPods.subscribe(namespace)
 	items := s.collectPodsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	streamWatch(r.Context(), w, sub, items, keep)
 }
 
 func (s *ClusterState) servePodItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -162,24 +167,15 @@ func (s *ClusterState) listPodsAllNamespaces(w http.ResponseWriter, r *http.Requ
 // status.phase fieldSelectors to a Pod list (kubectl get pods -l / --field-
 // selector). An empty/absent selector returns everything.
 func filterPods(pods []corev1.Pod, r *http.Request) []corev1.Pod {
-	sel, err := labels.Parse(r.URL.Query().Get("labelSelector"))
-	if err != nil {
-		sel = labels.Everything()
-	}
-
-	fields := parseFieldSelector(r.URL.Query().Get("fieldSelector"))
+	sel, fields := parseListSelectors(r)
 
 	out := make([]corev1.Pod, 0, len(pods))
 
-	for _, p := range pods {
-		if !sel.Matches(labels.Set(p.Labels)) {
-			continue
+	for i := range pods {
+		p := &pods[i]
+		if sel.Matches(labels.Set(p.Labels)) && podMatchesFields(p, fields) {
+			out = append(out, *p)
 		}
-		if !podMatchesFields(&p, fields) {
-			continue
-		}
-
-		out = append(out, p)
 	}
 
 	return out
@@ -188,19 +184,19 @@ func filterPods(pods []corev1.Pod, r *http.Request) []corev1.Pod {
 func podMatchesFields(p *corev1.Pod, fields map[string]string) bool {
 	for k, v := range fields {
 		switch k {
-		case "metadata.name":
+		case fieldMetadataName:
 			if p.Name != v {
 				return false
 			}
-		case "metadata.namespace":
+		case fieldMetadataNamespace:
 			if p.Namespace != v {
 				return false
 			}
-		case "status.phase":
+		case fieldStatusPhase:
 			if string(p.Status.Phase) != v {
 				return false
 			}
-		case "spec.nodeName":
+		case fieldSpecNodeName:
 			// Every reconciler-materialized Pod is scheduled to the single
 			// synthetic node, so this is a common and answerable selector.
 			if p.Spec.NodeName != v {

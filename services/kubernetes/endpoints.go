@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -136,11 +137,16 @@ func (s *ClusterState) getEndpoints(w http.ResponseWriter, namespace, name strin
 }
 
 func (s *ClusterState) watchEndpoints(w http.ResponseWriter, r *http.Request, namespace string) {
+	sel, fields := parseListSelectors(r)
+	keep := func(ep corev1.Endpoints) bool {
+		return sel.Matches(labels.Set(ep.Labels)) && metaFieldsMatch(ep.Name, ep.Namespace, fields)
+	}
+
 	s.mu.RLock()
 	sub := s.wEndpoints.subscribe(namespace)
 	items := s.collectEndpointsLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	streamWatch(r.Context(), w, sub, items, keep)
 }
 
 func endpointsKey(namespace, name string) string {

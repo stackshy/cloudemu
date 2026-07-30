@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // clusterIPNone is the sentinel value a client sets on a headless Service —
@@ -79,11 +80,16 @@ func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Req
 }
 
 func (s *ClusterState) watchServices(w http.ResponseWriter, r *http.Request, namespace string) {
+	sel, fields := parseListSelectors(r)
+	keep := func(svc corev1.Service) bool {
+		return sel.Matches(labels.Set(svc.Labels)) && metaFieldsMatch(svc.Name, svc.Namespace, fields)
+	}
+
 	s.mu.RLock()
 	sub := s.wServices.subscribe(namespace)
 	items := s.collectServicesLocked(namespace)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	streamWatch(r.Context(), w, sub, items, keep)
 }
 
 func (s *ClusterState) serveServiceItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
