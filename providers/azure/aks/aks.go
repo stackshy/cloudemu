@@ -708,7 +708,7 @@ func (m *Mock) ListMaintenanceConfigs(_ context.Context, rg, cluster string) ([]
 
 // Kubeconfig returns a kubeconfig blob for the named managed cluster.
 //
-// When a shared kubernetes.APIServer is wired (Phase 3 onward) and the
+// When a shared kubernetes.APIServer is wired (the normal path) and the
 // cluster has a registered UID, the kubeconfig points at <base>/k8s/<uid> —
 // the real in-memory K8s API server registered to this cluster on Create.
 // When the APIServer isn't wired (Wave 1 fallback), the kubeconfig points

@@ -148,10 +148,11 @@ func (*ClusterState) readScaleReplicas(w http.ResponseWriter, r *http.Request, d
 		return 0, true
 	}
 
-	merged, err := mergePatch(cur, body)
-	if err != nil {
-		writeBadRequest(w, "k8s api: apply scale patch: "+err.Error())
-
+	// Route through the shared patch dispatcher so the typed /scale honors
+	// merge, strategic-merge, and JSONPatch — the same set the registry /scale
+	// accepts (the two scale paths must not diverge).
+	merged, ok := applyPatchBytes(w, r.Header.Get("Content-Type"), cur, body, &autoscalingv1.Scale{})
+	if !ok {
 		return 0, true
 	}
 

@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -128,6 +129,7 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 
 	stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
+	in.Generation = 1
 
 	dep := in
 	s.deployments[key] = &dep
@@ -222,6 +224,7 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 	in.CreationTimestamp = cur.CreationTimestamp
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
+	in.Generation = generationFor(cur.Generation, &in.Spec, &cur.Spec)
 
 	dep := in
 	s.deployments[key] = &dep
@@ -230,7 +233,6 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, &dep)
 }
 
-//nolint:dupl // per-resource CRUD; a generic helper would obscure store access.
 func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := deploymentKey(namespace, name)
 
@@ -250,10 +252,23 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	patched.Generation = generationFor(cur.Generation, &patched.Spec, &cur.Spec)
+
 	s.deployments[key] = patched
 	s.reconcileDeploymentLocked(patched)
 	s.wDeployments.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
+}
+
+// generationFor advances metadata.generation only when the spec actually
+// changed, matching apiserver semantics (and the registry path) so an
+// observedGeneration comparison is meaningful.
+func generationFor(cur int64, newSpec, oldSpec *appsv1.DeploymentSpec) int64 {
+	if reflect.DeepEqual(newSpec, oldSpec) {
+		return cur
+	}
+
+	return cur + 1
 }
 
 func (s *ClusterState) deleteDeployment(w http.ResponseWriter, namespace, name string) {

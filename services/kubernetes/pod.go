@@ -283,8 +283,6 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 
 // Patch flow is identical across namespaced resources; sharing would force a
 // runtime type-switch and obscure the resource-specific store access.
-//
-//nolint:dupl // see comment above.
 func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := podKey(namespace, name)
 
