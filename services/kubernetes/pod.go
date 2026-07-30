@@ -275,7 +275,15 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	in.TypeMeta = cur.TypeMeta
 
 	pod := in
+	// A spec-only PUT (no status) must not drop the Pod out of Running — keep it
+	// materialized like createPod does.
+	if pod.Status.Phase == "" {
+		s.markPodRunningLocked(&pod)
+	}
+
 	s.pods[key] = &pod
+	// Labels may have changed to (no longer) match a Service selector.
+	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventModified, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusOK, &pod)
 }
@@ -304,6 +312,8 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	s.pods[key] = patched
+	// A patch may have changed labels that match a Service selector.
+	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }

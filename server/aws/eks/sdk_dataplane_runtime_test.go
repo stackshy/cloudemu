@@ -59,6 +59,22 @@ func TestSDKEKSDataPlane_WorkloadRuntime(t *testing.T) {
 	}
 	assertEndpointAddresses(t, cs, ns, "web", 2)
 
+	// EndpointSlices mirror the Endpoints so EndpointSlice-mode consumers
+	// (kube-proxy, Gateway API) see the same backends.
+	slices, err := cs.DiscoveryV1().EndpointSlices(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "kubernetes.io/service-name=web",
+	})
+	if err != nil {
+		t.Fatalf("list endpointslices: %v", err)
+	}
+	gotEPS := 0
+	for _, sl := range slices.Items {
+		gotEPS += len(sl.Endpoints)
+	}
+	if gotEPS != 2 {
+		t.Fatalf("endpointslice endpoints for web = %d, want 2", gotEPS)
+	}
+
 	// --- Scale via the /scale subresource ------------------------------------
 	scale, err := cs.AppsV1().Deployments(ns).GetScale(ctx, "web", metav1.GetOptions{})
 	if err != nil {

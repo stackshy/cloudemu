@@ -121,6 +121,15 @@ func newClusterState() *ClusterState {
 		s.serviceAccounts[serviceAccountKey(name, "default")] = sa
 	}
 
+	// Bootstrap the single synthetic Node every reconciler-materialized Pod is
+	// scheduled onto (spec.nodeName=cloudemu-node-0). Without it `kubectl get
+	// nodes` is empty on a fresh cluster and Pods/DaemonSets reference a Node
+	// object that doesn't exist.
+	if store := s.reg.stores[regKey("", "v1", "nodes")]; store != nil {
+		node := newNodeObject()
+		store.items[objKey("", node.GetName())] = node
+	}
+
 	return s
 }
 

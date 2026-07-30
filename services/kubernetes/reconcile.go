@@ -244,6 +244,27 @@ func (s *ClusterState) reconcileServiceEndpointsLocked(svc *corev1.Service) {
 		return
 	}
 
+	addrs := s.matchingEndpointAddressesLocked(svc)
+
+	var subsets []corev1.EndpointSubset
+	if len(addrs) > 0 {
+		subsets = []corev1.EndpointSubset{{Addresses: addrs, Ports: endpointPorts(svc)}}
+	}
+
+	// Only touch the stores when the address set actually changed — resync runs
+	// for every Service on any Pod change, so most calls are no-ops and must not
+	// emit spurious watch events / bump ResourceVersions. The EndpointSlice
+	// mirrors the same addresses, so it only needs updating when Endpoints did.
+	if !s.writeEndpointsLocked(svc, subsets) {
+		return
+	}
+
+	s.syncEndpointSliceLocked(svc, addrs)
+}
+
+// matchingEndpointAddressesLocked returns the ready Pod addresses a Service
+// selector matches, sorted by IP for a stable (change-detectable) result.
+func (s *ClusterState) matchingEndpointAddressesLocked(svc *corev1.Service) []corev1.EndpointAddress {
 	var addrs []corev1.EndpointAddress
 
 	for _, pod := range s.pods {
@@ -255,21 +276,21 @@ func (s *ClusterState) reconcileServiceEndpointsLocked(svc *corev1.Service) {
 			continue
 		}
 
-		p := pod
 		addrs = append(addrs, corev1.EndpointAddress{
-			IP:        p.Status.PodIP,
+			IP:        pod.Status.PodIP,
 			NodeName:  strPtr(nodeName),
-			TargetRef: &corev1.ObjectReference{Kind: "Pod", Namespace: p.Namespace, Name: p.Name, UID: p.UID},
+			TargetRef: &corev1.ObjectReference{Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name, UID: pod.UID},
 		})
 	}
 
 	sort.Slice(addrs, func(i, j int) bool { return addrs[i].IP < addrs[j].IP })
 
-	var subsets []corev1.EndpointSubset
-	if len(addrs) > 0 {
-		subsets = []corev1.EndpointSubset{{Addresses: addrs, Ports: endpointPorts(svc)}}
-	}
+	return addrs
+}
 
+// writeEndpointsLocked stores the Service's Endpoints and reports whether the
+// subset set changed (so callers skip spurious watch events on no-op resyncs).
+func (s *ClusterState) writeEndpointsLocked(svc *corev1.Service, subsets []corev1.EndpointSubset) bool {
 	key := endpointsKey(svc.Namespace, svc.Name)
 
 	ep := s.endpoints[key]
@@ -279,19 +300,71 @@ func (s *ClusterState) reconcileServiceEndpointsLocked(svc *corev1.Service) {
 		ep = newEndpointsObject(svc.Namespace, svc.Name)
 	}
 
-	// resyncEndpointsForNamespaceLocked reconciles every Service in a namespace
-	// on any Pod change, so most calls are no-ops. Only bump ResourceVersion and
-	// publish a MODIFIED event when the address set actually changed — otherwise
-	// an informer on Endpoints would see a spurious event (with a climbing RV)
-	// for every Service on every unrelated Pod churn in the namespace.
 	if existed && reflect.DeepEqual(ep.Subsets, subsets) {
-		return
+		return false
 	}
 
 	ep.Subsets = subsets
 	ep.ResourceVersion = bumpResourceVersion(ep.ResourceVersion)
 	s.endpoints[key] = ep
 	s.wEndpoints.publish(EventModified, svc.Namespace, *ep.DeepCopy())
+
+	return true
+}
+
+// serviceNameLabel is the label EndpointSlices carry so kube-proxy / Gateway
+// API / controller-runtime can find the slices backing a Service.
+const serviceNameLabel = "kubernetes.io/service-name"
+
+// syncEndpointSliceLocked mirrors a Service's endpoints into a discovery.k8s.io
+// EndpointSlice, so EndpointSlice-mode consumers (kube-proxy, Gateway API) see
+// the same backends the typed Endpoints object carries.
+func (s *ClusterState) syncEndpointSliceLocked(svc *corev1.Service, addrs []corev1.EndpointAddress) {
+	store := s.reg.stores[regKey(apiGroupDiscovery, "v1", "endpointslices")]
+	if store == nil {
+		return
+	}
+
+	endpoints := make([]any, 0, len(addrs))
+	for _, a := range addrs {
+		endpoints = append(endpoints, map[string]any{
+			"addresses":  []any{a.IP},
+			"conditions": map[string]any{"ready": true},
+			"nodeName":   nodeName,
+			"targetRef": map[string]any{
+				"kind": "Pod", "namespace": a.TargetRef.Namespace, "name": a.TargetRef.Name, "uid": string(a.TargetRef.UID),
+			},
+		})
+	}
+
+	ports := make([]any, 0, len(svc.Spec.Ports))
+	for _, p := range endpointPorts(svc) {
+		ports = append(ports, map[string]any{"name": p.Name, "port": int64(p.Port), "protocol": string(p.Protocol)})
+	}
+
+	key := objKey(svc.Namespace, svc.Name)
+
+	slice := store.items[key]
+	if slice == nil {
+		slice = &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": apiGroupDiscovery + "/v1",
+			"kind":       "EndpointSlice",
+			"metadata": map[string]any{
+				"name":              svc.Name,
+				"namespace":         svc.Namespace,
+				"labels":            map[string]any{serviceNameLabel: svc.Name},
+				"creationTimestamp": nil,
+			},
+		}}
+		slice.SetUID(types.UID(newUID()))
+	}
+
+	slice.Object["addressType"] = "IPv4"
+	slice.Object["endpoints"] = endpoints
+	slice.Object["ports"] = ports
+	store.stampRVLocked(slice)
+	store.items[key] = slice
+	store.watch.publish(EventModified, svc.Namespace, *slice.DeepCopy())
 }
 
 func endpointPorts(svc *corev1.Service) []corev1.EndpointPort {
@@ -331,17 +404,21 @@ func labelsMatch(selector, labels map[string]string) bool {
 // ReplicaSet object is not yet materialized; Pods are owned by the Deployment
 // directly — a documented simplification.) Callers hold s.mu.
 func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
-	desired := int32(1)
+	desired := 1
 	if dep.Spec.Replicas != nil {
-		desired = *dep.Spec.Replicas
+		desired = int(*dep.Spec.Replicas)
 	}
+
+	desired = clampPodCount(desired)
 
 	owner := metav1.OwnerReference{
 		APIVersion: "apps/v1", Kind: "Deployment", Name: dep.Name, UID: dep.UID,
 		Controller: boolPtr(true), BlockOwnerDeletion: boolPtr(true),
 	}
 
-	ready := int32(s.syncScaledPods(dep.Namespace, dep.Name, owner, dep.Spec.Template, int(desired))) //nolint:gosec
+	// syncScaledPods returns a count already clamped to maxReconciledPods, so the
+	// int32 conversion cannot overflow.
+	ready := int32(s.syncScaledPods(dep.Namespace, dep.Name, owner, dep.Spec.Template, desired)) //nolint:gosec // bounded by maxReconciledPods
 
 	dep.Status.Replicas = ready
 	dep.Status.ReadyReplicas = ready
@@ -424,16 +501,19 @@ func reconcileIngress(_ *ClusterState, obj *unstructured.Unstructured) {
 // reconcileJob runs a Job to completion: it creates `completions` Pods (default
 // 1) that go straight to Succeeded, and marks the Job Complete.
 func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
-	completions := int64(1)
+	completions := 1
 	if c, found, _ := unstructured.NestedInt64(obj.Object, "spec", "completions"); found && c > 0 {
-		completions = c
+		completions = clampPodCount(int(c))
 	}
 
 	ns := obj.GetNamespace()
 	owner := ownerRefOf(obj)
 	tmpl := podTemplateFromUnstructured(obj)
 
-	for len(s.podsOwnedByLocked(ns, owner.UID)) < int(completions) {
+	// Count owned Pods once, then top up — re-scanning s.pods each iteration
+	// would make this O(n²).
+	have := len(s.podsOwnedByLocked(ns, owner.UID))
+	for ; have < completions; have++ {
 		pod := s.buildControllerPod(ns, obj.GetName()+"-"+shortID(), tmpl, owner)
 		s.markPodSucceededLocked(pod)
 		s.pods[podKey(ns, pod.Name)] = pod
@@ -530,13 +610,61 @@ func ownerRefOf(obj *unstructured.Unstructured) metav1.OwnerReference {
 	}
 }
 
+// newNodeObject builds the single synthetic Node the emulator schedules every
+// Pod onto. It is marked Ready with an InternalIP so tooling that inspects node
+// health or addresses (kubectl get nodes, scheduler-style field selectors) sees
+// a consistent, healthy node.
+func newNodeObject() *unstructured.Unstructured {
+	node := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Node",
+		"metadata": map[string]any{
+			"name":              nodeName,
+			"labels":            map[string]any{"kubernetes.io/hostname": nodeName},
+			"creationTimestamp": nil,
+		},
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{"type": "Ready", "status": "True", "reason": "KubeletReady"},
+			},
+			"addresses": []any{
+				map[string]any{"type": "InternalIP", "address": nodeHostIP},
+				map[string]any{"type": "Hostname", "address": nodeName},
+			},
+		},
+	}}
+	node.SetUID(types.UID(newUID()))
+	node.SetResourceVersion("1")
+
+	return node
+}
+
+// maxReconciledPods caps how many Pods a single controller materializes. The
+// reconciler runs synchronously under the cluster lock, so an unbounded
+// replicas/completions (a copied prod manifest, a typo, a fuzz input) would
+// otherwise allocate and hang the entire cluster API — a real apiserver just
+// stores the integer and lets asynchronous controllers catch up. Clamping keeps
+// the emulator responsive; the object's own spec is preserved unchanged.
+const maxReconciledPods = 500
+
+func clampPodCount(n int) int {
+	switch {
+	case n < 0:
+		return 0
+	case n > maxReconciledPods:
+		return maxReconciledPods
+	default:
+		return n
+	}
+}
+
 func replicasOf(obj *unstructured.Unstructured) int {
 	n, found, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
 	if !found {
 		return 1
 	}
 
-	return int(n)
+	return clampPodCount(int(n))
 }
 
 func podTemplateFromUnstructured(obj *unstructured.Unstructured) corev1.PodTemplateSpec {

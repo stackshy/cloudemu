@@ -178,11 +178,15 @@ func TestSDKEKSDataPlane_SupportingKinds(t *testing.T) {
 	})
 
 	t.Run("Node round-trips (cluster-scoped)", func(t *testing.T) {
+		// A fresh cluster bootstraps the synthetic node every Pod is scheduled
+		// onto, so `kubectl get nodes` is never empty.
 		nodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		if err != nil {
 			t.Fatalf("list nodes: %v", err)
 		}
-		_ = nodes // an emulated cluster starts with no registered Node objects
+		if !hasNode(nodes.Items, "cloudemu-node-0") {
+			t.Fatalf("fresh cluster missing synthetic node cloudemu-node-0; got %d nodes", len(nodes.Items))
+		}
 
 		if _, err := cs.CoreV1().Nodes().Create(ctx, &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{Name: "worker-0"},
@@ -199,6 +203,16 @@ func TestSDKEKSDataPlane_SupportingKinds(t *testing.T) {
 	assertGroupDiscoverable(t, cs, "networking.k8s.io/v1", "ingresses")
 	assertGroupDiscoverable(t, cs, "rbac.authorization.k8s.io/v1", "clusterroles")
 	assertGroupDiscoverable(t, cs, "storage.k8s.io/v1", "storageclasses")
+}
+
+func hasNode(nodes []corev1.Node, name string) bool {
+	for i := range nodes {
+		if nodes[i].Name == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 // assertGroupDiscoverable verifies a group-version appears in discovery and
