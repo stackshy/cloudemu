@@ -64,7 +64,12 @@ func (e *Engine) resolveInstance(
 	ctx context.Context,
 	instanceID string,
 ) (*computedriver.Instance, error) {
-	instances, err := e.compute.DescribeInstances(ctx, []string{instanceID}, nil)
+	// Connectivity analysis is an internal/system caller: a managed
+	// (service-owned) instance must still be resolvable even when the account
+	// hides managed resources from the public Describe API. Opt in so hiding
+	// doesn't make a real instance look non-existent.
+	instances, err := e.compute.DescribeInstances(ctx, []string{instanceID}, nil,
+		computedriver.DescribeInstancesOptions{IncludeManagedResources: true})
 	if err != nil {
 		return nil, err
 	}

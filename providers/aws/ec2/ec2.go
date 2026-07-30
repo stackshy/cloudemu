@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +23,11 @@ const (
 	ipSegmentSize  = 256
 	stateAvailable = "available"
 	stateInUse     = "in-use"
+
+	// visibilityHidden and visibilityVisible are the account-level
+	// managed-resource-visibility settings.
+	visibilityHidden  = "hidden"
+	visibilityVisible = "visible"
 )
 
 type lifecycleTransition struct {
@@ -81,6 +87,13 @@ type instanceData struct {
 	SecurityGroups []string
 	Tags           map[string]string
 	LaunchTime     string
+	Operator       *operatorData
+}
+
+// operatorData records service-provider managed-resource ownership.
+type operatorData struct {
+	Managed   bool
+	Principal string
 }
 
 type asgData struct {
@@ -105,6 +118,13 @@ type Mock struct {
 	snapCounter  atomic.Int64
 	amiCounter   atomic.Int64
 	monitoring   mondriver.Monitoring
+	// mu guards managedResourceVisibility, which is scalar shared state that
+	// (unlike the memstores) has no internal locking of its own.
+	mu sync.RWMutex
+	// managedResourceVisibility is "visible" or "hidden". When "hidden",
+	// service-provider-managed instances are omitted from DescribeInstances
+	// unless the request opts in with IncludeManagedResources.
+	managedResourceVisibility string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -180,6 +200,8 @@ func New(opts *config.Options) *Mock {
 		keyPairs:     memstore.New[*driver.KeyPairInfo](),
 		sm:           statemachine.New(compute.VMTransitions()),
 		opts:         opts,
+
+		managedResourceVisibility: visibilityVisible,
 	}
 }
 
@@ -188,7 +210,10 @@ func (m *Mock) nextIP() string {
 	return fmt.Sprintf("10.0.%d.%d", n/ipSegmentSize, n%ipSegmentSize)
 }
 
-func toInstance(d *instanceData) driver.Instance {
+// toInstance converts stored instance data to the driver shape. hidden is the
+// account-level managed-resource-visibility ("hidden") resolved once by the
+// caller, so this never touches m.mu (avoiding nested read locks).
+func toInstance(d *instanceData, hidden bool) driver.Instance {
 	sg := make([]string, len(d.SecurityGroups))
 	copy(sg, d.SecurityGroups)
 
@@ -198,10 +223,19 @@ func toInstance(d *instanceData) driver.Instance {
 		tags[k] = v
 	}
 
+	var operator *driver.OperatorInfo
+	if d.Operator != nil {
+		operator = &driver.OperatorInfo{
+			Managed:         d.Operator.Managed,
+			Principal:       d.Operator.Principal,
+			HiddenByDefault: hidden,
+		}
+	}
+
 	return driver.Instance{
 		ID: d.ID, ImageID: d.ImageID, InstanceType: d.InstanceType, State: d.State,
 		PrivateIP: d.PrivateIP, PublicIP: d.PublicIP, SubnetID: d.SubnetID, VPCID: d.VPCID,
-		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime,
+		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime, Operator: operator,
 	}
 }
 
@@ -219,6 +253,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	}
 
 	results := make([]driver.Instance, 0, count)
+	hidden := m.visibility() == visibilityHidden
 
 	for i := 0; i < count; i++ {
 		id := idgen.GenerateID("i-")
@@ -238,12 +273,23 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		}
+
+		if cfg.Managed {
+			inst.Operator = &operatorData{Managed: true, Principal: cfg.Principal}
+		}
+
 		m.instances.Set(id, inst)
 		m.sm.SetState(id, compute.StatePending)
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
-		results = append(results, toInstance(inst))
-		m.emitInstanceMetrics(ctx, id, inst.LaunchTime)
+		results = append(results, toInstance(inst, hidden))
+
+		// Managed (service-owned) instances are hidden from Describe, so
+		// emitting instance-dimensioned CloudWatch metrics for them would leak
+		// their existence. Suppress metrics for managed instances.
+		if !isManaged(inst) {
+			m.emitInstanceMetrics(ctx, id, inst.LaunchTime)
+		}
 	}
 
 	return results, nil
@@ -272,7 +318,11 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 		_ = m.sm.Transition(id, t.finalState)
 		inst.State = t.finalState
 
-		m.emitLifecycleMetrics(ctx, id, t.metricValues)
+		// Managed instances are hidden from Describe; keep them out of metrics
+		// too so a hidden instance isn't observable via CloudWatch.
+		if !isManaged(inst) {
+			m.emitLifecycleMetrics(ctx, id, t.metricValues)
+		}
 	}
 
 	return nil
@@ -304,30 +354,89 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	return m.transitionInstances(ctx, instanceIDs, terminateTransition)
 }
 
-func (m *Mock) DescribeInstances(_ context.Context, instanceIDs []string, filters []driver.DescribeFilter) ([]driver.Instance, error) {
-	var candidates []*instanceData
+func (m *Mock) DescribeInstances(
+	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, opts ...driver.DescribeInstancesOptions,
+) ([]driver.Instance, error) {
+	var includeManaged bool
+	if len(opts) > 0 {
+		includeManaged = opts[0].IncludeManagedResources
+	}
 
-	if len(instanceIDs) > 0 {
-		for _, id := range instanceIDs {
-			if inst, ok := m.instances.Get(id); ok {
-				candidates = append(candidates, inst)
-			}
-		}
-	} else {
-		for _, inst := range m.instances.All() {
-			candidates = append(candidates, inst)
-		}
+	hidden := m.visibility() == visibilityHidden
+
+	candidates, err := m.describeCandidates(instanceIDs, hidden, includeManaged)
+	if err != nil {
+		return nil, err
 	}
 
 	results := make([]driver.Instance, 0)
 
 	for _, inst := range candidates {
+		if hiddenManaged(inst, hidden, includeManaged) {
+			continue
+		}
+
 		if matchesFilters(inst, filters) {
-			results = append(results, toInstance(inst))
+			results = append(results, toInstance(inst, hidden))
 		}
 	}
 
 	return results, nil
+}
+
+// describeCandidates gathers the instances a describe should consider. For an
+// explicit-ID request naming a hidden managed instance, real EC2 reports the
+// id as non-existent (InvalidInstanceID.NotFound) rather than silently
+// omitting it, so we surface a NotFound error there. The unfiltered list path
+// keeps silently omitting hidden managed instances.
+func (m *Mock) describeCandidates(instanceIDs []string, hidden, includeManaged bool) ([]*instanceData, error) {
+	if len(instanceIDs) == 0 {
+		var candidates []*instanceData
+		for _, inst := range m.instances.All() {
+			candidates = append(candidates, inst)
+		}
+
+		return candidates, nil
+	}
+
+	candidates := make([]*instanceData, 0, len(instanceIDs))
+
+	for _, id := range instanceIDs {
+		inst, ok := m.instances.Get(id)
+		if !ok {
+			continue
+		}
+
+		if hiddenManaged(inst, hidden, includeManaged) {
+			return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
+		}
+
+		candidates = append(candidates, inst)
+	}
+
+	return candidates, nil
+}
+
+// hiddenManaged reports whether a managed instance must be hidden from a
+// describe result. Managed instances are hidden when the account's
+// managed-resource-visibility is "hidden" (hidden) and the caller did not opt
+// in with IncludeManagedResources.
+func hiddenManaged(inst *instanceData, hidden, includeManaged bool) bool {
+	return isManaged(inst) && hidden && !includeManaged
+}
+
+// isManaged reports whether an instance is a service-provider-managed resource.
+func isManaged(inst *instanceData) bool {
+	return inst.Operator != nil && inst.Operator.Managed
+}
+
+// visibility returns the account-level managed-resource-visibility under a
+// read lock.
+func (m *Mock) visibility() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.managedResourceVisibility
 }
 
 func matchesFilters(inst *instanceData, filters []driver.DescribeFilter) bool {
@@ -408,6 +517,45 @@ func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
 	}
 
 	inst.VPCID = vpcID
+
+	return nil
+}
+
+// LaunchManaged provisions a service-managed instance (Operator.Managed=true,
+// the given Principal) and returns its instance id. It lets another service
+// (e.g. ECS registering a container instance) surface a real managed EC2
+// instance, so managed-resource visibility (#300) applies to it. Satisfies the
+// ecs provider's ManagedInstanceLauncher interface.
+func (m *Mock) LaunchManaged(instanceType, principal string, tags map[string]string) (string, error) {
+	instances, err := m.RunInstances(context.Background(), driver.InstanceConfig{
+		InstanceType: instanceType,
+		Managed:      true,
+		Principal:    principal,
+		Tags:         tags,
+	}, 1)
+	if err != nil {
+		return "", err
+	}
+
+	return instances[0].ID, nil
+}
+
+// SetManagedResourceVisibility sets the account's managed-resource-visibility.
+// v must be exactly "visible" or "hidden"; any other value (e.g. a typo like
+// "hiden") is rejected with an InvalidArgument error rather than silently
+// meaning "visible". When "hidden", managed instances are omitted from
+// DescribeInstances unless the request sets IncludeManagedResources.
+func (m *Mock) SetManagedResourceVisibility(v string) error {
+	if v != visibilityVisible && v != visibilityHidden {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"invalid managed-resource-visibility %q: must be %q or %q",
+			v, visibilityVisible, visibilityHidden)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.managedResourceVisibility = v
 
 	return nil
 }

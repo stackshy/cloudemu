@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -60,7 +61,11 @@ const (
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
-	instances, err := e.drivers.Compute.DescribeInstances(ctx, nil, nil)
+	// Resource discovery is an internal/system walk: managed (service-owned)
+	// instances still exist and must be discoverable even when the account
+	// hides them from the public Describe API, so opt in explicitly.
+	instances, err := e.drivers.Compute.DescribeInstances(ctx, nil, nil,
+		computedriver.DescribeInstancesOptions{IncludeManagedResources: true})
 	if err != nil {
 		return nil, fmt.Errorf("walkCompute: %w", err)
 	}

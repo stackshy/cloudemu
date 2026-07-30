@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/server/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/server/aws/ecr"
+	ecssrv "github.com/stackshy/cloudemu/v2/server/aws/ecs"
 	"github.com/stackshy/cloudemu/v2/server/aws/eks"
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
@@ -44,6 +45,7 @@ import (
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
@@ -82,6 +84,9 @@ type Drivers struct {
 	BedrockAgent        bedrockagentdriver.BedrockAgent
 	BedrockAgentRuntime bedrockagentruntimedriver.BedrockAgentRuntime
 	SageMaker           sagemakerdriver.Service
+	// ECS serves the Amazon ECS JSON 1.1 protocol (X-Amz-Target prefix
+	// AmazonEC2ContainerServiceV20141113.) against the ecs driver.
+	ECS ecsdriver.ECS
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
@@ -146,6 +151,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		BedrockAgent:        p.BedrockAgent,
 		BedrockAgentRuntime: p.BedrockAgentRuntime,
 		SageMaker:           p.SageMaker,
+		ECS:                 p.ECS,
 		SecretsManager:      p.SecretsManager,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
@@ -235,6 +241,13 @@ func New(d Drivers) *server.Server {
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, and the tagging API.
 	if d.SecretsManager != nil {
 		srv.Register(secretsmanagersrv.New(d.SecretsManager))
+	}
+
+	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
+	// — disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, SSM,
+	// EventBridge, and the tagging API, so registration order is unconstrained.
+	if d.ECS != nil {
+		srv.Register(ecssrv.New(d.ECS))
 	}
 
 	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —

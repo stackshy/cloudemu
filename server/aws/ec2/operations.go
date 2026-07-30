@@ -57,7 +57,10 @@ func (h *Handler) describeInstances(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(form, "InstanceId")
 	filters := toDriverFilters(awsquery.Filters(form))
 
-	instances, err := h.compute.DescribeInstances(r.Context(), ids, filters)
+	includeManaged, _ := strconv.ParseBool(form.Get("IncludeManagedResources"))
+
+	instances, err := h.compute.DescribeInstances(r.Context(), ids, filters,
+		computedriver.DescribeInstancesOptions{IncludeManagedResources: includeManaged})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -253,6 +256,14 @@ func toInstanceXMLs(instances []computedriver.Instance) []instanceXML {
 
 		for k, v := range inst.Tags {
 			xi.Tags = append(xi.Tags, tagItem{Key: k, Value: v})
+		}
+
+		if inst.Operator != nil {
+			xi.Operator = &operatorXML{
+				Managed:         inst.Operator.Managed,
+				Principal:       inst.Operator.Principal,
+				HiddenByDefault: inst.Operator.HiddenByDefault,
+			}
 		}
 
 		out = append(out, xi)

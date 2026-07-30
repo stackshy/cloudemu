@@ -419,6 +419,8 @@ type computeConfigCompat = struct {
 	SecurityGroups []string
 	KeyName        string
 	UserData       string
+	Managed        bool
+	Principal      string
 }
 
 // computeInstanceConfig reproduces the helper used elsewhere in the package

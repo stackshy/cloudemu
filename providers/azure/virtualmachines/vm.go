@@ -287,7 +287,9 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 }
 
 // DescribeInstances returns instances matching the given IDs and filters.
-func (m *Mock) DescribeInstances(_ context.Context, instanceIDs []string, filters []driver.DescribeFilter) ([]driver.Instance, error) {
+func (m *Mock) DescribeInstances(
+	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
+) ([]driver.Instance, error) {
 	var candidates []*instanceData
 
 	if len(instanceIDs) > 0 {
