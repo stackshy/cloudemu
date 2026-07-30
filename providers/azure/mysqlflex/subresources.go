@@ -27,6 +27,29 @@ var (
 
 const defaultCollation = "utf8mb4_general_ci"
 
+// knownServerParameters is a representative subset of the MySQL Flexible Server
+// parameter catalog. Azure rejects SetConfiguration for a name outside the
+// catalog with 404, so the mock validates against this set rather than
+// accept-and-echo any name.
+//
+//nolint:gochecknoglobals // immutable parameter-name lookup table.
+var knownServerParameters = map[string]bool{
+	"max_connections":                 true,
+	"wait_timeout":                    true,
+	"interactive_timeout":             true,
+	"slow_query_log":                  true,
+	"long_query_time":                 true,
+	"innodb_buffer_pool_size":         true,
+	"character_set_server":            true,
+	"collation_server":                true,
+	"time_zone":                       true,
+	"sql_mode":                        true,
+	"event_scheduler":                 true,
+	"log_bin_trust_function_creators": true,
+	"max_allowed_packet":              true,
+	"innodb_lock_wait_timeout":        true,
+}
+
 func childKey(server, name string) string { return server + "/" + name }
 
 func (m *Mock) childARN(server, subType, name string) string {
@@ -223,6 +246,14 @@ func (m *Mock) SetConfiguration(
 ) (*rdsdriver.Configuration, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "configuration name is required")
+	}
+
+	if !knownServerParameters[cfg.Name] {
+		return nil, cerrors.Newf(cerrors.NotFound, "unknown server parameter %q", cfg.Name)
+	}
+
+	if cfg.Value == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "configuration value is required")
 	}
 
 	m.mu.Lock()

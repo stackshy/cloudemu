@@ -6,6 +6,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -19,6 +20,9 @@ const (
 	miDefaultTier    = "GeneralPurpose"
 	miDefaultVCores  = 4
 	miDefaultStorage = 32
+
+	miStateReady   = "Ready"
+	miStateStopped = "Stopped"
 )
 
 func (m *Mock) miARN(name string) string {
@@ -60,7 +64,7 @@ func (m *Mock) CreateManagedInstance(
 		SubnetID:    cfg.SubnetID,
 		VCores:      orDefaultInt(cfg.VCores, miDefaultVCores),
 		StorageGB:   orDefaultInt(cfg.StorageGB, miDefaultStorage),
-		State:       "Ready",
+		State:       miStateReady,
 		FQDN:        cfg.Name + ".managed.database.windows.net",
 		ARN:         m.miARN(cfg.Name),
 		Tags:        copyTags(cfg.Tags),
@@ -68,9 +72,32 @@ func (m *Mock) CreateManagedInstance(
 
 	m.managedInstances.Set(cfg.Name, mi)
 
+	m.emitManagedInstanceMetrics(cfg.Name)
+
 	out := mi
+	out.Tags = copyTags(mi.Tags)
 
 	return &out, nil
+}
+
+// emitManagedInstanceMetrics pushes a representative datapoint set on the
+// Microsoft.Sql/managedInstances namespace, matching the instance-scoped
+// metrics real Azure Monitor surfaces (siblings emit on create too).
+func (m *Mock) emitManagedInstanceMetrics(name string) {
+	if m.monitoring == nil {
+		return
+	}
+
+	const ns = "Microsoft.Sql/managedInstances"
+
+	now := m.opts.Clock.Now()
+	dims := map[string]string{"resourceId": m.miARN(name)}
+
+	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{
+		{Namespace: ns, MetricName: "avg_cpu_percent", Value: 25, Unit: "Percent", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "storage_space_used_mb", Value: 1024, Unit: "Count", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "virtual_core_count", Value: 4, Unit: "Count", Dimensions: dims, Timestamp: now},
+	})
 }
 
 // UpdateManagedInstance applies the non-zero fields of cfg to an existing
@@ -165,23 +192,20 @@ func (m *Mock) DeleteManagedInstance(_ context.Context, name string) error {
 	return nil
 }
 
-// StartManagedInstance marks a managed instance ready.
+// StartManagedInstance moves a stopped managed instance back to ready.
 func (m *Mock) StartManagedInstance(ctx context.Context, name string) error {
-	return m.setManagedInstanceState(ctx, name, "Ready")
+	return m.transitionManagedInstance(ctx, name, miStateStopped, miStateReady, "start")
 }
 
-// StopManagedInstance marks a managed instance stopped.
+// StopManagedInstance moves a ready managed instance to stopped.
 func (m *Mock) StopManagedInstance(ctx context.Context, name string) error {
-	return m.setManagedInstanceState(ctx, name, "Stopped")
+	return m.transitionManagedInstance(ctx, name, miStateReady, miStateStopped, "stop")
 }
 
-// FailoverManagedInstance triggers a managed-instance failover; the instance
-// stays ready.
-func (m *Mock) FailoverManagedInstance(ctx context.Context, name string) error {
-	return m.setManagedInstanceState(ctx, name, "Ready")
-}
-
-func (m *Mock) setManagedInstanceState(_ context.Context, name, state string) error {
+// FailoverManagedInstance fails a managed instance over to its standby. It must
+// be ready (real ECS/SQL rejects a failover on a stopped instance); it stays
+// ready afterwards and re-emits metrics.
+func (m *Mock) FailoverManagedInstance(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -190,7 +214,38 @@ func (m *Mock) setManagedInstanceState(_ context.Context, name, state string) er
 		return cerrors.Newf(cerrors.NotFound, "managed instance %q not found", name)
 	}
 
-	mi.State = state
+	if mi.State != miStateReady {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"managed instance %q is in state %q; failover requires %q", name, mi.State, miStateReady)
+	}
+
+	m.emitManagedInstanceMetrics(name)
+
+	return nil
+}
+
+// transitionManagedInstance moves a managed instance from one state to another,
+// no-op when already in the target state and a precondition error when it is in
+// neither — matching the sibling flex/Cloud SQL lifecycle guards.
+func (m *Mock) transitionManagedInstance(_ context.Context, name, from, to, verb string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	mi, ok := m.managedInstances.Get(name)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "managed instance %q not found", name)
+	}
+
+	if mi.State == to {
+		return nil
+	}
+
+	if mi.State != from {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"managed instance %q is in state %q; %s requires %q", name, mi.State, verb, from)
+	}
+
+	mi.State = to
 	m.managedInstances.Set(name, mi)
 
 	return nil

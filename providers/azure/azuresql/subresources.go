@@ -1,6 +1,7 @@
 package azuresql
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"strings"
@@ -16,6 +17,12 @@ import (
 func validIPv4(s string) bool {
 	ip := net.ParseIP(s)
 	return ip != nil && ip.To4() != nil
+}
+
+// ipv4LessOrEqual reports whether start <= end by unsigned 32-bit value. Both
+// must already be valid IPv4 (checked by validIPv4).
+func ipv4LessOrEqual(start, end string) bool {
+	return bytes.Compare(net.ParseIP(start).To4(), net.ParseIP(end).To4()) <= 0
 }
 
 // Azure SQL exposes firewall rules, virtual-network rules, elastic pools,
@@ -70,6 +77,10 @@ func (m *Mock) CreateFirewallRule(
 
 	if !validIPv4(cfg.StartIPAddress) || !validIPv4(cfg.EndIPAddress) {
 		return nil, cerrors.New(cerrors.InvalidArgument, "startIpAddress and endIpAddress must be valid IPv4 addresses")
+	}
+
+	if !ipv4LessOrEqual(cfg.StartIPAddress, cfg.EndIPAddress) {
+		return nil, cerrors.New(cerrors.InvalidArgument, "startIpAddress must be less than or equal to endIpAddress")
 	}
 
 	m.mu.Lock()
@@ -487,6 +498,14 @@ func (m *Mock) FailoverFailoverGroup(_ context.Context, server, name string) (*r
 	fg, ok := m.failoverGroups.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "failover group %q not found", name)
+	}
+
+	// A failover only makes sense when there is a partner server to promote to;
+	// otherwise a standalone group would ping-pong between Primary and Secondary
+	// and leave a Secondary with no Primary.
+	if len(fg.PartnerServers) == 0 {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition,
+			"failover group %q has no partner server to fail over to", name)
 	}
 
 	if fg.ReplicationRole == rolePrimary {

@@ -112,7 +112,7 @@ func doneOperation(project, name, opType, _ string) operation {
 func doneOperationWithTarget(project, name, opType, resourceType, target string) operation {
 	op := doneOperation(project, name, opType, "")
 	op.TargetID = target
-	op.TargetLink = "/sql/v1beta4/projects/" + project + "/" + resourceType + "/" + target
+	op.TargetLink = pathPrefix + project + "/" + resourceType + "/" + target
 
 	return op
 }
@@ -130,7 +130,7 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 		ConnectionName:     inst.Endpoint,
 		MasterInstanceName: inst.ReadReplicaSource,
 		ReplicaNames:       inst.ReadReplicaTargets,
-		SelfLink:           "/sql/v1beta4/projects/" + project + "/instances/" + inst.ID,
+		SelfLink:           pathPrefix + project + "/instances/" + inst.ID,
 		IPAddresses: []ipMapping{
 			{IPAddress: "10.0.0.1", Type: "PRIVATE"},
 		},

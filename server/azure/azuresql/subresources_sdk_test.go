@@ -224,6 +224,23 @@ func TestSDKAzureSQLFailoverGroups(t *testing.T) {
 		t.Fatalf("expected Secondary role after failover, got %v", foResp.Properties)
 	}
 
+	// The forced-failover verb (a distinct 4th path segment) routes to the same
+	// action and flips the role back to Primary.
+	forcePoller, err := fg.BeginForceFailoverAllowDataLoss(ctx, "rg-1", "srv1", "fg1", nil)
+	if err != nil {
+		t.Fatalf("BeginForceFailoverAllowDataLoss: %v", err)
+	}
+
+	forceResp, err := forcePoller.PollUntilDone(ctx, nil)
+	if err != nil {
+		t.Fatalf("force failover PollUntilDone: %v", err)
+	}
+
+	if forceResp.Properties == nil || forceResp.Properties.ReplicationRole == nil ||
+		*forceResp.Properties.ReplicationRole != armsql.FailoverGroupReplicationRolePrimary {
+		t.Fatalf("expected Primary role after force failover, got %v", forceResp.Properties)
+	}
+
 	delPoller, err := fg.BeginDelete(ctx, "rg-1", "srv1", "fg1", nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)

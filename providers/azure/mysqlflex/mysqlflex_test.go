@@ -276,7 +276,7 @@ func TestSubResourcesRequireServer(t *testing.T) {
 		t.Error("CreateFirewallRule on missing server: expected error")
 	}
 
-	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "ghost", Name: "k"}); err == nil {
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "ghost", Name: "max_connections", Value: "100"}); err == nil {
 		t.Error("SetConfiguration on missing server: expected error")
 	}
 }
@@ -301,7 +301,7 @@ func TestDatabaseLifecycleAndCascade(t *testing.T) {
 		t.Fatalf("CreateFirewallRule: %v", err)
 	}
 
-	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "k", Value: "v"}); err != nil {
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "max_connections", Value: "100"}); err != nil {
 		t.Fatalf("SetConfiguration: %v", err)
 	}
 
@@ -312,6 +312,29 @@ func TestDatabaseLifecycleAndCascade(t *testing.T) {
 
 	if _, err := m.ListDatabases(ctx, "srv"); err == nil {
 		t.Error("ListDatabases after server delete: expected server NotFound")
+	}
+}
+
+func TestSetConfigurationValidatesParameter(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Unknown parameter names and empty values are both rejected (real Azure
+	// 404s an unknown server parameter).
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "not_a_real_param", Value: "1"}); err == nil {
+		t.Error("SetConfiguration with unknown parameter: expected NotFound")
+	}
+
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "max_connections", Value: ""}); err == nil {
+		t.Error("SetConfiguration with empty value: expected InvalidArgument")
+	}
+
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "max_connections", Value: "200"}); err != nil {
+		t.Errorf("SetConfiguration with known parameter: %v", err)
 	}
 }
 
@@ -337,5 +360,65 @@ func TestFailoverRequiresRunning(t *testing.T) {
 
 	if err := m.FailoverInstance(ctx, "ghost"); err == nil {
 		t.Error("FailoverInstance on missing server: expected NotFound")
+	}
+}
+
+func TestSubResourceCRUDCoverage(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Databases: get + delete.
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv", Name: "app"}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if got, err := m.GetDatabase(ctx, "srv", "app"); err != nil || got.Name != "app" {
+		t.Fatalf("GetDatabase: %+v %v", got, err)
+	}
+
+	if err := m.DeleteDatabase(ctx, "srv", "app"); err != nil {
+		t.Fatalf("DeleteDatabase: %v", err)
+	}
+
+	if err := m.DeleteDatabase(ctx, "srv", "app"); err == nil {
+		t.Error("DeleteDatabase again: expected NotFound")
+	}
+
+	// Firewall rules: get, list, delete.
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r", StartIPAddress: "10.0.0.1", EndIPAddress: "10.0.0.9"}); err != nil {
+		t.Fatalf("CreateFirewallRule: %v", err)
+	}
+
+	if got, err := m.GetFirewallRule(ctx, "srv", "r"); err != nil || got.EndIPAddress != "10.0.0.9" {
+		t.Fatalf("GetFirewallRule: %+v %v", got, err)
+	}
+
+	if rs, err := m.ListFirewallRules(ctx, "srv"); err != nil || len(rs) != 1 {
+		t.Fatalf("ListFirewallRules: %d %v", len(rs), err)
+	}
+
+	if err := m.DeleteFirewallRule(ctx, "srv", "r"); err != nil {
+		t.Fatalf("DeleteFirewallRule: %v", err)
+	}
+
+	if err := m.DeleteFirewallRule(ctx, "srv", "r"); err == nil {
+		t.Error("DeleteFirewallRule again: expected NotFound")
+	}
+
+	// Configurations: set (known param), get, list.
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "max_connections", Value: "100"}); err != nil {
+		t.Fatalf("SetConfiguration: %v", err)
+	}
+
+	if got, err := m.GetConfiguration(ctx, "srv", "max_connections"); err != nil || got.Value != "100" {
+		t.Fatalf("GetConfiguration: %+v %v", got, err)
+	}
+
+	if cs, err := m.ListConfigurations(ctx, "srv"); err != nil || len(cs) != 1 {
+		t.Fatalf("ListConfigurations: %d %v", len(cs), err)
 	}
 }

@@ -103,11 +103,11 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // path components parsed out of the URL.
 //
-//	/sql/v1beta4/projects/{p}/instances
-//	/sql/v1beta4/projects/{p}/instances/{i}
-//	/sql/v1beta4/projects/{p}/instances/{i}/{action}
-//	/sql/v1beta4/projects/{p}/instances/{i}/backupRuns[/{id}]
-//	/sql/v1beta4/projects/{p}/operations/{op}
+//	/v1/projects/{p}/instances
+//	/v1/projects/{p}/instances/{i}
+//	/v1/projects/{p}/instances/{i}/{action}
+//	/v1/projects/{p}/instances/{i}/backupRuns[/{id}]
+//	/v1/projects/{p}/operations/{op}
 type sqlPath struct {
 	project     string
 	resource    string // "instances" or "operations"

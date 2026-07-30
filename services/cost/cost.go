@@ -59,6 +59,7 @@ func defaultRates() map[string]float64 {
 		"relationaldb:CreateInstance":              0.017, // db.t3.micro-equivalent instance-hour
 		"relationaldb:CreateDBInstanceReadReplica": 0.017,
 		"relationaldb:RestoreInstanceFromSnapshot": 0.017,
+		"relationaldb:CreateManagedInstance":       0.50,  // Azure SQL Managed Instance (GP 4-vCore) instance-hour
 		"relationaldb:CreateDBProxy":               0.015, // proxy vCPU-hour proxy
 		"relationaldb:CreateCluster":               0.0,   // Aurora billed per member instance + ACU
 		"relationaldb:CreateSnapshot":              0.0,   // manual snapshot storage

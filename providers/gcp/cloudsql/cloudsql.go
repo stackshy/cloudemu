@@ -36,6 +36,8 @@ const (
 
 var _ rdsdriver.RelationalDB = (*Mock)(nil)
 
+var _ rdsdriver.BackupRestorer = (*Mock)(nil)
+
 // Mock is the in-memory GCP Cloud SQL implementation.
 type Mock struct {
 	mu sync.RWMutex
@@ -294,18 +296,43 @@ func (m *Mock) ModifyInstance(
 	return &out, nil
 }
 
-// DeleteInstance removes an instance.
+// DeleteInstance removes an instance, unlinks it from any replica relationship,
+// and cascades to its children.
 func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.instances.Delete(id) {
+	inst, ok := m.instances.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
 	}
 
+	m.instances.Delete(id)
+	m.unlinkReplicas(&inst)
 	m.deleteChildren(id)
 
 	return nil
+}
+
+// unlinkReplicas keeps the replica graph consistent when inst is removed: a
+// deleted replica is dropped from its master's target list, and a deleted
+// master's replicas have their source pointer cleared — so no surviving
+// instance advertises a link to one that no longer exists. The caller holds the
+// write lock.
+func (m *Mock) unlinkReplicas(inst *rdsdriver.Instance) {
+	if inst.ReadReplicaSource != "" {
+		if master, ok := m.instances.Get(inst.ReadReplicaSource); ok {
+			master.ReadReplicaTargets = removeStr(master.ReadReplicaTargets, inst.ID)
+			m.instances.Set(inst.ReadReplicaSource, master)
+		}
+	}
+
+	for _, replicaID := range inst.ReadReplicaTargets {
+		if replica, ok := m.instances.Get(replicaID); ok {
+			replica.ReadReplicaSource = ""
+			m.instances.Set(replicaID, replica)
+		}
+	}
 }
 
 // deleteChildren removes the databases, users and SSL certs belonging to
@@ -563,6 +590,41 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 	m.emitInstanceMetrics(input.NewInstanceID, cpuMetricRunning, connRunning)
 
 	out := inst
+
+	return &out, nil
+}
+
+// RestoreBackup restores a backup run in place onto an existing instance,
+// matching Cloud SQL's restoreBackup semantics: the target instance must
+// already exist and its engine/version/storage are overwritten from the
+// backup. Unlike RestoreInstanceFromSnapshot it never provisions a new
+// instance.
+func (m *Mock) RestoreBackup(
+	_ context.Context, targetInstanceID, backupRunID string,
+) (*rdsdriver.Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	snap, ok := m.snapshots.Get(backupRunID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "backup run %q not found", backupRunID)
+	}
+
+	inst, ok := m.instances.Get(targetInstanceID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", targetInstanceID)
+	}
+
+	inst.Engine = snap.Engine
+	inst.EngineVersion = snap.EngineVersion
+	inst.AllocatedStorage = snap.AllocatedStorage
+	inst.State = rdsdriver.StateAvailable
+
+	m.instances.Set(targetInstanceID, inst)
+	m.emitInstanceMetrics(targetInstanceID, cpuMetricRunning, connRunning)
+
+	out := inst
+	out.Tags = copyTags(inst.Tags)
 
 	return &out, nil
 }

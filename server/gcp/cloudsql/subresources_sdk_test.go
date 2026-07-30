@@ -88,6 +88,13 @@ func TestSDKCloudSQLUsers(t *testing.T) {
 		t.Fatalf("got %d users, want 1", len(list.Items))
 	}
 
+	// Update the user's password (Cloud SQL users.update).
+	if _, err := svc.Users.Update(project, "pg", &sqladmin.User{
+		Name: "appuser", Host: "%", Password: "newpass",
+	}).Name("appuser").Context(ctx).Do(); err != nil {
+		t.Fatalf("Users.Update: %v", err)
+	}
+
 	if _, err := svc.Users.Delete(project, "pg").Name("appuser").Context(ctx).Do(); err != nil {
 		t.Fatalf("Users.Delete: %v", err)
 	}
@@ -244,5 +251,35 @@ func TestSDKCloudSQLTiersAndFlags(t *testing.T) {
 
 	if !sawMaxConns {
 		t.Error("expected max_connections in the flag catalog")
+	}
+}
+
+func TestSDKCloudSQLErrorPaths(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+
+	// Operations on a nonexistent instance surface errors (handler writeErr).
+	if _, err := svc.Instances.Delete(project, "ghost").Context(ctx).Do(); err == nil {
+		t.Error("Delete missing instance: expected error")
+	}
+
+	if _, err := svc.Instances.Restart(project, "ghost").Context(ctx).Do(); err == nil {
+		t.Error("Restart missing instance: expected error")
+	}
+
+	if _, err := svc.Instances.Get(project, "ghost").Context(ctx).Do(); err == nil {
+		t.Error("Get missing instance: expected error")
+	}
+
+	if _, err := svc.Users.List(project, "ghost").Context(ctx).Do(); err == nil {
+		t.Error("Users.List on missing instance: expected error")
+	}
+
+	if _, err := svc.Databases.List(project, "ghost").Context(ctx).Do(); err == nil {
+		t.Error("Databases.List on missing instance: expected error")
+	}
+
+	if _, err := svc.BackupRuns.Delete(project, "ghost", 12345).Context(ctx).Do(); err == nil {
+		t.Error("BackupRuns.Delete on missing instance: expected error")
 	}
 }

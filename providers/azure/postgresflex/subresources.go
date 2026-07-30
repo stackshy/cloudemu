@@ -29,6 +29,29 @@ const (
 	defaultCollation = "en_US.utf8"
 )
 
+// knownServerParameters is a representative subset of the PostgreSQL Flexible
+// Server parameter catalog. Azure rejects SetConfiguration for a name outside
+// the catalog with 404, so the mock validates against this set rather than
+// accept-and-echo any name.
+//
+//nolint:gochecknoglobals // immutable parameter-name lookup table.
+var knownServerParameters = map[string]bool{
+	"max_connections":                     true,
+	"shared_buffers":                      true,
+	"work_mem":                            true,
+	"maintenance_work_mem":                true,
+	"effective_cache_size":                true,
+	"log_statement":                       true,
+	"log_min_duration_statement":          true,
+	"autovacuum":                          true,
+	"statement_timeout":                   true,
+	"timezone":                            true,
+	"max_wal_size":                        true,
+	"wal_level":                           true,
+	"max_prepared_transactions":           true,
+	"idle_in_transaction_session_timeout": true,
+}
+
 func childKey(server, name string) string { return server + "/" + name }
 
 func (m *Mock) childARN(server, subType, name string) string {
@@ -229,6 +252,14 @@ func (m *Mock) SetConfiguration(
 ) (*rdsdriver.Configuration, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "configuration name is required")
+	}
+
+	if !knownServerParameters[cfg.Name] {
+		return nil, cerrors.Newf(cerrors.NotFound, "unknown server parameter %q", cfg.Name)
+	}
+
+	if cfg.Value == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "configuration value is required")
 	}
 
 	m.mu.Lock()

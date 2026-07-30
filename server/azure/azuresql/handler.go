@@ -42,6 +42,9 @@ const (
 	subMIStart    = "start"
 	subMIStop     = "stop"
 	subMIFailover = "failover"
+
+	actionFailover      = "failover"
+	actionForceFailover = "forceFailoverAllowDataLoss"
 )
 
 // Handler serves Microsoft.Sql ARM requests against a relationaldb driver.

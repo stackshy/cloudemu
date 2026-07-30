@@ -3,6 +3,7 @@ package cloudsql
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -147,13 +148,16 @@ func (h *Handler) restoreInstance(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	// p.name is the *target* instance to restore into.
-	input := rdsdriver.RestoreInstanceInput{
-		NewInstanceID: p.name,
-		SnapshotID:    body.RestoreBackupContext.BackupRunID,
+	// p.name is the *target* instance to restore into. Cloud SQL restores the
+	// backup in place onto the existing instance rather than provisioning a new
+	// one, so prefer the in-place BackupRestorer capability.
+	restorer, ok := h.db.(rdsdriver.BackupRestorer)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.FailedPrecondition, "backend does not support restoreBackup"))
+		return
 	}
 
-	if _, err := h.db.RestoreInstanceFromSnapshot(r.Context(), input); err != nil {
+	if _, err := restorer.RestoreBackup(r.Context(), p.name, body.RestoreBackupContext.BackupRunID); err != nil {
 		writeErr(w, err)
 		return
 	}

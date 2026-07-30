@@ -509,6 +509,16 @@ func (*Handler) writeFailoverGroup(
 func (*Handler) doFailover(
 	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, fg rdsdriver.FailoverGroups,
 ) {
+	// The action verb is the segment after the group name. Only the two real
+	// failover verbs are accepted; an unknown POST verb must 404 rather than be
+	// silently treated as a planned failover.
+	switch rp.SubResourceAction {
+	case actionFailover, actionForceFailover:
+	default:
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported failover-group action: "+rp.SubResourceAction)
+		return
+	}
+
 	out, err := fg.FailoverFailoverGroup(r.Context(), rp.ResourceName, rp.SubResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)

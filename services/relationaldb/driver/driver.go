@@ -761,6 +761,15 @@ type AdvancedRestore interface {
 	RestoreDBClusterToPointInTime(ctx context.Context, input RestoreClusterToPointInTimeInput) (*Cluster, error)
 }
 
+// BackupRestorer is an OPTIONAL capability for restoring a backup in place
+// onto an existing instance, discovered by type assertion. Cloud SQL's
+// restoreBackup overwrites the target instance's data from a backup run rather
+// than provisioning a new instance (unlike RestoreInstanceFromSnapshot), so the
+// target must already exist.
+type BackupRestorer interface {
+	RestoreBackup(ctx context.Context, targetInstanceID, backupRunID string) (*Instance, error)
+}
+
 // ProxyAuth is one authentication config entry on a DB proxy.
 type ProxyAuth struct {
 	AuthScheme             string // "SECRETS"
