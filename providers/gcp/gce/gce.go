@@ -291,7 +291,9 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	return m.transitionInstances(ctx, instanceIDs, terminateTransition)
 }
 
-func (m *Mock) DescribeInstances(_ context.Context, instanceIDs []string, filters []driver.DescribeFilter) ([]driver.Instance, error) {
+func (m *Mock) DescribeInstances(
+	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
+) ([]driver.Instance, error) {
 	var candidates []*instanceData
 
 	if len(instanceIDs) > 0 {

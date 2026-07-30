@@ -29,6 +29,7 @@ This document lists every service and operation available in CloudEmu across all
 | 21 | Databricks | — | `databricks` | — |
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
 | 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
+| 24 | Container Orchestration | `ecs` | — | — |
 
 ---
 
@@ -144,8 +145,36 @@ This document lists every service and operation available in CloudEmu across all
 | `StopInstances` | `(ctx, instanceIDs) error` |
 | `RebootInstances` | `(ctx, instanceIDs) error` |
 | `TerminateInstances` | `(ctx, instanceIDs) error` |
-| `DescribeInstances` | `(ctx, instanceIDs, filters) ([]Instance, error)` |
+| `DescribeInstances` | `(ctx, instanceIDs, filters, ...opts) ([]Instance, error)` |
 | `ModifyInstance` | `(ctx, instanceID, input) error` |
+
+#### Managed-resource visibility
+
+EC2 emulates AWS *managed resources* — instances an AWS service (e.g. ECS Managed
+Instances, EKS Auto Mode) provisions on the account's behalf. A managed instance
+carries an `Operator` block (`Managed=true`, `Principal`) and is **hidden from
+`DescribeInstances` by default** once the account's visibility is set to `hidden`,
+reappearing only when the caller opts in with `IncludeManagedResources=true`.
+Non-managed instances are always returned.
+
+```go
+cloud := cloudemu.NewAWS()
+cloud.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+    InstanceType: "m5.large",
+    Managed:      true,                  // Operator.Managed = true
+    Principal:    "ecs.amazonaws.com",   // Operator.Principal
+    Tags:         map[string]string{"aws:ec2:managed-launch": "ecs-managed-instances"},
+}, 1)
+cloud.EC2.SetManagedResourceVisibility("hidden")
+
+// Go API
+cloud.EC2.DescribeInstances(ctx, nil, nil)                                            // managed instance omitted
+cloud.EC2.DescribeInstances(ctx, nil, nil, computedriver.DescribeInstancesOptions{IncludeManagedResources: true}) // included
+
+// SDK-compat: real aws-sdk-go-v2 ec2.Client
+client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})                                // omits managed
+client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResources: aws.Bool(true)}) // includes managed
+```
 
 ### Auto-Scaling Groups (ASG)
 
@@ -1648,6 +1677,61 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 
 ---
 
+## 24. Container Orchestration
+
+**Driver interface:** `services/ecs/driver/driver.go`
+**AWS:** ECS (`AmazonEC2ContainerServiceV20141113.*`, AWS JSON 1.1) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/ecs` clients work against the SDK-compat
+server (`awsserver.Drivers{ECS: cloud.ECS}`).
+
+**Scheduling & placement.** Container instances carry CPU/memory capacity;
+`RunTask`/services with launch type **EC2** are first-fit **placed** onto an
+instance with sufficient remaining capacity (reserving it, releasing on stop) —
+no capacity leaves the task in `failures[]` (`AGENT`/`RESOURCE:*`) or, for a
+service, `PENDING`. **FARGATE** requires `networkConfiguration.awsvpcConfiguration`
++ an `awsvpc` task-def with cpu+memory, and synthesizes an ENI `attachment` +
+`platformVersion` (no capacity pool). `launchType` is validated against the
+task-def's `requiresCompatibilities`.
+
+**Services** converge synchronously: `CreateService` actually launches
+`desiredCount` tasks (linked via the `service:<name>` group), records a PRIMARY
+`deployment` (rolloutState COMPLETED/IN_PROGRESS) and an `event`; `UpdateService`
+reconciles tasks and promotes a new deployment (superseded deployments drain and
+are dropped, so the list does not grow); DAEMON runs one task per container
+instance (and rejects a caller-supplied `desiredCount`). Batch `Describe*` and
+`RunTask` return partial success (`failures[]`) rather than erroring; typed
+exceptions (`ClusterNotFoundException`, `ServiceNotFoundException`,
+`ClusterContains*Exception`, `InvalidParameterException`, `ClientException`) match
+the SDK.
+
+*Accepted but not simulated* (stored and round-tripped so SDK calls succeed, but
+with no behavioral effect): `capacityProviderStrategy` (placement still falls
+through to EC2/Fargate by launch type — no FARGATE_SPOT/ASG providers),
+`loadBalancers` / `serviceRegistries` (no target-group registration, health
+checks, or Service Connect), and the deployment circuit-breaker / rollback.
+Fargate task-level `cpu`/`memory` **is** validated against the supported
+configuration table.
+
+**Composes with EC2 (#300).** `RegisterContainerInstance` provisions a backing
+**managed EC2 instance** (`Operator.Managed=true`, principal `ecs.amazonaws.com`,
+`aws:ec2:managed-launch` tag), so an ECS container instance is discoverable as a
+real EC2 instance subject to managed-resource visibility.
+
+| Family | Operations |
+|--------|-----------|
+| Clusters | CreateCluster, ListClusters, DescribeClusters, DeleteCluster (cascade-guarded), UpdateCluster, UpdateClusterSettings, PutClusterCapacityProviders |
+| Task definitions | RegisterTaskDefinition (auto-incrementing revision; the full container/task runtime surface — portMappings, environment, secrets, healthCheck, logConfiguration, mountPoints, ulimits, resourceRequirements, volumes, ephemeralStorage, runtimePlatform, proxyConfiguration, … — is accepted and round-tripped on the task definition, **not** reflected onto launched containers, which carry only name/image/status), ListTaskDefinitions, DescribeTaskDefinition, DeregisterTaskDefinition, ListTaskDefinitionFamilies |
+| Tasks | RunTask (EC2 placement / Fargate ENI), StopTask, ListTasks, DescribeTasks, ExecuteCommand |
+| Services | CreateService, UpdateService, ListServices, DescribeServices, DeleteService (force) |
+| Container instances | RegisterContainerInstance, DeregisterContainerInstance, UpdateContainerInstancesState (DRAINING), ListContainerInstances, DescribeContainerInstances |
+| Tagging | TagResource, UntagResource, ListTagsForResource |
+| Account & attributes | PutAccountSetting(+Default), ListAccountSettings, DeleteAccountSetting, PutAttributes, DeleteAttributes, ListAttributes |
+
+**Total: 37 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -1752,7 +1836,8 @@ still sees success.
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| **Grand Total** | **1047** (+67 optional) |
+| Container Orchestration — AWS ECS | 37 |
+| **Grand Total** | **1084** (+67 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

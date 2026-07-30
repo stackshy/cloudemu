@@ -2,12 +2,15 @@ package ec2
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/compute"
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 func newTestMock() *Mock {
@@ -1908,4 +1911,351 @@ func TestSetInstanceVPC(t *testing.T) {
 		err := m.SetInstanceVPC("i-nonexistent", "vpc-123")
 		assertError(t, err, true)
 	})
+}
+
+// hasInstanceID reports whether the described set contains the given id.
+func hasInstanceID(insts []driver.Instance, id string) bool {
+	for i := range insts {
+		if insts[i].ID == id {
+			return true
+		}
+	}
+
+	return false
+}
+
+func TestManagedResourceVisibility(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	// One managed instance (carrying the system launch tag) and one ordinary
+	// instance.
+	managed, err := m.RunInstances(ctx, driver.InstanceConfig{
+		ImageID:      "ami-managed",
+		InstanceType: "t2.micro",
+		Managed:      true,
+		Principal:    "eks.amazonaws.com",
+		Tags:         map[string]string{"aws:ec2:managed-launch": "eks"},
+	}, 1)
+	if err != nil {
+		t.Fatalf("run managed: %v", err)
+	}
+
+	plain, err := m.RunInstances(ctx, defaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("run plain: %v", err)
+	}
+
+	managedID := managed[0].ID
+	plainID := plain[0].ID
+
+	// Default visibility is "visible": both instances are returned, and the
+	// managed one carries Operator metadata plus the system tag.
+	all, err := m.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+
+	if !hasInstanceID(all, managedID) || !hasInstanceID(all, plainID) {
+		t.Fatalf("visible: expected both instances, got %d", len(all))
+	}
+
+	for i := range all {
+		if all[i].ID != managedID {
+			continue
+		}
+
+		if all[i].Operator == nil || !all[i].Operator.Managed {
+			t.Fatalf("managed instance missing Operator.Managed")
+		}
+
+		if all[i].Operator.Principal != "eks.amazonaws.com" {
+			t.Fatalf("principal = %q", all[i].Operator.Principal)
+		}
+
+		if all[i].Tags["aws:ec2:managed-launch"] != "eks" {
+			t.Fatalf("system tag missing")
+		}
+	}
+
+	// Hide managed resources. Without the opt-in flag the managed instance is
+	// gone from list results but the ordinary one remains.
+	if err = m.SetManagedResourceVisibility("hidden"); err != nil {
+		t.Fatalf("set visibility hidden: %v", err)
+	}
+
+	hidden, err := m.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("describe hidden: %v", err)
+	}
+
+	if hasInstanceID(hidden, managedID) {
+		t.Fatalf("hidden: managed instance should be absent")
+	}
+
+	if !hasInstanceID(hidden, plainID) {
+		t.Fatalf("hidden: plain instance should be present")
+	}
+
+	// Opt in reveals the managed instance, and HiddenByDefault is reported.
+	revealed, err := m.DescribeInstances(ctx, nil, nil,
+		driver.DescribeInstancesOptions{IncludeManagedResources: true})
+	if err != nil {
+		t.Fatalf("describe revealed: %v", err)
+	}
+
+	if !hasInstanceID(revealed, managedID) {
+		t.Fatalf("revealed: managed instance should be present")
+	}
+
+	for i := range revealed {
+		if revealed[i].ID == managedID && !revealed[i].Operator.HiddenByDefault {
+			t.Fatalf("revealed: HiddenByDefault should be true when hidden")
+		}
+	}
+
+	// Explicit-InstanceIds path: naming a hidden managed instance without the
+	// flag returns InvalidInstanceID.NotFound (NotFound), matching real EC2,
+	// rather than silently dropping it to an empty result.
+	byID, err := m.DescribeInstances(ctx, []string{managedID}, nil)
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("explicit-id hidden managed: want NotFound, got err=%v result=%v", err, byID)
+	}
+
+	if hasInstanceID(byID, managedID) {
+		t.Fatalf("explicit-id: managed instance should not be returned")
+	}
+
+	// ...but is returned by explicit id when the flag is set.
+	byIDOpt, err := m.DescribeInstances(ctx, []string{managedID}, nil,
+		driver.DescribeInstancesOptions{IncludeManagedResources: true})
+	if err != nil {
+		t.Fatalf("describe by id opt: %v", err)
+	}
+
+	if !hasInstanceID(byIDOpt, managedID) {
+		t.Fatalf("explicit-id opt: managed instance should be present")
+	}
+
+	// Back to visible: managed instance returns without any opt-in.
+	if err = m.SetManagedResourceVisibility("visible"); err != nil {
+		t.Fatalf("set visibility visible: %v", err)
+	}
+
+	visibleAgain, err := m.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("describe visible again: %v", err)
+	}
+
+	if !hasInstanceID(visibleAgain, managedID) {
+		t.Fatalf("visible again: managed instance should be present")
+	}
+}
+
+func TestSetManagedResourceVisibilityInvalid(t *testing.T) {
+	m := newTestMock()
+
+	// Valid values are accepted.
+	if err := m.SetManagedResourceVisibility("hidden"); err != nil {
+		t.Fatalf("hidden should be accepted: %v", err)
+	}
+
+	if err := m.SetManagedResourceVisibility("visible"); err != nil {
+		t.Fatalf("visible should be accepted: %v", err)
+	}
+
+	// A typo must be rejected rather than silently treated as "visible".
+	for _, bad := range []string{"hiden", "Hidden", "", "true", "invisible"} {
+		err := m.SetManagedResourceVisibility(bad)
+		if !cerrors.IsInvalidArgument(err) {
+			t.Fatalf("SetManagedResourceVisibility(%q): want InvalidArgument, got %v", bad, err)
+		}
+	}
+
+	// The last (rejected) call must not have mutated the setting away from the
+	// last valid value ("visible").
+	insts, err := m.RunInstances(context.Background(), driver.InstanceConfig{
+		ImageID: "ami-x", InstanceType: "t2.micro", Managed: true, Principal: "eks.amazonaws.com",
+	}, 1)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got, err := m.DescribeInstances(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+
+	if !hasInstanceID(got, insts[0].ID) {
+		t.Fatalf("rejected value must not have changed visibility to hidden")
+	}
+}
+
+// TestManagedResourceVisibilityRace toggles the account visibility setting
+// concurrently with DescribeInstances (including the managed-hiding path) to
+// prove the scalar visibility state is race-free under `go test -race`. The
+// instance set is seeded up front and never mutated during the run, so this
+// isolates the visibility scalar (the subject of the lock fix).
+func TestManagedResourceVisibilityRace(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	if _, err := m.RunInstances(ctx, defaultConfig(), 2); err != nil {
+		t.Fatalf("run plain: %v", err)
+	}
+
+	managed, err := m.RunInstances(ctx, driver.InstanceConfig{
+		ImageID: "ami-managed", InstanceType: "t2.micro", Managed: true, Principal: "eks.amazonaws.com",
+	}, 1)
+	if err != nil {
+		t.Fatalf("run managed: %v", err)
+	}
+
+	managedID := managed[0].ID
+
+	const (
+		iterations = 300
+		readers    = 4
+	)
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		for i := 0; i < iterations; i++ {
+			vis := "visible"
+			if i%2 == 0 {
+				vis = "hidden"
+			}
+
+			_ = m.SetManagedResourceVisibility(vis)
+		}
+	}()
+
+	for r := 0; r < readers; r++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for i := 0; i < iterations; i++ {
+				// List path (may hide the managed instance depending on the
+				// concurrent toggle) and an explicit-ID + opt-in path.
+				_, _ = m.DescribeInstances(ctx, nil, nil)
+				_, _ = m.DescribeInstances(ctx, []string{managedID}, nil,
+					driver.DescribeInstancesOptions{IncludeManagedResources: true})
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// captureMonitoring is a minimal Monitoring backend that records the metric
+// datums passed to PutMetricData so tests can assert which instances emit
+// metrics. All other methods are inert stubs.
+type captureMonitoring struct {
+	mu   sync.Mutex
+	data []mondriver.MetricDatum
+}
+
+func (c *captureMonitoring) PutMetricData(_ context.Context, data []mondriver.MetricDatum) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.data = append(c.data, data...)
+
+	return nil
+}
+
+func (c *captureMonitoring) instanceIDs() map[string]bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	out := make(map[string]bool)
+
+	for i := range c.data {
+		if id := c.data[i].Dimensions["InstanceId"]; id != "" {
+			out[id] = true
+		}
+	}
+
+	return out
+}
+
+func (c *captureMonitoring) GetMetricData(context.Context, mondriver.GetMetricInput) (*mondriver.MetricDataResult, error) {
+	return &mondriver.MetricDataResult{}, nil
+}
+func (c *captureMonitoring) ListMetrics(context.Context, string) ([]string, error)    { return nil, nil }
+func (c *captureMonitoring) CreateAlarm(context.Context, mondriver.AlarmConfig) error { return nil }
+func (c *captureMonitoring) DeleteAlarm(context.Context, string) error                { return nil }
+func (c *captureMonitoring) DescribeAlarms(context.Context, []string) ([]mondriver.AlarmInfo, error) {
+	return nil, nil
+}
+func (c *captureMonitoring) SetAlarmState(context.Context, string, string, string) error { return nil }
+func (c *captureMonitoring) CreateNotificationChannel(
+	context.Context, mondriver.NotificationChannelConfig,
+) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+func (c *captureMonitoring) DeleteNotificationChannel(context.Context, string) error { return nil }
+func (c *captureMonitoring) GetNotificationChannel(
+	context.Context, string,
+) (*mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+func (c *captureMonitoring) ListNotificationChannels(
+	context.Context,
+) ([]mondriver.NotificationChannelInfo, error) {
+	return nil, nil
+}
+func (c *captureMonitoring) GetAlarmHistory(
+	context.Context, string, int,
+) ([]mondriver.AlarmHistoryEntry, error) {
+	return nil, nil
+}
+
+// TestManagedInstanceMetricsSuppressed verifies a managed (service-owned)
+// instance never emits instance-dimensioned CloudWatch metrics, so it can't
+// leak via metrics while being hidden from Describe. A plain instance still
+// emits metrics.
+func TestManagedInstanceMetricsSuppressed(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	mon := &captureMonitoring{}
+	m.SetMonitoring(mon)
+
+	managed, err := m.RunInstances(ctx, driver.InstanceConfig{
+		ImageID: "ami-managed", InstanceType: "t2.micro", Managed: true, Principal: "eks.amazonaws.com",
+	}, 1)
+	if err != nil {
+		t.Fatalf("run managed: %v", err)
+	}
+
+	managedID := managed[0].ID
+
+	plain, err := m.RunInstances(ctx, defaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("run plain: %v", err)
+	}
+
+	plainID := plain[0].ID
+
+	// Drive lifecycle metrics too: stop both.
+	if err := m.StopInstances(ctx, []string{managedID, plainID}); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	ids := mon.instanceIDs()
+	if ids[managedID] {
+		t.Fatalf("managed instance %q must not emit instance-dimensioned metrics", managedID)
+	}
+
+	if !ids[plainID] {
+		t.Fatalf("plain instance %q should still emit metrics", plainID)
+	}
 }
