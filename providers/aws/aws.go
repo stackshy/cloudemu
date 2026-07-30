@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ecr"
+	"github.com/stackshy/cloudemu/v2/providers/aws/ecs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
@@ -136,6 +137,7 @@ type Provider struct {
 	BedrockAgentRuntime *bedrockagentruntime.Mock
 	SageMaker           *sagemaker.Mock
 	SSM                 *ssm.Mock
+	ECS                 *ecs.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -169,6 +171,7 @@ func New(opts ...config.Option) *Provider {
 		BedrockAgentRuntime: bedrockagentruntime.New(o),
 		SageMaker:           sagemaker.New(o),
 		SSM:                 ssm.New(o),
+		ECS:                 ecs.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}
@@ -186,6 +189,9 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.SSM.SetInstanceResolver(p.EC2)
+	// ECS-registered container instances surface as managed EC2 instances, so
+	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
+	p.ECS.SetManagedInstanceLauncher(p.EC2)
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	p.SageMaker.SetMonitoring(p.CloudWatch)

@@ -54,6 +54,17 @@ type groupItem struct {
 	GroupID string `xml:"groupId"`
 }
 
+// operatorXML is the nested <operator> element carrying managed-resource
+// ownership. The child element names match the ec2 OperatorResponse fields the
+// aws-sdk-go-v2 deserializer reads case-insensitively (managed, principal,
+// hiddenByDefault); verified against service/ec2 deserializers.go, which does
+// strings.EqualFold("hiddenByDefault", ...) into OperatorResponse.HiddenByDefault.
+type operatorXML struct {
+	Managed         bool   `xml:"managed"`
+	Principal       string `xml:"principal,omitempty"`
+	HiddenByDefault bool   `xml:"hiddenByDefault,omitempty"`
+}
+
 // instanceXML is the per-instance payload shared by RunInstances and
 // DescribeInstances responses. We populate only the fields the SDK reliably
 // consumes and real apps actually read; unused AWS fields are omitted.
@@ -70,6 +81,7 @@ type instanceXML struct {
 	KeyName      string        `xml:"keyName,omitempty"`
 	Groups       []groupItem   `xml:"groupSet>item,omitempty"`
 	Tags         []tagItem     `xml:"tagSet>item,omitempty"`
+	Operator     *operatorXML  `xml:"operator,omitempty"`
 }
 
 // runInstancesResponse is the XML body for RunInstances.

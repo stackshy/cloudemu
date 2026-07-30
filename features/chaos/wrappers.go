@@ -179,13 +179,13 @@ func (c *chaosCompute) TerminateInstances(ctx context.Context, ids []string) err
 }
 
 func (c *chaosCompute) DescribeInstances(
-	ctx context.Context, ids []string, filters []computedriver.DescribeFilter,
+	ctx context.Context, ids []string, filters []computedriver.DescribeFilter, opts ...computedriver.DescribeInstancesOptions,
 ) ([]computedriver.Instance, error) {
 	if err := applyChaos(ctx, c.engine, "compute", "DescribeInstances"); err != nil {
 		return nil, err
 	}
 
-	return c.Compute.DescribeInstances(ctx, ids, filters)
+	return c.Compute.DescribeInstances(ctx, ids, filters, opts...)
 }
 
 // chaosDatabase wraps a database driver.
