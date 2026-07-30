@@ -54,20 +54,27 @@ func (m *Mock) newInstance(cluster, ec2InstanceID string, cpu, memory int) *driv
 
 // launchManagedInstance provisions a backing managed EC2 instance via the wired
 // launcher (so the container instance is discoverable as a managed EC2 instance,
-// composing #159 with #300). Falls back to a synthesized id when no launcher is
-// wired or provisioning fails.
-func (m *Mock) launchManagedInstance(cluster string) string {
-	if m.launcher != nil {
-		id, err := m.launcher.LaunchManaged("m5.large", ecsServicePrincipal, map[string]string{
-			managedLaunchTag:       "ecs-managed-instances",
-			"aws:ecs:cluster-name": resolveClusterName(cluster),
-		})
-		if err == nil && id != "" {
-			return id
-		}
+// composing #159 with #300). When no launcher is wired it synthesizes an id; a
+// wired launcher that fails is surfaced, not silently swallowed (a silent
+// fallback would hide a real misconfiguration and regress the compose).
+func (m *Mock) launchManagedInstance(cluster string) (string, error) {
+	if m.launcher == nil {
+		return "i-" + m.hexID()[:17], nil
 	}
 
-	return "i-" + m.hexID()[:17]
+	id, err := m.launcher.LaunchManaged("m5.large", ecsServicePrincipal, map[string]string{
+		managedLaunchTag:       "ecs-managed-instances",
+		"aws:ecs:cluster-name": resolveClusterName(cluster),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if id == "" {
+		return "i-" + m.hexID()[:17], nil
+	}
+
+	return id, nil
 }
 
 // SeedContainerInstance registers a container instance into a cluster and
@@ -101,7 +108,12 @@ func (m *Mock) RegisterContainerInstance(
 
 	ec2ID := instanceIDFromDoc(in.InstanceIdentityDocument)
 	if ec2ID == "" {
-		ec2ID = m.launchManagedInstance(in.Cluster)
+		id, err := m.launchManagedInstance(in.Cluster)
+		if err != nil {
+			return nil, apiErrf(errors.Internal, excServer, "failed to launch managed EC2 instance: %v", err)
+		}
+
+		ec2ID = id
 	}
 
 	ci := m.newInstance(in.Cluster, ec2ID, cpu, memory)
@@ -132,12 +144,42 @@ func (m *Mock) DeregisterContainerInstance(
 			"container instance %q has %d running task(s); use force to deregister", ci.EC2InstanceID, ci.RunningTasksCount)
 	}
 
+	// Force-deregistering an instance with running tasks stops those tasks, as
+	// real ECS does — leaving them RUNNING on a deleted instance would strand
+	// them. The instance is removed, so its capacity need not be returned.
+	if force {
+		m.stopTasksOnInstance(ci.ARN)
+	}
+
 	m.instances.Delete(ci.ARN)
 
 	out := *ci
 	out.Status = statusInactive
 
 	return &out, nil
+}
+
+// stopTasksOnInstance marks every non-stopped task placed on the given instance
+// STOPPED. The caller holds placeMu (so this must not call StopTask, which also
+// takes it); capacity is not released because the instance is being removed.
+func (m *Mock) stopTasksOnInstance(instanceARN string) {
+	for _, t := range m.tasks.SortedValues() {
+		if t.ContainerInstanceARN != instanceARN || t.LastStatus == statusStopped {
+			continue
+		}
+
+		updated := cloneTask(t)
+		updated.LastStatus = statusStopped
+		updated.DesiredStatus = statusStopped
+		updated.StoppedReason = "Container instance deregistered."
+		updated.StopCode = "TerminationNotice"
+
+		for i := range updated.Containers {
+			updated.Containers[i].LastStatus = statusStopped
+		}
+
+		m.tasks.Set(updated.ARN, &updated)
+	}
 }
 
 // UpdateContainerInstancesState sets each resolved instance to ACTIVE or

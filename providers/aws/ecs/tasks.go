@@ -108,7 +108,59 @@ func validateLaunch(td *driver.TaskDefinition, launchType string, netCfg *driver
 			"Fargate requires task-level cpu and memory to be specified")
 	}
 
+	if !validFargateCPUMemory(td.CPU, td.Memory) {
+		return apiErrf(errors.InvalidArgument, excInvalidParameter,
+			"No Fargate configuration exists for given cpu (%s) and memory (%s) values", td.CPU, td.Memory)
+	}
+
 	return nil
+}
+
+// fargateMemRange is the supported task memory (MiB) for one Fargate task-cpu
+// value: either an explicit set of sizes or an inclusive [min,max] with a fixed
+// step between allowed sizes. The .25 vCPU (256) tier is the one non-uniform
+// case, so it uses the explicit set.
+type fargateMemRange struct {
+	minMiB, maxMiB, step int
+	explicit             []int
+}
+
+// fargateMemRanges maps a Fargate task cpu value (vCPU units) to its supported
+// memory sizes, matching the configurations AWS Fargate allows.
+//
+//nolint:gochecknoglobals // static Fargate cpu→memory configuration table.
+var fargateMemRanges = map[int]fargateMemRange{
+	256:   {explicit: []int{512, 1024, 2048}},
+	512:   {minMiB: 1024, maxMiB: 4096, step: 1024},
+	1024:  {minMiB: 2048, maxMiB: 8192, step: 1024},
+	2048:  {minMiB: 4096, maxMiB: 16384, step: 1024},
+	4096:  {minMiB: 8192, maxMiB: 30720, step: 1024},
+	8192:  {minMiB: 16384, maxMiB: 61440, step: 4096},
+	16384: {minMiB: 32768, maxMiB: 122880, step: 8192},
+}
+
+// validFargateCPUMemory reports whether the task-level cpu/memory pair is a
+// supported Fargate configuration. Real Fargate rejects any other pairing with a
+// "No Fargate configuration exists for given values" error.
+func validFargateCPUMemory(cpuStr, memStr string) bool {
+	r, ok := fargateMemRanges[atoiSafe(cpuStr)]
+	if !ok {
+		return false
+	}
+
+	mem := atoiSafe(memStr)
+
+	if len(r.explicit) > 0 {
+		for _, v := range r.explicit {
+			if v == mem {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	return mem >= r.minMiB && mem <= r.maxMiB && (mem-r.minMiB)%r.step == 0
 }
 
 // hasSubnets reports whether the request carries an awsvpc configuration with at

@@ -83,6 +83,13 @@ func (m *Mock) CreateService(_ context.Context, in driver.CreateServiceInput) (*
 		return nil, err
 	}
 
+	// A DAEMON service runs exactly one task per container instance, so AWS
+	// rejects a caller-supplied desiredCount rather than overriding it.
+	if in.SchedulingStrategy == schedDaemon && in.DesiredCount > 0 {
+		return nil, apiErrf(errors.InvalidArgument, excInvalidParameter,
+			"desiredCount must not be specified for a DAEMON service")
+	}
+
 	svc := serviceFromInput(&in, m.arn, cluster, m.now())
 
 	if err := m.reserveServiceName(serviceKey(cluster, in.ServiceName), svc); err != nil {
@@ -126,12 +133,15 @@ func serviceFromInput(in *driver.CreateServiceInput, arn func(string) string, cl
 		EnableExecuteCommand:          in.EnableExecuteCommand,
 		HealthCheckGracePeriodSeconds: in.HealthCheckGracePeriodSeconds,
 		CreatedAt:                     now,
-		DeploymentConfiguration:       in.DeploymentConfiguration,
-		NetworkConfiguration:          in.NetworkConfiguration,
-		CapacityProviderStrategy:      in.CapacityProviderStrategy,
-		LoadBalancers:                 in.LoadBalancers,
-		ServiceRegistries:             in.ServiceRegistries,
-		Tags:                          copyTags(in.Tags),
+		// Clone reference-typed fields so the stored record never aliases the
+		// caller's input slices/pointers (a caller mutating what it passed must
+		// not corrupt the store).
+		DeploymentConfiguration:  cloneDeploymentConfig(in.DeploymentConfiguration),
+		NetworkConfiguration:     cloneNetworkConfig(in.NetworkConfiguration),
+		CapacityProviderStrategy: append([]driver.CapacityProviderStrategyItem(nil), in.CapacityProviderStrategy...),
+		LoadBalancers:            append([]driver.LoadBalancer(nil), in.LoadBalancers...),
+		ServiceRegistries:        append([]driver.ServiceRegistry(nil), in.ServiceRegistries...),
+		Tags:                     copyTags(in.Tags),
 	}
 }
 
@@ -358,14 +368,12 @@ func (m *Mock) redeployService(ctx context.Context, svc *driver.Service, in *dri
 	svc.RunningCount = running
 	svc.PendingCount = pending
 
-	for i := range svc.Deployments {
-		svc.Deployments[i].Status = deploymentActive
-		svc.Deployments[i].RunningCount = 0
-		svc.Deployments[i].PendingCount = 0
-	}
-
+	// The superseded deployment drained synchronously in drainService above, so
+	// real ECS's "drop a deployment once drained" leaves just the new PRIMARY.
+	// Replacing the slice (rather than prepending) is what stops the deployments
+	// list from growing unbounded across repeated UpdateService calls.
 	dep := m.newDeployment(id, deploymentPrimary, svc, running, pending)
-	svc.Deployments = append([]driver.Deployment{dep}, svc.Deployments...)
+	svc.Deployments = []driver.Deployment{dep}
 	svc.Events = append(svc.Events, m.serviceEvent(fmt.Sprintf("(service %s) has started %d tasks.", svc.Name, running)))
 }
 
@@ -392,24 +400,26 @@ func applyServiceScalars(svc *driver.Service, in *driver.UpdateServiceInput) {
 // applyServiceRefs stores the supplied reference-typed update fields, leaving nil
 // fields unchanged.
 func applyServiceRefs(svc *driver.Service, in *driver.UpdateServiceInput) {
+	// Clone reference-typed fields so the stored record never aliases the
+	// caller's input.
 	if in.DeploymentConfiguration != nil {
-		svc.DeploymentConfiguration = in.DeploymentConfiguration
+		svc.DeploymentConfiguration = cloneDeploymentConfig(in.DeploymentConfiguration)
 	}
 
 	if in.NetworkConfiguration != nil {
-		svc.NetworkConfiguration = in.NetworkConfiguration
+		svc.NetworkConfiguration = cloneNetworkConfig(in.NetworkConfiguration)
 	}
 
 	if in.CapacityProviderStrategy != nil {
-		svc.CapacityProviderStrategy = in.CapacityProviderStrategy
+		svc.CapacityProviderStrategy = append([]driver.CapacityProviderStrategyItem(nil), in.CapacityProviderStrategy...)
 	}
 
 	if in.LoadBalancers != nil {
-		svc.LoadBalancers = in.LoadBalancers
+		svc.LoadBalancers = append([]driver.LoadBalancer(nil), in.LoadBalancers...)
 	}
 
 	if in.ServiceRegistries != nil {
-		svc.ServiceRegistries = in.ServiceRegistries
+		svc.ServiceRegistries = append([]driver.ServiceRegistry(nil), in.ServiceRegistries...)
 	}
 }
 

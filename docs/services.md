@@ -1697,13 +1697,21 @@ task-def's `requiresCompatibilities`.
 **Services** converge synchronously: `CreateService` actually launches
 `desiredCount` tasks (linked via the `service:<name>` group), records a PRIMARY
 `deployment` (rolloutState COMPLETED/IN_PROGRESS) and an `event`; `UpdateService`
-reconciles tasks and promotes a new deployment; DAEMON runs one task per
-container instance. `loadBalancers`/`serviceRegistries`/`deploymentConfiguration`
-round-trip. Long-running jobs still complete synchronously; batch `Describe*` and
+reconciles tasks and promotes a new deployment (superseded deployments drain and
+are dropped, so the list does not grow); DAEMON runs one task per container
+instance (and rejects a caller-supplied `desiredCount`). Batch `Describe*` and
 `RunTask` return partial success (`failures[]`) rather than erroring; typed
 exceptions (`ClusterNotFoundException`, `ServiceNotFoundException`,
 `ClusterContains*Exception`, `InvalidParameterException`, `ClientException`) match
 the SDK.
+
+*Accepted but not simulated* (stored and round-tripped so SDK calls succeed, but
+with no behavioral effect): `capacityProviderStrategy` (placement still falls
+through to EC2/Fargate by launch type — no FARGATE_SPOT/ASG providers),
+`loadBalancers` / `serviceRegistries` (no target-group registration, health
+checks, or Service Connect), and the deployment circuit-breaker / rollback.
+Fargate task-level `cpu`/`memory` **is** validated against the supported
+configuration table.
 
 **Composes with EC2 (#300).** `RegisterContainerInstance` provisions a backing
 **managed EC2 instance** (`Operator.Managed=true`, principal `ecs.amazonaws.com`,
@@ -1713,7 +1721,7 @@ real EC2 instance subject to managed-resource visibility.
 | Family | Operations |
 |--------|-----------|
 | Clusters | CreateCluster, ListClusters, DescribeClusters, DeleteCluster (cascade-guarded), UpdateCluster, UpdateClusterSettings, PutClusterCapacityProviders |
-| Task definitions | RegisterTaskDefinition (auto-incrementing revision; full container/task runtime surface — portMappings, environment, secrets, healthCheck, logConfiguration, mountPoints, ulimits, resourceRequirements, volumes, ephemeralStorage, runtimePlatform, proxyConfiguration, …), ListTaskDefinitions, DescribeTaskDefinition, DeregisterTaskDefinition, ListTaskDefinitionFamilies |
+| Task definitions | RegisterTaskDefinition (auto-incrementing revision; the full container/task runtime surface — portMappings, environment, secrets, healthCheck, logConfiguration, mountPoints, ulimits, resourceRequirements, volumes, ephemeralStorage, runtimePlatform, proxyConfiguration, … — is accepted and round-tripped on the task definition, **not** reflected onto launched containers, which carry only name/image/status), ListTaskDefinitions, DescribeTaskDefinition, DeregisterTaskDefinition, ListTaskDefinitionFamilies |
 | Tasks | RunTask (EC2 placement / Fargate ENI), StopTask, ListTasks, DescribeTasks, ExecuteCommand |
 | Services | CreateService, UpdateService, ListServices, DescribeServices, DeleteService (force) |
 | Container instances | RegisterContainerInstance, DeregisterContainerInstance, UpdateContainerInstancesState (DRAINING), ListContainerInstances, DescribeContainerInstances |

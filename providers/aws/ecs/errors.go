@@ -13,6 +13,7 @@ const (
 	excClusterContainsServices  = "ClusterContainsServicesException"
 	excClusterContainsTasks     = "ClusterContainsTasksException"
 	excClusterContainsInstances = "ClusterContainsContainerInstancesException"
+	excServer                   = "ServerException"
 )
 
 // apiError pairs a canonical cloudemu error with the precise ECS exception name
