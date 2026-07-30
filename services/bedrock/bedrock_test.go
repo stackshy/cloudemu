@@ -166,11 +166,11 @@ func TestManagementWrappers(t *testing.T) {
 	_, err = b.GetGuardrail(ctx, g.ID, "")
 	require.NoError(t, err)
 
-	gs, err := b.ListGuardrails(ctx)
+	gs, err := b.ListGuardrails(ctx, "")
 	require.NoError(t, err)
 	require.Len(t, gs, 1)
 
-	require.NoError(t, b.DeleteGuardrail(ctx, g.ID))
+	require.NoError(t, b.DeleteGuardrail(ctx, g.ID, ""))
 
 	pt, err := b.CreateProvisionedModelThroughput(ctx, driver.ProvisionedThroughputConfig{
 		ProvisionedModelName: "pt-1",

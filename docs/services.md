@@ -25,7 +25,7 @@ This document lists every service and operation available in CloudEmu across all
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
-| 20 | Generative AI | `bedrock` (+ `bedrock-runtime`) | — | — |
+| 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
 | 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
@@ -1122,7 +1122,97 @@ answer `InvalidAction`.
 matching the real service. Callers tearing down a VPC list subnet groups and
 match on it.
 
-**Total: 21 operations (+3 optional)**
+### Parameter Groups (optional capability — `ParameterGroups`)
+
+DB and DB **cluster** parameter groups. Only user-set parameters are modeled;
+the emulator does not fabricate the hundreds of engine defaults real AWS
+returns. Real AWS reuses the `DBParameterGroup*` fault codes for the cluster
+variants, so error mapping is shared.
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateDBParameterGroup` | `(ctx, ParameterGroupConfig) (*ParameterGroup, error)` |
+| `DescribeDBParameterGroups` | `(ctx, names) ([]ParameterGroup, error)` |
+| `ModifyDBParameterGroup` | `(ctx, name, []Parameter) (*ParameterGroup, error)` |
+| `DeleteDBParameterGroup` | `(ctx, name) error` |
+| `DescribeDBParameters` | `(ctx, name) ([]Parameter, error)` |
+| `ResetDBParameterGroup` | `(ctx, name, params, resetAll) (*ParameterGroup, error)` |
+| `CopyDBParameterGroup` | `(ctx, source, target, description) (*ParameterGroup, error)` |
+| `CreateDBClusterParameterGroup` … `CopyDBClusterParameterGroup` | cluster-scoped analogues (7) |
+
+### Option Groups (optional capability — `OptionGroups`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateOptionGroup` | `(ctx, OptionGroupConfig) (*OptionGroup, error)` |
+| `DescribeOptionGroups` | `(ctx, names, engineName) ([]OptionGroup, error)` |
+| `ModifyOptionGroup` | `(ctx, name, include, remove) (*OptionGroup, error)` |
+| `DeleteOptionGroup` | `(ctx, name) error` |
+| `CopyOptionGroup` | `(ctx, source, target, description) (*OptionGroup, error)` |
+| `DescribeOptionGroupOptions` | `(ctx, engineName, majorEngineVersion) ([]OptionGroupOption, error)` |
+
+`DescribeOptionGroupOptions` returns a representative per-engine catalog of
+well-known option names, not AWS's exhaustive version-specific list.
+
+### Read Replicas (optional capability — `ReadReplicas`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateDBInstanceReadReplica` | `(ctx, ReadReplicaConfig) (*Instance, error)` |
+| `PromoteReadReplica` | `(ctx, id) (*Instance, error)` |
+
+A replica inherits its source's engine/version/storage; the source tracks its
+replica IDs and the replica records its source. Promotion detaches it.
+
+### Snapshot Copy & Point-in-Time Restore (optional capability — `AdvancedRestore`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CopyDBSnapshot` | `(ctx, source, target, tags) (*Snapshot, error)` |
+| `CopyDBClusterSnapshot` | `(ctx, source, target, tags) (*ClusterSnapshot, error)` |
+| `RestoreDBInstanceToPointInTime` | `(ctx, RestoreInstanceToPointInTimeInput) (*Instance, error)` |
+| `RestoreDBClusterToPointInTime` | `(ctx, RestoreClusterToPointInTimeInput) (*Cluster, error)` |
+
+The emulator retains no historical timeline, so PITR clones the source's
+current spec; `RestoreTime` / `UseLatestRestorableTime` are accepted but not
+replayed.
+
+### RDS Proxy (optional capability — `DBProxies`)
+
+A proxy has a single implicit `default` target group; targets are RDS instances
+(`RDS_INSTANCE`) or clusters (`TRACKED_CLUSTER`), validated on registration.
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateDBProxy` / `DescribeDBProxies` / `ModifyDBProxy` / `DeleteDBProxy` | proxy lifecycle (4) |
+| `RegisterDBProxyTargets` / `DeregisterDBProxyTargets` / `DescribeDBProxyTargets` | target membership (3) |
+| `DescribeDBProxyTargetGroups` | `(ctx, name) ([]ProxyTargetGroup, error)` |
+
+### Event Subscriptions (optional capability — `EventSubscriptions`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateEventSubscription` / `DescribeEventSubscriptions` / `ModifyEventSubscription` / `DeleteEventSubscription` | subscription CRUD (4) |
+| `DescribeEvents` | `(ctx, sourceType, sourceID, categories) ([]Event, error)` — empty: no event timeline is retained |
+| `DescribeEventCategories` | `(ctx, sourceType) ([]EventCategoryGroup, error)` |
+
+### Aurora Cluster Endpoints, Failover & Global Clusters
+
+- `ClusterEndpoints`: `CreateDBClusterEndpoint` / `DescribeDBClusterEndpoints` / `ModifyDBClusterEndpoint` / `DeleteDBClusterEndpoint` (4).
+- `ClusterFailover`: `FailoverDBCluster` promotes the target member to writer, or rotates the first reader when no target is given (1).
+- `GlobalClusters`: `CreateGlobalCluster` / `DescribeGlobalClusters` / `ModifyGlobalCluster` / `DeleteGlobalCluster` / `RemoveFromGlobalCluster` (5).
+
+### Metadata & Tagging
+
+- `Metadata`: `DescribeDBEngineVersions`, `DescribeOrderableDBInstanceOptions` — representative per-engine catalogs (2).
+- `Tagging`: `AddTagsToResource`, `RemoveTagsFromResource`, `ListTagsForResource` — addressed by resource ARN over the tag-bearing stores (instances, clusters, instance/cluster snapshots) (3).
+
+**Total: 21 core operations + 58 optional across 12 type-asserted capability
+interfaces (`SubnetGroups`, `ParameterGroups`, `OptionGroups`, `ReadReplicas`,
+`AdvancedRestore`, `DBProxies`, `EventSubscriptions`, `ClusterEndpoints`,
+`ClusterFailover`, `GlobalClusters`, `Metadata`, `Tagging`).** AWS RDS wires all
+of them; other clouds implement the subset that maps to a real resource and
+answer `InvalidAction` otherwise.
 
 ---
 
@@ -1195,7 +1285,7 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 ## 19. Resource Discovery
 
-**Engine:** `services/resourcediscovery/` — a cross-service inventory engine that walks the Compute, Networking, Storage, Database, Serverless, Databricks, and Kubernetes drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
+**Engine:** `services/resourcediscovery/` — a cross-service inventory engine that walks the Compute, Networking, Storage, Database, Serverless, Databricks, Kubernetes, and Relational Database drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
 
 **SDK-compat handlers:** AWS Resource Explorer Two + Resource Groups Tagging API, Azure Resource Graph, and GCP Cloud Asset Inventory. All three sit on top of the same engine, so a tag written through any one path is visible through the others.
 
@@ -1213,6 +1303,8 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 | `kubernetes/NodeGroup` | `kubernetes:nodegroup` | `microsoft.containerservice/managedclusters/agentpools` | `container.googleapis.com/NodePool` |
 
 Kubernetes clusters (EKS/GKE/AKS) and their node groups (nodegroups / node pools / agent pools) are surfaced via a `KubernetesClusters` discovery adapter each provider wires in over its cluster mock.
+
+Relational databases follow the same pattern via a `RelationalDatabases` adapter: AWS RDS/Aurora instances, clusters, and snapshots surface through **Resource Explorer 2** (filter `service:rds`) via the `rdsDiscovery` adapter. GCP Cloud SQL and Azure SQL discovery are not yet wired.
 
 ### Engine (`services/resourcediscovery/`)
 
@@ -1652,19 +1744,20 @@ still sees success.
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
-| Relational Database | 21 (+3 optional) |
+| Relational Database | 21 (+58 optional) |
 | Kubernetes — AWS EKS (control plane) | 21 |
 | Kubernetes — Azure AKS (control plane) | 18 |
 | Kubernetes — GCP GKE (control plane) | 26 |
 | Kubernetes — data plane (30 resources, most × 7 verbs incl. Watch, + /scale and /status subresources) | 249 |
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
-| Generative AI — AWS Bedrock | 22 |
+| Generative AI — AWS Bedrock (control plane + runtime) | 65 |
+| Generative AI — AWS Bedrock Agent (control plane + runtime) | 32 |
 | Databricks — Azure (control + data plane) | 52 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| **Grand Total** | **1165** (+12 optional) |
+| **Grand Total** | **1240** (+67 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

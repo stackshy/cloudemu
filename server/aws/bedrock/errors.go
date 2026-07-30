@@ -34,8 +34,15 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "ConflictException", err.Error())
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+	case cerrors.IsPermissionDenied(err):
+		writeError(w, http.StatusForbidden, "AccessDeniedException", err.Error())
+	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
+		// A quota/limit breach maps to Bedrock's ServiceQuotaExceededException.
+		writeError(w, http.StatusBadRequest, "ServiceQuotaExceededException", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		// A resource in a conflicting state (e.g. stopping a terminal job) maps
+		// to Bedrock's ConflictException, matching real AWS.
+		writeError(w, http.StatusConflict, "ConflictException", err.Error())
 	case cerrors.IsThrottled(err):
 		writeError(w, http.StatusTooManyRequests, "ThrottlingException", err.Error())
 	default:

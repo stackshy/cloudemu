@@ -56,11 +56,18 @@ var _ rdsdriver.RelationalDB = (*Mock)(nil)
 type Mock struct {
 	mu sync.RWMutex
 
-	instances        *memstore.Store[rdsdriver.Instance]
-	clusters         *memstore.Store[rdsdriver.Cluster]
-	snapshots        *memstore.Store[rdsdriver.Snapshot]
-	clusterSnapshots *memstore.Store[rdsdriver.ClusterSnapshot]
-	subnetGroups     *memstore.Store[rdsdriver.SubnetGroup]
+	instances          *memstore.Store[rdsdriver.Instance]
+	clusters           *memstore.Store[rdsdriver.Cluster]
+	snapshots          *memstore.Store[rdsdriver.Snapshot]
+	clusterSnapshots   *memstore.Store[rdsdriver.ClusterSnapshot]
+	subnetGroups       *memstore.Store[rdsdriver.SubnetGroup]
+	paramGroups        *memstore.Store[rdsdriver.ParameterGroup]
+	clusterParamGroups *memstore.Store[rdsdriver.ClusterParameterGroup]
+	optionGroups       *memstore.Store[rdsdriver.OptionGroup]
+	proxies            *memstore.Store[rdsdriver.DBProxy]
+	eventSubs          *memstore.Store[rdsdriver.EventSubscription]
+	clusterEndpoints   *memstore.Store[rdsdriver.ClusterEndpoint]
+	globalClusters     *memstore.Store[rdsdriver.GlobalCluster]
 
 	opts           *config.Options
 	subnetResolver SubnetResolver
@@ -70,12 +77,19 @@ type Mock struct {
 // New creates a new AWS RDS mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances:        memstore.New[rdsdriver.Instance](),
-		clusters:         memstore.New[rdsdriver.Cluster](),
-		snapshots:        memstore.New[rdsdriver.Snapshot](),
-		clusterSnapshots: memstore.New[rdsdriver.ClusterSnapshot](),
-		subnetGroups:     memstore.New[rdsdriver.SubnetGroup](),
-		opts:             opts,
+		instances:          memstore.New[rdsdriver.Instance](),
+		clusters:           memstore.New[rdsdriver.Cluster](),
+		snapshots:          memstore.New[rdsdriver.Snapshot](),
+		clusterSnapshots:   memstore.New[rdsdriver.ClusterSnapshot](),
+		subnetGroups:       memstore.New[rdsdriver.SubnetGroup](),
+		paramGroups:        memstore.New[rdsdriver.ParameterGroup](),
+		clusterParamGroups: memstore.New[rdsdriver.ClusterParameterGroup](),
+		optionGroups:       memstore.New[rdsdriver.OptionGroup](),
+		proxies:            memstore.New[rdsdriver.DBProxy](),
+		eventSubs:          memstore.New[rdsdriver.EventSubscription](),
+		clusterEndpoints:   memstore.New[rdsdriver.ClusterEndpoint](),
+		globalClusters:     memstore.New[rdsdriver.GlobalCluster](),
+		opts:               opts,
 	}
 }
 
@@ -93,12 +107,27 @@ func (m *Mock) emitInstanceMetrics(instanceID, engine string, cpu, connections f
 	dims := map[string]string{"DBInstanceIdentifier": instanceID}
 	ns := namespaceFor(engine)
 
+	// Latency and network throughput track whether the instance is serving
+	// traffic; cpu is 0 only when the instance is stopped.
+	running := cpu > 0
+
+	var readLatency, writeLatency, rxThroughput, txThroughput float64
+	if running {
+		readLatency, writeLatency = 0.001, 0.002
+		rxThroughput, txThroughput = 1<<20, 1<<19
+	}
+
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{
 		{Namespace: ns, MetricName: "CPUUtilization", Value: cpu, Unit: "Percent", Dimensions: dims, Timestamp: now},
 		{Namespace: ns, MetricName: "DatabaseConnections", Value: connections, Unit: "Count", Dimensions: dims, Timestamp: now},
 		{Namespace: ns, MetricName: "FreeableMemory", Value: 1 << 30, Unit: "Bytes", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "FreeStorageSpace", Value: 10 << 30, Unit: "Bytes", Dimensions: dims, Timestamp: now},
 		{Namespace: ns, MetricName: "ReadIOPS", Value: 10, Unit: "Count/Second", Dimensions: dims, Timestamp: now},
 		{Namespace: ns, MetricName: "WriteIOPS", Value: 5, Unit: "Count/Second", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "ReadLatency", Value: readLatency, Unit: "Seconds", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "WriteLatency", Value: writeLatency, Unit: "Seconds", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "NetworkReceiveThroughput", Value: rxThroughput, Unit: "Bytes/Second", Dimensions: dims, Timestamp: now},
+		{Namespace: ns, MetricName: "NetworkTransmitThroughput", Value: txThroughput, Unit: "Bytes/Second", Dimensions: dims, Timestamp: now},
 	})
 }
 
@@ -147,6 +176,38 @@ func snapshotARN(region, accountID, id string) string {
 
 func clusterSnapshotARN(region, accountID, id string) string {
 	return idgen.AWSARN("rds", region, accountID, "cluster-snapshot:"+id)
+}
+
+// cloneSlice returns a shallow copy of s (nil for empty), so a slice returned
+// by a Describe call never aliases the store's backing array — a caller
+// mutating the result can't corrupt internal state.
+func cloneSlice[T any](s []T) []T {
+	if len(s) == 0 {
+		return nil
+	}
+
+	return append([]T(nil), s...)
+}
+
+// cloneInstance / cloneCluster copy the map + slice fields so a value returned
+// by a Describe call never aliases the store.
+//
+//nolint:gocritic // takes a value on purpose: it returns an independent copy.
+func cloneInstance(in rdsdriver.Instance) rdsdriver.Instance {
+	in.Tags = copyTags(in.Tags)
+	in.VPCSecurityGroups = cloneSlice(in.VPCSecurityGroups)
+	in.ReadReplicaTargets = cloneSlice(in.ReadReplicaTargets)
+
+	return in
+}
+
+//nolint:gocritic // takes a value on purpose: it returns an independent copy.
+func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
+	c.Tags = copyTags(c.Tags)
+	c.Members = cloneSlice(c.Members)
+	c.VPCSecurityGroups = cloneSlice(c.VPCSecurityGroups)
+
+	return c
 }
 
 func copyTags(src map[string]string) map[string]string {
@@ -208,26 +269,28 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 	}
 
 	inst := rdsdriver.Instance{
-		ID:                 cfg.ID,
-		ARN:                instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:             cfg.Engine,
-		EngineVersion:      cfg.EngineVersion,
-		InstanceClass:      instanceClass,
-		AllocatedStorage:   storage,
-		StorageType:        storageType,
-		MasterUsername:     cfg.MasterUsername,
-		DBName:             cfg.DBName,
-		Endpoint:           endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
-		Port:               port,
-		State:              rdsdriver.StateAvailable,
-		MultiAZ:            cfg.MultiAZ,
-		PubliclyAccessible: cfg.PubliclyAccessible,
-		VPCSecurityGroups:  append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:    cfg.SubnetGroupName,
-		ClusterID:          cfg.ClusterID,
-		AvailabilityZone:   cfg.AvailabilityZone,
-		CreatedAt:          m.opts.Clock.Now().UTC(),
-		Tags:               copyTags(cfg.Tags),
+		ID:                   cfg.ID,
+		ARN:                  instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:               cfg.Engine,
+		EngineVersion:        cfg.EngineVersion,
+		InstanceClass:        instanceClass,
+		AllocatedStorage:     storage,
+		StorageType:          storageType,
+		MasterUsername:       cfg.MasterUsername,
+		DBName:               cfg.DBName,
+		Endpoint:             endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
+		Port:                 port,
+		State:                rdsdriver.StateAvailable,
+		MultiAZ:              cfg.MultiAZ,
+		PubliclyAccessible:   cfg.PubliclyAccessible,
+		VPCSecurityGroups:    append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:      cfg.SubnetGroupName,
+		DBParameterGroupName: cfg.DBParameterGroupName,
+		OptionGroupName:      cfg.OptionGroupName,
+		ClusterID:            cfg.ClusterID,
+		AvailabilityZone:     cfg.AvailabilityZone,
+		CreatedAt:            m.opts.Clock.Now().UTC(),
+		Tags:                 copyTags(cfg.Tags),
 	}
 
 	m.instances.Set(cfg.ID, inst)
@@ -258,7 +321,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
-			out = append(out, v)
+			out = append(out, cloneInstance(v))
 		}
 
 		return out, nil
@@ -272,13 +335,15 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 		}
 
-		out = append(out, inst)
+		out = append(out, cloneInstance(inst))
 	}
 
 	return out, nil
 }
 
 // ModifyInstance applies the supplied changes.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -306,6 +371,14 @@ func (m *Mock) ModifyInstance(
 		inst.MultiAZ = *input.MultiAZ
 	}
 
+	if input.DBParameterGroupName != "" {
+		inst.DBParameterGroupName = input.DBParameterGroupName
+	}
+
+	if input.OptionGroupName != "" {
+		inst.OptionGroupName = input.OptionGroupName
+	}
+
 	if input.Tags != nil {
 		inst.Tags = copyTags(input.Tags)
 	}
@@ -327,11 +400,27 @@ func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
 	}
 
+	// Real AWS refuses to delete a source that still has read replicas; the
+	// replicas would otherwise be orphaned with a dangling ReadReplicaSource.
+	if len(inst.ReadReplicaTargets) > 0 {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"DB instance %q has read replicas %v; promote or delete them first", id, inst.ReadReplicaTargets)
+	}
+
 	if inst.ClusterID != "" {
 		cluster, ok := m.clusters.Get(inst.ClusterID)
 		if ok {
 			cluster.Members = removeString(cluster.Members, id)
 			m.clusters.Set(inst.ClusterID, cluster)
+		}
+	}
+
+	// If this instance is itself a replica, detach it from its source so the
+	// source no longer lists a replica that has gone.
+	if inst.ReadReplicaSource != "" {
+		if src, ok := m.instances.Get(inst.ReadReplicaSource); ok {
+			src.ReadReplicaTargets = removeString(src.ReadReplicaTargets, id)
+			m.instances.Set(src.ID, src)
 		}
 	}
 
@@ -424,20 +513,21 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 	}
 
 	cluster := rdsdriver.Cluster{
-		ID:                cfg.ID,
-		ARN:               clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:            cfg.Engine,
-		EngineVersion:     cfg.EngineVersion,
-		MasterUsername:    cfg.MasterUsername,
-		DatabaseName:      cfg.DatabaseName,
-		Endpoint:          endpointFor(cfg.ID, m.opts.Region, "cluster"),
-		ReaderEndpoint:    endpointFor(cfg.ID, m.opts.Region, "cluster-ro"),
-		Port:              port,
-		State:             rdsdriver.StateAvailable,
-		VPCSecurityGroups: append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:   cfg.SubnetGroupName,
-		CreatedAt:         m.opts.Clock.Now().UTC(),
-		Tags:              copyTags(cfg.Tags),
+		ID:                          cfg.ID,
+		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:                      cfg.Engine,
+		EngineVersion:               cfg.EngineVersion,
+		MasterUsername:              cfg.MasterUsername,
+		DatabaseName:                cfg.DatabaseName,
+		Endpoint:                    endpointFor(cfg.ID, m.opts.Region, "cluster"),
+		ReaderEndpoint:              endpointFor(cfg.ID, m.opts.Region, "cluster-ro"),
+		Port:                        port,
+		State:                       rdsdriver.StateAvailable,
+		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:             cfg.SubnetGroupName,
+		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
+		CreatedAt:                   m.opts.Clock.Now().UTC(),
+		Tags:                        copyTags(cfg.Tags),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
@@ -460,7 +550,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
-			out = append(out, v)
+			out = append(out, cloneCluster(v))
 		}
 
 		return out, nil
@@ -474,13 +564,15 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 			return nil, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", id)
 		}
 
-		out = append(out, cluster)
+		out = append(out, cloneCluster(cluster))
 	}
 
 	return out, nil
 }
 
 // ModifyCluster applies changes.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyCluster(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Cluster, error) {
@@ -494,6 +586,10 @@ func (m *Mock) ModifyCluster(
 
 	if input.EngineVersion != "" {
 		cluster.EngineVersion = input.EngineVersion
+	}
+
+	if input.DBClusterParameterGroupName != "" {
+		cluster.DBClusterParameterGroupName = input.DBClusterParameterGroupName
 	}
 
 	if input.Tags != nil {
@@ -624,6 +720,7 @@ func (m *Mock) DescribeSnapshots(
 			}
 		}
 
+		snap.Tags = copyTags(snap.Tags)
 		out = append(out, snap)
 	}
 
@@ -757,6 +854,7 @@ func (m *Mock) DescribeClusterSnapshots(
 			}
 		}
 
+		snap.Tags = copyTags(snap.Tags)
 		out = append(out, snap)
 	}
 
@@ -817,14 +915,19 @@ func (m *Mock) RestoreClusterFromSnapshot(
 	return &out, nil
 }
 
+// removeString returns a NEW slice with target removed. It never mutates the
+// input's backing array, so a slice previously handed out by a Describe call
+// is never corrupted by a later membership change.
 func removeString(slice []string, target string) []string {
-	for i, v := range slice {
-		if v == target {
-			return append(slice[:i], slice[i+1:]...)
+	out := make([]string, 0, len(slice))
+
+	for _, v := range slice {
+		if v != target {
+			out = append(out, v)
 		}
 	}
 
-	return slice
+	return out
 }
 
 func stringSet(values []string) map[string]struct{} {
