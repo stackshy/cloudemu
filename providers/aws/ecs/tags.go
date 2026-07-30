@@ -16,28 +16,29 @@ func (m *Mock) recordTags(arn string, tags []driver.Tag) {
 }
 
 // TagResource merges tags onto a resource, replacing the value of any key that
-// already exists and appending new keys, mirroring AWS's upsert semantics.
+// already exists and appending new keys, mirroring AWS's upsert semantics. The
+// read-modify-write runs atomically under the store lock (SetIfAbsent seeds the
+// entry, then Update mutates it in place) so two concurrent tag writes on the
+// same ARN can't lose one another's changes.
 func (m *Mock) TagResource(_ context.Context, resourceARN string, tags []driver.Tag) error {
 	if resourceARN == "" {
 		return apiErrf(errors.InvalidArgument, excInvalidParameter, "resourceArn is required")
 	}
 
-	existing, _ := m.tags.Get(resourceARN)
-	merged := mergeTags(existing, tags)
-	m.tags.Set(resourceARN, merged)
+	m.tags.SetIfAbsent(resourceARN, nil)
+	m.tags.Update(resourceARN, func(existing []driver.Tag) []driver.Tag {
+		return mergeTags(existing, tags)
+	})
 
 	return nil
 }
 
-// UntagResource removes the given tag keys from a resource.
+// UntagResource removes the given tag keys from a resource. The read-modify-write
+// runs atomically under the store lock so it can't race a concurrent TagResource
+// on the same ARN. An absent ARN is a no-op (Update returns false, ignored).
 func (m *Mock) UntagResource(_ context.Context, resourceARN string, tagKeys []string) error {
 	if resourceARN == "" {
 		return apiErrf(errors.InvalidArgument, excInvalidParameter, "resourceArn is required")
-	}
-
-	existing, ok := m.tags.Get(resourceARN)
-	if !ok {
-		return nil
 	}
 
 	drop := make(map[string]bool, len(tagKeys))
@@ -45,15 +46,17 @@ func (m *Mock) UntagResource(_ context.Context, resourceARN string, tagKeys []st
 		drop[k] = true
 	}
 
-	kept := make([]driver.Tag, 0, len(existing))
+	m.tags.Update(resourceARN, func(existing []driver.Tag) []driver.Tag {
+		kept := make([]driver.Tag, 0, len(existing))
 
-	for _, t := range existing {
-		if !drop[t.Key] {
-			kept = append(kept, t)
+		for _, t := range existing {
+			if !drop[t.Key] {
+				kept = append(kept, t)
+			}
 		}
-	}
 
-	m.tags.Set(resourceARN, kept)
+		return kept
+	})
 
 	return nil
 }

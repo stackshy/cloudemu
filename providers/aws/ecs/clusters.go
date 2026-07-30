@@ -147,19 +147,24 @@ func (m *Mock) PutClusterCapacityProviders(
 }
 
 // mutateCluster resolves a cluster by name or ARN, applies fn to a clone under
-// copy-on-write, stores it, and returns the described cluster. An unknown
-// cluster surfaces a ClusterNotFoundException.
+// copy-on-write, stores it, and returns the described cluster. The
+// read-modify-write runs atomically under the store lock (via memstore.Update)
+// so two concurrent cluster mutations can't lose one another's changes. An
+// unknown cluster surfaces a ClusterNotFoundException.
 func (m *Mock) mutateCluster(id string, fn func(*driver.Cluster)) (*driver.Cluster, error) {
 	name := resolveClusterName(id)
 
-	c, ok := m.clusters.Get(name)
+	var updated driver.Cluster
+
+	ok := m.clusters.Update(name, func(c *driver.Cluster) *driver.Cluster {
+		updated = cloneCluster(c)
+		fn(&updated)
+
+		return &updated
+	})
 	if !ok {
 		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", name)
 	}
-
-	updated := cloneCluster(c)
-	fn(&updated)
-	m.clusters.Set(name, &updated)
 
 	out := m.describeCluster(&updated)
 
