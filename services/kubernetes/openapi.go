@@ -184,8 +184,7 @@ func kindsForGroupVersion(group, version string) []string {
 	}
 
 	seen := map[string]bool{}
-
-	var kinds []string
+	kinds := make([]string, 0, len(res))
 
 	for _, r := range res {
 		// Skip subresources (name contains '/', e.g. deployments/scale) — they

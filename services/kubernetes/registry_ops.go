@@ -14,10 +14,12 @@ import (
 // covers both registry-backed children and the typed Pod store. Callers hold
 // s.mu.
 func (s *ClusterState) garbageCollectLocked(owner types.UID) {
-	// Collect the registry objects owned (transitively) by `owner` before
-	// deleting any, so we never mutate a store's map while ranging it and the
-	// result is independent of Go's randomized map iteration order. A registry
-	// child may own further registry children, so this is a breadth-first walk.
+	// Walk the ownership tree breadth-first. Deleting the current key from a map
+	// mid-range is legal in Go, but a naive recursive descent would re-range the
+	// same stores while an outer range is still live and make the result depend
+	// on Go's randomized iteration order; the explicit BFS queue makes the
+	// cascade order-independent. A registry child may own further registry
+	// children, so intermediate owners are enqueued as they're found.
 	// owners accumulates every UID whose direct children must be reaped —
 	// `owner` plus each collected registry object — so Pods owned by an
 	// intermediate controller (not just the root) are garbage-collected too.

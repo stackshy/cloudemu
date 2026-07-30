@@ -66,7 +66,22 @@ const (
 	EventAdded    = "ADDED"
 	EventModified = "MODIFIED"
 	EventDeleted  = "DELETED"
+	// EventError carries a Status object (e.g. 410 Gone) that tells a client-go
+	// reflector to relist — used when a slow watcher overflowed its buffer.
+	EventError = "ERROR"
 )
+
+// expiredWatchStatus is the 410 Gone a real apiserver sends when a watch has
+// fallen too far behind; client-go reacts by relisting.
+func expiredWatchStatus() *metav1.Status {
+	return &metav1.Status{
+		TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"},
+		Status:   metav1.StatusFailure,
+		Code:     http.StatusGone,
+		Reason:   metav1.StatusReasonExpired,
+		Message:  "watch events were dropped for a slow client; relist required",
+	}
+}
 
 // watchSubscriberBuffer is the per-subscriber channel capacity. Generous so
 // a slow client can fall a few events behind without blocking the publisher;
@@ -89,6 +104,10 @@ type subscriber struct {
 	namespace string // "" matches every namespace
 	ch        chan watchEvent
 	done      chan struct{}
+	// overflow is signaled (once) when the publisher had to drop an event
+	// because ch was full. streamWatch turns that into a 410 Gone so the client
+	// relists rather than running with a silently-divergent cache.
+	overflow chan struct{}
 }
 
 // broadcaster fans out resource mutations to every connected Watch
@@ -114,6 +133,7 @@ func (b *broadcaster) subscribe(namespace string) *subscriber {
 		namespace: namespace,
 		ch:        make(chan watchEvent, watchSubscriberBuffer),
 		done:      make(chan struct{}),
+		overflow:  make(chan struct{}, 1),
 	}
 
 	b.mu.Lock()
@@ -146,12 +166,16 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 			continue
 		}
 
-		// Channel full → drop this event for the slow subscriber rather
-		// than block the publisher or other subscribers. Real apiserver
-		// would disconnect; we shed load.
+		// Channel full → don't block the publisher or other subscribers. Signal
+		// overflow (once, non-blocking) so streamWatch sends the client a 410
+		// Gone and it relists, instead of silently missing events forever.
 		select {
 		case sub.ch <- watchEvent{Type: eventType, Object: obj}:
 		default:
+			select {
+			case sub.overflow <- struct{}{}:
+			default:
+			}
 		}
 
 		keep = append(keep, sub)
@@ -227,6 +251,14 @@ func streamWatch[T any](
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-sub.overflow:
+			// We dropped at least one event for this slow watcher. Send a 410
+			// Gone (Expired) like a real apiserver so the client-go reflector
+			// relists rather than running with a permanently-stale cache, then
+			// end the stream.
+			encodeWatchEvent(enc, flusher, watchEvent{Type: EventError, Object: expiredWatchStatus()})
+
 			return
 		case ev, ok := <-sub.ch:
 			if !ok {

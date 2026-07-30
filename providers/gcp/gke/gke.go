@@ -1,15 +1,12 @@
 // Package gke provides an in-memory mock of GCP Kubernetes Engine (GKE).
 //
-// Wave 1 covers only the GKE control-plane: Clusters, NodePools, and the
-// long-running Operations they emit. The Kubernetes data-plane API
-// (Deployments, StatefulSets, Pods, Services) is intentionally out of scope
-// and will be wired up in Wave 2 alongside a Kubernetes API server stub.
-//
-// To reflect that, GetCluster returns a stub Endpoint
-// (https://GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local) and a stub CA
-// certificate so that tooling like `gcloud container clusters get-credentials`
-// can render a kubeconfig — actual API calls against the kubeconfig will fail
-// until Wave 2 lands.
+// It covers the GKE control-plane (Clusters, NodePools, and the long-running
+// Operations they emit) plus a live Kubernetes data plane. When a shared
+// kubernetes.APIServer is wired in, GetCluster's Endpoint + masterAuth CA point
+// at a real in-memory apiserver so `gcloud container clusters get-credentials`
+// yields a working kubeconfig. Without one, GetCluster falls back to a sentinel
+// Endpoint (https://GKE-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local) so kubeconfig
+// rendering still works syntactically.
 package gke
 
 import (

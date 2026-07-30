@@ -199,22 +199,26 @@ func rwVerbs() []string {
 }
 
 func coreResources() []apiResource {
-	//nolint:prealloc // fixed base list plus registry expansion via append.
-	res := []apiResource{
-		{"namespaces", "namespace", "Namespace", false, rwVerbs(), []string{"ns"}},
-		{"configmaps", "configmap", "ConfigMap", true, rwVerbs(), []string{"cm"}},
-		{"pods", "pod", "Pod", true, rwVerbs(), []string{"po"}},
-		{"secrets", "secret", "Secret", true, rwVerbs(), nil},
-		{"serviceaccounts", "serviceaccount", "ServiceAccount", true, rwVerbs(), []string{"sa"}},
-		{"services", "service", "Service", true, rwVerbs(), []string{"svc"}},
+	reg := registryAPIResources("", "v1")
+
+	const typedCoreKinds = 7
+
+	res := make([]apiResource, 0, typedCoreKinds+len(reg))
+	res = append(res,
+		apiResource{"namespaces", "namespace", "Namespace", false, rwVerbs(), []string{"ns"}},
+		apiResource{"configmaps", "configmap", "ConfigMap", true, rwVerbs(), []string{"cm"}},
+		apiResource{"pods", "pod", "Pod", true, rwVerbs(), []string{"po"}},
+		apiResource{"secrets", "secret", "Secret", true, rwVerbs(), nil},
+		apiResource{"serviceaccounts", "serviceaccount", "ServiceAccount", true, rwVerbs(), []string{"sa"}},
+		apiResource{"services", "service", "Service", true, rwVerbs(), []string{"svc"}},
 		// Endpoints are managed by the emulator (auto-created per Service and torn
 		// down with it), so only the read verbs serveEndpoints implements are
 		// advertised — promising create/update/delete would have kubectl and
 		// client-go issue writes that 405.
-		{"endpoints", "endpoints", "Endpoints", true, []string{"get", "list", "watch"}, []string{"ep"}},
-	}
+		apiResource{"endpoints", "endpoints", "Endpoints", true, []string{"get", "list", "watch"}, []string{"ep"}},
+	)
 
-	return append(res, registryAPIResources("", "v1")...)
+	return append(res, reg...)
 }
 
 // registryAPIResources expands the registry-backed kinds of a group/version
@@ -222,9 +226,10 @@ func coreResources() []apiResource {
 // subresources), so discovery is derived from the registry and can't drift
 // from what the server actually serves.
 func registryAPIResources(group, version string) []apiResource {
-	var out []apiResource
+	defs := registeredResources()
+	out := make([]apiResource, 0, len(defs))
 
-	for _, d := range registeredResources() {
+	for _, d := range defs {
 		if d.group != group || d.version != version {
 			continue
 		}
@@ -283,12 +288,16 @@ func policyResources() []apiResource {
 }
 
 func appsResources() []apiResource {
-	//nolint:prealloc // fixed base list plus registry expansion via append.
-	res := []apiResource{
-		{"deployments", "deployment", "Deployment", true, rwVerbs(), []string{"deploy"}},
-		{"deployments/status", "", "Deployment", true, subresourceVerbs(), nil},
-		{"deployments/scale", "", "Scale", true, subresourceVerbs(), nil},
-	}
+	reg := registryAPIResources(apiGroupApps, "v1")
 
-	return append(res, registryAPIResources("apps", "v1")...)
+	const typedAppsEntries = 3
+
+	res := make([]apiResource, 0, typedAppsEntries+len(reg))
+	res = append(res,
+		apiResource{"deployments", "deployment", "Deployment", true, rwVerbs(), []string{"deploy"}},
+		apiResource{"deployments/status", "", "Deployment", true, subresourceVerbs(), nil},
+		apiResource{"deployments/scale", "", "Scale", true, subresourceVerbs(), nil},
+	)
+
+	return append(res, reg...)
 }

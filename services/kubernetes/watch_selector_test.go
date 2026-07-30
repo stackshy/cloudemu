@@ -4,12 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// When a slow watcher overflows its buffer, the server must emit a 410 Gone
+// (ERROR) event so the client relists, instead of silently dropping events and
+// leaving the client's cache permanently divergent.
+func TestWatch_OverflowEmits410Gone(t *testing.T) {
+	b := newBroadcaster()
+	sub := b.subscribe("")
+
+	// Publish more than the buffer holds without anyone draining, so at least
+	// one event is dropped and overflow is signaled.
+	for i := 0; i < watchSubscriberBuffer+5; i++ {
+		b.publish(EventAdded, "", corev1.Pod{})
+	}
+
+	rec := httptest.NewRecorder()
+	streamWatch[corev1.Pod](context.Background(), rec, sub, nil, nil)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"ERROR"`) || !strings.Contains(body, "410") {
+		t.Fatalf("expected a 410 Gone ERROR event after overflow, got: %s", body)
+	}
+}
 
 // A watch with a labelSelector must stream only matching objects — both in the
 // initial snapshot and in live events. Regression guard for the blocker where

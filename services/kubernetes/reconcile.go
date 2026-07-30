@@ -276,7 +276,7 @@ func (s *ClusterState) reconcileServiceEndpointsLocked(svc *corev1.Service) {
 // matchingEndpointAddressesLocked returns the ready Pod addresses a Service
 // selector matches, sorted by IP for a stable (change-detectable) result.
 func (s *ClusterState) matchingEndpointAddressesLocked(svc *corev1.Service) []corev1.EndpointAddress {
-	var addrs []corev1.EndpointAddress
+	addrs := make([]corev1.EndpointAddress, 0, len(s.pods))
 
 	for _, pod := range s.pods {
 		if pod.Namespace != svc.Namespace || pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {

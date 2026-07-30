@@ -1,9 +1,10 @@
-// Package eks provides an in-memory mock of AWS EKS — Wave 1 covers the
-// control plane only (clusters, managed node groups, Fargate profiles, and
-// add-ons). The Kubernetes data plane is out of scope and will be Wave 2;
-// for now the cluster Endpoint and CertificateAuthority fields return
-// placeholder values so kubeconfig generation works syntactically without
-// a real apiserver.
+// Package eks provides an in-memory mock of AWS EKS: the control plane
+// (clusters, managed node groups, Fargate profiles, and add-ons) plus a live
+// Kubernetes data plane. When a shared kubernetes.APIServer is wired in,
+// CreateCluster registers a real in-memory apiserver and DescribeCluster
+// advertises its endpoint + CA so client-go and kubectl operate end-to-end;
+// without one, the Endpoint and CertificateAuthority fields fall back to
+// placeholder values so kubeconfig generation still works syntactically.
 //
 // The mock implements eks/driver.EKS so the same backend serves both the
 // SDK-compat HTTP handler in server/aws/eks and any direct programmatic
