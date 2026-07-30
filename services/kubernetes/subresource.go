@@ -15,13 +15,13 @@ import (
 // the typed Deployment exposes /scale and /status; anything else is a 404,
 // matching a real apiserver's response for a nonexistent subresource.
 func (s *ClusterState) serveSubresource(w http.ResponseWriter, r *http.Request, route *Route) {
-	if route.APIGroup == apiGroupApps && route.Resource == "deployments" {
+	if route.APIGroup == apiGroupApps && route.Resource == resourceDeployments {
 		switch route.Subresource {
-		case "scale":
+		case subresourceScale:
 			s.deploymentScale(w, r, route.Namespace, route.Name)
 
 			return
-		case "status":
+		case subresourceStatus:
 			s.deploymentStatus(w, r, route.Namespace, route.Name)
 
 			return
@@ -124,7 +124,7 @@ func deploymentScaleObject(dep *appsv1.Deployment) *autoscalingv1.Scale {
 // readScaleReplicas parses the desired replica count from a PUT (full Scale) or
 // a PATCH (merged onto the current Scale). The bool is true when a wire error
 // was already written.
-func (s *ClusterState) readScaleReplicas(w http.ResponseWriter, r *http.Request, dep *appsv1.Deployment) (int32, bool) {
+func (*ClusterState) readScaleReplicas(w http.ResponseWriter, r *http.Request, dep *appsv1.Deployment) (int32, bool) {
 	if r.Method == http.MethodPut {
 		var in autoscalingv1.Scale
 		if !readJSON(w, r, &in) {

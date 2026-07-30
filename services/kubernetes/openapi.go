@@ -157,9 +157,9 @@ func parseGVPath(p string) (group, version string) {
 	parts := strings.Split(p, "/")
 
 	switch {
-	case len(parts) == 2 && parts[0] == "api":
+	case len(parts) == 2 && parts[0] == pathSegAPI:
 		return "", parts[1]
-	case len(parts) == 3 && parts[0] == "apis":
+	case len(parts) == 3 && parts[0] == pathSegAPIs:
 		return parts[1], parts[2]
 	}
 
@@ -173,11 +173,11 @@ func kindsForGroupVersion(group, version string) []string {
 	var res []apiResource
 
 	switch {
-	case group == "" && version == "v1":
+	case group == "" && version == apiVersionV1:
 		res = coreResources()
-	case group == "apps" && version == "v1":
+	case group == apiGroupApps && version == apiVersionV1:
 		res = appsResources()
-	case group == "policy" && version == "v1":
+	case group == apiGroupPolicy && version == apiVersionV1:
 		res = policyResources()
 	default:
 		res = registryAPIResources(group, version)

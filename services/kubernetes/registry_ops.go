@@ -89,7 +89,7 @@ func ownedByAny(refs []metav1.OwnerReference, owners map[types.UID]bool) bool {
 // registry-backed kind that declares them.
 func (s *ClusterState) registrySubresource(w http.ResponseWriter, r *http.Request, route *Route, st *registryStore) {
 	switch route.Subresource {
-	case "status":
+	case subresourceStatus:
 		if !st.def.hasStatus {
 			writeNotFound(w, "k8s api: "+st.def.kind+" has no status subresource")
 
@@ -97,7 +97,7 @@ func (s *ClusterState) registrySubresource(w http.ResponseWriter, r *http.Reques
 		}
 
 		s.registryStatus(w, r, st, route.Namespace, route.Name)
-	case "scale":
+	case subresourceScale:
 		if !st.def.hasScale {
 			writeNotFound(w, "k8s api: "+st.def.kind+" has no scale subresource")
 

@@ -10,16 +10,32 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
+// serveWatch is the shared body of every typed watch handler: subscribe and
+// snapshot under one RLock (the ordering streamWatch's contract requires), then
+// stream selector-filtered events. collect runs under the held RLock.
+func serveWatch[T any](
+	s *ClusterState, w http.ResponseWriter, r *http.Request,
+	b *broadcaster, namespace string, collect func() []T, keep func(T) bool,
+) {
+	s.mu.RLock()
+	sub := b.subscribe(namespace)
+	items := collect()
+	s.mu.RUnlock()
+	streamWatch(r.Context(), w, sub, items, keep)
+}
+
 // parseListSelectors extracts the labelSelector and fieldSelector from a list
 // or watch request. A malformed labelSelector degrades to match-everything
 // (matching the typed list path's existing behavior).
-func parseListSelectors(r *http.Request) (labels.Selector, map[string]string) {
+func parseListSelectors(r *http.Request) (sel labels.Selector, fields map[string]string) {
 	sel, err := labels.Parse(r.URL.Query().Get("labelSelector"))
 	if err != nil {
 		sel = labels.Everything()
 	}
 
-	return sel, parseFieldSelector(r.URL.Query().Get("fieldSelector"))
+	fields = parseFieldSelector(r.URL.Query().Get("fieldSelector"))
+
+	return sel, fields
 }
 
 // metaFieldsMatch answers the metadata.name / metadata.namespace field
@@ -173,6 +189,8 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 // selective watch (`kubectl get pods -l app=x -w`, or any informer built with a
 // selector) would receive non-matching objects — polluting reflector caches and
 // firing spurious reconciles, which the reconcile engine amplifies.
+//
+//nolint:gocyclo // snapshot + stream loop with selector filtering; splitting further would hide the subscribe/snapshot ordering contract.
 func streamWatch[T any](
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -201,11 +219,9 @@ func streamWatch[T any](
 			continue
 		}
 
-		if err := enc.Encode(watchEvent{Type: EventAdded, Object: item}); err != nil {
+		if !encodeWatchEvent(enc, flusher, watchEvent{Type: EventAdded, Object: item}) {
 			return
 		}
-
-		flusher.Flush()
 	}
 
 	for {
@@ -224,11 +240,21 @@ func streamWatch[T any](
 				continue
 			}
 
-			if err := enc.Encode(ev); err != nil {
+			if !encodeWatchEvent(enc, flusher, ev) {
 				return
 			}
-
-			flusher.Flush()
 		}
 	}
+}
+
+// encodeWatchEvent writes one watch event and flushes it, returning false if
+// the write failed (client gone) so the caller stops streaming.
+func encodeWatchEvent(enc *json.Encoder, flusher http.Flusher, ev watchEvent) bool {
+	if err := enc.Encode(ev); err != nil {
+		return false
+	}
+
+	flusher.Flush()
+
+	return true
 }

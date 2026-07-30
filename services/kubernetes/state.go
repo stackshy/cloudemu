@@ -167,6 +167,15 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.dispatchResource(w, r, route)
+}
+
+// dispatchResource routes an object (non-subresource) request to the typed
+// handler for its resource, falling back to the registry for registry-backed
+// kinds.
+//
+//nolint:gocyclo // flat per-resource dispatch switch; one arm per typed kind.
+func (s *ClusterState) dispatchResource(w http.ResponseWriter, r *http.Request, route *Route) {
 	switch route.Resource {
 	case "namespaces":
 		s.serveNamespaces(w, r, route)
@@ -180,7 +189,7 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveServiceAccounts(w, r, route)
 	case "services":
 		s.serveServices(w, r, route)
-	case "deployments":
+	case resourceDeployments:
 		s.serveDeployments(w, r, route)
 	case "poddisruptionbudgets":
 		s.servePDBs(w, r, route)

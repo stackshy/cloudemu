@@ -79,15 +79,11 @@ func (s *ClusterState) serveConfigMapCollection(w http.ResponseWriter, r *http.R
 
 func (s *ClusterState) watchConfigMaps(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	keep := func(cm corev1.ConfigMap) bool {
-		return sel.Matches(labels.Set(cm.Labels)) && metaFieldsMatch(cm.Name, cm.Namespace, fields)
-	}
-
-	s.mu.RLock()
-	sub := s.wConfigMaps.subscribe(namespace)
-	items := s.collectConfigMapsLocked(namespace)
-	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items, keep)
+	serveWatch(s, w, r, s.wConfigMaps, namespace,
+		func() []corev1.ConfigMap { return s.collectConfigMapsLocked(namespace) },
+		func(cm corev1.ConfigMap) bool {
+			return sel.Matches(labels.Set(cm.Labels)) && metaFieldsMatch(cm.Name, cm.Namespace, fields)
+		})
 }
 
 func (s *ClusterState) serveConfigMapItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

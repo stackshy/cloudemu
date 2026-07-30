@@ -14,6 +14,9 @@ import (
 // live under: /apis/apps/v1/...
 const apiGroupApps = "apps"
 
+// resourceDeployments is the plural resource segment for Deployments.
+const resourceDeployments = "deployments"
+
 // serveDeployments dispatches /apis/apps/v1/{namespaces/{ns}/deployments|
 // deployments} requests. Deployments are the first apps/v1 resource so the
 // route group check is different from the core/v1 handlers.
@@ -76,15 +79,11 @@ func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.
 
 func (s *ClusterState) watchDeployments(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	keep := func(d appsv1.Deployment) bool {
-		return sel.Matches(labels.Set(d.Labels)) && metaFieldsMatch(d.Name, d.Namespace, fields)
-	}
-
-	s.mu.RLock()
-	sub := s.wDeployments.subscribe(namespace)
-	items := s.collectDeploymentsLocked(namespace)
-	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items, keep)
+	serveWatch(s, w, r, s.wDeployments, namespace,
+		func() []appsv1.Deployment { return s.collectDeploymentsLocked(namespace) },
+		func(d appsv1.Deployment) bool {
+			return sel.Matches(labels.Set(d.Labels)) && metaFieldsMatch(d.Name, d.Namespace, fields)
+		})
 }
 
 func (s *ClusterState) serveDeploymentItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -231,6 +230,7 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, &dep)
 }
 
+//nolint:dupl // per-resource CRUD; a generic helper would obscure store access.
 func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := deploymentKey(namespace, name)
 

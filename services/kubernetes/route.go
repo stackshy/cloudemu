@@ -12,6 +12,20 @@ const namespacesSegment = "namespaces"
 // core (/api/v1) and apps (/apis/apps/v1).
 const apiVersionV1 = "v1"
 
+// pathSegAPI and pathSegAPIs are the leading URL segments that distinguish
+// core (/api/v1) from grouped (/apis/{group}/{version}) resource paths.
+const (
+	pathSegAPI  = "api"
+	pathSegAPIs = "apis"
+)
+
+// subresourceStatus and subresourceScale are the two subresource path segments
+// the emulator dispatches on (.../{name}/status and .../{name}/scale).
+const (
+	subresourceStatus = "status"
+	subresourceScale  = "scale"
+)
+
 // watchQuery is the ?watch=true value clients pass to upgrade a list
 // request into a stream. Centralized so dispatchers don't all hold a
 // "true" literal.
@@ -44,9 +58,9 @@ func parseRoute(path string) *Route {
 	parts := splitPath(path)
 
 	switch {
-	case len(parts) >= 2 && parts[0] == "api":
+	case len(parts) >= 2 && parts[0] == pathSegAPI:
 		return parseCoreRoute(parts[1:])
-	case len(parts) >= 3 && parts[0] == "apis":
+	case len(parts) >= 3 && parts[0] == pathSegAPIs:
 		return parseGroupRoute(parts[1:])
 	default:
 		return nil

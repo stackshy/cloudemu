@@ -124,6 +124,12 @@ func (s *ClusterState) serveRegistry(w http.ResponseWriter, r *http.Request, rou
 		return
 	}
 
+	s.serveRegistryItem(w, r, route, st)
+}
+
+// serveRegistryItem dispatches the single-object (named) methods for a
+// registry-backed kind.
+func (s *ClusterState) serveRegistryItem(w http.ResponseWriter, r *http.Request, route *Route, st *registryStore) {
 	switch r.Method {
 	case http.MethodGet:
 		s.registryGet(w, st, route.Namespace, route.Name)
@@ -376,7 +382,7 @@ func (st *registryStore) bumpRVLocked() { st.rv++ }
 // applyUnstructuredPatch merges a JSON-merge-patch body into cur and returns the
 // result. Strategic-merge and apply patches are accepted and treated as a merge
 // (a documented emulation: the mock has no strategic metadata / field managers).
-func (s *ClusterState) applyUnstructuredPatch(
+func (*ClusterState) applyUnstructuredPatch(
 	w http.ResponseWriter, r *http.Request, cur *unstructured.Unstructured,
 ) (*unstructured.Unstructured, bool) {
 	body, err := io.ReadAll(r.Body)
@@ -400,12 +406,12 @@ func (s *ClusterState) applyUnstructuredPatch(
 
 	switch ct := r.Header.Get("Content-Type"); ct {
 	case contentTypeJSONPatch:
-		merged, ok := applyRFC6902(w, curBytes, body)
-		if !ok {
+		m, jok := applyRFC6902(w, curBytes, body)
+		if !jok {
 			return nil, false
 		}
 
-		return decodeUnstructured(w, merged)
+		return decodeUnstructured(w, m)
 	case "", contentTypeJSON, contentTypeJSONMergePatch,
 		contentTypeStrategicMerge, contentTypeApplyPatch:
 		merged, err = mergePatch(curBytes, body)

@@ -81,15 +81,11 @@ func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Req
 
 func (s *ClusterState) watchServices(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	keep := func(svc corev1.Service) bool {
-		return sel.Matches(labels.Set(svc.Labels)) && metaFieldsMatch(svc.Name, svc.Namespace, fields)
-	}
-
-	s.mu.RLock()
-	sub := s.wServices.subscribe(namespace)
-	items := s.collectServicesLocked(namespace)
-	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items, keep)
+	serveWatch(s, w, r, s.wServices, namespace,
+		func() []corev1.Service { return s.collectServicesLocked(namespace) },
+		func(svc corev1.Service) bool {
+			return sel.Matches(labels.Set(svc.Labels)) && metaFieldsMatch(svc.Name, svc.Namespace, fields)
+		})
 }
 
 func (s *ClusterState) serveServiceItem(w http.ResponseWriter, r *http.Request, namespace, name string) {

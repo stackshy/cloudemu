@@ -78,15 +78,11 @@ func (s *ClusterState) serveServiceAccountCollection(w http.ResponseWriter, r *h
 
 func (s *ClusterState) watchServiceAccounts(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	keep := func(sa corev1.ServiceAccount) bool {
-		return sel.Matches(labels.Set(sa.Labels)) && metaFieldsMatch(sa.Name, sa.Namespace, fields)
-	}
-
-	s.mu.RLock()
-	sub := s.wServiceAccounts.subscribe(namespace)
-	items := s.collectServiceAccountsLocked(namespace)
-	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items, keep)
+	serveWatch(s, w, r, s.wServiceAccounts, namespace,
+		func() []corev1.ServiceAccount { return s.collectServiceAccountsLocked(namespace) },
+		func(sa corev1.ServiceAccount) bool {
+			return sel.Matches(labels.Set(sa.Labels)) && metaFieldsMatch(sa.Name, sa.Namespace, fields)
+		})
 }
 
 func (s *ClusterState) serveServiceAccountItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -194,7 +190,6 @@ func (s *ClusterState) getServiceAccount(w http.ResponseWriter, namespace, name 
 	writeJSON(w, http.StatusOK, sa.DeepCopy())
 }
 
-//nolint:dupl // namespaced-update CRUD pattern; copy-paste is clearer than a generic helper.
 func (s *ClusterState) updateServiceAccount(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	var in corev1.ServiceAccount
 	if !readJSON(w, r, &in) {

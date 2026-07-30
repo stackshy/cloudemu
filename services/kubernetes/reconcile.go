@@ -26,6 +26,8 @@ import (
 const (
 	nodeHostIP = "10.0.0.1"
 	nodeName   = "cloudemu-node-0"
+	// octetMask extracts the low 8 bits of a synthetic Pod-IP counter octet.
+	octetMask = 0xff
 )
 
 // allocatePodIPLocked hands out the next synthetic Pod IP. Callers hold s.mu.
@@ -33,7 +35,7 @@ func (s *ClusterState) allocatePodIPLocked() string {
 	n := s.nextPodIP
 	s.nextPodIP++
 
-	return fmt.Sprintf("10.244.%d.%d", (n>>8)&0xff, n&0xff)
+	return fmt.Sprintf("10.244.%d.%d", (n>>8)&octetMask, n&octetMask)
 }
 
 // markPodRunningLocked synthesizes the status of a scheduled, running Pod: a Pod
@@ -71,7 +73,9 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 	}
 
 	statuses := make([]corev1.ContainerStatus, 0, len(pod.Spec.Containers))
-	for _, c := range pod.Spec.Containers {
+
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
 		statuses = append(statuses, corev1.ContainerStatus{
 			Name:        c.Name,
 			Image:       c.Image,
@@ -88,6 +92,8 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 
 // buildControllerPod builds a Running Pod from a controller's PodTemplateSpec,
 // owned by that controller. Callers hold s.mu.
+//
+//nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
 func (s *ClusterState) buildControllerPod(
 	namespace, name string, tmpl corev1.PodTemplateSpec, owner metav1.OwnerReference,
 ) *corev1.Pod {
@@ -127,6 +133,7 @@ func (s *ClusterState) buildControllerPod(
 // treats as a rolling update — stale-hash Pods are replaced.
 const podTemplateHashLabel = "pod-template-hash"
 
+//nolint:gocritic // hugeParam: k8s template struct, copy is intentional.
 func podTemplateHash(tmpl corev1.PodTemplateSpec) string {
 	// Hash only the spec: label/annotation churn that doesn't change what runs
 	// should not trigger a rollout, matching upstream's collision-avoidance
@@ -160,6 +167,8 @@ func (s *ClusterState) podsOwnedByLocked(namespace string, owner types.UID) []*c
 
 // syncScaledPods brings the owner's Pods to desired count using random-suffixed
 // names (ReplicaSet / Deployment semantics). Returns the live count.
+//
+//nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
 func (s *ClusterState) syncScaledPods(
 	namespace, baseName string, owner metav1.OwnerReference, tmpl corev1.PodTemplateSpec, desired int,
 ) int {
@@ -196,6 +205,8 @@ func (s *ClusterState) syncScaledPods(
 
 // syncStablePods reconciles the owner's Pods to exactly the named set (stable
 // identity — StatefulSet / DaemonSet). Returns the live count.
+//
+//nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
 func (s *ClusterState) syncStablePods(
 	namespace string, owner metav1.OwnerReference, tmpl corev1.PodTemplateSpec, names []string,
 ) int {

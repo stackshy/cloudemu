@@ -75,15 +75,9 @@ func (s *ClusterState) servePodCollection(w http.ResponseWriter, r *http.Request
 
 func (s *ClusterState) watchPods(w http.ResponseWriter, r *http.Request, namespace string) {
 	sel, fields := parseListSelectors(r)
-	keep := func(p corev1.Pod) bool {
-		return sel.Matches(labels.Set(p.Labels)) && podMatchesFields(&p, fields)
-	}
-
-	s.mu.RLock()
-	sub := s.wPods.subscribe(namespace)
-	items := s.collectPodsLocked(namespace)
-	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items, keep)
+	serveWatch(s, w, r, s.wPods, namespace,
+		func() []corev1.Pod { return s.collectPodsLocked(namespace) },
+		func(p corev1.Pod) bool { return sel.Matches(labels.Set(p.Labels)) && podMatchesFields(&p, fields) })
 }
 
 func (s *ClusterState) servePodItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -243,7 +237,6 @@ func (s *ClusterState) getPod(w http.ResponseWriter, namespace, name string) {
 	writeJSON(w, http.StatusOK, pod.DeepCopy())
 }
 
-//nolint:dupl // namespaced-update CRUD pattern; copy-paste is clearer than a generic helper.
 func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	var in corev1.Pod
 	if !readJSON(w, r, &in) {

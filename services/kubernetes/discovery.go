@@ -25,7 +25,7 @@ import (
 //
 // Returns false when the path is not a discovery request, so the caller falls
 // through to normal resource routing.
-func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool {
+func (*ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		return false
 	}
@@ -120,17 +120,17 @@ func discoveryGroups() []groupVersion {
 // path, or ok=false if the path isn't a served group-version.
 func groupVersionDiscovery(path string) (res []apiResource, groupVersionStr, group string, ok bool) {
 	parts := splitPath(strings.TrimSuffix(path, "/"))
-	if len(parts) != 3 || parts[0] != "apis" {
+	if len(parts) != 3 || parts[0] != pathSegAPIs {
 		return nil, "", "", false
 	}
 
 	group, version := parts[1], parts[2]
 
 	switch {
-	case group == "apps" && version == "v1":
-		return appsResources(), "apps/v1", "apps", true
-	case group == "policy" && version == "v1":
-		return policyResources(), "policy/v1", "policy", true
+	case group == apiGroupApps && version == apiVersionV1:
+		return appsResources(), "apps/v1", apiGroupApps, true
+	case group == apiGroupPolicy && version == apiVersionV1:
+		return policyResources(), "policy/v1", apiGroupPolicy, true
 	default:
 		r := registryAPIResources(group, version)
 		if len(r) == 0 {
@@ -199,6 +199,7 @@ func rwVerbs() []string {
 }
 
 func coreResources() []apiResource {
+	//nolint:prealloc // fixed base list plus registry expansion via append.
 	res := []apiResource{
 		{"namespaces", "namespace", "Namespace", false, rwVerbs(), []string{"ns"}},
 		{"configmaps", "configmap", "ConfigMap", true, rwVerbs(), []string{"cm"}},
@@ -250,6 +251,8 @@ func subresourceVerbs() []string { return []string{"get", "patch", "update"} }
 
 // registryShortNames maps a registry resource's plural to the kubectl short
 // names real clusters advertise, so `kubectl get pvc/hpa/sts/...` resolves.
+//
+//nolint:gochecknoglobals // immutable package-level lookup table.
 var registryShortNames = map[string][]string{
 	"persistentvolumeclaims":   {"pvc"},
 	"persistentvolumes":        {"pv"},
@@ -280,6 +283,7 @@ func policyResources() []apiResource {
 }
 
 func appsResources() []apiResource {
+	//nolint:prealloc // fixed base list plus registry expansion via append.
 	res := []apiResource{
 		{"deployments", "deployment", "Deployment", true, rwVerbs(), []string{"deploy"}},
 		{"deployments/status", "", "Deployment", true, subresourceVerbs(), nil},

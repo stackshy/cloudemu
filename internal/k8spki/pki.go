@@ -25,11 +25,19 @@ import (
 	"time"
 )
 
+const (
+	rsaKeyBits   = 2048
+	caValidYears = 10
+	serialBits   = 128
+)
+
 // loadCA generates the CA once and reuses it. The private key is retained (not
 // discarded) so ServingTLSConfig can mint leaf certificates the advertised CA
 // certifies. A generation failure is carried rather than swallowed: a silently
 // empty CA is exactly the placeholder-that-breaks-client-go failure this
 // package exists to prevent.
+//
+//nolint:gochecknoglobals // process-wide sync.OnceValues cache for the single CA.
 var loadCA = sync.OnceValues(initCA)
 
 type caMaterial struct {
@@ -39,7 +47,7 @@ type caMaterial struct {
 }
 
 func initCA() (caMaterial, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
 	if err != nil {
 		return caMaterial{}, fmt.Errorf("generate CA key: %w", err)
 	}
@@ -48,7 +56,7 @@ func initCA() (caMaterial, error) {
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{CommonName: "cloudemu-k8s-ca"},
 		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
+		NotAfter:              time.Now().AddDate(caValidYears, 0, 0),
 		IsCA:                  true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
@@ -95,7 +103,7 @@ func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 		return nil, fmt.Errorf("certificate authority unavailable: %w", err)
 	}
 
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
 	if err != nil {
 		return nil, fmt.Errorf("generate serving key: %w", err)
 	}
@@ -104,7 +112,7 @@ func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 	// listener/test, each minting a fresh key, so a fixed serial would present
 	// two different public keys under the same (issuer, serial) — which strict,
 	// non-Go verifiers (the cross-SDK parity this package promises) can reject.
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), serialBits))
 	if err != nil {
 		return nil, fmt.Errorf("generate serving serial: %w", err)
 	}
@@ -113,7 +121,7 @@ func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "cloudemu-k8s"},
 		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().AddDate(10, 0, 0),
+		NotAfter:     time.Now().AddDate(caValidYears, 0, 0),
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		// Assert cA=FALSE explicitly so end-entity-strict verifiers accept the leaf.
