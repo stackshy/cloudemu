@@ -143,7 +143,7 @@ func TestSDKCloudSQLInstanceActions(t *testing.T) {
 	ctx := context.Background()
 	mustCreateInstance(t, svc, project, "pg")
 
-	// Clone.
+	// Clone produces an independent instance.
 	if _, err := svc.Instances.Clone(project, "pg", &sqladmin.InstancesCloneRequest{
 		CloneContext: &sqladmin.CloneContext{DestinationInstanceName: "pg-clone"},
 	}).Context(ctx).Do(); err != nil {
@@ -154,21 +154,58 @@ func TestSDKCloudSQLInstanceActions(t *testing.T) {
 		t.Fatalf("Get clone: %v", err)
 	}
 
-	// Failover, stop/start replica, promote replica all succeed on a live instance.
+	// Failover is valid on the primary.
 	if _, err := svc.Instances.Failover(project, "pg", &sqladmin.InstancesFailoverRequest{}).Context(ctx).Do(); err != nil {
 		t.Fatalf("Instances.Failover: %v", err)
 	}
 
-	if _, err := svc.Instances.StopReplica(project, "pg-clone").Context(ctx).Do(); err != nil {
+	// A read replica is created via a normal insert with masterInstanceName.
+	if _, err := svc.Instances.Insert(project, &sqladmin.DatabaseInstance{
+		Name:               "pg-replica",
+		DatabaseVersion:    "POSTGRES_15",
+		Region:             "us-central1",
+		MasterInstanceName: "pg",
+		Settings:           &sqladmin.Settings{Tier: "db-custom-2-8192"},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("replica Insert: %v", err)
+	}
+
+	// The primary now lists the replica; the replica records its master.
+	primary, err := svc.Instances.Get(project, "pg").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get primary: %v", err)
+	}
+
+	if len(primary.ReplicaNames) != 1 || primary.ReplicaNames[0] != "pg-replica" {
+		t.Fatalf("primary replicaNames = %v, want [pg-replica]", primary.ReplicaNames)
+	}
+
+	// Replica lifecycle actions require an actual replica.
+	if _, err := svc.Instances.StopReplica(project, "pg-replica").Context(ctx).Do(); err != nil {
 		t.Fatalf("Instances.StopReplica: %v", err)
 	}
 
-	if _, err := svc.Instances.StartReplica(project, "pg-clone").Context(ctx).Do(); err != nil {
+	if _, err := svc.Instances.StartReplica(project, "pg-replica").Context(ctx).Do(); err != nil {
 		t.Fatalf("Instances.StartReplica: %v", err)
 	}
 
-	if _, err := svc.Instances.PromoteReplica(project, "pg-clone").Context(ctx).Do(); err != nil {
+	// Replica ops on a non-replica are rejected.
+	if _, err := svc.Instances.PromoteReplica(project, "pg-clone").Context(ctx).Do(); err == nil {
+		t.Fatal("PromoteReplica on a non-replica: expected error")
+	}
+
+	// Promote detaches the replica from its master.
+	if _, err := svc.Instances.PromoteReplica(project, "pg-replica").Context(ctx).Do(); err != nil {
 		t.Fatalf("Instances.PromoteReplica: %v", err)
+	}
+
+	promoted, err := svc.Instances.Get(project, "pg-replica").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get promoted: %v", err)
+	}
+
+	if promoted.MasterInstanceName != "" {
+		t.Fatalf("promoted replica still has master %q", promoted.MasterInstanceName)
 	}
 }
 

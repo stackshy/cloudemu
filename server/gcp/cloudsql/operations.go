@@ -13,10 +13,11 @@ import (
 // activationPolicy live under settings.
 func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 	cfg := rdsdriver.InstanceConfig{
-		ID:               body.Name,
-		Engine:           body.DatabaseVersion,
-		AvailabilityZone: body.Region,
-		MasterUsername:   body.RootPassword, // SDKs use rootPassword on insert.
+		ID:                 body.Name,
+		Engine:             body.DatabaseVersion,
+		AvailabilityZone:   body.Region,
+		MasterUsername:     body.RootPassword, // SDKs use rootPassword on insert.
+		MasterInstanceName: body.MasterInstanceName,
 	}
 
 	if body.Settings != nil {

@@ -17,19 +17,21 @@ const (
 
 // sqlInstance is the JSON shape Cloud SQL expects for DatabaseInstance.
 type sqlInstance struct {
-	Kind            string       `json:"kind,omitempty"`
-	Name            string       `json:"name,omitempty"`
-	Project         string       `json:"project,omitempty"`
-	Region          string       `json:"region,omitempty"`
-	DatabaseVersion string       `json:"databaseVersion,omitempty"`
-	State           string       `json:"state,omitempty"`
-	BackendType     string       `json:"backendType,omitempty"`
-	ConnectionName  string       `json:"connectionName,omitempty"`
-	SelfLink        string       `json:"selfLink,omitempty"`
-	RootPassword    string       `json:"rootPassword,omitempty"`
-	IPAddresses     []ipMapping  `json:"ipAddresses,omitempty"`
-	Settings        *sqlSettings `json:"settings,omitempty"`
-	CreateTime      string       `json:"createTime,omitempty"`
+	Kind               string       `json:"kind,omitempty"`
+	Name               string       `json:"name,omitempty"`
+	Project            string       `json:"project,omitempty"`
+	Region             string       `json:"region,omitempty"`
+	DatabaseVersion    string       `json:"databaseVersion,omitempty"`
+	State              string       `json:"state,omitempty"`
+	BackendType        string       `json:"backendType,omitempty"`
+	ConnectionName     string       `json:"connectionName,omitempty"`
+	SelfLink           string       `json:"selfLink,omitempty"`
+	RootPassword       string       `json:"rootPassword,omitempty"`
+	MasterInstanceName string       `json:"masterInstanceName,omitempty"`
+	ReplicaNames       []string     `json:"replicaNames,omitempty"`
+	IPAddresses        []ipMapping  `json:"ipAddresses,omitempty"`
+	Settings           *sqlSettings `json:"settings,omitempty"`
+	CreateTime         string       `json:"createTime,omitempty"`
 }
 
 type sqlSettings struct {
@@ -118,15 +120,17 @@ func doneOperationWithTarget(project, name, opType, resourceType, target string)
 // toSQLInstance converts a portable Instance to the wire shape.
 func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 	return sqlInstance{
-		Kind:            "sql#instance",
-		Name:            inst.ID,
-		Project:         project,
-		Region:          inst.AvailabilityZone,
-		DatabaseVersion: inst.Engine,
-		State:           sqlState(inst.State),
-		BackendType:     "SECOND_GEN",
-		ConnectionName:  inst.Endpoint,
-		SelfLink:        "/sql/v1beta4/projects/" + project + "/instances/" + inst.ID,
+		Kind:               "sql#instance",
+		Name:               inst.ID,
+		Project:            project,
+		Region:             inst.AvailabilityZone,
+		DatabaseVersion:    inst.Engine,
+		State:              sqlState(inst.State),
+		BackendType:        "SECOND_GEN",
+		ConnectionName:     inst.Endpoint,
+		MasterInstanceName: inst.ReadReplicaSource,
+		ReplicaNames:       inst.ReadReplicaTargets,
+		SelfLink:           "/sql/v1beta4/projects/" + project + "/instances/" + inst.ID,
 		IPAddresses: []ipMapping{
 			{IPAddress: "10.0.0.1", Type: "PRIVATE"},
 		},

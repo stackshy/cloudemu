@@ -55,7 +55,11 @@ type InstanceConfig struct {
 	// pool's ARM resource ID); empty for standalone databases and non-Azure
 	// engines.
 	ElasticPoolID string
-	Tags          map[string]string
+	// MasterInstanceName marks this instance as a read replica of the named
+	// primary (Cloud SQL creates replicas via a normal insert with this field);
+	// empty for a standalone primary.
+	MasterInstanceName string
+	Tags               map[string]string
 }
 
 // Instance describes a managed database instance.

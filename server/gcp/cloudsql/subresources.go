@@ -449,18 +449,37 @@ func (h *Handler) promoteReplica(w http.ResponseWriter, r *http.Request, p *sqlP
 	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "promote", "PROMOTE_REPLICA", "instances", p.name))
 }
 
+// startReplica / stopReplica start and stop replication on a read replica.
+// Unlike Start/StopInstance they do not change the RUNNABLE state (a replica
+// stays running), and they require the target to actually be a replica —
+// matching real Cloud SQL, which errors otherwise.
 func (h *Handler) startReplica(w http.ResponseWriter, r *http.Request, p *sqlPath) {
-	if err := h.db.StartInstance(r.Context(), p.name); err != nil {
-		writeErr(w, err)
+	if !h.requireReplica(w, r, p) {
 		return
 	}
 
 	writeJSON(w, http.StatusOK, doneOperationWithTarget(p.project, "start-replica", "START_REPLICA", "instances", p.name))
 }
 
-func (h *Handler) stopReplica(w http.ResponseWriter, r *http.Request, p *sqlPath) {
-	if err := h.db.StopInstance(r.Context(), p.name); err != nil {
+// requireReplica writes an error and returns false unless p.name is an existing
+// read replica (has a master).
+func (h *Handler) requireReplica(w http.ResponseWriter, r *http.Request, p *sqlPath) bool {
+	insts, err := h.db.DescribeInstances(r.Context(), []string{p.name})
+	if err != nil {
 		writeErr(w, err)
+		return false
+	}
+
+	if insts[0].ReadReplicaSource == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "instance is not a read replica: "+p.name)
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) stopReplica(w http.ResponseWriter, r *http.Request, p *sqlPath) {
+	if !h.requireReplica(w, r, p) {
 		return
 	}
 

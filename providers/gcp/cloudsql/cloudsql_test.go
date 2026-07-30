@@ -299,12 +299,40 @@ func TestCloudSQLReplicaAndFailoverActions(t *testing.T) {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
+	// Failover is valid on a primary, not on a replica.
 	if err := m.FailoverInstance(ctx, "i"); err != nil {
 		t.Errorf("FailoverInstance: %v", err)
 	}
 
-	if err := m.PromoteReplica(ctx, "i"); err != nil {
-		t.Errorf("PromoteReplica: %v", err)
+	// Promote requires an actual replica.
+	if err := m.PromoteReplica(ctx, "i"); err == nil {
+		t.Error("PromoteReplica on a non-replica: expected FailedPrecondition")
+	}
+
+	// Create a replica of i, then promote it — it detaches and the primary
+	// loses it from its replica list.
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "r", Engine: "POSTGRES_15", MasterInstanceName: "i",
+	}); err != nil {
+		t.Fatalf("CreateInstance replica: %v", err)
+	}
+
+	if err := m.FailoverInstance(ctx, "r"); err == nil {
+		t.Error("FailoverInstance on a replica: expected FailedPrecondition")
+	}
+
+	if err := m.PromoteReplica(ctx, "r"); err != nil {
+		t.Fatalf("PromoteReplica: %v", err)
+	}
+
+	got, _ := m.DescribeInstances(ctx, []string{"r"})
+	if got[0].ReadReplicaSource != "" {
+		t.Errorf("promoted replica still has master %q", got[0].ReadReplicaSource)
+	}
+
+	primary, _ := m.DescribeInstances(ctx, []string{"i"})
+	if len(primary[0].ReadReplicaTargets) != 0 {
+		t.Errorf("primary still lists promoted replica: %v", primary[0].ReadReplicaTargets)
 	}
 
 	if err := m.FailoverInstance(ctx, "ghost"); err == nil {

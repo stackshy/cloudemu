@@ -322,15 +322,20 @@ func (m *Mock) DeleteSslCert(_ context.Context, instance, sha1FP string) error {
 
 // ---- Instance actions ----
 
-// FailoverInstance validates the instance exists and re-emits metrics. Cloud
-// SQL failover promotes the standby of a regional instance; the mock keeps the
-// instance available.
+// FailoverInstance promotes the standby of a regional (HA) instance. Failover
+// is a primary-instance operation; real Cloud SQL rejects it on a read replica.
 func (m *Mock) FailoverInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.instances.Get(id); !ok {
+	inst, ok := m.instances.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
+	}
+
+	if inst.ReadReplicaSource != "" {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"Cloud SQL instance %q is a read replica; failover applies to the primary", id)
 	}
 
 	m.emitInstanceMetrics(id, cpuMetricRunning, connRunning)
@@ -338,18 +343,46 @@ func (m *Mock) FailoverInstance(_ context.Context, id string) error {
 	return nil
 }
 
-// PromoteReplica validates the instance exists. Cloud SQL detaches the replica
-// from its primary and makes it a standalone instance; the mock keeps it
-// available.
+// PromoteReplica detaches a read replica from its primary, making it a
+// standalone instance. Real Cloud SQL rejects it on a non-replica.
 func (m *Mock) PromoteReplica(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.instances.Get(id); !ok {
+	inst, ok := m.instances.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
 	}
 
+	if inst.ReadReplicaSource == "" {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"Cloud SQL instance %q is not a read replica", id)
+	}
+
+	master, ok := m.instances.Get(inst.ReadReplicaSource)
+	if ok {
+		master.ReadReplicaTargets = removeStr(master.ReadReplicaTargets, id)
+		m.instances.Set(inst.ReadReplicaSource, master)
+	}
+
+	inst.ReadReplicaSource = ""
+	m.instances.Set(id, inst)
+
 	return nil
+}
+
+// removeStr returns a new slice with s removed (replace-on-write; never mutates
+// the stored slice in place).
+func removeStr(items []string, s string) []string {
+	out := make([]string, 0, len(items))
+
+	for _, v := range items {
+		if v != s {
+			out = append(out, v)
+		}
+	}
+
+	return out
 }
 
 // CloneInstance copies sourceID to a new instance named destID.

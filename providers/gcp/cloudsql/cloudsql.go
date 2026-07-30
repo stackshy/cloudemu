@@ -124,7 +124,7 @@ func copyTags(src map[string]string) map[string]string {
 
 // CreateInstance creates a new Cloud SQL instance.
 //
-//nolint:gocritic // cfg matches the driver interface signature.
+//nolint:gocritic,gocyclo // cfg matches the driver signature; linear field-defaulting plus optional replica linking.
 func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "instance name is required")
@@ -188,6 +188,12 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		Tags:               copyTags(cfg.Tags),
 	}
 
+	if cfg.MasterInstanceName != "" {
+		if err := m.linkReplica(&inst, cfg.MasterInstanceName); err != nil {
+			return nil, err
+		}
+	}
+
 	m.instances.Set(cfg.ID, inst)
 
 	m.emitInstanceMetrics(cfg.ID, cpuMetricRunning, connRunning)
@@ -195,6 +201,21 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 	out := inst
 
 	return &out, nil
+}
+
+// linkReplica marks inst as a read replica of masterName and records it on the
+// master's replica list. The caller holds the write lock.
+func (m *Mock) linkReplica(inst *rdsdriver.Instance, masterName string) error {
+	master, ok := m.instances.Get(masterName)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "master instance %q not found", masterName)
+	}
+
+	inst.ReadReplicaSource = masterName
+	master.ReadReplicaTargets = append(append([]string(nil), master.ReadReplicaTargets...), inst.ID)
+	m.instances.Set(masterName, master)
+
+	return nil
 }
 
 // DescribeInstances returns all instances if ids is empty, else only matching ones.
