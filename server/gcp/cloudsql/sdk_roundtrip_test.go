@@ -166,6 +166,13 @@ func TestSDKCloudSQLBackupRunsAndRestore(t *testing.T) {
 		t.Fatal("expected TargetId from BackupRuns.Insert response")
 	}
 
+	// The insert returns an operation; fetch it by name (Operations.Get).
+	if op.Name != "" {
+		if _, err := svc.Operations.Get(project, op.Name).Context(ctx).Do(); err != nil {
+			t.Fatalf("Operations.Get: %v", err)
+		}
+	}
+
 	list, err := svc.BackupRuns.List(project, "src").Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("BackupRuns.List: %v", err)
@@ -173,6 +180,15 @@ func TestSDKCloudSQLBackupRunsAndRestore(t *testing.T) {
 
 	if len(list.Items) != 1 {
 		t.Fatalf("got %d backup runs, want 1", len(list.Items))
+	}
+
+	parsedForGet, err := strconvAtoi64(backupID)
+	if err != nil {
+		t.Fatalf("backup id %q not numeric: %v", backupID, err)
+	}
+
+	if _, err := svc.BackupRuns.Get(project, "src", parsedForGet).Context(ctx).Do(); err != nil {
+		t.Fatalf("BackupRuns.Get: %v", err)
 	}
 
 	// Create the target instance for restore (Cloud SQL: target must exist).
@@ -186,20 +202,11 @@ func TestSDKCloudSQLBackupRunsAndRestore(t *testing.T) {
 	}
 
 	// RestoreBackup is special: target instance is the URL path; backup run
-	// id is in the body. Real Cloud SQL replaces the target's data with the
-	// backup; the mock just verifies the operation completes successfully.
-	// We use the existing target instance — RestoreBackup is supposed to be
-	// applied to an *existing* instance.
+	// id is in the body. Cloud SQL replaces the *existing* target's data with
+	// the backup in place, so the target must still exist when we call it.
 	parsedID, err := strconvAtoi64(backupID)
 	if err != nil {
 		t.Fatalf("backup id %q not numeric: %v", backupID, err)
-	}
-
-	// Delete the target so the restore (which uses NewInstanceID for our
-	// mock) doesn't conflict — RestoreBackup conceptually replaces the
-	// target's data.
-	if _, err := svc.Instances.Delete(project, "target").Context(ctx).Do(); err != nil {
-		t.Fatalf("Delete target before restore: %v", err)
 	}
 
 	if _, err := svc.Instances.RestoreBackup(project, "target",

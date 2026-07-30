@@ -11,6 +11,7 @@ package cloudsql
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -35,12 +36,23 @@ const (
 
 var _ rdsdriver.RelationalDB = (*Mock)(nil)
 
+var _ rdsdriver.BackupRestorer = (*Mock)(nil)
+
 // Mock is the in-memory GCP Cloud SQL implementation.
 type Mock struct {
 	mu sync.RWMutex
 
 	instances *memstore.Store[rdsdriver.Instance]
 	snapshots *memstore.Store[rdsdriver.Snapshot]
+
+	// child resources keyed "instance/name" (sslCerts keyed "instance/sha1")
+	databases *memstore.Store[rdsdriver.Database]
+	users     *memstore.Store[rdsdriver.User]
+	sslCerts  *memstore.Store[rdsdriver.SslCert]
+
+	// backupSeq gives auto-generated backup-run IDs a deterministic,
+	// collision-free suffix (guarded by mu).
+	backupSeq int64
 
 	opts       *config.Options
 	monitoring mondriver.Monitoring
@@ -51,6 +63,9 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		instances: memstore.New[rdsdriver.Instance](),
 		snapshots: memstore.New[rdsdriver.Snapshot](),
+		databases: memstore.New[rdsdriver.Database](),
+		users:     memstore.New[rdsdriver.User](),
+		sslCerts:  memstore.New[rdsdriver.SslCert](),
 		opts:      opts,
 	}
 }
@@ -113,9 +128,38 @@ func copyTags(src map[string]string) map[string]string {
 	return out
 }
 
+func cloneStrings(s []string) []string {
+	if len(s) == 0 {
+		return nil
+	}
+
+	return append([]string(nil), s...)
+}
+
+// cloneInstance / cloneSnapshot deep-copy the slice/map fields so a returned
+// value never aliases the memstore — a caller mutating its result (or a
+// concurrent reader) can't corrupt the store or trigger a concurrent-map
+// read/write panic. Callers own the returned copy.
+//
+//nolint:gocritic // value copy is intentional — the result must not alias the store.
+func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
+	inst.Tags = copyTags(inst.Tags)
+	inst.VPCSecurityGroups = cloneStrings(inst.VPCSecurityGroups)
+	inst.ReadReplicaTargets = cloneStrings(inst.ReadReplicaTargets)
+
+	return inst
+}
+
+//nolint:gocritic // value copy is intentional — the result must not alias the store.
+func cloneSnapshot(s rdsdriver.Snapshot) rdsdriver.Snapshot {
+	s.Tags = copyTags(s.Tags)
+
+	return s
+}
+
 // CreateInstance creates a new Cloud SQL instance.
 //
-//nolint:gocritic // cfg matches the driver interface signature.
+//nolint:gocritic,gocyclo // cfg matches the driver signature; linear field-defaulting plus optional replica linking.
 func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "instance name is required")
@@ -179,13 +223,34 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		Tags:               copyTags(cfg.Tags),
 	}
 
+	if cfg.MasterInstanceName != "" {
+		if err := m.linkReplica(&inst, cfg.MasterInstanceName); err != nil {
+			return nil, err
+		}
+	}
+
 	m.instances.Set(cfg.ID, inst)
 
 	m.emitInstanceMetrics(cfg.ID, cpuMetricRunning, connRunning)
 
-	out := inst
+	out := cloneInstance(inst)
 
 	return &out, nil
+}
+
+// linkReplica marks inst as a read replica of masterName and records it on the
+// master's replica list. The caller holds the write lock.
+func (m *Mock) linkReplica(inst *rdsdriver.Instance, masterName string) error {
+	master, ok := m.instances.Get(masterName)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "master instance %q not found", masterName)
+	}
+
+	inst.ReadReplicaSource = masterName
+	master.ReadReplicaTargets = append(append([]string(nil), master.ReadReplicaTargets...), inst.ID)
+	m.instances.Set(masterName, master)
+
+	return nil
 }
 
 // DescribeInstances returns all instances if ids is empty, else only matching ones.
@@ -199,7 +264,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing the result slice.
 		for _, v := range all {
-			out = append(out, v)
+			out = append(out, cloneInstance(v))
 		}
 
 		return out, nil
@@ -213,13 +278,15 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
 		}
 
-		out = append(out, inst)
+		out = append(out, cloneInstance(inst))
 	}
 
 	return out, nil
 }
 
 // ModifyInstance applies the supplied changes.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -253,21 +320,72 @@ func (m *Mock) ModifyInstance(
 
 	m.instances.Set(id, inst)
 
-	out := inst
+	out := cloneInstance(inst)
 
 	return &out, nil
 }
 
-// DeleteInstance removes an instance.
+// DeleteInstance removes an instance, unlinks it from any replica relationship,
+// and cascades to its children.
 func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.instances.Delete(id) {
+	inst, ok := m.instances.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
 	}
 
+	m.instances.Delete(id)
+	m.unlinkReplicas(&inst)
+	m.deleteChildren(id)
+
 	return nil
+}
+
+// unlinkReplicas keeps the replica graph consistent when inst is removed: a
+// deleted replica is dropped from its master's target list, and a deleted
+// master's replicas have their source pointer cleared — so no surviving
+// instance advertises a link to one that no longer exists. The caller holds the
+// write lock.
+func (m *Mock) unlinkReplicas(inst *rdsdriver.Instance) {
+	if inst.ReadReplicaSource != "" {
+		if master, ok := m.instances.Get(inst.ReadReplicaSource); ok {
+			master.ReadReplicaTargets = removeStr(master.ReadReplicaTargets, inst.ID)
+			m.instances.Set(inst.ReadReplicaSource, master)
+		}
+	}
+
+	for _, replicaID := range inst.ReadReplicaTargets {
+		if replica, ok := m.instances.Get(replicaID); ok {
+			replica.ReadReplicaSource = ""
+			m.instances.Set(replicaID, replica)
+		}
+	}
+}
+
+// deleteChildren removes the databases, users and SSL certs belonging to
+// instance id. The caller already holds the write lock.
+func (m *Mock) deleteChildren(instance string) {
+	prefix := instance + "/"
+
+	for key := range m.databases.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.databases.Delete(key)
+		}
+	}
+
+	for key := range m.users.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.users.Delete(key)
+		}
+	}
+
+	for key := range m.sslCerts.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.sslCerts.Delete(key)
+		}
+	}
 }
 
 // StartInstance moves a stopped instance back to runnable. In Cloud SQL this
@@ -345,6 +463,8 @@ func (*Mock) DescribeClusters(_ context.Context, _ []string) ([]rdsdriver.Cluste
 }
 
 // ModifyCluster is unsupported on Cloud SQL.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (*Mock) ModifyCluster(
 	_ context.Context, _ string, _ rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Cluster, error) {
@@ -369,10 +489,6 @@ func (*Mock) StopCluster(_ context.Context, _ string) error {
 // CreateSnapshot creates a backup run for an instance. Cloud SQL calls
 // these "backup runs"; the portable API exposes them as snapshots.
 func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (*rdsdriver.Snapshot, error) {
-	if cfg.ID == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "snapshot id is required")
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -381,13 +497,22 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 		return nil, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", cfg.InstanceID)
 	}
 
-	if _, ok := m.snapshots.Get(cfg.ID); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "backup run %q already exists", cfg.ID)
+	// Cloud SQL generates the backup-run ID server-side; derive one
+	// deterministically from the clock and a monotonic counter when the caller
+	// omits it, so tests stay reproducible under a fake clock.
+	id := cfg.ID
+	if id == "" {
+		m.backupSeq++
+		id = fmt.Sprintf("%d", m.opts.Clock.Now().UnixNano()+m.backupSeq)
+	}
+
+	if _, ok := m.snapshots.Get(id); ok {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "backup run %q already exists", id)
 	}
 
 	snap := rdsdriver.Snapshot{
-		ID:               cfg.ID,
-		ARN:              idgen.GCPID(m.opts.ProjectID, "instances/"+cfg.InstanceID+"/backupRuns", cfg.ID),
+		ID:               id,
+		ARN:              idgen.GCPID(m.opts.ProjectID, "instances/"+cfg.InstanceID+"/backupRuns", id),
 		InstanceID:       cfg.InstanceID,
 		Engine:           inst.Engine,
 		EngineVersion:    inst.EngineVersion,
@@ -397,9 +522,9 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 		Tags:             copyTags(cfg.Tags),
 	}
 
-	m.snapshots.Set(cfg.ID, snap)
+	m.snapshots.Set(id, snap)
 
-	out := snap
+	out := cloneSnapshot(snap)
 
 	return &out, nil
 }
@@ -428,7 +553,7 @@ func (m *Mock) DescribeSnapshots(
 			}
 		}
 
-		out = append(out, snap)
+		out = append(out, cloneSnapshot(snap))
 	}
 
 	return out, nil
@@ -493,7 +618,41 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 
 	m.emitInstanceMetrics(input.NewInstanceID, cpuMetricRunning, connRunning)
 
-	out := inst
+	out := cloneInstance(inst)
+
+	return &out, nil
+}
+
+// RestoreBackup restores a backup run in place onto an existing instance,
+// matching Cloud SQL's restoreBackup semantics: the target instance must
+// already exist and its engine/version/storage are overwritten from the
+// backup. Unlike RestoreInstanceFromSnapshot it never provisions a new
+// instance.
+func (m *Mock) RestoreBackup(
+	_ context.Context, targetInstanceID, backupRunID string,
+) (*rdsdriver.Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	snap, ok := m.snapshots.Get(backupRunID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "backup run %q not found", backupRunID)
+	}
+
+	inst, ok := m.instances.Get(targetInstanceID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", targetInstanceID)
+	}
+
+	inst.Engine = snap.Engine
+	inst.EngineVersion = snap.EngineVersion
+	inst.AllocatedStorage = snap.AllocatedStorage
+	inst.State = rdsdriver.StateAvailable
+
+	m.instances.Set(targetInstanceID, inst)
+	m.emitInstanceMetrics(targetInstanceID, cpuMetricRunning, connRunning)
+
+	out := cloneInstance(inst)
 
 	return &out, nil
 }

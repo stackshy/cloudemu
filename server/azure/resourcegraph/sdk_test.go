@@ -24,6 +24,7 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 type fakeCred struct{}
@@ -459,5 +460,59 @@ func TestSDKResourceGraph_BugFixes(t *testing.T) {
 		}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, out)
+	})
+}
+
+func TestSDKResourceGraph_SQLIndexing(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	if _, err := cloudP.SQL.CreateCluster(ctx, rdsdriver.ClusterConfig{
+		ID: "srv1", MasterUsername: "admin", EngineVersion: "12.0",
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := cloudP.SQL.CreateManagedInstance(ctx, rdsdriver.ManagedInstanceConfig{
+		Name: "mi1", SubnetID: "/subscriptions/123456789012/resourceGroups/rg-1/providers/Microsoft.Network/virtualNetworks/vn/subnets/mi",
+	}); err != nil {
+		t.Fatalf("CreateManagedInstance: %v", err)
+	}
+
+	srv := azureserver.New(azureserver.Drivers{
+		SQL:               cloudP.SQL,
+		MySQLFlex:         cloudP.MySQLFlex,
+		PostgresFlex:      cloudP.PostgresFlex,
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		SubscriptionID:    "123456789012",
+	})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newResourceGraphClient(t, ts)
+
+	t.Run("logical server and managed instance are indexed", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources"),
+		}, nil)
+		require.NoError(t, err)
+
+		data := out.Data.([]any)
+		assert.True(t, rowsHaveType(data, "microsoft.sql/servers"), "logical server must be indexed")
+		assert.True(t, rowsHaveType(data, "microsoft.sql/managedinstances"), "managed instance must be indexed")
+	})
+
+	t.Run("type filter narrows to the managed instance", func(t *testing.T) {
+		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+			Query: to.Ptr("Resources | where type =~ 'microsoft.sql/managedinstances' | project id, name, type"),
+		}, nil)
+		require.NoError(t, err)
+
+		data := out.Data.([]any)
+		require.Len(t, data, 1)
+
+		row := data[0].(map[string]any)
+		assert.Equal(t, "mi1", row["name"])
+		assert.Equal(t, "microsoft.sql/managedinstances", row["type"])
 	})
 }

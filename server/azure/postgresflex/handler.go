@@ -34,6 +34,10 @@ const (
 	subResourceStart   = "start"
 	subResourceStop    = "stop"
 	subResourceRestart = "restart"
+
+	subDatabases      = "databases"
+	subFirewallRules  = "firewallRules"
+	subConfigurations = "configurations"
 )
 
 // Handler serves Microsoft.DBforPostgreSQL ARM requests against a
@@ -65,9 +69,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lifecycle action: .../flexibleServers/{name}/{start|stop|restart}.
+	// Child resources and lifecycle actions live under a server name.
 	if rp.SubResource != "" {
-		h.serveLifecycleAction(w, r, &rp)
+		switch rp.SubResource {
+		case subDatabases:
+			h.serveDatabase(w, r, &rp)
+		case subFirewallRules:
+			h.serveFirewallRule(w, r, &rp)
+		case subConfigurations:
+			h.serveConfiguration(w, r, &rp)
+		case subResourceStart, subResourceStop, subResourceRestart:
+			h.serveLifecycleAction(w, r, &rp)
+		default:
+			azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+		}
+
 		return
 	}
 

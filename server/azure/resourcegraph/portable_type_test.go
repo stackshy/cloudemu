@@ -14,6 +14,10 @@ func TestPortableToAzureType(t *testing.T) {
 		{"databricks", "Workspace", "microsoft.databricks/workspaces"},
 		{"kubernetes", "Cluster", "microsoft.containerservice/managedclusters"},
 		{"kubernetes", "NodeGroup", "microsoft.containerservice/managedclusters/agentpools"},
+		{"relationaldb", "SqlServer", "microsoft.sql/servers"},
+		{"relationaldb", "SqlManagedInstance", "microsoft.sql/managedinstances"},
+		{"relationaldb", "MySqlFlexibleServer", "microsoft.dbformysql/flexibleservers"},
+		{"relationaldb", "PostgresFlexibleServer", "microsoft.dbforpostgresql/flexibleservers"},
 	}
 
 	for _, c := range cases {

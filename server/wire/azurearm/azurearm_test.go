@@ -59,6 +59,19 @@ func TestParsePathSubResource(t *testing.T) {
 	}
 }
 
+func TestParsePathSubResourceAction(t *testing.T) {
+	rp, ok := azurearm.ParsePath(
+		"/subscriptions/s/resourceGroups/rg/providers/Microsoft.Sql/servers/srv1/failoverGroups/fg1/forceFailoverAllowDataLoss")
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+
+	if rp.ResourceName != "srv1" || rp.SubResource != "failoverGroups" ||
+		rp.SubResourceName != "fg1" || rp.SubResourceAction != "forceFailoverAllowDataLoss" {
+		t.Errorf("rp=%+v", rp)
+	}
+}
+
 func TestParsePathRejectsNonARM(t *testing.T) {
 	cases := []string{
 		"/",

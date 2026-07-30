@@ -24,6 +24,7 @@ package azuresql
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -58,6 +59,18 @@ type Mock struct {
 	// snapshots key = snapshot id
 	snapshots *memstore.Store[rdsdriver.Snapshot]
 
+	// child resources keyed "server/name"
+	firewallRules  *memstore.Store[rdsdriver.FirewallRule]
+	vnetRules      *memstore.Store[rdsdriver.VNetRule]
+	elasticPools   *memstore.Store[rdsdriver.ElasticPool]
+	failoverGroups *memstore.Store[rdsdriver.FailoverGroup]
+	// aadAdmins key = server name (a server has at most one)
+	aadAdmins *memstore.Store[rdsdriver.AADAdmin]
+
+	// managed instances key = instance name; managed databases key = "mi/db"
+	managedInstances *memstore.Store[rdsdriver.ManagedInstance]
+	managedDatabases *memstore.Store[rdsdriver.ManagedDatabase]
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -65,10 +78,17 @@ type Mock struct {
 // New creates a new Azure SQL mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:  memstore.New[rdsdriver.Cluster](),
-		instances: memstore.New[rdsdriver.Instance](),
-		snapshots: memstore.New[rdsdriver.Snapshot](),
-		opts:      opts,
+		clusters:         memstore.New[rdsdriver.Cluster](),
+		instances:        memstore.New[rdsdriver.Instance](),
+		snapshots:        memstore.New[rdsdriver.Snapshot](),
+		firewallRules:    memstore.New[rdsdriver.FirewallRule](),
+		vnetRules:        memstore.New[rdsdriver.VNetRule](),
+		elasticPools:     memstore.New[rdsdriver.ElasticPool](),
+		failoverGroups:   memstore.New[rdsdriver.FailoverGroup](),
+		aadAdmins:        memstore.New[rdsdriver.AADAdmin](),
+		managedInstances: memstore.New[rdsdriver.ManagedInstance](),
+		managedDatabases: memstore.New[rdsdriver.ManagedDatabase](),
+		opts:             opts,
 	}
 }
 
@@ -128,6 +148,36 @@ func copyTags(src map[string]string) map[string]string {
 	return out
 }
 
+// cloneInstance / cloneCluster / cloneSnapshot deep-copy the slice/map fields so
+// a returned value never aliases the memstore — a caller mutating its result
+// (or a concurrent reader) can't corrupt the store or trigger a concurrent-map
+// read/write panic. Callers own the returned copy.
+//
+//nolint:gocritic // value copy is intentional — the result must not alias the store.
+func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
+	inst.Tags = copyTags(inst.Tags)
+	inst.VPCSecurityGroups = cloneStrings(inst.VPCSecurityGroups)
+	inst.ReadReplicaTargets = cloneStrings(inst.ReadReplicaTargets)
+
+	return inst
+}
+
+//nolint:gocritic // value copy is intentional — the result must not alias the store.
+func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
+	c.Tags = copyTags(c.Tags)
+	c.VPCSecurityGroups = cloneStrings(c.VPCSecurityGroups)
+	c.Members = cloneStrings(c.Members)
+
+	return c
+}
+
+//nolint:gocritic // value copy is intentional — the result must not alias the store.
+func cloneSnapshot(s rdsdriver.Snapshot) rdsdriver.Snapshot {
+	s.Tags = copyTags(s.Tags)
+
+	return s
+}
+
 // CreateInstance creates a new database under an existing logical server.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
@@ -153,6 +203,10 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 	if _, ok := m.instances.Get(key); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists,
 			"database %q already exists on server %q", cfg.ID, cfg.ClusterID)
+	}
+
+	if err := m.requireElasticPool(cfg.ClusterID, cfg.ElasticPoolID); err != nil {
+		return nil, err
 	}
 
 	storage := cfg.AllocatedStorage
@@ -182,6 +236,7 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		Port:             defaultPort,
 		State:            rdsdriver.StateAvailable,
 		ClusterID:        cfg.ClusterID,
+		ElasticPoolID:    cfg.ElasticPoolID,
 		AvailabilityZone: server.SubnetGroupName, // re-use as region carrier
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(cfg.Tags),
@@ -194,7 +249,7 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 
 	m.emitDatabaseMetrics(cfg.ClusterID, cfg.ID, cpuMetricRunning, dtuRunning)
 
-	out := inst
+	out := cloneInstance(inst)
 
 	return &out, nil
 }
@@ -213,7 +268,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing the result slice.
 		for _, v := range all {
-			out = append(out, v)
+			out = append(out, cloneInstance(v))
 		}
 
 		return out, nil
@@ -227,7 +282,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, err
 		}
 
-		out = append(out, inst)
+		out = append(out, cloneInstance(inst))
 	}
 
 	return out, nil
@@ -260,6 +315,8 @@ func (m *Mock) lookupInstance(id string) (rdsdriver.Instance, error) {
 }
 
 // ModifyInstance applies the supplied changes to a database.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -283,13 +340,21 @@ func (m *Mock) ModifyInstance(
 		inst.EngineVersion = input.EngineVersion
 	}
 
+	if input.ElasticPoolID != "" {
+		if err := m.requireElasticPool(inst.ClusterID, input.ElasticPoolID); err != nil {
+			return nil, err
+		}
+
+		inst.ElasticPoolID = input.ElasticPoolID
+	}
+
 	if input.Tags != nil {
 		inst.Tags = copyTags(input.Tags)
 	}
 
 	m.instances.Set(instanceKey(inst.ClusterID, inst.ID), inst)
 
-	out := inst
+	out := cloneInstance(inst)
 
 	return &out, nil
 }
@@ -405,7 +470,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 
 	m.clusters.Set(cfg.ID, cluster)
 
-	out := cluster
+	out := cloneCluster(cluster)
 
 	return &out, nil
 }
@@ -421,7 +486,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing the result slice.
 		for _, v := range all {
-			out = append(out, v)
+			out = append(out, cloneCluster(v))
 		}
 
 		return out, nil
@@ -435,13 +500,15 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 			return nil, cerrors.Newf(cerrors.NotFound, "Azure SQL server %q not found", id)
 		}
 
-		out = append(out, cluster)
+		out = append(out, cloneCluster(cluster))
 	}
 
 	return out, nil
 }
 
 // ModifyCluster updates server-level fields (admin password reset, version).
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyCluster(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Cluster, error) {
@@ -463,7 +530,7 @@ func (m *Mock) ModifyCluster(
 
 	m.clusters.Set(id, cluster)
 
-	out := cluster
+	out := cloneCluster(cluster)
 
 	return &out, nil
 }
@@ -484,8 +551,42 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 	}
 
 	m.clusters.Delete(id)
+	m.deleteChildren(id)
 
 	return nil
+}
+
+// deleteChildren removes the firewall rules, vnet rules, elastic pools,
+// failover groups and AAD admin belonging to server id, matching Azure's
+// cascade delete on server removal. The caller already holds the write lock.
+func (m *Mock) deleteChildren(server string) {
+	prefix := server + "/"
+
+	for key := range m.firewallRules.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.firewallRules.Delete(key)
+		}
+	}
+
+	for key := range m.vnetRules.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.vnetRules.Delete(key)
+		}
+	}
+
+	for key := range m.elasticPools.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.elasticPools.Delete(key)
+		}
+	}
+
+	for key := range m.failoverGroups.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.failoverGroups.Delete(key)
+		}
+	}
+
+	m.aadAdmins.Delete(server)
 }
 
 // StartCluster / StopCluster are no-ops on Azure SQL servers. They aren't
@@ -528,7 +629,7 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 
 	m.snapshots.Set(cfg.ID, snap)
 
-	out := snap
+	out := cloneSnapshot(snap)
 
 	return &out, nil
 }
@@ -557,7 +658,7 @@ func (m *Mock) DescribeSnapshots(
 			}
 		}
 
-		out = append(out, snap)
+		out = append(out, cloneSnapshot(snap))
 	}
 
 	return out, nil
@@ -644,7 +745,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 
 	m.emitDatabaseMetrics(server, dbName, cpuMetricRunning, dtuRunning)
 
-	out := inst
+	out := cloneInstance(inst)
 
 	return &out, nil
 }

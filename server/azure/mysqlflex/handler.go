@@ -30,9 +30,15 @@ const (
 	providerName        = "Microsoft.DBforMySQL"
 	resourceFlexServers = "flexibleServers"
 
-	subStart   = "start"
-	subStop    = "stop"
-	subRestart = "restart"
+	subStart    = "start"
+	subStop     = "stop"
+	subRestart  = "restart"
+	subFailover = "failover"
+
+	subDatabases      = "databases"
+	subFirewallRules  = "firewallRules"
+	subConfigurations = "configurations"
+	subUpdateConfigs  = "updateConfigurations"
 )
 
 // Handler serves Microsoft.DBforMySQL/flexibleServers ARM requests against a
@@ -64,9 +70,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Action sub-resources: start, stop, restart.
+	// Child resources and server actions live under a server name.
 	if rp.SubResource != "" {
-		h.serveAction(w, r, &rp)
+		switch rp.SubResource {
+		case subDatabases:
+			h.serveDatabase(w, r, &rp)
+		case subFirewallRules:
+			h.serveFirewallRule(w, r, &rp)
+		case subConfigurations:
+			h.serveConfiguration(w, r, &rp)
+		case subUpdateConfigs:
+			h.batchUpdateConfigurations(w, r, &rp)
+		case subStart, subStop, subRestart, subFailover:
+			h.serveAction(w, r, &rp)
+		default:
+			azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+		}
+
 		return
 	}
 
@@ -116,6 +136,8 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurea
 		h.stopServer(w, r, rp)
 	case subRestart:
 		h.restartServer(w, r, rp)
+	case subFailover:
+		h.failoverServer(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported action: "+rp.SubResource)
 	}

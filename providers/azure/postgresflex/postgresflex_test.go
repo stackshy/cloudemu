@@ -271,3 +271,157 @@ func assertNotEmpty(t *testing.T, s string) {
 		t.Error("expected non-empty string")
 	}
 }
+
+func TestSubResourcesRequireServer(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "ghost", Name: "db"}); err == nil {
+		t.Error("CreateDatabase on missing server: expected error")
+	}
+
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "ghost", Name: "r"}); err == nil {
+		t.Error("CreateFirewallRule on missing server: expected error")
+	}
+
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "ghost", Name: "max_connections", Value: "100"}); err == nil {
+		t.Error("SetConfiguration on missing server: expected error")
+	}
+}
+
+func TestDatabaseDefaultsAndCascade(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	db, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv", Name: "app"})
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if db.Charset != "UTF8" || db.Collation != "en_US.utf8" {
+		t.Errorf("defaults: got charset=%q collation=%q", db.Charset, db.Collation)
+	}
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv", Name: "app"}); err == nil {
+		t.Error("duplicate database: expected AlreadyExists")
+	}
+
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r", StartIPAddress: "10.0.0.1", EndIPAddress: "10.0.0.9"}); err != nil {
+		t.Fatalf("CreateFirewallRule: %v", err)
+	}
+
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "max_connections", Value: "100"}); err != nil {
+		t.Fatalf("SetConfiguration: %v", err)
+	}
+
+	if err := m.DeleteInstance(ctx, "srv"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	if _, err := m.ListDatabases(ctx, "srv"); err == nil {
+		t.Error("ListDatabases after server delete: expected server NotFound")
+	}
+}
+
+func TestSetConfigurationValidatesParameter(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Unknown parameter names and empty values are both rejected (real Azure
+	// 404s an unknown server parameter).
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "not_a_real_param", Value: "1"}); err == nil {
+		t.Error("SetConfiguration with unknown parameter: expected NotFound")
+	}
+
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "work_mem", Value: ""}); err == nil {
+		t.Error("SetConfiguration with empty value: expected InvalidArgument")
+	}
+
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "work_mem", Value: "4MB"}); err != nil {
+		t.Errorf("SetConfiguration with known parameter: %v", err)
+	}
+
+	// A known-but-unset parameter returns its catalog default, not NotFound.
+	def, err := m.GetConfiguration(ctx, "srv", "max_connections")
+	if err != nil {
+		t.Fatalf("GetConfiguration for unset known param: %v", err)
+	}
+
+	if def.Source != "system-default" || def.Value == "" {
+		t.Errorf("expected catalog default for max_connections, got %+v", def)
+	}
+
+	if _, err := m.GetConfiguration(ctx, "srv", "not_a_real_param"); err == nil {
+		t.Error("GetConfiguration for unknown param: expected NotFound")
+	}
+}
+
+func TestSubResourceCRUDCoverage(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Databases: get + delete.
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv", Name: "app"}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if got, err := m.GetDatabase(ctx, "srv", "app"); err != nil || got.Name != "app" {
+		t.Fatalf("GetDatabase: %+v %v", got, err)
+	}
+
+	if err := m.DeleteDatabase(ctx, "srv", "app"); err != nil {
+		t.Fatalf("DeleteDatabase: %v", err)
+	}
+
+	if err := m.DeleteDatabase(ctx, "srv", "app"); err == nil {
+		t.Error("DeleteDatabase again: expected NotFound")
+	}
+
+	// Firewall rules: get, list, delete.
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r", StartIPAddress: "10.0.0.1", EndIPAddress: "10.0.0.9"}); err != nil {
+		t.Fatalf("CreateFirewallRule: %v", err)
+	}
+
+	if got, err := m.GetFirewallRule(ctx, "srv", "r"); err != nil || got.EndIPAddress != "10.0.0.9" {
+		t.Fatalf("GetFirewallRule: %+v %v", got, err)
+	}
+
+	if rs, err := m.ListFirewallRules(ctx, "srv"); err != nil || len(rs) != 1 {
+		t.Fatalf("ListFirewallRules: %d %v", len(rs), err)
+	}
+
+	if err := m.DeleteFirewallRule(ctx, "srv", "r"); err != nil {
+		t.Fatalf("DeleteFirewallRule: %v", err)
+	}
+
+	if err := m.DeleteFirewallRule(ctx, "srv", "r"); err == nil {
+		t.Error("DeleteFirewallRule again: expected NotFound")
+	}
+
+	// Configurations: set (known param), get, list.
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "max_connections", Value: "100"}); err != nil {
+		t.Fatalf("SetConfiguration: %v", err)
+	}
+
+	if got, err := m.GetConfiguration(ctx, "srv", "max_connections"); err != nil || got.Value != "100" {
+		t.Fatalf("GetConfiguration: %+v %v", got, err)
+	}
+
+	// List returns the full catalog (with the override applied), not just the
+	// single written parameter.
+	if cs, err := m.ListConfigurations(ctx, "srv"); err != nil || len(cs) < 2 {
+		t.Fatalf("ListConfigurations: %d %v", len(cs), err)
+	}
+}

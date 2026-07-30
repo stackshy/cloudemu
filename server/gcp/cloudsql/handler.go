@@ -38,13 +38,29 @@ import (
 
 const (
 	pathPrefix      = "/v1/projects/"
+	pathFlags       = "/v1/flags"
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 1 << 20
 
 	resourceInstances  = "instances"
 	resourceOperations = "operations"
 	resourceBackupRuns = "backupRuns"
+	resourceDatabases  = "databases"
+	resourceUsers      = "users"
+	resourceSslCerts   = "sslCerts"
+	resourceTiers      = "tiers"
 )
+
+// isSubResource reports whether seg is an instance-scoped sub-collection; any
+// other trailing segment is treated as an action (restart, clone, …).
+func isSubResource(seg string) bool {
+	switch seg {
+	case resourceBackupRuns, resourceDatabases, resourceUsers, resourceSslCerts:
+		return true
+	default:
+		return false
+	}
+}
 
 // Handler serves Cloud SQL Admin REST requests against a relationaldb driver.
 type Handler struct {
@@ -56,11 +72,15 @@ func New(db rdsdriver.RelationalDB) *Handler {
 	return &Handler{db: db}
 }
 
-// Matches accepts /v1/projects/{p}/{instances|operations}/... paths.
-// Other resource types under /v1/projects/ (locations, topics, subscriptions,
-// databases) belong to Cloud Functions, Pub/Sub, or Firestore respectively
-// and must fall through.
+// Matches accepts /v1/projects/{p}/{instances|operations|tiers}/... paths plus
+// the project-less /v1/flags catalog. Other resource types under /v1/projects/
+// (locations, topics, subscriptions, databases) belong to Cloud Functions,
+// Pub/Sub, or Firestore respectively and must fall through.
 func (*Handler) Matches(r *http.Request) bool {
+	if r.URL.Path == pathFlags {
+		return true
+	}
+
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
 		return false
 	}
@@ -74,7 +94,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch parts[idxResource] {
-	case resourceInstances, resourceOperations:
+	case resourceInstances, resourceOperations, resourceTiers:
 		return true
 	}
 
@@ -83,11 +103,11 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // path components parsed out of the URL.
 //
-//	/sql/v1beta4/projects/{p}/instances
-//	/sql/v1beta4/projects/{p}/instances/{i}
-//	/sql/v1beta4/projects/{p}/instances/{i}/{action}
-//	/sql/v1beta4/projects/{p}/instances/{i}/backupRuns[/{id}]
-//	/sql/v1beta4/projects/{p}/operations/{op}
+//	/v1/projects/{p}/instances
+//	/v1/projects/{p}/instances/{i}
+//	/v1/projects/{p}/instances/{i}/{action}
+//	/v1/projects/{p}/instances/{i}/backupRuns[/{id}]
+//	/v1/projects/{p}/operations/{op}
 type sqlPath struct {
 	project     string
 	resource    string // "instances" or "operations"
@@ -123,7 +143,7 @@ func parsePath(urlPath string) (sqlPath, bool) {
 	if len(parts) > idxSubResource {
 		// {action} OR {subResource}
 		seg := parts[idxSubResource]
-		if seg == resourceBackupRuns {
+		if isSubResource(seg) {
 			out.subResource = seg
 		} else {
 			out.action = seg
@@ -139,6 +159,12 @@ func parsePath(urlPath string) (sqlPath, bool) {
 
 // ServeHTTP routes the parsed path to the matching operation.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// /v1/flags is project-less, so it bypasses the project path parser.
+	if r.URL.Path == pathFlags {
+		serveFlags(w, r)
+		return
+	}
+
 	p, ok := parsePath(r.URL.Path)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "malformed path")
@@ -150,19 +176,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveOperation(w, r, &p)
 	case resourceInstances:
 		h.serveInstancesRoute(w, r, &p)
+	case resourceTiers:
+		serveTiers(w, r, &p)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported resource: "+p.resource)
 	}
 }
 
 func (h *Handler) serveInstancesRoute(w http.ResponseWriter, r *http.Request, p *sqlPath) {
-	// Sub-resource: backup runs.
-	if p.subResource == resourceBackupRuns {
+	// Instance-scoped sub-collections.
+	switch p.subResource {
+	case resourceBackupRuns:
 		h.serveBackupRunsRoute(w, r, p)
+		return
+	case resourceDatabases:
+		h.serveDatabasesRoute(w, r, p)
+		return
+	case resourceUsers:
+		h.serveUsersRoute(w, r, p)
+		return
+	case resourceSslCerts:
+		h.serveSslCertsRoute(w, r, p)
 		return
 	}
 
-	// Action on an instance: restart, restoreBackup.
+	// Action on an instance: restart, restoreBackup, clone, failover, replicas.
 	if p.action != "" {
 		h.serveInstanceAction(w, r, p)
 		return
@@ -213,6 +251,16 @@ func (h *Handler) serveInstanceAction(w http.ResponseWriter, r *http.Request, p 
 		h.restartInstance(w, r, p)
 	case "restoreBackup":
 		h.restoreInstance(w, r, p)
+	case "clone":
+		h.cloneInstance(w, r, p)
+	case "failover":
+		h.failoverInstance(w, r, p)
+	case "promoteReplica":
+		h.promoteReplica(w, r, p)
+	case "startReplica":
+		h.startReplica(w, r, p)
+	case "stopReplica":
+		h.stopReplica(w, r, p)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported action: "+p.action)
 	}
