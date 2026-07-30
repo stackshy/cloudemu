@@ -1,8 +1,10 @@
 package mysqlflex
 
 import (
+	"bytes"
 	"context"
 	"net"
+	"sort"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -15,39 +17,47 @@ func validIPv4(s string) bool {
 	return ip != nil && ip.To4() != nil
 }
 
+// ipv4LessOrEqual reports whether start <= end by unsigned 32-bit value. Both
+// must already be valid IPv4 (checked by validIPv4).
+func ipv4LessOrEqual(start, end string) bool {
+	return bytes.Compare(net.ParseIP(start).To4(), net.ParseIP(end).To4()) <= 0
+}
+
 // MySQL Flexible Server exposes databases, firewall rules and server
 // configurations as child resources. These are optional relationaldb driver
 // capabilities discovered by the ARM handler via type assertion.
 var (
-	_ rdsdriver.Databases      = (*Mock)(nil)
-	_ rdsdriver.FirewallRules  = (*Mock)(nil)
-	_ rdsdriver.Configurations = (*Mock)(nil)
-	_ rdsdriver.Failover       = (*Mock)(nil)
+	_ rdsdriver.Databases           = (*Mock)(nil)
+	_ rdsdriver.FirewallRules       = (*Mock)(nil)
+	_ rdsdriver.Configurations      = (*Mock)(nil)
+	_ rdsdriver.BatchConfigurations = (*Mock)(nil)
+	_ rdsdriver.Failover            = (*Mock)(nil)
 )
 
 const defaultCollation = "utf8mb4_general_ci"
 
 // knownServerParameters is a representative subset of the MySQL Flexible Server
-// parameter catalog. Azure rejects SetConfiguration for a name outside the
-// catalog with 404, so the mock validates against this set rather than
-// accept-and-echo any name.
+// parameter catalog mapped to its server default. Azure rejects
+// SetConfiguration for a name outside the catalog with 404 (so the mock
+// validates against this set rather than accept-and-echo any name), and returns
+// the default via Get/List for a known-but-unset parameter rather than 404.
 //
 //nolint:gochecknoglobals // immutable parameter-name lookup table.
-var knownServerParameters = map[string]bool{
-	"max_connections":                 true,
-	"wait_timeout":                    true,
-	"interactive_timeout":             true,
-	"slow_query_log":                  true,
-	"long_query_time":                 true,
-	"innodb_buffer_pool_size":         true,
-	"character_set_server":            true,
-	"collation_server":                true,
-	"time_zone":                       true,
-	"sql_mode":                        true,
-	"event_scheduler":                 true,
-	"log_bin_trust_function_creators": true,
-	"max_allowed_packet":              true,
-	"innodb_lock_wait_timeout":        true,
+var knownServerParameters = map[string]string{
+	"max_connections":                 "151",
+	"wait_timeout":                    "28800",
+	"interactive_timeout":             "28800",
+	"slow_query_log":                  "OFF",
+	"long_query_time":                 "10",
+	"innodb_buffer_pool_size":         "134217728",
+	"character_set_server":            "utf8mb4",
+	"collation_server":                "utf8mb4_general_ci",
+	"time_zone":                       "SYSTEM",
+	"sql_mode":                        "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION",
+	"event_scheduler":                 "OFF",
+	"log_bin_trust_function_creators": "OFF",
+	"max_allowed_packet":              "67108864",
+	"innodb_lock_wait_timeout":        "50",
 }
 
 func childKey(server, name string) string { return server + "/" + name }
@@ -168,6 +178,10 @@ func (m *Mock) CreateFirewallRule(
 		return nil, cerrors.New(cerrors.InvalidArgument, "startIpAddress and endIpAddress must be valid IPv4 addresses")
 	}
 
+	if !ipv4LessOrEqual(cfg.StartIPAddress, cfg.EndIPAddress) {
+		return nil, cerrors.New(cerrors.InvalidArgument, "startIpAddress must be less than or equal to endIpAddress")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -239,30 +253,28 @@ func (m *Mock) DeleteFirewallRule(_ context.Context, server, name string) error 
 
 // ---- Configurations (server parameters) ----
 
-// SetConfiguration sets a server parameter value, recording it as a user
-// override.
-func (m *Mock) SetConfiguration(
-	_ context.Context, cfg rdsdriver.ConfigurationConfig,
-) (*rdsdriver.Configuration, error) {
+// validateConfiguration checks a single parameter without applying it: name
+// must be a known catalog entry and the value non-empty. Server existence is
+// checked separately by the caller under the lock.
+func validateConfiguration(cfg rdsdriver.ConfigurationConfig) error {
 	if cfg.Name == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "configuration name is required")
+		return cerrors.New(cerrors.InvalidArgument, "configuration name is required")
 	}
 
-	if !knownServerParameters[cfg.Name] {
-		return nil, cerrors.Newf(cerrors.NotFound, "unknown server parameter %q", cfg.Name)
+	if _, known := knownServerParameters[cfg.Name]; !known {
+		return cerrors.Newf(cerrors.NotFound, "unknown server parameter %q", cfg.Name)
 	}
 
 	if cfg.Value == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "configuration value is required")
+		return cerrors.New(cerrors.InvalidArgument, "configuration value is required")
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	return nil
+}
 
-	if err := m.requireServer(cfg.Server); err != nil {
-		return nil, err
-	}
-
+// applyConfiguration writes one validated parameter. The caller holds the write
+// lock and has already validated cfg + server existence.
+func (m *Mock) applyConfiguration(cfg rdsdriver.ConfigurationConfig) rdsdriver.Configuration {
 	key := childKey(cfg.Server, cfg.Name)
 
 	conf, ok := m.configurations.Get(key)
@@ -280,27 +292,94 @@ func (m *Mock) SetConfiguration(
 
 	m.configurations.Set(key, conf)
 
-	out := conf
+	return conf
+}
+
+// SetConfiguration sets a server parameter value, recording it as a user
+// override.
+func (m *Mock) SetConfiguration(
+	_ context.Context, cfg rdsdriver.ConfigurationConfig,
+) (*rdsdriver.Configuration, error) {
+	if err := validateConfiguration(cfg); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.requireServer(cfg.Server); err != nil {
+		return nil, err
+	}
+
+	out := m.applyConfiguration(cfg)
 
 	return &out, nil
 }
 
-// GetConfiguration returns a server parameter.
+// BatchSetConfigurations applies several parameters atomically: every entry is
+// validated (and the server checked) before any write, so a bad entry never
+// leaves earlier ones persisted.
+func (m *Mock) BatchSetConfigurations(
+	_ context.Context, server string, cfgs []rdsdriver.ConfigurationConfig,
+) ([]rdsdriver.Configuration, error) {
+	for i := range cfgs {
+		cfgs[i].Server = server
+		if err := validateConfiguration(cfgs[i]); err != nil {
+			return nil, err
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.requireServer(server); err != nil {
+		return nil, err
+	}
+
+	out := make([]rdsdriver.Configuration, 0, len(cfgs))
+	for i := range cfgs {
+		out = append(out, m.applyConfiguration(cfgs[i]))
+	}
+
+	return out, nil
+}
+
+// GetConfiguration returns a server parameter — the user override if one was
+// set, otherwise the catalog default for a known parameter (real Azure returns
+// the system default for an unset-but-valid parameter). Unknown parameters 404.
 func (m *Mock) GetConfiguration(_ context.Context, server, name string) (*rdsdriver.Configuration, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	conf, ok := m.configurations.Get(childKey(server, name))
-	if !ok {
+	if conf, ok := m.configurations.Get(childKey(server, name)); ok {
+		out := conf
+
+		return &out, nil
+	}
+
+	def, known := knownServerParameters[name]
+	if !known {
 		return nil, cerrors.Newf(cerrors.NotFound, "configuration %q not found", name)
 	}
 
-	out := conf
-
-	return &out, nil
+	return m.defaultConfiguration(server, name, def), nil
 }
 
-// ListConfigurations returns the parameters that have been set on a server.
+// defaultConfiguration builds the system-default view of a known parameter.
+func (m *Mock) defaultConfiguration(server, name, value string) *rdsdriver.Configuration {
+	return &rdsdriver.Configuration{
+		Server:   server,
+		Name:     name,
+		Value:    value,
+		Source:   "system-default",
+		DataType: "String",
+		ARN:      m.childARN(server, "configurations", name),
+	}
+}
+
+// ListConfigurations returns the full parameter catalog, with user overrides
+// applied where present (real Azure lists the catalog with defaults, not just
+// the parameters that have been written).
 func (m *Mock) ListConfigurations(_ context.Context, server string) ([]rdsdriver.Configuration, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -309,13 +388,31 @@ func (m *Mock) ListConfigurations(_ context.Context, server string) ([]rdsdriver
 		return nil, err
 	}
 
-	out := []rdsdriver.Configuration{}
+	overrides := make(map[string]rdsdriver.Configuration)
 
 	confs := m.configurations.SortedValues()
 	for i := range confs {
 		if confs[i].Server == server {
-			out = append(out, confs[i])
+			overrides[confs[i].Name] = confs[i]
 		}
+	}
+
+	names := make([]string, 0, len(knownServerParameters))
+	for name := range knownServerParameters {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	out := make([]rdsdriver.Configuration, 0, len(names))
+
+	for _, name := range names {
+		if conf, ok := overrides[name]; ok {
+			out = append(out, conf)
+			continue
+		}
+
+		out = append(out, *m.defaultConfiguration(server, name, knownServerParameters[name]))
 	}
 
 	return out, nil

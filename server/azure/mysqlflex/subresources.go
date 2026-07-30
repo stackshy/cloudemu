@@ -394,16 +394,28 @@ func (h *Handler) batchUpdateConfigurations(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	cfgs := make([]rdsdriver.ConfigurationConfig, 0, len(body.Value))
+
 	for i := range body.Value {
 		cfg := rdsdriver.ConfigurationConfig{Server: rp.ResourceName, Name: body.Value[i].Name}
 		if body.Value[i].Properties != nil {
 			cfg.Value = body.Value[i].Properties.Value
 		}
 
-		if _, err := cf.SetConfiguration(r.Context(), cfg); err != nil {
-			azurearm.WriteCErr(w, err)
-			return
-		}
+		cfgs = append(cfgs, cfg)
+	}
+
+	// Apply the batch atomically — a bad entry must not leave earlier ones
+	// persisted — via the BatchConfigurations capability.
+	batch, ok := cf.(rdsdriver.BatchConfigurations)
+	if !ok {
+		writeUnsupported(w, "updateConfigurations")
+		return
+	}
+
+	if _, err := batch.BatchSetConfigurations(r.Context(), rp.ResourceName, cfgs); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
 	}
 
 	items, err := cf.ListConfigurations(r.Context(), rp.ResourceName)

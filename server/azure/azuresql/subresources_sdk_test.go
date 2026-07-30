@@ -241,6 +241,33 @@ func TestSDKAzureSQLFailoverGroups(t *testing.T) {
 		t.Fatalf("expected Primary role after force failover, got %v", forceResp.Properties)
 	}
 
+	// PATCH (BeginUpdate) merges — changing the grace period keeps the partner.
+	patchPoller, err := fg.BeginUpdate(ctx, "rg-1", "srv1", "fg1", armsql.FailoverGroupUpdate{
+		Properties: &armsql.FailoverGroupUpdateProperties{
+			ReadWriteEndpoint: &armsql.FailoverGroupReadWriteEndpoint{
+				FailoverPolicy:                         to.Ptr(armsql.ReadWriteEndpointFailoverPolicyAutomatic),
+				FailoverWithDataLossGracePeriodMinutes: to.Ptr(int32(120)),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("fg BeginUpdate: %v", err)
+	}
+
+	if _, err := patchPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("fg patch PollUntilDone: %v", err)
+	}
+
+	// List the failover groups on the server.
+	fgPage, err := fg.NewListByServerPager("rg-1", "srv1", nil).NextPage(ctx)
+	if err != nil {
+		t.Fatalf("fg List: %v", err)
+	}
+
+	if len(fgPage.Value) != 1 {
+		t.Fatalf("got %d failover groups, want 1", len(fgPage.Value))
+	}
+
 	delPoller, err := fg.BeginDelete(ctx, "rg-1", "srv1", "fg1", nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)
@@ -386,6 +413,20 @@ func TestSDKAzureSQLManagedInstances(t *testing.T) {
 
 	if len(dbPage.Value) != 1 {
 		t.Fatalf("got %d managed databases, want 1", len(dbPage.Value))
+	}
+
+	// Explicitly delete the managed database (DeleteManagedDatabase handler).
+	mdbDelPoller, err := mdc.BeginDelete(ctx, "rg-1", "mi1", "appdb", nil)
+	if err != nil {
+		t.Fatalf("MDB BeginDelete: %v", err)
+	}
+
+	if _, err := mdbDelPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("MDB delete: %v", err)
+	}
+
+	if _, err := mdc.Get(ctx, "rg-1", "mi1", "appdb", nil); err == nil {
+		t.Fatal("expected NotFound after managed database delete")
 	}
 
 	// Delete the instance; managed databases cascade.

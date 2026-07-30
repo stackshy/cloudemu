@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1" //nolint:gosec // SHA-1 fingerprints are the Cloud SQL cert identifier format, not a security control.
 	"encoding/hex"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -31,6 +32,18 @@ const (
 
 func childKey(instance, name string) string { return instance + "/" + name }
 
+// validChildName rejects a child-resource name containing '/', which would
+// collide with the "{instance}/{name}" storage key and create a row that is
+// unreachable via the single-segment GET/DELETE paths (real Cloud SQL rejects
+// such names too).
+func validChildName(kind, name string) error {
+	if strings.Contains(name, "/") {
+		return cerrors.Newf(cerrors.InvalidArgument, "%s name %q must not contain '/'", kind, name)
+	}
+
+	return nil
+}
+
 func (m *Mock) requireInstance(instance string) error {
 	if _, ok := m.instances.Get(instance); !ok {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", instance)
@@ -45,6 +58,10 @@ func (m *Mock) requireInstance(instance string) error {
 func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (*rdsdriver.Database, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "database name is required")
+	}
+
+	if err := validChildName("database", cfg.Name); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -137,6 +154,10 @@ func (m *Mock) DeleteDatabase(_ context.Context, instance, name string) error {
 func (m *Mock) CreateUser(_ context.Context, cfg rdsdriver.UserConfig) (*rdsdriver.User, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "user name is required")
+	}
+
+	if err := validChildName("user", cfg.Name); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -422,7 +443,7 @@ func (m *Mock) CloneInstance(_ context.Context, sourceID, destID string) (*rdsdr
 
 	m.emitInstanceMetrics(destID, cpuMetricRunning, connRunning)
 
-	out := clone
+	out := cloneInstance(clone)
 
 	return &out, nil
 }

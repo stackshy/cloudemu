@@ -811,3 +811,84 @@ func TestDatabaseAndManagedInstanceEmitMetrics(t *testing.T) {
 		t.Fatalf("managed-instance metrics: %v %v", names, err)
 	}
 }
+
+func TestDescribeResultsDoNotAliasStore(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "srv", Tags: map[string]string{"env": "prod"}}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "db", ClusterID: "srv", Tags: map[string]string{"tier": "gold"},
+	}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Mutating returned instance Tags must not corrupt the store.
+	insts, err := m.DescribeInstances(ctx, []string{"srv/db"})
+	requireNoError(t, err)
+	insts[0].Tags["tier"] = "tampered"
+
+	reread, err := m.DescribeInstances(ctx, []string{"srv/db"})
+	requireNoError(t, err)
+	if reread[0].Tags["tier"] != "gold" {
+		t.Errorf("instance Tags aliased: got %q, want gold", reread[0].Tags["tier"])
+	}
+
+	// Same for clusters.
+	clusters, err := m.DescribeClusters(ctx, []string{"srv"})
+	requireNoError(t, err)
+	clusters[0].Tags["env"] = "tampered"
+	clusters[0].Members = append(clusters[0].Members, "phantom")
+
+	rc, err := m.DescribeClusters(ctx, []string{"srv"})
+	requireNoError(t, err)
+	if rc[0].Tags["env"] != "prod" {
+		t.Errorf("cluster Tags aliased: got %q, want prod", rc[0].Tags["env"])
+	}
+	if len(rc[0].Members) != 1 {
+		t.Errorf("cluster Members aliased: got %v", rc[0].Members)
+	}
+}
+
+func TestCreateDatabaseValidatesElasticPool(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	// Referencing a nonexistent pool is rejected.
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "db1", ClusterID: "srv", ElasticPoolID: "ghost-pool",
+	}); err == nil {
+		t.Error("CreateInstance into a nonexistent pool: expected NotFound")
+	}
+
+	if _, err := m.CreateElasticPool(ctx, rdsdriver.ElasticPoolConfig{Server: "srv", Name: "pool1"}); err != nil {
+		t.Fatalf("CreateElasticPool: %v", err)
+	}
+
+	// Bare name resolves.
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "db1", ClusterID: "srv", ElasticPoolID: "pool1",
+	}); err != nil {
+		t.Fatalf("CreateInstance into an existing pool: %v", err)
+	}
+
+	// Full ARM ID resolves too.
+	poolID := "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Sql/servers/srv/elasticPools/pool1"
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "db2", ClusterID: "srv", ElasticPoolID: poolID,
+	}); err != nil {
+		t.Fatalf("CreateInstance with pool ARM ID: %v", err)
+	}
+
+	// Moving a DB into a nonexistent pool via Modify is rejected.
+	if _, err := m.ModifyInstance(ctx, "srv/db1", rdsdriver.ModifyInstanceInput{ElasticPoolID: "ghost"}); err == nil {
+		t.Error("ModifyInstance into a nonexistent pool: expected NotFound")
+	}
+}

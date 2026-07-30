@@ -336,6 +336,21 @@ func TestSetConfigurationValidatesParameter(t *testing.T) {
 	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "max_connections", Value: "200"}); err != nil {
 		t.Errorf("SetConfiguration with known parameter: %v", err)
 	}
+
+	// A known-but-unset parameter returns its catalog default, not NotFound.
+	def, err := m.GetConfiguration(ctx, "srv", "wait_timeout")
+	if err != nil {
+		t.Fatalf("GetConfiguration for unset known param: %v", err)
+	}
+
+	if def.Source != "system-default" || def.Value == "" {
+		t.Errorf("expected catalog default for wait_timeout, got %+v", def)
+	}
+
+	// An unknown parameter still 404s.
+	if _, err := m.GetConfiguration(ctx, "srv", "not_a_real_param"); err == nil {
+		t.Error("GetConfiguration for unknown param: expected NotFound")
+	}
 }
 
 func TestFailoverRequiresRunning(t *testing.T) {
@@ -418,7 +433,51 @@ func TestSubResourceCRUDCoverage(t *testing.T) {
 		t.Fatalf("GetConfiguration: %+v %v", got, err)
 	}
 
-	if cs, err := m.ListConfigurations(ctx, "srv"); err != nil || len(cs) != 1 {
+	// List returns the full catalog (with the override applied), not just the
+	// single written parameter.
+	if cs, err := m.ListConfigurations(ctx, "srv"); err != nil || len(cs) < 2 {
 		t.Fatalf("ListConfigurations: %d %v", len(cs), err)
+	}
+}
+
+func TestBatchSetConfigurationsIsAtomic(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// A batch with a good entry followed by an unknown-parameter entry must
+	// apply nothing (the good entry keeps its catalog default).
+	_, err := m.BatchSetConfigurations(ctx, "srv", []rdsdriver.ConfigurationConfig{
+		{Name: "max_connections", Value: "500"},
+		{Name: "not_a_real_param", Value: "x"},
+	})
+	if err == nil {
+		t.Fatal("BatchSetConfigurations with a bad entry: expected error")
+	}
+
+	got, err := m.GetConfiguration(ctx, "srv", "max_connections")
+	if err != nil {
+		t.Fatalf("GetConfiguration: %v", err)
+	}
+
+	if got.Source != "system-default" {
+		t.Errorf("batch was not atomic: max_connections was persisted as %q (source %q)", got.Value, got.Source)
+	}
+
+	// A fully-valid batch applies all entries.
+	if _, err := m.BatchSetConfigurations(ctx, "srv", []rdsdriver.ConfigurationConfig{
+		{Name: "max_connections", Value: "500"},
+		{Name: "slow_query_log", Value: "ON"},
+	}); err != nil {
+		t.Fatalf("BatchSetConfigurations (valid): %v", err)
+	}
+
+	mc, _ := m.GetConfiguration(ctx, "srv", "max_connections")
+	sl, _ := m.GetConfiguration(ctx, "srv", "slow_query_log")
+	if mc.Value != "500" || sl.Value != "ON" {
+		t.Errorf("valid batch not applied: max_connections=%q slow_query_log=%q", mc.Value, sl.Value)
 	}
 }

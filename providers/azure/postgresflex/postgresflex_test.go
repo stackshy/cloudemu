@@ -348,6 +348,20 @@ func TestSetConfigurationValidatesParameter(t *testing.T) {
 	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{Server: "srv", Name: "work_mem", Value: "4MB"}); err != nil {
 		t.Errorf("SetConfiguration with known parameter: %v", err)
 	}
+
+	// A known-but-unset parameter returns its catalog default, not NotFound.
+	def, err := m.GetConfiguration(ctx, "srv", "max_connections")
+	if err != nil {
+		t.Fatalf("GetConfiguration for unset known param: %v", err)
+	}
+
+	if def.Source != "system-default" || def.Value == "" {
+		t.Errorf("expected catalog default for max_connections, got %+v", def)
+	}
+
+	if _, err := m.GetConfiguration(ctx, "srv", "not_a_real_param"); err == nil {
+		t.Error("GetConfiguration for unknown param: expected NotFound")
+	}
 }
 
 func TestSubResourceCRUDCoverage(t *testing.T) {
@@ -405,7 +419,9 @@ func TestSubResourceCRUDCoverage(t *testing.T) {
 		t.Fatalf("GetConfiguration: %+v %v", got, err)
 	}
 
-	if cs, err := m.ListConfigurations(ctx, "srv"); err != nil || len(cs) != 1 {
+	// List returns the full catalog (with the override applied), not just the
+	// single written parameter.
+	if cs, err := m.ListConfigurations(ctx, "srv"); err != nil || len(cs) < 2 {
 		t.Fatalf("ListConfigurations: %d %v", len(cs), err)
 	}
 }

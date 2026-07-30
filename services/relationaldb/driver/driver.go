@@ -345,6 +345,14 @@ type Configurations interface {
 	ListConfigurations(ctx context.Context, server string) ([]Configuration, error)
 }
 
+// BatchConfigurations is an OPTIONAL capability for applying several server
+// parameters atomically (MySQL Flexible Server's updateConfigurations),
+// discovered by type assertion. All entries are validated before any is
+// applied, so a bad entry never leaves earlier ones persisted.
+type BatchConfigurations interface {
+	BatchSetConfigurations(ctx context.Context, server string, cfgs []ConfigurationConfig) ([]Configuration, error)
+}
+
 // Failover is an OPTIONAL capability that triggers a server failover to its
 // standby, discovered by type assertion.
 type Failover interface {

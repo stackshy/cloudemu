@@ -70,6 +70,11 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, p *sqlPath
 		return
 	}
 
+	if len(insts) == 0 {
+		writeErr(w, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", p.name))
+		return
+	}
+
 	writeJSON(w, http.StatusOK, toSQLInstance(&insts[0], p.project))
 }
 

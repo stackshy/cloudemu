@@ -45,6 +45,32 @@ const (
 
 func subKey(server, name string) string { return server + "/" + name }
 
+// elasticPoolName extracts the pool name from an elasticPoolId, which may be a
+// bare name or a full ARM resource ID ending in ".../elasticPools/{name}".
+func elasticPoolName(id string) string {
+	if i := strings.LastIndex(id, "/elasticPools/"); i >= 0 {
+		return id[i+len("/elasticPools/"):]
+	}
+
+	return id
+}
+
+// requireElasticPool returns NotFound when a non-empty elastic-pool reference
+// doesn't resolve to an existing pool on the server. Empty id is a no-op (a
+// standalone database). Callers hold the write lock.
+func (m *Mock) requireElasticPool(server, poolID string) error {
+	if poolID == "" {
+		return nil
+	}
+
+	name := elasticPoolName(poolID)
+	if _, ok := m.elasticPools.Get(subKey(server, name)); !ok {
+		return cerrors.Newf(cerrors.NotFound, "elastic pool %q not found on server %q", name, server)
+	}
+
+	return nil
+}
+
 func (m *Mock) childARN(server, subType, name string) string {
 	return idgen.AzureID(m.opts.Region, m.opts.Region, armProvider, "servers/"+server+"/"+subType, name)
 }

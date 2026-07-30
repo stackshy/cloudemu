@@ -186,8 +186,25 @@ func TestSDKMySQLFlexConfigurations(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	if len(page.Value) != 2 {
-		t.Fatalf("got %d configurations, want 2", len(page.Value))
+	// List returns the full parameter catalog with the two overrides applied,
+	// not just the written parameters.
+	if len(page.Value) < 2 {
+		t.Fatalf("got %d configurations, want the catalog", len(page.Value))
+	}
+
+	values := map[string]string{}
+	for _, c := range page.Value {
+		if c.Name != nil && c.Properties != nil && c.Properties.Value != nil {
+			values[*c.Name] = *c.Properties.Value
+		}
+	}
+
+	if values["max_connections"] != "200" {
+		t.Errorf("max_connections override missing: got %q", values["max_connections"])
+	}
+
+	if values["slow_query_log"] != "ON" {
+		t.Errorf("slow_query_log override missing: got %q", values["slow_query_log"])
 	}
 }
 

@@ -76,6 +76,11 @@ func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm
 		return
 	}
 
+	if len(clusters) == 0 {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "server "+rp.ResourceName+" not found")
+		return
+	}
+
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(&clusters[0], rp.Subscription, rp.ResourceGroup))
 }
 
@@ -215,6 +220,11 @@ func (h *Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 	insts, err := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName + "/" + rp.SubResourceName})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if len(insts) == 0 {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "database "+rp.SubResourceName+" not found")
 		return
 	}
 

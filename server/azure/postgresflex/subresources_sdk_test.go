@@ -189,7 +189,20 @@ func TestSDKPostgresFlexConfigurations(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	if len(page.Value) != 1 {
-		t.Fatalf("got %d configurations, want 1", len(page.Value))
+	// List returns the full parameter catalog with the override applied.
+	if len(page.Value) < 1 {
+		t.Fatalf("got %d configurations, want the catalog", len(page.Value))
+	}
+
+	var sawOverride bool
+	for _, c := range page.Value {
+		if c.Name != nil && *c.Name == "max_connections" &&
+			c.Properties != nil && c.Properties.Value != nil && *c.Properties.Value == "200" {
+			sawOverride = true
+		}
+	}
+
+	if !sawOverride {
+		t.Error("max_connections override missing from catalog list")
 	}
 }

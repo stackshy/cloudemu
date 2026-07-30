@@ -1,8 +1,10 @@
 package postgresflex
 
 import (
+	"bytes"
 	"context"
 	"net"
+	"sort"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -12,6 +14,12 @@ import (
 func validIPv4(s string) bool {
 	ip := net.ParseIP(s)
 	return ip != nil && ip.To4() != nil
+}
+
+// ipv4LessOrEqual reports whether start <= end by unsigned 32-bit value. Both
+// must already be valid IPv4 (checked by validIPv4).
+func ipv4LessOrEqual(start, end string) bool {
+	return bytes.Compare(net.ParseIP(start).To4(), net.ParseIP(end).To4()) <= 0
 }
 
 // Postgres Flexible Server exposes databases, firewall rules and server
@@ -30,26 +38,27 @@ const (
 )
 
 // knownServerParameters is a representative subset of the PostgreSQL Flexible
-// Server parameter catalog. Azure rejects SetConfiguration for a name outside
-// the catalog with 404, so the mock validates against this set rather than
-// accept-and-echo any name.
+// Server parameter catalog mapped to its server default. Azure rejects
+// SetConfiguration for a name outside the catalog with 404 (so the mock
+// validates against this set rather than accept-and-echo any name), and returns
+// the default via Get/List for a known-but-unset parameter rather than 404.
 //
 //nolint:gochecknoglobals // immutable parameter-name lookup table.
-var knownServerParameters = map[string]bool{
-	"max_connections":                     true,
-	"shared_buffers":                      true,
-	"work_mem":                            true,
-	"maintenance_work_mem":                true,
-	"effective_cache_size":                true,
-	"log_statement":                       true,
-	"log_min_duration_statement":          true,
-	"autovacuum":                          true,
-	"statement_timeout":                   true,
-	"timezone":                            true,
-	"max_wal_size":                        true,
-	"wal_level":                           true,
-	"max_prepared_transactions":           true,
-	"idle_in_transaction_session_timeout": true,
+var knownServerParameters = map[string]string{
+	"max_connections":                     "100",
+	"shared_buffers":                      "32768",
+	"work_mem":                            "4096",
+	"maintenance_work_mem":                "65536",
+	"effective_cache_size":                "524288",
+	"log_statement":                       "none",
+	"log_min_duration_statement":          "-1",
+	"autovacuum":                          "on",
+	"statement_timeout":                   "0",
+	"timezone":                            "UTC",
+	"max_wal_size":                        "1024",
+	"wal_level":                           "replica",
+	"max_prepared_transactions":           "0",
+	"idle_in_transaction_session_timeout": "0",
 }
 
 func childKey(server, name string) string { return server + "/" + name }
@@ -174,6 +183,10 @@ func (m *Mock) CreateFirewallRule(
 		return nil, cerrors.New(cerrors.InvalidArgument, "startIpAddress and endIpAddress must be valid IPv4 addresses")
 	}
 
+	if !ipv4LessOrEqual(cfg.StartIPAddress, cfg.EndIPAddress) {
+		return nil, cerrors.New(cerrors.InvalidArgument, "startIpAddress must be less than or equal to endIpAddress")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -254,7 +267,7 @@ func (m *Mock) SetConfiguration(
 		return nil, cerrors.New(cerrors.InvalidArgument, "configuration name is required")
 	}
 
-	if !knownServerParameters[cfg.Name] {
+	if _, known := knownServerParameters[cfg.Name]; !known {
 		return nil, cerrors.Newf(cerrors.NotFound, "unknown server parameter %q", cfg.Name)
 	}
 
@@ -291,22 +304,42 @@ func (m *Mock) SetConfiguration(
 	return &out, nil
 }
 
-// GetConfiguration returns a server parameter.
+// GetConfiguration returns a server parameter — the user override if one was
+// set, otherwise the catalog default for a known parameter (real Azure returns
+// the system default for an unset-but-valid parameter). Unknown parameters 404.
 func (m *Mock) GetConfiguration(_ context.Context, server, name string) (*rdsdriver.Configuration, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	conf, ok := m.configurations.Get(childKey(server, name))
-	if !ok {
+	if conf, ok := m.configurations.Get(childKey(server, name)); ok {
+		out := conf
+
+		return &out, nil
+	}
+
+	def, known := knownServerParameters[name]
+	if !known {
 		return nil, cerrors.Newf(cerrors.NotFound, "configuration %q not found", name)
 	}
 
-	out := conf
-
-	return &out, nil
+	return m.defaultConfiguration(server, name, def), nil
 }
 
-// ListConfigurations returns the parameters that have been set on a server.
+// defaultConfiguration builds the system-default view of a known parameter.
+func (m *Mock) defaultConfiguration(server, name, value string) *rdsdriver.Configuration {
+	return &rdsdriver.Configuration{
+		Server:   server,
+		Name:     name,
+		Value:    value,
+		Source:   "system-default",
+		DataType: "String",
+		ARN:      m.childARN(server, "configurations", name),
+	}
+}
+
+// ListConfigurations returns the full parameter catalog, with user overrides
+// applied where present (real Azure lists the catalog with defaults, not just
+// the parameters that have been written).
 func (m *Mock) ListConfigurations(_ context.Context, server string) ([]rdsdriver.Configuration, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -315,13 +348,31 @@ func (m *Mock) ListConfigurations(_ context.Context, server string) ([]rdsdriver
 		return nil, err
 	}
 
-	out := []rdsdriver.Configuration{}
+	overrides := make(map[string]rdsdriver.Configuration)
 
 	confs := m.configurations.SortedValues()
 	for i := range confs {
 		if confs[i].Server == server {
-			out = append(out, confs[i])
+			overrides[confs[i].Name] = confs[i]
 		}
+	}
+
+	names := make([]string, 0, len(knownServerParameters))
+	for name := range knownServerParameters {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	out := make([]rdsdriver.Configuration, 0, len(names))
+
+	for _, name := range names {
+		if conf, ok := overrides[name]; ok {
+			out = append(out, conf)
+			continue
+		}
+
+		out = append(out, *m.defaultConfiguration(server, name, knownServerParameters[name]))
 	}
 
 	return out, nil

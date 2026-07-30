@@ -148,6 +148,36 @@ func copyTags(src map[string]string) map[string]string {
 	return out
 }
 
+// cloneInstance / cloneCluster / cloneSnapshot deep-copy the slice/map fields so
+// a returned value never aliases the memstore — a caller mutating its result
+// (or a concurrent reader) can't corrupt the store or trigger a concurrent-map
+// read/write panic. Callers own the returned copy.
+//
+//nolint:gocritic // value copy is intentional — the result must not alias the store.
+func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
+	inst.Tags = copyTags(inst.Tags)
+	inst.VPCSecurityGroups = cloneStrings(inst.VPCSecurityGroups)
+	inst.ReadReplicaTargets = cloneStrings(inst.ReadReplicaTargets)
+
+	return inst
+}
+
+//nolint:gocritic // value copy is intentional — the result must not alias the store.
+func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
+	c.Tags = copyTags(c.Tags)
+	c.VPCSecurityGroups = cloneStrings(c.VPCSecurityGroups)
+	c.Members = cloneStrings(c.Members)
+
+	return c
+}
+
+//nolint:gocritic // value copy is intentional — the result must not alias the store.
+func cloneSnapshot(s rdsdriver.Snapshot) rdsdriver.Snapshot {
+	s.Tags = copyTags(s.Tags)
+
+	return s
+}
+
 // CreateInstance creates a new database under an existing logical server.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
@@ -173,6 +203,10 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 	if _, ok := m.instances.Get(key); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists,
 			"database %q already exists on server %q", cfg.ID, cfg.ClusterID)
+	}
+
+	if err := m.requireElasticPool(cfg.ClusterID, cfg.ElasticPoolID); err != nil {
+		return nil, err
 	}
 
 	storage := cfg.AllocatedStorage
@@ -215,7 +249,7 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 
 	m.emitDatabaseMetrics(cfg.ClusterID, cfg.ID, cpuMetricRunning, dtuRunning)
 
-	out := inst
+	out := cloneInstance(inst)
 
 	return &out, nil
 }
@@ -234,7 +268,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing the result slice.
 		for _, v := range all {
-			out = append(out, v)
+			out = append(out, cloneInstance(v))
 		}
 
 		return out, nil
@@ -248,7 +282,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 			return nil, err
 		}
 
-		out = append(out, inst)
+		out = append(out, cloneInstance(inst))
 	}
 
 	return out, nil
@@ -307,6 +341,10 @@ func (m *Mock) ModifyInstance(
 	}
 
 	if input.ElasticPoolID != "" {
+		if err := m.requireElasticPool(inst.ClusterID, input.ElasticPoolID); err != nil {
+			return nil, err
+		}
+
 		inst.ElasticPoolID = input.ElasticPoolID
 	}
 
@@ -316,7 +354,7 @@ func (m *Mock) ModifyInstance(
 
 	m.instances.Set(instanceKey(inst.ClusterID, inst.ID), inst)
 
-	out := inst
+	out := cloneInstance(inst)
 
 	return &out, nil
 }
@@ -432,7 +470,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 
 	m.clusters.Set(cfg.ID, cluster)
 
-	out := cluster
+	out := cloneCluster(cluster)
 
 	return &out, nil
 }
@@ -448,7 +486,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing the result slice.
 		for _, v := range all {
-			out = append(out, v)
+			out = append(out, cloneCluster(v))
 		}
 
 		return out, nil
@@ -462,7 +500,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 			return nil, cerrors.Newf(cerrors.NotFound, "Azure SQL server %q not found", id)
 		}
 
-		out = append(out, cluster)
+		out = append(out, cloneCluster(cluster))
 	}
 
 	return out, nil
@@ -492,7 +530,7 @@ func (m *Mock) ModifyCluster(
 
 	m.clusters.Set(id, cluster)
 
-	out := cluster
+	out := cloneCluster(cluster)
 
 	return &out, nil
 }
@@ -591,7 +629,7 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 
 	m.snapshots.Set(cfg.ID, snap)
 
-	out := snap
+	out := cloneSnapshot(snap)
 
 	return &out, nil
 }
@@ -620,7 +658,7 @@ func (m *Mock) DescribeSnapshots(
 			}
 		}
 
-		out = append(out, snap)
+		out = append(out, cloneSnapshot(snap))
 	}
 
 	return out, nil
@@ -707,7 +745,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 
 	m.emitDatabaseMetrics(server, dbName, cpuMetricRunning, dtuRunning)
 
-	out := inst
+	out := cloneInstance(inst)
 
 	return &out, nil
 }

@@ -532,3 +532,51 @@ func TestClusterOpsAndMonitoringCoverage(t *testing.T) {
 		t.Error("RestoreClusterFromSnapshot: expected unsupported")
 	}
 }
+
+func TestDescribeInstancesResultDoesNotAliasStore(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "inst", Engine: "MYSQL_8_0", Tags: map[string]string{"env": "prod"},
+	}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	got, err := m.DescribeInstances(ctx, []string{"inst"})
+	requireNoError(t, err)
+
+	// Mutating the returned Tags map must not corrupt the store.
+	got[0].Tags["env"] = "tampered"
+	got[0].Tags["injected"] = "x"
+
+	reread, err := m.DescribeInstances(ctx, []string{"inst"})
+	requireNoError(t, err)
+
+	if reread[0].Tags["env"] != "prod" {
+		t.Errorf("store Tags aliased: got %q, want prod", reread[0].Tags["env"])
+	}
+
+	if _, ok := reread[0].Tags["injected"]; ok {
+		t.Error("store Tags aliased: injected key leaked into store")
+	}
+}
+
+func TestChildNameRejectsSlash(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "inst", Engine: "MYSQL_8_0"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// A '/' in a child name would collide with the "{instance}/{name}" key and
+	// create a row unreachable via single-segment GET/DELETE.
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "inst", Name: "a/b"}); err == nil {
+		t.Error("CreateDatabase with '/' in name: expected InvalidArgument")
+	}
+
+	if _, err := m.CreateUser(ctx, rdsdriver.UserConfig{Instance: "inst", Name: "a/b"}); err == nil {
+		t.Error("CreateUser with '/' in name: expected InvalidArgument")
+	}
+}
