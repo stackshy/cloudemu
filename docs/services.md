@@ -22,7 +22,7 @@ This document lists every service and operation available in CloudEmu across all
 | 14 | Notification | `sns` | `notificationhubs` | `fcm` |
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
-| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql` |
+| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
@@ -1089,9 +1089,11 @@ Both interfaces are AWS-only concepts, discovered by type assertion.
 ## 17. Relational Database
 
 **Driver interface:** `services/relationaldb/driver/driver.go`
-**AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `azuresql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`
+**AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `azuresql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`, `alloydb`
 
-A single portable interface backs every RDBMS handler. Engine selection (MySQL / PostgreSQL / Aurora / Neptune / DocumentDB / Redshift / Cloud SQL / Azure SQL / …) is a field on the input config, not a separate driver.
+A single portable interface backs every RDBMS handler. Engine selection (MySQL / PostgreSQL / Aurora / Neptune / DocumentDB / Redshift / Cloud SQL / Azure SQL / AlloyDB / …) is a field on the input config, not a separate driver.
+
+**AlloyDB (GCP):** a PostgreSQL-compatible managed database served on the `alloydb.googleapis.com/v1` REST API (`server/gcp/alloydb`). It reuses the relational driver — AlloyDB clusters map to `Cluster`, instances (PRIMARY / READ_POOL / SECONDARY) to `Instance`, and cluster backups to `ClusterSnapshot` — plus the `Users` and `Databases` capabilities. AlloyDB-specific behavior (instance types, machine vCPU config, cross-region secondary clusters + promote, instance failover/restart, continuous/automated backup config) lives in the optional `AlloyDB` capability. Because AlloyDB's REST paths (`/v1/projects/{p}/locations/{l}/clusters…`) are identical to GKE's, the two cannot be multiplexed on one server; the combined GCP server leaves `Drivers.AlloyDB` nil and callers inject it in place of GKE.
 
 ### Instance Operations
 
@@ -1248,7 +1250,7 @@ cascade-delete children when their parent server/instance is deleted.
 
 | Capability | Operations | Implemented by |
 |-----------|-----------|----------------|
-| `Databases` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `cloudsql` |
+| `Databases` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `cloudsql`, `alloydb` |
 | `FirewallRules` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `azuresql` |
 | `Configurations` | Set / Get / List (server parameters) | `mysqlflex`, `postgresflex` |
 | `Failover` | `FailoverInstance` | `mysqlflex`, `cloudsql` |
@@ -1256,11 +1258,12 @@ cascade-delete children when their parent server/instance is deleted.
 | `ElasticPools` | Create / Get / List / Delete | `azuresql` |
 | `FailoverGroups` | Create / Get / List / Delete / Failover | `azuresql` |
 | `AADAdmins` | Set / Get / List / Delete | `azuresql` |
-| `Users` | Create / Get / List / Update / Delete | `cloudsql` |
+| `Users` | Create / Get / List / Update / Delete | `cloudsql`, `alloydb` |
 | `SslCerts` | Create / Get / List / Delete | `cloudsql` |
 | `Clonable` | `CloneInstance` | `cloudsql` |
 | `ReplicaPromotion` | `PromoteReplica` | `cloudsql` |
 | `ManagedInstances` | managed-instance CRUD + Start/Stop/Failover, managed-database CRUD/List | `azuresql` |
+| `AlloyDB` | AlloyDB cluster/instance create, CreateSecondary/Promote, instance Failover/Restart, `*Info` accessors | `alloydb` |
 
 Cloud SQL also serves the `startReplica`/`stopReplica` instance actions (mapped
 onto Start/Stop) and the static `tiers` (`/v1/projects/{p}/tiers`) and `flags`
@@ -1864,7 +1867,7 @@ still sees success.
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
-| Relational Database | 21 (+109 optional) |
+| Relational Database | 21 (+117 optional) |
 | Kubernetes — AWS EKS (control plane) | 21 |
 | Kubernetes — Azure AKS (control plane) | 18 |
 | Kubernetes — GCP GKE (control plane) | 26 |
@@ -1878,7 +1881,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1084** (+116 optional) |
+| **Grand Total** | **1084** (+124 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

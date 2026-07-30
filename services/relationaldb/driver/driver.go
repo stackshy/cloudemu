@@ -1028,3 +1028,83 @@ type Tagging interface {
 	RemoveTagsFromResource(ctx context.Context, resourceARN string, keys []string) error
 	ListTagsForResource(ctx context.Context, resourceARN string) (map[string]string, error)
 }
+
+// ---- AlloyDB (GCP) ----
+//
+// AlloyDB is a PostgreSQL-compatible managed database whose cluster/instance
+// CRUD, backups (as cluster snapshots), users and databases reuse the portable
+// RelationalDB + Users + Databases surface. The attributes and actions below
+// are AlloyDB-specific and can't be expressed through the portable config
+// structs, so they live in this optional capability (discovered by type
+// assertion), mirroring the ManagedInstances precedent. GET/LIST/DELETE/MODIFY
+// reuse the base surface; the *Info accessors expose the extra attributes for
+// wire rendering.
+
+// AlloyDBClusterConfig carries AlloyDB-specific cluster-create fields.
+type AlloyDBClusterConfig struct {
+	ID                     string
+	DatabaseVersion        string // "POSTGRES_15", …
+	Network                string
+	InitialUser            string
+	InitialPassword        string
+	AutomatedBackupEnabled bool
+	ContinuousBackup       bool
+	MaintenanceDay         string // e.g. "SUNDAY"
+	Tags                   map[string]string
+}
+
+// SecondaryClusterConfig configures a cross-region SECONDARY (read replica)
+// cluster created from a PRIMARY.
+type SecondaryClusterConfig struct {
+	ID             string
+	PrimaryCluster string // source PRIMARY cluster ID
+	Tags           map[string]string
+}
+
+// AlloyDBInstanceConfig carries AlloyDB-specific instance-create fields.
+type AlloyDBInstanceConfig struct {
+	ClusterID        string
+	ID               string
+	InstanceType     string // "PRIMARY" | "READ_POOL" | "SECONDARY"
+	CPUCount         int
+	NodeCount        int    // READ_POOL node count
+	AvailabilityType string // "REGIONAL" | "ZONAL"
+	Tags             map[string]string
+}
+
+// AlloyDBClusterInfo is the AlloyDB-native view of a cluster's extra attributes.
+type AlloyDBClusterInfo struct {
+	ClusterType            string // "PRIMARY" | "SECONDARY"
+	DatabaseVersion        string
+	Network                string
+	AutomatedBackupEnabled bool
+	ContinuousBackup       bool
+	MaintenanceDay         string
+	PrimaryCluster         string // set for a SECONDARY cluster
+}
+
+// AlloyDBInstanceInfo is the AlloyDB-native view of an instance's extra
+// attributes.
+type AlloyDBInstanceInfo struct {
+	InstanceType     string
+	CPUCount         int
+	NodeCount        int
+	AvailabilityType string
+	IPAddress        string
+	GceZone          string
+}
+
+// AlloyDB is an OPTIONAL capability for AlloyDB-specific cluster/instance
+// management, discovered by type assertion.
+type AlloyDB interface {
+	CreateAlloyDBCluster(ctx context.Context, cfg AlloyDBClusterConfig) (*Cluster, error)
+	CreateSecondaryCluster(ctx context.Context, cfg SecondaryClusterConfig) (*Cluster, error)
+	PromoteCluster(ctx context.Context, id string) (*Cluster, error)
+
+	CreateAlloyDBInstance(ctx context.Context, cfg AlloyDBInstanceConfig) (*Instance, error)
+	FailoverInstance(ctx context.Context, clusterID, instanceID string) (*Instance, error)
+	RestartInstance(ctx context.Context, clusterID, instanceID string) (*Instance, error)
+
+	AlloyDBClusterInfo(ctx context.Context, id string) (*AlloyDBClusterInfo, error)
+	AlloyDBInstanceInfo(ctx context.Context, clusterID, instanceID string) (*AlloyDBInstanceInfo, error)
+}

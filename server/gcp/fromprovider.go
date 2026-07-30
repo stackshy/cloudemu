@@ -31,7 +31,10 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Memorystore:      p.Memorystore,
 		FCM:              p.FCM,
 		// K8sAPI is left nil; injected by the caller when a shared cluster is desired.
-		K8sAPI:            nil,
+		K8sAPI: nil,
+		// AlloyDB is left nil: its REST paths collide with GKE's, so callers that
+		// want AlloyDB inject p.AlloyDB explicitly (in place of GKE).
+		AlloyDB:           nil,
 		ResourceDiscovery: p.ResourceDiscovery,
 		ProjectID:         p.ProjectID,
 	}
