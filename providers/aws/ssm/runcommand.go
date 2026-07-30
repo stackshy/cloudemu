@@ -82,7 +82,12 @@ func (m *Mock) checkTargets(ctx context.Context, instanceIDs []string) error {
 		return nil
 	}
 
-	found, err := m.instanceResolver.DescribeInstances(ctx, instanceIDs, nil)
+	// SSM Run Command is an internal/system caller: a managed (service-owned)
+	// instance is a valid target even when the account hides managed resources
+	// from the public Describe API. Opt in so hiding doesn't spuriously report
+	// InvalidInstanceId for a real, running instance.
+	found, err := m.instanceResolver.DescribeInstances(ctx, instanceIDs, nil,
+		computedriver.DescribeInstancesOptions{IncludeManagedResources: true})
 	if err != nil {
 		return errors.Newf(errors.NotFound,
 			"InvalidInstanceId: %v", err)

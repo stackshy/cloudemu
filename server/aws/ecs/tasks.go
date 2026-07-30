@@ -17,6 +17,8 @@ func (h *Handler) routeTasks(w http.ResponseWriter, r *http.Request, op string) 
 		h.listTasks(w, r)
 	case "DescribeTasks":
 		h.describeTasks(w, r)
+	case "ExecuteCommand":
+		h.executeCommand(w, r)
 	default:
 		return false
 	}
@@ -24,15 +26,58 @@ func (h *Handler) routeTasks(w http.ResponseWriter, r *http.Request, op string) 
 	return true
 }
 
+func (h *Handler) executeCommand(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cluster     string `json:"cluster"`
+		Task        string `json:"task"`
+		Container   string `json:"container"`
+		Command     string `json:"command"`
+		Interactive bool   `json:"interactive"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	res, err := h.ecs.ExecuteCommand(r.Context(), driver.ExecuteCommandInput{
+		Cluster:     req.Cluster,
+		Task:        req.Task,
+		Container:   req.Container,
+		Command:     req.Command,
+		Interactive: req.Interactive,
+	})
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{
+		"clusterArn":    res.ClusterARN,
+		"containerArn":  res.ContainerARN,
+		"containerName": res.ContainerName,
+		"interactive":   res.Interactive,
+		"taskArn":       res.TaskARN,
+		"session": map[string]any{
+			"sessionId":  res.Session.SessionID,
+			"streamUrl":  res.Session.StreamURL,
+			"tokenValue": res.Session.TokenValue,
+		},
+	})
+}
+
 func (h *Handler) runTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TaskDefinition string    `json:"taskDefinition"`
-		Cluster        string    `json:"cluster"`
-		Count          int       `json:"count"`
-		LaunchType     string    `json:"launchType"`
-		Group          string    `json:"group"`
-		StartedBy      string    `json:"startedBy"`
-		Tags           []wireTag `json:"tags"`
+		TaskDefinition           string                             `json:"taskDefinition"`
+		Cluster                  string                             `json:"cluster"`
+		Count                    int                                `json:"count"`
+		LaunchType               string                             `json:"launchType"`
+		PlatformVersion          string                             `json:"platformVersion"`
+		Group                    string                             `json:"group"`
+		StartedBy                string                             `json:"startedBy"`
+		NetworkConfiguration     *wireNetworkConfiguration          `json:"networkConfiguration"`
+		CapacityProviderStrategy []wireCapacityProviderStrategyItem `json:"capacityProviderStrategy"`
+		Tags                     []wireTag                          `json:"tags"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -40,13 +85,16 @@ func (h *Handler) runTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tasks, failures, err := h.ecs.RunTask(r.Context(), driver.RunTaskInput{
-		TaskDefinition: req.TaskDefinition,
-		Cluster:        req.Cluster,
-		Count:          req.Count,
-		LaunchType:     req.LaunchType,
-		Group:          req.Group,
-		StartedBy:      req.StartedBy,
-		Tags:           toTags(req.Tags),
+		TaskDefinition:           req.TaskDefinition,
+		Cluster:                  req.Cluster,
+		Count:                    req.Count,
+		LaunchType:               req.LaunchType,
+		PlatformVersion:          req.PlatformVersion,
+		Group:                    req.Group,
+		StartedBy:                req.StartedBy,
+		NetworkConfiguration:     toNetworkConfiguration(req.NetworkConfiguration),
+		CapacityProviderStrategy: toCapacityProviderStrategy(req.CapacityProviderStrategy),
+		Tags:                     toTags(req.Tags),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -83,13 +131,14 @@ func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
 		Cluster       string `json:"cluster"`
 		Family        string `json:"family"`
 		DesiredStatus string `json:"desiredStatus"`
+		ServiceName   string `json:"serviceName"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	tasks, err := h.ecs.ListTasks(r.Context(), req.Cluster, req.Family, req.DesiredStatus)
+	tasks, err := h.ecs.ListTasks(r.Context(), req.Cluster, req.Family, req.DesiredStatus, req.ServiceName)
 	if err != nil {
 		writeErr(w, err)
 

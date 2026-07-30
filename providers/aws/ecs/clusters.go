@@ -14,10 +14,6 @@ func (m *Mock) CreateCluster(_ context.Context, in driver.CreateClusterInput) (*
 		name = defaultCluster
 	}
 
-	if m.clusters.Has(name) {
-		return nil, errors.Newf(errors.AlreadyExists, "cluster %q already exists", name)
-	}
-
 	c := &driver.Cluster{
 		ARN:      m.arn("cluster/" + name),
 		Name:     name,
@@ -25,9 +21,16 @@ func (m *Mock) CreateCluster(_ context.Context, in driver.CreateClusterInput) (*
 		Tags:     copyTags(in.Tags),
 		Settings: append([]driver.Setting(nil), in.Settings...),
 	}
-	m.clusters.Set(name, c)
 
-	out := *c
+	// SetIfAbsent closes the check-then-set TOCTOU: two concurrent creates of the
+	// same name can't both succeed.
+	if !m.clusters.SetIfAbsent(name, c) {
+		return nil, errors.Newf(errors.AlreadyExists, "cluster %q already exists", name)
+	}
+
+	m.recordTags(c.ARN, in.Tags)
+
+	out := cloneCluster(c)
 
 	return &out, nil
 }
@@ -38,7 +41,7 @@ func (m *Mock) ListClusters(_ context.Context) ([]driver.Cluster, error) {
 
 	out := make([]driver.Cluster, 0, len(all))
 	for _, c := range all {
-		out = append(out, *c)
+		out = append(out, m.describeCluster(c))
 	}
 
 	return out, nil
@@ -52,7 +55,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]driver.Clust
 
 		clusters := make([]driver.Cluster, 0, len(all))
 		for _, c := range all {
-			clusters = append(clusters, *c)
+			clusters = append(clusters, m.describeCluster(c))
 		}
 
 		return clusters, nil, nil
@@ -64,7 +67,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]driver.Clust
 	for _, id := range ids {
 		name := resolveClusterName(id)
 		if c, ok := m.clusters.Get(name); ok {
-			found = append(found, *c)
+			found = append(found, m.describeCluster(c))
 			continue
 		}
 
@@ -74,18 +77,112 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]driver.Clust
 	return found, failures, nil
 }
 
-// DeleteCluster marks a cluster INACTIVE and returns it.
+// describeCluster returns a deep copy of the stored cluster with its live
+// resource counts computed from the task, service, and instance stores.
+func (m *Mock) describeCluster(c *driver.Cluster) driver.Cluster {
+	out := cloneCluster(c)
+	out.ActiveServicesCount, out.RunningTasksCount, out.PendingTasksCount, out.RegisteredContainerInstancesCount =
+		m.clusterCounts(c.Name)
+
+	return out
+}
+
+// DeleteCluster marks a cluster INACTIVE and returns it. AWS refuses to delete a
+// cluster that still contains active services, running/pending tasks, or
+// registered container instances, so those are guarded here.
 func (m *Mock) DeleteCluster(_ context.Context, id string) (*driver.Cluster, error) {
 	name := resolveClusterName(id)
 
 	c, ok := m.clusters.Get(name)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "cluster %q not found", name)
+		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", name)
 	}
 
-	c.Status = statusInactive
+	if err := m.checkClusterEmpty(name); err != nil {
+		return nil, err
+	}
 
-	out := *c
+	// Copy-on-write: mutate a clone and Set it back so concurrent readers never
+	// race the status write.
+	updated := cloneCluster(c)
+	updated.Status = statusInactive
+	m.clusters.Set(name, &updated)
+
+	out := m.describeCluster(&updated)
 
 	return &out, nil
+}
+
+// UpdateCluster updates a cluster's settings and execute-command configuration.
+// A nil Settings or Configuration leaves that field unchanged.
+func (m *Mock) UpdateCluster(_ context.Context, in driver.UpdateClusterInput) (*driver.Cluster, error) {
+	return m.mutateCluster(in.Cluster, func(c *driver.Cluster) {
+		if in.Settings != nil {
+			c.Settings = append([]driver.Setting(nil), in.Settings...)
+		}
+
+		if in.Configuration != nil {
+			c.Configuration = in.Configuration
+		}
+	})
+}
+
+// UpdateClusterSettings replaces a cluster's settings and returns the cluster.
+func (m *Mock) UpdateClusterSettings(_ context.Context, cluster string, settings []driver.Setting) (*driver.Cluster, error) {
+	return m.mutateCluster(cluster, func(c *driver.Cluster) {
+		c.Settings = append([]driver.Setting(nil), settings...)
+	})
+}
+
+// PutClusterCapacityProviders associates capacity providers and a default
+// strategy with a cluster (stored and echoed, not resolved to real resources).
+func (m *Mock) PutClusterCapacityProviders(
+	_ context.Context, cluster string, capacityProviders []string, defaultStrategy []driver.CapacityProviderStrategyItem,
+) (*driver.Cluster, error) {
+	return m.mutateCluster(cluster, func(c *driver.Cluster) {
+		c.CapacityProviders = append([]string(nil), capacityProviders...)
+		c.DefaultCapacityProviderStrategy =
+			append([]driver.CapacityProviderStrategyItem(nil), defaultStrategy...)
+	})
+}
+
+// mutateCluster resolves a cluster by name or ARN, applies fn to a clone under
+// copy-on-write, stores it, and returns the described cluster. An unknown
+// cluster surfaces a ClusterNotFoundException.
+func (m *Mock) mutateCluster(id string, fn func(*driver.Cluster)) (*driver.Cluster, error) {
+	name := resolveClusterName(id)
+
+	c, ok := m.clusters.Get(name)
+	if !ok {
+		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", name)
+	}
+
+	updated := cloneCluster(c)
+	fn(&updated)
+	m.clusters.Set(name, &updated)
+
+	out := m.describeCluster(&updated)
+
+	return &out, nil
+}
+
+// checkClusterEmpty returns a typed FailedPrecondition error if the cluster
+// still contains active services, running/pending tasks, or registered
+// container instances, mirroring AWS's ClusterContains* exceptions.
+func (m *Mock) checkClusterEmpty(name string) error {
+	services, running, pending, instances := m.clusterCounts(name)
+
+	switch {
+	case services > 0:
+		return apiErrf(errors.FailedPrecondition, excClusterContainsServices,
+			"cluster %q contains %d active service(s)", name, services)
+	case running+pending > 0:
+		return apiErrf(errors.FailedPrecondition, excClusterContainsTasks,
+			"cluster %q contains %d task(s)", name, running+pending)
+	case instances > 0:
+		return apiErrf(errors.FailedPrecondition, excClusterContainsInstances,
+			"cluster %q contains %d container instance(s)", name, instances)
+	}
+
+	return nil
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithy "github.com/aws/smithy-go"
 	"github.com/stackshy/cloudemu/v2"
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -2203,7 +2204,7 @@ func TestEC2DescribeInstancesManagedResourceVisibility(t *testing.T) {
 	require.NoError(t, err)
 	plainID := plain[0].ID
 
-	provider.EC2.SetManagedResourceVisibility("hidden")
+	require.NoError(t, provider.EC2.SetManagedResourceVisibility("hidden"))
 
 	client := ec2ClientFromProvider(t, provider)
 
@@ -2252,4 +2253,56 @@ func TestEC2DescribeInstancesManagedResourceVisibility(t *testing.T) {
 	}
 
 	assert.True(t, foundTag, "system launch tag must round-trip")
+}
+
+// TestEC2DescribeInstancesHiddenExplicitIDNotFound verifies that naming a
+// hidden managed instance by explicit id (without IncludeManagedResources)
+// returns the real EC2 InvalidInstanceID.NotFound error over the SDK, rather
+// than an empty result — matching how AWS reports an id it won't reveal.
+func TestEC2DescribeInstancesHiddenExplicitIDNotFound(t *testing.T) {
+	ctx := context.Background()
+	provider := cloudemu.NewAWS()
+
+	managed, err := provider.EC2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID:      "ami-managed",
+		InstanceType: "t2.micro",
+		Managed:      true,
+		Principal:    "eks.amazonaws.com",
+	}, 1)
+	require.NoError(t, err)
+	managedID := managed[0].ID
+
+	require.NoError(t, provider.EC2.SetManagedResourceVisibility("hidden"))
+
+	client := ec2ClientFromProvider(t, provider)
+
+	// Explicit id, no opt-in: must be InvalidInstanceID.NotFound.
+	_, err = client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{managedID},
+	})
+	require.Error(t, err, "explicit-id describe of a hidden managed instance must error")
+
+	var apiErr smithy.APIError
+
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "InvalidInstanceID.NotFound", apiErr.ErrorCode())
+
+	// With the opt-in it resolves normally.
+	out, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds:             []string{managedID},
+		IncludeManagedResources: aws.Bool(true),
+	})
+	require.NoError(t, err)
+
+	var found bool
+
+	for _, res := range out.Reservations {
+		for _, inst := range res.Instances {
+			if aws.ToString(inst.InstanceId) == managedID {
+				found = true
+			}
+		}
+	}
+
+	assert.True(t, found, "opt-in explicit-id describe must return the managed instance")
 }

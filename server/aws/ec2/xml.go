@@ -55,8 +55,10 @@ type groupItem struct {
 }
 
 // operatorXML is the nested <operator> element carrying managed-resource
-// ownership. The child element names match what the aws-sdk-go-v2 deserializer
-// reads (case-insensitively): managed, principal, hiddenByDefault.
+// ownership. The child element names match the ec2 OperatorResponse fields the
+// aws-sdk-go-v2 deserializer reads case-insensitively (managed, principal,
+// hiddenByDefault); verified against service/ec2 deserializers.go, which does
+// strings.EqualFold("hiddenByDefault", ...) into OperatorResponse.HiddenByDefault.
 type operatorXML struct {
 	Managed         bool   `xml:"managed"`
 	Principal       string `xml:"principal,omitempty"`

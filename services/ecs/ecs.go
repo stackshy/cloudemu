@@ -160,9 +160,9 @@ func (e *ECS) DeregisterTaskDefinition(ctx context.Context, id string) (*driver.
 }
 
 // ListTaskDefinitions lists task definitions, optionally filtered by family prefix and status.
-func (e *ECS) ListTaskDefinitions(ctx context.Context, familyPrefix, status string) ([]driver.TaskDefinition, error) {
+func (e *ECS) ListTaskDefinitions(ctx context.Context, familyPrefix, status, sortOrder string) ([]driver.TaskDefinition, error) {
 	out, err := e.do(ctx, "ListTaskDefinitions", familyPrefix, func() (any, error) {
-		return e.driver.ListTaskDefinitions(ctx, familyPrefix, status)
+		return e.driver.ListTaskDefinitions(ctx, familyPrefix, status, sortOrder)
 	})
 	if err != nil {
 		return nil, err
@@ -181,10 +181,11 @@ func (e *ECS) StopTask(ctx context.Context, cluster, task, reason string) (*driv
 	return out.(*driver.Task), nil
 }
 
-// ListTasks lists tasks in a cluster, optionally filtered by family and desired status.
-func (e *ECS) ListTasks(ctx context.Context, cluster, family, desiredStatus string) ([]driver.Task, error) {
+// ListTasks lists tasks in a cluster, optionally filtered by family, desired
+// status, and service name.
+func (e *ECS) ListTasks(ctx context.Context, cluster, family, desiredStatus, serviceName string) ([]driver.Task, error) {
 	out, err := e.do(ctx, "ListTasks", cluster, func() (any, error) {
-		return e.driver.ListTasks(ctx, cluster, family, desiredStatus)
+		return e.driver.ListTasks(ctx, cluster, family, desiredStatus, serviceName)
 	})
 	if err != nil {
 		return nil, err
@@ -206,6 +207,8 @@ func (e *ECS) CreateService(ctx context.Context, in driver.CreateServiceInput) (
 }
 
 // UpdateService updates mutable fields of a service.
+//
+//nolint:gocritic // in matches the driver.ECS interface signature; copied once on entry.
 func (e *ECS) UpdateService(ctx context.Context, in driver.UpdateServiceInput) (*driver.Service, error) {
 	out, err := e.do(ctx, "UpdateService", in, func() (any, error) { return e.driver.UpdateService(ctx, in) })
 	if err != nil {
@@ -225,9 +228,12 @@ func (e *ECS) ListServices(ctx context.Context, cluster string) ([]driver.Servic
 	return out.([]driver.Service), nil
 }
 
-// DeleteService deletes (deactivates) a service.
-func (e *ECS) DeleteService(ctx context.Context, cluster, service string) (*driver.Service, error) {
-	out, err := e.do(ctx, "DeleteService", service, func() (any, error) { return e.driver.DeleteService(ctx, cluster, service) })
+// DeleteService deletes (deactivates) a service. Set force to delete a service
+// that still has a non-zero desired or running count.
+func (e *ECS) DeleteService(ctx context.Context, cluster, service string, force bool) (*driver.Service, error) {
+	out, err := e.do(ctx, "DeleteService", service, func() (any, error) {
+		return e.driver.DeleteService(ctx, cluster, service, force)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -308,4 +314,207 @@ func (e *ECS) DescribeContainerInstances(ctx context.Context, cluster string, id
 	return doBatch(ctx, e, "DescribeContainerInstances", ids, func() ([]driver.ContainerInstance, []driver.Failure, error) {
 		return e.driver.DescribeContainerInstances(ctx, cluster, ids)
 	})
+}
+
+// RegisterContainerInstance registers an EC2 container instance into a cluster.
+//
+//nolint:gocritic // in is passed by value to mirror the driver.ECS interface; the copy is cheap for a mock.
+func (e *ECS) RegisterContainerInstance(ctx context.Context, in driver.RegisterContainerInstanceInput) (
+	*driver.ContainerInstance, error,
+) {
+	out, err := e.do(ctx, "RegisterContainerInstance", in, func() (any, error) {
+		return e.driver.RegisterContainerInstance(ctx, in)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ContainerInstance), nil
+}
+
+// DeregisterContainerInstance removes a container instance from a cluster.
+func (e *ECS) DeregisterContainerInstance(ctx context.Context, cluster, containerInstance string, force bool) (
+	*driver.ContainerInstance, error,
+) {
+	out, err := e.do(ctx, "DeregisterContainerInstance", containerInstance, func() (any, error) {
+		return e.driver.DeregisterContainerInstance(ctx, cluster, containerInstance, force)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ContainerInstance), nil
+}
+
+// UpdateContainerInstancesState sets the ACTIVE/DRAINING state of container instances.
+func (e *ECS) UpdateContainerInstancesState(ctx context.Context, cluster string, ids []string, status string) (
+	[]driver.ContainerInstance, []driver.Failure, error,
+) {
+	return doBatch(ctx, e, "UpdateContainerInstancesState", ids, func() ([]driver.ContainerInstance, []driver.Failure, error) {
+		return e.driver.UpdateContainerInstancesState(ctx, cluster, ids, status)
+	})
+}
+
+// UpdateCluster updates a cluster's settings and execute-command configuration.
+func (e *ECS) UpdateCluster(ctx context.Context, in driver.UpdateClusterInput) (*driver.Cluster, error) {
+	out, err := e.do(ctx, "UpdateCluster", in, func() (any, error) { return e.driver.UpdateCluster(ctx, in) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.Cluster), nil
+}
+
+// UpdateClusterSettings replaces a cluster's settings.
+func (e *ECS) UpdateClusterSettings(ctx context.Context, cluster string, settings []driver.Setting) (*driver.Cluster, error) {
+	out, err := e.do(ctx, "UpdateClusterSettings", cluster, func() (any, error) {
+		return e.driver.UpdateClusterSettings(ctx, cluster, settings)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.Cluster), nil
+}
+
+// PutClusterCapacityProviders associates capacity providers with a cluster.
+func (e *ECS) PutClusterCapacityProviders(
+	ctx context.Context, cluster string, capacityProviders []string, defaultStrategy []driver.CapacityProviderStrategyItem,
+) (*driver.Cluster, error) {
+	out, err := e.do(ctx, "PutClusterCapacityProviders", cluster, func() (any, error) {
+		return e.driver.PutClusterCapacityProviders(ctx, cluster, capacityProviders, defaultStrategy)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.Cluster), nil
+}
+
+// TagResource adds or replaces tags on a resource.
+func (e *ECS) TagResource(ctx context.Context, resourceARN string, tags []driver.Tag) error {
+	_, err := e.do(ctx, "TagResource", resourceARN, func() (any, error) {
+		return nil, e.driver.TagResource(ctx, resourceARN, tags)
+	})
+
+	return err
+}
+
+// UntagResource removes tag keys from a resource.
+func (e *ECS) UntagResource(ctx context.Context, resourceARN string, tagKeys []string) error {
+	_, err := e.do(ctx, "UntagResource", resourceARN, func() (any, error) {
+		return nil, e.driver.UntagResource(ctx, resourceARN, tagKeys)
+	})
+
+	return err
+}
+
+// ListTagsForResource lists a resource's tags.
+func (e *ECS) ListTagsForResource(ctx context.Context, resourceARN string) ([]driver.Tag, error) {
+	out, err := e.do(ctx, "ListTagsForResource", resourceARN, func() (any, error) {
+		return e.driver.ListTagsForResource(ctx, resourceARN)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.Tag), nil
+}
+
+// PutAccountSetting sets an account setting for the authenticated principal.
+func (e *ECS) PutAccountSetting(ctx context.Context, name, value string) (*driver.AccountSetting, error) {
+	out, err := e.do(ctx, "PutAccountSetting", name, func() (any, error) { return e.driver.PutAccountSetting(ctx, name, value) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.AccountSetting), nil
+}
+
+// PutAccountSettingDefault sets the account-wide default for a setting.
+func (e *ECS) PutAccountSettingDefault(ctx context.Context, name, value string) (*driver.AccountSetting, error) {
+	out, err := e.do(ctx, "PutAccountSettingDefault", name, func() (any, error) {
+		return e.driver.PutAccountSettingDefault(ctx, name, value)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.AccountSetting), nil
+}
+
+// ListAccountSettings lists all account settings.
+func (e *ECS) ListAccountSettings(ctx context.Context) ([]driver.AccountSetting, error) {
+	out, err := e.do(ctx, "ListAccountSettings", nil, func() (any, error) { return e.driver.ListAccountSettings(ctx) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.AccountSetting), nil
+}
+
+// DeleteAccountSetting removes an account setting.
+func (e *ECS) DeleteAccountSetting(ctx context.Context, name string) (*driver.AccountSetting, error) {
+	out, err := e.do(ctx, "DeleteAccountSetting", name, func() (any, error) { return e.driver.DeleteAccountSetting(ctx, name) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.AccountSetting), nil
+}
+
+// PutAttributes upserts custom attributes onto their targets.
+func (e *ECS) PutAttributes(ctx context.Context, cluster string, attrs []driver.Attribute) ([]driver.Attribute, error) {
+	out, err := e.do(ctx, "PutAttributes", cluster, func() (any, error) { return e.driver.PutAttributes(ctx, cluster, attrs) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.Attribute), nil
+}
+
+// DeleteAttributes removes attributes from their targets.
+func (e *ECS) DeleteAttributes(ctx context.Context, cluster string, attrs []driver.Attribute) ([]driver.Attribute, error) {
+	out, err := e.do(ctx, "DeleteAttributes", cluster, func() (any, error) { return e.driver.DeleteAttributes(ctx, cluster, attrs) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.Attribute), nil
+}
+
+// ListAttributes lists attributes of a target type, optionally filtered by name/value.
+func (e *ECS) ListAttributes(ctx context.Context, cluster, targetType, attributeName, attributeValue string) (
+	[]driver.Attribute, error,
+) {
+	out, err := e.do(ctx, "ListAttributes", targetType, func() (any, error) {
+		return e.driver.ListAttributes(ctx, cluster, targetType, attributeName, attributeValue)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]driver.Attribute), nil
+}
+
+// ListTaskDefinitionFamilies lists distinct task-definition family names.
+func (e *ECS) ListTaskDefinitionFamilies(ctx context.Context, familyPrefix, status string) ([]string, error) {
+	out, err := e.do(ctx, "ListTaskDefinitionFamilies", familyPrefix, func() (any, error) {
+		return e.driver.ListTaskDefinitionFamilies(ctx, familyPrefix, status)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.([]string), nil
+}
+
+// ExecuteCommand resolves a task and returns a synthetic execute-command session.
+func (e *ECS) ExecuteCommand(ctx context.Context, in driver.ExecuteCommandInput) (*driver.ExecuteCommandResult, error) {
+	out, err := e.do(ctx, "ExecuteCommand", in, func() (any, error) { return e.driver.ExecuteCommand(ctx, in) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.ExecuteCommandResult), nil
 }

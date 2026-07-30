@@ -189,6 +189,9 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.SSM.SetInstanceResolver(p.EC2)
+	// ECS-registered container instances surface as managed EC2 instances, so
+	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
+	p.ECS.SetManagedInstanceLauncher(p.EC2)
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	p.SageMaker.SetMonitoring(p.CloudWatch)

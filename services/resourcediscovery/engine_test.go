@@ -217,6 +217,49 @@ func TestNilDriversSkipped(t *testing.T) {
 	assert.Equal(t, ServiceDatabase, out[0].Service)
 }
 
+// TestWalkComputeDiscoversHiddenManagedInstance proves resource discovery is an
+// internal caller: even when the account hides managed resources from the
+// public Describe API, a managed (service-owned) instance must still be
+// discovered by the walker.
+func TestWalkComputeDiscoversHiddenManagedInstance(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	managed, err := f.ec2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-managed", InstanceType: "t2.micro", Managed: true, Principal: "eks.amazonaws.com",
+	}, 1)
+	require.NoError(t, err)
+	require.NoError(t, f.ec2.SetManagedResourceVisibility("hidden"))
+
+	// Sanity: the public list (no opt-in) hides it.
+	public, err := f.ec2.DescribeInstances(ctx, nil, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, computeIDs(public), managed[0].ID, "public describe must hide the managed instance")
+
+	// Discovery must still surface it.
+	out, err := f.engine.ListAll(ctx)
+	require.NoError(t, err)
+
+	var found bool
+
+	for i := range out {
+		if out[i].Type == TypeInstance && out[i].ID == managed[0].ID {
+			found = true
+		}
+	}
+
+	assert.True(t, found, "resource discovery must surface the hidden managed instance")
+}
+
+func computeIDs(insts []computedriver.Instance) []string {
+	ids := make([]string, len(insts))
+	for i := range insts {
+		ids[i] = insts[i].ID
+	}
+
+	return ids
+}
+
 func seedCompute(t *testing.T, f *fixture, tags map[string]string) {
 	t.Helper()
 	_, err := f.ec2.RunInstances(context.Background(), computedriver.InstanceConfig{

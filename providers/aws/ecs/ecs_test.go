@@ -46,6 +46,75 @@ func TestClusterLifecycle(t *testing.T) {
 	assert.True(t, errors.IsNotFound(err))
 }
 
+func TestDeleteClusterCascadeGuard(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+
+	_, err = m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family:               "web",
+		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
+	})
+	require.NoError(t, err)
+
+	// A cluster with a running task refuses deletion. EXTERNAL launch runs the
+	// task unplaced (no container instance needed), keeping this test focused on
+	// the running-task cascade guard rather than capacity.
+	tasks, failures, err := m.RunTask(ctx, driver.RunTaskInput{
+		Cluster: "prod", TaskDefinition: "web", LaunchType: "EXTERNAL",
+	})
+	require.NoError(t, err)
+	require.Empty(t, failures)
+	require.Len(t, tasks, 1)
+
+	_, err = m.DeleteCluster(ctx, "prod")
+	require.Error(t, err)
+	assert.True(t, errors.IsFailedPrecondition(err))
+
+	// Stopping the task clears the running-task guard.
+	_, err = m.StopTask(ctx, "prod", tasks[0].ARN, "bye")
+	require.NoError(t, err)
+
+	del, err := m.DeleteCluster(ctx, "prod")
+	require.NoError(t, err)
+	assert.Equal(t, statusInactive, del.Status)
+}
+
+func TestDescribeClustersCounts(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+
+	_, err = m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family:               "web",
+		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
+	})
+	require.NoError(t, err)
+
+	// Seed EC2 capacity so both tasks place onto a container instance.
+	m.SeedContainerInstance("prod", "i-counts")
+
+	_, runFailures, err := m.RunTask(ctx, driver.RunTaskInput{Cluster: "prod", TaskDefinition: "web", Count: 2})
+	require.NoError(t, err)
+	require.Empty(t, runFailures)
+
+	_, err = m.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName: "svc", Cluster: "prod", TaskDefinition: "web", DesiredCount: 1,
+	})
+	require.NoError(t, err)
+
+	found, _, err := m.DescribeClusters(ctx, []string{"prod"})
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	// 2 standalone tasks + 1 task launched by the desired-count-1 service.
+	assert.Equal(t, 3, found[0].RunningTasksCount)
+	assert.Equal(t, 1, found[0].ActiveServicesCount)
+}
+
 func TestCreateClusterDefaultName(t *testing.T) {
 	m := newTestMock()
 
@@ -119,6 +188,36 @@ func TestTaskDefinitionRevisions(t *testing.T) {
 	assert.True(t, errors.IsNotFound(err))
 }
 
+func TestListTaskDefinitionsNumericRevisionOrder(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	in := driver.RegisterTaskDefinitionInput{
+		Family:               "web",
+		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
+	}
+
+	// Register 12 revisions so lexical ordering (web:10 < web:2) would misorder.
+	for range 12 {
+		_, err := m.RegisterTaskDefinition(ctx, in)
+		require.NoError(t, err)
+	}
+
+	asc, err := m.ListTaskDefinitions(ctx, "web", "", "")
+	require.NoError(t, err)
+	require.Len(t, asc, 12)
+	assert.Equal(t, 1, asc[0].Revision)
+	assert.Equal(t, 2, asc[1].Revision)
+	assert.Equal(t, 10, asc[9].Revision)
+	assert.Equal(t, 12, asc[11].Revision)
+
+	desc, err := m.ListTaskDefinitions(ctx, "web", "", "DESC")
+	require.NoError(t, err)
+	require.Len(t, desc, 12)
+	assert.Equal(t, 12, desc[0].Revision)
+	assert.Equal(t, 1, desc[11].Revision)
+}
+
 func TestRegisterTaskDefinitionRequiresFamily(t *testing.T) {
 	m := newTestMock()
 
@@ -130,26 +229,41 @@ func TestRunAndStopTask(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	_, err := m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+	// RunTask/ListTasks validate the target cluster exists.
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+
+	_, err = m.CreateCluster(ctx, driver.CreateClusterInput{Name: "staging"})
+	require.NoError(t, err)
+
+	_, err = m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
 		Family:               "web",
 		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
 	})
 	require.NoError(t, err)
+
+	// Seed EC2 capacity so the tasks place onto a container instance.
+	m.SeedContainerInstance("prod", "i-runstop")
 
 	tasks, failures, err := m.RunTask(ctx, driver.RunTaskInput{Cluster: "prod", TaskDefinition: "web", Count: 3})
 	require.NoError(t, err)
 	assert.Empty(t, failures)
 	assert.Len(t, tasks, 3)
 	assert.Equal(t, "RUNNING", tasks[0].LastStatus)
+	assert.NotEmpty(t, tasks[0].ContainerInstanceARN)
 
-	listed, err := m.ListTasks(ctx, "prod", "web", "RUNNING")
+	listed, err := m.ListTasks(ctx, "prod", "web", "RUNNING", "")
 	require.NoError(t, err)
 	assert.Len(t, listed, 3)
 
-	// A different cluster yields nothing.
-	other, err := m.ListTasks(ctx, "staging", "", "")
+	// A different (existing) cluster yields nothing.
+	other, err := m.ListTasks(ctx, "staging", "", "", "")
 	require.NoError(t, err)
 	assert.Empty(t, other)
+
+	// Listing tasks in a non-existent cluster is a typed error.
+	_, err = m.ListTasks(ctx, "ghost", "", "", "")
+	assert.True(t, errors.IsNotFound(err))
 
 	stopped, err := m.StopTask(ctx, "prod", tasks[0].ARN, "bye")
 	require.NoError(t, err)
@@ -160,11 +274,13 @@ func TestRunAndStopTask(t *testing.T) {
 func TestRunTaskUnresolvedDefinition(t *testing.T) {
 	m := newTestMock()
 
+	// An unresolved task definition is a synchronous ClientException in real
+	// ECS, not a placement failure in failures[].
 	tasks, failures, err := m.RunTask(context.Background(), driver.RunTaskInput{TaskDefinition: "nope"})
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err))
 	assert.Empty(t, tasks)
-	require.Len(t, failures, 1)
-	assert.Equal(t, "MISSING", failures[0].Reason)
+	assert.Empty(t, failures)
 }
 
 func TestRunTaskCountCappedAtMax(t *testing.T) {
@@ -176,6 +292,9 @@ func TestRunTaskCountCappedAtMax(t *testing.T) {
 		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
 	})
 	require.NoError(t, err)
+
+	// Seed capacity in the implicit default cluster so placement succeeds.
+	m.SeedContainerInstance("default", "i-cap")
 
 	// Count at the max is allowed.
 	tasks, _, err := m.RunTask(ctx, driver.RunTaskInput{TaskDefinition: "web", Count: maxRunTaskCount})
@@ -197,6 +316,19 @@ func TestServiceLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
+	// CreateService validates both the cluster and the task definition exist.
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+
+	_, err = m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family:               "web",
+		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
+	})
+	require.NoError(t, err)
+
+	// Seed EC2 capacity so the (default EC2 launch-type) service converges.
+	m.SeedContainerInstance("prod", "i-svc", WithCapacity(8192, 16384))
+
 	svc, err := m.CreateService(ctx, driver.CreateServiceInput{
 		ServiceName:    "web-svc",
 		Cluster:        "prod",
@@ -207,7 +339,7 @@ func TestServiceLifecycle(t *testing.T) {
 	assert.Equal(t, 2, svc.RunningCount)
 	assert.Equal(t, "REPLICA", svc.SchedulingStrategy)
 
-	_, err = m.CreateService(ctx, driver.CreateServiceInput{ServiceName: "web-svc", Cluster: "prod"})
+	_, err = m.CreateService(ctx, driver.CreateServiceInput{ServiceName: "web-svc", Cluster: "prod", TaskDefinition: "web"})
 	assert.True(t, errors.IsAlreadyExists(err))
 
 	count := 5
@@ -229,9 +361,21 @@ func TestServiceLifecycle(t *testing.T) {
 	assert.Len(t, found, 1)
 	assert.Len(t, failures, 1)
 
-	del, err := m.DeleteService(ctx, "prod", "web-svc")
+	// A service with a non-zero desired count refuses deletion without force.
+	_, err = m.DeleteService(ctx, "prod", "web-svc", false)
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+
+	del, err := m.DeleteService(ctx, "prod", "web-svc", true)
 	require.NoError(t, err)
 	assert.Equal(t, statusInactive, del.Status)
+
+	// The name can be reused after the ACTIVE service is deleted.
+	recreated, err := m.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName: "web-svc", Cluster: "prod", TaskDefinition: "web", DesiredCount: 0,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, statusActive, recreated.Status)
 }
 
 func TestContainerInstances(t *testing.T) {

@@ -1,6 +1,7 @@
 package ecs
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -18,6 +19,12 @@ func (h *Handler) routeClusters(w http.ResponseWriter, r *http.Request, op strin
 		h.describeClusters(w, r)
 	case "DeleteCluster":
 		h.deleteCluster(w, r)
+	case "UpdateCluster":
+		h.updateCluster(w, r)
+	case "UpdateClusterSettings":
+		h.updateClusterSettings(w, r)
+	case "PutClusterCapacityProviders":
+		h.putClusterCapacityProviders(w, r)
 	default:
 		return false
 	}
@@ -128,6 +135,74 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c, err := h.ecs.DeleteCluster(r.Context(), req.Cluster)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"cluster": clusterToWire(c)})
+}
+
+func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cluster       string          `json:"cluster"`
+		Settings      []wireSetting   `json:"settings"`
+		Configuration json.RawMessage `json:"configuration"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	in := driver.UpdateClusterInput{Cluster: req.Cluster, Configuration: req.Configuration}
+	if req.Settings != nil {
+		in.Settings = toSettings(req.Settings)
+	}
+
+	c, err := h.ecs.UpdateCluster(r.Context(), in)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"cluster": clusterToWire(c)})
+}
+
+func (h *Handler) updateClusterSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cluster  string        `json:"cluster"`
+		Settings []wireSetting `json:"settings"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	c, err := h.ecs.UpdateClusterSettings(r.Context(), req.Cluster, toSettings(req.Settings))
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"cluster": clusterToWire(c)})
+}
+
+func (h *Handler) putClusterCapacityProviders(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cluster                         string                             `json:"cluster"`
+		CapacityProviders               []string                           `json:"capacityProviders"`
+		DefaultCapacityProviderStrategy []wireCapacityProviderStrategyItem `json:"defaultCapacityProviderStrategy"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	c, err := h.ecs.PutClusterCapacityProviders(r.Context(), req.Cluster,
+		req.CapacityProviders, toCapacityProviderStrategy(req.DefaultCapacityProviderStrategy))
 	if err != nil {
 		writeErr(w, err)
 

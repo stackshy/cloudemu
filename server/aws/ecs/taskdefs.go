@@ -17,6 +17,8 @@ func (h *Handler) routeTaskDefs(w http.ResponseWriter, r *http.Request, op strin
 		h.describeTaskDefinition(w, r)
 	case "DeregisterTaskDefinition":
 		h.deregisterTaskDefinition(w, r)
+	case "ListTaskDefinitionFamilies":
+		h.listTaskDefinitionFamilies(w, r)
 	default:
 		return false
 	}
@@ -24,17 +26,46 @@ func (h *Handler) routeTaskDefs(w http.ResponseWriter, r *http.Request, op strin
 	return true
 }
 
+func (h *Handler) listTaskDefinitionFamilies(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FamilyPrefix string `json:"familyPrefix"`
+		Status       string `json:"status"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	families, err := h.ecs.ListTaskDefinitionFamilies(r.Context(), req.FamilyPrefix, req.Status)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"families": families})
+}
+
 func (h *Handler) registerTaskDefinition(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Family                  string             `json:"family"`
-		ContainerDefinitions    []wireContainerDef `json:"containerDefinitions"`
-		CPU                     string             `json:"cpu"`
-		Memory                  string             `json:"memory"`
-		NetworkMode             string             `json:"networkMode"`
-		RequiresCompatibilities []string           `json:"requiresCompatibilities"`
-		TaskRoleArn             string             `json:"taskRoleArn"`
-		ExecutionRoleArn        string             `json:"executionRoleArn"`
-		Tags                    []wireTag          `json:"tags"`
+		Family                  string                     `json:"family"`
+		ContainerDefinitions    []wireContainerDef         `json:"containerDefinitions"`
+		CPU                     string                     `json:"cpu"`
+		Memory                  string                     `json:"memory"`
+		NetworkMode             string                     `json:"networkMode"`
+		RequiresCompatibilities []string                   `json:"requiresCompatibilities"`
+		TaskRoleArn             string                     `json:"taskRoleArn"`
+		ExecutionRoleArn        string                     `json:"executionRoleArn"`
+		Volumes                 []wireVolume               `json:"volumes"`
+		EphemeralStorage        *wireEphemeralStorage      `json:"ephemeralStorage"`
+		PidMode                 string                     `json:"pidMode"`
+		IpcMode                 string                     `json:"ipcMode"`
+		RuntimePlatform         *wireRuntimePlatform       `json:"runtimePlatform"`
+		ProxyConfiguration      *wireProxyConfiguration    `json:"proxyConfiguration"`
+		PlacementConstraints    []wirePlacementConstraint  `json:"placementConstraints"`
+		InferenceAccelerators   []wireInferenceAccelerator `json:"inferenceAccelerators"`
+		EnableFaultInjection    bool                       `json:"enableFaultInjection"`
+		Tags                    []wireTag                  `json:"tags"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -50,6 +81,15 @@ func (h *Handler) registerTaskDefinition(w http.ResponseWriter, r *http.Request)
 		RequiresCompatibilities: req.RequiresCompatibilities,
 		TaskRoleARN:             req.TaskRoleArn,
 		ExecutionRoleARN:        req.ExecutionRoleArn,
+		Volumes:                 toVolumes(req.Volumes),
+		EphemeralStorage:        toEphemeralStorage(req.EphemeralStorage),
+		PidMode:                 req.PidMode,
+		IpcMode:                 req.IpcMode,
+		RuntimePlatform:         toRuntimePlatform(req.RuntimePlatform),
+		ProxyConfiguration:      toProxyConfiguration(req.ProxyConfiguration),
+		PlacementConstraints:    toPlacementConstraints(req.PlacementConstraints),
+		InferenceAccelerators:   toInferenceAccelerators(req.InferenceAccelerators),
+		EnableFaultInjection:    req.EnableFaultInjection,
 		Tags:                    toTags(req.Tags),
 	})
 	if err != nil {
@@ -65,13 +105,14 @@ func (h *Handler) listTaskDefinitions(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FamilyPrefix string `json:"familyPrefix"`
 		Status       string `json:"status"`
+		Sort         string `json:"sort"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	defs, err := h.ecs.ListTaskDefinitions(r.Context(), req.FamilyPrefix, req.Status)
+	defs, err := h.ecs.ListTaskDefinitions(r.Context(), req.FamilyPrefix, req.Status, req.Sort)
 	if err != nil {
 		writeErr(w, err)
 

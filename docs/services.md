@@ -1683,20 +1683,44 @@ cost rates integrate Azure AI Search with the cross-cutting layers like every ot
 **AWS:** ECS (`AmazonEC2ContainerServiceV20141113.*`, AWS JSON 1.1) | **Azure:** — | **GCP:** —
 
 AWS-only. Real `aws-sdk-go-v2/service/ecs` clients work against the SDK-compat
-server (`awsserver.Drivers{ECS: cloud.ECS}`). Resources complete synchronously
-(e.g. `RunTask` returns `RUNNING` tasks, `CreateService` reaches `desiredCount`
-immediately). The batch `Describe*` ops and `RunTask` return partial success —
-unresolved ids appear in `failures[]` rather than erroring.
+server (`awsserver.Drivers{ECS: cloud.ECS}`).
+
+**Scheduling & placement.** Container instances carry CPU/memory capacity;
+`RunTask`/services with launch type **EC2** are first-fit **placed** onto an
+instance with sufficient remaining capacity (reserving it, releasing on stop) —
+no capacity leaves the task in `failures[]` (`AGENT`/`RESOURCE:*`) or, for a
+service, `PENDING`. **FARGATE** requires `networkConfiguration.awsvpcConfiguration`
++ an `awsvpc` task-def with cpu+memory, and synthesizes an ENI `attachment` +
+`platformVersion` (no capacity pool). `launchType` is validated against the
+task-def's `requiresCompatibilities`.
+
+**Services** converge synchronously: `CreateService` actually launches
+`desiredCount` tasks (linked via the `service:<name>` group), records a PRIMARY
+`deployment` (rolloutState COMPLETED/IN_PROGRESS) and an `event`; `UpdateService`
+reconciles tasks and promotes a new deployment; DAEMON runs one task per
+container instance. `loadBalancers`/`serviceRegistries`/`deploymentConfiguration`
+round-trip. Long-running jobs still complete synchronously; batch `Describe*` and
+`RunTask` return partial success (`failures[]`) rather than erroring; typed
+exceptions (`ClusterNotFoundException`, `ServiceNotFoundException`,
+`ClusterContains*Exception`, `InvalidParameterException`, `ClientException`) match
+the SDK.
+
+**Composes with EC2 (#300).** `RegisterContainerInstance` provisions a backing
+**managed EC2 instance** (`Operator.Managed=true`, principal `ecs.amazonaws.com`,
+`aws:ec2:managed-launch` tag), so an ECS container instance is discoverable as a
+real EC2 instance subject to managed-resource visibility.
 
 | Family | Operations |
 |--------|-----------|
-| Clusters | CreateCluster, ListClusters, DescribeClusters, DeleteCluster |
-| Task definitions | RegisterTaskDefinition (auto-incrementing revision per family), ListTaskDefinitions, DescribeTaskDefinition, DeregisterTaskDefinition |
-| Tasks | RunTask, StopTask, ListTasks, DescribeTasks |
-| Services | CreateService, UpdateService, ListServices, DescribeServices, DeleteService |
-| Container instances | ListContainerInstances, DescribeContainerInstances |
+| Clusters | CreateCluster, ListClusters, DescribeClusters, DeleteCluster (cascade-guarded), UpdateCluster, UpdateClusterSettings, PutClusterCapacityProviders |
+| Task definitions | RegisterTaskDefinition (auto-incrementing revision; full container/task runtime surface — portMappings, environment, secrets, healthCheck, logConfiguration, mountPoints, ulimits, resourceRequirements, volumes, ephemeralStorage, runtimePlatform, proxyConfiguration, …), ListTaskDefinitions, DescribeTaskDefinition, DeregisterTaskDefinition, ListTaskDefinitionFamilies |
+| Tasks | RunTask (EC2 placement / Fargate ENI), StopTask, ListTasks, DescribeTasks, ExecuteCommand |
+| Services | CreateService, UpdateService, ListServices, DescribeServices, DeleteService (force) |
+| Container instances | RegisterContainerInstance, DeregisterContainerInstance, UpdateContainerInstancesState (DRAINING), ListContainerInstances, DescribeContainerInstances |
+| Tagging | TagResource, UntagResource, ListTagsForResource |
+| Account & attributes | PutAccountSetting(+Default), ListAccountSettings, DeleteAccountSetting, PutAttributes, DeleteAttributes, ListAttributes |
 
-**Total: 19 operations.**
+**Total: 37 operations.**
 
 ---
 
@@ -1804,8 +1828,8 @@ still sees success.
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
-| Container Orchestration — AWS ECS | 19 |
-| **Grand Total** | **1066** (+67 optional) |
+| Container Orchestration — AWS ECS | 37 |
+| **Grand Total** | **1084** (+67 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
