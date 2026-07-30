@@ -39,6 +39,7 @@ type Mock struct {
 	opts       *config.Options
 	regMu      sync.Mutex // serializes task-definition revision allocation
 	placeMu    sync.Mutex // serializes container-instance capacity reserve/release
+	clusterMu  sync.Mutex // serializes CreateCluster name-reuse compare-and-set
 
 	launcher ManagedInstanceLauncher // optional: provisions backing managed EC2 instances
 }
@@ -141,10 +142,26 @@ func copyTags(in []driver.Tag) []driver.Tag {
 	return out
 }
 
-// clusterExists reports whether a cluster with the given bare name is present.
-// The implicit "default" cluster is always treated as present, matching AWS.
+// clusterExists reports whether a cluster with the given bare name is present
+// (in any state, including INACTIVE). The implicit "default" cluster is always
+// treated as present, matching AWS. Used by resource-resolution paths (e.g.
+// tagging) that must still see a deleted cluster.
 func (m *Mock) clusterExists(name string) bool {
 	return name == defaultCluster || m.clusters.Has(name)
+}
+
+// clusterActive reports whether a cluster is present AND ACTIVE. Launch paths
+// (RunTask, CreateService) gate on this rather than clusterExists: DeleteCluster
+// leaves an INACTIVE tombstone, and real ECS rejects new work against a deleted
+// cluster with ClusterNotFoundException. The implicit "default" cluster, when it
+// was never explicitly created, is treated as ACTIVE.
+func (m *Mock) clusterActive(name string) bool {
+	c, ok := m.clusters.Get(name)
+	if !ok {
+		return name == defaultCluster
+	}
+
+	return c.Status == statusActive
 }
 
 // clusterCounts computes the live resource counts for a cluster from the task,

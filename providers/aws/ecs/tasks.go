@@ -27,15 +27,16 @@ func (m *Mock) RunTask(_ context.Context, in driver.RunTaskInput) ([]driver.Task
 	cluster := resolveClusterName(in.Cluster)
 	clusterARN := m.arn("cluster/" + cluster)
 
-	if !m.clusterExists(cluster) {
+	if !m.clusterActive(cluster) {
 		return nil, nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", cluster)
 	}
 
-	// An unresolved task definition is a synchronous ClientException in real ECS,
-	// not a placement failure — failures[] is reserved for capacity/placement.
-	td, ok := m.resolveTaskDef(in.TaskDefinition)
-	if !ok {
-		return nil, nil, apiErrf(errors.NotFound, excClient, "task definition %q not found", in.TaskDefinition)
+	// An unresolved or deregistered (INACTIVE) task definition is a synchronous
+	// ClientException in real ECS, not a placement failure — failures[] is
+	// reserved for capacity/placement.
+	td, err := m.resolveLaunchableTaskDef(in.TaskDefinition)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	count := in.Count

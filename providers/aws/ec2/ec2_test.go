@@ -2052,39 +2052,6 @@ func TestManagedResourceVisibility(t *testing.T) {
 	}
 }
 
-func TestSetManaged(t *testing.T) {
-	ctx := context.Background()
-	m := newTestMock()
-
-	insts, err := m.RunInstances(ctx, defaultConfig(), 1)
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-
-	id := insts[0].ID
-
-	if err := m.SetManaged(id, "ecs.amazonaws.com"); err != nil {
-		t.Fatalf("set managed: %v", err)
-	}
-
-	if err := m.SetManagedResourceVisibility("hidden"); err != nil {
-		t.Fatalf("set visibility hidden: %v", err)
-	}
-
-	got, err := m.DescribeInstances(ctx, nil, nil)
-	if err != nil {
-		t.Fatalf("describe: %v", err)
-	}
-
-	if hasInstanceID(got, id) {
-		t.Fatalf("instance marked managed should be hidden")
-	}
-
-	if err := m.SetManaged("i-missing", "x"); err == nil {
-		t.Fatalf("SetManaged on missing instance should error")
-	}
-}
-
 func TestSetManagedResourceVisibilityInvalid(t *testing.T) {
 	m := newTestMock()
 

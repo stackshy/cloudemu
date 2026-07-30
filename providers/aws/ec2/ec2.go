@@ -521,19 +521,6 @@ func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
 	return nil
 }
 
-// SetManaged marks an existing instance as a service-provider-managed resource.
-// This is a test helper for exercising managed-resource visibility.
-func (m *Mock) SetManaged(instanceID, principal string) error {
-	inst, ok := m.instances.Get(instanceID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
-	}
-
-	inst.Operator = &operatorData{Managed: true, Principal: principal}
-
-	return nil
-}
-
 // LaunchManaged provisions a service-managed instance (Operator.Managed=true,
 // the given Principal) and returns its instance id. It lets another service
 // (e.g. ECS registering a container instance) surface a real managed EC2

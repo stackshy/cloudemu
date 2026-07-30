@@ -193,6 +193,15 @@ func (m *Mock) UpdateContainerInstancesState(
 			"container instance status must be ACTIVE or DRAINING, got %q", status)
 	}
 
+	// Hold placeMu for the whole read-modify-write: reserve (capacity.go),
+	// release/StopTask, and DeregisterContainerInstance all mutate an instance
+	// under placeMu, so resolving-then-Set without it would let a concurrent
+	// capacity reserve be silently reverted (a logical lost update -race can't
+	// see, since memstore.Set is per-key locked). Resolving under the lock also
+	// guarantees the clone reflects the freshest capacity counts.
+	m.placeMu.Lock()
+	defer m.placeMu.Unlock()
+
 	found := make([]driver.ContainerInstance, 0, len(ids))
 	failures := make([]driver.Failure, 0, len(ids))
 

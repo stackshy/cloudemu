@@ -36,7 +36,7 @@ func (m *Mock) RegisterTaskDefinition(_ context.Context, in driver.RegisterTaskD
 		Family:                  in.Family,
 		Revision:                revision,
 		Status:                  statusActive,
-		ContainerDefinitions:    append([]driver.ContainerDefinition(nil), in.ContainerDefinitions...),
+		ContainerDefinitions:    cloneContainerDefs(in.ContainerDefinitions),
 		CPU:                     in.CPU,
 		Memory:                  in.Memory,
 		NetworkMode:             in.NetworkMode,
@@ -55,10 +55,17 @@ func (m *Mock) RegisterTaskDefinition(_ context.Context, in driver.RegisterTaskD
 		RegisteredAt:            m.now(),
 		Tags:                    copyTags(in.Tags),
 	}
-	m.taskDefs.Set(fmt.Sprintf("%s:%d", in.Family, revision), td)
-	m.recordTags(td.ARN, in.Tags)
+	// Store a deep clone so the stored record never aliases the caller's input:
+	// the ContainerDefinitions slice above is cloned, but the remaining task-level
+	// reference fields (Volumes, PlacementConstraints, InferenceAccelerators,
+	// EphemeralStorage, RuntimePlatform, ProxyConfiguration) would otherwise be
+	// held by reference, so a caller mutating its input after register could
+	// corrupt the store. cloneTaskDef deep-copies every such field.
+	stored := cloneTaskDef(td)
+	m.taskDefs.Set(fmt.Sprintf("%s:%d", in.Family, revision), &stored)
+	m.recordTags(stored.ARN, in.Tags)
 
-	out := cloneTaskDef(td)
+	out := cloneTaskDef(&stored)
 
 	return &out, nil
 }
@@ -260,6 +267,28 @@ func (m *Mock) resolveTaskDef(id string) (*driver.TaskDefinition, bool) {
 	}
 
 	return m.latestActive(key)
+}
+
+// resolveLaunchableTaskDef resolves a definition for launching a task or service
+// and requires it to be ACTIVE. resolveTaskDef alone accepts a deregistered
+// (INACTIVE) definition when referenced by an explicit family:revision or ARN;
+// real ECS refuses to run new tasks from such a definition, so launch paths use
+// this instead. A missing definition is a not-found ClientException; a resolved
+// but INACTIVE one is an InvalidParameter ClientException (it exists, it's just
+// not runnable). Bare-family lookups are unaffected — latestActive already skips
+// INACTIVE revisions.
+func (m *Mock) resolveLaunchableTaskDef(id string) (*driver.TaskDefinition, error) {
+	td, ok := m.resolveTaskDef(id)
+	if !ok {
+		return nil, apiErrf(errors.NotFound, excClient, "task definition %q not found", id)
+	}
+
+	if td.Status != statusActive {
+		return nil, apiErrf(errors.InvalidArgument, excClient,
+			"task definition %q is not ACTIVE; it was deregistered", id)
+	}
+
+	return td, nil
 }
 
 // latestActive returns the highest ACTIVE revision for a family.

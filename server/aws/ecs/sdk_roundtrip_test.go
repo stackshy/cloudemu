@@ -1170,3 +1170,89 @@ func TestSDKExecuteCommand(t *testing.T) {
 		t.Fatalf("ExecuteCommand missing task error = %T, want InvalidParameterException", err)
 	}
 }
+
+// TestSDKClientException asserts the typed-exception path (distinct from the
+// failures[] path): RunTask against an unresolvable task definition surfaces a
+// synchronous ClientException, not a placement failure entry.
+func TestSDKClientException(t *testing.T) {
+	client := newECSClient(t)
+	ctx := context.Background()
+
+	out, err := client.RunTask(ctx, &awsecs.RunTaskInput{
+		TaskDefinition: aws.String("does-not-exist:1"),
+	})
+	if err == nil {
+		t.Fatalf("RunTask with unknown task def: want ClientException, got tasks=%+v failures=%+v",
+			out.Tasks, out.Failures)
+	}
+
+	var ce *ecstypes.ClientException
+	if !errorsAs(err, &ce) {
+		t.Fatalf("RunTask unknown task def error = %T (%v), want *ClientException", err, err)
+	}
+}
+
+// TestSDKDescribeIncludeTagsGating asserts DescribeClusters returns tags only
+// when the caller opts in via include=[TAGS], matching real ECS ClusterField
+// semantics.
+func TestSDKDescribeIncludeTagsGating(t *testing.T) {
+	client := newECSClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateCluster(ctx, &awsecs.CreateClusterInput{
+		ClusterName: aws.String("prod"),
+		Tags:        []ecstypes.Tag{{Key: aws.String("team"), Value: aws.String("platform")}},
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	// Without include, tags are withheld.
+	bare, err := client.DescribeClusters(ctx, &awsecs.DescribeClustersInput{
+		Clusters: []string{"prod"},
+	})
+	if err != nil {
+		t.Fatalf("DescribeClusters (no include): %v", err)
+	}
+
+	if len(bare.Clusters) != 1 {
+		t.Fatalf("DescribeClusters = %d clusters, want 1", len(bare.Clusters))
+	}
+
+	if len(bare.Clusters[0].Tags) != 0 {
+		t.Fatalf("DescribeClusters without include returned tags %+v, want none", bare.Clusters[0].Tags)
+	}
+
+	// With include=[TAGS], tags come back.
+	withTags, err := client.DescribeClusters(ctx, &awsecs.DescribeClustersInput{
+		Clusters: []string{"prod"},
+		Include:  []ecstypes.ClusterField{ecstypes.ClusterFieldTags},
+	})
+	if err != nil {
+		t.Fatalf("DescribeClusters (include TAGS): %v", err)
+	}
+
+	if len(withTags.Clusters[0].Tags) != 1 ||
+		aws.ToString(withTags.Clusters[0].Tags[0].Key) != "team" ||
+		aws.ToString(withTags.Clusters[0].Tags[0].Value) != "platform" {
+		t.Fatalf("DescribeClusters include TAGS = %+v, want the team=platform tag", withTags.Clusters[0].Tags)
+	}
+}
+
+// TestSDKPutAccountSettingDefaultRoundtrip covers the Default variant over the
+// wire (TestSDKAccountSettingsRoundtrip only exercises PutAccountSetting).
+func TestSDKPutAccountSettingDefaultRoundtrip(t *testing.T) {
+	client := newECSClient(t)
+	ctx := context.Background()
+
+	put, err := client.PutAccountSettingDefault(ctx, &awsecs.PutAccountSettingDefaultInput{
+		Name:  ecstypes.SettingNameServiceLongArnFormat,
+		Value: aws.String("enabled"),
+	})
+	if err != nil {
+		t.Fatalf("PutAccountSettingDefault: %v", err)
+	}
+
+	if string(put.Setting.Name) != "serviceLongArnFormat" || aws.ToString(put.Setting.Value) != "enabled" {
+		t.Fatalf("PutAccountSettingDefault = %+v, want serviceLongArnFormat=enabled", put.Setting)
+	}
+}

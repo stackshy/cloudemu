@@ -69,13 +69,13 @@ func (m *Mock) CreateService(_ context.Context, in driver.CreateServiceInput) (*
 	}
 
 	cluster := resolveClusterName(in.Cluster)
-	if !m.clusterExists(cluster) {
+	if !m.clusterActive(cluster) {
 		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", cluster)
 	}
 
-	td, ok := m.resolveTaskDef(in.TaskDefinition)
-	if !ok {
-		return nil, apiErrf(errors.NotFound, excClient, "task definition %q not found", in.TaskDefinition)
+	td, err := m.resolveLaunchableTaskDef(in.TaskDefinition)
+	if err != nil {
+		return nil, err
 	}
 
 	launchType := effectiveServiceLaunchType(in.LaunchType)
@@ -317,17 +317,20 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 		return nil, apiErrf(errors.NotFound, excServiceNotFound, "service %q not found", in.Service)
 	}
 
+	// A DAEMON service runs one task per container instance, so ECS rejects a
+	// caller-supplied desiredCount on update just as it does on create.
+	if svc.SchedulingStrategy == schedDaemon && in.DesiredCount != nil {
+		return nil, apiErrf(errors.InvalidArgument, excInvalidParameter,
+			"desiredCount must not be specified for a DAEMON service")
+	}
+
 	updated := cloneService(svc)
 	applyServiceScalars(&updated, &in)
 	applyServiceRefs(&updated, &in)
 
-	tdChanged := in.TaskDefinition != "" && in.TaskDefinition != svc.TaskDefinition
-	if tdChanged {
-		if _, tdOK := m.resolveTaskDef(in.TaskDefinition); !tdOK {
-			return nil, apiErrf(errors.NotFound, excClient, "task definition %q not found", in.TaskDefinition)
-		}
-
-		updated.TaskDefinition = in.TaskDefinition
+	tdChanged, err := m.applyTaskDefChange(&updated, svc, &in)
+	if err != nil {
+		return nil, err
 	}
 
 	countChanged := in.DesiredCount != nil && *in.DesiredCount != svc.DesiredCount
@@ -340,6 +343,24 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 	out := cloneService(&updated)
 
 	return &out, nil
+}
+
+// applyTaskDefChange applies a task-definition change to the pending service
+// update, reporting whether the definition actually changed. An unchanged (or
+// unset) task definition is a no-op. A deregistered (INACTIVE) definition can't
+// back a new deployment, same as CreateService/RunTask, so it is rejected.
+func (m *Mock) applyTaskDefChange(updated, svc *driver.Service, in *driver.UpdateServiceInput) (bool, error) {
+	if in.TaskDefinition == "" || in.TaskDefinition == svc.TaskDefinition {
+		return false, nil
+	}
+
+	if _, err := m.resolveLaunchableTaskDef(in.TaskDefinition); err != nil {
+		return false, err
+	}
+
+	updated.TaskDefinition = in.TaskDefinition
+
+	return true, nil
 }
 
 // redeployService reconciles the service to a new PRIMARY deployment: it resolves
@@ -432,7 +453,10 @@ func (m *Mock) ListServices(_ context.Context, cluster string) ([]driver.Service
 	out := make([]driver.Service, 0, len(all))
 
 	for _, s := range all {
-		if clusterNameFromARN(s.ClusterARN) == want {
+		// Real ECS ListServices returns only live services (ACTIVE/DRAINING); a
+		// deleted service is marked INACTIVE but kept for DescribeServices, so
+		// filter the tombstones out here.
+		if clusterNameFromARN(s.ClusterARN) == want && s.Status != statusInactive {
 			out = append(out, cloneService(s))
 		}
 	}

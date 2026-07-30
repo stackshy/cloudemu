@@ -22,11 +22,19 @@ func (m *Mock) CreateCluster(_ context.Context, in driver.CreateClusterInput) (*
 		Settings: append([]driver.Setting(nil), in.Settings...),
 	}
 
-	// SetIfAbsent closes the check-then-set TOCTOU: two concurrent creates of the
-	// same name can't both succeed.
-	if !m.clusters.SetIfAbsent(name, c) {
+	// Serialize the reject-if-ACTIVE / create-or-reuse compare-and-set so two
+	// concurrent creates of the same name can't both succeed. Only an ACTIVE
+	// cluster of the same name is a conflict; a previously deleted (INACTIVE)
+	// tombstone is overwritten, so a deleted cluster name can be recreated —
+	// real ECS lets the name be reused once the old cluster is gone.
+	m.clusterMu.Lock()
+	if existing, ok := m.clusters.Get(name); ok && existing.Status == statusActive {
+		m.clusterMu.Unlock()
 		return nil, errors.Newf(errors.AlreadyExists, "cluster %q already exists", name)
 	}
+
+	m.clusters.Set(name, c)
+	m.clusterMu.Unlock()
 
 	m.recordTags(c.ARN, in.Tags)
 
@@ -122,7 +130,9 @@ func (m *Mock) UpdateCluster(_ context.Context, in driver.UpdateClusterInput) (*
 		}
 
 		if in.Configuration != nil {
-			c.Configuration = in.Configuration
+			// Clone the caller's raw JSON so a later mutation of their byte
+			// slice can't corrupt the stored record (read paths already clone).
+			c.Configuration = cloneRaw(in.Configuration)
 		}
 	})
 }
