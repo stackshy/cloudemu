@@ -442,6 +442,7 @@ func TestSDKAzureSQLManagedInstancePatchMerge(t *testing.T) {
 		Properties: &armsql.ManagedInstanceProperties{
 			AdministratorLogin: to.Ptr("miadmin"),
 			VCores:             to.Ptr(int32(4)),
+			SubnetID:           to.Ptr("/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/virtualNetworks/vn/subnets/mi"),
 		},
 	}, nil)
 	if err != nil {

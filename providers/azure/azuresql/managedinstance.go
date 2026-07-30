@@ -39,6 +39,10 @@ func (m *Mock) CreateManagedInstance(
 		return nil, cerrors.New(cerrors.InvalidArgument, "managed instance name is required")
 	}
 
+	if cfg.SubnetID == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "subnetId is required for a managed instance")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

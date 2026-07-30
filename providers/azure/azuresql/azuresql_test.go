@@ -2,6 +2,8 @@ package azuresql
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -308,7 +310,7 @@ func TestFailoverGroupRoleFlipAndCascade(t *testing.T) {
 		t.Error("returned slice aliased stored state")
 	}
 
-	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r"}); err != nil {
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r", StartIPAddress: "10.0.0.1", EndIPAddress: "10.0.0.9"}); err != nil {
 		t.Fatalf("CreateFirewallRule: %v", err)
 	}
 
@@ -360,7 +362,7 @@ func TestManagedInstanceLifecycleAndCascade(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateManagedInstance(ctx, rdsdriver.ManagedInstanceConfig{Name: "mi"}); err != nil {
+	if _, err := m.CreateManagedInstance(ctx, rdsdriver.ManagedInstanceConfig{Name: "mi", SubnetID: "/subnets/mi"}); err != nil {
 		t.Fatalf("CreateManagedInstance: %v", err)
 	}
 
@@ -433,4 +435,44 @@ func TestElasticPoolMembershipBlocksDelete(t *testing.T) {
 	if err := m.DeleteElasticPool(ctx, "srv", "pool"); err != nil {
 		t.Errorf("DeleteElasticPool on empty pool: %v", err)
 	}
+}
+
+// TestConcurrentSubResourceAccess exercises the mock under -race: concurrent
+// mutators and readers, plus a caller mutating the Tags map returned from a
+// managed-instance read (which must be a clone, not the stored map).
+func TestConcurrentSubResourceAccess(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{ID: "srv"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := m.CreateManagedInstance(ctx, rdsdriver.ManagedInstanceConfig{
+		Name: "mi", SubnetID: "/subnets/mi", Tags: map[string]string{"a": "b"},
+	}); err != nil {
+		t.Fatalf("CreateManagedInstance: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 25; i++ {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			_, _ = m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{
+				Server: "srv", Name: fmt.Sprintf("r%d", i),
+				StartIPAddress: "10.0.0.1", EndIPAddress: "10.0.0.2",
+			})
+			_, _ = m.ListFirewallRules(ctx, "srv")
+
+			if got, err := m.GetManagedInstance(ctx, "mi"); err == nil {
+				// Mutating the returned Tags must not race the stored map.
+				got.Tags["writer"] = "x"
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }

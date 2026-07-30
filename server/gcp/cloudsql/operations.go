@@ -2,8 +2,6 @@ package cloudsql
 
 import (
 	"net/http"
-	"strconv"
-	"time"
 
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -166,15 +164,9 @@ func (h *Handler) restoreInstance(w http.ResponseWriter, r *http.Request, p *sql
 }
 
 func (h *Handler) insertBackupRun(w http.ResponseWriter, r *http.Request, p *sqlPath) {
-	// SDK lets the caller omit ID and we generate one.
-	id := strconv.FormatInt(time.Now().UnixNano(), 10)
-
-	cfg := rdsdriver.SnapshotConfig{
-		ID:         id,
-		InstanceID: p.name,
-	}
-
-	snap, err := h.db.CreateSnapshot(r.Context(), cfg)
+	// The backup-run ID is generated deterministically by the mock (clock +
+	// counter); leave it empty here.
+	snap, err := h.db.CreateSnapshot(r.Context(), rdsdriver.SnapshotConfig{InstanceID: p.name})
 	if err != nil {
 		writeErr(w, err)
 		return

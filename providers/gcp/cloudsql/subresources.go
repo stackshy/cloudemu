@@ -199,8 +199,8 @@ func (m *Mock) ListUsers(_ context.Context, instance string) ([]rdsdriver.User, 
 	return out, nil
 }
 
-// UpdateUser updates an existing user (host is the only mutable field the mock
-// tracks). Cloud SQL's Update is idempotent create-or-update.
+// UpdateUser updates an existing user's host (the only mutable field the mock
+// tracks) and returns NotFound when the user does not exist.
 func (m *Mock) UpdateUser(_ context.Context, cfg rdsdriver.UserConfig) (*rdsdriver.User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -409,15 +409,36 @@ func (m *Mock) CloneInstance(_ context.Context, sourceID, destID string) (*rdsdr
 	clone.Endpoint = instanceConnectionName(m.opts.ProjectID, src.AvailabilityZone, destID)
 	clone.State = rdsdriver.StateAvailable
 	clone.CreatedAt = m.opts.Clock.Now().UTC()
+	// A clone is a standalone primary, not part of the source's replica chain.
+	clone.ReadReplicaSource = ""
+	clone.ReadReplicaTargets = nil
 
 	clone.VPCSecurityGroups = append([]string(nil), src.VPCSecurityGroups...)
 	clone.Tags = copyTags(src.Tags)
 
 	m.instances.Set(destID, clone)
 
+	m.cloneDatabases(sourceID, destID)
+
 	m.emitInstanceMetrics(destID, cpuMetricRunning, connRunning)
 
 	out := clone
 
 	return &out, nil
+}
+
+// cloneDatabases copies the source instance's logical databases onto dest.
+// The caller holds the write lock.
+func (m *Mock) cloneDatabases(sourceID, destID string) {
+	dbs := m.databases.SortedValues()
+	for i := range dbs {
+		if dbs[i].Server != sourceID {
+			continue
+		}
+
+		nd := dbs[i]
+		nd.Server = destID
+		nd.ARN = idgen.GCPID(m.opts.ProjectID, "instances/"+destID+"/databases", nd.Name)
+		m.databases.Set(childKey(destID, nd.Name), nd)
+	}
 }

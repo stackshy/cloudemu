@@ -48,6 +48,10 @@ type Mock struct {
 	users     *memstore.Store[rdsdriver.User]
 	sslCerts  *memstore.Store[rdsdriver.SslCert]
 
+	// backupSeq gives auto-generated backup-run IDs a deterministic,
+	// collision-free suffix (guarded by mu).
+	backupSeq int64
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -429,10 +433,6 @@ func (*Mock) StopCluster(_ context.Context, _ string) error {
 // CreateSnapshot creates a backup run for an instance. Cloud SQL calls
 // these "backup runs"; the portable API exposes them as snapshots.
 func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (*rdsdriver.Snapshot, error) {
-	if cfg.ID == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "snapshot id is required")
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -441,13 +441,22 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 		return nil, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", cfg.InstanceID)
 	}
 
-	if _, ok := m.snapshots.Get(cfg.ID); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "backup run %q already exists", cfg.ID)
+	// Cloud SQL generates the backup-run ID server-side; derive one
+	// deterministically from the clock and a monotonic counter when the caller
+	// omits it, so tests stay reproducible under a fake clock.
+	id := cfg.ID
+	if id == "" {
+		m.backupSeq++
+		id = fmt.Sprintf("%d", m.opts.Clock.Now().UnixNano()+m.backupSeq)
+	}
+
+	if _, ok := m.snapshots.Get(id); ok {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "backup run %q already exists", id)
 	}
 
 	snap := rdsdriver.Snapshot{
-		ID:               cfg.ID,
-		ARN:              idgen.GCPID(m.opts.ProjectID, "instances/"+cfg.InstanceID+"/backupRuns", cfg.ID),
+		ID:               id,
+		ARN:              idgen.GCPID(m.opts.ProjectID, "instances/"+cfg.InstanceID+"/backupRuns", id),
 		InstanceID:       cfg.InstanceID,
 		Engine:           inst.Engine,
 		EngineVersion:    inst.EngineVersion,
@@ -457,7 +466,7 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 		Tags:             copyTags(cfg.Tags),
 	}
 
-	m.snapshots.Set(cfg.ID, snap)
+	m.snapshots.Set(id, snap)
 
 	out := snap
 

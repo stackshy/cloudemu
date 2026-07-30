@@ -297,7 +297,7 @@ func TestDatabaseLifecycleAndCascade(t *testing.T) {
 		t.Error("duplicate database: expected AlreadyExists")
 	}
 
-	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r"}); err != nil {
+	if _, err := m.CreateFirewallRule(ctx, rdsdriver.FirewallRuleConfig{Server: "srv", Name: "r", StartIPAddress: "10.0.0.1", EndIPAddress: "10.0.0.9"}); err != nil {
 		t.Fatalf("CreateFirewallRule: %v", err)
 	}
 

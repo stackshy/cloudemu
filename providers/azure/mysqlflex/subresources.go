@@ -2,11 +2,18 @@ package mysqlflex
 
 import (
 	"context"
+	"net"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
+
+// validIPv4 reports whether s parses as an IPv4 address.
+func validIPv4(s string) bool {
+	ip := net.ParseIP(s)
+	return ip != nil && ip.To4() != nil
+}
 
 // MySQL Flexible Server exposes databases, firewall rules and server
 // configurations as child resources. These are optional relationaldb driver
@@ -132,6 +139,10 @@ func (m *Mock) CreateFirewallRule(
 ) (*rdsdriver.FirewallRule, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "firewall rule name is required")
+	}
+
+	if !validIPv4(cfg.StartIPAddress) || !validIPv4(cfg.EndIPAddress) {
+		return nil, cerrors.New(cerrors.InvalidArgument, "startIpAddress and endIpAddress must be valid IPv4 addresses")
 	}
 
 	m.mu.Lock()
