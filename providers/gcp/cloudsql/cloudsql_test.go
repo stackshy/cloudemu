@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudmonitoring"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -169,6 +170,49 @@ func TestSnapshotAndRestore(t *testing.T) {
 	requireNoError(t, m.DeleteSnapshot(ctx, "snap1"))
 }
 
+func TestRestoreBackupInPlace(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:               "src",
+		Engine:           "POSTGRES_15",
+		AllocatedStorage: 100,
+	})
+	requireNoError(t, err)
+
+	_, err = m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:               "target",
+		Engine:           "MYSQL_8_0",
+		AllocatedStorage: 20,
+	})
+	requireNoError(t, err)
+
+	_, err = m.CreateSnapshot(ctx, rdsdriver.SnapshotConfig{ID: "snap1", InstanceID: "src"})
+	requireNoError(t, err)
+
+	// Restoring in place keeps the target's identity but adopts the backup's
+	// engine/version/storage — and does NOT create a new instance.
+	restored, err := m.RestoreBackup(ctx, "target", "snap1")
+	requireNoError(t, err)
+	assertEqual(t, "target", restored.ID)
+	assertEqual(t, 100, restored.AllocatedStorage)
+	assertEqual(t, "POSTGRES_15", restored.Engine)
+
+	instances, err := m.DescribeInstances(ctx, nil)
+	requireNoError(t, err)
+	assertEqual(t, 2, len(instances))
+
+	// Missing target and missing backup both surface NotFound.
+	if _, err := m.RestoreBackup(ctx, "ghost", "snap1"); err == nil {
+		t.Error("RestoreBackup onto missing instance: expected NotFound")
+	}
+
+	if _, err := m.RestoreBackup(ctx, "target", "ghost"); err == nil {
+		t.Error("RestoreBackup with missing backup: expected NotFound")
+	}
+}
+
 func TestClusterOpsUnsupported(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -228,5 +272,311 @@ func assertNotEmpty(t *testing.T, s string) {
 
 	if s == "" {
 		t.Error("expected non-empty string")
+	}
+}
+
+func TestSubResourcesRequireInstance(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "ghost", Name: "db"}); err == nil {
+		t.Error("CreateDatabase on missing instance: expected error")
+	}
+
+	if _, err := m.CreateUser(ctx, rdsdriver.UserConfig{Instance: "ghost", Name: "u"}); err == nil {
+		t.Error("CreateUser on missing instance: expected error")
+	}
+
+	if _, err := m.CreateSslCert(ctx, rdsdriver.SslCertConfig{Instance: "ghost", CommonName: "c"}); err == nil {
+		t.Error("CreateSslCert on missing instance: expected error")
+	}
+}
+
+func TestCloneAndCascade(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "src", Engine: "POSTGRES_15"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "src", Name: "app"}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if _, err := m.CreateUser(ctx, rdsdriver.UserConfig{Instance: "src", Name: "u"}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	clone, err := m.CloneInstance(ctx, "src", "dst")
+	if err != nil {
+		t.Fatalf("CloneInstance: %v", err)
+	}
+
+	if clone.ID != "dst" || clone.Engine != "POSTGRES_15" {
+		t.Errorf("clone: got id=%q engine=%q", clone.ID, clone.Engine)
+	}
+
+	if _, err := m.CloneInstance(ctx, "src", "dst"); err == nil {
+		t.Error("clone onto existing instance: expected AlreadyExists")
+	}
+
+	// Deleting the source cascades to its children but leaves the clone.
+	if err := m.DeleteInstance(ctx, "src"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	if _, err := m.ListDatabases(ctx, "src"); err == nil {
+		t.Error("ListDatabases after instance delete: expected NotFound")
+	}
+
+	if _, err := m.DescribeInstances(ctx, []string{"dst"}); err != nil {
+		t.Errorf("clone should survive source delete: %v", err)
+	}
+}
+
+func TestCloudSQLReplicaAndFailoverActions(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "i", Engine: "POSTGRES_15"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Failover is valid on a primary, not on a replica.
+	if err := m.FailoverInstance(ctx, "i"); err != nil {
+		t.Errorf("FailoverInstance: %v", err)
+	}
+
+	// Promote requires an actual replica.
+	if err := m.PromoteReplica(ctx, "i"); err == nil {
+		t.Error("PromoteReplica on a non-replica: expected FailedPrecondition")
+	}
+
+	// Create a replica of i, then promote it — it detaches and the primary
+	// loses it from its replica list.
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "r", Engine: "POSTGRES_15", MasterInstanceName: "i",
+	}); err != nil {
+		t.Fatalf("CreateInstance replica: %v", err)
+	}
+
+	if err := m.FailoverInstance(ctx, "r"); err == nil {
+		t.Error("FailoverInstance on a replica: expected FailedPrecondition")
+	}
+
+	if err := m.PromoteReplica(ctx, "r"); err != nil {
+		t.Fatalf("PromoteReplica: %v", err)
+	}
+
+	got, _ := m.DescribeInstances(ctx, []string{"r"})
+	if got[0].ReadReplicaSource != "" {
+		t.Errorf("promoted replica still has master %q", got[0].ReadReplicaSource)
+	}
+
+	primary, _ := m.DescribeInstances(ctx, []string{"i"})
+	if len(primary[0].ReadReplicaTargets) != 0 {
+		t.Errorf("primary still lists promoted replica: %v", primary[0].ReadReplicaTargets)
+	}
+
+	if err := m.FailoverInstance(ctx, "ghost"); err == nil {
+		t.Error("FailoverInstance on missing instance: expected NotFound")
+	}
+}
+
+func TestDeleteInstanceUnlinksReplicas(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	mk := func(id, master string) {
+		_, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+			ID: id, Engine: "POSTGRES_15", MasterInstanceName: master,
+		})
+		if err != nil {
+			t.Fatalf("CreateInstance %q: %v", id, err)
+		}
+	}
+
+	mk("master", "")
+	mk("replica", "master")
+
+	// Deleting the replica drops it from the master's target list.
+	if err := m.DeleteInstance(ctx, "replica"); err != nil {
+		t.Fatalf("DeleteInstance replica: %v", err)
+	}
+
+	got, _ := m.DescribeInstances(ctx, []string{"master"})
+	if len(got[0].ReadReplicaTargets) != 0 {
+		t.Errorf("master still lists a deleted replica: %v", got[0].ReadReplicaTargets)
+	}
+
+	// Deleting the master clears the source pointer on its surviving replica.
+	mk("replica2", "master")
+
+	if err := m.DeleteInstance(ctx, "master"); err != nil {
+		t.Fatalf("DeleteInstance master: %v", err)
+	}
+
+	got, _ = m.DescribeInstances(ctx, []string{"replica2"})
+	if got[0].ReadReplicaSource != "" {
+		t.Errorf("replica still points at a deleted master: %q", got[0].ReadReplicaSource)
+	}
+}
+
+func TestSubResourceCRUDCoverage(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "inst", Engine: "MYSQL_8_0"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Databases.
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "inst", Name: "app"}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if got, err := m.GetDatabase(ctx, "inst", "app"); err != nil || got.Name != "app" {
+		t.Fatalf("GetDatabase: %+v %v", got, err)
+	}
+
+	if err := m.DeleteDatabase(ctx, "inst", "app"); err != nil {
+		t.Fatalf("DeleteDatabase: %v", err)
+	}
+
+	// Users: create, get, list, update, delete.
+	if _, err := m.CreateUser(ctx, rdsdriver.UserConfig{Instance: "inst", Name: "u1", Host: "%", Password: "p1"}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if got, err := m.GetUser(ctx, "inst", "u1"); err != nil || got.Name != "u1" {
+		t.Fatalf("GetUser: %+v %v", got, err)
+	}
+
+	if us, err := m.ListUsers(ctx, "inst"); err != nil || len(us) != 1 {
+		t.Fatalf("ListUsers: %d %v", len(us), err)
+	}
+
+	if _, err := m.UpdateUser(ctx, rdsdriver.UserConfig{Instance: "inst", Name: "u1", Host: "%", Password: "p2"}); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+
+	if _, err := m.UpdateUser(ctx, rdsdriver.UserConfig{Instance: "inst", Name: "ghost", Host: "%"}); err == nil {
+		t.Error("UpdateUser on missing user: expected NotFound")
+	}
+
+	if err := m.DeleteUser(ctx, "inst", "u1"); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+
+	// SSL certs: create, get, list, delete.
+	cert, err := m.CreateSslCert(ctx, rdsdriver.SslCertConfig{Instance: "inst", CommonName: "client"})
+	if err != nil {
+		t.Fatalf("CreateSslCert: %v", err)
+	}
+
+	if got, err := m.GetSslCert(ctx, "inst", cert.Sha1Fingerprint); err != nil || got.CommonName != "client" {
+		t.Fatalf("GetSslCert: %+v %v", got, err)
+	}
+
+	if cs, err := m.ListSslCerts(ctx, "inst"); err != nil || len(cs) != 1 {
+		t.Fatalf("ListSslCerts: %d %v", len(cs), err)
+	}
+
+	if err := m.DeleteSslCert(ctx, "inst", cert.Sha1Fingerprint); err != nil {
+		t.Fatalf("DeleteSslCert: %v", err)
+	}
+
+	// Snapshot describe + delete-snapshot NotFound.
+	if _, err := m.CreateSnapshot(ctx, rdsdriver.SnapshotConfig{ID: "b1", InstanceID: "inst"}); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	if snaps, err := m.DescribeSnapshots(ctx, nil, "inst"); err != nil || len(snaps) != 1 {
+		t.Fatalf("DescribeSnapshots: %d %v", len(snaps), err)
+	}
+}
+
+func TestClusterOpsAndMonitoringCoverage(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-central1"), config.WithProjectID("p"))
+
+	m := New(opts)
+	mon := cloudmonitoring.New(opts)
+	m.SetMonitoring(mon)
+
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "inst", Engine: "MYSQL_8_0"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Cluster and cluster-snapshot ops are unsupported on Cloud SQL.
+	if _, err := m.ModifyCluster(ctx, "x", rdsdriver.ModifyInstanceInput{}); err == nil {
+		t.Error("ModifyCluster: expected unsupported")
+	}
+
+	if err := m.DeleteCluster(ctx, "x"); err == nil {
+		t.Error("DeleteCluster: expected unsupported")
+	}
+
+	if err := m.StopCluster(ctx, "x"); err == nil {
+		t.Error("StopCluster: expected unsupported")
+	}
+
+	if err := m.DeleteClusterSnapshot(ctx, "x"); err == nil {
+		t.Error("DeleteClusterSnapshot: expected unsupported")
+	}
+
+	if _, err := m.RestoreClusterFromSnapshot(ctx, rdsdriver.RestoreClusterInput{}); err == nil {
+		t.Error("RestoreClusterFromSnapshot: expected unsupported")
+	}
+}
+
+func TestDescribeInstancesResultDoesNotAliasStore(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "inst", Engine: "MYSQL_8_0", Tags: map[string]string{"env": "prod"},
+	}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	got, err := m.DescribeInstances(ctx, []string{"inst"})
+	requireNoError(t, err)
+
+	// Mutating the returned Tags map must not corrupt the store.
+	got[0].Tags["env"] = "tampered"
+	got[0].Tags["injected"] = "x"
+
+	reread, err := m.DescribeInstances(ctx, []string{"inst"})
+	requireNoError(t, err)
+
+	if reread[0].Tags["env"] != "prod" {
+		t.Errorf("store Tags aliased: got %q, want prod", reread[0].Tags["env"])
+	}
+
+	if _, ok := reread[0].Tags["injected"]; ok {
+		t.Error("store Tags aliased: injected key leaked into store")
+	}
+}
+
+func TestChildNameRejectsSlash(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "inst", Engine: "MYSQL_8_0"}); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// A '/' in a child name would collide with the "{instance}/{name}" key and
+	// create a row unreachable via single-segment GET/DELETE.
+	if _, err := m.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "inst", Name: "a/b"}); err == nil {
+		t.Error("CreateDatabase with '/' in name: expected InvalidArgument")
+	}
+
+	if _, err := m.CreateUser(ctx, rdsdriver.UserConfig{Instance: "inst", Name: "a/b"}); err == nil {
+		t.Error("CreateUser with '/' in name: expected InvalidArgument")
 	}
 }

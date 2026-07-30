@@ -1236,12 +1236,53 @@ A proxy has a single implicit `default` target group; targets are RDS instances
 - `Metadata`: `DescribeDBEngineVersions`, `DescribeOrderableDBInstanceOptions` — representative per-engine catalogs (2).
 - `Tagging`: `AddTagsToResource`, `RemoveTagsFromResource`, `ListTagsForResource` — addressed by resource ARN over the tag-bearing stores (instances, clusters, instance/cluster snapshots) (3).
 
-**Total: 21 core operations + 58 optional across 12 type-asserted capability
-interfaces (`SubnetGroups`, `ParameterGroups`, `OptionGroups`, `ReadReplicas`,
-`AdvancedRestore`, `DBProxies`, `EventSubscriptions`, `ClusterEndpoints`,
-`ClusterFailover`, `GlobalClusters`, `Metadata`, `Tagging`).** AWS RDS wires all
-of them; other clouds implement the subset that maps to a real resource and
-answer `InvalidAction` otherwise.
+### Azure & GCP managed-SQL native sub-resources (optional capabilities)
+
+Each managed-SQL service also exposes its cloud's own child resources and
+actions. Like the RDS capabilities above, these are kept out of the core
+`RelationalDB` interface and discovered by type assertion, so a driver only
+answers for the resources its cloud actually has; others return `InvalidAction`.
+The server handlers reach them the way real SDK clients do (ARM sub-resource
+routes for Azure, sqladmin sub-collections for Cloud SQL), and the mocks
+cascade-delete children when their parent server/instance is deleted.
+
+| Capability | Operations | Implemented by |
+|-----------|-----------|----------------|
+| `Databases` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `cloudsql` |
+| `FirewallRules` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `azuresql` |
+| `Configurations` | Set / Get / List (server parameters) | `mysqlflex`, `postgresflex` |
+| `Failover` | `FailoverInstance` | `mysqlflex`, `cloudsql` |
+| `VNetRules` | Create / Get / List / Delete | `azuresql` |
+| `ElasticPools` | Create / Get / List / Delete | `azuresql` |
+| `FailoverGroups` | Create / Get / List / Delete / Failover | `azuresql` |
+| `AADAdmins` | Set / Get / List / Delete | `azuresql` |
+| `Users` | Create / Get / List / Update / Delete | `cloudsql` |
+| `SslCerts` | Create / Get / List / Delete | `cloudsql` |
+| `Clonable` | `CloneInstance` | `cloudsql` |
+| `ReplicaPromotion` | `PromoteReplica` | `cloudsql` |
+| `ManagedInstances` | managed-instance CRUD + Start/Stop/Failover, managed-database CRUD/List | `azuresql` |
+
+Cloud SQL also serves the `startReplica`/`stopReplica` instance actions (mapped
+onto Start/Stop) and the static `tiers` (`/v1/projects/{p}/tiers`) and `flags`
+(`/v1/flags`) reference catalogs. Azure SQL adds the SQL Managed Instance family
+(`Microsoft.Sql/managedInstances` + managed databases) alongside the
+single-database logical server. Managed relational servers surface in
+cross-service discovery (Azure Resource Graph as `microsoft.sql/servers`,
+`microsoft.dbformysql/flexibleservers`,
+`microsoft.dbforpostgresql/flexibleservers`; GCP Cloud Asset as
+`sqladmin.googleapis.com/Instance`), are billed per instance-hour via the
+`relationaldb:*` cost catalog, and emit their cloud's monitoring metrics
+(including the `Microsoft.Sql/servers/elasticpools` pool namespace).
+
+**Total: 21 core operations + 109 optional across 25 type-asserted capability
+interfaces** — the 12 RDS-oriented ones (`SubnetGroups`, `ParameterGroups`,
+`OptionGroups`, `ReadReplicas`, `AdvancedRestore`, `DBProxies`,
+`EventSubscriptions`, `ClusterEndpoints`, `ClusterFailover`, `GlobalClusters`,
+`Metadata`, `Tagging`) plus the 13 Azure/GCP managed-SQL ones (`Databases`,
+`FirewallRules`, `Configurations`, `Failover`, `VNetRules`, `ElasticPools`,
+`FailoverGroups`, `AADAdmins`, `Users`, `SslCerts`, `Clonable`,
+`ReplicaPromotion`, `ManagedInstances`). Each cloud implements the subset that
+maps to a real resource and answers `InvalidAction` otherwise.
 
 ---
 
@@ -1823,7 +1864,7 @@ still sees success.
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
-| Relational Database | 21 (+58 optional) |
+| Relational Database | 21 (+109 optional) |
 | Kubernetes — AWS EKS (control plane) | 21 |
 | Kubernetes — Azure AKS (control plane) | 18 |
 | Kubernetes — GCP GKE (control plane) | 26 |
@@ -1837,7 +1878,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1084** (+67 optional) |
+| **Grand Total** | **1084** (+116 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

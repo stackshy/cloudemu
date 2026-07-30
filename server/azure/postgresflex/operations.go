@@ -121,6 +121,11 @@ func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm
 		return
 	}
 
+	if len(insts) == 0 {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "server "+rp.ResourceName+" not found")
+		return
+	}
+
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(&insts[0], rp.Subscription, rp.ResourceGroup))
 }
 

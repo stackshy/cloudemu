@@ -36,13 +36,14 @@ const pairLen = 2
 // ResourcePath is a parsed ARM URL path. Fields are empty when not present in
 // the path (e.g., a subscription-scoped list has no ResourceGroup).
 type ResourcePath struct {
-	Subscription    string
-	ResourceGroup   string
-	Provider        string // e.g. "Microsoft.Compute"
-	ResourceType    string // e.g. "virtualMachines" or "locations"
-	ResourceName    string // empty for collection paths
-	SubResource     string // e.g. "start", "powerOff", "operationStatuses"
-	SubResourceName string // e.g. operation GUID for .../operationStatuses/{id}
+	Subscription      string
+	ResourceGroup     string
+	Provider          string // e.g. "Microsoft.Compute"
+	ResourceType      string // e.g. "virtualMachines" or "locations"
+	ResourceName      string // empty for collection paths
+	SubResource       string // e.g. "start", "powerOff", "operationStatuses"
+	SubResourceName   string // e.g. operation GUID for .../operationStatuses/{id}
+	SubResourceAction string // e.g. "failover" for .../failoverGroups/{name}/failover
 }
 
 // ParsePath extracts the ARM path components from urlPath. Returns ok=false
@@ -100,9 +101,11 @@ func parseResourceGroup(parts []string, i int, rp *ResourcePath) int {
 	return i + pairLen
 }
 
-// parseTrailing records {name}, {subResource}, and {subResourceName} segments
-// if present. The fourth segment lets us model paths like
-// .../locations/{loc}/operationStatuses/{id}.
+// parseTrailing records {name}, {subResource}, {subResourceName} and a final
+// {subResourceAction} segment if present. The last two let us model paths like
+// .../locations/{loc}/operationStatuses/{id} and
+// .../failoverGroups/{name}/failover, where the action verb must be preserved
+// to distinguish e.g. planned failover from forceFailoverAllowDataLoss.
 func parseTrailing(parts []string, i int, rp *ResourcePath) {
 	if i < len(parts) {
 		rp.ResourceName = parts[i]
@@ -116,6 +119,11 @@ func parseTrailing(parts []string, i int, rp *ResourcePath) {
 
 	if i < len(parts) {
 		rp.SubResourceName = parts[i]
+		i++
+	}
+
+	if i < len(parts) {
+		rp.SubResourceAction = parts[i]
 	}
 }
 

@@ -12,6 +12,7 @@ package mysqlflex
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -49,6 +50,10 @@ type Mock struct {
 	instances *memstore.Store[rdsdriver.Instance]
 	snapshots *memstore.Store[rdsdriver.Snapshot]
 
+	databases      *memstore.Store[rdsdriver.Database]
+	firewallRules  *memstore.Store[rdsdriver.FirewallRule]
+	configurations *memstore.Store[rdsdriver.Configuration]
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -56,9 +61,12 @@ type Mock struct {
 // New creates a new MySQL Flexible Server mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances: memstore.New[rdsdriver.Instance](),
-		snapshots: memstore.New[rdsdriver.Snapshot](),
-		opts:      opts,
+		instances:      memstore.New[rdsdriver.Instance](),
+		snapshots:      memstore.New[rdsdriver.Snapshot](),
+		databases:      memstore.New[rdsdriver.Database](),
+		firewallRules:  memstore.New[rdsdriver.FirewallRule](),
+		configurations: memstore.New[rdsdriver.Configuration](),
+		opts:           opts,
 	}
 }
 
@@ -217,6 +225,8 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 }
 
 // ModifyInstance applies the supplied changes.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
 	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -264,7 +274,34 @@ func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "MySQL Flexible Server %q not found", id)
 	}
 
+	m.deleteChildren(id)
+
 	return nil
+}
+
+// deleteChildren removes the databases, firewall rules and configurations that
+// belong to server id, matching Azure's cascade delete on server removal. The
+// caller already holds the write lock.
+func (m *Mock) deleteChildren(server string) {
+	prefix := server + "/"
+
+	for key := range m.databases.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.databases.Delete(key)
+		}
+	}
+
+	for key := range m.firewallRules.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.firewallRules.Delete(key)
+		}
+	}
+
+	for key := range m.configurations.All() {
+		if strings.HasPrefix(key, prefix) {
+			m.configurations.Delete(key)
+		}
+	}
 }
 
 // StartInstance moves a stopped server back to runnable.
@@ -341,6 +378,8 @@ func (*Mock) DescribeClusters(_ context.Context, _ []string) ([]rdsdriver.Cluste
 }
 
 // ModifyCluster is unsupported on MySQL Flexible Server.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (*Mock) ModifyCluster(
 	_ context.Context, _ string, _ rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Cluster, error) {

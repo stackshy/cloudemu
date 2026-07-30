@@ -49,6 +49,17 @@ const (
 	TypeDBSnapshot    = "DBSnapshot"
 )
 
+// Azure/GCP managed-SQL server types. These portable types map to per-cloud
+// native type strings in Resource Graph (Azure) and Cloud Asset (GCP). AWS RDS
+// uses TypeDBInstance/DBCluster/DBSnapshot above.
+const (
+	TypeSQLServer       = "SqlServer"              // Azure SQL logical server
+	TypeMySQLFlex       = "MySqlFlexibleServer"    // Azure Database for MySQL Flexible Server
+	TypePostgresFlex    = "PostgresFlexibleServer" // Azure Database for PostgreSQL Flexible Server
+	TypeSQLInstance     = "SqlInstance"            // GCP Cloud SQL instance
+	TypeManagedInstance = "SqlManagedInstance"     // Azure SQL Managed Instance
+)
+
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 	// Resource discovery is an internal/system walk: managed (service-owned)
 	// instances still exist and must be discoverable even when the account
@@ -347,6 +358,11 @@ func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
 	return out, nil
 }
 
+// walkRelationalDB surfaces managed relational database servers (RDS/Aurora,
+// Azure SQL, Azure MySQL/PostgreSQL Flexible Server, Cloud SQL). The provider
+// supplies a DiscoverDatabases adapter; each server becomes a relational-db
+// resource whose Type carries the per-cloud kind so Resource Explorer /
+// Resource Graph / Cloud Asset can translate it to the native type string.
 func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
 	dbs, err := e.drivers.RelationalDB.DiscoverDatabases(ctx)
 	if err != nil {

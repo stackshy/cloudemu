@@ -2,9 +2,8 @@ package cloudsql
 
 import (
 	"net/http"
-	"strconv"
-	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -13,10 +12,11 @@ import (
 // activationPolicy live under settings.
 func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 	cfg := rdsdriver.InstanceConfig{
-		ID:               body.Name,
-		Engine:           body.DatabaseVersion,
-		AvailabilityZone: body.Region,
-		MasterUsername:   body.RootPassword, // SDKs use rootPassword on insert.
+		ID:                 body.Name,
+		Engine:             body.DatabaseVersion,
+		AvailabilityZone:   body.Region,
+		MasterUsername:     body.RootPassword, // SDKs use rootPassword on insert.
+		MasterInstanceName: body.MasterInstanceName,
 	}
 
 	if body.Settings != nil {
@@ -67,6 +67,11 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, p *sqlPath
 	insts, err := h.db.DescribeInstances(r.Context(), []string{p.name})
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+
+	if len(insts) == 0 {
+		writeErr(w, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", p.name))
 		return
 	}
 
@@ -148,13 +153,16 @@ func (h *Handler) restoreInstance(w http.ResponseWriter, r *http.Request, p *sql
 		return
 	}
 
-	// p.name is the *target* instance to restore into.
-	input := rdsdriver.RestoreInstanceInput{
-		NewInstanceID: p.name,
-		SnapshotID:    body.RestoreBackupContext.BackupRunID,
+	// p.name is the *target* instance to restore into. Cloud SQL restores the
+	// backup in place onto the existing instance rather than provisioning a new
+	// one, so prefer the in-place BackupRestorer capability.
+	restorer, ok := h.db.(rdsdriver.BackupRestorer)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.FailedPrecondition, "backend does not support restoreBackup"))
+		return
 	}
 
-	if _, err := h.db.RestoreInstanceFromSnapshot(r.Context(), input); err != nil {
+	if _, err := restorer.RestoreBackup(r.Context(), p.name, body.RestoreBackupContext.BackupRunID); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -165,15 +173,9 @@ func (h *Handler) restoreInstance(w http.ResponseWriter, r *http.Request, p *sql
 }
 
 func (h *Handler) insertBackupRun(w http.ResponseWriter, r *http.Request, p *sqlPath) {
-	// SDK lets the caller omit ID and we generate one.
-	id := strconv.FormatInt(time.Now().UnixNano(), 10)
-
-	cfg := rdsdriver.SnapshotConfig{
-		ID:         id,
-		InstanceID: p.name,
-	}
-
-	snap, err := h.db.CreateSnapshot(r.Context(), cfg)
+	// The backup-run ID is generated deterministically by the mock (clock +
+	// counter); leave it empty here.
+	snap, err := h.db.CreateSnapshot(r.Context(), rdsdriver.SnapshotConfig{InstanceID: p.name})
 	if err != nil {
 		writeErr(w, err)
 		return

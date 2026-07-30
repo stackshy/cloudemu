@@ -254,16 +254,20 @@ func extractSubscription(arn string) string {
 // carries. A map lookup rather than a switch keeps gocyclo under the gate as the
 // pairs grow.
 var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
-	"compute/Instance":         "microsoft.compute/virtualmachines",
-	"networking/VPC":           "microsoft.network/virtualnetworks",
-	"networking/Subnet":        "microsoft.network/subnets",
-	"networking/SecurityGroup": "microsoft.network/networksecuritygroups",
-	"storage/Bucket":           "microsoft.storage/storageaccounts",
-	"database/Table":           "microsoft.documentdb/databaseaccounts",
-	"serverless/Function":      "microsoft.web/sites",
-	"databricks/Workspace":     "microsoft.databricks/workspaces",
-	"kubernetes/Cluster":       "microsoft.containerservice/managedclusters",
-	"kubernetes/NodeGroup":     "microsoft.containerservice/managedclusters/agentpools",
+	"compute/Instance":                    "microsoft.compute/virtualmachines",
+	"networking/VPC":                      "microsoft.network/virtualnetworks",
+	"networking/Subnet":                   "microsoft.network/subnets",
+	"networking/SecurityGroup":            "microsoft.network/networksecuritygroups",
+	"storage/Bucket":                      "microsoft.storage/storageaccounts",
+	"database/Table":                      "microsoft.documentdb/databaseaccounts",
+	"serverless/Function":                 "microsoft.web/sites",
+	"databricks/Workspace":                "microsoft.databricks/workspaces",
+	"kubernetes/Cluster":                  "microsoft.containerservice/managedclusters",
+	"kubernetes/NodeGroup":                "microsoft.containerservice/managedclusters/agentpools",
+	"relationaldb/SqlServer":              "microsoft.sql/servers",
+	"relationaldb/SqlManagedInstance":     "microsoft.sql/managedinstances",
+	"relationaldb/MySqlFlexibleServer":    "microsoft.dbformysql/flexibleservers",
+	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 }
 
 func portableToAzureType(service, typ string) string {
