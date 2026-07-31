@@ -894,6 +894,106 @@ Both interfaces are AWS-only concepts, discovered by type assertion.
 
 ---
 
+## 11a. MemoryDB (AWS)
+
+**Driver interface:** `services/memorydb/driver/driver.go`
+**AWS:** MemoryDB for Redis/Valkey | **Azure:** — | **GCP:** —
+
+A durable, in-VPC Redis/Valkey cluster service. Unlike Cache, MemoryDB is a
+control-plane-only surface (no `Set`/`Get` data plane), so it has its own driver
+rather than reusing `services/cache`. Served as AWS JSON 1.1 on the
+`AmazonMemoryDB.` target prefix (`server/aws/memorydb`), so a real
+`aws-sdk-go-v2/service/memorydb` client with a custom endpoint works unchanged.
+
+### Clusters (shards, nodes, endpoints)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateCluster` | `(ctx, CreateClusterConfig) (*Cluster, error)` |
+| `DescribeClusters` | `(ctx, names) ([]Cluster, error)` |
+| `UpdateCluster` | `(ctx, UpdateClusterConfig) (*Cluster, error)` |
+| `DeleteCluster` | `(ctx, name, finalSnapshotName) (*Cluster, error)` |
+| `FailoverShard` | `(ctx, clusterName, shardName) (*Cluster, error)` |
+| `ListAllowedNodeTypeUpdates` | `(ctx, clusterName) (scaleUp, scaleDown []string, error)` |
+
+### ACLs & Users
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateACL` | `(ctx, name, userNames, tags) (*ACL, error)` |
+| `DescribeACLs` | `(ctx, names) ([]ACL, error)` |
+| `UpdateACL` | `(ctx, name, add, remove) (*ACL, error)` |
+| `DeleteACL` | `(ctx, name) (*ACL, error)` |
+| `CreateUser` | `(ctx, CreateUserConfig) (*User, error)` |
+| `DescribeUsers` | `(ctx, names) ([]User, error)` |
+| `UpdateUser` | `(ctx, UpdateUserConfig) (*User, error)` |
+| `DeleteUser` | `(ctx, name) (*User, error)` |
+
+### Parameter Groups
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateParameterGroup` | `(ctx, name, family, description, tags) (*ParameterGroup, error)` |
+| `DescribeParameterGroups` | `(ctx, names) ([]ParameterGroup, error)` |
+| `UpdateParameterGroup` | `(ctx, name, params) (*ParameterGroup, error)` |
+| `ResetParameterGroup` | `(ctx, name, all, names) (*ParameterGroup, error)` |
+| `DeleteParameterGroup` | `(ctx, name) (*ParameterGroup, error)` |
+| `DescribeParameters` | `(ctx, groupName) ([]Parameter, error)` |
+
+### Subnet Groups
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateSubnetGroup` | `(ctx, CreateSubnetGroupConfig) (*SubnetGroup, error)` |
+| `DescribeSubnetGroups` | `(ctx, names) ([]SubnetGroup, error)` |
+| `UpdateSubnetGroup` | `(ctx, UpdateSubnetGroupConfig) (*SubnetGroup, error)` |
+| `DeleteSubnetGroup` | `(ctx, name) (*SubnetGroup, error)` |
+
+### Snapshots
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateSnapshot` | `(ctx, CreateSnapshotConfig) (*Snapshot, error)` |
+| `DescribeSnapshots` | `(ctx, names, clusterName) ([]Snapshot, error)` |
+| `CopySnapshot` | `(ctx, CopySnapshotConfig) (*Snapshot, error)` |
+| `DeleteSnapshot` | `(ctx, name) (*Snapshot, error)` |
+
+### Tags & Catalogs
+
+| Operation | Signature |
+|-----------|-----------|
+| `TagResource` | `(ctx, arn, tags) ([]Tag, error)` |
+| `UntagResource` | `(ctx, arn, keys) ([]Tag, error)` |
+| `ListTags` | `(ctx, arn) ([]Tag, error)` |
+| `DescribeEngineVersions` | `(ctx, engine) ([]EngineVersionInfo, error)` |
+| `DescribeEvents` | `(ctx, sourceName, sourceType) ([]Event, error)` |
+
+### Multi-Region Clusters (optional capability — `MultiRegion`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateMultiRegionCluster` | `(ctx, CreateMultiRegionClusterConfig) (*MultiRegionCluster, error)` |
+| `DescribeMultiRegionClusters` | `(ctx, names) ([]MultiRegionCluster, error)` |
+| `UpdateMultiRegionCluster` | `(ctx, name, nodeType, engineVersion, shardCount) (*MultiRegionCluster, error)` |
+| `DeleteMultiRegionCluster` | `(ctx, name) (*MultiRegionCluster, error)` |
+| `ListAllowedMultiRegionClusterUpdates` | `(ctx, name) ([]string, error)` |
+| `DescribeMultiRegionParameterGroups` | `(ctx, names) ([]MultiRegionParameterGroup, error)` |
+| `DescribeMultiRegionParameters` | `(ctx, groupName) ([]Parameter, error)` |
+
+### Reserved Nodes (optional capability — `ReservedNodes`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `DescribeReservedNodes` | `(ctx) ([]ReservedNode, error)` |
+| `DescribeReservedNodesOfferings` | `(ctx) ([]ReservedNodesOffering, error)` |
+| `PurchaseReservedNodesOffering` | `(ctx, offeringID, reservationID, count) (*ReservedNode, error)` |
+
+Both optional interfaces are AWS-only concepts, discovered by type assertion.
+
+**Total: 33 operations (+10 optional)**
+
+---
+
 ## 12. Secrets
 
 **Driver interface:** `services/secrets/driver/driver.go`
@@ -1867,6 +1967,7 @@ still sees success.
 | Load Balancer | 21 |
 | Message Queue | 14 |
 | Cache | 16 (+7 optional) |
+| MemoryDB — AWS (Redis/Valkey control plane) | 33 (+10 optional) |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
@@ -1886,7 +1987,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1277** (+124 optional) |
+| **Grand Total** | **1310** (+134 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

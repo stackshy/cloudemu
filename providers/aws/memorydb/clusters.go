@@ -1,0 +1,383 @@
+package memorydb
+
+import (
+	"context"
+	"fmt"
+
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
+)
+
+// cloneCluster deep-copies slice/map fields so a returned value never aliases
+// the store (copy-on-read).
+func cloneCluster(in *mdbdriver.Cluster) mdbdriver.Cluster {
+	c := *in
+	c.Tags = copyTags(c.Tags)
+	c.SecurityGroups = append([]mdbdriver.SecurityGroupMembership(nil), c.SecurityGroups...)
+
+	shards := make([]mdbdriver.Shard, len(c.Shards))
+
+	for i := range c.Shards {
+		s := c.Shards[i]
+		s.Nodes = append([]mdbdriver.Node(nil), c.Shards[i].Nodes...)
+		shards[i] = s
+	}
+
+	c.Shards = shards
+
+	return c
+}
+
+// buildShards constructs the shard/node topology + endpoints for a cluster.
+func (m *Mock) buildShards(clusterName string, numShards, replicasPerShard int) []mdbdriver.Shard {
+	if numShards <= 0 {
+		numShards = 1
+	}
+
+	nodesPerShard := replicasPerShard + 1 // primary + replicas
+	shards := make([]mdbdriver.Shard, 0, numShards)
+	now := m.opts.Clock.Now().UTC()
+
+	for s := 1; s <= numShards; s++ {
+		shardName := fmt.Sprintf("%04d", s)
+		nodes := make([]mdbdriver.Node, 0, nodesPerShard)
+
+		for n := 1; n <= nodesPerShard; n++ {
+			nodeName := fmt.Sprintf("%s-%s-%03d", clusterName, shardName, n)
+			nodes = append(nodes, mdbdriver.Node{
+				Name:             nodeName,
+				Status:           mdbdriver.StatusAvailable,
+				AvailabilityZone: m.opts.Region + azSuffix(n),
+				CreateTime:       now,
+				Endpoint: mdbdriver.Endpoint{
+					Address: fmt.Sprintf("%s.%s.memorydb.%s.amazonaws.com", nodeName, clusterName, m.opts.Region),
+					Port:    defaultPort,
+				},
+			})
+		}
+
+		shards = append(shards, mdbdriver.Shard{
+			Name:          shardName,
+			Status:        mdbdriver.StatusAvailable,
+			Slots:         slotRange(s, numShards),
+			NumberOfNodes: nodesPerShard,
+			Nodes:         nodes,
+		})
+	}
+
+	return shards
+}
+
+func azSuffix(n int) string {
+	return string(rune('a' + ((n - 1) % 3)))
+}
+
+// slotRange splits the 16384 Redis slots evenly across shards.
+func slotRange(shard, total int) string {
+	const slots = 16384
+	per := slots / total
+	start := (shard - 1) * per
+	end := start + per - 1
+
+	if shard == total {
+		end = slots - 1
+	}
+
+	return fmt.Sprintf("%d-%d", start, end)
+}
+
+// validateClusterRefs checks that referenced ACL/parameter-group/subnet-group
+// exist. A dangling reference is an invalid input to the create/update call
+// (not a missing cluster), so it surfaces as InvalidArgument — real MemoryDB
+// answers CreateCluster with a bad ACLName as InvalidParameterValueException.
+// The caller holds the lock.
+func (m *Mock) validateClusterRefs(aclName, paramGroup, subnetGroup string) error {
+	if aclName != "" && !m.acls.Has(aclName) {
+		return cerrors.Newf(cerrors.InvalidArgument, "ACL %q not found", aclName)
+	}
+
+	if paramGroup != "" && !m.parameterGroups.Has(paramGroup) {
+		return cerrors.Newf(cerrors.InvalidArgument, "parameter group %q not found", paramGroup)
+	}
+
+	if subnetGroup != "" && !m.subnetGroups.Has(subnetGroup) {
+		return cerrors.Newf(cerrors.InvalidArgument, "subnet group %q not found", subnetGroup)
+	}
+
+	return nil
+}
+
+// CreateCluster creates a MemoryDB cluster.
+//
+//nolint:gocritic // cfg is large but matches the driver signature.
+func (m *Mock) CreateCluster(_ context.Context, cfg mdbdriver.CreateClusterConfig) (*mdbdriver.Cluster, error) {
+	if err := validName("cluster", cfg.Name); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.clusters.Has(cfg.Name) {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "cluster %q already exists", cfg.Name)
+	}
+
+	if err := m.validateClusterRefs(cfg.ACLName, cfg.ParameterGroupName, cfg.SubnetGroupName); err != nil {
+		return nil, err
+	}
+
+	numShards := cfg.NumShards
+	engine := orDefault(cfg.Engine, defaultEngine)
+	engineVersion := orDefault(cfg.EngineVersion, defaultEngineVersion)
+	nodeType := orDefault(cfg.NodeType, defaultNodeType)
+	acl := orDefault(cfg.ACLName, "open-access")
+	pg := orDefault(cfg.ParameterGroupName, "default.memorydb-redis7")
+
+	// Restore-from-snapshot inherits the source's shape.
+	if cfg.SnapshotName != "" {
+		snap, ok := m.snapshots.Get(cfg.SnapshotName)
+		if !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "snapshot %q not found", cfg.SnapshotName)
+		}
+
+		if numShards == 0 {
+			numShards = snap.ClusterConfiguration.NumShards
+		}
+
+		if cfg.NodeType == "" {
+			nodeType = snap.ClusterConfiguration.NodeType
+		}
+	}
+
+	sgs := make([]mdbdriver.SecurityGroupMembership, 0, len(cfg.SecurityGroupIDs))
+	for _, id := range cfg.SecurityGroupIDs {
+		sgs = append(sgs, mdbdriver.SecurityGroupMembership{SecurityGroupID: id, Status: mdbdriver.StatusAvailable})
+	}
+
+	cluster := mdbdriver.Cluster{
+		Name:                 cfg.Name,
+		ARN:                  m.arn("cluster", cfg.Name),
+		Description:          cfg.Description,
+		Status:               mdbdriver.StatusAvailable,
+		NodeType:             nodeType,
+		Engine:               engine,
+		EngineVersion:        engineVersion,
+		EnginePatchVersion:   engineVersion + ".0",
+		NumberOfShards:       maxInt(numShards, 1),
+		ACLName:              acl,
+		ParameterGroupName:   pg,
+		ParameterGroupStatus: mdbdriver.StatusAvailable,
+		SubnetGroupName:      cfg.SubnetGroupName,
+		SecurityGroups:       sgs,
+		Shards:               m.buildShards(cfg.Name, numShards, cfg.NumReplicasPerShard),
+		ClusterEndpoint: mdbdriver.Endpoint{
+			Address: fmt.Sprintf("clustercfg.%s.memorydb.%s.amazonaws.com", cfg.Name, m.opts.Region),
+			Port:    portOr(cfg.Port),
+		},
+		TLSEnabled:              cfg.TLSEnabled,
+		KmsKeyID:                cfg.KmsKeyID,
+		MaintenanceWindow:       orDefault(cfg.MaintenanceWindow, "sun:23:00-mon:01:30"),
+		SnapshotWindow:          orDefault(cfg.SnapshotWindow, "05:00-06:00"),
+		SnapshotRetentionLimit:  cfg.SnapshotRetentionLimit,
+		SnsTopicARN:             cfg.SnsTopicARN,
+		AutoMinorVersionUpgrade: cfg.AutoMinorVersionUpgrade,
+		DataTiering:             cfg.DataTiering,
+		AvailabilityMode:        availabilityMode(cfg.NumReplicasPerShard),
+		NetworkType:             orDefault(cfg.NetworkType, "ipv4"),
+		IPDiscovery:             orDefault(cfg.IPDiscovery, "ipv4"),
+		MultiRegionClusterName:  cfg.MultiRegionClusterName,
+		Tags:                    copyTags(cfg.Tags),
+		CreatedAt:               m.opts.Clock.Now().UTC(),
+	}
+
+	m.clusters.Set(cfg.Name, cluster)
+	m.linkACLCluster(acl, cfg.Name, true)
+	m.emitClusterMetrics(cfg.Name)
+	m.recordClusterEvent(cfg.Name, "Cluster created")
+
+	out := cloneCluster(&cluster)
+
+	return &out, nil
+}
+
+// DescribeClusters returns all clusters, or the named ones.
+func (m *Mock) DescribeClusters(_ context.Context, names []string) ([]mdbdriver.Cluster, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return describeByName(m.clusters, names, cloneCluster, func(n string) error {
+		return cerrors.Newf(cerrors.NotFound, "cluster %q not found", n)
+	})
+}
+
+// UpdateCluster applies the non-zero fields of cfg to an existing cluster.
+//
+//nolint:gocritic // cfg is large but matches the driver signature.
+func (m *Mock) UpdateCluster(_ context.Context, cfg mdbdriver.UpdateClusterConfig) (*mdbdriver.Cluster, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.clusters.Get(cfg.Name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", cfg.Name)
+	}
+
+	if cfg.ACLName != "" {
+		if !m.acls.Has(cfg.ACLName) {
+			return nil, cerrors.Newf(cerrors.NotFound, "ACL %q not found", cfg.ACLName)
+		}
+
+		m.linkACLCluster(c.ACLName, cfg.Name, false)
+		m.linkACLCluster(cfg.ACLName, cfg.Name, true)
+		c.ACLName = cfg.ACLName
+	}
+
+	if cfg.ParameterGroupName != "" {
+		if !m.parameterGroups.Has(cfg.ParameterGroupName) {
+			return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", cfg.ParameterGroupName)
+		}
+
+		c.ParameterGroupName = cfg.ParameterGroupName
+	}
+
+	c.Description = orKeep(cfg.Description, c.Description)
+	c.NodeType = orKeep(cfg.NodeType, c.NodeType)
+	c.EngineVersion = orKeep(cfg.EngineVersion, c.EngineVersion)
+	c.MaintenanceWindow = orKeep(cfg.MaintenanceWindow, c.MaintenanceWindow)
+	c.SnapshotWindow = orKeep(cfg.SnapshotWindow, c.SnapshotWindow)
+	c.SnsTopicARN = orKeep(cfg.SnsTopicARN, c.SnsTopicARN)
+
+	if cfg.SnapshotRetentionLimit != nil {
+		c.SnapshotRetentionLimit = *cfg.SnapshotRetentionLimit
+	}
+
+	if cfg.ShardCount != nil && *cfg.ShardCount > 0 {
+		c.NumberOfShards = *cfg.ShardCount
+		c.Shards = m.buildShards(cfg.Name, *cfg.ShardCount, len(c.Shards[0].Nodes)-1)
+	}
+
+	if cfg.ReplicaCount != nil {
+		c.Shards = m.buildShards(cfg.Name, c.NumberOfShards, *cfg.ReplicaCount)
+		c.AvailabilityMode = availabilityMode(*cfg.ReplicaCount)
+	}
+
+	m.clusters.Set(cfg.Name, c)
+	m.recordClusterEvent(cfg.Name, "Cluster modified")
+
+	out := cloneCluster(&c)
+
+	return &out, nil
+}
+
+// DeleteCluster removes a cluster (optionally taking a final snapshot).
+func (m *Mock) DeleteCluster(_ context.Context, name, finalSnapshotName string) (*mdbdriver.Cluster, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.clusters.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
+	}
+
+	if finalSnapshotName != "" {
+		m.snapshots.Set(finalSnapshotName, m.snapshotFromCluster(finalSnapshotName, &c, "manual", nil))
+	}
+
+	m.clusters.Delete(name)
+	m.linkACLCluster(c.ACLName, name, false)
+	m.recordClusterEvent(name, "Cluster deleted")
+
+	c.Status = mdbdriver.StatusDeleting
+	out := cloneCluster(&c)
+
+	return &out, nil
+}
+
+// FailoverShard triggers a failover of a shard's primary; the shard stays
+// available.
+func (m *Mock) FailoverShard(_ context.Context, clusterName, shardName string) (*mdbdriver.Cluster, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.clusters.Get(clusterName)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", clusterName)
+	}
+
+	found := false
+
+	for i := range c.Shards {
+		if c.Shards[i].Name == shardName {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, cerrors.Newf(cerrors.NotFound, "shard %q not found in cluster %q", shardName, clusterName)
+	}
+
+	if len(c.Shards) > 0 && c.Shards[0].NumberOfNodes < 2 {
+		return nil, cerrors.New(cerrors.FailedPrecondition, "failover requires at least one replica in the shard")
+	}
+
+	m.recordClusterEvent(clusterName, "Failover started for shard "+shardName)
+
+	out := cloneCluster(&c)
+
+	return &out, nil
+}
+
+// ListAllowedNodeTypeUpdates returns the scale-up/scale-down node types.
+func (m *Mock) ListAllowedNodeTypeUpdates(_ context.Context, clusterName string) (scaleUp, scaleDown []string, err error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if !m.clusters.Has(clusterName) {
+		return nil, nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", clusterName)
+	}
+
+	return []string{"db.r7g.large", "db.r7g.xlarge"}, []string{"db.t4g.medium"}, nil
+}
+
+// ---- small helpers ----
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+
+	return v
+}
+
+func orKeep(v, cur string) string {
+	if v == "" {
+		return cur
+	}
+
+	return v
+}
+
+func portOr(p int) int {
+	if p == 0 {
+		return defaultPort
+	}
+
+	return p
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+func availabilityMode(replicas int) string {
+	if replicas > 0 {
+		return "MultiAZ"
+	}
+
+	return "SingleAZ"
+}

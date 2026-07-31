@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
+	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/server/aws/rds"
 	"github.com/stackshy/cloudemu/v2/server/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/server/aws/resourceexplorer2"
@@ -51,6 +52,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -107,6 +109,9 @@ type Drivers struct {
 	// ElastiCache serves the ElastiCache query protocol (cluster control plane)
 	// against the cache driver.
 	ElastiCache cachedriver.Cache
+	// MemoryDB serves the AWS MemoryDB JSON 1.1 protocol (Redis/Valkey cluster
+	// control plane) against the memorydb driver.
+	MemoryDB mdbdriver.MemoryDB
 	// SNS serves the SNS query protocol against the notification driver.
 	SNS notifdriver.Notification
 	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
@@ -159,6 +164,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		ELB:                 p.ELB,
 		EventBridge:         p.EventBridge,
 		ElastiCache:         p.ElastiCache,
+		MemoryDB:            p.MemoryDB,
 		SNS:                 p.SNS,
 		STS:                 true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
@@ -194,7 +200,7 @@ func NewFromProvider(p *awsprovider.Provider) *server.Server {
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
 //
-//nolint:gocritic,gocyclo // Drivers is by-value for ergonomics; the dispatch is one if-per-driver and grows with the bundle.
+//nolint:gocritic,gocyclo,funlen // Drivers is by-value for ergonomics; the dispatch is one if-per-driver and grows with the bundle.
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
@@ -292,6 +298,13 @@ func New(d Drivers) *server.Server {
 	// shadowing occurs.
 	if d.ElastiCache != nil {
 		srv.Register(elasticache.New(d.ElastiCache))
+	}
+
+	// MemoryDB speaks AWS JSON 1.1 and matches on the "AmazonMemoryDB." target
+	// prefix, so its dispatch is disjoint from every query-protocol handler and
+	// registration order relative to the EC2 catch-all does not matter.
+	if d.MemoryDB != nil {
+		srv.Register(memorydbsrv.New(d.MemoryDB))
 	}
 
 	// SNS also speaks the AWS query protocol; its action set (CreateTopic,

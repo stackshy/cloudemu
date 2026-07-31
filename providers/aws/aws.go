@@ -23,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
+	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
 	"github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/providers/aws/route53"
@@ -124,6 +125,7 @@ type Provider struct {
 	ELB                 *elb.Mock
 	SQS                 *sqs.Mock
 	ElastiCache         *elasticache.Mock
+	MemoryDB            *memorydb.Mock
 	SecretsManager      *secretsmanager.Mock
 	CloudWatchLogs      *cloudwatchlogs.Mock
 	SNS                 *sns.Mock
@@ -158,6 +160,7 @@ func New(opts ...config.Option) *Provider {
 		ELB:                 elb.New(o),
 		SQS:                 sqs.New(o),
 		ElastiCache:         elasticache.New(o),
+		MemoryDB:            memorydb.New(o),
 		SecretsManager:      secretsmanager.New(o),
 		CloudWatchLogs:      cloudwatchlogs.New(o),
 		SNS:                 sns.New(o),
@@ -181,6 +184,7 @@ func New(opts ...config.Option) *Provider {
 	p.Lambda.SetMonitoring(p.CloudWatch)
 	p.SQS.SetMonitoring(p.CloudWatch)
 	p.ElastiCache.SetMonitoring(p.CloudWatch)
+	p.MemoryDB.SetMonitoring(p.CloudWatch)
 	p.CloudWatchLogs.SetMonitoring(p.CloudWatch)
 	p.SNS.SetMonitoring(p.CloudWatch)
 	p.ECR.SetMonitoring(p.CloudWatch)

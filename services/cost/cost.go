@@ -69,6 +69,15 @@ func defaultRates() map[string]float64 {
 		"relationaldb:StartInstance":               0.0,
 		"relationaldb:StopInstance":                0.0,
 
+		// MemoryDB (Redis/Valkey): clusters billed per node-hour proxy at
+		// create; multi-region grouping, snapshots and reserved-node purchases
+		// proxied at 0 (metered via member clusters / storage / reservations).
+		"memorydb:CreateCluster":                 0.226, // db.r6g.large-equivalent node-hour
+		"memorydb:CreateMultiRegionCluster":      0.0,
+		"memorydb:CreateSnapshot":                0.0,
+		"memorydb:CopySnapshot":                  0.0,
+		"memorydb:PurchaseReservedNodesOffering": 0.0,
+
 		// Serverless (per invocation)
 		"serverless:Invoke": 0.0000002, // $0.20 per 1M
 
