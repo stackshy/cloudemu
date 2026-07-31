@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/alloydb"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
@@ -72,6 +73,7 @@ type Provider struct {
 	ArtifactRegistry *artifactregistry.Mock
 	Eventarc         *eventarc.Mock
 	CloudSQL         *cloudsql.Mock
+	AlloyDB          *alloydb.Mock
 	GKE              *gke.Mock
 	VertexAI         *vertexai.Mock
 
@@ -105,6 +107,7 @@ func New(opts ...config.Option) *Provider {
 		ArtifactRegistry: artifactregistry.New(o),
 		Eventarc:         eventarc.New(o),
 		CloudSQL:         cloudsql.New(o),
+		AlloyDB:          alloydb.New(o),
 		GKE:              gke.New(o),
 		VertexAI:         vertexai.New(o),
 		ProjectID:        o.ProjectID,
@@ -121,6 +124,7 @@ func New(opts ...config.Option) *Provider {
 	p.ArtifactRegistry.SetMonitoring(p.CloudMonitoring)
 	p.Eventarc.SetMonitoring(p.CloudMonitoring)
 	p.CloudSQL.SetMonitoring(p.CloudMonitoring)
+	p.AlloyDB.SetMonitoring(p.CloudMonitoring)
 	p.GKE.SetMonitoring(p.CloudMonitoring)
 	p.VertexAI.SetMonitoring(p.CloudMonitoring)
 
@@ -133,11 +137,45 @@ func New(opts ...config.Option) *Provider {
 			Database:     p.Firestore,
 			Serverless:   p.CloudFunctions,
 			Kubernetes:   gkeDiscovery{p.GKE},
-			RelationalDB: cloudSQLDiscovery{p.CloudSQL},
+			RelationalDB: gcpRelationalDiscovery{sql: p.CloudSQL, alloy: p.AlloyDB},
 		},
 	)
 
 	return p
+}
+
+// gcpRelationalDiscovery fans GCP's relational mocks (Cloud SQL instances and
+// AlloyDB clusters) into a single resourcediscovery.RelationalDatabases
+// adapter, since the engine exposes one relational slot per provider.
+type gcpRelationalDiscovery struct {
+	sql   *cloudsql.Mock
+	alloy *alloydb.Mock
+}
+
+func (d gcpRelationalDiscovery) DiscoverDatabases(
+	ctx context.Context,
+) ([]resourcediscovery.DiscoveredDatabase, error) {
+	out, err := (cloudSQLDiscovery{d.sql}).DiscoverDatabases(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	clusters, err := d.alloy.DescribeClusters(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range clusters {
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name:   clusters[i].ID,
+			Type:   resourcediscovery.TypeAlloyDBCluster,
+			Region: d.alloy.Region(),
+			ARN:    clusters[i].ARN,
+			Tags:   clusters[i].Tags,
+		})
+	}
+
+	return out, nil
 }
 
 // cloudSQLDiscovery adapts the Cloud SQL mock to the resourcediscovery

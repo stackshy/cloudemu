@@ -58,6 +58,7 @@ const (
 	TypePostgresFlex    = "PostgresFlexibleServer" // Azure Database for PostgreSQL Flexible Server
 	TypeSQLInstance     = "SqlInstance"            // GCP Cloud SQL instance
 	TypeManagedInstance = "SqlManagedInstance"     // Azure SQL Managed Instance
+	TypeAlloyDBCluster  = "AlloyDBCluster"         // GCP AlloyDB cluster
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {

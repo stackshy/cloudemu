@@ -60,6 +60,8 @@ func defaultRates() map[string]float64 {
 		"relationaldb:CreateDBInstanceReadReplica": 0.017,
 		"relationaldb:RestoreInstanceFromSnapshot": 0.017,
 		"relationaldb:CreateManagedInstance":       0.50,  // Azure SQL Managed Instance (GP 4-vCore) instance-hour
+		"relationaldb:CreateAlloyDBCluster":        0.0,   // AlloyDB billed per instance, not per cluster
+		"relationaldb:CreateAlloyDBInstance":       0.53,  // AlloyDB 4-vCPU instance-hour proxy
 		"relationaldb:CreateDBProxy":               0.015, // proxy vCPU-hour proxy
 		"relationaldb:CreateCluster":               0.0,   // Aurora billed per member instance + ACU
 		"relationaldb:CreateSnapshot":              0.0,   // manual snapshot storage

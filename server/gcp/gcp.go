@@ -9,6 +9,7 @@ package gcp
 import (
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	"github.com/stackshy/cloudemu/v2/server"
+	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/v2/server/gcp/clouddns"
@@ -54,15 +55,21 @@ import (
 
 // Drivers bundles the driver interfaces the GCP server can expose.
 type Drivers struct {
-	Compute          computedriver.Compute
-	Storage          storagedriver.Bucket
-	Firestore        dbdriver.Database
-	Networking       netdriver.Networking
-	Monitoring       mondriver.Monitoring
-	CloudFunctions   sdrv.Serverless
-	PubSub           mqdriver.MessageQueue
-	CloudSQL         rdbdriver.RelationalDB
-	GKE              *gkeprov.Mock
+	Compute        computedriver.Compute
+	Storage        storagedriver.Bucket
+	Firestore      dbdriver.Database
+	Networking     netdriver.Networking
+	Monitoring     mondriver.Monitoring
+	CloudFunctions sdrv.Serverless
+	PubSub         mqdriver.MessageQueue
+	CloudSQL       rdbdriver.RelationalDB
+	GKE            *gkeprov.Mock
+	// AlloyDB serves the alloydb.googleapis.com v1 REST API against a
+	// relationaldb driver that also implements the AlloyDB capability. Its
+	// paths (/v1/projects/{p}/locations/{l}/clusters…) are identical to GKE's,
+	// so the two cannot be multiplexed on one server; AlloyDB is left nil in
+	// DriversFrom and injected by callers that want it instead of GKE.
+	AlloyDB          rdbdriver.RelationalDB
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
@@ -112,6 +119,15 @@ type Drivers struct {
 //
 //nolint:gocritic,gocyclo // Drivers is all interface fields; one if-per-driver is the simplest expression and grows with the bundle.
 func New(d Drivers) *server.Server {
+	// AlloyDB and GKE claim the same /v1/projects/{p}/locations/{l}/clusters
+	// paths, so enabling both would silently shadow one. Fail fast rather than
+	// route ambiguously — use DriversFromWithAlloyDB to enable AlloyDB in place
+	// of GKE.
+	if d.AlloyDB != nil && d.GKE != nil {
+		panic("gcp server: AlloyDB and GKE share REST paths and cannot both be enabled; " +
+			"use DriversFromWithAlloyDB to enable AlloyDB in place of GKE")
+	}
+
 	srv := server.New()
 
 	if d.Compute != nil {
@@ -157,6 +173,14 @@ func New(d Drivers) *server.Server {
 	// /v1/projects/ space as Firestore, so register first.
 	if d.CloudSQL != nil {
 		srv.Register(cloudsql.New(d.CloudSQL))
+	}
+
+	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|
+	// operations}/... — the cluster/operations paths are identical to GKE's, so
+	// the two are mutually exclusive on one server. Registered before GKE so an
+	// AlloyDB-configured server (GKE nil) works; DriversFrom leaves AlloyDB nil.
+	if d.AlloyDB != nil {
+		srv.Register(alloydbsrv.New(d.AlloyDB))
 	}
 
 	// GKE matches /v1/projects/{p}/locations/{l}/{clusters|operations}/...;
