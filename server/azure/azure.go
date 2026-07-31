@@ -40,6 +40,7 @@ import (
 	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
+	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
 	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/server/azure/network"
@@ -67,6 +68,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mcdriver "github.com/stackshy/cloudemu/v2/services/managedcassandra/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -100,16 +102,19 @@ type Drivers struct {
 	// the tablestorage driver.
 	TableStorage tabledriver.TableStorage
 	CosmosDB     dbdriver.Database
-	Network      netdriver.Networking
-	Monitor      mondriver.Monitoring
-	Functions    sdrv.Serverless
-	ServiceBus   mqdriver.MessageQueue
-	SQL          rdbdriver.RelationalDB
-	PostgresFlex rdbdriver.RelationalDB
-	MySQLFlex    rdbdriver.RelationalDB
-	AKS          aksserver.Backend
-	IAM          iamdriver.IAM
-	ACR          crdriver.ContainerRegistry
+	// ManagedCassandra serves Microsoft.DocumentDB/cassandraClusters (Azure
+	// Managed Instance for Apache Cassandra) via the ARM protocol.
+	ManagedCassandra mcdriver.ManagedCassandra
+	Network          netdriver.Networking
+	Monitor          mondriver.Monitoring
+	Functions        sdrv.Serverless
+	ServiceBus       mqdriver.MessageQueue
+	SQL              rdbdriver.RelationalDB
+	PostgresFlex     rdbdriver.RelationalDB
+	MySQLFlex        rdbdriver.RelationalDB
+	AKS              aksserver.Backend
+	IAM              iamdriver.IAM
+	ACR              crdriver.ContainerRegistry
 	// KeyVault serves the Key Vault secrets data-plane API (/secrets/…)
 	// against the secrets driver.
 	KeyVault secretsdriver.Secrets
@@ -161,7 +166,7 @@ type Drivers struct {
 // so handlers can register independently — virtualMachines doesn't conflict
 // with future blob storage or networking handlers.
 //
-//nolint:gocritic,gocyclo // Drivers is all interface fields; one if-per-driver is the simplest expression
+//nolint:gocritic,gocyclo,gocognit,funlen // Drivers is all interface fields; one if-per-driver is the simplest expression
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
@@ -196,6 +201,12 @@ func New(d Drivers) *server.Server {
 	// blob handler.
 	if d.CosmosDB != nil {
 		srv.Register(cosmos.New(d.CosmosDB))
+	}
+
+	// Managed Cassandra matches ARM Microsoft.DocumentDB/cassandraClusters paths
+	// (disjoint from every other Azure handler).
+	if d.ManagedCassandra != nil {
+		srv.Register(managedcassandra.New(d.ManagedCassandra))
 	}
 
 	if d.Network != nil {

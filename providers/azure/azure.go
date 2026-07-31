@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
@@ -62,16 +63,17 @@ func (a aksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 
 // Provider holds all Azure mock services.
 type Provider struct {
-	BlobStorage     *blobstorage.Mock
-	VirtualMachines *virtualmachines.Mock
-	CosmosDB        *cosmosdb.Mock
-	Functions       *functions.Mock
-	VNet            *vnet.Mock
-	Monitor         *azuremonitor.Mock
-	IAM             *azureiam.Mock
-	DNS             *azuredns.Mock
-	LB              *azurelb.Mock
-	ServiceBus      *servicebus.Mock
+	BlobStorage      *blobstorage.Mock
+	VirtualMachines  *virtualmachines.Mock
+	CosmosDB         *cosmosdb.Mock
+	ManagedCassandra *managedcassandra.Mock
+	Functions        *functions.Mock
+	VNet             *vnet.Mock
+	Monitor          *azuremonitor.Mock
+	IAM              *azureiam.Mock
+	DNS              *azuredns.Mock
+	LB               *azurelb.Mock
+	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
 	// the two services keep separate queue namespaces.
@@ -109,6 +111,7 @@ func New(opts ...config.Option) *Provider {
 		BlobStorage:      blobstorage.New(o),
 		VirtualMachines:  virtualmachines.New(o),
 		CosmosDB:         cosmosdb.New(o),
+		ManagedCassandra: managedcassandra.New(o),
 		Functions:        functions.New(o),
 		VNet:             vnet.New(o),
 		Monitor:          azuremonitor.New(o),
