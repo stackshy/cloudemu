@@ -24,6 +24,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
+	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/server/aws/rds"
@@ -49,6 +50,7 @@ import (
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
+	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
@@ -109,6 +111,9 @@ type Drivers struct {
 	// ElastiCache serves the ElastiCache query protocol (cluster control plane)
 	// against the cache driver.
 	ElastiCache cachedriver.Cache
+	// Keyspaces serves the Amazon Keyspaces JSON 1.0 protocol (Cassandra
+	// control plane) against the keyspaces driver.
+	Keyspaces ksdriver.Keyspaces
 	// MemoryDB serves the AWS MemoryDB JSON 1.1 protocol (Redis/Valkey cluster
 	// control plane) against the memorydb driver.
 	MemoryDB mdbdriver.MemoryDB
@@ -164,6 +169,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		ELB:                 p.ELB,
 		EventBridge:         p.EventBridge,
 		ElastiCache:         p.ElastiCache,
+		Keyspaces:           p.Keyspaces,
 		MemoryDB:            p.MemoryDB,
 		SNS:                 p.SNS,
 		STS:                 true,
@@ -200,7 +206,7 @@ func NewFromProvider(p *awsprovider.Provider) *server.Server {
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
 //
-//nolint:gocritic,gocyclo,funlen // Drivers is by-value for ergonomics; the dispatch is one if-per-driver and grows with the bundle.
+//nolint:gocritic,gocyclo,funlen,gocognit // by-value Drivers for ergonomics; one if-per-driver dispatch grows with the bundle.
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
@@ -305,6 +311,12 @@ func New(d Drivers) *server.Server {
 	// registration order relative to the EC2 catch-all does not matter.
 	if d.MemoryDB != nil {
 		srv.Register(memorydbsrv.New(d.MemoryDB))
+	}
+
+	// Keyspaces speaks AWS JSON 1.0 and matches on the "KeyspacesService." target
+	// prefix, so its dispatch is disjoint from every other handler.
+	if d.Keyspaces != nil {
+		srv.Register(keyspacessrv.New(d.Keyspaces))
 	}
 
 	// SNS also speaks the AWS query protocol; its action set (CreateTopic,

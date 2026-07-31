@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
@@ -125,6 +126,7 @@ type Provider struct {
 	ELB                 *elb.Mock
 	SQS                 *sqs.Mock
 	ElastiCache         *elasticache.Mock
+	Keyspaces           *keyspaces.Mock
 	MemoryDB            *memorydb.Mock
 	SecretsManager      *secretsmanager.Mock
 	CloudWatchLogs      *cloudwatchlogs.Mock
@@ -160,6 +162,7 @@ func New(opts ...config.Option) *Provider {
 		ELB:                 elb.New(o),
 		SQS:                 sqs.New(o),
 		ElastiCache:         elasticache.New(o),
+		Keyspaces:           keyspaces.New(o),
 		MemoryDB:            memorydb.New(o),
 		SecretsManager:      secretsmanager.New(o),
 		CloudWatchLogs:      cloudwatchlogs.New(o),
