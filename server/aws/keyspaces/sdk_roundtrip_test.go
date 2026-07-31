@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -150,6 +151,7 @@ func TestSDKTableLifecycle(t *testing.T) {
 	if _, err := client.RestoreTable(ctx, &awskeyspaces.RestoreTableInput{
 		SourceKeyspaceName: aws.String("app"), SourceTableName: aws.String("events"),
 		TargetKeyspaceName: aws.String("app"), TargetTableName: aws.String("events_restored"),
+		RestoreTimestamp: aws.Time(time.Unix(1735689600, 0)),
 	}); err != nil {
 		t.Fatalf("RestoreTable: %v", err)
 	}

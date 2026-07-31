@@ -40,14 +40,14 @@ func TestTracker_MemoryDBRates(t *testing.T) {
 func TestTracker_KeyspacesRates(t *testing.T) {
 	tracker := New()
 
-	// Two provisioned tables priced at the table-hour rate; keyspace, type and
-	// restore are free.
+	// Two created tables + one restore priced at the table-hour rate; keyspace
+	// and type creation are free.
 	tracker.Record("keyspaces", "CreateTable", 2)
+	tracker.Record("keyspaces", "RestoreTable", 1)
 	tracker.Record("keyspaces", "CreateKeyspace", 1)
 	tracker.Record("keyspaces", "CreateType", 1)
-	tracker.Record("keyspaces", "RestoreTable", 1)
 
-	want := 0.01 * 2
+	want := 0.01 * 3
 	assert.InDelta(t, want, tracker.CostByService()["keyspaces"], 1e-9)
 }
 

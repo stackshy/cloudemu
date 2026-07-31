@@ -114,9 +114,15 @@ func (m *Mock) CreateKeyspace(_ context.Context, cfg ksdriver.CreateKeyspaceConf
 		strategy = ksdriver.SingleRegion
 	}
 
+	if strategy != ksdriver.SingleRegion && strategy != ksdriver.MultiRegion {
+		return nil, cerrors.Newf(cerrors.InvalidArgument,
+			"replicationStrategy %q must be SINGLE_REGION or MULTI_REGION", strategy)
+	}
+
 	const minMultiRegionRegions = 2
 
-	regions := cfg.ReplicationRegions
+	// Clone the caller's slice so a later mutation can't reach into the store.
+	regions := append([]string(nil), cfg.ReplicationRegions...)
 	if strategy == ksdriver.SingleRegion {
 		regions = []string{m.opts.Region}
 	} else if len(regions) < minMultiRegionRegions {
@@ -132,7 +138,7 @@ func (m *Mock) CreateKeyspace(_ context.Context, cfg ksdriver.CreateKeyspaceConf
 
 	ks := ksdriver.Keyspace{
 		Name: cfg.Name, ARN: m.keyspaceARN(cfg.Name),
-		ReplicationStrategy: strategy, ReplicationRegions: regions, Tags: copyTags(cfg.Tags),
+		ReplicationStrategy: strategy, ReplicationRegions: regions,
 	}
 	m.keyspaces.Set(cfg.Name, ks)
 	m.setTags(ks.ARN, cfg.Tags)
@@ -209,8 +215,16 @@ func (m *Mock) DeleteKeyspace(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "keyspace %q not found", name)
 	}
 
+	if isSystemKeyspace(name) {
+		return cerrors.Newf(cerrors.InvalidArgument, "system keyspace %q cannot be deleted", name)
+	}
+
 	if m.keyspaceHasTables(name) {
 		return cerrors.Newf(cerrors.FailedPrecondition, "keyspace %q still contains tables", name)
+	}
+
+	if m.keyspaceHasTypes(name) {
+		return cerrors.Newf(cerrors.FailedPrecondition, "keyspace %q still contains user-defined types", name)
 	}
 
 	m.keyspaces.Delete(name)
@@ -219,9 +233,25 @@ func (m *Mock) DeleteKeyspace(_ context.Context, name string) error {
 	return nil
 }
 
+func isSystemKeyspace(name string) bool {
+	switch name {
+	case "system", "system_schema", "system_multiregion_info":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *Mock) keyspaceHasTables(keyspace string) bool {
-	prefix := keyspace + "/"
-	for _, k := range m.tables.Keys() {
+	return hasPrefixKey(m.tables.Keys(), keyspace+"/")
+}
+
+func (m *Mock) keyspaceHasTypes(keyspace string) bool {
+	return hasPrefixKey(m.udts.Keys(), keyspace+"/")
+}
+
+func hasPrefixKey(keys []string, prefix string) bool {
+	for _, k := range keys {
 		if strings.HasPrefix(k, prefix) {
 			return true
 		}

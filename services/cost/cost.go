@@ -82,9 +82,9 @@ func defaultRates() map[string]float64 {
 		// keyspaces, types, restores and tags are free control-plane ops. A
 		// provisioned table is proxied at a small hourly base at create.
 		"keyspaces:CreateTable":    0.01, // provisioned-capacity table-hour proxy
+		"keyspaces:RestoreTable":   0.01, // restore provisions a new table
 		"keyspaces:CreateKeyspace": 0.0,
 		"keyspaces:CreateType":     0.0,
-		"keyspaces:RestoreTable":   0.0,
 
 		// Serverless (per invocation)
 		"serverless:Invoke": 0.0000002, // $0.20 per 1M

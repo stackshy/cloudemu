@@ -301,6 +301,138 @@ func TestAutoScalingRequiresProvisioned(t *testing.T) {
 	}
 }
 
+func TestUDTInUseGuard(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustKeyspace(t, m, "app")
+
+	if _, err := m.CreateType(ctx, "app", "address", []ksdriver.FieldDefinition{{Name: "street", Type: "text"}}); err != nil {
+		t.Fatalf("CreateType: %v", err)
+	}
+
+	// A table with a frozen<address> column registers a reference.
+	schema := sampleSchema()
+	schema.AllColumns = append(schema.AllColumns, ksdriver.ColumnDefinition{Name: "addr", Type: "frozen<address>"})
+
+	if _, err := m.CreateTable(ctx, ksdriver.CreateTableConfig{KeyspaceName: "app", Name: "people", SchemaDefinition: schema}); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// DeleteType is now blocked (guard is live).
+	if _, err := m.DeleteType(ctx, "app", "address"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete in-use type: got %v, want FailedPrecondition", err)
+	}
+
+	// Dropping the referring table unblocks the delete.
+	if err := m.DeleteTable(ctx, "app", "people"); err != nil {
+		t.Fatalf("DeleteTable: %v", err)
+	}
+
+	if _, err := m.DeleteType(ctx, "app", "address"); err != nil {
+		t.Fatalf("delete type after table gone: %v", err)
+	}
+}
+
+func TestSchemaRejectsUndeclaredStaticColumn(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustKeyspace(t, m, "app")
+
+	schema := sampleSchema()
+	schema.StaticColumns = []ksdriver.StaticColumn{{Name: "undeclared"}}
+
+	if _, err := m.CreateTable(ctx, ksdriver.CreateTableConfig{KeyspaceName: "app", Name: "t", SchemaDefinition: schema}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("undeclared static column: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestDeleteKeyspaceGuardsTypesAndSystem(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustKeyspace(t, m, "app")
+
+	if _, err := m.CreateType(ctx, "app", "address", []ksdriver.FieldDefinition{{Name: "s", Type: "text"}}); err != nil {
+		t.Fatalf("CreateType: %v", err)
+	}
+
+	if err := m.DeleteKeyspace(ctx, "app"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete keyspace with types: got %v, want FailedPrecondition", err)
+	}
+
+	// System keyspaces cannot be deleted.
+	if err := m.DeleteKeyspace(ctx, "system"); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("delete system keyspace: got %v, want InvalidArgument", err)
+	}
+
+	// GetType on a missing keyspace is NotFound (not an orphan lookup).
+	if _, err := m.GetType(ctx, "ghost", "address"); !cerrors.IsNotFound(err) {
+		t.Fatalf("GetType missing keyspace: got %v, want NotFound", err)
+	}
+}
+
+func TestCreateKeyspaceClonesRegions(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	regions := []string{"us-east-1", "us-west-2"}
+	if _, err := m.CreateKeyspace(ctx, ksdriver.CreateKeyspaceConfig{
+		Name: "mr", ReplicationStrategy: ksdriver.MultiRegion, ReplicationRegions: regions,
+	}); err != nil {
+		t.Fatalf("CreateKeyspace: %v", err)
+	}
+
+	regions[0] = "MUTATED" // must not reach the store
+
+	got, _ := m.GetKeyspace(ctx, "mr")
+	if got.ReplicationRegions[0] != "us-east-1" {
+		t.Fatalf("stored keyspace aliases caller slice: %v", got.ReplicationRegions)
+	}
+}
+
+func TestCreateKeyspaceRejectsBadStrategy(t *testing.T) {
+	m := newTestMock()
+
+	if _, err := m.CreateKeyspace(context.Background(), ksdriver.CreateKeyspaceConfig{
+		Name: "bad", ReplicationStrategy: "GARBAGE",
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("bad strategy: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestUpdateTableRejectsDuplicateColumn(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustKeyspace(t, m, "app")
+
+	if _, err := m.CreateTable(ctx, ksdriver.CreateTableConfig{KeyspaceName: "app", Name: "t", SchemaDefinition: sampleSchema()}); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// "val" already exists in sampleSchema.
+	if _, err := m.UpdateTable(ctx, ksdriver.UpdateTableConfig{
+		KeyspaceName: "app", Name: "t", AddColumns: []ksdriver.ColumnDefinition{{Name: "val", Type: "text"}},
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("duplicate column: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestRestoreTableRejectsFutureTimestamp(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustKeyspace(t, m, "app")
+
+	if _, err := m.CreateTable(ctx, ksdriver.CreateTableConfig{KeyspaceName: "app", Name: "src", SchemaDefinition: sampleSchema()}); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	future := m.opts.Clock.Now().Add(24 * time.Hour)
+	if _, err := m.RestoreTable(ctx, ksdriver.RestoreTableConfig{
+		SourceKeyspace: "app", SourceTable: "src", TargetKeyspace: "app", TargetTable: "dst", RestoreTimestamp: future,
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("future restore timestamp: got %v, want InvalidArgument", err)
+	}
+}
+
 func TestTableResultDoesNotAliasStore(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

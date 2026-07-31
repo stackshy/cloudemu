@@ -32,12 +32,18 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 // lowerCamelKeys returns v with the first letter of every map key lowercased,
-// recursively.
+// recursively. It also drops null values and the SDK's always-empty
+// resultMetadata envelope so the response carries only meaningful fields.
 func lowerCamelKeys(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(t))
+
 		for k, val := range t {
+			if val == nil || k == "ResultMetadata" {
+				continue
+			}
+
 			out[lowerFirst(k)] = lowerCamelKeys(val)
 		}
 

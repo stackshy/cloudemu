@@ -56,16 +56,35 @@ func disabledIfEmpty(v string) string {
 	return v
 }
 
-// validateSchema requires at least one partition key and rejects clustering/
-// static/partition columns that are not declared in AllColumns.
+// validateSchema requires at least one partition key, rejects empty/duplicate
+// column names, and rejects partition/clustering/static columns not declared in
+// AllColumns.
+func declaredColumns(s *ksdriver.SchemaDefinition) (map[string]struct{}, error) {
+	declared := make(map[string]struct{}, len(s.AllColumns))
+
+	for _, c := range s.AllColumns {
+		if c.Name == "" {
+			return nil, cerrors.New(cerrors.InvalidArgument, "column name must not be empty")
+		}
+
+		if _, dup := declared[c.Name]; dup {
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "duplicate column %q in schema", c.Name)
+		}
+
+		declared[c.Name] = struct{}{}
+	}
+
+	return declared, nil
+}
+
 func validateSchema(s *ksdriver.SchemaDefinition) error {
 	if len(s.PartitionKeys) == 0 {
 		return cerrors.New(cerrors.InvalidArgument, "schema requires at least one partition key")
 	}
 
-	declared := make(map[string]struct{}, len(s.AllColumns))
-	for _, c := range s.AllColumns {
-		declared[c.Name] = struct{}{}
+	declared, err := declaredColumns(s)
+	if err != nil {
+		return err
 	}
 
 	for _, pk := range s.PartitionKeys {
@@ -77,6 +96,12 @@ func validateSchema(s *ksdriver.SchemaDefinition) error {
 	for _, ck := range s.ClusteringKeys {
 		if _, ok := declared[ck.Name]; !ok {
 			return cerrors.Newf(cerrors.InvalidArgument, "clustering key %q is not declared in the schema columns", ck.Name)
+		}
+	}
+
+	for _, sc := range s.StaticColumns {
+		if _, ok := declared[sc.Name]; !ok {
+			return cerrors.Newf(cerrors.InvalidArgument, "static column %q is not declared in the schema columns", sc.Name)
 		}
 	}
 
@@ -124,10 +149,10 @@ func (m *Mock) CreateTable(_ context.Context, cfg ksdriver.CreateTableConfig) (*
 		ReplicaRegions:            append([]string(nil), cfg.ReplicaRegions...),
 		AutoScaling:               cloneAutoScaling(cfg.AutoScaling),
 		CreationTimestamp:         m.opts.Clock.Now().UTC(),
-		Tags:                      copyTags(cfg.Tags),
 	}
 	m.tables.Set(key, t)
 	m.setTags(t.ARN, cfg.Tags)
+	m.registerTableUDTRefs(cfg.KeyspaceName, cfg.Name, &t.SchemaDefinition)
 
 	out := cloneTable(&t)
 
@@ -220,6 +245,19 @@ func (m *Mock) UpdateTable(_ context.Context, cfg ksdriver.UpdateTableConfig) (*
 		return nil, err
 	}
 
+	existing := make(map[string]struct{}, len(t.SchemaDefinition.AllColumns))
+	for _, c := range t.SchemaDefinition.AllColumns {
+		existing[c.Name] = struct{}{}
+	}
+
+	for _, c := range cfg.AddColumns {
+		if _, dup := existing[c.Name]; dup {
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "column %q already exists", c.Name)
+		}
+
+		existing[c.Name] = struct{}{}
+	}
+
 	t.SchemaDefinition.AllColumns = append(t.SchemaDefinition.AllColumns, cfg.AddColumns...)
 
 	if cfg.CapacitySpecification != nil {
@@ -269,6 +307,7 @@ func (m *Mock) DeleteTable(_ context.Context, keyspace, table string) error {
 
 	m.tables.Delete(key)
 	delete(m.tags, t.ARN)
+	m.unregisterTableUDTRefs(keyspace, table)
 
 	return nil
 }
@@ -279,6 +318,14 @@ func (m *Mock) DeleteTable(_ context.Context, keyspace, table string) error {
 func (m *Mock) RestoreTable(_ context.Context, cfg ksdriver.RestoreTableConfig) (*ksdriver.Table, error) {
 	if err := validName("table", cfg.TargetTable); err != nil {
 		return nil, err
+	}
+
+	if cfg.RestoreTimestamp.IsZero() {
+		return nil, cerrors.New(cerrors.InvalidArgument, "restoreTimestamp is required")
+	}
+
+	if cfg.RestoreTimestamp.After(m.opts.Clock.Now().UTC()) {
+		return nil, cerrors.New(cerrors.InvalidArgument, "restoreTimestamp must not be in the future")
 	}
 
 	m.mu.Lock()
@@ -304,7 +351,7 @@ func (m *Mock) RestoreTable(_ context.Context, cfg ksdriver.RestoreTableConfig) 
 	restored.ARN = m.tableARN(cfg.TargetKeyspace, cfg.TargetTable)
 	restored.Status = ksdriver.StatusActive
 	restored.CreationTimestamp = m.opts.Clock.Now().UTC()
-	restored.Tags = copyTags(cfg.Tags)
+	restored.Tags = nil
 
 	if cfg.CapacitySpecification != nil {
 		restored.CapacitySpecification = resolveCapacity(*cfg.CapacitySpecification)
@@ -318,6 +365,7 @@ func (m *Mock) RestoreTable(_ context.Context, cfg ksdriver.RestoreTableConfig) 
 
 	m.tables.Set(targetKey, restored)
 	m.setTags(restored.ARN, cfg.Tags)
+	m.registerTableUDTRefs(cfg.TargetKeyspace, cfg.TargetTable, &restored.SchemaDefinition)
 
 	out := cloneTable(&restored)
 

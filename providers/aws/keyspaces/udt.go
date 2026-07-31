@@ -8,6 +8,88 @@ import (
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 )
 
+// typeMentions reports whether a Cassandra column type string references the
+// named UDT as an identifier token (e.g. "address", "frozen<address>",
+// "list<frozen<address>>"), without matching substrings of other identifiers.
+func typeMentions(colType, name string) bool {
+	for _, tok := range strings.FieldsFunc(colType, func(r rune) bool {
+		return !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+	}) {
+		if tok == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// registerTableUDTRefs records table→UDT references so DeleteType's in-use guard
+// is live: for every UDT in the keyspace mentioned by a column type, the table
+// is added to that UDT's DirectReferringTables. The caller holds the lock.
+func (m *Mock) registerTableUDTRefs(keyspace, table string, schema *ksdriver.SchemaDefinition) {
+	prefix := keyspace + "/"
+
+	for _, key := range m.udts.Keys() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+
+		u, ok := m.udts.Get(key)
+		if !ok {
+			continue
+		}
+
+		if schemaMentionsType(schema, u.Name) && !containsStr(u.DirectReferringTables, table) {
+			u.DirectReferringTables = append(u.DirectReferringTables, table)
+			m.udts.Set(key, u)
+		}
+	}
+}
+
+// unregisterTableUDTRefs drops a table from every UDT's referring-tables list in
+// the keyspace. The caller holds the lock.
+func (m *Mock) unregisterTableUDTRefs(keyspace, table string) {
+	prefix := keyspace + "/"
+
+	for _, key := range m.udts.Keys() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+
+		u, ok := m.udts.Get(key)
+		if !ok {
+			continue
+		}
+
+		if containsStr(u.DirectReferringTables, table) {
+			u.DirectReferringTables = removeStr(u.DirectReferringTables, table)
+			m.udts.Set(key, u)
+		}
+	}
+}
+
+func schemaMentionsType(s *ksdriver.SchemaDefinition, name string) bool {
+	for _, c := range s.AllColumns {
+		if typeMentions(c.Type, name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func removeStr(items []string, s string) []string {
+	out := items[:0:0]
+
+	for _, v := range items {
+		if v != s {
+			out = append(out, v)
+		}
+	}
+
+	return out
+}
+
 func cloneUDT(in *ksdriver.UDT) ksdriver.UDT {
 	u := *in
 	u.FieldDefinitions = append([]ksdriver.FieldDefinition(nil), u.FieldDefinitions...)
@@ -74,6 +156,10 @@ func (m *Mock) GetType(_ context.Context, keyspace, name string) (*ksdriver.UDT,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if !m.keyspaces.Has(keyspace) {
+		return nil, cerrors.Newf(cerrors.NotFound, "keyspace %q not found", keyspace)
+	}
+
 	u, ok := m.udts.Get(typeKey(keyspace, name))
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "type %q not found in keyspace %q", name, keyspace)
@@ -114,6 +200,10 @@ func (m *Mock) DeleteType(_ context.Context, keyspace, name string) (*ksdriver.U
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if !m.keyspaces.Has(keyspace) {
+		return nil, cerrors.Newf(cerrors.NotFound, "keyspace %q not found", keyspace)
+	}
+
 	key := typeKey(keyspace, name)
 
 	u, ok := m.udts.Get(key)
@@ -122,7 +212,7 @@ func (m *Mock) DeleteType(_ context.Context, keyspace, name string) (*ksdriver.U
 	}
 
 	if len(u.DirectReferringTables) > 0 || len(u.DirectParentTypes) > 0 {
-		return nil, cerrors.Newf(cerrors.FailedPrecondition, "type %q is still referenced", name)
+		return nil, cerrors.Newf(cerrors.FailedPrecondition, "type %q is still referenced by %v", name, u.DirectReferringTables)
 	}
 
 	m.udts.Delete(key)

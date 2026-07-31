@@ -1,7 +1,10 @@
 package keyspaces
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/keyspaces"
@@ -10,6 +13,46 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 )
+
+// extractRestoreTimestamp reads the request body, removes the epoch-number
+// restoreTimestamp field (which cannot decode into a time.Time), and returns
+// the resolved timestamp (defaulting to now when absent) plus the remaining
+// body for normal decoding. It writes an error and returns ok=false on failure.
+func extractRestoreTimestamp(w http.ResponseWriter, r *http.Request) (time.Time, []byte, bool) {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "SerializationException", "cannot read body: "+err.Error())
+		return time.Time{}, nil, false
+	}
+
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &fields); err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "SerializationException", "invalid JSON: "+err.Error())
+		return time.Time{}, nil, false
+	}
+
+	at := time.Now().UTC()
+
+	if tok, present := fields["restoreTimestamp"]; present {
+		var epoch float64
+		if err = json.Unmarshal(tok, &epoch); err != nil {
+			wire.WriteJSONError(w, http.StatusBadRequest, "SerializationException", "invalid restoreTimestamp")
+			return time.Time{}, nil, false
+		}
+
+		at = time.Unix(int64(epoch), 0).UTC()
+
+		delete(fields, "restoreTimestamp")
+	}
+
+	rest, err := json.Marshal(fields)
+	if err != nil {
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServerException", err.Error())
+		return time.Time{}, nil, false
+	}
+
+	return at, rest, true
+}
 
 func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 	var in keyspaces.CreateTableInput
@@ -187,17 +230,27 @@ func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) restoreTable(w http.ResponseWriter, r *http.Request) {
+	// restoreTimestamp arrives as an AWS-JSON epoch number, which can't decode
+	// into the SDK input's time.Time. Pull it out (it's optional — default to
+	// now) and decode the rest of the body normally.
+	restoreAt, body, ok := extractRestoreTimestamp(w, r)
+	if !ok {
+		return
+	}
+
 	var in keyspaces.RestoreTableInput
-	if !wire.DecodeJSON(w, r, &in) {
+	if err := json.Unmarshal(body, &in); err != nil {
+		wire.WriteJSONError(w, http.StatusBadRequest, "SerializationException", "invalid JSON: "+err.Error())
 		return
 	}
 
 	cfg := ksdriver.RestoreTableConfig{
-		SourceKeyspace: aws.ToString(in.SourceKeyspaceName),
-		SourceTable:    aws.ToString(in.SourceTableName),
-		TargetKeyspace: aws.ToString(in.TargetKeyspaceName),
-		TargetTable:    aws.ToString(in.TargetTableName),
-		Tags:           tagMap(in.TagsOverride),
+		SourceKeyspace:   aws.ToString(in.SourceKeyspaceName),
+		SourceTable:      aws.ToString(in.SourceTableName),
+		TargetKeyspace:   aws.ToString(in.TargetKeyspaceName),
+		TargetTable:      aws.ToString(in.TargetTableName),
+		RestoreTimestamp: restoreAt,
+		Tags:             tagMap(in.TagsOverride),
 	}
 
 	if in.CapacitySpecificationOverride != nil {
