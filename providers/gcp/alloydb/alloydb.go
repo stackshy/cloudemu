@@ -132,8 +132,6 @@ func (m *Mock) Region() string {
 	return m.opts.Region
 }
 
-// ---- resource-name + key helpers ----
-
 func (m *Mock) clusterName(id string) string {
 	return fmt.Sprintf("projects/%s/locations/%s/clusters/%s", m.opts.ProjectID, m.opts.Region, id)
 }
@@ -157,8 +155,6 @@ func splitInstanceKey(id string) (cluster, instance string, composite bool) {
 
 	return "", id, false
 }
-
-// ---- clone helpers (copy-on-read: a returned value must never alias the store) ----
 
 func copyTags(src map[string]string) map[string]string {
 	if src == nil {
@@ -220,8 +216,6 @@ func validName(kind, name string) error {
 
 	return nil
 }
-
-// ---- metrics ----
 
 // emitInstanceMetrics pushes AlloyDB utilization metrics on the
 // alloydb.googleapis.com namespace (emitted on instance create, like the

@@ -44,3 +44,14 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 func NewFromProvider(p *gcpprovider.Provider) *server.Server {
 	return New(DriversFrom(p))
 }
+
+// DriversFromWithAlloyDB is like DriversFrom but enables AlloyDB in place of
+// GKE: the two serve identical REST paths and cannot coexist on one server, so
+// this helper wires AlloyDB and nils GKE to avoid the ambiguity.
+func DriversFromWithAlloyDB(p *gcpprovider.Provider) Drivers {
+	d := DriversFrom(p)
+	d.AlloyDB = p.AlloyDB
+	d.GKE = nil
+
+	return d
+}

@@ -22,8 +22,8 @@ func (h *Handler) serveInstances(w http.ResponseWriter, r *http.Request, p *allo
 		return
 	}
 
-	if p.subAction == actionFailover || p.subAction == actionRestart {
-		h.instanceAction(w, r, p)
+	if p.subAction != "" {
+		h.serveInstanceCustomMethod(w, r, p)
 		return
 	}
 
@@ -37,6 +37,22 @@ func (h *Handler) serveInstances(w http.ResponseWriter, r *http.Request, p *allo
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", r.Method)
 	}
+}
+
+// serveInstanceCustomMethod handles the POST-only :failover/:restart actions;
+// a non-POST is 405 and an unknown verb 404 (rather than misrouting to CRUD).
+func (h *Handler) serveInstanceCustomMethod(w http.ResponseWriter, r *http.Request, p *alloyPath) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", r.Method)
+		return
+	}
+
+	if p.subAction != actionFailover && p.subAction != actionRestart {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported instance action: "+p.subAction)
+		return
+	}
+
+	h.instanceAction(w, r, p)
 }
 
 func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, p *alloyPath) {
@@ -126,7 +142,11 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, p *alloyPa
 }
 
 func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *alloyPath) {
-	adb, _ := h.alloyCap()
+	adb, ok := h.alloyCap()
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "UNIMPLEMENTED", "AlloyDB capability not wired")
+		return
+	}
 
 	var body alloydb.Instance
 	if !decodeJSON(w, r, &body) {

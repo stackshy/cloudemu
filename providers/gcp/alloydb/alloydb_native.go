@@ -19,6 +19,71 @@ func validInstanceType(t string) bool {
 	}
 }
 
+// validateInstanceConfig runs the lock-free validation for a new AlloyDB
+// instance: name, cluster reference, instance type, and READ_POOL node count.
+func validateInstanceConfig(cfg *rdsdriver.AlloyDBInstanceConfig, instType string) error {
+	if err := validName("instance", cfg.ID); err != nil {
+		return err
+	}
+
+	if cfg.ClusterID == "" {
+		return cerrors.New(cerrors.InvalidArgument, "clusterId is required")
+	}
+
+	if !validInstanceType(instType) {
+		return cerrors.Newf(cerrors.InvalidArgument, "invalid instance type %q", instType)
+	}
+
+	if instType == instanceTypeReadPool && cfg.NodeCount <= 0 {
+		return cerrors.New(cerrors.InvalidArgument, "READ_POOL instance requires nodeCount > 0")
+	}
+
+	return nil
+}
+
+// checkNewInstance runs the under-lock preconditions for a new instance and
+// returns its cluster. The caller holds m.mu.
+func (m *Mock) checkNewInstance(
+	cfg *rdsdriver.AlloyDBInstanceConfig, instType string,
+) (rdsdriver.Cluster, error) {
+	cluster, ok := m.clusters.Get(cfg.ClusterID)
+	if !ok {
+		return cluster, cerrors.Newf(cerrors.NotFound, "AlloyDB cluster %q not found", cfg.ClusterID)
+	}
+
+	if m.instances.Has(instanceKey(cfg.ClusterID, cfg.ID)) {
+		return cluster, cerrors.Newf(cerrors.AlreadyExists,
+			"AlloyDB instance %q already exists in cluster %q", cfg.ID, cfg.ClusterID)
+	}
+
+	if instType == instanceTypePrimary && m.clusterHasPrimary(cfg.ClusterID) {
+		return cluster, cerrors.Newf(cerrors.FailedPrecondition,
+			"AlloyDB cluster %q already has a PRIMARY instance", cfg.ClusterID)
+	}
+
+	if instType == instanceTypeSecondary && m.clusterExtra[cfg.ClusterID].ClusterType != clusterTypeSecondary {
+		return cluster, cerrors.Newf(cerrors.FailedPrecondition,
+			"SECONDARY instance requires a SECONDARY cluster; %q is %s",
+			cfg.ClusterID, m.clusterExtra[cfg.ClusterID].ClusterType)
+	}
+
+	return cluster, nil
+}
+
+// clusterHasPrimary reports whether the cluster already has a PRIMARY instance.
+// The caller holds m.mu.
+func (m *Mock) clusterHasPrimary(cluster string) bool {
+	prefix := cluster + "/"
+
+	for key, extra := range m.instanceExtra {
+		if hasPrefix(key, prefix) && extra.InstanceType == instanceTypePrimary {
+			return true
+		}
+	}
+
+	return false
+}
+
 // CreateAlloyDBCluster creates a PRIMARY cluster with AlloyDB-specific config.
 //
 //nolint:gocritic // cfg matches the AlloyDB capability signature.
@@ -154,35 +219,21 @@ func (m *Mock) PromoteCluster(_ context.Context, id string) (*rdsdriver.Cluster,
 func (m *Mock) CreateAlloyDBInstance(
 	_ context.Context, cfg rdsdriver.AlloyDBInstanceConfig,
 ) (*rdsdriver.Instance, error) {
-	if err := validName("instance", cfg.ID); err != nil {
-		return nil, err
-	}
-
-	if cfg.ClusterID == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "clusterId is required")
-	}
-
 	instType := cfg.InstanceType
 	if instType == "" {
 		instType = instanceTypePrimary
 	}
 
-	if !validInstanceType(instType) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid instance type %q", instType)
+	if err := validateInstanceConfig(&cfg, instType); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cluster, ok := m.clusters.Get(cfg.ClusterID)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "AlloyDB cluster %q not found", cfg.ClusterID)
-	}
-
-	key := instanceKey(cfg.ClusterID, cfg.ID)
-	if _, ok := m.instances.Get(key); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists,
-			"AlloyDB instance %q already exists in cluster %q", cfg.ID, cfg.ClusterID)
+	cluster, err := m.checkNewInstance(&cfg, instType)
+	if err != nil {
+		return nil, err
 	}
 
 	cpu := cfg.CPUCount
@@ -209,6 +260,7 @@ func (m *Mock) CreateAlloyDBInstance(
 		Tags:             copyTags(cfg.Tags),
 	}
 
+	key := instanceKey(cfg.ClusterID, cfg.ID)
 	m.instances.Set(key, inst)
 	m.instanceExtra[key] = instanceExtra{
 		InstanceType:     instType,
@@ -229,18 +281,20 @@ func (m *Mock) CreateAlloyDBInstance(
 	return &out, nil
 }
 
-// FailoverInstance triggers a failover of a REGIONAL primary instance. The
-// instance stays available; the action just verifies it exists.
+// FailoverInstance triggers a failover of the cluster's PRIMARY instance. Real
+// AlloyDB failover is valid only on a PRIMARY, so a READ_POOL/SECONDARY target
+// is rejected. The instance stays available otherwise.
 func (m *Mock) FailoverInstance(_ context.Context, clusterID, instanceID string) (*rdsdriver.Instance, error) {
-	return m.instanceAction(clusterID, instanceID)
+	return m.instanceAction(clusterID, instanceID, true)
 }
 
-// RestartInstance restarts an instance (the instances.restart action).
+// RestartInstance restarts an instance (the instances.restart action), valid on
+// any instance type.
 func (m *Mock) RestartInstance(_ context.Context, clusterID, instanceID string) (*rdsdriver.Instance, error) {
-	return m.instanceAction(clusterID, instanceID)
+	return m.instanceAction(clusterID, instanceID, false)
 }
 
-func (m *Mock) instanceAction(clusterID, instanceID string) (*rdsdriver.Instance, error) {
+func (m *Mock) instanceAction(clusterID, instanceID string, requirePrimary bool) (*rdsdriver.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -249,6 +303,11 @@ func (m *Mock) instanceAction(clusterID, instanceID string) (*rdsdriver.Instance
 	inst, ok := m.instances.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "AlloyDB instance %q not found in cluster %q", instanceID, clusterID)
+	}
+
+	if requirePrimary && m.instanceExtra[key].InstanceType != instanceTypePrimary {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition,
+			"failover is only valid on a PRIMARY instance; %q is %s", instanceID, m.instanceExtra[key].InstanceType)
 	}
 
 	out := cloneInstance(inst)

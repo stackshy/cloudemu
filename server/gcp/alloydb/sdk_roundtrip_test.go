@@ -303,3 +303,53 @@ func TestSDKAlloyDBCoverageExtras(t *testing.T) {
 		t.Fatalf("operations.get: %+v %v", op, err)
 	}
 }
+
+func TestSDKAlloyDBUserPatchAndGuards(t *testing.T) {
+	svc := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := svc.Projects.Locations.Clusters.Create(parent(), &alloydb.Cluster{DatabaseVersion: "POSTGRES_15"}).
+		ClusterId("c1").Context(ctx).Do(); err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+
+	if _, err := svc.Projects.Locations.Clusters.Users.Create(parent()+"/clusters/c1", &alloydb.User{}).
+		UserId("u1").Context(ctx).Do(); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	// Users.Patch (UpdateUser) is now routed (was 405).
+	got, err := svc.Projects.Locations.Clusters.Users.Patch(parent()+"/clusters/c1/users/u1",
+		&alloydb.User{Password: "newpass"}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Users.Patch: %v", err)
+	}
+
+	if got.Name == "" {
+		t.Error("patched user has empty name")
+	}
+
+	// 400 — READ_POOL instance without a node count.
+	_, err = svc.Projects.Locations.Clusters.Instances.Create(parent()+"/clusters/c1", &alloydb.Instance{
+		InstanceType: "READ_POOL",
+	}).InstanceId("bad").Context(ctx).Do()
+	assertStatus(t, err, 400)
+}
+
+func TestAlloyDBRawGetPromoteRejected(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion(testLocation), config.WithProjectID(testProject))
+	ts := httptest.NewServer(alloysrv.New(alloyprov.New(opts)))
+	t.Cleanup(ts.Close)
+
+	// A GET on the :promote custom method must not trigger the state change.
+	resp, err := ts.Client().Get(ts.URL + "/v1/" + parent() + "/clusters/c1:promote")
+	if err != nil {
+		t.Fatalf("GET :promote: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != 405 {
+		t.Errorf("GET :promote: status %d, want 405", resp.StatusCode)
+	}
+}

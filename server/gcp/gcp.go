@@ -119,6 +119,15 @@ type Drivers struct {
 //
 //nolint:gocritic,gocyclo // Drivers is all interface fields; one if-per-driver is the simplest expression and grows with the bundle.
 func New(d Drivers) *server.Server {
+	// AlloyDB and GKE claim the same /v1/projects/{p}/locations/{l}/clusters
+	// paths, so enabling both would silently shadow one. Fail fast rather than
+	// route ambiguously — use DriversFromWithAlloyDB to enable AlloyDB in place
+	// of GKE.
+	if d.AlloyDB != nil && d.GKE != nil {
+		panic("gcp server: AlloyDB and GKE share REST paths and cannot both be enabled; " +
+			"use DriversFromWithAlloyDB to enable AlloyDB in place of GKE")
+	}
+
 	srv := server.New()
 
 	if d.Compute != nil {

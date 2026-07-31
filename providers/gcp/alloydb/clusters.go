@@ -73,7 +73,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 	defer m.mu.RUnlock()
 
 	if len(ids) == 0 {
-		all := m.clusters.All()
+		all := m.clusters.SortedValues()
 		out := make([]rdsdriver.Cluster, 0, len(all))
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing.
@@ -148,8 +148,22 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 	m.clusters.Delete(id)
 	delete(m.clusterExtra, id)
 	m.deleteClusterChildren(id)
+	m.detachSecondaries(id)
 
 	return nil
+}
+
+// detachSecondaries clears the primary link on any SECONDARY cluster that
+// pointed at the just-deleted primary, so a live secondary never advertises a
+// ghost primary (the replica-linkage class from #303). The caller holds the
+// write lock.
+func (m *Mock) detachSecondaries(primaryID string) {
+	for cid, extra := range m.clusterExtra {
+		if extra.PrimaryCluster == primaryID {
+			extra.PrimaryCluster = ""
+			m.clusterExtra[cid] = extra
+		}
+	}
 }
 
 // deleteClusterChildren removes instances, users and databases under a cluster.
@@ -191,8 +205,6 @@ func (*Mock) StartCluster(_ context.Context, _ string) error {
 func (*Mock) StopCluster(_ context.Context, _ string) error {
 	return cerrors.New(cerrors.InvalidArgument, "AlloyDB does not support stopping clusters")
 }
-
-// ---- Backups (cluster-scoped snapshots) ----
 
 // CreateClusterSnapshot creates an on-demand backup of a cluster.
 func (m *Mock) CreateClusterSnapshot(

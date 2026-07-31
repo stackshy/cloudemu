@@ -96,8 +96,21 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, _ *alloyP
 }
 
 func (h *Handler) serveClusterItem(w http.ResponseWriter, r *http.Request, p *alloyPath) {
-	if p.clusterAction == actionPromote {
+	// Custom methods are POST-only; a non-POST (e.g. GET .../{c}:promote) must
+	// not trigger the state change, and an unknown verb is a 404.
+	if p.clusterAction != "" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", r.Method)
+			return
+		}
+
+		if p.clusterAction != actionPromote {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported cluster action: "+p.clusterAction)
+			return
+		}
+
 		h.promoteCluster(w, r, p)
+
 		return
 	}
 
@@ -136,7 +149,11 @@ func (h *Handler) getCluster(w http.ResponseWriter, r *http.Request, p *alloyPat
 }
 
 func (h *Handler) patchCluster(w http.ResponseWriter, r *http.Request, p *alloyPath) {
-	adb, _ := h.alloyCap()
+	adb, ok := h.alloyCap()
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "UNIMPLEMENTED", "AlloyDB capability not wired")
+		return
+	}
 
 	var body alloydb.Cluster
 	if !decodeJSON(w, r, &body) {

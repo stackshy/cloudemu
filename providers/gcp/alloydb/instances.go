@@ -37,6 +37,12 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 			"AlloyDB instance %q already exists in cluster %q", cfg.ID, cfg.ClusterID)
 	}
 
+	// The base create always makes a PRIMARY; a cluster may have at most one.
+	if m.clusterHasPrimary(cfg.ClusterID) {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition,
+			"AlloyDB cluster %q already has a PRIMARY instance", cfg.ClusterID)
+	}
+
 	zone := cfg.AvailabilityZone
 	if zone == "" {
 		zone = m.opts.Region
@@ -119,7 +125,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 	defer m.mu.RUnlock()
 
 	if len(ids) == 0 {
-		all := m.instances.All()
+		all := m.instances.SortedValues()
 		out := make([]rdsdriver.Instance, 0, len(all))
 
 		//nolint:gocritic // map values are large structs; copy is unavoidable when materializing.
@@ -231,8 +237,6 @@ func (*Mock) StartInstance(_ context.Context, _ string) error {
 func (*Mock) StopInstance(_ context.Context, _ string) error {
 	return cerrors.New(cerrors.InvalidArgument, "AlloyDB does not support stopping instances")
 }
-
-// ---- Instance-level snapshots: unsupported (AlloyDB backs up clusters) ----
 
 // CreateSnapshot is unsupported — AlloyDB backups are cluster-scoped.
 func (*Mock) CreateSnapshot(_ context.Context, _ rdsdriver.SnapshotConfig) (*rdsdriver.Snapshot, error) {

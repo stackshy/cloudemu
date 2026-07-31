@@ -25,8 +25,6 @@ func (m *Mock) requireCluster(cluster string) error {
 	return nil
 }
 
-// ---- Users ----
-
 // CreateUser adds a database user to a cluster.
 func (m *Mock) CreateUser(_ context.Context, cfg rdsdriver.UserConfig) (*rdsdriver.User, error) {
 	if err := validName("user", cfg.Name); err != nil {
@@ -127,8 +125,6 @@ func (m *Mock) DeleteUser(_ context.Context, cluster, name string) error {
 
 	return nil
 }
-
-// ---- Databases ----
 
 // CreateDatabase adds a logical database to a cluster.
 func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (*rdsdriver.Database, error) {

@@ -93,8 +93,6 @@ func (h *Handler) usersCap() (rdsdriver.Users, bool) {
 	return c, ok
 }
 
-// ---- driver → SDK wire conversions ----
-
 func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClusterInfo) *alloydb.Cluster {
 	out := &alloydb.Cluster{
 		Name:            c.ARN,
@@ -145,9 +143,12 @@ func toWireBackup(s *rdsdriver.ClusterSnapshot, backupType string) *alloydb.Back
 	}
 }
 
-func toWireUser(u *rdsdriver.User) *alloydb.User {
+func toWireUser(p *alloyPath, u *rdsdriver.User) *alloydb.User {
+	name := "projects/" + p.project + "/locations/" + p.location +
+		"/clusters/" + u.Instance + "/users/" + u.Name
+
 	return &alloydb.User{
-		Name:     u.Name,
+		Name:     name,
 		UserType: "ALLOYDB_BUILT_IN",
 	}
 }
