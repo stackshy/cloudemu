@@ -1010,6 +1010,83 @@ base64 offset token; a malformed token yields `InvalidParameterValueException`.
 
 ---
 
+## 11b. Keyspaces (AWS)
+
+**Driver interface:** `services/keyspaces/driver/driver.go`
+**AWS:** Amazon Keyspaces (for Apache Cassandra) | **Azure:** — | **GCP:** —
+
+A managed, Cassandra-compatible wide-column service. Control-plane only (CQL
+data operations are out of scope), so it has its own driver rather than reusing
+the relational/cache drivers. Served as AWS JSON 1.0 on the `KeyspacesService.`
+target prefix (`server/aws/keyspaces`); a real
+`aws-sdk-go-v2/service/keyspaces` client with a custom endpoint works unchanged.
+Because Keyspaces models its members in lowerCamelCase, the server lowercases
+response keys so the SDK's case-sensitive deserializer decodes them.
+
+### Keyspaces
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateKeyspace` | `(ctx, CreateKeyspaceConfig) (*Keyspace, error)` |
+| `GetKeyspace` | `(ctx, name) (*Keyspace, error)` |
+| `ListKeyspaces` | `(ctx) ([]Keyspace, error)` |
+| `UpdateKeyspace` | `(ctx, name, addRegions) (*Keyspace, error)` |
+| `DeleteKeyspace` | `(ctx, name) error` |
+
+Single- or multi-region replication (`ReplicationSpecification`); a keyspace
+must be empty to delete.
+
+### Tables
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateTable` | `(ctx, CreateTableConfig) (*Table, error)` |
+| `GetTable` | `(ctx, keyspace, table) (*Table, error)` |
+| `ListTables` | `(ctx, keyspace) ([]Table, error)` |
+| `UpdateTable` | `(ctx, UpdateTableConfig) (*Table, error)` |
+| `DeleteTable` | `(ctx, keyspace, table) error` |
+| `RestoreTable` | `(ctx, RestoreTableConfig) (*Table, error)` |
+
+Full `SchemaDefinition` (partition/clustering keys, static & regular columns),
+`CapacitySpecification` (PAY_PER_REQUEST / PROVISIONED + RCU/WCU), encryption,
+point-in-time recovery, TTL, client-side timestamps, CDC, comment, and
+multi-region replica specs. `RestoreTable` is point-in-time recovery into a new
+table.
+
+### User-Defined Types
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateType` | `(ctx, keyspace, name, fields) (*UDT, error)` |
+| `GetType` | `(ctx, keyspace, name) (*UDT, error)` |
+| `ListTypes` | `(ctx, keyspace) ([]UDT, error)` |
+| `DeleteType` | `(ctx, keyspace, name) (*UDT, error)` |
+
+### Tags
+
+| Operation | Signature |
+|-----------|-----------|
+| `TagResource` | `(ctx, arn, tags) error` |
+| `UntagResource` | `(ctx, arn, keys) error` |
+| `ListTagsForResource` | `(ctx, arn) ([]Tag, error)` |
+
+### Auto Scaling (optional capability — `AutoScaling`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `GetTableAutoScalingSettings` | `(ctx, keyspace, table) (*Table, error)` |
+
+Target-tracking auto scaling for PROVISIONED tables, discovered by type
+assertion; errors for PAY_PER_REQUEST tables (matching AWS).
+
+**Pagination:** `ListKeyspaces`/`ListTables`/`ListTypes`/`ListTagsForResource`
+honor `MaxResults`/`NextToken` (server-side opaque base64 offset token over the
+deterministic result set; a malformed token yields `ValidationException`).
+
+**Total: 18 operations (+1 optional)**
+
+---
+
 ## 12. Secrets
 
 **Driver interface:** `services/secrets/driver/driver.go`
@@ -1984,6 +2061,7 @@ still sees success.
 | Message Queue | 14 |
 | Cache | 16 (+7 optional) |
 | MemoryDB — AWS (Redis/Valkey control plane) | 33 (+13 optional) |
+| Keyspaces — AWS (Cassandra control plane) | 18 (+1 optional) |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
@@ -2003,7 +2081,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1310** (+137 optional) |
+| **Grand Total** | **1328** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

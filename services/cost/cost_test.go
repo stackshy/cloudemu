@@ -37,6 +37,20 @@ func TestTracker_MemoryDBRates(t *testing.T) {
 	assert.InDelta(t, want, tracker.CostByService()["memorydb"], 1e-9)
 }
 
+func TestTracker_KeyspacesRates(t *testing.T) {
+	tracker := New()
+
+	// Two created tables + one restore priced at the table-hour rate; keyspace
+	// and type creation are free.
+	tracker.Record("keyspaces", "CreateTable", 2)
+	tracker.Record("keyspaces", "RestoreTable", 1)
+	tracker.Record("keyspaces", "CreateKeyspace", 1)
+	tracker.Record("keyspaces", "CreateType", 1)
+
+	want := 0.01 * 3
+	assert.InDelta(t, want, tracker.CostByService()["keyspaces"], 1e-9)
+}
+
 func TestTracker_Record_And_TotalCost(t *testing.T) {
 	tests := []struct {
 		name    string
