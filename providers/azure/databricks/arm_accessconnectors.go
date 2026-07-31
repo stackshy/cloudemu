@@ -15,6 +15,12 @@ import (
 
 const accessConnectorsType = "accessConnectors"
 
+// emulatorTenantID is the single Azure AD directory (tenant) that all
+// system-assigned identities in this emulator belong to. Real Azure has one
+// tenant per directory, so this is a fixed emulator-wide value rather than a
+// per-resource synthesized GUID.
+const emulatorTenantID = "11111111-1111-1111-1111-111111111111"
+
 // CreateOrUpdateAccessConnector creates or updates an access connector,
 // completing provisioning synchronously (store-and-echo).
 func (m *Mock) CreateOrUpdateAccessConnector(
@@ -37,7 +43,7 @@ func (m *Mock) CreateOrUpdateAccessConnector(
 		// immutable in real Azure, so it is left untouched.
 		updated := *existing
 		updated.Tags = copyMap(cfg.Tags)
-		updated.Identity = resolveIdentity(cfg.Identity, cfg.Name)
+		updated.Identity = resolveIdentity(cfg.Identity, cfg.ResourceGroup, cfg.Name)
 		m.accessConnectors.Set(k, &updated)
 
 		return cloneAccessConnector(&updated), nil
@@ -49,7 +55,7 @@ func (m *Mock) CreateOrUpdateAccessConnector(
 		ResourceGroup:     cfg.ResourceGroup,
 		Location:          cfg.Location,
 		Tags:              copyMap(cfg.Tags),
-		Identity:          resolveIdentity(cfg.Identity, cfg.Name),
+		Identity:          resolveIdentity(cfg.Identity, cfg.ResourceGroup, cfg.Name),
 		ProvisioningState: driver.StateSucceeded,
 		CreatedAt:         m.opts.Clock.Now().UTC().Format(time.RFC3339),
 	}
@@ -89,7 +95,7 @@ func (m *Mock) UpdateAccessConnector(
 	}
 
 	if identity != nil {
-		updated.Identity = resolveIdentity(identity, name)
+		updated.Identity = resolveIdentity(identity, resourceGroup, name)
 	}
 
 	m.accessConnectors.Set(k, &updated)
@@ -144,7 +150,7 @@ func sortAccessConnectors(in []driver.AccessConnector) {
 // resolveIdentity normalizes an incoming managed identity: for a system-assigned
 // identity it synthesizes deterministic principal/tenant GUIDs (as Azure does on
 // assignment); a nil or "None" identity resolves to nil.
-func resolveIdentity(in *driver.ManagedIdentity, name string) *driver.ManagedIdentity {
+func resolveIdentity(in *driver.ManagedIdentity, resourceGroup, name string) *driver.ManagedIdentity {
 	if in == nil || in.Type == "" || strings.EqualFold(in.Type, "None") {
 		return nil
 	}
@@ -155,8 +161,12 @@ func resolveIdentity(in *driver.ManagedIdentity, name string) *driver.ManagedIde
 	}
 
 	if strings.Contains(strings.ToLower(in.Type), "systemassigned") {
-		out.PrincipalID = synthGUID("principal/" + name)
-		out.TenantID = synthGUID("tenant/" + name)
+		// PrincipalID is per-resource: keying on (resource group, name) means two
+		// connectors with the same name in different RGs get distinct principals,
+		// while the value stays stable across gets/restarts for the same resource.
+		out.PrincipalID = synthGUID("principal/" + resourceGroup + "/" + name)
+		// TenantID is the emulator's single directory (one tenant per directory).
+		out.TenantID = emulatorTenantID
 	}
 
 	return out

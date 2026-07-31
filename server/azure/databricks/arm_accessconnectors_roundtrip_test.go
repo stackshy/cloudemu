@@ -249,3 +249,44 @@ func TestSDKAccessConnectorNoIdentity(t *testing.T) {
 		t.Fatalf("expected no identity on Get for Type=None, got %+v", got.Identity)
 	}
 }
+
+// TestSDKAccessConnectorPatchIdentityToNone SDK-round-trips the identity
+// transition the unit tests cover only in-process: a PATCH with identity type
+// None clears a previously system-assigned identity.
+func TestSDKAccessConnectorPatchIdentityToNone(t *testing.T) {
+	client := newAccessConnectorsClient(t)
+	ctx := context.Background()
+
+	const name = "conn-none"
+
+	created := createAccessConnector(t, client, name, armdatabricks.AccessConnector{
+		Location: to.Ptr("eastus"),
+		Identity: &armdatabricks.ManagedServiceIdentity{
+			Type: to.Ptr(armdatabricks.ManagedServiceIdentityTypeSystemAssigned),
+		},
+	})
+
+	if created.Identity == nil || created.Identity.PrincipalID == nil || *created.Identity.PrincipalID == "" {
+		t.Fatalf("expected a system-assigned identity on create, got %+v", created.Identity)
+	}
+
+	poller, err := client.BeginUpdate(ctx, testRG, name, armdatabricks.AccessConnectorUpdate{
+		Identity: &armdatabricks.ManagedServiceIdentity{
+			Type: to.Ptr(armdatabricks.ManagedServiceIdentityTypeNone),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate: %v", err)
+	}
+
+	updated, err := poller.PollUntilDone(ctx, nil)
+	if err != nil {
+		t.Fatalf("update PollUntilDone: %v", err)
+	}
+
+	// None clears the identity: the emulator resolves type None to no identity,
+	// so the ARM response omits the identity block.
+	if updated.Identity != nil {
+		t.Fatalf("expected identity cleared after PATCH None, got %+v", updated.Identity)
+	}
+}

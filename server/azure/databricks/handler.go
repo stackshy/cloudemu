@@ -66,8 +66,9 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.Provider == providerName &&
-		(rp.ResourceType == resourceType || rp.ResourceType == accessConnectorsType)
+	return strings.EqualFold(rp.Provider, providerName) &&
+		(strings.EqualFold(rp.ResourceType, resourceType) ||
+			strings.EqualFold(rp.ResourceType, accessConnectorsType))
 }
 
 // isOperationsPath reports whether urlPath is the provider operations list path
@@ -91,10 +92,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch rp.ResourceType {
-	case accessConnectorsType:
+	switch {
+	case strings.EqualFold(rp.ResourceType, accessConnectorsType):
 		h.serveAccessConnectors(w, r, &rp)
-	case resourceType:
+	case strings.EqualFold(rp.ResourceType, resourceType):
 		h.serveWorkspaces(w, r, &rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "unsupported resource type")
@@ -138,14 +139,14 @@ func (h *Handler) serveWorkspaces(w http.ResponseWriter, r *http.Request, rp *az
 
 // serveWorkspaceChild routes a workspace sub-resource collection.
 func (h *Handler) serveWorkspaceChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	switch rp.SubResource {
-	case subPEC:
+	switch {
+	case strings.EqualFold(rp.SubResource, subPEC):
 		h.servePEC(w, r, rp)
-	case subPLR:
+	case strings.EqualFold(rp.SubResource, subPLR):
 		h.servePLR(w, r, rp)
-	case subPeering:
+	case strings.EqualFold(rp.SubResource, subPeering):
 		h.servePeering(w, r, rp)
-	case subOutbound:
+	case strings.EqualFold(rp.SubResource, subOutbound):
 		h.serveOutbound(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "unsupported sub-resource")

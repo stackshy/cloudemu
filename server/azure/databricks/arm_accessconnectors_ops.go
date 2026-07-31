@@ -3,6 +3,7 @@ package databricks
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
@@ -87,13 +88,17 @@ func (h *Handler) patchAccessConnector(w http.ResponseWriter, r *http.Request, r
 }
 
 func (h *Handler) deleteAccessConnector(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.dbx.DeleteAccessConnector(r.Context(), rp.ResourceGroup, rp.ResourceName); err != nil {
+	// ARM DELETE is idempotent: a missing resource is the caller's desired end
+	// state, so a NotFound from the driver still returns 204 (teardown retries
+	// and delete-then-delete must not fail on the second pass).
+	err := h.dbx.DeleteAccessConnector(r.Context(), rp.ResourceGroup, rp.ResourceName)
+	if err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) listAccessConnectors(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

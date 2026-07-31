@@ -1621,7 +1621,7 @@ static catalog of the RBAC operations the namespace exposes.
 | `SetPermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
 | `UpdatePermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
 
-**Total: 52 operations**
+**Total: 70 operations**
 
 ---
 
@@ -1906,7 +1906,7 @@ still sees success.
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI — AWS Bedrock (control plane + runtime) | 65 |
 | Generative AI — AWS Bedrock Agent (control plane + runtime) | 32 |
-| Databricks — Azure (control + data plane) | 52 |
+| Databricks — Azure (control + data plane) | 70 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |

@@ -3,6 +3,7 @@ package databricks
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 )
@@ -69,14 +70,17 @@ func (h *Handler) getPEC(w http.ResponseWriter, r *http.Request, rp *azurearm.Re
 }
 
 func (h *Handler) deletePEC(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	// ARM DELETE is idempotent: a missing resource is the caller's desired end
+	// state, so a NotFound from the driver still returns 204 (teardown retries
+	// and delete-then-delete must not fail on the second pass).
 	err := h.dbx.DeletePrivateEndpointConnection(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
-	if err != nil {
+	if err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) listPEC(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -210,13 +214,17 @@ func (h *Handler) getPeering(w http.ResponseWriter, r *http.Request, rp *azurear
 }
 
 func (h *Handler) deletePeering(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.dbx.DeleteVNetPeering(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName); err != nil {
+	// ARM DELETE is idempotent: a missing resource is the caller's desired end
+	// state, so a NotFound from the driver still returns 204 (teardown retries
+	// and delete-then-delete must not fail on the second pass).
+	err := h.dbx.DeleteVNetPeering(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
+	if err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) listPeering(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
