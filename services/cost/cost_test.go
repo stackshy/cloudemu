@@ -22,6 +22,21 @@ func TestTracker_RelationalDBRates(t *testing.T) {
 	assert.InDelta(t, want, tracker.CostByService()["relationaldb"], 1e-9)
 }
 
+func TestTracker_MemoryDBRates(t *testing.T) {
+	tracker := New()
+
+	// Two clusters priced at the node-hour rate; a snapshot, a copy, a
+	// multi-region grouping and a reserved-node purchase are all free.
+	tracker.Record("memorydb", "CreateCluster", 2)
+	tracker.Record("memorydb", "CreateSnapshot", 1)
+	tracker.Record("memorydb", "CopySnapshot", 1)
+	tracker.Record("memorydb", "CreateMultiRegionCluster", 1)
+	tracker.Record("memorydb", "PurchaseReservedNodesOffering", 1)
+
+	want := 0.226 * 2
+	assert.InDelta(t, want, tracker.CostByService()["memorydb"], 1e-9)
+}
+
 func TestTracker_Record_And_TotalCost(t *testing.T) {
 	tests := []struct {
 		name    string
