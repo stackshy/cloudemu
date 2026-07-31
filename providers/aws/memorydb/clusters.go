@@ -34,6 +34,8 @@ func cloneCluster(in *mdbdriver.Cluster) mdbdriver.Cluster {
 const (
 	maxShardsPerCluster = 500
 	maxReplicasPerShard = 5
+	// minNodesForFailover is a primary plus at least one replica.
+	minNodesForFailover = 2
 )
 
 // validateShardTopology bounds caller-supplied shard/replica counts to the
@@ -152,6 +154,63 @@ func (m *Mock) validateClusterRefs(aclName, paramGroup, subnetGroup string) erro
 	return nil
 }
 
+func buildSecurityGroups(ids []string) []mdbdriver.SecurityGroupMembership {
+	sgs := make([]mdbdriver.SecurityGroupMembership, 0, len(ids))
+	for _, id := range ids {
+		sgs = append(sgs, mdbdriver.SecurityGroupMembership{SecurityGroupID: id, Status: mdbdriver.StatusAvailable})
+	}
+
+	return sgs
+}
+
+// clusterShape holds the resolvable cluster dimensions that a restore may fill
+// in from the source snapshot when the caller leaves them unset.
+type clusterShape struct {
+	numShards   int
+	replicas    int
+	nodeType    string
+	subnetGroup string
+	pg          string
+	tls         bool
+}
+
+// applySnapshotShape fills any unset shape field from the named snapshot's
+// stored configuration. Referenced subnet/parameter groups are honored only if
+// they still exist. The caller holds the lock.
+func (m *Mock) applySnapshotShape(cfg *mdbdriver.CreateClusterConfig, shape *clusterShape) error {
+	snap, ok := m.snapshots.Get(cfg.SnapshotName)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "snapshot %q not found", cfg.SnapshotName)
+	}
+
+	sc := snap.ClusterConfiguration
+	if cfg.NumShards == 0 {
+		shape.numShards = sc.NumShards
+	}
+
+	if cfg.NumReplicasPerShard == 0 {
+		shape.replicas = sc.ReplicasPerShard
+	}
+
+	if cfg.NodeType == "" {
+		shape.nodeType = orDefault(sc.NodeType, shape.nodeType)
+	}
+
+	if cfg.SubnetGroupName == "" && m.subnetGroups.Has(sc.SubnetGroupName) {
+		shape.subnetGroup = sc.SubnetGroupName
+	}
+
+	if cfg.ParameterGroupName == "" && m.parameterGroups.Has(sc.ParameterGroupName) {
+		shape.pg = sc.ParameterGroupName
+	}
+
+	if !cfg.TLSEnabled {
+		shape.tls = sc.TLSEnabled
+	}
+
+	return nil
+}
+
 // CreateCluster creates a MemoryDB cluster.
 //
 //nolint:gocritic // cfg is large but matches the driver signature.
@@ -171,59 +230,56 @@ func (m *Mock) CreateCluster(_ context.Context, cfg mdbdriver.CreateClusterConfi
 		return nil, err
 	}
 
-	numShards := cfg.NumShards
+	shape := clusterShape{
+		numShards:   cfg.NumShards,
+		replicas:    cfg.NumReplicasPerShard,
+		nodeType:    orDefault(cfg.NodeType, defaultNodeType),
+		subnetGroup: cfg.SubnetGroupName,
+		pg:          orDefault(cfg.ParameterGroupName, "default.memorydb-redis7"),
+		tls:         cfg.TLSEnabled,
+	}
 	engine := orDefault(cfg.Engine, defaultEngine)
 	engineVersion := orDefault(cfg.EngineVersion, defaultEngineVersion)
-	nodeType := orDefault(cfg.NodeType, defaultNodeType)
 	acl := orDefault(cfg.ACLName, "open-access")
-	pg := orDefault(cfg.ParameterGroupName, "default.memorydb-redis7")
 
-	// Restore-from-snapshot inherits the source's shape.
 	if cfg.SnapshotName != "" {
-		snap, ok := m.snapshots.Get(cfg.SnapshotName)
-		if !ok {
-			return nil, cerrors.Newf(cerrors.NotFound, "snapshot %q not found", cfg.SnapshotName)
-		}
-
-		if numShards == 0 {
-			numShards = snap.ClusterConfiguration.NumShards
-		}
-
-		if cfg.NodeType == "" {
-			nodeType = snap.ClusterConfiguration.NodeType
+		if err := m.applySnapshotShape(&cfg, &shape); err != nil {
+			return nil, err
 		}
 	}
 
-	if err := validateShardTopology(numShards, cfg.NumReplicasPerShard); err != nil {
+	if err := validateShardTopology(shape.numShards, shape.replicas); err != nil {
 		return nil, err
 	}
 
-	sgs := make([]mdbdriver.SecurityGroupMembership, 0, len(cfg.SecurityGroupIDs))
-	for _, id := range cfg.SecurityGroupIDs {
-		sgs = append(sgs, mdbdriver.SecurityGroupMembership{SecurityGroupID: id, Status: mdbdriver.StatusAvailable})
+	if cfg.MultiRegionClusterName != "" && !m.multiRegion.Has(cfg.MultiRegionClusterName) {
+		return nil, cerrors.Newf(cerrors.InvalidArgument,
+			"multi-region cluster %q not found", cfg.MultiRegionClusterName)
 	}
+
+	sgs := buildSecurityGroups(cfg.SecurityGroupIDs)
 
 	cluster := mdbdriver.Cluster{
 		Name:                 cfg.Name,
 		ARN:                  m.arn("cluster", cfg.Name),
 		Description:          cfg.Description,
 		Status:               mdbdriver.StatusAvailable,
-		NodeType:             nodeType,
+		NodeType:             shape.nodeType,
 		Engine:               engine,
 		EngineVersion:        engineVersion,
 		EnginePatchVersion:   engineVersion + ".0",
-		NumberOfShards:       maxInt(numShards, 1),
+		NumberOfShards:       maxInt(shape.numShards, 1),
 		ACLName:              acl,
-		ParameterGroupName:   pg,
+		ParameterGroupName:   shape.pg,
 		ParameterGroupStatus: mdbdriver.StatusAvailable,
-		SubnetGroupName:      cfg.SubnetGroupName,
+		SubnetGroupName:      shape.subnetGroup,
 		SecurityGroups:       sgs,
-		Shards:               m.buildShards(cfg.Name, numShards, cfg.NumReplicasPerShard),
+		Shards:               m.buildShards(cfg.Name, shape.numShards, shape.replicas),
 		ClusterEndpoint: mdbdriver.Endpoint{
 			Address: fmt.Sprintf("clustercfg.%s.memorydb.%s.amazonaws.com", cfg.Name, m.opts.Region),
 			Port:    portOr(cfg.Port),
 		},
-		TLSEnabled:              cfg.TLSEnabled,
+		TLSEnabled:              shape.tls,
 		KmsKeyID:                cfg.KmsKeyID,
 		MaintenanceWindow:       orDefault(cfg.MaintenanceWindow, "sun:23:00-mon:01:30"),
 		SnapshotWindow:          orDefault(cfg.SnapshotWindow, "05:00-06:00"),
@@ -231,7 +287,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg mdbdriver.CreateClusterConfi
 		SnsTopicARN:             cfg.SnsTopicARN,
 		AutoMinorVersionUpgrade: cfg.AutoMinorVersionUpgrade,
 		DataTiering:             cfg.DataTiering,
-		AvailabilityMode:        availabilityMode(cfg.NumReplicasPerShard),
+		AvailabilityMode:        availabilityMode(shape.replicas),
 		NetworkType:             orDefault(cfg.NetworkType, "ipv4"),
 		IPDiscovery:             orDefault(cfg.IPDiscovery, "ipv4"),
 		MultiRegionClusterName:  cfg.MultiRegionClusterName,
@@ -241,6 +297,11 @@ func (m *Mock) CreateCluster(_ context.Context, cfg mdbdriver.CreateClusterConfi
 
 	m.clusters.Set(cfg.Name, cluster)
 	m.linkACLCluster(acl, cfg.Name, true)
+
+	if cfg.MultiRegionClusterName != "" {
+		m.registerMRCMember(cfg.MultiRegionClusterName, cfg.Name, cluster.ARN)
+	}
+
 	m.emitClusterMetrics(cfg.Name)
 	m.recordClusterEvent(cfg.Name, "Cluster created")
 
@@ -273,7 +334,7 @@ func (m *Mock) UpdateCluster(_ context.Context, cfg mdbdriver.UpdateClusterConfi
 
 	if cfg.ACLName != "" {
 		if !m.acls.Has(cfg.ACLName) {
-			return nil, cerrors.Newf(cerrors.NotFound, "ACL %q not found", cfg.ACLName)
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "ACL %q not found", cfg.ACLName)
 		}
 
 		m.linkACLCluster(c.ACLName, cfg.Name, false)
@@ -283,7 +344,7 @@ func (m *Mock) UpdateCluster(_ context.Context, cfg mdbdriver.UpdateClusterConfi
 
 	if cfg.ParameterGroupName != "" {
 		if !m.parameterGroups.Has(cfg.ParameterGroupName) {
-			return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", cfg.ParameterGroupName)
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "parameter group %q not found", cfg.ParameterGroupName)
 		}
 
 		c.ParameterGroupName = cfg.ParameterGroupName
@@ -348,11 +409,20 @@ func (m *Mock) DeleteCluster(_ context.Context, name, finalSnapshotName string) 
 	}
 
 	if finalSnapshotName != "" {
+		if m.snapshots.Has(finalSnapshotName) {
+			return nil, cerrors.Newf(cerrors.AlreadyExists, "snapshot %q already exists", finalSnapshotName)
+		}
+
 		m.snapshots.Set(finalSnapshotName, m.snapshotFromCluster(finalSnapshotName, &c, "manual", nil))
 	}
 
 	m.clusters.Delete(name)
 	m.linkACLCluster(c.ACLName, name, false)
+
+	if c.MultiRegionClusterName != "" {
+		m.unregisterMRCMember(c.MultiRegionClusterName, name)
+	}
+
 	m.recordClusterEvent(name, "Cluster deleted")
 
 	c.Status = mdbdriver.StatusDeleting
@@ -372,20 +442,20 @@ func (m *Mock) FailoverShard(_ context.Context, clusterName, shardName string) (
 		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", clusterName)
 	}
 
-	found := false
+	shard := -1
 
 	for i := range c.Shards {
 		if c.Shards[i].Name == shardName {
-			found = true
+			shard = i
 			break
 		}
 	}
 
-	if !found {
+	if shard < 0 {
 		return nil, cerrors.Newf(cerrors.NotFound, "shard %q not found in cluster %q", shardName, clusterName)
 	}
 
-	if len(c.Shards) > 0 && c.Shards[0].NumberOfNodes < 2 {
+	if c.Shards[shard].NumberOfNodes < minNodesForFailover {
 		return nil, cerrors.New(cerrors.FailedPrecondition, "failover requires at least one replica in the shard")
 	}
 

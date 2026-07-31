@@ -249,8 +249,10 @@ type ClusterConfiguration struct {
 	SnapshotWindow         string
 	TopicARN               string
 	NumShards              int
+	ReplicasPerShard       int
 	Port                   int
 	SnapshotRetentionLimit int
+	TLSEnabled             bool
 }
 
 // Snapshot is a point-in-time copy of a cluster.
@@ -443,4 +445,33 @@ type ReservedNodes interface {
 	DescribeReservedNodes(ctx context.Context) ([]ReservedNode, error)
 	DescribeReservedNodesOfferings(ctx context.Context) ([]ReservedNodesOffering, error)
 	PurchaseReservedNodesOffering(ctx context.Context, offeringID, reservationID string, nodeCount int) (*ReservedNode, error)
+}
+
+// ServiceUpdate is a maintenance/security update available for clusters.
+type ServiceUpdate struct {
+	ClusterName         string
+	ServiceUpdateName   string
+	ReleaseDate         time.Time
+	Description         string
+	Status              string
+	Type                string
+	Engine              string
+	NodesUpdated        string
+	AutoUpdateStartDate time.Time
+}
+
+// UnprocessedCluster reports a cluster a batch update could not be applied to.
+type UnprocessedCluster struct {
+	ClusterName  string
+	ErrorType    string
+	ErrorMessage string
+}
+
+// ServiceUpdates is an OPTIONAL capability (fleet maintenance), discovered by
+// type assertion.
+type ServiceUpdates interface {
+	DescribeServiceUpdates(ctx context.Context, serviceUpdateName string, clusterNames, status []string) ([]ServiceUpdate, error)
+	BatchUpdateCluster(
+		ctx context.Context, clusterNames []string, serviceUpdateName string,
+	) (processed []Cluster, unprocessed []UnprocessedCluster, err error)
 }

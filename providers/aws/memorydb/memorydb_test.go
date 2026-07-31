@@ -129,6 +129,124 @@ func TestClusterReferenceValidation(t *testing.T) {
 	}
 }
 
+func TestMultiRegionParentLinkage(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	mrc, err := m.CreateMultiRegionCluster(ctx, mdbdriver.CreateMultiRegionClusterConfig{NameSuffix: "g", NumShards: 1})
+	requireNoError(t, err)
+
+	// A cluster referencing a non-existent MRC is rejected.
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "bad", MultiRegionClusterName: "virtual-nope"}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("dangling MRC ref: got %v, want InvalidArgument", err)
+	}
+
+	// A valid regional member registers into the MRC and blocks its delete.
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "regional", MultiRegionClusterName: mrc.Name}); err != nil {
+		t.Fatalf("CreateCluster (member): %v", err)
+	}
+
+	if _, err := m.DeleteMultiRegionCluster(ctx, mrc.Name); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete MRC with member: got %v, want FailedPrecondition", err)
+	}
+
+	// Removing the member unblocks the MRC delete.
+	if _, err := m.DeleteCluster(ctx, "regional", ""); err != nil {
+		t.Fatalf("DeleteCluster (member): %v", err)
+	}
+
+	if _, err := m.DeleteMultiRegionCluster(ctx, mrc.Name); err != nil {
+		t.Fatalf("delete MRC after member removed: %v", err)
+	}
+}
+
+func TestRestorePreservesTopology(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
+		Name: "src", NumShards: 2, NumReplicasPerShard: 2, TLSEnabled: true,
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := m.CreateSnapshot(ctx, mdbdriver.CreateSnapshotConfig{Name: "snap", ClusterName: "src"}); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	restored, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "dst", SnapshotName: "snap"})
+	requireNoError(t, err)
+
+	// Replica count (nodes-per-shard) and TLS are inherited from the snapshot.
+	if restored.NumberOfShards != 2 || len(restored.Shards) != 2 || restored.Shards[0].NumberOfNodes != 3 {
+		t.Fatalf("restore lost topology: shards=%d nodes/shard=%d", restored.NumberOfShards, restored.Shards[0].NumberOfNodes)
+	}
+
+	if !restored.TLSEnabled {
+		t.Error("restore lost TLSEnabled")
+	}
+}
+
+func TestDeleteClusterDuplicateSnapshotRejected(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "c1", NumShards: 1}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := m.CreateSnapshot(ctx, mdbdriver.CreateSnapshotConfig{Name: "final", ClusterName: "c1"}); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	if _, err := m.DeleteCluster(ctx, "c1", "final"); !cerrors.IsAlreadyExists(err) {
+		t.Fatalf("delete with existing final snapshot: got %v, want AlreadyExists", err)
+	}
+}
+
+func TestCreateACLDedupesUsers(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateUser(ctx, mdbdriver.CreateUserConfig{Name: "u1", AccessString: "on ~* +@all"}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	acl, err := m.CreateACL(ctx, "acl", []string{"u1", "u1", "u1"}, nil)
+	requireNoError(t, err)
+
+	if len(acl.UserNames) != 1 {
+		t.Fatalf("ACL user names not deduped: %v", acl.UserNames)
+	}
+}
+
+func TestServiceUpdates(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{Name: "c1", NumShards: 1}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	updates, err := m.DescribeServiceUpdates(ctx, "", nil, nil)
+	requireNoError(t, err)
+
+	if len(updates) != 1 || updates[0].ClusterName != "c1" || updates[0].Status != "available" {
+		t.Fatalf("service updates wrong: %+v", updates)
+	}
+
+	processed, unprocessed, err := m.BatchUpdateCluster(ctx, []string{"c1", "ghost"}, defaultServiceUpdate)
+	requireNoError(t, err)
+
+	if len(processed) != 1 || processed[0].Name != "c1" {
+		t.Fatalf("processed wrong: %+v", processed)
+	}
+
+	if len(unprocessed) != 1 || unprocessed[0].ClusterName != "ghost" || unprocessed[0].ErrorType != "ClusterNotFoundFault" {
+		t.Fatalf("unprocessed wrong: %+v", unprocessed)
+	}
+}
+
 func TestFailoverRequiresReplica(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

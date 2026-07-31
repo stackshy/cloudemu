@@ -49,6 +49,47 @@ func (m *Mock) CreateMultiRegionCluster(
 	return &out, nil
 }
 
+// registerMRCMember records a regional cluster as a member of a multi-region
+// cluster so the delete guard is live. The caller holds the write lock; the
+// MRC's existence is validated by the caller before this runs.
+func (m *Mock) registerMRCMember(mrcName, clusterName, arn string) {
+	mrc, ok := m.multiRegion.Get(mrcName)
+	if !ok {
+		return
+	}
+
+	for i := range mrc.Members {
+		if mrc.Members[i].ClusterName == clusterName {
+			return
+		}
+	}
+
+	mrc.Members = append(mrc.Members, mdbdriver.RegionalCluster{
+		ClusterName: clusterName, Region: m.opts.Region, Status: mdbdriver.StatusAvailable, ARN: arn,
+	})
+	m.multiRegion.Set(mrcName, mrc)
+}
+
+// unregisterMRCMember drops a regional cluster from its multi-region cluster's
+// member list. The caller holds the write lock.
+func (m *Mock) unregisterMRCMember(mrcName, clusterName string) {
+	mrc, ok := m.multiRegion.Get(mrcName)
+	if !ok {
+		return
+	}
+
+	kept := mrc.Members[:0:0]
+
+	for _, mem := range mrc.Members {
+		if mem.ClusterName != clusterName {
+			kept = append(kept, mem)
+		}
+	}
+
+	mrc.Members = kept
+	m.multiRegion.Set(mrcName, mrc)
+}
+
 // DescribeMultiRegionClusters returns all multi-region clusters, or named ones.
 func (m *Mock) DescribeMultiRegionClusters(_ context.Context, names []string) ([]mdbdriver.MultiRegionCluster, error) {
 	m.mu.RLock()

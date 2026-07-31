@@ -44,9 +44,15 @@ func (h *Handler) describeParameterGroups(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	out := memorydb.DescribeParameterGroupsOutput{}
-	for i := range groups {
-		out.ParameterGroups = append(out.ParameterGroups, *toWireParameterGroup(&groups[i]))
+	page, next, err := paginate(groups, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "ParameterGroup", err)
+		return
+	}
+
+	out := memorydb.DescribeParameterGroupsOutput{NextToken: next}
+	for i := range page {
+		out.ParameterGroups = append(out.ParameterGroups, *toWireParameterGroup(&page[i]))
 	}
 
 	wire.WriteJSON(w, out)
@@ -117,9 +123,15 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := memorydb.DescribeParametersOutput{}
-	for _, p := range params {
-		out.Parameters = append(out.Parameters, toWireParameter(&p))
+	page, next, err := paginate(params, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "ParameterGroup", err)
+		return
+	}
+
+	out := memorydb.DescribeParametersOutput{NextToken: next}
+	for i := range page {
+		out.Parameters = append(out.Parameters, toWireParameter(&page[i]))
 	}
 
 	wire.WriteJSON(w, out)

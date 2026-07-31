@@ -46,9 +46,15 @@ func (h *Handler) describeSnapshots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := memorydb.DescribeSnapshotsOutput{}
-	for i := range snaps {
-		out.Snapshots = append(out.Snapshots, *toWireSnapshot(&snaps[i]))
+	page, next, err := paginate(snaps, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "Snapshot", err)
+		return
+	}
+
+	out := memorydb.DescribeSnapshotsOutput{NextToken: next}
+	for i := range page {
+		out.Snapshots = append(out.Snapshots, *toWireSnapshot(&page[i]))
 	}
 
 	wire.WriteJSON(w, out)

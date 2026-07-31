@@ -67,8 +67,14 @@ func (h *Handler) describeEngineVersions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	out := memorydb.DescribeEngineVersionsOutput{}
-	for _, v := range versions {
+	page, next, err := paginate(versions, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "Cluster", err)
+		return
+	}
+
+	out := memorydb.DescribeEngineVersionsOutput{NextToken: next}
+	for _, v := range page {
 		out.EngineVersions = append(out.EngineVersions, types.EngineVersionInfo{
 			Engine: aws.String(v.Engine), EngineVersion: aws.String(v.EngineVersion),
 			EnginePatchVersion: aws.String(v.EnginePatchVersion), ParameterGroupFamily: aws.String(v.ParameterGroupFamily),
@@ -90,8 +96,14 @@ func (h *Handler) describeEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := memorydb.DescribeEventsOutput{}
-	for _, e := range events {
+	page, next, err := paginate(events, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "Cluster", err)
+		return
+	}
+
+	out := memorydb.DescribeEventsOutput{NextToken: next}
+	for _, e := range page {
 		out.Events = append(out.Events, types.Event{
 			SourceName: aws.String(e.SourceName), SourceType: types.SourceType(e.SourceType),
 			Message: aws.String(e.Message),

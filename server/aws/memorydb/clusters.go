@@ -71,9 +71,15 @@ func (h *Handler) describeClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := memorydb.DescribeClustersOutput{}
-	for i := range clusters {
-		out.Clusters = append(out.Clusters, *toWireCluster(&clusters[i]))
+	page, next, err := paginate(clusters, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "Cluster", err)
+		return
+	}
+
+	out := memorydb.DescribeClustersOutput{NextToken: next}
+	for i := range page {
+		out.Clusters = append(out.Clusters, *toWireCluster(&page[i]))
 	}
 
 	wire.WriteJSON(w, out)

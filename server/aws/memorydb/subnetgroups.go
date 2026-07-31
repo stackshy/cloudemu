@@ -46,9 +46,15 @@ func (h *Handler) describeSubnetGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := memorydb.DescribeSubnetGroupsOutput{}
-	for i := range groups {
-		out.SubnetGroups = append(out.SubnetGroups, *toWireSubnetGroup(&groups[i]))
+	page, next, err := paginate(groups, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "SubnetGroup", err)
+		return
+	}
+
+	out := memorydb.DescribeSubnetGroupsOutput{NextToken: next}
+	for i := range page {
+		out.SubnetGroups = append(out.SubnetGroups, *toWireSubnetGroup(&page[i]))
 	}
 
 	wire.WriteJSON(w, out)

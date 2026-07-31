@@ -52,6 +52,25 @@ func removeStr(items []string, s string) []string {
 	return out
 }
 
+// dedupeStrings returns items with duplicates removed, preserving first-seen
+// order.
+func dedupeStrings(items []string) []string {
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+
+	for _, v := range items {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+
+		seen[v] = struct{}{}
+
+		out = append(out, v)
+	}
+
+	return out
+}
+
 func containsStr(items []string, s string) bool {
 	for _, v := range items {
 		if v == s {
@@ -83,12 +102,14 @@ func (m *Mock) CreateACL(_ context.Context, name string, userNames []string, tag
 		}
 	}
 
+	users := dedupeStrings(userNames)
+
 	acl := mdbdriver.ACL{
 		Name: name, ARN: m.arn("acl", name), Status: mdbdriver.StatusAvailable,
-		MinimumEngineVersion: "6.2", UserNames: cloneStrings(userNames), Tags: copyTags(tags),
+		MinimumEngineVersion: "6.2", UserNames: users, Tags: copyTags(tags),
 	}
 	m.acls.Set(name, acl)
-	m.attachUsersToACL(name, userNames)
+	m.attachUsersToACL(name, users)
 
 	out := cloneACL(&acl)
 

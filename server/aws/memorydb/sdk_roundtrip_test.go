@@ -616,6 +616,112 @@ func TestSDKErrorFaults(t *testing.T) {
 	}
 }
 
+func TestSDKReservedNodeDuplicateFault(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	offers, err := client.DescribeReservedNodesOfferings(ctx, &awsmemorydb.DescribeReservedNodesOfferingsInput{})
+	if err != nil {
+		t.Fatalf("DescribeReservedNodesOfferings: %v", err)
+	}
+
+	in := &awsmemorydb.PurchaseReservedNodesOfferingInput{
+		ReservedNodesOfferingId: offers.ReservedNodesOfferings[0].ReservedNodesOfferingId,
+		ReservationId:           aws.String("dup-res"),
+	}
+
+	if _, err := client.PurchaseReservedNodesOffering(ctx, in); err != nil {
+		t.Fatalf("first purchase: %v", err)
+	}
+
+	// Second purchase with the same ReservationId must surface the SDK-modeled
+	// ReservedNodeAlreadyExistsFault (not the unmodeled *Offering* variant).
+	_, err = client.PurchaseReservedNodesOffering(ctx, in)
+
+	var dup *mdbtypes.ReservedNodeAlreadyExistsFault
+	if !errors.As(err, &dup) {
+		t.Fatalf("duplicate purchase: got %v, want ReservedNodeAlreadyExistsFault", err)
+	}
+}
+
+func TestSDKPagination(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	for _, n := range []string{"c1", "c2", "c3"} {
+		if _, err := client.CreateCluster(ctx, &awsmemorydb.CreateClusterInput{
+			ClusterName: aws.String(n), NodeType: aws.String("db.r6g.large"),
+			ACLName: aws.String("open-access"), NumShards: aws.Int32(1),
+		}); err != nil {
+			t.Fatalf("CreateCluster %s: %v", n, err)
+		}
+	}
+
+	first, err := client.DescribeClusters(ctx, &awsmemorydb.DescribeClustersInput{MaxResults: aws.Int32(2)})
+	if err != nil {
+		t.Fatalf("DescribeClusters page 1: %v", err)
+	}
+
+	if len(first.Clusters) != 2 || first.NextToken == nil {
+		t.Fatalf("page 1: got %d clusters, token=%v; want 2 + token", len(first.Clusters), first.NextToken)
+	}
+
+	second, err := client.DescribeClusters(ctx, &awsmemorydb.DescribeClustersInput{
+		MaxResults: aws.Int32(2), NextToken: first.NextToken,
+	})
+	if err != nil {
+		t.Fatalf("DescribeClusters page 2: %v", err)
+	}
+
+	if len(second.Clusters) != 1 || second.NextToken != nil {
+		t.Fatalf("page 2: got %d clusters, token=%v; want 1 + no token", len(second.Clusters), second.NextToken)
+	}
+
+	// A malformed token is rejected.
+	_, err = client.DescribeClusters(ctx, &awsmemorydb.DescribeClustersInput{NextToken: aws.String("!!not-base64!!")})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValueException" {
+		t.Fatalf("bad token: got %v, want InvalidParameterValueException", err)
+	}
+}
+
+func TestSDKServiceUpdates(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateCluster(ctx, &awsmemorydb.CreateClusterInput{
+		ClusterName: aws.String("su"), NodeType: aws.String("db.r6g.large"),
+		ACLName: aws.String("open-access"), NumShards: aws.Int32(1),
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	updates, err := client.DescribeServiceUpdates(ctx, &awsmemorydb.DescribeServiceUpdatesInput{})
+	if err != nil {
+		t.Fatalf("DescribeServiceUpdates: %v", err)
+	}
+
+	if len(updates.ServiceUpdates) != 1 || aws.ToString(updates.ServiceUpdates[0].ClusterName) != "su" {
+		t.Fatalf("service updates wrong: %+v", updates.ServiceUpdates)
+	}
+
+	batch, err := client.BatchUpdateCluster(ctx, &awsmemorydb.BatchUpdateClusterInput{
+		ClusterNames: []string{"su", "ghost"},
+	})
+	if err != nil {
+		t.Fatalf("BatchUpdateCluster: %v", err)
+	}
+
+	if len(batch.ProcessedClusters) != 1 || len(batch.UnprocessedClusters) != 1 {
+		t.Fatalf("batch: processed=%d unprocessed=%d; want 1/1", len(batch.ProcessedClusters), len(batch.UnprocessedClusters))
+	}
+
+	if aws.ToString(batch.UnprocessedClusters[0].ErrorType) != "ClusterNotFoundFault" {
+		t.Fatalf("unprocessed error type = %q", aws.ToString(batch.UnprocessedClusters[0].ErrorType))
+	}
+}
+
 func TestSDKUnknownOperation(t *testing.T) {
 	client := newSDKClient(t)
 

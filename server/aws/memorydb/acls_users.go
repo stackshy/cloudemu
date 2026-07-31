@@ -43,9 +43,15 @@ func (h *Handler) describeACLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := memorydb.DescribeACLsOutput{}
-	for i := range acls {
-		out.ACLs = append(out.ACLs, *toWireACL(&acls[i]))
+	page, next, err := paginate(acls, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "ACL", err)
+		return
+	}
+
+	out := memorydb.DescribeACLsOutput{NextToken: next}
+	for i := range page {
+		out.ACLs = append(out.ACLs, *toWireACL(&page[i]))
 	}
 
 	wire.WriteJSON(w, out)
@@ -122,9 +128,15 @@ func (h *Handler) describeUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := memorydb.DescribeUsersOutput{}
-	for i := range users {
-		out.Users = append(out.Users, *toWireUser(&users[i]))
+	page, next, err := paginate(users, in.MaxResults, in.NextToken)
+	if err != nil {
+		writeErr(w, "User", err)
+		return
+	}
+
+	out := memorydb.DescribeUsersOutput{NextToken: next}
+	for i := range page {
+		out.Users = append(out.Users, *toWireUser(&page[i]))
 	}
 
 	wire.WriteJSON(w, out)

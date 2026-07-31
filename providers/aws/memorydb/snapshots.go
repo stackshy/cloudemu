@@ -17,6 +17,13 @@ func cloneSnapshot(in *mdbdriver.Snapshot) mdbdriver.Snapshot {
 // snapshotFromCluster captures a cluster's shape into a snapshot. The caller
 // holds the write lock.
 func (m *Mock) snapshotFromCluster(name string, c *mdbdriver.Cluster, source string, tags map[string]string) mdbdriver.Snapshot {
+	// Replicas-per-shard is uniform across shards; derive it from the first
+	// shard's node count (primary + replicas).
+	replicas := 0
+	if len(c.Shards) > 0 && c.Shards[0].NumberOfNodes > 1 {
+		replicas = c.Shards[0].NumberOfNodes - 1
+	}
+
 	return mdbdriver.Snapshot{
 		Name:        name,
 		ARN:         m.arn("snapshot", name),
@@ -34,8 +41,10 @@ func (m *Mock) snapshotFromCluster(name string, c *mdbdriver.Cluster, source str
 			SnapshotWindow:         c.SnapshotWindow,
 			TopicARN:               c.SnsTopicARN,
 			NumShards:              c.NumberOfShards,
+			ReplicasPerShard:       replicas,
 			Port:                   c.ClusterEndpoint.Port,
 			SnapshotRetentionLimit: c.SnapshotRetentionLimit,
+			TLSEnabled:             c.TLSEnabled,
 		},
 		Tags:      copyTags(tags),
 		CreatedAt: m.opts.Clock.Now().UTC(),

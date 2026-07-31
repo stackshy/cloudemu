@@ -965,8 +965,8 @@ rather than reusing `services/cache`. Served as AWS JSON 1.1 on the
 | `TagResource` | `(ctx, arn, tags) ([]Tag, error)` |
 | `UntagResource` | `(ctx, arn, keys) ([]Tag, error)` |
 | `ListTags` | `(ctx, arn) ([]Tag, error)` |
-| `DescribeEngineVersions` | `(ctx, engine) ([]EngineVersionInfo, error)` |
-| `DescribeEvents` | `(ctx, sourceName, sourceType) ([]Event, error)` |
+| `DescribeEngineVersions` | `(ctx, engine, version) ([]EngineVersionInfo, error)` |
+| `DescribeEvents` | `(ctx) ([]Event, error)` |
 
 ### Multi-Region Clusters (optional capability — `MultiRegion`)
 
@@ -988,9 +988,25 @@ rather than reusing `services/cache`. Served as AWS JSON 1.1 on the
 | `DescribeReservedNodesOfferings` | `(ctx) ([]ReservedNodesOffering, error)` |
 | `PurchaseReservedNodesOffering` | `(ctx, offeringID, reservationID, count) (*ReservedNode, error)` |
 
-Both optional interfaces are AWS-only concepts, discovered by type assertion.
+### Service Updates (optional capability — `ServiceUpdates`)
 
-**Total: 33 operations (+10 optional)**
+| Operation | Signature |
+|-----------|-----------|
+| `DescribeServiceUpdates` | `(ctx, serviceUpdateName, clusterNames, status) ([]ServiceUpdate, error)` |
+| `BatchUpdateCluster` | `(ctx, clusterNames, serviceUpdateName) (processed []Cluster, unprocessed []UnprocessedCluster, error)` |
+
+`BatchUpdateCluster` applies a service update to each named cluster; a name that
+does not exist is returned in `unprocessed` (with `ClusterNotFoundFault`) rather
+than failing the whole batch — matching AWS's partial-success semantics.
+
+The three optional interfaces are AWS-only concepts, discovered by type
+assertion.
+
+**Pagination:** every `Describe*` operation honors `MaxResults`/`NextToken`.
+The server pages the deterministic (sorted) result set and returns an opaque
+base64 offset token; a malformed token yields `InvalidParameterValueException`.
+
+**Total: 33 operations (+13 optional)**
 
 ---
 
@@ -1967,7 +1983,7 @@ still sees success.
 | Load Balancer | 21 |
 | Message Queue | 14 |
 | Cache | 16 (+7 optional) |
-| MemoryDB — AWS (Redis/Valkey control plane) | 33 (+10 optional) |
+| MemoryDB — AWS (Redis/Valkey control plane) | 33 (+13 optional) |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
@@ -1987,7 +2003,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1310** (+134 optional) |
+| **Grand Total** | **1310** (+137 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

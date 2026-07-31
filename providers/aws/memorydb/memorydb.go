@@ -8,6 +8,7 @@ package memorydb
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -199,9 +200,18 @@ func containsSlash(s string) bool {
 // ---- Tags (addressed by ARN) ----
 
 func (m *Mock) tagList(arn string) []mdbdriver.Tag {
-	out := []mdbdriver.Tag{}
-	for k, v := range m.tags[arn] {
-		out = append(out, mdbdriver.Tag{Key: k, Value: v})
+	tags := m.tags[arn]
+
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys) // deterministic order (AWS leaves it unspecified)
+
+	out := make([]mdbdriver.Tag, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, mdbdriver.Tag{Key: k, Value: tags[k]})
 	}
 
 	return out

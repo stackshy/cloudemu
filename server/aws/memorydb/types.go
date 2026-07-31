@@ -195,6 +195,25 @@ func mrParamWire(p *mdbdriver.Parameter) types.MultiRegionParameter {
 	}
 }
 
+func serviceUpdateWire(s *mdbdriver.ServiceUpdate) types.ServiceUpdate {
+	return types.ServiceUpdate{
+		ClusterName: aws.String(s.ClusterName), ServiceUpdateName: aws.String(s.ServiceUpdateName),
+		Description: aws.String(s.Description), Status: types.ServiceUpdateStatus(s.Status),
+		Type: types.ServiceUpdateType(s.Type), Engine: aws.String(s.Engine),
+		NodesUpdated: aws.String(s.NodesUpdated),
+		// ReleaseDate/AutoUpdateStartDate omitted: AWS JSON 1.1 encodes
+		// timestamps as epoch numbers, which encoding/json cannot emit for a
+		// time.Time.
+	}
+}
+
+func unprocessedWire(u *mdbdriver.UnprocessedCluster) types.UnprocessedCluster {
+	return types.UnprocessedCluster{
+		ClusterName: aws.String(u.ClusterName), ErrorType: aws.String(u.ErrorType),
+		ErrorMessage: aws.String(u.ErrorMessage),
+	}
+}
+
 func reservedNodeWire(n *mdbdriver.ReservedNode) types.ReservedNode {
 	return types.ReservedNode{
 		ReservationId: aws.String(n.ReservationID), ReservedNodesOfferingId: aws.String(n.ReservedNodesOfferingID),
