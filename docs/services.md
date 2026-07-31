@@ -1330,24 +1330,29 @@ Operations: **26**
 
 ### Data plane (`services/kubernetes/`)
 
-Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Anonymous auth (kubeconfigs use `insecure-skip-tls-verify: true`).
+Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Served over **real TLS**: the control plane advertises a shared CA (`internal/k8spki`) that certifies the serving cert, so `client-go` and `kubectl` validate the connection normally — kubeconfigs carry `certificate-authority-data`, not `insecure-skip-tls-verify`.
 
-| Resource | Group / Version | Verbs |
-|---|---|---|
-| Namespace | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** |
-| ConfigMap | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** |
-| Secret | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — StringData merged into Data on create/update |
-| ServiceAccount | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — `default` SA auto-created in every namespace |
-| Pod | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — born Pending, no scheduler |
-| Service | `core/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — ClusterIP allocated from 10.96.0.0/12; immutable on update |
-| Endpoints | `core/v1` | Get, List, **Watch** — auto-created (empty Subsets) on Service create; not user-creatable |
-| Deployment | `apps/v1` | Create, Get, List, Update, Patch, Delete, **Watch** — status mirrored from spec.replicas (no controller) |
+**Real `kubectl` works end-to-end**, not just `client-go`: the server decodes the **protobuf** request bodies kubectl sends on writes (it accepts protobuf and replies JSON, which kubectl's `Accept` allows), and serves an **OpenAPI v3** discovery document (plus a protobuf **v2** for the legacy path) carrying every served GVK so `kubectl apply` validation passes. Verified against `kubectl` v1.36 across all three providers: `create/apply/scale/set image/patch/rollout/delete`, `get` with short names (`pvc`, `hpa`, `sts`, …), and cascade teardown.
 
-**Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) just works.
+It behaves like a tiny always-converged cluster (minikube-like) rather than a bare object store: a **synchronous reconcile engine** runs on every write — there are no controller goroutines, so results are immediate and deterministic. Controllers materialize Running Pods, Services get Endpoints, PVCs bind, Jobs complete.
 
-**Cascade**: deleting a Namespace publishes DELETED events for every child resource.
+**Discovery** is derived from the resource registry (`registeredResources()`), so `/api`, `/apis`, and every `/apis/<group>/<version>` list exactly the resources the server serves — discovery can't promise a kind that 404s.
 
-**Not in scope**: real controllers (no Deployment → ReplicaSet → Pod, no Pods scheduled to nodes), RBAC, subresources (`/status`, `/scale`, `/log`, `/exec`), PV/PVC, StatefulSet, DaemonSet, Job/CronJob, Ingress, NetworkPolicy.
+**Core (`core/v1`)**: Namespace, ConfigMap, Secret (StringData merged into Data), ServiceAccount (`default` auto-created per namespace), Pod (driven **Running** with a synthetic Pod IP — a directly-created Pod with a terminal phase is preserved), Service (ClusterIP from 10.96.0.0/12, immutable on update), Endpoints (get/list/watch only — auto-managed per Service), PersistentVolumeClaim (→ Bound), PersistentVolume (→ Available), Node, Event, ResourceQuota, LimitRange.
+
+**Workload controllers (`apps/v1`)**: Deployment, ReplicaSet, StatefulSet (stable `-0..-N` names + one Bound PVC per `volumeClaimTemplate`), DaemonSet (one Pod per node). All materialize Running Pods owned via `ownerReferences`; deleting a controller cascade-deletes its Pods and drains Endpoints. A change to the pod template (e.g. image) is a **rolling update** — stale-hash Pods (tracked by a `pod-template-hash` label) are replaced. Deployments/StatefulSets expose **`/scale`** and **`/status`** subresources.
+
+**Other groups** (registry-backed CRUD + list/watch/patch/delete): `batch/v1` Job (→ Succeeded Pods) / CronJob; `networking.k8s.io/v1` Ingress (→ load-balancer IP) / IngressClass / NetworkPolicy; `rbac.authorization.k8s.io/v1` Role / RoleBinding / ClusterRole / ClusterRoleBinding; `storage.k8s.io/v1` StorageClass; `autoscaling/v2` HorizontalPodAutoscaler; `discovery.k8s.io/v1` EndpointSlice; `policy/v1` PodDisruptionBudget.
+
+**Selectors**: label selectors on list, and field selectors for the fields the store can answer (`metadata.name`, `metadata.namespace`, Pod `status.phase` / `spec.nodeName`). List responses are unpaginated — `limit`/`continue` are not honored (an emulation simplification; every list returns the full set in one response).
+
+**Patch**: all four content types — JSON-merge-patch, JSONPatch (RFC 6902), and strategic-merge-patch (real strategic merge against the typed struct for core/apps kinds, so `kubectl set image` merges the container list by name). Server-side-apply is accepted and applied as a merge (an emulation simplification — apply field-ownership is not tracked).
+
+**Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, and the request's `labelSelector`/`fieldSelector` filters both the initial snapshot and live events, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) — including selective informers — just works. A fresh cluster bootstraps a synthetic Ready node (`cloudemu-node-0`), and each selector Service's endpoints are mirrored into a `discovery.k8s.io` **EndpointSlice** so EndpointSlice-mode consumers see the same backends as the `Endpoints` object.
+
+**Cascade**: deleting a Namespace or an owning controller publishes DELETED events for every child resource (garbage collection follows `ownerReferences`).
+
+**Non-goals** (deliberate emulation boundaries): no kubelet-backed Pod subresources (`/log`, `/exec`, `/attach`, `/portforward`); no real scheduling (all Pods land on a single synthetic node, no affinity/taints/resource-fit); no admission/quota/policy **enforcement** (ResourceQuota, LimitRange, NetworkPolicy, PodDisruptionBudget, RBAC are stored and served but not enforced); HPA does not actually autoscale; CronJob does not fire on a schedule; rollouts converge instantly with no surge/unavailable pacing or revision history; no aggregated API servers, admission webhooks, or CRD registration.
 
 ---
 
@@ -1871,7 +1876,7 @@ still sees success.
 | Kubernetes — AWS EKS (control plane) | 21 |
 | Kubernetes — Azure AKS (control plane) | 18 |
 | Kubernetes — GCP GKE (control plane) | 26 |
-| Kubernetes — data plane (8 resources × 7 verbs incl. Watch) | 56 |
+| Kubernetes — data plane (30 resources, most × 7 verbs incl. Watch, + /scale and /status subresources) | 249 |
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI — AWS Bedrock (control plane + runtime) | 65 |
 | Generative AI — AWS Bedrock Agent (control plane + runtime) | 32 |
@@ -1881,7 +1886,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1084** (+124 optional) |
+| **Grand Total** | **1277** (+124 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

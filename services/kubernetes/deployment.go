@@ -2,16 +2,21 @@ package kubernetes
 
 import (
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // apiGroupApps is the API group Deployments (and other workload controllers)
 // live under: /apis/apps/v1/...
 const apiGroupApps = "apps"
+
+// resourceDeployments is the plural resource segment for Deployments.
+const resourceDeployments = "deployments"
 
 // serveDeployments dispatches /apis/apps/v1/{namespaces/{ns}/deployments|
 // deployments} requests. Deployments are the first apps/v1 resource so the
@@ -74,11 +79,12 @@ func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.
 }
 
 func (s *ClusterState) watchDeployments(w http.ResponseWriter, r *http.Request, namespace string) {
-	s.mu.RLock()
-	sub := s.wDeployments.subscribe(namespace)
-	items := s.collectDeploymentsLocked(namespace)
-	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	sel, fields := parseListSelectors(r)
+	serveWatch(s, w, r, s.wDeployments, namespace,
+		func() []appsv1.Deployment { return s.collectDeploymentsLocked(namespace) },
+		func(d appsv1.Deployment) bool {
+			return sel.Matches(labels.Set(d.Labels)) && metaFieldsMatch(d.Name, d.Namespace, fields)
+		})
 }
 
 func (s *ClusterState) serveDeploymentItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -123,15 +129,13 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 
 	stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
-
-	// No controller-manager in Wave 2 — mirror spec.replicas straight onto
-	// status so basic "is my deployment 'ready'?" checks pass. Real
-	// apiserver leaves status empty; the deployment controller fills it in
-	// after observing ReplicaSets and Pods.
-	mirrorDeploymentReplicas(&in)
+	in.Generation = 1
 
 	dep := in
 	s.deployments[key] = &dep
+	// Reconcile: materialize Running Pods and populate status + Service
+	// endpoints so the deployment is actually "up", not just stored.
+	s.reconcileDeploymentLocked(&dep)
 	s.wDeployments.publish(EventAdded, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusCreated, &dep)
 }
@@ -220,11 +224,11 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 	in.CreationTimestamp = cur.CreationTimestamp
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
-
-	mirrorDeploymentReplicas(&in)
+	in.Generation = generationFor(cur.Generation, &in.Spec, &cur.Spec)
 
 	dep := in
 	s.deployments[key] = &dep
+	s.reconcileDeploymentLocked(&dep)
 	s.wDeployments.publish(EventModified, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusOK, &dep)
 }
@@ -248,10 +252,23 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
-	mirrorDeploymentReplicas(patched)
+	patched.Generation = generationFor(cur.Generation, &patched.Spec, &cur.Spec)
+
 	s.deployments[key] = patched
+	s.reconcileDeploymentLocked(patched)
 	s.wDeployments.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
+}
+
+// generationFor advances metadata.generation only when the spec actually
+// changed, matching apiserver semantics (and the registry path) so an
+// observedGeneration comparison is meaningful.
+func generationFor(cur int64, newSpec, oldSpec *appsv1.DeploymentSpec) int64 {
+	if reflect.DeepEqual(newSpec, oldSpec) {
+		return cur
+	}
+
+	return cur + 1
 }
 
 func (s *ClusterState) deleteDeployment(w http.ResponseWriter, namespace, name string) {
@@ -268,27 +285,12 @@ func (s *ClusterState) deleteDeployment(w http.ResponseWriter, namespace, name s
 	}
 
 	delete(s.deployments, key)
+	// Cascade: garbage-collect the Pods this Deployment owns.
+	s.garbageCollectLocked(dep.UID)
 	s.wDeployments.publish(EventDeleted, namespace, *dep.DeepCopy())
 	writeJSON(w, http.StatusOK, dep.DeepCopy())
 }
 
 func deploymentKey(namespace, name string) string {
 	return namespace + "/" + name
-}
-
-// mirrorDeploymentReplicas copies spec.replicas onto status. There is no
-// controller in Wave 2 to drive a real reconcile loop, so we synthesize the
-// terminal-state status fields tests typically assert on. Spec.Replicas of
-// nil is treated as 1 (real k8s default).
-func mirrorDeploymentReplicas(d *appsv1.Deployment) {
-	var replicas int32 = 1
-	if d.Spec.Replicas != nil {
-		replicas = *d.Spec.Replicas
-	}
-
-	d.Status.Replicas = replicas
-	d.Status.ReadyReplicas = replicas
-	d.Status.AvailableReplicas = replicas
-	d.Status.UpdatedReplicas = replicas
-	d.Status.ObservedGeneration = d.Generation
 }

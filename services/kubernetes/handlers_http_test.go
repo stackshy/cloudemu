@@ -81,10 +81,10 @@ func TestServeHTTP_UnknownResourceReturns404(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)
 
-	// "nodes" is intentionally not implemented in Phase 2 — Pods, Services,
-	// Deployments etc. *are* served, so we need a resource that always falls
-	// through the dispatcher.
-	resp := do(t, http.MethodGet, base+"/api/v1/nodes", nil)
+	// "widgets" is not a real Kubernetes kind and is not registered, so it
+	// always falls through the dispatcher to a 404 (Pods, Services,
+	// Deployments, Nodes, Jobs, … are all served now).
+	resp := do(t, http.MethodGet, base+"/api/v1/widgets", nil)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {

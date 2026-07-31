@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -62,21 +63,22 @@ func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request
 }
 
 func (s *ClusterState) watchNamespaces(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
+	sel, fields := parseListSelectors(r)
+	serveWatch(s, w, r, s.wNamespaces, "",
+		s.collectNamespacesLocked,
+		func(n corev1.Namespace) bool {
+			return sel.Matches(labels.Set(n.Labels)) && metaFieldsMatch(n.Name, n.Namespace, fields)
+		})
+}
 
-	// Subscribe under RLock so any subsequent publisher sees us; the snapshot
-	// taken inside the same RLock is consistent with the subscription order.
-	// See streamWatch's contract for the race this closes.
-	sub := s.wNamespaces.subscribe("")
-
+// collectNamespacesLocked snapshots all namespaces. Callers hold s.mu.
+func (s *ClusterState) collectNamespacesLocked() []corev1.Namespace {
 	items := make([]corev1.Namespace, 0, len(s.namespaces))
 	for _, n := range s.namespaces {
 		items = append(items, *n.DeepCopy())
 	}
 
-	s.mu.RUnlock()
-
-	streamWatch(r.Context(), w, sub, items)
+	return items
 }
 
 func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {

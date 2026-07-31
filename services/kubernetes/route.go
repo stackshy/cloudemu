@@ -12,19 +12,34 @@ const namespacesSegment = "namespaces"
 // core (/api/v1) and apps (/apis/apps/v1).
 const apiVersionV1 = "v1"
 
+// pathSegAPI and pathSegAPIs are the leading URL segments that distinguish
+// core (/api/v1) from grouped (/apis/{group}/{version}) resource paths.
+const (
+	pathSegAPI  = "api"
+	pathSegAPIs = "apis"
+)
+
+// subresourceStatus and subresourceScale are the two subresource path segments
+// the emulator dispatches on (.../{name}/status and .../{name}/scale).
+const (
+	subresourceStatus = "status"
+	subresourceScale  = "scale"
+)
+
 // watchQuery is the ?watch=true value clients pass to upgrade a list
 // request into a stream. Centralized so dispatchers don't all hold a
 // "true" literal.
 const watchQueryValue = "true"
 
-// Route holds the four pieces every Kubernetes REST URL decomposes into.
-// One Route value is the dispatch key for the per-resource handlers.
+// Route holds the pieces every Kubernetes REST URL decomposes into. One Route
+// value is the dispatch key for the per-resource handlers.
 type Route struct {
-	APIGroup   string // "" for core (/api/v1), "apps" for /apis/apps/v1, etc.
-	APIVersion string // always "v1" for Wave 2 Phase 1
-	Namespace  string // "" for cluster-scoped resources
-	Resource   string // "namespaces", "configmaps", "pods", …
-	Name       string // "" for collection requests (LIST / CREATE)
+	APIGroup    string // "" for core (/api/v1), "apps" for /apis/apps/v1, etc.
+	APIVersion  string // e.g. "v1"
+	Namespace   string // "" for cluster-scoped resources
+	Resource    string // "namespaces", "configmaps", "pods", …
+	Name        string // "" for collection requests (LIST / CREATE)
+	Subresource string // "" for the object itself, else "status", "scale", …
 }
 
 // parseRoute splits a Kubernetes REST path into its semantic pieces. The
@@ -43,9 +58,9 @@ func parseRoute(path string) *Route {
 	parts := splitPath(path)
 
 	switch {
-	case len(parts) >= 2 && parts[0] == "api":
+	case len(parts) >= 2 && parts[0] == pathSegAPI:
 		return parseCoreRoute(parts[1:])
-	case len(parts) >= 3 && parts[0] == "apis":
+	case len(parts) >= 3 && parts[0] == pathSegAPIs:
 		return parseGroupRoute(parts[1:])
 	default:
 		return nil
@@ -77,8 +92,10 @@ func parseGroupRoute(parts []string) *Route {
 	return fillResourceRoute(r, parts[2:])
 }
 
-// fillResourceRoute fills in the Namespace/Resource/Name fields from the
-// path tail.
+// fillResourceRoute fills in the Namespace/Resource/Name/Subresource fields
+// from the path tail. It supports both cluster-scoped and namespaced shapes,
+// each with an optional trailing subresource segment (e.g. .../{name}/scale or
+// .../{name}/status).
 func fillResourceRoute(r *Route, tail []string) *Route {
 	switch len(tail) {
 	case pathSegsResourceOnly:
@@ -91,13 +108,19 @@ func fillResourceRoute(r *Route, tail []string) *Route {
 
 		return r
 	case pathSegsNamespacedCollection:
-		// namespaces/{ns}/{resource}
-		if tail[0] != namespacesSegment {
-			return nil
+		// Ambiguous length: either "namespaces/{ns}/{resource}" (namespaced
+		// collection) or "{resource}/{name}/{subresource}" (cluster-scoped
+		// item subresource). The "namespaces" marker disambiguates.
+		if tail[0] == namespacesSegment {
+			r.Namespace = tail[1]
+			r.Resource = tail[2]
+
+			return r
 		}
 
-		r.Namespace = tail[1]
-		r.Resource = tail[2]
+		r.Resource = tail[0]
+		r.Name = tail[1]
+		r.Subresource = tail[2]
 
 		return r
 	case pathSegsNamespacedItem:
@@ -110,18 +133,31 @@ func fillResourceRoute(r *Route, tail []string) *Route {
 		r.Name = tail[3]
 
 		return r
+	case pathSegsNamespacedSubresource:
+		// namespaces/{ns}/{resource}/{name}/{subresource}
+		if tail[0] != namespacesSegment {
+			return nil
+		}
+
+		r.Namespace = tail[1]
+		r.Resource = tail[2]
+		r.Name = tail[3]
+		r.Subresource = tail[4]
+
+		return r
 	default:
 		return nil
 	}
 }
 
 const (
-	pathSegsCoreCollection       = 2 // version + resource
-	pathSegsGroupCollection      = 3 // group + version + resource
-	pathSegsResourceOnly         = 1 // resource
-	pathSegsResourceAndName      = 2 // resource + name
-	pathSegsNamespacedCollection = 3 // "namespaces" + ns + resource
-	pathSegsNamespacedItem       = 4 // "namespaces" + ns + resource + name
+	pathSegsCoreCollection        = 2 // version + resource
+	pathSegsGroupCollection       = 3 // group + version + resource
+	pathSegsResourceOnly          = 1 // resource
+	pathSegsResourceAndName       = 2 // resource + name
+	pathSegsNamespacedCollection  = 3 // "namespaces" + ns + resource  (or  resource + name + subresource)
+	pathSegsNamespacedItem        = 4 // "namespaces" + ns + resource + name
+	pathSegsNamespacedSubresource = 5 // "namespaces" + ns + resource + name + subresource
 )
 
 // splitPath returns the non-empty path segments of p.

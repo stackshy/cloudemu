@@ -25,7 +25,7 @@ import (
 //
 // Returns false when the path is not a discovery request, so the caller falls
 // through to normal resource routing.
-func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool {
+func (*ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		return false
 	}
@@ -44,13 +44,15 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 		return true
 
 	case "/apis":
+		groups := make([]map[string]any, 0)
+		for _, gv := range discoveryGroups() {
+			groups = append(groups, apiGroup(gv.group, gv.version))
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
 			"kind":       "APIGroupList",
 			"apiVersion": "v1",
-			"groups": []map[string]any{
-				apiGroup("apps", "v1"),
-				apiGroup("policy", "v1"),
-			},
+			"groups":     groups,
 		})
 
 		return true
@@ -60,42 +62,9 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 
 		return true
 
-	case "/apis/apps/v1":
-		writeJSON(w, http.StatusOK, apiResourceList("apps", "apps/v1", appsResources()))
-
-		return true
-
-	case "/apis/policy/v1":
-		writeJSON(w, http.StatusOK, apiResourceList("policy", "policy/v1", policyResources()))
-
-		return true
-
-	// helm validates rendered manifests against the server's OpenAPI schema
-	// unless the caller passes --disable-openapi-validation. Without this
-	// endpoint `helm install` fails at "failed to download openapi: the server
-	// could not find the requested resource" — after successfully rendering
-	// the chart, which makes it look like a chart problem rather than a
-	// missing server capability.
-	//
-	// The document is intentionally MINIMAL: a valid Swagger 2.0 envelope with
-	// no definitions. helm's validator skips kinds it finds no schema for, so
-	// an empty definitions map means "nothing to contradict" rather than
-	// "everything is invalid". Publishing hand-written partial schemas would be
-	// worse — a subtly wrong schema rejects valid manifests, and the emulator
-	// would be asserting API shapes it does not actually enforce.
-	case "/openapi/v2":
-		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w, http.StatusOK, map[string]any{
-			"swagger": "2.0",
-			"info": map[string]any{
-				"title":   "cloudemu-kubernetes",
-				"version": "v1.29.0-cloudemu",
-			},
-			"paths":       map[string]any{},
-			"definitions": map[string]any{},
-		})
-
-		return true
+	// OpenAPI (v2 JSON/protobuf and v3) is served cluster-independently by
+	// serveOpenAPI, intercepted in APIServer.ServeHTTP before this handler —
+	// helm and kubectl both validate rendered manifests against it.
 
 	// /version is not discovery proper, but kubectl and helm both probe it and
 	// some code paths refuse to proceed without a parseable server version.
@@ -109,7 +78,67 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 		return true
 	}
 
+	// Group-version discovery: /apis/<group>/<version>. Derived from the
+	// registry (plus the typed apps/policy groups) so every served group and
+	// its resources — including subresources — are advertised.
+	if res, gv, group, ok := groupVersionDiscovery(r.URL.Path); ok {
+		writeJSON(w, http.StatusOK, apiResourceList(group, gv, res))
+
+		return true
+	}
+
 	return false
+}
+
+// groupVersion pairs an API group with the version this server serves it at.
+type groupVersion struct {
+	group   string
+	version string
+}
+
+// discoveryGroups lists the non-core API groups the server serves, each with a
+// representative version, built from the typed handlers (apps, policy) plus the
+// registry so new groups surface automatically.
+func discoveryGroups() []groupVersion {
+	seen := map[string]bool{"apps": true, "policy": true}
+	out := []groupVersion{{"apps", "v1"}, {"policy", "v1"}}
+
+	for _, d := range registeredResources() {
+		if d.group == "" || seen[d.group] {
+			continue
+		}
+
+		seen[d.group] = true
+
+		out = append(out, groupVersion{d.group, d.version})
+	}
+
+	return out
+}
+
+// groupVersionDiscovery returns the resource list for a /apis/<group>/<version>
+// path, or ok=false if the path isn't a served group-version.
+func groupVersionDiscovery(path string) (res []apiResource, groupVersionStr, group string, ok bool) {
+	parts := splitPath(strings.TrimSuffix(path, "/"))
+	if len(parts) != 3 || parts[0] != pathSegAPIs {
+		return nil, "", "", false
+	}
+
+	group, version := parts[1], parts[2]
+
+	switch {
+	case group == apiGroupApps && version == apiVersionV1:
+		return appsResources(), "apps/v1", apiGroupApps, true
+	case group == apiGroupPolicy && version == apiVersionV1:
+		return policyResources(), "policy/v1", apiGroupPolicy, true
+	default:
+		r := registryAPIResources(group, version)
+		if len(r) == 0 {
+			return nil, "", "", false
+		}
+
+		return r, group + "/" + version, group, true
+	}
 }
 
 func apiGroup(name, version string) map[string]any {
@@ -170,14 +199,80 @@ func rwVerbs() []string {
 }
 
 func coreResources() []apiResource {
-	return []apiResource{
-		{"namespaces", "namespace", "Namespace", false, rwVerbs(), []string{"ns"}},
-		{"configmaps", "configmap", "ConfigMap", true, rwVerbs(), []string{"cm"}},
-		{"pods", "pod", "Pod", true, rwVerbs(), []string{"po"}},
-		{"secrets", "secret", "Secret", true, rwVerbs(), nil},
-		{"serviceaccounts", "serviceaccount", "ServiceAccount", true, rwVerbs(), []string{"sa"}},
-		{"services", "service", "Service", true, rwVerbs(), []string{"svc"}},
+	reg := registryAPIResources("", "v1")
+
+	const typedCoreKinds = 7
+
+	res := make([]apiResource, 0, typedCoreKinds+len(reg))
+	res = append(res,
+		apiResource{"namespaces", "namespace", "Namespace", false, rwVerbs(), []string{"ns"}},
+		apiResource{"configmaps", "configmap", "ConfigMap", true, rwVerbs(), []string{"cm"}},
+		apiResource{"pods", "pod", "Pod", true, rwVerbs(), []string{"po"}},
+		apiResource{"secrets", "secret", "Secret", true, rwVerbs(), nil},
+		apiResource{"serviceaccounts", "serviceaccount", "ServiceAccount", true, rwVerbs(), []string{"sa"}},
+		apiResource{"services", "service", "Service", true, rwVerbs(), []string{"svc"}},
+		// Endpoints are managed by the emulator (auto-created per Service and torn
+		// down with it), so only the read verbs serveEndpoints implements are
+		// advertised — promising create/update/delete would have kubectl and
+		// client-go issue writes that 405.
+		apiResource{"endpoints", "endpoints", "Endpoints", true, []string{"get", "list", "watch"}, []string{"ep"}},
+	)
+
+	return append(res, reg...)
+}
+
+// registryAPIResources expands the registry-backed kinds of a group/version
+// into discovery entries (the resource plus its /status and /scale
+// subresources), so discovery is derived from the registry and can't drift
+// from what the server actually serves.
+func registryAPIResources(group, version string) []apiResource {
+	defs := registeredResources()
+	out := make([]apiResource, 0, len(defs))
+
+	for _, d := range defs {
+		if d.group != group || d.version != version {
+			continue
+		}
+
+		out = append(out, apiResource{d.plural, strings.ToLower(d.kind), d.kind, d.namespaced, rwVerbs(), registryShortNames[d.plural]})
+
+		if d.hasStatus {
+			out = append(out, apiResource{
+				d.plural + "/status", "", d.kind, d.namespaced, subresourceVerbs(), nil,
+			})
+		}
+
+		if d.hasScale {
+			out = append(out, apiResource{
+				d.plural + "/scale", "", "Scale", d.namespaced, subresourceVerbs(), nil,
+			})
+		}
 	}
+
+	return out
+}
+
+func subresourceVerbs() []string { return []string{"get", "patch", "update"} }
+
+// registryShortNames maps a registry resource's plural to the kubectl short
+// names real clusters advertise, so `kubectl get pvc/hpa/sts/...` resolves.
+//
+//nolint:gochecknoglobals // immutable package-level lookup table.
+var registryShortNames = map[string][]string{
+	"persistentvolumeclaims":   {"pvc"},
+	"persistentvolumes":        {"pv"},
+	"horizontalpodautoscalers": {"hpa"},
+	"statefulsets":             {"sts"},
+	"replicasets":              {"rs"},
+	"daemonsets":               {"ds"},
+	"cronjobs":                 {"cj"},
+	"ingresses":                {"ing"},
+	"networkpolicies":          {"netpol"},
+	"storageclasses":           {"sc"},
+	"resourcequotas":           {"quota"},
+	"limitranges":              {"limits"},
+	"events":                   {"ev"},
+	"nodes":                    {"no"},
 }
 
 func policyResources() []apiResource {
@@ -193,7 +288,16 @@ func policyResources() []apiResource {
 }
 
 func appsResources() []apiResource {
-	return []apiResource{
-		{"deployments", "deployment", "Deployment", true, rwVerbs(), []string{"deploy"}},
-	}
+	reg := registryAPIResources(apiGroupApps, "v1")
+
+	const typedAppsEntries = 3
+
+	res := make([]apiResource, 0, typedAppsEntries+len(reg))
+	res = append(res,
+		apiResource{"deployments", "deployment", "Deployment", true, rwVerbs(), []string{"deploy"}},
+		apiResource{"deployments/status", "", "Deployment", true, subresourceVerbs(), nil},
+		apiResource{"deployments/scale", "", "Scale", true, subresourceVerbs(), nil},
+	)
+
+	return append(res, reg...)
 }

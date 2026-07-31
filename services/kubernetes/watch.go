@@ -7,7 +7,58 @@ import (
 	"sync"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
+
+// serveWatch is the shared body of every typed watch handler: subscribe and
+// snapshot under one RLock (the ordering streamWatch's contract requires), then
+// stream selector-filtered events. collect runs under the held RLock.
+func serveWatch[T any](
+	s *ClusterState, w http.ResponseWriter, r *http.Request,
+	b *broadcaster, namespace string, collect func() []T, keep func(T) bool,
+) {
+	s.mu.RLock()
+	sub := b.subscribe(namespace)
+	items := collect()
+	s.mu.RUnlock()
+	streamWatch(r.Context(), w, sub, items, keep)
+}
+
+// parseListSelectors extracts the labelSelector and fieldSelector from a list
+// or watch request. A malformed labelSelector degrades to match-everything
+// (matching the typed list path's existing behavior).
+func parseListSelectors(r *http.Request) (sel labels.Selector, fields map[string]string) {
+	sel, err := labels.Parse(r.URL.Query().Get("labelSelector"))
+	if err != nil {
+		sel = labels.Everything()
+	}
+
+	fields = parseFieldSelector(r.URL.Query().Get("fieldSelector"))
+
+	return sel, fields
+}
+
+// metaFieldsMatch answers the metadata.name / metadata.namespace field
+// selectors an object can satisfy from its ObjectMeta alone. Any other field
+// key matches nothing — the same fail-closed convention as matchesFields.
+func metaFieldsMatch(name, namespace string, fields map[string]string) bool {
+	for k, v := range fields {
+		switch k {
+		case fieldMetadataName:
+			if name != v {
+				return false
+			}
+		case fieldMetadataNamespace:
+			if namespace != v {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+
+	return true
+}
 
 // Watch event types per the Kubernetes API contract. Wire format is
 // {"type":"<EventType>","object":{...}} sent as one JSON object per chunk.
@@ -15,7 +66,22 @@ const (
 	EventAdded    = "ADDED"
 	EventModified = "MODIFIED"
 	EventDeleted  = "DELETED"
+	// EventError carries a Status object (e.g. 410 Gone) that tells a client-go
+	// reflector to relist — used when a slow watcher overflowed its buffer.
+	EventError = "ERROR"
 )
+
+// expiredWatchStatus is the 410 Gone a real apiserver sends when a watch has
+// fallen too far behind; client-go reacts by relisting.
+func expiredWatchStatus() *metav1.Status {
+	return &metav1.Status{
+		TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"},
+		Status:   metav1.StatusFailure,
+		Code:     http.StatusGone,
+		Reason:   metav1.StatusReasonExpired,
+		Message:  "watch events were dropped for a slow client; relist required",
+	}
+}
 
 // watchSubscriberBuffer is the per-subscriber channel capacity. Generous so
 // a slow client can fall a few events behind without blocking the publisher;
@@ -38,6 +104,10 @@ type subscriber struct {
 	namespace string // "" matches every namespace
 	ch        chan watchEvent
 	done      chan struct{}
+	// overflow is signaled (once) when the publisher had to drop an event
+	// because ch was full. streamWatch turns that into a 410 Gone so the client
+	// relists rather than running with a silently-divergent cache.
+	overflow chan struct{}
 }
 
 // broadcaster fans out resource mutations to every connected Watch
@@ -63,6 +133,7 @@ func (b *broadcaster) subscribe(namespace string) *subscriber {
 		namespace: namespace,
 		ch:        make(chan watchEvent, watchSubscriberBuffer),
 		done:      make(chan struct{}),
+		overflow:  make(chan struct{}, 1),
 	}
 
 	b.mu.Lock()
@@ -95,12 +166,16 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 			continue
 		}
 
-		// Channel full → drop this event for the slow subscriber rather
-		// than block the publisher or other subscribers. Real apiserver
-		// would disconnect; we shed load.
+		// Channel full → don't block the publisher or other subscribers. Signal
+		// overflow (once, non-blocking) so streamWatch sends the client a 410
+		// Gone and it relists, instead of silently missing events forever.
 		select {
 		case sub.ch <- watchEvent{Type: eventType, Object: obj}:
 		default:
+			select {
+			case sub.overflow <- struct{}{}:
+			default:
+			}
 		}
 
 		keep = append(keep, sub)
@@ -133,11 +208,19 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 //
 // streamWatch closes sub.done on return so broadcaster.publish can prune
 // the subscriber slice on the next publish.
+// keep, when non-nil, filters both the initial snapshot and streamed events to
+// the objects a client's labelSelector/fieldSelector matches. Without it a
+// selective watch (`kubectl get pods -l app=x -w`, or any informer built with a
+// selector) would receive non-matching objects — polluting reflector caches and
+// firing spurious reconciles, which the reconcile engine amplifies.
+//
+//nolint:gocyclo // snapshot + stream loop with selector filtering; splitting further would hide the subscribe/snapshot ordering contract.
 func streamWatch[T any](
 	ctx context.Context,
 	w http.ResponseWriter,
 	sub *subscriber,
 	initial []T,
+	keep func(T) bool,
 ) {
 	defer close(sub.done)
 
@@ -156,27 +239,54 @@ func streamWatch[T any](
 	enc := json.NewEncoder(w)
 
 	for _, item := range initial {
-		if err := enc.Encode(watchEvent{Type: EventAdded, Object: item}); err != nil {
-			return
+		if keep != nil && !keep(item) {
+			continue
 		}
 
-		flusher.Flush()
+		if !encodeWatchEvent(enc, flusher, watchEvent{Type: EventAdded, Object: item}) {
+			return
+		}
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-sub.overflow:
+			// We dropped at least one event for this slow watcher. Send a 410
+			// Gone (Expired) like a real apiserver so the client-go reflector
+			// relists rather than running with a permanently-stale cache, then
+			// end the stream.
+			encodeWatchEvent(enc, flusher, watchEvent{Type: EventError, Object: expiredWatchStatus()})
+
+			return
 		case ev, ok := <-sub.ch:
 			if !ok {
 				return
 			}
 
-			if err := enc.Encode(ev); err != nil {
-				return
+			// Streamed objects are published as the same concrete type as
+			// initial; apply the same selector filter. A type mismatch (never
+			// expected) passes through rather than silently dropping.
+			if obj, ok := ev.Object.(T); ok && keep != nil && !keep(obj) {
+				continue
 			}
 
-			flusher.Flush()
+			if !encodeWatchEvent(enc, flusher, ev) {
+				return
+			}
 		}
 	}
+}
+
+// encodeWatchEvent writes one watch event and flushes it, returning false if
+// the write failed (client gone) so the caller stops streaming.
+func encodeWatchEvent(enc *json.Encoder, flusher http.Flusher, ev watchEvent) bool {
+	if err := enc.Encode(ev); err != nil {
+		return false
+	}
+
+	flusher.Flush()
+
+	return true
 }

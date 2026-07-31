@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // servePods dispatches /api/v1/{namespaces/{ns}/pods|pods} requests.
@@ -14,7 +15,7 @@ import (
 // Per-resource files share the dispatch shape on purpose; each resource keeps
 // its quirks (Service ClusterIP, Secret StringData merge) close to its type.
 //
-//nolint:dupl // see comment above.
+
 func (s *ClusterState) servePods(w http.ResponseWriter, r *http.Request, route *Route) {
 	if route.APIGroup != "" || route.APIVersion != apiVersionV1 {
 		writeNotFound(w, "k8s api: pods are only served at /api/v1")
@@ -35,7 +36,7 @@ func (s *ClusterState) servePods(w http.ResponseWriter, r *http.Request, route *
 			return
 		}
 
-		s.listPodsAllNamespaces(w)
+		s.listPodsAllNamespaces(w, r)
 
 		return
 	}
@@ -64,7 +65,7 @@ func (s *ClusterState) servePodCollection(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		s.listPods(w, namespace)
+		s.listPods(w, r, namespace)
 	case http.MethodPost:
 		s.createPod(w, r, namespace)
 	default:
@@ -73,11 +74,10 @@ func (s *ClusterState) servePodCollection(w http.ResponseWriter, r *http.Request
 }
 
 func (s *ClusterState) watchPods(w http.ResponseWriter, r *http.Request, namespace string) {
-	s.mu.RLock()
-	sub := s.wPods.subscribe(namespace)
-	items := s.collectPodsLocked(namespace)
-	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	sel, fields := parseListSelectors(r)
+	serveWatch(s, w, r, s.wPods, namespace,
+		func() []corev1.Pod { return s.collectPodsLocked(namespace) },
+		func(p corev1.Pod) bool { return sel.Matches(labels.Set(p.Labels)) && podMatchesFields(&p, fields) })
 }
 
 func (s *ClusterState) servePodItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -123,39 +123,85 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 	stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
 
-	// No scheduler in Wave 2 — every Pod is born Pending and stays there
-	// until something (a future Phase 4 controller, or the test author)
-	// explicitly mutates Status.
-	if in.Status.Phase == "" {
-		in.Status.Phase = corev1.PodPending
-	}
-
 	pod := in
+	// cloudemu has no kubelet; a directly-created Pod is driven Running (with a
+	// synthetic IP and ready containers) so it behaves like a scheduled Pod. A
+	// caller-supplied terminal phase (Succeeded/Failed) is preserved.
+	s.markPodRunningLocked(&pod)
 	s.pods[key] = &pod
+	// A new Pod may satisfy a Service selector — refresh endpoints.
+	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventAdded, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusCreated, &pod)
 }
 
-func (s *ClusterState) listPods(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listPods(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectPodsLocked(namespace)
+	items := filterPods(s.collectPodsLocked(namespace), r)
 	writeJSON(w, http.StatusOK, &corev1.PodList{
 		TypeMeta: metav1.TypeMeta{Kind: "PodList", APIVersion: "v1"},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listPodsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listPodsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectPodsLocked("")
+	items := filterPods(s.collectPodsLocked(""), r)
 	writeJSON(w, http.StatusOK, &corev1.PodList{
 		TypeMeta: metav1.TypeMeta{Kind: "PodList", APIVersion: "v1"},
 		Items:    items,
 	})
+}
+
+// filterPods applies the request's labelSelector and the metadata.name /
+// status.phase fieldSelectors to a Pod list (kubectl get pods -l / --field-
+// selector). An empty/absent selector returns everything.
+func filterPods(pods []corev1.Pod, r *http.Request) []corev1.Pod {
+	sel, fields := parseListSelectors(r)
+
+	out := make([]corev1.Pod, 0, len(pods))
+
+	for i := range pods {
+		p := &pods[i]
+		if sel.Matches(labels.Set(p.Labels)) && podMatchesFields(p, fields) {
+			out = append(out, *p)
+		}
+	}
+
+	return out
+}
+
+func podMatchesFields(p *corev1.Pod, fields map[string]string) bool {
+	for k, v := range fields {
+		switch k {
+		case fieldMetadataName:
+			if p.Name != v {
+				return false
+			}
+		case fieldMetadataNamespace:
+			if p.Namespace != v {
+				return false
+			}
+		case fieldStatusPhase:
+			if string(p.Status.Phase) != v {
+				return false
+			}
+		case fieldSpecNodeName:
+			// Every reconciler-materialized Pod is scheduled to the single
+			// synthetic node, so this is a common and answerable selector.
+			if p.Spec.NodeName != v {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 func (s *ClusterState) collectPodsLocked(namespace string) []corev1.Pod {
@@ -191,7 +237,6 @@ func (s *ClusterState) getPod(w http.ResponseWriter, namespace, name string) {
 	writeJSON(w, http.StatusOK, pod.DeepCopy())
 }
 
-//nolint:dupl // namespaced-update CRUD pattern; copy-paste is clearer than a generic helper.
 func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	var in corev1.Pod
 	if !readJSON(w, r, &in) {
@@ -223,15 +268,21 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	in.TypeMeta = cur.TypeMeta
 
 	pod := in
+	// A spec-only PUT (no status) must not drop the Pod out of Running — keep it
+	// materialized like createPod does.
+	if pod.Status.Phase == "" {
+		s.markPodRunningLocked(&pod)
+	}
+
 	s.pods[key] = &pod
+	// Labels may have changed to (no longer) match a Service selector.
+	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventModified, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusOK, &pod)
 }
 
 // Patch flow is identical across namespaced resources; sharing would force a
 // runtime type-switch and obscure the resource-specific store access.
-//
-//nolint:dupl // see comment above.
 func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := podKey(namespace, name)
 
@@ -252,6 +303,8 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	s.pods[key] = patched
+	// A patch may have changed labels that match a Service selector.
+	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
@@ -270,6 +323,8 @@ func (s *ClusterState) deletePod(w http.ResponseWriter, namespace, name string) 
 	}
 
 	delete(s.pods, key)
+	// A Service may have been pointing at this Pod — refresh its endpoints.
+	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventDeleted, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusOK, pod.DeepCopy())
 }
