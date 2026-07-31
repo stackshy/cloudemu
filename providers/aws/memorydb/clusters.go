@@ -58,6 +58,21 @@ func (m *Mock) buildShards(clusterName string, numShards, replicasPerShard int) 
 		numShards = 1
 	}
 
+	// Defensive clamp to the service limits. Callers reject out-of-range counts
+	// via validateShardTopology first, so this never triggers for valid input;
+	// it keeps the allocations below bounded regardless of the call path.
+	if numShards > maxShardsPerCluster {
+		numShards = maxShardsPerCluster
+	}
+
+	if replicasPerShard < 0 {
+		replicasPerShard = 0
+	}
+
+	if replicasPerShard > maxReplicasPerShard {
+		replicasPerShard = maxReplicasPerShard
+	}
+
 	nodesPerShard := replicasPerShard + 1 // primary + replicas
 	shards := make([]mdbdriver.Shard, 0, numShards)
 	now := m.opts.Clock.Now().UTC()
