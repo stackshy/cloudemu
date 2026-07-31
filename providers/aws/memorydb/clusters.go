@@ -28,7 +28,31 @@ func cloneCluster(in *mdbdriver.Cluster) mdbdriver.Cluster {
 	return c
 }
 
+// MemoryDB service limits on cluster topology. Enforcing them before the mock
+// allocates the shard/node slices keeps a caller-supplied count from driving
+// unbounded memory use.
+const (
+	maxShardsPerCluster = 500
+	maxReplicasPerShard = 5
+)
+
+// validateShardTopology bounds caller-supplied shard/replica counts to the
+// MemoryDB service limits, rejecting out-of-range requests before allocation.
+func validateShardTopology(numShards, replicasPerShard int) error {
+	if numShards < 0 || numShards > maxShardsPerCluster {
+		return cerrors.Newf(cerrors.InvalidArgument, "NumShards must be between 1 and %d", maxShardsPerCluster)
+	}
+
+	if replicasPerShard < 0 || replicasPerShard > maxReplicasPerShard {
+		return cerrors.Newf(cerrors.InvalidArgument, "ReplicasPerShard must be between 0 and %d", maxReplicasPerShard)
+	}
+
+	return nil
+}
+
 // buildShards constructs the shard/node topology + endpoints for a cluster.
+// Callers must validate numShards/replicasPerShard via validateShardTopology
+// first; the values are bounded to the MemoryDB service limits.
 func (m *Mock) buildShards(clusterName string, numShards, replicasPerShard int) []mdbdriver.Shard {
 	if numShards <= 0 {
 		numShards = 1
@@ -149,6 +173,10 @@ func (m *Mock) CreateCluster(_ context.Context, cfg mdbdriver.CreateClusterConfi
 		}
 	}
 
+	if err := validateShardTopology(numShards, cfg.NumReplicasPerShard); err != nil {
+		return nil, err
+	}
+
 	sgs := make([]mdbdriver.SecurityGroupMembership, 0, len(cfg.SecurityGroupIDs))
 	for _, id := range cfg.SecurityGroupIDs {
 		sgs = append(sgs, mdbdriver.SecurityGroupMembership{SecurityGroupID: id, Status: mdbdriver.StatusAvailable})
@@ -251,14 +279,8 @@ func (m *Mock) UpdateCluster(_ context.Context, cfg mdbdriver.UpdateClusterConfi
 		c.SnapshotRetentionLimit = *cfg.SnapshotRetentionLimit
 	}
 
-	if cfg.ShardCount != nil && *cfg.ShardCount > 0 {
-		c.NumberOfShards = *cfg.ShardCount
-		c.Shards = m.buildShards(cfg.Name, *cfg.ShardCount, len(c.Shards[0].Nodes)-1)
-	}
-
-	if cfg.ReplicaCount != nil {
-		c.Shards = m.buildShards(cfg.Name, c.NumberOfShards, *cfg.ReplicaCount)
-		c.AvailabilityMode = availabilityMode(*cfg.ReplicaCount)
+	if err := m.reconfigureShards(&c, &cfg); err != nil {
+		return nil, err
 	}
 
 	m.clusters.Set(cfg.Name, c)
@@ -267,6 +289,31 @@ func (m *Mock) UpdateCluster(_ context.Context, cfg mdbdriver.UpdateClusterConfi
 	out := cloneCluster(&c)
 
 	return &out, nil
+}
+
+// reconfigureShards rebuilds the shard/node topology for an in-place shard-count
+// or replica-count change, enforcing the MemoryDB service limits before any
+// allocation. The caller holds the lock.
+func (m *Mock) reconfigureShards(c *mdbdriver.Cluster, cfg *mdbdriver.UpdateClusterConfig) error {
+	if cfg.ShardCount != nil && *cfg.ShardCount > 0 {
+		if err := validateShardTopology(*cfg.ShardCount, len(c.Shards[0].Nodes)-1); err != nil {
+			return err
+		}
+
+		c.NumberOfShards = *cfg.ShardCount
+		c.Shards = m.buildShards(c.Name, *cfg.ShardCount, len(c.Shards[0].Nodes)-1)
+	}
+
+	if cfg.ReplicaCount != nil {
+		if err := validateShardTopology(c.NumberOfShards, *cfg.ReplicaCount); err != nil {
+			return err
+		}
+
+		c.Shards = m.buildShards(c.Name, c.NumberOfShards, *cfg.ReplicaCount)
+		c.AvailabilityMode = availabilityMode(*cfg.ReplicaCount)
+	}
+
+	return nil
 }
 
 // DeleteCluster removes a cluster (optionally taking a final snapshot).

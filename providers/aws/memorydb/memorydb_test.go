@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 )
@@ -22,6 +23,30 @@ func requireNoError(t *testing.T, err error) {
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClusterShardTopologyLimits(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
+		Name: "too-many-shards", NumShards: maxShardsPerCluster + 1,
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("NumShards over limit: got %v, want InvalidArgument", err)
+	}
+
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
+		Name: "too-many-replicas", NumShards: 1, NumReplicasPerShard: maxReplicasPerShard + 1,
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("ReplicasPerShard over limit: got %v, want InvalidArgument", err)
+	}
+
+	// At the limits it succeeds.
+	if _, err := m.CreateCluster(ctx, mdbdriver.CreateClusterConfig{
+		Name: "at-limit", NumShards: 1, NumReplicasPerShard: maxReplicasPerShard,
+	}); err != nil {
+		t.Fatalf("at-limit create: unexpected error %v", err)
 	}
 }
 
