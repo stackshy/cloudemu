@@ -74,12 +74,18 @@ func (m *Mock) buildShards(clusterName string, numShards, replicasPerShard int) 
 	}
 
 	nodesPerShard := replicasPerShard + 1 // primary + replicas
-	shards := make([]mdbdriver.Shard, 0, numShards)
 	now := m.opts.Clock.Now().UTC()
+
+	// Capacities are intentionally left unhinted: the counts, though clamped to
+	// the service limits above, originate from caller input, and a tainted
+	// make() size is an uncontrolled-allocation risk. The clamped loop bounds
+	// keep the append-driven growth bounded.
+	var shards []mdbdriver.Shard
 
 	for s := 1; s <= numShards; s++ {
 		shardName := fmt.Sprintf("%04d", s)
-		nodes := make([]mdbdriver.Node, 0, nodesPerShard)
+
+		var nodes []mdbdriver.Node
 
 		for n := 1; n <= nodesPerShard; n++ {
 			nodeName := fmt.Sprintf("%s-%s-%03d", clusterName, shardName, n)
