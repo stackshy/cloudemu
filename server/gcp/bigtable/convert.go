@@ -12,9 +12,14 @@ import (
 )
 
 func toWireInstance(i *btdriver.Instance) *bt.Instance {
-	return &bt.Instance{
+	out := &bt.Instance{
 		Name: i.Name, DisplayName: i.DisplayName, Type: i.Type, State: i.State, Labels: i.Labels,
 	}
+	if !i.CreateTime.IsZero() {
+		out.CreateTime = i.CreateTime.Format(time.RFC3339)
+	}
+
+	return out
 }
 
 func toWireCluster(c *btdriver.Cluster) *bt.Cluster {

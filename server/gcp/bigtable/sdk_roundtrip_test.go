@@ -312,6 +312,13 @@ func TestSDKGetListDeleteUpdatePaths(t *testing.T) {
 		t.Fatalf("AppProfiles.Delete: %v", err)
 	}
 
+	// A second cluster lets us delete c1 (an instance must keep >= 1 cluster).
+	if _, err := svc.Projects.Instances.Clusters.Create(inst, &bt.Cluster{
+		Location: "projects/" + project + "/locations/us-east1-b", ServeNodes: 3,
+	}).ClusterId("c2").Do(); err != nil {
+		t.Fatalf("Clusters.Create c2: %v", err)
+	}
+
 	// Cluster delete.
 	if _, err := svc.Projects.Instances.Clusters.Delete(cluster).Do(); err != nil {
 		t.Fatalf("Clusters.Delete: %v", err)

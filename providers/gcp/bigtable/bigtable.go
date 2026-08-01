@@ -108,6 +108,23 @@ func (m *Mock) CreateInstance(_ context.Context, cfg btdriver.CreateInstanceConf
 		return nil, nil, cerrors.Newf(cerrors.AlreadyExists, "instance %q already exists", cfg.Name)
 	}
 
+	// Validate every initial cluster up front so the create is all-or-nothing:
+	// a bad cluster (or a duplicate name that would silently collapse) must not
+	// leave a live cluster-less or under-provisioned instance behind.
+	seen := make(map[string]bool, len(cfg.Clusters))
+
+	for i := range cfg.Clusters {
+		if err := validateServeNodes(cfg.Clusters[i].ServeNodes); err != nil {
+			return nil, nil, err
+		}
+
+		if seen[cfg.Clusters[i].Name] {
+			return nil, nil, cerrors.Newf(cerrors.InvalidArgument, "duplicate cluster %q", cfg.Clusters[i].Name)
+		}
+
+		seen[cfg.Clusters[i].Name] = true
+	}
+
 	inst := btdriver.Instance{
 		Name:        cfg.Name,
 		DisplayName: orDefault(cfg.DisplayName, lastSegment(cfg.Name)),
@@ -302,10 +319,56 @@ func (m *Mock) SetIamPolicy(_ context.Context, resource string, policy btdriver.
 	return &out, nil
 }
 
-// TestIamPermissions echoes back the subset of permissions the caller holds. The
-// mock grants all requested permissions.
-func (*Mock) TestIamPermissions(_ context.Context, _ string, permissions []string) ([]string, error) {
-	return append([]string(nil), permissions...), nil
+// rolePermissions maps a Bigtable IAM role to the permissions it confers. A nil
+// set means the role grants every permission (admin).
+//
+//nolint:gochecknoglobals // static IAM role -> permission lookup table
+var rolePermissions = map[string]map[string]bool{
+	"roles/bigtable.admin": nil,
+	"roles/bigtable.user": {
+		"bigtable.tables.readRows": true, "bigtable.tables.mutateRows": true,
+		"bigtable.tables.sampleRowKeys": true, "bigtable.tables.get": true,
+		"bigtable.tables.list": true, "bigtable.instances.get": true,
+	},
+	"roles/bigtable.reader": {
+		"bigtable.tables.readRows": true, "bigtable.tables.sampleRowKeys": true,
+		"bigtable.tables.get": true, "bigtable.tables.list": true,
+	},
+	"roles/bigtable.viewer": {
+		"bigtable.tables.get": true, "bigtable.tables.list": true, "bigtable.instances.get": true,
+	},
+}
+
+// roleGrants reports whether a role confers a permission.
+func roleGrants(role, perm string) bool {
+	set, known := rolePermissions[role]
+	if !known {
+		return false
+	}
+
+	return set == nil || set[perm] // nil set = admin (all permissions)
+}
+
+// TestIamPermissions returns the subset of the requested permissions that the
+// resource's stored policy actually confers (empty when no policy is set).
+func (m *Mock) TestIamPermissions(_ context.Context, resource string, permissions []string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	policy := m.policies[resource]
+
+	granted := make([]string, 0, len(permissions))
+
+	for _, perm := range permissions {
+		for i := range policy.Bindings {
+			if roleGrants(policy.Bindings[i].Role, perm) {
+				granted = append(granted, perm)
+				break
+			}
+		}
+	}
+
+	return granted, nil
 }
 
 func clonePolicy(in *btdriver.Policy) btdriver.Policy {

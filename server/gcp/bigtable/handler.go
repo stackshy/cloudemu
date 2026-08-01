@@ -38,7 +38,16 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return strings.Contains(p, "/instances") || strings.HasPrefix(p, basePrefix+"operations/")
+	// Anchor "/instances" to a path segment so we don't claim look-alikes such
+	// as ".../instancesFoo". Also strip any trailing :verb before the suffix check.
+	base := p
+	if colon := strings.LastIndex(p, ":"); colon > strings.LastIndex(p, "/") {
+		base = p[:colon]
+	}
+
+	return strings.Contains(p, "/instances/") ||
+		strings.HasSuffix(base, "/instances") ||
+		strings.HasPrefix(p, basePrefix+"operations/")
 }
 
 // route is a parsed Bigtable Admin request path.

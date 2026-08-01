@@ -296,7 +296,10 @@ func (m *Mock) RestoreTable(_ context.Context, parent, tableID, backup string) (
 		return nil, nil, cerrors.Newf(cerrors.AlreadyExists, "table %q already exists", name)
 	}
 
-	t := btdriver.Table{Name: name, Granularity: "MILLIS", SourceBackup: b.Name}
+	t := btdriver.Table{
+		Name: name, Granularity: "MILLIS", SourceBackup: b.Name,
+		ColumnFamilies: cloneColumnFamilies(b.ColumnFamilies),
+	}
 	m.tables.Set(name, t)
 
 	op := m.newOp("restore-table", name)

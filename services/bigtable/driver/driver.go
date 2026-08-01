@@ -86,17 +86,19 @@ type AppProfile struct {
 	Etag                     string
 }
 
-// Backup is a table backup stored in a cluster.
+// Backup is a table backup stored in a cluster. It snapshots the source
+// table's column families so a restore can rebuild the schema.
 type Backup struct {
-	Name         string
-	SourceTable  string
-	SourceBackup string
-	ExpireTime   time.Time
-	StartTime    time.Time
-	EndTime      time.Time
-	SizeBytes    int64
-	State        string
-	BackupType   string
+	Name           string
+	SourceTable    string
+	SourceBackup   string
+	ColumnFamilies map[string]ColumnFamily
+	ExpireTime     time.Time
+	StartTime      time.Time
+	EndTime        time.Time
+	SizeBytes      int64
+	State          string
+	BackupType     string
 }
 
 // Operation is a long-running operation. Done is always true in the mock; the

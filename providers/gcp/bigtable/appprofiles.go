@@ -15,6 +15,17 @@ func cloneAppProfile(in *btdriver.AppProfile) btdriver.AppProfile {
 	return a
 }
 
+// validateRouting requires exactly one routing policy (multi-cluster or
+// single-cluster), matching the Bigtable Admin API.
+func validateRouting(cfg *btdriver.CreateAppProfileConfig) error {
+	if cfg.MultiClusterRoutingAny == (cfg.SingleClusterID != "") {
+		return cerrors.New(cerrors.InvalidArgument,
+			"exactly one of multiClusterRoutingUseAny or singleClusterRouting is required")
+	}
+
+	return nil
+}
+
 func appProfileFrom(cfg *btdriver.CreateAppProfileConfig, name string) btdriver.AppProfile {
 	return btdriver.AppProfile{
 		Name:                     name,
@@ -34,6 +45,10 @@ func appProfileFrom(cfg *btdriver.CreateAppProfileConfig, name string) btdriver.
 func (m *Mock) CreateAppProfile(_ context.Context, cfg btdriver.CreateAppProfileConfig) (*btdriver.AppProfile, error) {
 	if cfg.AppProfileID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "appProfileId is required")
+	}
+
+	if err := validateRouting(&cfg); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -95,6 +110,10 @@ func (m *Mock) ListAppProfiles(_ context.Context, instance string) ([]btdriver.A
 func (m *Mock) UpdateAppProfile(
 	_ context.Context, name string, cfg btdriver.CreateAppProfileConfig,
 ) (*btdriver.AppProfile, *btdriver.Operation, error) {
+	if err := validateRouting(&cfg); err != nil {
+		return nil, nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

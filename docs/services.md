@@ -1218,7 +1218,7 @@ Modeling: instances own clusters/tables/app-profiles (parent linkage, cascade
 delete); backups live under a cluster and restore into a new table; serve-node
 counts are bounded; clone-on-read on every path.
 
-**Total: 44 operations**
+**Total: 38 operations**
 
 ---
 
@@ -2198,7 +2198,7 @@ still sees success.
 | MemoryDB — AWS (Redis/Valkey control plane) | 33 (+13 optional) |
 | Keyspaces — AWS (Cassandra control plane) | 18 (+1 optional) |
 | Managed Cassandra — Azure (Cosmos DB) | 15 |
-| Bigtable — GCP (wide-column NoSQL) | 44 |
+| Bigtable — GCP (wide-column NoSQL) | 38 |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
@@ -2218,7 +2218,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1387** (+138 optional) |
+| **Grand Total** | **1381** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

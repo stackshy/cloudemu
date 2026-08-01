@@ -217,6 +217,13 @@ func TestBackupsAndRestore(t *testing.T) {
 		t.Fatalf("restored table wrong: %v %+v", err, rt)
 	}
 
+	// A second cluster lets us delete c1 (an instance must keep >= 1 cluster).
+	if _, _, err := m.CreateCluster(ctx, btdriver.CreateClusterConfig{
+		Name: inst + "/clusters/c2", Location: "us-east1-b", ServeNodes: 3,
+	}); err != nil {
+		t.Fatalf("CreateCluster c2: %v", err)
+	}
+
 	// Deleting the cluster removes its backups.
 	if err := m.DeleteCluster(ctx, cluster); err != nil {
 		t.Fatalf("DeleteCluster: %v", err)
@@ -355,5 +362,213 @@ func TestTableResultDoesNotAliasStore(t *testing.T) {
 	again, _ := m.GetTable(ctx, name)
 	if again.ColumnFamilies["cf1"].GCRule.MaxNumVersions != 3 {
 		t.Fatal("returned table aliases the store (clone-on-read broken)")
+	}
+}
+
+func TestUpdateClusterAutoscalingDoesNotAlias(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+	name := inst + "/clusters/c1"
+
+	as := &btdriver.Autoscaling{MinServeNodes: 2, MaxServeNodes: 10, CPUTargetPct: 60}
+	if _, _, err := m.UpdateCluster(ctx, name, 0, as); err != nil {
+		t.Fatalf("UpdateCluster: %v", err)
+	}
+
+	// Mutating the caller's struct after the call must not reach the store.
+	as.MaxServeNodes = 999
+
+	got, _ := m.GetCluster(ctx, name)
+	if got.Autoscaling == nil || got.Autoscaling.MaxServeNodes != 10 {
+		t.Fatalf("autoscaling aliased the caller's struct: %+v", got.Autoscaling)
+	}
+}
+
+func TestTestIamPermissionsIntersectsPolicy(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+
+	// No policy set -> nothing granted.
+	if perms, _ := m.TestIamPermissions(ctx, inst, []string{"bigtable.tables.readRows"}); len(perms) != 0 {
+		t.Fatalf("no-policy grant: got %+v, want none", perms)
+	}
+
+	// A viewer can read table metadata but cannot mutate rows.
+	if _, err := m.SetIamPolicy(ctx, inst, btdriver.Policy{
+		Bindings: []btdriver.Binding{{Role: "roles/bigtable.viewer", Members: []string{"user:a@b.com"}}},
+	}); err != nil {
+		t.Fatalf("SetIamPolicy: %v", err)
+	}
+
+	perms, _ := m.TestIamPermissions(ctx, inst, []string{"bigtable.tables.get", "bigtable.tables.mutateRows"})
+	if len(perms) != 1 || perms[0] != "bigtable.tables.get" {
+		t.Fatalf("viewer intersection wrong: %+v", perms)
+	}
+}
+
+func TestDeleteLastClusterRejected(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+
+	// The sole cluster cannot be deleted.
+	if err := m.DeleteCluster(ctx, inst+"/clusters/c1"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete last cluster: got %v, want FailedPrecondition", err)
+	}
+
+	// With a second cluster present, deleting one is allowed.
+	if _, _, err := m.CreateCluster(ctx, btdriver.CreateClusterConfig{
+		Name: inst + "/clusters/c2", Location: "us-central1-b", ServeNodes: 3,
+	}); err != nil {
+		t.Fatalf("CreateCluster c2: %v", err)
+	}
+
+	if err := m.DeleteCluster(ctx, inst+"/clusters/c1"); err != nil {
+		t.Fatalf("DeleteCluster c1: %v", err)
+	}
+}
+
+func TestCreateInstanceIsAtomicOnBadCluster(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	name := proj + "/instances/atomic"
+
+	// A bad cluster in the initial set must fail the whole create with no
+	// half-built instance left behind.
+	_, _, err := m.CreateInstance(ctx, btdriver.CreateInstanceConfig{
+		Name: name,
+		Clusters: []btdriver.CreateClusterConfig{
+			{Name: name + "/clusters/ok", Location: "us-central1-a", ServeNodes: 3},
+			{Name: name + "/clusters/bad", Location: "us-central1-b", ServeNodes: maxServeNodes + 1},
+		},
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("bad initial cluster: got %v, want InvalidArgument", err)
+	}
+
+	if _, err := m.GetInstance(ctx, name); !cerrors.IsNotFound(err) {
+		t.Fatalf("instance survived failed create: got %v, want NotFound", err)
+	}
+}
+
+func TestRestorePreservesColumnFamilies(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+	cluster := inst + "/clusters/c1"
+
+	if _, err := m.CreateTable(ctx, btdriver.CreateTableConfig{
+		Parent: inst, TableID: "src",
+		ColumnFamilies: map[string]btdriver.ColumnFamily{"cf": {GCRule: &btdriver.GCRule{MaxNumVersions: 5}}},
+	}); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	if _, _, err := m.CreateBackup(ctx, btdriver.CreateBackupConfig{
+		Parent: cluster, BackupID: "b1", SourceTable: inst + "/tables/src",
+		ExpireTime: m.opts.Clock.Now().Add(24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+
+	if _, _, err := m.RestoreTable(ctx, inst, "restored", cluster+"/backups/b1"); err != nil {
+		t.Fatalf("RestoreTable: %v", err)
+	}
+
+	rt, err := m.GetTable(ctx, inst+"/tables/restored")
+	if err != nil {
+		t.Fatalf("GetTable restored: %v", err)
+	}
+
+	cf, ok := rt.ColumnFamilies["cf"]
+	if !ok || cf.GCRule == nil || cf.GCRule.MaxNumVersions != 5 {
+		t.Fatalf("restored table lost column families: %+v", rt.ColumnFamilies)
+	}
+}
+
+func TestCreateBackupSourceTableValidation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+	other := mustInstance(t, m, "other")
+	cluster := inst + "/clusters/c1"
+
+	// A source table in a different instance is rejected.
+	if _, err := m.CreateTable(ctx, btdriver.CreateTableConfig{Parent: other, TableID: "t"}); err != nil {
+		t.Fatalf("CreateTable other: %v", err)
+	}
+
+	if _, _, err := m.CreateBackup(ctx, btdriver.CreateBackupConfig{
+		Parent: cluster, BackupID: "x", SourceTable: other + "/tables/t",
+		ExpireTime: m.opts.Clock.Now().Add(time.Hour),
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("cross-instance source: got %v, want InvalidArgument", err)
+	}
+
+	// A soft-deleted source table is rejected.
+	if _, err := m.CreateTable(ctx, btdriver.CreateTableConfig{Parent: inst, TableID: "gone"}); err != nil {
+		t.Fatalf("CreateTable gone: %v", err)
+	}
+
+	if err := m.DeleteTable(ctx, inst+"/tables/gone"); err != nil {
+		t.Fatalf("DeleteTable: %v", err)
+	}
+
+	if _, _, err := m.CreateBackup(ctx, btdriver.CreateBackupConfig{
+		Parent: cluster, BackupID: "y", SourceTable: inst + "/tables/gone",
+		ExpireTime: m.opts.Clock.Now().Add(time.Hour),
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("deleted source: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestAppProfileRoutingRequiresExactlyOnePolicy(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+
+	// Neither routing policy set.
+	if _, err := m.CreateAppProfile(ctx, btdriver.CreateAppProfileConfig{
+		Parent: inst, AppProfileID: "none",
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("no routing: got %v, want InvalidArgument", err)
+	}
+
+	// Both routing policies set.
+	if _, err := m.CreateAppProfile(ctx, btdriver.CreateAppProfileConfig{
+		Parent: inst, AppProfileID: "both", MultiClusterRoutingAny: true, SingleClusterID: "c1",
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("both routing: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestNestedGCRuleSurvivesCloneOnRead(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+
+	nested := &btdriver.GCRule{Union: []btdriver.GCRule{
+		{MaxNumVersions: 1},
+		{Intersection: []btdriver.GCRule{{MaxNumVersions: 2}, {MaxAgeSeconds: 3600}}},
+	}}
+
+	if _, err := m.CreateTable(ctx, btdriver.CreateTableConfig{
+		Parent: inst, TableID: "t",
+		ColumnFamilies: map[string]btdriver.ColumnFamily{"cf": {GCRule: nested}},
+	}); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	name := inst + "/tables/t"
+
+	// Mutating a deeply nested node of the returned tree must not reach the store.
+	got, _ := m.GetTable(ctx, name)
+	got.ColumnFamilies["cf"].GCRule.Union[1].Intersection[0].MaxNumVersions = 99
+
+	again, _ := m.GetTable(ctx, name)
+	if again.ColumnFamilies["cf"].GCRule.Union[1].Intersection[0].MaxNumVersions != 2 {
+		t.Fatal("nested GC rule aliases the store (deep clone broken)")
 	}
 }

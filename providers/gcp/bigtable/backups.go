@@ -9,7 +9,12 @@ import (
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 )
 
-func cloneBackup(in *btdriver.Backup) btdriver.Backup { return *in }
+func cloneBackup(in *btdriver.Backup) btdriver.Backup {
+	b := *in
+	b.ColumnFamilies = cloneColumnFamilies(in.ColumnFamilies)
+
+	return b
+}
 
 // CreateBackup creates a backup of a table under a cluster (LRO).
 //
@@ -26,8 +31,15 @@ func (m *Mock) CreateBackup(_ context.Context, cfg btdriver.CreateBackupConfig) 
 		return nil, nil, cerrors.Newf(cerrors.InvalidArgument, "cluster %q not found", cfg.Parent)
 	}
 
+	// The source table must be a live table in the same instance as the backup
+	// cluster (a backup can't reference another instance's table).
 	instance := parentName(cfg.Parent)
-	if cfg.SourceTable == "" || !m.tables.Has(instance+"/tables/"+lastSegment(cfg.SourceTable)) {
+	if parentName(cfg.SourceTable) != instance {
+		return nil, nil, cerrors.Newf(cerrors.InvalidArgument, "source table %q is not in instance %q", cfg.SourceTable, instance)
+	}
+
+	src, ok := m.tables.Get(cfg.SourceTable)
+	if !ok || src.Deleted {
 		return nil, nil, cerrors.Newf(cerrors.InvalidArgument, "source table %q not found", cfg.SourceTable)
 	}
 
@@ -38,14 +50,15 @@ func (m *Mock) CreateBackup(_ context.Context, cfg btdriver.CreateBackupConfig) 
 
 	now := m.opts.Clock.Now().UTC()
 	b := btdriver.Backup{
-		Name:        name,
-		SourceTable: cfg.SourceTable,
-		ExpireTime:  cfg.ExpireTime,
-		StartTime:   now,
-		EndTime:     now,
-		SizeBytes:   0,
-		State:       "READY",
-		BackupType:  orDefault(cfg.BackupType, "STANDARD"),
+		Name:           name,
+		SourceTable:    cfg.SourceTable,
+		ColumnFamilies: cloneColumnFamilies(src.ColumnFamilies),
+		ExpireTime:     cfg.ExpireTime,
+		StartTime:      now,
+		EndTime:        now,
+		SizeBytes:      0,
+		State:          "READY",
+		BackupType:     orDefault(cfg.BackupType, "STANDARD"),
 	}
 	m.backups.Set(name, b)
 
@@ -144,15 +157,16 @@ func (m *Mock) CopyBackup(_ context.Context, cfg btdriver.CopyBackupConfig) (*bt
 
 	now := m.opts.Clock.Now().UTC()
 	b := btdriver.Backup{
-		Name:         name,
-		SourceTable:  src.SourceTable,
-		SourceBackup: cfg.SourceBackup,
-		ExpireTime:   cfg.ExpireTime,
-		StartTime:    now,
-		EndTime:      now,
-		SizeBytes:    src.SizeBytes,
-		State:        "READY",
-		BackupType:   src.BackupType,
+		Name:           name,
+		SourceTable:    src.SourceTable,
+		SourceBackup:   cfg.SourceBackup,
+		ColumnFamilies: cloneColumnFamilies(src.ColumnFamilies),
+		ExpireTime:     cfg.ExpireTime,
+		StartTime:      now,
+		EndTime:        now,
+		SizeBytes:      src.SizeBytes,
+		State:          "READY",
+		BackupType:     src.BackupType,
 	}
 	m.backups.Set(name, b)
 

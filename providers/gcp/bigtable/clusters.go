@@ -41,10 +41,22 @@ func (m *Mock) putClusterLocked(cfg btdriver.CreateClusterConfig) error {
 		ServeNodes:         serve,
 		DefaultStorageType: orDefault(cfg.DefaultStorageType, defaultStorageType),
 		State:              btdriver.StateReady,
-		Autoscaling:        cfg.Autoscaling,
+		Autoscaling:        cloneAutoscaling(cfg.Autoscaling),
 	})
 
 	return nil
+}
+
+// cloneAutoscaling copies the caller's autoscaling struct so a later mutation
+// can't reach into the store (clone-on-write).
+func cloneAutoscaling(a *btdriver.Autoscaling) *btdriver.Autoscaling {
+	if a == nil {
+		return nil
+	}
+
+	out := *a
+
+	return &out
 }
 
 func validateServeNodes(n int) error {
@@ -123,7 +135,7 @@ func (m *Mock) UpdateCluster(
 	}
 
 	if autoscaling != nil {
-		c.Autoscaling = autoscaling
+		c.Autoscaling = cloneAutoscaling(autoscaling)
 	} else if serveNodes > 0 {
 		if err := validateServeNodes(serveNodes); err != nil {
 			return nil, nil, err
@@ -141,7 +153,8 @@ func (m *Mock) UpdateCluster(
 	return &out, op, nil
 }
 
-// DeleteCluster removes a cluster and its backups.
+// DeleteCluster removes a cluster and its backups. An instance must keep at
+// least one cluster, so deleting the last one is rejected.
 func (m *Mock) DeleteCluster(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -150,10 +163,29 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
 	}
 
+	if m.clusterCount(parentName(name)) <= 1 {
+		return cerrors.Newf(cerrors.FailedPrecondition, "cannot delete the last cluster of instance %q", parentName(name))
+	}
+
 	m.clusters.Delete(name)
 	deletePrefixed(m.backups, name+"/")
 
 	return nil
+}
+
+// clusterCount returns the number of clusters directly under an instance. The
+// caller holds a lock.
+func (m *Mock) clusterCount(instance string) int {
+	prefix := instance + "/clusters/"
+	n := 0
+
+	for _, k := range m.clusters.Keys() {
+		if strings.HasPrefix(k, prefix) && !strings.Contains(strings.TrimPrefix(k, prefix), "/") {
+			n++
+		}
+	}
+
+	return n
 }
 
 // GetClusterMemoryLayer reports the cluster's memory-layer status. The mock has
