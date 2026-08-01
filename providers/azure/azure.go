@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/azuresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
+	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
@@ -67,6 +68,7 @@ type Provider struct {
 	VirtualMachines  *virtualmachines.Mock
 	CosmosDB         *cosmosdb.Mock
 	ManagedCassandra *managedcassandra.Mock
+	CosmosPostgreSQL *cosmospostgresql.Mock
 	Functions        *functions.Mock
 	VNet             *vnet.Mock
 	Monitor          *azuremonitor.Mock
@@ -112,6 +114,7 @@ func New(opts ...config.Option) *Provider {
 		VirtualMachines:  virtualmachines.New(o),
 		CosmosDB:         cosmosdb.New(o),
 		ManagedCassandra: managedcassandra.New(o),
+		CosmosPostgreSQL: cosmospostgresql.New(o),
 		Functions:        functions.New(o),
 		VNet:             vnet.New(o),
 		Monitor:          azuremonitor.New(o),

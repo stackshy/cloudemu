@@ -26,6 +26,7 @@ This document lists every service and operation available in CloudEmu across all
 | 17a | In-memory Database (Redis/Valkey) | `memorydb` | — | — |
 | 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | — |
 | 17c | Wide-column (Bigtable) | — | — | `bigtable` |
+| 17d | Distributed PostgreSQL (Citus) | — | `cosmospostgresql` | — |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
@@ -1222,6 +1223,57 @@ counts are bounded; clone-on-read on every path.
 
 ---
 
+## 11e. Cosmos DB for PostgreSQL (Azure)
+
+**Driver interface:** `services/cosmospostgresql/driver/driver.go`
+**Azure:** Cosmos DB for PostgreSQL (Citus) — `Microsoft.DBforPostgreSQL/serverGroupsv2`
+
+Real `armcosmosforpostgresql` clients configured with a custom endpoint hit the
+ARM handler (`server/azure/cosmospostgresql`) the same way they hit
+management.azure.com. Create/update RPCs return the resource inline with a
+terminal `provisioningState`; the cluster start/stop/restart/promote actions
+reply `202` + `Location` and the poller reads a terminal status from the
+`operationStatuses` URL.
+
+### Clusters (server groups)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateOrUpdateCluster` | `(ctx, CreateClusterConfig) (*Cluster, error)` |
+| `GetCluster` / `ListClustersByResourceGroup` / `ListClustersBySubscription` | cluster reads |
+| `UpdateCluster` | `(ctx, rg, name, ClusterPatch) (*Cluster, error)` (PATCH) |
+| `DeleteCluster` | `(ctx, rg, name) error` |
+| `RestartCluster` / `StartCluster` / `StopCluster` | lifecycle actions (LRO) |
+| `PromoteReadReplica` | `(ctx, rg, name) error` — detach a replica |
+| `CheckNameAvailability` | `(ctx, name, type) (*NameAvailability, error)` |
+
+### Firewall Rules & Roles
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateOrUpdateFirewallRule` / `GetFirewallRule` / `ListFirewallRules` / `DeleteFirewallRule` | IP allow-list CRUD |
+| `CreateRole` / `GetRole` / `ListRoles` / `DeleteRole` | Postgres role CRUD |
+
+### Servers (nodes), Configurations & Private Endpoints
+
+| Operation | Signature |
+|-----------|-----------|
+| `GetServer` / `ListServers` | read-only derived nodes (coordinator + workers) |
+| `ListConfigurations` / `GetConfiguration` | cluster-wide server parameters (per-role values) |
+| `GetCoordinatorConfiguration` / `GetNodeConfiguration` / `ListServerConfigurations` | server-scoped parameter reads |
+| `UpdateCoordinatorConfiguration` / `UpdateNodeConfiguration` | per-role parameter updates (LRO) |
+| `CreateOrUpdatePrivateEndpointConnection` / `GetPrivateEndpointConnection` / `ListPrivateEndpointConnections` / `DeletePrivateEndpointConnection` | private-endpoint CRUD |
+| `GetPrivateLinkResource` / `ListPrivateLinkResources` | private-link resource reads |
+
+Modeling: a cluster owns its firewall rules, roles, configurations, and
+private-endpoint connections (parent linkage, cascade delete); nodes are derived
+from the cluster shape (one coordinator + N workers); read replicas link back to
+a source cluster and detach on promote; clone-on-read on every path.
+
+**Total: 34 operations**
+
+---
+
 ## 12. Secrets
 
 **Driver interface:** `services/secrets/driver/driver.go`
@@ -2199,6 +2251,7 @@ still sees success.
 | Keyspaces — AWS (Cassandra control plane) | 18 (+1 optional) |
 | Managed Cassandra — Azure (Cosmos DB) | 15 |
 | Bigtable — GCP (wide-column NoSQL) | 38 |
+| Cosmos DB for PostgreSQL — Azure (Citus) | 34 |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
@@ -2218,7 +2271,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1381** (+138 optional) |
+| **Grand Total** | **1415** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

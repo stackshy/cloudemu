@@ -28,6 +28,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		TableStorage:     p.TableStorage,
 		CosmosDB:         p.CosmosDB,
 		ManagedCassandra: p.ManagedCassandra,
+		CosmosPostgreSQL: p.CosmosPostgreSQL,
 		Network:          p.VNet,
 		Monitor:          p.Monitor,
 		Functions:        p.Functions,

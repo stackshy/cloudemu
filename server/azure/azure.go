@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/blob"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmos"
+	"github.com/stackshy/cloudemu/v2/server/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/dbfs"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/gitcredentials"
@@ -60,6 +61,7 @@ import (
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	cpgdriver "github.com/stackshy/cloudemu/v2/services/cosmospostgresql/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
@@ -105,6 +107,9 @@ type Drivers struct {
 	// ManagedCassandra serves Microsoft.DocumentDB/cassandraClusters (Azure
 	// Managed Instance for Apache Cassandra) via the ARM protocol.
 	ManagedCassandra mcdriver.ManagedCassandra
+	// CosmosPostgreSQL serves Microsoft.DBforPostgreSQL/serverGroupsv2 (Azure
+	// Cosmos DB for PostgreSQL, Citus) via the ARM protocol.
+	CosmosPostgreSQL cpgdriver.CosmosPostgreSQL
 	Network          netdriver.Networking
 	Monitor          mondriver.Monitoring
 	Functions        sdrv.Serverless
@@ -207,6 +212,10 @@ func New(d Drivers) *server.Server {
 	// (disjoint from every other Azure handler).
 	if d.ManagedCassandra != nil {
 		srv.Register(managedcassandra.New(d.ManagedCassandra))
+	}
+
+	if d.CosmosPostgreSQL != nil {
+		srv.Register(cosmospostgresql.New(d.CosmosPostgreSQL))
 	}
 
 	if d.Network != nil {
