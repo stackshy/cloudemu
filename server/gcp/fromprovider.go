@@ -18,6 +18,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Monitoring:       p.CloudMonitoring,
 		CloudFunctions:   p.CloudFunctions,
 		PubSub:           p.PubSub,
+		Bigtable:         p.Bigtable,
 		CloudSQL:         p.CloudSQL,
 		GKE:              p.GKE,
 		VertexAI:         p.VertexAI,

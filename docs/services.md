@@ -25,6 +25,7 @@ This document lists every service and operation available in CloudEmu across all
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
 | 17a | In-memory Database (Redis/Valkey) | `memorydb` | — | — |
 | 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | — |
+| 17c | Wide-column (Bigtable) | — | — | `bigtable` |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
@@ -1142,6 +1143,85 @@ deallocate/start propagate to all datacenters.
 
 ---
 
+## 11d. Bigtable (GCP)
+
+**Driver interface:** `services/bigtable/driver/driver.go`
+**AWS:** — | **Azure:** — | **GCP:** Cloud Bigtable
+
+A wide-column NoSQL database. Control-plane only (the data plane is out of
+scope), so it has its own driver. Served as GCP REST/JSON under `/v2/...`
+(`server/gcp/bigtable`); a real `google.golang.org/api/bigtableadmin/v2` client
+with a custom endpoint works unchanged. The wire layer uses the SDK's own types
+for exact fidelity. Long-running RPCs return a Google `Operation{done:true}`
+carrying the resulting resource, and `operations.get` returns a done Operation,
+so SDK LRO waits complete.
+
+### Instances
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateInstance` | `(ctx, CreateInstanceConfig) (*Instance, *Operation, error)` |
+| `GetInstance` | `(ctx, name) (*Instance, error)` |
+| `ListInstances` | `(ctx, project) ([]Instance, error)` |
+| `UpdateInstance` | `(ctx, name, cfg) (*Instance, error)` |
+| `PartialUpdateInstance` | `(ctx, name, cfg) (*Instance, *Operation, error)` |
+| `DeleteInstance` | `(ctx, name) error` |
+
+### Clusters
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateCluster` | `(ctx, CreateClusterConfig) (*Cluster, *Operation, error)` |
+| `GetCluster` | `(ctx, name) (*Cluster, error)` |
+| `ListClusters` | `(ctx, instance) ([]Cluster, error)` |
+| `UpdateCluster` | `(ctx, name, serveNodes, autoscaling) (*Cluster, *Operation, error)` |
+| `DeleteCluster` | `(ctx, name) error` |
+| `GetClusterMemoryLayer` | `(ctx, name) error` |
+
+### Tables
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateTable` | `(ctx, CreateTableConfig) (*Table, error)` |
+| `GetTable` / `ListTables` | `(ctx, name) / (ctx, instance)` |
+| `UpdateTable` | `(ctx, name, deletionProtection) (*Table, *Operation, error)` |
+| `DeleteTable` / `UndeleteTable` | `(ctx, name)` (soft-delete + restore) |
+| `ModifyColumnFamilies` | `(ctx, name, mods) (*Table, error)` |
+| `DropRowRange` / `GenerateConsistencyToken` / `CheckConsistency` | data-consistency helpers |
+| `RestoreTable` | `(ctx, parent, tableID, backup) (*Table, *Operation, error)` |
+
+Column families carry recursive GC rules (`maxNumVersions` / `maxAge` /
+`union` / `intersection`).
+
+### App Profiles
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateAppProfile` / `GetAppProfile` / `ListAppProfiles` | routing-policy CRUD |
+| `UpdateAppProfile` | `(ctx, name, cfg) (*AppProfile, *Operation, error)` |
+| `DeleteAppProfile` | `(ctx, name) error` |
+
+### Backups
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateBackup` | `(ctx, CreateBackupConfig) (*Backup, *Operation, error)` |
+| `GetBackup` / `ListBackups` / `UpdateBackup` / `DeleteBackup` | backup CRUD |
+| `CopyBackup` | `(ctx, CopyBackupConfig) (*Backup, *Operation, error)` |
+
+### Operations & IAM
+
+`GetOperation` (LRO poll) plus per-resource IAM on instances, tables, and
+backups: `GetIamPolicy`, `SetIamPolicy`, `TestIamPermissions`.
+
+Modeling: instances own clusters/tables/app-profiles (parent linkage, cascade
+delete); backups live under a cluster and restore into a new table; serve-node
+counts are bounded; clone-on-read on every path.
+
+**Total: 38 operations**
+
+---
+
 ## 12. Secrets
 
 **Driver interface:** `services/secrets/driver/driver.go`
@@ -2118,6 +2198,7 @@ still sees success.
 | MemoryDB — AWS (Redis/Valkey control plane) | 33 (+13 optional) |
 | Keyspaces — AWS (Cassandra control plane) | 18 (+1 optional) |
 | Managed Cassandra — Azure (Cosmos DB) | 15 |
+| Bigtable — GCP (wide-column NoSQL) | 38 |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
@@ -2137,7 +2218,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1343** (+138 optional) |
+| **Grand Total** | **1381** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
