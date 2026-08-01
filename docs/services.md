@@ -23,6 +23,8 @@ This document lists every service and operation available in CloudEmu across all
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
+| 17a | In-memory Database (Redis/Valkey) | `memorydb` | — | — |
+| 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | — |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
@@ -1087,6 +1089,59 @@ deterministic result set; a malformed token yields `ValidationException`).
 
 ---
 
+## 11c. Managed Cassandra (Azure)
+
+**Driver interface:** `services/managedcassandra/driver/driver.go`
+**AWS:** — | **Azure:** Azure Managed Instance for Apache Cassandra | **GCP:** —
+
+A managed, Cassandra-compatible cluster service under Cosmos DB. Control-plane
+only (CQL is out of scope), so it has its own driver. Served as ARM REST/JSON
+under `Microsoft.DocumentDB/cassandraClusters` (`server/azure/managedcassandra`);
+a real `armcosmos` `CassandraClusters`/`CassandraDataCenters` client with a
+custom endpoint works unchanged. Mutating ops complete synchronously so the
+SDK's LRO pollers terminate on the first response (create/patch return the
+resource; delete → 204; deallocate/start → 202 + `Azure-AsyncOperation`;
+invokeCommand → 202 + `Location` returning the command output).
+
+### Clusters
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateOrUpdateCluster` | `(ctx, CreateClusterConfig) (*Cluster, error)` |
+| `GetCluster` | `(ctx, resourceGroup, name) (*Cluster, error)` |
+| `ListClustersByResourceGroup` | `(ctx, resourceGroup) ([]Cluster, error)` |
+| `ListClustersBySubscription` | `(ctx) ([]Cluster, error)` |
+| `UpdateCluster` | `(ctx, resourceGroup, name, ClusterPatch) (*Cluster, error)` |
+| `DeleteCluster` | `(ctx, resourceGroup, name) error` |
+| `DeallocateCluster` | `(ctx, resourceGroup, name) (*Cluster, error)` |
+| `StartCluster` | `(ctx, resourceGroup, name) (*Cluster, error)` |
+| `InvokeCommand` | `(ctx, resourceGroup, name, command, host) (string, error)` |
+| `ClusterStatus` | `(ctx, resourceGroup, name) (*ClusterStatus, error)` |
+
+Single/multi-region-capable clusters with cassandra version, delegated subnet,
+authentication method, repair, backups, seed/gossip/client certs, and a
+deallocate/start lifecycle. `ClusterStatus` reports per-node health;
+`InvokeCommand` runs a maintenance command (e.g. `nodetool`).
+
+### Data Centers
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateOrUpdateDataCenter` | `(ctx, CreateDataCenterConfig) (*DataCenter, error)` |
+| `GetDataCenter` | `(ctx, resourceGroup, cluster, name) (*DataCenter, error)` |
+| `ListDataCenters` | `(ctx, resourceGroup, cluster) ([]DataCenter, error)` |
+| `UpdateDataCenter` | `(ctx, resourceGroup, cluster, name, DataCenterPatch) (*DataCenter, error)` |
+| `DeleteDataCenter` | `(ctx, resourceGroup, cluster, name) error` |
+
+Datacenters live under a cluster (node count, disk capacity, SKU, availability
+zone, delegated subnet, seed nodes). Deleting a cluster cascade-deletes its
+datacenters; creating a datacenter validates the parent cluster exists;
+deallocate/start propagate to all datacenters.
+
+**Total: 15 operations**
+
+---
+
 ## 12. Secrets
 
 **Driver interface:** `services/secrets/driver/driver.go`
@@ -2062,6 +2117,7 @@ still sees success.
 | Cache | 16 (+7 optional) |
 | MemoryDB — AWS (Redis/Valkey control plane) | 33 (+13 optional) |
 | Keyspaces — AWS (Cassandra control plane) | 18 (+1 optional) |
+| Managed Cassandra — Azure (Cosmos DB) | 15 |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
@@ -2081,7 +2137,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1328** (+138 optional) |
+| **Grand Total** | **1343** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

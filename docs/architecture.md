@@ -48,7 +48,7 @@ The bottom layer contains the actual mock implementations for each cloud provide
 Sitting above Layer 2 (driver interfaces) are **cross-service engines** that consume driver interfaces directly without going through the portable API. They're peers of each other, not layers in the three-layer stack. Two exist today:
 
 - `features/topology/` -- reads from compute, networking, and DNS drivers to simulate real network connectivity (`CanConnect`, `TraceRoute`, `Resolve`, security-group and NACL evaluation). See [topology.md](topology.md).
-- `server/` -- exposes driver interfaces over HTTP in each cloud's native SDK wire format, so real `aws-sdk-go-v2`, `azure-sdk-for-go`, and `cloud.google.com/go` clients work against CloudEmu by only changing the endpoint. Covers Storage, Compute, Database, Networking, Monitoring, Serverless, and Message Queue across all 3 providers (AWS S3/EC2/DynamoDB/Lambda/SQS/CloudWatch + sibling Azure ARM and GCP REST handlers). Uses a pluggable `Handler` registry so new services drop in as self-contained packages without touching the core. See [sdk-server.md](sdk-server.md).
+- `server/` -- exposes driver interfaces over HTTP in each cloud's native SDK wire format, so real `aws-sdk-go-v2`, `azure-sdk-for-go`, and `cloud.google.com/go` clients work against CloudEmu by only changing the endpoint. Covers storage, compute, relational and NoSQL databases (incl. Redis/MemoryDB and Cassandra — Keyspaces and Azure Managed Cassandra), networking, monitoring/logging, serverless, containers (registry + ECS + Kubernetes), messaging, secrets, IAM, resource discovery, and AI/ML (Bedrock, SageMaker, Azure AI, Vertex AI) across all 3 providers. Uses a pluggable `Handler` registry so new services drop in as self-contained packages without touching the core. See [sdk-server.md](sdk-server.md) and the full catalog in [services.md](services.md).
 
 Both engines depend only on Layer 2 interfaces -- never on concrete provider types -- so they work uniformly across AWS, Azure, and GCP backends.
 
@@ -136,6 +136,7 @@ services/                             # emulated cloud services (portable API + 
     iam/  dns/  loadbalancer/  messagequeue/  cache/  secrets/  logging/
     notification/  eventbus/  containerregistry/  kubernetes/  resourcediscovery/
     bedrock/  sagemaker/  vertexai/  databricks/  azureai/  azuresearch/
+    memorydb/  keyspaces/  managedcassandra/  ecs/
     parameterstore/  tablestorage/  cost/
                                       # each: <name>.go (portable API) + driver/ (interface)
 features/                             # cross-cutting capabilities you wrap drivers with
@@ -159,6 +160,8 @@ providers/
         elb/                          # ELB mock
         sqs/                          # SQS mock
         elasticache/                  # ElastiCache mock
+        memorydb/                     # MemoryDB mock (Redis/Valkey control plane)
+        keyspaces/                    # Keyspaces mock (Cassandra control plane)
         secretsmanager/               # Secrets Manager mock
         cloudwatchlogs/               # CloudWatch Logs mock
         sns/                          # SNS mock
@@ -173,6 +176,7 @@ providers/
         blobstorage/                  # Blob Storage mock
         virtualmachines/              # Virtual Machines mock
         cosmosdb/                     # Cosmos DB mock
+        managedcassandra/             # Managed Instance for Apache Cassandra mock
         functions/                    # Azure Functions mock
         vnet/                         # VNet mock
         azuremonitor/                 # Azure Monitor mock
@@ -225,12 +229,14 @@ server/                               # SDK-compat HTTP servers (real cloud SDKs
         cloudwatch/                   # Smithy rpc-v2-cbor
         lambda/  sqs/                 # REST + JSON-RPC handlers
         rds/  redshift/               # query-protocol relational DB handlers
+        memorydb/  keyspaces/         # JSON 1.1 / JSON 1.0 NoSQL DB handlers
         eks/                          # REST EKS control-plane handler
     azure/
         azure.go                      # azureserver.New(Drivers{...})
         virtualmachines/  disks/  snapshots/  images/  sshpublickeys/
         blob/  cosmos/  network/  monitor/  functions/  servicebus/
         azuresql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
+        managedcassandra/             # ARM Managed Cassandra handler
         aks/                          # ARM AKS control-plane handler
     gcp/
         gcp.go                        # gcpserver.New(Drivers{...})

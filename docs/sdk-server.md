@@ -171,6 +171,8 @@ Region, credentials, and tokens can be any dummy values — the server doesn't v
 | **CloudWatch** *(Smithy rpc-v2-cbor)* | PutMetricData, GetMetricStatistics, ListMetrics, PutMetricAlarm, DescribeAlarms, DeleteAlarms |
 | **RDS / Aurora** *(query protocol)* | DBInstances (Create/Describe/Modify/Delete/Start/Stop/Reboot), DBClusters (Create/Describe/Modify/Delete/Start/Stop), DBSnapshots + DBClusterSnapshots (Create/Describe/Delete/Restore). One handler also serves the **Neptune** and **DocumentDB** engines — both reuse the same `aws-sdk-go-v2/service/{neptune,docdb}` client surface. |
 | **Redshift** *(query protocol)* | CreateCluster, DescribeClusters, ModifyCluster, DeleteCluster, RebootCluster, CreateClusterSnapshot, DescribeClusterSnapshots, DeleteClusterSnapshot, RestoreFromClusterSnapshot |
+| **MemoryDB** *(JSON 1.1, `AmazonMemoryDB.*`)* | Clusters (Create/Describe/Update/Delete/FailoverShard/ListAllowedNodeTypeUpdates), ACLs & Users, Parameter Groups, Subnet Groups, Snapshots (Create/Describe/Copy/Delete + restore), tags, engine-version & event catalogs. Optional (type-asserted): Multi-Region clusters, Reserved Nodes. Server-side `MaxResults`/`NextToken` pagination on every Describe. |
+| **Keyspaces** *(JSON 1.0, `KeyspacesService.*`)* | Keyspaces (Create/Get/List/Update/Delete, single/multi-region replication), Tables (Create/Get/List/Update/Delete/Restore — full schema, capacity, encryption, PITR, TTL, CDC), user-defined types, tags. Optional: `GetTableAutoScalingSettings`. Responses use lower-camel keys so the case-sensitive SDK deserializer decodes them; pagination on every list. |
 | **EKS** *(REST + JSON)* | Clusters (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), NodeGroups (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), Fargate Profiles (Create/Describe/List/Delete), Addons (Create/Describe/List/Update/Delete). Stub kubeconfig only — data plane deferred to Wave 2. |
 | **IAM** *(query protocol)* | Users (Create/Get/List/Delete), Roles (Create/Get/List/Delete), Policies (Create/Get/List/Delete), Attach/Detach/ListAttached for both Users and Roles, Groups (Create/Get/List/Delete + AddUserToGroup/RemoveUserFromGroup/ListGroupsForUser), AccessKeys (Create/List/Delete), InstanceProfiles (Create/Get/List/Delete + AddRoleToInstanceProfile/RemoveRoleFromInstanceProfile). Errors surface as typed `*types.NoSuchEntityException` / `*types.EntityAlreadyExistsException`. |
 | **Resource Explorer 2** *(JSON)* | Search — free-text plus filter expression over the cross-service inventory; results include ARN, resource type, region, owning account, and tags |
@@ -193,6 +195,7 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **Functions** | `Microsoft.Web/sites` (Function Apps): CreateOrUpdate, Get, List, Delete + non-ARM `/api/{name}` invoke |
 | **Service Bus** | `Microsoft.ServiceBus/namespaces[/queues]` ARM CRUD + raw-HTTP REST data plane (`POST /{ns}/{queue}/messages`, `DELETE /messages/head`) |
 | **SQL Database** | `Microsoft.Sql/servers[/databases]` — servers and databases, full CRUD lifecycle |
+| **Managed Cassandra** | `Microsoft.DocumentDB/cassandraClusters[/dataCenters]` — clusters (CreateOrUpdate, Get, ListByResourceGroup, ListBySubscription, Update, Delete, deallocate, start, invokeCommand, status) and datacenters (CreateOrUpdate, Get, List, Update, Delete). Real `armcosmos` `CassandraClusters`/`CassandraDataCenters` clients round-trip end-to-end, including the LRO pollers. |
 | **PostgreSQL Flexible Server** | `Microsoft.DBforPostgreSQL/flexibleServers` — full CRUD lifecycle |
 | **MySQL Flexible Server** | `Microsoft.DBforMySQL/flexibleServers` — full CRUD lifecycle |
 | **AKS** | `Microsoft.ContainerService/managedClusters` — ManagedClusters (CreateOrUpdate, Get, UpdateTags, Delete, List/ListByResourceGroup), AgentPools (CreateOrUpdate, Get, Delete, List), MaintenanceConfigurations (CreateOrUpdate, Get, Delete, List), ListClusterAdmin/User/MonitoringUser Credentials, RotateClusterCertificates. Stub kubeconfig only — data plane deferred to Wave 2. |
@@ -278,6 +281,8 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 |---------|-------------------|
 | AWS DynamoDB | `X-Amz-Target: DynamoDB_20120810.*` header |
 | AWS SQS | `X-Amz-Target: AmazonSQS.*` header |
+| AWS MemoryDB | `X-Amz-Target: AmazonMemoryDB.*` header |
+| AWS Keyspaces | `X-Amz-Target: KeyspacesService.*` header |
 | AWS Lambda | URL prefix `/2015-03-31/functions` |
 | AWS EKS | URL prefix `/clusters` |
 | AWS RDS | Form-encoded POST whose `Action=` is a known RDS operation (registered before EC2) |
@@ -289,6 +294,7 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 | AWS S3 | Fallback (everything else REST-shaped) |
 | Azure (all ARM) | URL begins with `/subscriptions/{sub}` and matches `Microsoft.<Provider>/<Type>` |
 | Azure SQL | ARM provider `Microsoft.Sql` |
+| Azure Managed Cassandra | ARM provider `Microsoft.DocumentDB/cassandraClusters` |
 | Azure PostgreSQL Flexible | ARM provider `Microsoft.DBforPostgreSQL/flexibleServers` |
 | Azure MySQL Flexible | ARM provider `Microsoft.DBforMySQL/flexibleServers` |
 | Azure AKS | ARM provider `Microsoft.ContainerService/managedClusters` |
