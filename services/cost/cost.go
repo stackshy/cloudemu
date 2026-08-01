@@ -92,6 +92,13 @@ func defaultRates() map[string]float64 {
 		"managedcassandra:CreateOrUpdateDataCenter": 0.5, // Standard_DS14_v2-equivalent node-hours proxy
 		"managedcassandra:CreateOrUpdateCluster":    0.0,
 
+		// GCP Bigtable: billed per cluster node-hour (+ storage); the instance,
+		// tables, app profiles, and backups are free control-plane objects.
+		"bigtable:CreateCluster":  0.65, // node-hour proxy for a 3-node cluster
+		"bigtable:CreateInstance": 0.0,
+		"bigtable:CreateTable":    0.0,
+		"bigtable:CreateBackup":   0.0,
+
 		// Serverless (per invocation)
 		"serverless:Invoke": 0.0000002, // $0.20 per 1M
 

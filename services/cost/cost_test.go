@@ -62,6 +62,19 @@ func TestTracker_ManagedCassandraRates(t *testing.T) {
 	assert.InDelta(t, want, tracker.CostByService()["managedcassandra"], 1e-9)
 }
 
+func TestTracker_BigtableRates(t *testing.T) {
+	tracker := New()
+
+	// Two clusters priced at the node-hour rate; instance/table/backup free.
+	tracker.Record("bigtable", "CreateCluster", 2)
+	tracker.Record("bigtable", "CreateInstance", 1)
+	tracker.Record("bigtable", "CreateTable", 1)
+	tracker.Record("bigtable", "CreateBackup", 1)
+
+	want := 0.65 * 2
+	assert.InDelta(t, want, tracker.CostByService()["bigtable"], 1e-9)
+}
+
 func TestTracker_Record_And_TotalCost(t *testing.T) {
 	tests := []struct {
 		name    string

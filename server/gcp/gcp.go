@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server"
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
+	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/v2/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudfunctions"
@@ -31,6 +32,7 @@ import (
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
+	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -62,6 +64,7 @@ type Drivers struct {
 	Monitoring     mondriver.Monitoring
 	CloudFunctions sdrv.Serverless
 	PubSub         mqdriver.MessageQueue
+	Bigtable       btdriver.Admin
 	CloudSQL       rdbdriver.RelationalDB
 	GKE            *gkeprov.Mock
 	// AlloyDB serves the alloydb.googleapis.com v1 REST API against a
@@ -117,7 +120,7 @@ type Drivers struct {
 // firestore, monitoring) ahead of GCS so first-match-wins keeps each on the
 // correct package.
 //
-//nolint:gocritic,gocyclo // Drivers is all interface fields; one if-per-driver is the simplest expression and grows with the bundle.
+//nolint:gocritic,gocyclo,funlen // Drivers is all interface fields; one if-per-driver is the simplest expression and grows with the bundle.
 func New(d Drivers) *server.Server {
 	// AlloyDB and GKE claim the same /v1/projects/{p}/locations/{l}/clusters
 	// paths, so enabling both would silently shadow one. Fail fast rather than
@@ -171,6 +174,10 @@ func New(d Drivers) *server.Server {
 
 	// Cloud SQL matches /v1/projects/{p}/{instances|operations}/...; same
 	// /v1/projects/ space as Firestore, so register first.
+	if d.Bigtable != nil {
+		srv.Register(bigtableserver.New(d.Bigtable))
+	}
+
 	if d.CloudSQL != nil {
 		srv.Register(cloudsql.New(d.CloudSQL))
 	}
