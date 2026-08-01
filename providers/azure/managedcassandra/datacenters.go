@@ -35,7 +35,8 @@ func (m *Mock) CreateOrUpdateDataCenter(_ context.Context, cfg mcdriver.CreateDa
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.clusters.Has(clusterKey(cfg.ResourceGroup, cfg.ClusterName)) {
+	cluster, ok := m.clusters.Get(clusterKey(cfg.ResourceGroup, cfg.ClusterName))
+	if !ok {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "managed cassandra cluster %q not found", cfg.ClusterName)
 	}
 
@@ -62,6 +63,10 @@ func (m *Mock) CreateOrUpdateDataCenter(_ context.Context, cfg mcdriver.CreateDa
 		BackupStorageCustomerKeyURI:        cfg.BackupStorageCustomerKeyURI,
 		ManagedDiskCustomerKeyURI:          cfg.ManagedDiskCustomerKeyURI,
 		SeedNodes:                          seedNodes(cfg.Name, nodeCount),
+		// A datacenter inherits the parent cluster's run state so a DC added to
+		// (or replaced in) a deallocated cluster isn't reported NORMAL while its
+		// siblings are STOPPED.
+		Deallocated: cluster.Deallocated,
 	}
 	m.dataCenters.Set(key, dc)
 

@@ -89,8 +89,8 @@ func defaultRates() map[string]float64 {
 		// Azure Managed Cassandra: billed per datacenter node (VM SKU); the
 		// cluster itself and control-plane ops are free. Proxied per datacenter
 		// at create (a node-hour base × the default node count).
-		"managedcassandra:CreateDataCenter": 0.5, // Standard_DS14_v2-equivalent node-hours proxy
-		"managedcassandra:CreateCluster":    0.0,
+		"managedcassandra:CreateOrUpdateDataCenter": 0.5, // Standard_DS14_v2-equivalent node-hours proxy
+		"managedcassandra:CreateOrUpdateCluster":    0.0,
 
 		// Serverless (per invocation)
 		"serverless:Invoke": 0.0000002, // $0.20 per 1M

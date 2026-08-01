@@ -2,6 +2,7 @@ package managedcassandra_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -279,6 +280,63 @@ func TestSDKUpdateListAndErrors(t *testing.T) {
 	// Get a missing cluster → error.
 	if _, err := cc.Get(ctx, "rg1", "ghost", nil); err == nil {
 		t.Fatal("get missing cluster: expected error")
+	}
+}
+
+func TestSDKTypedErrorsAndStart(t *testing.T) {
+	f := newFactory(t)
+	cc := f.NewCassandraClustersClient()
+	dcc := f.NewCassandraDataCentersClient()
+	ctx := lroCtx(t)
+
+	// Get a missing cluster → typed 404 ResourceError.
+	_, err := cc.Get(ctx, "rg1", "ghost", nil)
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != 404 {
+		t.Fatalf("get missing cluster: got %v, want 404 ResponseError", err)
+	}
+
+	// Datacenter create under a missing cluster → typed 400.
+	dcPoller, err := dcc.BeginCreateUpdate(ctx, "rg1", "ghost", "dc1", armcosmos.DataCenterResource{
+		Properties: &armcosmos.DataCenterResourceProperties{NodeCount: to.Ptr[int32](3)},
+	}, nil)
+	if err == nil {
+		_, err = dcPoller.PollUntilDone(ctx, nil)
+	}
+
+	if !errors.As(err, &respErr) || respErr.StatusCode != 400 {
+		t.Fatalf("dc under missing cluster: got %v, want 400 ResponseError", err)
+	}
+
+	// Deallocate → Start round-trips (Start shares the async path).
+	mustCreateCluster(t, cc, ctx)
+
+	dePoller, err := cc.BeginDeallocate(ctx, "rg1", "cass", nil)
+	if err != nil {
+		t.Fatalf("BeginDeallocate: %v", err)
+	}
+
+	if _, err := dePoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("deallocate poll: %v", err)
+	}
+
+	stPoller, err := cc.BeginStart(ctx, "rg1", "cass", nil)
+	if err != nil {
+		t.Fatalf("BeginStart: %v", err)
+	}
+
+	if _, err := stPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("start poll: %v", err)
+	}
+
+	got, err := cc.Get(ctx, "rg1", "cass", nil)
+	if err != nil {
+		t.Fatalf("Get after start: %v", err)
+	}
+
+	if got.Properties.Deallocated != nil && *got.Properties.Deallocated {
+		t.Fatal("cluster still deallocated after start")
 	}
 }
 

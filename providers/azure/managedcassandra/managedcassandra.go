@@ -133,9 +133,12 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg mcdriver.CreateClust
 		ExternalGossipCertificates:   cloneStrings(cfg.ExternalGossipCertificates),
 	}
 
-	// Preserve deallocated state + derived seed nodes across an update.
+	// Preserve service-computed fields (run state and gossip/prometheus
+	// endpoints the caller can't set) across a re-PUT.
 	if existing, ok := m.clusters.Get(key); ok {
 		c.Deallocated = existing.Deallocated
+		c.GossipCertificates = existing.GossipCertificates
+		c.PrometheusEndpoint = existing.PrometheusEndpoint
 	}
 
 	c.SeedNodes = m.clusterSeedNodes(cfg.ResourceGroup, cfg.Name)

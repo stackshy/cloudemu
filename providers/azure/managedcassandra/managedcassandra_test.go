@@ -197,6 +197,47 @@ func TestInvokeCommand(t *testing.T) {
 	}
 }
 
+func TestDataCenterInheritsClusterDeallocatedState(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "cass")
+
+	// Deallocate the cluster, then add a new datacenter.
+	if _, err := m.DeallocateCluster(ctx, "rg1", "cass"); err != nil {
+		t.Fatalf("DeallocateCluster: %v", err)
+	}
+
+	dc, err := m.CreateOrUpdateDataCenter(ctx, mcdriver.CreateDataCenterConfig{
+		ClusterName: "cass", ResourceGroup: "rg1", Name: "dc1", NodeCount: 3,
+	})
+	if err != nil {
+		t.Fatalf("CreateOrUpdateDataCenter: %v", err)
+	}
+
+	// The new DC must inherit the stopped cluster's state, not default to false.
+	if !dc.Deallocated {
+		t.Fatal("new datacenter did not inherit the cluster's deallocated state")
+	}
+
+	// Status is therefore internally consistent (all STOPPED).
+	status, _ := m.ClusterStatus(ctx, "rg1", "cass")
+	for _, n := range status.Nodes {
+		if n.State != "STOPPED" {
+			t.Fatalf("mixed status after add-to-deallocated: %+v", status.Nodes)
+		}
+	}
+
+	// Starting the cluster brings the DC back with it.
+	if _, err := m.StartCluster(ctx, "rg1", "cass"); err != nil {
+		t.Fatalf("StartCluster: %v", err)
+	}
+
+	got, _ := m.GetDataCenter(ctx, "rg1", "cass", "dc1")
+	if got.Deallocated {
+		t.Fatal("datacenter still deallocated after cluster start")
+	}
+}
+
 func TestDataCenterNodeCountBounded(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

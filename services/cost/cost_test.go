@@ -55,8 +55,8 @@ func TestTracker_ManagedCassandraRates(t *testing.T) {
 	tracker := New()
 
 	// Two datacenters priced at the node-hours rate; the cluster is free.
-	tracker.Record("managedcassandra", "CreateDataCenter", 2)
-	tracker.Record("managedcassandra", "CreateCluster", 1)
+	tracker.Record("managedcassandra", "CreateOrUpdateDataCenter", 2)
+	tracker.Record("managedcassandra", "CreateOrUpdateCluster", 1)
 
 	want := 0.5 * 2
 	assert.InDelta(t, want, tracker.CostByService()["managedcassandra"], 1e-9)
