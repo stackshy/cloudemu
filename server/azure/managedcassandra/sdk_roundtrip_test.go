@@ -3,7 +3,9 @@ package managedcassandra_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -337,6 +339,32 @@ func TestSDKTypedErrorsAndStart(t *testing.T) {
 
 	if got.Properties.Deallocated != nil && *got.Properties.Deallocated {
 		t.Fatal("cluster still deallocated after start")
+	}
+}
+
+func TestMalformedBodyRejected(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	ts := httptest.NewServer(azureserver.NewFromProvider(cloudP))
+	t.Cleanup(ts.Close)
+
+	url := ts.URL + "/subscriptions/" + subID +
+		"/resourceGroups/rg1/providers/Microsoft.DocumentDB/cassandraClusters/cass?api-version=2024-11-15"
+
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader("{not json"))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed body: got %d, want 400", resp.StatusCode)
 	}
 }
 
