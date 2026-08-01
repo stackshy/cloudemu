@@ -42,13 +42,18 @@ func splitEntityPath(path string) (table, predicate string, ok bool) {
 	return path[:open], path[open+1 : closeIdx], true
 }
 
-// parseKeyPredicate parses "PartitionKey='p',RowKey='r'" into ("p", "r").
-// The two clauses may appear in either order.
+// parseKeyPredicate parses "PartitionKey='p',RowKey='r'" into ("p", "r"). The
+// two clauses may appear in either order, but a single-entity key predicate
+// must name BOTH keys: a malformed clause, an unknown key, or a missing key
+// makes it invalid (ok=false → 400 InvalidInput) rather than a partial key that
+// then reports the entity as not-found (404).
 func parseKeyPredicate(predicate string) (partitionKey, rowKey string, ok bool) {
+	var havePK, haveRK bool
+
 	for _, clause := range splitTopLevel(predicate) {
 		key, val, found := strings.Cut(clause, "=")
 		if !found {
-			continue
+			return "", "", false
 		}
 
 		key = strings.TrimSpace(key)
@@ -56,13 +61,15 @@ func parseKeyPredicate(predicate string) (partitionKey, rowKey string, ok bool) 
 
 		switch key {
 		case "PartitionKey":
-			partitionKey = val
+			partitionKey, havePK = val, true
 		case "RowKey":
-			rowKey = val
+			rowKey, haveRK = val, true
+		default:
+			return "", "", false
 		}
 	}
 
-	if partitionKey == "" && rowKey == "" {
+	if !havePK || !haveRK {
 		return "", "", false
 	}
 

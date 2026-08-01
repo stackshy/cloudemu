@@ -11,17 +11,22 @@ import (
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
+	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
+	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/server/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/server/aws/ecr"
+	ecssrv "github.com/stackshy/cloudemu/v2/server/aws/ecs"
 	"github.com/stackshy/cloudemu/v2/server/aws/eks"
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
+	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
+	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/server/aws/rds"
 	"github.com/stackshy/cloudemu/v2/server/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/server/aws/resourceexplorer2"
@@ -35,16 +40,21 @@ import (
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
+	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
+	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
+	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -62,20 +72,25 @@ import (
 // field nil to omit that service; the server returns 501 Not Implemented for
 // any request that no registered handler matches.
 type Drivers struct {
-	S3         storagedriver.Bucket
-	DynamoDB   dbdriver.Database
-	EC2        computedriver.Compute
-	VPC        netdriver.Networking
-	CloudWatch mondriver.Monitoring
-	Lambda     sdrv.Serverless
-	SQS        mqdriver.MessageQueue
-	RDS        rdbdriver.RelationalDB
-	Redshift   rdbdriver.RelationalDB
-	EKS        eksdriver.EKS
-	IAM        iamdriver.IAM
-	ECR        crdriver.ContainerRegistry
-	Bedrock    bedrockdriver.Bedrock
-	SageMaker  sagemakerdriver.Service
+	S3                  storagedriver.Bucket
+	DynamoDB            dbdriver.Database
+	EC2                 computedriver.Compute
+	VPC                 netdriver.Networking
+	CloudWatch          mondriver.Monitoring
+	Lambda              sdrv.Serverless
+	SQS                 mqdriver.MessageQueue
+	RDS                 rdbdriver.RelationalDB
+	Redshift            rdbdriver.RelationalDB
+	EKS                 eksdriver.EKS
+	IAM                 iamdriver.IAM
+	ECR                 crdriver.ContainerRegistry
+	Bedrock             bedrockdriver.Bedrock
+	BedrockAgent        bedrockagentdriver.BedrockAgent
+	BedrockAgentRuntime bedrockagentruntimedriver.BedrockAgentRuntime
+	SageMaker           sagemakerdriver.Service
+	// ECS serves the Amazon ECS JSON 1.1 protocol (X-Amz-Target prefix
+	// AmazonEC2ContainerServiceV20141113.) against the ecs driver.
+	ECS ecsdriver.ECS
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
@@ -96,6 +111,12 @@ type Drivers struct {
 	// ElastiCache serves the ElastiCache query protocol (cluster control plane)
 	// against the cache driver.
 	ElastiCache cachedriver.Cache
+	// Keyspaces serves the Amazon Keyspaces JSON 1.0 protocol (Cassandra
+	// control plane) against the keyspaces driver.
+	Keyspaces ksdriver.Keyspaces
+	// MemoryDB serves the AWS MemoryDB JSON 1.1 protocol (Redis/Valkey cluster
+	// control plane) against the memorydb driver.
+	MemoryDB mdbdriver.MemoryDB
 	// SNS serves the SNS query protocol against the notification driver.
 	SNS notifdriver.Notification
 	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
@@ -124,33 +145,38 @@ type Drivers struct {
 // nil for the caller to inject when a shared cluster is desired.
 func DriversFrom(p *awsprovider.Provider) Drivers {
 	return Drivers{
-		S3:                p.S3,
-		DynamoDB:          p.DynamoDB,
-		EC2:               p.EC2,
-		VPC:               p.VPC,
-		CloudWatch:        p.CloudWatch,
-		Lambda:            p.Lambda,
-		SQS:               p.SQS,
-		RDS:               p.RDS,
-		Redshift:          p.Redshift,
-		EKS:               p.EKS,
-		IAM:               p.IAM,
-		ECR:               p.ECR,
-		Bedrock:           p.Bedrock,
-		SageMaker:         p.SageMaker,
-		SecretsManager:    p.SecretsManager,
-		SSM:               p.SSM,
-		CloudWatchLogs:    p.CloudWatchLogs,
-		Route53:           p.Route53,
-		ELB:               p.ELB,
-		EventBridge:       p.EventBridge,
-		ElastiCache:       p.ElastiCache,
-		SNS:               p.SNS,
-		STS:               true,
-		K8sAPI:            nil, // injected by the caller when a shared cluster is desired
-		ResourceDiscovery: p.ResourceDiscovery,
-		AccountID:         p.AccountID,
-		Region:            p.Region,
+		S3:                  p.S3,
+		DynamoDB:            p.DynamoDB,
+		EC2:                 p.EC2,
+		VPC:                 p.VPC,
+		CloudWatch:          p.CloudWatch,
+		Lambda:              p.Lambda,
+		SQS:                 p.SQS,
+		RDS:                 p.RDS,
+		Redshift:            p.Redshift,
+		EKS:                 p.EKS,
+		IAM:                 p.IAM,
+		ECR:                 p.ECR,
+		Bedrock:             p.Bedrock,
+		BedrockAgent:        p.BedrockAgent,
+		BedrockAgentRuntime: p.BedrockAgentRuntime,
+		SageMaker:           p.SageMaker,
+		ECS:                 p.ECS,
+		SecretsManager:      p.SecretsManager,
+		SSM:                 p.SSM,
+		CloudWatchLogs:      p.CloudWatchLogs,
+		Route53:             p.Route53,
+		ELB:                 p.ELB,
+		EventBridge:         p.EventBridge,
+		ElastiCache:         p.ElastiCache,
+		Keyspaces:           p.Keyspaces,
+		MemoryDB:            p.MemoryDB,
+		SNS:                 p.SNS,
+		STS:                 true,
+		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
+		ResourceDiscovery:   p.ResourceDiscovery,
+		AccountID:           p.AccountID,
+		Region:              p.Region,
 	}
 }
 
@@ -180,7 +206,7 @@ func NewFromProvider(p *awsprovider.Provider) *server.Server {
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
 //
-//nolint:gocritic,gocyclo // Drivers is by-value for ergonomics; the dispatch is one if-per-driver and grows with the bundle.
+//nolint:gocritic,gocyclo,funlen,gocognit // by-value Drivers for ergonomics; one if-per-driver dispatch grows with the bundle.
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
@@ -229,6 +255,13 @@ func New(d Drivers) *server.Server {
 		srv.Register(secretsmanagersrv.New(d.SecretsManager))
 	}
 
+	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
+	// — disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, SSM,
+	// EventBridge, and the tagging API, so registration order is unconstrained.
+	if d.ECS != nil {
+		srv.Register(ecssrv.New(d.ECS))
+	}
+
 	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, EventBridge,
 	// CloudWatch Logs, and the tagging API.
@@ -273,6 +306,19 @@ func New(d Drivers) *server.Server {
 		srv.Register(elasticache.New(d.ElastiCache))
 	}
 
+	// MemoryDB speaks AWS JSON 1.1 and matches on the "AmazonMemoryDB." target
+	// prefix, so its dispatch is disjoint from every query-protocol handler and
+	// registration order relative to the EC2 catch-all does not matter.
+	if d.MemoryDB != nil {
+		srv.Register(memorydbsrv.New(d.MemoryDB))
+	}
+
+	// Keyspaces speaks AWS JSON 1.0 and matches on the "KeyspacesService." target
+	// prefix, so its dispatch is disjoint from every other handler.
+	if d.Keyspaces != nil {
+		srv.Register(keyspacessrv.New(d.Keyspaces))
+	}
+
 	// SNS also speaks the AWS query protocol; its action set (CreateTopic,
 	// Subscribe, Publish, …) is disjoint from RDS, Redshift, IAM, and EC2, so
 	// no shadowing occurs. Registered before the EC2 catch-all.
@@ -310,6 +356,22 @@ func New(d Drivers) *server.Server {
 	// REST fallback that would otherwise claim those paths.
 	if d.Bedrock != nil {
 		srv.Register(bedrock.New(d.Bedrock))
+	}
+
+	// bedrock-agent-runtime (InvokeAgent / Retrieve / RetrieveAndGenerate) shares
+	// the /agents and /knowledgebases roots with the bedrock-agent control plane,
+	// but matches only the runtime suffixes (/text, /retrieve) and
+	// /retrieveAndGenerate. It MUST register before the control-plane handler so
+	// its more specific Matches wins for those paths, and both before S3.
+	if d.BedrockAgentRuntime != nil {
+		srv.Register(bedrockagentruntime.New(d.BedrockAgentRuntime))
+	}
+
+	// bedrock-agent control plane: agents, knowledge bases, data sources, flows,
+	// prompts. REST/JSON rooted at /agents, /knowledgebases, /flows, /prompts —
+	// registered before S3's permissive REST fallback.
+	if d.BedrockAgent != nil {
+		srv.Register(bedrockagent.New(d.BedrockAgent))
 	}
 
 	// SageMaker control plane matches the X-Amz-Target prefix "SageMaker."

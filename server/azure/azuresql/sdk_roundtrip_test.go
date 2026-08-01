@@ -23,7 +23,19 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
-func newSDKClients(t *testing.T) (*armsql.ServersClient, *armsql.DatabasesClient) {
+func newRawServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{SQL: cloudP.SQL})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	return ts
+}
+
+func newFactory(t *testing.T) *armsql.ClientFactory {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -54,6 +66,14 @@ func newSDKClients(t *testing.T) (*armsql.ServersClient, *armsql.DatabasesClient
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	return cf
+}
+
+func newSDKClients(t *testing.T) (*armsql.ServersClient, *armsql.DatabasesClient) {
+	t.Helper()
+
+	cf := newFactory(t)
 
 	return cf.NewServersClient(), cf.NewDatabasesClient()
 }
@@ -104,6 +124,18 @@ func TestSDKAzureSQLServerLifecycle(t *testing.T) {
 
 	if len(page.Value) != 1 {
 		t.Fatalf("got %d servers, want 1", len(page.Value))
+	}
+
+	// PATCH the server (ServersClient.BeginUpdate → updateServer handler).
+	upPoller, err := servers.BeginUpdate(ctx, "rg-1", "srv1", armsql.ServerUpdate{
+		Properties: &armsql.ServerProperties{Version: to.Ptr("12.1")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate: %v", err)
+	}
+
+	if _, err := upPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("update PollUntilDone: %v", err)
 	}
 
 	delPoller, err := servers.BeginDelete(ctx, "rg-1", "srv1", nil)

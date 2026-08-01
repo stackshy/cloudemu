@@ -123,6 +123,26 @@ func TestGetParametersByPathRecursive(t *testing.T) {
 	}
 }
 
+// TestDeleteParameterStripsSelector covers #266: DeleteParameter strips a
+// ":version"/":label" selector (like the read paths) so a selector addresses
+// the base parameter rather than a literal name containing ':'.
+func TestDeleteParameterStripsSelector(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: "/del/p", Value: "v", Type: driver.TypeString}); err != nil {
+		t.Fatalf("PutParameter: %v", err)
+	}
+
+	if err := m.DeleteParameter(ctx, "/del/p:1"); err != nil {
+		t.Fatalf("DeleteParameter with selector: %v", err)
+	}
+
+	if _, err := m.GetParameter(ctx, "/del/p", false); !cerrors.IsNotFound(err) {
+		t.Fatalf("after delete, GetParameter err = %v, want NotFound", err)
+	}
+}
+
 func TestDeleteParameters(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()

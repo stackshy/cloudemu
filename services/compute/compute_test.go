@@ -140,7 +140,9 @@ func (m *mockCompute) TerminateInstances(_ context.Context, ids []string) error 
 	return nil
 }
 
-func (m *mockCompute) DescribeInstances(_ context.Context, ids []string, _ []driver.DescribeFilter) ([]driver.Instance, error) {
+func (m *mockCompute) DescribeInstances(
+	_ context.Context, ids []string, _ []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
+) ([]driver.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

@@ -19,6 +19,8 @@ const (
 	netKindVPC           = "vpc"
 	netKindSubnet        = "subnet"
 	netKindSecurityGroup = "security-group"
+	netKindNetworkIface  = "network-interface"
+	netKindElasticIP     = "elastic-ip"
 )
 
 func (e *Engine) computeInstanceARN(id string) string {
@@ -56,6 +58,10 @@ func azureNetworkType(kind string) string {
 		return "subnets"
 	case netKindSecurityGroup:
 		return "networkSecurityGroups"
+	case netKindNetworkIface:
+		return "networkInterfaces"
+	case netKindElasticIP:
+		return "publicIPAddresses"
 	default:
 		return kind
 	}
@@ -69,6 +75,10 @@ func gcpNetworkCollection(kind string) string {
 		return "subnetworks"
 	case netKindSecurityGroup:
 		return "firewalls"
+	case netKindNetworkIface:
+		return "networkInterfaces"
+	case netKindElasticIP:
+		return "addresses"
 	default:
 		return kind
 	}
@@ -100,6 +110,45 @@ func (e *Engine) databaseTableARN(name string) string {
 	default:
 		return name
 	}
+}
+
+// region and resourceGroup come from the cluster (falling back to engine
+// defaults) so the identifier matches the resource's real location: GCP
+// self-links embed the region, Azure IDs embed the resource group.
+func (e *Engine) kubernetesClusterARN(region, resourceGroup, name string) string {
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("eks", region, e.accountID, "cluster/"+name)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup),
+			"Microsoft.ContainerService", "managedClusters", name)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "locations/"+region+"/clusters", name)
+	default:
+		return name
+	}
+}
+
+func (e *Engine) kubernetesNodeGroupARN(region, resourceGroup, cluster, name string) string {
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("eks", region, e.accountID, "nodegroup/"+cluster+"/"+name)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup),
+			"Microsoft.ContainerService", "managedClusters/"+cluster+"/agentPools", name)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "locations/"+region+"/clusters/"+cluster+"/nodePools", name)
+	default:
+		return name
+	}
+}
+
+func azureResourceGroupOrDefault(rg string) string {
+	if rg == "" {
+		return azureDefaultResourceGroup
+	}
+
+	return rg
 }
 
 func (e *Engine) serverlessFunctionARN(name string) string {

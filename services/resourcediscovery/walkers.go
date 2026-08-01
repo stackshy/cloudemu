@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // Provider name constants used for routing per-provider ARN construction.
@@ -18,12 +20,14 @@ const (
 // portable-API service identifiers, not provider-specific names. Callers
 // translate to per-provider service names at the SDK boundary.
 const (
-	ServiceCompute    = "compute"
-	ServiceNetworking = "networking"
-	ServiceStorage    = "storage"
-	ServiceDatabase   = "database"
-	ServiceServerless = "serverless"
-	ServiceDatabricks = "databricks"
+	ServiceCompute      = "compute"
+	ServiceNetworking   = "networking"
+	ServiceStorage      = "storage"
+	ServiceDatabase     = "database"
+	ServiceServerless   = "serverless"
+	ServiceDatabricks   = "databricks"
+	ServiceKubernetes   = "kubernetes"
+	ServiceRelationalDB = "relationaldb"
 )
 
 // Resource type constants emitted by the walkers.
@@ -32,14 +36,37 @@ const (
 	TypeVPC           = "VPC"
 	TypeSubnet        = "Subnet"
 	TypeSecurityGroup = "SecurityGroup"
+	TypeNetworkIface  = "NetworkInterface"
+	TypeElasticIP     = "ElasticIP"
 	TypeBucket        = "Bucket"
 	TypeTable         = "Table"
 	TypeFunction      = "Function"
 	TypeWorkspace     = "Workspace"
+	TypeCluster       = "Cluster"
+	TypeNodeGroup     = "NodeGroup"
+	TypeDBInstance    = "DBInstance"
+	TypeDBCluster     = "DBCluster"
+	TypeDBSnapshot    = "DBSnapshot"
+)
+
+// Azure/GCP managed-SQL server types. These portable types map to per-cloud
+// native type strings in Resource Graph (Azure) and Cloud Asset (GCP). AWS RDS
+// uses TypeDBInstance/DBCluster/DBSnapshot above.
+const (
+	TypeSQLServer       = "SqlServer"              // Azure SQL logical server
+	TypeMySQLFlex       = "MySqlFlexibleServer"    // Azure Database for MySQL Flexible Server
+	TypePostgresFlex    = "PostgresFlexibleServer" // Azure Database for PostgreSQL Flexible Server
+	TypeSQLInstance     = "SqlInstance"            // GCP Cloud SQL instance
+	TypeManagedInstance = "SqlManagedInstance"     // Azure SQL Managed Instance
+	TypeAlloyDBCluster  = "AlloyDBCluster"         // GCP AlloyDB cluster
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
-	instances, err := e.drivers.Compute.DescribeInstances(ctx, nil, nil)
+	// Resource discovery is an internal/system walk: managed (service-owned)
+	// instances still exist and must be discoverable even when the account
+	// hides them from the public Describe API, so opt in explicitly.
+	instances, err := e.drivers.Compute.DescribeInstances(ctx, nil, nil,
+		computedriver.DescribeInstancesOptions{IncludeManagedResources: true})
 	if err != nil {
 		return nil, fmt.Errorf("walkCompute: %w", err)
 	}
@@ -102,6 +129,58 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 			ID:     sg.ID,
 			ARN:    e.networkARN(netKindSecurityGroup, sg.ID),
 			Region: e.region, Tags: copyTags(sg.Tags),
+		})
+	}
+
+	eips, err := e.drivers.Networking.DescribeAddresses(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking addresses: %w", err)
+	}
+
+	for _, eip := range eips {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeElasticIP,
+			ID:     eip.AllocationID,
+			ARN:    e.networkARN(netKindElasticIP, eip.AllocationID),
+			Region: e.region, Tags: copyTags(eip.Tags),
+		})
+	}
+
+	ifaces, err := e.walkNetworkInterfaces(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking interfaces: %w", err)
+	}
+
+	return append(out, ifaces...), nil
+}
+
+// walkNetworkInterfaces adds interfaces when the driver models them.
+//
+// They are an optional capability, so a driver without them contributes
+// nothing rather than failing the whole walk — a cloud that has no interfaces
+// has none to discover, which is not an error.
+func (e *Engine) walkNetworkInterfaces(ctx context.Context) ([]Resource, error) {
+	enisDriver, ok := e.drivers.Networking.(netdriver.NetworkInterfaces)
+	if !ok {
+		return nil, nil
+	}
+
+	// A driver that models interfaces and then fails to list them has a real
+	// problem, and swallowing it would report a complete inventory that is
+	// missing whatever the walk could not read.
+	enis, err := enisDriver.DescribeNetworkInterfaces(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]Resource, 0, len(enis))
+
+	for _, eni := range enis {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeNetworkIface,
+			ID:     eni.ID,
+			ARN:    e.networkARN(netKindNetworkIface, eni.ID),
+			Region: e.region, Tags: copyTags(eni.Tags),
 		})
 	}
 
@@ -228,6 +307,89 @@ func (e *Engine) walkDatabricks(ctx context.Context) ([]Resource, error) {
 			ID:     workspaces[i].Name,
 			ARN:    workspaces[i].ID,
 			Region: region, Tags: copyTags(workspaces[i].Tags),
+		})
+	}
+
+	return out, nil
+}
+
+// walkKubernetes surfaces managed Kubernetes clusters (EKS/GKE/AKS) and their
+// node groups. The provider supplies a DiscoverClusters adapter; each cluster
+// becomes a Cluster resource and each node group / node pool / agent pool a
+// NodeGroup resource, so a client enumerating inventory sees them the way real
+// RE2 / Resource Graph / Cloud Asset would.
+func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
+	clusters, err := e.drivers.Kubernetes.DiscoverClusters(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkKubernetes: %w", err)
+	}
+
+	out := []Resource{}
+
+	for i := range clusters {
+		c := clusters[i]
+
+		region := c.Region
+		if region == "" {
+			region = e.region
+		}
+
+		clusterARN := c.ARN
+		if clusterARN == "" {
+			clusterARN = e.kubernetesClusterARN(region, c.ResourceGroup, c.Name)
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceKubernetes, Type: TypeCluster,
+			ID:     c.Name,
+			ARN:    clusterARN,
+			Region: region, Tags: copyTags(c.Tags),
+		})
+
+		for _, ng := range c.NodeGroups {
+			out = append(out, Resource{
+				Provider: e.provider, Service: ServiceKubernetes, Type: TypeNodeGroup,
+				ID:     ng,
+				ARN:    e.kubernetesNodeGroupARN(region, c.ResourceGroup, c.Name, ng),
+				Region: region,
+			})
+		}
+	}
+
+	return out, nil
+}
+
+// walkRelationalDB surfaces managed relational database servers (RDS/Aurora,
+// Azure SQL, Azure MySQL/PostgreSQL Flexible Server, Cloud SQL). The provider
+// supplies a DiscoverDatabases adapter; each server becomes a relational-db
+// resource whose Type carries the per-cloud kind so Resource Explorer /
+// Resource Graph / Cloud Asset can translate it to the native type string.
+func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
+	dbs, err := e.drivers.RelationalDB.DiscoverDatabases(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkRelationalDB: %w", err)
+	}
+
+	out := []Resource{}
+
+	for i := range dbs {
+		d := dbs[i]
+
+		region := d.Region
+		if region == "" {
+			region = e.region
+		}
+
+		typ := d.Type
+		if typ == "" {
+			typ = TypeDBInstance
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceRelationalDB, Type: typ,
+			ID:     d.Name,
+			ARN:    d.ARN,
+			Region: region, Tags: copyTags(d.Tags),
 		})
 	}
 

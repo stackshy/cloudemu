@@ -113,14 +113,27 @@ SDK-compat coverage across AWS, Azure, and GCP:
 | Storage | S3 | Blob Storage | GCS |
 | Compute | EC2 (+ VPC, EBS, Snapshots, AMIs, Spot, Launch Templates, Auto Scaling) | Virtual Machines (+ Disks, Snapshots, Images, SSH keys) | Compute Engine (+ Disks, Snapshots, Images) |
 | NoSQL DB | DynamoDB | Cosmos DB | Firestore |
-| Relational DB | RDS + Aurora (incl. Neptune & DocumentDB engines), Redshift | SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server | Cloud SQL |
+| Relational DB | RDS + Aurora (incl. Neptune & DocumentDB engines), Redshift | SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server | Cloud SQL, AlloyDB |
+| Wide-column NoSQL | Keyspaces (Cassandra) | Managed Instance for Apache Cassandra | Bigtable |
+| In-memory / Redis | ElastiCache, MemoryDB | Cache for Redis | Memorystore |
 | Kubernetes | EKS (control plane + data plane) | AKS (control plane + data plane) | GKE (control plane + data plane) |
 | Serverless | Lambda | Functions | Cloud Functions v1 |
+| Container Orchestration | ECS | — | — |
+| Container Registry | ECR | ACR | Artifact Registry |
 | Message Queue | SQS | Service Bus | Pub/Sub |
+| Event Bus | EventBridge | Event Grid | Eventarc |
+| Notification | SNS | Notification Hubs | FCM |
 | Networking | VPC (under EC2) | Virtual Network | VPC + Subnets + Firewalls + Routes |
+| Load Balancer | ELB (ALB/NLB) | Load Balancer | Cloud Load Balancing |
+| DNS | Route 53 | Azure DNS | Cloud DNS |
 | Monitoring | CloudWatch | Azure Monitor | Cloud Monitoring |
+| Logging | CloudWatch Logs | Log Analytics | Cloud Logging |
+| Secrets | Secrets Manager | Key Vault | Secret Manager |
+| IAM | IAM | Azure RBAC (armauthorization) | Cloud IAM |
 | Resource Discovery | Resource Explorer + Resource Groups Tagging API | Resource Graph | Cloud Asset Inventory |
-| Generative AI | Bedrock (control plane + bedrock-runtime InvokeModel/Converse) | — | — |
+| Generative AI | Bedrock (+ runtime), Bedrock Agent (+ runtime) | — | — |
+| Machine Learning | SageMaker (+ runtime) | Azure AI (Foundry / ML) | Vertex AI |
+| AI Search | — | Azure AI Search | — |
 | Databricks | — | Databricks (ARM workspace + workspace data plane) | — |
 
 The Kubernetes story is two layers, both shipped:

@@ -39,9 +39,16 @@ const (
 // elastiCacheActions is the set of Action values this handler recognizes.
 // Matches uses it to decide whether to claim a request.
 var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateCacheCluster":    {},
-	"DescribeCacheClusters": {},
-	"DeleteCacheCluster":    {},
+	"CreateCacheSubnetGroup":    {},
+	"DescribeCacheSubnetGroups": {},
+	"DeleteCacheSubnetGroup":    {},
+	"CreateCacheCluster":        {},
+	"DescribeCacheClusters":     {},
+	"DeleteCacheCluster":        {},
+	"CreateReplicationGroup":    {},
+	"DescribeReplicationGroups": {},
+	"ModifyReplicationGroup":    {},
+	"DeleteReplicationGroup":    {},
 }
 
 // Handler serves ElastiCache query-protocol requests against a cache driver.
@@ -84,10 +91,24 @@ func (*Handler) Matches(r *http.Request) bool {
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Form.Get("Action") {
+	case "CreateCacheSubnetGroup":
+		h.createCacheSubnetGroup(w, r)
+	case "DescribeCacheSubnetGroups":
+		h.describeCacheSubnetGroups(w, r)
+	case "DeleteCacheSubnetGroup":
+		h.deleteCacheSubnetGroup(w, r)
 	case "CreateCacheCluster":
 		h.createCacheCluster(w, r)
 	case "DescribeCacheClusters":
 		h.describeCacheClusters(w, r)
+	case "CreateReplicationGroup":
+		h.createReplicationGroup(w, r)
+	case "DescribeReplicationGroups":
+		h.describeReplicationGroups(w, r)
+	case "ModifyReplicationGroup":
+		h.modifyReplicationGroup(w, r)
+	case "DeleteReplicationGroup":
+		h.deleteReplicationGroup(w, r)
 	case "DeleteCacheCluster":
 		h.deleteCacheCluster(w, r)
 	default:
@@ -100,14 +121,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, "CacheClusterNotFound", err.Error())
+		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), err.Error())
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "CacheClusterAlreadyExists", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), err.Error())
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidCacheClusterState", err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+	}
+}
+
+// notFoundCode picks the AWS-shaped error code for the resource the message
+// names. A caller matching the SDK's typed errors sees the code, not the
+// message, so a generic one leaves it unable to tell a missing replication
+// group from a missing cache cluster.
+//
+// Order matters: "cache subnet group" also contains "cache", so the more
+// specific resources are checked first.
+func notFoundCode(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "replication group"):
+		return "ReplicationGroupNotFoundFault"
+	case strings.Contains(msg, "cache subnet group"):
+		return "CacheSubnetGroupNotFoundFault"
+	default:
+		return "CacheClusterNotFound"
+	}
+}
+
+// alreadyExistsCode is the create-side counterpart of notFoundCode. Callers
+// treat the specific already-exists code as "already provisioned, carry on",
+// so collapsing it turns an idempotent re-run into a hard failure.
+func alreadyExistsCode(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "replication group"):
+		return "ReplicationGroupAlreadyExists"
+	case strings.Contains(msg, "cache subnet group"):
+		return "CacheSubnetGroupAlreadyExists"
+	default:
+		return "CacheClusterAlreadyExists"
 	}
 }

@@ -22,6 +22,34 @@ Or from a checkout:
 go run ./cmd/cloudemu serve
 ```
 
+### Docker
+
+No Go toolchain needed — pull the published image (it runs `serve --host 0.0.0.0`):
+
+```sh
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 ghcr.io/stackshy/cloudemu:latest
+```
+
+Or bring up the whole emulated cloud with the example compose file:
+
+```sh
+docker compose up
+```
+
+### Testcontainers (Go)
+
+Go test suites can start and stop the container automatically with the
+[Testcontainers module](https://github.com/stackshy/cloudemu/tree/development/contrib/testcontainers)
+(a separate module, so it doesn't add Docker deps to your app):
+
+```go
+ctr, _ := cloudemu.Run(ctx)
+defer ctr.Terminate(ctx)
+
+endpoint, _ := ctr.AWSEndpoint(ctx) // point aws-sdk-go-v2 here
+ctr.Reset(ctx)                      // clean slate between tests
+```
+
 On start it prints the live endpoints:
 
 ```
@@ -132,9 +160,61 @@ app at the whole emulated cloud at once:
 }
 ```
 
+## Resetting state between tests (`/_cloudemu`)
+
+A long-lived server keeps state across requests, so a shared or parallel test
+suite needs a way to get a clean slate. The control plane at `/_cloudemu` does
+this (on by default; disable with `--admin=false`):
+
+```sh
+# wipe all emulator state — every provider back to empty
+curl -X POST http://127.0.0.1:4566/_cloudemu/reset
+
+# load a fixture of resources into the provider on this port
+curl -X POST http://127.0.0.1:4566/_cloudemu/seed --data @fixtures.json
+
+# liveness check
+curl http://127.0.0.1:4566/_cloudemu/health
+```
+
+`reset` rebuilds every provider (and the shared Kubernetes data-plane) to empty
+state and swaps it in atomically — in-flight requests finish against the old
+state, new requests see the fresh one. Call it from your suite's setup/teardown
+so each test starts clean without restarting the process. A `POST` to any
+provider's port resets the whole emulator.
+
+`seed` bulk-loads a declarative fixture into the provider on that port. The
+fixture is provider-agnostic — the same file seeds S3, Azure Blob, or GCS
+depending on which port you POST it to:
+
+```json
+{
+  "buckets": [
+    { "name": "app-data", "objects": [{ "key": "config.yaml", "body": "port: 8080" }] }
+  ],
+  "tables": [
+    { "name": "users", "partitionKey": "id", "items": [{ "id": "u1", "name": "Ada" }] }
+  ],
+  "secrets": [{ "name": "db-password", "value": "s3cr3t" }],
+  "instances": [{ "imageId": "ami-123", "instanceType": "t3.micro", "count": 2 }]
+}
+```
+
+In-process (or embedded) tests can load the same fixtures directly with the
+[`seed`](https://pkg.go.dev/github.com/stackshy/cloudemu/v2/seed) package and
+`go:embed`:
+
+```go
+//go:embed testdata/fixtures.json
+var fixtures embed.FS
+
+f, _ := seed.LoadFS(fixtures, "testdata/fixtures.json")
+seed.Apply(ctx, f, seed.Target{Storage: aws.S3, Database: aws.DynamoDB})
+```
+
 ## Not yet included
 
-State **seeding** and **persistence** across restarts are not in this mode yet —
-they need a cross-service state-import loader (tracked in #250). Today the server
-starts empty each run. Docker packaging (#247) and a Testcontainers module (#248)
-build directly on this binary and are the natural next steps.
+**Persistence** across restarts and **snapshot/restore** aren't part of this
+mode yet — snapshot/restore needs the state model tracked in #107. Docker
+packaging (#247) and a Testcontainers module (#248) build directly on this
+binary.

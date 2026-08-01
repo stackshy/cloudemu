@@ -15,6 +15,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/stackshy/cloudemu/v2"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -224,6 +225,79 @@ func TestSDKCloudAsset(t *testing.T) {
 		_, err := client.Feeds.Get(feedName).Do()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "NOT_FOUND")
+	})
+}
+
+// TestSDKCloudAsset_KubernetesIndexing mirrors the Databricks/Azure precedent
+// for the GKE types added in this PR: a cluster and its node pool must be
+// retrievable through the real Cloud Asset search/list handler, and an
+// assetType filter on the container-service types must actually narrow to them.
+func TestSDKCloudAsset_KubernetesIndexing(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewGCP()
+	const projectID = "my-test-project"
+
+	_, _, err := cloudP.GKE.CreateCluster(ctx, &gke.CreateClusterInput{
+		Name: "prod", Location: "us-central1",
+	})
+	require.NoError(t, err)
+
+	_, _, err = cloudP.GKE.CreateNodePool(ctx, "us-central1", "prod", &gke.NodePoolSpec{
+		Name: "np-1", InitialNodeCount: 1,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, cloudP.GCS.CreateBucket(ctx, "control-bucket"))
+
+	srv := gcpserver.New(gcpserver.Drivers{
+		Storage:           cloudP.GCS,
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		ProjectID:         projectID,
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := cloudasset.NewService(ctx,
+		option.WithEndpoint(ts.URL),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+
+	scope := "projects/" + projectID
+
+	t.Run("cluster + node pool appear in searchAllResources", func(t *testing.T) {
+		out, err := client.V1.SearchAllResources(scope).Do()
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, len(out.Results), 3, "control bucket + GKE cluster + node pool")
+
+		var haveCluster, haveNodePool bool
+		for _, r := range out.Results {
+			switch r.AssetType {
+			case "container.googleapis.com/Cluster":
+				haveCluster = true
+			case "container.googleapis.com/NodePool":
+				haveNodePool = true
+			}
+		}
+
+		assert.True(t, haveCluster, "GKE cluster must be indexed")
+		assert.True(t, haveNodePool, "GKE node pool must be indexed")
+	})
+
+	t.Run("assetType filter narrows to just the cluster", func(t *testing.T) {
+		out, err := client.V1.SearchAllResources(scope).
+			Query("assetType:container.googleapis.com/Cluster").Do()
+		require.NoError(t, err)
+		require.Len(t, out.Results, 1, "assetType must narrow to the cluster, not return all rows")
+		assert.Equal(t, "container.googleapis.com/Cluster", out.Results[0].AssetType)
+		assert.Equal(t, "prod", out.Results[0].DisplayName)
+	})
+
+	t.Run("assets.list with GKE assetType narrows", func(t *testing.T) {
+		out, err := client.Assets.List(scope).
+			AssetTypes("container.googleapis.com/Cluster").Do()
+		require.NoError(t, err)
+		assert.Len(t, out.Assets, 1)
 	})
 }
 

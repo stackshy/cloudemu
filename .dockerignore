@@ -1,0 +1,10 @@
+# Keep the build context small and reproducible.
+.git
+.github
+.claude
+contrib
+docs
+*.md
+Dockerfile
+.dockerignore
+docker-compose.yml

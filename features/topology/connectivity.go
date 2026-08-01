@@ -64,7 +64,12 @@ func (e *Engine) resolveInstance(
 	ctx context.Context,
 	instanceID string,
 ) (*computedriver.Instance, error) {
-	instances, err := e.compute.DescribeInstances(ctx, []string{instanceID}, nil)
+	// Connectivity analysis is an internal/system caller: a managed
+	// (service-owned) instance must still be resolvable even when the account
+	// hides managed resources from the public Describe API. Opt in so hiding
+	// doesn't make a real instance look non-existent.
+	instances, err := e.compute.DescribeInstances(ctx, []string{instanceID}, nil,
+		computedriver.DescribeInstancesOptions{IncludeManagedResources: true})
 	if err != nil {
 		return nil, err
 	}
@@ -198,21 +203,51 @@ func (*Engine) buildPath(
 	return buildPath(src, dst)
 }
 
-// findRouteTableForVPC returns the first route table matching the given VPC.
-func (e *Engine) findRouteTableForVPC(
+// findRouteTableForSubnet resolves the route table that actually governs a
+// subnet, the way the cloud does: an explicit association wins, and a subnet
+// without one falls back to the VPC's main route table.
+//
+// Taking whichever table was listed first was only ever right while a VPC had
+// exactly one. Once a main route table exists alongside caller-created ones,
+// the arbitrary choice can land on a table whose routes do not govern the
+// subnet, and every answer derived from it is then wrong — a reachable
+// destination reads as blocked.
+func (e *Engine) findRouteTableForSubnet(
 	ctx context.Context,
-	vpcID string,
+	vpcID, subnetID string,
 ) (*netdriver.RouteTable, error) {
 	tables, err := e.networking.DescribeRouteTables(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
+	var main, anyInVPC *netdriver.RouteTable
+
 	for i := range tables {
-		if tables[i].VPCID == vpcID {
-			return &tables[i], nil
+		if tables[i].VPCID != vpcID {
+			continue
+		}
+
+		if anyInVPC == nil {
+			anyInVPC = &tables[i]
+		}
+
+		for _, assoc := range tables[i].Associations {
+			if assoc.Main {
+				main = &tables[i]
+			}
+
+			if subnetID != "" && assoc.SubnetID == subnetID {
+				return &tables[i], nil
+			}
 		}
 	}
 
-	return nil, nil
+	if main != nil {
+		return main, nil
+	}
+
+	// Drivers that do not model a main route table still get an answer rather
+	// than the subnet reading as unroutable.
+	return anyInVPC, nil
 }

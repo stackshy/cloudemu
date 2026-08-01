@@ -1,8 +1,9 @@
 package kubernetes
 
 import (
-	"encoding/base64"
 	"fmt"
+
+	"github.com/stackshy/cloudemu/v2/internal/k8spki"
 )
 
 // StubToken is the bearer token returned in every cloudemu-rendered
@@ -25,10 +26,10 @@ const StubToken = "cloudemu-anonymous"
 func RenderKubeconfig(apiServerBase, uid, clusterName string) []byte {
 	server := apiServerBase + pathPrefix + uid
 
-	// Empty cluster-certificate-authority-data is fine because we set
-	// insecure-skip-tls-verify: true. Real apiservers embed the CA; for the
-	// in-memory plain-HTTP case there's nothing to embed.
-	ca := base64.StdEncoding.EncodeToString(nil)
+	// Advertise the real shared CA the data plane is served with (matching EKS
+	// and GKE). Over a plain-HTTP base URL client-go ignores it; over the
+	// HTTPS `serve` endpoint it validates the handshake — no skip-verify.
+	ca := k8spki.CertificatePEM()
 
 	yaml := fmt.Sprintf(`apiVersion: v1
 kind: Config
@@ -36,7 +37,6 @@ clusters:
 - name: %s
   cluster:
     server: %s
-    insecure-skip-tls-verify: true
     certificate-authority-data: %s
 users:
 - name: %s

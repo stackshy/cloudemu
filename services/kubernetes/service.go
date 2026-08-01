@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 // clusterIPNone is the sentinel value a client sets on a headless Service —
@@ -79,11 +80,12 @@ func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Req
 }
 
 func (s *ClusterState) watchServices(w http.ResponseWriter, r *http.Request, namespace string) {
-	s.mu.RLock()
-	sub := s.wServices.subscribe(namespace)
-	items := s.collectServicesLocked(namespace)
-	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items)
+	sel, fields := parseListSelectors(r)
+	serveWatch(s, w, r, s.wServices, namespace,
+		func() []corev1.Service { return s.collectServicesLocked(namespace) },
+		func(svc corev1.Service) bool {
+			return sel.Matches(labels.Set(svc.Labels)) && metaFieldsMatch(svc.Name, svc.Namespace, fields)
+		})
 }
 
 func (s *ClusterState) serveServiceItem(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -148,13 +150,14 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 	svc := in
 	s.services[key] = &svc
 
-	// Auto-create an empty Endpoints stub so kubectl get endpoints returns
-	// rows. Subsets stays nil — no scheduler / Pod IPs in Wave 2.
+	// Auto-create the Endpoints object, then let the endpoints controller fill
+	// its Subsets from Running Pods that match the Service selector.
 	ep := newEndpointsObject(namespace, svc.Name)
 	s.endpoints[endpointsKey(namespace, svc.Name)] = ep
 
 	s.wServices.publish(EventAdded, namespace, *svc.DeepCopy())
 	s.wEndpoints.publish(EventAdded, namespace, *ep.DeepCopy())
+	s.reconcileServiceEndpointsLocked(&svc)
 
 	writeJSON(w, http.StatusCreated, &svc)
 }

@@ -1,11 +1,12 @@
 // Package aks provides an in-memory mock of Microsoft.ContainerService
 // (Azure Kubernetes Service) — control-plane only.
 //
-// Wave 1 scope: ManagedClusters + AgentPools + MaintenanceConfigurations
-// CRUD and credential listing. The Kubernetes data-plane API (Deployments,
-// Pods, Services, …) is intentionally NOT modeled here; that is deferred to
-// Wave 2. The mock returns a stub kubeconfig pointing at a sentinel host so
-// callers can detect that the data plane is not implemented.
+// Scope: ManagedClusters + AgentPools + MaintenanceConfigurations CRUD and
+// credential listing, plus a live Kubernetes data plane. When a shared
+// kubernetes.APIServer is wired in, ListClusterAdminCredentials returns a
+// kubeconfig pointing at a real in-memory apiserver (with its CA) so client-go
+// and kubectl operate end-to-end; without one, the kubeconfig points at a
+// sentinel host so callers can detect the data plane is unwired.
 package aks
 
 import (
@@ -708,7 +709,7 @@ func (m *Mock) ListMaintenanceConfigs(_ context.Context, rg, cluster string) ([]
 
 // Kubeconfig returns a kubeconfig blob for the named managed cluster.
 //
-// When a shared kubernetes.APIServer is wired (Phase 3 onward) and the
+// When a shared kubernetes.APIServer is wired (the normal path) and the
 // cluster has a registered UID, the kubeconfig points at <base>/k8s/<uid> —
 // the real in-memory K8s API server registered to this cluster on Create.
 // When the APIServer isn't wired (Wave 1 fallback), the kubeconfig points

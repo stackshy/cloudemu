@@ -50,15 +50,18 @@ type paramData struct {
 
 // Mock is an in-memory mock implementation of SSM Parameter Store.
 type Mock struct {
-	params *memstore.Store[*paramData]
-	opts   *config.Options
+	params           *memstore.Store[*paramData]
+	commands         *memstore.Store[driver.CommandInvocation]
+	instanceResolver InstanceResolver
+	opts             *config.Options
 }
 
 // New creates a new SSM Parameter Store mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		params: memstore.New[*paramData](),
-		opts:   opts,
+		params:   memstore.New[*paramData](),
+		commands: memstore.New[driver.CommandInvocation](),
+		opts:     opts,
 	}
 }
 
@@ -240,6 +243,10 @@ func selectorFor(requested, base string) string {
 func (m *Mock) GetParameter(_ context.Context, name string, _ bool) (*driver.Parameter, error) {
 	base, selector := resolveSelector(name)
 
+	// AWS-published parameters are readable from every account without having
+	// been put, so resolving one must not answer NotFound.
+	m.ensurePublicParameter(base)
+
 	pd, ok := m.params.Get(base)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "parameter %q not found", base)
@@ -250,7 +257,10 @@ func (m *Mock) GetParameter(_ context.Context, name string, _ bool) (*driver.Par
 
 	v, ok := pd.pick(selector)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "parameter %q version/label %q not found", base, selector)
+		// Parameter exists but this version/label doesn't — distinct from the
+		// parameter being absent, so the handler can return the specific
+		// ParameterVersionNotFound wire error.
+		return nil, driver.ErrVersionNotFound
 	}
 
 	p := m.toParameter(pd, v, selector)
@@ -267,6 +277,8 @@ func (m *Mock) GetParameters(_ context.Context, names []string, _ bool) ([]drive
 
 	for _, name := range names {
 		base, selector := resolveSelector(name)
+
+		m.ensurePublicParameter(base)
 
 		pd, ok := m.params.Get(base)
 		if !ok {
@@ -335,10 +347,13 @@ func (m *Mock) GetParametersByPath(_ context.Context, in driver.GetByPathInput) 
 	return out, nil
 }
 
-// DeleteParameter removes a parameter and all its versions.
+// DeleteParameter removes a parameter and all its versions. A ":version"/
+// ":label" selector is stripped first, matching the read paths — SSM has no
+// per-version delete, so a selector addresses the base parameter.
 func (m *Mock) DeleteParameter(_ context.Context, name string) error {
-	if !m.params.Delete(name) {
-		return errors.Newf(errors.NotFound, "parameter %q not found", name)
+	base, _ := resolveSelector(name)
+	if !m.params.Delete(base) {
+		return errors.Newf(errors.NotFound, "parameter %q not found", base)
 	}
 
 	return nil
@@ -350,7 +365,8 @@ func (m *Mock) DeleteParameters(_ context.Context, names []string) ([]string, []
 	var deleted, invalid []string
 
 	for _, name := range names {
-		if m.params.Delete(name) {
+		base, _ := resolveSelector(name)
+		if m.params.Delete(base) {
 			deleted = append(deleted, name)
 		} else {
 			invalid = append(invalid, name)

@@ -108,6 +108,12 @@ type LBAttributes struct {
 	DeletionProtection bool
 	AccessLogsEnabled  bool
 	AccessLogsBucket   string
+	// Extra holds attributes outside the typed set above, keyed by their AWS
+	// attribute name (load_balancing.cross_zone.enabled and friends). AWS
+	// models attributes as open key/value pairs and adds new ones over time,
+	// so a fixed struct silently drops whatever it has not been taught — and a
+	// caller reading back its own write would get a wrong answer.
+	Extra map[string]string
 }
 
 // Target identifies a target (e.g., instance) in a target group.
@@ -150,4 +156,18 @@ type LoadBalancer interface {
 	DeregisterTargets(ctx context.Context, targetGroupARN string, targets []Target) error
 	DescribeTargetHealth(ctx context.Context, targetGroupARN string) ([]TargetHealth, error)
 	SetTargetHealth(ctx context.Context, targetGroupARN string, targetID string, state string) error
+}
+
+// LBAttributeUpdater is implemented by drivers that can apply a partial
+// attribute update atomically.
+//
+// Attribute modification is a read-modify-write, and doing it as a Get
+// followed by a Put drops the lock in between: two overlapping updates on one
+// load balancer each read the same base and the second write silently
+// discards the first. A driver that can hold the lock across both halves
+// implements this; callers fall back to Get/Put when it does not.
+type LBAttributeUpdater interface {
+	UpdateLBAttributes(
+		ctx context.Context, lbARN string, apply func(*LBAttributes),
+	) (*LBAttributes, error)
 }

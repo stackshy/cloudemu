@@ -90,6 +90,11 @@ func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm
 		return
 	}
 
+	if len(insts) == 0 {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "server "+rp.ResourceName+" not found")
+		return
+	}
+
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(&insts[0], rp.Subscription, rp.ResourceGroup))
 }
 
@@ -147,13 +152,8 @@ func (h *Handler) restartServer(w http.ResponseWriter, r *http.Request, rp *azur
 }
 
 // respondWithServer fetches the current server state and writes it as the
-// action response so the SDK's LRO poller observes a typed body.
+// action response so the SDK's LRO poller observes a typed body. It is the same
+// fetch-and-write as getServer.
 func (h *Handler) respondWithServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	insts, err := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName})
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, toARMServer(&insts[0], rp.Subscription, rp.ResourceGroup))
+	h.getServer(w, r, rp)
 }

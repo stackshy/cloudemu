@@ -44,6 +44,32 @@ jobs:
       - name: go vet (reuses the build cache)
         run: go vet ./...
 
+  contrib-testcontainers:
+    name: Contrib (testcontainers)
+    runs-on: ubuntu-latest
+    # Separate Go module (keeps testcontainers-go out of the core module), so
+    # the root build/vet doesn't cover it. Compile + vet only — the container
+    # acceptance test needs Docker and is run on demand (go test ./...).
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-contrib-${{ hashFiles('contrib/testcontainers/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-contrib-
+      - name: build & vet
+        working-directory: contrib/testcontainers
+        run: |
+          go build ./...
+          go vet ./...
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -62,6 +88,10 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-
       - run: go test ./...
+      # Run the Bedrock packages under the race detector so their concurrency
+      # tests (guardrail versions, evaluation-job stop, etc.) actually exercise
+      # -race in CI rather than being inert.
+      - run: go test -race ./providers/aws/bedrock/... ./server/aws/bedrock/... ./providers/aws/bedrockagent/... ./server/aws/bedrockagent/... ./server/aws/bedrockagentruntime/...
 
   tidy:
     name: Tidy

@@ -12,15 +12,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"net/http"
 	"net/http/httptest"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -65,8 +69,36 @@ func newSuiteS3Client(t *testing.T) *s3.Client {
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(url)
 		o.UsePathStyle = true
-		o.Retryer = aws.NopRetryer{}
+		// httptest servers under parallel CI load occasionally close the TCP
+		// connection while the SDK is still reading a (200) response body,
+		// surfacing as "use of closed network connection". Retry ONLY that
+		// transient transport error — the retryables list is replaced (not
+		// extended), so API errors and the emulator's 500s are still observed on
+		// exactly one attempt, as the negative-path assertions expect.
+		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
+			so.Retryables = []retry.IsErrorRetryable{retryClosedNetConn{}}
+		})
+		// Fresh connection per request avoids reusing a since-closed keep-alive.
+		o.HTTPClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	})
+}
+
+// retryClosedNetConn marks the transient "use of closed network connection"
+// that httptest surfaces during response-body reads under parallel load as
+// retryable; every other error is left non-retryable.
+type retryClosedNetConn struct{}
+
+func (retryClosedNetConn) IsErrorRetryable(err error) aws.Ternary {
+	// The teardown race surfaces as net.ErrClosed ("use of closed network
+	// connection"), wrapped by the SDK's deserialization layer. Match the typed
+	// sentinel (robust to wording changes) with a string fallback (robust to a
+	// wrapper that breaks the Unwrap chain).
+	if err != nil && (errors.Is(err, net.ErrClosed) ||
+		strings.Contains(err.Error(), "use of closed network connection")) {
+		return aws.TrueTernary
+	}
+
+	return aws.UnknownTernary
 }
 
 func suiteCreateBucket(t *testing.T, client *s3.Client, bucket string) {
@@ -714,23 +746,82 @@ func TestS3VersioningAndListVersions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, types.BucketVersioningStatusEnabled, enabled.Status)
 
-	// Even with versioning "enabled", overwrites keep no history: a key has
-	// exactly one version with the null version id.
-	suitePut(t, client, bucket, "doc.txt", []byte("v1"), "text/plain")
-	suitePut(t, client, bucket, "doc.txt", []byte("v2"), "text/plain")
-
-	versions, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
-		Bucket: aws.String(bucket),
+	// Two overwrites create two distinct, retained versions.
+	putV1, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("doc.txt"), Body: bytes.NewReader([]byte("v1")),
 	})
 	require.NoError(t, err)
-	require.Len(t, versions.Versions, 1, "flag-only versioning keeps no history")
+	putV2, err := client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("doc.txt"), Body: bytes.NewReader([]byte("v2")),
+	})
+	require.NoError(t, err)
 
-	v := versions.Versions[0]
-	assert.Equal(t, "doc.txt", aws.ToString(v.Key))
-	assert.Equal(t, "null", aws.ToString(v.VersionId))
-	assert.True(t, aws.ToBool(v.IsLatest))
-	assert.Equal(t, quotedSHA256([]byte("v2")), aws.ToString(v.ETag),
-		"the sole version reflects the latest overwrite")
+	v1ID, v2ID := aws.ToString(putV1.VersionId), aws.ToString(putV2.VersionId)
+	require.NotEmpty(t, v1ID)
+	require.NotEmpty(t, v2ID)
+	require.NotEqual(t, v1ID, v2ID, "each put gets a distinct version id")
+
+	// ListObjectVersions returns both, newest first, only the latest flagged.
+	versions, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
+	require.NoError(t, err)
+	require.Len(t, versions.Versions, 2, "both versions retained")
+	assert.Equal(t, v2ID, aws.ToString(versions.Versions[0].VersionId))
+	assert.True(t, aws.ToBool(versions.Versions[0].IsLatest))
+	assert.False(t, aws.ToBool(versions.Versions[1].IsLatest))
+
+	// Current GET returns v2; version-addressable GET returns the older v1.
+	assert.Equal(t, "v2", suiteVersionBody(t, client, bucket, "doc.txt", ""))
+	assert.Equal(t, "v1", suiteVersionBody(t, client, bucket, "doc.txt", v1ID))
+
+	// A top-level delete on a versioned bucket writes a delete marker; the
+	// current object is then hidden (GET 404s) but old versions remain.
+	del, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("doc.txt"),
+	})
+	require.NoError(t, err)
+	assert.True(t, aws.ToBool(del.DeleteMarker), "delete on a versioned bucket is a marker")
+	require.NotEmpty(t, aws.ToString(del.VersionId))
+
+	_, err = client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String("doc.txt")})
+	require.Error(t, err, "current object hidden behind the delete marker")
+	assert.Equal(t, "v1", suiteVersionBody(t, client, bucket, "doc.txt", v1ID), "old version still retrievable")
+
+	after, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
+	require.NoError(t, err)
+	require.Len(t, after.DeleteMarkers, 1)
+	assert.True(t, aws.ToBool(after.DeleteMarkers[0].IsLatest))
+	require.Len(t, after.Versions, 2, "both object versions still present alongside the marker")
+
+	// Deleting a specific version permanently removes just that version.
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("doc.txt"), VersionId: aws.String(v1ID),
+	})
+	require.NoError(t, err)
+	final, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{Bucket: aws.String(bucket)})
+	require.NoError(t, err)
+	for _, v := range final.Versions {
+		assert.NotEqual(t, v1ID, aws.ToString(v.VersionId), "the specific version was permanently deleted")
+	}
+}
+
+// suiteVersionBody GETs an object (optionally a specific version) and returns
+// its body as a string.
+func suiteVersionBody(t *testing.T, client *s3.Client, bucket, key, versionID string) string {
+	t.Helper()
+
+	in := &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}
+	if versionID != "" {
+		in.VersionId = aws.String(versionID)
+	}
+
+	out, err := client.GetObject(context.Background(), in)
+	require.NoError(t, err, "GetObject %s/%s version=%q", bucket, key, versionID)
+	defer out.Body.Close()
+
+	b, err := io.ReadAll(out.Body)
+	require.NoError(t, err)
+
+	return string(b)
 }
 
 // TestS3ListBucketsSorted verifies ListBuckets returns all buckets

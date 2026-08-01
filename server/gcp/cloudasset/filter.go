@@ -44,15 +44,20 @@ const (
 	atFirestoreColl   = "firestore.googleapis.com/Collection"
 	atCloudFunction   = "cloudfunctions.googleapis.com/Function"
 	atCloudFunctionV1 = "cloudfunctions.googleapis.com/CloudFunction"
+	atGKECluster      = "container.googleapis.com/Cluster"
+	atGKENodePool     = "container.googleapis.com/NodePool"
+	atCloudSQLInst    = "sqladmin.googleapis.com/Instance"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
 const (
-	portableCompute    = "compute"
-	portableNetworking = "networking"
-	portableStorage    = "storage"
-	portableDatabase   = "database"
-	portableServerless = "serverless"
+	portableCompute      = "compute"
+	portableNetworking   = "networking"
+	portableStorage      = "storage"
+	portableDatabase     = "database"
+	portableServerless   = "serverless"
+	portableKubernetes   = "kubernetes"
+	portableRelationalDB = "relationaldb"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -225,49 +230,55 @@ func expandPortableService(svc string) []string {
 	return []string{svc}
 }
 
+// portableResourceType is a (service, type) pair in the portable vocabulary.
+type portableResourceType struct{ service, typ string }
+
+// gcpAssetToPortable maps a fully-qualified GCP asset type to the portable
+// (service, type) pair the engine uses. A map lookup rather than a switch keeps
+// gocyclo under the gate as the pairs grow.
+var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
+	atComputeInstance: {portableCompute, "Instance"},
+	atNetwork:         {portableNetworking, "VPC"},
+	atSubnetwork:      {portableNetworking, "Subnet"},
+	atFirewall:        {portableNetworking, "SecurityGroup"},
+	atStorageBucket:   {portableStorage, "Bucket"},
+	atFirestoreDB:     {portableDatabase, "Table"},
+	atFirestoreColl:   {portableDatabase, "Table"},
+	atCloudFunction:   {portableServerless, "Function"},
+	atCloudFunctionV1: {portableServerless, "Function"},
+	atGKECluster:      {portableKubernetes, "Cluster"},
+	atGKENodePool:     {portableKubernetes, "NodeGroup"},
+	atCloudSQLInst:    {portableRelationalDB, "SqlInstance"},
+}
+
+// portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
+var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
+	portableCompute + "/Instance":         atComputeInstance,
+	portableNetworking + "/VPC":           atNetwork,
+	portableNetworking + "/Subnet":        atSubnetwork,
+	portableNetworking + "/SecurityGroup": atFirewall,
+	portableStorage + "/Bucket":           atStorageBucket,
+	portableDatabase + "/Table":           atFirestoreDB,
+	portableServerless + "/Function":      atCloudFunction,
+	portableKubernetes + "/Cluster":       atGKECluster,
+	portableKubernetes + "/NodeGroup":     atGKENodePool,
+	portableRelationalDB + "/SqlInstance": atCloudSQLInst,
+}
+
 // mapGCPAssetType translates a fully-qualified GCP asset type
 // (compute.googleapis.com/Instance) to the portable (service, type) pair
 // the engine uses. Returns ("", "") for unmapped types.
 func mapGCPAssetType(assetType string) (service, typ string) {
-	switch assetType {
-	case atComputeInstance:
-		return portableCompute, "Instance"
-	case atNetwork:
-		return portableNetworking, "VPC"
-	case atSubnetwork:
-		return portableNetworking, "Subnet"
-	case atFirewall:
-		return portableNetworking, "SecurityGroup"
-	case atStorageBucket:
-		return portableStorage, "Bucket"
-	case atFirestoreDB, atFirestoreColl:
-		return portableDatabase, "Table"
-	case atCloudFunction, atCloudFunctionV1:
-		return portableServerless, "Function"
-	default:
-		return "", ""
-	}
+	p := gcpAssetToPortable[assetType]
+	return p.service, p.typ
 }
 
 // portableToGCPAssetType is the inverse — turns the engine's (service,
 // type) pair into the canonical GCP assetType string the API emits.
 func portableToGCPAssetType(service, typ string) string {
-	switch service + "/" + typ {
-	case portableCompute + "/Instance":
-		return atComputeInstance
-	case portableNetworking + "/VPC":
-		return atNetwork
-	case portableNetworking + "/Subnet":
-		return atSubnetwork
-	case portableNetworking + "/SecurityGroup":
-		return atFirewall
-	case portableStorage + "/Bucket":
-		return atStorageBucket
-	case portableDatabase + "/Table":
-		return atFirestoreDB
-	case portableServerless + "/Function":
-		return atCloudFunction
-	default:
-		return service + "/" + typ
+	if at, ok := portableToGCPAssetTypeMap[service+"/"+typ]; ok {
+		return at
 	}
+
+	return service + "/" + typ
 }

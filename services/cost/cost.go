@@ -53,6 +53,53 @@ func defaultRates() map[string]float64 {
 		"database:BatchPutItems": 0.00000125,
 		"database:BatchGetItems": 0.00000025,
 
+		// Relational DB (RDS/Aurora): instances and read replicas per
+		// instance-hour (proxied at create), RDS Proxy per hour; snapshots and
+		// Aurora cluster grouping billed via storage/members, proxied at 0.
+		"relationaldb:CreateInstance":              0.017, // db.t3.micro-equivalent instance-hour
+		"relationaldb:CreateDBInstanceReadReplica": 0.017,
+		"relationaldb:RestoreInstanceFromSnapshot": 0.017,
+		"relationaldb:CreateManagedInstance":       0.50,  // Azure SQL Managed Instance (GP 4-vCore) instance-hour
+		"relationaldb:CreateAlloyDBCluster":        0.0,   // AlloyDB billed per instance, not per cluster
+		"relationaldb:CreateAlloyDBInstance":       0.53,  // AlloyDB 4-vCPU instance-hour proxy
+		"relationaldb:CreateDBProxy":               0.015, // proxy vCPU-hour proxy
+		"relationaldb:CreateCluster":               0.0,   // Aurora billed per member instance + ACU
+		"relationaldb:CreateSnapshot":              0.0,   // manual snapshot storage
+		"relationaldb:CreateClusterSnapshot":       0.0,
+		"relationaldb:StartInstance":               0.0,
+		"relationaldb:StopInstance":                0.0,
+
+		// MemoryDB (Redis/Valkey): clusters billed per node-hour proxy at
+		// create; multi-region grouping, snapshots and reserved-node purchases
+		// proxied at 0 (metered via member clusters / storage / reservations).
+		"memorydb:CreateCluster":                 0.226, // db.r6g.large-equivalent node-hour
+		"memorydb:CreateMultiRegionCluster":      0.0,
+		"memorydb:CreateSnapshot":                0.0,
+		"memorydb:CopySnapshot":                  0.0,
+		"memorydb:PurchaseReservedNodesOffering": 0.0,
+
+		// Amazon Keyspaces (Cassandra): tables billed per throughput/storage;
+		// keyspaces, types, restores and tags are free control-plane ops. A
+		// provisioned table is proxied at a small hourly base at create.
+		"keyspaces:CreateTable":    0.01, // provisioned-capacity table-hour proxy
+		"keyspaces:RestoreTable":   0.01, // restore provisions a new table
+		"keyspaces:CreateKeyspace": 0.0,
+		"keyspaces:CreateType":     0.0,
+
+		// Azure Managed Cassandra: billed per datacenter node (VM SKU); the
+		// cluster itself and control-plane ops are free. Proxied per datacenter
+		// at create (a node-hour base × the default node count).
+		"managedcassandra:CreateOrUpdateDataCenter": 0.5, // Standard_DS14_v2-equivalent node-hours proxy
+		"managedcassandra:CreateOrUpdateCluster":    0.0,
+
+		// GCP Bigtable: real billing is per cluster node-hour (+ storage). The
+		// emulator has no clock, so it books a flat proxy charge when a cluster is
+		// created; the instance, tables, app profiles, and backups are free.
+		"bigtable:CreateCluster":  0.65, // flat proxy (~1h of a 3-node cluster)
+		"bigtable:CreateInstance": 0.0,
+		"bigtable:CreateTable":    0.0,
+		"bigtable:CreateBackup":   0.0,
+
 		// Serverless (per invocation)
 		"serverless:Invoke": 0.0000002, // $0.20 per 1M
 

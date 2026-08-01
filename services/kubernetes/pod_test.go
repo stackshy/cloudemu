@@ -29,8 +29,14 @@ func TestPod_LifecycleInNamespace(t *testing.T) {
 	var created corev1.Pod
 	mustDecode(t, resp.Body, &created)
 
-	if created.Status.Phase != corev1.PodPending {
-		t.Fatalf("Phase on create: got %q, want Pending", created.Status.Phase)
+	// cloudemu drives a directly-created Pod to Running with a synthetic Pod IP
+	// (no kubelet), so it behaves like a scheduled Pod.
+	if created.Status.Phase != corev1.PodRunning {
+		t.Fatalf("Phase on create: got %q, want Running", created.Status.Phase)
+	}
+
+	if created.Status.PodIP == "" {
+		t.Fatal("running Pod missing Pod IP")
 	}
 
 	if created.UID == "" {

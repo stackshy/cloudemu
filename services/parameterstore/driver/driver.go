@@ -1,7 +1,19 @@
 // Package driver defines the interface for SSM Parameter Store service implementations.
 package driver
 
-import "context"
+import (
+	"context"
+
+	"github.com/stackshy/cloudemu/v2/errors"
+)
+
+// ErrVersionNotFound is returned by GetParameter when the parameter itself
+// exists but the requested version or label does not — distinct from the
+// parameter being absent. It carries the NotFound code so generic handling
+// still treats it as not-found, while the SDK-compat layer can match it with
+// errors.Is to return AWS's distinct ParameterVersionNotFound error instead of
+// ParameterNotFound.
+var ErrVersionNotFound = errors.New(errors.NotFound, "requested parameter version or label not found")
 
 // Parameter types, matching AWS SSM Parameter Store.
 const (
@@ -74,4 +86,38 @@ type ParameterStore interface {
 	GetParameterHistory(ctx context.Context, name string) ([]Parameter, error)
 	// LabelParameterVersion attaches labels to a specific version (0 = latest).
 	LabelParameterVersion(ctx context.Context, name string, version int64, labels []string) (appliedVersion int64, invalid []string, err error)
+}
+
+// CommandInvocation is the result of a Run Command execution on one instance.
+type CommandInvocation struct {
+	CommandID    string
+	InstanceID   string
+	DocumentName string
+	Status       string
+	ResponseCode int32
+	Stdout       string
+	Stderr       string
+}
+
+// CommandConfig describes a Run Command send.
+type CommandConfig struct {
+	InstanceIDs  []string
+	DocumentName string
+	Comment      string
+	Parameters   map[string][]string
+}
+
+// RunCommand is an OPTIONAL capability, discovered by type assertion.
+//
+// Targets are validated — sending to an instance that does not exist is
+// InvalidInstanceId, as it is against the real service.
+//
+// IMPORTANT: an emulated instance has no guest operating system, so nothing
+// executes. Invocations report success and empty output. This exercises a
+// caller's send/poll orchestration — that it waits for a terminal status, reads
+// the response code, and handles failure — but it does NOT validate the script
+// itself. A caller whose bootstrap script is wrong will still see success here.
+type RunCommand interface {
+	SendCommand(ctx context.Context, cfg CommandConfig) (string, error)
+	GetCommandInvocation(ctx context.Context, commandID, instanceID string) (*CommandInvocation, error)
 }

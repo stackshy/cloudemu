@@ -33,11 +33,22 @@ type cacheData struct {
 	items *memstore.Store[cacheItem]
 }
 
+// Defaults applied when a caller omits them, shared by cache clusters and
+// replication groups so the two cannot drift apart.
+const (
+	defaultEngine   = "redis"
+	defaultNodeType = "cache.t3.micro"
+	statusAvailable = "available"
+)
+
 // Mock is an in-memory mock implementation of the AWS ElastiCache service.
 type Mock struct {
-	caches     *memstore.Store[*cacheData]
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	caches            *memstore.Store[*cacheData]
+	subnetGroups      *memstore.Store[driver.SubnetGroup]
+	replicationGroups *memstore.Store[driver.ReplicationGroup]
+	subnetResolver    SubnetResolver
+	opts              *config.Options
+	monitoring        mondriver.Monitoring
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -60,8 +71,10 @@ func (m *Mock) emitMetric(metricName string, value float64, dims map[string]stri
 // New creates a new ElastiCache mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		caches: memstore.New[*cacheData](),
-		opts:   opts,
+		caches:            memstore.New[*cacheData](),
+		subnetGroups:      memstore.New[driver.SubnetGroup](),
+		replicationGroups: memstore.New[driver.ReplicationGroup](),
+		opts:              opts,
 	}
 }
 
@@ -77,12 +90,12 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	engine := cfg.Engine
 	if engine == "" {
-		engine = "redis"
+		engine = defaultEngine
 	}
 
 	nodeType := cfg.NodeType
 	if nodeType == "" {
-		nodeType = "cache.t3.micro"
+		nodeType = defaultNodeType
 	}
 
 	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
@@ -97,7 +110,7 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		Scope:     cfg.Scope,
 		NodeType:  nodeType,
 		Engine:    engine,
-		Status:    "available",
+		Status:    statusAvailable,
 		Endpoint:  endpoint,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		Tags:      tags,

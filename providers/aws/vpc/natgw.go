@@ -47,6 +47,10 @@ func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) 
 	}
 	m.natGateways.Set(id, nat)
 
+	// A real NAT gateway occupies an ENI in its subnet for as long as it
+	// lives, and that ENI is what refuses a VPC delete issued too early.
+	m.attachManagedENI(subnet.VPCID, cfg.SubnetID, natENIDescription(id))
+
 	info := toNATGatewayInfo(nat)
 
 	return &info, nil
@@ -58,7 +62,13 @@ func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
 		return errors.Newf(errors.NotFound, "NAT gateway %q not found", id)
 	}
 
+	m.releaseManagedENIs(natENIDescription(id))
+
 	return nil
+}
+
+func natENIDescription(natID string) string {
+	return "Interface for NAT Gateway " + natID
 }
 
 // DescribeNATGateways returns NAT gateways matching the given IDs, or all if empty.

@@ -70,9 +70,11 @@ func TestCascadeDelete_DropsAllNamespacedResources(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	// Sanity — namespaced lists are non-empty before delete.
+	// Sanity — namespaced lists are non-empty before delete. The "dep"
+	// Deployment (1 replica) now materializes its own Running Pod, so the pod
+	// count is the manually-created "p" plus the Deployment's pod = 2.
 	mustHaveItems(t, base, "/api/v1/namespaces/doomed/configmaps", 1)
-	mustHaveItems(t, base, "/api/v1/namespaces/doomed/pods", 1)
+	mustHaveItems(t, base, "/api/v1/namespaces/doomed/pods", 2)
 	mustHaveItems(t, base, "/api/v1/namespaces/doomed/secrets", 1)
 	// SA list contains the auto-bootstrap "default" SA + our "sa" = 2.
 	mustHaveItems(t, base, "/api/v1/namespaces/doomed/serviceaccounts", 2)

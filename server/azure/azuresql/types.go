@@ -57,6 +57,7 @@ type armDatabaseProps struct {
 	Collation                   string `json:"collation,omitempty"`
 	DatabaseID                  string `json:"databaseId,omitempty"`
 	CurrentServiceObjectiveName string `json:"currentServiceObjectiveName,omitempty"`
+	ElasticPoolID               string `json:"elasticPoolId,omitempty"`
 }
 
 // armList is the ARM list-response envelope.
@@ -100,6 +101,7 @@ func toARMDatabase(inst *rdsdriver.Instance, subscription, resourceGroup string)
 			Collation:                   "SQL_Latin1_General_CP1_CI_AS",
 			DatabaseID:                  inst.ARN,
 			CurrentServiceObjectiveName: inst.InstanceClass,
+			ElasticPoolID:               inst.ElasticPoolID,
 		},
 	}
 }

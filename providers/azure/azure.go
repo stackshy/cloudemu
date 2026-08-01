@@ -2,6 +2,8 @@
 package azure
 
 import (
+	"context"
+
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
@@ -20,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
@@ -27,21 +30,50 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
+// aksDiscovery adapts the AKS mock to the resourcediscovery KubernetesClusters
+// capability, so AKS managed clusters and agent pools surface in Resource
+// Graph.
+type aksDiscovery struct{ m *aks.Mock }
+
+func (a aksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery.DiscoveredCluster, error) {
+	clusters, err := a.m.ListClusters(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredCluster, 0, len(clusters))
+
+	for i := range clusters {
+		c := clusters[i]
+		out = append(out, resourcediscovery.DiscoveredCluster{
+			Name:          c.Name,
+			Region:        c.Location,
+			ResourceGroup: c.ResourceGroup,
+			Tags:          c.Tags,
+			NodeGroups:    c.AgentPoolNames,
+		})
+	}
+
+	return out, nil
+}
+
 // Provider holds all Azure mock services.
 type Provider struct {
-	BlobStorage     *blobstorage.Mock
-	VirtualMachines *virtualmachines.Mock
-	CosmosDB        *cosmosdb.Mock
-	Functions       *functions.Mock
-	VNet            *vnet.Mock
-	Monitor         *azuremonitor.Mock
-	IAM             *azureiam.Mock
-	DNS             *azuredns.Mock
-	LB              *azurelb.Mock
-	ServiceBus      *servicebus.Mock
+	BlobStorage      *blobstorage.Mock
+	VirtualMachines  *virtualmachines.Mock
+	CosmosDB         *cosmosdb.Mock
+	ManagedCassandra *managedcassandra.Mock
+	Functions        *functions.Mock
+	VNet             *vnet.Mock
+	Monitor          *azuremonitor.Mock
+	IAM              *azureiam.Mock
+	DNS              *azuredns.Mock
+	LB               *azurelb.Mock
+	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
 	// the two services keep separate queue namespaces.
@@ -79,6 +111,7 @@ func New(opts ...config.Option) *Provider {
 		BlobStorage:      blobstorage.New(o),
 		VirtualMachines:  virtualmachines.New(o),
 		CosmosDB:         cosmosdb.New(o),
+		ManagedCassandra: managedcassandra.New(o),
 		Functions:        functions.New(o),
 		VNet:             vnet.New(o),
 		Monitor:          azuremonitor.New(o),
@@ -124,14 +157,84 @@ func New(opts ...config.Option) *Provider {
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
 		&resourcediscovery.Drivers{
-			Compute:    p.VirtualMachines,
-			Networking: p.VNet,
-			Storage:    p.BlobStorage,
-			Database:   p.CosmosDB,
-			Serverless: p.Functions,
-			Databricks: p.Databricks,
+			Compute:      p.VirtualMachines,
+			Networking:   p.VNet,
+			Storage:      p.BlobStorage,
+			Database:     p.CosmosDB,
+			Serverless:   p.Functions,
+			Databricks:   p.Databricks,
+			Kubernetes:   aksDiscovery{p.AKS},
+			RelationalDB: sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
 		},
 	)
 
 	return p
+}
+
+// sqlDiscovery adapts the Azure relational mocks (SQL logical servers plus
+// MySQL/PostgreSQL Flexible Servers) to the resourcediscovery
+// RelationalDatabases capability, so they surface in Resource Graph.
+type sqlDiscovery struct {
+	sql   *azuresql.Mock
+	mysql *mysqlflex.Mock
+	pg    *postgresflex.Mock
+}
+
+func (d sqlDiscovery) DiscoverDatabases(
+	ctx context.Context,
+) ([]resourcediscovery.DiscoveredDatabase, error) {
+	clusters, err := d.sql.DescribeClusters(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredDatabase, 0, len(clusters))
+
+	for i := range clusters {
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name: clusters[i].ID, Type: resourcediscovery.TypeSQLServer,
+			ARN: clusters[i].ARN, Tags: clusters[i].Tags,
+		})
+	}
+
+	myInsts, err := d.mysql.DescribeInstances(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out = appendFlexServers(out, myInsts, resourcediscovery.TypeMySQLFlex)
+
+	pgInsts, err := d.pg.DescribeInstances(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	out = appendFlexServers(out, pgInsts, resourcediscovery.TypePostgresFlex)
+
+	mis, err := d.sql.ListManagedInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range mis {
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name: mis[i].Name, Type: resourcediscovery.TypeManagedInstance,
+			Region: mis[i].Location, ARN: mis[i].ARN, Tags: mis[i].Tags,
+		})
+	}
+
+	return out, nil
+}
+
+func appendFlexServers(
+	out []resourcediscovery.DiscoveredDatabase, insts []rdsdriver.Instance, typ string,
+) []resourcediscovery.DiscoveredDatabase {
+	for i := range insts {
+		out = append(out, resourcediscovery.DiscoveredDatabase{
+			Name: insts[i].ID, Type: typ, Region: insts[i].AvailabilityZone,
+			ARN: insts[i].ARN, Tags: insts[i].Tags,
+		})
+	}
+
+	return out
 }
