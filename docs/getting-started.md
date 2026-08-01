@@ -30,9 +30,10 @@ func main() {
     // All services are available, e.g.:
     // aws.S3, aws.EC2, aws.DynamoDB, aws.Lambda, aws.VPC,
     // aws.CloudWatch, aws.IAM, aws.Route53, aws.ELB, aws.SQS,
-    // aws.ElastiCache, aws.SecretsManager, aws.CloudWatchLogs,
+    // aws.ElastiCache, aws.MemoryDB, aws.Keyspaces,
+    // aws.SecretsManager, aws.CloudWatchLogs,
     // aws.SNS, aws.ECR, aws.EventBridge,
-    // aws.RDS, aws.Redshift, aws.EKS
+    // aws.RDS, aws.Redshift, aws.EKS, aws.ECS
     _ = ctx
 }
 ```
