@@ -95,7 +95,7 @@ func (s *ClusterState) serveConfigMapItem(w http.ResponseWriter, r *http.Request
 	case http.MethodPatch:
 		s.patchConfigMap(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deleteConfigMap(w, namespace, name)
+		s.deleteConfigMap(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: configmap item: method not allowed: "+r.Method)
 	}
@@ -130,6 +130,12 @@ func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, n
 
 	stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
 
 	cm := in
 	s.configMaps[key] = &cm
@@ -227,6 +233,12 @@ func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, n
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	cm := in
 	s.configMaps[key] = &cm
 	s.wConfigMaps.publish(EventModified, namespace, *cm.DeepCopy())
@@ -256,12 +268,19 @@ func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, na
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.configMaps[key] = patched
 	s.wConfigMaps.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := configMapKey(namespace, name)
 
 	s.mu.Lock()
@@ -270,6 +289,12 @@ func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, namespace, name st
 	cm, ok := s.configMaps[key]
 	if !ok {
 		writeNotFound(w, "k8s api: configmap not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, cm.DeepCopy())
 
 		return
 	}

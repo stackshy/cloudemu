@@ -138,7 +138,7 @@ func (s *ClusterState) serveRegistryItem(w http.ResponseWriter, r *http.Request,
 	case http.MethodPatch:
 		s.registryPatch(w, r, st, route.Namespace, route.Name)
 	case http.MethodDelete:
-		s.registryDelete(w, st, route.Namespace, route.Name)
+		s.registryDelete(w, r, st, route.Namespace, route.Name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: "+st.def.plural+" item: method not allowed: "+r.Method)
 	}
@@ -241,6 +241,14 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 	obj.SetUID(types.UID(newUID()))
 	obj.SetCreationTimestamp(metav1.NewTime(time.Now()))
 	obj.SetGeneration(1)
+
+	if isDryRun(r) {
+		obj.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		writeJSON(w, http.StatusCreated, obj)
+
+		return
+	}
+
 	st.stampRVLocked(obj)
 
 	st.items[key] = obj
@@ -302,6 +310,13 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 		in.SetGeneration(cur.GetGeneration())
 	}
 
+	if isDryRun(r) {
+		in.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		writeJSON(w, http.StatusOK, in)
+
+		return
+	}
+
 	st.stampRVLocked(in)
 
 	st.items[objKey(namespace, name)] = in
@@ -334,6 +349,13 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 		patched.SetGeneration(cur.GetGeneration() + 1)
 	}
 
+	if isDryRun(r) {
+		patched.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	st.stampRVLocked(patched)
 
 	st.items[objKey(namespace, name)] = patched
@@ -346,7 +368,7 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) registryDelete(w http.ResponseWriter, st *registryStore, namespace, name string) {
+func (s *ClusterState) registryDelete(w http.ResponseWriter, r *http.Request, st *registryStore, namespace, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -355,6 +377,12 @@ func (s *ClusterState) registryDelete(w http.ResponseWriter, st *registryStore, 
 	obj, ok := st.items[key]
 	if !ok {
 		writeNotFound(w, "k8s api: "+st.def.kind+" not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, obj.DeepCopy())
 
 		return
 	}
@@ -502,30 +530,57 @@ const (
 	fieldMetadataNamespace = "metadata.namespace"
 	fieldStatusPhase       = "status.phase"
 	fieldSpecNodeName      = "spec.nodeName"
+	// Event field selectors — `kubectl get events --field-selector` and
+	// controllers filtering their own Events rely on these. Without them the
+	// generic store fell closed (returned nothing) for any Event filter.
+	fieldInvolvedName      = "involvedObject.name"
+	fieldInvolvedNamespace = "involvedObject.namespace"
+	fieldInvolvedKind      = "involvedObject.kind"
+	fieldInvolvedUID       = "involvedObject.uid"
+	fieldEventReason       = "reason"
+	fieldEventType         = "type"
 )
 
 func matchesFields(obj *unstructured.Unstructured, fields map[string]string) bool {
 	for k, v := range fields {
-		switch k {
-		case fieldMetadataName:
-			if obj.GetName() != v {
-				return false
-			}
-		case fieldMetadataNamespace:
-			if obj.GetNamespace() != v {
-				return false
-			}
-		case fieldStatusPhase:
-			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
-			if phase != v {
-				return false
-			}
-		default:
-			// Unknown field selector: match nothing rather than silently
-			// returning everything (a data-correctness hazard for callers).
+		if !matchesField(obj, k, v) {
 			return false
 		}
 	}
 
 	return true
+}
+
+// matchesField answers a single field-selector clause. Unknown keys fail closed
+// (match nothing) rather than silently returning everything — a data-correctness
+// hazard for callers that expect the filter to be honored.
+func matchesField(obj *unstructured.Unstructured, key, want string) bool {
+	switch key {
+	case fieldMetadataName:
+		return obj.GetName() == want
+	case fieldMetadataNamespace:
+		return obj.GetNamespace() == want
+	case fieldStatusPhase:
+		return nestedStringField(obj, want, "status", "phase")
+	case fieldInvolvedName:
+		return nestedStringField(obj, want, "involvedObject", "name")
+	case fieldInvolvedNamespace:
+		return nestedStringField(obj, want, "involvedObject", "namespace")
+	case fieldInvolvedKind:
+		return nestedStringField(obj, want, "involvedObject", "kind")
+	case fieldInvolvedUID:
+		return nestedStringField(obj, want, "involvedObject", "uid")
+	case fieldEventReason:
+		return nestedStringField(obj, want, "reason")
+	case fieldEventType:
+		return nestedStringField(obj, want, "type")
+	default:
+		return false
+	}
+}
+
+func nestedStringField(obj *unstructured.Unstructured, want string, path ...string) bool {
+	got, _, _ := unstructured.NestedString(obj.Object, path...)
+
+	return got == want
 }

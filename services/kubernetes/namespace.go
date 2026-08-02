@@ -56,7 +56,7 @@ func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request
 	case http.MethodPatch:
 		s.patchNamespace(w, r, name)
 	case http.MethodDelete:
-		s.deleteNamespace(w, name)
+		s.deleteNamespace(w, r, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: namespace item: method not allowed: "+r.Method)
 	}
@@ -105,6 +105,13 @@ func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
 	ns := newNamespaceObject(in.Name)
 	ns.Labels = in.Labels
 	ns.Annotations = in.Annotations
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, ns)
+
+		return
+	}
+
 	s.namespaces[in.Name] = ns
 
 	// Real apiserver auto-creates a "default" ServiceAccount in every new
@@ -187,6 +194,12 @@ func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, n
 		in.Status.Phase = corev1.NamespaceActive
 	}
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	s.namespaces[name] = &in
 	s.wNamespaces.publish(EventModified, "", *in.DeepCopy())
 	writeJSON(w, http.StatusOK, &in)
@@ -209,18 +222,31 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.namespaces[name] = patched
 	s.wNamespaces.publish(EventModified, "", *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
+func (s *ClusterState) deleteNamespace(w http.ResponseWriter, r *http.Request, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	ns, ok := s.namespaces[name]
 	if !ok {
 		writeNotFound(w, "k8s api: namespace not found: "+name)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, ns.DeepCopy())
 
 		return
 	}

@@ -141,7 +141,7 @@ The Kubernetes story is two layers, both shipped:
 - **Control plane** (EKS / AKS / GKE) — cluster, node-pool, addon / Fargate / maintenance-config lifecycle via the real cloud SDKs.
 - **Data plane** (in-memory Kubernetes API) — Namespace, Pod, Service, ConfigMap, Secret, ServiceAccount, Deployment, Endpoints. Supports CRUD + JSON-merge Patch + Watch streaming, so real `client-go` `Informer`/`Reflector` machinery works against a cloudemu-emulated cluster. Kubeconfigs returned by the control plane point at the in-memory data plane — `kubectl apply -f deployment.yaml` followed by `kubectl get pods` round-trips end-to-end.
 
-What's intentionally out of scope: real controllers (Deployment ↛ ReplicaSet ↛ Pod), scheduler (Pods stay Pending), RBAC, PV/PVC, StatefulSet/DaemonSet/Job/CronJob, Ingress.
+Emulation model: there is no scheduler or kubelet, so controllers converge **synchronously** — a Deployment / ReplicaSet / StatefulSet / DaemonSet / Job materializes its Pods straight to Running (a Job's straight to Succeeded), and Services get Endpoints, on every write. Workload, batch, storage and networking kinds (ReplicaSet, StatefulSet, DaemonSet, Job, PV/PVC, Ingress, …) are all served. See [docs/services.md](docs/services.md) §18 for the authoritative capability list.
 
 Full per-service operation list: [docs/services.md](docs/services.md).
 Per-handler protocol details and limitations: [docs/sdk-server.md](docs/sdk-server.md).

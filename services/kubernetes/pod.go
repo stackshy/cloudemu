@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -89,7 +90,7 @@ func (s *ClusterState) servePodItem(w http.ResponseWriter, r *http.Request, name
 	case http.MethodPatch:
 		s.patchPod(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deletePod(w, namespace, name)
+		s.deletePod(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: pod item: method not allowed: "+r.Method)
 	}
@@ -122,6 +123,12 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 
 	stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
 
 	pod := in
 	// cloudemu has no kubelet; a directly-created Pod is driven Running (with a
@@ -267,6 +274,12 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	pod := in
 	// A spec-only PUT (no status) must not drop the Pod out of Running — keep it
 	// materialized like createPod does.
@@ -302,6 +315,13 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.pods[key] = patched
 	// A patch may have changed labels that match a Service selector.
 	s.resyncEndpointsForNamespaceLocked(namespace)
@@ -309,7 +329,7 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deletePod(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deletePod(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := podKey(namespace, name)
 
 	s.mu.Lock()
@@ -318,6 +338,12 @@ func (s *ClusterState) deletePod(w http.ResponseWriter, namespace, name string) 
 	pod, ok := s.pods[key]
 	if !ok {
 		writeNotFound(w, "k8s api: pod not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, pod.DeepCopy())
 
 		return
 	}
@@ -331,4 +357,75 @@ func (s *ClusterState) deletePod(w http.ResponseWriter, namespace, name string) 
 
 func podKey(namespace, name string) string {
 	return namespace + "/" + name
+}
+
+// servePodSubresource serves the pod subresources kubectl reaches for. `log`
+// returns synthetic container output (there are no real containers, but a
+// clean 200 with a deterministic line keeps `kubectl logs` and log-scraping
+// clients working). `exec`/`attach`/`portforward` require a streaming protocol
+// upgrade the emulator does not implement and return a typed 501 Status so
+// client-go surfaces a clear error rather than a raw connection failure.
+func (s *ClusterState) servePodSubresource(w http.ResponseWriter, r *http.Request, route *Route) {
+	s.mu.RLock()
+	pod, ok := s.pods[podKey(route.Namespace, route.Name)]
+
+	var container string
+	if ok {
+		container = firstContainerName(pod)
+	}
+	s.mu.RUnlock()
+
+	if !ok {
+		writeNotFound(w, "k8s api: pod not found: "+podKey(route.Namespace, route.Name))
+
+		return
+	}
+
+	switch route.Subresource {
+	case subresourcePodLog:
+		servePodLog(w, r, route, container)
+	case subresourcePodExec, subresourcePodAttach, subresourcePodPortForward:
+		writeStreamingUnsupported(w, route)
+	default:
+		writeNotFound(w, "k8s api: subresource not implemented: pods/"+route.Name+"/"+route.Subresource)
+	}
+}
+
+// servePodLog writes a deterministic synthetic log line for the requested
+// container. Streaming query params (follow, tail, previous) are accepted and
+// ignored — the response is a single flush, which kubectl handles fine.
+func servePodLog(w http.ResponseWriter, r *http.Request, route *Route, defaultContainer string) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, "k8s api: pods/log: method not allowed: "+r.Method)
+
+		return
+	}
+
+	container := r.URL.Query().Get("container")
+	if container == "" {
+		container = defaultContainer
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	// Response is text/plain (not HTML) and the identifiers are path-derived, so
+	// reflecting them carries no XSS risk.
+	//nolint:gosec // G705: text/plain log echo, not an HTML sink.
+	_, _ = fmt.Fprintf(w, "cloudemu: synthetic log stream for pod %s/%s container %q\n",
+		route.Namespace, route.Name, container)
+}
+
+// writeStreamingUnsupported returns a typed 501 for the pod subresources that
+// need a SPDY/WebSocket upgrade cloudemu does not implement.
+func writeStreamingUnsupported(w http.ResponseWriter, route *Route) {
+	writeStatus(w, http.StatusNotImplemented, metav1.StatusReason("NotImplemented"),
+		"k8s api: pods/"+route.Subresource+" requires a streaming connection upgrade cloudemu does not implement")
+}
+
+func firstContainerName(pod *corev1.Pod) string {
+	if len(pod.Spec.Containers) > 0 {
+		return pod.Spec.Containers[0].Name
+	}
+
+	return ""
 }

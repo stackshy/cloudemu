@@ -15,6 +15,12 @@ import (
 // the typed Deployment exposes /scale and /status; anything else is a 404,
 // matching a real apiserver's response for a nonexistent subresource.
 func (s *ClusterState) serveSubresource(w http.ResponseWriter, r *http.Request, route *Route) {
+	if route.APIGroup == "" && route.Resource == resourcePods {
+		s.servePodSubresource(w, r, route)
+
+		return
+	}
+
 	if route.APIGroup == apiGroupApps && route.Resource == resourceDeployments {
 		switch route.Subresource {
 		case subresourceScale:

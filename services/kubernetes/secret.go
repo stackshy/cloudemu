@@ -91,7 +91,7 @@ func (s *ClusterState) serveSecretItem(w http.ResponseWriter, r *http.Request, n
 	case http.MethodPatch:
 		s.patchSecret(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deleteSecret(w, namespace, name)
+		s.deleteSecret(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: secret item: method not allowed: "+r.Method)
 	}
@@ -129,6 +129,12 @@ func (s *ClusterState) createSecret(w http.ResponseWriter, r *http.Request, name
 
 	if in.Type == "" {
 		in.Type = corev1.SecretTypeOpaque
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
 	}
 
 	sec := in
@@ -228,6 +234,12 @@ func (s *ClusterState) updateSecret(w http.ResponseWriter, r *http.Request, name
 		in.Type = cur.Type
 	}
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	sec := in
 	s.secrets[key] = &sec
 	s.wSecrets.publish(EventModified, namespace, *sec.DeepCopy())
@@ -257,12 +269,19 @@ func (s *ClusterState) patchSecret(w http.ResponseWriter, r *http.Request, names
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.secrets[key] = patched
 	s.wSecrets.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteSecret(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deleteSecret(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := secretKey(namespace, name)
 
 	s.mu.Lock()
@@ -271,6 +290,12 @@ func (s *ClusterState) deleteSecret(w http.ResponseWriter, namespace, name strin
 	sec, ok := s.secrets[key]
 	if !ok {
 		writeNotFound(w, "k8s api: secret not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, sec.DeepCopy())
 
 		return
 	}

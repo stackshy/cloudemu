@@ -94,7 +94,7 @@ func (s *ClusterState) serveServiceAccountItem(w http.ResponseWriter, r *http.Re
 	case http.MethodPatch:
 		s.patchServiceAccount(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deleteServiceAccount(w, namespace, name)
+		s.deleteServiceAccount(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: serviceaccount item: method not allowed: "+r.Method)
 	}
@@ -128,6 +128,12 @@ func (s *ClusterState) createServiceAccount(w http.ResponseWriter, r *http.Reque
 
 	stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "ServiceAccount", APIVersion: "v1"}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
 
 	sa := in
 	s.serviceAccounts[key] = &sa
@@ -220,6 +226,12 @@ func (s *ClusterState) updateServiceAccount(w http.ResponseWriter, r *http.Reque
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	sa := in
 	s.serviceAccounts[key] = &sa
 	s.wServiceAccounts.publish(EventModified, namespace, *sa.DeepCopy())
@@ -249,12 +261,19 @@ func (s *ClusterState) patchServiceAccount(w http.ResponseWriter, r *http.Reques
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.serviceAccounts[key] = patched
 	s.wServiceAccounts.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteServiceAccount(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deleteServiceAccount(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := serviceAccountKey(namespace, name)
 
 	s.mu.Lock()
@@ -263,6 +282,12 @@ func (s *ClusterState) deleteServiceAccount(w http.ResponseWriter, namespace, na
 	sa, ok := s.serviceAccounts[key]
 	if !ok {
 		writeNotFound(w, "k8s api: serviceaccount not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, sa.DeepCopy())
 
 		return
 	}

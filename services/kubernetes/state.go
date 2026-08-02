@@ -181,7 +181,7 @@ func (s *ClusterState) dispatchResource(w http.ResponseWriter, r *http.Request, 
 		s.serveNamespaces(w, r, route)
 	case "configmaps":
 		s.serveConfigMaps(w, r, route)
-	case "pods":
+	case resourcePods:
 		s.servePods(w, r, route)
 	case "secrets":
 		s.serveSecrets(w, r, route)

@@ -97,7 +97,7 @@ func (s *ClusterState) serveServiceItem(w http.ResponseWriter, r *http.Request, 
 	case http.MethodPatch:
 		s.patchService(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deleteService(w, namespace, name)
+		s.deleteService(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: service item: method not allowed: "+r.Method)
 	}
@@ -145,6 +145,12 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 
 	if len(in.Spec.ClusterIPs) == 0 && in.Spec.ClusterIP != "" && in.Spec.ClusterIP != clusterIPNone {
 		in.Spec.ClusterIPs = []string{in.Spec.ClusterIP}
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
 	}
 
 	svc := in
@@ -259,6 +265,12 @@ func (s *ClusterState) updateService(w http.ResponseWriter, r *http.Request, nam
 		in.Spec.Type = cur.Spec.Type
 	}
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	svc := in
 	s.services[key] = &svc
 	s.wServices.publish(EventModified, namespace, *svc.DeepCopy())
@@ -287,12 +299,19 @@ func (s *ClusterState) patchService(w http.ResponseWriter, r *http.Request, name
 	// Same ClusterIP-immutable rule as updateService.
 	patched.Spec.ClusterIP = cur.Spec.ClusterIP
 	patched.Spec.ClusterIPs = cur.Spec.ClusterIPs
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.services[key] = patched
 	s.wServices.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteService(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deleteService(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := serviceKey(namespace, name)
 
 	s.mu.Lock()
@@ -301,6 +320,12 @@ func (s *ClusterState) deleteService(w http.ResponseWriter, namespace, name stri
 	svc, ok := s.services[key]
 	if !ok {
 		writeNotFound(w, "k8s api: service not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, svc.DeepCopy())
 
 		return
 	}

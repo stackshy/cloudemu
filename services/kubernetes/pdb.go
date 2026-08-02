@@ -73,7 +73,7 @@ func (s *ClusterState) servePDBItem(w http.ResponseWriter, r *http.Request, rout
 	case http.MethodPut:
 		s.replacePDB(w, r, route)
 	case http.MethodDelete:
-		s.deletePDB(w, route)
+		s.deletePDB(w, r, route)
 	default:
 		writeMethodNotAllowed(w, "k8s api: poddisruptionbudget: method not allowed: "+r.Method)
 	}
@@ -111,6 +111,12 @@ func (s *ClusterState) createPDB(w http.ResponseWriter, r *http.Request, route *
 	// There is no controller here, so report the shape a client expects without
 	// inventing eviction semantics the emulator cannot honor.
 	in.Status = policyv1.PodDisruptionBudgetStatus{ObservedGeneration: 1}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
 
 	s.pdbs[pdbKey(in.Namespace, in.Name)] = &in
 
@@ -156,18 +162,30 @@ func (s *ClusterState) replacePDB(w http.ResponseWriter, r *http.Request, route 
 	in.TypeMeta = metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"}
 	in.Status = existing.Status
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	s.pdbs[key] = &in
 
 	writeJSON(w, http.StatusOK, &in)
 }
 
-func (s *ClusterState) deletePDB(w http.ResponseWriter, route *Route) {
+func (s *ClusterState) deletePDB(w http.ResponseWriter, r *http.Request, route *Route) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := pdbKey(route.Namespace, route.Name)
 	if _, ok := s.pdbs[key]; !ok {
 		writeNotFound(w, "k8s api: poddisruptionbudget not found: "+route.Name)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &metav1.Status{Status: metav1.StatusSuccess})
 
 		return
 	}
