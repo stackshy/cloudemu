@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,7 +38,7 @@ func (s *ClusterState) serveServiceAccounts(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		s.listServiceAccountsAllNamespaces(w)
+		s.listServiceAccountsAllNamespaces(w, r)
 
 		return
 	}
@@ -68,7 +67,7 @@ func (s *ClusterState) serveServiceAccountCollection(w http.ResponseWriter, r *h
 			return
 		}
 
-		s.listServiceAccounts(w, namespace)
+		s.listServiceAccounts(w, r, namespace)
 	case http.MethodPost:
 		s.createServiceAccount(w, r, namespace)
 	default:
@@ -126,7 +125,7 @@ func (s *ClusterState) createServiceAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "ServiceAccount", APIVersion: "v1"}
 
 	if isDryRun(r) {
@@ -141,24 +140,26 @@ func (s *ClusterState) createServiceAccount(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, &sa)
 }
 
-func (s *ClusterState) listServiceAccounts(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listServiceAccounts(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectServiceAccountsLocked(namespace)
+	items, cont := listPage(s.collectServiceAccountsLocked(namespace), r)
 	writeJSON(w, http.StatusOK, &corev1.ServiceAccountList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccountList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listServiceAccountsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listServiceAccountsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectServiceAccountsLocked("")
+	items, cont := listPage(s.collectServiceAccountsLocked(""), r)
 	writeJSON(w, http.StatusOK, &corev1.ServiceAccountList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccountList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -305,14 +306,14 @@ func serviceAccountKey(namespace, name string) string {
 // fields a real apiserver fills in on create. Token Secrets used to be
 // auto-created here (pre-1.24); Wave 2 follows current behavior and leaves
 // .secrets empty.
-func newServiceAccountObject(namespace, name string) *corev1.ServiceAccount {
+func (s *ClusterState) newServiceAccountObject(namespace, name string) *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccount", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
 			Namespace:         namespace,
 			UID:               types.UID(newUID()),
-			CreationTimestamp: metav1.NewTime(time.Now()),
+			CreationTimestamp: s.now(),
 			ResourceVersion:   "1",
 		},
 	}

@@ -16,7 +16,7 @@ import (
 // Per-resource files share the dispatch shape on purpose; each resource keeps
 // its quirks (Service ClusterIP, Secret StringData merge) close to its type.
 //
-
+//nolint:dupl // per-resource dispatch shape; see comment above.
 func (s *ClusterState) servePods(w http.ResponseWriter, r *http.Request, route *Route) {
 	if route.APIGroup != "" || route.APIVersion != apiVersionV1 {
 		writeNotFound(w, "k8s api: pods are only served at /api/v1")
@@ -121,7 +121,7 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
 
 	if isDryRun(r) {
@@ -147,8 +147,10 @@ func (s *ClusterState) listPods(w http.ResponseWriter, r *http.Request, namespac
 	defer s.mu.RUnlock()
 
 	items := filterPods(s.collectPodsLocked(namespace), r)
+	items, cont := listPage(items, r)
 	writeJSON(w, http.StatusOK, &corev1.PodList{
 		TypeMeta: metav1.TypeMeta{Kind: "PodList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -158,8 +160,10 @@ func (s *ClusterState) listPodsAllNamespaces(w http.ResponseWriter, r *http.Requ
 	defer s.mu.RUnlock()
 
 	items := filterPods(s.collectPodsLocked(""), r)
+	items, cont := listPage(items, r)
 	writeJSON(w, http.StatusOK, &corev1.PodList{
 		TypeMeta: metav1.TypeMeta{Kind: "PodList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -273,8 +277,20 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	in.CreationTimestamp = cur.CreationTimestamp
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
+	// deletionTimestamp is server-owned — preserve it across a PUT.
+	in.DeletionTimestamp = cur.DeletionTimestamp
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
+	// Last finalizer removed on a Terminating Pod → complete the delete.
+	if finalizersDrained(&in.ObjectMeta) {
+		delete(s.pods, key)
+		s.resyncEndpointsForNamespaceLocked(namespace)
+		s.wPods.publish(EventDeleted, namespace, *in.DeepCopy())
 		writeJSON(w, http.StatusOK, &in)
 
 		return
@@ -322,6 +338,17 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 		return
 	}
 
+	// A patch removing the last finalizer from a Terminating Pod completes the
+	// delete (patch inherits cur's deletionTimestamp).
+	if finalizersDrained(&patched.ObjectMeta) {
+		delete(s.pods, key)
+		s.resyncEndpointsForNamespaceLocked(namespace)
+		s.wPods.publish(EventDeleted, namespace, *patched.DeepCopy())
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.pods[key] = patched
 	// A patch may have changed labels that match a Service selector.
 	s.resyncEndpointsForNamespaceLocked(namespace)
@@ -343,6 +370,16 @@ func (s *ClusterState) deletePod(w http.ResponseWriter, r *http.Request, namespa
 	}
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, pod.DeepCopy())
+
+		return
+	}
+
+	// Finalizer-gated deletion: a Pod with finalizers goes Terminating and is
+	// removed only when the last finalizer is dropped via update/patch.
+	if s.markForDeletion(&pod.ObjectMeta) {
+		pod.ResourceVersion = bumpResourceVersion(pod.ResourceVersion)
+		s.wPods.publish(EventModified, namespace, *pod.DeepCopy())
 		writeJSON(w, http.StatusOK, pod.DeepCopy())
 
 		return

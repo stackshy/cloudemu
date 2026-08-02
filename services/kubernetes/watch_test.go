@@ -307,7 +307,7 @@ func TestStreamWatch_NoFlusher500s(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	streamWatch(ctx, w, sub, []string{"x"}, nil)
+	streamWatch(ctx, w, sub, []string{"x"}, nil, watchOpts{})
 
 	if rec.Code != 500 {
 		t.Fatalf("status: got %d, want 500", rec.Code)
@@ -326,7 +326,7 @@ func TestStreamWatch_EncodeErrorReturns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	streamWatch(ctx, w, sub, []string{"item-1"}, nil)
+	streamWatch(ctx, w, sub, []string{"item-1"}, nil, watchOpts{})
 
 	// Defensive: the function should have returned before the deadline,
 	// proving it bails on the encode error rather than spinning.
@@ -351,7 +351,7 @@ func TestStreamWatch_InitialSnapshotAndLiveEvents(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		streamWatch(ctx, rec, sub, []string{"seed-1", "seed-2"}, nil)
+		streamWatch(ctx, rec, sub, []string{"seed-1", "seed-2"}, nil, watchOpts{})
 		close(done)
 	}()
 

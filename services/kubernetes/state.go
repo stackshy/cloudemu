@@ -7,6 +7,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/stackshy/cloudemu/v2/config"
 )
 
 // ClusterState is the in-memory backing store for one Kubernetes cluster's
@@ -20,6 +23,11 @@ import (
 // complexity without measurable gain.
 type ClusterState struct {
 	mu sync.RWMutex
+
+	// clock sources every timestamp the data plane stamps (creationTimestamp,
+	// pod start/condition times). A FakeClock makes all of them deterministic;
+	// defaults to config.RealClock.
+	clock config.Clock
 
 	// namespaces is cluster-scoped — keyed by namespace name.
 	namespaces map[string]*corev1.Namespace
@@ -88,8 +96,13 @@ const firstClusterIPOffset uint32 = 1
 // namespaces (default, kube-system, kube-public) and a "default"
 // ServiceAccount in each, matching the bootstrap state of a fresh real
 // cluster.
-func newClusterState() *ClusterState {
+func newClusterState(clock config.Clock) *ClusterState {
+	if clock == nil {
+		clock = config.RealClock{}
+	}
+
 	s := &ClusterState{
+		clock:            clock,
 		namespaces:       make(map[string]*corev1.Namespace),
 		configMaps:       make(map[string]*corev1.ConfigMap),
 		pods:             make(map[string]*corev1.Pod),
@@ -113,11 +126,11 @@ func newClusterState() *ClusterState {
 	}
 
 	for _, name := range []string{"default", "kube-system", "kube-public"} {
-		s.namespaces[name] = newNamespaceObject(name)
+		s.namespaces[name] = s.newNamespaceObject(name)
 		// Real apiserver auto-creates a "default" ServiceAccount in every
 		// namespace. We do the same so `kubectl get sa default` works in
 		// the bootstrap namespaces.
-		sa := newServiceAccountObject(name, "default")
+		sa := s.newServiceAccountObject(name, "default")
 		s.serviceAccounts[serviceAccountKey(name, "default")] = sa
 	}
 
@@ -131,6 +144,13 @@ func newClusterState() *ClusterState {
 	}
 
 	return s
+}
+
+// now returns the current time from the cluster's clock as a metav1.Time. Every
+// data-plane timestamp flows through here so a FakeClock renders them all
+// deterministic for tests.
+func (s *ClusterState) now() metav1.Time {
+	return metav1.NewTime(s.clock.Now())
 }
 
 // ServeHTTP dispatches a Kubernetes REST request into the per-resource

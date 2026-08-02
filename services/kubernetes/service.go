@@ -42,7 +42,7 @@ func (s *ClusterState) serveServices(w http.ResponseWriter, r *http.Request, rou
 			return
 		}
 
-		s.listServicesAllNamespaces(w)
+		s.listServicesAllNamespaces(w, r)
 
 		return
 	}
@@ -71,7 +71,7 @@ func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		s.listServices(w, namespace)
+		s.listServices(w, r, namespace)
 	case http.MethodPost:
 		s.createService(w, r, namespace)
 	default:
@@ -128,7 +128,7 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Service", APIVersion: "v1"}
 
 	if in.Spec.Type == "" {
@@ -158,7 +158,7 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 
 	// Auto-create the Endpoints object, then let the endpoints controller fill
 	// its Subsets from Running Pods that match the Service selector.
-	ep := newEndpointsObject(namespace, svc.Name)
+	ep := s.newEndpointsObject(namespace, svc.Name)
 	s.endpoints[endpointsKey(namespace, svc.Name)] = ep
 
 	s.wServices.publish(EventAdded, namespace, *svc.DeepCopy())
@@ -168,24 +168,26 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 	writeJSON(w, http.StatusCreated, &svc)
 }
 
-func (s *ClusterState) listServices(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listServices(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectServicesLocked(namespace)
+	items, cont := listPage(s.collectServicesLocked(namespace), r)
 	writeJSON(w, http.StatusOK, &corev1.ServiceList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listServicesAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listServicesAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectServicesLocked("")
+	items, cont := listPage(s.collectServicesLocked(""), r)
 	writeJSON(w, http.StatusOK, &corev1.ServiceList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }

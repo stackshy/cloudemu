@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,7 +39,7 @@ func (s *ClusterState) serveConfigMaps(w http.ResponseWriter, r *http.Request, r
 			return
 		}
 
-		s.listConfigMapsAllNamespaces(w)
+		s.listConfigMapsAllNamespaces(w, r)
 
 		return
 	}
@@ -69,7 +68,7 @@ func (s *ClusterState) serveConfigMapCollection(w http.ResponseWriter, r *http.R
 			return
 		}
 
-		s.listConfigMaps(w, namespace)
+		s.listConfigMaps(w, r, namespace)
 	case http.MethodPost:
 		s.createConfigMap(w, r, namespace)
 	default:
@@ -128,7 +127,7 @@ func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}
 
 	if isDryRun(r) {
@@ -143,24 +142,26 @@ func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, n
 	writeJSON(w, http.StatusCreated, &cm)
 }
 
-func (s *ClusterState) listConfigMaps(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listConfigMaps(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectConfigMapsLocked(namespace)
+	items, cont := listPage(s.collectConfigMapsLocked(namespace), r)
 	writeJSON(w, http.StatusOK, &corev1.ConfigMapList{
 		TypeMeta: metav1.TypeMeta{Kind: "ConfigMapList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listConfigMapsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listConfigMapsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectConfigMapsLocked("")
+	items, cont := listPage(s.collectConfigMapsLocked(""), r)
 	writeJSON(w, http.StatusOK, &corev1.ConfigMapList{
 		TypeMeta: metav1.TypeMeta{Kind: "ConfigMapList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -318,9 +319,9 @@ func configMapKey(namespace, name string) string {
 }
 
 // stamp fills in the implicit fields a real apiserver writes on Create:
-// UID, creationTimestamp, resourceVersion.
-func stamp(om *metav1.ObjectMeta) {
+// UID, creationTimestamp (from the cluster clock), resourceVersion.
+func (s *ClusterState) stamp(om *metav1.ObjectMeta) {
 	om.UID = types.UID(newUID())
-	om.CreationTimestamp = metav1.NewTime(time.Now())
+	om.CreationTimestamp = s.now()
 	om.ResourceVersion = "1"
 }

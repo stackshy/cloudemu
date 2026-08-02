@@ -8,10 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -154,8 +152,13 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 		s.mu.RLock()
 		sub := st.watch.subscribe(namespace)
 		items := st.snapshotLocked(namespace, r)
+		rv := st.rv
 		s.mu.RUnlock()
-		streamWatch(r.Context(), w, sub, items, keep)
+		streamWatch(r.Context(), w, sub, items, keep, watchOpts{
+			resume:      watchResume(r),
+			bookmarks:   watchBookmarksEnabled(r),
+			bookmarkObj: registryBookmark(st, rv),
+		})
 
 		return
 	}
@@ -164,14 +167,28 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 	defer s.mu.RUnlock()
 
 	items := st.snapshotLocked(namespace, r)
+	items, cont := listPage(items, r)
 
 	list := &unstructured.UnstructuredList{}
 	list.SetAPIVersion(st.def.apiVersion())
 	list.SetKind(st.def.listKind)
 	list.SetResourceVersion(strconv.Itoa(st.rv))
+	list.SetContinue(cont)
 	list.Items = items
 
 	writeJSON(w, http.StatusOK, list)
+}
+
+// registryBookmark builds the minimal object a BOOKMARK watch event carries for
+// a registry-backed kind: just the kind's apiVersion/kind and the store's
+// current resourceVersion.
+func registryBookmark(st *registryStore, rv int) *unstructured.Unstructured {
+	bm := &unstructured.Unstructured{}
+	bm.SetAPIVersion(st.def.apiVersion())
+	bm.SetKind(st.def.kind)
+	bm.SetResourceVersion(strconv.Itoa(rv))
+
+	return bm
 }
 
 // snapshotLocked returns a sorted, selector-filtered copy of the store's items
@@ -239,7 +256,7 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 	obj.SetAPIVersion(st.def.apiVersion())
 	obj.SetKind(st.def.kind)
 	obj.SetUID(types.UID(newUID()))
-	obj.SetCreationTimestamp(metav1.NewTime(time.Now()))
+	obj.SetCreationTimestamp(s.now())
 	obj.SetGeneration(1)
 
 	if isDryRun(r) {
@@ -302,6 +319,9 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 	in.SetCreationTimestamp(cur.GetCreationTimestamp())
 	in.SetAPIVersion(st.def.apiVersion())
 	in.SetKind(st.def.kind)
+	// deletionTimestamp is server-owned: a PUT can drop a finalizer but must not
+	// resurrect a Terminating object by omitting the timestamp.
+	in.SetDeletionTimestamp(cur.GetDeletionTimestamp())
 	// Bump generation when the spec changed — controllers compare it against
 	// status.observedGeneration.
 	if specChanged(cur, in) {
@@ -318,6 +338,16 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 	}
 
 	st.stampRVLocked(in)
+
+	// Last finalizer removed on a Terminating object → complete the delete.
+	if finalizersDrainedUnstructured(in) {
+		delete(st.items, objKey(namespace, name))
+		s.garbageCollectLocked(in.GetUID())
+		st.watch.publish(EventDeleted, in.GetNamespace(), *in.DeepCopy())
+		writeJSON(w, http.StatusOK, in)
+
+		return
+	}
 
 	st.items[objKey(namespace, name)] = in
 
@@ -358,6 +388,18 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 
 	st.stampRVLocked(patched)
 
+	// A patch that removes the last finalizer from a Terminating object completes
+	// the delete (the patch was applied onto cur, so it inherits its
+	// deletionTimestamp).
+	if finalizersDrainedUnstructured(patched) {
+		delete(st.items, objKey(namespace, name))
+		s.garbageCollectLocked(patched.GetUID())
+		st.watch.publish(EventDeleted, patched.GetNamespace(), *patched.DeepCopy())
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	st.items[objKey(namespace, name)] = patched
 
 	if st.def.reconcile != nil {
@@ -382,6 +424,17 @@ func (s *ClusterState) registryDelete(w http.ResponseWriter, r *http.Request, st
 	}
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, obj.DeepCopy())
+
+		return
+	}
+
+	// Finalizer-gated deletion: an object with finalizers goes Terminating
+	// (deletionTimestamp stamped) and stays until the last finalizer is removed
+	// via a later update/patch, rather than being deleted now.
+	if s.markForDeletionUnstructured(obj) {
+		st.stampRVLocked(obj)
+		st.watch.publish(EventModified, obj.GetNamespace(), *obj.DeepCopy())
 		writeJSON(w, http.StatusOK, obj.DeepCopy())
 
 		return

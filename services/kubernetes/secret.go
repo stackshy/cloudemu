@@ -36,7 +36,7 @@ func (s *ClusterState) serveSecrets(w http.ResponseWriter, r *http.Request, rout
 			return
 		}
 
-		s.listSecretsAllNamespaces(w)
+		s.listSecretsAllNamespaces(w, r)
 
 		return
 	}
@@ -65,7 +65,7 @@ func (s *ClusterState) serveSecretCollection(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		s.listSecrets(w, namespace)
+		s.listSecrets(w, r, namespace)
 	case http.MethodPost:
 		s.createSecret(w, r, namespace)
 	default:
@@ -124,7 +124,7 @@ func (s *ClusterState) createSecret(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Secret", APIVersion: "v1"}
 
 	if in.Type == "" {
@@ -143,24 +143,26 @@ func (s *ClusterState) createSecret(w http.ResponseWriter, r *http.Request, name
 	writeJSON(w, http.StatusCreated, &sec)
 }
 
-func (s *ClusterState) listSecrets(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listSecrets(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectSecretsLocked(namespace)
+	items, cont := listPage(s.collectSecretsLocked(namespace), r)
 	writeJSON(w, http.StatusOK, &corev1.SecretList{
 		TypeMeta: metav1.TypeMeta{Kind: "SecretList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listSecretsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listSecretsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectSecretsLocked("")
+	items, cont := listPage(s.collectSecretsLocked(""), r)
 	writeJSON(w, http.StatusOK, &corev1.SecretList{
 		TypeMeta: metav1.TypeMeta{Kind: "SecretList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }

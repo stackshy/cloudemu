@@ -45,7 +45,7 @@ func (s *ClusterState) serveDeployments(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
-		s.listDeploymentsAllNamespaces(w)
+		s.listDeploymentsAllNamespaces(w, r)
 
 		return
 	}
@@ -74,7 +74,7 @@ func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.
 			return
 		}
 
-		s.listDeployments(w, namespace)
+		s.listDeployments(w, r, namespace)
 	case http.MethodPost:
 		s.createDeployment(w, r, namespace)
 	default:
@@ -131,7 +131,7 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
 	in.Generation = 1
 
@@ -150,24 +150,26 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusCreated, &dep)
 }
 
-func (s *ClusterState) listDeployments(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listDeployments(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectDeploymentsLocked(namespace)
+	items, cont := listPage(s.collectDeploymentsLocked(namespace), r)
 	writeJSON(w, http.StatusOK, &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{Kind: "DeploymentList", APIVersion: "apps/v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listDeploymentsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listDeploymentsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectDeploymentsLocked("")
+	items, cont := listPage(s.collectDeploymentsLocked(""), r)
 	writeJSON(w, http.StatusOK, &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{Kind: "DeploymentList", APIVersion: "apps/v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }

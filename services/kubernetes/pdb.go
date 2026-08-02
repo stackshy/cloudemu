@@ -35,7 +35,7 @@ func (s *ClusterState) servePDBs(w http.ResponseWriter, r *http.Request, route *
 			return
 		}
 
-		s.listPDBs(w, "")
+		s.listPDBs(w, r, "")
 
 		return
 	}
@@ -58,7 +58,7 @@ func (s *ClusterState) servePDBs(w http.ResponseWriter, r *http.Request, route *
 func (s *ClusterState) servePDBCollection(w http.ResponseWriter, r *http.Request, route *Route) {
 	switch r.Method {
 	case http.MethodGet:
-		s.listPDBs(w, route.Namespace)
+		s.listPDBs(w, r, route.Namespace)
 	case http.MethodPost:
 		s.createPDB(w, r, route)
 	default:
@@ -104,7 +104,7 @@ func (s *ClusterState) createPDB(w http.ResponseWriter, r *http.Request, route *
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"}
 
 	// Real PDB status is computed by the disruption controller from live pods.
@@ -196,7 +196,7 @@ func (s *ClusterState) deletePDB(w http.ResponseWriter, r *http.Request, route *
 }
 
 // listPDBs lists one namespace, or every namespace when namespace is "".
-func (s *ClusterState) listPDBs(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listPDBs(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -216,8 +216,10 @@ func (s *ClusterState) listPDBs(w http.ResponseWriter, namespace string) {
 		return items[i].Name < items[j].Name
 	})
 
+	items, cont := listPage(items, r)
 	writeJSON(w, http.StatusOK, &policyv1.PodDisruptionBudgetList{
 		TypeMeta: metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudgetList"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }

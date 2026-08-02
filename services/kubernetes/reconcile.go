@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -46,7 +45,7 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 		return
 	}
 
-	now := metav1.NewTime(time.Now())
+	now := s.now()
 
 	if pod.Status.PodIP == "" {
 		ip := s.allocatePodIPLocked()
@@ -115,7 +114,7 @@ func (s *ClusterState) buildControllerPod(
 			Name:              name,
 			Namespace:         namespace,
 			UID:               types.UID(newUID()),
-			CreationTimestamp: metav1.NewTime(time.Now()),
+			CreationTimestamp: s.now(),
 			ResourceVersion:   "1",
 			Labels:            labels,
 			Annotations:       tmpl.Annotations,
@@ -308,7 +307,7 @@ func (s *ClusterState) writeEndpointsLocked(svc *corev1.Service, subsets []corev
 	existed := ep != nil
 
 	if !existed {
-		ep = newEndpointsObject(svc.Namespace, svc.Name)
+		ep = s.newEndpointsObject(svc.Namespace, svc.Name)
 	}
 
 	if existed && reflect.DeepEqual(ep.Subsets, subsets) {
@@ -570,7 +569,7 @@ func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 func (s *ClusterState) markPodSucceededLocked(pod *corev1.Pod) {
 	s.markPodRunningLocked(pod)
 
-	now := metav1.NewTime(time.Now())
+	now := s.now()
 	pod.Status.Phase = corev1.PodSucceeded
 
 	for i := range pod.Status.ContainerStatuses {
@@ -627,7 +626,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 				"status": map[string]any{"phase": "Bound"},
 			}}
 			pvc.SetUID(types.UID(newUID()))
-			pvc.SetCreationTimestamp(metav1.NewTime(time.Now()))
+			pvc.SetCreationTimestamp(s.now())
 			pvc.SetOwnerReferences([]metav1.OwnerReference{ownerRefOf(sts)})
 			store.stampRVLocked(pvc)
 			store.items[key] = pvc

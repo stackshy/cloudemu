@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,7 +38,7 @@ func (s *ClusterState) serveEndpoints(w http.ResponseWriter, r *http.Request, ro
 			return
 		}
 
-		s.listEndpointsAllNamespaces(w)
+		s.listEndpointsAllNamespaces(w, r)
 
 		return
 	}
@@ -78,27 +77,29 @@ func (s *ClusterState) serveEndpointsCollection(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	s.listEndpoints(w, namespace)
+	s.listEndpoints(w, r, namespace)
 }
 
-func (s *ClusterState) listEndpoints(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listEndpoints(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectEndpointsLocked(namespace)
+	items, cont := listPage(s.collectEndpointsLocked(namespace), r)
 	writeJSON(w, http.StatusOK, &corev1.EndpointsList{
 		TypeMeta: metav1.TypeMeta{Kind: "EndpointsList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listEndpointsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listEndpointsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectEndpointsLocked("")
+	items, cont := listPage(s.collectEndpointsLocked(""), r)
 	writeJSON(w, http.StatusOK, &corev1.EndpointsList{
 		TypeMeta: metav1.TypeMeta{Kind: "EndpointsList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -153,14 +154,14 @@ func endpointsKey(namespace, name string) string {
 // Subsets is left empty — there's no scheduler / Pod-IP allocation in Wave 2.
 // Real apiserver lets the endpoints controller fill Subsets in once Pods
 // match the Service selector and become Ready.
-func newEndpointsObject(namespace, name string) *corev1.Endpoints {
+func (s *ClusterState) newEndpointsObject(namespace, name string) *corev1.Endpoints {
 	return &corev1.Endpoints{
 		TypeMeta: metav1.TypeMeta{Kind: "Endpoints", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
 			Namespace:         namespace,
 			UID:               types.UID(newUID()),
-			CreationTimestamp: metav1.NewTime(time.Now()),
+			CreationTimestamp: s.now(),
 			ResourceVersion:   "1",
 		},
 	}

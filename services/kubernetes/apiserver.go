@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/stackshy/cloudemu/v2/config"
 )
 
 // pathPrefix is the URL segment that namespaces every cluster's data plane.
@@ -37,11 +39,28 @@ type APIServer struct {
 	mu       sync.RWMutex
 	clusters map[string]*ClusterState
 	baseURL  string
+	// clock is handed to every ClusterState registered after it is set, so a
+	// FakeClock injected before RegisterCluster makes the data plane's
+	// timestamps deterministic. Defaults to config.RealClock.
+	clock config.Clock
 }
 
 // NewAPIServer returns an empty APIServer with no registered clusters.
 func NewAPIServer() *APIServer {
-	return &APIServer{clusters: make(map[string]*ClusterState)}
+	return &APIServer{clusters: make(map[string]*ClusterState), clock: config.RealClock{}}
+}
+
+// SetClock sets the clock handed to ClusterStates registered from now on. Wire
+// a config.FakeClock before RegisterCluster to make all data-plane timestamps
+// deterministic.
+func (s *APIServer) SetClock(c config.Clock) {
+	if c == nil {
+		return
+	}
+
+	s.mu.Lock()
+	s.clock = c
+	s.mu.Unlock()
 }
 
 // RegisterCluster allocates fresh state for a new cluster and returns its
@@ -49,9 +68,9 @@ func NewAPIServer() *APIServer {
 // server URL — kubeconfig "server" becomes "<base>/k8s/<uid>".
 func (s *APIServer) RegisterCluster() (string, *ClusterState) {
 	uid := newUID()
-	state := newClusterState()
 
 	s.mu.Lock()
+	state := newClusterState(s.clock)
 	s.clusters[uid] = state
 	s.mu.Unlock()
 

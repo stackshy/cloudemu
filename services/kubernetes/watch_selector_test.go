@@ -26,7 +26,7 @@ func TestWatch_OverflowEmits410Gone(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	streamWatch[corev1.Pod](context.Background(), rec, sub, nil, nil)
+	streamWatch[corev1.Pod](context.Background(), rec, sub, nil, nil, watchOpts{})
 
 	body := rec.Body.String()
 	if !strings.Contains(body, `"type":"ERROR"`) || !strings.Contains(body, "410") {
