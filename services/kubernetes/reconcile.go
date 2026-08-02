@@ -422,14 +422,9 @@ func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
 	desired := clampPodCount(requested)
 	noteClampMeta(&dep.ObjectMeta, requested, desired)
 
-	owner := metav1.OwnerReference{
-		APIVersion: "apps/v1", Kind: "Deployment", Name: dep.Name, UID: dep.UID,
-		Controller: boolPtr(true), BlockOwnerDeletion: boolPtr(true),
-	}
-
-	// syncScaledPods returns a count already clamped to maxReconciledPods, so the
-	// int32 conversion cannot overflow.
-	ready := int32(s.syncScaledPods(dep.Namespace, dep.Name, owner, dep.Spec.Template, desired)) //nolint:gosec // bounded by maxReconciledPods
+	// Interpose a ReplicaSet (Deployment→RS→Pod) rather than owning Pods
+	// directly, matching real Deployment topology.
+	ready := s.syncDeploymentReplicaSetLocked(dep, desired)
 
 	dep.Status.Replicas = ready
 	dep.Status.ReadyReplicas = ready
@@ -474,7 +469,14 @@ func reconcileStatefulSet(s *ClusterState, obj *unstructured.Unstructured) {
 }
 
 func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
-	names := []string{obj.GetName() + "-" + nodeName}
+	// A DaemonSet runs one Pod per node whose labels satisfy the template's
+	// nodeSelector. With a single synthetic node, a non-matching selector yields
+	// zero Pods (rather than the previous unconditional one).
+	var names []string
+	if s.daemonSetSchedulesToNode(obj) {
+		names = []string{obj.GetName() + "-" + nodeName}
+	}
+
 	ready := int64(s.syncStablePods(obj.GetNamespace(), ownerRefOf(obj), podTemplateFromUnstructured(obj), names))
 
 	set := func(field string) { _ = unstructured.SetNestedField(obj.Object, ready, "status", field) }
@@ -486,6 +488,41 @@ func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
 	_ = unstructured.SetNestedField(obj.Object, obj.GetGeneration(), "status", "observedGeneration")
 
 	s.resyncEndpointsForNamespaceLocked(obj.GetNamespace())
+}
+
+// daemonSetSchedulesToNode reports whether the DaemonSet's template nodeSelector
+// matches the single synthetic node's labels (empty selector always matches).
+func (s *ClusterState) daemonSetSchedulesToNode(obj *unstructured.Unstructured) bool {
+	sel, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "spec", "nodeSelector")
+	if len(sel) == 0 {
+		return true
+	}
+
+	labels := s.nodeLabels()
+	for k, v := range sel {
+		if labels[k] != v {
+			return false
+		}
+	}
+
+	return true
+}
+
+// nodeLabels returns the synthetic node's labels (nil if the node is absent).
+func (s *ClusterState) nodeLabels() map[string]string {
+	st := s.reg.getStore("", "v1", "nodes")
+	if st == nil {
+		return nil
+	}
+
+	node := st.items[objKey("", nodeName)]
+	if node == nil {
+		return nil
+	}
+
+	labels, _, _ := unstructured.NestedStringMap(node.Object, "metadata", "labels")
+
+	return labels
 }
 
 // reconcilePVC marks a PersistentVolumeClaim Bound — cloudemu dynamically
