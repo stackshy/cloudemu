@@ -13,11 +13,15 @@ func (m *Mock) CreateRole(_ context.Context, cfg cpgdriver.CreateRoleConfig) (*c
 		return nil, err
 	}
 
+	if cfg.Password == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "role password is required")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.clusters.Has(clusterKey(cfg.ResourceGroup, cfg.ClusterName)) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "cluster %q not found", cfg.ClusterName)
+	if err := m.requireClusterLocked(cfg.ResourceGroup, cfg.ClusterName); err != nil {
+		return nil, err
 	}
 
 	key := childKey(cfg.ResourceGroup, cfg.ClusterName, cfg.Name)
@@ -57,6 +61,10 @@ func (m *Mock) GetRole(_ context.Context, rg, cluster, name string) (*cpgdriver.
 func (m *Mock) ListRoles(_ context.Context, rg, cluster string) ([]cpgdriver.Role, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return nil, err
+	}
 
 	return listChildren(m.roles, rg, cluster, roleKey, identity[cpgdriver.Role]), nil
 }

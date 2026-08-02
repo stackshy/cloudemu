@@ -62,6 +62,17 @@ func clusterKey(rg, name string) string { return rg + "/" + name }
 
 func childKey(rg, cluster, name string) string { return rg + "/" + cluster + "/" + name }
 
+// requireClusterLocked returns NotFound if the parent cluster doesn't exist.
+// Real Azure returns 404 for a missing parent on every child operation. The
+// caller holds a lock.
+func (m *Mock) requireClusterLocked(rg, cluster string) error {
+	if !m.clusters.Has(clusterKey(rg, cluster)) {
+		return cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", cluster)
+	}
+
+	return nil
+}
+
 func validName(kind, name string) error {
 	if name == "" {
 		return cerrors.Newf(cerrors.InvalidArgument, "%s name is required", kind)
@@ -146,14 +157,28 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClus
 		return nil, err
 	}
 
-	if cfg.NodeCount < 0 || cfg.NodeCount > maxNodeCount {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "nodeCount must be between 0 and %d", maxNodeCount)
+	if err := validateSizing(&cfg); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	key := clusterKey(cfg.ResourceGroup, cfg.Name)
+
+	// A create (no existing cluster at this rg/name) must have a globally-unique
+	// name and, for a replica, a valid primary source.
+	if !m.clusters.Has(key) {
+		if err := m.ensureNameAvailableLocked(cfg.Name); err != nil {
+			return nil, err
+		}
+
+		if cfg.SourceResourceID != "" {
+			if err := m.validateReplicaSourceLocked(cfg.SourceResourceID); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	c := cpgdriver.Cluster{
 		Name:                            cfg.Name,
@@ -201,6 +226,58 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClus
 	out := cloneCluster(&c)
 
 	return &out, nil
+}
+
+// validateSizing bounds the node count and rejects negative vCore/storage
+// sizing. Zero means "use the default", so only negatives are rejected there.
+func validateSizing(cfg *cpgdriver.CreateClusterConfig) error {
+	if cfg.NodeCount < 0 || cfg.NodeCount > maxNodeCount {
+		return cerrors.Newf(cerrors.InvalidArgument, "nodeCount must be between 0 and %d", maxNodeCount)
+	}
+
+	if cfg.CoordinatorVCores < 0 || cfg.NodeVCores < 0 {
+		return cerrors.New(cerrors.InvalidArgument, "vCores must not be negative")
+	}
+
+	if cfg.CoordinatorStorageQuotaInMb < 0 || cfg.NodeStorageQuotaInMb < 0 {
+		return cerrors.New(cerrors.InvalidArgument, "storageQuotaInMb must not be negative")
+	}
+
+	return nil
+}
+
+// ensureNameAvailableLocked rejects a create whose name is already used by any
+// cluster in the subscription (Cosmos-PG names are globally unique — they form
+// the coordinator FQDN). The caller holds the lock.
+func (m *Mock) ensureNameAvailableLocked(name string) error {
+	all := m.clusters.SortedValues()
+	for i := range all {
+		if all[i].Name == name {
+			return cerrors.Newf(cerrors.AlreadyExists, "cluster name %q is already in use", name)
+		}
+	}
+
+	return nil
+}
+
+// validateReplicaSourceLocked requires the replica's source to exist and itself
+// be a primary (no replica-of-a-replica chains). The caller holds the lock.
+func (m *Mock) validateReplicaSourceLocked(sourceID string) error {
+	rg, name, ok := parseClusterID(sourceID)
+	if !ok {
+		return cerrors.Newf(cerrors.InvalidArgument, "malformed sourceResourceId %q", sourceID)
+	}
+
+	src, ok := m.clusters.Get(clusterKey(rg, name))
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "source cluster %q not found", name)
+	}
+
+	if src.SourceResourceID != "" {
+		return cerrors.Newf(cerrors.InvalidArgument, "cannot create a read replica of a read replica (%q)", name)
+	}
+
+	return nil
 }
 
 // linkReplicaLocked adds replicaID to the ReadReplicas of the source cluster
@@ -300,7 +377,10 @@ func (m *Mock) UpdateCluster(_ context.Context, rg, name string, patch cpgdriver
 		return nil, cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", name)
 	}
 
-	applyClusterPatch(&c, &patch)
+	if err := applyClusterPatch(&c, &patch); err != nil {
+		return nil, err
+	}
+
 	m.clusters.Set(key, c)
 
 	out := cloneCluster(&c)
@@ -308,7 +388,13 @@ func (m *Mock) UpdateCluster(_ context.Context, rg, name string, patch cpgdriver
 	return &out, nil
 }
 
-func applyClusterPatch(c *cpgdriver.Cluster, patch *cpgdriver.ClusterPatch) {
+func applyClusterPatch(c *cpgdriver.Cluster, patch *cpgdriver.ClusterPatch) error {
+	// A PATCH must re-validate the same bounds as create — otherwise a negative
+	// or huge nodeCount is stored and later crashes node derivation.
+	if err := validatePatchSizing(patch); err != nil {
+		return err
+	}
+
 	if patch.Tags != nil {
 		c.Tags = copyTags(patch.Tags)
 	}
@@ -331,6 +417,29 @@ func applyClusterPatch(c *cpgdriver.Cluster, patch *cpgdriver.ClusterPatch) {
 	if patch.MaintenanceWindow != nil {
 		c.MaintenanceWindow = cloneMaintenanceWindow(patch.MaintenanceWindow)
 	}
+
+	return nil
+}
+
+// validatePatchSizing bounds any sizing fields present in a PATCH.
+func validatePatchSizing(patch *cpgdriver.ClusterPatch) error {
+	if patch.NodeCount != nil && (*patch.NodeCount < 0 || *patch.NodeCount > maxNodeCount) {
+		return cerrors.Newf(cerrors.InvalidArgument, "nodeCount must be between 0 and %d", maxNodeCount)
+	}
+
+	for _, v := range []*int{patch.CoordinatorVCores, patch.NodeVCores} {
+		if v != nil && *v < 0 {
+			return cerrors.New(cerrors.InvalidArgument, "vCores must not be negative")
+		}
+	}
+
+	for _, s := range []*int{patch.CoordinatorStorageQuotaInMb, patch.NodeStorageQuotaInMb} {
+		if s != nil && *s < 0 {
+			return cerrors.New(cerrors.InvalidArgument, "storageQuotaInMb must not be negative")
+		}
+	}
+
+	return nil
 }
 
 func setStr(dst, v *string) {
@@ -351,9 +460,19 @@ func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
 	defer m.mu.Unlock()
 
 	key := clusterKey(rg, name)
-	if !m.clusters.Has(key) {
+
+	c, ok := m.clusters.Get(key)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", name)
 	}
+
+	// Keep replica links consistent: if this is a replica, drop it from its
+	// source's list; if it's a source, orphan its replicas (clear their link).
+	if c.SourceResourceID != "" {
+		m.unlinkReplicaLocked(c.SourceResourceID, m.clusterResourceID(rg, name))
+	}
+
+	m.clearReplicaSourcesLocked(c.ReadReplicas)
 
 	prefix := rg + "/" + name + "/"
 
@@ -364,6 +483,27 @@ func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
 	m.clusters.Delete(key)
 
 	return nil
+}
+
+// clearReplicaSourcesLocked clears SourceResourceID/SourceLocation on each
+// replica whose resource ID is listed, orphaning them when their source is
+// deleted. The caller holds the lock.
+func (m *Mock) clearReplicaSourcesLocked(replicaIDs []string) {
+	for _, id := range replicaIDs {
+		rg, name, ok := parseClusterID(id)
+		if !ok {
+			continue
+		}
+
+		rep, ok := m.clusters.Get(clusterKey(rg, name))
+		if !ok {
+			continue
+		}
+
+		rep.SourceResourceID = ""
+		rep.SourceLocation = ""
+		m.clusters.Set(clusterKey(rg, name), rep)
+	}
 }
 
 func deletePrefixed[T any](store *memstore.Store[T], prefix string) {
@@ -390,33 +530,24 @@ func listChildren[T any](store *memstore.Store[T], rg, cluster string, keyOf fun
 	return out
 }
 
-// RestartCluster validates the cluster exists (no state change in the mock).
+// RestartCluster restarts a running cluster (must be Ready).
 func (m *Mock) RestartCluster(_ context.Context, rg, name string) error {
-	return m.requireCluster(rg, name)
+	return m.transitionState(rg, name, "Ready", "Ready")
 }
 
-// StartCluster marks the cluster Ready.
+// StartCluster starts a stopped cluster (must be Stopped → Ready).
 func (m *Mock) StartCluster(_ context.Context, rg, name string) error {
-	return m.setClusterState(rg, name, "Ready")
+	return m.transitionState(rg, name, "Stopped", "Ready")
 }
 
-// StopCluster marks the cluster Stopped.
+// StopCluster stops a running cluster (must be Ready → Stopped).
 func (m *Mock) StopCluster(_ context.Context, rg, name string) error {
-	return m.setClusterState(rg, name, "Stopped")
+	return m.transitionState(rg, name, "Ready", "Stopped")
 }
 
-func (m *Mock) requireCluster(rg, name string) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if !m.clusters.Has(clusterKey(rg, name)) {
-		return cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", name)
-	}
-
-	return nil
-}
-
-func (m *Mock) setClusterState(rg, name, state string) error {
+// transitionState moves a cluster from want to next, rejecting the action when
+// the cluster isn't in the expected state (real Azure 409s these).
+func (m *Mock) transitionState(rg, name, want, next string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -427,7 +558,11 @@ func (m *Mock) setClusterState(rg, name, state string) error {
 		return cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", name)
 	}
 
-	c.State = state
+	if c.State != want {
+		return cerrors.Newf(cerrors.FailedPrecondition, "cluster %q is %q; expected %q for this action", name, c.State, want)
+	}
+
+	c.State = next
 	m.clusters.Set(key, c)
 
 	return nil

@@ -3,6 +3,7 @@ package cosmospostgresql
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -41,6 +42,70 @@ func catalogNames() []string {
 
 func configKey(rg, cluster, role, name string) string {
 	return rg + "/" + cluster + "/" + role + "/" + name
+}
+
+// validateConfigValue rejects an empty value and enforces the parameter's
+// AllowedValues: a comma-list is treated as an enum, a "min-max" string as an
+// inclusive integer range, anything else as freeform.
+func validateConfigValue(name, allowed, value string) error {
+	if value == "" {
+		return cerrors.Newf(cerrors.InvalidArgument, "value is required for configuration %q", name)
+	}
+
+	switch {
+	case strings.Contains(allowed, ","):
+		for _, opt := range strings.Split(allowed, ",") {
+			if value == strings.TrimSpace(opt) {
+				return nil
+			}
+		}
+
+		return cerrors.Newf(cerrors.InvalidArgument, "value %q for %q must be one of: %s", value, name, allowed)
+	case isRange(allowed):
+		return validateRange(name, allowed, value)
+	default:
+		return nil
+	}
+}
+
+func isRange(allowed string) bool {
+	lo, hi, found := strings.Cut(allowed, "-")
+	if !found {
+		return false
+	}
+
+	return isDigits(lo) && isDigits(hi)
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func validateRange(name, allowed, value string) error {
+	loStr, hiStr, _ := strings.Cut(allowed, "-")
+	lo, _ := strconv.Atoi(loStr)
+	hi, _ := strconv.Atoi(hiStr)
+
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return cerrors.Newf(cerrors.InvalidArgument, "value %q for %q must be an integer", value, name)
+	}
+
+	if n < lo || n > hi {
+		return cerrors.Newf(cerrors.InvalidArgument, "value %d for %q must be within %s", n, name, allowed)
+	}
+
+	return nil
 }
 
 // storedOrDefault returns the coordinator/node value for a parameter: an
@@ -216,6 +281,10 @@ func (m *Mock) updateServerConfig(rg, cluster, role, name, value string) (*cpgdr
 	entry, ok := configCatalog[name]
 	if !ok {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "unknown configuration %q", name)
+	}
+
+	if err := validateConfigValue(name, entry.allowed, value); err != nil {
+		return nil, err
 	}
 
 	sc := cpgdriver.ServerConfiguration{

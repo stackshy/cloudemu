@@ -21,10 +21,21 @@ func serverName(cluster, role string, idx int) string {
 // nodesForCluster derives the (read-only) node list from a cluster's shape: one
 // coordinator plus NodeCount workers.
 func (m *Mock) nodesForCluster(c *cpgdriver.Cluster) []cpgdriver.Server {
-	out := make([]cpgdriver.Server, 0, c.NodeCount+1)
+	// Clamp defensively: create/PATCH validate the bound, but a bad stored value
+	// must never reach make() with a negative/huge cap.
+	workers := c.NodeCount
+	if workers < 0 {
+		workers = 0
+	}
+
+	if workers > maxNodeCount {
+		workers = maxNodeCount
+	}
+
+	out := make([]cpgdriver.Server, 0, workers+1)
 
 	out = append(out, m.node(c, cpgdriver.RoleCoordinator, 0))
-	for i := 0; i < c.NodeCount; i++ {
+	for i := 0; i < workers; i++ {
 		out = append(out, m.node(c, cpgdriver.RoleWorker, i))
 	}
 
@@ -63,7 +74,8 @@ func (m *Mock) node(c *cpgdriver.Cluster, role string, idx int) cpgdriver.Server
 		PostgresqlVersion:        c.PostgresqlVersion,
 		EnableHa:                 c.EnableHa,
 		EnablePublicIPAccess:     public,
-		IsReadOnly:               role == cpgdriver.RoleWorker && c.SourceResourceID != "",
+		// Every node of a read replica is read-only (coordinator included).
+		IsReadOnly: c.SourceResourceID != "",
 	}
 }
 

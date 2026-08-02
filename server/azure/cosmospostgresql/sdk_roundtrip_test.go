@@ -3,6 +3,7 @@ package cosmospostgresql_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -328,6 +329,142 @@ func TestSDKConfigurationsAndReplicaAndErrors(t *testing.T) {
 	}
 }
 
+func TestSDKChildGetDeleteAndPrivateLinks(t *testing.T) {
+	f := newFactory(t)
+	cc := f.NewClustersClient()
+	ctx := context.Background()
+
+	mustCreateCluster(t, cc, ctx, 2)
+
+	// Firewall rule get + delete.
+	fwc := f.NewFirewallRulesClient()
+
+	fwPoller, err := fwc.BeginCreateOrUpdate(ctx, "rg1", "pg1", "fw", armcosmosforpostgresql.FirewallRule{
+		Properties: &armcosmosforpostgresql.FirewallRuleProperties{
+			StartIPAddress: to.Ptr("10.0.0.0"), EndIPAddress: to.Ptr("10.0.0.255"),
+		},
+	}, nil)
+	if err == nil {
+		_, err = fwPoller.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("fw create: %v", err)
+	}
+
+	if _, err := fwc.Get(ctx, "rg1", "pg1", "fw", nil); err != nil {
+		t.Fatalf("fw Get: %v", err)
+	}
+
+	fwDel, err := fwc.BeginDelete(ctx, "rg1", "pg1", "fw", nil)
+	if err == nil {
+		_, err = fwDel.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("fw delete: %v", err)
+	}
+
+	// Role delete + list.
+	rc := f.NewRolesClient()
+
+	rolePoller, err := rc.BeginCreate(ctx, "rg1", "pg1", "app", armcosmosforpostgresql.Role{
+		Properties: &armcosmosforpostgresql.RoleProperties{Password: to.Ptr("R0lePass!")},
+	}, nil)
+	if err == nil {
+		_, err = rolePoller.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("role create: %v", err)
+	}
+
+	if _, err := rc.NewListByClusterPager("rg1", "pg1", nil).NextPage(ctx); err != nil {
+		t.Fatalf("role list: %v", err)
+	}
+
+	roleDel, err := rc.BeginDelete(ctx, "rg1", "pg1", "app", nil)
+	if err == nil {
+		_, err = roleDel.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("role delete: %v", err)
+	}
+
+	// Node configuration get + update + single get + list-by-server.
+	cfgc := f.NewConfigurationsClient()
+
+	if _, err := cfgc.GetNode(ctx, "rg1", "pg1", "max_connections", nil); err != nil {
+		t.Fatalf("config GetNode: %v", err)
+	}
+
+	nodePoller, err := cfgc.BeginUpdateOnNode(ctx, "rg1", "pg1", "max_connections", armcosmosforpostgresql.ServerConfiguration{
+		Properties: &armcosmosforpostgresql.ServerConfigurationProperties{Value: to.Ptr("400")},
+	}, nil)
+	if err == nil {
+		_, err = nodePoller.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("config UpdateOnNode: %v", err)
+	}
+
+	if _, err := cfgc.Get(ctx, "rg1", "pg1", "max_connections", nil); err != nil {
+		t.Fatalf("config Get: %v", err)
+	}
+
+	if _, err := cfgc.NewListByServerPager("rg1", "pg1", "pg1-c", nil).NextPage(ctx); err != nil {
+		t.Fatalf("config ListByServer: %v", err)
+	}
+
+	// Private-endpoint connection full CRUD.
+	pec := f.NewPrivateEndpointConnectionsClient()
+
+	pecPoller, err := pec.BeginCreateOrUpdate(ctx, "rg1", "pg1", "pe1", armcosmosforpostgresql.PrivateEndpointConnection{
+		Properties: &armcosmosforpostgresql.PrivateEndpointConnectionProperties{
+			PrivateLinkServiceConnectionState: &armcosmosforpostgresql.PrivateLinkServiceConnectionState{
+				Status: to.Ptr(armcosmosforpostgresql.PrivateEndpointServiceConnectionStatusApproved),
+			},
+		},
+	}, nil)
+	if err == nil {
+		_, err = pecPoller.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("PE create: %v", err)
+	}
+
+	if _, err := pec.Get(ctx, "rg1", "pg1", "pe1", nil); err != nil {
+		t.Fatalf("PE Get: %v", err)
+	}
+
+	if _, err := pec.NewListByClusterPager("rg1", "pg1", nil).NextPage(ctx); err != nil {
+		t.Fatalf("PE list: %v", err)
+	}
+
+	peDel, err := pec.BeginDelete(ctx, "rg1", "pg1", "pe1", nil)
+	if err == nil {
+		_, err = peDel.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("PE delete: %v", err)
+	}
+
+	// Private-link resources list + get.
+	plr := f.NewPrivateLinkResourcesClient()
+
+	if _, err := plr.NewListByClusterPager("rg1", "pg1", nil).NextPage(ctx); err != nil {
+		t.Fatalf("PLR list: %v", err)
+	}
+
+	if _, err := plr.Get(ctx, "rg1", "pg1", "coordinator", nil); err != nil {
+		t.Fatalf("PLR get: %v", err)
+	}
+}
+
 func TestMalformedBodyRejected(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewServer(azureserver.NewFromProvider(cloudP))
@@ -351,5 +488,66 @@ func TestMalformedBodyRejected(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("malformed body: got %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestServerErrorPaths(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	ts := httptest.NewServer(azureserver.NewFromProvider(cloudP))
+	t.Cleanup(ts.Close)
+
+	base := ts.URL + "/subscriptions/" + subID + "/resourceGroups/rg1/providers/Microsoft.DBforPostgreSQL"
+	const ver = "?api-version=2023-03-02-preview"
+
+	do := func(method, path, body string) int {
+		t.Helper()
+
+		var rdr io.Reader
+		if body != "" {
+			rdr = strings.NewReader(body)
+		}
+
+		req, err := http.NewRequest(method, path, rdr)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		return resp.StatusCode
+	}
+
+	// Create a cluster so child error paths are distinct from a missing parent.
+	if code := do(http.MethodPut, base+"/serverGroupsv2/pg1"+ver, `{"location":"eastus","properties":{"nodeCount":1}}`); code != http.StatusOK {
+		t.Fatalf("create cluster: got %d, want 200", code)
+	}
+
+	cases := []struct {
+		name, method, path string
+		want               int
+	}{
+		{"get missing firewall rule", http.MethodGet, base + "/serverGroupsv2/pg1/firewallRules/nope" + ver, http.StatusNotFound},
+		{"method not allowed on firewall item", http.MethodPost, base + "/serverGroupsv2/pg1/firewallRules/fw" + ver, http.StatusMethodNotAllowed},
+		{"delete missing role", http.MethodDelete, base + "/serverGroupsv2/pg1/roles/ghost" + ver, http.StatusNotFound},
+		{"unsupported sub-resource", http.MethodGet, base + "/serverGroupsv2/pg1/bogus" + ver, http.StatusNotFound},
+		{"get missing cluster", http.MethodGet, base + "/serverGroupsv2/ghost" + ver, http.StatusNotFound},
+		{"checkNameAvailability wrong method", http.MethodGet, base + "/checkNameAvailability" + ver, http.StatusMethodNotAllowed},
+		{"get missing private endpoint", http.MethodGet, base + "/serverGroupsv2/pg1/privateEndpointConnections/nope" + ver, http.StatusNotFound},
+		{"get missing private link", http.MethodGet, base + "/serverGroupsv2/pg1/privateLinkResources/nope" + ver, http.StatusNotFound},
+		{"get missing server node", http.MethodGet, base + "/serverGroupsv2/pg1/servers/nope" + ver, http.StatusNotFound},
+		{"get missing configuration", http.MethodGet, base + "/serverGroupsv2/pg1/configurations/nope" + ver, http.StatusNotFound},
+		{"method not allowed on coordinator config", http.MethodDelete, base + "/serverGroupsv2/pg1/coordinatorConfigurations/max_connections" + ver, http.StatusMethodNotAllowed},
+	}
+
+	for _, c := range cases {
+		if got := do(c.method, c.path, ""); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
 	}
 }

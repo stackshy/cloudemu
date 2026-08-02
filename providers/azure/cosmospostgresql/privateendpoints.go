@@ -23,11 +23,16 @@ func (m *Mock) CreateOrUpdatePrivateEndpointConnection(
 		return nil, err
 	}
 
+	status = orDefault(status, "Approved")
+	if status != "Approved" && status != "Rejected" && status != "Pending" {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid connection status %q", status)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.clusters.Has(clusterKey(rg, cluster)) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "cluster %q not found", cluster)
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return nil, err
 	}
 
 	key := childKey(rg, cluster, name)
@@ -39,8 +44,9 @@ func (m *Mock) CreateOrUpdatePrivateEndpointConnection(
 		ProvisioningState: cpgdriver.ProvisioningSucceeded,
 		GroupIDs:          []string{"coordinator"},
 		PrivateEndpointID: m.clusterResourceID(rg, cluster) + "/privateEndpoints/" + name,
-		ConnectionStatus:  orDefault(status, "Approved"),
+		ConnectionStatus:  status,
 		ConnectionDesc:    description,
+		ActionsRequired:   "None",
 	}
 
 	if existing, ok := m.privateEPs.Get(key); ok {
@@ -73,6 +79,10 @@ func (m *Mock) GetPrivateEndpointConnection(_ context.Context, rg, cluster, name
 func (m *Mock) ListPrivateEndpointConnections(_ context.Context, rg, cluster string) ([]cpgdriver.PrivateEndpointConnection, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return nil, err
+	}
 
 	return listChildren(m.privateEPs, rg, cluster, pecKey, clonePEC), nil
 }

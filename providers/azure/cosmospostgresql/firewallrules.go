@@ -1,11 +1,28 @@
 package cosmospostgresql
 
 import (
+	"bytes"
 	"context"
+	"net"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	cpgdriver "github.com/stackshy/cloudemu/v2/services/cosmospostgresql/driver"
 )
+
+// validateIPRange rejects non-IPv4 endpoints and reversed ranges, matching the
+// real Azure firewall-rule validation.
+func validateIPRange(start, end string) error {
+	s, e := net.ParseIP(start).To4(), net.ParseIP(end).To4()
+	if s == nil || e == nil {
+		return cerrors.New(cerrors.InvalidArgument, "startIpAddress and endIpAddress must be valid IPv4 addresses")
+	}
+
+	if bytes.Compare(s, e) > 0 {
+		return cerrors.New(cerrors.InvalidArgument, "startIpAddress must be less than or equal to endIpAddress")
+	}
+
+	return nil
+}
 
 // CreateOrUpdateFirewallRule creates or replaces a firewall rule on a cluster.
 //
@@ -15,11 +32,15 @@ func (m *Mock) CreateOrUpdateFirewallRule(_ context.Context, cfg cpgdriver.Creat
 		return nil, err
 	}
 
+	if err := validateIPRange(cfg.StartIPAddress, cfg.EndIPAddress); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.clusters.Has(clusterKey(cfg.ResourceGroup, cfg.ClusterName)) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "cluster %q not found", cfg.ClusterName)
+	if err := m.requireClusterLocked(cfg.ResourceGroup, cfg.ClusterName); err != nil {
+		return nil, err
 	}
 
 	fr := cpgdriver.FirewallRule{
@@ -56,6 +77,10 @@ func (m *Mock) GetFirewallRule(_ context.Context, rg, cluster, name string) (*cp
 func (m *Mock) ListFirewallRules(_ context.Context, rg, cluster string) ([]cpgdriver.FirewallRule, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return nil, err
+	}
 
 	return listChildren(m.firewallRules, rg, cluster, firewallRuleKey, identity[cpgdriver.FirewallRule]), nil
 }

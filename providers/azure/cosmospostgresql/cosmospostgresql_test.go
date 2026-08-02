@@ -106,11 +106,11 @@ func TestFirewallRulesAndRoles(t *testing.T) {
 	ctx := context.Background()
 	mustCluster(t, m, "rg1", "pg1", 2)
 
-	// A firewall rule under a missing cluster is rejected.
+	// A firewall rule under a missing cluster is rejected with NotFound.
 	if _, err := m.CreateOrUpdateFirewallRule(ctx, cpgdriver.CreateFirewallRuleConfig{
 		ResourceGroup: "rg1", ClusterName: "ghost", Name: "all", StartIPAddress: "0.0.0.0", EndIPAddress: "255.255.255.255",
-	}); !cerrors.IsInvalidArgument(err) {
-		t.Fatalf("fw under missing cluster: got %v, want InvalidArgument", err)
+	}); !cerrors.IsNotFound(err) {
+		t.Fatalf("fw under missing cluster: got %v, want NotFound", err)
 	}
 
 	if _, err := m.CreateOrUpdateFirewallRule(ctx, cpgdriver.CreateFirewallRuleConfig{
@@ -124,11 +124,13 @@ func TestFirewallRulesAndRoles(t *testing.T) {
 		t.Fatalf("list fw wrong: %+v", rules)
 	}
 
-	if _, err := m.CreateRole(ctx, cpgdriver.CreateRoleConfig{ResourceGroup: "rg1", ClusterName: "pg1", Name: "app"}); err != nil {
+	if _, err := m.CreateRole(ctx, cpgdriver.CreateRoleConfig{ResourceGroup: "rg1", ClusterName: "pg1", Name: "app", Password: "R0lePass!"}); err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
 
-	if _, err := m.CreateRole(ctx, cpgdriver.CreateRoleConfig{ResourceGroup: "rg1", ClusterName: "pg1", Name: "app"}); !cerrors.IsAlreadyExists(err) {
+	if _, err := m.CreateRole(ctx, cpgdriver.CreateRoleConfig{
+		ResourceGroup: "rg1", ClusterName: "pg1", Name: "app", Password: "R0lePass!",
+	}); !cerrors.IsAlreadyExists(err) {
 		t.Fatalf("duplicate role: got %v, want AlreadyExists", err)
 	}
 
@@ -284,3 +286,341 @@ func TestClusterResultDoesNotAliasStore(t *testing.T) {
 }
 
 func intPtr(i int) *int { return &i }
+
+func TestPatchNodeCountValidated(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 2)
+
+	// A negative PATCH nodeCount must be rejected (would otherwise store a bad
+	// cap and crash node derivation).
+	if _, err := m.UpdateCluster(ctx, "rg1", "pg1", cpgdriver.ClusterPatch{NodeCount: intPtr(-2)}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("negative PATCH nodeCount: got %v, want InvalidArgument", err)
+	}
+
+	if _, err := m.UpdateCluster(ctx, "rg1", "pg1", cpgdriver.ClusterPatch{NodeCount: intPtr(maxNodeCount + 1)}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("oversized PATCH nodeCount: got %v, want InvalidArgument", err)
+	}
+
+	// The stored cluster is unchanged, and node derivation still works.
+	if _, err := m.ListServers(ctx, "rg1", "pg1"); err != nil {
+		t.Fatalf("ListServers after rejected patch: %v", err)
+	}
+}
+
+func TestClusterNameGloballyUnique(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 1)
+
+	// Same name in a different resource group is rejected.
+	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "pg1", ResourceGroup: "rg2", Location: "eastus",
+	}); !cerrors.IsAlreadyExists(err) {
+		t.Fatalf("duplicate name across RGs: got %v, want AlreadyExists", err)
+	}
+
+	// Re-PUT of the same rg/name is an update, not a conflict.
+	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "pg1", ResourceGroup: "rg1", Location: "eastus", NodeCount: 3,
+	}); err != nil {
+		t.Fatalf("re-PUT same cluster: %v", err)
+	}
+}
+
+func TestReplicaSourceValidated(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "primary", 2)
+
+	// A bogus source is rejected.
+	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "rep1", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "ghost"),
+	}); !cerrors.IsNotFound(err) {
+		t.Fatalf("bogus replica source: got %v, want NotFound", err)
+	}
+
+	// A valid replica, then a replica-of-a-replica is rejected.
+	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "rep1", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "primary"),
+	}); err != nil {
+		t.Fatalf("valid replica: %v", err)
+	}
+
+	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "rep2", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "rep1"),
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("chained replica: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestDeleteUnlinksReplicas(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "primary", 2)
+
+	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "rep1", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "primary"),
+	}); err != nil {
+		t.Fatalf("create replica: %v", err)
+	}
+
+	// Deleting the source orphans the replica (clears its SourceResourceID).
+	if err := m.DeleteCluster(ctx, "rg1", "primary"); err != nil {
+		t.Fatalf("delete primary: %v", err)
+	}
+
+	rep, _ := m.GetCluster(ctx, "rg1", "rep1")
+	if rep.SourceResourceID != "" {
+		t.Fatalf("replica still links a deleted source: %+v", rep.SourceResourceID)
+	}
+}
+
+func TestDeleteReplicaUnlinksFromSource(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "primary", 2)
+
+	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "rep1", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "primary"),
+	}); err != nil {
+		t.Fatalf("create replica: %v", err)
+	}
+
+	if err := m.DeleteCluster(ctx, "rg1", "rep1"); err != nil {
+		t.Fatalf("delete replica: %v", err)
+	}
+
+	primary, _ := m.GetCluster(ctx, "rg1", "primary")
+	if len(primary.ReadReplicas) != 0 {
+		t.Fatalf("source still lists a deleted replica: %+v", primary.ReadReplicas)
+	}
+}
+
+func TestFirewallIPValidation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 1)
+
+	// Non-IPv4.
+	if _, err := m.CreateOrUpdateFirewallRule(ctx, cpgdriver.CreateFirewallRuleConfig{
+		ResourceGroup: "rg1", ClusterName: "pg1", Name: "bad", StartIPAddress: "not-an-ip", EndIPAddress: "1.2.3.4",
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("bad IP: got %v, want InvalidArgument", err)
+	}
+
+	// Reversed range.
+	if _, err := m.CreateOrUpdateFirewallRule(ctx, cpgdriver.CreateFirewallRuleConfig{
+		ResourceGroup: "rg1", ClusterName: "pg1", Name: "rev", StartIPAddress: "203.0.113.50", EndIPAddress: "203.0.113.10",
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("reversed range: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestListChildrenRequireParent(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.ListFirewallRules(ctx, "rg1", "ghost"); !cerrors.IsNotFound(err) {
+		t.Fatalf("list fw missing parent: got %v, want NotFound", err)
+	}
+
+	if _, err := m.ListRoles(ctx, "rg1", "ghost"); !cerrors.IsNotFound(err) {
+		t.Fatalf("list roles missing parent: got %v, want NotFound", err)
+	}
+
+	if _, err := m.ListPrivateEndpointConnections(ctx, "rg1", "ghost"); !cerrors.IsNotFound(err) {
+		t.Fatalf("list PE missing parent: got %v, want NotFound", err)
+	}
+}
+
+func TestClusterStateGuards(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 1)
+
+	// Can't start an already-running cluster.
+	if err := m.StartCluster(ctx, "rg1", "pg1"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("start running cluster: got %v, want FailedPrecondition", err)
+	}
+
+	// Stop → can't stop again; start brings it back.
+	if err := m.StopCluster(ctx, "rg1", "pg1"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	if err := m.StopCluster(ctx, "rg1", "pg1"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("stop stopped cluster: got %v, want FailedPrecondition", err)
+	}
+
+	if err := m.StartCluster(ctx, "rg1", "pg1"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	if err := m.RestartCluster(ctx, "rg1", "pg1"); err != nil {
+		t.Fatalf("restart running cluster: %v", err)
+	}
+}
+
+func TestConfigValueValidation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 1)
+
+	// Empty value rejected.
+	if _, err := m.UpdateCoordinatorConfiguration(ctx, "rg1", "pg1", "max_connections", ""); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("empty value: got %v, want InvalidArgument", err)
+	}
+
+	// Out-of-range integer rejected (max_connections range is 25-3000).
+	if _, err := m.UpdateCoordinatorConfiguration(ctx, "rg1", "pg1", "max_connections", "999999"); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("out-of-range: got %v, want InvalidArgument", err)
+	}
+
+	// Enum violation rejected (array_nulls allows on,off).
+	if _, err := m.UpdateNodeConfiguration(ctx, "rg1", "pg1", "array_nulls", "maybe"); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("enum violation: got %v, want InvalidArgument", err)
+	}
+
+	// A valid in-range value is accepted.
+	if _, err := m.UpdateCoordinatorConfiguration(ctx, "rg1", "pg1", "max_connections", "500"); err != nil {
+		t.Fatalf("valid value: %v", err)
+	}
+}
+
+func TestRolePasswordRequired(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 1)
+
+	if _, err := m.CreateRole(ctx, cpgdriver.CreateRoleConfig{ResourceGroup: "rg1", ClusterName: "pg1", Name: "app"}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("role without password: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestFirewallAndRoleGetDelete(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 1)
+
+	if _, err := m.CreateOrUpdateFirewallRule(ctx, cpgdriver.CreateFirewallRuleConfig{
+		ResourceGroup: "rg1", ClusterName: "pg1", Name: "fw", StartIPAddress: "10.0.0.0", EndIPAddress: "10.0.0.255",
+	}); err != nil {
+		t.Fatalf("create fw: %v", err)
+	}
+
+	if _, err := m.GetFirewallRule(ctx, "rg1", "pg1", "fw"); err != nil {
+		t.Fatalf("GetFirewallRule: %v", err)
+	}
+
+	if err := m.DeleteFirewallRule(ctx, "rg1", "pg1", "fw"); err != nil {
+		t.Fatalf("DeleteFirewallRule: %v", err)
+	}
+
+	if _, err := m.GetFirewallRule(ctx, "rg1", "pg1", "fw"); !cerrors.IsNotFound(err) {
+		t.Fatalf("get deleted fw: got %v, want NotFound", err)
+	}
+
+	if _, err := m.CreateRole(ctx, cpgdriver.CreateRoleConfig{ResourceGroup: "rg1", ClusterName: "pg1", Name: "app", Password: "R0lePass!"}); err != nil {
+		t.Fatalf("create role: %v", err)
+	}
+
+	if _, err := m.GetRole(ctx, "rg1", "pg1", "app"); err != nil {
+		t.Fatalf("GetRole: %v", err)
+	}
+
+	if err := m.DeleteRole(ctx, "rg1", "pg1", "app"); err != nil {
+		t.Fatalf("DeleteRole: %v", err)
+	}
+
+	if err := m.DeleteRole(ctx, "rg1", "pg1", "app"); !cerrors.IsNotFound(err) {
+		t.Fatalf("delete missing role: got %v, want NotFound", err)
+	}
+}
+
+func TestConfigurationsListingAndServerConfigs(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 1)
+
+	cfgs, err := m.ListConfigurations(ctx, "rg1", "pg1")
+	if err != nil || len(cfgs) == 0 {
+		t.Fatalf("ListConfigurations: %v len=%d", err, len(cfgs))
+	}
+
+	scs, err := m.ListServerConfigurations(ctx, "rg1", "pg1", "pg1-c")
+	if err != nil || len(scs) == 0 {
+		t.Fatalf("ListServerConfigurations: %v len=%d", err, len(scs))
+	}
+
+	if _, err := m.GetNodeConfiguration(ctx, "rg1", "pg1", "work_mem"); err != nil {
+		t.Fatalf("GetNodeConfiguration: %v", err)
+	}
+
+	// Listing under a missing cluster is NotFound.
+	if _, err := m.ListConfigurations(ctx, "rg1", "ghost"); !cerrors.IsNotFound(err) {
+		t.Fatalf("ListConfigurations missing parent: got %v, want NotFound", err)
+	}
+}
+
+func TestPrivateEndpointsAndLinks(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 1)
+
+	// Invalid connection status is rejected.
+	if _, err := m.CreateOrUpdatePrivateEndpointConnection(ctx, "rg1", "pg1", "pe1", "Bogus", ""); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("bad PE status: got %v, want InvalidArgument", err)
+	}
+
+	pec, err := m.CreateOrUpdatePrivateEndpointConnection(ctx, "rg1", "pg1", "pe1", "Approved", "ok")
+	if err != nil || pec.ActionsRequired != "None" {
+		t.Fatalf("create PE: %v %+v", err, pec)
+	}
+
+	if _, err := m.GetPrivateEndpointConnection(ctx, "rg1", "pg1", "pe1"); err != nil {
+		t.Fatalf("GetPrivateEndpointConnection: %v", err)
+	}
+
+	pecs, _ := m.ListPrivateEndpointConnections(ctx, "rg1", "pg1")
+	if len(pecs) != 1 {
+		t.Fatalf("ListPrivateEndpointConnections: got %d, want 1", len(pecs))
+	}
+
+	if err := m.DeletePrivateEndpointConnection(ctx, "rg1", "pg1", "pe1"); err != nil {
+		t.Fatalf("DeletePrivateEndpointConnection: %v", err)
+	}
+
+	// Private-link resources: one "coordinator" group.
+	plrs, err := m.ListPrivateLinkResources(ctx, "rg1", "pg1")
+	if err != nil || len(plrs) != 1 {
+		t.Fatalf("ListPrivateLinkResources: %v len=%d", err, len(plrs))
+	}
+
+	if _, err := m.GetPrivateLinkResource(ctx, "rg1", "pg1", "coordinator"); err != nil {
+		t.Fatalf("GetPrivateLinkResource: %v", err)
+	}
+
+	if _, err := m.GetPrivateLinkResource(ctx, "rg1", "pg1", "nope"); !cerrors.IsNotFound(err) {
+		t.Fatalf("GetPrivateLinkResource missing: got %v, want NotFound", err)
+	}
+}
+
+func TestReplicaNodesReadOnly(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "primary", 2)
+
+	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "rep1", ResourceGroup: "rg1", NodeCount: 2, SourceResourceID: m.clusterResourceID("rg1", "primary"),
+	}); err != nil {
+		t.Fatalf("create replica: %v", err)
+	}
+
+	nodes, _ := m.ListServers(ctx, "rg1", "rep1")
+	for i := range nodes {
+		if !nodes[i].IsReadOnly {
+			t.Fatalf("replica node %q (%s) is not read-only", nodes[i].Name, nodes[i].Role)
+		}
+	}
+}
