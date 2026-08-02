@@ -121,11 +121,27 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 		return
 	}
 
+	// LimitRange defaulting/validation runs before dry-run so the echoed object
+	// reflects applied defaults.
+	if status := s.applyLimitRange(namespace, &in); status != nil {
+		writeJSON(w, int(status.Code), status)
+
+		return
+	}
+
 	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
+
+	// Quota is checked AND reserved only on a real (non-dry-run) create, so a
+	// dry-run never consumes quota.
+	if status := s.checkAndReserveQuota(namespace, "Pod", resourcePods); status != nil {
+		writeJSON(w, int(status.Code), status)
 
 		return
 	}
@@ -423,6 +439,8 @@ func (s *ClusterState) servePodSubresource(w http.ResponseWriter, r *http.Reques
 		servePodLog(w, r, route, container)
 	case subresourcePodExec, subresourcePodAttach, subresourcePodPortForward:
 		writeStreamingUnsupported(w, route)
+	case subresourceEviction:
+		s.evictPod(w, r, route.Namespace, route.Name)
 	default:
 		writeNotFound(w, "k8s api: subresource not implemented: pods/"+route.Name+"/"+route.Subresource)
 	}

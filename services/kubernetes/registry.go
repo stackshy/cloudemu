@@ -339,6 +339,13 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 		return
 	}
 
+	// Quota is reserved only on a real (non-dry-run) create.
+	if status := s.checkAndReserveQuota(namespace, st.def.kind, st.def.plural); status != nil {
+		writeJSON(w, int(status.Code), status)
+
+		return
+	}
+
 	st.stampRVLocked(obj)
 
 	st.items[key] = obj
