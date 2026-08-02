@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -31,6 +32,9 @@ type resourceDef struct {
 	// reconcile runs (under s.mu) after a successful create/update/patch to
 	// materialize children and refresh status. nil = plain CRUD store.
 	reconcile func(s *ClusterState, obj *unstructured.Unstructured)
+	// onDelete runs (under s.mu) after a successful delete. Used by the CRD kind
+	// to deregister the custom resource's store and cascade-delete its objects.
+	onDelete func(s *ClusterState, obj *unstructured.Unstructured)
 }
 
 func (d *resourceDef) apiVersion() string {
@@ -52,8 +56,13 @@ type registryStore struct {
 	rv    int // monotonic resourceVersion source, bumped on every mutation
 }
 
-// registry maps a group/version/plural to its store.
+// registry maps a group/version/plural to its store. The stores map is fixed at
+// construction for built-in kinds but grows/shrinks at runtime as CRDs are
+// created/deleted, so all access is guarded by mu. (Store CONTENTS — items/rv —
+// remain guarded by the owning ClusterState's mutex; mu guards only the set of
+// stores.)
 type registry struct {
+	mu     sync.RWMutex
 	stores map[string]*registryStore
 }
 
@@ -77,7 +86,71 @@ func (r *registry) lookup(route *Route) *registryStore {
 		return nil
 	}
 
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	return r.stores[regKey(route.APIGroup, route.APIVersion, route.Resource)]
+}
+
+// getStore returns the store for a group/version/plural, or nil. Safe against
+// concurrent CRD add/remove.
+func (r *registry) getStore(group, version, plural string) *registryStore {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.stores[regKey(group, version, plural)]
+}
+
+// addStore materializes a store for a (CRD-defined) kind if absent, returning
+// the store. Idempotent — re-applying a CRD keeps the existing store and its
+// objects.
+func (r *registry) addStore(d *resourceDef) *registryStore {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key := regKey(d.group, d.version, d.plural)
+	if st, ok := r.stores[key]; ok {
+		return st
+	}
+
+	st := &registryStore{def: d, items: make(map[string]*unstructured.Unstructured), watch: newBroadcaster()}
+	r.stores[key] = st
+
+	return st
+}
+
+// removeStore drops a (CRD-defined) kind's store. Idempotent.
+func (r *registry) removeStore(group, version, plural string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	delete(r.stores, regKey(group, version, plural))
+}
+
+// allDefs returns every live store's resourceDef, sorted for deterministic
+// discovery output. Includes both built-in and CRD-added kinds.
+func (r *registry) allDefs() []*resourceDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make([]*resourceDef, 0, len(r.stores))
+	for _, st := range r.stores {
+		out = append(out, st.def)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].group != out[j].group {
+			return out[i].group < out[j].group
+		}
+
+		if out[i].version != out[j].version {
+			return out[i].version < out[j].version
+		}
+
+		return out[i].plural < out[j].plural
+	})
+
+	return out
 }
 
 func objKey(namespace, name string) string { return namespace + "/" + name }
@@ -446,6 +519,11 @@ func (s *ClusterState) registryDelete(w http.ResponseWriter, r *http.Request, st
 	// Cascade: garbage-collect anything this object owns (its controlled Pods
 	// and any registry-backed children carrying its ownerReference).
 	s.garbageCollectLocked(obj.GetUID())
+
+	// Kind-specific cleanup (the CRD kind deregisters its CR store here).
+	if st.def.onDelete != nil {
+		st.def.onDelete(s, obj)
+	}
 
 	st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
 	writeJSON(w, http.StatusOK, obj.DeepCopy())

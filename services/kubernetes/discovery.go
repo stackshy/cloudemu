@@ -25,7 +25,7 @@ import (
 //
 // Returns false when the path is not a discovery request, so the caller falls
 // through to normal resource routing.
-func (*ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool {
+func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		return false
 	}
@@ -45,7 +45,7 @@ func (*ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool
 
 	case "/apis":
 		groups := make([]map[string]any, 0)
-		for _, gv := range discoveryGroups() {
+		for _, gv := range s.discoveryGroups() {
 			groups = append(groups, apiGroup(gv.group, gv.version))
 		}
 
@@ -58,7 +58,7 @@ func (*ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool
 		return true
 
 	case "/api/v1":
-		writeJSON(w, http.StatusOK, apiResourceList("", "v1", coreResources()))
+		writeJSON(w, http.StatusOK, apiResourceList("", "v1", s.coreResources()))
 
 		return true
 
@@ -81,7 +81,7 @@ func (*ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bool
 	// Group-version discovery: /apis/<group>/<version>. Derived from the
 	// registry (plus the typed apps/policy groups) so every served group and
 	// its resources — including subresources — are advertised.
-	if res, gv, group, ok := groupVersionDiscovery(r.URL.Path); ok {
+	if res, gv, group, ok := s.groupVersionDiscovery(r.URL.Path); ok {
 		writeJSON(w, http.StatusOK, apiResourceList(group, gv, res))
 
 		return true
@@ -96,14 +96,20 @@ type groupVersion struct {
 	version string
 }
 
-// discoveryGroups lists the non-core API groups the server serves, each with a
-// representative version, built from the typed handlers (apps, policy) plus the
-// registry so new groups surface automatically.
-func discoveryGroups() []groupVersion {
+// discoveryGroups (method) advertises groups from the LIVE registry, so a CRD
+// created at runtime surfaces its group in discovery immediately.
+func (s *ClusterState) discoveryGroups() []groupVersion {
+	return discoveryGroupsFrom(s.reg.allDefs())
+}
+
+// discoveryGroupsFrom lists the non-core API groups the server serves, each with
+// a representative version, built from the typed handlers (apps, policy) plus
+// the supplied defs so new groups surface automatically.
+func discoveryGroupsFrom(defs []*resourceDef) []groupVersion {
 	seen := map[string]bool{"apps": true, "policy": true}
 	out := []groupVersion{{"apps", "v1"}, {"policy", "v1"}}
 
-	for _, d := range registeredResources() {
+	for _, d := range defs {
 		if d.group == "" || seen[d.group] {
 			continue
 		}
@@ -117,8 +123,9 @@ func discoveryGroups() []groupVersion {
 }
 
 // groupVersionDiscovery returns the resource list for a /apis/<group>/<version>
-// path, or ok=false if the path isn't a served group-version.
-func groupVersionDiscovery(path string) (res []apiResource, groupVersionStr, group string, ok bool) {
+// path, or ok=false if the path isn't a served group-version. Reads the live
+// registry so CRD group-versions resolve.
+func (s *ClusterState) groupVersionDiscovery(path string) (res []apiResource, groupVersionStr, group string, ok bool) {
 	parts := splitPath(strings.TrimSuffix(path, "/"))
 	if len(parts) != 3 || parts[0] != pathSegAPIs {
 		return nil, "", "", false
@@ -128,11 +135,11 @@ func groupVersionDiscovery(path string) (res []apiResource, groupVersionStr, gro
 
 	switch {
 	case group == apiGroupApps && version == apiVersionV1:
-		return appsResources(), "apps/v1", apiGroupApps, true
+		return s.appsResources(), "apps/v1", apiGroupApps, true
 	case group == apiGroupPolicy && version == apiVersionV1:
 		return policyResources(), "policy/v1", apiGroupPolicy, true
 	default:
-		r := registryAPIResources(group, version)
+		r := registryAPIResourcesFrom(s.reg.allDefs(), group, version)
 		if len(r) == 0 {
 			return nil, "", "", false
 		}
@@ -198,8 +205,14 @@ func rwVerbs() []string {
 	return []string{"get", "list", "watch", "create", "update", "patch", "delete"}
 }
 
-func coreResources() []apiResource {
-	reg := registryAPIResources("", "v1")
+// coreResources (method) reads the live registry so CRD core-group kinds (rare,
+// but allowed) surface. coreResourcesFrom is the pure form OpenAPI uses.
+func (s *ClusterState) coreResources() []apiResource {
+	return coreResourcesFrom(s.reg.allDefs())
+}
+
+func coreResourcesFrom(defs []*resourceDef) []apiResource {
+	reg := registryAPIResourcesFrom(defs, "", "v1")
 
 	const typedCoreKinds = 7
 
@@ -225,8 +238,7 @@ func coreResources() []apiResource {
 // into discovery entries (the resource plus its /status and /scale
 // subresources), so discovery is derived from the registry and can't drift
 // from what the server actually serves.
-func registryAPIResources(group, version string) []apiResource {
-	defs := registeredResources()
+func registryAPIResourcesFrom(defs []*resourceDef, group, version string) []apiResource {
 	out := make([]apiResource, 0, len(defs))
 
 	for _, d := range defs {
@@ -259,20 +271,21 @@ func subresourceVerbs() []string { return []string{"get", "patch", "update"} }
 //
 //nolint:gochecknoglobals // immutable package-level lookup table.
 var registryShortNames = map[string][]string{
-	"persistentvolumeclaims":   {"pvc"},
-	"persistentvolumes":        {"pv"},
-	"horizontalpodautoscalers": {"hpa"},
-	"statefulsets":             {"sts"},
-	"replicasets":              {"rs"},
-	"daemonsets":               {"ds"},
-	"cronjobs":                 {"cj"},
-	"ingresses":                {"ing"},
-	"networkpolicies":          {"netpol"},
-	"storageclasses":           {"sc"},
-	"resourcequotas":           {"quota"},
-	"limitranges":              {"limits"},
-	"events":                   {"ev"},
-	"nodes":                    {"no"},
+	"persistentvolumeclaims":    {"pvc"},
+	"persistentvolumes":         {"pv"},
+	"horizontalpodautoscalers":  {"hpa"},
+	"statefulsets":              {"sts"},
+	"replicasets":               {"rs"},
+	"daemonsets":                {"ds"},
+	"cronjobs":                  {"cj"},
+	"ingresses":                 {"ing"},
+	"networkpolicies":           {"netpol"},
+	"storageclasses":            {"sc"},
+	"resourcequotas":            {"quota"},
+	"limitranges":               {"limits"},
+	"events":                    {"ev"},
+	"nodes":                     {"no"},
+	"customresourcedefinitions": {"crd", "crds"},
 }
 
 func policyResources() []apiResource {
@@ -287,8 +300,14 @@ func policyResources() []apiResource {
 	}
 }
 
-func appsResources() []apiResource {
-	reg := registryAPIResources(apiGroupApps, "v1")
+// appsResources (method) reads the live registry. appsResourcesFrom is the pure
+// form OpenAPI uses.
+func (s *ClusterState) appsResources() []apiResource {
+	return appsResourcesFrom(s.reg.allDefs())
+}
+
+func appsResourcesFrom(defs []*resourceDef) []apiResource {
+	reg := registryAPIResourcesFrom(defs, apiGroupApps, "v1")
 
 	const typedAppsEntries = 3
 

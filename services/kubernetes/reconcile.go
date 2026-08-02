@@ -330,7 +330,7 @@ const serviceNameLabel = "kubernetes.io/service-name"
 // EndpointSlice, so EndpointSlice-mode consumers (kube-proxy, Gateway API) see
 // the same backends the typed Endpoints object carries.
 func (s *ClusterState) syncEndpointSliceLocked(svc *corev1.Service, addrs []corev1.EndpointAddress) {
-	store := s.reg.stores[regKey(apiGroupDiscovery, "v1", "endpointslices")]
+	store := s.reg.getStore(apiGroupDiscovery, "v1", "endpointslices")
 	if store == nil {
 		return
 	}
@@ -590,7 +590,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 		return
 	}
 
-	store := s.reg.stores[regKey("", "v1", "persistentvolumeclaims")]
+	store := s.reg.getStore("", "v1", "persistentvolumeclaims")
 	if store == nil {
 		return
 	}

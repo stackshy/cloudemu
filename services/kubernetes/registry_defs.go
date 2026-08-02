@@ -9,6 +9,7 @@ const (
 	apiGroupStorage     = "storage.k8s.io"
 	apiGroupAutoscaling = "autoscaling"
 	apiGroupDiscovery   = "discovery.k8s.io"
+	apiGroupExtensions  = "apiextensions.k8s.io"
 )
 
 // registeredResources lists every registry-backed kind. Adding a Kubernetes
@@ -28,6 +29,7 @@ func registeredResources() []*resourceDef {
 		autoscalingRegistryDefs(),
 		discoveryRegistryDefs(),
 		coreRegistryDefs(),
+		crdRegistryDefs(),
 	)
 }
 
