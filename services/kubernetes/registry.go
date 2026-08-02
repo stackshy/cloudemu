@@ -443,7 +443,16 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 		return
 	}
 
-	patched, ok := s.applyUnstructuredPatch(w, r, cur)
+	// Server-side apply tracks field ownership + conflicts (managedFields); every
+	// other patch content-type is a plain merge/strategic/JSONPatch.
+	var patched *unstructured.Unstructured
+
+	if r.Header.Get("Content-Type") == contentTypeApplyPatch {
+		patched, ok = s.serverSideApply(w, r, st, cur)
+	} else {
+		patched, ok = s.applyUnstructuredPatch(w, r, cur)
+	}
+
 	if !ok {
 		return
 	}
