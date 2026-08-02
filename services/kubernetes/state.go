@@ -173,6 +173,15 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SubjectAccessReview is a POST-only, non-persisted "review" API — it has
+	// no registry store and no Route shape (parseRoute assumes a resource
+	// collection/item), so it's dispatched here before route parsing.
+	if r.Method == http.MethodPost && r.URL.Path == pathSubjectAccessReviews {
+		s.serveSubjectAccessReview(w, r)
+
+		return
+	}
+
 	route := parseRoute(r.URL.Path)
 	if route == nil {
 		writeNotFound(w, "k8s api: unrecognized path "+r.URL.Path)

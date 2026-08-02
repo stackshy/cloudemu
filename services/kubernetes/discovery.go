@@ -104,11 +104,14 @@ func (s *ClusterState) discoveryGroups() []groupVersion {
 
 // discoveryGroupsFrom lists the non-core API groups the server serves, each with
 // a representative version, built from the typed handlers (apps, policy), the
-// aggregated metrics.k8s.io API, plus the supplied defs so new groups surface
-// automatically.
+// aggregated metrics.k8s.io and authorization.k8s.io APIs, plus the supplied
+// defs so new groups surface automatically.
 func discoveryGroupsFrom(defs []*resourceDef) []groupVersion {
-	seen := map[string]bool{"apps": true, "policy": true, apiGroupMetrics: true}
-	out := []groupVersion{{"apps", "v1"}, {"policy", "v1"}, {apiGroupMetrics, apiVersionMetrics}}
+	seen := map[string]bool{"apps": true, "policy": true, apiGroupMetrics: true, apiGroupAuthorization: true}
+	out := []groupVersion{
+		{"apps", "v1"}, {"policy", "v1"},
+		{apiGroupMetrics, apiVersionMetrics}, {apiGroupAuthorization, apiVersionV1},
+	}
 
 	for _, d := range defs {
 		if d.group == "" || seen[d.group] {
@@ -139,6 +142,8 @@ func (s *ClusterState) groupVersionDiscovery(path string) (res []apiResource, gr
 		return s.appsResources(), "apps/v1", apiGroupApps, true
 	case group == apiGroupPolicy && version == apiVersionV1:
 		return policyResources(), "policy/v1", apiGroupPolicy, true
+	case group == apiGroupAuthorization && version == apiVersionV1:
+		return authorizationResources(), apiGroupAuthorization + "/v1", apiGroupAuthorization, true
 	default:
 		r := registryAPIResourcesFrom(s.reg.allDefs(), group, version)
 		if len(r) == 0 {
