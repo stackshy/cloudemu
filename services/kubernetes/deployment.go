@@ -135,6 +135,10 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 	in.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
 	in.Generation = 1
 
+	if handled := s.admit(w, opCreate, gvrDeployments(), &in); handled {
+		return
+	}
+
 	if isDryRun(r) {
 		writeJSON(w, http.StatusCreated, &in)
 

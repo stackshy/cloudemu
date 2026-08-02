@@ -332,6 +332,12 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 	obj.SetCreationTimestamp(s.now())
 	obj.SetGeneration(1)
 
+	// Admission (opt-in) is the first gate — before dry-run echoes or quota is
+	// reserved, so a denied create leaks neither.
+	if handled := s.admit(w, opCreate, st.def.gvr(), obj); handled {
+		return
+	}
+
 	if isDryRun(r) {
 		obj.SetResourceVersion(strconv.Itoa(st.rv + 1))
 		writeJSON(w, http.StatusCreated, obj)
@@ -410,6 +416,10 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 		in.SetGeneration(cur.GetGeneration())
 	}
 
+	if handled := s.admit(w, opUpdate, st.def.gvr(), in); handled {
+		return
+	}
+
 	if isDryRun(r) {
 		in.SetResourceVersion(strconv.Itoa(st.rv + 1))
 		writeJSON(w, http.StatusOK, in)
@@ -466,6 +476,10 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 
 	if specChanged(cur, patched) {
 		patched.SetGeneration(cur.GetGeneration() + 1)
+	}
+
+	if handled := s.admit(w, opUpdate, st.def.gvr(), patched); handled {
+		return
 	}
 
 	if isDryRun(r) {

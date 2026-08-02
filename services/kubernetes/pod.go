@@ -132,6 +132,12 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"}
 
+	// Admission webhooks (opt-in) validate/mutate before dry-run echoes or the
+	// object is persisted.
+	if handled := s.admit(w, opCreate, gvrPods(), &in); handled {
+		return
+	}
+
 	if isDryRun(r) {
 		writeJSON(w, http.StatusCreated, &in)
 

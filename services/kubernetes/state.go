@@ -75,6 +75,12 @@ type ClusterState struct {
 	// hand-written handler (ReplicaSet, StatefulSet, DaemonSet, …).
 	reg *registry
 
+	// admissionEnabled and admissionClient configure the opt-in admission
+	// webhook chain (see APIServer.SetAdmissionEnabled and admission.go).
+	// Set once at registration; admissionClient is never nil.
+	admissionEnabled bool
+	admissionClient  *http.Client
+
 	// Per-resource Watch broadcasters. Handlers publish on Create/Update/
 	// Patch/Delete; ?watch=true requests subscribe via streamWatch.
 	wNamespaces      *broadcaster
@@ -97,9 +103,13 @@ const firstClusterIPOffset uint32 = 1
 // namespaces (default, kube-system, kube-public) and a "default"
 // ServiceAccount in each, matching the bootstrap state of a fresh real
 // cluster.
-func newClusterState(clock config.Clock) *ClusterState {
+func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient *http.Client) *ClusterState {
 	if clock == nil {
 		clock = config.RealClock{}
+	}
+
+	if admissionClient == nil {
+		admissionClient = &http.Client{Timeout: defaultAdmissionTimeout}
 	}
 
 	s := &ClusterState{
@@ -116,6 +126,8 @@ func newClusterState(clock config.Clock) *ClusterState {
 		nextClusterIP:    firstClusterIPOffset,
 		nextPodIP:        1,
 		reg:              newRegistry(registeredResources()),
+		admissionEnabled: admissionEnabled,
+		admissionClient:  admissionClient,
 		wNamespaces:      newBroadcaster(),
 		wConfigMaps:      newBroadcaster(),
 		wPods:            newBroadcaster(),

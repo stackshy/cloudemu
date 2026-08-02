@@ -3,13 +3,20 @@ package kubernetes
 // API group names for the registry-backed kinds. apps and policy have their own
 // constants next to their typed handlers (apiGroupApps, apiGroupPolicy).
 const (
-	apiGroupBatch       = "batch"
-	apiGroupNetworking  = "networking.k8s.io"
-	apiGroupRBAC        = "rbac.authorization.k8s.io"
-	apiGroupStorage     = "storage.k8s.io"
-	apiGroupAutoscaling = "autoscaling"
-	apiGroupDiscovery   = "discovery.k8s.io"
-	apiGroupExtensions  = "apiextensions.k8s.io"
+	apiGroupBatch                 = "batch"
+	apiGroupNetworking            = "networking.k8s.io"
+	apiGroupRBAC                  = "rbac.authorization.k8s.io"
+	apiGroupStorage               = "storage.k8s.io"
+	apiGroupAutoscaling           = "autoscaling"
+	apiGroupDiscovery             = "discovery.k8s.io"
+	apiGroupExtensions            = "apiextensions.k8s.io"
+	apiGroupAdmissionRegistration = "admissionregistration.k8s.io"
+
+	// Plural resource segments for the two webhook config kinds — referenced
+	// by admission.go when it looks up the registry store to find configured
+	// webhooks.
+	pluralMutatingWebhooks   = "mutatingwebhookconfigurations"
+	pluralValidatingWebhooks = "validatingwebhookconfigurations"
 )
 
 // registeredResources lists every registry-backed kind. Adding a Kubernetes
@@ -30,6 +37,7 @@ func registeredResources() []*resourceDef {
 		discoveryRegistryDefs(),
 		coreRegistryDefs(),
 		crdRegistryDefs(),
+		admissionRegistryDefs(),
 	)
 }
 
@@ -154,6 +162,23 @@ func coreRegistryDefs() []*resourceDef {
 		{
 			group: "", version: "v1", kind: "LimitRange", listKind: "LimitRangeList",
 			plural: "limitranges", namespaced: true,
+		},
+	}
+}
+
+// admissionRegistryDefs registers the two webhook config kinds as plain
+// stored (no reconcile) kinds — this alone makes `kubectl apply -f
+// webhook.yaml` round-trip. Whether they are actually invoked on writes is
+// controlled separately by APIServer.SetAdmissionEnabled (see admission.go).
+func admissionRegistryDefs() []*resourceDef {
+	return []*resourceDef{
+		{
+			group: apiGroupAdmissionRegistration, version: "v1", kind: "MutatingWebhookConfiguration",
+			listKind: "MutatingWebhookConfigurationList", plural: pluralMutatingWebhooks, namespaced: false,
+		},
+		{
+			group: apiGroupAdmissionRegistration, version: "v1", kind: "ValidatingWebhookConfiguration",
+			listKind: "ValidatingWebhookConfigurationList", plural: pluralValidatingWebhooks, namespaced: false,
 		},
 	}
 }
