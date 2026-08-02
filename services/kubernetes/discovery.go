@@ -103,11 +103,12 @@ func (s *ClusterState) discoveryGroups() []groupVersion {
 }
 
 // discoveryGroupsFrom lists the non-core API groups the server serves, each with
-// a representative version, built from the typed handlers (apps, policy) plus
-// the supplied defs so new groups surface automatically.
+// a representative version, built from the typed handlers (apps, policy), the
+// aggregated metrics.k8s.io API, plus the supplied defs so new groups surface
+// automatically.
 func discoveryGroupsFrom(defs []*resourceDef) []groupVersion {
-	seen := map[string]bool{"apps": true, "policy": true}
-	out := []groupVersion{{"apps", "v1"}, {"policy", "v1"}}
+	seen := map[string]bool{"apps": true, "policy": true, apiGroupMetrics: true}
+	out := []groupVersion{{"apps", "v1"}, {"policy", "v1"}, {apiGroupMetrics, apiVersionMetrics}}
 
 	for _, d := range defs {
 		if d.group == "" || seen[d.group] {

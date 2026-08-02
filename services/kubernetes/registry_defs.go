@@ -115,6 +115,7 @@ func autoscalingRegistryDefs() []*resourceDef {
 		{
 			group: apiGroupAutoscaling, version: "v2", kind: "HorizontalPodAutoscaler",
 			listKind: "HorizontalPodAutoscalerList", plural: "horizontalpodautoscalers", namespaced: true, hasStatus: true,
+			reconcile: reconcileHPA,
 		},
 	}
 }

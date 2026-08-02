@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -161,6 +162,14 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Discovery first: /api, /apis and the group-version lists are not
 	// resource paths and parseRoute cannot represent them.
 	if s.serveDiscovery(w, r) {
+		return
+	}
+
+	// metrics.k8s.io is an aggregated API, not a registry-backed kind — it has
+	// no persisted objects, so it can't go through parseRoute/serveRegistry.
+	if strings.HasPrefix(r.URL.Path, metricsAPIPrefix) {
+		s.serveMetrics(w, r)
+
 		return
 	}
 
