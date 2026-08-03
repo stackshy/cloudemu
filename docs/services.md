@@ -10,7 +10,8 @@ This document lists every service and operation available in CloudEmu across all
 | 2 | Compute | `ec2` | `virtualmachines` | `gce` |
 | 3 | Database | `dynamodb` | `cosmosdb` | `firestore` |
 | 4 | Serverless | `lambda` | `functions` | `cloudfunctions` |
-| 5 | Networking | `vpc` | `vnet` | `gcpvpc` |
+| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN) | `vnet` | `gcpvpc` |
+| 5a | Network Firewall | `network-firewall` | — | — |
 | 6 | Monitoring | `cloudwatch` | `azuremonitor` | `cloudmonitoring` |
 | 7 | IAM | `awsiam` | `azureiam` | `gcpiam` |
 | 8 | DNS | `route53` | `azuredns` | `clouddns` |
@@ -532,6 +533,25 @@ DNS hostnames off.
 | `ModifyVPCEndpoint` | `(ctx, id, config) (*VPCEndpoint, error)` |
 
 **Total: 47 operations**
+
+### AWS-specific networking (optional capabilities)
+
+AWS models several networking resources that don't map cleanly across clouds.
+These are **AWS-only optional capability interfaces** (discovered by type
+assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
+`providers/aws/vpc` and served by the EC2 handler — no Azure/GCP stubs.
+
+| Capability | Operations |
+|-----------|-----------|
+| Transit Gateway | CreateTransitGateway, DeleteTransitGateway, DescribeTransitGateways; VPC attachments (Create/Delete/Describe); route tables (Create/Delete/Describe); routes (Create/Delete/Search); route-table Associate + Enable/DisableRouteTablePropagation |
+| VPN | CustomerGateway (Create/Delete/Describe); VpnGateway (Create/Delete/Describe/Attach/Detach); VpnConnection (Create/Delete/Describe/ModifyVpnConnection); VpnConnectionRoute (Create/Delete) |
+| DHCP option sets | Create, Delete, Describe, Associate |
+| Managed prefix lists | Create, Delete, Describe, GetEntries, Modify |
+| Egress-only internet gateways | Create, Delete, Describe |
+| VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
+| Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
+
+**AWS-specific total: 58 operations**
 
 ---
 
@@ -2241,6 +2261,8 @@ still sees success.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
+| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN) | 58 |
+| Network Firewall — AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
 | DNS | 15 |
@@ -2271,7 +2293,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1415** (+138 optional) |
+| **Grand Total** | **1493** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

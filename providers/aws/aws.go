@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
 	"github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/providers/aws/route53"
@@ -128,6 +129,7 @@ type Provider struct {
 	ElastiCache         *elasticache.Mock
 	Keyspaces           *keyspaces.Mock
 	MemoryDB            *memorydb.Mock
+	NetworkFirewall     *networkfirewall.Mock
 	SecretsManager      *secretsmanager.Mock
 	CloudWatchLogs      *cloudwatchlogs.Mock
 	SNS                 *sns.Mock
@@ -164,6 +166,7 @@ func New(opts ...config.Option) *Provider {
 		ElastiCache:         elasticache.New(o),
 		Keyspaces:           keyspaces.New(o),
 		MemoryDB:            memorydb.New(o),
+		NetworkFirewall:     networkfirewall.New(o),
 		SecretsManager:      secretsmanager.New(o),
 		CloudWatchLogs:      cloudwatchlogs.New(o),
 		SNS:                 sns.New(o),

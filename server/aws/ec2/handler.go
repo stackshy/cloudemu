@@ -87,6 +87,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeVpcPeering,
 		h.routeFlowLogs,
 		h.routeNetworkACLs,
+		h.routeTransitGateways,
+		h.routeVPN,
+		h.routeDHCPOptions,
+		h.routePrefixLists,
+		h.routeEgressOnlyIGW,
+		h.routeEndpointServices,
+		h.routeClientVPN,
 		h.routeVPC,
 	}
 	for _, route := range routes {
@@ -225,7 +232,6 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateAutoScalingGroup":
