@@ -87,6 +87,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeVpcPeering,
 		h.routeFlowLogs,
 		h.routeNetworkACLs,
+		h.routeTransitGateways,
+		h.routeVPN,
+		h.routeDHCPOptions,
+		h.routePrefixLists,
+		h.routeEgressOnlyIGW,
+		h.routeEndpointServices,
+		h.routeClientVPN,
 		h.routeVPC,
 	}
 	for _, route := range routes {

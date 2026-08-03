@@ -26,9 +26,16 @@ const (
 // interface and every call would answer InvalidAction at runtime instead of
 // failing the build.
 var (
-	_ driver.Networking        = (*Mock)(nil)
-	_ driver.NetworkInterfaces = (*Mock)(nil)
-	_ driver.VPCAttributes     = (*Mock)(nil)
+	_ driver.Networking                 = (*Mock)(nil)
+	_ driver.NetworkInterfaces          = (*Mock)(nil)
+	_ driver.VPCAttributes              = (*Mock)(nil)
+	_ driver.TransitGateways            = (*Mock)(nil)
+	_ driver.VPNConnections             = (*Mock)(nil)
+	_ driver.DHCPOptionSets             = (*Mock)(nil)
+	_ driver.PrefixLists                = (*Mock)(nil)
+	_ driver.EgressOnlyInternetGateways = (*Mock)(nil)
+	_ driver.VPCEndpointServices        = (*Mock)(nil)
+	_ driver.ClientVPN                  = (*Mock)(nil)
 )
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
@@ -53,7 +60,22 @@ type Mock struct {
 	rtAssocs       *memstore.Store[*rtAssocData]
 	enis           *memstore.Store[*eniData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
-	opts           *config.Options
+
+	// AWS-specific networking capabilities (optional interfaces).
+	transitGateways    *memstore.Store[*driver.TransitGateway]
+	tgwAttachments     *memstore.Store[*driver.TransitGatewayVPCAttachment]
+	tgwRouteTables     *memstore.Store[*driver.TransitGatewayRouteTable]
+	customerGateways   *memstore.Store[*driver.CustomerGateway]
+	vpnGateways        *memstore.Store[*driver.VPNGateway]
+	vpnConnections     *memstore.Store[*driver.VPNConnection]
+	dhcpOptions        *memstore.Store[*driver.DHCPOptions]
+	prefixLists        *memstore.Store[*driver.PrefixList]
+	egressOnlyIGWs     *memstore.Store[*driver.EgressOnlyInternetGateway]
+	endpointServices   *memstore.Store[*driver.EndpointService]
+	clientVPNEndpoints *memstore.Store[*driver.ClientVPNEndpoint]
+	clientVPNAssocs    *memstore.Store[*driver.ClientVPNTargetNetwork]
+
+	opts *config.Options
 }
 
 type vpcData struct {
@@ -100,7 +122,21 @@ func New(opts *config.Options) *Mock {
 		rtAssocs:       memstore.New[*rtAssocData](),
 		enis:           memstore.New[*eniData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
-		opts:           opts,
+
+		transitGateways:    memstore.New[*driver.TransitGateway](),
+		tgwAttachments:     memstore.New[*driver.TransitGatewayVPCAttachment](),
+		tgwRouteTables:     memstore.New[*driver.TransitGatewayRouteTable](),
+		customerGateways:   memstore.New[*driver.CustomerGateway](),
+		vpnGateways:        memstore.New[*driver.VPNGateway](),
+		vpnConnections:     memstore.New[*driver.VPNConnection](),
+		dhcpOptions:        memstore.New[*driver.DHCPOptions](),
+		prefixLists:        memstore.New[*driver.PrefixList](),
+		egressOnlyIGWs:     memstore.New[*driver.EgressOnlyInternetGateway](),
+		endpointServices:   memstore.New[*driver.EndpointService](),
+		clientVPNEndpoints: memstore.New[*driver.ClientVPNEndpoint](),
+		clientVPNAssocs:    memstore.New[*driver.ClientVPNTargetNetwork](),
+
+		opts: opts,
 	}
 }
 
