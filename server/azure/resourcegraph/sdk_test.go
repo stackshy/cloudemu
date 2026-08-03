@@ -214,6 +214,43 @@ func TestSDKResourceGraph_ResourceFields(t *testing.T) {
 	assert.Equal(t, vm["id"], disk["managedBy"], "disk managedBy links to the VM id")
 }
 
+// TestSDKResourceGraph_FlexServerFields proves the generic attribute mechanism
+// is not VM/disk-specific: a PostgreSQL Flexible Server projects its compute
+// SKU and HA mode through the same slots, rendered the same way.
+func TestSDKResourceGraph_FlexServerFields(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	_, err := cloudP.PostgresFlex.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "pg-flex-1", InstanceClass: "Standard_D2ds_v5", AllocatedStorage: 128, MultiAZ: true,
+	})
+	require.NoError(t, err)
+
+	srv := azureserver.New(azureserver.Drivers{
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		SubscriptionID:    "123456789012",
+	})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newResourceGraphClient(t, ts)
+
+	out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+		Query: to.Ptr("Resources | where type =~ 'microsoft.dbforpostgresql/flexibleservers'"),
+	}, nil)
+	require.NoError(t, err)
+
+	data := out.Data.([]any)
+	require.Len(t, data, 1)
+
+	row := data[0].(map[string]any)
+	assert.Equal(t, "Standard_D2ds_v5", row["sku"].(map[string]any)["name"])
+
+	props := row["properties"].(map[string]any)
+	assert.Equal(t, "ZoneRedundant", props["highAvailability"].(map[string]any)["mode"])
+	assert.EqualValues(t, 128, props["storage"].(map[string]any)["storageSizeGB"])
+}
+
 func findRowByType(t *testing.T, data []any, typ string) map[string]any {
 	t.Helper()
 
