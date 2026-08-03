@@ -310,14 +310,25 @@ func TestSDKConfigurationsAndReplicaAndErrors(t *testing.T) {
 		t.Fatalf("coordinator config update: %v %+v", err, updatedCfg.Properties)
 	}
 
-	// checkNameAvailability.
+	// checkNameAvailability: a taken name is explicitly unavailable (assert the
+	// pointer is present so a dropped field would regress loudly)...
 	na, err := cc.CheckNameAvailability(ctx, armcosmosforpostgresql.NameAvailabilityRequest{Name: to.Ptr("pg1")}, nil)
 	if err != nil {
-		t.Fatalf("CheckNameAvailability: %v", err)
+		t.Fatalf("CheckNameAvailability taken: %v", err)
 	}
 
-	if deref(na.NameAvailable) {
-		t.Fatal("existing name should be unavailable")
+	if na.NameAvailable == nil || *na.NameAvailable {
+		t.Fatalf("existing name should be explicitly unavailable: %v", na.NameAvailable)
+	}
+
+	// ...and a free name is explicitly available.
+	free, err := cc.CheckNameAvailability(ctx, armcosmosforpostgresql.NameAvailabilityRequest{Name: to.Ptr("brand-new")}, nil)
+	if err != nil {
+		t.Fatalf("CheckNameAvailability free: %v", err)
+	}
+
+	if free.NameAvailable == nil || !*free.NameAvailable {
+		t.Fatalf("free name should be explicitly available: %v", free.NameAvailable)
 	}
 
 	// Typed 404 for a missing cluster.

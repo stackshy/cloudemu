@@ -55,6 +55,6 @@ func (h *Handler) listServerConfigurations(w http.ResponseWriter, r *http.Reques
 	azurearm.WriteJSON(w, http.StatusOK, armListOf(cfgs, func(sc *cpgdriver.ServerConfiguration) serverConfigurationResource {
 		id := h.childID(rp, subServers, rp.SubResourceName) + "/" + subConfigurations + "/" + sc.Name
 
-		return toARMServerConfiguration(sc, id)
+		return toARMServerConfiguration(sc, id, subConfigurations)
 	}))
 }

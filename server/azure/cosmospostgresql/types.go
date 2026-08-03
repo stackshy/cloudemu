@@ -367,11 +367,14 @@ func toARMConfiguration(c *cpgdriver.Configuration, id string) configurationReso
 	}
 }
 
-func toARMServerConfiguration(sc *cpgdriver.ServerConfiguration, id string) serverConfigurationResource {
+// toARMServerConfiguration renders a server-scoped configuration. typeSuffix is
+// the collection segment used in the id (coordinatorConfigurations /
+// nodeConfigurations / configurations) so type and id agree.
+func toARMServerConfiguration(sc *cpgdriver.ServerConfiguration, id, typeSuffix string) serverConfigurationResource {
 	return serverConfigurationResource{
 		ID:   id,
 		Name: sc.Name,
-		Type: clusterResourceType + "/" + subConfigurations,
+		Type: clusterResourceType + "/" + typeSuffix,
 		Properties: &serverConfigurationProperties{
 			Value:             sc.Value,
 			DefaultValue:      sc.DefaultValue,

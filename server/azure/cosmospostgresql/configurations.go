@@ -72,7 +72,7 @@ func (h *Handler) getServerConfig(w http.ResponseWriter, r *http.Request, rp *az
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMServerConfiguration(sc, h.childID(rp, sub, sc.Name)))
+	azurearm.WriteJSON(w, http.StatusOK, toARMServerConfiguration(sc, h.childID(rp, sub, sc.Name), sub))
 }
 
 func (h *Handler) updateServerConfig(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, coordinator bool) {
@@ -104,5 +104,5 @@ func (h *Handler) updateServerConfig(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMServerConfiguration(sc, h.childID(rp, sub, sc.Name)))
+	azurearm.WriteJSON(w, http.StatusOK, toARMServerConfiguration(sc, h.childID(rp, sub, sc.Name), sub))
 }
