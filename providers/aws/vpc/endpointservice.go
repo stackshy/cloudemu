@@ -57,3 +57,47 @@ func cloneEndpointService(s *driver.EndpointService) driver.EndpointService {
 
 	return out
 }
+
+// ModifyVPCEndpointServicePermissions adds/removes allowed principals on a service.
+//
+//nolint:gocritic // slices match the driver signature.
+func (m *Mock) ModifyVPCEndpointServicePermissions(
+	_ context.Context, serviceID string, addPrincipals, removePrincipals []string,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.endpointServices.Has(serviceID) {
+		return errors.Newf(errors.NotFound, "endpoint service %q not found", serviceID)
+	}
+
+	remove := make(map[string]bool, len(removePrincipals))
+	for _, p := range removePrincipals {
+		remove[p] = true
+	}
+
+	current := m.endpointServicePerms[serviceID]
+	kept := current[:0:0]
+
+	for _, p := range current {
+		if !remove[p] {
+			kept = append(kept, p)
+		}
+	}
+
+	m.endpointServicePerms[serviceID] = append(kept, addPrincipals...)
+
+	return nil
+}
+
+// DescribeVPCEndpointServicePermissions returns the allowed principals.
+func (m *Mock) DescribeVPCEndpointServicePermissions(_ context.Context, serviceID string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if !m.endpointServices.Has(serviceID) {
+		return nil, errors.Newf(errors.NotFound, "endpoint service %q not found", serviceID)
+	}
+
+	return append([]string(nil), m.endpointServicePerms[serviceID]...), nil
+}

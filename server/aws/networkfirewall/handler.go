@@ -61,6 +61,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteRuleGroup(w, r)
 	case "ListRuleGroups":
 		h.listRuleGroups(w, r)
+	case "AssociateFirewallPolicy":
+		h.associateFirewallPolicy(w, r)
+	case "AssociateSubnets":
+		h.associateSubnets(w, r)
+	case "DisassociateSubnets":
+		h.disassociateSubnets(w, r)
+	case "UpdateFirewallDeleteProtection":
+		h.updateFirewallDeleteProtection(w, r)
+	case "UpdateLoggingConfiguration":
+		h.updateLoggingConfiguration(w, r)
+	case "DescribeLoggingConfiguration":
+		h.describeLoggingConfiguration(w, r)
+	case "TagResource":
+		h.tagResource(w, r)
+	case "UntagResource":
+		h.untagResource(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", "unknown operation: "+op)
 	}

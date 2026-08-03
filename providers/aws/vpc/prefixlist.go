@@ -81,3 +81,39 @@ func clonePrefixList(p *driver.PrefixList) driver.PrefixList {
 
 	return out
 }
+
+// ModifyManagedPrefixList adds and/or removes entries, bumping the version.
+//
+//nolint:gocritic // slices match the driver signature.
+func (m *Mock) ModifyManagedPrefixList(
+	_ context.Context, id string, addEntries []driver.PrefixListEntry, removeCIDRs []string,
+) (*driver.PrefixList, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pl, ok := m.prefixLists.Get(id)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "prefix list %q not found", id)
+	}
+
+	remove := make(map[string]bool, len(removeCIDRs))
+	for _, c := range removeCIDRs {
+		remove[c] = true
+	}
+
+	kept := pl.Entries[:0:0]
+
+	for _, e := range pl.Entries {
+		if !remove[e.CIDR] {
+			kept = append(kept, e)
+		}
+	}
+
+	pl.Entries = append(kept, addEntries...)
+	pl.Version++
+	m.prefixLists.Set(id, pl)
+
+	out := clonePrefixList(pl)
+
+	return &out, nil
+}

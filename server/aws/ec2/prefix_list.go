@@ -45,6 +45,8 @@ func (h *Handler) routePrefixLists(w http.ResponseWriter, r *http.Request, actio
 		h.describePrefixLists(w, r, p)
 	case "GetManagedPrefixListEntries":
 		h.getPrefixListEntries(w, r, p)
+	case "ModifyManagedPrefixList":
+		h.modifyPrefixList(w, r, p)
 	default:
 		return false
 	}
@@ -129,6 +131,68 @@ func (*Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p n
 		Req     string               `xml:"requestId"`
 		Set     []prefixListEntryXML `xml:"entrySet>item"`
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+}
+
+func (*Handler) modifyPrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
+	out, err := p.ModifyManagedPrefixList(r.Context(),
+		r.Form.Get("PrefixListId"), parseAddPrefixListEntries(r), parseRemovePrefixListCIDRs(r))
+	if err != nil {
+		writePrefixListErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name      `xml:"ModifyManagedPrefixListResponse"`
+		Xmlns   string        `xml:"xmlns,attr"`
+		Req     string        `xml:"requestId"`
+		PL      prefixListXML `xml:"prefixList"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(out)})
+}
+
+func parseAddPrefixListEntries(r *http.Request) []netdriver.PrefixListEntry {
+	var out []netdriver.PrefixListEntry
+
+	for _, prefix := range []string{"AddEntry", "AddEntries"} {
+		for i := 1; ; i++ {
+			base := prefix + "." + strconv.Itoa(i)
+
+			cidr := r.Form.Get(base + ".Cidr")
+			if cidr == "" {
+				break
+			}
+
+			out = append(out, netdriver.PrefixListEntry{CIDR: cidr, Description: r.Form.Get(base + ".Description")})
+		}
+
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	return out
+}
+
+func parseRemovePrefixListCIDRs(r *http.Request) []string {
+	var out []string
+
+	for _, prefix := range []string{"RemoveEntry", "RemoveEntries"} {
+		for i := 1; ; i++ {
+			base := prefix + "." + strconv.Itoa(i)
+
+			cidr := r.Form.Get(base + ".Cidr")
+			if cidr == "" {
+				break
+			}
+
+			out = append(out, cidr)
+		}
+
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	return out
 }
 
 // parsePrefixListEntries reads the AddPrefixListEntry list. The EC2 query

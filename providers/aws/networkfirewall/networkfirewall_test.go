@@ -89,3 +89,68 @@ func TestFirewallPolicyAndRuleGroup(t *testing.T) {
 		t.Fatalf("describe deleted rule group: got %v, want NotFound", err)
 	}
 }
+
+func TestFirewallDepth(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	fw, err := m.CreateFirewall(ctx, nfdriver.CreateFirewallConfig{Name: "fw-1", SubnetIDs: []string{"subnet-1"}})
+	if err != nil {
+		t.Fatalf("CreateFirewall: %v", err)
+	}
+
+	if _, err := m.AssociateFirewallPolicy(ctx, "fw-1", "arn:policy"); err != nil {
+		t.Fatalf("AssociateFirewallPolicy: %v", err)
+	}
+
+	assoc, err := m.AssociateSubnets(ctx, "fw-1", []string{"subnet-1", "subnet-2"})
+	if err != nil || len(assoc.SubnetIDs) != 2 {
+		t.Fatalf("AssociateSubnets: %v %+v", err, assoc)
+	}
+
+	dis, err := m.DisassociateSubnets(ctx, "fw-1", []string{"subnet-1"})
+	if err != nil || len(dis.SubnetIDs) != 1 || dis.SubnetIDs[0] != "subnet-2" {
+		t.Fatalf("DisassociateSubnets: %v %+v", err, dis)
+	}
+
+	prot, err := m.UpdateFirewallDeleteProtection(ctx, "fw-1", true)
+	if err != nil || !prot.DeleteProtection {
+		t.Fatalf("UpdateFirewallDeleteProtection: %v %+v", err, prot)
+	}
+
+	if err := m.UpdateLoggingConfiguration(ctx, "fw-1", []string{"FLOW", "ALERT"}); err != nil {
+		t.Fatalf("UpdateLoggingConfiguration: %v", err)
+	}
+
+	logs, err := m.DescribeLoggingConfiguration(ctx, "fw-1")
+	if err != nil || len(logs) != 2 {
+		t.Fatalf("DescribeLoggingConfiguration: %v %+v", err, logs)
+	}
+
+	if err := m.TagResource(ctx, fw.ARN, map[string]string{"env": "prod"}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	got, _ := m.DescribeFirewall(ctx, "fw-1", "")
+	if got.Tags["env"] != "prod" {
+		t.Fatalf("tag not applied: %+v", got.Tags)
+	}
+
+	if err := m.UntagResource(ctx, fw.ARN, []string{"env"}); err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	got, _ = m.DescribeFirewall(ctx, "fw-1", "")
+	if _, ok := got.Tags["env"]; ok {
+		t.Fatalf("tag not removed: %+v", got.Tags)
+	}
+
+	// Unknown firewall / ARN error paths.
+	if _, err := m.AssociateFirewallPolicy(ctx, "missing", "x"); !cerrors.IsNotFound(err) {
+		t.Fatalf("associate missing firewall: got %v, want NotFound", err)
+	}
+
+	if err := m.TagResource(ctx, "arn:nope", map[string]string{"a": "b"}); !cerrors.IsNotFound(err) {
+		t.Fatalf("tag unknown arn: got %v, want NotFound", err)
+	}
+}

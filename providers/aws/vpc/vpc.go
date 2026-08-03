@@ -75,6 +75,12 @@ type Mock struct {
 	endpointServices   *memstore.Store[*driver.EndpointService]
 	clientVPNEndpoints *memstore.Store[*driver.ClientVPNEndpoint]
 	clientVPNAssocs    *memstore.Store[*driver.ClientVPNTargetNetwork]
+	clientVPNAuthRules *memstore.Store[*driver.ClientVPNAuthorizationRule]
+	clientVPNRoutes    *memstore.Store[*driver.ClientVPNRoute]
+
+	// endpointServicePerms holds allowed principals per endpoint-service id,
+	// guarded by mu.
+	endpointServicePerms map[string][]string
 
 	opts *config.Options
 }
@@ -138,6 +144,10 @@ func New(opts *config.Options) *Mock {
 		endpointServices:   memstore.New[*driver.EndpointService](),
 		clientVPNEndpoints: memstore.New[*driver.ClientVPNEndpoint](),
 		clientVPNAssocs:    memstore.New[*driver.ClientVPNTargetNetwork](),
+		clientVPNAuthRules: memstore.New[*driver.ClientVPNAuthorizationRule](),
+		clientVPNRoutes:    memstore.New[*driver.ClientVPNRoute](),
+
+		endpointServicePerms: map[string][]string{},
 
 		opts: opts,
 	}

@@ -29,6 +29,7 @@ type clientVPNEndpointXML struct {
 	Tags                 []tagItem          `xml:"tagSet>item,omitempty"`
 }
 
+//nolint:gocyclo // flat action dispatch table
 func (h *Handler) routeClientVPN(w http.ResponseWriter, r *http.Request, action string) bool {
 	c, ok := h.clientVPN()
 	if !ok {
@@ -46,6 +47,20 @@ func (h *Handler) routeClientVPN(w http.ResponseWriter, r *http.Request, action 
 		h.associateClientVPN(w, r, c)
 	case "DisassociateClientVpnTargetNetwork":
 		h.disassociateClientVPN(w, r, c)
+	case "DescribeClientVpnTargetNetworks":
+		h.describeClientVPNTargetNetworks(w, r, c)
+	case "AuthorizeClientVpnIngress":
+		h.authorizeClientVPNIngress(w, r, c)
+	case "RevokeClientVpnIngress":
+		h.revokeClientVPNIngress(w, r, c)
+	case "DescribeClientVpnAuthorizationRules":
+		h.describeClientVPNAuthRules(w, r, c)
+	case "CreateClientVpnRoute":
+		h.createClientVPNRoute(w, r, c)
+	case "DeleteClientVpnRoute":
+		h.deleteClientVPNRoute(w, r, c)
+	case "DescribeClientVpnRoutes":
+		h.describeClientVPNRoutes(w, r, c)
 	default:
 		return false
 	}
@@ -138,6 +153,166 @@ func (*Handler) disassociateClientVPN(w http.ResponseWriter, r *http.Request, c 
 		Req     string             `xml:"requestId"`
 		Status  clientVPNStatusXML `xml:"status"`
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Status: clientVPNStatusXML{Code: "disassociating"}})
+}
+
+type clientVPNTargetNetworkXML struct {
+	AssociationID       string             `xml:"associationId"`
+	ClientVpnEndpointID string             `xml:"clientVpnEndpointId"`
+	TargetNetworkID     string             `xml:"targetNetworkId"`
+	VpcID               string             `xml:"vpcId,omitempty"`
+	Status              clientVPNStatusXML `xml:"status"`
+}
+
+type clientVPNAuthRuleXML struct {
+	ClientVpnEndpointID string             `xml:"clientVpnEndpointId"`
+	DestinationCidr     string             `xml:"destinationCidr"`
+	GroupID             string             `xml:"groupId,omitempty"`
+	AccessAll           bool               `xml:"accessAll"`
+	Status              clientVPNStatusXML `xml:"status"`
+}
+
+type clientVPNRouteXML struct {
+	ClientVpnEndpointID string             `xml:"clientVpnEndpointId"`
+	DestinationCidr     string             `xml:"destinationCidr"`
+	TargetSubnet        string             `xml:"targetSubnet"`
+	Status              clientVPNStatusXML `xml:"status"`
+}
+
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeClientVPNTargetNetworks(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+	items, err := c.DescribeClientVPNTargetNetworks(r.Context(), r.Form.Get("ClientVpnEndpointId"))
+	if err != nil {
+		writeClientVPNErr(w, err)
+		return
+	}
+
+	out := make([]clientVPNTargetNetworkXML, 0, len(items))
+	for i := range items {
+		out = append(out, clientVPNTargetNetworkXML{
+			AssociationID: items[i].AssociationID, ClientVpnEndpointID: items[i].EndpointID,
+			TargetNetworkID: items[i].SubnetID, VpcID: items[i].VPCID,
+			Status: clientVPNStatusXML{Code: items[i].State},
+		})
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name                    `xml:"DescribeClientVpnTargetNetworksResponse"`
+		Xmlns   string                      `xml:"xmlns,attr"`
+		Req     string                      `xml:"requestId"`
+		Set     []clientVPNTargetNetworkXML `xml:"clientVpnTargetNetworks>item"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+}
+
+func (*Handler) authorizeClientVPNIngress(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+	out, err := c.AuthorizeClientVPNIngress(r.Context(), r.Form.Get("ClientVpnEndpointId"),
+		r.Form.Get("TargetNetworkCidr"), r.Form.Get("AccessGroupId"), r.Form.Get("AuthorizeAllGroups") == formTrue)
+	if err != nil {
+		writeClientVPNErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name           `xml:"AuthorizeClientVpnIngressResponse"`
+		Xmlns   string             `xml:"xmlns,attr"`
+		Req     string             `xml:"requestId"`
+		Status  clientVPNStatusXML `xml:"status"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Status: clientVPNStatusXML{Code: out.Status}})
+}
+
+func (*Handler) revokeClientVPNIngress(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+	err := c.RevokeClientVPNIngress(r.Context(), r.Form.Get("ClientVpnEndpointId"), r.Form.Get("TargetNetworkCidr"))
+	if err != nil {
+		writeClientVPNErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name           `xml:"RevokeClientVpnIngressResponse"`
+		Xmlns   string             `xml:"xmlns,attr"`
+		Req     string             `xml:"requestId"`
+		Status  clientVPNStatusXML `xml:"status"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Status: clientVPNStatusXML{Code: "revoking"}})
+}
+
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeClientVPNAuthRules(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+	items, err := c.DescribeClientVPNAuthorizationRules(r.Context(), r.Form.Get("ClientVpnEndpointId"))
+	if err != nil {
+		writeClientVPNErr(w, err)
+		return
+	}
+
+	out := make([]clientVPNAuthRuleXML, 0, len(items))
+	for i := range items {
+		out = append(out, clientVPNAuthRuleXML{
+			ClientVpnEndpointID: items[i].EndpointID, DestinationCidr: items[i].TargetCIDR,
+			GroupID: items[i].GroupID, AccessAll: items[i].AccessAll,
+			Status: clientVPNStatusXML{Code: items[i].Status},
+		})
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name               `xml:"DescribeClientVpnAuthorizationRulesResponse"`
+		Xmlns   string                 `xml:"xmlns,attr"`
+		Req     string                 `xml:"requestId"`
+		Set     []clientVPNAuthRuleXML `xml:"authorizationRule>item"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+}
+
+func (*Handler) createClientVPNRoute(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+	out, err := c.CreateClientVPNRoute(r.Context(), r.Form.Get("ClientVpnEndpointId"),
+		r.Form.Get("DestinationCidrBlock"), r.Form.Get("TargetVpcSubnetId"))
+	if err != nil {
+		writeClientVPNErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name           `xml:"CreateClientVpnRouteResponse"`
+		Xmlns   string             `xml:"xmlns,attr"`
+		Req     string             `xml:"requestId"`
+		Status  clientVPNStatusXML `xml:"status"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Status: clientVPNStatusXML{Code: out.Status}})
+}
+
+func (*Handler) deleteClientVPNRoute(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+	err := c.DeleteClientVPNRoute(r.Context(), r.Form.Get("ClientVpnEndpointId"),
+		r.Form.Get("DestinationCidrBlock"), r.Form.Get("TargetVpcSubnetId"))
+	if err != nil {
+		writeClientVPNErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name           `xml:"DeleteClientVpnRouteResponse"`
+		Xmlns   string             `xml:"xmlns,attr"`
+		Req     string             `xml:"requestId"`
+		Status  clientVPNStatusXML `xml:"status"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Status: clientVPNStatusXML{Code: "deleting"}})
+}
+
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeClientVPNRoutes(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+	items, err := c.DescribeClientVPNRoutes(r.Context(), r.Form.Get("ClientVpnEndpointId"))
+	if err != nil {
+		writeClientVPNErr(w, err)
+		return
+	}
+
+	out := make([]clientVPNRouteXML, 0, len(items))
+	for i := range items {
+		out = append(out, clientVPNRouteXML{
+			ClientVpnEndpointID: items[i].EndpointID, DestinationCidr: items[i].DestinationCIDR,
+			TargetSubnet: items[i].TargetSubnetID, Status: clientVPNStatusXML{Code: items[i].Status},
+		})
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name            `xml:"DescribeClientVpnRoutesResponse"`
+		Xmlns   string              `xml:"xmlns,attr"`
+		Req     string              `xml:"requestId"`
+		Set     []clientVPNRouteXML `xml:"routes>item"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
 func toClientVPNEndpointXML(e *netdriver.ClientVPNEndpoint) clientVPNEndpointXML {

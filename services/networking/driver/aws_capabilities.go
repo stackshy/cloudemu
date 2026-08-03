@@ -141,7 +141,14 @@ type VPNConnection struct {
 	Type              string
 	State             string
 	StaticRoutesOnly  bool
+	Routes            []VPNConnectionRoute
 	Tags              map[string]string
+}
+
+// VPNConnectionRoute is a static route on a site-to-site VPN connection.
+type VPNConnectionRoute struct {
+	DestinationCIDR string
+	State           string
 }
 
 // VPNConnectionConfig is the input to CreateVPNConnection.
@@ -169,6 +176,9 @@ type VPNConnections interface {
 	CreateVPNConnection(ctx context.Context, cfg VPNConnectionConfig) (*VPNConnection, error)
 	DeleteVPNConnection(ctx context.Context, id string) error
 	DescribeVPNConnections(ctx context.Context, ids []string) ([]VPNConnection, error)
+	CreateVPNConnectionRoute(ctx context.Context, vpnConnectionID, destinationCIDR string) error
+	DeleteVPNConnectionRoute(ctx context.Context, vpnConnectionID, destinationCIDR string) error
+	ModifyVPNConnection(ctx context.Context, id, transitGatewayID, vpnGatewayID string) (*VPNConnection, error)
 }
 
 // ---- DHCP Option Sets ----
@@ -229,6 +239,7 @@ type PrefixLists interface {
 	DeleteManagedPrefixList(ctx context.Context, id string) (*PrefixList, error)
 	DescribeManagedPrefixLists(ctx context.Context, ids []string) ([]PrefixList, error)
 	GetManagedPrefixListEntries(ctx context.Context, id string) ([]PrefixListEntry, error)
+	ModifyManagedPrefixList(ctx context.Context, id string, addEntries []PrefixListEntry, removeCIDRs []string) (*PrefixList, error)
 }
 
 // ---- Egress-only Internet Gateway (IPv6) ----
@@ -273,6 +284,8 @@ type VPCEndpointServices interface {
 	CreateVPCEndpointServiceConfiguration(ctx context.Context, cfg EndpointServiceConfig) (*EndpointService, error)
 	DeleteVPCEndpointServiceConfiguration(ctx context.Context, id string) error
 	DescribeVPCEndpointServiceConfigurations(ctx context.Context, ids []string) ([]EndpointService, error)
+	ModifyVPCEndpointServicePermissions(ctx context.Context, serviceID string, addPrincipals, removePrincipals []string) error
+	DescribeVPCEndpointServicePermissions(ctx context.Context, serviceID string) ([]string, error)
 }
 
 // ---- Client VPN ----
@@ -307,6 +320,23 @@ type ClientVPNTargetNetwork struct {
 	State         string
 }
 
+// ClientVPNAuthorizationRule authorizes a client CIDR to reach a target network.
+type ClientVPNAuthorizationRule struct {
+	EndpointID string
+	TargetCIDR string
+	GroupID    string
+	AccessAll  bool
+	Status     string
+}
+
+// ClientVPNRoute is a route on a Client VPN endpoint.
+type ClientVPNRoute struct {
+	EndpointID      string
+	DestinationCIDR string
+	TargetSubnetID  string
+	Status          string
+}
+
 // ClientVPN is an OPTIONAL AWS capability (type-asserted).
 type ClientVPN interface {
 	CreateClientVPNEndpoint(ctx context.Context, cfg ClientVPNEndpointConfig) (*ClientVPNEndpoint, error)
@@ -314,4 +344,11 @@ type ClientVPN interface {
 	DescribeClientVPNEndpoints(ctx context.Context, ids []string) ([]ClientVPNEndpoint, error)
 	AssociateClientVPNTargetNetwork(ctx context.Context, endpointID, subnetID string) (*ClientVPNTargetNetwork, error)
 	DisassociateClientVPNTargetNetwork(ctx context.Context, endpointID, associationID string) error
+	DescribeClientVPNTargetNetworks(ctx context.Context, endpointID string) ([]ClientVPNTargetNetwork, error)
+	AuthorizeClientVPNIngress(ctx context.Context, endpointID, targetCIDR, groupID string, accessAll bool) (*ClientVPNAuthorizationRule, error)
+	RevokeClientVPNIngress(ctx context.Context, endpointID, targetCIDR string) error
+	DescribeClientVPNAuthorizationRules(ctx context.Context, endpointID string) ([]ClientVPNAuthorizationRule, error)
+	CreateClientVPNRoute(ctx context.Context, endpointID, destinationCIDR, targetSubnetID string) (*ClientVPNRoute, error)
+	DeleteClientVPNRoute(ctx context.Context, endpointID, destinationCIDR, targetSubnetID string) error
+	DescribeClientVPNRoutes(ctx context.Context, endpointID string) ([]ClientVPNRoute, error)
 }

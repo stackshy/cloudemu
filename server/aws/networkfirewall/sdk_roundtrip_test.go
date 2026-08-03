@@ -88,6 +88,66 @@ func TestSDKNetworkFirewall(t *testing.T) {
 	require.Len(t, descFw.Firewall.SubnetMappings, 1)
 	assert.Equal(t, "subnet-1", aws.ToString(descFw.Firewall.SubnetMappings[0].SubnetId))
 
+	// Depth: subnet association, delete protection, logging, tags.
+	_, err = client.AssociateSubnets(ctx, &networkfirewall.AssociateSubnetsInput{
+		FirewallName:   aws.String("fw-1"),
+		SubnetMappings: []nftypes.SubnetMapping{{SubnetId: aws.String("subnet-2")}},
+	})
+	require.NoError(t, err)
+
+	descAfterAssoc, err := client.DescribeFirewall(ctx, &networkfirewall.DescribeFirewallInput{
+		FirewallName: aws.String("fw-1"),
+	})
+	require.NoError(t, err)
+	assert.Len(t, descAfterAssoc.Firewall.SubnetMappings, 2)
+
+	_, err = client.DisassociateSubnets(ctx, &networkfirewall.DisassociateSubnetsInput{
+		FirewallName: aws.String("fw-1"), SubnetIds: []string{"subnet-2"},
+	})
+	require.NoError(t, err)
+
+	_, err = client.UpdateFirewallDeleteProtection(ctx, &networkfirewall.UpdateFirewallDeleteProtectionInput{
+		FirewallName: aws.String("fw-1"), DeleteProtection: true,
+	})
+	require.NoError(t, err)
+
+	_, err = client.UpdateLoggingConfiguration(ctx, &networkfirewall.UpdateLoggingConfigurationInput{
+		FirewallName: aws.String("fw-1"),
+		LoggingConfiguration: &nftypes.LoggingConfiguration{
+			LogDestinationConfigs: []nftypes.LogDestinationConfig{{
+				LogType:            nftypes.LogTypeFlow,
+				LogDestinationType: nftypes.LogDestinationTypeCloudwatchLogs,
+				LogDestination:     map[string]string{"logGroup": "nf-logs"},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	descLog, err := client.DescribeLoggingConfiguration(ctx, &networkfirewall.DescribeLoggingConfigurationInput{
+		FirewallName: aws.String("fw-1"),
+	})
+	require.NoError(t, err)
+	require.Len(t, descLog.LoggingConfiguration.LogDestinationConfigs, 1)
+	assert.Equal(t, nftypes.LogTypeFlow, descLog.LoggingConfiguration.LogDestinationConfigs[0].LogType)
+
+	fwARN := aws.ToString(descFw.Firewall.FirewallArn)
+	_, err = client.TagResource(ctx, &networkfirewall.TagResourceInput{
+		ResourceArn: aws.String(fwARN),
+		Tags:        []nftypes.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+	})
+	require.NoError(t, err)
+
+	_, err = client.UntagResource(ctx, &networkfirewall.UntagResourceInput{
+		ResourceArn: aws.String(fwARN), TagKeys: []string{"env"},
+	})
+	require.NoError(t, err)
+
+	// Turn off delete protection so the delete below succeeds.
+	_, err = client.UpdateFirewallDeleteProtection(ctx, &networkfirewall.UpdateFirewallDeleteProtectionInput{
+		FirewallName: aws.String("fw-1"), DeleteProtection: false,
+	})
+	require.NoError(t, err)
+
 	// List + delete.
 	list, err := client.ListFirewalls(ctx, &networkfirewall.ListFirewallsInput{})
 	require.NoError(t, err)

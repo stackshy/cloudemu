@@ -20,6 +20,7 @@ type Mock struct {
 	firewalls  *memstore.Store[*nfdriver.Firewall]
 	policies   *memstore.Store[*nfdriver.FirewallPolicy]
 	ruleGroups *memstore.Store[*nfdriver.RuleGroup]
+	logging    map[string][]string
 	opts       *config.Options
 }
 
@@ -29,6 +30,7 @@ func New(opts *config.Options) *Mock {
 		firewalls:  memstore.New[*nfdriver.Firewall](),
 		policies:   memstore.New[*nfdriver.FirewallPolicy](),
 		ruleGroups: memstore.New[*nfdriver.RuleGroup](),
+		logging:    map[string][]string{},
 		opts:       opts,
 	}
 }
@@ -334,4 +336,176 @@ func nonEmpty(a, b string) string {
 	}
 
 	return b
+}
+
+// ---- Firewall depth: associations, protection, logging, tags ----
+
+// AssociateFirewallPolicy attaches a firewall policy to a firewall.
+func (m *Mock) AssociateFirewallPolicy(_ context.Context, firewallName, policyARN string) (*nfdriver.Firewall, error) {
+	fw, ok := m.firewalls.Get(firewallName)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
+	}
+
+	fw.PolicyARN = policyARN
+
+	out := cloneFirewall(fw)
+
+	return &out, nil
+}
+
+// AssociateSubnets adds subnet mappings to a firewall.
+//
+//nolint:gocritic // slice matches the driver signature.
+func (m *Mock) AssociateSubnets(_ context.Context, firewallName string, subnetIDs []string) (*nfdriver.Firewall, error) {
+	fw, ok := m.firewalls.Get(firewallName)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
+	}
+
+	seen := make(map[string]bool, len(fw.SubnetIDs))
+	for _, s := range fw.SubnetIDs {
+		seen[s] = true
+	}
+
+	for _, s := range subnetIDs {
+		if !seen[s] {
+			fw.SubnetIDs = append(fw.SubnetIDs, s)
+			seen[s] = true
+		}
+	}
+
+	out := cloneFirewall(fw)
+
+	return &out, nil
+}
+
+// DisassociateSubnets removes subnet mappings from a firewall.
+//
+//nolint:gocritic // slice matches the driver signature.
+func (m *Mock) DisassociateSubnets(_ context.Context, firewallName string, subnetIDs []string) (*nfdriver.Firewall, error) {
+	fw, ok := m.firewalls.Get(firewallName)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
+	}
+
+	remove := make(map[string]bool, len(subnetIDs))
+	for _, s := range subnetIDs {
+		remove[s] = true
+	}
+
+	kept := fw.SubnetIDs[:0:0]
+
+	for _, s := range fw.SubnetIDs {
+		if !remove[s] {
+			kept = append(kept, s)
+		}
+	}
+
+	fw.SubnetIDs = kept
+
+	out := cloneFirewall(fw)
+
+	return &out, nil
+}
+
+// UpdateFirewallDeleteProtection toggles delete protection on a firewall.
+func (m *Mock) UpdateFirewallDeleteProtection(_ context.Context, firewallName string, enabled bool) (*nfdriver.Firewall, error) {
+	fw, ok := m.firewalls.Get(firewallName)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
+	}
+
+	fw.DeleteProtection = enabled
+
+	out := cloneFirewall(fw)
+
+	return &out, nil
+}
+
+// UpdateLoggingConfiguration sets the firewall's log types.
+//
+//nolint:gocritic // slice matches the driver signature.
+func (m *Mock) UpdateLoggingConfiguration(_ context.Context, firewallName string, logTypes []string) error {
+	if !m.firewalls.Has(firewallName) {
+		return cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
+	}
+
+	m.logging[firewallName] = append([]string(nil), logTypes...)
+
+	return nil
+}
+
+// DescribeLoggingConfiguration returns the firewall's log types.
+func (m *Mock) DescribeLoggingConfiguration(_ context.Context, firewallName string) ([]string, error) {
+	if !m.firewalls.Has(firewallName) {
+		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
+	}
+
+	return append([]string(nil), m.logging[firewallName]...), nil
+}
+
+// TagResource adds tags to a firewall / policy / rule group by ARN.
+func (m *Mock) TagResource(_ context.Context, arn string, tags map[string]string) error {
+	if t := m.taggableByARN(arn); t != nil {
+		for k, v := range tags {
+			t[k] = v
+		}
+
+		return nil
+	}
+
+	return cerrors.Newf(cerrors.NotFound, "resource %q not found", arn)
+}
+
+// UntagResource removes tags from a firewall / policy / rule group by ARN.
+//
+//nolint:gocritic // keys slice matches the driver signature.
+func (m *Mock) UntagResource(_ context.Context, arn string, keys []string) error {
+	t := m.taggableByARN(arn)
+	if t == nil {
+		return cerrors.Newf(cerrors.NotFound, "resource %q not found", arn)
+	}
+
+	for _, k := range keys {
+		delete(t, k)
+	}
+
+	return nil
+}
+
+// taggableByARN returns the mutable Tags map of the resource with the given ARN,
+// creating it if nil, or nil when no resource matches.
+func (m *Mock) taggableByARN(arn string) map[string]string {
+	for _, f := range m.firewalls.SortedValues() {
+		if f.ARN == arn {
+			if f.Tags == nil {
+				f.Tags = map[string]string{}
+			}
+
+			return f.Tags
+		}
+	}
+
+	for _, p := range m.policies.SortedValues() {
+		if p.ARN == arn {
+			if p.Tags == nil {
+				p.Tags = map[string]string{}
+			}
+
+			return p.Tags
+		}
+	}
+
+	for _, rg := range m.ruleGroups.SortedValues() {
+		if rg.ARN == arn {
+			if rg.Tags == nil {
+				rg.Tags = map[string]string{}
+			}
+
+			return rg.Tags
+		}
+	}
+
+	return nil
 }

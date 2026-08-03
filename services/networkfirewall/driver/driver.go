@@ -87,4 +87,13 @@ type NetworkFirewall interface {
 	DescribeRuleGroup(ctx context.Context, name, arn, ruleType string) (*RuleGroup, error)
 	DeleteRuleGroup(ctx context.Context, name, arn, ruleType string) (*RuleGroup, error)
 	ListRuleGroups(ctx context.Context) ([]RuleGroup, error)
+
+	AssociateFirewallPolicy(ctx context.Context, firewallName, policyARN string) (*Firewall, error)
+	AssociateSubnets(ctx context.Context, firewallName string, subnetIDs []string) (*Firewall, error)
+	DisassociateSubnets(ctx context.Context, firewallName string, subnetIDs []string) (*Firewall, error)
+	UpdateFirewallDeleteProtection(ctx context.Context, firewallName string, enabled bool) (*Firewall, error)
+	UpdateLoggingConfiguration(ctx context.Context, firewallName string, logTypes []string) error
+	DescribeLoggingConfiguration(ctx context.Context, firewallName string) ([]string, error)
+	TagResource(ctx context.Context, arn string, tags map[string]string) error
+	UntagResource(ctx context.Context, arn string, keys []string) error
 }

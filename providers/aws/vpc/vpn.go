@@ -171,6 +171,75 @@ func (m *Mock) DescribeVPNConnections(_ context.Context, ids []string) ([]driver
 	return describeResources(m.vpnConnections, ids, cloneVPNConnection), nil
 }
 
+// CreateVPNConnectionRoute adds a static route to a VPN connection.
+func (m *Mock) CreateVPNConnectionRoute(_ context.Context, vpnConnectionID, destinationCIDR string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	vpn, ok := m.vpnConnections.Get(vpnConnectionID)
+	if !ok {
+		return errors.Newf(errors.NotFound, "vpn connection %q not found", vpnConnectionID)
+	}
+
+	for _, rt := range vpn.Routes {
+		if rt.DestinationCIDR == destinationCIDR {
+			return nil
+		}
+	}
+
+	vpn.Routes = append(vpn.Routes, driver.VPNConnectionRoute{DestinationCIDR: destinationCIDR, State: "available"})
+
+	return nil
+}
+
+// DeleteVPNConnectionRoute removes a static route from a VPN connection.
+func (m *Mock) DeleteVPNConnectionRoute(_ context.Context, vpnConnectionID, destinationCIDR string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	vpn, ok := m.vpnConnections.Get(vpnConnectionID)
+	if !ok {
+		return errors.Newf(errors.NotFound, "vpn connection %q not found", vpnConnectionID)
+	}
+
+	kept := vpn.Routes[:0:0]
+
+	for _, rt := range vpn.Routes {
+		if rt.DestinationCIDR != destinationCIDR {
+			kept = append(kept, rt)
+		}
+	}
+
+	vpn.Routes = kept
+
+	return nil
+}
+
+// ModifyVPNConnection re-targets a VPN connection to a different gateway.
+func (m *Mock) ModifyVPNConnection(_ context.Context, id, transitGatewayID, vpnGatewayID string) (*driver.VPNConnection, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	vpn, ok := m.vpnConnections.Get(id)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "vpn connection %q not found", id)
+	}
+
+	if transitGatewayID != "" {
+		vpn.TransitGatewayID = transitGatewayID
+		vpn.VPNGatewayID = ""
+	}
+
+	if vpnGatewayID != "" {
+		vpn.VPNGatewayID = vpnGatewayID
+		vpn.TransitGatewayID = ""
+	}
+
+	out := cloneVPNConnection(vpn)
+
+	return &out, nil
+}
+
 func cloneCustomerGateway(c *driver.CustomerGateway) driver.CustomerGateway {
 	out := *c
 	out.Tags = copyTags(c.Tags)
@@ -188,6 +257,7 @@ func cloneVPNGateway(v *driver.VPNGateway) driver.VPNGateway {
 func cloneVPNConnection(v *driver.VPNConnection) driver.VPNConnection {
 	out := *v
 	out.Tags = copyTags(v.Tags)
+	out.Routes = append([]driver.VPNConnectionRoute(nil), v.Routes...)
 
 	return out
 }

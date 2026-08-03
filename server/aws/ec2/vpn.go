@@ -39,13 +39,19 @@ type vpnAttachmentXML struct {
 }
 
 type vpnConnectionXML struct {
-	VpnConnectionID   string    `xml:"vpnConnectionId"`
-	CustomerGatewayID string    `xml:"customerGatewayId"`
-	VpnGatewayID      string    `xml:"vpnGatewayId,omitempty"`
-	TransitGatewayID  string    `xml:"transitGatewayId,omitempty"`
-	Type              string    `xml:"type"`
-	State             string    `xml:"state"`
-	Tags              []tagItem `xml:"tagSet>item,omitempty"`
+	VpnConnectionID   string        `xml:"vpnConnectionId"`
+	CustomerGatewayID string        `xml:"customerGatewayId"`
+	VpnGatewayID      string        `xml:"vpnGatewayId,omitempty"`
+	TransitGatewayID  string        `xml:"transitGatewayId,omitempty"`
+	Type              string        `xml:"type"`
+	State             string        `xml:"state"`
+	Routes            []vpnRouteXML `xml:"routes>item,omitempty"`
+	Tags              []tagItem     `xml:"tagSet>item,omitempty"`
+}
+
+type vpnRouteXML struct {
+	DestinationCidrBlock string `xml:"destinationCidrBlock"`
+	State                string `xml:"state"`
 }
 
 //nolint:gocyclo // flat action dispatch table
@@ -78,6 +84,12 @@ func (h *Handler) routeVPN(w http.ResponseWriter, r *http.Request, action string
 		h.deleteVPNConnection(w, r, v)
 	case "DescribeVpnConnections":
 		h.describeVPNConnections(w, r, v)
+	case "CreateVpnConnectionRoute":
+		h.createVPNConnectionRoute(w, r, v)
+	case "DeleteVpnConnectionRoute":
+		h.deleteVPNConnectionRoute(w, r, v)
+	case "ModifyVpnConnection":
+		h.modifyVPNConnection(w, r, v)
 	default:
 		return false
 	}
@@ -264,6 +276,42 @@ func (*Handler) describeVPNConnections(w http.ResponseWriter, r *http.Request, v
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
+func (*Handler) createVPNConnectionRoute(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+	err := v.CreateVPNConnectionRoute(r.Context(), r.Form.Get("VpnConnectionId"), r.Form.Get("DestinationCidrBlock"))
+	if err != nil {
+		writeVPNErr(w, err)
+		return
+	}
+
+	writeReturnTrue(w, "CreateVpnConnectionRouteResponse")
+}
+
+func (*Handler) deleteVPNConnectionRoute(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+	err := v.DeleteVPNConnectionRoute(r.Context(), r.Form.Get("VpnConnectionId"), r.Form.Get("DestinationCidrBlock"))
+	if err != nil {
+		writeVPNErr(w, err)
+		return
+	}
+
+	writeReturnTrue(w, "DeleteVpnConnectionRouteResponse")
+}
+
+func (*Handler) modifyVPNConnection(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+	out, err := v.ModifyVPNConnection(r.Context(),
+		r.Form.Get("VpnConnectionId"), r.Form.Get("TransitGatewayId"), r.Form.Get("VpnGatewayId"))
+	if err != nil {
+		writeVPNErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name         `xml:"ModifyVpnConnectionResponse"`
+		Xmlns   string           `xml:"xmlns,attr"`
+		Req     string           `xml:"requestId"`
+		VPN     vpnConnectionXML `xml:"vpnConnection"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, VPN: toVPNConnectionXML(out)})
+}
+
 func toCustomerGatewayXML(c *netdriver.CustomerGateway) customerGatewayXML {
 	return customerGatewayXML{
 		CustomerGatewayID: c.ID, IPAddress: c.IPAddress, BgpAsn: strconv.FormatInt(c.BGPASN, 10),
@@ -284,10 +332,16 @@ func toVPNGatewayXML(v *netdriver.VPNGateway) vpnGatewayXML {
 }
 
 func toVPNConnectionXML(v *netdriver.VPNConnection) vpnConnectionXML {
-	return vpnConnectionXML{
+	x := vpnConnectionXML{
 		VpnConnectionID: v.ID, CustomerGatewayID: v.CustomerGatewayID, VpnGatewayID: v.VPNGatewayID,
 		TransitGatewayID: v.TransitGatewayID, Type: v.Type, State: v.State, Tags: toTagItems(v.Tags),
 	}
+
+	for _, rt := range v.Routes {
+		x.Routes = append(x.Routes, vpnRouteXML{DestinationCidrBlock: rt.DestinationCIDR, State: rt.State})
+	}
+
+	return x
 }
 
 func writeVPNErr(w http.ResponseWriter, err error) {

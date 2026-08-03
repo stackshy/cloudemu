@@ -37,6 +37,10 @@ func (h *Handler) routeEndpointServices(w http.ResponseWriter, r *http.Request, 
 		h.deleteEndpointService(w, r, s)
 	case "DescribeVpcEndpointServiceConfigurations":
 		h.describeEndpointServices(w, r, s)
+	case "ModifyVpcEndpointServicePermissions":
+		h.modifyEndpointServicePermissions(w, r, s)
+	case "DescribeVpcEndpointServicePermissions":
+		h.describeEndpointServicePermissions(w, r, s)
 	default:
 		return false
 	}
@@ -98,6 +102,47 @@ func (*Handler) describeEndpointServices(w http.ResponseWriter, r *http.Request,
 		Req     string               `xml:"requestId"`
 		Set     []endpointServiceXML `xml:"serviceConfigurationSet>item"`
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+}
+
+func (*Handler) modifyEndpointServicePermissions(w http.ResponseWriter, r *http.Request, s netdriver.VPCEndpointServices) {
+	err := s.ModifyVPCEndpointServicePermissions(r.Context(), r.Form.Get("ServiceId"),
+		awsquery.ListStrings(r.Form, "AddAllowedPrincipals"), awsquery.ListStrings(r.Form, "RemoveAllowedPrincipals"))
+	if err != nil {
+		writeEndpointServiceErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName     xml.Name `xml:"ModifyVpcEndpointServicePermissionsResponse"`
+		Xmlns       string   `xml:"xmlns,attr"`
+		Req         string   `xml:"requestId"`
+		ReturnValue bool     `xml:"returnValue"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, ReturnValue: true})
+}
+
+func (*Handler) describeEndpointServicePermissions(w http.ResponseWriter, r *http.Request, s netdriver.VPCEndpointServices) {
+	principals, err := s.DescribeVPCEndpointServicePermissions(r.Context(), r.Form.Get("ServiceId"))
+	if err != nil {
+		writeEndpointServiceErr(w, err)
+		return
+	}
+
+	type principalXML struct {
+		PrincipalType string `xml:"principalType"`
+		Principal     string `xml:"principal"`
+	}
+
+	out := make([]principalXML, 0, len(principals))
+	for _, p := range principals {
+		out = append(out, principalXML{PrincipalType: "Account", Principal: p})
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName    xml.Name       `xml:"DescribeVpcEndpointServicePermissionsResponse"`
+		Xmlns      string         `xml:"xmlns,attr"`
+		Req        string         `xml:"requestId"`
+		Principals []principalXML `xml:"allowedPrincipals>item"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Principals: out})
 }
 
 func toEndpointServiceXML(s *netdriver.EndpointService) endpointServiceXML {

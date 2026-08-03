@@ -136,6 +136,31 @@ func TestVPNLifecycle(t *testing.T) {
 		t.Fatalf("vpn connection without gateway: got %v, want InvalidArgument", err)
 	}
 
+	// Static route depth.
+	if err := m.CreateVPNConnectionRoute(ctx, vpn.ID, "192.168.0.0/16"); err != nil {
+		t.Fatalf("CreateVPNConnectionRoute: %v", err)
+	}
+
+	// Duplicate route is a no-op.
+	if err := m.CreateVPNConnectionRoute(ctx, vpn.ID, "192.168.0.0/16"); err != nil {
+		t.Fatalf("CreateVPNConnectionRoute dup: %v", err)
+	}
+
+	gotVPN, _ := m.DescribeVPNConnections(ctx, []string{vpn.ID})
+	if len(gotVPN) != 1 || len(gotVPN[0].Routes) != 1 {
+		t.Fatalf("vpn routes wrong: %+v", gotVPN)
+	}
+
+	// Re-target to a transit gateway clears the vpn gateway.
+	mod, err := m.ModifyVPNConnection(ctx, vpn.ID, "tgw-1", "")
+	if err != nil || mod.TransitGatewayID != "tgw-1" || mod.VPNGatewayID != "" {
+		t.Fatalf("ModifyVPNConnection: %v %+v", err, mod)
+	}
+
+	if err := m.DeleteVPNConnectionRoute(ctx, vpn.ID, "192.168.0.0/16"); err != nil {
+		t.Fatalf("DeleteVPNConnectionRoute: %v", err)
+	}
+
 	if err := m.DetachVPNGateway(ctx, vgw.ID, vpcID); err != nil {
 		t.Fatalf("DetachVPNGateway: %v", err)
 	}
@@ -183,6 +208,18 @@ func TestDHCPPrefixEgressEndpointClientVPN(t *testing.T) {
 		t.Fatalf("prefix list entries: %+v", entries)
 	}
 
+	// Modify: swap the entry, version bumps.
+	mod, err := m.ModifyManagedPrefixList(ctx, pl.ID,
+		[]driver.PrefixListEntry{{CIDR: "172.16.0.0/12"}}, []string{"10.0.0.0/8"})
+	if err != nil || mod.Version != 2 {
+		t.Fatalf("ModifyManagedPrefixList: %v %+v", err, mod)
+	}
+
+	entries2, _ := m.GetManagedPrefixListEntries(ctx, pl.ID)
+	if len(entries2) != 1 || entries2[0].CIDR != "172.16.0.0/12" {
+		t.Fatalf("prefix list after modify: %+v", entries2)
+	}
+
 	// Egress-only IGW.
 	if _, err := m.CreateEgressOnlyInternetGateway(ctx, "vpc-nope", nil); !cerrors.IsInvalidArgument(err) {
 		t.Fatalf("egress-only under missing vpc: got %v, want InvalidArgument", err)
@@ -205,6 +242,27 @@ func TestDHCPPrefixEgressEndpointClientVPN(t *testing.T) {
 		t.Fatalf("CreateVPCEndpointServiceConfiguration: %v %+v", err, svc)
 	}
 
+	// Endpoint-service permissions: add then remove.
+	if err := m.ModifyVPCEndpointServicePermissions(ctx, svc.ID,
+		[]string{"arn:aws:iam::111122223333:root", "arn:aws:iam::444455556666:root"}, nil); err != nil {
+		t.Fatalf("ModifyVPCEndpointServicePermissions add: %v", err)
+	}
+
+	perms, _ := m.DescribeVPCEndpointServicePermissions(ctx, svc.ID)
+	if len(perms) != 2 {
+		t.Fatalf("endpoint service perms after add: %+v", perms)
+	}
+
+	if err := m.ModifyVPCEndpointServicePermissions(ctx, svc.ID,
+		nil, []string{"arn:aws:iam::444455556666:root"}); err != nil {
+		t.Fatalf("ModifyVPCEndpointServicePermissions remove: %v", err)
+	}
+
+	perms, _ = m.DescribeVPCEndpointServicePermissions(ctx, svc.ID)
+	if len(perms) != 1 || perms[0] != "arn:aws:iam::111122223333:root" {
+		t.Fatalf("endpoint service perms after remove: %+v", perms)
+	}
+
 	// Client VPN.
 	ep, err := m.CreateClientVPNEndpoint(ctx, driver.ClientVPNEndpointConfig{
 		ClientCIDRBlock: "10.100.0.0/16", ServerCertificateARN: "arn:aws:acm:us-east-1:0:certificate/abc",
@@ -221,6 +279,43 @@ func TestDHCPPrefixEgressEndpointClientVPN(t *testing.T) {
 	got, _ := m.DescribeClientVPNEndpoints(ctx, []string{ep.ID})
 	if len(got) != 1 || got[0].State != "available" {
 		t.Fatalf("client vpn not available after associate: %+v", got)
+	}
+
+	nets, err := m.DescribeClientVPNTargetNetworks(ctx, ep.ID)
+	if err != nil || len(nets) != 1 {
+		t.Fatalf("DescribeClientVPNTargetNetworks: %v %+v", err, nets)
+	}
+
+	// Authorization rules.
+	if _, err := m.AuthorizeClientVPNIngress(ctx, ep.ID, "10.0.0.0/16", "", true); err != nil {
+		t.Fatalf("AuthorizeClientVPNIngress: %v", err)
+	}
+
+	rules, _ := m.DescribeClientVPNAuthorizationRules(ctx, ep.ID)
+	if len(rules) != 1 || rules[0].TargetCIDR != "10.0.0.0/16" {
+		t.Fatalf("auth rules: %+v", rules)
+	}
+
+	if err := m.RevokeClientVPNIngress(ctx, ep.ID, "10.0.0.0/16"); err != nil {
+		t.Fatalf("RevokeClientVPNIngress: %v", err)
+	}
+
+	if rules, _ := m.DescribeClientVPNAuthorizationRules(ctx, ep.ID); len(rules) != 0 {
+		t.Fatalf("auth rule survived revoke: %+v", rules)
+	}
+
+	// Routes.
+	if _, err := m.CreateClientVPNRoute(ctx, ep.ID, "0.0.0.0/0", subnetID); err != nil {
+		t.Fatalf("CreateClientVPNRoute: %v", err)
+	}
+
+	routes, _ := m.DescribeClientVPNRoutes(ctx, ep.ID)
+	if len(routes) != 1 || routes[0].DestinationCIDR != "0.0.0.0/0" {
+		t.Fatalf("client vpn routes: %+v", routes)
+	}
+
+	if err := m.DeleteClientVPNRoute(ctx, ep.ID, "0.0.0.0/0", subnetID); err != nil {
+		t.Fatalf("DeleteClientVPNRoute: %v", err)
 	}
 
 	if err := m.DisassociateClientVPNTargetNetwork(ctx, ep.ID, assoc.AssociationID); err != nil {

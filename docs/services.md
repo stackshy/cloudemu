@@ -543,15 +543,15 @@ assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
 
 | Capability | Operations |
 |-----------|-----------|
-| Transit Gateway | CreateTransitGateway, DeleteTransitGateway, DescribeTransitGateways; VPC attachments (Create/Delete/Describe); route tables (Create/Delete/Describe) |
-| VPN | CustomerGateway (Create/Delete/Describe); VpnGateway (Create/Delete/Describe/Attach/Detach); VpnConnection (Create/Delete/Describe) |
+| Transit Gateway | CreateTransitGateway, DeleteTransitGateway, DescribeTransitGateways; VPC attachments (Create/Delete/Describe); route tables (Create/Delete/Describe); routes (Create/Delete/Search); route-table Associate + Enable/DisableRouteTablePropagation |
+| VPN | CustomerGateway (Create/Delete/Describe); VpnGateway (Create/Delete/Describe/Attach/Detach); VpnConnection (Create/Delete/Describe/ModifyVpnConnection); VpnConnectionRoute (Create/Delete) |
 | DHCP option sets | Create, Delete, Describe, Associate |
-| Managed prefix lists | Create, Delete, Describe, GetEntries |
+| Managed prefix lists | Create, Delete, Describe, GetEntries, Modify |
 | Egress-only internet gateways | Create, Delete, Describe |
-| VPC endpoint services (PrivateLink) | Create, Delete, Describe |
-| Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork |
+| VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
+| Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
 
-**AWS-specific total: 35 operations**
+**AWS-specific total: 54 operations**
 
 ---
 
@@ -2261,8 +2261,8 @@ still sees success.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
-| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN) | 35 |
-| Network Firewall — AWS | 12 |
+| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN) | 54 |
+| Network Firewall — AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
 | DNS | 15 |
@@ -2293,7 +2293,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1462** (+138 optional) |
+| **Grand Total** | **1489** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

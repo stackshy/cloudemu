@@ -78,6 +78,16 @@ func TestEC2NetworkingParitySDK(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, routes.Routes, 1)
 		assert.Equal(t, "10.1.0.0/16", aws.ToString(routes.Routes[0].DestinationCidrBlock))
+
+		_, err = client.EnableTransitGatewayRouteTablePropagation(ctx, &ec2.EnableTransitGatewayRouteTablePropagationInput{
+			TransitGatewayRouteTableId: aws.String(rtID), TransitGatewayAttachmentId: aws.String(attID),
+		})
+		require.NoError(t, err)
+
+		_, err = client.DeleteTransitGatewayRoute(ctx, &ec2.DeleteTransitGatewayRouteInput{
+			TransitGatewayRouteTableId: aws.String(rtID), DestinationCidrBlock: aws.String("10.1.0.0/16"),
+		})
+		require.NoError(t, err)
 	})
 
 	t.Run("vpn", func(t *testing.T) {
@@ -101,10 +111,23 @@ func TestEC2NetworkingParitySDK(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, cgwID, aws.ToString(vpn.VpnConnection.CustomerGatewayId))
+		vpnID := aws.ToString(vpn.VpnConnection.VpnConnectionId)
+
+		_, err = client.CreateVpnConnectionRoute(ctx, &ec2.CreateVpnConnectionRouteInput{
+			VpnConnectionId: aws.String(vpnID), DestinationCidrBlock: aws.String("192.168.0.0/16"),
+		})
+		require.NoError(t, err)
 
 		desc, err := client.DescribeVpnConnections(ctx, &ec2.DescribeVpnConnectionsInput{})
 		require.NoError(t, err)
-		assert.Len(t, desc.VpnConnections, 1)
+		require.Len(t, desc.VpnConnections, 1)
+		require.Len(t, desc.VpnConnections[0].Routes, 1)
+		assert.Equal(t, "192.168.0.0/16", aws.ToString(desc.VpnConnections[0].Routes[0].DestinationCidrBlock))
+
+		_, err = client.DeleteVpnConnectionRoute(ctx, &ec2.DeleteVpnConnectionRouteInput{
+			VpnConnectionId: aws.String(vpnID), DestinationCidrBlock: aws.String("192.168.0.0/16"),
+		})
+		require.NoError(t, err)
 	})
 
 	t.Run("dhcp options", func(t *testing.T) {
@@ -137,6 +160,21 @@ func TestEC2NetworkingParitySDK(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, entries.Entries, 1)
 		assert.Equal(t, "10.0.0.0/8", aws.ToString(entries.Entries[0].Cidr))
+
+		mod, err := client.ModifyManagedPrefixList(ctx, &ec2.ModifyManagedPrefixListInput{
+			PrefixListId:  aws.String(id),
+			AddEntries:    []ec2types.AddPrefixListEntry{{Cidr: aws.String("172.16.0.0/12")}},
+			RemoveEntries: []ec2types.RemovePrefixListEntry{{Cidr: aws.String("10.0.0.0/8")}},
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, mod.PrefixList)
+
+		entries2, err := client.GetManagedPrefixListEntries(ctx, &ec2.GetManagedPrefixListEntriesInput{
+			PrefixListId: aws.String(id),
+		})
+		require.NoError(t, err)
+		require.Len(t, entries2.Entries, 1)
+		assert.Equal(t, "172.16.0.0/12", aws.ToString(entries2.Entries[0].Cidr))
 	})
 
 	t.Run("egress-only internet gateway", func(t *testing.T) {
@@ -152,7 +190,21 @@ func TestEC2NetworkingParitySDK(t *testing.T) {
 			NetworkLoadBalancerArns: []string{"arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/net/x/1"},
 		})
 		require.NoError(t, err)
-		assert.NotEmpty(t, aws.ToString(out.ServiceConfiguration.ServiceId))
+		svcID := aws.ToString(out.ServiceConfiguration.ServiceId)
+		assert.NotEmpty(t, svcID)
+
+		_, err = client.ModifyVpcEndpointServicePermissions(ctx, &ec2.ModifyVpcEndpointServicePermissionsInput{
+			ServiceId:            aws.String(svcID),
+			AddAllowedPrincipals: []string{"arn:aws:iam::111122223333:root"},
+		})
+		require.NoError(t, err)
+
+		perms, err := client.DescribeVpcEndpointServicePermissions(ctx, &ec2.DescribeVpcEndpointServicePermissionsInput{
+			ServiceId: aws.String(svcID),
+		})
+		require.NoError(t, err)
+		require.Len(t, perms.AllowedPrincipals, 1)
+		assert.Equal(t, "arn:aws:iam::111122223333:root", aws.ToString(perms.AllowedPrincipals[0].Principal))
 	})
 
 	t.Run("client vpn", func(t *testing.T) {
@@ -173,5 +225,37 @@ func TestEC2NetworkingParitySDK(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.NotEmpty(t, aws.ToString(assoc.AssociationId))
+
+		nets, err := client.DescribeClientVpnTargetNetworks(ctx, &ec2.DescribeClientVpnTargetNetworksInput{
+			ClientVpnEndpointId: aws.String(epID),
+		})
+		require.NoError(t, err)
+		require.Len(t, nets.ClientVpnTargetNetworks, 1)
+
+		_, err = client.AuthorizeClientVpnIngress(ctx, &ec2.AuthorizeClientVpnIngressInput{
+			ClientVpnEndpointId: aws.String(epID), TargetNetworkCidr: aws.String("10.0.0.0/16"),
+			AuthorizeAllGroups: aws.Bool(true),
+		})
+		require.NoError(t, err)
+
+		rules, err := client.DescribeClientVpnAuthorizationRules(ctx, &ec2.DescribeClientVpnAuthorizationRulesInput{
+			ClientVpnEndpointId: aws.String(epID),
+		})
+		require.NoError(t, err)
+		require.Len(t, rules.AuthorizationRules, 1)
+		assert.Equal(t, "10.0.0.0/16", aws.ToString(rules.AuthorizationRules[0].DestinationCidr))
+
+		_, err = client.CreateClientVpnRoute(ctx, &ec2.CreateClientVpnRouteInput{
+			ClientVpnEndpointId: aws.String(epID), DestinationCidrBlock: aws.String("0.0.0.0/0"),
+			TargetVpcSubnetId: aws.String(subnetID),
+		})
+		require.NoError(t, err)
+
+		vpnRoutes, err := client.DescribeClientVpnRoutes(ctx, &ec2.DescribeClientVpnRoutesInput{
+			ClientVpnEndpointId: aws.String(epID),
+		})
+		require.NoError(t, err)
+		require.Len(t, vpnRoutes.Routes, 1)
+		assert.Equal(t, "0.0.0.0/0", aws.ToString(vpnRoutes.Routes[0].DestinationCidr))
 	})
 }
