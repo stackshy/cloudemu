@@ -67,6 +67,14 @@ func (h *Handler) converseStream(w http.ResponseWriter, r *http.Request, modelID
 		return
 	}
 
+	// Drain any bytes the JSON decoder left unread (e.g. a trailing newline)
+	// before switching to a streamed chunked response. With the request body
+	// unread, net/http can't finish the connection gracefully and tears it down
+	// when the handler returns, which under load races the client's in-flight
+	// read of the event stream and surfaces as "use of closed network
+	// connection". invokeModelStream already reads the whole body via io.ReadAll.
+	_, _ = io.Copy(io.Discard, r.Body)
+
 	out, err := h.bedrock.Converse(r.Context(), toConverseInput(modelID, &in))
 	if err != nil {
 		writeErr(w, err)
