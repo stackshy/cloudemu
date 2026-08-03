@@ -223,6 +223,15 @@ func (d sqlDiscovery) DiscoverDatabases(
 		out = append(out, resourcediscovery.DiscoveredDatabase{
 			Name: mis[i].Name, Type: resourcediscovery.TypeManagedInstance,
 			Region: mis[i].Location, ARN: mis[i].ARN, Tags: mis[i].Tags,
+			Attrs: resourcediscovery.Attributes{
+				SKU: mis[i].SKUName,
+				Properties: nonEmptyProps(map[string]any{
+					"vCores":          mis[i].VCores,
+					"storageSizeInGB": mis[i].StorageGB,
+					"tier":            mis[i].SKUTier,
+					"licenseType":     mis[i].LicenseType,
+				}),
+			},
 		})
 	}
 
@@ -233,11 +242,46 @@ func appendFlexServers(
 	out []resourcediscovery.DiscoveredDatabase, insts []rdsdriver.Instance, typ string,
 ) []resourcediscovery.DiscoveredDatabase {
 	for i := range insts {
+		ha := "Disabled"
+		if insts[i].MultiAZ {
+			ha = "ZoneRedundant"
+		}
+
 		out = append(out, resourcediscovery.DiscoveredDatabase{
 			Name: insts[i].ID, Type: typ, Region: insts[i].AvailabilityZone,
 			ARN: insts[i].ARN, Tags: insts[i].Tags,
+			Attrs: resourcediscovery.Attributes{
+				SKU: insts[i].InstanceClass,
+				Properties: nonEmptyProps(map[string]any{
+					"storage":          map[string]any{"storageSizeGB": insts[i].AllocatedStorage},
+					"highAvailability": map[string]any{"mode": ha},
+				}),
+			},
 		})
 	}
 
 	return out
+}
+
+// nonEmptyProps drops zero-valued entries so the Properties bag only carries
+// attributes the resource actually has, and returns nil for an empty result.
+func nonEmptyProps(m map[string]any) map[string]any {
+	for k, v := range m {
+		switch val := v.(type) {
+		case string:
+			if val == "" {
+				delete(m, k)
+			}
+		case int:
+			if val == 0 {
+				delete(m, k)
+			}
+		}
+	}
+
+	if len(m) == 0 {
+		return nil
+	}
+
+	return m
 }

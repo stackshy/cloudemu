@@ -208,21 +208,64 @@ func applyLimit(results []resourcediscovery.Resource, kqlLimit, top, skip int) [
 	return results
 }
 
-// resourceToWire formats one Resource into the Azure Resource Graph row
-// shape: { id, name, type, location, resourceGroup, subscriptionId, tags }.
-// The portable Type is translated back to the canonical Azure type string.
+// resourceToWire formats one Resource into the Azure Resource Graph row shape.
+// The fixed columns (id, name, type, location, resourceGroup, subscriptionId,
+// tags) are always present; the resource-shape columns (sku, properties,
+// managedBy, kind, zones) are emitted from the Resource's generic attribute
+// slots only when set — the same rendering for every resource type, with no
+// per-type branching. id is the ARM resource ID and resourceGroup is derived
+// from it (real Resource Graph consumers parse both).
 func resourceToWire(r *resourcediscovery.Resource) map[string]any {
 	out := map[string]any{
 		"id":             r.ARN,
 		"name":           r.ID,
 		"type":           portableToAzureType(r.Service, r.Type),
 		"location":       r.Region,
-		"resourceGroup":  "default",
+		"resourceGroup":  resourceGroupOrDefault(r.ARN),
 		"subscriptionId": extractSubscription(r.ARN),
 		"tags":           tagsOrEmpty(r.Tags),
 	}
 
+	if r.SKU != "" {
+		out["sku"] = map[string]any{"name": r.SKU}
+	}
+
+	if r.ManagedBy != "" {
+		out["managedBy"] = r.ManagedBy
+	}
+
+	if r.Kind != "" {
+		out["kind"] = r.Kind
+	}
+
+	if len(r.Zones) > 0 {
+		out["zones"] = r.Zones
+	}
+
+	if len(r.Properties) > 0 {
+		out["properties"] = r.Properties
+	}
+
 	return out
+}
+
+// resourceGroupOrDefault pulls the resource group out of an Azure resource ID
+// (/subscriptions/<id>/resourceGroups/<rg>/...), case-insensitively. Falls back
+// to "default" for IDs that don't carry one.
+func resourceGroupOrDefault(id string) string {
+	const key = "/resourcegroups/"
+
+	i := strings.Index(strings.ToLower(id), key)
+	if i < 0 {
+		return "default"
+	}
+
+	rest := id[i+len(key):]
+	if j := strings.IndexByte(rest, '/'); j >= 0 {
+		return rest[:j]
+	}
+
+	return rest
 }
 
 func tagsOrEmpty(tags map[string]string) map[string]string {
@@ -255,6 +298,7 @@ func extractSubscription(arn string) string {
 // pairs grow.
 var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	"compute/Instance":                    "microsoft.compute/virtualmachines",
+	"compute/Volume":                      "microsoft.compute/disks",
 	"networking/VPC":                      "microsoft.network/virtualnetworks",
 	"networking/Subnet":                   "microsoft.network/subnets",
 	"networking/SecurityGroup":            "microsoft.network/networksecuritygroups",

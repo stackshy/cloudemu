@@ -48,6 +48,22 @@ type DiscoveredDatabase struct {
 	Region string
 	Type   string
 	Tags   map[string]string
+
+	// Attrs carries the same generic slots as Resource (SKU/Properties/…) so a
+	// provider adapter can project a DB's compute SKU, storage, and HA mode
+	// without a bespoke per-cloud struct.
+	Attrs Attributes
+}
+
+// Attributes is the generic, resource-agnostic attribute set every Discovered*
+// projection can carry, mirroring the slots on Resource. The walker copies it
+// onto the emitted Resource verbatim, so no walker branches on resource type.
+type Attributes struct {
+	SKU        string
+	Kind       string
+	ManagedBy  string
+	Zones      []string
+	Properties map[string]any
 }
 
 // KubernetesClusters is the discovery capability for managed Kubernetes —
@@ -78,6 +94,10 @@ type DiscoveredCluster struct {
 	ARN           string
 	Tags          map[string]string
 	NodeGroups    []string
+
+	// Attrs carries the generic slots (SKU/Properties/…) for the cluster
+	// resource, mirroring Resource.
+	Attrs Attributes
 }
 
 // Engine walks all configured service drivers and returns a normalized
