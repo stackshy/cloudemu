@@ -21,6 +21,7 @@ import (
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -160,6 +161,72 @@ func TestSDKResourceGraph(t *testing.T) {
 		assert.Contains(t, id, "Microsoft.Network")
 		assert.Equal(t, "123456789012", row["subscriptionId"])
 	})
+}
+
+// TestSDKResourceGraph_ResourceFields pins issue #315: Resource Graph rows must
+// carry resource-type-specific fields (VM sku.name; managed-disk rows with
+// sku.name, properties.diskSizeGB, and managedBy) so a real discovery + cost
+// consumer can price SKU/size-sensitive resources offline.
+func TestSDKResourceGraph_ResourceFields(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	insts, err := cloudP.VirtualMachines.RunInstances(ctx,
+		computedriver.InstanceConfig{InstanceType: "Standard_D2s_v3"}, 1)
+	require.NoError(t, err)
+	require.Len(t, insts, 1)
+
+	vol, err := cloudP.VirtualMachines.CreateVolume(ctx,
+		computedriver.VolumeConfig{Size: 4, VolumeType: "Premium_LRS"})
+	require.NoError(t, err)
+	require.NoError(t, cloudP.VirtualMachines.AttachVolume(ctx, vol.ID, insts[0].ID, "/dev/sda"))
+
+	srv := azureserver.New(azureserver.Drivers{
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		SubscriptionID:    "123456789012",
+	})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newResourceGraphClient(t, ts)
+
+	out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
+		Query: to.Ptr("Resources | where type in~ ('microsoft.compute/virtualmachines'," +
+			"'microsoft.compute/disks') | project id,name,type,location,resourceGroup,managedBy,properties,sku,tags,zones"),
+	}, nil)
+	require.NoError(t, err)
+
+	data := out.Data.([]any)
+	require.Len(t, data, 2, "expect the VM and its disk")
+
+	vm := findRowByType(t, data, "microsoft.compute/virtualmachines")
+	disk := findRowByType(t, data, "microsoft.compute/disks")
+
+	// VM: sku.name is the VM size; id is an ARM-shaped resource id.
+	assert.Equal(t, "Standard_D2s_v3", vm["sku"].(map[string]any)["name"])
+	assert.Contains(t, vm["id"], "/providers/Microsoft.Compute/virtualMachines/")
+	assert.Equal(t, insts[0].ID, vm["name"], "name is the short resource name")
+
+	// Disk: sku.name = tier, properties.diskSizeGB = provisioned size, managedBy
+	// = the owning VM's id (JSON numbers decode as float64).
+	assert.Equal(t, "Premium_LRS", disk["sku"].(map[string]any)["name"])
+	assert.EqualValues(t, 4, disk["properties"].(map[string]any)["diskSizeGB"])
+	assert.Equal(t, vm["id"], disk["managedBy"], "disk managedBy links to the VM id")
+}
+
+func findRowByType(t *testing.T, data []any, typ string) map[string]any {
+	t.Helper()
+
+	for _, d := range data {
+		row := d.(map[string]any)
+		if row["type"] == typ {
+			return row
+		}
+	}
+
+	t.Fatalf("no row of type %q in %v", typ, data)
+
+	return nil
 }
 
 // TestSDKResourceGraph_DatabricksIndexing pins issue #225: Databricks ARM

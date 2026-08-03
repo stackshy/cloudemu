@@ -33,6 +33,7 @@ const (
 // Resource type constants emitted by the walkers.
 const (
 	TypeInstance      = "Instance"
+	TypeVolume        = "Volume"
 	TypeVPC           = "VPC"
 	TypeSubnet        = "Subnet"
 	TypeSecurityGroup = "SecurityGroup"
@@ -72,15 +73,73 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 	}
 
 	out := make([]Resource, 0, len(instances))
+
 	for i := range instances {
+		inst := &instances[i]
+
+		props := map[string]any{}
+		putStr(props, "osType", inst.OSType)
+		putStr(props, "priority", inst.Priority)
+		putStr(props, "licenseType", inst.LicenseType)
+
 		out = append(out, Resource{
-			Provider: e.provider,
-			Service:  ServiceCompute,
-			Type:     TypeInstance,
-			ID:       instances[i].ID,
-			ARN:      e.computeInstanceARN(instances[i].ID),
-			Region:   e.region,
-			Tags:     copyTags(instances[i].Tags),
+			Provider:   e.provider,
+			Service:    ServiceCompute,
+			Type:       TypeInstance,
+			ID:         inst.ID,
+			ARN:        e.computeInstanceARN(inst.ID),
+			Region:     e.region,
+			Tags:       copyTags(inst.Tags),
+			SKU:        inst.InstanceType,
+			Zones:      cloneStrings(inst.Zones),
+			Properties: orNilProps(props),
+		})
+	}
+
+	vols, err := e.walkVolumes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(out, vols...), nil
+}
+
+// walkVolumes surfaces block volumes (EBS / Azure managed disks / GCE PDs) as
+// first-class resources, so a discoverer sees them the way the real cloud APIs
+// do. ManagedBy links the volume to its owning instance.
+func (e *Engine) walkVolumes(ctx context.Context) ([]Resource, error) {
+	vols, err := e.drivers.Compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkCompute volumes: %w", err)
+	}
+
+	out := make([]Resource, 0, len(vols))
+
+	for i := range vols {
+		v := &vols[i]
+
+		props := map[string]any{"diskSizeGB": v.Size}
+		putInt(props, "diskIOPSReadWrite", v.IOPS)
+		putInt(props, "diskMBpsReadWrite", v.Throughput)
+		putStr(props, "diskState", v.State)
+
+		managedBy := ""
+		if v.AttachedTo != "" {
+			managedBy = e.computeInstanceARN(v.AttachedTo)
+		}
+
+		out = append(out, Resource{
+			Provider:   e.provider,
+			Service:    ServiceCompute,
+			Type:       TypeVolume,
+			ID:         shortName(v.ID),
+			ARN:        e.computeVolumeARN(v.ID),
+			Region:     e.region,
+			Tags:       copyTags(v.Tags),
+			SKU:        v.VolumeType,
+			ManagedBy:  managedBy,
+			Zones:      zonesOf(v.AvailabilityZone),
+			Properties: props,
 		})
 	}
 
@@ -339,12 +398,14 @@ func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
 			clusterARN = e.kubernetesClusterARN(region, c.ResourceGroup, c.Name)
 		}
 
-		out = append(out, Resource{
+		cluster := Resource{
 			Provider: e.provider, Service: ServiceKubernetes, Type: TypeCluster,
 			ID:     c.Name,
 			ARN:    clusterARN,
 			Region: region, Tags: copyTags(c.Tags),
-		})
+		}
+		applyAttrs(&cluster, &c.Attrs)
+		out = append(out, cluster)
 
 		for _, ng := range c.NodeGroups {
 			out = append(out, Resource{
@@ -385,12 +446,14 @@ func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
 			typ = TypeDBInstance
 		}
 
-		out = append(out, Resource{
+		r := Resource{
 			Provider: e.provider, Service: ServiceRelationalDB, Type: typ,
 			ID:     d.Name,
 			ARN:    d.ARN,
 			Region: region, Tags: copyTags(d.Tags),
-		})
+		}
+		applyAttrs(&r, &d.Attrs)
+		out = append(out, r)
 	}
 
 	return out, nil
@@ -407,4 +470,78 @@ func copyTags(src map[string]string) map[string]string {
 	}
 
 	return out
+}
+
+// applyAttrs copies the generic attribute slots from a Discovered* projection
+// onto the emitted Resource. Kept in one place so every walker fills the slots
+// identically, with no per-type branching.
+func applyAttrs(r *Resource, a *Attributes) {
+	r.SKU = a.SKU
+	r.Kind = a.Kind
+	r.ManagedBy = a.ManagedBy
+	r.Zones = cloneStrings(a.Zones)
+	r.Properties = cloneProps(a.Properties)
+}
+
+func cloneStrings(s []string) []string {
+	if len(s) == 0 {
+		return nil
+	}
+
+	return append([]string(nil), s...)
+}
+
+func cloneProps(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+
+	return out
+}
+
+// orNilProps returns nil for an empty map so an empty Properties bag is omitted
+// downstream rather than rendered as an empty object.
+func orNilProps(m map[string]any) map[string]any {
+	if len(m) == 0 {
+		return nil
+	}
+
+	return m
+}
+
+func putStr(m map[string]any, key, val string) {
+	if val != "" {
+		m[key] = val
+	}
+}
+
+func putInt(m map[string]any, key string, val int) {
+	if val > 0 {
+		m[key] = val
+	}
+}
+
+func zonesOf(zone string) []string {
+	if zone == "" {
+		return nil
+	}
+
+	return []string{zone}
+}
+
+// shortName returns the last path segment of an id (the resource's short name),
+// or the id unchanged when it has no separator.
+func shortName(id string) string {
+	for i := len(id) - 1; i >= 0; i-- {
+		if id[i] == '/' {
+			return id[i+1:]
+		}
+	}
+
+	return id
 }

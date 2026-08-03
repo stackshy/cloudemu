@@ -15,6 +15,13 @@ import "time"
 // Resource is the normalized cross-cloud resource shape. Every walker emits
 // resources in this form so callers can filter, search, and tag-query
 // uniformly regardless of provider or service.
+//
+// The attribute slots below (SKU, Kind, ManagedBy, Zones, Properties) are a
+// uniform, resource-agnostic way to carry the type-specific shape a real cloud
+// API returns (a VM size, a disk tier + size, a DB compute SKU, …). Every
+// walker fills the same slots from its driver's fields, and every row-builder
+// renders them the same way, so no layer branches on a specific resource or
+// provider type. All slots are optional — an empty slot is omitted downstream.
 type Resource struct {
 	Provider  string
 	Service   string
@@ -24,6 +31,18 @@ type Resource struct {
 	Region    string
 	Tags      map[string]string
 	CreatedAt time.Time
+
+	// SKU is the size/tier identifier (VM size, disk tier, DB compute SKU).
+	SKU string
+	// Kind is an optional resource sub-kind.
+	Kind string
+	// ManagedBy is the id of an owning/parent resource (e.g. a disk's VM).
+	ManagedBy string
+	// Zones are the availability zones the resource occupies.
+	Zones []string
+	// Properties is an open bag of resource-specific attributes (e.g. disk
+	// size, OS type, HA mode) keyed by the cloud-native property name.
+	Properties map[string]any
 }
 
 // Query filters a list operation. All non-empty fields must match. Tags match

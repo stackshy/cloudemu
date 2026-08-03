@@ -31,6 +31,16 @@ type Instance struct {
 	SecurityGroups []string
 	Tags           map[string]string
 	LaunchTime     string
+	// OSType is the guest OS family ("Linux"/"Windows"), when known.
+	OSType string
+	// Priority is the provisioning priority ("Spot"/"Regular"), when known —
+	// used by cost consumers to price interruptible instances.
+	Priority string
+	// LicenseType is a bring-your-own-license / hybrid-benefit marker
+	// ("Windows_Server"/"RHEL_BYOS"), when set.
+	LicenseType string
+	// Zones are the availability zones the instance occupies, when known.
+	Zones []string
 	// Operator carries service-provider managed-resource metadata. It is nil
 	// for ordinary (unmanaged) instances.
 	Operator *OperatorInfo
@@ -159,6 +169,10 @@ type VolumeInfo struct {
 	Device           string
 	CreatedAt        string
 	Tags             map[string]string
+	// IOPS is the provisioned IOPS (io2/gp3, Premium/Ultra disks), when set.
+	IOPS int
+	// Throughput is the provisioned throughput in MB/s, when set.
+	Throughput int
 }
 
 // SnapshotConfig describes a snapshot to create.

@@ -36,6 +36,42 @@ func (e *Engine) computeInstanceARN(id string) string {
 	}
 }
 
+// computeVolumeARN canonicalizes a block-volume id. When the driver already
+// hands back a fully-qualified id (an Azure managed-disk ARM path, a GCP
+// self-link, or an AWS ARN) it is used verbatim; otherwise a per-provider id
+// is built from the short id.
+func (e *Engine) computeVolumeARN(id string) string {
+	if isQualifiedID(id) {
+		return id
+	}
+
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("ec2", e.region, e.accountID, "volume/"+id)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Compute", "disks", id)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "zones/"+e.region+"/disks", id)
+	default:
+		return id
+	}
+}
+
+// isQualifiedID reports whether id is already a canonical cloud identifier and
+// should be used as-is rather than rebuilt.
+func isQualifiedID(id string) bool {
+	switch {
+	case len(id) >= 4 && id[:4] == "arn:":
+		return true
+	case len(id) >= 1 && id[0] == '/':
+		return true
+	case len(id) >= 8 && id[:8] == "https://":
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *Engine) networkARN(kind, id string) string {
 	switch e.provider {
 	case ProviderAWS:
