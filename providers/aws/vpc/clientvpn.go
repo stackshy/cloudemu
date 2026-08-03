@@ -9,8 +9,6 @@ import (
 )
 
 // CreateClientVPNEndpoint creates a Client VPN endpoint.
-//
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateClientVPNEndpoint(_ context.Context, cfg driver.ClientVPNEndpointConfig) (*driver.ClientVPNEndpoint, error) {
 	if cfg.ClientCIDRBlock == "" {
 		return nil, errors.New(errors.InvalidArgument, "clientCidrBlock is required")

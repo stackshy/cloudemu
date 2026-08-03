@@ -9,8 +9,6 @@ import (
 )
 
 // CreateManagedPrefixList creates a customer-managed prefix list.
-//
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateManagedPrefixList(_ context.Context, cfg driver.PrefixListConfig) (*driver.PrefixList, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "prefix list name is required")
@@ -45,6 +43,7 @@ func (m *Mock) DeleteManagedPrefixList(_ context.Context, id string) (*driver.Pr
 	}
 
 	pl.State = "delete-complete"
+
 	m.prefixLists.Delete(id)
 
 	out := clonePrefixList(pl)

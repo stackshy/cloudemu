@@ -17,8 +17,6 @@ func orDefaultStr(v, def string) string {
 }
 
 // CreateCustomerGateway creates a customer gateway (the on-prem VPN endpoint).
-//
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateCustomerGateway(_ context.Context, cfg driver.CustomerGatewayConfig) (*driver.CustomerGateway, error) {
 	if cfg.IPAddress == "" {
 		return nil, errors.New(errors.InvalidArgument, "customer gateway IP address is required")
@@ -54,8 +52,6 @@ func (m *Mock) DescribeCustomerGateways(_ context.Context, ids []string) ([]driv
 }
 
 // CreateVPNGateway creates a virtual private gateway.
-//
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateVPNGateway(_ context.Context, cfg driver.VPNGatewayConfig) (*driver.VPNGateway, error) {
 	asn := cfg.AmazonSideASN
 	if asn == 0 {

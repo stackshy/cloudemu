@@ -9,8 +9,6 @@ import (
 )
 
 // CreateDHCPOptions creates a DHCP option set.
-//
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateDHCPOptions(_ context.Context, cfg driver.DHCPOptionsConfig) (*driver.DHCPOptions, error) {
 	opt := &driver.DHCPOptions{
 		ID:            idgen.GenerateID("dopt-"),

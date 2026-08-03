@@ -11,8 +11,6 @@ import (
 const defaultAmazonSideASN = 64512
 
 // CreateTransitGateway creates a transit gateway.
-//
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateTransitGateway(_ context.Context, cfg driver.TransitGatewayConfig) (*driver.TransitGateway, error) {
 	asn := cfg.ASN
 	if asn == 0 {
@@ -41,7 +39,8 @@ func (m *Mock) DeleteTransitGateway(_ context.Context, id string) (*driver.Trans
 		return nil, errors.Newf(errors.NotFound, "transit gateway %q not found", id)
 	}
 
-	tgw.State = "deleted"
+	tgw.State = NATStateDeleted
+
 	m.transitGateways.Delete(id)
 
 	out := cloneTGW(tgw)
@@ -55,8 +54,6 @@ func (m *Mock) DescribeTransitGateways(_ context.Context, ids []string) ([]drive
 }
 
 // CreateTransitGatewayVPCAttachment attaches a VPC to a transit gateway.
-//
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateTransitGatewayVPCAttachment(
 	_ context.Context, cfg driver.TransitGatewayVPCAttachmentConfig,
 ) (*driver.TransitGatewayVPCAttachment, error) {
@@ -90,7 +87,8 @@ func (m *Mock) DeleteTransitGatewayVPCAttachment(_ context.Context, id string) (
 		return nil, errors.Newf(errors.NotFound, "transit gateway attachment %q not found", id)
 	}
 
-	att.State = "deleted"
+	att.State = NATStateDeleted
+
 	m.tgwAttachments.Delete(id)
 
 	out := cloneTGWAttachment(att)
@@ -131,7 +129,8 @@ func (m *Mock) DeleteTransitGatewayRouteTable(_ context.Context, id string) (*dr
 		return nil, errors.Newf(errors.NotFound, "transit gateway route table %q not found", id)
 	}
 
-	rt.State = "deleted"
+	rt.State = NATStateDeleted
+
 	m.tgwRouteTables.Delete(id)
 
 	out := cloneTGWRouteTable(rt)

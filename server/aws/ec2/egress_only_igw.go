@@ -45,7 +45,8 @@ func (h *Handler) routeEgressOnlyIGW(w http.ResponseWriter, r *http.Request, act
 	return true
 }
 
-func (h *Handler) createEgressOnlyIGW(w http.ResponseWriter, r *http.Request, e netdriver.EgressOnlyInternetGateways) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) createEgressOnlyIGW(w http.ResponseWriter, r *http.Request, e netdriver.EgressOnlyInternetGateways) {
 	out, err := e.CreateEgressOnlyInternetGateway(r.Context(), r.Form.Get("VpcId"),
 		mergeTagSpecs(awsquery.TagSpecs(r.Form), "egress-only-internet-gateway"))
 	if err != nil {
@@ -61,7 +62,7 @@ func (h *Handler) createEgressOnlyIGW(w http.ResponseWriter, r *http.Request, e 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Gateway: toEgressOnlyIGWXML(out)})
 }
 
-func (h *Handler) deleteEgressOnlyIGW(w http.ResponseWriter, r *http.Request, e netdriver.EgressOnlyInternetGateways) {
+func (*Handler) deleteEgressOnlyIGW(w http.ResponseWriter, r *http.Request, e netdriver.EgressOnlyInternetGateways) {
 	if err := e.DeleteEgressOnlyInternetGateway(r.Context(), r.Form.Get("EgressOnlyInternetGatewayId")); err != nil {
 		writeEgressOnlyErr(w, err)
 		return
@@ -75,7 +76,8 @@ func (h *Handler) deleteEgressOnlyIGW(w http.ResponseWriter, r *http.Request, e 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, ReturnCode: true})
 }
 
-func (h *Handler) describeEgressOnlyIGWs(w http.ResponseWriter, r *http.Request, e netdriver.EgressOnlyInternetGateways) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeEgressOnlyIGWs(w http.ResponseWriter, r *http.Request, e netdriver.EgressOnlyInternetGateways) {
 	items, err := e.DescribeEgressOnlyInternetGateways(r.Context(), awsquery.ListStrings(r.Form, "EgressOnlyInternetGatewayId"))
 	if err != nil {
 		writeEgressOnlyErr(w, err)

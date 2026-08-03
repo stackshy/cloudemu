@@ -45,6 +45,7 @@ type transitGatewayRouteTableXML struct {
 	Tags                       []tagItem `xml:"tagSet>item,omitempty"`
 }
 
+//nolint:gocyclo // flat action dispatch table
 func (h *Handler) routeTransitGateways(w http.ResponseWriter, r *http.Request, action string) bool {
 	tg, ok := h.transitGateways()
 	if !ok {
@@ -77,8 +78,9 @@ func (h *Handler) routeTransitGateways(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-func (h *Handler) createTransitGateway(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) createTransitGateway(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	asn, _ := strconv.ParseInt(r.Form.Get("Options.AmazonSideAsn"), 10, 64)
+
 	out, err := tg.CreateTransitGateway(r.Context(), netdriver.TransitGatewayConfig{
 		ASN:         asn,
 		Description: r.Form.Get("Description"),
@@ -97,7 +99,7 @@ func (h *Handler) createTransitGateway(w http.ResponseWriter, r *http.Request, t
 	}{Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, TransitGateway: toTGWXML(out)})
 }
 
-func (h *Handler) deleteTransitGateway(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) deleteTransitGateway(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	out, err := tg.DeleteTransitGateway(r.Context(), r.Form.Get("TransitGatewayId"))
 	if err != nil {
 		writeTGWErr(w, err)
@@ -112,7 +114,8 @@ func (h *Handler) deleteTransitGateway(w http.ResponseWriter, r *http.Request, t
 	}{Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, TransitGateway: toTGWXML(out)})
 }
 
-func (h *Handler) describeTransitGateways(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeTransitGateways(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	items, err := tg.DescribeTransitGateways(r.Context(), awsquery.ListStrings(r.Form, "TransitGatewayIds"))
 	if err != nil {
 		writeTGWErr(w, err)
@@ -132,7 +135,7 @@ func (h *Handler) describeTransitGateways(w http.ResponseWriter, r *http.Request
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
-func (h *Handler) createTGWAttachment(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) createTGWAttachment(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	out, err := tg.CreateTransitGatewayVPCAttachment(r.Context(), netdriver.TransitGatewayVPCAttachmentConfig{
 		TransitGatewayID: r.Form.Get("TransitGatewayId"),
 		VPCID:            r.Form.Get("VpcId"),
@@ -152,7 +155,7 @@ func (h *Handler) createTGWAttachment(w http.ResponseWriter, r *http.Request, tg
 	}{Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, Attachment: toTGWAttachmentXML(out)})
 }
 
-func (h *Handler) deleteTGWAttachment(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) deleteTGWAttachment(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	out, err := tg.DeleteTransitGatewayVPCAttachment(r.Context(), r.Form.Get("TransitGatewayAttachmentId"))
 	if err != nil {
 		writeTGWErr(w, err)
@@ -167,7 +170,8 @@ func (h *Handler) deleteTGWAttachment(w http.ResponseWriter, r *http.Request, tg
 	}{Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, Attachment: toTGWAttachmentXML(out)})
 }
 
-func (h *Handler) describeTGWAttachments(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeTGWAttachments(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	items, err := tg.DescribeTransitGatewayVPCAttachments(r.Context(), awsquery.ListStrings(r.Form, "TransitGatewayAttachmentIds"))
 	if err != nil {
 		writeTGWErr(w, err)
@@ -187,7 +191,8 @@ func (h *Handler) describeTGWAttachments(w http.ResponseWriter, r *http.Request,
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
-func (h *Handler) createTGWRouteTable(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) createTGWRouteTable(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	out, err := tg.CreateTransitGatewayRouteTable(r.Context(), r.Form.Get("TransitGatewayId"),
 		mergeTagSpecs(awsquery.TagSpecs(r.Form), "transit-gateway-route-table"))
 	if err != nil {
@@ -203,7 +208,7 @@ func (h *Handler) createTGWRouteTable(w http.ResponseWriter, r *http.Request, tg
 	}{Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, RouteTable: toTGWRouteTableXML(out)})
 }
 
-func (h *Handler) deleteTGWRouteTable(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) deleteTGWRouteTable(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	out, err := tg.DeleteTransitGatewayRouteTable(r.Context(), r.Form.Get("TransitGatewayRouteTableId"))
 	if err != nil {
 		writeTGWErr(w, err)
@@ -218,7 +223,8 @@ func (h *Handler) deleteTGWRouteTable(w http.ResponseWriter, r *http.Request, tg
 	}{Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, RouteTable: toTGWRouteTableXML(out)})
 }
 
-func (h *Handler) describeTGWRouteTables(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeTGWRouteTables(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	items, err := tg.DescribeTransitGatewayRouteTables(r.Context(), awsquery.ListStrings(r.Form, "TransitGatewayRouteTableIds"))
 	if err != nil {
 		writeTGWErr(w, err)

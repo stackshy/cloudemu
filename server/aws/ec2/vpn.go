@@ -85,8 +85,9 @@ func (h *Handler) routeVPN(w http.ResponseWriter, r *http.Request, action string
 	return true
 }
 
-func (h *Handler) createCustomerGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+func (*Handler) createCustomerGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	asn, _ := strconv.ParseInt(r.Form.Get("BgpAsn"), 10, 64)
+
 	out, err := v.CreateCustomerGateway(r.Context(), netdriver.CustomerGatewayConfig{
 		IPAddress: nonEmpty(r.Form.Get("PublicIp"), r.Form.Get("IpAddress")),
 		BGPASN:    asn,
@@ -106,7 +107,7 @@ func (h *Handler) createCustomerGateway(w http.ResponseWriter, r *http.Request, 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, CGW: toCustomerGatewayXML(out)})
 }
 
-func (h *Handler) deleteCustomerGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+func (*Handler) deleteCustomerGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	if err := v.DeleteCustomerGateway(r.Context(), r.Form.Get("CustomerGatewayId")); err != nil {
 		writeVPNErr(w, err)
 		return
@@ -115,7 +116,8 @@ func (h *Handler) deleteCustomerGateway(w http.ResponseWriter, r *http.Request, 
 	writeReturnTrue(w, "DeleteCustomerGatewayResponse")
 }
 
-func (h *Handler) describeCustomerGateways(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeCustomerGateways(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	items, err := v.DescribeCustomerGateways(r.Context(), awsquery.ListStrings(r.Form, "CustomerGatewayId"))
 	if err != nil {
 		writeVPNErr(w, err)
@@ -135,8 +137,9 @@ func (h *Handler) describeCustomerGateways(w http.ResponseWriter, r *http.Reques
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
-func (h *Handler) createVPNGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+func (*Handler) createVPNGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	asn, _ := strconv.ParseInt(r.Form.Get("AmazonSideAsn"), 10, 64)
+
 	out, err := v.CreateVPNGateway(r.Context(), netdriver.VPNGatewayConfig{
 		Type:          r.Form.Get("Type"),
 		AmazonSideASN: asn,
@@ -155,7 +158,7 @@ func (h *Handler) createVPNGateway(w http.ResponseWriter, r *http.Request, v net
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, VGW: toVPNGatewayXML(out)})
 }
 
-func (h *Handler) deleteVPNGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+func (*Handler) deleteVPNGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	if err := v.DeleteVPNGateway(r.Context(), r.Form.Get("VpnGatewayId")); err != nil {
 		writeVPNErr(w, err)
 		return
@@ -164,7 +167,8 @@ func (h *Handler) deleteVPNGateway(w http.ResponseWriter, r *http.Request, v net
 	writeReturnTrue(w, "DeleteVpnGatewayResponse")
 }
 
-func (h *Handler) describeVPNGateways(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeVPNGateways(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	items, err := v.DescribeVPNGateways(r.Context(), awsquery.ListStrings(r.Form, "VpnGatewayId"))
 	if err != nil {
 		writeVPNErr(w, err)
@@ -184,7 +188,7 @@ func (h *Handler) describeVPNGateways(w http.ResponseWriter, r *http.Request, v 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
-func (h *Handler) attachVPNGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+func (*Handler) attachVPNGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	out, err := v.AttachVPNGateway(r.Context(), r.Form.Get("VpnGatewayId"), r.Form.Get("VpcId"))
 	if err != nil {
 		writeVPNErr(w, err)
@@ -199,7 +203,7 @@ func (h *Handler) attachVPNGateway(w http.ResponseWriter, r *http.Request, v net
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Attachment: vpnAttachmentXML{VpcID: out.AttachedVPCID, State: out.AttachmentState}})
 }
 
-func (h *Handler) detachVPNGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+func (*Handler) detachVPNGateway(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	if err := v.DetachVPNGateway(r.Context(), r.Form.Get("VpnGatewayId"), r.Form.Get("VpcId")); err != nil {
 		writeVPNErr(w, err)
 		return
@@ -208,7 +212,7 @@ func (h *Handler) detachVPNGateway(w http.ResponseWriter, r *http.Request, v net
 	writeReturnTrue(w, "DetachVpnGatewayResponse")
 }
 
-func (h *Handler) createVPNConnection(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+func (*Handler) createVPNConnection(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	out, err := v.CreateVPNConnection(r.Context(), netdriver.VPNConnectionConfig{
 		CustomerGatewayID: r.Form.Get("CustomerGatewayId"),
 		VPNGatewayID:      r.Form.Get("VpnGatewayId"),
@@ -230,7 +234,7 @@ func (h *Handler) createVPNConnection(w http.ResponseWriter, r *http.Request, v 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, VPN: toVPNConnectionXML(out)})
 }
 
-func (h *Handler) deleteVPNConnection(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+func (*Handler) deleteVPNConnection(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	if err := v.DeleteVPNConnection(r.Context(), r.Form.Get("VpnConnectionId")); err != nil {
 		writeVPNErr(w, err)
 		return
@@ -239,7 +243,8 @@ func (h *Handler) deleteVPNConnection(w http.ResponseWriter, r *http.Request, v 
 	writeReturnTrue(w, "DeleteVpnConnectionResponse")
 }
 
-func (h *Handler) describeVPNConnections(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeVPNConnections(w http.ResponseWriter, r *http.Request, v netdriver.VPNConnections) {
 	items, err := v.DescribeVPNConnections(r.Context(), awsquery.ListStrings(r.Form, "VpnConnectionId"))
 	if err != nil {
 		writeVPNErr(w, err)

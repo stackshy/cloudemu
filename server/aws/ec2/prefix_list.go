@@ -52,8 +52,9 @@ func (h *Handler) routePrefixLists(w http.ResponseWriter, r *http.Request, actio
 	return true
 }
 
-func (h *Handler) createPrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
+func (*Handler) createPrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
 	maxEntries, _ := strconv.Atoi(r.Form.Get("MaxEntries"))
+
 	out, err := p.CreateManagedPrefixList(r.Context(), netdriver.PrefixListConfig{
 		Name:          r.Form.Get("PrefixListName"),
 		AddressFamily: r.Form.Get("AddressFamily"),
@@ -74,7 +75,7 @@ func (h *Handler) createPrefixList(w http.ResponseWriter, r *http.Request, p net
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(out)})
 }
 
-func (h *Handler) deletePrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
+func (*Handler) deletePrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
 	out, err := p.DeleteManagedPrefixList(r.Context(), r.Form.Get("PrefixListId"))
 	if err != nil {
 		writePrefixListErr(w, err)
@@ -89,7 +90,8 @@ func (h *Handler) deletePrefixList(w http.ResponseWriter, r *http.Request, p net
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(out)})
 }
 
-func (h *Handler) describePrefixLists(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describePrefixLists(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
 	items, err := p.DescribeManagedPrefixLists(r.Context(), awsquery.ListStrings(r.Form, "PrefixListId"))
 	if err != nil {
 		writePrefixListErr(w, err)
@@ -109,7 +111,7 @@ func (h *Handler) describePrefixLists(w http.ResponseWriter, r *http.Request, p 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
-func (h *Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
+func (*Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
 	entries, err := p.GetManagedPrefixListEntries(r.Context(), r.Form.Get("PrefixListId"))
 	if err != nil {
 		writePrefixListErr(w, err)
@@ -129,22 +131,30 @@ func (h *Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
-// parsePrefixListEntries reads Entries.N.Cidr + .Description groups.
+// parsePrefixListEntries reads the AddPrefixListEntry list. The EC2 query
+// serialization names the member "Entry" (Entry.N.Cidr); older/alternate SDKs
+// may use "Entries", so both prefixes are accepted.
 func parsePrefixListEntries(r *http.Request) []netdriver.PrefixListEntry {
-	var out []netdriver.PrefixListEntry
+	for _, prefix := range []string{"Entry", "Entries"} {
+		var out []netdriver.PrefixListEntry
 
-	for i := 1; ; i++ {
-		base := "Entries." + strconv.Itoa(i)
+		for i := 1; ; i++ {
+			base := prefix + "." + strconv.Itoa(i)
 
-		cidr := r.Form.Get(base + ".Cidr")
-		if cidr == "" {
-			break
+			cidr := r.Form.Get(base + ".Cidr")
+			if cidr == "" {
+				break
+			}
+
+			out = append(out, netdriver.PrefixListEntry{CIDR: cidr, Description: r.Form.Get(base + ".Description")})
 		}
 
-		out = append(out, netdriver.PrefixListEntry{CIDR: cidr, Description: r.Form.Get(base + ".Description")})
+		if len(out) > 0 {
+			return out
+		}
 	}
 
-	return out
+	return nil
 }
 
 func toPrefixListXML(p *netdriver.PrefixList) prefixListXML {

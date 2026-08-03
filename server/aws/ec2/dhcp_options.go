@@ -53,7 +53,7 @@ func (h *Handler) routeDHCPOptions(w http.ResponseWriter, r *http.Request, actio
 	return true
 }
 
-func (h *Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
+func (*Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	out, err := d.CreateDHCPOptions(r.Context(), netdriver.DHCPOptionsConfig{
 		Configuration: parseDHCPConfigurations(r),
 		Tags:          mergeTagSpecs(awsquery.TagSpecs(r.Form), "dhcp-options"),
@@ -71,7 +71,7 @@ func (h *Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request, d ne
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Opts: toDHCPOptionsXML(out)})
 }
 
-func (h *Handler) deleteDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
+func (*Handler) deleteDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	if err := d.DeleteDHCPOptions(r.Context(), r.Form.Get("DhcpOptionsId")); err != nil {
 		writeDHCPErr(w, err)
 		return
@@ -80,7 +80,8 @@ func (h *Handler) deleteDHCPOptions(w http.ResponseWriter, r *http.Request, d ne
 	writeReturnTrue(w, "DeleteDhcpOptionsResponse")
 }
 
-func (h *Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	items, err := d.DescribeDHCPOptions(r.Context(), awsquery.ListStrings(r.Form, "DhcpOptionsId"))
 	if err != nil {
 		writeDHCPErr(w, err)
@@ -100,7 +101,7 @@ func (h *Handler) describeDHCPOptions(w http.ResponseWriter, r *http.Request, d 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
-func (h *Handler) associateDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
+func (*Handler) associateDHCPOptions(w http.ResponseWriter, r *http.Request, d netdriver.DHCPOptionSets) {
 	if err := d.AssociateDHCPOptions(r.Context(), r.Form.Get("DhcpOptionsId"), r.Form.Get("VpcId")); err != nil {
 		writeDHCPErr(w, err)
 		return

@@ -53,7 +53,7 @@ func (h *Handler) routeClientVPN(w http.ResponseWriter, r *http.Request, action 
 	return true
 }
 
-func (h *Handler) createClientVPNEndpoint(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+func (*Handler) createClientVPNEndpoint(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
 	out, err := c.CreateClientVPNEndpoint(r.Context(), netdriver.ClientVPNEndpointConfig{
 		Description:          r.Form.Get("Description"),
 		ClientCIDRBlock:      r.Form.Get("ClientCidrBlock"),
@@ -75,7 +75,7 @@ func (h *Handler) createClientVPNEndpoint(w http.ResponseWriter, r *http.Request
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, EndpointID: out.ID, Status: clientVPNStatusXML{Code: out.State}})
 }
 
-func (h *Handler) deleteClientVPNEndpoint(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+func (*Handler) deleteClientVPNEndpoint(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
 	if err := c.DeleteClientVPNEndpoint(r.Context(), r.Form.Get("ClientVpnEndpointId")); err != nil {
 		writeClientVPNErr(w, err)
 		return
@@ -89,7 +89,8 @@ func (h *Handler) deleteClientVPNEndpoint(w http.ResponseWriter, r *http.Request
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Status: clientVPNStatusXML{Code: "deleting"}})
 }
 
-func (h *Handler) describeClientVPNEndpoints(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeClientVPNEndpoints(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
 	items, err := c.DescribeClientVPNEndpoints(r.Context(), awsquery.ListStrings(r.Form, "ClientVpnEndpointId"))
 	if err != nil {
 		writeClientVPNErr(w, err)
@@ -109,7 +110,7 @@ func (h *Handler) describeClientVPNEndpoints(w http.ResponseWriter, r *http.Requ
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
 }
 
-func (h *Handler) associateClientVPN(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+func (*Handler) associateClientVPN(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
 	out, err := c.AssociateClientVPNTargetNetwork(r.Context(), r.Form.Get("ClientVpnEndpointId"), r.Form.Get("SubnetId"))
 	if err != nil {
 		writeClientVPNErr(w, err)
@@ -125,7 +126,7 @@ func (h *Handler) associateClientVPN(w http.ResponseWriter, r *http.Request, c n
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, AssociationID: out.AssociationID, Status: clientVPNStatusXML{Code: out.State}})
 }
 
-func (h *Handler) disassociateClientVPN(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
+func (*Handler) disassociateClientVPN(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
 	if err := c.DisassociateClientVPNTargetNetwork(r.Context(), r.Form.Get("ClientVpnEndpointId"), r.Form.Get("AssociationId")); err != nil {
 		writeClientVPNErr(w, err)
 		return

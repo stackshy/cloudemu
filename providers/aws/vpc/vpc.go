@@ -2,9 +2,8 @@
 package vpc
 
 import (
-	"sync"
-
 	"context"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"

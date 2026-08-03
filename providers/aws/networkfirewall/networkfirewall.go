@@ -238,7 +238,6 @@ func cloneFirewallPolicy(p *nfdriver.FirewallPolicy) nfdriver.FirewallPolicy {
 
 // ---- Rule Groups ----
 
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateRuleGroup(_ context.Context, cfg nfdriver.CreateRuleGroupConfig) (*nfdriver.RuleGroup, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "RuleGroupName is required")

@@ -11,8 +11,6 @@ import (
 
 // CreateVPCEndpointServiceConfiguration publishes a PrivateLink endpoint service
 // backed by one or more network load balancers.
-//
-//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateVPCEndpointServiceConfiguration(
 	_ context.Context, cfg driver.EndpointServiceConfig,
 ) (*driver.EndpointService, error) {

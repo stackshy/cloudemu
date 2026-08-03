@@ -44,7 +44,7 @@ func (h *Handler) routeEndpointServices(w http.ResponseWriter, r *http.Request, 
 	return true
 }
 
-func (h *Handler) createEndpointService(w http.ResponseWriter, r *http.Request, s netdriver.VPCEndpointServices) {
+func (*Handler) createEndpointService(w http.ResponseWriter, r *http.Request, s netdriver.VPCEndpointServices) {
 	out, err := s.CreateVPCEndpointServiceConfiguration(r.Context(), netdriver.EndpointServiceConfig{
 		NetworkLoadBalancerARNs: awsquery.ListStrings(r.Form, "NetworkLoadBalancerArn"),
 		AcceptanceRequired:      r.Form.Get("AcceptanceRequired") == formTrue,
@@ -63,7 +63,7 @@ func (h *Handler) createEndpointService(w http.ResponseWriter, r *http.Request, 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Config: toEndpointServiceXML(out)})
 }
 
-func (h *Handler) deleteEndpointService(w http.ResponseWriter, r *http.Request, s netdriver.VPCEndpointServices) {
+func (*Handler) deleteEndpointService(w http.ResponseWriter, r *http.Request, s netdriver.VPCEndpointServices) {
 	for _, id := range awsquery.ListStrings(r.Form, "ServiceId") {
 		if err := s.DeleteVPCEndpointServiceConfiguration(r.Context(), id); err != nil {
 			writeEndpointServiceErr(w, err)
@@ -79,7 +79,8 @@ func (h *Handler) deleteEndpointService(w http.ResponseWriter, r *http.Request, 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID})
 }
 
-func (h *Handler) describeEndpointServices(w http.ResponseWriter, r *http.Request, s netdriver.VPCEndpointServices) {
+//nolint:dupl // parallel per-resource marshaling
+func (*Handler) describeEndpointServices(w http.ResponseWriter, r *http.Request, s netdriver.VPCEndpointServices) {
 	items, err := s.DescribeVPCEndpointServiceConfigurations(r.Context(), awsquery.ListStrings(r.Form, "ServiceId"))
 	if err != nil {
 		writeEndpointServiceErr(w, err)
