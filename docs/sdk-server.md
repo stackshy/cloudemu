@@ -197,6 +197,7 @@ All handlers speak ARM JSON over HTTPS unless noted.
 | **SQL Database** | `Microsoft.Sql/servers[/databases]` — servers and databases, full CRUD lifecycle |
 | **Managed Cassandra** | `Microsoft.DocumentDB/cassandraClusters[/dataCenters]` — clusters (CreateOrUpdate, Get, ListByResourceGroup, ListBySubscription, Update, Delete, deallocate, start, invokeCommand, status) and datacenters (CreateOrUpdate, Get, List, Update, Delete). Real `armcosmos` `CassandraClusters`/`CassandraDataCenters` clients round-trip end-to-end, including the LRO pollers. |
 | **PostgreSQL Flexible Server** | `Microsoft.DBforPostgreSQL/flexibleServers` — full CRUD lifecycle |
+| **Cosmos DB for PostgreSQL** | `Microsoft.DBforPostgreSQL/serverGroupsv2` — clusters (CreateOrUpdate, Get, ListByResourceGroup, ListBySubscription, Update, Delete, restart, start, stop, promote, checkNameAvailability), firewall rules, roles, derived servers/nodes, configurations (cluster/coordinator/node reads + updates), and private endpoint connections/links. Real `armcosmosforpostgresql` clients round-trip end-to-end, including the LRO pollers. |
 | **MySQL Flexible Server** | `Microsoft.DBforMySQL/flexibleServers` — full CRUD lifecycle |
 | **AKS** | `Microsoft.ContainerService/managedClusters` — ManagedClusters (CreateOrUpdate, Get, UpdateTags, Delete, List/ListByResourceGroup), AgentPools (CreateOrUpdate, Get, Delete, List), MaintenanceConfigurations (CreateOrUpdate, Get, Delete, List), ListClusterAdmin/User/MonitoringUser Credentials, RotateClusterCertificates. Stub kubeconfig only — data plane deferred to Wave 2. |
 | **IAM (armauthorization)** | `Microsoft.Authorization` — RoleDefinitions (CreateOrUpdate, Get, List, Delete) and RoleAssignments (Create, Get, ListForScope, Delete) at any scope (subscription, resource group, resource, management group). Real `armauthorization` SDK clients round-trip end-to-end. Microsoft Graph (users/groups) is out of scope — deferred to a future handler. |
@@ -297,6 +298,7 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 | Azure SQL | ARM provider `Microsoft.Sql` |
 | Azure Managed Cassandra | ARM provider `Microsoft.DocumentDB/cassandraClusters` |
 | Azure PostgreSQL Flexible | ARM provider `Microsoft.DBforPostgreSQL/flexibleServers` |
+| Azure Cosmos DB for PostgreSQL | ARM provider `Microsoft.DBforPostgreSQL/serverGroupsv2` |
 | Azure MySQL Flexible | ARM provider `Microsoft.DBforMySQL/flexibleServers` |
 | Azure AKS | ARM provider `Microsoft.ContainerService/managedClusters` |
 | Azure Databricks (ARM) | ARM provider `Microsoft.Databricks/workspaces` |

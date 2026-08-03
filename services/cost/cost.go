@@ -100,6 +100,11 @@ func defaultRates() map[string]float64 {
 		"bigtable:CreateTable":    0.0,
 		"bigtable:CreateBackup":   0.0,
 
+		// Azure Cosmos DB for PostgreSQL (Citus): billed per node vCore-hour (+
+		// storage). The emulator books a flat proxy charge on cluster create (a
+		// coordinator plus the worker nodes); child resources are free.
+		"cosmospostgresql:CreateOrUpdateCluster": 0.52, // flat proxy (~1h of a small coordinator + 2 workers)
+
 		// Serverless (per invocation)
 		"serverless:Invoke": 0.0000002, // $0.20 per 1M
 

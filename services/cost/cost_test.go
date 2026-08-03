@@ -75,6 +75,16 @@ func TestTracker_BigtableRates(t *testing.T) {
 	assert.InDelta(t, want, tracker.CostByService()["bigtable"], 1e-9)
 }
 
+func TestTracker_CosmosPostgreSQLRates(t *testing.T) {
+	tracker := New()
+
+	// Two clusters priced at the flat node proxy; child resources are free.
+	tracker.Record("cosmospostgresql", "CreateOrUpdateCluster", 2)
+
+	want := 0.52 * 2
+	assert.InDelta(t, want, tracker.CostByService()["cosmospostgresql"], 1e-9)
+}
+
 func TestTracker_Record_And_TotalCost(t *testing.T) {
 	tests := []struct {
 		name    string

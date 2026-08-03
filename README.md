@@ -113,7 +113,7 @@ SDK-compat coverage across AWS, Azure, and GCP:
 | Storage | S3 | Blob Storage | GCS |
 | Compute | EC2 (+ VPC, EBS, Snapshots, AMIs, Spot, Launch Templates, Auto Scaling) | Virtual Machines (+ Disks, Snapshots, Images, SSH keys) | Compute Engine (+ Disks, Snapshots, Images) |
 | NoSQL DB | DynamoDB | Cosmos DB | Firestore |
-| Relational DB | RDS + Aurora (incl. Neptune & DocumentDB engines), Redshift | SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server | Cloud SQL, AlloyDB |
+| Relational DB | RDS + Aurora (incl. Neptune & DocumentDB engines), Redshift | SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server, Cosmos DB for PostgreSQL (Citus) | Cloud SQL, AlloyDB |
 | Wide-column NoSQL | Keyspaces (Cassandra) | Managed Instance for Apache Cassandra | Bigtable |
 | In-memory / Redis | ElastiCache, MemoryDB | Cache for Redis | Memorystore |
 | Kubernetes | EKS (control plane + data plane) | AKS (control plane + data plane) | GKE (control plane + data plane) |
