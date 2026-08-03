@@ -280,7 +280,7 @@ func (m *Mock) updateServerConfig(rg, cluster, role, name, value string) (*cpgdr
 
 	entry, ok := configCatalog[name]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "unknown configuration %q", name)
+		return nil, cerrors.Newf(cerrors.NotFound, "configuration %q not found", name)
 	}
 
 	if err := validateConfigValue(name, entry.allowed, value); err != nil {

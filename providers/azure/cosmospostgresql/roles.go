@@ -47,6 +47,10 @@ func (m *Mock) GetRole(_ context.Context, rg, cluster, name string) (*cpgdriver.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return nil, err
+	}
+
 	role, ok := m.roles.Get(childKey(rg, cluster, name))
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "role %q not found", name)
@@ -77,6 +81,10 @@ func roleKey(role *cpgdriver.Role) string {
 func (m *Mock) DeleteRole(_ context.Context, rg, cluster, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return err
+	}
 
 	key := childKey(rg, cluster, name)
 	if !m.roles.Has(key) {

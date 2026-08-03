@@ -198,20 +198,23 @@ type CreateClusterConfig struct {
 // ClusterPatch carries the mutable fields of an UpdateCluster (PATCH). Nil
 // pointers leave the field unchanged.
 type ClusterPatch struct {
-	Tags                        map[string]string
-	AdministratorLoginPassword  *string
-	CitusVersion                *string
-	PostgresqlVersion           *string
-	CoordinatorServerEdition    *string
-	CoordinatorVCores           *int
-	CoordinatorStorageQuotaInMb *int
-	NodeServerEdition           *string
-	NodeCount                   *int
-	NodeVCores                  *int
-	NodeStorageQuotaInMb        *int
-	EnableHa                    *bool
-	PreferredPrimaryZone        *string
-	MaintenanceWindow           *MaintenanceWindow
+	Tags                            map[string]string
+	AdministratorLoginPassword      *string
+	CitusVersion                    *string
+	PostgresqlVersion               *string
+	CoordinatorServerEdition        *string
+	CoordinatorVCores               *int
+	CoordinatorStorageQuotaInMb     *int
+	CoordinatorEnablePublicIPAccess *bool
+	EnableShardsOnCoordinator       *bool
+	NodeServerEdition               *string
+	NodeCount                       *int
+	NodeVCores                      *int
+	NodeStorageQuotaInMb            *int
+	NodeEnablePublicIPAccess        *bool
+	EnableHa                        *bool
+	PreferredPrimaryZone            *string
+	MaintenanceWindow               *MaintenanceWindow
 }
 
 // CreateFirewallRuleConfig is the input to CreateOrUpdateFirewallRule.
@@ -235,8 +238,9 @@ type CreateRoleConfig struct {
 //
 //nolint:interfacebloat // mirrors the Microsoft.DBforPostgreSQL/serverGroupsv2 surface.
 type CosmosPostgreSQL interface {
-	// Clusters (server groups).
-	CreateOrUpdateCluster(ctx context.Context, cfg CreateClusterConfig) (*Cluster, error)
+	// Clusters (server groups). CreateOrUpdateCluster reports whether the cluster
+	// was created (true) or updated (false) so the ARM layer can return 201/200.
+	CreateOrUpdateCluster(ctx context.Context, cfg CreateClusterConfig) (cluster *Cluster, created bool, err error)
 	GetCluster(ctx context.Context, resourceGroup, name string) (*Cluster, error)
 	ListClustersByResourceGroup(ctx context.Context, resourceGroup string) ([]Cluster, error)
 	ListClustersBySubscription(ctx context.Context) ([]Cluster, error)

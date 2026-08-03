@@ -1,6 +1,8 @@
 package cosmospostgresql
 
 import (
+	"fmt"
+
 	cpgdriver "github.com/stackshy/cloudemu/v2/services/cosmospostgresql/driver"
 )
 
@@ -37,9 +39,9 @@ type armList[T any] struct {
 
 type maintenanceWindow struct {
 	CustomWindow string `json:"customWindow,omitempty"`
-	DayOfWeek    int    `json:"dayOfWeek,omitempty"`
-	StartHour    int    `json:"startHour,omitempty"`
-	StartMinute  int    `json:"startMinute,omitempty"`
+	DayOfWeek    *int   `json:"dayOfWeek,omitempty"`
+	StartHour    *int   `json:"startHour,omitempty"`
+	StartMinute  *int   `json:"startMinute,omitempty"`
 }
 
 type serverNameItem struct {
@@ -65,14 +67,14 @@ type clusterProperties struct {
 	ProvisioningState               string             `json:"provisioningState,omitempty"`
 	State                           string             `json:"state,omitempty"`
 	CoordinatorServerEdition        string             `json:"coordinatorServerEdition,omitempty"`
-	CoordinatorVCores               int                `json:"coordinatorVCores,omitempty"`
-	CoordinatorStorageQuotaInMb     int                `json:"coordinatorStorageQuotaInMb,omitempty"`
+	CoordinatorVCores               *int               `json:"coordinatorVCores,omitempty"`
+	CoordinatorStorageQuotaInMb     *int               `json:"coordinatorStorageQuotaInMb,omitempty"`
 	CoordinatorEnablePublicIPAccess *bool              `json:"coordinatorEnablePublicIpAccess,omitempty"`
 	EnableShardsOnCoordinator       *bool              `json:"enableShardsOnCoordinator,omitempty"`
 	NodeServerEdition               string             `json:"nodeServerEdition,omitempty"`
-	NodeCount                       int                `json:"nodeCount,omitempty"`
-	NodeVCores                      int                `json:"nodeVCores,omitempty"`
-	NodeStorageQuotaInMb            int                `json:"nodeStorageQuotaInMb,omitempty"`
+	NodeCount                       *int               `json:"nodeCount,omitempty"`
+	NodeVCores                      *int               `json:"nodeVCores,omitempty"`
+	NodeStorageQuotaInMb            *int               `json:"nodeStorageQuotaInMb,omitempty"`
 	NodeEnablePublicIPAccess        *bool              `json:"nodeEnablePublicIpAccess,omitempty"`
 	EnableHa                        *bool              `json:"enableHa,omitempty"`
 	PreferredPrimaryZone            string             `json:"preferredPrimaryZone,omitempty"`
@@ -223,22 +225,39 @@ type nameAvailabilityResult struct {
 
 func boolPtr(b bool) *bool { return &b }
 
+func intPtr(i int) *int { return &i }
+
 func cloneMW(in *cpgdriver.MaintenanceWindow) *maintenanceWindow {
 	if in == nil {
 		return nil
 	}
 
 	return &maintenanceWindow{
-		CustomWindow: in.CustomWindow, DayOfWeek: in.DayOfWeek,
-		StartHour: in.StartHour, StartMinute: in.StartMinute,
+		CustomWindow: in.CustomWindow, DayOfWeek: intPtr(in.DayOfWeek),
+		StartHour: intPtr(in.StartHour), StartMinute: intPtr(in.StartMinute),
 	}
 }
 
+// nodeFQDN builds a node's fully-qualified domain name, matching the servers
+// sub-resource: <node>.<location>.postgres.cosmos.azure.com.
+func nodeFQDN(node, location string) string {
+	if location == "" {
+		location = "eastus"
+	}
+
+	return node + "." + location + ".postgres.cosmos.azure.com"
+}
+
+// serverNames enumerates the cluster's nodes (coordinator + workers), matching
+// the servers sub-resource in both the set and the FQDN.
 func serverNames(c *cpgdriver.Cluster) []serverNameItem {
-	items := []serverNameItem{{
-		Name:                     c.Name + "-c",
-		FullyQualifiedDomainName: c.Name + "-c.postgres.cosmos.azure.com",
-	}}
+	coord := c.Name + "-c"
+	items := []serverNameItem{{Name: coord, FullyQualifiedDomainName: nodeFQDN(coord, c.Location)}}
+
+	for i := 0; i < c.NodeCount; i++ {
+		w := fmt.Sprintf("%s-w%d", c.Name, i)
+		items = append(items, serverNameItem{Name: w, FullyQualifiedDomainName: nodeFQDN(w, c.Location)})
+	}
 
 	return items
 }
@@ -258,14 +277,14 @@ func toARMCluster(c *cpgdriver.Cluster, id string) clusterResource {
 			ProvisioningState:               c.ProvisioningState,
 			State:                           c.State,
 			CoordinatorServerEdition:        c.CoordinatorServerEdition,
-			CoordinatorVCores:               c.CoordinatorVCores,
-			CoordinatorStorageQuotaInMb:     c.CoordinatorStorageQuotaInMb,
+			CoordinatorVCores:               intPtr(c.CoordinatorVCores),
+			CoordinatorStorageQuotaInMb:     intPtr(c.CoordinatorStorageQuotaInMb),
 			CoordinatorEnablePublicIPAccess: boolPtr(c.CoordinatorEnablePublicIPAccess),
 			EnableShardsOnCoordinator:       boolPtr(c.EnableShardsOnCoordinator),
 			NodeServerEdition:               c.NodeServerEdition,
-			NodeCount:                       c.NodeCount,
-			NodeVCores:                      c.NodeVCores,
-			NodeStorageQuotaInMb:            c.NodeStorageQuotaInMb,
+			NodeCount:                       intPtr(c.NodeCount),
+			NodeVCores:                      intPtr(c.NodeVCores),
+			NodeStorageQuotaInMb:            intPtr(c.NodeStorageQuotaInMb),
 			NodeEnablePublicIPAccess:        boolPtr(c.NodeEnablePublicIPAccess),
 			EnableHa:                        boolPtr(c.EnableHa),
 			PreferredPrimaryZone:            c.PreferredPrimaryZone,

@@ -65,6 +65,10 @@ func (m *Mock) GetPrivateEndpointConnection(_ context.Context, rg, cluster, name
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return nil, err
+	}
+
 	pec, ok := m.privateEPs.Get(childKey(rg, cluster, name))
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "private endpoint connection %q not found", name)
@@ -95,6 +99,10 @@ func pecKey(pec *cpgdriver.PrivateEndpointConnection) string {
 func (m *Mock) DeletePrivateEndpointConnection(_ context.Context, rg, cluster, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return err
+	}
 
 	key := childKey(rg, cluster, name)
 	if !m.privateEPs.Has(key) {

@@ -38,14 +38,14 @@ func (h *Handler) createOrUpdateCluster(w http.ResponseWriter, r *http.Request, 
 		cfg.CitusVersion = p.CitusVersion
 		cfg.PostgresqlVersion = p.PostgresqlVersion
 		cfg.CoordinatorServerEdition = p.CoordinatorServerEdition
-		cfg.CoordinatorVCores = p.CoordinatorVCores
-		cfg.CoordinatorStorageQuotaInMb = p.CoordinatorStorageQuotaInMb
+		cfg.CoordinatorVCores = derefInt(p.CoordinatorVCores)
+		cfg.CoordinatorStorageQuotaInMb = derefInt(p.CoordinatorStorageQuotaInMb)
 		cfg.CoordinatorEnablePublicIPAccess = derefBool(p.CoordinatorEnablePublicIPAccess)
 		cfg.EnableShardsOnCoordinator = derefBool(p.EnableShardsOnCoordinator)
 		cfg.NodeServerEdition = p.NodeServerEdition
-		cfg.NodeCount = p.NodeCount
-		cfg.NodeVCores = p.NodeVCores
-		cfg.NodeStorageQuotaInMb = p.NodeStorageQuotaInMb
+		cfg.NodeCount = derefInt(p.NodeCount)
+		cfg.NodeVCores = derefInt(p.NodeVCores)
+		cfg.NodeStorageQuotaInMb = derefInt(p.NodeStorageQuotaInMb)
 		cfg.NodeEnablePublicIPAccess = derefBool(p.NodeEnablePublicIPAccess)
 		cfg.EnableHa = derefBool(p.EnableHa)
 		cfg.PreferredPrimaryZone = p.PreferredPrimaryZone
@@ -54,13 +54,18 @@ func (h *Handler) createOrUpdateCluster(w http.ResponseWriter, r *http.Request, 
 		cfg.MaintenanceWindow = fromWireMW(p.MaintenanceWindow)
 	}
 
-	c, err := h.db.CreateOrUpdateCluster(r.Context(), cfg)
+	c, created, err := h.db.CreateOrUpdateCluster(r.Context(), cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMCluster(c, h.clusterID(rp, c.Name)))
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+
+	azurearm.WriteJSON(w, status, toARMCluster(c, h.clusterID(rp, c.Name)))
 }
 
 func (h *Handler) getCluster(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -82,22 +87,22 @@ func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, rp *azur
 	patch := cpgdriver.ClusterPatch{Tags: body.Tags}
 
 	if p := body.Properties; p != nil {
+		patch.AdministratorLoginPassword = strPtrIfSet(p.AdministratorLoginPassword)
 		patch.CitusVersion = strPtrIfSet(p.CitusVersion)
 		patch.PostgresqlVersion = strPtrIfSet(p.PostgresqlVersion)
 		patch.CoordinatorServerEdition = strPtrIfSet(p.CoordinatorServerEdition)
-		patch.CoordinatorVCores = intPtrIfSet(p.CoordinatorVCores)
-		patch.CoordinatorStorageQuotaInMb = intPtrIfSet(p.CoordinatorStorageQuotaInMb)
+		patch.CoordinatorVCores = p.CoordinatorVCores
+		patch.CoordinatorStorageQuotaInMb = p.CoordinatorStorageQuotaInMb
+		patch.CoordinatorEnablePublicIPAccess = p.CoordinatorEnablePublicIPAccess
+		patch.EnableShardsOnCoordinator = p.EnableShardsOnCoordinator
 		patch.NodeServerEdition = strPtrIfSet(p.NodeServerEdition)
-		patch.NodeVCores = intPtrIfSet(p.NodeVCores)
-		patch.NodeStorageQuotaInMb = intPtrIfSet(p.NodeStorageQuotaInMb)
+		patch.NodeCount = p.NodeCount
+		patch.NodeVCores = p.NodeVCores
+		patch.NodeStorageQuotaInMb = p.NodeStorageQuotaInMb
+		patch.NodeEnablePublicIPAccess = p.NodeEnablePublicIPAccess
 		patch.PreferredPrimaryZone = strPtrIfSet(p.PreferredPrimaryZone)
 		patch.EnableHa = p.EnableHa
 		patch.MaintenanceWindow = fromWireMW(p.MaintenanceWindow)
-
-		if p.NodeCount != 0 {
-			nc := p.NodeCount
-			patch.NodeCount = &nc
-		}
 	}
 
 	c, err := h.db.UpdateCluster(r.Context(), rp.ResourceGroup, rp.ResourceName, patch)
@@ -228,12 +233,12 @@ func strPtrIfSet(s string) *string {
 	return &s
 }
 
-func intPtrIfSet(v int) *int {
-	if v == 0 {
-		return nil
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
 	}
 
-	return &v
+	return *p
 }
 
 func fromWireMW(mw *maintenanceWindow) *cpgdriver.MaintenanceWindow {
@@ -242,7 +247,7 @@ func fromWireMW(mw *maintenanceWindow) *cpgdriver.MaintenanceWindow {
 	}
 
 	return &cpgdriver.MaintenanceWindow{
-		CustomWindow: mw.CustomWindow, DayOfWeek: mw.DayOfWeek,
-		StartHour: mw.StartHour, StartMinute: mw.StartMinute,
+		CustomWindow: mw.CustomWindow, DayOfWeek: derefInt(mw.DayOfWeek),
+		StartHour: derefInt(mw.StartHour), StartMinute: derefInt(mw.StartMinute),
 	}
 }

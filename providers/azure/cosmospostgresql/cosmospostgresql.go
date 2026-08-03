@@ -152,30 +152,31 @@ func (m *Mock) clusterResourceID(rg, name string) string {
 // CreateOrUpdateCluster creates or replaces a server-group cluster.
 //
 //nolint:gocritic // cfg matches the driver signature.
-func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClusterConfig) (*cpgdriver.Cluster, error) {
+func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClusterConfig) (*cpgdriver.Cluster, bool, error) {
 	if err := validName("cluster", cfg.Name); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if err := validateSizing(&cfg); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	key := clusterKey(cfg.ResourceGroup, cfg.Name)
+	existing, isUpdate := m.clusters.Get(key)
 
 	// A create (no existing cluster at this rg/name) must have a globally-unique
 	// name and, for a replica, a valid primary source.
-	if !m.clusters.Has(key) {
+	if !isUpdate {
 		if err := m.ensureNameAvailableLocked(cfg.Name); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 
 		if cfg.SourceResourceID != "" {
 			if err := m.validateReplicaSourceLocked(cfg.SourceResourceID); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
 	}
@@ -207,15 +208,13 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClus
 		SourceLocation:                  cfg.SourceLocation,
 	}
 
-	// Preserve service-computed fields across a re-PUT.
-	if existing, ok := m.clusters.Get(key); ok {
+	if isUpdate {
+		// Preserve service-computed fields, and treat the replica source as
+		// immutable — a re-PUT must not re-point (or corrupt) the replica graph.
 		c.State = existing.State
 		c.ReadReplicas = cloneStrings(existing.ReadReplicas)
-
-		if c.SourceResourceID == "" {
-			c.SourceResourceID = existing.SourceResourceID
-			c.SourceLocation = existing.SourceLocation
-		}
+		c.SourceResourceID = existing.SourceResourceID
+		c.SourceLocation = existing.SourceLocation
 	} else if cfg.SourceResourceID != "" {
 		// A newly-created replica registers itself on its source cluster.
 		m.linkReplicaLocked(cfg.SourceResourceID, m.clusterResourceID(cfg.ResourceGroup, cfg.Name))
@@ -225,7 +224,7 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClus
 
 	out := cloneCluster(&c)
 
-	return &out, nil
+	return &out, !isUpdate, nil
 }
 
 // validateSizing bounds the node count and rejects negative vCore/storage
@@ -413,6 +412,22 @@ func applyClusterPatch(c *cpgdriver.Cluster, patch *cpgdriver.ClusterPatch) erro
 	if patch.EnableHa != nil {
 		c.EnableHa = *patch.EnableHa
 	}
+
+	if patch.CoordinatorEnablePublicIPAccess != nil {
+		c.CoordinatorEnablePublicIPAccess = *patch.CoordinatorEnablePublicIPAccess
+	}
+
+	if patch.NodeEnablePublicIPAccess != nil {
+		c.NodeEnablePublicIPAccess = *patch.NodeEnablePublicIPAccess
+	}
+
+	if patch.EnableShardsOnCoordinator != nil {
+		c.EnableShardsOnCoordinator = *patch.EnableShardsOnCoordinator
+	}
+
+	// AdministratorLoginPassword is a write-only secret: accepted here but never
+	// stored or surfaced (the real API never returns it).
+	_ = patch.AdministratorLoginPassword
 
 	if patch.MaintenanceWindow != nil {
 		c.MaintenanceWindow = cloneMaintenanceWindow(patch.MaintenanceWindow)

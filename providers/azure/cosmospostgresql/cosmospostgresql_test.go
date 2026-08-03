@@ -22,7 +22,7 @@ func newTestMock() *Mock {
 func mustCluster(t *testing.T, m *Mock, rg, name string, nodeCount int) string {
 	t.Helper()
 
-	if _, err := m.CreateOrUpdateCluster(context.Background(), cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(context.Background(), cpgdriver.CreateClusterConfig{
 		Name: name, ResourceGroup: rg, Location: "eastus", NodeCount: nodeCount,
 	}); err != nil {
 		t.Fatalf("CreateOrUpdateCluster %s: %v", name, err)
@@ -35,7 +35,7 @@ func TestClusterLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	c, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	c, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "pg1", ResourceGroup: "rg1", Location: "eastus", NodeCount: 2,
 		Tags: map[string]string{"env": "prod"}, EnableHa: true,
 	})
@@ -94,7 +94,7 @@ func TestClusterLifecycle(t *testing.T) {
 func TestNodeCountBounded(t *testing.T) {
 	m := newTestMock()
 
-	if _, err := m.CreateOrUpdateCluster(context.Background(), cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(context.Background(), cpgdriver.CreateClusterConfig{
 		Name: "big", ResourceGroup: "rg1", NodeCount: maxNodeCount + 1,
 	}); !cerrors.IsInvalidArgument(err) {
 		t.Fatalf("oversized nodeCount: got %v, want InvalidArgument", err)
@@ -213,7 +213,7 @@ func TestReadReplicaPromotion(t *testing.T) {
 	srcID := m.clusterResourceID("rg1", "primary")
 
 	// Create a replica pointing at the primary.
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "replica", ResourceGroup: "rg1", Location: "westus",
 		SourceResourceID: srcID, SourceLocation: "eastus",
 	}); err != nil {
@@ -268,7 +268,7 @@ func TestClusterResultDoesNotAliasStore(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "pg1", ResourceGroup: "rg1", Tags: map[string]string{"env": "prod"},
 		MaintenanceWindow: &cpgdriver.MaintenanceWindow{DayOfWeek: 1, StartHour: 2},
 	}); err != nil {
@@ -314,14 +314,14 @@ func TestClusterNameGloballyUnique(t *testing.T) {
 	mustCluster(t, m, "rg1", "pg1", 1)
 
 	// Same name in a different resource group is rejected.
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "pg1", ResourceGroup: "rg2", Location: "eastus",
 	}); !cerrors.IsAlreadyExists(err) {
 		t.Fatalf("duplicate name across RGs: got %v, want AlreadyExists", err)
 	}
 
 	// Re-PUT of the same rg/name is an update, not a conflict.
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "pg1", ResourceGroup: "rg1", Location: "eastus", NodeCount: 3,
 	}); err != nil {
 		t.Fatalf("re-PUT same cluster: %v", err)
@@ -334,20 +334,20 @@ func TestReplicaSourceValidated(t *testing.T) {
 	mustCluster(t, m, "rg1", "primary", 2)
 
 	// A bogus source is rejected.
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "rep1", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "ghost"),
 	}); !cerrors.IsNotFound(err) {
 		t.Fatalf("bogus replica source: got %v, want NotFound", err)
 	}
 
 	// A valid replica, then a replica-of-a-replica is rejected.
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "rep1", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "primary"),
 	}); err != nil {
 		t.Fatalf("valid replica: %v", err)
 	}
 
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "rep2", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "rep1"),
 	}); !cerrors.IsInvalidArgument(err) {
 		t.Fatalf("chained replica: got %v, want InvalidArgument", err)
@@ -359,7 +359,7 @@ func TestDeleteUnlinksReplicas(t *testing.T) {
 	ctx := context.Background()
 	mustCluster(t, m, "rg1", "primary", 2)
 
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "rep1", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "primary"),
 	}); err != nil {
 		t.Fatalf("create replica: %v", err)
@@ -381,7 +381,7 @@ func TestDeleteReplicaUnlinksFromSource(t *testing.T) {
 	ctx := context.Background()
 	mustCluster(t, m, "rg1", "primary", 2)
 
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "rep1", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "primary"),
 	}); err != nil {
 		t.Fatalf("create replica: %v", err)
@@ -606,12 +606,89 @@ func TestPrivateEndpointsAndLinks(t *testing.T) {
 	}
 }
 
+func TestReplicaSourceImmutableOnRePut(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "primary", 2)
+	mustCluster(t, m, "rg1", "other", 2)
+
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "replica", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "primary"),
+	}); err != nil {
+		t.Fatalf("create replica: %v", err)
+	}
+
+	// Re-PUT the replica trying to re-point it at "other": the source is
+	// immutable, so the link graph must not change.
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+		Name: "replica", ResourceGroup: "rg1", SourceResourceID: m.clusterResourceID("rg1", "other"),
+	}); err != nil {
+		t.Fatalf("re-PUT replica: %v", err)
+	}
+
+	rep, _ := m.GetCluster(ctx, "rg1", "replica")
+	if rep.SourceResourceID != m.clusterResourceID("rg1", "primary") {
+		t.Fatalf("replica source changed on re-PUT: %q", rep.SourceResourceID)
+	}
+
+	other, _ := m.GetCluster(ctx, "rg1", "other")
+	if len(other.ReadReplicas) != 0 {
+		t.Fatalf("re-PUT wrongly linked 'other': %+v", other.ReadReplicas)
+	}
+
+	primary, _ := m.GetCluster(ctx, "rg1", "primary")
+	if len(primary.ReadReplicas) != 1 {
+		t.Fatalf("primary lost its replica link: %+v", primary.ReadReplicas)
+	}
+}
+
+func TestCreatedFlag(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, created, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{Name: "pg1", ResourceGroup: "rg1"})
+	if err != nil || !created {
+		t.Fatalf("first PUT: created=%v err=%v", created, err)
+	}
+
+	_, created, err = m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{Name: "pg1", ResourceGroup: "rg1"})
+	if err != nil || created {
+		t.Fatalf("re-PUT: created=%v err=%v", created, err)
+	}
+}
+
+func TestPatchAppliesWritableFields(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	mustCluster(t, m, "rg1", "pg1", 2)
+
+	pub, shards := true, true
+	up, err := m.UpdateCluster(ctx, "rg1", "pg1", cpgdriver.ClusterPatch{
+		CoordinatorEnablePublicIPAccess: &pub,
+		NodeEnablePublicIPAccess:        &pub,
+		EnableShardsOnCoordinator:       &shards,
+		NodeCount:                       intPtr(0),
+	})
+	if err != nil {
+		t.Fatalf("UpdateCluster: %v", err)
+	}
+
+	if !up.CoordinatorEnablePublicIPAccess || !up.NodeEnablePublicIPAccess || !up.EnableShardsOnCoordinator {
+		t.Fatalf("public-IP / shards flags not applied: %+v", up)
+	}
+
+	// PATCH scale-to-single-node (nodeCount 0) must take effect.
+	if up.NodeCount != 0 {
+		t.Fatalf("scale-to-single-node not applied: %d", up.NodeCount)
+	}
+}
+
 func TestReplicaNodesReadOnly(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 	mustCluster(t, m, "rg1", "primary", 2)
 
-	if _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
+	if _, _, err := m.CreateOrUpdateCluster(ctx, cpgdriver.CreateClusterConfig{
 		Name: "rep1", ResourceGroup: "rg1", NodeCount: 2, SourceResourceID: m.clusterResourceID("rg1", "primary"),
 	}); err != nil {
 		t.Fatalf("create replica: %v", err)

@@ -63,6 +63,10 @@ func (m *Mock) GetFirewallRule(_ context.Context, rg, cluster, name string) (*cp
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return nil, err
+	}
+
 	fr, ok := m.firewallRules.Get(childKey(rg, cluster, name))
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", name)
@@ -95,6 +99,10 @@ func identity[T any](v *T) T { return *v }
 func (m *Mock) DeleteFirewallRule(_ context.Context, rg, cluster, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if err := m.requireClusterLocked(rg, cluster); err != nil {
+		return err
+	}
 
 	key := childKey(rg, cluster, name)
 	if !m.firewallRules.Has(key) {

@@ -379,8 +379,9 @@ func TestSDKChildGetDeleteAndPrivateLinks(t *testing.T) {
 		t.Fatalf("role create: %v", err)
 	}
 
-	if _, err := rc.NewListByClusterPager("rg1", "pg1", nil).NextPage(ctx); err != nil {
-		t.Fatalf("role list: %v", err)
+	rolePage, err := rc.NewListByClusterPager("rg1", "pg1", nil).NextPage(ctx)
+	if err != nil || len(rolePage.Value) != 1 || deref(rolePage.Value[0].Name) != "app" {
+		t.Fatalf("role list: err=%v page=%+v", err, rolePage.Value)
 	}
 
 	roleDel, err := rc.BeginDelete(ctx, "rg1", "pg1", "app", nil)
@@ -465,6 +466,147 @@ func TestSDKChildGetDeleteAndPrivateLinks(t *testing.T) {
 	}
 }
 
+func TestSDKReplicaPromoteAndStateGuards(t *testing.T) {
+	f := newFactory(t)
+	cc := f.NewClustersClient()
+	ctx := context.Background()
+
+	// Primary + replica.
+	primary, err := cc.BeginCreate(ctx, "rg1", "primary", armcosmosforpostgresql.Cluster{
+		Location:   to.Ptr("eastus"),
+		Properties: &armcosmosforpostgresql.ClusterProperties{AdministratorLoginPassword: to.Ptr("Sup3rSecret!"), NodeCount: to.Ptr[int32](2)},
+	}, nil)
+	if err == nil {
+		_, err = primary.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("create primary: %v", err)
+	}
+
+	srcID := "/subscriptions/" + subID + "/resourceGroups/rg1/providers/Microsoft.DBforPostgreSQL/serverGroupsv2/primary"
+
+	rep, err := cc.BeginCreate(ctx, "rg1", "replica", armcosmosforpostgresql.Cluster{
+		Location: to.Ptr("westus"),
+		Properties: &armcosmosforpostgresql.ClusterProperties{
+			SourceResourceID: to.Ptr(srcID), SourceLocation: to.Ptr("eastus"),
+		},
+	}, nil)
+	if err == nil {
+		_, err = rep.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("create replica: %v", err)
+	}
+
+	// Promote the replica (Location LRO).
+	prom, err := cc.BeginPromoteReadReplica(ctx, "rg1", "replica", nil)
+	if err == nil {
+		_, err = prom.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+
+	promoted, err := cc.Get(ctx, "rg1", "replica", nil)
+	if err != nil {
+		t.Fatalf("get promoted: %v", err)
+	}
+
+	if promoted.Properties.SourceResourceID != nil && deref(promoted.Properties.SourceResourceID) != "" {
+		t.Fatalf("replica still linked after promote: %+v", promoted.Properties.SourceResourceID)
+	}
+
+	// Restart-while-Stopped is rejected (409).
+	stop, err := cc.BeginStop(ctx, "rg1", "primary", nil)
+	if err == nil {
+		_, err = stop.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	restart, err := cc.BeginRestart(ctx, "rg1", "primary", nil)
+	if err == nil {
+		_, err = restart.PollUntilDone(ctx, nil)
+	}
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != 409 {
+		t.Fatalf("restart while stopped: got %v, want 409", err)
+	}
+}
+
+func TestSDKSingleNodeAndServerNames(t *testing.T) {
+	f := newFactory(t)
+	cc := f.NewClustersClient()
+	ctx := context.Background()
+
+	// A single-node cluster (nodeCount=0) must round-trip: the response carries
+	// an explicit 0, not an omitted key that deserializes to nil.
+	single, err := cc.BeginCreate(ctx, "rg1", "solo", armcosmosforpostgresql.Cluster{
+		Location:   to.Ptr("eastus"),
+		Properties: &armcosmosforpostgresql.ClusterProperties{AdministratorLoginPassword: to.Ptr("Sup3rSecret!"), NodeCount: to.Ptr[int32](0)},
+	}, nil)
+	if err == nil {
+		_, err = single.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("create single-node: %v", err)
+	}
+
+	got, err := cc.Get(ctx, "rg1", "solo", nil)
+	if err != nil {
+		t.Fatalf("get single-node: %v", err)
+	}
+
+	if got.Properties.NodeCount == nil || *got.Properties.NodeCount != 0 {
+		t.Fatalf("single-node NodeCount not represented: %v", got.Properties.NodeCount)
+	}
+
+	// serverNames enumerates the coordinator only (no workers).
+	if len(got.Properties.ServerNames) != 1 {
+		t.Fatalf("single-node serverNames: got %d, want 1", len(got.Properties.ServerNames))
+	}
+
+	// A 2-worker cluster reports coordinator + 2 workers, and the coordinator
+	// FQDN matches the servers sub-resource.
+	multi, err := cc.BeginCreate(ctx, "rg1", "multi", armcosmosforpostgresql.Cluster{
+		Location:   to.Ptr("eastus"),
+		Properties: &armcosmosforpostgresql.ClusterProperties{AdministratorLoginPassword: to.Ptr("Sup3rSecret!"), NodeCount: to.Ptr[int32](2)},
+	}, nil)
+	if err == nil {
+		_, err = multi.PollUntilDone(ctx, nil)
+	}
+
+	if err != nil {
+		t.Fatalf("create multi: %v", err)
+	}
+
+	m, err := cc.Get(ctx, "rg1", "multi", nil)
+	if err != nil {
+		t.Fatalf("get multi: %v", err)
+	}
+
+	if len(m.Properties.ServerNames) != 3 {
+		t.Fatalf("multi serverNames: got %d, want 3", len(m.Properties.ServerNames))
+	}
+
+	srv, err := f.NewServersClient().Get(ctx, "rg1", "multi", "multi-c", nil)
+	if err != nil {
+		t.Fatalf("servers Get: %v", err)
+	}
+
+	if deref(m.Properties.ServerNames[0].FullyQualifiedDomainName) != deref(srv.Properties.FullyQualifiedDomainName) {
+		t.Fatalf("coordinator FQDN mismatch: serverNames=%q servers=%q",
+			deref(m.Properties.ServerNames[0].FullyQualifiedDomainName), deref(srv.Properties.FullyQualifiedDomainName))
+	}
+}
+
 func TestMalformedBodyRejected(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewServer(azureserver.NewFromProvider(cloudP))
@@ -524,8 +666,13 @@ func TestServerErrorPaths(t *testing.T) {
 	}
 
 	// Create a cluster so child error paths are distinct from a missing parent.
+	// A create returns 201; a re-PUT of the same cluster returns 200.
+	if code := do(http.MethodPut, base+"/serverGroupsv2/pg1"+ver, `{"location":"eastus","properties":{"nodeCount":1}}`); code != http.StatusCreated {
+		t.Fatalf("create cluster: got %d, want 201", code)
+	}
+
 	if code := do(http.MethodPut, base+"/serverGroupsv2/pg1"+ver, `{"location":"eastus","properties":{"nodeCount":1}}`); code != http.StatusOK {
-		t.Fatalf("create cluster: got %d, want 200", code)
+		t.Fatalf("re-PUT cluster: got %d, want 200", code)
 	}
 
 	cases := []struct {

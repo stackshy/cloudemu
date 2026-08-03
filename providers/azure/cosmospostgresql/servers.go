@@ -42,7 +42,7 @@ func (m *Mock) nodesForCluster(c *cpgdriver.Cluster) []cpgdriver.Server {
 	return out
 }
 
-func (m *Mock) node(c *cpgdriver.Cluster, role string, idx int) cpgdriver.Server {
+func (*Mock) node(c *cpgdriver.Cluster, role string, idx int) cpgdriver.Server {
 	name := serverName(c.Name, role, idx)
 
 	vcores, edition := c.NodeVCores, c.NodeServerEdition
@@ -65,7 +65,7 @@ func (m *Mock) node(c *cpgdriver.Cluster, role string, idx int) cpgdriver.Server
 		Role:                     role,
 		State:                    orDefault(c.State, "Ready"),
 		HaState:                  haState,
-		FullyQualifiedDomainName: name + "." + orDefault(m.opts.Region, "eastus") + ".postgres.cosmos.azure.com",
+		FullyQualifiedDomainName: name + "." + orDefault(c.Location, "eastus") + ".postgres.cosmos.azure.com",
 		AdministratorLogin:       c.AdministratorLogin,
 		ServerEdition:            edition,
 		VCores:                   vcores,
