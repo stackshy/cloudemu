@@ -58,6 +58,33 @@ func TestTransitGatewayLifecycle(t *testing.T) {
 		t.Fatalf("CreateTransitGatewayRouteTable: %v", err)
 	}
 
+	// Routing depth: associate, add a route, search.
+	if _, err := m.AssociateTransitGatewayRouteTable(ctx, rt.ID, att.ID); err != nil {
+		t.Fatalf("AssociateTransitGatewayRouteTable: %v", err)
+	}
+
+	if _, err := m.CreateTransitGatewayRoute(ctx, rt.ID, "10.9.0.0/16", att.ID); err != nil {
+		t.Fatalf("CreateTransitGatewayRoute: %v", err)
+	}
+
+	routes, err := m.SearchTransitGatewayRoutes(ctx, rt.ID)
+	if err != nil || len(routes) != 1 || routes[0].DestinationCIDR != "10.9.0.0/16" {
+		t.Fatalf("SearchTransitGatewayRoutes: %v %+v", err, routes)
+	}
+
+	if err := m.EnableTransitGatewayRouteTablePropagation(ctx, rt.ID, att.ID); err != nil {
+		t.Fatalf("EnableTransitGatewayRouteTablePropagation: %v", err)
+	}
+
+	if _, err := m.DeleteTransitGatewayRoute(ctx, rt.ID, "10.9.0.0/16"); err != nil {
+		t.Fatalf("DeleteTransitGatewayRoute: %v", err)
+	}
+
+	// A route in a missing route table is rejected.
+	if _, err := m.CreateTransitGatewayRoute(ctx, "tgw-rtb-nope", "10.0.0.0/8", att.ID); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("route in missing table: got %v, want InvalidArgument", err)
+	}
+
 	if _, err := m.DeleteTransitGatewayRouteTable(ctx, rt.ID); err != nil {
 		t.Fatalf("DeleteTransitGatewayRouteTable: %v", err)
 	}

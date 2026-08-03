@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -141,6 +142,117 @@ func (m *Mock) DeleteTransitGatewayRouteTable(_ context.Context, id string) (*dr
 // DescribeTransitGatewayRouteTables returns route tables matching ids.
 func (m *Mock) DescribeTransitGatewayRouteTables(_ context.Context, ids []string) ([]driver.TransitGatewayRouteTable, error) {
 	return describeResources(m.tgwRouteTables, ids, cloneTGWRouteTable), nil
+}
+
+func tgwRouteKey(routeTableID, cidr string) string { return routeTableID + "|" + cidr }
+
+func tgwAssocKey(routeTableID, attachmentID string) string { return routeTableID + "|" + attachmentID }
+
+// CreateTransitGatewayRoute adds a static route to a TGW route table.
+func (m *Mock) CreateTransitGatewayRoute(
+	_ context.Context, routeTableID, destinationCIDR, attachmentID string,
+) (*driver.TransitGatewayRoute, error) {
+	if !m.tgwRouteTables.Has(routeTableID) {
+		return nil, errors.Newf(errors.InvalidArgument, "transit gateway route table %q not found", routeTableID)
+	}
+
+	route := &driver.TransitGatewayRoute{
+		DestinationCIDR: destinationCIDR,
+		AttachmentID:    attachmentID,
+		Type:            "static",
+		State:           "active",
+	}
+	m.tgwRoutes.Set(tgwRouteKey(routeTableID, destinationCIDR), route)
+
+	out := *route
+
+	return &out, nil
+}
+
+// DeleteTransitGatewayRoute removes a route from a TGW route table.
+func (m *Mock) DeleteTransitGatewayRoute(
+	_ context.Context, routeTableID, destinationCIDR string,
+) (*driver.TransitGatewayRoute, error) {
+	key := tgwRouteKey(routeTableID, destinationCIDR)
+
+	route, ok := m.tgwRoutes.Get(key)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "transit gateway route %q not found", destinationCIDR)
+	}
+
+	route.State = NATStateDeleted
+	m.tgwRoutes.Delete(key)
+
+	out := *route
+
+	return &out, nil
+}
+
+// SearchTransitGatewayRoutes returns the routes of a TGW route table.
+func (m *Mock) SearchTransitGatewayRoutes(_ context.Context, routeTableID string) ([]driver.TransitGatewayRoute, error) {
+	if !m.tgwRouteTables.Has(routeTableID) {
+		return nil, errors.Newf(errors.InvalidArgument, "transit gateway route table %q not found", routeTableID)
+	}
+
+	prefix := routeTableID + "|"
+
+	var out []driver.TransitGatewayRoute
+
+	for _, k := range m.tgwRoutes.Keys() {
+		if strings.HasPrefix(k, prefix) {
+			if r, ok := m.tgwRoutes.Get(k); ok {
+				out = append(out, *r)
+			}
+		}
+	}
+
+	return out, nil
+}
+
+// AssociateTransitGatewayRouteTable associates an attachment with a route table.
+func (m *Mock) AssociateTransitGatewayRouteTable(
+	_ context.Context, routeTableID, attachmentID string,
+) (*driver.TransitGatewayRouteTableAssociation, error) {
+	if !m.tgwRouteTables.Has(routeTableID) {
+		return nil, errors.Newf(errors.InvalidArgument, "transit gateway route table %q not found", routeTableID)
+	}
+
+	att, ok := m.tgwAttachments.Get(attachmentID)
+	if !ok {
+		return nil, errors.Newf(errors.InvalidArgument, "transit gateway attachment %q not found", attachmentID)
+	}
+
+	assoc := &driver.TransitGatewayRouteTableAssociation{
+		RouteTableID: routeTableID,
+		AttachmentID: attachmentID,
+		ResourceID:   att.VPCID,
+		ResourceType: "vpc",
+		State:        "associated",
+	}
+	m.tgwAssociations.Set(tgwAssocKey(routeTableID, attachmentID), assoc)
+
+	out := *assoc
+
+	return &out, nil
+}
+
+// EnableTransitGatewayRouteTablePropagation enables propagation from an
+// attachment into a route table.
+func (m *Mock) EnableTransitGatewayRouteTablePropagation(_ context.Context, routeTableID, attachmentID string) error {
+	return m.requireRouteTableAndAttachment(routeTableID, attachmentID)
+}
+
+// DisableTransitGatewayRouteTablePropagation disables propagation.
+func (m *Mock) DisableTransitGatewayRouteTablePropagation(_ context.Context, routeTableID, attachmentID string) error {
+	return m.requireRouteTableAndAttachment(routeTableID, attachmentID)
+}
+
+func (m *Mock) requireRouteTableAndAttachment(routeTableID, attachmentID string) error {
+	if !m.tgwRouteTables.Has(routeTableID) || !m.tgwAttachments.Has(attachmentID) {
+		return errors.New(errors.InvalidArgument, "route table or attachment not found")
+	}
+
+	return nil
 }
 
 func cloneTGW(t *driver.TransitGateway) driver.TransitGateway {

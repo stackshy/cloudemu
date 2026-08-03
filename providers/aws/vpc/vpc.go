@@ -64,6 +64,8 @@ type Mock struct {
 	transitGateways    *memstore.Store[*driver.TransitGateway]
 	tgwAttachments     *memstore.Store[*driver.TransitGatewayVPCAttachment]
 	tgwRouteTables     *memstore.Store[*driver.TransitGatewayRouteTable]
+	tgwRoutes          *memstore.Store[*driver.TransitGatewayRoute]
+	tgwAssociations    *memstore.Store[*driver.TransitGatewayRouteTableAssociation]
 	customerGateways   *memstore.Store[*driver.CustomerGateway]
 	vpnGateways        *memstore.Store[*driver.VPNGateway]
 	vpnConnections     *memstore.Store[*driver.VPNConnection]
@@ -125,6 +127,8 @@ func New(opts *config.Options) *Mock {
 		transitGateways:    memstore.New[*driver.TransitGateway](),
 		tgwAttachments:     memstore.New[*driver.TransitGatewayVPCAttachment](),
 		tgwRouteTables:     memstore.New[*driver.TransitGatewayRouteTable](),
+		tgwRoutes:          memstore.New[*driver.TransitGatewayRoute](),
+		tgwAssociations:    memstore.New[*driver.TransitGatewayRouteTableAssociation](),
 		customerGateways:   memstore.New[*driver.CustomerGateway](),
 		vpnGateways:        memstore.New[*driver.VPNGateway](),
 		vpnConnections:     memstore.New[*driver.VPNConnection](),

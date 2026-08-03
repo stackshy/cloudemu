@@ -55,6 +55,23 @@ type TransitGatewayRouteTable struct {
 	Tags             map[string]string
 }
 
+// TransitGatewayRoute is a route within a transit gateway route table.
+type TransitGatewayRoute struct {
+	DestinationCIDR string
+	AttachmentID    string
+	Type            string // static | propagated
+	State           string
+}
+
+// TransitGatewayRouteTableAssociation links an attachment to a TGW route table.
+type TransitGatewayRouteTableAssociation struct {
+	RouteTableID string
+	AttachmentID string
+	ResourceID   string
+	ResourceType string
+	State        string
+}
+
 // TransitGateways is an OPTIONAL AWS capability (type-asserted).
 type TransitGateways interface {
 	CreateTransitGateway(ctx context.Context, cfg TransitGatewayConfig) (*TransitGateway, error)
@@ -68,6 +85,13 @@ type TransitGateways interface {
 	CreateTransitGatewayRouteTable(ctx context.Context, transitGatewayID string, tags map[string]string) (*TransitGatewayRouteTable, error)
 	DeleteTransitGatewayRouteTable(ctx context.Context, id string) (*TransitGatewayRouteTable, error)
 	DescribeTransitGatewayRouteTables(ctx context.Context, ids []string) ([]TransitGatewayRouteTable, error)
+
+	CreateTransitGatewayRoute(ctx context.Context, routeTableID, destinationCIDR, attachmentID string) (*TransitGatewayRoute, error)
+	DeleteTransitGatewayRoute(ctx context.Context, routeTableID, destinationCIDR string) (*TransitGatewayRoute, error)
+	SearchTransitGatewayRoutes(ctx context.Context, routeTableID string) ([]TransitGatewayRoute, error)
+	AssociateTransitGatewayRouteTable(ctx context.Context, routeTableID, attachmentID string) (*TransitGatewayRouteTableAssociation, error)
+	EnableTransitGatewayRouteTablePropagation(ctx context.Context, routeTableID, attachmentID string) error
+	DisableTransitGatewayRouteTablePropagation(ctx context.Context, routeTableID, attachmentID string) error
 }
 
 // ---- VPN (Customer Gateway / VPN Gateway / VPN Connection) ----

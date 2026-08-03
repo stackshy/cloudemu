@@ -71,6 +71,18 @@ func (h *Handler) routeTransitGateways(w http.ResponseWriter, r *http.Request, a
 		h.deleteTGWRouteTable(w, r, tg)
 	case "DescribeTransitGatewayRouteTables":
 		h.describeTGWRouteTables(w, r, tg)
+	case "CreateTransitGatewayRoute":
+		h.createTGWRoute(w, r, tg)
+	case "DeleteTransitGatewayRoute":
+		h.deleteTGWRoute(w, r, tg)
+	case "SearchTransitGatewayRoutes":
+		h.searchTGWRoutes(w, r, tg)
+	case "AssociateTransitGatewayRouteTable":
+		h.associateTGWRouteTable(w, r, tg)
+	case "EnableTransitGatewayRouteTablePropagation":
+		h.setTGWPropagation(w, r, tg, true)
+	case "DisableTransitGatewayRouteTablePropagation":
+		h.setTGWPropagation(w, r, tg, false)
 	default:
 		return false
 	}
@@ -273,6 +285,139 @@ func toTGWRouteTableXML(t *netdriver.TransitGatewayRouteTable) transitGatewayRou
 		State:                      t.State,
 		Tags:                       toTagItems(t.Tags),
 	}
+}
+
+type tgwRouteAttachmentXML struct {
+	TransitGatewayAttachmentID string `xml:"transitGatewayAttachmentId"`
+}
+
+type tgwRouteXML struct {
+	DestinationCidrBlock      string                  `xml:"destinationCidrBlock"`
+	Type                      string                  `xml:"type"`
+	State                     string                  `xml:"state"`
+	TransitGatewayAttachments []tgwRouteAttachmentXML `xml:"transitGatewayAttachments>item,omitempty"`
+}
+
+type tgwAssociationXML struct {
+	TransitGatewayRouteTableID string `xml:"transitGatewayRouteTableId"`
+	TransitGatewayAttachmentID string `xml:"transitGatewayAttachmentId"`
+	ResourceID                 string `xml:"resourceId,omitempty"`
+	ResourceType               string `xml:"resourceType,omitempty"`
+	State                      string `xml:"state"`
+}
+
+func toTGWRouteXML(rt *netdriver.TransitGatewayRoute) tgwRouteXML {
+	x := tgwRouteXML{DestinationCidrBlock: rt.DestinationCIDR, Type: rt.Type, State: rt.State}
+	if rt.AttachmentID != "" {
+		x.TransitGatewayAttachments = []tgwRouteAttachmentXML{{TransitGatewayAttachmentID: rt.AttachmentID}}
+	}
+
+	return x
+}
+
+func (h *Handler) createTGWRoute(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+	out, err := tg.CreateTransitGatewayRoute(r.Context(),
+		r.Form.Get("TransitGatewayRouteTableId"), r.Form.Get("DestinationCidrBlock"), r.Form.Get("TransitGatewayAttachmentId"))
+	if err != nil {
+		writeTGWErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name    `xml:"CreateTransitGatewayRouteResponse"`
+		Xmlns   string      `xml:"xmlns,attr"`
+		Req     string      `xml:"requestId"`
+		Route   tgwRouteXML `xml:"route"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Route: toTGWRouteXML(out)})
+}
+
+func (h *Handler) deleteTGWRoute(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+	out, err := tg.DeleteTransitGatewayRoute(r.Context(),
+		r.Form.Get("TransitGatewayRouteTableId"), r.Form.Get("DestinationCidrBlock"))
+	if err != nil {
+		writeTGWErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name    `xml:"DeleteTransitGatewayRouteResponse"`
+		Xmlns   string      `xml:"xmlns,attr"`
+		Req     string      `xml:"requestId"`
+		Route   tgwRouteXML `xml:"route"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Route: toTGWRouteXML(out)})
+}
+
+//nolint:dupl // parallel per-resource marshaling
+func (h *Handler) searchTGWRoutes(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+	items, err := tg.SearchTransitGatewayRoutes(r.Context(), r.Form.Get("TransitGatewayRouteTableId"))
+	if err != nil {
+		writeTGWErr(w, err)
+		return
+	}
+
+	out := make([]tgwRouteXML, 0, len(items))
+	for i := range items {
+		out = append(out, toTGWRouteXML(&items[i]))
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName xml.Name      `xml:"SearchTransitGatewayRoutesResponse"`
+		Xmlns   string        `xml:"xmlns,attr"`
+		Req     string        `xml:"requestId"`
+		Routes  []tgwRouteXML `xml:"routeSet>item"`
+		More    string        `xml:"additionalRoutesAvailable"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Routes: out, More: "false"})
+}
+
+func (h *Handler) associateTGWRouteTable(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+	out, err := tg.AssociateTransitGatewayRouteTable(r.Context(),
+		r.Form.Get("TransitGatewayRouteTableId"), r.Form.Get("TransitGatewayAttachmentId"))
+	if err != nil {
+		writeTGWErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName     xml.Name          `xml:"AssociateTransitGatewayRouteTableResponse"`
+		Xmlns       string            `xml:"xmlns,attr"`
+		Req         string            `xml:"requestId"`
+		Association tgwAssociationXML `xml:"association"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Association: tgwAssociationXML{
+		TransitGatewayRouteTableID: out.RouteTableID, TransitGatewayAttachmentID: out.AttachmentID,
+		ResourceID: out.ResourceID, ResourceType: out.ResourceType, State: out.State,
+	}})
+}
+
+func (h *Handler) setTGWPropagation(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways, enable bool) {
+	rtID := r.Form.Get("TransitGatewayRouteTableId")
+	attID := r.Form.Get("TransitGatewayAttachmentId")
+
+	var err error
+	if enable {
+		err = tg.EnableTransitGatewayRouteTablePropagation(r.Context(), rtID, attID)
+	} else {
+		err = tg.DisableTransitGatewayRouteTablePropagation(r.Context(), rtID, attID)
+	}
+
+	if err != nil {
+		writeTGWErr(w, err)
+		return
+	}
+
+	resp, state := "EnableTransitGatewayRouteTablePropagationResponse", "enabled"
+	if !enable {
+		resp, state = "DisableTransitGatewayRouteTablePropagationResponse", "disabled"
+	}
+
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName     xml.Name
+		Xmlns       string            `xml:"xmlns,attr"`
+		Req         string            `xml:"requestId"`
+		Propagation tgwAssociationXML `xml:"propagation"`
+	}{
+		XMLName: xml.Name{Local: resp}, Xmlns: awsquery.Namespace, Req: awsquery.RequestID,
+		Propagation: tgwAssociationXML{TransitGatewayRouteTableID: rtID, TransitGatewayAttachmentID: attID, State: state},
+	})
 }
 
 func writeTGWErr(w http.ResponseWriter, err error) {
