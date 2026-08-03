@@ -46,6 +46,9 @@ func (m *Mock) DeleteVPCEndpointServiceConfiguration(_ context.Context, id strin
 
 // DescribeVPCEndpointServiceConfigurations returns endpoint services matching ids.
 func (m *Mock) DescribeVPCEndpointServiceConfigurations(_ context.Context, ids []string) ([]driver.EndpointService, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.endpointServices, ids, cloneEndpointService), nil
 }
 
@@ -59,8 +62,6 @@ func cloneEndpointService(s *driver.EndpointService) driver.EndpointService {
 }
 
 // ModifyVPCEndpointServicePermissions adds/removes allowed principals on a service.
-//
-//nolint:gocritic // slices match the driver signature.
 func (m *Mock) ModifyVPCEndpointServicePermissions(
 	_ context.Context, serviceID string, addPrincipals, removePrincipals []string,
 ) error {

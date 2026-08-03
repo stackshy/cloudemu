@@ -76,10 +76,10 @@ func (*Handler) deleteEndpointService(w http.ResponseWriter, r *http.Request, s 
 	}
 
 	awsquery.WriteXMLResponse(w, struct {
-		XMLName xml.Name `xml:"DeleteVpcEndpointServiceConfigurationsResponse"`
-		Xmlns   string   `xml:"xmlns,attr"`
-		Req     string   `xml:"requestId"`
-		Unsucc  []string `xml:"unsuccessful>item,omitempty"`
+		XMLName xml.Name              `xml:"DeleteVpcEndpointServiceConfigurationsResponse"`
+		Xmlns   string                `xml:"xmlns,attr"`
+		Req     string                `xml:"requestId"`
+		Unsucc  []unsuccessfulItemXML `xml:"unsuccessful>item,omitempty"`
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID})
 }
 
@@ -116,7 +116,7 @@ func (*Handler) modifyEndpointServicePermissions(w http.ResponseWriter, r *http.
 		XMLName     xml.Name `xml:"ModifyVpcEndpointServicePermissionsResponse"`
 		Xmlns       string   `xml:"xmlns,attr"`
 		Req         string   `xml:"requestId"`
-		ReturnValue bool     `xml:"returnValue"`
+		ReturnValue bool     `xml:"return"`
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, ReturnValue: true})
 }
 
@@ -151,6 +151,17 @@ func toEndpointServiceXML(s *netdriver.EndpointService) endpointServiceXML {
 		AcceptanceRequired: s.AcceptanceRequired, AvailabilityZones: s.AvailabilityZones,
 		NlbArns: s.NetworkLoadBalancerARNs, Tags: toTagItems(s.Tags),
 	}
+}
+
+// unsuccessfulItemXML mirrors the EC2 UnsuccessfulItem shape (resourceId +
+// nested error). The mock never fails a delete, so the set is always empty,
+// but the shape must match what the SDK expects to deserialize.
+type unsuccessfulItemXML struct {
+	ResourceID string `xml:"resourceId"`
+	Error      struct {
+		Code    string `xml:"code"`
+		Message string `xml:"message"`
+	} `xml:"error"`
 }
 
 func writeEndpointServiceErr(w http.ResponseWriter, err error) {

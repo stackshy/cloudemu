@@ -2,6 +2,7 @@ package networkfirewall
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -94,13 +95,28 @@ func TestFirewallDepth(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
 
+	pol, err := m.CreateFirewallPolicy(ctx, nfdriver.CreateFirewallPolicyConfig{Name: "pol-dep"})
+	if err != nil {
+		t.Fatalf("CreateFirewallPolicy: %v", err)
+	}
+
 	fw, err := m.CreateFirewall(ctx, nfdriver.CreateFirewallConfig{Name: "fw-1", SubnetIDs: []string{"subnet-1"}})
 	if err != nil {
 		t.Fatalf("CreateFirewall: %v", err)
 	}
 
-	if _, err := m.AssociateFirewallPolicy(ctx, "fw-1", "arn:policy"); err != nil {
+	// Associating a nonexistent policy is rejected.
+	if _, err := m.AssociateFirewallPolicy(ctx, "fw-1", "arn:nope"); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("associate missing policy: got %v, want InvalidArgument", err)
+	}
+
+	if _, err := m.AssociateFirewallPolicy(ctx, "fw-1", pol.ARN); err != nil {
 		t.Fatalf("AssociateFirewallPolicy: %v", err)
+	}
+
+	// The policy is now in use, so deleting it is blocked.
+	if _, err := m.DeleteFirewallPolicy(ctx, "pol-dep", ""); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete in-use policy: got %v, want FailedPrecondition", err)
 	}
 
 	assoc, err := m.AssociateSubnets(ctx, "fw-1", []string{"subnet-1", "subnet-2"})
@@ -153,4 +169,35 @@ func TestFirewallDepth(t *testing.T) {
 	if err := m.TagResource(ctx, "arn:nope", map[string]string{"a": "b"}); !cerrors.IsNotFound(err) {
 		t.Fatalf("tag unknown arn: got %v, want NotFound", err)
 	}
+}
+
+// TestFirewallConcurrentAccess exercises the mutex under the race detector:
+// concurrent logging writes + describes + tag mutations must not race or trip
+// "concurrent map writes". Run with -race for it to be meaningful.
+func TestFirewallConcurrentAccess(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateFirewall(ctx, nfdriver.CreateFirewallConfig{Name: "fw-1"}); err != nil {
+		t.Fatalf("CreateFirewall: %v", err)
+	}
+
+	fw, _ := m.DescribeFirewall(ctx, "fw-1", "")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			_ = m.UpdateLoggingConfiguration(ctx, "fw-1", []string{"FLOW", "ALERT"})
+			_, _ = m.DescribeLoggingConfiguration(ctx, "fw-1")
+			_, _ = m.DescribeFirewall(ctx, "fw-1", "")
+			_ = m.TagResource(ctx, fw.ARN, map[string]string{"k": "v"})
+			_, _ = m.ListFirewalls(ctx)
+		}()
+	}
+
+	wg.Wait()
 }

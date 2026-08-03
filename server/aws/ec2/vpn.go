@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -39,14 +40,15 @@ type vpnAttachmentXML struct {
 }
 
 type vpnConnectionXML struct {
-	VpnConnectionID   string        `xml:"vpnConnectionId"`
-	CustomerGatewayID string        `xml:"customerGatewayId"`
-	VpnGatewayID      string        `xml:"vpnGatewayId,omitempty"`
-	TransitGatewayID  string        `xml:"transitGatewayId,omitempty"`
-	Type              string        `xml:"type"`
-	State             string        `xml:"state"`
-	Routes            []vpnRouteXML `xml:"routes>item,omitempty"`
-	Tags              []tagItem     `xml:"tagSet>item,omitempty"`
+	VpnConnectionID              string        `xml:"vpnConnectionId"`
+	CustomerGatewayID            string        `xml:"customerGatewayId"`
+	CustomerGatewayConfiguration string        `xml:"customerGatewayConfiguration"`
+	VpnGatewayID                 string        `xml:"vpnGatewayId,omitempty"`
+	TransitGatewayID             string        `xml:"transitGatewayId,omitempty"`
+	Type                         string        `xml:"type"`
+	State                        string        `xml:"state"`
+	Routes                       []vpnRouteXML `xml:"routes>item,omitempty"`
+	Tags                         []tagItem     `xml:"tagSet>item,omitempty"`
 }
 
 type vpnRouteXML struct {
@@ -334,7 +336,9 @@ func toVPNGatewayXML(v *netdriver.VPNGateway) vpnGatewayXML {
 func toVPNConnectionXML(v *netdriver.VPNConnection) vpnConnectionXML {
 	x := vpnConnectionXML{
 		VpnConnectionID: v.ID, CustomerGatewayID: v.CustomerGatewayID, VpnGatewayID: v.VPNGatewayID,
-		TransitGatewayID: v.TransitGatewayID, Type: v.Type, State: v.State, Tags: toTagItems(v.Tags),
+		TransitGatewayID: v.TransitGatewayID, Type: v.Type, State: v.State,
+		CustomerGatewayConfiguration: customerGatewayConfiguration(v),
+		Tags:                         toTagItems(v.Tags),
 	}
 
 	for _, rt := range v.Routes {
@@ -342,6 +346,39 @@ func toVPNConnectionXML(v *netdriver.VPNConnection) vpnConnectionXML {
 	}
 
 	return x
+}
+
+// customerGatewayConfiguration returns the IPsec tunnel-config document that
+// real Site-to-Site VPN responses always carry (Terraform's aws_vpn_connection
+// parses it). The emulator has no real tunnels, so this is a minimal but
+// structurally-valid stub identifying the connection and its gateways.
+func customerGatewayConfiguration(v *netdriver.VPNConnection) string {
+	var b strings.Builder
+
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
+	b.WriteString(`<vpn_connection id="` + v.ID + `">`)
+	b.WriteString(`<customer_gateway_id>` + v.CustomerGatewayID + `</customer_gateway_id>`)
+
+	if v.VPNGatewayID != "" {
+		b.WriteString(`<vpn_gateway_id>` + v.VPNGatewayID + `</vpn_gateway_id>`)
+	}
+
+	if v.TransitGatewayID != "" {
+		b.WriteString(`<transit_gateway_id>` + v.TransitGatewayID + `</transit_gateway_id>`)
+	}
+
+	b.WriteString(`<vpn_connection_type>` + orDefault(v.Type, "ipsec.1") + `</vpn_connection_type>`)
+	b.WriteString(`</vpn_connection>`)
+
+	return b.String()
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+
+	return v
 }
 
 func writeVPNErr(w http.ResponseWriter, err error) {

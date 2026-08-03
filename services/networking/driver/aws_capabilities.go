@@ -296,6 +296,7 @@ type ClientVPNEndpoint struct {
 	Description          string
 	ClientCIDRBlock      string
 	ServerCertificateARN string
+	AuthenticationTypes  []string
 	State                string
 	SplitTunnel          bool
 	VPCID                string
@@ -307,6 +308,7 @@ type ClientVPNEndpointConfig struct {
 	Description          string
 	ClientCIDRBlock      string
 	ServerCertificateARN string
+	AuthenticationTypes  []string
 	SplitTunnel          bool
 	Tags                 map[string]string
 }

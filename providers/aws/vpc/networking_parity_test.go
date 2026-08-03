@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -89,6 +90,15 @@ func TestTransitGatewayLifecycle(t *testing.T) {
 		t.Fatalf("DeleteTransitGatewayRouteTable: %v", err)
 	}
 
+	// A transit gateway with a live attachment cannot be deleted.
+	if _, err := m.DeleteTransitGateway(ctx, tgw.ID); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete in-use tgw: got %v, want FailedPrecondition", err)
+	}
+
+	if _, err := m.DeleteTransitGatewayVPCAttachment(ctx, att.ID); err != nil {
+		t.Fatalf("DeleteTransitGatewayVPCAttachment: %v", err)
+	}
+
 	if _, err := m.DeleteTransitGateway(ctx, tgw.ID); err != nil {
 		t.Fatalf("DeleteTransitGateway: %v", err)
 	}
@@ -152,8 +162,18 @@ func TestVPNLifecycle(t *testing.T) {
 	}
 
 	// Re-target to a transit gateway clears the vpn gateway.
-	mod, err := m.ModifyVPNConnection(ctx, vpn.ID, "tgw-1", "")
-	if err != nil || mod.TransitGatewayID != "tgw-1" || mod.VPNGatewayID != "" {
+	tgw, err := m.CreateTransitGateway(ctx, driver.TransitGatewayConfig{})
+	if err != nil {
+		t.Fatalf("CreateTransitGateway: %v", err)
+	}
+
+	// Modify rejects a nonexistent gateway.
+	if _, err := m.ModifyVPNConnection(ctx, vpn.ID, "tgw-nope", ""); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("modify to missing tgw: got %v, want InvalidArgument", err)
+	}
+
+	mod, err := m.ModifyVPNConnection(ctx, vpn.ID, tgw.ID, "")
+	if err != nil || mod.TransitGatewayID != tgw.ID || mod.VPNGatewayID != "" {
 		t.Fatalf("ModifyVPNConnection: %v %+v", err, mod)
 	}
 
@@ -167,6 +187,28 @@ func TestVPNLifecycle(t *testing.T) {
 
 	if err := m.DeleteVPNConnection(ctx, vpn.ID); err != nil {
 		t.Fatalf("DeleteVPNConnection: %v", err)
+	}
+
+	// Delete the gateways and confirm the read-back is empty.
+	if err := m.DeleteVPNGateway(ctx, vgw.ID); err != nil {
+		t.Fatalf("DeleteVPNGateway: %v", err)
+	}
+
+	if err := m.DeleteCustomerGateway(ctx, cgw.ID); err != nil {
+		t.Fatalf("DeleteCustomerGateway: %v", err)
+	}
+
+	if got, _ := m.DescribeCustomerGateways(ctx, nil); len(got) != 0 {
+		t.Fatalf("customer gateway survived delete: %+v", got)
+	}
+
+	if got, _ := m.DescribeVPNGateways(ctx, nil); len(got) != 0 {
+		t.Fatalf("vpn gateway survived delete: %+v", got)
+	}
+
+	// Deleting a missing connection is a NotFound.
+	if err := m.DeleteVPNConnection(ctx, "vpn-nope"); !cerrors.IsNotFound(err) {
+		t.Fatalf("delete missing vpn: got %v, want NotFound", err)
 	}
 }
 
@@ -263,9 +305,16 @@ func TestDHCPPrefixEgressEndpointClientVPN(t *testing.T) {
 		t.Fatalf("endpoint service perms after remove: %+v", perms)
 	}
 
-	// Client VPN.
+	// Client VPN. Authentication options are required.
+	if _, err := m.CreateClientVPNEndpoint(ctx, driver.ClientVPNEndpointConfig{
+		ClientCIDRBlock: "10.100.0.0/16", ServerCertificateARN: "arn:aws:acm:us-east-1:0:certificate/abc",
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("client vpn without auth: got %v, want InvalidArgument", err)
+	}
+
 	ep, err := m.CreateClientVPNEndpoint(ctx, driver.ClientVPNEndpointConfig{
 		ClientCIDRBlock: "10.100.0.0/16", ServerCertificateARN: "arn:aws:acm:us-east-1:0:certificate/abc",
+		AuthenticationTypes: []string{"certificate-authentication"},
 	})
 	if err != nil || ep.State != "pending-associate" {
 		t.Fatalf("CreateClientVPNEndpoint: %v %+v", err, ep)
@@ -321,4 +370,67 @@ func TestDHCPPrefixEgressEndpointClientVPN(t *testing.T) {
 	if err := m.DisassociateClientVPNTargetNetwork(ctx, ep.ID, assoc.AssociationID); err != nil {
 		t.Fatalf("DisassociateClientVPNTargetNetwork: %v", err)
 	}
+
+	// Delete the remaining resources and confirm the read-back halves.
+	if _, err := m.DeleteManagedPrefixList(ctx, pl.ID); err != nil {
+		t.Fatalf("DeleteManagedPrefixList: %v", err)
+	}
+
+	if got, _ := m.DescribeManagedPrefixLists(ctx, nil); len(got) != 0 {
+		t.Fatalf("prefix list survived delete: %+v", got)
+	}
+
+	if err := m.DeleteEgressOnlyInternetGateway(ctx, eigw.ID); err != nil {
+		t.Fatalf("DeleteEgressOnlyInternetGateway: %v", err)
+	}
+
+	if err := m.DeleteVPCEndpointServiceConfiguration(ctx, svc.ID); err != nil {
+		t.Fatalf("DeleteVPCEndpointServiceConfiguration: %v", err)
+	}
+
+	if got, _ := m.DescribeVPCEndpointServiceConfigurations(ctx, nil); len(got) != 0 {
+		t.Fatalf("endpoint service survived delete: %+v", got)
+	}
+
+	if err := m.DeleteClientVPNEndpoint(ctx, ep.ID); err != nil {
+		t.Fatalf("DeleteClientVPNEndpoint: %v", err)
+	}
+
+	if got, _ := m.DescribeClientVPNEndpoints(ctx, nil); len(got) != 0 {
+		t.Fatalf("client vpn endpoint survived delete: %+v", got)
+	}
+}
+
+// TestNetworkingConcurrentReadWrite exercises the reader RLock vs mutator Lock
+// discipline under the race detector: an in-place VPN-gateway mutation
+// (Attach/Detach) must not race a concurrent Describe. Meaningful with -race.
+func TestNetworkingConcurrentReadWrite(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	vpcID, _ := mustVPC(t, m)
+
+	vgw, err := m.CreateVPNGateway(ctx, driver.VPNGatewayConfig{})
+	if err != nil {
+		t.Fatalf("CreateVPNGateway: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = m.AttachVPNGateway(ctx, vgw.ID, vpcID)
+			_ = m.DetachVPNGateway(ctx, vgw.ID, vpcID)
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = m.DescribeVPNGateways(ctx, []string{vgw.ID})
+		}()
+	}
+
+	wg.Wait()
 }

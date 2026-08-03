@@ -315,7 +315,7 @@ func toTGWRouteXML(rt *netdriver.TransitGatewayRoute) tgwRouteXML {
 	return x
 }
 
-func (h *Handler) createTGWRoute(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) createTGWRoute(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	out, err := tg.CreateTransitGatewayRoute(r.Context(),
 		r.Form.Get("TransitGatewayRouteTableId"), r.Form.Get("DestinationCidrBlock"), r.Form.Get("TransitGatewayAttachmentId"))
 	if err != nil {
@@ -331,7 +331,7 @@ func (h *Handler) createTGWRoute(w http.ResponseWriter, r *http.Request, tg netd
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Route: toTGWRouteXML(out)})
 }
 
-func (h *Handler) deleteTGWRoute(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) deleteTGWRoute(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	out, err := tg.DeleteTransitGatewayRoute(r.Context(),
 		r.Form.Get("TransitGatewayRouteTableId"), r.Form.Get("DestinationCidrBlock"))
 	if err != nil {
@@ -347,8 +347,7 @@ func (h *Handler) deleteTGWRoute(w http.ResponseWriter, r *http.Request, tg netd
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Route: toTGWRouteXML(out)})
 }
 
-//nolint:dupl // parallel per-resource marshaling
-func (h *Handler) searchTGWRoutes(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) searchTGWRoutes(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	items, err := tg.SearchTransitGatewayRoutes(r.Context(), r.Form.Get("TransitGatewayRouteTableId"))
 	if err != nil {
 		writeTGWErr(w, err)
@@ -369,7 +368,7 @@ func (h *Handler) searchTGWRoutes(w http.ResponseWriter, r *http.Request, tg net
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Routes: out, More: "false"})
 }
 
-func (h *Handler) associateTGWRouteTable(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
+func (*Handler) associateTGWRouteTable(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways) {
 	out, err := tg.AssociateTransitGatewayRouteTable(r.Context(),
 		r.Form.Get("TransitGatewayRouteTableId"), r.Form.Get("TransitGatewayAttachmentId"))
 	if err != nil {
@@ -388,7 +387,7 @@ func (h *Handler) associateTGWRouteTable(w http.ResponseWriter, r *http.Request,
 	}})
 }
 
-func (h *Handler) setTGWPropagation(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways, enable bool) {
+func (*Handler) setTGWPropagation(w http.ResponseWriter, r *http.Request, tg netdriver.TransitGateways, enable bool) {
 	rtID := r.Form.Get("TransitGatewayRouteTableId")
 	attID := r.Form.Get("TransitGatewayAttachmentId")
 

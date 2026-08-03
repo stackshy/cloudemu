@@ -33,6 +33,9 @@ func (m *Mock) DeleteDHCPOptions(_ context.Context, id string) error {
 
 // DescribeDHCPOptions returns DHCP option sets matching ids.
 func (m *Mock) DescribeDHCPOptions(_ context.Context, ids []string) ([]driver.DHCPOptions, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.dhcpOptions, ids, cloneDHCPOptions), nil
 }
 

@@ -3,6 +3,7 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -18,15 +19,20 @@ type clientVPNStatusXML struct {
 	Code string `xml:"code"`
 }
 
+type clientVPNAuthXML struct {
+	Type string `xml:"type"`
+}
+
 type clientVPNEndpointXML struct {
-	ClientVpnEndpointID  string             `xml:"clientVpnEndpointId"`
-	Description          string             `xml:"description,omitempty"`
-	Status               clientVPNStatusXML `xml:"status"`
-	ClientCidrBlock      string             `xml:"clientCidrBlock"`
-	ServerCertificateARN string             `xml:"serverCertificateArn"`
-	SplitTunnel          bool               `xml:"splitTunnel"`
-	VpcID                string             `xml:"vpcId,omitempty"`
-	Tags                 []tagItem          `xml:"tagSet>item,omitempty"`
+	ClientVpnEndpointID   string             `xml:"clientVpnEndpointId"`
+	Description           string             `xml:"description,omitempty"`
+	Status                clientVPNStatusXML `xml:"status"`
+	ClientCidrBlock       string             `xml:"clientCidrBlock"`
+	ServerCertificateARN  string             `xml:"serverCertificateArn"`
+	AuthenticationOptions []clientVPNAuthXML `xml:"authenticationOptions>item,omitempty"`
+	SplitTunnel           bool               `xml:"splitTunnel"`
+	VpcID                 string             `xml:"vpcId,omitempty"`
+	Tags                  []tagItem          `xml:"tagSet>item,omitempty"`
 }
 
 //nolint:gocyclo // flat action dispatch table
@@ -73,6 +79,7 @@ func (*Handler) createClientVPNEndpoint(w http.ResponseWriter, r *http.Request, 
 		Description:          r.Form.Get("Description"),
 		ClientCIDRBlock:      r.Form.Get("ClientCidrBlock"),
 		ServerCertificateARN: r.Form.Get("ServerCertificateArn"),
+		AuthenticationTypes:  parseClientVPNAuthTypes(r),
 		SplitTunnel:          r.Form.Get("SplitTunnel") == formTrue,
 		Tags:                 mergeTagSpecs(awsquery.TagSpecs(r.Form), "client-vpn-endpoint"),
 	})
@@ -291,7 +298,6 @@ func (*Handler) deleteClientVPNRoute(w http.ResponseWriter, r *http.Request, c n
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Status: clientVPNStatusXML{Code: "deleting"}})
 }
 
-//nolint:dupl // parallel per-resource marshaling
 func (*Handler) describeClientVPNRoutes(w http.ResponseWriter, r *http.Request, c netdriver.ClientVPN) {
 	items, err := c.DescribeClientVPNRoutes(r.Context(), r.Form.Get("ClientVpnEndpointId"))
 	if err != nil {
@@ -316,11 +322,34 @@ func (*Handler) describeClientVPNRoutes(w http.ResponseWriter, r *http.Request, 
 }
 
 func toClientVPNEndpointXML(e *netdriver.ClientVPNEndpoint) clientVPNEndpointXML {
-	return clientVPNEndpointXML{
+	x := clientVPNEndpointXML{
 		ClientVpnEndpointID: e.ID, Description: e.Description, Status: clientVPNStatusXML{Code: e.State},
 		ClientCidrBlock: e.ClientCIDRBlock, ServerCertificateARN: e.ServerCertificateARN,
 		SplitTunnel: e.SplitTunnel, VpcID: e.VPCID, Tags: toTagItems(e.Tags),
 	}
+
+	for _, t := range e.AuthenticationTypes {
+		x.AuthenticationOptions = append(x.AuthenticationOptions, clientVPNAuthXML{Type: t})
+	}
+
+	return x
+}
+
+// parseClientVPNAuthTypes reads the Authentication.N.Type list from the EC2
+// query form (the SDK serializes AuthenticationOptions as Authentication.N).
+func parseClientVPNAuthTypes(r *http.Request) []string {
+	var out []string
+
+	for i := 1; ; i++ {
+		t := r.Form.Get("Authentication." + strconv.Itoa(i) + ".Type")
+		if t == "" {
+			break
+		}
+
+		out = append(out, t)
+	}
+
+	return out
 }
 
 func writeClientVPNErr(w http.ResponseWriter, err error) {

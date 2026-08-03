@@ -9,6 +9,8 @@ import (
 )
 
 // CreateClientVPNEndpoint creates a Client VPN endpoint.
+//
+//nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateClientVPNEndpoint(_ context.Context, cfg driver.ClientVPNEndpointConfig) (*driver.ClientVPNEndpoint, error) {
 	if cfg.ClientCIDRBlock == "" {
 		return nil, errors.New(errors.InvalidArgument, "clientCidrBlock is required")
@@ -18,11 +20,16 @@ func (m *Mock) CreateClientVPNEndpoint(_ context.Context, cfg driver.ClientVPNEn
 		return nil, errors.New(errors.InvalidArgument, "serverCertificateArn is required")
 	}
 
+	if len(cfg.AuthenticationTypes) == 0 {
+		return nil, errors.New(errors.InvalidArgument, "at least one authentication option is required")
+	}
+
 	ep := &driver.ClientVPNEndpoint{
 		ID:                   idgen.GenerateID("cvpn-endpoint-"),
 		Description:          cfg.Description,
 		ClientCIDRBlock:      cfg.ClientCIDRBlock,
 		ServerCertificateARN: cfg.ServerCertificateARN,
+		AuthenticationTypes:  append([]string(nil), cfg.AuthenticationTypes...),
 		State:                "pending-associate",
 		SplitTunnel:          cfg.SplitTunnel,
 		Tags:                 copyTags(cfg.Tags),
@@ -45,6 +52,9 @@ func (m *Mock) DeleteClientVPNEndpoint(_ context.Context, id string) error {
 
 // DescribeClientVPNEndpoints returns Client VPN endpoints matching ids.
 func (m *Mock) DescribeClientVPNEndpoints(_ context.Context, ids []string) ([]driver.ClientVPNEndpoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.clientVPNEndpoints, ids, cloneClientVPNEndpoint), nil
 }
 
@@ -97,6 +107,7 @@ func (m *Mock) DisassociateClientVPNTargetNetwork(_ context.Context, endpointID,
 
 func cloneClientVPNEndpoint(e *driver.ClientVPNEndpoint) driver.ClientVPNEndpoint {
 	out := *e
+	out.AuthenticationTypes = append([]string(nil), e.AuthenticationTypes...)
 	out.Tags = copyTags(e.Tags)
 
 	return out
@@ -104,6 +115,9 @@ func cloneClientVPNEndpoint(e *driver.ClientVPNEndpoint) driver.ClientVPNEndpoin
 
 // DescribeClientVPNTargetNetworks returns the target-network associations.
 func (m *Mock) DescribeClientVPNTargetNetworks(_ context.Context, endpointID string) ([]driver.ClientVPNTargetNetwork, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if !m.clientVPNEndpoints.Has(endpointID) {
 		return nil, errors.Newf(errors.NotFound, "client vpn endpoint %q not found", endpointID)
 	}
@@ -149,6 +163,9 @@ func (m *Mock) RevokeClientVPNIngress(_ context.Context, endpointID, targetCIDR 
 
 // DescribeClientVPNAuthorizationRules returns the endpoint's authorization rules.
 func (m *Mock) DescribeClientVPNAuthorizationRules(_ context.Context, endpointID string) ([]driver.ClientVPNAuthorizationRule, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if !m.clientVPNEndpoints.Has(endpointID) {
 		return nil, errors.Newf(errors.NotFound, "client vpn endpoint %q not found", endpointID)
 	}
@@ -194,6 +211,9 @@ func (m *Mock) DeleteClientVPNRoute(_ context.Context, endpointID, destinationCI
 
 // DescribeClientVPNRoutes returns the endpoint's routes.
 func (m *Mock) DescribeClientVPNRoutes(_ context.Context, endpointID string) ([]driver.ClientVPNRoute, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if !m.clientVPNEndpoints.Has(endpointID) {
 		return nil, errors.Newf(errors.NotFound, "client vpn endpoint %q not found", endpointID)
 	}

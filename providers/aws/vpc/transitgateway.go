@@ -35,9 +35,16 @@ func (m *Mock) CreateTransitGateway(_ context.Context, cfg driver.TransitGateway
 
 // DeleteTransitGateway deletes a transit gateway.
 func (m *Mock) DeleteTransitGateway(_ context.Context, id string) (*driver.TransitGateway, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	tgw, ok := m.transitGateways.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "transit gateway %q not found", id)
+	}
+
+	if m.transitGatewayInUse(id) {
+		return nil, errors.Newf(errors.FailedPrecondition, "transit gateway %q has attachments or route tables", id)
 	}
 
 	tgw.State = NATStateDeleted
@@ -51,6 +58,9 @@ func (m *Mock) DeleteTransitGateway(_ context.Context, id string) (*driver.Trans
 
 // DescribeTransitGateways returns transit gateways matching ids (all if empty).
 func (m *Mock) DescribeTransitGateways(_ context.Context, ids []string) ([]driver.TransitGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.transitGateways, ids, cloneTGW), nil
 }
 
@@ -83,6 +93,9 @@ func (m *Mock) CreateTransitGatewayVPCAttachment(
 
 // DeleteTransitGatewayVPCAttachment deletes a transit gateway VPC attachment.
 func (m *Mock) DeleteTransitGatewayVPCAttachment(_ context.Context, id string) (*driver.TransitGatewayVPCAttachment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	att, ok := m.tgwAttachments.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "transit gateway attachment %q not found", id)
@@ -99,6 +112,9 @@ func (m *Mock) DeleteTransitGatewayVPCAttachment(_ context.Context, id string) (
 
 // DescribeTransitGatewayVPCAttachments returns attachments matching ids.
 func (m *Mock) DescribeTransitGatewayVPCAttachments(_ context.Context, ids []string) ([]driver.TransitGatewayVPCAttachment, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.tgwAttachments, ids, cloneTGWAttachment), nil
 }
 
@@ -125,6 +141,9 @@ func (m *Mock) CreateTransitGatewayRouteTable(
 
 // DeleteTransitGatewayRouteTable deletes a transit gateway route table.
 func (m *Mock) DeleteTransitGatewayRouteTable(_ context.Context, id string) (*driver.TransitGatewayRouteTable, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rt, ok := m.tgwRouteTables.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "transit gateway route table %q not found", id)
@@ -141,7 +160,28 @@ func (m *Mock) DeleteTransitGatewayRouteTable(_ context.Context, id string) (*dr
 
 // DescribeTransitGatewayRouteTables returns route tables matching ids.
 func (m *Mock) DescribeTransitGatewayRouteTables(_ context.Context, ids []string) ([]driver.TransitGatewayRouteTable, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.tgwRouteTables, ids, cloneTGWRouteTable), nil
+}
+
+// transitGatewayInUse reports whether any attachment or route table still
+// references the transit gateway. Caller must hold the lock.
+func (m *Mock) transitGatewayInUse(id string) bool {
+	for _, att := range m.tgwAttachments.SortedValues() {
+		if att.TransitGatewayID == id {
+			return true
+		}
+	}
+
+	for _, rt := range m.tgwRouteTables.SortedValues() {
+		if rt.TransitGatewayID == id {
+			return true
+		}
+	}
+
+	return false
 }
 
 func tgwRouteKey(routeTableID, cidr string) string { return routeTableID + "|" + cidr }
@@ -154,6 +194,10 @@ func (m *Mock) CreateTransitGatewayRoute(
 ) (*driver.TransitGatewayRoute, error) {
 	if !m.tgwRouteTables.Has(routeTableID) {
 		return nil, errors.Newf(errors.InvalidArgument, "transit gateway route table %q not found", routeTableID)
+	}
+
+	if attachmentID != "" && !m.tgwAttachments.Has(attachmentID) {
+		return nil, errors.Newf(errors.InvalidArgument, "transit gateway attachment %q not found", attachmentID)
 	}
 
 	route := &driver.TransitGatewayRoute{
@@ -173,6 +217,9 @@ func (m *Mock) CreateTransitGatewayRoute(
 func (m *Mock) DeleteTransitGatewayRoute(
 	_ context.Context, routeTableID, destinationCIDR string,
 ) (*driver.TransitGatewayRoute, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	key := tgwRouteKey(routeTableID, destinationCIDR)
 
 	route, ok := m.tgwRoutes.Get(key)
@@ -181,6 +228,7 @@ func (m *Mock) DeleteTransitGatewayRoute(
 	}
 
 	route.State = NATStateDeleted
+
 	m.tgwRoutes.Delete(key)
 
 	out := *route
@@ -190,6 +238,9 @@ func (m *Mock) DeleteTransitGatewayRoute(
 
 // SearchTransitGatewayRoutes returns the routes of a TGW route table.
 func (m *Mock) SearchTransitGatewayRoutes(_ context.Context, routeTableID string) ([]driver.TransitGatewayRoute, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if !m.tgwRouteTables.Has(routeTableID) {
 		return nil, errors.Newf(errors.InvalidArgument, "transit gateway route table %q not found", routeTableID)
 	}

@@ -18,6 +18,11 @@ func (m *Mock) CreateManagedPrefixList(_ context.Context, cfg driver.PrefixListC
 		return nil, errors.New(errors.InvalidArgument, "maxEntries must be greater than zero")
 	}
 
+	if len(cfg.Entries) > cfg.MaxEntries {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"prefix list has %d entries, exceeding maxEntries %d", len(cfg.Entries), cfg.MaxEntries)
+	}
+
 	pl := &driver.PrefixList{
 		ID:            idgen.GenerateID("pl-"),
 		Name:          cfg.Name,
@@ -37,6 +42,9 @@ func (m *Mock) CreateManagedPrefixList(_ context.Context, cfg driver.PrefixListC
 
 // DeleteManagedPrefixList deletes a managed prefix list.
 func (m *Mock) DeleteManagedPrefixList(_ context.Context, id string) (*driver.PrefixList, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	pl, ok := m.prefixLists.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "prefix list %q not found", id)
@@ -53,11 +61,17 @@ func (m *Mock) DeleteManagedPrefixList(_ context.Context, id string) (*driver.Pr
 
 // DescribeManagedPrefixLists returns prefix lists matching ids.
 func (m *Mock) DescribeManagedPrefixLists(_ context.Context, ids []string) ([]driver.PrefixList, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.prefixLists, ids, clonePrefixList), nil
 }
 
 // GetManagedPrefixListEntries returns the entries of a prefix list.
 func (m *Mock) GetManagedPrefixListEntries(_ context.Context, id string) ([]driver.PrefixListEntry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	pl, ok := m.prefixLists.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "prefix list %q not found", id)
@@ -109,7 +123,13 @@ func (m *Mock) ModifyManagedPrefixList(
 		}
 	}
 
-	pl.Entries = append(kept, addEntries...)
+	updated := append(kept, addEntries...)
+	if len(updated) > pl.MaxEntries {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"prefix list would have %d entries, exceeding maxEntries %d", len(updated), pl.MaxEntries)
+	}
+
+	pl.Entries = updated
 	pl.Version++
 	m.prefixLists.Set(id, pl)
 

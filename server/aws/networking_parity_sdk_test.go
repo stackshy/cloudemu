@@ -128,6 +128,13 @@ func TestEC2NetworkingParitySDK(t *testing.T) {
 			VpnConnectionId: aws.String(vpnID), DestinationCidrBlock: aws.String("192.168.0.0/16"),
 		})
 		require.NoError(t, err)
+
+		// Error path: modifying a nonexistent connection surfaces an SDK error
+		// deserialized from the query-protocol error XML.
+		_, err = client.ModifyVpnConnection(ctx, &ec2.ModifyVpnConnectionInput{
+			VpnConnectionId: aws.String("vpn-does-not-exist"), VpnGatewayId: aws.String(vgwID),
+		})
+		require.Error(t, err, "expected error modifying unknown vpn connection")
 	})
 
 	t.Run("dhcp options", func(t *testing.T) {

@@ -4,6 +4,7 @@ package networkfirewall
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -12,11 +13,21 @@ import (
 	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
 )
 
+const (
+	ruleTypeStateful  = "STATEFUL"
+	ruleTypeStateless = "STATELESS"
+)
+
 var _ nfdriver.NetworkFirewall = (*Mock)(nil)
 
 // Mock is the in-memory AWS Network Firewall implementation. Resources are
 // keyed by name (unique per account/region, as in the real service).
+//
+// The stores hand back shared pointers whose fields are mutated in place
+// (associate/tag/protection/subnets) and logging is a plain map, so every
+// public method serializes on mu: mutators take Lock, readers take RLock.
 type Mock struct {
+	mu         sync.RWMutex
 	firewalls  *memstore.Store[*nfdriver.Firewall]
 	policies   *memstore.Store[*nfdriver.FirewallPolicy]
 	ruleGroups *memstore.Store[*nfdriver.RuleGroup]
@@ -64,12 +75,19 @@ func cloneStrings(s []string) []string {
 
 //nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateFirewall(_ context.Context, cfg nfdriver.CreateFirewallConfig) (*nfdriver.Firewall, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "FirewallName is required")
 	}
 
 	if m.firewalls.Has(cfg.Name) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "firewall %q already exists", cfg.Name)
+	}
+
+	if cfg.PolicyARN != "" && !m.policyExists(cfg.PolicyARN) {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "firewall policy %q not found", cfg.PolicyARN)
 	}
 
 	fw := &nfdriver.Firewall{
@@ -91,6 +109,9 @@ func (m *Mock) CreateFirewall(_ context.Context, cfg nfdriver.CreateFirewallConf
 }
 
 func (m *Mock) DescribeFirewall(_ context.Context, name, arn string) (*nfdriver.Firewall, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	fw, ok := m.lookupFirewall(name, arn)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", nonEmpty(name, arn))
@@ -102,6 +123,9 @@ func (m *Mock) DescribeFirewall(_ context.Context, name, arn string) (*nfdriver.
 }
 
 func (m *Mock) DeleteFirewall(_ context.Context, name, arn string) (*nfdriver.Firewall, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fw, ok := m.lookupFirewall(name, arn)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", nonEmpty(name, arn))
@@ -120,6 +144,9 @@ func (m *Mock) DeleteFirewall(_ context.Context, name, arn string) (*nfdriver.Fi
 }
 
 func (m *Mock) ListFirewalls(_ context.Context) ([]nfdriver.Firewall, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	all := m.firewalls.SortedValues()
 	out := make([]nfdriver.Firewall, 0, len(all))
 
@@ -156,6 +183,9 @@ func cloneFirewall(f *nfdriver.Firewall) nfdriver.Firewall {
 
 //nolint:gocritic // cfg matches the driver signature.
 func (m *Mock) CreateFirewallPolicy(_ context.Context, cfg nfdriver.CreateFirewallPolicyConfig) (*nfdriver.FirewallPolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "FirewallPolicyName is required")
 	}
@@ -181,6 +211,9 @@ func (m *Mock) CreateFirewallPolicy(_ context.Context, cfg nfdriver.CreateFirewa
 }
 
 func (m *Mock) DescribeFirewallPolicy(_ context.Context, name, arn string) (*nfdriver.FirewallPolicy, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	p, ok := m.lookupPolicy(name, arn)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall policy %q not found", nonEmpty(name, arn))
@@ -192,9 +225,16 @@ func (m *Mock) DescribeFirewallPolicy(_ context.Context, name, arn string) (*nfd
 }
 
 func (m *Mock) DeleteFirewallPolicy(_ context.Context, name, arn string) (*nfdriver.FirewallPolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	p, ok := m.lookupPolicy(name, arn)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall policy %q not found", nonEmpty(name, arn))
+	}
+
+	if m.policyInUse(p.ARN) {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition, "firewall policy %q is in use by a firewall", p.Name)
 	}
 
 	m.policies.Delete(p.Name)
@@ -205,6 +245,9 @@ func (m *Mock) DeleteFirewallPolicy(_ context.Context, name, arn string) (*nfdri
 }
 
 func (m *Mock) ListFirewallPolicies(_ context.Context) ([]nfdriver.FirewallPolicy, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	all := m.policies.SortedValues()
 	out := make([]nfdriver.FirewallPolicy, 0, len(all))
 
@@ -229,6 +272,28 @@ func (m *Mock) lookupPolicy(name, arn string) (*nfdriver.FirewallPolicy, bool) {
 	return nil, false
 }
 
+// policyExists reports whether a firewall policy with the given ARN is present.
+func (m *Mock) policyExists(arn string) bool {
+	for _, p := range m.policies.SortedValues() {
+		if p.ARN == arn {
+			return true
+		}
+	}
+
+	return false
+}
+
+// policyInUse reports whether any firewall references the policy ARN.
+func (m *Mock) policyInUse(arn string) bool {
+	for _, f := range m.firewalls.SortedValues() {
+		if f.PolicyARN == arn {
+			return true
+		}
+	}
+
+	return false
+}
+
 func cloneFirewallPolicy(p *nfdriver.FirewallPolicy) nfdriver.FirewallPolicy {
 	out := *p
 	out.StatelessDefaultActions = cloneStrings(p.StatelessDefaultActions)
@@ -241,11 +306,14 @@ func cloneFirewallPolicy(p *nfdriver.FirewallPolicy) nfdriver.FirewallPolicy {
 // ---- Rule Groups ----
 
 func (m *Mock) CreateRuleGroup(_ context.Context, cfg nfdriver.CreateRuleGroupConfig) (*nfdriver.RuleGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "RuleGroupName is required")
 	}
 
-	if cfg.Type != "STATEFUL" && cfg.Type != "STATELESS" {
+	if cfg.Type != ruleTypeStateful && cfg.Type != ruleTypeStateless {
 		return nil, cerrors.New(cerrors.InvalidArgument, "Type must be STATEFUL or STATELESS")
 	}
 
@@ -254,9 +322,14 @@ func (m *Mock) CreateRuleGroup(_ context.Context, cfg nfdriver.CreateRuleGroupCo
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "rule group %q already exists", cfg.Name)
 	}
 
+	rgKind := "stateful-rulegroup"
+	if cfg.Type == ruleTypeStateless {
+		rgKind = "stateless-rulegroup"
+	}
+
 	rg := &nfdriver.RuleGroup{
 		Name:        cfg.Name,
-		ARN:         m.arn("stateful-rulegroup", cfg.Name),
+		ARN:         m.arn(rgKind, cfg.Name),
 		ID:          idgen.GenerateID(""),
 		Type:        cfg.Type,
 		Capacity:    cfg.Capacity,
@@ -271,6 +344,9 @@ func (m *Mock) CreateRuleGroup(_ context.Context, cfg nfdriver.CreateRuleGroupCo
 }
 
 func (m *Mock) DescribeRuleGroup(_ context.Context, name, arn, ruleType string) (*nfdriver.RuleGroup, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	rg, ok := m.lookupRuleGroup(name, arn, ruleType)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "rule group %q not found", nonEmpty(name, arn))
@@ -282,6 +358,9 @@ func (m *Mock) DescribeRuleGroup(_ context.Context, name, arn, ruleType string) 
 }
 
 func (m *Mock) DeleteRuleGroup(_ context.Context, name, arn, ruleType string) (*nfdriver.RuleGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rg, ok := m.lookupRuleGroup(name, arn, ruleType)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "rule group %q not found", nonEmpty(name, arn))
@@ -295,6 +374,9 @@ func (m *Mock) DeleteRuleGroup(_ context.Context, name, arn, ruleType string) (*
 }
 
 func (m *Mock) ListRuleGroups(_ context.Context) ([]nfdriver.RuleGroup, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	all := m.ruleGroups.SortedValues()
 	out := make([]nfdriver.RuleGroup, 0, len(all))
 
@@ -342,9 +424,16 @@ func nonEmpty(a, b string) string {
 
 // AssociateFirewallPolicy attaches a firewall policy to a firewall.
 func (m *Mock) AssociateFirewallPolicy(_ context.Context, firewallName, policyARN string) (*nfdriver.Firewall, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fw, ok := m.firewalls.Get(firewallName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
+	}
+
+	if !m.policyExists(policyARN) {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "firewall policy %q not found", policyARN)
 	}
 
 	fw.PolicyARN = policyARN
@@ -355,9 +444,10 @@ func (m *Mock) AssociateFirewallPolicy(_ context.Context, firewallName, policyAR
 }
 
 // AssociateSubnets adds subnet mappings to a firewall.
-//
-//nolint:gocritic // slice matches the driver signature.
 func (m *Mock) AssociateSubnets(_ context.Context, firewallName string, subnetIDs []string) (*nfdriver.Firewall, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fw, ok := m.firewalls.Get(firewallName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
@@ -381,9 +471,10 @@ func (m *Mock) AssociateSubnets(_ context.Context, firewallName string, subnetID
 }
 
 // DisassociateSubnets removes subnet mappings from a firewall.
-//
-//nolint:gocritic // slice matches the driver signature.
 func (m *Mock) DisassociateSubnets(_ context.Context, firewallName string, subnetIDs []string) (*nfdriver.Firewall, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fw, ok := m.firewalls.Get(firewallName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
@@ -411,6 +502,9 @@ func (m *Mock) DisassociateSubnets(_ context.Context, firewallName string, subne
 
 // UpdateFirewallDeleteProtection toggles delete protection on a firewall.
 func (m *Mock) UpdateFirewallDeleteProtection(_ context.Context, firewallName string, enabled bool) (*nfdriver.Firewall, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fw, ok := m.firewalls.Get(firewallName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
@@ -424,9 +518,10 @@ func (m *Mock) UpdateFirewallDeleteProtection(_ context.Context, firewallName st
 }
 
 // UpdateLoggingConfiguration sets the firewall's log types.
-//
-//nolint:gocritic // slice matches the driver signature.
 func (m *Mock) UpdateLoggingConfiguration(_ context.Context, firewallName string, logTypes []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.firewalls.Has(firewallName) {
 		return cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
 	}
@@ -438,6 +533,9 @@ func (m *Mock) UpdateLoggingConfiguration(_ context.Context, firewallName string
 
 // DescribeLoggingConfiguration returns the firewall's log types.
 func (m *Mock) DescribeLoggingConfiguration(_ context.Context, firewallName string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if !m.firewalls.Has(firewallName) {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
 	}
@@ -447,6 +545,9 @@ func (m *Mock) DescribeLoggingConfiguration(_ context.Context, firewallName stri
 
 // TagResource adds tags to a firewall / policy / rule group by ARN.
 func (m *Mock) TagResource(_ context.Context, arn string, tags map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if t := m.taggableByARN(arn); t != nil {
 		for k, v := range tags {
 			t[k] = v
@@ -459,9 +560,10 @@ func (m *Mock) TagResource(_ context.Context, arn string, tags map[string]string
 }
 
 // UntagResource removes tags from a firewall / policy / rule group by ARN.
-//
-//nolint:gocritic // keys slice matches the driver signature.
 func (m *Mock) UntagResource(_ context.Context, arn string, keys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	t := m.taggableByARN(arn)
 	if t == nil {
 		return cerrors.Newf(cerrors.NotFound, "resource %q not found", arn)

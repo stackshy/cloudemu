@@ -48,6 +48,9 @@ func (m *Mock) DeleteCustomerGateway(_ context.Context, id string) error {
 
 // DescribeCustomerGateways returns customer gateways matching ids.
 func (m *Mock) DescribeCustomerGateways(_ context.Context, ids []string) ([]driver.CustomerGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.customerGateways, ids, cloneCustomerGateway), nil
 }
 
@@ -83,6 +86,9 @@ func (m *Mock) DeleteVPNGateway(_ context.Context, id string) error {
 
 // DescribeVPNGateways returns VPN gateways matching ids.
 func (m *Mock) DescribeVPNGateways(_ context.Context, ids []string) ([]driver.VPNGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.vpnGateways, ids, cloneVPNGateway), nil
 }
 
@@ -140,6 +146,14 @@ func (m *Mock) CreateVPNConnection(_ context.Context, cfg driver.VPNConnectionCo
 		return nil, errors.New(errors.InvalidArgument, "a vpn gateway or transit gateway is required")
 	}
 
+	if cfg.VPNGatewayID != "" && !m.vpnGateways.Has(cfg.VPNGatewayID) {
+		return nil, errors.Newf(errors.InvalidArgument, "vpn gateway %q not found", cfg.VPNGatewayID)
+	}
+
+	if cfg.TransitGatewayID != "" && !m.transitGateways.Has(cfg.TransitGatewayID) {
+		return nil, errors.Newf(errors.InvalidArgument, "transit gateway %q not found", cfg.TransitGatewayID)
+	}
+
 	vpn := &driver.VPNConnection{
 		ID:                idgen.GenerateID("vpn-"),
 		CustomerGatewayID: cfg.CustomerGatewayID,
@@ -168,6 +182,9 @@ func (m *Mock) DeleteVPNConnection(_ context.Context, id string) error {
 
 // DescribeVPNConnections returns VPN connections matching ids.
 func (m *Mock) DescribeVPNConnections(_ context.Context, ids []string) ([]driver.VPNConnection, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.vpnConnections, ids, cloneVPNConnection), nil
 }
 
@@ -223,6 +240,14 @@ func (m *Mock) ModifyVPNConnection(_ context.Context, id, transitGatewayID, vpnG
 	vpn, ok := m.vpnConnections.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "vpn connection %q not found", id)
+	}
+
+	if transitGatewayID != "" && !m.transitGateways.Has(transitGatewayID) {
+		return nil, errors.Newf(errors.InvalidArgument, "transit gateway %q not found", transitGatewayID)
+	}
+
+	if vpnGatewayID != "" && !m.vpnGateways.Has(vpnGatewayID) {
+		return nil, errors.Newf(errors.InvalidArgument, "vpn gateway %q not found", vpnGatewayID)
 	}
 
 	if transitGatewayID != "" {

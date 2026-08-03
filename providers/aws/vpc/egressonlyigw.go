@@ -41,6 +41,9 @@ func (m *Mock) DeleteEgressOnlyInternetGateway(_ context.Context, id string) err
 
 // DescribeEgressOnlyInternetGateways returns egress-only IGWs matching ids.
 func (m *Mock) DescribeEgressOnlyInternetGateways(_ context.Context, ids []string) ([]driver.EgressOnlyInternetGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.egressOnlyIGWs, ids, cloneEgressOnlyIGW), nil
 }
 

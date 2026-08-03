@@ -551,7 +551,7 @@ assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
 | VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
 | Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
 
-**AWS-specific total: 54 operations**
+**AWS-specific total: 58 operations**
 
 ---
 
@@ -2261,7 +2261,7 @@ still sees success.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
-| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN) | 54 |
+| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN) | 58 |
 | Network Firewall — AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
@@ -2293,7 +2293,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1489** (+138 optional) |
+| **Grand Total** | **1493** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

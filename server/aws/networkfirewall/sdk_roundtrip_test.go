@@ -158,4 +158,9 @@ func TestSDKNetworkFirewall(t *testing.T) {
 
 	_, err = client.DescribeFirewall(ctx, &networkfirewall.DescribeFirewallInput{FirewallName: aws.String("fw-1")})
 	require.Error(t, err, "firewall should be gone after delete")
+
+	// Error path: the JSON error envelope decodes into a typed SDK error.
+	_, err = client.DescribeFirewall(ctx, &networkfirewall.DescribeFirewallInput{FirewallName: aws.String("does-not-exist")})
+	var notFound *nftypes.ResourceNotFoundException
+	require.ErrorAs(t, err, &notFound, "expected ResourceNotFoundException for unknown firewall")
 }
