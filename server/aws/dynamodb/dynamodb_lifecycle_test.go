@@ -199,6 +199,42 @@ func TestDDBTableLifecycle(t *testing.T) {
 	require.ErrorAs(t, err, &rnf, "DescribeTable on a deleted table should be ResourceNotFoundException")
 }
 
+// TestDDBTagging is a regression guard for issue #319: TagResource /
+// UntagResource / ListTagsOfResource returned UnknownOperationException.
+func TestDDBTagging(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "tagged", "pk", "sk")
+
+	arn := "arn:aws:dynamodb:us-east-1:000000000000:table/tagged"
+
+	if _, err := client.TagResource(ctx, &dynamodb.TagResourceInput{
+		ResourceArn: aws.String(arn),
+		Tags: []ddbtypes.Tag{
+			{Key: aws.String("env"), Value: aws.String("prod")},
+			{Key: aws.String("team"), Value: aws.String("data")},
+		},
+	}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	list, err := client.ListTagsOfResource(ctx, &dynamodb.ListTagsOfResourceInput{ResourceArn: aws.String(arn)})
+	require.NoError(t, err)
+	require.Len(t, list.Tags, 2)
+
+	if _, err := client.UntagResource(ctx, &dynamodb.UntagResourceInput{
+		ResourceArn: aws.String(arn), TagKeys: []string{"env"},
+	}); err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	list, err = client.ListTagsOfResource(ctx, &dynamodb.ListTagsOfResourceInput{ResourceArn: aws.String(arn)})
+	require.NoError(t, err)
+	require.Len(t, list.Tags, 1)
+	assert.Equal(t, "team", aws.ToString(list.Tags[0].Key))
+}
+
 // TestDDBItemJourney: put an item with varied attribute types
 // (S, N incl. negative decimal, BOOL, NULL, L, M, empty string, ~100KB blob),
 // read it back through the SDK, update with SET+REMOVE (ReturnValues ALL_NEW),
