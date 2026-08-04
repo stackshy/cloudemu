@@ -883,13 +883,9 @@ func TestDDBTypedErrors(t *testing.T) {
 	})
 
 	t.Run("unrouted operation is UnknownOperationException", func(t *testing.T) {
-		// UpdateTimeToLive has no HTTP surface in the emulator.
-		_, err := client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
+		// DescribeContinuousBackups has no HTTP surface in the emulator.
+		_, err := client.DescribeContinuousBackups(ctx, &dynamodb.DescribeContinuousBackupsInput{
 			TableName: aws.String("errs"),
-			TimeToLiveSpecification: &ddbtypes.TimeToLiveSpecification{
-				AttributeName: aws.String("ttl"),
-				Enabled:       aws.Bool(true),
-			},
 		})
 		require.Error(t, err)
 
