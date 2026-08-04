@@ -401,6 +401,41 @@ func TestDDBQueryPartitionAndSort(t *testing.T) {
 	assert.Equal(t, "99", attrN(t, out.Items[0], "total"))
 }
 
+// TestDDBQueryWithFilterExpression is a regression guard for issue #319: Query
+// ignored FilterExpression and returned the full key-matched set (silent wrong
+// data), while Scan applied it correctly.
+func TestDDBQueryWithFilterExpression(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "orders", "customer", "orderDate")
+
+	for _, o := range []struct{ date, total string }{
+		{"2024-01-01", "10"},
+		{"2024-02-15", "70"},
+		{"2024-03-10", "40"},
+	} {
+		suiteDDBPut(t, client, "orders", map[string]ddbtypes.AttributeValue{
+			"customer":  sAttr("alice"),
+			"orderDate": sAttr(o.date),
+			"total":     nAttr(o.total),
+		})
+	}
+
+	// Key matches 3 rows; the filter (total > 50) should leave only 1.
+	out, err := client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String("orders"),
+		KeyConditionExpression: aws.String("customer = :c"),
+		FilterExpression:       aws.String("total > :m"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":c": sAttr("alice"), ":m": nAttr("50"),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), out.Count, "FilterExpression must prune the key-matched set")
+	assert.Equal(t, "70", attrN(t, out.Items[0], "total"))
+}
+
 // TestDDBQueryEdges: query on an empty table returns zero items;
 // query against a missing table or unknown index yields the typed error.
 func TestDDBQueryEdges(t *testing.T) {

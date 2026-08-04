@@ -363,6 +363,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
+		FilterExpression          string            `json:"FilterExpression"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		Limit                     int               `json:"Limit"`
@@ -377,6 +378,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 
 	vals := fromWireItem(req.ExpressionAttributeValues)
 	kc := parseKeyCondition(req.KeyConditionExpression, vals, req.ExpressionAttributeNames)
+	filters := parseFilterExpression(req.FilterExpression, vals, req.ExpressionAttributeNames)
 
 	forward := true
 	if req.ScanIndexForward != nil {
@@ -387,6 +389,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		Table:             req.TableName,
 		IndexName:         req.IndexName,
 		KeyCondition:      kc,
+		Filters:           filters,
 		Limit:             req.Limit,
 		SortDescending:    !forward,
 		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),

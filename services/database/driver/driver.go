@@ -94,8 +94,11 @@ type QueryInput struct {
 	Table        string
 	IndexName    string
 	KeyCondition KeyCondition
-	Limit        int
-	PageToken    string
+	// Filters is the post-key-condition FilterExpression, applied to items
+	// that already match the key condition (same semantics as Scan.Filters).
+	Filters   []ScanFilter
+	Limit     int
+	PageToken string
 
 	// ExclusiveStartKey selects key-based continuation (DynamoDB-style):
 	// the page starts after the item with these key attributes. Mutually
