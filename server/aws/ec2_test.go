@@ -713,16 +713,20 @@ func TestEC2DescribeTerminatedInstanceStillVisible(t *testing.T) {
 		"terminated instance should still be described")
 }
 
-func TestEC2DescribeInstancesByUnknownIDReturnsEmpty(t *testing.T) {
-	// Real AWS returns an error; our provider returns empty. Document behavior.
+func TestEC2DescribeInstancesByUnknownIDReturnsNotFound(t *testing.T) {
+	// Real AWS returns InvalidInstanceID.NotFound for an explicit missing ID
+	// (issue #319, theme C); a prior version returned an empty success.
 	client := newEC2Client(t)
 	ctx := context.Background()
 
-	out, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+	_, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		InstanceIds: []string{"i-deadbeef"},
 	})
-	require.NoError(t, err)
-	assert.Empty(t, collectIDs(out))
+	require.Error(t, err)
+
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, "InvalidInstanceID.NotFound", apiErr.ErrorCode())
 }
 
 func TestEC2StopIdempotent(t *testing.T) {
