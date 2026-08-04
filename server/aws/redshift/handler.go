@@ -95,9 +95,46 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := redshiftActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
+	if _, ok := redshiftActions[action]; !ok {
+		return false
+	}
 
-	return ok
+	// CreateTags/DeleteTags/DescribeTags are generic tag verbs shared with EC2
+	// and ELBv2 on the same query protocol. Redshift registers before both, so
+	// claim these only when the SigV4 credential scope names "redshift";
+	// otherwise let them fall through to the owning handler.
+	if _, ambiguous := ambiguousTagActions[action]; ambiguous {
+		return sigV4ScopeService(r.Header.Get("Authorization")) == "redshift"
+	}
+
+	return true
+}
+
+// ambiguousTagActions are the tag verbs Redshift shares with other
+// query-protocol services (EC2 CreateTags/DeleteTags, ELBv2 DescribeTags).
+var ambiguousTagActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"CreateTags":   {},
+	"DeleteTags":   {},
+	"DescribeTags": {},
+}
+
+// sigV4ScopeService extracts the service from a SigV4 Authorization credential
+// scope: "Credential=AKID/20260101/us-east-1/<service>/aws4_request".
+func sigV4ScopeService(auth string) string {
+	i := strings.Index(auth, "Credential=")
+	if i < 0 {
+		return ""
+	}
+
+	parts := strings.Split(auth[i+len("Credential="):], "/")
+
+	const serviceField = 3
+	if len(parts) <= serviceField {
+		return ""
+	}
+
+	return parts[serviceField]
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
