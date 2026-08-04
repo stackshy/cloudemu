@@ -62,6 +62,7 @@ type Mock struct {
 	clusterSnapshots *memstore.Store[rdbdriver.ClusterSnapshot]
 	parameterGroups  *memstore.Store[ParameterGroup]
 	subnetGroups     *memstore.Store[SubnetGroup]
+	tagsByARN        map[string]map[string]string // ResourceName (ARN) -> tags
 
 	opts       *config.Options
 	monitoring mondriver.Monitoring

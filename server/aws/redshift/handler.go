@@ -44,6 +44,9 @@ var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static l
 	"RestoreFromClusterSnapshot":  {},
 	"CreateClusterParameterGroup": {},
 	"CreateClusterSubnetGroup":    {},
+	"CreateTags":                  {},
+	"DeleteTags":                  {},
+	"DescribeTags":                {},
 }
 
 // clusterGroupManager is the AWS-specific parameter/subnet-group surface, not
@@ -51,6 +54,13 @@ var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static l
 type clusterGroupManager interface {
 	CreateClusterParameterGroup(ctx context.Context, name, family, description string) (*redshiftprovider.ParameterGroup, error)
 	CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*redshiftprovider.SubnetGroup, error)
+}
+
+// resourceTagger is the AWS-specific Redshift tagging surface.
+type resourceTagger interface {
+	CreateTags(ctx context.Context, resourceName string, tags map[string]string) error
+	DeleteTags(ctx context.Context, resourceName string, keys []string) error
+	DescribeTags(ctx context.Context, resourceName string) (map[string]string, error)
 }
 
 // Handler serves Redshift query-protocol requests.
@@ -117,6 +127,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createClusterParameterGroup(w, r)
 	case "CreateClusterSubnetGroup":
 		h.createClusterSubnetGroup(w, r)
+	case "CreateTags":
+		h.createTags(w, r)
+	case "DeleteTags":
+		h.deleteTags(w, r)
+	case "DescribeTags":
+		h.describeTags(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown Redshift action: "+action)
