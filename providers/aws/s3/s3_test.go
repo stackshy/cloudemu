@@ -19,6 +19,55 @@ func newTestMock() *Mock {
 	return New(opts)
 }
 
+// recordingDeliverer captures S3 -> SQS deliveries for assertion.
+type recordingDeliverer struct {
+	arns   []string
+	bodies []string
+}
+
+func (d *recordingDeliverer) DeliverExternal(_ context.Context, queueARN, body string) error {
+	d.arns = append(d.arns, queueARN)
+	d.bodies = append(d.bodies, body)
+
+	return nil
+}
+
+// TestBucketNotificationDelivery is a regression guard for issue #319: a bucket
+// with an SQS notification config must deliver an S3 event on object create,
+// and only to targets whose event filter matches.
+func TestBucketNotificationDelivery(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	rec := &recordingDeliverer{}
+	m.SetSQSDeliverer(rec)
+
+	if err := m.CreateBucket(ctx, "nb"); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	if err := m.PutBucketNotification(ctx, "nb", []QueueNotification{
+		{QueueARN: "arn:aws:sqs:us-east-1:000000000000:s3events", Events: []string{"s3:ObjectCreated:*"}},
+		{QueueARN: "arn:aws:sqs:us-east-1:000000000000:deletes", Events: []string{"s3:ObjectRemoved:*"}},
+	}); err != nil {
+		t.Fatalf("PutBucketNotification: %v", err)
+	}
+
+	if err := m.PutObject(ctx, "nb", "file1.txt", []byte("hi"), "text/plain", nil); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Only the ObjectCreated:* target should have received the event.
+	if len(rec.arns) != 1 || !strings.HasSuffix(rec.arns[0], ":s3events") {
+		t.Fatalf("deliveries = %v, want one to :s3events", rec.arns)
+	}
+
+	if !strings.Contains(rec.bodies[0], `"eventName":"ObjectCreated:Put"`) ||
+		!strings.Contains(rec.bodies[0], `"key":"file1.txt"`) {
+		t.Fatalf("event body = %s", rec.bodies[0])
+	}
+}
+
 func TestCreateBucket(t *testing.T) {
 	tests := []struct {
 		name      string

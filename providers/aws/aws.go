@@ -209,6 +209,8 @@ func New(opts ...config.Option) *Provider {
 	p.SNS.SetSQSDeliverer(p.SQS)
 	// EventBridge -> SQS: matched rules deliver events to SQS targets.
 	p.EventBridge.SetSQSDeliverer(p.SQS)
+	// S3 -> SQS: object-create events deliver to bucket notification targets.
+	p.S3.SetSQSDeliverer(p.SQS)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region,

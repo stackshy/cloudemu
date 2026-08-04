@@ -86,6 +86,21 @@ type bucketMeta struct {
 	corsConfig    *driver.CORSConfig
 	encryption    *driver.EncryptionConfig
 	tags          map[string]string
+	notifications []QueueNotification
+}
+
+// QueueNotification is one S3 bucket-notification target: an SQS queue that
+// receives events whose names match one of Events (e.g. "s3:ObjectCreated:*").
+type QueueNotification struct {
+	ID       string
+	QueueARN string
+	Events   []string
+}
+
+// SQSDeliverer delivers an S3 event notification into an SQS queue by ARN. The
+// SQS mock satisfies this, enabling real S3 -> SQS event delivery.
+type SQSDeliverer interface {
+	DeliverExternal(ctx context.Context, queueARN, body string) error
 }
 
 // Mock is an in-memory mock implementation of the AWS S3 service.
@@ -93,6 +108,13 @@ type Mock struct {
 	buckets    *memstore.Store[*bucketMeta]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+	sqs        SQSDeliverer
+}
+
+// SetSQSDeliverer wires the SQS backend so object-create events deliver to
+// buckets' SQS notification targets.
+func (m *Mock) SetSQSDeliverer(d SQSDeliverer) {
+	m.sqs = d
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -197,6 +219,8 @@ func (m *Mock) PutObject(_ context.Context, bucket, key string, data []byte, con
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("PutRequests", 1, "Count", dims)
 	m.emitMetric("BytesUploaded", float64(len(data)), "Bytes", dims)
+
+	m.notifyObjectCreated(bkt, bucket, key, int64(len(data)))
 
 	return nil
 }

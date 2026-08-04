@@ -129,6 +129,9 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 	case q.Has("tagging"):
 		h.bucketTaggingOp(w, r, bucket)
 		return
+	case q.Has("notification"):
+		h.bucketNotificationOp(w, r, bucket)
+		return
 	case q.Has("versioning"):
 		h.bucketVersioningOp(w, r, bucket)
 		return
