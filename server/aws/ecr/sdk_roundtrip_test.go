@@ -2,9 +2,12 @@ package ecr_test
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -89,6 +92,42 @@ func TestSDKECRRepositoryLifecycle(t *testing.T) {
 	var notFound *ecrtypes.RepositoryNotFoundException
 	if !errors.As(err, &notFound) {
 		t.Fatalf("describe after delete: want RepositoryNotFoundException, got %v", err)
+	}
+}
+
+// TestSDKECRGetAuthorizationToken is a regression guard for issue #319:
+// GetAuthorizationToken (required for `docker login` / image push+pull) was
+// unimplemented. The SDK must decode a base64 "AWS:<pw>" token, a proxy
+// endpoint, and an expiry.
+func TestSDKECRGetAuthorizationToken(t *testing.T) {
+	client := newECRClient(t)
+
+	out, err := client.GetAuthorizationToken(context.Background(), &awsecr.GetAuthorizationTokenInput{})
+	if err != nil {
+		t.Fatalf("GetAuthorizationToken: %v", err)
+	}
+
+	if len(out.AuthorizationData) != 1 {
+		t.Fatalf("got %d authorization entries, want 1", len(out.AuthorizationData))
+	}
+
+	data := out.AuthorizationData[0]
+
+	decoded, err := base64.StdEncoding.DecodeString(aws.ToString(data.AuthorizationToken))
+	if err != nil {
+		t.Fatalf("token not base64: %v", err)
+	}
+
+	if !strings.HasPrefix(string(decoded), "AWS:") {
+		t.Fatalf("decoded token = %q, want AWS:<password>", string(decoded))
+	}
+
+	if !strings.Contains(aws.ToString(data.ProxyEndpoint), ".dkr.ecr.") {
+		t.Fatalf("proxy endpoint = %q", aws.ToString(data.ProxyEndpoint))
+	}
+
+	if data.ExpiresAt == nil || !data.ExpiresAt.After(time.Now()) {
+		t.Fatalf("expiresAt = %v, want a future time", data.ExpiresAt)
 	}
 }
 
