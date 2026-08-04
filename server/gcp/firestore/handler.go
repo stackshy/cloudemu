@@ -13,6 +13,7 @@
 package firestore
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -236,6 +237,8 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 					return
 				}
 			}
+
+			h.ensureCollection(r.Context(), p.collection)
 
 			if perr := h.db.PutItem(r.Context(), p.collection, item); perr != nil {
 				writeErr(w, perr)
@@ -616,12 +619,23 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p fires
 	item := fieldsToMap(inDoc.Fields)
 	item["id"] = docID
 
+	// Firestore creates a collection lazily on first write; the driver requires
+	// the "table" to exist, so ensure it before writing.
+	h.ensureCollection(r.Context(), p.collection)
+
 	if err := h.db.PutItem(r.Context(), p.collection, item); err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, mapToDocument(item, p, docID))
+}
+
+// ensureCollection lazily creates a Firestore collection (driver table keyed on
+// the document "id") so a first write doesn't fail with "collection not found".
+// An already-exists result is benign.
+func (h *Handler) ensureCollection(ctx context.Context, collection string) {
+	_ = h.db.CreateTable(ctx, dbdriver.TableConfig{Name: collection, PartitionKey: "id"})
 }
 
 func (h *Handler) getDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {

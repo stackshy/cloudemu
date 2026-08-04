@@ -88,16 +88,18 @@ func TestSDKCloudLoggingStructuredFields(t *testing.T) {
 	logName := "projects/" + testProject + "/logs/structured"
 	base := time.Now().UTC().Truncate(time.Millisecond)
 
+	// Write OUT of timestamp order (ERROR is later but written first) so the
+	// test guards a real timestamp sort, not a mere reversal of insertion order.
 	if _, err := svc.Entries.Write(&logging.WriteLogEntriesRequest{
 		LogName: logName,
 		Entries: []*logging.LogEntry{
-			{Timestamp: base.Format(time.RFC3339Nano), TextPayload: "first", Severity: "INFO"},
 			{
 				Timestamp:   base.Add(time.Second).Format(time.RFC3339Nano),
 				Severity:    "ERROR",
 				Labels:      map[string]string{"component": "api"},
 				JsonPayload: googleapi.RawMessage(`{"code":500}`),
 			},
+			{Timestamp: base.Format(time.RFC3339Nano), TextPayload: "first", Severity: "INFO"},
 		},
 	}).Context(ctx).Do(); err != nil {
 		t.Fatalf("Entries.Write: %v", err)

@@ -26,7 +26,9 @@ package pubsub
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -205,8 +207,13 @@ func (h *Handler) serveTopic(w http.ResponseWriter, r *http.Request, project, na
 }
 
 func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request, project, name string) {
+	// Real Pub/Sub createTopic accepts an empty body, so tolerate EOF/empty
+	// rather than 400ing on a bodyless request.
 	var body topic
-	_ = decodeJSON(w, r, &body) // topic body is mostly empty for create; tolerate it
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
+		return
+	}
 
 	info, err := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: name, Tags: body.Labels})
 	if err != nil {

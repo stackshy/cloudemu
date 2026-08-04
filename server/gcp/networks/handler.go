@@ -194,6 +194,13 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
+	if _, err := findNetByName(r.Context(), h.net, req.Name); err == nil {
+		gcprest.WriteError(w, http.StatusConflict, "alreadyExists",
+			"network "+req.Name+" already exists")
+
+		return
+	}
+
 	cidr := "10.0.0.0/16"
 	if req.IPv4Range != "" {
 		cidr = req.IPv4Range

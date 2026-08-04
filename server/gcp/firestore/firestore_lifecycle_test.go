@@ -292,23 +292,22 @@ func TestDatabaseTypedErrors(t *testing.T) {
 		t.Error("missing doc snapshot should report Exists()==false")
 	}
 
-	// Missing collection: never created as a driver table.
+	// Reading a document in a collection that has never been written is
+	// NotFound (a read does not create the collection).
 	_, err = client.Collection("ghost").Doc("x").Get(ctx)
 	if code := dbSDKCode(err); code != codes.NotFound {
 		t.Errorf("Get in missing collection: code=%v err=%v, want NotFound", code, err)
 	}
 
-	// Writing into a missing collection is also NotFound (tables must be
-	// pre-created — emulator-specific behavior per survey).
-	_, err = client.Collection("ghost").Doc("x").Set(ctx, map[string]any{"a": 1})
-	if code := dbSDKCode(err); code != codes.NotFound {
-		t.Errorf("Set in missing collection: code=%v err=%v, want NotFound", code, err)
+	// Writing into a not-yet-existent collection succeeds — real Firestore
+	// creates the collection lazily on first write (#321 E2E fix).
+	if _, err = client.Collection("ghost").Doc("x").Set(ctx, map[string]any{"a": 1}); err != nil {
+		t.Errorf("Set in new collection: %v, want nil (lazy create)", err)
 	}
 
-	// Listing a missing collection surfaces NotFound through the iterator.
-	_, err = client.Collection("ghost").Documents(ctx).Next()
-	if code := dbSDKCode(err); code != codes.NotFound {
-		t.Errorf("List missing collection: code=%v err=%v, want NotFound", code, err)
+	// After that write the document is readable.
+	if _, err = client.Collection("ghost").Doc("x").Get(ctx); err != nil {
+		t.Errorf("Get after lazy-create Set: %v, want nil", err)
 	}
 
 	// Deleting a missing document is idempotent — no error (matches real

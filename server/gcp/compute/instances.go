@@ -115,7 +115,15 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	if err := h.compute.TerminateInstances(r.Context(), []string{inst.ID}); err != nil {
+	// GCP instances.delete removes the resource (a subsequent GET is 404),
+	// unlike EC2 terminate which leaves a TERMINATED tombstone. Hard-remove
+	// when the driver supports it; fall back to terminate otherwise.
+	if remover, ok := h.compute.(instanceRemover); ok {
+		if err := remover.RemoveInstance(r.Context(), inst.ID); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+	} else if err := h.compute.TerminateInstances(r.Context(), []string{inst.ID}); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -169,6 +177,12 @@ func (h *Handler) action(
 		"instances", rp.ResourceName, opType)
 
 	gcprest.WriteJSON(w, http.StatusOK, doneOp)
+}
+
+// instanceRemover is the GCP-local hard-delete capability (removes the
+// instance rather than tombstoning it). The GCE provider Mock implements it.
+type instanceRemover interface {
+	RemoveInstance(ctx context.Context, instanceID string) error
 }
 
 // findByName looks up an instance by its GCP-tagged name.

@@ -77,11 +77,35 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	// Direct media URLs are /{bucket}/{object}. Two or more path segments
-	// suffices.
+	// suffices — but NOT when the first segment is a reserved API prefix
+	// (v1, v2, sql, compute, …): those are other services' endpoints that no
+	// earlier handler claimed, and swallowing them here yields a misleading
+	// "bucket \"v1\" not found" instead of a clean not-implemented/not-found.
 	trimmed := strings.TrimPrefix(p, "/")
 	parts := strings.SplitN(trimmed, "/", pathBucketAndKey)
 
-	return len(parts) == pathBucketAndKey && parts[0] != "" && parts[1] != ""
+	if len(parts) != pathBucketAndKey || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+
+	return !isReservedAPIPrefix(parts[0])
+}
+
+// isReservedAPIPrefix reports whether a first path segment is a Google API
+// version/service prefix rather than a plausible bucket name. GCS bucket names
+// are lowercase and never collide with these in practice.
+func isReservedAPIPrefix(seg string) bool {
+	switch seg {
+	case "sql", "compute", "dns", "upload", "storage", "download", "batch", "_cloudemu":
+		return true
+	}
+
+	// API version prefixes: v1, v2, v3, v1beta4, v2beta, …
+	if len(seg) >= 2 && seg[0] == 'v' && seg[1] >= '0' && seg[1] <= '9' {
+		return true
+	}
+
+	return false
 }
 
 // ServeHTTP routes the request based on URL path shape.

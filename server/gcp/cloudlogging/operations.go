@@ -3,6 +3,7 @@ package cloudlogging
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -104,18 +105,24 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cloud Logging defaults to ascending timestamp order; "timestamp desc"
-	// reverses it. The driver returns events in insertion (ascending) order.
+	// Cloud Logging orders by timestamp — ascending by default, descending for
+	// "timestamp desc". Sort by the entry timestamp rather than assuming the
+	// driver's insertion order matches (out-of-order writes must still sort).
 	desc := strings.Contains(strings.ToLower(req.OrderBy), "desc")
 
-	out := make([]logEntryJSON, 0, len(events))
-	for i := range events {
-		idx := i
+	sorted := make([]logdriver.LogEvent, len(events))
+	copy(sorted, events)
+	sort.SliceStable(sorted, func(i, j int) bool {
 		if desc {
-			idx = len(events) - 1 - i
+			return sorted[i].Timestamp.After(sorted[j].Timestamp)
 		}
 
-		out = append(out, toLogEntryJSON(project, logID, &events[idx]))
+		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
+	})
+
+	out := make([]logEntryJSON, 0, len(sorted))
+	for i := range sorted {
+		out = append(out, toLogEntryJSON(project, logID, &sorted[i]))
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, listLogEntriesResponse{Entries: out})

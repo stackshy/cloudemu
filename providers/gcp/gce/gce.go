@@ -291,6 +291,20 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	return m.transitionInstances(ctx, instanceIDs, terminateTransition)
 }
 
+// RemoveInstance hard-deletes an instance, mirroring GCP's instances.delete
+// (which removes the resource, unlike EC2 terminate which leaves a TERMINATED
+// tombstone). GCP-specific; reached via a type assertion from the GCE handler.
+func (m *Mock) RemoveInstance(_ context.Context, instanceID string) error {
+	if !m.instances.Has(instanceID) {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	m.instances.Delete(instanceID)
+	m.sm.Remove(instanceID)
+
+	return nil
+}
+
 func (m *Mock) DescribeInstances(
 	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
 ) ([]driver.Instance, error) {
