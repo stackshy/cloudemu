@@ -562,3 +562,130 @@ func TestIPAMConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestIPAMFullProvider(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	// Seed a VPC + subnet so resource CIDRs / discovery / metrics have input.
+	v, _ := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	_, _ = m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.0.0/24"})
+
+	ipam, err := m.CreateIpam(ctx, driver.IpamConfig{})
+	if err != nil || ipam.DefaultResourceDiscoveryID == "" || ipam.ResourceDiscoveryAssociationCount != 1 {
+		t.Fatalf("CreateIpam default RD: %v %+v", err, ipam)
+	}
+
+	// Resource CIDRs + history derive from the VPC/subnet.
+	rc, err := m.GetIpamResourceCidrs(ctx, ipam.PrivateDefaultScopeID, "")
+	if err != nil || len(rc) != 2 {
+		t.Fatalf("GetIpamResourceCidrs: %v %+v", err, rc)
+	}
+
+	if hist, _ := m.GetIpamAddressHistory(ctx, "10.0.0.0/16", ""); len(hist) != 1 {
+		t.Fatalf("GetIpamAddressHistory: %+v", hist)
+	}
+
+	// Resource discovery: default RD is discoverable + discovered getters work.
+	if rds, _ := m.DescribeIpamResourceDiscoveries(ctx, nil); len(rds) != 1 {
+		t.Fatalf("DescribeIpamResourceDiscoveries: %+v", rds)
+	}
+
+	if accts, _ := m.GetIpamDiscoveredAccounts(ctx, ipam.DefaultResourceDiscoveryID, ""); len(accts) != 1 {
+		t.Fatalf("GetIpamDiscoveredAccounts: %+v", accts)
+	}
+
+	if dcidrs, _ := m.GetIpamDiscoveredResourceCidrs(ctx, ipam.DefaultResourceDiscoveryID, ""); len(dcidrs) != 2 {
+		t.Fatalf("GetIpamDiscoveredResourceCidrs: %+v", dcidrs)
+	}
+
+	// A non-default resource discovery can be created + deleted.
+	rd, err := m.CreateIpamResourceDiscovery(ctx, driver.IpamResourceDiscoveryConfig{Description: "extra"})
+	if err != nil {
+		t.Fatalf("CreateIpamResourceDiscovery: %v", err)
+	}
+
+	if _, err := m.DeleteIpamResourceDiscovery(ctx, rd.ID); err != nil {
+		t.Fatalf("DeleteIpamResourceDiscovery: %v", err)
+	}
+
+	// BYOASN + BYOIP.
+	if _, err := m.ProvisionIpamByoasn(ctx, ipam.ID, "64512"); err != nil {
+		t.Fatalf("ProvisionIpamByoasn: %v", err)
+	}
+
+	if _, err := m.ProvisionByoipCidr(ctx, "203.0.113.0/24", "byoip"); err != nil {
+		t.Fatalf("ProvisionByoipCidr: %v", err)
+	}
+
+	if _, err := m.AdvertiseByoipCidr(ctx, "203.0.113.0/24"); err != nil {
+		t.Fatalf("AdvertiseByoipCidr: %v", err)
+	}
+
+	// Advertised CIDR cannot be deprovisioned.
+	if _, err := m.DeprovisionByoipCidr(ctx, "203.0.113.0/24"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("deprovision advertised: got %v, want FailedPrecondition", err)
+	}
+
+	// Prefix-list resolver + target + verification token.
+	res, err := m.CreateIpamPrefixListResolver(ctx, ipam.ID, "ipv4", "res", nil)
+	if err != nil {
+		t.Fatalf("CreateIpamPrefixListResolver: %v", err)
+	}
+
+	if _, err := m.CreateIpamPrefixListResolverTarget(ctx, res.ID, "pl-1", "", 1, true, nil); err != nil {
+		t.Fatalf("CreateIpamPrefixListResolverTarget: %v", err)
+	}
+
+	// Resolver with a target cannot be deleted.
+	if _, err := m.DeleteIpamPrefixListResolver(ctx, res.ID); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete resolver with target: got %v, want FailedPrecondition", err)
+	}
+
+	if _, err := m.CreateIpamExternalResourceVerificationToken(ctx, ipam.ID, "tok", nil); err != nil {
+		t.Fatalf("CreateIpamExternalResourceVerificationToken: %v", err)
+	}
+
+	// Policy + org admin.
+	pol, err := m.CreateIpamPolicy(ctx, ipam.ID, nil)
+	if err != nil {
+		t.Fatalf("CreateIpamPolicy: %v", err)
+	}
+
+	if _, err := m.EnableIpamPolicy(ctx, pol.ID, ""); err != nil {
+		t.Fatalf("EnableIpamPolicy: %v", err)
+	}
+
+	if id, enabled, _, _ := m.GetEnabledIpamPolicy(ctx); !enabled || id != pol.ID {
+		t.Fatalf("GetEnabledIpamPolicy: id=%q enabled=%v", id, enabled)
+	}
+
+	if ok, err := m.EnableIpamOrganizationAdminAccount(ctx, "111122223333"); err != nil || !ok {
+		t.Fatalf("EnableIpamOrganizationAdminAccount: %v %v", ok, err)
+	}
+
+	// Metrics derive from state: TotalActiveIpCount + VpcIPUsage present.
+	metrics := m.IpamMetrics(ctx)
+	seen := map[string]bool{}
+	for _, mtr := range metrics {
+		seen[mtr.MetricName] = true
+	}
+
+	if !seen["TotalActiveIpCount"] || !seen["VpcIPUsage"] || !seen["ManagedResourceCidrs"] {
+		t.Fatalf("expected IPAM metrics, got %v", seen)
+	}
+
+	// Pool metrics appear once a pool with supply + an allocation exists.
+	pool, _ := m.CreateIpamPool(ctx, driver.IpamPoolConfig{IpamScopeID: ipam.PrivateDefaultScopeID})
+	_, _ = m.ProvisionIpamPoolCidr(ctx, pool.ID, "10.1.0.0/16", 0)
+	_, _ = m.AllocateIpamPoolCidr(ctx, driver.AllocateIpamPoolCidrConfig{IpamPoolID: pool.ID, CIDR: "10.1.1.0/24"})
+
+	seen = map[string]bool{}
+	for _, mtr := range m.IpamMetrics(ctx) {
+		seen[mtr.MetricName] = true
+	}
+
+	if !seen["PercentAssigned"] || !seen["PercentAvailable"] {
+		t.Fatalf("expected pool metrics, got %v", seen)
+	}
+}

@@ -11,17 +11,20 @@ import "context"
 // Ipam is the top-level IP Address Manager. Creating one implicitly creates a
 // public and a private default scope.
 type Ipam struct {
-	ID                    string
-	ARN                   string
-	Region                string
-	PublicDefaultScopeID  string
-	PrivateDefaultScopeID string
-	ScopeCount            int
-	OperatingRegions      []string
-	Description           string
-	Tier                  string
-	State                 string
-	Tags                  map[string]string
+	ID                                    string
+	ARN                                   string
+	Region                                string
+	PublicDefaultScopeID                  string
+	PrivateDefaultScopeID                 string
+	ScopeCount                            int
+	DefaultResourceDiscoveryID            string
+	DefaultResourceDiscoveryAssociationID string
+	ResourceDiscoveryAssociationCount     int
+	OperatingRegions                      []string
+	Description                           string
+	Tier                                  string
+	State                                 string
+	Tags                                  map[string]string
 }
 
 // IpamConfig is the input to CreateIpam.

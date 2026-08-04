@@ -36,6 +36,14 @@ var (
 	_ driver.VPCEndpointServices        = (*Mock)(nil)
 	_ driver.ClientVPN                  = (*Mock)(nil)
 	_ driver.IPAM                       = (*Mock)(nil)
+	_ driver.IPAMResources              = (*Mock)(nil)
+	_ driver.IPAMDiscovery              = (*Mock)(nil)
+	_ driver.IPAMByoasn                 = (*Mock)(nil)
+	_ driver.IPAMByoip                  = (*Mock)(nil)
+	_ driver.IPAMPrefixListResolver     = (*Mock)(nil)
+	_ driver.IPAMExternalToken          = (*Mock)(nil)
+	_ driver.IPAMPolicy                 = (*Mock)(nil)
+	_ driver.IPAMMetrics                = (*Mock)(nil)
 )
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
@@ -79,11 +87,19 @@ type Mock struct {
 	clientVPNAuthRules *memstore.Store[*driver.ClientVPNAuthorizationRule]
 	clientVPNRoutes    *memstore.Store[*driver.ClientVPNRoute]
 
-	ipams           *memstore.Store[*driver.Ipam]
-	ipamScopes      *memstore.Store[*driver.IpamScope]
-	ipamPools       *memstore.Store[*driver.IpamPool]
-	ipamPoolCidrs   *memstore.Store[*driver.IpamPoolCidr]
-	ipamAllocations *memstore.Store[*driver.IpamPoolAllocation]
+	ipams               *memstore.Store[*driver.Ipam]
+	ipamScopes          *memstore.Store[*driver.IpamScope]
+	ipamPools           *memstore.Store[*driver.IpamPool]
+	ipamPoolCidrs       *memstore.Store[*driver.IpamPoolCidr]
+	ipamAllocations     *memstore.Store[*driver.IpamPoolAllocation]
+	ipamDiscoveries     *memstore.Store[*driver.IpamResourceDiscovery]
+	ipamRDAssociations  *memstore.Store[*driver.IpamResourceDiscoveryAssociation]
+	ipamByoasns         *memstore.Store[*driver.Byoasn]
+	ipamByoipCidrs      *memstore.Store[*driver.ByoipCidr]
+	ipamResolvers       *memstore.Store[*driver.IpamPrefixListResolver]
+	ipamResolverTargets *memstore.Store[*driver.IpamPrefixListResolverTarget]
+	ipamTokens          *memstore.Store[*driver.IpamExternalResourceVerificationToken]
+	ipamPolicies        *memstore.Store[*driver.IpamPolicy]
 
 	// endpointServicePerms holds allowed principals per endpoint-service id,
 	// guarded by mu.
@@ -159,11 +175,19 @@ func New(opts *config.Options) *Mock {
 		clientVPNAuthRules: memstore.New[*driver.ClientVPNAuthorizationRule](),
 		clientVPNRoutes:    memstore.New[*driver.ClientVPNRoute](),
 
-		ipams:           memstore.New[*driver.Ipam](),
-		ipamScopes:      memstore.New[*driver.IpamScope](),
-		ipamPools:       memstore.New[*driver.IpamPool](),
-		ipamPoolCidrs:   memstore.New[*driver.IpamPoolCidr](),
-		ipamAllocations: memstore.New[*driver.IpamPoolAllocation](),
+		ipams:               memstore.New[*driver.Ipam](),
+		ipamScopes:          memstore.New[*driver.IpamScope](),
+		ipamPools:           memstore.New[*driver.IpamPool](),
+		ipamPoolCidrs:       memstore.New[*driver.IpamPoolCidr](),
+		ipamAllocations:     memstore.New[*driver.IpamPoolAllocation](),
+		ipamDiscoveries:     memstore.New[*driver.IpamResourceDiscovery](),
+		ipamRDAssociations:  memstore.New[*driver.IpamResourceDiscoveryAssociation](),
+		ipamByoasns:         memstore.New[*driver.Byoasn](),
+		ipamByoipCidrs:      memstore.New[*driver.ByoipCidr](),
+		ipamResolvers:       memstore.New[*driver.IpamPrefixListResolver](),
+		ipamResolverTargets: memstore.New[*driver.IpamPrefixListResolverTarget](),
+		ipamTokens:          memstore.New[*driver.IpamExternalResourceVerificationToken](),
+		ipamPolicies:        memstore.New[*driver.IpamPolicy](),
 
 		endpointServicePerms: map[string][]string{},
 		ipamPoolByCidr:       map[string]string{},

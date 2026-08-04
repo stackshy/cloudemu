@@ -16,17 +16,20 @@ func (h *Handler) ipam() (netdriver.IPAM, bool) {
 }
 
 type ipamXML struct {
-	IpamID                string     `xml:"ipamId"`
-	IpamArn               string     `xml:"ipamArn"`
-	IpamRegion            string     `xml:"ipamRegion,omitempty"`
-	PublicDefaultScopeID  string     `xml:"publicDefaultScopeId"`
-	PrivateDefaultScopeID string     `xml:"privateDefaultScopeId"`
-	ScopeCount            int        `xml:"scopeCount"`
-	OperatingRegions      []opRegXML `xml:"operatingRegionSet>item,omitempty"`
-	Description           string     `xml:"description,omitempty"`
-	Tier                  string     `xml:"tier,omitempty"`
-	State                 string     `xml:"state"`
-	Tags                  []tagItem  `xml:"tagSet>item,omitempty"`
+	IpamID                                string     `xml:"ipamId"`
+	IpamArn                               string     `xml:"ipamArn"`
+	IpamRegion                            string     `xml:"ipamRegion,omitempty"`
+	PublicDefaultScopeID                  string     `xml:"publicDefaultScopeId"`
+	PrivateDefaultScopeID                 string     `xml:"privateDefaultScopeId"`
+	ScopeCount                            int        `xml:"scopeCount"`
+	DefaultResourceDiscoveryID            string     `xml:"defaultResourceDiscoveryId,omitempty"`
+	DefaultResourceDiscoveryAssociationID string     `xml:"defaultResourceDiscoveryAssociationId,omitempty"`
+	ResourceDiscoveryAssociationCount     int        `xml:"resourceDiscoveryAssociationCount,omitempty"`
+	OperatingRegions                      []opRegXML `xml:"operatingRegionSet>item,omitempty"`
+	Description                           string     `xml:"description,omitempty"`
+	Tier                                  string     `xml:"tier,omitempty"`
+	State                                 string     `xml:"state"`
+	Tags                                  []tagItem  `xml:"tagSet>item,omitempty"`
 }
 
 type opRegXML struct {
@@ -205,7 +208,11 @@ func toIpamXML(i *netdriver.Ipam) ipamXML {
 	x := ipamXML{
 		IpamID: i.ID, IpamArn: i.ARN, IpamRegion: i.Region,
 		PublicDefaultScopeID: i.PublicDefaultScopeID, PrivateDefaultScopeID: i.PrivateDefaultScopeID,
-		ScopeCount: i.ScopeCount, Description: i.Description, Tier: i.Tier, State: i.State,
+		ScopeCount:                            i.ScopeCount,
+		DefaultResourceDiscoveryID:            i.DefaultResourceDiscoveryID,
+		DefaultResourceDiscoveryAssociationID: i.DefaultResourceDiscoveryAssociationID,
+		ResourceDiscoveryAssociationCount:     i.ResourceDiscoveryAssociationCount,
+		Description:                           i.Description, Tier: i.Tier, State: i.State,
 		Tags: toTagItems(i.Tags),
 	}
 

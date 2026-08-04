@@ -8,7 +8,10 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
-const ipamStateDeleteComplete = "delete-complete"
+const (
+	ipamStateDeleteComplete = "delete-complete"
+	ipamStateDeprovisioned  = "deprovisioned"
+)
 
 // ipamARN builds an IPAM-family ARN. IPAM ARNs carry no region segment
 // (arn:aws:ec2::<account>:<resource>), matching the real service.
@@ -40,6 +43,14 @@ func (m *Mock) CreateIpam(_ context.Context, cfg driver.IpamConfig) (*driver.Ipa
 		State:                 "create-complete",
 		Tags:                  copyTags(cfg.Tags),
 	}
+
+	// A new IPAM gets a default resource discovery associated with it.
+	rd := m.newResourceDiscovery(true, "", nil)
+	assoc := m.newRDAssociation(ipam, rd.ID, true, nil)
+	ipam.DefaultResourceDiscoveryID = rd.ID
+	ipam.DefaultResourceDiscoveryAssociationID = assoc.ID
+	ipam.ResourceDiscoveryAssociationCount = 1
+
 	m.ipams.Set(id, ipam)
 
 	out := cloneIpam(ipam)
@@ -90,6 +101,8 @@ func (m *Mock) ModifyIpam(_ context.Context, id, description string) (*driver.Ip
 
 // DeleteIpam deletes an IPAM and its default scopes. Non-default scopes or
 // pools referencing the IPAM block deletion.
+//
+//nolint:gocyclo // sequential precondition checks; flattening hurts readability
 func (m *Mock) DeleteIpam(_ context.Context, id string) (*driver.Ipam, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -109,11 +122,26 @@ func (m *Mock) DeleteIpam(_ context.Context, id string) (*driver.Ipam, error) {
 		return nil, errors.Newf(errors.FailedPrecondition, "ipam %q has pools", id)
 	}
 
+	for _, a := range m.ipamRDAssociations.SortedValues() {
+		if a.IpamID == id && !a.IsDefault {
+			return nil, errors.Newf(errors.FailedPrecondition, "ipam %q has resource-discovery associations", id)
+		}
+	}
+
 	for _, s := range m.ipamScopes.SortedValues() {
 		if s.IpamARN == ipam.ARN {
 			m.ipamScopes.Delete(s.ID)
 		}
 	}
+
+	// Tear down the default resource discovery + association.
+	for _, a := range m.ipamRDAssociations.SortedValues() {
+		if a.IpamID == id {
+			m.ipamRDAssociations.Delete(a.ID)
+		}
+	}
+
+	m.ipamDiscoveries.Delete(ipam.DefaultResourceDiscoveryID)
 
 	ipam.State = ipamStateDeleteComplete
 
@@ -352,7 +380,7 @@ func (m *Mock) DeprovisionIpamPoolCidr(_ context.Context, poolID, cidr string) (
 			continue
 		}
 
-		c.State = "deprovisioned"
+		c.State = ipamStateDeprovisioned
 
 		m.ipamPoolCidrs.Delete(c.ID)
 		delete(m.ipamPoolByCidr, c.ID)

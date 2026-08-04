@@ -7,6 +7,14 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+)
+
+const (
+	statSum         = "Sum"
+	statMinimum     = "Minimum"
+	statMaximum     = "Maximum"
+	statSampleCount = "SampleCount"
 )
 
 // putMetricDataInput mirrors the AWS wire shape for the operation. Field
@@ -111,6 +119,11 @@ func (h *Handler) getMetricStatistics(w http.ResponseWriter, r *http.Request, bo
 		end = *in.EndTime
 	}
 
+	if h.ipam != nil && in.Namespace == netdriver.IpamMetricNamespace {
+		h.getIpamMetricStatistics(w, r, in.MetricName, toDimensionMap(in.Dimensions), stat)
+		return
+	}
+
 	input := mondriver.GetMetricInput{
 		Namespace:  in.Namespace,
 		MetricName: in.MetricName,
@@ -131,6 +144,51 @@ func (h *Handler) getMetricStatistics(w http.ResponseWriter, r *http.Request, bo
 		Label:      in.MetricName,
 		Datapoints: toDatapointsCBR(result, stat),
 	})
+}
+
+// getIpamMetricStatistics returns a single datapoint for a derived AWS/IPAM
+// metric, matched by name and (if supplied) dimensions.
+func (h *Handler) getIpamMetricStatistics(w http.ResponseWriter, r *http.Request, name string, dims map[string]string, stat string) {
+	for _, mtr := range h.ipam.IpamMetrics(r.Context()) {
+		if mtr.MetricName != name || !dimensionsMatch(mtr.Dimensions, dims) {
+			continue
+		}
+
+		dp := datapointCBR{Timestamp: time.Unix(0, 0).UTC(), Unit: mtr.Unit}
+		setDatapointStat(&dp, stat, mtr.Value)
+
+		writeCBORResponse(w, getMetricStatisticsOutput{Label: name, Datapoints: []datapointCBR{dp}})
+
+		return
+	}
+
+	writeCBORResponse(w, getMetricStatisticsOutput{Label: name, Datapoints: nil})
+}
+
+// dimensionsMatch reports whether every requested dimension is present in have.
+func dimensionsMatch(have, want map[string]string) bool {
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+
+	return true
+}
+
+func setDatapointStat(dp *datapointCBR, stat string, value float64) {
+	switch stat {
+	case statSum:
+		dp.Sum = value
+	case statMinimum:
+		dp.Minimum = value
+	case statMaximum:
+		dp.Maximum = value
+	case statSampleCount:
+		dp.SampleCount = value
+	default:
+		dp.Average = value
+	}
 }
 
 type listMetricsInput struct {
@@ -154,6 +212,11 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request, body []byt
 		return
 	}
 
+	if h.ipam != nil && (in.Namespace == netdriver.IpamMetricNamespace || in.Namespace == "") {
+		h.listIpamMetrics(w, r, in.Namespace)
+		return
+	}
+
 	names, err := h.monitoring.ListMetrics(r.Context(), in.Namespace)
 	if err != nil {
 		writeDriverErr(w, err)
@@ -163,6 +226,23 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request, body []byt
 	out := make([]metricCBR, 0, len(names))
 	for _, name := range names {
 		out = append(out, metricCBR{Namespace: in.Namespace, MetricName: name})
+	}
+
+	writeCBORResponse(w, listMetricsOutput{Metrics: out})
+}
+
+// listIpamMetrics returns the derived AWS/IPAM metrics with their dimensions.
+func (h *Handler) listIpamMetrics(w http.ResponseWriter, r *http.Request, _ string) {
+	metrics := h.ipam.IpamMetrics(r.Context())
+	out := make([]metricCBR, 0, len(metrics))
+
+	for _, mtr := range metrics {
+		dims := make([]dimensionCBR, 0, len(mtr.Dimensions))
+		for k, v := range mtr.Dimensions {
+			dims = append(dims, dimensionCBR{Name: k, Value: v})
+		}
+
+		out = append(out, metricCBR{Namespace: netdriver.IpamMetricNamespace, MetricName: mtr.MetricName, Dimensions: dims})
 	}
 
 	writeCBORResponse(w, listMetricsOutput{Metrics: out})
@@ -309,13 +389,13 @@ func toDatapointsCBR(res *mondriver.MetricDataResult, stat string) []datapointCB
 		v := res.Values[i]
 
 		switch stat {
-		case "Sum":
+		case statSum:
 			dp.Sum = v
-		case "Minimum":
+		case statMinimum:
 			dp.Minimum = v
-		case "Maximum":
+		case statMaximum:
 			dp.Maximum = v
-		case "SampleCount":
+		case statSampleCount:
 			dp.SampleCount = v
 		default:
 			dp.Average = v

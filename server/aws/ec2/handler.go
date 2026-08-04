@@ -95,6 +95,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeEndpointServices,
 		h.routeClientVPN,
 		h.routeIPAM,
+		h.routeIPAMResources,
+		h.routeIPAMDiscovery,
+		h.routeIPAMByoip,
+		h.routeIPAMResolver,
+		h.routeIPAMPolicy,
 		h.routeVPC,
 	}
 	for _, route := range routes {

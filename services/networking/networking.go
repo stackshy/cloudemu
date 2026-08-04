@@ -3,9 +3,9 @@ package networking
 
 import (
 	"context"
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/features/inject"
 	"github.com/stackshy/cloudemu/v2/features/metrics"
 	"github.com/stackshy/cloudemu/v2/features/ratelimit"
