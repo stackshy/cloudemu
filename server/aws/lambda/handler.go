@@ -7,7 +7,8 @@
 // Invoke (synchronous), UpdateFunctionConfiguration, PublishVersion /
 // ListVersionsByFunction, the alias lifecycle (create/get/list/update/
 // delete), and resource policies (AddPermission / GetPolicy /
-// RemovePermission). Layers, concurrency configs, tagging, and event source
+// RemovePermission), and tagging (TagResource / UntagResource / ListTags at
+// the /2017-03-31/tags prefix). Layers, concurrency configs, and event source
 // mappings remain deferred — the driver supports some of them but the wire
 // surface is not yet wired through.
 package lambda
@@ -28,6 +29,12 @@ import (
 // REST traffic that should fall through to the S3 catch-all.
 const pathPrefix = "/2015-03-31/functions"
 
+// tagsPrefix is the Lambda tagging API prefix (TagResource / UntagResource /
+// ListTags). It's a different version prefix than the function control plane,
+// so it needs its own Matches clause — otherwise tag requests fall through to
+// the S3 catch-all and return a 405 HTML body the SDK can't deserialize.
+const tagsPrefix = "/2017-03-31/tags"
+
 const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 6 << 20 // 6 MiB — Lambda's sync invocation payload limit.
@@ -41,6 +48,14 @@ type policyManager interface {
 	AddPermission(ctx context.Context, functionName string, stmt sdrv.PermissionStatement) error
 	RemovePermission(ctx context.Context, functionName, statementID string) error
 	GetPolicy(ctx context.Context, functionName string) (string, error)
+}
+
+// functionTagger is the AWS-specific Lambda tagging surface (not part of the
+// portable Serverless driver), asserted the same way as policyManager.
+type functionTagger interface {
+	TagFunction(ctx context.Context, name string, tags map[string]string) error
+	UntagFunction(ctx context.Context, name string, keys []string) error
+	ListFunctionTags(ctx context.Context, name string) (map[string]string, error)
 }
 
 // Handler serves AWS Lambda REST requests against a serverless.Serverless
@@ -57,7 +72,7 @@ func New(fn sdrv.Serverless) *Handler {
 // Matches returns true for any URL under /2015-03-31/functions — that's the
 // Lambda control-plane prefix the SDK uses for every operation in our MVP.
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, pathPrefix)
+	return strings.HasPrefix(r.URL.Path, pathPrefix) || strings.HasPrefix(r.URL.Path, tagsPrefix)
 }
 
 // ServeHTTP dispatches Lambda operations based on path shape and method.
@@ -66,6 +81,13 @@ func (*Handler) Matches(r *http.Request) bool {
 //	/2015-03-31/functions/{name}                GET=get, DELETE=delete
 //	/2015-03-31/functions/{name}/invocations    POST=invoke
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
+		arn := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, tagsPrefix), "/")
+		h.serveTags(w, r, arn)
+
+		return
+	}
+
 	rest := strings.TrimPrefix(r.URL.Path, pathPrefix)
 	rest = strings.TrimPrefix(rest, "/")
 
@@ -118,6 +140,66 @@ func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name,
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 	}
+}
+
+// serveTags handles the Lambda tagging API at /2017-03-31/tags/{arn}:
+// POST=TagResource, DELETE=UntagResource (?tagKeys=...), GET=ListTags.
+func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, arn string) {
+	tagger, ok := h.fn.(functionTagger)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "tagging not supported")
+		return
+	}
+
+	name := functionNameFromARN(arn)
+
+	switch r.Method {
+	case http.MethodPost:
+		var req struct {
+			Tags map[string]string `json:"Tags"`
+		}
+
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		if err := tagger.TagFunction(r.Context(), name, req.Tags); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		if err := tagger.UntagFunction(r.Context(), name, r.URL.Query()["tagKeys"]); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodGet:
+		tags, err := tagger.ListFunctionTags(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{"Tags": tags})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+// functionNameFromARN extracts the function name from a Lambda ARN
+// (arn:aws:lambda:<region>:<account>:function:<name>). A value that isn't an
+// ARN is returned unchanged.
+func functionNameFromARN(arn string) string {
+	const marker = ":function:"
+
+	if i := strings.LastIndex(arn, marker); i >= 0 {
+		return arn[i+len(marker):]
+	}
+
+	return arn
 }
 
 // servePolicy handles POST (AddPermission) and GET (GetPolicy) on

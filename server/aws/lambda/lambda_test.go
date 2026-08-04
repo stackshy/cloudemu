@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -461,6 +462,56 @@ func TestResourcePolicy(t *testing.T) {
 
 	if resp := doJSON(t, http.MethodGet, base+"/pf/policy", ""); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get-policy after remove status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestTagging is a regression guard for issue #319: the Lambda tagging API
+// (/2017-03-31/tags/{arn}) was unmatched, so it fell through to the S3
+// catch-all and returned a 405 + HTML body the SDK couldn't deserialize.
+func TestTagging(t *testing.T) {
+	srv, _ := newServer(t)
+
+	if resp := postJSON(t, srv.URL+"/2015-03-31/functions",
+		`{"FunctionName":"tf","Runtime":"go1.x","Handler":"main"}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", resp.StatusCode)
+	}
+
+	// The SDK percent-encodes the ARN in the path; mirror that here so the
+	// server's URL parser keeps the query string separate.
+	tagsURL := srv.URL + "/2017-03-31/tags/" +
+		url.PathEscape("arn:aws:lambda:us-east-1:000000000000:function:tf")
+
+	// TagResource.
+	if resp := postJSON(t, tagsURL, `{"Tags":{"env":"prod","team":"sls"}}`); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("tag-resource status = %d", resp.StatusCode)
+	}
+
+	// ListTags.
+	resp := doJSON(t, http.MethodGet, tagsURL, "")
+
+	var got struct {
+		Tags map[string]string `json:"Tags"`
+	}
+
+	decode(t, resp, &got)
+
+	if got.Tags["env"] != "prod" || got.Tags["team"] != "sls" {
+		t.Fatalf("ListTags = %+v", got.Tags)
+	}
+
+	// UntagResource.
+	if resp := doJSON(t, http.MethodDelete, tagsURL+"?tagKeys=env", ""); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("untag-resource status = %d", resp.StatusCode)
+	}
+
+	var after struct {
+		Tags map[string]string `json:"Tags"`
+	}
+
+	decode(t, doJSON(t, http.MethodGet, tagsURL, ""), &after)
+
+	if _, has := after.Tags["env"]; has || after.Tags["team"] != "sls" {
+		t.Fatalf("after untag = %+v", after.Tags)
 	}
 }
 
