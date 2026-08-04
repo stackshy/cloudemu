@@ -480,6 +480,63 @@ func TestToIPPermissionXMLsEmpty(t *testing.T) {
 }
 
 // between returns the substring between open and close markers, or empty.
+// TestCreateAndDeleteTags is a regression guard for issue #319: EC2
+// CreateTags/DeleteTags returned InvalidAction. Tags must apply to VPC-family
+// resources (networking provider) and compute resources (compute tagger), and
+// an unknown ID must yield InvalidID.NotFound.
+func TestCreateAndDeleteTags(t *testing.T) {
+	h := newFullHandler()
+
+	vpc := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateVpc"}, "CidrBlock": {"10.0.0.0/16"},
+	})
+	vpcID := between(vpc.Body.String(), "<vpcId>", "</vpcId>")
+
+	if vpcID == "" {
+		t.Fatalf("CreateVpc returned no id: %s", vpc.Body.String())
+	}
+
+	// CreateTags on the VPC.
+	ct := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateTags"}, "ResourceId.1": {vpcID},
+		"Tag.1.Key": {"env"}, "Tag.1.Value": {"prod"},
+		"Tag.2.Key": {"team"}, "Tag.2.Value": {"platform"},
+	})
+	if ct.Code != http.StatusOK {
+		t.Fatalf("CreateTags status = %d: %s", ct.Code, ct.Body.String())
+	}
+
+	desc := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"DescribeVpcs"}, "VpcId.1": {vpcID},
+	}).Body.String()
+	if !strings.Contains(desc, "<key>env</key>") || !strings.Contains(desc, "<key>team</key>") {
+		t.Fatalf("tags missing after CreateTags: %s", desc)
+	}
+
+	// DeleteTags removes one key.
+	if dt := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"DeleteTags"}, "ResourceId.1": {vpcID}, "Tag.1.Key": {"env"},
+	}); dt.Code != http.StatusOK {
+		t.Fatalf("DeleteTags status = %d", dt.Code)
+	}
+
+	desc = do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"DescribeVpcs"}, "VpcId.1": {vpcID},
+	}).Body.String()
+	if strings.Contains(desc, "<key>env</key>") || !strings.Contains(desc, "<key>team</key>") {
+		t.Fatalf("DeleteTags result wrong: %s", desc)
+	}
+
+	// Unknown ID -> InvalidID.NotFound.
+	bad := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateTags"}, "ResourceId.1": {"vpc-deadbeef"},
+		"Tag.1.Key": {"a"}, "Tag.1.Value": {"b"},
+	})
+	if !strings.Contains(bad.Body.String(), "InvalidID.NotFound") {
+		t.Fatalf("want InvalidID.NotFound, got: %s", bad.Body.String())
+	}
+}
+
 func between(s, open, close string) string {
 	i := strings.Index(s, open)
 	if i < 0 {
