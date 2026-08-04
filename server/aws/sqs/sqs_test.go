@@ -179,6 +179,49 @@ func TestUnknownOperation(t *testing.T) {
 
 // helpers --------------------------------------------------------------------
 
+// TestQueueAttributesAndPurge is a regression guard for issue #319: the SQS
+// handler previously did not dispatch GetQueueAttributes/SetQueueAttributes/
+// PurgeQueue, so callers couldn't read a queue's ARN (needed for DLQ wiring,
+// event-source mappings, and S3->SQS notifications) or resize/drain a queue.
+func TestQueueAttributesAndPurge(t *testing.T) {
+	srv, _ := newServer(t)
+
+	create := postJSON(t, srv, "AmazonSQS.CreateQueue", `{"QueueName":"attrq"}`)
+	qurl := extractQueueURL(t, create)
+
+	// GetQueueAttributes(All) must surface QueueArn.
+	got := readBody(t, postJSON(t, srv, "AmazonSQS.GetQueueAttributes",
+		`{"QueueUrl":"`+qurl+`","AttributeNames":["All"]}`))
+	if !strings.Contains(got, `"QueueArn":"arn:aws:sqs:`) {
+		t.Fatalf("GetQueueAttributes missing QueueArn: %s", got)
+	}
+
+	// SetQueueAttributes persists a numeric attribute.
+	if resp := postJSON(t, srv, "AmazonSQS.SetQueueAttributes",
+		`{"QueueUrl":"`+qurl+`","Attributes":{"VisibilityTimeout":"45"}}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("SetQueueAttributes status = %d", resp.StatusCode)
+	}
+
+	got = readBody(t, postJSON(t, srv, "AmazonSQS.GetQueueAttributes",
+		`{"QueueUrl":"`+qurl+`","AttributeNames":["VisibilityTimeout"]}`))
+	if !strings.Contains(got, `"VisibilityTimeout":"45"`) {
+		t.Fatalf("SetQueueAttributes not applied: %s", got)
+	}
+
+	// PurgeQueue drains messages.
+	postJSON(t, srv, "AmazonSQS.SendMessage", `{"QueueUrl":"`+qurl+`","MessageBody":"x"}`)
+	if resp := postJSON(t, srv, "AmazonSQS.PurgeQueue",
+		`{"QueueUrl":"`+qurl+`"}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("PurgeQueue status = %d", resp.StatusCode)
+	}
+
+	got = readBody(t, postJSON(t, srv, "AmazonSQS.GetQueueAttributes",
+		`{"QueueUrl":"`+qurl+`","AttributeNames":["ApproximateNumberOfMessages"]}`))
+	if !strings.Contains(got, `"ApproximateNumberOfMessages":"0"`) {
+		t.Fatalf("PurgeQueue left messages: %s", got)
+	}
+}
+
 func postJSON(t *testing.T, srv *httptest.Server, target, body string) *http.Response {
 	t.Helper()
 
