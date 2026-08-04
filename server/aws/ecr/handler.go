@@ -63,6 +63,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.batchDeleteImage(w, r)
 	case "GetAuthorizationToken":
 		h.getAuthorizationToken(w, r)
+	case "TagResource":
+		h.tagResource(w, r)
+	case "UntagResource":
+		h.untagResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
 	default:
 		op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 		wire.WriteJSONError(w, http.StatusBadRequest,
