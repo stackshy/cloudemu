@@ -550,8 +550,11 @@ assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
 | Egress-only internet gateways | Create, Delete, Describe |
 | VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
 | Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
+| IPAM (IP Address Manager) — core lifecycle | Ipam (Create/Describe/Modify/Delete); IpamScope (Create/Describe/Modify/Delete); IpamPool (Create/Describe/Modify/Delete); Cidr (Provision/Deprovision/GetIpamPoolCidrs); Allocation (Allocate/Release/Get/Modify) |
 
-**AWS-specific total: 58 operations**
+**AWS-specific total: 78 operations**
+
+IPAM covers the core lifecycle (IPAM/scopes/pools/CIDRs/allocations). BYOASN, Resource Discovery, External Verification Tokens, Prefix-List Resolvers, Policies, Organization-Admin, and discovered-resource scanning are intentionally out of scope — they model multi-account AWS Organizations with live network scanning, which an in-memory single-account emulator cannot represent.
 
 ---
 
@@ -2261,7 +2264,7 @@ still sees success.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
-| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN) | 58 |
+| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / IPAM) | 78 |
 | Network Firewall — AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
@@ -2293,7 +2296,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1493** (+138 optional) |
+| **Grand Total** | **1513** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

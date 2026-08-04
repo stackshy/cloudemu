@@ -266,3 +266,92 @@ func TestEC2NetworkingParitySDK(t *testing.T) {
 		assert.Equal(t, "0.0.0.0/0", aws.ToString(vpnRoutes.Routes[0].DestinationCidr))
 	})
 }
+
+// TestEC2IPAMParitySDK drives the real aws-sdk-go-v2 EC2 client across the
+// IPAM core lifecycle (IPAM + scopes + pools + provisioned CIDRs + allocations),
+// proving the query-protocol XML round-trips.
+func TestEC2IPAMParitySDK(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	ipam, err := client.CreateIpam(ctx, &ec2.CreateIpamInput{Description: aws.String("corp")})
+	require.NoError(t, err)
+	require.NotNil(t, ipam.Ipam)
+	ipamID := aws.ToString(ipam.Ipam.IpamId)
+	assert.NotEmpty(t, ipamID)
+	// Creating an IPAM implicitly creates a public + private default scope.
+	privScopeID := aws.ToString(ipam.Ipam.PrivateDefaultScopeId)
+	assert.NotEmpty(t, aws.ToString(ipam.Ipam.PublicDefaultScopeId))
+	assert.NotEmpty(t, privScopeID)
+	assert.EqualValues(t, 2, aws.ToInt32(ipam.Ipam.ScopeCount))
+
+	desc, err := client.DescribeIpams(ctx, &ec2.DescribeIpamsInput{IpamIds: []string{ipamID}})
+	require.NoError(t, err)
+	require.Len(t, desc.Ipams, 1)
+
+	scope, err := client.CreateIpamScope(ctx, &ec2.CreateIpamScopeInput{
+		IpamId: aws.String(ipamID), Description: aws.String("extra"),
+	})
+	require.NoError(t, err)
+	assert.False(t, aws.ToBool(scope.IpamScope.IsDefault))
+
+	pool, err := client.CreateIpamPool(ctx, &ec2.CreateIpamPoolInput{
+		IpamScopeId:   aws.String(privScopeID),
+		AddressFamily: ec2types.AddressFamilyIpv4,
+		Locale:        aws.String("us-east-1"),
+	})
+	require.NoError(t, err)
+	poolID := aws.ToString(pool.IpamPool.IpamPoolId)
+	assert.NotEmpty(t, poolID)
+	assert.Equal(t, ec2types.AddressFamilyIpv4, pool.IpamPool.AddressFamily)
+
+	// Provision supply into the pool, then read it back.
+	_, err = client.ProvisionIpamPoolCidr(ctx, &ec2.ProvisionIpamPoolCidrInput{
+		IpamPoolId: aws.String(poolID), Cidr: aws.String("10.0.0.0/16"),
+	})
+	require.NoError(t, err)
+
+	cidrs, err := client.GetIpamPoolCidrs(ctx, &ec2.GetIpamPoolCidrsInput{IpamPoolId: aws.String(poolID)})
+	require.NoError(t, err)
+	require.Len(t, cidrs.IpamPoolCidrs, 1)
+	assert.Equal(t, "10.0.0.0/16", aws.ToString(cidrs.IpamPoolCidrs[0].Cidr))
+
+	// Allocate a CIDR out of the pool, then read + release it.
+	alloc, err := client.AllocateIpamPoolCidr(ctx, &ec2.AllocateIpamPoolCidrInput{
+		IpamPoolId: aws.String(poolID), Cidr: aws.String("10.0.1.0/24"),
+	})
+	require.NoError(t, err)
+	allocID := aws.ToString(alloc.IpamPoolAllocation.IpamPoolAllocationId)
+	assert.NotEmpty(t, allocID)
+
+	allocs, err := client.GetIpamPoolAllocations(ctx, &ec2.GetIpamPoolAllocationsInput{IpamPoolId: aws.String(poolID)})
+	require.NoError(t, err)
+	require.Len(t, allocs.IpamPoolAllocations, 1)
+	assert.Equal(t, "10.0.1.0/24", aws.ToString(allocs.IpamPoolAllocations[0].Cidr))
+
+	rel, err := client.ReleaseIpamPoolAllocation(ctx, &ec2.ReleaseIpamPoolAllocationInput{
+		IpamPoolId: aws.String(poolID), IpamPoolAllocationId: aws.String(allocID), Cidr: aws.String("10.0.1.0/24"),
+	})
+	require.NoError(t, err)
+	assert.True(t, aws.ToBool(rel.Success))
+
+	// Teardown in dependency order: pool (deprovision first) → scope → ipam.
+	_, err = client.DeprovisionIpamPoolCidr(ctx, &ec2.DeprovisionIpamPoolCidrInput{
+		IpamPoolId: aws.String(poolID), Cidr: aws.String("10.0.0.0/16"),
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeleteIpamPool(ctx, &ec2.DeleteIpamPoolInput{IpamPoolId: aws.String(poolID)})
+	require.NoError(t, err)
+
+	_, err = client.DeleteIpamScope(ctx, &ec2.DeleteIpamScopeInput{IpamScopeId: scope.IpamScope.IpamScopeId})
+	require.NoError(t, err)
+
+	_, err = client.DeleteIpam(ctx, &ec2.DeleteIpamInput{IpamId: aws.String(ipamID)})
+	require.NoError(t, err)
+
+	// Error path: describing a deleted IPAM by id returns an empty set.
+	after, err := client.DescribeIpams(ctx, &ec2.DescribeIpamsInput{IpamIds: []string{ipamID}})
+	require.NoError(t, err)
+	assert.Empty(t, after.Ipams)
+}

@@ -94,6 +94,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeEgressOnlyIGW,
 		h.routeEndpointServices,
 		h.routeClientVPN,
+		h.routeIPAM,
 		h.routeVPC,
 	}
 	for _, route := range routes {

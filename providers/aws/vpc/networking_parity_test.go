@@ -434,3 +434,131 @@ func TestNetworkingConcurrentReadWrite(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestIPAMLifecycle(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	ipam, err := m.CreateIpam(ctx, driver.IpamConfig{Description: "corp"})
+	if err != nil || ipam.PublicDefaultScopeID == "" || ipam.PrivateDefaultScopeID == "" || ipam.ScopeCount != 2 {
+		t.Fatalf("CreateIpam: %v %+v", err, ipam)
+	}
+
+	// Default scopes are discoverable.
+	if got, _ := m.DescribeIpamScopes(ctx, nil); len(got) != 2 {
+		t.Fatalf("default scopes: %+v", got)
+	}
+
+	// Creating a pool in a missing scope is rejected.
+	if _, err := m.CreateIpamPool(ctx, driver.IpamPoolConfig{IpamScopeID: "ipam-scope-nope"}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("pool in missing scope: got %v, want InvalidArgument", err)
+	}
+
+	pool, err := m.CreateIpamPool(ctx, driver.IpamPoolConfig{IpamScopeID: ipam.PrivateDefaultScopeID, AddressFamily: "ipv4"})
+	if err != nil || pool.State != "create-complete" {
+		t.Fatalf("CreateIpamPool: %v %+v", err, pool)
+	}
+
+	// Provision supply, allocate, read back.
+	if _, err := m.ProvisionIpamPoolCidr(ctx, pool.ID, "10.0.0.0/16", 0); err != nil {
+		t.Fatalf("ProvisionIpamPoolCidr: %v", err)
+	}
+
+	if cidrs, _ := m.GetIpamPoolCidrs(ctx, pool.ID); len(cidrs) != 1 || cidrs[0].CIDR != "10.0.0.0/16" {
+		t.Fatalf("GetIpamPoolCidrs: %+v", cidrs)
+	}
+
+	alloc, err := m.AllocateIpamPoolCidr(ctx, driver.AllocateIpamPoolCidrConfig{IpamPoolID: pool.ID, CIDR: "10.0.1.0/24"})
+	if err != nil {
+		t.Fatalf("AllocateIpamPoolCidr: %v", err)
+	}
+
+	// A pool with a live allocation cannot be deleted.
+	if _, err := m.DeleteIpamPool(ctx, pool.ID); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete pool with allocation: got %v, want FailedPrecondition", err)
+	}
+
+	if allocs, _ := m.GetIpamPoolAllocations(ctx, pool.ID); len(allocs) != 1 {
+		t.Fatalf("GetIpamPoolAllocations: %+v", allocs)
+	}
+
+	if _, err := m.ModifyIpamPoolAllocation(ctx, alloc.ID, "updated"); err != nil {
+		t.Fatalf("ModifyIpamPoolAllocation: %v", err)
+	}
+
+	if err := m.ReleaseIpamPoolAllocation(ctx, pool.ID, alloc.ID); err != nil {
+		t.Fatalf("ReleaseIpamPoolAllocation: %v", err)
+	}
+
+	// Releasing again is NotFound.
+	if err := m.ReleaseIpamPoolAllocation(ctx, pool.ID, alloc.ID); !cerrors.IsNotFound(err) {
+		t.Fatalf("release twice: got %v, want NotFound", err)
+	}
+
+	if _, err := m.DeprovisionIpamPoolCidr(ctx, pool.ID, "10.0.0.0/16"); err != nil {
+		t.Fatalf("DeprovisionIpamPoolCidr: %v", err)
+	}
+
+	if _, err := m.DeleteIpamPool(ctx, pool.ID); err != nil {
+		t.Fatalf("DeleteIpamPool: %v", err)
+	}
+
+	// An IPAM with a non-default scope cannot be deleted until the scope is gone.
+	extra, err := m.CreateIpamScope(ctx, driver.IpamScopeConfig{IpamID: ipam.ID})
+	if err != nil {
+		t.Fatalf("CreateIpamScope: %v", err)
+	}
+
+	if _, err := m.DeleteIpam(ctx, ipam.ID); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("delete ipam with scope: got %v, want FailedPrecondition", err)
+	}
+
+	if _, err := m.DeleteIpamScope(ctx, extra.ID); err != nil {
+		t.Fatalf("DeleteIpamScope: %v", err)
+	}
+
+	if _, err := m.DeleteIpam(ctx, ipam.ID); err != nil {
+		t.Fatalf("DeleteIpam: %v", err)
+	}
+
+	if got, _ := m.DescribeIpams(ctx, nil); len(got) != 0 {
+		t.Fatalf("ipam survived delete: %+v", got)
+	}
+}
+
+// TestIPAMConcurrentAccess exercises the IPAM locking under -race.
+func TestIPAMConcurrentAccess(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	ipam, err := m.CreateIpam(ctx, driver.IpamConfig{})
+	if err != nil {
+		t.Fatalf("CreateIpam: %v", err)
+	}
+
+	pool, err := m.CreateIpamPool(ctx, driver.IpamPoolConfig{IpamScopeID: ipam.PrivateDefaultScopeID})
+	if err != nil {
+		t.Fatalf("CreateIpamPool: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = m.ProvisionIpamPoolCidr(ctx, pool.ID, "10.0.0.0/16", 0)
+			_, _ = m.ModifyIpamPool(ctx, pool.ID, "x")
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = m.GetIpamPoolCidrs(ctx, pool.ID)
+			_, _ = m.DescribeIpamPools(ctx, []string{pool.ID})
+		}()
+	}
+
+	wg.Wait()
+}

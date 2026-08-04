@@ -35,6 +35,7 @@ var (
 	_ driver.EgressOnlyInternetGateways = (*Mock)(nil)
 	_ driver.VPCEndpointServices        = (*Mock)(nil)
 	_ driver.ClientVPN                  = (*Mock)(nil)
+	_ driver.IPAM                       = (*Mock)(nil)
 )
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
@@ -78,9 +79,20 @@ type Mock struct {
 	clientVPNAuthRules *memstore.Store[*driver.ClientVPNAuthorizationRule]
 	clientVPNRoutes    *memstore.Store[*driver.ClientVPNRoute]
 
+	ipams           *memstore.Store[*driver.Ipam]
+	ipamScopes      *memstore.Store[*driver.IpamScope]
+	ipamPools       *memstore.Store[*driver.IpamPool]
+	ipamPoolCidrs   *memstore.Store[*driver.IpamPoolCidr]
+	ipamAllocations *memstore.Store[*driver.IpamPoolAllocation]
+
 	// endpointServicePerms holds allowed principals per endpoint-service id,
 	// guarded by mu.
 	endpointServicePerms map[string][]string
+
+	// ipamPoolByCidr / ipamPoolByAllocation map a provisioned CIDR id and an
+	// allocation id to their owning pool id, guarded by mu.
+	ipamPoolByCidr       map[string]string
+	ipamPoolByAllocation map[string]string
 
 	opts *config.Options
 }
@@ -147,7 +159,15 @@ func New(opts *config.Options) *Mock {
 		clientVPNAuthRules: memstore.New[*driver.ClientVPNAuthorizationRule](),
 		clientVPNRoutes:    memstore.New[*driver.ClientVPNRoute](),
 
+		ipams:           memstore.New[*driver.Ipam](),
+		ipamScopes:      memstore.New[*driver.IpamScope](),
+		ipamPools:       memstore.New[*driver.IpamPool](),
+		ipamPoolCidrs:   memstore.New[*driver.IpamPoolCidr](),
+		ipamAllocations: memstore.New[*driver.IpamPoolAllocation](),
+
 		endpointServicePerms: map[string][]string{},
+		ipamPoolByCidr:       map[string]string{},
+		ipamPoolByAllocation: map[string]string{},
 
 		opts: opts,
 	}
