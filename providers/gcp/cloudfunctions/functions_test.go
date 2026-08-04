@@ -160,7 +160,8 @@ func TestInvokeFunction(t *testing.T) {
 		wantErr    bool
 		errSubstr  string
 	}{
-		{name: "no handler", funcName: "echo", wantStatus: 500},
+		// No Go handler → 200 stub echo (mirrors AWS Lambda, #319 review).
+		{name: "no handler", funcName: "echo", wantStatus: 200},
 		{name: "with handler", funcName: "echo", handler: func(_ context.Context, p []byte) ([]byte, error) {
 			return append([]byte("echo:"), p...), nil
 		}, payload: []byte("hi"), wantStatus: 200},

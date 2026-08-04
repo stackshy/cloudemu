@@ -81,6 +81,36 @@ func TestSDKLogGroupLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKPutRetentionPolicy is a regression guard for issue #319:
+// PutRetentionPolicy was unimplemented (UnknownOperationException).
+func TestSDKPutRetentionPolicy(t *testing.T) {
+	client := newLogsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateLogGroup(ctx, &cwl.CreateLogGroupInput{
+		LogGroupName: aws.String("/app/ret"),
+	}); err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	if _, err := client.PutRetentionPolicy(ctx, &cwl.PutRetentionPolicyInput{
+		LogGroupName: aws.String("/app/ret"), RetentionInDays: aws.Int32(14),
+	}); err != nil {
+		t.Fatalf("PutRetentionPolicy: %v", err)
+	}
+
+	desc, err := client.DescribeLogGroups(ctx, &cwl.DescribeLogGroupsInput{
+		LogGroupNamePrefix: aws.String("/app/ret"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeLogGroups: %v", err)
+	}
+
+	if len(desc.LogGroups) != 1 || aws.ToInt32(desc.LogGroups[0].RetentionInDays) != 14 {
+		t.Fatalf("retention not applied: %+v", desc.LogGroups)
+	}
+}
+
 func TestSDKPutAndGetLogEvents(t *testing.T) {
 	client := newLogsClient(t)
 	ctx := context.Background()

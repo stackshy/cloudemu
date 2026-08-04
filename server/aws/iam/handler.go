@@ -11,6 +11,7 @@
 package iam
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -71,6 +72,30 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"ListInstanceProfiles":          {},
 	"AddRoleToInstanceProfile":      {},
 	"RemoveRoleFromInstanceProfile": {},
+	"PutRolePolicy":                 {},
+	"GetRolePolicy":                 {},
+	"DeleteRolePolicy":              {},
+	"ListRolePolicies":              {},
+	"TagRole":                       {},
+	"UntagRole":                     {},
+	"ListRoleTags":                  {},
+}
+
+// roleTagManager is the AWS-specific role-tagging surface, asserted against the
+// provider (not part of the portable IAM driver).
+type roleTagManager interface {
+	TagRole(ctx context.Context, roleName string, tags map[string]string) error
+	UntagRole(ctx context.Context, roleName string, keys []string) error
+	ListRoleTags(ctx context.Context, roleName string) (map[string]string, error)
+}
+
+// rolePolicyManager is the AWS-specific inline-role-policy surface. It's not
+// part of the portable IAM driver, so the handler type-asserts for it.
+type rolePolicyManager interface {
+	PutRolePolicy(ctx context.Context, roleName, policyName, policyDocument string) error
+	GetRolePolicy(ctx context.Context, roleName, policyName string) (string, error)
+	DeleteRolePolicy(ctx context.Context, roleName, policyName string) error
+	ListRolePolicies(ctx context.Context, roleName string) ([]string, error)
 }
 
 // Handler serves IAM query-protocol requests.
@@ -193,6 +218,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.addRoleToInstanceProfile(w, r)
 	case "RemoveRoleFromInstanceProfile":
 		h.removeRoleFromInstanceProfile(w, r)
+	case "PutRolePolicy":
+		h.putRolePolicy(w, r)
+	case "GetRolePolicy":
+		h.getRolePolicy(w, r)
+	case "DeleteRolePolicy":
+		h.deleteRolePolicy(w, r)
+	case "ListRolePolicies":
+		h.listRolePolicies(w, r)
+	case "TagRole":
+		h.tagRole(w, r)
+	case "UntagRole":
+		h.untagRole(w, r)
+	case "ListRoleTags":
+		h.listRoleTags(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown IAM action: "+r.Form.Get("Action"))

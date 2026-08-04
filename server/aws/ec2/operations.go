@@ -116,7 +116,7 @@ func (h *Handler) stopInstances(w http.ResponseWriter, r *http.Request) {
 		RequestID: awsquery.RequestID,
 		Changes: stateChanges(ids,
 			instanceState{Code: stateCodeStopping, Name: "stopping"},
-			instanceState{Code: stateCodeRunning, Name: "running"}),
+			instanceState{Code: stateCodeRunning, Name: stateRunning}),
 	})
 }
 
@@ -150,7 +150,7 @@ func (h *Handler) terminateInstances(w http.ResponseWriter, r *http.Request) {
 		RequestID: awsquery.RequestID,
 		Changes: stateChanges(ids,
 			instanceState{Code: stateCodeShuttingDown, Name: "shutting-down"},
-			instanceState{Code: stateCodeRunning, Name: "running"}),
+			instanceState{Code: stateCodeRunning, Name: stateRunning}),
 	})
 }
 

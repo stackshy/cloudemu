@@ -78,9 +78,10 @@ func TestDescribeVPCs(t *testing.T) {
 	})
 
 	t.Run("nonexistent ID", func(t *testing.T) {
-		vpcs, err := m.DescribeVPCs(ctx, []string{"vpc-nope"})
-		requireNoError(t, err)
-		assertEqual(t, 0, len(vpcs))
+		// Real EC2 returns InvalidVpcID.NotFound for an explicit missing ID,
+		// not an empty success — existence checks and Terraform drift rely on it.
+		_, err := m.DescribeVPCs(ctx, []string{"vpc-nope"})
+		assertError(t, err, true)
 	})
 
 	_ = v2 // used to create second VPC

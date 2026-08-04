@@ -207,7 +207,20 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	}
 
 	if h == nil {
-		return &driver.InvokeOutput{StatusCode: 500, Error: "no handler registered"}, nil
+		// The emulator can't execute uploaded function code, so with no Go
+		// handler registered we return a successful stub echoing the request
+		// payload rather than a FunctionError — mirroring the AWS Lambda
+		// provider so identical cross-provider tests behave the same.
+		noHandlerDims := map[string]string{"function_name": input.FunctionName}
+		m.emitMetric(ctx, "function/execution_count", 1, noHandlerDims)
+		m.emitMetric(ctx, "function/execution_times", 1, noHandlerDims)
+
+		payload := input.Payload
+		if len(payload) == 0 {
+			payload = []byte("{}")
+		}
+
+		return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
 	}
 
 	dims := map[string]string{"function_name": input.FunctionName}

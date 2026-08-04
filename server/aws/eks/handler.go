@@ -31,6 +31,9 @@ const (
 
 	pathPrefix = "/clusters"
 
+	// tagsPrefix is the EKS tagging API root: /tags/{resourceArn}.
+	tagsPrefix = "/tags/"
+
 	// segNodeGroups, segFargateProfiles, segAddons are the EKS sub-resource
 	// path segments. Real SDK kebab-cases them (note "node-groups" with a
 	// hyphen; the JSON body field is camelCase "nodegroupName").
@@ -71,11 +74,17 @@ func (*Handler) Matches(r *http.Request) bool {
 		return true
 	}
 
-	return strings.HasPrefix(r.URL.Path, pathPrefix+"/")
+	return strings.HasPrefix(r.URL.Path, pathPrefix+"/") ||
+		strings.HasPrefix(r.URL.Path, tagsPrefix)
 }
 
 // ServeHTTP routes EKS requests by URL shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
+		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
+		return
+	}
+
 	parts := splitPath(r.URL.Path)
 
 	switch len(parts) {

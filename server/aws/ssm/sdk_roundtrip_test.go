@@ -78,6 +78,57 @@ func TestSDKPutGetParameter(t *testing.T) {
 	}
 }
 
+// TestSDKParameterTagging is a regression guard for issue #319:
+// AddTagsToResource / RemoveTagsFromResource / ListTagsForResource were
+// unimplemented (UnknownOperationException).
+func TestSDKParameterTagging(t *testing.T) {
+	client := newSSMClient(t)
+	ctx := context.Background()
+
+	if _, err := client.PutParameter(ctx, &awsssm.PutParameterInput{
+		Name: aws.String("/app/db"), Value: aws.String("v"), Type: ssmtypes.ParameterTypeString,
+	}); err != nil {
+		t.Fatalf("PutParameter: %v", err)
+	}
+
+	if _, err := client.AddTagsToResource(ctx, &awsssm.AddTagsToResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
+		ResourceId:   aws.String("/app/db"),
+		Tags:         []ssmtypes.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+	}); err != nil {
+		t.Fatalf("AddTagsToResource: %v", err)
+	}
+
+	list, err := client.ListTagsForResource(ctx, &awsssm.ListTagsForResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter, ResourceId: aws.String("/app/db"),
+	})
+	if err != nil {
+		t.Fatalf("ListTagsForResource: %v", err)
+	}
+
+	if len(list.TagList) != 1 || aws.ToString(list.TagList[0].Key) != "env" {
+		t.Fatalf("TagList = %+v", list.TagList)
+	}
+
+	if _, err := client.RemoveTagsFromResource(ctx, &awsssm.RemoveTagsFromResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
+		ResourceId:   aws.String("/app/db"), TagKeys: []string{"env"},
+	}); err != nil {
+		t.Fatalf("RemoveTagsFromResource: %v", err)
+	}
+
+	list, err = client.ListTagsForResource(ctx, &awsssm.ListTagsForResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter, ResourceId: aws.String("/app/db"),
+	})
+	if err != nil {
+		t.Fatalf("ListTagsForResource after remove: %v", err)
+	}
+
+	if len(list.TagList) != 0 {
+		t.Fatalf("TagList after remove = %+v, want empty", list.TagList)
+	}
+}
+
 func TestSDKPutOverwriteVersioning(t *testing.T) {
 	client := newSSMClient(t)
 	ctx := context.Background()

@@ -31,6 +31,13 @@ type describeNetworkInterfacesResponseXML struct {
 	NetworkInterfaceSet []networkInterfaceXML `xml:"networkInterfaceSet>item"`
 }
 
+type createNetworkInterfaceResponseXML struct {
+	XMLName          xml.Name            `xml:"CreateNetworkInterfaceResponse"`
+	Xmlns            string              `xml:"xmlns,attr"`
+	RequestID        string              `xml:"requestId"`
+	NetworkInterface networkInterfaceXML `xml:"networkInterface"`
+}
+
 type detachNetworkInterfaceResponseXML struct {
 	XMLName   xml.Name `xml:"DetachNetworkInterfaceResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
@@ -148,6 +155,33 @@ func containsString(values []string, want string) bool {
 	}
 
 	return false
+}
+
+func (h *Handler) createNetworkInterface(w http.ResponseWriter, r *http.Request) {
+	creator, ok := h.vpc.(netdriver.NetworkInterfaceCreator)
+	if !ok {
+		writeUnsupportedENI(w)
+		return
+	}
+
+	subnetID := r.Form.Get("SubnetId")
+	if subnetID == "" {
+		writeENIErr(w, cerrors.New(cerrors.InvalidArgument, "SubnetId is required"))
+		return
+	}
+
+	eni, err := creator.CreateNetworkInterface(r.Context(), subnetID, r.Form.Get("Description"),
+		mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-interface"))
+	if err != nil {
+		writeENIErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, createNetworkInterfaceResponseXML{
+		Xmlns:            awsquery.Namespace,
+		RequestID:        awsquery.RequestID,
+		NetworkInterface: toNetworkInterfaceXML(eni),
+	})
 }
 
 func (h *Handler) detachNetworkInterface(w http.ResponseWriter, r *http.Request) {

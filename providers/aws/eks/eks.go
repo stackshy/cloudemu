@@ -30,9 +30,10 @@ import (
 // Wave 1 placeholder for the cluster API server endpoint. Wave 2 will swap
 // in a real per-cluster apiserver address.
 const (
-	wavePlaceholderEndpoint = "https://EKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
-	defaultPlatformVersion  = "eks.1"
-	namespaceEKS            = "AWS/EKS"
+	wavePlaceholderEndpoint  = "https://EKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
+	defaultPlatformVersion   = "eks.1"
+	defaultKubernetesVersion = "1.29"
+	namespaceEKS             = "AWS/EKS"
 )
 
 // CloudWatch-style metric values emitted on cluster create. The numbers are
@@ -243,10 +244,17 @@ func (m *Mock) CreateCluster(_ context.Context, cfg eksdriver.ClusterConfig) (*e
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "cluster %q already exists", cfg.Name)
 	}
 
+	version := cfg.Version
+	if version == "" {
+		// Real EKS defaults to the latest supported Kubernetes version when the
+		// caller omits it, rather than returning a null version.
+		version = defaultKubernetesVersion
+	}
+
 	cluster := eksdriver.Cluster{
 		Name:                 cfg.Name,
 		ARN:                  m.clusterARN(cfg.Name),
-		Version:              cfg.Version,
+		Version:              version,
 		PlatformVersion:      defaultPlatformVersion,
 		RoleArn:              cfg.RoleArn,
 		Endpoint:             wavePlaceholderEndpoint,

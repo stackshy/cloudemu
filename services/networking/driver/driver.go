@@ -379,3 +379,10 @@ type NetworkInterfaces interface {
 	DetachNetworkInterface(ctx context.Context, attachmentID string, force bool) error
 	DeleteNetworkInterface(ctx context.Context, id string) error
 }
+
+// NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept
+// out of NetworkInterfaces so that adding it doesn't break subset assertions
+// (e.g. resourcediscovery's read-only walker, which only needs Describe).
+type NetworkInterfaceCreator interface {
+	CreateNetworkInterface(ctx context.Context, subnetID, description string, tags map[string]string) (*NetworkInterface, error)
+}

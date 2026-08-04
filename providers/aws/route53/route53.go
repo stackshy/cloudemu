@@ -5,6 +5,7 @@ import (
 	"context"
 	"maps"
 	"strings"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -23,6 +24,9 @@ type Mock struct {
 	records      *memstore.Store[driver.RecordInfo]
 	healthChecks *memstore.Store[driver.HealthCheckInfo]
 	opts         *config.Options
+
+	tagsMu   sync.Mutex
+	tagsByID map[string]map[string]string // ResourceId -> tags
 }
 
 // New creates a new Route 53 mock with the given configuration options.
@@ -32,7 +36,42 @@ func New(opts *config.Options) *Mock {
 		records:      memstore.New[driver.RecordInfo](),
 		healthChecks: memstore.New[driver.HealthCheckInfo](),
 		opts:         opts,
+		tagsByID:     map[string]map[string]string{},
 	}
+}
+
+// ChangeResourceTags applies tag additions and key removals to a Route 53
+// resource (hosted zone or health check) identified by ID.
+func (m *Mock) ChangeResourceTags(_ context.Context, resourceID string, add map[string]string, remove []string) error {
+	m.tagsMu.Lock()
+	defer m.tagsMu.Unlock()
+
+	if m.tagsByID[resourceID] == nil {
+		m.tagsByID[resourceID] = map[string]string{}
+	}
+
+	for k, v := range add {
+		m.tagsByID[resourceID][k] = v
+	}
+
+	for _, k := range remove {
+		delete(m.tagsByID[resourceID], k)
+	}
+
+	return nil
+}
+
+// ListResourceTags returns the tags on a Route 53 resource by ID.
+func (m *Mock) ListResourceTags(_ context.Context, resourceID string) (map[string]string, error) {
+	m.tagsMu.Lock()
+	defer m.tagsMu.Unlock()
+
+	out := make(map[string]string, len(m.tagsByID[resourceID]))
+	for k, v := range m.tagsByID[resourceID] {
+		out[k] = v
+	}
+
+	return out, nil
 }
 
 // recordKey builds the key used to store a record in the memstore.

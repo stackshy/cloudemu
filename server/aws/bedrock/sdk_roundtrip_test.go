@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -212,6 +213,13 @@ func newRuntimeClient(t *testing.T) *awsruntime.Client {
 
 	return awsruntime.NewFromConfig(cfg, func(o *awsruntime.Options) {
 		o.BaseEndpoint = aws.String(newServer(t))
+		// Disable HTTP keep-alives for the streaming (eventstream) client.
+		// Reusing a pooled connection races the httptest server's teardown:
+		// the eventstream reader can observe "use of closed network
+		// connection" instead of a clean EOF once the stream is fully
+		// consumed, flaking under CI load. A fresh, server-closed connection
+		// per request makes the stream end deterministically.
+		o.HTTPClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	})
 }
 

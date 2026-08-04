@@ -1,10 +1,12 @@
 package elasticache
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -46,6 +48,34 @@ func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	awsquery.WriteXMLResponse(w, createCacheClusterResponse{
+		Xmlns:    Namespace,
+		Result:   cacheClusterResult{CacheCluster: toCacheClusterXML(info)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// cacheModifier is the AWS-specific ModifyCacheCluster surface. It's not part
+// of the portable Cache driver (Azure Cache and GCP Memorystore also implement
+// it), so the handler type-asserts for it.
+type cacheModifier interface {
+	ModifyCache(ctx context.Context, name, nodeType, engine string) (*cachedriver.CacheInfo, error)
+}
+
+func (h *Handler) modifyCacheCluster(w http.ResponseWriter, r *http.Request) {
+	mod, ok := h.cache.(cacheModifier)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "ModifyCacheCluster not supported"))
+		return
+	}
+
+	info, err := mod.ModifyCache(r.Context(),
+		r.Form.Get("CacheClusterId"), r.Form.Get("CacheNodeType"), r.Form.Get("Engine"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyCacheClusterResponse{
 		Xmlns:    Namespace,
 		Result:   cacheClusterResult{CacheCluster: toCacheClusterXML(info)},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},

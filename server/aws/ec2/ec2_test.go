@@ -99,6 +99,31 @@ func TestMatchesRejectsJSONPost(t *testing.T) {
 	}
 }
 
+// TestDescribeRegionsAndInstanceTypes is a regression guard for issue #319:
+// DescribeRegions / DescribeInstanceTypes returned InvalidAction, breaking
+// region/instance-type validation calls.
+func TestDescribeRegionsAndInstanceTypes(t *testing.T) {
+	h := newHandler()
+
+	regions := do(t, h, http.MethodPost, "/", url.Values{"Action": {"DescribeRegions"}})
+	if regions.Code != http.StatusOK {
+		t.Fatalf("DescribeRegions status = %d", regions.Code)
+	}
+	if !strings.Contains(regions.Body.String(), "<regionName>us-east-1</regionName>") {
+		t.Fatalf("DescribeRegions missing us-east-1: %s", regions.Body.String())
+	}
+
+	types := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"DescribeInstanceTypes"}, "InstanceType.1": {"t3.micro"},
+	})
+	if types.Code != http.StatusOK {
+		t.Fatalf("DescribeInstanceTypes status = %d", types.Code)
+	}
+	if !strings.Contains(types.Body.String(), "<instanceType>t3.micro</instanceType>") {
+		t.Fatalf("DescribeInstanceTypes missing t3.micro: %s", types.Body.String())
+	}
+}
+
 func TestServeHTTPUnknownActionReturns400(t *testing.T) {
 	h := newHandler()
 

@@ -38,6 +38,31 @@ type unsubscribeResponse struct {
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
+type setTopicAttributesResponse struct {
+	XMLName  xml.Name         `xml:"SetTopicAttributesResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+// --- TagResource / UntagResource (empty results) ---
+//
+// The SDK's SNS unmarshaler expects the empty <FooResult/> wrapper element, so
+// it's included even though it carries no data.
+
+type tagResourceResponse struct {
+	XMLName  xml.Name         `xml:"TagResourceResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   struct{}         `xml:"TagResourceResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type untagResourceResponse struct {
+	XMLName  xml.Name         `xml:"UntagResourceResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   struct{}         `xml:"UntagResourceResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
 // --- GetTopicAttributes ---
 
 type attributeEntry struct {

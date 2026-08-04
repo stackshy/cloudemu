@@ -175,11 +175,14 @@ func TestInvokeFunction(t *testing.T) {
 	_, err := m.CreateFunction(ctx, driver.FunctionConfig{Name: "fn1", Runtime: "go1.x"})
 	require.NoError(t, err)
 
-	t.Run("no handler registered", func(t *testing.T) {
-		out, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: "fn1", Payload: []byte("test")})
+	t.Run("no handler echoes a success stub", func(t *testing.T) {
+		// Mirrors AWS Lambda (#319 review): no Go handler → 200 + echoed
+		// payload, not a FunctionError, so cross-provider tests match.
+		out, err := m.Invoke(ctx, driver.InvokeInput{FunctionName: "fn1", Payload: []byte(`{"k":1}`)})
 		require.NoError(t, err)
-		assert.Equal(t, 500, out.StatusCode)
-		assert.Equal(t, "no handler registered", out.Error)
+		assert.Equal(t, 200, out.StatusCode)
+		assert.Equal(t, "", out.Error)
+		assert.Equal(t, `{"k":1}`, string(out.Payload))
 	})
 
 	t.Run("with handler success", func(t *testing.T) {
