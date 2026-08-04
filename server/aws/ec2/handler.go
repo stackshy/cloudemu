@@ -96,6 +96,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeClientVPN,
 		h.routeVPC,
 		h.routeTags,
+		h.routeMetadata,
 	}
 	for _, route := range routes {
 		if route(w, r, action) {
