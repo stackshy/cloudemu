@@ -101,6 +101,27 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request) {
 // getTopicAttributes maps GetTopicAttributes to Notification.GetTopic and
 // exposes the topic's ARN, display name, and subscription count as the standard
 // SNS attribute map.
+// setTopicAttributes maps SetTopicAttributes to Notification.UpdateTopic for
+// the DisplayName attribute. Other attribute names (Policy, DeliveryPolicy) are
+// accepted but not modeled — the emulator doesn't evaluate topic policies, so
+// storing them would have no observable effect.
+func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {
+	name := topicNameFromARN(r.Form.Get("TopicArn"))
+
+	if r.Form.Get("AttributeName") == "DisplayName" {
+		if _, err := h.notif.UpdateTopic(r.Context(), notifdriver.TopicConfig{
+			Name: name, DisplayName: r.Form.Get("AttributeValue"),
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	awsquery.WriteXMLResponse(w, setTopicAttributesResponse{
+		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
 func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	name := topicNameFromARN(r.Form.Get("TopicArn"))
 

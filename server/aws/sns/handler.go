@@ -48,6 +48,7 @@ var snsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"CreateTopic":              {},
 	"DeleteTopic":              {},
 	"GetTopicAttributes":       {},
+	"SetTopicAttributes":       {},
 	"ListTopics":               {},
 	"Subscribe":                {},
 	"Unsubscribe":              {},
@@ -119,6 +120,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteTopic(w, r)
 	case "GetTopicAttributes":
 		h.getTopicAttributes(w, r)
+	case "SetTopicAttributes":
+		h.setTopicAttributes(w, r)
 	case "ListTopics":
 		h.listTopics(w, r)
 	case "Subscribe":

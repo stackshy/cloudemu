@@ -107,6 +107,25 @@ func TestCreateTopicWithTags(t *testing.T) {
 	assert.Equal(t, "staging", info.Tags["env"])
 }
 
+// TestUpdateTopicDisplayName guards the DisplayName path SetTopicAttributes
+// uses (issue #319): UpdateTopic must change the display name in place.
+func TestUpdateTopicDisplayName(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateTopic(ctx, driver.TopicConfig{Name: "t"}); err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	if _, err := m.UpdateTopic(ctx, driver.TopicConfig{Name: "t", DisplayName: "My Topic"}); err != nil {
+		t.Fatalf("UpdateTopic: %v", err)
+	}
+
+	info, err := m.GetTopic(ctx, "t")
+	require.NoError(t, err)
+	assert.Equal(t, "My Topic", info.DisplayName)
+}
+
 // TestTagUntagTopic is a regression guard for issue #319: SNS TagResource /
 // UntagResource were unimplemented.
 func TestTagUntagTopic(t *testing.T) {
