@@ -11,6 +11,44 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
+func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.notif.(topicTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	name := topicNameFromARN(r.Form.Get("ResourceArn"))
+
+	if err := tagger.TagTopic(r.Context(), name, awsquery.FlatTags(r.Form, "Tags.member")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, tagResourceResponse{
+		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.notif.(topicTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	name := topicNameFromARN(r.Form.Get("ResourceArn"))
+
+	if err := tagger.UntagTopic(r.Context(), name, awsquery.ListStrings(r.Form, "TagKeys.member")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, untagResourceResponse{
+		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
 // createTopic maps CreateTopic to Notification.CreateTopic. SNS CreateTopic is
 // idempotent: creating a topic that already exists returns the existing ARN
 // rather than an error, so we translate the driver's AlreadyExists into a

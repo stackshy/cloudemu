@@ -107,6 +107,34 @@ func TestCreateTopicWithTags(t *testing.T) {
 	assert.Equal(t, "staging", info.Tags["env"])
 }
 
+// TestTagUntagTopic is a regression guard for issue #319: SNS TagResource /
+// UntagResource were unimplemented.
+func TestTagUntagTopic(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateTopic(ctx, driver.TopicConfig{Name: "t"}); err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	require.NoError(t, m.TagTopic(ctx, "t", map[string]string{"env": "prod", "team": "infra"}))
+
+	got, err := m.ListTopicTags(ctx, "t")
+	require.NoError(t, err)
+	assert.Equal(t, "prod", got["env"])
+	assert.Equal(t, "infra", got["team"])
+
+	require.NoError(t, m.UntagTopic(ctx, "t", []string{"env"}))
+
+	got, err = m.ListTopicTags(ctx, "t")
+	require.NoError(t, err)
+	_, has := got["env"]
+	assert.False(t, has)
+	assert.Equal(t, "infra", got["team"])
+
+	assert.Error(t, m.TagTopic(ctx, "missing", map[string]string{"a": "b"}))
+}
+
 func TestDeleteTopic(t *testing.T) {
 	tests := []struct {
 		name      string

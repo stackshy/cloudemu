@@ -24,6 +24,7 @@
 package sns
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -53,6 +54,21 @@ var snsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"ListSubscriptions":        {},
 	"ListSubscriptionsByTopic": {},
 	"Publish":                  {},
+	"TagResource":              {},
+	"UntagResource":            {},
+}
+
+// topicTagger is the AWS-specific topic-tagging surface. It's not part of the
+// portable Notification driver (Azure Notification Hubs and GCP FCM also
+// implement it), so the handler type-asserts for it.
+//
+// ListTagsForResource is intentionally omitted: that action name collides with
+// RDS in the shared query protocol (RDS registers first and claims it), and
+// disambiguating would require SigV4 credential-scope routing. SNS tag writes
+// (the flagged gap) work; tag read-back is a follow-up.
+type topicTagger interface {
+	TagTopic(ctx context.Context, topicName string, tags map[string]string) error
+	UntagTopic(ctx context.Context, topicName string, keys []string) error
 }
 
 // Handler serves SNS query-protocol requests against a notification driver.
@@ -115,6 +131,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listSubscriptionsByTopic(w, r)
 	case "Publish":
 		h.publish(w, r)
+	case "TagResource":
+		h.tagResource(w, r)
+	case "UntagResource":
+		h.untagResource(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown SNS action: "+action)
