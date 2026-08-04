@@ -137,6 +137,47 @@ func TestModifyLoadBalancerAttributesMerges(t *testing.T) {
 
 // A sweep for orphaned infrastructure identifies its own load balancers by
 // tag; an empty answer reads as "not mine" and leaves the orphan standing.
+// TestAddAndRemoveTags is a regression guard for issue #319: AddTags/RemoveTags
+// were unimplemented, so tags could only be set at create time.
+func TestAddAndRemoveTags(t *testing.T) {
+	ctx := context.Background()
+	c := newELBClient(t)
+
+	arn := mkLB(t, c, "nlb-mut", nil)
+
+	if _, err := c.AddTags(ctx, &awselbv2.AddTagsInput{
+		ResourceArns: []string{arn},
+		Tags:         []elbv2types.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+	}); err != nil {
+		t.Fatalf("AddTags: %v", err)
+	}
+
+	got, err := c.DescribeTags(ctx, &awselbv2.DescribeTagsInput{ResourceArns: []string{arn}})
+	if err != nil {
+		t.Fatalf("DescribeTags: %v", err)
+	}
+
+	if len(got.TagDescriptions) != 1 || len(got.TagDescriptions[0].Tags) != 1 ||
+		aws.ToString(got.TagDescriptions[0].Tags[0].Key) != "env" {
+		t.Fatalf("after AddTags: %+v", got.TagDescriptions)
+	}
+
+	if _, err := c.RemoveTags(ctx, &awselbv2.RemoveTagsInput{
+		ResourceArns: []string{arn}, TagKeys: []string{"env"},
+	}); err != nil {
+		t.Fatalf("RemoveTags: %v", err)
+	}
+
+	got, err = c.DescribeTags(ctx, &awselbv2.DescribeTagsInput{ResourceArns: []string{arn}})
+	if err != nil {
+		t.Fatalf("DescribeTags after remove: %v", err)
+	}
+
+	if len(got.TagDescriptions) == 1 && len(got.TagDescriptions[0].Tags) != 0 {
+		t.Fatalf("tags remained after RemoveTags: %+v", got.TagDescriptions[0].Tags)
+	}
+}
+
 func TestDescribeTagsReturnsLoadBalancerTags(t *testing.T) {
 	ctx := context.Background()
 	c := newELBClient(t)
