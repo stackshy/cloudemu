@@ -375,6 +375,7 @@ type VPCAttributes interface {
 // that do not model interfaces would carry identical copies of one that does
 // nothing for them.
 type NetworkInterfaces interface {
+	CreateNetworkInterface(ctx context.Context, subnetID, description string, tags map[string]string) (*NetworkInterface, error)
 	DescribeNetworkInterfaces(ctx context.Context, ids []string) ([]NetworkInterface, error)
 	DetachNetworkInterface(ctx context.Context, attachmentID string, force bool) error
 	DeleteNetworkInterface(ctx context.Context, id string) error

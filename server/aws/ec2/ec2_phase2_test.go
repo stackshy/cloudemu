@@ -537,6 +537,49 @@ func TestCreateAndDeleteTags(t *testing.T) {
 	}
 }
 
+// TestCreateNetworkInterfaceAndInstanceStatus is a regression guard for issue
+// #319: CreateNetworkInterface, MonitorInstances, and DescribeInstanceStatus
+// returned InvalidAction.
+func TestCreateNetworkInterfaceAndInstanceStatus(t *testing.T) {
+	h := newFullHandler()
+
+	vpcID := between(do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateVpc"}, "CidrBlock": {"10.0.0.0/16"},
+	}).Body.String(), "<vpcId>", "</vpcId>")
+
+	subnetID := between(do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateSubnet"}, "VpcId": {vpcID}, "CidrBlock": {"10.0.1.0/24"},
+	}).Body.String(), "<subnetId>", "</subnetId>")
+
+	// CreateNetworkInterface in the subnet.
+	eni := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateNetworkInterface"}, "SubnetId": {subnetID}, "Description": {"eni-x"},
+	})
+	if eni.Code != http.StatusOK || !strings.Contains(eni.Body.String(), "<networkInterfaceId>eni-") {
+		t.Fatalf("CreateNetworkInterface: code=%d body=%s", eni.Code, eni.Body.String())
+	}
+
+	// Run an instance, then monitor + status it.
+	instID := between(do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"RunInstances"}, "ImageId": {"ami-1"}, "InstanceType": {"t3.micro"},
+		"MinCount": {"1"}, "MaxCount": {"1"},
+	}).Body.String(), "<instanceId>", "</instanceId>")
+
+	mon := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"MonitorInstances"}, "InstanceId.1": {instID},
+	})
+	if mon.Code != http.StatusOK || !strings.Contains(mon.Body.String(), "<state>enabled</state>") {
+		t.Fatalf("MonitorInstances: code=%d body=%s", mon.Code, mon.Body.String())
+	}
+
+	status := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"DescribeInstanceStatus"}, "InstanceId.1": {instID},
+	})
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), "<instanceId>"+instID+"</instanceId>") {
+		t.Fatalf("DescribeInstanceStatus: code=%d body=%s", status.Code, status.Body.String())
+	}
+}
+
 func between(s, open, close string) string {
 	i := strings.Index(s, open)
 	if i < 0 {
