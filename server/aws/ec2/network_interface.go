@@ -158,7 +158,7 @@ func containsString(values []string, want string) bool {
 }
 
 func (h *Handler) createNetworkInterface(w http.ResponseWriter, r *http.Request) {
-	store, ok := h.networkInterfaces()
+	creator, ok := h.vpc.(netdriver.NetworkInterfaceCreator)
 	if !ok {
 		writeUnsupportedENI(w)
 		return
@@ -170,7 +170,7 @@ func (h *Handler) createNetworkInterface(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	eni, err := store.CreateNetworkInterface(r.Context(), subnetID, r.Form.Get("Description"),
+	eni, err := creator.CreateNetworkInterface(r.Context(), subnetID, r.Form.Get("Description"),
 		mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-interface"))
 	if err != nil {
 		writeENIErr(w, err)
