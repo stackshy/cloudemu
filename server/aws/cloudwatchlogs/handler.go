@@ -70,10 +70,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getLogEvents(w, r)
 	case "FilterLogEvents":
 		h.filterLogEvents(w, r)
+	case "PutRetentionPolicy":
+		h.putRetentionPolicy(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown CloudWatch Logs operation: "+op)
 	}
+}
+
+// putRetentionPolicy sets a log group's retention (SSM PutRetentionPolicy),
+// backed by the driver's UpdateLogGroup.
+func (h *Handler) putRetentionPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LogGroupName    string `json:"logGroupName"`
+		RetentionInDays int    `json:"retentionInDays"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if _, err := h.logs.UpdateLogGroup(r.Context(), logdriver.LogGroupConfig{
+		Name: req.LogGroupName, RetentionDays: req.RetentionInDays,
+	}); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, struct{}{})
 }
 
 // writeErr maps canonical cloudemu errors to CloudWatch Logs JSON error
