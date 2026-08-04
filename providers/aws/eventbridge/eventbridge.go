@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,16 +42,27 @@ type busData struct {
 	events []driver.Event
 }
 
+// SQSDeliverer delivers an event to an SQS queue identified by its ARN.
+type SQSDeliverer interface {
+	DeliverExternal(ctx context.Context, queueARN, body string) error
+}
+
 // Mock is an in-memory mock implementation of AWS EventBridge.
 type Mock struct {
 	buses      *memstore.Store[*busData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+	sqs        SQSDeliverer
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetSQSDeliverer wires the SQS backend so PutEvents delivers to SQS targets.
+func (m *Mock) SetSQSDeliverer(d SQSDeliverer) {
+	m.sqs = d
 }
 
 func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
@@ -391,7 +403,7 @@ func (m *Mock) ListTargets(_ context.Context, eventBus, ruleName string) ([]driv
 }
 
 // PutEvents publishes events to the event bus.
-func (m *Mock) PutEvents(_ context.Context, events []driver.Event) (*driver.PublishResult, error) {
+func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.PublishResult, error) {
 	result := &driver.PublishResult{
 		EventIDs: make([]string, 0, len(events)),
 	}
@@ -418,6 +430,7 @@ func (m *Mock) PutEvents(_ context.Context, events []driver.Event) (*driver.Publ
 
 		m.storeEvent(bd, &events[i])
 		matched := m.MatchedRules(&events[i])
+		m.deliverToTargets(ctx, matched, &events[i])
 
 		dims := map[string]string{"EventBusName": busName}
 		m.emitMetric("PutEventsRequestCount", 1, dims)
@@ -428,6 +441,44 @@ func (m *Mock) PutEvents(_ context.Context, events []driver.Event) (*driver.Publ
 	}
 
 	return result, nil
+}
+
+// deliverToTargets delivers an event to the SQS targets of matched rules,
+// wrapping it in the standard EventBridge event envelope.
+func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, event *driver.Event) {
+	if m.sqs == nil {
+		return
+	}
+
+	for i := range matched {
+		for _, t := range matched[i].Targets {
+			if t.ARN == "" || !strings.Contains(t.ARN, ":sqs:") {
+				continue
+			}
+
+			detail := json.RawMessage(event.Detail)
+			if len(detail) == 0 {
+				detail = json.RawMessage("{}")
+			}
+
+			body, err := json.Marshal(map[string]any{
+				"version":     "0",
+				"id":          event.ID,
+				"detail-type": event.DetailType,
+				"source":      event.Source,
+				"account":     m.opts.AccountID,
+				"time":        event.Time.UTC().Format(time.RFC3339),
+				"region":      m.opts.Region,
+				"resources":   event.Resources,
+				"detail":      detail,
+			})
+			if err != nil {
+				continue
+			}
+
+			_ = m.sqs.DeliverExternal(ctx, t.ARN, string(body))
+		}
+	}
 }
 
 // GetEventHistory retrieves event history for an event bus.
