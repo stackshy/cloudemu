@@ -35,6 +35,10 @@ const pathPrefix = "/2015-03-31/functions"
 // the S3 catch-all and return a 405 HTML body the SDK can't deserialize.
 const tagsPrefix = "/2017-03-31/tags"
 
+// esmPrefix is the Lambda event-source-mapping API prefix (SQS/DynamoDB-stream
+// -> Lambda triggers). Its own version prefix, so it needs a Matches clause.
+const esmPrefix = "/2015-03-31/event-source-mappings"
+
 const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 6 << 20 // 6 MiB — Lambda's sync invocation payload limit.
@@ -72,7 +76,9 @@ func New(fn sdrv.Serverless) *Handler {
 // Matches returns true for any URL under /2015-03-31/functions — that's the
 // Lambda control-plane prefix the SDK uses for every operation in our MVP.
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, pathPrefix) || strings.HasPrefix(r.URL.Path, tagsPrefix)
+	return strings.HasPrefix(r.URL.Path, pathPrefix) ||
+		strings.HasPrefix(r.URL.Path, tagsPrefix) ||
+		strings.HasPrefix(r.URL.Path, esmPrefix)
 }
 
 // ServeHTTP dispatches Lambda operations based on path shape and method.
@@ -84,6 +90,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
 		arn := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, tagsPrefix), "/")
 		h.serveTags(w, r, arn)
+
+		return
+	}
+
+	if strings.HasPrefix(r.URL.Path, esmPrefix) {
+		uuid := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, esmPrefix), "/")
+		h.serveEventSourceMappings(w, r, uuid)
 
 		return
 	}

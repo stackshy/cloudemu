@@ -235,7 +235,11 @@ func TestInvokeReturnsHandlerPayload(t *testing.T) {
 	}
 }
 
-func TestInvokeMissingHandlerSignalsError(t *testing.T) {
+// TestInvokeNoHandlerEchoesStub is a regression guard for issue #319: with no
+// Go handler registered, invoke used to return a FunctionError ("no handler
+// registered"). The emulator can't run an uploaded zip, so it now returns a
+// successful stub that echoes the request payload — invoke is testable.
+func TestInvokeNoHandlerEchoesStub(t *testing.T) {
 	srv, _ := newServer(t)
 
 	if r := postJSON(t, srv.URL+"/2015-03-31/functions",
@@ -244,17 +248,68 @@ func TestInvokeMissingHandlerSignalsError(t *testing.T) {
 	}
 
 	resp, err := http.Post(srv.URL+"/2015-03-31/functions/nohandler/invocations",
-		"application/json", bytes.NewReader([]byte(`{}`)))
+		"application/json", bytes.NewReader([]byte(`{"hi":1}`)))
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 
 	defer resp.Body.Close()
 
-	if resp.Header.Get("X-Amz-Function-Error") == "" {
-		t.Fatal("expected X-Amz-Function-Error on no-handler invoke")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("invoke status = %d, want 200", resp.StatusCode)
+	}
+
+	if resp.Header.Get("X-Amz-Function-Error") != "" {
+		t.Fatal("no-handler invoke must not signal a FunctionError")
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != `{"hi":1}` {
+		t.Fatalf("stub invoke body = %q, want the echoed payload", string(body))
 	}
 }
+
+// TestEventSourceMappings is a regression guard for issue #319:
+// CreateEventSourceMapping (and the ESM lifecycle) returned 405.
+func TestEventSourceMappings(t *testing.T) {
+	srv, _ := newServer(t)
+
+	if r := postJSON(t, srv.URL+"/2015-03-31/functions",
+		`{"FunctionName":"fx","Runtime":"go1.x"}`); r.StatusCode != http.StatusCreated {
+		t.Fatalf("create fn: %d", r.StatusCode)
+	}
+
+	esmURL := srv.URL + esmBasePath
+	create := postJSON(t, esmURL,
+		`{"FunctionName":"fx","EventSourceArn":"arn:aws:sqs:us-east-1:000000000000:q","BatchSize":5}`)
+	if create.StatusCode != http.StatusCreated {
+		t.Fatalf("create ESM status = %d", create.StatusCode)
+	}
+
+	var esm struct {
+		UUID  string `json:"UUID"`
+		State string `json:"State"`
+	}
+
+	decode(t, create, &esm)
+
+	if esm.UUID == "" {
+		t.Fatal("CreateEventSourceMapping returned empty UUID")
+	}
+
+	// GET by UUID.
+	got := doJSON(t, http.MethodGet, esmURL+"/"+esm.UUID, "")
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("get ESM status = %d", got.StatusCode)
+	}
+
+	// DELETE by UUID.
+	if del := doJSON(t, http.MethodDelete, esmURL+"/"+esm.UUID, ""); del.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete ESM status = %d", del.StatusCode)
+	}
+}
+
+const esmBasePath = "/2015-03-31/event-source-mappings"
 
 func TestInvokeOnMissingFunctionReturns404(t *testing.T) {
 	srv, _ := newServer(t)

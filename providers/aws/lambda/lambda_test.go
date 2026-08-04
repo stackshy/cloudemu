@@ -164,14 +164,18 @@ func TestInvokeFunction(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 
-	t.Run("no handler returns error", func(t *testing.T) {
+	t.Run("no handler echoes a success stub", func(t *testing.T) {
+		// The emulator can't run an uploaded zip, so with no Go handler it
+		// returns a 200 stub echoing the payload rather than a FunctionError
+		// (issue #319) — invoke stays testable.
 		out, err := m.Invoke(ctx, driver.InvokeInput{
 			FunctionName: "my-func",
-			Payload:      []byte("test"),
+			Payload:      []byte(`{"k":1}`),
 		})
 		requireNoError(t, err)
-		assertEqual(t, 500, out.StatusCode)
-		assertEqual(t, "no handler registered", out.Error)
+		assertEqual(t, 200, out.StatusCode)
+		assertEqual(t, "", out.Error)
+		assertEqual(t, `{"k":1}`, string(out.Payload))
 	})
 
 	t.Run("with handler success", func(t *testing.T) {
