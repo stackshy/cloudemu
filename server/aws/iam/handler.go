@@ -76,6 +76,17 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"GetRolePolicy":                 {},
 	"DeleteRolePolicy":              {},
 	"ListRolePolicies":              {},
+	"TagRole":                       {},
+	"UntagRole":                     {},
+	"ListRoleTags":                  {},
+}
+
+// roleTagManager is the AWS-specific role-tagging surface, asserted against the
+// provider (not part of the portable IAM driver).
+type roleTagManager interface {
+	TagRole(ctx context.Context, roleName string, tags map[string]string) error
+	UntagRole(ctx context.Context, roleName string, keys []string) error
+	ListRoleTags(ctx context.Context, roleName string) (map[string]string, error)
 }
 
 // rolePolicyManager is the AWS-specific inline-role-policy surface. It's not
@@ -215,6 +226,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteRolePolicy(w, r)
 	case "ListRolePolicies":
 		h.listRolePolicies(w, r)
+	case "TagRole":
+		h.tagRole(w, r)
+	case "UntagRole":
+		h.untagRole(w, r)
+	case "ListRoleTags":
+		h.listRoleTags(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown IAM action: "+r.Form.Get("Action"))
