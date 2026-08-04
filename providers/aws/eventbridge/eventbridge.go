@@ -53,6 +53,7 @@ type Mock struct {
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 	sqs        SQSDeliverer
+	tagsByARN  tagStore
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.

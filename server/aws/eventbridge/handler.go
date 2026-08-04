@@ -69,6 +69,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listTargetsByRule(w, r)
 	case "PutEvents":
 		h.putEvents(w, r)
+	case "TagResource":
+		h.tagResource(w, r)
+	case "UntagResource":
+		h.untagResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown EventBridge operation: "+op)

@@ -771,3 +771,34 @@ func TestMetricsEmission(t *testing.T) {
 		assert.Contains(t, metrics, "MatchedEvents")
 	})
 }
+
+// TestResourceTagging is a regression guard for issue #319: EventBridge
+// TagResource/UntagResource/ListTagsForResource were unimplemented.
+func TestResourceTagging(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	arn := "arn:aws:events:us-east-1:000000000000:rule/r1"
+
+	if err := m.TagResource(ctx, arn, map[string]string{"env": "prod", "team": "evt"}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	tags, err := m.ListResourceTags(ctx, arn)
+	if err != nil {
+		t.Fatalf("ListResourceTags: %v", err)
+	}
+
+	if tags["env"] != "prod" || tags["team"] != "evt" {
+		t.Fatalf("tags = %v", tags)
+	}
+
+	if err := m.UntagResource(ctx, arn, []string{"env"}); err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	tags, _ = m.ListResourceTags(ctx, arn)
+	if _, has := tags["env"]; has || tags["team"] != "evt" {
+		t.Fatalf("after untag = %v", tags)
+	}
+}
