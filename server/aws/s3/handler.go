@@ -126,6 +126,9 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 	q := r.URL.Query()
 
 	switch {
+	case q.Has("tagging"):
+		h.bucketTaggingOp(w, r, bucket)
+		return
 	case q.Has("versioning"):
 		h.bucketVersioningOp(w, r, bucket)
 		return
@@ -156,6 +159,83 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 		h.deleteBucket(w, r, bucket)
 	case http.MethodGet:
 		h.listObjects(w, r, bucket)
+	case http.MethodHead:
+		h.headBucket(w, r, bucket)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	}
+}
+
+// headBucket answers HEAD /{bucket}: 200 if the bucket exists, 404 otherwise.
+// It backs the SDK's HeadBucket / bucket-exists waiters.
+func (h *Handler) headBucket(w http.ResponseWriter, r *http.Request, bucket string) {
+	buckets, err := h.bucket.ListBuckets(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	for _, b := range buckets {
+		if b.Name == bucket {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}
+
+	// HEAD carries no body, so the SDK infers NoSuchBucket from the 404 status.
+	w.WriteHeader(http.StatusNotFound)
+}
+
+// bucketTaggingOp dispatches PUT/GET/DELETE for the bucket ?tagging
+// sub-resource. Without this, a PUT ?tagging fell through to CreateBucket and
+// failed with BucketAlreadyOwnedByYou.
+func (h *Handler) bucketTaggingOp(w http.ResponseWriter, r *http.Request, bucket string) {
+	switch r.Method {
+	case http.MethodPut:
+		var body tagging
+		if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "MalformedXML", "could not parse request body")
+			return
+		}
+
+		tags := make(map[string]string, len(body.TagSet))
+		for _, t := range body.TagSet {
+			tags[t.Key] = t.Value
+		}
+
+		if err := h.bucket.PutBucketTagging(r.Context(), bucket, tags); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodGet:
+		tags, err := h.bucket.GetBucketTagging(r.Context(), bucket)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		resp := tagging{Xmlns: xmlns}
+
+		keys := make([]string, 0, len(tags))
+		for k := range tags {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			resp.TagSet = append(resp.TagSet, tagXML{Key: k, Value: tags[k]})
+		}
+
+		wire.WriteXML(w, http.StatusOK, resp)
+	case http.MethodDelete:
+		if err := h.bucket.DeleteBucketTagging(r.Context(), bucket); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}

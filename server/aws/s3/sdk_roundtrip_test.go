@@ -264,6 +264,51 @@ func TestSDKObjectTagging(t *testing.T) {
 	}
 }
 
+// TestSDKHeadBucketAndTagging is a regression guard for issue #319: HeadBucket
+// (HEAD /{bucket}) returned 405, and PutBucketTagging (PUT /{bucket}?tagging)
+// mis-routed to CreateBucket and failed with BucketAlreadyOwnedByYou.
+func TestSDKHeadBucketAndTagging(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "hb-bucket"
+
+	mustCreateBucket(t, client, bucket)
+
+	// HeadBucket on an existing bucket succeeds.
+	if _, err := client.HeadBucket(ctx, &awss3.HeadBucketInput{Bucket: aws.String(bucket)}); err != nil {
+		t.Fatalf("HeadBucket(existing): %v", err)
+	}
+
+	// HeadBucket on a missing bucket is an error (404).
+	if _, err := client.HeadBucket(ctx, &awss3.HeadBucketInput{Bucket: aws.String("ghost")}); err == nil {
+		t.Fatal("HeadBucket(missing): expected error, got nil")
+	}
+
+	// PutBucketTagging round-trips through the ?tagging sub-resource.
+	if _, err := client.PutBucketTagging(ctx, &awss3.PutBucketTaggingInput{
+		Bucket: aws.String(bucket),
+		Tagging: &types.Tagging{TagSet: []types.Tag{
+			{Key: aws.String("env"), Value: aws.String("prod")},
+		}},
+	}); err != nil {
+		t.Fatalf("PutBucketTagging: %v", err)
+	}
+
+	got, err := client.GetBucketTagging(ctx, &awss3.GetBucketTaggingInput{Bucket: aws.String(bucket)})
+	if err != nil {
+		t.Fatalf("GetBucketTagging: %v", err)
+	}
+
+	if len(got.TagSet) != 1 || aws.ToString(got.TagSet[0].Key) != "env" {
+		t.Fatalf("GetBucketTagging = %+v", got.TagSet)
+	}
+
+	if _, err := client.DeleteBucketTagging(ctx, &awss3.DeleteBucketTaggingInput{Bucket: aws.String(bucket)}); err != nil {
+		t.Fatalf("DeleteBucketTagging: %v", err)
+	}
+}
+
 // TestSDKBucketVersioning verifies PutBucketVersioning(Enabled) ->
 // GetBucketVersioning returns Enabled.
 func TestSDKBucketVersioning(t *testing.T) {
