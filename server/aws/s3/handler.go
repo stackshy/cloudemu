@@ -261,10 +261,29 @@ func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket st
 }
 
 func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket string) {
+	q := r.URL.Query()
+
+	// A client-supplied continuation-token (ListObjectsV2) or marker
+	// (ListObjects v1) both resume paging; accept either.
+	pageToken := q.Get("continuation-token")
+	if pageToken == "" {
+		pageToken = q.Get("marker")
+	}
+
 	opts := driver.ListOptions{
-		Prefix:    r.URL.Query().Get("prefix"),
-		Delimiter: r.URL.Query().Get("delimiter"),
-		PageToken: r.URL.Query().Get("continuation-token"),
+		Prefix:    q.Get("prefix"),
+		Delimiter: q.Get("delimiter"),
+		PageToken: pageToken,
+	}
+
+	// max-keys caps the page; an absent or unparseable value leaves the driver
+	// default in place. Previously ignored, so large buckets never truncated.
+	maxKeys := defaultMaxKeys
+	if v := q.Get("max-keys"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			opts.MaxKeys = n
+			maxKeys = n
+		}
 	}
 
 	result, err := h.bucket.ListObjects(r.Context(), bucket, opts)
@@ -278,7 +297,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		Name:        bucket,
 		Prefix:      opts.Prefix,
 		Delimiter:   opts.Delimiter,
-		MaxKeys:     defaultMaxKeys,
+		MaxKeys:     maxKeys,
 		IsTruncated: result.IsTruncated,
 		KeyCount:    len(result.Objects),
 	}

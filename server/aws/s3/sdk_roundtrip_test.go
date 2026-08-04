@@ -309,6 +309,54 @@ func TestSDKHeadBucketAndTagging(t *testing.T) {
 	}
 }
 
+// TestSDKListObjectsV2MaxKeys is a regression guard for issue #319:
+// ListObjectsV2 ignored MaxKeys, returned every key with IsTruncated=false and
+// no continuation token, breaking any client that pages large buckets.
+func TestSDKListObjectsV2MaxKeys(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "paged-bucket"
+
+	mustCreateBucket(t, client, bucket)
+
+	for _, k := range []string{"k1", "k2", "k3", "k4", "k5"} {
+		if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String(k), Body: bytes.NewReader([]byte("x")),
+		}); err != nil {
+			t.Fatalf("PutObject %s: %v", k, err)
+		}
+	}
+
+	first, err := client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+		Bucket: aws.String(bucket), MaxKeys: aws.Int32(2),
+	})
+	if err != nil {
+		t.Fatalf("ListObjectsV2 page 1: %v", err)
+	}
+
+	if len(first.Contents) != 2 || !aws.ToBool(first.IsTruncated) || aws.ToString(first.NextContinuationToken) == "" {
+		t.Fatalf("page 1: got %d keys, truncated=%v, token=%q",
+			len(first.Contents), aws.ToBool(first.IsTruncated), aws.ToString(first.NextContinuationToken))
+	}
+
+	second, err := client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+		Bucket: aws.String(bucket), MaxKeys: aws.Int32(2),
+		ContinuationToken: first.NextContinuationToken,
+	})
+	if err != nil {
+		t.Fatalf("ListObjectsV2 page 2: %v", err)
+	}
+
+	if len(second.Contents) != 2 {
+		t.Fatalf("page 2: got %d keys, want 2", len(second.Contents))
+	}
+
+	if aws.ToString(first.Contents[0].Key) == aws.ToString(second.Contents[0].Key) {
+		t.Fatal("page 2 returned the same first key as page 1 — pagination not advancing")
+	}
+}
+
 // TestSDKBucketVersioning verifies PutBucketVersioning(Enabled) ->
 // GetBucketVersioning returns Enabled.
 func TestSDKBucketVersioning(t *testing.T) {
