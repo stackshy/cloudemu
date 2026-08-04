@@ -401,6 +401,37 @@ func TestDDBQueryPartitionAndSort(t *testing.T) {
 	assert.Equal(t, "99", attrN(t, out.Items[0], "total"))
 }
 
+// TestDDBTimeToLive is a regression guard for issue #319:
+// DescribeTimeToLive / UpdateTimeToLive returned UnknownOperationException.
+func TestDDBTimeToLive(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "ttl-table", "pk", "")
+
+	desc, err := client.DescribeTimeToLive(ctx, &dynamodb.DescribeTimeToLiveInput{
+		TableName: aws.String("ttl-table"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ddbtypes.TimeToLiveStatusDisabled, desc.TimeToLiveDescription.TimeToLiveStatus)
+
+	if _, err := client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
+		TableName: aws.String("ttl-table"),
+		TimeToLiveSpecification: &ddbtypes.TimeToLiveSpecification{
+			Enabled: aws.Bool(true), AttributeName: aws.String("expiresAt"),
+		},
+	}); err != nil {
+		t.Fatalf("UpdateTimeToLive: %v", err)
+	}
+
+	desc, err = client.DescribeTimeToLive(ctx, &dynamodb.DescribeTimeToLiveInput{
+		TableName: aws.String("ttl-table"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ddbtypes.TimeToLiveStatusEnabled, desc.TimeToLiveDescription.TimeToLiveStatus)
+	assert.Equal(t, "expiresAt", aws.ToString(desc.TimeToLiveDescription.AttributeName))
+}
+
 // TestDDBQueryWithFilterExpression is a regression guard for issue #319: Query
 // ignored FilterExpression and returned the full key-matched set (silent wrong
 // data), while Scan applied it correctly.
