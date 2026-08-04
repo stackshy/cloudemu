@@ -176,6 +176,21 @@ func TestSDKResourceExplorer2_BugFixes(t *testing.T) {
 
 	client := newREXClient(t, ts.URL)
 
+	t.Run("CreateIndex is idempotent and returns the local index", func(t *testing.T) {
+		out, err := client.CreateIndex(ctx, &rex.CreateIndexInput{})
+		require.NoError(t, err, "CreateIndex must not return a 405/HTML deserialize error (#319 theme D)")
+		assert.NotEmpty(t, aws.ToString(out.Arn))
+	})
+
+	t.Run("GetDefaultView returns the first created view", func(t *testing.T) {
+		created, err := client.CreateView(ctx, &rex.CreateViewInput{ViewName: aws.String("default-probe")})
+		require.NoError(t, err)
+
+		got, err := client.GetDefaultView(ctx, &rex.GetDefaultViewInput{})
+		require.NoError(t, err, "GetDefaultView must not return a 405/HTML deserialize error (#319 theme D)")
+		assert.Equal(t, aws.ToString(created.View.ViewArn), aws.ToString(got.ViewArn))
+	})
+
 	t.Run("service:ec2 matches networking (not s3)", func(t *testing.T) {
 		out, err := client.Search(ctx, &rex.SearchInput{
 			QueryString: aws.String("service:ec2"),
