@@ -64,6 +64,13 @@ type createCacheClusterResponse struct {
 	Metadata responseMetadata   `xml:"ResponseMetadata"`
 }
 
+type modifyCacheClusterResponse struct {
+	XMLName  xml.Name           `xml:"ModifyCacheClusterResponse"`
+	Xmlns    string             `xml:"xmlns,attr"`
+	Result   cacheClusterResult `xml:"ModifyCacheClusterResult"`
+	Metadata responseMetadata   `xml:"ResponseMetadata"`
+}
+
 type deleteCacheClusterResponse struct {
 	XMLName  xml.Name           `xml:"DeleteCacheClusterResponse"`
 	Xmlns    string             `xml:"xmlns,attr"`
