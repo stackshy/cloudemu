@@ -22,12 +22,15 @@ const targetPrefix = "AWSEvents."
 
 // Handler serves EventBridge JSON-RPC requests against an EventBus driver.
 type Handler struct {
-	bus ebdriver.EventBus
+	bus       ebdriver.EventBus
+	accountID string
+	region    string
 }
 
-// New returns an EventBridge handler backed by b.
-func New(b ebdriver.EventBus) *Handler {
-	return &Handler{bus: b}
+// New returns an EventBridge handler backed by b. accountID and region are used
+// to synthesize well-formed rule ARNs.
+func New(b ebdriver.EventBus, accountID, region string) *Handler {
+	return &Handler{bus: b, accountID: accountID, region: region}
 }
 
 // Matches returns true for EventBridge-shaped requests, identified by an
