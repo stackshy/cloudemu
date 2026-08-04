@@ -108,6 +108,29 @@ func (m *Mock) RemoveTrigger(queueURL string) {
 	delete(m.triggers, queueURL)
 }
 
+// DeliverExternal enqueues body into the queue identified by ARN. It is used
+// for cross-service delivery such as SNS -> SQS and EventBridge -> SQS, where
+// the source only knows the target queue's ARN. Returns NotFound if no queue
+// matches the ARN.
+func (m *Mock) DeliverExternal(ctx context.Context, queueARN, body string) error {
+	var url string
+
+	for _, qd := range m.queues.SortedValues() {
+		if qd.info.ARN == queueARN {
+			url = qd.info.URL
+			break
+		}
+	}
+
+	if url == "" {
+		return errors.Newf(errors.NotFound, "no queue found for arn %q", queueARN)
+	}
+
+	_, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: url, Body: body})
+
+	return err
+}
+
 // CreateQueue creates a new SQS queue.
 func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.QueueInfo, error) {
 	if cfg.Name == "" {

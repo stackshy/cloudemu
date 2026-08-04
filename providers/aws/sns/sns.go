@@ -3,8 +3,10 @@ package sns
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -33,16 +35,28 @@ type topicData struct {
 	mu            sync.RWMutex
 }
 
+// SQSDeliverer delivers an SNS notification into an SQS queue identified by
+// its ARN. The SQS mock satisfies this, enabling real SNS -> SQS fan-out.
+type SQSDeliverer interface {
+	DeliverExternal(ctx context.Context, queueARN, body string) error
+}
+
 // Mock is an in-memory mock implementation of the AWS SNS service.
 type Mock struct {
 	topics     *memstore.Store[*topicData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+	sqs        SQSDeliverer
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
+}
+
+// SetSQSDeliverer wires the SQS backend so publishes fan out to SQS subscriptions.
+func (m *Mock) SetSQSDeliverer(d SQSDeliverer) {
+	m.sqs = d
 }
 
 func (m *Mock) emitMetric(metricName string, value float64, unit string, dims map[string]string) {
@@ -235,7 +249,7 @@ func (m *Mock) ListSubscriptions(_ context.Context, topicID string) ([]driver.Su
 }
 
 // Publish publishes a message to an SNS topic.
-func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
+func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
 	td, ok := m.topics.Get(input.TopicID)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "topic %q not found", input.TopicID)
@@ -262,9 +276,39 @@ func (m *Mock) Publish(_ context.Context, input driver.PublishInput) (*driver.Pu
 	})
 	td.mu.Unlock()
 
+	m.fanOutToSQS(ctx, td, msgID, input)
+
 	dims := map[string]string{"TopicName": input.TopicID}
 	m.emitMetric("NumberOfMessagesPublished", 1, "Count", dims)
 	m.emitMetric("PublishSize", float64(len(input.Message)), "Bytes", dims)
 
 	return &driver.PublishOutput{MessageID: msgID}, nil
+}
+
+// fanOutToSQS delivers a published message to every SQS-protocol subscription
+// on the topic, wrapping it in the SNS notification envelope real SNS uses.
+func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, input driver.PublishInput) {
+	if m.sqs == nil {
+		return
+	}
+
+	for _, sub := range td.subscriptions.All() {
+		if sub.Protocol != "sqs" || sub.Endpoint == "" {
+			continue
+		}
+
+		envelope, err := json.Marshal(map[string]string{
+			"Type":      "Notification",
+			"MessageId": msgID,
+			"TopicArn":  td.info.ResourceID,
+			"Subject":   input.Subject,
+			"Message":   input.Message,
+			"Timestamp": m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		})
+		if err != nil {
+			continue
+		}
+
+		_ = m.sqs.DeliverExternal(ctx, sub.Endpoint, string(envelope))
+	}
 }

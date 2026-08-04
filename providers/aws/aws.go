@@ -205,6 +205,8 @@ func New(opts ...config.Option) *Provider {
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	p.SageMaker.SetMonitoring(p.CloudWatch)
+	// SNS -> SQS fan-out: publishes deliver to SQS-protocol subscriptions.
+	p.SNS.SetSQSDeliverer(p.SQS)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region,
