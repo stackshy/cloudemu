@@ -27,6 +27,7 @@ const (
 	pathPrefix      = "/v1/projects/"
 	locationsSeg    = "locations"
 	repositoriesSeg = "repositories"
+	operationsSeg   = "operations"
 	dockerImagesSeg = "dockerImages"
 )
 
@@ -49,6 +50,7 @@ type route struct {
 	location   string
 	repository string // repo id; empty for the collection
 	sub        string // "dockerImages" or ""
+	operation  string // operation id when this is an /operations/{op} path
 }
 
 // parseRoute extracts the components of an Artifact Registry v1 path.
@@ -58,13 +60,27 @@ func parseRoute(urlPath string) (route, bool) {
 	}
 
 	parts := strings.Split(strings.TrimPrefix(urlPath, "/v1/"), "/")
-	// parts: [projects, {p}, locations, {l}, repositories, {id}?, {sub}?]
+	// parts: [projects, {p}, locations, {l}, {repositories|operations}, {id}?, {sub}?]
 	if len(parts) < minRepoCollectionParts ||
-		parts[0] != "projects" || parts[2] != locationsSeg || parts[4] != repositoriesSeg {
+		parts[0] != "projects" || parts[2] != locationsSeg {
 		return route{}, false
 	}
 
 	rt := route{project: parts[1], location: parts[3]}
+
+	// LRO polling: GAPIC clients (.Wait()) GET the operation returned by a
+	// create/delete. Without this route those polls 404.
+	if parts[4] == operationsSeg {
+		if len(parts) > minRepoCollectionParts {
+			rt.operation = parts[5]
+		}
+
+		return rt, true
+	}
+
+	if parts[4] != repositoriesSeg {
+		return route{}, false
+	}
 
 	if len(parts) > minRepoCollectionParts {
 		rt.repository = parts[5]
@@ -90,6 +106,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt, ok := parseRoute(r.URL.Path)
 	if !ok {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed Artifact Registry v1 path")
+		return
+	}
+
+	if rt.operation != "" {
+		// The mock completes operations synchronously, so any poll resolves to
+		// a done operation. This unblocks GAPIC .Wait() callers. Echo the exact
+		// operation name that was polled.
+		gcprest.WriteJSON(w, http.StatusOK, operationJSON{
+			Name: "projects/" + rt.project + "/locations/" + rt.location + "/operations/" + rt.operation,
+			Done: true,
+		})
+
 		return
 	}
 

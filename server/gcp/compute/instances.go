@@ -252,15 +252,33 @@ func toInstanceResponse(inst *computedriver.Instance, rp gcprest.ResourcePath, h
 	name := tagOr(inst.Tags, gcpNameTag, rp.ResourceName)
 
 	return instanceResponse{
-		Kind:        "compute#instance",
-		ID:          numericID(inst.ID),
-		Name:        name,
-		MachineType: gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "machineTypes", inst.InstanceType),
-		Status:      gcpStatusFor(inst.State),
-		Zone:        host + "/compute/v1/projects/" + rp.Project + "/zones/" + rp.ScopeName,
-		SelfLink:    gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", name),
-		Labels:      stripInternalTags(inst.Tags),
+		Kind:              "compute#instance",
+		ID:                numericID(inst.ID),
+		Name:              name,
+		MachineType:       gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "machineTypes", inst.InstanceType),
+		Status:            gcpStatusFor(inst.State),
+		Zone:              host + "/compute/v1/projects/" + rp.Project + "/zones/" + rp.ScopeName,
+		SelfLink:          gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", name),
+		NetworkInterfaces: instanceNICs(inst),
+		Labels:            stripInternalTags(inst.Tags),
 	}
+}
+
+// instanceNICs echoes back the network interface the instance was created
+// with. The driver stores the subnetwork the client set plus the private IP it
+// assigned; a read must return them (real GCP always reports a NIC), otherwise
+// a client that sets a subnet reads back an empty interface list.
+func instanceNICs(inst *computedriver.Instance) []networkInterface {
+	if inst.SubnetID == "" && inst.PrivateIP == "" && inst.VPCID == "" {
+		return nil
+	}
+
+	return []networkInterface{{
+		Name:       "nic0",
+		Network:    inst.VPCID,
+		Subnetwork: inst.SubnetID,
+		NetworkIP:  inst.PrivateIP,
+	}}
 }
 
 // numericID returns a stable uint64-shaped string derived from a driver

@@ -74,8 +74,10 @@ func (h *Handler) endpointAction(w http.ResponseWriter, r *http.Request, p *vPat
 		h.deployModel(w, r, p.name)
 	case "undeployModel":
 		h.undeployModel(w, r, p.name)
-	case actionGenerateContent, actionStreamGenerateContent:
-		h.endpointGenerateContent(w, r, p.name)
+	case actionGenerateContent, actionStreamGenerateContent, actionCountTokens:
+		// Route the real action through so endpoint countTokens works and stream
+		// requests aren't collapsed to non-streaming.
+		h.runGenAI(w, r, p.name, p.action)
 	default:
 		writeError(w, http.StatusNotFound, "notFound", "unknown endpoint action: "+p.action)
 	}

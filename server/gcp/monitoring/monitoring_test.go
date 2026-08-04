@@ -91,3 +91,74 @@ func TestMonitoringAlertPolicyCRUD(t *testing.T) {
 		t.Errorf("delete status=%d", delResp.StatusCode)
 	}
 }
+
+// TestMonitoringAlertPolicySemantics guards the #321 fix: a policy's
+// conditions/combiner/enabled/userLabels must round-trip on Get (not be
+// dropped for a hardcoded skeleton), and PATCH must apply.
+func TestMonitoringAlertPolicySemantics(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Monitoring: cloudP.CloudMonitoring})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	const collURL = "/v3/projects/p1/alertPolicies"
+
+	create := bytes.NewBufferString(`{
+		"displayName": "cpu-alert",
+		"combiner": "AND",
+		"enabled": true,
+		"userLabels": {"team": "sre"},
+		"conditions": [{"displayName": "cpu>80"}]
+	}`)
+
+	resp, err := ts.Client().Post(ts.URL+collURL, "application/json", create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Get must reflect what was created.
+	getResp, err := ts.Client().Get(ts.URL + collURL + "/cpu-alert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer getResp.Body.Close()
+
+	var got map[string]any
+	_ = json.NewDecoder(getResp.Body).Decode(&got)
+
+	if got["combiner"] != "AND" {
+		t.Errorf("combiner=%v want AND (dropped on read)", got["combiner"])
+	}
+
+	if got["enabled"] != true {
+		t.Errorf("enabled=%v want true", got["enabled"])
+	}
+
+	if ul, _ := got["userLabels"].(map[string]any); ul["team"] != "sre" {
+		t.Errorf("userLabels=%v want team=sre", got["userLabels"])
+	}
+
+	if conds, _ := got["conditions"].([]any); len(conds) != 1 {
+		t.Errorf("conditions=%v want 1", got["conditions"])
+	}
+
+	// PATCH updates the combiner.
+	patch := bytes.NewBufferString(`{"combiner": "OR", "enabled": false}`)
+	patchReq, _ := http.NewRequest(http.MethodPatch, ts.URL+collURL+"/cpu-alert", patch)
+	patchReq.Header.Set("Content-Type", "application/json")
+
+	patchResp, err := ts.Client().Do(patchReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer patchResp.Body.Close()
+
+	var patched map[string]any
+	_ = json.NewDecoder(patchResp.Body).Decode(&patched)
+
+	if patched["combiner"] != "OR" {
+		t.Errorf("after PATCH combiner=%v want OR", patched["combiner"])
+	}
+}

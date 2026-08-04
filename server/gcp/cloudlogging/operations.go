@@ -2,13 +2,14 @@ package cloudlogging
 
 import (
 	"context"
-	"github.com/stackshy/cloudemu/v2/services/scope"
 	"net/http"
+	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // writeEntries maps WriteLogEntries onto the driver. Cloud Logging creates a log
@@ -43,7 +44,7 @@ func (h *Handler) writeEntries(w http.ResponseWriter, r *http.Request) {
 
 		byLog[logID] = append(byLog[logID], logdriver.LogEvent{
 			Timestamp: parseTimestamp(e.Timestamp, now),
-			Message:   e.TextPayload,
+			Message:   encodeEntryPayload(e),
 		})
 	}
 
@@ -103,9 +104,18 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Cloud Logging defaults to ascending timestamp order; "timestamp desc"
+	// reverses it. The driver returns events in insertion (ascending) order.
+	desc := strings.Contains(strings.ToLower(req.OrderBy), "desc")
+
 	out := make([]logEntryJSON, 0, len(events))
 	for i := range events {
-		out = append(out, toLogEntryJSON(project, logID, &events[i]))
+		idx := i
+		if desc {
+			idx = len(events) - 1 - i
+		}
+
+		out = append(out, toLogEntryJSON(project, logID, &events[idx]))
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, listLogEntriesResponse{Entries: out})

@@ -11,10 +11,12 @@
 package monitoring
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -26,13 +28,22 @@ const (
 )
 
 // Handler serves GCP Cloud Monitoring alert-policy REST requests.
+//
+// The portable monitoring driver models a threshold Alarm, not GCP's richer
+// alert-policy shape (conditions, combiner, notificationChannels, userLabels).
+// To avoid dropping those on read, the full policy is held here keyed by name;
+// the driver alarm is kept as an existence marker.
 type Handler struct {
 	mon mondriver.Monitoring
+
+	mu       sync.RWMutex
+	policies map[string]alertPolicy // keyed by policy short-name
+	seq      atomic.Uint64
 }
 
 // New returns a Cloud Monitoring handler.
 func New(m mondriver.Monitoring) *Handler {
-	return &Handler{mon: m}
+	return &Handler{mon: m, policies: make(map[string]alertPolicy)}
 }
 
 // Matches returns true for /v3/projects/.../alertPolicies URLs.
@@ -67,6 +78,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			h.getPolicy(w, r, project, name)
+		case http.MethodPatch, http.MethodPut:
+			h.patchPolicy(w, r, project, name)
 		case http.MethodDelete:
 			h.deletePolicy(w, r, name)
 		default:
@@ -97,9 +110,11 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request, project s
 
 	name := body.DisplayName
 	if name == "" {
-		name = "policy-" + randID()
+		name = "policy-" + strconv.FormatUint(h.seq.Add(1), 10)
 	}
 
+	// The driver alarm is only an existence marker; the full policy shape lives
+	// in the handler registry so conditions/combiner/labels round-trip.
 	cfg := mondriver.AlarmConfig{
 		Name:               name,
 		Namespace:          "gcp",
@@ -116,50 +131,108 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request, project s
 		return
 	}
 
-	body.Name = "projects/" + project + "/alertPolicies/" + name
+	body.Name = policyResourceName(project, name)
+
+	h.mu.Lock()
+	h.policies[name] = body
+	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, body)
 }
 
-func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request, project, name string) {
-	if err := policyExists(r.Context(), h.mon, name); err != nil {
-		writeErr(w, err)
+func (h *Handler) getPolicy(w http.ResponseWriter, _ *http.Request, project, name string) {
+	h.mu.RLock()
+	pol, ok := h.policies[name]
+	h.mu.RUnlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "alertPolicy "+name+" not found")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, alertPolicy{
-		Name:        "projects/" + project + "/alertPolicies/" + name,
-		DisplayName: name,
-		Enabled:     true,
-	})
+	pol.Name = policyResourceName(project, name)
+
+	writeJSON(w, http.StatusOK, pol)
 }
 
-func (h *Handler) listPolicies(w http.ResponseWriter, r *http.Request, project string) {
-	alarms, err := h.mon.DescribeAlarms(r.Context(), nil)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
+func (h *Handler) listPolicies(w http.ResponseWriter, _ *http.Request, project string) {
+	h.mu.RLock()
+	out := alertPoliciesList{AlertPolicies: make([]alertPolicy, 0, len(h.policies))}
 
-	out := alertPoliciesList{}
-	for i := range alarms {
-		out.AlertPolicies = append(out.AlertPolicies, alertPolicy{
-			Name:        "projects/" + project + "/alertPolicies/" + alarms[i].Name,
-			DisplayName: alarms[i].Name,
-			Enabled:     true,
-		})
+	for name := range h.policies {
+		pol := h.policies[name]
+		pol.Name = policyResourceName(project, name)
+		out.AlertPolicies = append(out.AlertPolicies, pol)
 	}
+	h.mu.RUnlock()
 
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (h *Handler) deletePolicy(w http.ResponseWriter, r *http.Request, name string) {
-	if err := policyExists(r.Context(), h.mon, name); err != nil {
-		writeErr(w, err)
+// patchPolicy applies a partial update. GCP scopes changes by updateMask; the
+// pragmatic emulation overwrites any field the caller supplied (non-zero),
+// which covers displayName/combiner/enabled/conditions/labels/channels.
+func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, name string) {
+	var body alertPolicy
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
 		return
 	}
 
-	if err := h.mon.DeleteAlarm(r.Context(), name); err != nil {
+	h.mu.Lock()
+
+	cur, ok := h.policies[name]
+	if !ok {
+		h.mu.Unlock()
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "alertPolicy "+name+" not found")
+
+		return
+	}
+
+	if body.DisplayName != "" {
+		cur.DisplayName = body.DisplayName
+	}
+
+	if body.Combiner != "" {
+		cur.Combiner = body.Combiner
+	}
+
+	if body.Conditions != nil {
+		cur.Conditions = body.Conditions
+	}
+
+	if body.UserLabels != nil {
+		cur.UserLabels = body.UserLabels
+	}
+
+	if body.NotificationChannels != nil {
+		cur.NotificationChannels = body.NotificationChannels
+	}
+
+	cur.Enabled = body.Enabled
+
+	h.policies[name] = cur
+	h.mu.Unlock()
+
+	cur.Name = policyResourceName(project, name)
+
+	writeJSON(w, http.StatusOK, cur)
+}
+
+func (h *Handler) deletePolicy(w http.ResponseWriter, r *http.Request, name string) {
+	h.mu.Lock()
+	_, ok := h.policies[name]
+	delete(h.policies, name)
+	h.mu.Unlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "alertPolicy "+name+" not found")
+		return
+	}
+
+	if err := h.mon.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
 		writeErr(w, err)
 		return
 	}
@@ -167,26 +240,8 @@ func (h *Handler) deletePolicy(w http.ResponseWriter, r *http.Request, name stri
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-// policyExists reports whether an alert policy exists by name.
-func policyExists(ctx context.Context, m mondriver.Monitoring, name string) error {
-	alarms, err := m.DescribeAlarms(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	for i := range alarms {
-		if alarms[i].Name == name {
-			return nil
-		}
-	}
-
-	return cerrors.Newf(cerrors.NotFound, "alertPolicy %s not found", name)
-}
-
-// randID returns a small random identifier for synthesized policy names.
-// Stable enough for HTTP-level tests; not cryptographic.
-func randID() string {
-	return "auto"
+func policyResourceName(project, name string) string {
+	return "projects/" + project + "/alertPolicies/" + name
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

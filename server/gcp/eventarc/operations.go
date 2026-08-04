@@ -39,6 +39,7 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 		Name:         triggerID,
 		EventBus:     bus,
 		EventPattern: encodeEventPattern(body.EventFilters),
+		Description:  encodeTriggerMeta(body.ServiceAccount, body.Labels),
 	}); err != nil {
 		gcprest.WriteCErr(w, err)
 		return

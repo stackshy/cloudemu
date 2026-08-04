@@ -28,7 +28,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 		Name:     instanceID,
 		Engine:   "redis",
 		NodeType: body.Tier,
-		Tags:     body.Labels,
+		Tags:     instanceTags(&body, nil),
 		Scope:    scope.Scope{Project: rt.project},
 	})
 	if err != nil {
@@ -78,6 +78,48 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rt route
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, listInstancesResponse{Instances: out})
+}
+
+// patchInstance handles PATCH .../instances/{i} — Update. Real clients change
+// memorySizeGb, displayName, tier, and labels here; without it those are stuck
+// at their create-time values.
+func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route) {
+	existing, err := h.cache.GetCache(r.Context(), rt.name)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	var body instanceJSON
+	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	nodeType := existing.NodeType
+	if body.Tier != "" {
+		nodeType = body.Tier
+	}
+
+	updated, err := h.cache.UpdateCache(r.Context(), cachedriver.CacheConfig{
+		Name:     rt.name,
+		Engine:   "redis",
+		NodeType: nodeType,
+		Tags:     instanceTags(&body, existing.Tags),
+	})
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	inst := toInstanceJSON(rt.project, rt.location, shortInstanceID(updated.Name), updated)
+
+	raw, mErr := json.Marshal(inst)
+	if mErr != nil {
+		gcprest.WriteError(w, http.StatusInternalServerError, "internalError", mErr.Error())
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt.project, rt.location, "update-"+rt.name, raw))
 }
 
 // deleteInstance handles DELETE .../instances/{i} — Delete. The operation

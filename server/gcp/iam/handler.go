@@ -36,6 +36,7 @@ package iam
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
@@ -48,13 +49,24 @@ const (
 )
 
 // Handler serves iam.googleapis.com v1 REST requests against the IAM driver.
+//
+// Service-account resource policies and the enabled/disabled bit have no place
+// in the portable IAM driver, so they're tracked here keyed by SA email.
 type Handler struct {
 	iam iamdriver.IAM
+
+	mu       sync.RWMutex
+	saPolicy map[string]*iamPolicy // SA email -> resource policy
+	disabled map[string]bool       // SA email -> disabled
 }
 
 // New returns an IAM handler backed by drv.
 func New(drv iamdriver.IAM) *Handler {
-	return &Handler{iam: drv}
+	return &Handler{
+		iam:      drv,
+		saPolicy: make(map[string]*iamPolicy),
+		disabled: make(map[string]bool),
+	}
 }
 
 // Matches returns true for any /v1/projects/{p}/{serviceAccounts|roles}[/…]
@@ -84,6 +96,7 @@ type route struct {
 	name    string // SA email or role id, or "" for a collection
 	subKind string // keysSeg, or "" for non-key paths
 	subName string // key id, or "" for the collection
+	verb    string // trailing ":method" (getIamPolicy, signBlob, …), or ""
 }
 
 // parseRoute splits the URL after /v1/projects/. Returns ok=false if the
@@ -92,12 +105,21 @@ func parseRoute(urlPath string) (route, bool) {
 	tail := strings.TrimPrefix(urlPath, pathPrefix)
 	tail = strings.TrimRight(tail, "/")
 
+	// GCP one-off methods are POSTs to "…/{resource}:method". Split the trailing
+	// ":method" off the final segment before path splitting (SA emails and role
+	// ids contain no ':').
+	var verb string
+	if i := strings.LastIndex(tail, ":"); i >= 0 {
+		verb = tail[i+1:]
+		tail = tail[:i]
+	}
+
 	parts := strings.Split(tail, "/")
 	if len(parts) < 2 { //nolint:mnd // need at least project + kind
 		return route{}, false
 	}
 
-	r := route{project: parts[0], kind: parts[1]}
+	r := route{project: parts[0], kind: parts[1], verb: verb}
 
 	if len(parts) >= 3 { //nolint:mnd // optional resource name segment
 		r.name = parts[2]
@@ -135,6 +157,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // routeServiceAccounts dispatches the /serviceAccounts/* surface.
 func (h *Handler) routeServiceAccounts(w http.ResponseWriter, r *http.Request, rt *route) {
+	// One-off ":method" calls (getIamPolicy, signBlob, …) are POSTs on a
+	// specific service account.
+	if rt.verb != "" && rt.name != "" {
+		h.routeSAVerb(w, r, rt)
+		return
+	}
+
 	switch {
 	// Collection: POST create, GET list.
 	case rt.name == "":

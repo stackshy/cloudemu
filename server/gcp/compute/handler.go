@@ -230,7 +230,16 @@ func serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.Resource
 	}
 
 	if rp.ResourceName == "" {
-		writeNotImplemented(w, "operations list")
+		// The mock runs synchronously and retains no pending operations, so a
+		// list is legitimately empty rather than unimplemented.
+		host := hostFromRequest(r)
+		gcprest.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":     "compute#operationList",
+			"id":       "projects/" + rp.Project + "/operations",
+			"items":    []any{},
+			"selfLink": gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "operations", ""),
+		})
+
 		return
 	}
 

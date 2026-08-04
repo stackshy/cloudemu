@@ -47,9 +47,10 @@ import (
 )
 
 const (
-	pathPrefix   = "/v1/projects/"
-	locationsSeg = "locations"
-	triggersSeg  = "triggers"
+	pathPrefix    = "/v1/projects/"
+	locationsSeg  = "locations"
+	triggersSeg   = "triggers"
+	operationsSeg = "operations"
 )
 
 // minTriggersCollectionParts is the segment count of a triggers collection
@@ -68,9 +69,10 @@ func New(b ebdriver.EventBus) *Handler {
 }
 
 type route struct {
-	project  string
-	location string
-	trigger  string // trigger id; empty for the collection
+	project   string
+	location  string
+	trigger   string // trigger id; empty for the collection
+	operation string // operation id for an /operations/{op} path
 }
 
 // parseRoute extracts the components of an Eventarc v1 triggers path.
@@ -80,13 +82,26 @@ func parseRoute(urlPath string) (route, bool) {
 	}
 
 	parts := strings.Split(strings.TrimPrefix(urlPath, "/v1/"), "/")
-	// parts: [projects, {p}, locations, {l}, triggers, {id}?]
+	// parts: [projects, {p}, locations, {l}, {triggers|operations}, {id}?]
 	if len(parts) < minTriggersCollectionParts ||
-		parts[0] != "projects" || parts[2] != locationsSeg || parts[4] != triggersSeg {
+		parts[0] != "projects" || parts[2] != locationsSeg {
 		return route{}, false
 	}
 
 	rt := route{project: parts[1], location: parts[3]}
+
+	// LRO polling: GAPIC .Wait() GETs the operation the create/delete returned.
+	if parts[4] == operationsSeg {
+		if len(parts) > minTriggersCollectionParts {
+			rt.operation = parts[5]
+		}
+
+		return rt, true
+	}
+
+	if parts[4] != triggersSeg {
+		return route{}, false
+	}
 
 	if len(parts) > minTriggersCollectionParts {
 		rt.trigger = parts[5]
@@ -107,6 +122,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt, ok := parseRoute(r.URL.Path)
 	if !ok {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed Eventarc v1 path")
+		return
+	}
+
+	if rt.operation != "" {
+		// Operations complete synchronously; any poll resolves to done, which
+		// unblocks GAPIC .Wait() callers instead of 404ing.
+		gcprest.WriteJSON(w, http.StatusOK, operationJSON{
+			Name: "projects/" + rt.project + "/locations/" + rt.location + "/operations/" + rt.operation,
+			Done: true,
+		})
+
 		return
 	}
 

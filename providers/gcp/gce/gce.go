@@ -514,8 +514,13 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 }
 
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", cfg.InstanceID)
+	// GCP images are created from a disk, snapshot, or import — not from a
+	// source instance. An empty InstanceID is one of those source-based paths,
+	// so only validate when a specific instance was named (the EC2-style path).
+	if cfg.InstanceID != "" {
+		if _, ok := m.instances.Get(cfg.InstanceID); !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", cfg.InstanceID)
+		}
 	}
 
 	id := fmt.Sprintf("projects/%s/global/images/img-%d",

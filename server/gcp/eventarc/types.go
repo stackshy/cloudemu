@@ -156,11 +156,48 @@ func destinationSummary(dest *destinationJSON) string {
 
 // toTriggerJSON converts a driver rule into its Eventarc Trigger element.
 func toTriggerJSON(project, location string, rule *ebdriver.Rule) triggerJSON {
+	sa, labels := decodeTriggerMeta(rule.Description)
+
 	return triggerJSON{
-		Name:         triggerResourceName(project, location, rule.Name),
-		EventFilters: decodeEventPattern(rule.EventPattern),
-		Destination:  destinationFromTargets(rule.Targets),
-		CreateTime:   rule.CreatedAt,
-		UpdateTime:   rule.CreatedAt,
+		Name:           triggerResourceName(project, location, rule.Name),
+		EventFilters:   decodeEventPattern(rule.EventPattern),
+		Destination:    destinationFromTargets(rule.Targets),
+		ServiceAccount: sa,
+		Labels:         labels,
+		CreateTime:     rule.CreatedAt,
+		UpdateTime:     rule.CreatedAt,
 	}
+}
+
+// triggerMeta holds the Eventarc fields the eventbus Rule can't store natively;
+// it is JSON-encoded into the rule's Description.
+type triggerMeta struct {
+	ServiceAccount string            `json:"serviceAccount,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+}
+
+func encodeTriggerMeta(sa string, labels map[string]string) string {
+	if sa == "" && len(labels) == 0 {
+		return ""
+	}
+
+	b, err := json.Marshal(triggerMeta{ServiceAccount: sa, Labels: labels})
+	if err != nil {
+		return ""
+	}
+
+	return string(b)
+}
+
+func decodeTriggerMeta(s string) (serviceAccount string, labels map[string]string) {
+	if s == "" {
+		return "", nil
+	}
+
+	var m triggerMeta
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return "", nil
+	}
+
+	return m.ServiceAccount, m.Labels
 }

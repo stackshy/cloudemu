@@ -15,9 +15,24 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
+	// The driver models a Docker registry and has no format/description field,
+	// so preserve the request's values in reserved tags and echo them on read.
+	tags := make(map[string]string, len(body.Labels))
+	for k, v := range body.Labels {
+		tags[k] = v
+	}
+
+	if body.Format != "" {
+		tags[formatTag] = body.Format
+	}
+
+	if body.Description != "" {
+		tags[descriptionTag] = body.Description
+	}
+
 	repo, err := h.registry.CreateRepository(r.Context(), crdriver.RepositoryConfig{
 		Name: repoID,
-		Tags: body.Labels,
+		Tags: tags,
 	})
 	if err != nil {
 		gcprest.WriteCErr(w, err)

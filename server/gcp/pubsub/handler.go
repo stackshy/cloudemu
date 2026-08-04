@@ -29,6 +29,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
@@ -49,13 +51,31 @@ const (
 )
 
 // Handler serves Pub/Sub v1 REST requests against a messagequeue driver.
+//
+// The portable messagequeue driver has one queue per topic and no separate
+// subscription concept, so subscription identity + metadata (its topic,
+// ackDeadline, labels) is tracked here. Messages still live in the topic's
+// queue; a subscription resolves to that queue for pull/ack. This lets a
+// subscription carry a name distinct from its topic. (Multiple subscriptions
+// on one topic share the single underlying queue rather than each getting an
+// independent copy — a documented emulator simplification.)
 type Handler struct {
 	mq mqdriver.MessageQueue
+
+	mu   sync.RWMutex
+	subs map[string]*subMeta // keyed by subscription short-name
+}
+
+// subMeta is the per-subscription metadata the driver can't hold.
+type subMeta struct {
+	topic       string // topic short-name whose queue backs this subscription
+	ackDeadline int
+	labels      map[string]string
 }
 
 // New returns a Pub/Sub handler backed by mq.
 func New(mq mqdriver.MessageQueue) *Handler {
-	return &Handler{mq: mq}
+	return &Handler{mq: mq, subs: make(map[string]*subMeta)}
 }
 
 // Matches accepts /v1/projects/{p}/topics[...] and /v1/projects/{p}/subscriptions[...].
@@ -301,54 +321,84 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
-	// The driver pairs topic+subscription under a single queue; require the
-	// subscription name to match a known queue (which represents the topic).
-	if _, err := h.findQueueByName(r, name); err != nil {
-		// Auto-create from the topic field if present and matches the sub name.
-		if subToTopicName(body.Topic) != name {
-			writeErr(w, err)
-			return
-		}
-
-		if _, cerr := h.mq.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: name}); cerr != nil &&
-			!cerrors.IsAlreadyExists(cerr) {
-			writeErr(w, cerr)
-			return
-		}
+	// The topic (a driver queue) must exist. Its short name may differ from
+	// the subscription name; default to the subscription name only when the
+	// caller omitted the topic (tolerant legacy path).
+	topicShort := subToTopicName(body.Topic)
+	if topicShort == "" {
+		topicShort = name
 	}
 
-	resp := subscription{
-		Name:               subscriptionName(project, name),
-		Topic:              topicName(project, name),
-		AckDeadlineSeconds: body.AckDeadlineSeconds,
-		Labels:             body.Labels,
-	}
-	if resp.AckDeadlineSeconds == 0 {
-		resp.AckDeadlineSeconds = 10
-	}
-
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request, project, name string) {
-	q, err := h.findQueueByName(r, name)
-	if err != nil {
+	if _, err := h.findQueueByName(r, topicShort); err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	ackDeadline := body.AckDeadlineSeconds
+	if ackDeadline == 0 {
+		ackDeadline = 10
+	}
+
+	h.mu.Lock()
+	h.subs[name] = &subMeta{topic: topicShort, ackDeadline: ackDeadline, labels: body.Labels}
+	h.mu.Unlock()
+
 	writeJSON(w, http.StatusOK, subscription{
-		Name:               subscriptionName(project, q.Name),
-		Topic:              topicName(project, q.Name),
-		AckDeadlineSeconds: 10,
+		Name:               subscriptionName(project, name),
+		Topic:              topicName(project, topicShort),
+		AckDeadlineSeconds: ackDeadline,
+		Labels:             body.Labels,
 	})
 }
 
-func (*Handler) deleteSubscription(w http.ResponseWriter, _ *http.Request, _ string) {
-	// In the driver, deleting the subscription would orphan the topic. Treat
-	// it as a no-op: real Pub/Sub has no operation that's both safe and useful
-	// here without modeling subscriptions separately.
+func (h *Handler) getSubscription(w http.ResponseWriter, _ *http.Request, project, name string) {
+	h.mu.RLock()
+	meta, ok := h.subs[name]
+	h.mu.RUnlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "subscription "+name+" not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, subscription{
+		Name:               subscriptionName(project, name),
+		Topic:              topicName(project, meta.topic),
+		AckDeadlineSeconds: meta.ackDeadline,
+		Labels:             meta.labels,
+	})
+}
+
+func (h *Handler) deleteSubscription(w http.ResponseWriter, _ *http.Request, name string) {
+	h.mu.Lock()
+	_, ok := h.subs[name]
+	delete(h.subs, name)
+	h.mu.Unlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "subscription "+name+" not found")
+		return
+	}
+
+	// The subscription is removed from the registry; the topic's queue is left
+	// intact (real Pub/Sub deletes the subscription, not the topic).
 	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// subscriptionQueue resolves a subscription to the queue that backs it (its
+// topic's queue). Falls back to a same-named queue for subscriptions created
+// before registration (legacy tolerance).
+func (h *Handler) subscriptionQueue(r *http.Request, name string) (*mqdriver.QueueInfo, error) {
+	h.mu.RLock()
+	meta, ok := h.subs[name]
+	h.mu.RUnlock()
+
+	target := name
+	if ok {
+		target = meta.topic
+	}
+
+	return h.findQueueByName(r, target)
 }
 
 func (h *Handler) pull(w http.ResponseWriter, r *http.Request, name string) {
@@ -362,7 +412,7 @@ func (h *Handler) pull(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
-	q, err := h.findQueueByName(r, name)
+	q, err := h.subscriptionQueue(r, name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -381,14 +431,20 @@ func (h *Handler) pull(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
+	// Real Pub/Sub always stamps a publishTime; the driver doesn't retain one,
+	// so approximate with the delivery time (clients that require a non-empty,
+	// valid RFC3339 timestamp are satisfied).
+	publishTime := time.Now().UTC().Format(time.RFC3339)
+
 	out := pullResponse{ReceivedMessages: make([]receivedMessage, 0, len(msgs))}
 	for i := range msgs {
 		out.ReceivedMessages = append(out.ReceivedMessages, receivedMessage{
 			AckID: msgs[i].ReceiptHandle,
 			Message: pubsubMessage{
-				MessageID:  msgs[i].MessageID,
-				Data:       base64.StdEncoding.EncodeToString([]byte(msgs[i].Body)),
-				Attributes: msgs[i].Attributes,
+				MessageID:   msgs[i].MessageID,
+				Data:        base64.StdEncoding.EncodeToString([]byte(msgs[i].Body)),
+				Attributes:  msgs[i].Attributes,
+				PublishTime: publishTime,
 			},
 		})
 	}
@@ -407,7 +463,7 @@ func (h *Handler) acknowledge(w http.ResponseWriter, r *http.Request, name strin
 		return
 	}
 
-	q, err := h.findQueueByName(r, name)
+	q, err := h.subscriptionQueue(r, name)
 	if err != nil {
 		writeErr(w, err)
 		return

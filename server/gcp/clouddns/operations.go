@@ -2,6 +2,7 @@ package clouddns
 
 import (
 	"net/http"
+	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -15,10 +16,20 @@ func (h *Handler) createZone(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 
+	tags := req.Labels
+	if req.DNSName != "" {
+		tags = make(map[string]string, len(req.Labels)+1)
+		for k, v := range req.Labels {
+			tags[k] = v
+		}
+
+		tags[dnsNameTag] = req.DNSName
+	}
+
 	info, err := h.dns.CreateZone(r.Context(), dnsdriver.ZoneConfig{
 		Name:    req.Name,
 		Private: privateFor(req.Visibility),
-		Tags:    req.Labels,
+		Tags:    tags,
 		Scope:   scope.Scope{Project: rt.project},
 	})
 	if err != nil {
@@ -108,8 +119,21 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 		}
 	}
 
+	// The canonical "update a record set" change deletes the old rrset and adds
+	// a new one with the SAME name+type in one batch. Such an addition is not a
+	// real conflict — it replaces a record this same change removes — so exempt
+	// additions whose (name,type) also appears in the deletions.
+	deleting := make(map[string]bool, len(req.Deletions))
+	for i := range req.Deletions {
+		deleting[rrsetKey(req.Deletions[i].Name, req.Deletions[i].Type)] = true
+	}
+
 	for i := range req.Additions {
 		a := &req.Additions[i]
+		if deleting[rrsetKey(a.Name, a.Type)] {
+			continue
+		}
+
 		if _, gerr := h.dns.GetRecord(r.Context(), id, a.Name, a.Type); gerr == nil {
 			gcprest.WriteCErr(w, cerrors.Newf(cerrors.AlreadyExists,
 				"record set %q %s already exists", a.Name, a.Type))
@@ -143,11 +167,16 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 
 	gcprest.WriteJSON(w, http.StatusOK, changeJSON{
 		Kind:      kindChange,
-		ID:        "1",
+		ID:        strconv.FormatUint(h.changeSeq.Add(1), 10),
 		Additions: req.Additions,
 		Deletions: req.Deletions,
 		Status:    changeStatusDone,
 	})
+}
+
+// rrsetKey identifies a record set by name+type within a zone.
+func rrsetKey(name, rtype string) string {
+	return name + "|" + rtype
 }
 
 func (h *Handler) listRRSets(w http.ResponseWriter, r *http.Request, rt route) {

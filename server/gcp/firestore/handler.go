@@ -588,7 +588,9 @@ func parseFirestorePath(path string) (firestorePath, error) {
 
 func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
 	docID := r.URL.Query().Get("documentId")
-	if docID == "" {
+
+	explicitID := docID != ""
+	if !explicitID {
 		// Auto-generate an ID; Firestore's default IDs are 20-char IDs but
 		// any string is fine for our purposes.
 		docID = "auto-" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -598,6 +600,17 @@ func (h *Handler) createDocument(w http.ResponseWriter, r *http.Request, p fires
 
 	if !decodeJSON(w, r, &inDoc) {
 		return
+	}
+
+	// CreateDocument with an explicit id must fail if that id already exists,
+	// rather than silently overwriting (real Firestore returns ALREADY_EXISTS).
+	if explicitID {
+		if _, err := h.db.GetItem(r.Context(), p.collection, map[string]any{"id": docID}); err == nil {
+			writeError(w, http.StatusConflict, "ALREADY_EXISTS",
+				"document "+docID+" already exists")
+
+			return
+		}
 	}
 
 	item := fieldsToMap(inDoc.Fields)

@@ -16,8 +16,9 @@ type alertPolicy struct {
 }
 
 type alertCondition struct {
-	Name        string `json:"name,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
+	Name               string `json:"name,omitempty"`
+	DisplayName        string `json:"displayName,omitempty"`
+	ConditionThreshold any    `json:"conditionThreshold,omitempty"`
 }
 
 type alertPoliciesList struct {

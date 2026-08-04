@@ -158,6 +158,96 @@ func TestSDKGCEInstanceRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSDKGCEInstanceNICRoundTrip guards the #321 fix: an instance read must
+// echo the network interface it was created with (subnetwork + assigned
+// networkIP), not an empty list.
+func TestSDKGCEInstanceNICRoundTrip(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Compute: cloudP.GCE})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newSDKInstancesClient(t, ts)
+	ctx := context.Background()
+
+	insertOp, err := client.Insert(ctx, &computepb.InsertInstanceRequest{
+		Project: testProject, Zone: testZone,
+		InstanceResource: &computepb.Instance{
+			Name:        ptrStr("nic-vm"),
+			MachineType: ptrStr("zones/" + testZone + "/machineTypes/n1-standard-1"),
+			NetworkInterfaces: []*computepb.NetworkInterface{
+				{Subnetwork: ptrStr("regions/us-central1/subnetworks/my-subnet")},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := insertOp.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	got, err := client.Get(ctx, &computepb.GetInstanceRequest{
+		Project: testProject, Zone: testZone, Instance: "nic-vm",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	nics := got.GetNetworkInterfaces()
+	if len(nics) == 0 {
+		t.Fatal("read-back instance has no networkInterfaces")
+	}
+
+	if !strings.HasSuffix(nics[0].GetSubnetwork(), "subnetworks/my-subnet") {
+		t.Errorf("subnetwork=%q want ...subnetworks/my-subnet", nics[0].GetSubnetwork())
+	}
+
+	if nics[0].GetNetworkIP() == "" {
+		t.Error("networkIP is empty; the mock assigns a private IP on create")
+	}
+}
+
+// TestSDKGCEImageFromScratch guards the #321 fix: an image create must not
+// require a pre-existing instance (GCP images come from disks/snapshots, not
+// instances). This creates an image with no instances present.
+func TestSDKGCEImageFromScratch(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Compute: cloudP.GCE})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+	imgClient := newImagesSDKClient(t, ts)
+
+	op, err := imgClient.Insert(ctx, &computepb.InsertImageRequest{
+		Project: testProject,
+		ImageResource: &computepb.Image{
+			Name:       ptrStr("disk-img"),
+			SourceDisk: ptrStr("zones/" + testZone + "/disks/my-disk"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := op.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait (image-from-disk should not need an instance): %v", err)
+	}
+
+	got, err := imgClient.Get(ctx, &computepb.GetImageRequest{Project: testProject, Image: "disk-img"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetName() != "disk-img" {
+		t.Errorf("name=%q want disk-img", got.GetName())
+	}
+}
+
 // ptr helpers — computepb fields are pointers because the protocol uses
 // proto3-with-presence and the SDK marshalers care about the distinction
 // between unset and zero-value.
