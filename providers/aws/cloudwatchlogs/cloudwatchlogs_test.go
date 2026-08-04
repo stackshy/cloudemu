@@ -815,3 +815,30 @@ func TestDescribeMetricFilters(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// TestLogGroupTagging is a regression guard for issue #319: CloudWatch Logs
+// TagResource/UntagResource/ListTagsForResource were unimplemented.
+func TestLogGroupTagging(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "g"})
+	require.NoError(t, err)
+
+	require.NoError(t, m.TagLogGroup(ctx, "g", map[string]string{"env": "prod", "team": "ops"}))
+
+	tags, err := m.ListLogGroupTags(ctx, "g")
+	require.NoError(t, err)
+	assert.Equal(t, "prod", tags["env"])
+	assert.Equal(t, "ops", tags["team"])
+
+	require.NoError(t, m.UntagLogGroup(ctx, "g", []string{"env"}))
+
+	tags, err = m.ListLogGroupTags(ctx, "g")
+	require.NoError(t, err)
+	_, has := tags["env"]
+	assert.False(t, has)
+	assert.Equal(t, "ops", tags["team"])
+
+	assert.Error(t, m.TagLogGroup(ctx, "missing", map[string]string{"a": "b"}))
+}

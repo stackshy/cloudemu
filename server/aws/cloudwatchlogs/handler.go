@@ -72,6 +72,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.filterLogEvents(w, r)
 	case "PutRetentionPolicy":
 		h.putRetentionPolicy(w, r)
+	case "TagResource", "TagLogGroup":
+		h.tagLogGroup(w, r)
+	case "UntagResource", "UntagLogGroup":
+		h.untagLogGroup(w, r)
+	case "ListTagsForResource", "ListTagsLogGroup":
+		h.listTagsForResource(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown CloudWatch Logs operation: "+op)
