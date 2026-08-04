@@ -96,6 +96,66 @@ func TestSDKSecretLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKUpdateSecretAndTagging is a regression guard for issue #319:
+// UpdateSecret, TagResource, and UntagResource were unimplemented.
+func TestSDKUpdateSecretAndTagging(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("s"), Description: aws.String("d1"), SecretString: aws.String("v1"),
+	}); err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// UpdateSecret changes description and value.
+	if _, err := client.UpdateSecret(ctx, &awssm.UpdateSecretInput{
+		SecretId: aws.String("s"), Description: aws.String("d2"), SecretString: aws.String("v2"),
+	}); err != nil {
+		t.Fatalf("UpdateSecret: %v", err)
+	}
+
+	val, err := client.GetSecretValue(ctx, &awssm.GetSecretValueInput{SecretId: aws.String("s")})
+	if err != nil {
+		t.Fatalf("GetSecretValue: %v", err)
+	}
+
+	if aws.ToString(val.SecretString) != "v2" {
+		t.Fatalf("value = %q, want v2", aws.ToString(val.SecretString))
+	}
+
+	// TagResource then UntagResource.
+	if _, err := client.TagResource(ctx, &awssm.TagResourceInput{
+		SecretId: aws.String("s"), Tags: []smtypes.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+	}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	desc, err := client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("s")})
+	if err != nil {
+		t.Fatalf("DescribeSecret: %v", err)
+	}
+
+	if aws.ToString(desc.Description) != "d2" || len(desc.Tags) != 1 {
+		t.Fatalf("after update+tag: description=%q tags=%+v", aws.ToString(desc.Description), desc.Tags)
+	}
+
+	if _, err := client.UntagResource(ctx, &awssm.UntagResourceInput{
+		SecretId: aws.String("s"), TagKeys: []string{"env"},
+	}); err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	desc, err = client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("s")})
+	if err != nil {
+		t.Fatalf("DescribeSecret after untag: %v", err)
+	}
+
+	if len(desc.Tags) != 0 {
+		t.Fatalf("tags after untag = %+v, want none", desc.Tags)
+	}
+}
+
 func TestSDKSecretValueVersioning(t *testing.T) {
 	client := newSecretsClient(t)
 	ctx := context.Background()

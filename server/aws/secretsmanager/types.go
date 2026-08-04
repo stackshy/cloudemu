@@ -59,6 +59,28 @@ type putSecretValueRequest struct {
 	SecretBinary []byte `json:"SecretBinary"`
 }
 
+type updateSecretRequest struct {
+	SecretID     string `json:"SecretId"`
+	Description  string `json:"Description"`
+	SecretString string `json:"SecretString"`
+	SecretBinary []byte `json:"SecretBinary"`
+}
+
+type tagResourceRequest struct {
+	SecretID string    `json:"SecretId"`
+	Tags     []tagJSON `json:"Tags"`
+}
+
+type untagResourceRequest struct {
+	SecretID string   `json:"SecretId"`
+	TagKeys  []string `json:"TagKeys"`
+}
+
+type updateSecretResponse struct {
+	ARN  string `json:"ARN"`
+	Name string `json:"Name"`
+}
+
 // --- response envelopes ---
 
 type createSecretResponse struct {

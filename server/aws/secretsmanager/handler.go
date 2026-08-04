@@ -8,6 +8,7 @@
 package secretsmanager
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -17,6 +18,16 @@ import (
 )
 
 const targetPrefix = "secretsmanager."
+
+// secretMutator is the AWS-specific UpdateSecret + tagging surface. These are
+// not part of the portable Secrets driver (Azure Key Vault and GCP Secret
+// Manager also implement it), so the handler type-asserts for them rather than
+// widening the shared interface.
+type secretMutator interface {
+	UpdateSecret(ctx context.Context, name, description string, value []byte) (*secretsdriver.SecretInfo, error)
+	TagSecret(ctx context.Context, name string, tags map[string]string) error
+	UntagSecret(ctx context.Context, name string, keys []string) error
+}
 
 // Handler serves Secrets Manager JSON-RPC requests against a Secrets driver.
 type Handler struct {
@@ -51,12 +62,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.putSecretValue(w, r)
 	case "ListSecretVersionIds":
 		h.listSecretVersionIDs(w, r)
+	case "UpdateSecret":
+		h.updateSecret(w, r)
+	case "TagResource":
+		h.tagResource(w, r)
+	case "UntagResource":
+		h.untagResource(w, r)
 	default:
 		op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown Secrets Manager operation: "+op)
 	}
 }
+
+// errNotSupported is returned when the backing driver doesn't implement the
+// AWS-specific secretMutator surface. Real deployments always do.
+var errNotSupported = cerrors.New(cerrors.Unimplemented, "operation not supported by this backend")
 
 // writeErr maps canonical cloudemu errors to Secrets Manager JSON error
 // responses. Secrets Manager returns errors as HTTP 400 with a "__type" body
