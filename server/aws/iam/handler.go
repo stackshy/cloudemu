@@ -11,6 +11,7 @@
 package iam
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -71,6 +72,19 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"ListInstanceProfiles":          {},
 	"AddRoleToInstanceProfile":      {},
 	"RemoveRoleFromInstanceProfile": {},
+	"PutRolePolicy":                 {},
+	"GetRolePolicy":                 {},
+	"DeleteRolePolicy":              {},
+	"ListRolePolicies":              {},
+}
+
+// rolePolicyManager is the AWS-specific inline-role-policy surface. It's not
+// part of the portable IAM driver, so the handler type-asserts for it.
+type rolePolicyManager interface {
+	PutRolePolicy(ctx context.Context, roleName, policyName, policyDocument string) error
+	GetRolePolicy(ctx context.Context, roleName, policyName string) (string, error)
+	DeleteRolePolicy(ctx context.Context, roleName, policyName string) error
+	ListRolePolicies(ctx context.Context, roleName string) ([]string, error)
 }
 
 // Handler serves IAM query-protocol requests.
@@ -193,6 +207,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.addRoleToInstanceProfile(w, r)
 	case "RemoveRoleFromInstanceProfile":
 		h.removeRoleFromInstanceProfile(w, r)
+	case "PutRolePolicy":
+		h.putRolePolicy(w, r)
+	case "GetRolePolicy":
+		h.getRolePolicy(w, r)
+	case "DeleteRolePolicy":
+		h.deleteRolePolicy(w, r)
+	case "ListRolePolicies":
+		h.listRolePolicies(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown IAM action: "+r.Form.Get("Action"))

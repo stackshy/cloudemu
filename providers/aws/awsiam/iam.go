@@ -53,6 +53,7 @@ type roleData struct {
 	Path                string
 	AssumeRolePolicyDoc string
 	Tags                map[string]string
+	inlinePolicies      map[string]string // policyName -> policy document JSON
 }
 
 type policyData struct {
