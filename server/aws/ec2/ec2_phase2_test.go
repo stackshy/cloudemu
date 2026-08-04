@@ -580,6 +580,24 @@ func TestCreateNetworkInterfaceAndInstanceStatus(t *testing.T) {
 	}
 }
 
+// TestCreateNetworkInterfaceUnknownSubnet guards the resolve-from-subnet path:
+// an ENI create against a subnet that does not exist must fail (NotFound), not
+// silently create an interface with a dangling subnet reference.
+func TestCreateNetworkInterfaceUnknownSubnet(t *testing.T) {
+	h := newFullHandler()
+
+	resp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateNetworkInterface"}, "SubnetId": {"subnet-does-not-exist"},
+	})
+	if resp.Code == http.StatusOK {
+		t.Fatalf("want error for unknown subnet, got 200: %s", resp.Body.String())
+	}
+
+	if !strings.Contains(resp.Body.String(), "InvalidSubnetID.NotFound") {
+		t.Fatalf("want InvalidSubnetID.NotFound, got code=%d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
 func between(s, open, close string) string {
 	i := strings.Index(s, open)
 	if i < 0 {

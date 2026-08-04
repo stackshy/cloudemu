@@ -43,6 +43,49 @@ func newECRClient(t *testing.T) *awsecr.Client {
 	})
 }
 
+// TestSDKECRRepositoryPolicy is a regression guard for the #320 review
+// follow-up: Set/Get/DeleteRepositoryPolicy round-trip a resource policy.
+func TestSDKECRRepositoryPolicy(t *testing.T) {
+	client := newECRClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateRepository(ctx, &awsecr.CreateRepositoryInput{
+		RepositoryName: aws.String("policy-repo"),
+	}); err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+
+	const policy = `{"Version":"2008-10-17","Statement":[{"Sid":"a","Effect":"Allow","Principal":"*","Action":"ecr:GetDownloadUrlForLayer"}]}`
+
+	set, err := client.SetRepositoryPolicy(ctx, &awsecr.SetRepositoryPolicyInput{
+		RepositoryName: aws.String("policy-repo"), PolicyText: aws.String(policy),
+	})
+	if err != nil {
+		t.Fatalf("SetRepositoryPolicy: %v", err)
+	}
+
+	if aws.ToString(set.PolicyText) != policy {
+		t.Fatalf("SetRepositoryPolicy echoed %q", aws.ToString(set.PolicyText))
+	}
+
+	got, err := client.GetRepositoryPolicy(ctx, &awsecr.GetRepositoryPolicyInput{
+		RepositoryName: aws.String("policy-repo"),
+	})
+	if err != nil {
+		t.Fatalf("GetRepositoryPolicy: %v", err)
+	}
+
+	if aws.ToString(got.PolicyText) != policy {
+		t.Fatalf("GetRepositoryPolicy = %q", aws.ToString(got.PolicyText))
+	}
+
+	if _, err := client.DeleteRepositoryPolicy(ctx, &awsecr.DeleteRepositoryPolicyInput{
+		RepositoryName: aws.String("policy-repo"),
+	}); err != nil {
+		t.Fatalf("DeleteRepositoryPolicy: %v", err)
+	}
+}
+
 func TestSDKECRRepositoryLifecycle(t *testing.T) {
 	client := newECRClient(t)
 	ctx := context.Background()

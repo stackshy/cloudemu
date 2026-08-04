@@ -69,6 +69,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.untagResource(w, r)
 	case "ListTagsForResource":
 		h.listTagsForResource(w, r)
+	case "SetRepositoryPolicy":
+		h.setRepositoryPolicy(w, r)
+	case "GetRepositoryPolicy":
+		h.getRepositoryPolicy(w, r)
+	case "DeleteRepositoryPolicy":
+		h.deleteRepositoryPolicy(w, r)
 	default:
 		op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 		wire.WriteJSONError(w, http.StatusBadRequest,

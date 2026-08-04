@@ -44,7 +44,7 @@ func (h *Handler) routeMetadata(w http.ResponseWriter, r *http.Request, action s
 
 // describeRegions answers ec2:DescribeRegions. If explicit RegionName.N filters
 // are supplied, only those are returned; otherwise the common set is reported.
-func (h *Handler) describeRegions(w http.ResponseWriter, r *http.Request) {
+func (*Handler) describeRegions(w http.ResponseWriter, r *http.Request) {
 	requested := awsquery.ListStrings(r.Form, "RegionName")
 
 	names := commonRegions
@@ -111,7 +111,7 @@ type describeInstanceTypesResponseXML struct {
 // describeInstanceTypes answers ec2:DescribeInstanceTypes. Explicit
 // InstanceType.N values are echoed with their (or a default) spec; with none
 // supplied, the known set is reported.
-func (h *Handler) describeInstanceTypes(w http.ResponseWriter, r *http.Request) {
+func (*Handler) describeInstanceTypes(w http.ResponseWriter, r *http.Request) {
 	requested := awsquery.ListStrings(r.Form, "InstanceType")
 
 	names := requested
@@ -122,6 +122,7 @@ func (h *Handler) describeInstanceTypes(w http.ResponseWriter, r *http.Request) 
 	}
 
 	out := make([]instanceTypeInfoXML, 0, len(names))
+
 	for _, name := range names {
 		spec, ok := knownInstanceTypes[name]
 		if !ok {

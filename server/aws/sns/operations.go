@@ -49,6 +49,31 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// parseMessageAttributes reads SNS Publish MessageAttributes.entry.N.Name /
+// .Value.StringValue form parameters into a flat name->value map. Only string
+// values are modeled (the common case); binary values are ignored.
+func parseMessageAttributes(form url.Values) map[string]string {
+	idx := awsquery.CollectIndices(form, "MessageAttributes.entry")
+	if len(idx) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(idx))
+
+	for _, i := range idx {
+		base := "MessageAttributes.entry." + strconv.Itoa(i)
+
+		name := form.Get(base + ".Name")
+		if name == "" {
+			continue
+		}
+
+		out[name] = form.Get(base + ".Value.StringValue")
+	}
+
+	return out
+}
+
 // createTopic maps CreateTopic to Notification.CreateTopic. SNS CreateTopic is
 // idempotent: creating a topic that already exists returns the existing ARN
 // rather than an error, so we translate the driver's AlreadyExists into a
@@ -256,9 +281,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.notif.Publish(r.Context(), notifdriver.PublishInput{
-		TopicID: topicNameFromARN(arn),
-		Subject: r.Form.Get("Subject"),
-		Message: r.Form.Get("Message"),
+		TopicID:    topicNameFromARN(arn),
+		Subject:    r.Form.Get("Subject"),
+		Message:    r.Form.Get("Message"),
+		Attributes: parseMessageAttributes(r.Form),
 	})
 	if err != nil {
 		writeErr(w, err)

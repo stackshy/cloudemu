@@ -30,16 +30,26 @@ func (m *Mock) GetBucketNotification(_ context.Context, bucket string) ([]QueueN
 	return bkt.notifications, nil
 }
 
-// notifyObjectCreated delivers an s3:ObjectCreated:Put event to every SQS
-// target configured on the bucket whose event filter matches. Best-effort:
-// delivery errors are swallowed so a missing/failed queue never fails the
-// upload (mirroring S3's asynchronous, decoupled notification behavior).
+// notifyObjectCreated delivers an s3:ObjectCreated:Put event (PutObject, copy,
+// or completed multipart upload) to matching SQS targets.
 func (m *Mock) notifyObjectCreated(bkt *bucketMeta, bucket, key string, size int64) {
+	m.notify(bkt, bucket, key, size, "ObjectCreated:Put")
+}
+
+// notifyObjectRemoved delivers an s3:ObjectRemoved:Delete event to matching SQS
+// targets.
+func (m *Mock) notifyObjectRemoved(bkt *bucketMeta, bucket, key string) {
+	m.notify(bkt, bucket, key, 0, "ObjectRemoved:Delete")
+}
+
+// notify delivers an S3 event to every SQS target configured on the bucket
+// whose event filter matches. Best-effort: delivery errors are swallowed so a
+// missing/failed queue never fails the object operation (mirroring S3's
+// asynchronous, decoupled notification behavior).
+func (m *Mock) notify(bkt *bucketMeta, bucket, key string, size int64, eventName string) {
 	if m.sqs == nil || len(bkt.notifications) == 0 {
 		return
 	}
-
-	const eventName = "ObjectCreated:Put"
 
 	body := m.objectEventJSON(bucket, key, size, eventName)
 

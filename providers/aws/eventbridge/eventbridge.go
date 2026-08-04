@@ -410,7 +410,7 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 	}
 
 	for i := range events {
-		eventID := generateEventID(&events[i], m.opts.Clock.Now())
+		eventID := generateEventID(&events[i], m.opts.Clock.Now(), i)
 		events[i].ID = eventID
 
 		if events[i].Time.IsZero() {
@@ -529,8 +529,14 @@ func targetsFromStore(store *memstore.Store[driver.Target]) []driver.Target {
 	return targets
 }
 
-func generateEventID(event *driver.Event, now time.Time) string {
-	data := fmt.Sprintf("%s:%s:%s:%s:%d", event.Source, event.DetailType, event.Detail, event.EventBus, now.UnixNano())
+// generateEventID hashes the event's identity plus the clock and its position
+// within the PutEvents batch. The batch index is included because real
+// EventBridge always issues unique IDs, and under a deterministic (fake) clock
+// two byte-identical events in one call would otherwise collide — breaking any
+// consumer that uses EventId as an idempotency/history key.
+func generateEventID(event *driver.Event, now time.Time, index int) string {
+	data := fmt.Sprintf("%s:%s:%s:%s:%d:%d",
+		event.Source, event.DetailType, event.Detail, event.EventBus, now.UnixNano(), index)
 	hash := sha256.Sum256([]byte(data))
 
 	return fmt.Sprintf("%x", hash[:16])

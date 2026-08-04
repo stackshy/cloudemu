@@ -338,6 +338,8 @@ func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("DeleteRequests", 1, "Count", dims)
 
+	m.notifyObjectRemoved(bkt, bucket, key)
+
 	return nil
 }
 
@@ -494,6 +496,8 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 	dims := map[string]string{"BucketName": dstBucket}
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("CopyRequests", 1, "Count", dims)
+
+	m.notifyObjectCreated(dstBkt, dstBucket, dstKey, int64(len(dataCopy)))
 
 	return nil
 }
@@ -737,6 +741,8 @@ func (m *Mock) CompleteMultipartUpload(_ context.Context, bucket, key, uploadID 
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("PutRequests", 1, "Count", dims)
 	m.emitMetric("BytesUploaded", float64(len(data)), "Bytes", dims)
+
+	m.notifyObjectCreated(bkt, bucket, key, int64(len(data)))
 
 	return nil
 }

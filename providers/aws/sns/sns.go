@@ -297,14 +297,27 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 			continue
 		}
 
-		envelope, err := json.Marshal(map[string]string{
+		env := map[string]any{
 			"Type":      "Notification",
 			"MessageId": msgID,
 			"TopicArn":  td.info.ResourceID,
 			"Subject":   input.Subject,
 			"Message":   input.Message,
 			"Timestamp": m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		})
+		}
+
+		// Real SNS carries publish MessageAttributes into the SQS envelope as
+		// {name: {"Type": "String", "Value": v}}; preserve them end-to-end.
+		if len(input.Attributes) > 0 {
+			attrs := make(map[string]any, len(input.Attributes))
+			for k, v := range input.Attributes {
+				attrs[k] = map[string]string{"Type": "String", "Value": v}
+			}
+
+			env["MessageAttributes"] = attrs
+		}
+
+		envelope, err := json.Marshal(env)
 		if err != nil {
 			continue
 		}

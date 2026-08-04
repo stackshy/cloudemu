@@ -89,9 +89,10 @@ func (h *Handler) describeInstanceStatus(w http.ResponseWriter, r *http.Request)
 	}
 
 	out := make([]instanceStatusItemXML, 0, len(instances))
+
 	for i := range instances {
 		inst := &instances[i]
-		if !includeAll && inst.State != "running" {
+		if !includeAll && inst.State != stateRunning {
 			continue
 		}
 
@@ -107,7 +108,7 @@ func statusItem(inst *computedriver.Instance) instanceStatusItemXML {
 	// Checks are "ok" only once the instance is running; otherwise
 	// "not-applicable", matching real EC2's status-check semantics.
 	check := "not-applicable"
-	if inst.State == "running" {
+	if inst.State == stateRunning {
 		check = "ok"
 	}
 

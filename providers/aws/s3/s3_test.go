@@ -66,6 +66,29 @@ func TestBucketNotificationDelivery(t *testing.T) {
 		!strings.Contains(rec.bodies[0], `"key":"file1.txt"`) {
 		t.Fatalf("event body = %s", rec.bodies[0])
 	}
+
+	// CopyObject also fires ObjectCreated (regression: multipart/copy used to
+	// notify nothing).
+	if err := m.CopyObject(ctx, "nb", "file2.txt", driver.CopySource{Bucket: "nb", Key: "file1.txt"}); err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+
+	if len(rec.arns) != 2 || !strings.HasSuffix(rec.arns[1], ":s3events") ||
+		!strings.Contains(rec.bodies[1], `"key":"file2.txt"`) {
+		t.Fatalf("copy delivery = arns %v, body %q", rec.arns, rec.bodies[len(rec.bodies)-1])
+	}
+
+	// DeleteObject fires ObjectRemoved:* to the deletes queue (regression: the
+	// ObjectRemoved selector previously could never receive anything).
+	if err := m.DeleteObject(ctx, "nb", "file1.txt"); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+
+	if len(rec.arns) != 3 || !strings.HasSuffix(rec.arns[2], ":deletes") ||
+		!strings.Contains(rec.bodies[2], `"eventName":"ObjectRemoved:Delete"`) ||
+		!strings.Contains(rec.bodies[2], `"key":"file1.txt"`) {
+		t.Fatalf("delete delivery = arns %v, body %q", rec.arns, rec.bodies[len(rec.bodies)-1])
+	}
 }
 
 func TestCreateBucket(t *testing.T) {

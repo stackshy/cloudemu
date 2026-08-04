@@ -41,6 +41,7 @@ func TestSNSToSQSDelivery(t *testing.T) {
 
 	if _, err := sns.Publish(ctx, sndriver.PublishInput{
 		TopicID: topic.Name, Message: "hello", Subject: "hi",
+		Attributes: map[string]string{"env": "prod"},
 	}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -54,12 +55,23 @@ func TestSNSToSQSDelivery(t *testing.T) {
 		t.Fatalf("expected 1 delivered message, got %d", len(msgs))
 	}
 
-	var envelope map[string]string
+	var envelope map[string]any
 	if err := json.Unmarshal([]byte(msgs[0].Body), &envelope); err != nil {
 		t.Fatalf("delivered body is not the SNS envelope JSON: %v (%s)", err, msgs[0].Body)
 	}
 
 	if envelope["Type"] != "Notification" || envelope["Message"] != "hello" || envelope["TopicArn"] != topic.ResourceID {
 		t.Fatalf("unexpected envelope: %+v", envelope)
+	}
+
+	// MessageAttributes must survive the SNS -> SQS hop (#320 review).
+	attrs, ok := envelope["MessageAttributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("envelope missing MessageAttributes: %+v", envelope)
+	}
+
+	env, ok := attrs["env"].(map[string]any)
+	if !ok || env["Type"] != "String" || env["Value"] != "prod" {
+		t.Fatalf("unexpected MessageAttributes: %+v", attrs)
 	}
 }
