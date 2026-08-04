@@ -1,6 +1,7 @@
 package cloudwatch
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -212,8 +213,28 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request, body []byt
 		return
 	}
 
-	if h.ipam != nil && (in.Namespace == netdriver.IpamMetricNamespace || in.Namespace == "") {
-		h.listIpamMetrics(w, r, in.Namespace)
+	// An exact AWS/IPAM request returns only the synthetic IPAM metrics.
+	if h.ipam != nil && in.Namespace == netdriver.IpamMetricNamespace {
+		writeCBORResponse(w, listMetricsOutput{Metrics: h.ipamMetricRows(r)})
+		return
+	}
+
+	// A namespace-less "list all" request must return every real metric (with
+	// its true namespace) and, when IPAM is wired, the IPAM metrics merged in —
+	// never one set replacing the other.
+	if in.Namespace == "" {
+		out, err := h.allMetricRows(r)
+		if err != nil {
+			writeDriverErr(w, err)
+			return
+		}
+
+		if h.ipam != nil {
+			out = append(out, h.ipamMetricRows(r)...)
+		}
+
+		writeCBORResponse(w, listMetricsOutput{Metrics: out})
+
 		return
 	}
 
@@ -231,8 +252,46 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request, body []byt
 	writeCBORResponse(w, listMetricsOutput{Metrics: out})
 }
 
-// listIpamMetrics returns the derived AWS/IPAM metrics with their dimensions.
-func (h *Handler) listIpamMetrics(w http.ResponseWriter, r *http.Request, _ string) {
+// detailedMetricLister is the AWS-local capability that enumerates every metric
+// with its namespace, backing a namespace-less ListMetrics. The shared
+// Monitoring interface only lists names within a single namespace.
+type detailedMetricLister interface {
+	ListMetricsDetailed(ctx context.Context) ([]mondriver.MetricIdentifier, error)
+}
+
+// allMetricRows lists every real metric tagged with its true namespace, using
+// the detailed lister when available and otherwise degrading to the
+// empty-namespace name list.
+func (h *Handler) allMetricRows(r *http.Request) ([]metricCBR, error) {
+	if dl, ok := h.monitoring.(detailedMetricLister); ok {
+		ids, err := dl.ListMetricsDetailed(r.Context())
+		if err != nil {
+			return nil, err
+		}
+
+		out := make([]metricCBR, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, metricCBR{Namespace: id.Namespace, MetricName: id.MetricName})
+		}
+
+		return out, nil
+	}
+
+	names, err := h.monitoring.ListMetrics(r.Context(), "")
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]metricCBR, 0, len(names))
+	for _, name := range names {
+		out = append(out, metricCBR{MetricName: name})
+	}
+
+	return out, nil
+}
+
+// ipamMetricRows returns the derived AWS/IPAM metrics with their dimensions.
+func (h *Handler) ipamMetricRows(r *http.Request) []metricCBR {
 	metrics := h.ipam.IpamMetrics(r.Context())
 	out := make([]metricCBR, 0, len(metrics))
 
@@ -245,7 +304,7 @@ func (h *Handler) listIpamMetrics(w http.ResponseWriter, r *http.Request, _ stri
 		out = append(out, metricCBR{Namespace: netdriver.IpamMetricNamespace, MetricName: mtr.MetricName, Dimensions: dims})
 	}
 
-	writeCBORResponse(w, listMetricsOutput{Metrics: out})
+	return out
 }
 
 type putMetricAlarmInput struct {

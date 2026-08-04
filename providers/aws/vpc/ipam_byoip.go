@@ -71,11 +71,13 @@ func (m *Mock) AssociateIpamByoasn(_ context.Context, asn, cidr string) (*driver
 		return nil, errors.Newf(errors.InvalidArgument, "byoasn %q not found", asn)
 	}
 
-	assoc := driver.AsnAssociation{Asn: asn, CIDR: cidr, State: "associated"}
-
-	if bc, ok := m.ipamByoipCidrs.Get(cidr); ok {
-		bc.AsnAssociations = append(bc.AsnAssociations, assoc)
+	bc, ok := m.ipamByoipCidrs.Get(cidr)
+	if !ok {
+		return nil, errors.Newf(errors.InvalidArgument, "byoip cidr %q not provisioned", cidr)
 	}
+
+	assoc := driver.AsnAssociation{Asn: asn, CIDR: cidr, State: "associated"}
+	bc.AsnAssociations = append(bc.AsnAssociations, assoc)
 
 	return &assoc, nil
 }
@@ -84,6 +86,10 @@ func (m *Mock) AssociateIpamByoasn(_ context.Context, asn, cidr string) (*driver
 func (m *Mock) DisassociateIpamByoasn(_ context.Context, asn, cidr string) (*driver.AsnAssociation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if !m.ipamByoasns.Has(asn) {
+		return nil, errors.Newf(errors.InvalidArgument, "byoasn %q not found", asn)
+	}
 
 	assoc := driver.AsnAssociation{Asn: asn, CIDR: cidr, State: "disassociated"}
 

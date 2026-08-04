@@ -523,6 +523,25 @@ func TestIPAMMetricsSDK(t *testing.T) {
 	assert.True(t, names["TotalActiveIpCount"], "expected TotalActiveIpCount metric")
 	assert.True(t, names["VpcIPUsage"], "expected VpcIPUsage metric")
 
+	// Regression (#318 review): a real metric plus an empty-namespace
+	// "list all" call must return BOTH the real namespace and AWS/IPAM — the
+	// IPAM shortcut must not drop every non-IPAM metric.
+	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace:  aws.String("MyApp"),
+		MetricData: []cwtypes.MetricDatum{{MetricName: aws.String("RequestCount"), Value: aws.Float64(1)}},
+	})
+	require.NoError(t, err)
+
+	all, err := cw.ListMetrics(ctx, &cloudwatch.ListMetricsInput{})
+	require.NoError(t, err)
+
+	namespaces := map[string]bool{}
+	for _, m := range all.Metrics {
+		namespaces[aws.ToString(m.Namespace)] = true
+	}
+	assert.True(t, namespaces["MyApp"], "empty-namespace ListMetrics dropped the real MyApp metric")
+	assert.True(t, namespaces["AWS/IPAM"], "empty-namespace ListMetrics dropped the AWS/IPAM metrics")
+
 	// GetMetricStatistics for VpcIPUsage returns the computed utilization (a
 	// /24 subnet in a /16 VPC = 256/65536 = ~0.39%).
 	vpcID := aws.ToString(vpcOut.Vpc.VpcId)

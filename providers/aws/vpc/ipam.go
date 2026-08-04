@@ -351,6 +351,19 @@ func (m *Mock) ProvisionIpamPoolCidr(_ context.Context, poolID, cidr string, net
 		return nil, errors.New(errors.InvalidArgument, "a cidr or netmaskLength is required")
 	}
 
+	// AWS's common pattern is netmask-only ("provision a /24"); derive a
+	// concrete CIDR so downstream reads and AWS/IPAM metrics aren't corrupted
+	// by an empty CIDR string.
+	if cidr == "" {
+		derived, ok := m.deriveProvisionCIDR(poolID, netmaskLength)
+		if !ok {
+			return nil, errors.Newf(errors.InvalidArgument,
+				"unable to provision a /%d cidr from the pool's available space", netmaskLength)
+		}
+
+		cidr = derived
+	}
+
 	id := idgen.GenerateID("ipam-pool-cidr-")
 	pc := &driver.IpamPoolCidr{
 		ID:            id,
@@ -426,10 +439,24 @@ func (m *Mock) AllocateIpamPoolCidr(_ context.Context, cfg driver.AllocateIpamPo
 		return nil, errors.New(errors.InvalidArgument, "a cidr or netmaskLength is required")
 	}
 
+	// Netmask-only allocation ("give me a /24 from this pool") is the standard
+	// AWS pattern; carve a concrete free block from the pool's provisioned
+	// supply so the returned allocation and AWS/IPAM metrics are correct.
+	cidr := cfg.CIDR
+	if cidr == "" {
+		derived, ok := m.deriveAllocationCIDR(cfg.IpamPoolID, cfg.NetmaskLength)
+		if !ok {
+			return nil, errors.Newf(errors.InvalidArgument,
+				"unable to allocate a /%d cidr from the pool's available space", cfg.NetmaskLength)
+		}
+
+		cidr = derived
+	}
+
 	id := idgen.GenerateID("ipam-pool-alloc-")
 	alloc := &driver.IpamPoolAllocation{
 		ID:           id,
-		CIDR:         cfg.CIDR,
+		CIDR:         cidr,
 		ResourceType: "custom",
 		Description:  cfg.Description,
 		Tags:         copyTags(cfg.Tags),

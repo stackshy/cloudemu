@@ -110,6 +110,11 @@ type Mock struct {
 	ipamPoolByCidr       map[string]string
 	ipamPoolByAllocation map[string]string
 
+	// ipamResourceOverrides persists ModifyIpamResourceCidr scope/unmonitor
+	// changes, keyed by resourceID, since the base resource-CIDR list is
+	// re-derived from VPCs/subnets on every read. Guarded by mu.
+	ipamResourceOverrides map[string]ipamResourceOverride
+
 	opts *config.Options
 }
 
@@ -189,9 +194,10 @@ func New(opts *config.Options) *Mock {
 		ipamTokens:          memstore.New[*driver.IpamExternalResourceVerificationToken](),
 		ipamPolicies:        memstore.New[*driver.IpamPolicy](),
 
-		endpointServicePerms: map[string][]string{},
-		ipamPoolByCidr:       map[string]string{},
-		ipamPoolByAllocation: map[string]string{},
+		endpointServicePerms:  map[string][]string{},
+		ipamPoolByCidr:        map[string]string{},
+		ipamPoolByAllocation:  map[string]string{},
+		ipamResourceOverrides: map[string]ipamResourceOverride{},
 
 		opts: opts,
 	}

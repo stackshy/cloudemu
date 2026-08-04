@@ -96,6 +96,10 @@ func (m *Mock) CreateIpamPrefixListResolverTarget(
 		return nil, errors.Newf(errors.InvalidArgument, "ipam prefix list resolver %q not found", resolverID)
 	}
 
+	if !m.prefixLists.Has(prefixListID) {
+		return nil, errors.Newf(errors.InvalidArgument, "managed prefix list %q not found", prefixListID)
+	}
+
 	id := idgen.GenerateID("ipam-pl-res-target-")
 	t := &driver.IpamPrefixListResolverTarget{
 		ID: id, ARN: m.ipamARN("ipam-prefix-list-resolver-target/" + id), ResolverID: resolverID,

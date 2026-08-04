@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"net"
 	"sync"
 	"testing"
 
@@ -473,6 +474,44 @@ func TestIPAMLifecycle(t *testing.T) {
 		t.Fatalf("AllocateIpamPoolCidr: %v", err)
 	}
 
+	// Netmask-only allocation (the standard AWS pattern) must derive a real,
+	// non-empty CIDR of the requested size from the pool's supply, not the
+	// empty string — otherwise downstream reads and AWS/IPAM metrics corrupt.
+	nmAlloc, err := m.AllocateIpamPoolCidr(ctx, driver.AllocateIpamPoolCidrConfig{IpamPoolID: pool.ID, NetmaskLength: 24})
+	if err != nil {
+		t.Fatalf("AllocateIpamPoolCidr(netmask): %v", err)
+	}
+
+	if _, ipnet, perr := net.ParseCIDR(nmAlloc.CIDR); perr != nil {
+		t.Fatalf("netmask-only allocation returned invalid CIDR %q: %v", nmAlloc.CIDR, perr)
+	} else if ones, _ := ipnet.Mask.Size(); ones != 24 {
+		t.Fatalf("derived CIDR %q is not a /24", nmAlloc.CIDR)
+	}
+
+	if nmAlloc.CIDR == "10.0.1.0/24" {
+		t.Fatalf("derived CIDR overlaps the existing allocation: %q", nmAlloc.CIDR)
+	}
+
+	// Netmask-only provisioning likewise derives a concrete CIDR.
+	nmProv, err := m.ProvisionIpamPoolCidr(ctx, pool.ID, "", 24)
+	if err != nil {
+		t.Fatalf("ProvisionIpamPoolCidr(netmask): %v", err)
+	}
+
+	if nmProv.CIDR == "" {
+		t.Fatal("netmask-only provisioning returned an empty CIDR")
+	}
+
+	// Restore the pool to a single provisioned CIDR + single allocation so the
+	// assertions below (delete-guard, allocation count) still hold.
+	if err := m.ReleaseIpamPoolAllocation(ctx, pool.ID, nmAlloc.ID); err != nil {
+		t.Fatalf("ReleaseIpamPoolAllocation(netmask): %v", err)
+	}
+
+	if _, err := m.DeprovisionIpamPoolCidr(ctx, pool.ID, nmProv.CIDR); err != nil {
+		t.Fatalf("DeprovisionIpamPoolCidr(netmask): %v", err)
+	}
+
 	// A pool with a live allocation cannot be deleted.
 	if _, err := m.DeleteIpamPool(ctx, pool.ID); !cerrors.IsFailedPrecondition(err) {
 		t.Fatalf("delete pool with allocation: got %v, want FailedPrecondition", err)
@@ -582,6 +621,21 @@ func TestIPAMFullProvider(t *testing.T) {
 		t.Fatalf("GetIpamResourceCidrs: %v %+v", err, rc)
 	}
 
+	// ModifyIpamResourceCidr must PERSIST: unmonitoring a resource has to
+	// survive the next (freshly-derived) read, not silently revert.
+	if _, err := m.ModifyIpamResourceCidr(ctx, rc[0].ResourceID, ipam.PrivateDefaultScopeID, "", false); err != nil {
+		t.Fatalf("ModifyIpamResourceCidr: %v", err)
+	}
+
+	after, err := m.GetIpamResourceCidrs(ctx, ipam.PrivateDefaultScopeID, rc[0].ResourceID)
+	if err != nil || len(after) != 1 {
+		t.Fatalf("GetIpamResourceCidrs(after modify): %v %+v", err, after)
+	}
+
+	if after[0].ManagementState != "unmanaged" {
+		t.Fatalf("unmonitor did not persist: ManagementState=%q, want unmanaged", after[0].ManagementState)
+	}
+
 	if hist, _ := m.GetIpamAddressHistory(ctx, "10.0.0.0/16", ""); len(hist) != 1 {
 		t.Fatalf("GetIpamAddressHistory: %+v", hist)
 	}
@@ -622,6 +676,24 @@ func TestIPAMFullProvider(t *testing.T) {
 		t.Fatalf("AdvertiseByoipCidr: %v", err)
 	}
 
+	// BYOASN association validates both sides: a provisioned CIDR associates,
+	// an unprovisioned one is rejected, and disassociating an unknown ASN errs.
+	if _, err := m.AssociateIpamByoasn(ctx, "64512", "203.0.113.0/24"); err != nil {
+		t.Fatalf("AssociateIpamByoasn: %v", err)
+	}
+
+	if _, err := m.AssociateIpamByoasn(ctx, "64512", "198.51.100.0/24"); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("associate unprovisioned cidr: got %v, want InvalidArgument", err)
+	}
+
+	if _, err := m.DisassociateIpamByoasn(ctx, "64999", "203.0.113.0/24"); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("disassociate unknown asn: got %v, want InvalidArgument", err)
+	}
+
+	if _, err := m.DisassociateIpamByoasn(ctx, "64512", "203.0.113.0/24"); err != nil {
+		t.Fatalf("DisassociateIpamByoasn: %v", err)
+	}
+
 	// Advertised CIDR cannot be deprovisioned.
 	if _, err := m.DeprovisionByoipCidr(ctx, "203.0.113.0/24"); !cerrors.IsFailedPrecondition(err) {
 		t.Fatalf("deprovision advertised: got %v, want FailedPrecondition", err)
@@ -633,8 +705,21 @@ func TestIPAMFullProvider(t *testing.T) {
 		t.Fatalf("CreateIpamPrefixListResolver: %v", err)
 	}
 
-	if _, err := m.CreateIpamPrefixListResolverTarget(ctx, res.ID, "pl-1", "", 1, true, nil); err != nil {
+	// The target must reference an existing managed prefix list.
+	targetPL, err := m.CreateManagedPrefixList(ctx, driver.PrefixListConfig{
+		Name: "resolver-target", MaxEntries: 5, Entries: []driver.PrefixListEntry{{CIDR: "10.1.0.0/16"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateManagedPrefixList: %v", err)
+	}
+
+	if _, err := m.CreateIpamPrefixListResolverTarget(ctx, res.ID, targetPL.ID, "", 1, true, nil); err != nil {
 		t.Fatalf("CreateIpamPrefixListResolverTarget: %v", err)
+	}
+
+	// A target referencing a non-existent prefix list is rejected.
+	if _, err := m.CreateIpamPrefixListResolverTarget(ctx, res.ID, "pl-does-not-exist", "", 1, true, nil); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("target with unknown prefix list: got %v, want InvalidArgument", err)
 	}
 
 	// Resolver with a target cannot be deleted.

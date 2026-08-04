@@ -12,7 +12,19 @@ import (
 const (
 	resourceTypeVPC    = "vpc"
 	resourceTypeSubnet = "subnet"
+
+	mgmtStateManaged   = "managed"
+	mgmtStateUnmanaged = "unmanaged"
 )
+
+// ipamResourceOverride records the caller-requested scope move / unmonitor for
+// a tracked resource CIDR. The base resource-CIDR list is derived fresh from
+// VPCs/subnets on every read, so ModifyIpamResourceCidr persists its changes
+// here and ipamResourceCidrs applies them.
+type ipamResourceOverride struct {
+	scopeID   string
+	unmanaged bool
+}
 
 // ipamResourceCidrs derives IPAM's tracked resource CIDRs from the VPCs and
 // subnets held in this mock. IPAM "monitors" existing network resources, so in
@@ -24,7 +36,7 @@ func (m *Mock) ipamResourceCidrs() []driver.IpamResourceCidr {
 		out = append(out, driver.IpamResourceCidr{
 			ResourceCIDR: v.CIDRBlock, ResourceID: v.ID, ResourceType: resourceTypeVPC, VPCID: v.ID,
 			ResourceRegion: m.opts.Region, ResourceOwnerID: m.opts.AccountID,
-			ComplianceStatus: "compliant", ManagementState: "managed", OverlapStatus: "nonoverlapping",
+			ComplianceStatus: "compliant", ManagementState: mgmtStateManaged, OverlapStatus: "nonoverlapping",
 			IPUsage: m.vpcIPUsage(v.ID, v.CIDRBlock), Tags: copyTags(v.Tags),
 		})
 	}
@@ -33,9 +45,26 @@ func (m *Mock) ipamResourceCidrs() []driver.IpamResourceCidr {
 		out = append(out, driver.IpamResourceCidr{
 			ResourceCIDR: s.CIDRBlock, ResourceID: s.ID, ResourceType: resourceTypeSubnet, VPCID: s.VPCID,
 			ResourceRegion: m.opts.Region, ResourceOwnerID: m.opts.AccountID, AvailabilityZone: s.AvailabilityZone,
-			ComplianceStatus: "compliant", ManagementState: "managed", OverlapStatus: "nonoverlapping",
+			ComplianceStatus: "compliant", ManagementState: mgmtStateManaged, OverlapStatus: "nonoverlapping",
 			IPUsage: 0, Tags: copyTags(s.Tags),
 		})
+	}
+
+	// Apply any persisted scope-move / unmonitor overrides from
+	// ModifyIpamResourceCidr so Get/Describe/metrics reflect the change.
+	for i := range out {
+		ov, ok := m.ipamResourceOverrides[out[i].ResourceID]
+		if !ok {
+			continue
+		}
+
+		if ov.scopeID != "" {
+			out[i].IpamScopeID = ov.scopeID
+		}
+
+		if ov.unmanaged {
+			out[i].ManagementState = mgmtStateUnmanaged
+		}
 	}
 
 	return out
@@ -103,24 +132,35 @@ func (m *Mock) GetIpamResourceCidrs(_ context.Context, scopeID, resourceID strin
 func (m *Mock) ModifyIpamResourceCidr(
 	_ context.Context, resourceID, currentScopeID, destScopeID string, monitored bool,
 ) (*driver.IpamResourceCidr, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	cidrs := m.ipamResourceCidrs()
 	for i := range cidrs {
-		c := cidrs[i]
-		if c.ResourceID != resourceID {
+		if cidrs[i].ResourceID != resourceID {
 			continue
 		}
 
-		if destScopeID != "" {
-			c.IpamScopeID = destScopeID
-		} else {
-			c.IpamScopeID = currentScopeID
+		scopeID := destScopeID
+		if scopeID == "" {
+			scopeID = currentScopeID
+		}
+
+		// Persist the change so subsequent Get/Describe/metrics reads reflect
+		// it — the base list is re-derived every call, so a purely local edit
+		// would silently revert.
+		m.ipamResourceOverrides[resourceID] = ipamResourceOverride{
+			scopeID:   scopeID,
+			unmanaged: !monitored,
+		}
+
+		c := cidrs[i]
+		if scopeID != "" {
+			c.IpamScopeID = scopeID
 		}
 
 		if !monitored {
-			c.ManagementState = "unmanaged"
+			c.ManagementState = mgmtStateUnmanaged
 		}
 
 		out := c
