@@ -3,10 +3,12 @@
 // registered with this handler and operations work against an in-memory
 // serverless driver.
 //
-// MVP coverage: CreateFunction, GetFunction, ListFunctions, DeleteFunction,
-// Invoke (synchronous). Versions, aliases, layers, concurrency configs, and
-// event source mappings are not yet wired through — the driver supports them
-// but the wire surface is deferred to a follow-up.
+// Coverage: CreateFunction, GetFunction, ListFunctions, DeleteFunction,
+// Invoke (synchronous), UpdateFunctionConfiguration, PublishVersion /
+// ListVersionsByFunction, and the alias lifecycle (create/get/list/update/
+// delete). Layers, concurrency configs, resource policies (AddPermission),
+// tagging, and event source mappings remain deferred — the driver supports
+// some of them but the wire surface is not yet wired through.
 package lambda
 
 import (
@@ -64,22 +66,213 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := parts[0]
 
 	const (
-		partsResource = 1 // /functions/{name}
-		partsInvoke   = 2 // /functions/{name}/invocations
+		partsResource    = 1 // /functions/{name}
+		partsSubresource = 2 // /functions/{name}/{sub}
+		partsSubItem     = 3 // /functions/{name}/{sub}/{id}
 	)
 
 	switch len(parts) {
 	case partsResource:
 		h.serveResource(w, r, name)
-	case partsInvoke:
-		if parts[1] == "invocations" {
-			h.serveInvoke(w, r, name)
+	case partsSubresource:
+		h.serveSubresource(w, r, name, parts[1])
+	case partsSubItem:
+		if parts[1] == "aliases" {
+			h.serveAlias(w, r, name, parts[2])
 			return
 		}
 
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
+	}
+}
+
+// serveSubresource dispatches /functions/{name}/{sub} paths.
+func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name, sub string) {
+	switch sub {
+	case "invocations":
+		h.serveInvoke(w, r, name)
+	case "configuration":
+		h.serveConfiguration(w, r, name)
+	case "versions":
+		h.serveVersions(w, r, name)
+	case "aliases":
+		h.serveAliases(w, r, name)
+	default:
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
+	}
+}
+
+// serveConfiguration handles PUT .../{name}/configuration
+// (UpdateFunctionConfiguration).
+func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+		return
+	}
+
+	var req updateFunctionConfigurationRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	cfg := sdrv.FunctionConfig{
+		Name:    name,
+		Runtime: req.Runtime,
+		Handler: req.Handler,
+		Memory:  req.MemorySize,
+		Timeout: req.Timeout,
+	}
+	if req.Environment != nil {
+		cfg.Environment = req.Environment.Variables
+	}
+
+	info, err := h.fn.UpdateFunction(r.Context(), name, cfg)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toConfiguration(info))
+}
+
+// serveVersions handles POST (PublishVersion) and GET (ListVersionsByFunction)
+// on .../{name}/versions.
+func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name string) {
+	switch r.Method {
+	case http.MethodPost:
+		var req publishVersionRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		ver, err := h.fn.PublishVersion(r.Context(), name, req.Description)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		info, err := h.fn.GetFunction(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		cfg := toConfiguration(info)
+		cfg.Version = ver.Version
+		cfg.Description = ver.Description
+		writeJSON(w, http.StatusCreated, cfg)
+	case http.MethodGet:
+		vers, err := h.fn.ListVersions(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		info, err := h.fn.GetFunction(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, len(vers))}
+		for i := range vers {
+			cfg := toConfiguration(info)
+			cfg.Version = vers[i].Version
+			cfg.Description = vers[i].Description
+			out.Versions = append(out.Versions, cfg)
+		}
+
+		writeJSON(w, http.StatusOK, out)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+// serveAliases handles POST (CreateAlias) and GET (ListAliases) on
+// .../{name}/aliases.
+func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name string) {
+	switch r.Method {
+	case http.MethodPost:
+		var req aliasRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		a, err := h.fn.CreateAlias(r.Context(), sdrv.AliasConfig{
+			FunctionName: name, Name: req.Name,
+			FunctionVersion: req.FunctionVersion, Description: req.Description,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, toAliasResponse(a))
+	case http.MethodGet:
+		aliases, err := h.fn.ListAliases(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		out := listAliasesResponse{Aliases: make([]aliasResponse, 0, len(aliases))}
+		for i := range aliases {
+			out.Aliases = append(out.Aliases, toAliasResponse(&aliases[i]))
+		}
+
+		writeJSON(w, http.StatusOK, out)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+// serveAlias handles GET/PUT/DELETE on .../{name}/aliases/{aliasName}.
+func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, aliasName string) {
+	switch r.Method {
+	case http.MethodGet:
+		a, err := h.fn.GetAlias(r.Context(), name, aliasName)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, toAliasResponse(a))
+	case http.MethodPut:
+		var req aliasRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		a, err := h.fn.UpdateAlias(r.Context(), sdrv.AliasConfig{
+			FunctionName: name, Name: aliasName,
+			FunctionVersion: req.FunctionVersion, Description: req.Description,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, toAliasResponse(a))
+	case http.MethodDelete:
+		if err := h.fn.DeleteAlias(r.Context(), name, aliasName); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+func toAliasResponse(a *sdrv.Alias) aliasResponse {
+	return aliasResponse{
+		AliasArn:        a.AliasARN,
+		Name:            a.Name,
+		FunctionVersion: a.FunctionVersion,
+		Description:     a.Description,
 	}
 }
 

@@ -325,6 +325,8 @@ type functionShape struct {
 	FunctionArn  string    `json:"FunctionArn"`
 	Runtime      string    `json:"Runtime"`
 	Handler      string    `json:"Handler"`
+	Timeout      int       `json:"Timeout"`
+	Version      string    `json:"Version"`
 	Environment  *envShape `json:"Environment"`
 }
 
@@ -337,4 +339,95 @@ func postJSON(t *testing.T, url, body string) *http.Response {
 	}
 
 	return resp
+}
+
+func doJSON(t *testing.T, method, url, body string) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new %s %s: %v", method, url, err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+
+	return resp
+}
+
+// TestConfigurationVersionsAliases is a regression guard for issue #319: the
+// Lambda handler previously returned 404 "unsupported Lambda path" for
+// UpdateFunctionConfiguration, PublishVersion, and the alias sub-resources.
+func TestConfigurationVersionsAliases(t *testing.T) {
+	srv, _ := newServer(t)
+	base := srv.URL + "/2015-03-31/functions"
+
+	if resp := postJSON(t, base,
+		`{"FunctionName":"fn","Runtime":"go1.x","Handler":"main","Timeout":10}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", resp.StatusCode)
+	}
+
+	// UpdateFunctionConfiguration.
+	resp := doJSON(t, http.MethodPut, base+"/fn/configuration", `{"Timeout":60,"MemorySize":256}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update-configuration status = %d", resp.StatusCode)
+	}
+
+	var cfg functionShape
+	decode(t, resp, &cfg)
+
+	if cfg.Timeout != 60 {
+		t.Fatalf("Timeout = %d, want 60", cfg.Timeout)
+	}
+
+	// PublishVersion.
+	resp = postJSON(t, base+"/fn/versions", `{"Description":"v1"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("publish-version status = %d", resp.StatusCode)
+	}
+
+	var ver functionShape
+	decode(t, resp, &ver)
+
+	if ver.Version != "1" {
+		t.Fatalf("Version = %q, want 1", ver.Version)
+	}
+
+	// CreateAlias + GetAlias.
+	resp = postJSON(t, base+"/fn/aliases", `{"Name":"prod","FunctionVersion":"1"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create-alias status = %d", resp.StatusCode)
+	}
+
+	resp = doJSON(t, http.MethodGet, base+"/fn/aliases/prod", "")
+
+	var alias struct {
+		Name            string `json:"Name"`
+		FunctionVersion string `json:"FunctionVersion"`
+		AliasArn        string `json:"AliasArn"`
+	}
+
+	decode(t, resp, &alias)
+
+	if alias.Name != "prod" || alias.FunctionVersion != "1" {
+		t.Fatalf("get-alias = %+v", alias)
+	}
+
+	if !strings.Contains(alias.AliasArn, ":function:fn:prod") {
+		t.Fatalf("AliasArn = %q", alias.AliasArn)
+	}
+}
+
+func decode(t *testing.T, resp *http.Response, v any) {
+	t.Helper()
+
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
 }
