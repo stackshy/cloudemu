@@ -222,6 +222,35 @@ func TestQueueAttributesAndPurge(t *testing.T) {
 	}
 }
 
+// TestQueueTagging is a regression guard for issue #319: TagQueue /
+// UntagQueue / ListQueueTags were unimplemented (UnknownOperationException).
+func TestQueueTagging(t *testing.T) {
+	srv, _ := newServer(t)
+
+	create := postJSON(t, srv, "AmazonSQS.CreateQueue", `{"QueueName":"tq"}`)
+	qurl := extractQueueURL(t, create)
+
+	if resp := postJSON(t, srv, "AmazonSQS.TagQueue",
+		`{"QueueUrl":"`+qurl+`","Tags":{"env":"prod","team":"msg"}}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("TagQueue status = %d", resp.StatusCode)
+	}
+
+	got := readBody(t, postJSON(t, srv, "AmazonSQS.ListQueueTags", `{"QueueUrl":"`+qurl+`"}`))
+	if !strings.Contains(got, `"env":"prod"`) || !strings.Contains(got, `"team":"msg"`) {
+		t.Fatalf("ListQueueTags = %s", got)
+	}
+
+	if resp := postJSON(t, srv, "AmazonSQS.UntagQueue",
+		`{"QueueUrl":"`+qurl+`","TagKeys":["env"]}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("UntagQueue status = %d", resp.StatusCode)
+	}
+
+	got = readBody(t, postJSON(t, srv, "AmazonSQS.ListQueueTags", `{"QueueUrl":"`+qurl+`"}`))
+	if strings.Contains(got, `"env"`) || !strings.Contains(got, `"team":"msg"`) {
+		t.Fatalf("after untag = %s", got)
+	}
+}
+
 func postJSON(t *testing.T, srv *httptest.Server, target, body string) *http.Response {
 	t.Helper()
 

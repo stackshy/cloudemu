@@ -10,6 +10,7 @@
 package sqs
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -64,6 +65,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.setQueueAttributes(w, r)
 	case "PurgeQueue":
 		h.purgeQueue(w, r)
+	case "TagQueue":
+		h.tagQueue(w, r)
+	case "UntagQueue":
+		h.untagQueue(w, r)
+	case "ListQueueTags":
+		h.listQueueTags(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown operation: "+op)
@@ -246,6 +253,86 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{})
+}
+
+// queueTagger is the AWS-specific SQS tagging surface. It's not part of the
+// portable MessageQueue driver, so the handler type-asserts for it.
+type queueTagger interface {
+	TagQueue(ctx context.Context, queueURL string, tags map[string]string) error
+	UntagQueue(ctx context.Context, queueURL string, keys []string) error
+	ListQueueTags(ctx context.Context, queueURL string) (map[string]string, error)
+}
+
+func (h *Handler) tagQueue(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.mq.(queueTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL string            `json:"QueueUrl"`
+		Tags     map[string]string `json:"Tags"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := tagger.TagQueue(r.Context(), req.QueueURL, req.Tags); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) untagQueue(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.mq.(queueTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL string   `json:"QueueUrl"`
+		TagKeys  []string `json:"TagKeys"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := tagger.UntagQueue(r.Context(), req.QueueURL, req.TagKeys); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) listQueueTags(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.mq.(queueTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL string `json:"QueueUrl"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tags, err := tagger.ListQueueTags(r.Context(), req.QueueURL)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"Tags": tags})
 }
 
 // numericAttrKeys are the SetQueueAttributes attributes the provider applies.
