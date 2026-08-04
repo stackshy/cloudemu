@@ -5,13 +5,15 @@
 //
 // Coverage: CreateFunction, GetFunction, ListFunctions, DeleteFunction,
 // Invoke (synchronous), UpdateFunctionConfiguration, PublishVersion /
-// ListVersionsByFunction, and the alias lifecycle (create/get/list/update/
-// delete). Layers, concurrency configs, resource policies (AddPermission),
-// tagging, and event source mappings remain deferred — the driver supports
-// some of them but the wire surface is not yet wired through.
+// ListVersionsByFunction, the alias lifecycle (create/get/list/update/
+// delete), and resource policies (AddPermission / GetPolicy /
+// RemovePermission). Layers, concurrency configs, tagging, and event source
+// mappings remain deferred — the driver supports some of them but the wire
+// surface is not yet wired through.
 package lambda
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -30,6 +32,16 @@ const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 6 << 20 // 6 MiB — Lambda's sync invocation payload limit.
 )
+
+// policyManager is the AWS-specific resource-policy surface (AddPermission /
+// GetPolicy / RemovePermission). It's not part of the portable Serverless
+// driver — resource policies are a Lambda concept — so the handler type-asserts
+// for it rather than requiring every cloud's function provider to implement it.
+type policyManager interface {
+	AddPermission(ctx context.Context, functionName string, stmt sdrv.PermissionStatement) error
+	RemovePermission(ctx context.Context, functionName, statementID string) error
+	GetPolicy(ctx context.Context, functionName string) (string, error)
+}
 
 // Handler serves AWS Lambda REST requests against a serverless.Serverless
 // driver.
@@ -77,12 +89,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case partsSubresource:
 		h.serveSubresource(w, r, name, parts[1])
 	case partsSubItem:
-		if parts[1] == "aliases" {
+		switch parts[1] {
+		case "aliases":
 			h.serveAlias(w, r, name, parts[2])
-			return
+		case "policy":
+			h.serveRemovePermission(w, r, name, parts[2])
+		default:
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 		}
-
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 	}
@@ -99,9 +113,82 @@ func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name,
 		h.serveVersions(w, r, name)
 	case "aliases":
 		h.serveAliases(w, r, name)
+	case "policy":
+		h.servePolicy(w, r, name)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 	}
+}
+
+// servePolicy handles POST (AddPermission) and GET (GetPolicy) on
+// .../{name}/policy.
+func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name string) {
+	pm, ok := h.fn.(policyManager)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "resource policies not supported")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		var req addPermissionRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		err := pm.AddPermission(r.Context(), name, sdrv.PermissionStatement{
+			StatementID: req.StatementID, Action: req.Action,
+			Principal: req.Principal, SourceARN: req.SourceArn,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		stmt, jerr := json.Marshal(map[string]any{
+			"Sid":       req.StatementID,
+			"Effect":    "Allow",
+			"Principal": map[string]string{"Service": req.Principal},
+			"Action":    req.Action,
+		})
+		if jerr != nil {
+			writeErr(w, jerr)
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, map[string]string{"Statement": string(stmt)})
+	case http.MethodGet:
+		policy, err := pm.GetPolicy(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"Policy": policy, "RevisionId": "1"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+// serveRemovePermission handles DELETE .../{name}/policy/{statementId}.
+func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, name, statementID string) {
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+		return
+	}
+
+	pm, ok := h.fn.(policyManager)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "resource policies not supported")
+		return
+	}
+
+	if err := pm.RemovePermission(r.Context(), name, statementID); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // serveConfiguration handles PUT .../{name}/configuration

@@ -66,6 +66,14 @@ type listAliasesResponse struct {
 	Aliases []aliasResponse `json:"Aliases"`
 }
 
+// addPermissionRequest is the body of AddPermission (POST .../{name}/policy).
+type addPermissionRequest struct {
+	StatementID string `json:"StatementId"`
+	Action      string `json:"Action"`
+	Principal   string `json:"Principal"`
+	SourceArn   string `json:"SourceArn"`
+}
+
 // functionResource is the shape returned by GetFunction:
 // {Configuration, Code, Tags}. Code is a placeholder since the driver
 // doesn't persist deployment artifacts.

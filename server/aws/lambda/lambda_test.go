@@ -422,6 +422,48 @@ func TestConfigurationVersionsAliases(t *testing.T) {
 	}
 }
 
+// TestResourcePolicy is a regression guard for issue #319: AddPermission,
+// GetPolicy, and RemovePermission (Terraform's aws_lambda_permission) were
+// unreachable. It also verifies the AWS-local policyManager assertion path.
+func TestResourcePolicy(t *testing.T) {
+	srv, _ := newServer(t)
+	base := srv.URL + "/2015-03-31/functions"
+
+	if resp := postJSON(t, base,
+		`{"FunctionName":"pf","Runtime":"go1.x","Handler":"main"}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", resp.StatusCode)
+	}
+
+	// AddPermission.
+	resp := postJSON(t, base+"/pf/policy",
+		`{"StatementId":"s3invoke","Action":"lambda:InvokeFunction","Principal":"s3.amazonaws.com","SourceArn":"arn:aws:s3:::b"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("add-permission status = %d", resp.StatusCode)
+	}
+
+	// GetPolicy surfaces the statement.
+	resp = doJSON(t, http.MethodGet, base+"/pf/policy", "")
+
+	var got struct {
+		Policy string `json:"Policy"`
+	}
+
+	decode(t, resp, &got)
+
+	if !strings.Contains(got.Policy, `"Sid":"s3invoke"`) {
+		t.Fatalf("policy missing statement: %s", got.Policy)
+	}
+
+	// RemovePermission, then GetPolicy must 404.
+	if resp := doJSON(t, http.MethodDelete, base+"/pf/policy/s3invoke", ""); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove-permission status = %d", resp.StatusCode)
+	}
+
+	if resp := doJSON(t, http.MethodGet, base+"/pf/policy", ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get-policy after remove status = %d, want 404", resp.StatusCode)
+	}
+}
+
 func decode(t *testing.T, resp *http.Response, v any) {
 	t.Helper()
 

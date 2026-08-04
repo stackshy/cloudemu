@@ -51,6 +51,7 @@ type funcData struct {
 	nextVersion int
 	aliases     *memstore.Store[*aliasData]
 	concurrency *driver.ConcurrencyConfig
+	policy      map[string]driver.PermissionStatement
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
