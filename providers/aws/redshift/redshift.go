@@ -39,12 +39,29 @@ var errInstanceOpsUnsupported = cerrors.New(cerrors.InvalidArgument,
 
 var _ rdbdriver.RelationalDB = (*Mock)(nil)
 
+// ParameterGroup and SubnetGroup are lightweight redshift-specific resources
+// (not part of the shared relationaldb driver). The emulator stores their
+// identity so IaC that creates and references them succeeds.
+type ParameterGroup struct {
+	Name        string
+	Family      string
+	Description string
+}
+
+type SubnetGroup struct {
+	Name        string
+	Description string
+	SubnetIDs   []string
+}
+
 // Mock is the in-memory AWS Redshift implementation.
 type Mock struct {
 	mu sync.RWMutex
 
 	clusters         *memstore.Store[rdbdriver.Cluster]
 	clusterSnapshots *memstore.Store[rdbdriver.ClusterSnapshot]
+	parameterGroups  *memstore.Store[ParameterGroup]
+	subnetGroups     *memstore.Store[SubnetGroup]
 
 	opts       *config.Options
 	monitoring mondriver.Monitoring
@@ -55,8 +72,42 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		clusters:         memstore.New[rdbdriver.Cluster](),
 		clusterSnapshots: memstore.New[rdbdriver.ClusterSnapshot](),
+		parameterGroups:  memstore.New[ParameterGroup](),
+		subnetGroups:     memstore.New[SubnetGroup](),
 		opts:             opts,
 	}
+}
+
+// CreateClusterParameterGroup registers a redshift cluster parameter group.
+func (m *Mock) CreateClusterParameterGroup(_ context.Context, name, family, description string) (*ParameterGroup, error) {
+	if name == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "parameter group name is required")
+	}
+
+	if m.parameterGroups.Has(name) {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "parameter group %q already exists", name)
+	}
+
+	pg := ParameterGroup{Name: name, Family: family, Description: description}
+	m.parameterGroups.Set(name, pg)
+
+	return &pg, nil
+}
+
+// CreateClusterSubnetGroup registers a redshift cluster subnet group.
+func (m *Mock) CreateClusterSubnetGroup(_ context.Context, name, description string, subnetIDs []string) (*SubnetGroup, error) {
+	if name == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "subnet group name is required")
+	}
+
+	if m.subnetGroups.Has(name) {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "subnet group %q already exists", name)
+	}
+
+	sg := SubnetGroup{Name: name, Description: description, SubnetIDs: subnetIDs}
+	m.subnetGroups.Set(name, sg)
+
+	return &sg, nil
 }
 
 // SetMonitoring wires a CloudWatch-style backend for auto-metric emission.
