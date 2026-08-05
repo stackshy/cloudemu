@@ -14,7 +14,7 @@
 //
 //   - Auto-provisioning one event bus per location, named "eventarc-<location>",
 //     the first time a trigger is created there. This is a synthesized
-//     container with no Eventarc analogue — the SDK never sees it.
+//     container with no Eventarc analog — the SDK never sees it.
 //   - Mapping each trigger onto a driver rule keyed by the trigger id, with the
 //     trigger's eventFilters serialized into the rule's EventPattern and the
 //     destination folded into a single target so Get/List can round-trip them.

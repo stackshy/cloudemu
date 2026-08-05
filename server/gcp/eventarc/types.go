@@ -65,7 +65,7 @@ func triggerResourceName(project, location, id string) string {
 }
 
 // channelName is the synthesized event-bus name backing a location's triggers.
-// It has no Eventarc analogue and is never surfaced to the SDK.
+// It has no Eventarc analog and is never surfaced to the SDK.
 func channelName(location string) string {
 	return "eventarc-" + location
 }

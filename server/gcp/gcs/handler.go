@@ -100,12 +100,27 @@ func isReservedAPIPrefix(seg string) bool {
 		return true
 	}
 
-	// API version prefixes: v1, v2, v3, v1beta4, v2beta, …
-	if len(seg) >= 2 && seg[0] == 'v' && seg[1] >= '0' && seg[1] <= '9' {
-		return true
+	// A whole-segment API version token (v1, v3, v1beta4, v2beta) — but NOT a
+	// bucket that merely starts that way (e.g. "v2-assets", "v1data").
+	return isVersionToken(seg)
+}
+
+// isVersionToken reports whether seg is exactly an API version like v1, v3,
+// v1beta4, v2beta — "v" + digits, optionally a beta/alpha qualifier, nothing
+// else. A hyphen or other suffix (a real bucket name) is not a version.
+func isVersionToken(seg string) bool {
+	if len(seg) < 2 || seg[0] != 'v' || seg[1] < '0' || seg[1] > '9' {
+		return false
 	}
 
-	return false
+	i := 1
+	for i < len(seg) && seg[i] >= '0' && seg[i] <= '9' {
+		i++
+	}
+
+	rest := seg[i:]
+
+	return rest == "" || strings.HasPrefix(rest, "beta") || strings.HasPrefix(rest, "alpha")
 }
 
 // ServeHTTP routes the request based on URL path shape.

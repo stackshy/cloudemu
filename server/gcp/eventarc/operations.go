@@ -1,6 +1,7 @@
 package eventarc
 
 import (
+	"encoding/json"
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -63,7 +64,29 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, triggerID,
-		toTriggerJSON(rt.project, rt.location, stored)))
+		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, stored))))
+}
+
+// triggerTypeURL is the protobuf Any type URL a GAPIC eventarc client expects
+// in a done LRO's response so CreateTriggerOperation.Wait() can decode it.
+const triggerTypeURL = "type.googleapis.com/google.cloud.eventarc.v1.Trigger"
+
+// typedResponse renders v as a google.protobuf.Any JSON object (resource fields
+// + "@type"); a GAPIC .Wait() can't unmarshal the response without @type.
+func typedResponse(typeURL string, v any) map[string]any {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+
+	m := map[string]any{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+
+	m["@type"] = typeURL
+
+	return m
 }
 
 func (h *Handler) getTrigger(w http.ResponseWriter, r *http.Request, rt *route) {

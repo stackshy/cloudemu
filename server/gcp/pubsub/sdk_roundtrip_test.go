@@ -148,6 +148,26 @@ func TestSDKPubSubSubscriptionMetadata(t *testing.T) {
 		t.Errorf("labels=%v want team=fin", got.Labels)
 	}
 
+	// List must return the real subscription (distinct name + metadata), not a
+	// phantom one named after the topic queue.
+	list, err := svc.Projects.Subscriptions.List("projects/demo").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Subscriptions.List: %v", err)
+	}
+
+	if len(list.Subscriptions) != 1 {
+		t.Fatalf("List returned %d subs, want 1: %+v", len(list.Subscriptions), list.Subscriptions)
+	}
+
+	ls := list.Subscriptions[0]
+	if !strings.HasSuffix(ls.Name, "/subscriptions/billing-sub") {
+		t.Errorf("List sub name=%q want .../subscriptions/billing-sub", ls.Name)
+	}
+
+	if !strings.HasSuffix(ls.Topic, "/topics/events") || ls.AckDeadlineSeconds != 45 {
+		t.Errorf("List sub metadata wrong: topic=%q ackDeadline=%d", ls.Topic, ls.AckDeadlineSeconds)
+	}
+
 	if _, err := svc.Projects.Subscriptions.Delete("projects/demo/subscriptions/billing-sub").Context(ctx).Do(); err != nil {
 		t.Fatalf("Subscription.Delete: %v", err)
 	}

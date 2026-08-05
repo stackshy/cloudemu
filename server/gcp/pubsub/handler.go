@@ -172,13 +172,20 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, projec
 
 		writeJSON(w, http.StatusOK, out)
 	case resSubscriptions:
-		out := listSubscriptionsResponse{Subscriptions: make([]subscription, 0, len(queues))}
-		for i := range queues {
+		// List from the subscription registry (not one phantom sub per queue),
+		// so distinct sub/topic names and their ackDeadline/labels round-trip.
+		h.mu.RLock()
+		out := listSubscriptionsResponse{Subscriptions: make([]subscription, 0, len(h.subs))}
+
+		for subName, meta := range h.subs {
 			out.Subscriptions = append(out.Subscriptions, subscription{
-				Name:  subscriptionName(project, queues[i].Name),
-				Topic: topicName(project, queues[i].Name),
+				Name:               subscriptionName(project, subName),
+				Topic:              topicName(project, meta.topic),
+				AckDeadlineSeconds: meta.ackDeadline,
+				Labels:             meta.labels,
 			})
 		}
+		h.mu.RUnlock()
 
 		writeJSON(w, http.StatusOK, out)
 	default:

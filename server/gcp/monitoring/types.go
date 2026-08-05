@@ -15,10 +15,17 @@ type alertPolicy struct {
 	MutationRecord       any               `json:"mutationRecord,omitempty"`
 }
 
+// alertCondition round-trips every Cloud Monitoring condition variant, not just
+// conditionThreshold — conditionAbsent / MQL / PromQL / matchedLog are carried
+// verbatim so they survive a create→read cycle instead of being silently dropped.
 type alertCondition struct {
-	Name               string `json:"name,omitempty"`
-	DisplayName        string `json:"displayName,omitempty"`
-	ConditionThreshold any    `json:"conditionThreshold,omitempty"`
+	Name                             string `json:"name,omitempty"`
+	DisplayName                      string `json:"displayName,omitempty"`
+	ConditionThreshold               any    `json:"conditionThreshold,omitempty"`
+	ConditionAbsent                  any    `json:"conditionAbsent,omitempty"`
+	ConditionMatchedLog              any    `json:"conditionMatchedLog,omitempty"`
+	ConditionMonitoringQueryLanguage any    `json:"conditionMonitoringQueryLanguage,omitempty"`
+	ConditionPrometheusQueryLanguage any    `json:"conditionPrometheusQueryLanguage,omitempty"`
 }
 
 type alertPoliciesList struct {

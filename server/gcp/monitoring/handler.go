@@ -173,7 +173,17 @@ func (h *Handler) listPolicies(w http.ResponseWriter, _ *http.Request, project s
 // pragmatic emulation overwrites any field the caller supplied (non-zero),
 // which covers displayName/combiner/enabled/conditions/labels/channels.
 func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, name string) {
-	var body alertPolicy
+	// Decode with a pointer Enabled so an omitted "enabled" is distinguishable
+	// from an explicit false — a partial PATCH must leave it unchanged, not
+	// silently disable the policy (real GCP applies only the updateMask paths).
+	var body struct {
+		DisplayName          string            `json:"displayName"`
+		Combiner             string            `json:"combiner"`
+		Conditions           []alertCondition  `json:"conditions"`
+		UserLabels           map[string]string `json:"userLabels"`
+		NotificationChannels []string          `json:"notificationChannels"`
+		Enabled              *bool             `json:"enabled"`
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -211,7 +221,9 @@ func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, n
 		cur.NotificationChannels = body.NotificationChannels
 	}
 
-	cur.Enabled = body.Enabled
+	if body.Enabled != nil {
+		cur.Enabled = *body.Enabled
+	}
 
 	h.policies[name] = cur
 	h.mu.Unlock()

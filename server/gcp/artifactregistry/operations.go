@@ -1,6 +1,7 @@
 package artifactregistry
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -39,7 +40,31 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, repoID, toRepositoryJSON(rt.project, rt.location, repo)))
+	gcprest.WriteJSON(w, http.StatusOK, doneOperation(rt, repoID,
+		typedResponse(repositoryTypeURL, toRepositoryJSON(rt.project, rt.location, repo))))
+}
+
+// repositoryTypeURL is the protobuf Any type URL a GAPIC client expects in a
+// done LRO's response so CreateRepositoryOperation.Wait() can decode it.
+const repositoryTypeURL = "type.googleapis.com/google.devtools.artifactregistry.v1.Repository"
+
+// typedResponse renders v as the JSON object a google.protobuf.Any expects: the
+// resource's fields plus an "@type" URL. Without @type a GAPIC .Wait() cannot
+// unmarshal the operation response.
+func typedResponse(typeURL string, v any) map[string]any {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+
+	m := map[string]any{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+
+	m["@type"] = typeURL
+
+	return m
 }
 
 func (h *Handler) getRepository(w http.ResponseWriter, r *http.Request, rt *route) {
