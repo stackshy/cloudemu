@@ -547,3 +547,203 @@ func TestSDKOutpostResolverLifecycle(t *testing.T) {
 		t.Fatal("GetOutpostResolver after delete: expected error, got nil")
 	}
 }
+
+// TestSDKFirewallFullSurface drives the firewall handlers not exercised by the
+// happy-path lifecycle: batch rule ops, policies, list variants, import, and
+// association update.
+func TestSDKFirewallFullSurface(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	dl, err := client.CreateFirewallDomainList(ctx, &awsr53r.CreateFirewallDomainListInput{
+		CreatorRequestId: aws.String("dl"), Name: aws.String("dl-1"),
+	})
+	require(t, err, "CreateFirewallDomainList")
+	dlID := aws.ToString(dl.FirewallDomainList.Id)
+
+	if _, err = client.GetFirewallDomainList(ctx, &awsr53r.GetFirewallDomainListInput{
+		FirewallDomainListId: aws.String(dlID),
+	}); err != nil {
+		t.Fatalf("GetFirewallDomainList: %v", err)
+	}
+
+	if _, err = client.ImportFirewallDomains(ctx, &awsr53r.ImportFirewallDomainsInput{
+		FirewallDomainListId: aws.String(dlID),
+		Operation:            r53rtypes.FirewallDomainImportOperationReplace,
+		DomainFileUrl:        aws.String("s3://bucket/domains.txt"),
+	}); err != nil {
+		t.Fatalf("ImportFirewallDomains: %v", err)
+	}
+
+	ldl, err := client.ListFirewallDomainLists(ctx, &awsr53r.ListFirewallDomainListsInput{})
+	if err != nil || len(ldl.FirewallDomainLists) != 1 {
+		t.Fatalf("ListFirewallDomainLists: %v %+v", err, ldl.FirewallDomainLists)
+	}
+
+	rg, err := client.CreateFirewallRuleGroup(ctx, &awsr53r.CreateFirewallRuleGroupInput{
+		CreatorRequestId: aws.String("rg"), Name: aws.String("rg-1"),
+	})
+	require(t, err, "CreateFirewallRuleGroup")
+	rgID := aws.ToString(rg.FirewallRuleGroup.Id)
+
+	bc, err := client.BatchCreateFirewallRule(ctx, &awsr53r.BatchCreateFirewallRuleInput{
+		CreateFirewallRuleEntries: []r53rtypes.CreateFirewallRuleEntry{{
+			CreatorRequestId:     aws.String("bc-1"),
+			FirewallRuleGroupId:  aws.String(rgID),
+			FirewallDomainListId: aws.String(dlID),
+			Name:                 aws.String("r1"),
+			Priority:             aws.Int32(10),
+			Action:               r53rtypes.ActionBlock,
+			BlockResponse:        r53rtypes.BlockResponseNxdomain,
+		}},
+	})
+	require(t, err, "BatchCreateFirewallRule")
+	if len(bc.CreatedFirewallRules) != 1 {
+		t.Fatalf("BatchCreateFirewallRule count: %+v", bc.CreatedFirewallRules)
+	}
+
+	if _, err = client.UpdateFirewallRule(ctx, &awsr53r.UpdateFirewallRuleInput{
+		FirewallRuleGroupId:  aws.String(rgID),
+		FirewallDomainListId: aws.String(dlID),
+		Action:               r53rtypes.ActionAlert,
+		Priority:             aws.Int32(10),
+	}); err != nil {
+		t.Fatalf("UpdateFirewallRule: %v", err)
+	}
+
+	bu, err := client.BatchUpdateFirewallRule(ctx, &awsr53r.BatchUpdateFirewallRuleInput{
+		UpdateFirewallRuleEntries: []r53rtypes.UpdateFirewallRuleEntry{{
+			FirewallRuleGroupId:  aws.String(rgID),
+			FirewallDomainListId: aws.String(dlID),
+			Action:               r53rtypes.ActionAllow,
+			Priority:             aws.Int32(10),
+		}},
+	})
+	if err != nil || len(bu.UpdatedFirewallRules) != 1 {
+		t.Fatalf("BatchUpdateFirewallRule: %v %+v", err, bu.UpdatedFirewallRules)
+	}
+
+	if _, err = client.PutFirewallRuleGroupPolicy(ctx, &awsr53r.PutFirewallRuleGroupPolicyInput{
+		Arn: aws.String(aws.ToString(rg.FirewallRuleGroup.Arn)), FirewallRuleGroupPolicy: aws.String("{}"),
+	}); err != nil {
+		t.Fatalf("PutFirewallRuleGroupPolicy: %v", err)
+	}
+	gp, err := client.GetFirewallRuleGroupPolicy(ctx, &awsr53r.GetFirewallRuleGroupPolicyInput{
+		Arn: aws.String(aws.ToString(rg.FirewallRuleGroup.Arn)),
+	})
+	if err != nil || aws.ToString(gp.FirewallRuleGroupPolicy) != "{}" {
+		t.Fatalf("GetFirewallRuleGroupPolicy: %v %+v", err, gp)
+	}
+
+	assoc, err := client.AssociateFirewallRuleGroup(ctx, &awsr53r.AssociateFirewallRuleGroupInput{
+		CreatorRequestId: aws.String("a"), FirewallRuleGroupId: aws.String(rgID),
+		Name: aws.String("a1"), Priority: aws.Int32(101), VpcId: aws.String("vpc-1"),
+	})
+	require(t, err, "AssociateFirewallRuleGroup")
+	assocID := aws.ToString(assoc.FirewallRuleGroupAssociation.Id)
+
+	if _, err = client.UpdateFirewallRuleGroupAssociation(ctx, &awsr53r.UpdateFirewallRuleGroupAssociationInput{
+		FirewallRuleGroupAssociationId: aws.String(assocID),
+		Name:                           aws.String("a2"),
+		Priority:                       aws.Int32(202),
+	}); err != nil {
+		t.Fatalf("UpdateFirewallRuleGroupAssociation: %v", err)
+	}
+
+	la, err := client.ListFirewallRuleGroupAssociations(ctx, &awsr53r.ListFirewallRuleGroupAssociationsInput{})
+	if err != nil || len(la.FirewallRuleGroupAssociations) != 1 {
+		t.Fatalf("ListFirewallRuleGroupAssociations: %v %+v", err, la.FirewallRuleGroupAssociations)
+	}
+
+	lrg, err := client.ListFirewallRuleGroups(ctx, &awsr53r.ListFirewallRuleGroupsInput{})
+	if err != nil || len(lrg.FirewallRuleGroups) != 1 {
+		t.Fatalf("ListFirewallRuleGroups: %v %+v", err, lrg.FirewallRuleGroups)
+	}
+
+	if _, err = client.ListFirewallConfigs(ctx, &awsr53r.ListFirewallConfigsInput{}); err != nil {
+		t.Fatalf("ListFirewallConfigs: %v", err)
+	}
+	if _, err = client.ListFirewallRuleTypes(ctx, &awsr53r.ListFirewallRuleTypesInput{}); err != nil {
+		t.Fatalf("ListFirewallRuleTypes: %v", err)
+	}
+
+	bd, err := client.BatchDeleteFirewallRule(ctx, &awsr53r.BatchDeleteFirewallRuleInput{
+		DeleteFirewallRuleEntries: []r53rtypes.DeleteFirewallRuleEntry{{
+			FirewallRuleGroupId:  aws.String(rgID),
+			FirewallDomainListId: aws.String(dlID),
+		}},
+	})
+	if err != nil || len(bd.DeletedFirewallRules) != 1 {
+		t.Fatalf("BatchDeleteFirewallRule: %v %+v", err, bd.DeletedFirewallRules)
+	}
+
+	if _, err = client.DeleteFirewallRuleGroup(ctx, &awsr53r.DeleteFirewallRuleGroupInput{
+		FirewallRuleGroupId: aws.String(rgID),
+	}); err != nil {
+		t.Fatalf("DeleteFirewallRuleGroup: %v", err)
+	}
+	if _, err = client.DeleteFirewallDomainList(ctx, &awsr53r.DeleteFirewallDomainListInput{
+		FirewallDomainListId: aws.String(dlID),
+	}); err != nil {
+		t.Fatalf("DeleteFirewallDomainList: %v", err)
+	}
+
+	// Error mapping: a missing rule group surfaces as ResourceNotFoundException.
+	_, err = client.GetFirewallRuleGroup(ctx, &awsr53r.GetFirewallRuleGroupInput{
+		FirewallRuleGroupId: aws.String("rslvr-frg-missing"),
+	})
+	var nfe *r53rtypes.ResourceNotFoundException
+	if !errors.As(err, &nfe) {
+		t.Fatalf("expected ResourceNotFoundException, got %v", err)
+	}
+}
+
+// TestSDKTaggingAndPolicies covers the tagging handlers and resolver/qlc policies.
+func TestSDKTaggingAndPolicies(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	rule, err := client.CreateResolverRule(ctx, &awsr53r.CreateResolverRuleInput{
+		CreatorRequestId: aws.String("r"), Name: aws.String("rule"),
+		RuleType: r53rtypes.RuleTypeOptionForward, DomainName: aws.String("example.com"),
+		ResolverEndpointId: aws.String("rslvr-out-1"),
+		TargetIps:          []r53rtypes.TargetAddress{{Ip: aws.String("10.0.0.2")}},
+	})
+	require(t, err, "CreateResolverRule")
+	arn := aws.ToString(rule.ResolverRule.Arn)
+
+	if _, err = client.TagResource(ctx, &awsr53r.TagResourceInput{
+		ResourceArn: aws.String(arn),
+		Tags:        []r53rtypes.Tag{{Key: aws.String("team"), Value: aws.String("net")}},
+	}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	lt, err := client.ListTagsForResource(ctx, &awsr53r.ListTagsForResourceInput{ResourceArn: aws.String(arn)})
+	if err != nil || len(lt.Tags) != 1 {
+		t.Fatalf("ListTagsForResource: %v %+v", err, lt.Tags)
+	}
+
+	if _, err = client.UntagResource(ctx, &awsr53r.UntagResourceInput{
+		ResourceArn: aws.String(arn), TagKeys: []string{"team"},
+	}); err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	if _, err = client.PutResolverRulePolicy(ctx, &awsr53r.PutResolverRulePolicyInput{
+		Arn: aws.String(arn), ResolverRulePolicy: aws.String("{}"),
+	}); err != nil {
+		t.Fatalf("PutResolverRulePolicy: %v", err)
+	}
+	if _, err = client.GetResolverRulePolicy(ctx, &awsr53r.GetResolverRulePolicyInput{Arn: aws.String(arn)}); err != nil {
+		t.Fatalf("GetResolverRulePolicy: %v", err)
+	}
+}
+
+func require(t *testing.T, err error, op string) {
+	t.Helper()
+
+	if err != nil {
+		t.Fatalf("%s: %v", op, err)
+	}
+}
