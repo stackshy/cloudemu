@@ -1,4 +1,4 @@
-// Package azuresearch implements the Azure AI Search REST APIs as
+// Package search implements the Azure AI Search REST APIs as
 // server.Handlers: the Microsoft.Search ARM control plane (service lifecycle,
 // admin/query keys, private links) and the {service}.search.windows.net data
 // plane (indexes, documents, indexers, data sources, skillsets, synonym maps,
@@ -7,7 +7,7 @@
 // Real armsearch clients (and the azsearch data-plane client) configured with a
 // custom endpoint hit these handlers the same way they hit management.azure.com
 // and {service}.search.windows.net.
-package azuresearch
+package search
 
 import (
 	"net/http"

@@ -1,4 +1,4 @@
-package azuresql
+package sql
 
 import (
 	"net/http"

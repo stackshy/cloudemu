@@ -1,4 +1,4 @@
-// Package azuresql implements the Azure SQL Database (Microsoft.Sql) ARM
+// Package sql implements the Azure SQL Database (Microsoft.Sql) ARM
 // REST API as a server.Handler. Real
 // github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sql/armsql clients
 // configured with a custom endpoint hit this handler the same way they hit
@@ -18,7 +18,7 @@
 //
 // Mutating ops return 200 OK with the resource body inline so the SDK's LRO
 // poller terminates on the first response.
-package azuresql
+package sql
 
 import (
 	"net/http"

@@ -14,7 +14,7 @@
 //
 // AML paths nest deeper than the shared azurearm.ParsePath captures, so this
 // handler parses the trailing segments itself.
-package azureai
+package ai
 
 import (
 	"net/http"

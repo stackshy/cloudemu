@@ -1,4 +1,4 @@
-// Package azureai implements the Azure AI ARM REST APIs as server.Handlers.
+// Package ai implements the Azure AI ARM REST APIs as server.Handlers.
 // This file serves Microsoft.CognitiveServices (AI Foundry / AI Studio / the AI
 // Services resource / Azure OpenAI). Real
 // github.com/Azure/azure-sdk-for-go/.../armcognitiveservices clients configured
@@ -18,7 +18,7 @@
 //
 // ARM PUT returns the resource inline with a terminal provisioningState so the
 // SDK LRO poller terminates on the first response.
-package azureai
+package ai
 
 import (
 	"net/http"

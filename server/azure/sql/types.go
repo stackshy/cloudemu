@@ -1,4 +1,4 @@
-package azuresql
+package sql
 
 import (
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"

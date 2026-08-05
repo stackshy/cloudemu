@@ -1,4 +1,4 @@
-package azuresearch
+package search
 
 import (
 	"net/http"

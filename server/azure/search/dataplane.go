@@ -1,4 +1,4 @@
-package azuresearch
+package search
 
 import (
 	"encoding/json"

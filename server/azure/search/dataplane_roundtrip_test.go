@@ -1,4 +1,4 @@
-package azuresearch_test
+package search_test
 
 import (
 	"bytes"

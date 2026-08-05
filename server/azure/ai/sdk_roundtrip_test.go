@@ -1,4 +1,4 @@
-package azureai_test
+package ai_test
 
 import (
 	"bytes"

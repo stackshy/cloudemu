@@ -10,9 +10,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
-	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/azureai"
-	azuresearchserver "github.com/stackshy/cloudemu/v2/server/azure/azuresearch"
-	"github.com/stackshy/cloudemu/v2/server/azure/azuresql"
+	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
+	azuresearchserver "github.com/stackshy/cloudemu/v2/server/azure/search"
+	"github.com/stackshy/cloudemu/v2/server/azure/sql"
 	"github.com/stackshy/cloudemu/v2/server/azure/blob"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmos"
@@ -291,7 +291,7 @@ func New(d Drivers) *server.Server {
 	// Microsoft.Sql provider — distinct ARM provider name from compute and
 	// network so registration order is unconstrained.
 	if d.SQL != nil {
-		srv.Register(azuresql.New(d.SQL))
+		srv.Register(sql.New(d.SQL))
 	}
 
 	// Postgres Flex matches on a distinct provider name

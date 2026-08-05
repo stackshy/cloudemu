@@ -1,4 +1,4 @@
-package azuresql_test
+package sql_test
 
 import (
 	"context"
