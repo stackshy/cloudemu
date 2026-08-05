@@ -150,6 +150,12 @@ type networkInsightsAccessScopeAnalysisXML struct {
 	Tags                                  []tagItem `xml:"tagSet>item,omitempty"`
 }
 
+type accessScopeAnalysisFindingXML struct {
+	FindingID                            string `xml:"findingId,omitempty"`
+	NetworkInsightsAccessScopeAnalysisID string `xml:"networkInsightsAccessScopeAnalysisId,omitempty"`
+	NetworkInsightsAccessScopeID         string `xml:"networkInsightsAccessScopeId,omitempty"`
+}
+
 // ---- path handlers ----
 
 func (*Handler) createNetworkInsightsPath(w http.ResponseWriter, r *http.Request, n netdriver.NetworkInsights) {
@@ -163,7 +169,7 @@ func (*Handler) createNetworkInsightsPath(w http.ResponseWriter, r *http.Request
 		Tags:            mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-insights-path"),
 	})
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsPathId.NotFound")
 		return
 	}
 
@@ -178,7 +184,7 @@ func (*Handler) createNetworkInsightsPath(w http.ResponseWriter, r *http.Request
 func (*Handler) deleteNetworkInsightsPath(w http.ResponseWriter, r *http.Request, n netdriver.NetworkInsights) {
 	id := r.Form.Get("NetworkInsightsPathId")
 	if err := n.DeleteNetworkInsightsPath(r.Context(), id); err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsPathId.NotFound")
 		return
 	}
 
@@ -194,7 +200,7 @@ func (*Handler) deleteNetworkInsightsPath(w http.ResponseWriter, r *http.Request
 func (*Handler) describeNetworkInsightsPaths(w http.ResponseWriter, r *http.Request, n netdriver.NetworkInsights) {
 	items, err := n.DescribeNetworkInsightsPaths(r.Context(), awsquery.ListStrings(r.Form, "NetworkInsightsPathId"))
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsPathId.NotFound")
 		return
 	}
 
@@ -220,7 +226,7 @@ func (*Handler) startNetworkInsightsAnalysis(w http.ResponseWriter, r *http.Requ
 		Tags:               mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-insights-analysis"),
 	})
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsPathId.NotFound")
 		return
 	}
 
@@ -235,7 +241,7 @@ func (*Handler) startNetworkInsightsAnalysis(w http.ResponseWriter, r *http.Requ
 func (*Handler) deleteNetworkInsightsAnalysis(w http.ResponseWriter, r *http.Request, n netdriver.NetworkInsights) {
 	id := r.Form.Get("NetworkInsightsAnalysisId")
 	if err := n.DeleteNetworkInsightsAnalysis(r.Context(), id); err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAnalysisId.NotFound")
 		return
 	}
 
@@ -253,7 +259,7 @@ func (*Handler) describeNetworkInsightsAnalyses(w http.ResponseWriter, r *http.R
 		awsquery.ListStrings(r.Form, "NetworkInsightsAnalysisId"),
 		r.Form.Get("NetworkInsightsPathId"))
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAnalysisId.NotFound")
 		return
 	}
 
@@ -279,7 +285,7 @@ func (*Handler) createNetworkInsightsAccessScope(w http.ResponseWriter, r *http.
 		Tags:         mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-insights-access-scope"),
 	})
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAccessScopeId.NotFound")
 		return
 	}
 
@@ -298,7 +304,7 @@ func (*Handler) createNetworkInsightsAccessScope(w http.ResponseWriter, r *http.
 func (*Handler) deleteNetworkInsightsAccessScope(w http.ResponseWriter, r *http.Request, n netdriver.NetworkInsights) {
 	id := r.Form.Get("NetworkInsightsAccessScopeId")
 	if err := n.DeleteNetworkInsightsAccessScope(r.Context(), id); err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAccessScopeId.NotFound")
 		return
 	}
 
@@ -317,7 +323,7 @@ func (*Handler) describeNetworkInsightsAccessScopes(
 	items, err := n.DescribeNetworkInsightsAccessScopes(r.Context(),
 		awsquery.ListStrings(r.Form, "NetworkInsightsAccessScopeId"))
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAccessScopeId.NotFound")
 		return
 	}
 
@@ -339,7 +345,7 @@ func (*Handler) getNetworkInsightsAccessScopeContent(
 ) {
 	out, err := n.GetNetworkInsightsAccessScopeContent(r.Context(), r.Form.Get("NetworkInsightsAccessScopeId"))
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAccessScopeId.NotFound")
 		return
 	}
 
@@ -359,7 +365,7 @@ func (*Handler) startNetworkInsightsAccessScopeAnalysis(
 		r.Form.Get("NetworkInsightsAccessScopeId"),
 		mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-insights-access-scope-analysis"))
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAccessScopeId.NotFound")
 		return
 	}
 
@@ -376,7 +382,7 @@ func (*Handler) deleteNetworkInsightsAccessScopeAnalysis(
 ) {
 	id := r.Form.Get("NetworkInsightsAccessScopeAnalysisId")
 	if err := n.DeleteNetworkInsightsAccessScopeAnalysis(r.Context(), id); err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAccessScopeAnalysisId.NotFound")
 		return
 	}
 
@@ -396,7 +402,7 @@ func (*Handler) describeNetworkInsightsAccessScopeAnalyses(
 		awsquery.ListStrings(r.Form, "NetworkInsightsAccessScopeAnalysisId"),
 		r.Form.Get("NetworkInsightsAccessScopeId"))
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAccessScopeAnalysisId.NotFound")
 		return
 	}
 
@@ -416,23 +422,32 @@ func (*Handler) describeNetworkInsightsAccessScopeAnalyses(
 func (*Handler) getNetworkInsightsAccessScopeAnalysisFindings(
 	w http.ResponseWriter, r *http.Request, n netdriver.NetworkInsights,
 ) {
-	_, status, err := n.GetNetworkInsightsAccessScopeAnalysisFindings(r.Context(),
+	findings, status, err := n.GetNetworkInsightsAccessScopeAnalysisFindings(r.Context(),
 		r.Form.Get("NetworkInsightsAccessScopeAnalysisId"))
 	if err != nil {
-		writeNetworkInsightsErr(w, err)
+		writeNetworkInsightsErr(w, err, "InvalidNetworkInsightsAccessScopeAnalysisId.NotFound")
 		return
 	}
 
+	out := make([]accessScopeAnalysisFindingXML, 0, len(findings))
+	for i := range findings {
+		out = append(out, accessScopeAnalysisFindingXML{
+			FindingID:                            findings[i].FindingID,
+			NetworkInsightsAccessScopeAnalysisID: findings[i].AnalysisID,
+			NetworkInsightsAccessScopeID:         findings[i].AccessScopeID,
+		})
+	}
+
 	awsquery.WriteXMLResponse(w, struct {
-		XMLName  xml.Name `xml:"GetNetworkInsightsAccessScopeAnalysisFindingsResponse"`
-		Xmlns    string   `xml:"xmlns,attr"`
-		Req      string   `xml:"requestId"`
-		ScopeID  string   `xml:"networkInsightsAccessScopeAnalysisId,omitempty"`
-		Status   string   `xml:"analysisStatus,omitempty"`
-		Findings []string `xml:"analysisFindingSet>item,omitempty"`
+		XMLName    xml.Name                        `xml:"GetNetworkInsightsAccessScopeAnalysisFindingsResponse"`
+		Xmlns      string                          `xml:"xmlns,attr"`
+		Req        string                          `xml:"requestId"`
+		AnalysisID string                          `xml:"networkInsightsAccessScopeAnalysisId,omitempty"`
+		Status     string                          `xml:"analysisStatus,omitempty"`
+		Findings   []accessScopeAnalysisFindingXML `xml:"analysisFindingSet>item,omitempty"`
 	}{
 		Xmlns: awsquery.Namespace, Req: awsquery.RequestID,
-		ScopeID: r.Form.Get("NetworkInsightsAccessScopeAnalysisId"), Status: status,
+		AnalysisID: r.Form.Get("NetworkInsightsAccessScopeAnalysisId"), Status: status, Findings: out,
 	})
 }
 
@@ -578,6 +593,6 @@ func formatTime(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
 
-func writeNetworkInsightsErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidNetworkInsightsPathId.NotFound", "DependencyViolation")
+func writeNetworkInsightsErr(w http.ResponseWriter, err error, notFoundCode string) {
+	writeErrWithNotFound(w, err, notFoundCode, "DependencyViolation")
 }

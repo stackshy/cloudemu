@@ -69,7 +69,7 @@ type vpcBPAExclusionXML struct {
 func (*Handler) describeVPCBPAOptions(w http.ResponseWriter, r *http.Request, v netdriver.VPCBlockPublicAccess) {
 	out, err := v.DescribeVPCBlockPublicAccessOptions(r.Context())
 	if err != nil {
-		writeVPCBPAErr(w, err)
+		writeVPCBPAErr(w, err, "InvalidVpcBlockPublicAccessOptions.NotFound")
 		return
 	}
 
@@ -84,7 +84,7 @@ func (*Handler) describeVPCBPAOptions(w http.ResponseWriter, r *http.Request, v 
 func (*Handler) modifyVPCBPAOptions(w http.ResponseWriter, r *http.Request, v netdriver.VPCBlockPublicAccess) {
 	out, err := v.ModifyVPCBlockPublicAccessOptions(r.Context(), r.Form.Get("InternetGatewayBlockMode"))
 	if err != nil {
-		writeVPCBPAErr(w, err)
+		writeVPCBPAErr(w, err, "InvalidVpcBlockPublicAccessOptions.NotFound")
 		return
 	}
 
@@ -106,7 +106,14 @@ func (*Handler) createVPCBPAExclusion(w http.ResponseWriter, r *http.Request, v 
 		Tags:                         mergeTagSpecs(awsquery.TagSpecs(r.Form), "vpc-block-public-access-exclusion"),
 	})
 	if err != nil {
-		writeVPCBPAErr(w, err)
+		// A missing referenced resource keys on the VPC/subnet code, matching EC2.
+		notFound := "InvalidVpcID.NotFound"
+		if r.Form.Get("SubnetId") != "" {
+			notFound = "InvalidSubnetID.NotFound"
+		}
+
+		writeVPCBPAErr(w, err, notFound)
+
 		return
 	}
 
@@ -122,7 +129,7 @@ func (*Handler) modifyVPCBPAExclusion(w http.ResponseWriter, r *http.Request, v 
 	out, err := v.ModifyVPCBlockPublicAccessExclusion(r.Context(),
 		r.Form.Get("ExclusionId"), r.Form.Get("InternetGatewayExclusionMode"))
 	if err != nil {
-		writeVPCBPAErr(w, err)
+		writeVPCBPAErr(w, err, "InvalidVpcBlockPublicAccessExclusionId.NotFound")
 		return
 	}
 
@@ -137,7 +144,7 @@ func (*Handler) modifyVPCBPAExclusion(w http.ResponseWriter, r *http.Request, v 
 func (*Handler) deleteVPCBPAExclusion(w http.ResponseWriter, r *http.Request, v netdriver.VPCBlockPublicAccess) {
 	out, err := v.DeleteVPCBlockPublicAccessExclusion(r.Context(), r.Form.Get("ExclusionId"))
 	if err != nil {
-		writeVPCBPAErr(w, err)
+		writeVPCBPAErr(w, err, "InvalidVpcBlockPublicAccessExclusionId.NotFound")
 		return
 	}
 
@@ -153,7 +160,7 @@ func (*Handler) deleteVPCBPAExclusion(w http.ResponseWriter, r *http.Request, v 
 func (*Handler) describeVPCBPAExclusions(w http.ResponseWriter, r *http.Request, v netdriver.VPCBlockPublicAccess) {
 	items, err := v.DescribeVPCBlockPublicAccessExclusions(r.Context(), awsquery.ListStrings(r.Form, "ExclusionId"))
 	if err != nil {
-		writeVPCBPAErr(w, err)
+		writeVPCBPAErr(w, err, "InvalidVpcBlockPublicAccessExclusionId.NotFound")
 		return
 	}
 
@@ -198,6 +205,6 @@ func toVPCBPAExclusionXML(e *netdriver.VPCBlockPublicAccessExclusion) vpcBPAExcl
 	}
 }
 
-func writeVPCBPAErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidVpcBlockPublicAccessExclusionId.NotFound", "DependencyViolation")
+func writeVPCBPAErr(w http.ResponseWriter, err error, notFoundCode string) {
+	writeErrWithNotFound(w, err, notFoundCode, "DependencyViolation")
 }

@@ -2,6 +2,7 @@ package aws_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -13,12 +14,27 @@ import (
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	smithy "github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
+
+// assertAPIErrorCode fails unless err is an AWS API error carrying wantCode.
+func assertAPIErrorCode(t *testing.T, err error, wantCode string) {
+	t.Helper()
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected smithy.APIError with code %q, got %v", wantCode, err)
+	}
+
+	if apiErr.ErrorCode() != wantCode {
+		t.Fatalf("error code = %q, want %q", apiErr.ErrorCode(), wantCode)
+	}
+}
 
 // TestEC2NetworkingParitySDK drives the real aws-sdk-go-v2 EC2 client against
 // the new AWS-only networking capabilities (transit gateway, VPN, DHCP options,
@@ -645,6 +661,15 @@ func TestEC2StageBNetworkingParitySDK(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, rules.TrafficMirrorFilterRules, 1)
 
+		// No-filter Describe of targets/filters round-trips the list shape.
+		listTargets, err := client.DescribeTrafficMirrorTargets(ctx, &ec2.DescribeTrafficMirrorTargetsInput{})
+		require.NoError(t, err)
+		require.Len(t, listTargets.TrafficMirrorTargets, 1)
+
+		listFilters, err := client.DescribeTrafficMirrorFilters(ctx, &ec2.DescribeTrafficMirrorFiltersInput{})
+		require.NoError(t, err)
+		require.Len(t, listFilters.TrafficMirrorFilters, 1)
+
 		session, err := client.CreateTrafficMirrorSession(ctx, &ec2.CreateTrafficMirrorSessionInput{
 			NetworkInterfaceId:    aws.String("eni-src"),
 			TrafficMirrorTargetId: aws.String(targetID),
@@ -661,6 +686,18 @@ func TestEC2StageBNetworkingParitySDK(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Len(t, sessions.TrafficMirrorSessions, 1)
+
+		// A live session blocks deleting its target/filter (EC2 DependencyViolation).
+		_, err = client.DeleteTrafficMirrorTarget(ctx, &ec2.DeleteTrafficMirrorTargetInput{
+			TrafficMirrorTargetId: aws.String(targetID),
+		})
+		assertAPIErrorCode(t, err, "DependencyViolation")
+
+		// A missing filter reports its own resource-specific NotFound code.
+		_, err = client.DeleteTrafficMirrorFilter(ctx, &ec2.DeleteTrafficMirrorFilterInput{
+			TrafficMirrorFilterId: aws.String("tmf-does-not-exist"),
+		})
+		assertAPIErrorCode(t, err, "InvalidTrafficMirrorFilterId.NotFound")
 
 		_, err = client.DeleteTrafficMirrorSession(ctx, &ec2.DeleteTrafficMirrorSessionInput{
 			TrafficMirrorSessionId: aws.String(sessionID),
@@ -703,10 +740,20 @@ func TestEC2StageBNetworkingParitySDK(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, analyses.NetworkInsightsAnalyses, 1)
 
+		paths, err := client.DescribeNetworkInsightsPaths(ctx, &ec2.DescribeNetworkInsightsPathsInput{})
+		require.NoError(t, err)
+		require.Len(t, paths.NetworkInsightsPaths, 1)
+
 		_, err = client.DeleteNetworkInsightsPath(ctx, &ec2.DeleteNetworkInsightsPathInput{
 			NetworkInsightsPathId: aws.String(pathID),
 		})
 		require.NoError(t, err)
+
+		// A missing path reports its resource-specific NotFound code.
+		_, err = client.DeleteNetworkInsightsPath(ctx, &ec2.DeleteNetworkInsightsPathInput{
+			NetworkInsightsPathId: aws.String("nip-does-not-exist"),
+		})
+		assertAPIErrorCode(t, err, "InvalidNetworkInsightsPathId.NotFound")
 	})
 
 	t.Run("access analyzer", func(t *testing.T) {
@@ -739,12 +786,21 @@ func TestEC2StageBNetworkingParitySDK(t *testing.T) {
 		analysisID := aws.ToString(analysis.NetworkInsightsAccessScopeAnalysis.NetworkInsightsAccessScopeAnalysisId)
 		assert.Equal(t, ec2types.AnalysisStatusSucceeded, analysis.NetworkInsightsAccessScopeAnalysis.Status)
 
+		scopes, err := client.DescribeNetworkInsightsAccessScopes(ctx,
+			&ec2.DescribeNetworkInsightsAccessScopesInput{})
+		require.NoError(t, err)
+		require.Len(t, scopes.NetworkInsightsAccessScopes, 1)
+
 		findings, err := client.GetNetworkInsightsAccessScopeAnalysisFindings(ctx,
 			&ec2.GetNetworkInsightsAccessScopeAnalysisFindingsInput{
 				NetworkInsightsAccessScopeAnalysisId: aws.String(analysisID),
 			})
 		require.NoError(t, err)
 		assert.Equal(t, ec2types.AnalysisStatusSucceeded, findings.AnalysisStatus)
+		// The findings member deserializes as the AccessScopeAnalysisFinding
+		// object shape (empty here — the mock reports no findings), proving the
+		// wire type is correct rather than a string list.
+		assert.Empty(t, findings.AnalysisFindings)
 
 		_, err = client.DeleteNetworkInsightsAccessScope(ctx, &ec2.DeleteNetworkInsightsAccessScopeInput{
 			NetworkInsightsAccessScopeId: aws.String(scopeID),
@@ -788,5 +844,18 @@ func TestEC2StageBNetworkingParitySDK(t *testing.T) {
 			ExclusionId: aws.String(exclID),
 		})
 		require.NoError(t, err)
+
+		// A missing exclusion reports its resource-specific NotFound code.
+		_, err = client.DeleteVpcBlockPublicAccessExclusion(ctx, &ec2.DeleteVpcBlockPublicAccessExclusionInput{
+			ExclusionId: aws.String("vpcbpa-exclude-nope"),
+		})
+		assertAPIErrorCode(t, err, "InvalidVpcBlockPublicAccessExclusionId.NotFound")
+
+		// Creating an exclusion for a nonexistent subnet keys on the subnet code.
+		_, err = client.CreateVpcBlockPublicAccessExclusion(ctx, &ec2.CreateVpcBlockPublicAccessExclusionInput{
+			SubnetId:                     aws.String("subnet-nope"),
+			InternetGatewayExclusionMode: ec2types.InternetGatewayExclusionModeAllowEgress,
+		})
+		assertAPIErrorCode(t, err, "InvalidSubnetID.NotFound")
 	})
 }

@@ -866,8 +866,8 @@ func TestTrafficMirroringLifecycle(t *testing.T) {
 
 	if _, err := m.CreateTrafficMirrorSession(ctx, driver.TrafficMirrorSessionConfig{
 		TrafficMirrorTargetID: "tmt-missing", TrafficMirrorFilterID: filter.ID, SessionNumber: 1,
-	}); !cerrors.IsInvalidArgument(err) {
-		t.Fatalf("expected InvalidArgument for missing target, got %v", err)
+	}); !cerrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound for missing target, got %v", err)
 	}
 
 	if err := m.DeleteTrafficMirrorSession(ctx, session.ID); err != nil {
@@ -990,8 +990,8 @@ func TestVPCBlockPublicAccess(t *testing.T) {
 
 	if _, err := m.CreateVPCBlockPublicAccessExclusion(ctx, driver.VPCBlockPublicAccessExclusionConfig{
 		VPCID: "vpc-missing", InternetGatewayExclusionMode: "allow-egress",
-	}); !cerrors.IsInvalidArgument(err) {
-		t.Fatalf("expected InvalidArgument for missing vpc, got %v", err)
+	}); !cerrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound for missing vpc, got %v", err)
 	}
 
 	if _, err := m.CreateVPCBlockPublicAccessExclusion(ctx, driver.VPCBlockPublicAccessExclusionConfig{

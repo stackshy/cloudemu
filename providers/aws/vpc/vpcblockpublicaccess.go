@@ -2,12 +2,33 @@ package vpc
 
 import (
 	"context"
-	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
+
+// validateBlockMode rejects an InternetGatewayBlockMode outside the EC2 enum,
+// rather than storing-and-echoing an invalid value.
+func validateBlockMode(mode string) error {
+	switch mode {
+	case "off", "block-bidirectional", "block-ingress":
+		return nil
+	default:
+		return errors.Newf(errors.InvalidArgument, "invalid InternetGatewayBlockMode %q", mode)
+	}
+}
+
+// validateExclusionMode rejects an InternetGatewayExclusionMode outside the
+// EC2 enum.
+func validateExclusionMode(mode string) error {
+	switch mode {
+	case "allow-bidirectional", "allow-egress":
+		return nil
+	default:
+		return errors.Newf(errors.InvalidArgument, "invalid InternetGatewayExclusionMode %q", mode)
+	}
+}
 
 // DescribeVPCBlockPublicAccessOptions returns the account/region BPA options,
 // synthesizing the "off" default when they've never been modified.
@@ -37,8 +58,8 @@ func (m *Mock) DescribeVPCBlockPublicAccessOptions(
 func (m *Mock) ModifyVPCBlockPublicAccessOptions(
 	_ context.Context, internetGatewayBlockMode string,
 ) (*driver.VPCBlockPublicAccessOptions, error) {
-	if internetGatewayBlockMode == "" {
-		return nil, errors.Newf(errors.InvalidArgument, "InternetGatewayBlockMode is required")
+	if err := validateBlockMode(internetGatewayBlockMode); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -51,7 +72,7 @@ func (m *Mock) ModifyVPCBlockPublicAccessOptions(
 		InternetGatewayBlockMode: internetGatewayBlockMode,
 		ExclusionsAllowed:        "allowed",
 		ManagedBy:                "account",
-		LastUpdateTimestamp:      time.Now().UTC(),
+		LastUpdateTimestamp:      m.opts.Clock.Now().UTC(),
 	}
 
 	out := *m.vpcBPAOptions
@@ -67,8 +88,8 @@ func (m *Mock) CreateVPCBlockPublicAccessExclusion(
 		return nil, errors.Newf(errors.InvalidArgument, "one of VpcId or SubnetId is required")
 	}
 
-	if cfg.InternetGatewayExclusionMode == "" {
-		return nil, errors.Newf(errors.InvalidArgument, "InternetGatewayExclusionMode is required")
+	if err := validateExclusionMode(cfg.InternetGatewayExclusionMode); err != nil {
+		return nil, err
 	}
 
 	resourceARN, err := m.exclusionResourceARN(cfg)
@@ -76,7 +97,7 @@ func (m *Mock) CreateVPCBlockPublicAccessExclusion(
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	now := m.opts.Clock.Now().UTC()
 	id := idgen.GenerateID("vpcbpa-exclude-")
 	e := &driver.VPCBlockPublicAccessExclusion{
 		ExclusionID:                  id,
@@ -99,14 +120,14 @@ func (m *Mock) CreateVPCBlockPublicAccessExclusion(
 func (m *Mock) exclusionResourceARN(cfg driver.VPCBlockPublicAccessExclusionConfig) (string, error) {
 	if cfg.SubnetID != "" {
 		if !m.subnets.Has(cfg.SubnetID) {
-			return "", errors.Newf(errors.InvalidArgument, "subnet %q not found", cfg.SubnetID)
+			return "", errors.Newf(errors.NotFound, "subnet %q not found", cfg.SubnetID)
 		}
 
 		return m.insightsARN("subnet", cfg.SubnetID), nil
 	}
 
 	if !m.vpcs.Has(cfg.VPCID) {
-		return "", errors.Newf(errors.InvalidArgument, "vpc %q not found", cfg.VPCID)
+		return "", errors.Newf(errors.NotFound, "vpc %q not found", cfg.VPCID)
 	}
 
 	return m.insightsARN("vpc", cfg.VPCID), nil
@@ -116,8 +137,8 @@ func (m *Mock) exclusionResourceARN(cfg driver.VPCBlockPublicAccessExclusionConf
 func (m *Mock) ModifyVPCBlockPublicAccessExclusion(
 	_ context.Context, id, internetGatewayExclusionMode string,
 ) (*driver.VPCBlockPublicAccessExclusion, error) {
-	if internetGatewayExclusionMode == "" {
-		return nil, errors.Newf(errors.InvalidArgument, "InternetGatewayExclusionMode is required")
+	if err := validateExclusionMode(internetGatewayExclusionMode); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -130,7 +151,7 @@ func (m *Mock) ModifyVPCBlockPublicAccessExclusion(
 
 	e.InternetGatewayExclusionMode = internetGatewayExclusionMode
 	e.State = "update-complete"
-	e.LastUpdateTimestamp = time.Now().UTC()
+	e.LastUpdateTimestamp = m.opts.Clock.Now().UTC()
 
 	out := cloneBPAExclusion(e)
 
@@ -151,7 +172,7 @@ func (m *Mock) DeleteVPCBlockPublicAccessExclusion(
 	}
 
 	e.State = "delete-complete"
-	e.LastUpdateTimestamp = time.Now().UTC()
+	e.LastUpdateTimestamp = m.opts.Clock.Now().UTC()
 	out := cloneBPAExclusion(e)
 
 	m.vpcBPAExclusions.Delete(id)

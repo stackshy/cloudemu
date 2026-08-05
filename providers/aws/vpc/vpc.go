@@ -470,7 +470,9 @@ func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver
 // describeResources is a generic helper for Describe* methods that list or filter by IDs.
 func describeResources[T any, R any](store *memstore.Store[T], ids []string, toInfo func(T) R) []R {
 	if len(ids) == 0 {
-		all := store.All()
+		// SortedValues (not All) so no-filter Describe* output is deterministic,
+		// matching the repo's list-ordering contract.
+		all := store.SortedValues()
 		result := make([]R, 0, len(all))
 
 		for _, item := range all {

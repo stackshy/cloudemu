@@ -2,7 +2,6 @@ package vpc
 
 import (
 	"context"
-	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -21,6 +20,10 @@ func (m *Mock) CreateNetworkInsightsPath(
 		return nil, errors.Newf(errors.InvalidArgument, "source is required")
 	}
 
+	if cfg.Destination == "" {
+		return nil, errors.Newf(errors.InvalidArgument, "destination is required")
+	}
+
 	id := idgen.GenerateID("nip-")
 	p := &driver.NetworkInsightsPath{
 		ID:              id,
@@ -31,7 +34,7 @@ func (m *Mock) CreateNetworkInsightsPath(
 		Destination:     cfg.Destination,
 		DestinationIP:   cfg.DestinationIP,
 		DestinationPort: cfg.DestinationPort,
-		CreatedDate:     time.Now().UTC(),
+		CreatedDate:     m.opts.Clock.Now().UTC(),
 		Tags:            copyTags(cfg.Tags),
 	}
 	m.networkInsightsPaths.Set(id, p)
@@ -74,7 +77,7 @@ func (m *Mock) StartNetworkInsightsAnalysis(
 	_ context.Context, cfg driver.NetworkInsightsAnalysisConfig,
 ) (*driver.NetworkInsightsAnalysis, error) {
 	if !m.networkInsightsPaths.Has(cfg.PathID) {
-		return nil, errors.Newf(errors.InvalidArgument, "network insights path %q not found", cfg.PathID)
+		return nil, errors.Newf(errors.NotFound, "network insights path %q not found", cfg.PathID)
 	}
 
 	id := idgen.GenerateID("nia-")
@@ -82,7 +85,7 @@ func (m *Mock) StartNetworkInsightsAnalysis(
 		ID:                 id,
 		ARN:                m.insightsARN("network-insights-analysis", id),
 		PathID:             cfg.PathID,
-		StartDate:          time.Now().UTC(),
+		StartDate:          m.opts.Clock.Now().UTC(),
 		Status:             "succeeded",
 		NetworkPathFound:   true,
 		FilterInARNs:       append([]string(nil), cfg.FilterInARNs...),
@@ -136,7 +139,7 @@ func (m *Mock) DescribeNetworkInsightsAnalyses(
 func (m *Mock) CreateNetworkInsightsAccessScope(
 	_ context.Context, cfg driver.NetworkInsightsAccessScopeConfig,
 ) (*driver.NetworkInsightsAccessScope, error) {
-	now := time.Now().UTC()
+	now := m.opts.Clock.Now().UTC()
 	id := idgen.GenerateID("nis-")
 	s := &driver.NetworkInsightsAccessScope{
 		ID:           id,
@@ -184,6 +187,9 @@ func (m *Mock) DescribeNetworkInsightsAccessScopes(
 func (m *Mock) GetNetworkInsightsAccessScopeContent(
 	_ context.Context, id string,
 ) (*driver.NetworkInsightsAccessScope, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	s, ok := m.networkInsightsAccessScopes.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "network insights access scope %q not found", id)
@@ -202,11 +208,11 @@ func (m *Mock) StartNetworkInsightsAccessScopeAnalysis(
 	_ context.Context, accessScopeID string, tags map[string]string,
 ) (*driver.NetworkInsightsAccessScopeAnalysis, error) {
 	if !m.networkInsightsAccessScopes.Has(accessScopeID) {
-		return nil, errors.Newf(errors.InvalidArgument,
+		return nil, errors.Newf(errors.NotFound,
 			"network insights access scope %q not found", accessScopeID)
 	}
 
-	now := time.Now().UTC()
+	now := m.opts.Clock.Now().UTC()
 	id := idgen.GenerateID("nisa-")
 	a := &driver.NetworkInsightsAccessScopeAnalysis{
 		ID:               id,
@@ -264,6 +270,9 @@ func (m *Mock) DescribeNetworkInsightsAccessScopeAnalyses(
 func (m *Mock) GetNetworkInsightsAccessScopeAnalysisFindings(
 	_ context.Context, analysisID string,
 ) ([]driver.AccessScopeAnalysisFinding, string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	a, ok := m.networkInsightsAccessScopeAnalyses.Get(analysisID)
 	if !ok {
 		return nil, "", errors.Newf(errors.NotFound,

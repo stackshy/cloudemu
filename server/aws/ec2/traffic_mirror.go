@@ -161,7 +161,7 @@ func (*Handler) createTrafficMirrorTarget(w http.ResponseWriter, r *http.Request
 		Tags:                          mergeTagSpecs(awsquery.TagSpecs(r.Form), "traffic-mirror-target"),
 	})
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorTargetId.NotFound")
 		return
 	}
 
@@ -176,7 +176,7 @@ func (*Handler) createTrafficMirrorTarget(w http.ResponseWriter, r *http.Request
 func (*Handler) deleteTrafficMirrorTarget(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	id := r.Form.Get("TrafficMirrorTargetId")
 	if err := t.DeleteTrafficMirrorTarget(r.Context(), id); err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorTargetId.NotFound")
 		return
 	}
 
@@ -192,7 +192,7 @@ func (*Handler) deleteTrafficMirrorTarget(w http.ResponseWriter, r *http.Request
 func (*Handler) describeTrafficMirrorTargets(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	items, err := t.DescribeTrafficMirrorTargets(r.Context(), awsquery.ListStrings(r.Form, "TrafficMirrorTargetId"))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorTargetId.NotFound")
 		return
 	}
 
@@ -216,7 +216,7 @@ func (*Handler) createTrafficMirrorFilter(w http.ResponseWriter, r *http.Request
 	out, err := t.CreateTrafficMirrorFilter(r.Context(), r.Form.Get("Description"),
 		mergeTagSpecs(awsquery.TagSpecs(r.Form), "traffic-mirror-filter"))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorFilterId.NotFound")
 		return
 	}
 
@@ -231,7 +231,7 @@ func (*Handler) createTrafficMirrorFilter(w http.ResponseWriter, r *http.Request
 func (*Handler) deleteTrafficMirrorFilter(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	id := r.Form.Get("TrafficMirrorFilterId")
 	if err := t.DeleteTrafficMirrorFilter(r.Context(), id); err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorFilterId.NotFound")
 		return
 	}
 
@@ -247,7 +247,7 @@ func (*Handler) deleteTrafficMirrorFilter(w http.ResponseWriter, r *http.Request
 func (*Handler) describeTrafficMirrorFilters(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	items, err := t.DescribeTrafficMirrorFilters(r.Context(), awsquery.ListStrings(r.Form, "TrafficMirrorFilterId"))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorFilterId.NotFound")
 		return
 	}
 
@@ -272,7 +272,7 @@ func (*Handler) modifyTrafficMirrorFilterNetworkServices(
 		awsquery.ListStrings(r.Form, "AddNetworkService"),
 		awsquery.ListStrings(r.Form, "RemoveNetworkService"))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorFilterId.NotFound")
 		return
 	}
 
@@ -287,7 +287,7 @@ func (*Handler) modifyTrafficMirrorFilterNetworkServices(
 func (*Handler) createTrafficMirrorFilterRule(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	out, err := t.CreateTrafficMirrorFilterRule(r.Context(), trafficMirrorRuleConfig(r))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorFilterRuleId.NotFound")
 		return
 	}
 
@@ -306,7 +306,7 @@ func (*Handler) modifyTrafficMirrorFilterRule(w http.ResponseWriter, r *http.Req
 		trafficMirrorRuleConfig(r),
 		awsquery.ListStrings(r.Form, "RemoveField"))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorFilterRuleId.NotFound")
 		return
 	}
 
@@ -321,7 +321,7 @@ func (*Handler) modifyTrafficMirrorFilterRule(w http.ResponseWriter, r *http.Req
 func (*Handler) deleteTrafficMirrorFilterRule(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	id := r.Form.Get("TrafficMirrorFilterRuleId")
 	if err := t.DeleteTrafficMirrorFilterRule(r.Context(), id); err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorFilterRuleId.NotFound")
 		return
 	}
 
@@ -338,7 +338,7 @@ func (*Handler) describeTrafficMirrorFilterRules(w http.ResponseWriter, r *http.
 		r.Form.Get("TrafficMirrorFilterId"),
 		awsquery.ListStrings(r.Form, "TrafficMirrorFilterRuleId"))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorFilterRuleId.NotFound")
 		return
 	}
 
@@ -360,7 +360,7 @@ func (*Handler) describeTrafficMirrorFilterRules(w http.ResponseWriter, r *http.
 func (*Handler) createTrafficMirrorSession(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	out, err := t.CreateTrafficMirrorSession(r.Context(), trafficMirrorSessionConfig(r))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorTargetId.NotFound")
 		return
 	}
 
@@ -379,7 +379,7 @@ func (*Handler) modifyTrafficMirrorSession(w http.ResponseWriter, r *http.Reques
 		trafficMirrorSessionConfig(r),
 		awsquery.ListStrings(r.Form, "RemoveField"))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorSessionId.NotFound")
 		return
 	}
 
@@ -394,7 +394,7 @@ func (*Handler) modifyTrafficMirrorSession(w http.ResponseWriter, r *http.Reques
 func (*Handler) deleteTrafficMirrorSession(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	id := r.Form.Get("TrafficMirrorSessionId")
 	if err := t.DeleteTrafficMirrorSession(r.Context(), id); err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorSessionId.NotFound")
 		return
 	}
 
@@ -410,7 +410,7 @@ func (*Handler) deleteTrafficMirrorSession(w http.ResponseWriter, r *http.Reques
 func (*Handler) describeTrafficMirrorSessions(w http.ResponseWriter, r *http.Request, t netdriver.TrafficMirroring) {
 	items, err := t.DescribeTrafficMirrorSessions(r.Context(), awsquery.ListStrings(r.Form, "TrafficMirrorSessionId"))
 	if err != nil {
-		writeTrafficMirrorErr(w, err)
+		writeTrafficMirrorErr(w, err, "InvalidTrafficMirrorSessionId.NotFound")
 		return
 	}
 
@@ -558,6 +558,6 @@ func toTrafficMirrorSessionXML(s *netdriver.TrafficMirrorSession) trafficMirrorS
 	}
 }
 
-func writeTrafficMirrorErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidTrafficMirrorTargetId.NotFound", "DependencyViolation")
+func writeTrafficMirrorErr(w http.ResponseWriter, err error, notFoundCode string) {
+	writeErrWithNotFound(w, err, notFoundCode, "DependencyViolation")
 }

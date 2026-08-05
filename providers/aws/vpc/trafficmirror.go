@@ -59,13 +59,43 @@ func trafficMirrorTargetType(cfg driver.TrafficMirrorTargetConfig) string {
 	}
 }
 
-// DeleteTrafficMirrorTarget deletes a mirror target.
+// DeleteTrafficMirrorTarget deletes a mirror target. Real EC2 refuses the
+// delete while a session still references the target.
 func (m *Mock) DeleteTrafficMirrorTarget(_ context.Context, id string) error {
-	if !m.trafficMirrorTargets.Delete(id) {
+	if !m.trafficMirrorTargets.Has(id) {
 		return errors.Newf(errors.NotFound, "traffic mirror target %q not found", id)
 	}
 
+	if sid, inUse := m.sessionReferencingTarget(id); inUse {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: traffic mirror session %q still references target %q", sid, id)
+	}
+
+	m.trafficMirrorTargets.Delete(id)
+
 	return nil
+}
+
+// sessionReferencingTarget reports a session still bound to the given target.
+func (m *Mock) sessionReferencingTarget(targetID string) (string, bool) {
+	for _, s := range m.trafficMirrorSessions.All() {
+		if s.TrafficMirrorTargetID == targetID {
+			return s.ID, true
+		}
+	}
+
+	return "", false
+}
+
+// sessionReferencingFilter reports a session still bound to the given filter.
+func (m *Mock) sessionReferencingFilter(filterID string) (string, bool) {
+	for _, s := range m.trafficMirrorSessions.All() {
+		if s.TrafficMirrorFilterID == filterID {
+			return s.ID, true
+		}
+	}
+
+	return "", false
 }
 
 // DescribeTrafficMirrorTargets returns mirror targets matching ids.
@@ -97,11 +127,19 @@ func (m *Mock) CreateTrafficMirrorFilter(
 	return &out, nil
 }
 
-// DeleteTrafficMirrorFilter deletes a mirror filter.
+// DeleteTrafficMirrorFilter deletes a mirror filter. Real EC2 refuses the
+// delete while a session still references the filter.
 func (m *Mock) DeleteTrafficMirrorFilter(_ context.Context, id string) error {
-	if !m.trafficMirrorFilters.Delete(id) {
+	if !m.trafficMirrorFilters.Has(id) {
 		return errors.Newf(errors.NotFound, "traffic mirror filter %q not found", id)
 	}
+
+	if sid, inUse := m.sessionReferencingFilter(id); inUse {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: traffic mirror session %q still references filter %q", sid, id)
+	}
+
+	m.trafficMirrorFilters.Delete(id)
 
 	return nil
 }
@@ -356,12 +394,12 @@ func (m *Mock) CreateTrafficMirrorSession(
 	_ context.Context, cfg driver.TrafficMirrorSessionConfig,
 ) (*driver.TrafficMirrorSession, error) {
 	if !m.trafficMirrorTargets.Has(cfg.TrafficMirrorTargetID) {
-		return nil, errors.Newf(errors.InvalidArgument,
+		return nil, errors.Newf(errors.NotFound,
 			"traffic mirror target %q not found", cfg.TrafficMirrorTargetID)
 	}
 
 	if !m.trafficMirrorFilters.Has(cfg.TrafficMirrorFilterID) {
-		return nil, errors.Newf(errors.InvalidArgument,
+		return nil, errors.Newf(errors.NotFound,
 			"traffic mirror filter %q not found", cfg.TrafficMirrorFilterID)
 	}
 
@@ -402,6 +440,18 @@ func (m *Mock) ModifyTrafficMirrorSession(
 	s, ok := m.trafficMirrorSessions.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "traffic mirror session %q not found", id)
+	}
+
+	// Re-validate a re-pointed target/filter, matching Create — otherwise a
+	// Modify could bind the session to a nonexistent target or filter.
+	if cfg.TrafficMirrorTargetID != "" && !m.trafficMirrorTargets.Has(cfg.TrafficMirrorTargetID) {
+		return nil, errors.Newf(errors.NotFound,
+			"traffic mirror target %q not found", cfg.TrafficMirrorTargetID)
+	}
+
+	if cfg.TrafficMirrorFilterID != "" && !m.trafficMirrorFilters.Has(cfg.TrafficMirrorFilterID) {
+		return nil, errors.Newf(errors.NotFound,
+			"traffic mirror filter %q not found", cfg.TrafficMirrorFilterID)
 	}
 
 	applySessionUpdate(s, &cfg)
