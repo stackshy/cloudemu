@@ -60,6 +60,7 @@ type Mock struct {
 	funcs      *memstore.Store[funcData]
 	layers     *memstore.Store[*layerData]
 	mappings   *memstore.Store[*driver.EventSourceMappingInfo]
+	plans      *memstore.Store[*AppServicePlan]
 	opts       *config.Options
 	handlersMu sync.RWMutex
 	handlers   map[string]driver.HandlerFunc
@@ -100,6 +101,7 @@ func New(opts *config.Options) *Mock {
 		funcs:    memstore.New[funcData](),
 		layers:   memstore.New[*layerData](),
 		mappings: memstore.New[*driver.EventSourceMappingInfo](),
+		plans:    memstore.New[*AppServicePlan](),
 		opts:     opts,
 		handlers: make(map[string]driver.HandlerFunc),
 	}

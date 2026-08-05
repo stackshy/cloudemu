@@ -71,6 +71,9 @@ type Mock struct {
 	managedInstances *memstore.Store[rdsdriver.ManagedInstance]
 	managedDatabases *memstore.Store[rdsdriver.ManagedDatabase]
 
+	// logical databases on a SQL server, key = "server/name"
+	databases *memstore.Store[rdsdriver.Database]
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -86,6 +89,7 @@ func New(opts *config.Options) *Mock {
 		elasticPools:     memstore.New[rdsdriver.ElasticPool](),
 		failoverGroups:   memstore.New[rdsdriver.FailoverGroup](),
 		aadAdmins:        memstore.New[rdsdriver.AADAdmin](),
+		databases:        memstore.New[rdsdriver.Database](),
 		managedInstances: memstore.New[rdsdriver.ManagedInstance](),
 		managedDatabases: memstore.New[rdsdriver.ManagedDatabase](),
 		opts:             opts,

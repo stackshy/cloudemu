@@ -226,8 +226,21 @@ func resourceToWire(r *resourcediscovery.Resource) map[string]any {
 		"tags":           tagsOrEmpty(r.Tags),
 	}
 
-	if r.SKU != "" {
-		out["sku"] = map[string]any{"name": r.SKU}
+	if r.SKU != "" || r.SKUTier != "" || r.SKUCapacity > 0 {
+		sku := map[string]any{}
+		if r.SKU != "" {
+			sku["name"] = r.SKU
+		}
+
+		if r.SKUTier != "" {
+			sku["tier"] = r.SKUTier
+		}
+
+		if r.SKUCapacity > 0 {
+			sku["capacity"] = r.SKUCapacity
+		}
+
+		out["sku"] = sku
 	}
 
 	if r.ManagedBy != "" {
@@ -299,17 +312,22 @@ func extractSubscription(arn string) string {
 var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	"compute/Instance":                    "microsoft.compute/virtualmachines",
 	"compute/Volume":                      "microsoft.compute/disks",
+	"compute/ScaleSet":                    "microsoft.compute/virtualmachinescalesets",
 	"networking/VPC":                      "microsoft.network/virtualnetworks",
 	"networking/Subnet":                   "microsoft.network/subnets",
 	"networking/SecurityGroup":            "microsoft.network/networksecuritygroups",
+	"networking/NetworkInterface":         "microsoft.network/networkinterfaces",
+	"networking/ElasticIP":                "microsoft.network/publicipaddresses",
 	"storage/Bucket":                      "microsoft.storage/storageaccounts",
 	"database/Table":                      "microsoft.documentdb/databaseaccounts",
 	"serverless/Function":                 "microsoft.web/sites",
+	"serverless/AppServicePlan":           "microsoft.web/serverfarms",
 	"databricks/Workspace":                "microsoft.databricks/workspaces",
 	"kubernetes/Cluster":                  "microsoft.containerservice/managedclusters",
 	"kubernetes/NodeGroup":                "microsoft.containerservice/managedclusters/agentpools",
 	"relationaldb/SqlServer":              "microsoft.sql/servers",
 	"relationaldb/SqlManagedInstance":     "microsoft.sql/managedinstances",
+	"relationaldb/SqlDatabase":            "microsoft.sql/servers/databases",
 	"relationaldb/MySqlFlexibleServer":    "microsoft.dbformysql/flexibleservers",
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 }

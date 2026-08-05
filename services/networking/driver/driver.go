@@ -195,6 +195,10 @@ type InternetGateway struct {
 // ElasticIPConfig configures an elastic IP allocation.
 type ElasticIPConfig struct {
 	Tags map[string]string
+	// SKU (Azure public IP: Basic/Standard) and AllocationMethod (Static/
+	// Dynamic) are cost/behaviour inputs a discoverer reads; optional.
+	SKU              string
+	AllocationMethod string
 }
 
 // ElasticIP represents an elastic IP address.
@@ -204,6 +208,10 @@ type ElasticIP struct {
 	AssociationID string
 	InstanceID    string
 	Tags          map[string]string
+	// SKU is the Azure public-IP SKU (Basic/Standard), echoed as sku.name.
+	SKU string
+	// AllocationMethod is Static/Dynamic (Azure publicIPAllocationMethod).
+	AllocationMethod string
 }
 
 // RouteTableAssociation represents an association between

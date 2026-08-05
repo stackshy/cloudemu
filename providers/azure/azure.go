@@ -3,6 +3,7 @@ package azure
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
@@ -50,16 +51,66 @@ func (a aksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 
 	for i := range clusters {
 		c := clusters[i]
+
+		props := map[string]any{}
+		if c.PowerState != "" {
+			props["powerState"] = map[string]any{"code": c.PowerState}
+		}
+
+		if c.KubernetesVersion != "" {
+			props["kubernetesVersion"] = c.KubernetesVersion
+		}
+
+		pools, err := a.m.ListAgentPools(ctx, c.ResourceGroup, c.Name)
+		if err != nil {
+			return nil, err
+		}
+
 		out = append(out, resourcediscovery.DiscoveredCluster{
 			Name:          c.Name,
 			Region:        c.Location,
 			ResourceGroup: c.ResourceGroup,
 			Tags:          c.Tags,
-			NodeGroups:    c.AgentPoolNames,
+			NodeGroups:    aksNodeGroups(pools),
+			Attrs: resourcediscovery.Attributes{
+				SKUTier:    c.Tier,
+				Properties: props,
+			},
 		})
 	}
 
 	return out, nil
+}
+
+// aksNodeGroups projects each agent pool's cost signals (vmSize as sku,
+// scaleSetPriority for Spot detection, count, mode, osType) onto the
+// per-node-group Attributes the walker emits.
+func aksNodeGroups(pools []aks.AgentPool) []resourcediscovery.DiscoveredNodeGroup {
+	out := make([]resourcediscovery.DiscoveredNodeGroup, 0, len(pools))
+
+	for i := range pools {
+		p := &pools[i]
+
+		props := map[string]any{"count": int(p.Count)}
+		if p.ScaleSetPriority != "" {
+			props["scaleSetPriority"] = p.ScaleSetPriority
+		}
+
+		if p.Mode != "" {
+			props["mode"] = p.Mode
+		}
+
+		if p.OSType != "" {
+			props["osType"] = p.OSType
+		}
+
+		out = append(out, resourcediscovery.DiscoveredNodeGroup{
+			Name:  p.Name,
+			Attrs: resourcediscovery.Attributes{SKU: p.VMSize, Properties: props},
+		})
+	}
+
+	return out
 }
 
 // Provider holds all Azure mock services.
@@ -160,14 +211,16 @@ func New(opts ...config.Option) *Provider {
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
 		&resourcediscovery.Drivers{
-			Compute:      p.VirtualMachines,
-			Networking:   p.VNet,
-			Storage:      p.BlobStorage,
-			Database:     p.CosmosDB,
-			Serverless:   p.Functions,
-			Databricks:   p.Databricks,
-			Kubernetes:   aksDiscovery{p.AKS},
-			RelationalDB: sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
+			Compute:         p.VirtualMachines,
+			Networking:      p.VNet,
+			Storage:         p.BlobStorage,
+			Database:        p.CosmosDB,
+			Serverless:      p.Functions,
+			Databricks:      p.Databricks,
+			Kubernetes:      aksDiscovery{p.AKS},
+			RelationalDB:    sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
+			ScaleSets:       vmssDiscovery{p.VirtualMachines},
+			AppServicePlans: appServicePlanDiscovery{p.Functions},
 		},
 	)
 
@@ -197,7 +250,30 @@ func (d sqlDiscovery) DiscoverDatabases(
 		out = append(out, resourcediscovery.DiscoveredDatabase{
 			Name: clusters[i].ID, Type: resourcediscovery.TypeSQLServer,
 			ARN: clusters[i].ARN, Tags: clusters[i].Tags,
+			Attrs: resourcediscovery.Attributes{
+				Properties: nonEmptyProps(map[string]any{"version": clusters[i].EngineVersion}),
+			},
 		})
+
+		dbs, dbErr := d.sql.ListDatabases(ctx, clusters[i].ID)
+		if dbErr != nil {
+			return nil, dbErr
+		}
+
+		for j := range dbs {
+			db := &dbs[j]
+			out = append(out, resourcediscovery.DiscoveredDatabase{
+				Name: db.Name, Type: resourcediscovery.TypeSQLDatabase, ARN: db.ARN,
+				Attrs: resourcediscovery.Attributes{
+					SKU:     db.SKUName,
+					SKUTier: db.SKUTier,
+					Properties: nonEmptyProps(map[string]any{
+						"zoneRedundant": db.ZoneRedundant,
+						"currentSku":    map[string]any{"name": db.SKUName, "tier": db.SKUTier},
+					}),
+				},
+			})
+		}
 	}
 
 	myInsts, err := d.mysql.DescribeInstances(ctx, nil)
@@ -226,16 +302,112 @@ func (d sqlDiscovery) DiscoverDatabases(
 			Attrs: resourcediscovery.Attributes{
 				SKU: mis[i].SKUName,
 				Properties: nonEmptyProps(map[string]any{
-					"vCores":          mis[i].VCores,
-					"storageSizeInGB": mis[i].StorageGB,
-					"tier":            mis[i].SKUTier,
-					"licenseType":     mis[i].LicenseType,
+					"vCores":             mis[i].VCores,
+					"storageSizeInGB":    mis[i].StorageGB,
+					"tier":               mis[i].SKUTier,
+					"licenseType":        mis[i].LicenseType,
+					"storageAccountType": mis[i].StorageAccountType,
 				}),
 			},
 		})
 	}
 
 	return out, nil
+}
+
+// vmssDiscovery projects the VM Scale Sets stored on the virtualmachines mock
+// onto DiscoveredScaleSet for Resource Graph.
+type vmssDiscovery struct{ m *virtualmachines.Mock }
+
+func (v vmssDiscovery) DiscoverScaleSets(ctx context.Context) ([]resourcediscovery.DiscoveredScaleSet, error) {
+	sets, err := v.m.ListScaleSets(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredScaleSet, 0, len(sets))
+
+	for i := range sets {
+		s := &sets[i]
+
+		profile := map[string]any{}
+		if s.Priority != "" {
+			profile["priority"] = s.Priority
+		}
+
+		if s.LicenseType != "" {
+			profile["licenseType"] = s.LicenseType
+		}
+
+		if s.OSType != "" {
+			profile["storageProfile"] = map[string]any{"osDisk": map[string]any{"osType": s.OSType}}
+		}
+
+		props := map[string]any{}
+		if len(profile) > 0 {
+			props["virtualMachineProfile"] = profile
+		}
+
+		out = append(out, resourcediscovery.DiscoveredScaleSet{
+			Name: s.Name, ARN: s.ID, Region: s.Location, Tags: s.Tags,
+			Attrs: resourcediscovery.Attributes{
+				SKU:         s.SKUName,
+				SKUTier:     s.SKUTier,
+				SKUCapacity: s.Capacity,
+				Properties:  props,
+			},
+		})
+	}
+
+	return out, nil
+}
+
+// appServicePlanDiscovery projects the App Service plans stored on the functions
+// mock onto DiscoveredAppServicePlan for Resource Graph.
+type appServicePlanDiscovery struct{ m *functions.Mock }
+
+func (a appServicePlanDiscovery) DiscoverAppServicePlans(
+	ctx context.Context,
+) ([]resourcediscovery.DiscoveredAppServicePlan, error) {
+	plans, err := a.m.ListAppServicePlans(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredAppServicePlan, 0, len(plans))
+
+	for i := range plans {
+		p := &plans[i]
+
+		out = append(out, resourcediscovery.DiscoveredAppServicePlan{
+			Name: p.Name, ARN: p.ID, Region: p.Location, Tags: p.Tags,
+			Attrs: resourcediscovery.Attributes{
+				SKU:         p.SKUName,
+				SKUTier:     p.SKUTier,
+				SKUCapacity: p.Capacity,
+				Kind:        p.Kind,
+			},
+		})
+	}
+
+	return out, nil
+}
+
+// flexTier derives the Azure Flexible Server SKU tier (Burstable /
+// GeneralPurpose / MemoryOptimized) from the SKU name, which encodes it as a
+// prefix in both the current ("Standard_B1ms") and legacy ("B_Gen5_1") naming.
+// Empty when the name doesn't match a known family.
+func flexTier(skuName string) string {
+	switch {
+	case strings.HasPrefix(skuName, "Standard_B"), strings.HasPrefix(skuName, "B_"):
+		return "Burstable"
+	case strings.HasPrefix(skuName, "Standard_E"), strings.HasPrefix(skuName, "MO_"):
+		return "MemoryOptimized"
+	case strings.HasPrefix(skuName, "Standard_D"), strings.HasPrefix(skuName, "GP_"):
+		return "GeneralPurpose"
+	default:
+		return ""
+	}
 }
 
 func appendFlexServers(
@@ -251,10 +423,12 @@ func appendFlexServers(
 			Name: insts[i].ID, Type: typ, Region: insts[i].AvailabilityZone,
 			ARN: insts[i].ARN, Tags: insts[i].Tags,
 			Attrs: resourcediscovery.Attributes{
-				SKU: insts[i].InstanceClass,
+				SKU:     insts[i].InstanceClass,
+				SKUTier: flexTier(insts[i].InstanceClass),
 				Properties: nonEmptyProps(map[string]any{
 					"storage":          map[string]any{"storageSizeGB": insts[i].AllocatedStorage},
 					"highAvailability": map[string]any{"mode": ha},
+					"version":          insts[i].EngineVersion,
 				}),
 			},
 		})

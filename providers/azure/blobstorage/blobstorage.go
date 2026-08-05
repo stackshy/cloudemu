@@ -70,8 +70,11 @@ type containerMeta struct {
 // Mock is an in-memory mock implementation of Azure Blob Storage.
 type Mock struct {
 	containers *memstore.Store[*containerMeta]
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	// bucketAttrs holds Azure storage-account attributes (SKU/kind/access tier)
+	// per container, for the BucketAttributes discovery capability.
+	bucketAttrs *memstore.Store[driver.AccountAttributes]
+	opts        *config.Options
+	monitoring  mondriver.Monitoring
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -104,9 +107,40 @@ func (m *Mock) emitMetric(container string, metrics map[string]float64) {
 // New creates a new Azure Blob Storage mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		containers: memstore.New[*containerMeta](),
-		opts:       opts,
+		containers:  memstore.New[*containerMeta](),
+		bucketAttrs: memstore.New[driver.AccountAttributes](),
+		opts:        opts,
 	}
+}
+
+// SetBucketAttributes seeds the Azure storage-account attributes (SKU/kind/
+// access tier) for a container, so tests and the ARM layer can vary them.
+func (m *Mock) SetBucketAttributes(name string, attrs driver.AccountAttributes) {
+	m.bucketAttrs.Set(name, attrs)
+}
+
+// BucketAttributes implements the storage BucketAttributes optional capability,
+// returning the seeded attributes or the real-Azure defaults (Standard_LRS /
+// StorageV2 / Hot) so a cost discoverer always sees a priceable SKU.
+func (m *Mock) BucketAttributes(_ context.Context, bucket string) (driver.AccountAttributes, error) {
+	a, ok := m.bucketAttrs.Get(bucket)
+	if !ok {
+		return driver.AccountAttributes{SKU: "Standard_LRS", Kind: "StorageV2", AccessTier: "Hot"}, nil
+	}
+
+	if a.SKU == "" {
+		a.SKU = "Standard_LRS"
+	}
+
+	if a.Kind == "" {
+		a.Kind = "StorageV2"
+	}
+
+	if a.AccessTier == "" {
+		a.AccessTier = "Hot"
+	}
+
+	return a, nil
 }
 
 // CreateBucket creates a new blob container.

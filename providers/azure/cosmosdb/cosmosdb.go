@@ -55,10 +55,48 @@ type tableData struct {
 
 // Mock is an in-memory mock implementation of Azure Cosmos DB.
 type Mock struct {
-	mu         sync.RWMutex
-	tables     map[string]*tableData
-	opts       *config.Options
-	monitoring mondriver.Monitoring
+	mu     sync.RWMutex
+	tables map[string]*tableData
+	// accountAttrs holds Cosmos-account cost attributes per table, for the
+	// TableAttributes discovery capability.
+	accountAttrs map[string]driver.AccountAttributes
+	opts         *config.Options
+	monitoring   mondriver.Monitoring
+}
+
+// SetTableAttributes seeds the Cosmos-account cost attributes for a table.
+func (m *Mock) SetTableAttributes(table string, attrs driver.AccountAttributes) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.accountAttrs == nil {
+		m.accountAttrs = make(map[string]driver.AccountAttributes)
+	}
+
+	m.accountAttrs[table] = attrs
+}
+
+// TableAttributes implements the database TableAttributes optional capability,
+// returning the seeded attributes or the common defaults (GlobalDocumentDB /
+// Standard offer) so a cost discoverer always sees a valid account shape.
+func (m *Mock) TableAttributes(_ context.Context, table string) (driver.AccountAttributes, error) {
+	m.mu.RLock()
+	a, ok := m.accountAttrs[table]
+	m.mu.RUnlock()
+
+	if !ok {
+		return driver.AccountAttributes{Kind: "GlobalDocumentDB", OfferType: "Standard"}, nil
+	}
+
+	if a.Kind == "" {
+		a.Kind = "GlobalDocumentDB"
+	}
+
+	if a.OfferType == "" {
+		a.OfferType = "Standard"
+	}
+
+	return a, nil
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.

@@ -13,6 +13,23 @@ type BucketInfo struct {
 	CreatedAt string
 }
 
+// AccountAttributes are the storage-account cost/identity attributes an Azure
+// storage account carries but an S3/GCS bucket does not (SKU redundancy, kind,
+// access tier). Surfaced through the optional BucketAttributes capability.
+type AccountAttributes struct {
+	SKU        string // e.g. Standard_LRS, Premium_LRS
+	Kind       string // e.g. StorageV2, BlobStorage
+	AccessTier string // Hot / Cool
+}
+
+// BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
+// the networking NetworkInterfaces capability): a provider whose buckets map to
+// a richer resource (Azure storage accounts) exposes their SKU/kind/access-tier
+// for cost discovery. S3/GCS don't implement it and contribute nothing.
+type BucketAttributes interface {
+	BucketAttributes(ctx context.Context, bucket string) (AccountAttributes, error)
+}
+
 // ObjectInfo describes a stored object.
 type ObjectInfo struct {
 	Key          string

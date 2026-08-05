@@ -145,6 +145,24 @@ type IndexInfo struct {
 }
 
 // Database is the interface that database provider implementations must satisfy.
+// AccountAttributes are the Cosmos-DB-account cost/identity attributes a real
+// Azure `documentdb/databaseaccounts` resource carries but a DynamoDB/Firestore
+// table does not. Surfaced through the optional TableAttributes capability.
+type AccountAttributes struct {
+	Kind           string   // GlobalDocumentDB / MongoDB
+	OfferType      string   // databaseAccountOfferType (Standard)
+	EnableFreeTier bool     // free-tier flag (cost)
+	Capabilities   []string // e.g. EnableServerless (cost)
+}
+
+// TableAttributes is an OPTIONAL capability, discovered by type assertion (like
+// the storage BucketAttributes capability): a provider whose tables map to a
+// richer account resource (Azure Cosmos DB) exposes the account's cost
+// attributes. DynamoDB/Firestore don't implement it and contribute nothing.
+type TableAttributes interface {
+	TableAttributes(ctx context.Context, table string) (AccountAttributes, error)
+}
+
 type Database interface {
 	CreateTable(ctx context.Context, config TableConfig) error
 	DeleteTable(ctx context.Context, name string) error
