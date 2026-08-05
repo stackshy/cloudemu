@@ -1,5 +1,5 @@
-// Package gcplb provides an in-memory mock implementation of GCP Cloud Load Balancing.
-package gcplb
+// Package loadbalancer provides an in-memory mock implementation of GCP Cloud Load Balancing.
+package loadbalancer
 
 import (
 	"context"

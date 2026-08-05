@@ -1,4 +1,4 @@
-package azureai
+package ai
 
 import (
 	"context"

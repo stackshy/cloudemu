@@ -1,4 +1,4 @@
-package gcpvpc
+package vpc
 
 import (
 	"context"

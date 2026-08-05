@@ -1,4 +1,4 @@
-package awsiam
+package iam
 
 import (
 	"context"

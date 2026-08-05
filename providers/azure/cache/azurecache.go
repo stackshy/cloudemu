@@ -1,5 +1,5 @@
-// Package azurecache provides an in-memory mock implementation of Azure Cache for Redis.
-package azurecache
+// Package cache provides an in-memory mock implementation of Azure Cache for Redis.
+package cache
 
 import (
 	"context"

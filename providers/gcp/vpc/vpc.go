@@ -1,5 +1,5 @@
-// Package gcpvpc provides an in-memory mock implementation of Google Cloud VPC networking.
-package gcpvpc
+// Package vpc provides an in-memory mock implementation of Google Cloud VPC networking.
+package vpc
 
 import (
 	"context"

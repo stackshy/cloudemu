@@ -1,4 +1,4 @@
-package azuredns
+package dns
 
 import (
 	"context"

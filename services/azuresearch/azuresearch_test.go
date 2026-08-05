@@ -13,7 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/inject"
 	"github.com/stackshy/cloudemu/v2/features/metrics"
 	"github.com/stackshy/cloudemu/v2/features/recorder"
-	provsearch "github.com/stackshy/cloudemu/v2/providers/azure/azuresearch"
+	provsearch "github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/services/azuresearch"
 	"github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )

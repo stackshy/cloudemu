@@ -1,4 +1,4 @@
-package azuresql
+package sql
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuremonitor"
+	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -369,7 +369,7 @@ func TestElasticPoolEmitsMetrics(t *testing.T) {
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("eastus"))
 
 	m := New(opts)
-	mon := azuremonitor.New(opts)
+	mon := monitor.New(opts)
 	m.SetMonitoring(mon)
 
 	ctx := context.Background()
@@ -786,7 +786,7 @@ func TestDatabaseAndManagedInstanceEmitMetrics(t *testing.T) {
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("eastus"))
 
 	m := New(opts)
-	mon := azuremonitor.New(opts)
+	mon := monitor.New(opts)
 	m.SetMonitoring(mon)
 
 	ctx := context.Background()

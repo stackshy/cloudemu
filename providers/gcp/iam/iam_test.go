@@ -1,4 +1,4 @@
-package gcpiam
+package iam
 
 import (
 	"context"

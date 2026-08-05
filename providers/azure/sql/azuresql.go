@@ -1,4 +1,4 @@
-// Package azuresql provides an in-memory mock of Microsoft.Sql (Azure SQL
+// Package sql provides an in-memory mock of Microsoft.Sql (Azure SQL
 // Database). It implements relationaldb/driver.RelationalDB so the same
 // backend serves both the portable API (relationaldb.DB) and the SDK-compat
 // HTTP layer.
@@ -19,7 +19,7 @@
 // start/stop API. The mock still tracks state transitions so portable-API
 // users can drive Start/Stop and observe deterministic behavior; the
 // transitions don't affect the ARM-visible state.
-package azuresql
+package sql
 
 import (
 	"context"

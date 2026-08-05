@@ -1,5 +1,5 @@
-// Package azurelb provides an in-memory mock implementation of Azure Load Balancer.
-package azurelb
+// Package loadbalancer provides an in-memory mock implementation of Azure Load Balancer.
+package loadbalancer
 
 import (
 	"context"

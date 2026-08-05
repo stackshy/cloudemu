@@ -1,5 +1,5 @@
-// Package awsiam provides an in-memory mock implementation of AWS IAM.
-package awsiam
+// Package iam provides an in-memory mock implementation of AWS IAM.
+package iam
 
 import (
 	"context"

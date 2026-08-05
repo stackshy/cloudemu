@@ -1,4 +1,4 @@
-package gcplb
+package loadbalancer
 
 import (
 	"context"

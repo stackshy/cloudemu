@@ -1,5 +1,5 @@
-// Package azuredns provides an in-memory mock implementation of Azure DNS.
-package azuredns
+// Package dns provides an in-memory mock implementation of Azure DNS.
+package dns
 
 import (
 	"context"

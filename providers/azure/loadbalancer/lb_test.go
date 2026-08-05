@@ -1,4 +1,4 @@
-package azurelb
+package loadbalancer
 
 import (
 	"context"

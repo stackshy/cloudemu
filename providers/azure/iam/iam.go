@@ -1,5 +1,5 @@
-// Package azureiam provides an in-memory mock implementation of Azure Active Directory / IAM.
-package azureiam
+// Package iam provides an in-memory mock implementation of Azure Active Directory / IAM.
+package iam
 
 import (
 	"context"

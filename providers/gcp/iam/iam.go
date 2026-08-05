@@ -1,5 +1,5 @@
-// Package gcpiam provides an in-memory mock implementation of GCP IAM.
-package gcpiam
+// Package iam provides an in-memory mock implementation of GCP IAM.
+package iam
 
 import (
 	"context"

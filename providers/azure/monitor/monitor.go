@@ -1,5 +1,5 @@
-// Package azuremonitor provides an in-memory mock implementation of Azure Monitor.
-package azuremonitor
+// Package monitor provides an in-memory mock implementation of Azure Monitor.
+package monitor
 
 import (
 	"context"

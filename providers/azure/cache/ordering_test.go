@@ -1,4 +1,4 @@
-package azurecache
+package cache
 
 import (
 	"context"

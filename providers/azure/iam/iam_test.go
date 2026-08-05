@@ -1,4 +1,4 @@
-package azureiam
+package iam
 
 import (
 	"context"

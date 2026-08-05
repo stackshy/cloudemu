@@ -17,9 +17,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/fcm"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/firestore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gce"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/gcpiam"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/gcplb"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/gcpvpc"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/vpc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
@@ -61,11 +61,11 @@ type Provider struct {
 	GCE              *gce.Mock
 	Firestore        *firestore.Mock
 	CloudFunctions   *cloudfunctions.Mock
-	VPC              *gcpvpc.Mock
+	VPC              *vpc.Mock
 	CloudMonitoring  *cloudmonitoring.Mock
-	IAM              *gcpiam.Mock
+	IAM              *iam.Mock
 	CloudDNS         *clouddns.Mock
-	LB               *gcplb.Mock
+	LB               *loadbalancer.Mock
 	PubSub           *pubsub.Mock
 	Memorystore      *memorystore.Mock
 	SecretManager    *secretmanager.Mock
@@ -96,11 +96,11 @@ func New(opts ...config.Option) *Provider {
 		GCE:              gce.New(o),
 		Firestore:        firestore.New(o),
 		CloudFunctions:   cloudfunctions.New(o),
-		VPC:              gcpvpc.New(o),
+		VPC:              vpc.New(o),
 		CloudMonitoring:  cloudmonitoring.New(o),
-		IAM:              gcpiam.New(o),
+		IAM:              iam.New(o),
 		CloudDNS:         clouddns.New(o),
-		LB:               gcplb.New(o),
+		LB:               loadbalancer.New(o),
 		PubSub:           pubsub.New(o),
 		Memorystore:      memorystore.New(o),
 		SecretManager:    secretmanager.New(o),

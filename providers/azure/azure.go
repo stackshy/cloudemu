@@ -8,14 +8,14 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azureai"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azurecache"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuredns"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azureiam"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azurelb"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuremonitor"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuresearch"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuresql"
+	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
+	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
+	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
+	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
+	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
+	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
+	"github.com/stackshy/cloudemu/v2/providers/azure/search"
+	"github.com/stackshy/cloudemu/v2/providers/azure/sql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
@@ -122,10 +122,10 @@ type Provider struct {
 	CosmosPostgreSQL *cosmospostgresql.Mock
 	Functions        *functions.Mock
 	VNet             *vnet.Mock
-	Monitor          *azuremonitor.Mock
-	IAM              *azureiam.Mock
-	DNS              *azuredns.Mock
-	LB               *azurelb.Mock
+	Monitor          *monitor.Mock
+	IAM              *iam.Mock
+	DNS              *dns.Mock
+	LB               *loadbalancer.Mock
 	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
@@ -133,19 +133,19 @@ type Provider struct {
 	QueueStorage *servicebus.Mock
 	// TableStorage backs the Azure Table Storage data-plane handler.
 	TableStorage     *tablestorage.Mock
-	Cache            *azurecache.Mock
+	Cache            *cache.Mock
 	KeyVault         *keyvault.Mock
 	LogAnalytics     *loganalytics.Mock
 	NotificationHubs *notificationhubs.Mock
 	ACR              *acr.Mock
 	EventGrid        *eventgrid.Mock
-	SQL              *azuresql.Mock
+	SQL              *sql.Mock
 	PostgresFlex     *postgresflex.Mock
 	MySQLFlex        *mysqlflex.Mock
 	AKS              *aks.Mock
 	Databricks       *databricks.Mock
-	AzureAI          *azureai.Mock
-	AzureSearch      *azuresearch.Mock
+	AzureAI          *ai.Mock
+	AzureSearch      *search.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -168,26 +168,26 @@ func New(opts ...config.Option) *Provider {
 		CosmosPostgreSQL: cosmospostgresql.New(o),
 		Functions:        functions.New(o),
 		VNet:             vnet.New(o),
-		Monitor:          azuremonitor.New(o),
-		IAM:              azureiam.New(o),
-		DNS:              azuredns.New(o),
-		LB:               azurelb.New(o),
+		Monitor:          monitor.New(o),
+		IAM:              iam.New(o),
+		DNS:              dns.New(o),
+		LB:               loadbalancer.New(o),
 		ServiceBus:       servicebus.New(o),
 		QueueStorage:     servicebus.New(o),
 		TableStorage:     tablestorage.New(o),
-		Cache:            azurecache.New(o),
+		Cache:            cache.New(o),
 		KeyVault:         keyvault.New(o),
 		LogAnalytics:     loganalytics.New(o),
 		NotificationHubs: notificationhubs.New(o),
 		ACR:              acr.New(o),
 		EventGrid:        eventgrid.New(o),
-		SQL:              azuresql.New(o),
+		SQL:              sql.New(o),
 		PostgresFlex:     postgresflex.New(o),
 		MySQLFlex:        mysqlflex.New(o),
 		AKS:              aks.New(o),
 		Databricks:       databricks.New(o),
-		AzureAI:          azureai.New(o),
-		AzureSearch:      azuresearch.New(o),
+		AzureAI:          ai.New(o),
+		AzureSearch:      search.New(o),
 		SubscriptionID:   o.AccountID,
 		Region:           o.Region,
 	}
@@ -231,7 +231,7 @@ func New(opts ...config.Option) *Provider {
 // MySQL/PostgreSQL Flexible Servers) to the resourcediscovery
 // RelationalDatabases capability, so they surface in Resource Graph.
 type sqlDiscovery struct {
-	sql   *azuresql.Mock
+	sql   *sql.Mock
 	mysql *mysqlflex.Mock
 	pg    *postgresflex.Mock
 }
