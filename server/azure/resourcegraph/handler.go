@@ -108,7 +108,7 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 
 	data := make([]map[string]any, 0, len(results))
 	for i := range results {
-		data = append(data, resourceToWire(&results[i]))
+		data = append(data, h.resourceToWire(&results[i]))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
@@ -208,21 +208,87 @@ func applyLimit(results []resourcediscovery.Resource, kqlLimit, top, skip int) [
 	return results
 }
 
-// resourceToWire formats one Resource into the Azure Resource Graph row
-// shape: { id, name, type, location, resourceGroup, subscriptionId, tags }.
-// The portable Type is translated back to the canonical Azure type string.
-func resourceToWire(r *resourcediscovery.Resource) map[string]any {
+// resourceToWire formats one Resource into the Azure Resource Graph row shape.
+// The fixed columns (id, name, type, location, resourceGroup, subscriptionId,
+// tags) are always present; the resource-shape columns (sku, properties,
+// managedBy, kind, zones) are emitted from the Resource's generic attribute
+// slots only when set — the same rendering for every resource type, with no
+// per-type branching. id is the ARM resource ID and resourceGroup is derived
+// from it (real Resource Graph consumers parse both).
+func (h *Handler) resourceToWire(r *resourcediscovery.Resource) map[string]any {
+	// The emulator is single-subscription: every resource belongs to the
+	// configured subscription the ARM clients use. Stamp that, rather than
+	// parsing it out of each mock's ARN — those embed inconsistent placeholders
+	// (empty, a region, a zero id), which would make a subscription-scoped ARG
+	// query return nothing. Fall back to the ARN only when unset.
+	subscription := h.subscriptionID
+	if subscription == "" {
+		subscription = extractSubscription(r.ARN)
+	}
+
 	out := map[string]any{
 		"id":             r.ARN,
 		"name":           r.ID,
 		"type":           portableToAzureType(r.Service, r.Type),
 		"location":       r.Region,
-		"resourceGroup":  "default",
-		"subscriptionId": extractSubscription(r.ARN),
+		"resourceGroup":  resourceGroupOrDefault(r.ARN),
+		"subscriptionId": subscription,
 		"tags":           tagsOrEmpty(r.Tags),
 	}
 
+	if r.SKU != "" || r.SKUTier != "" || r.SKUCapacity > 0 {
+		sku := map[string]any{}
+		if r.SKU != "" {
+			sku["name"] = r.SKU
+		}
+
+		if r.SKUTier != "" {
+			sku["tier"] = r.SKUTier
+		}
+
+		if r.SKUCapacity > 0 {
+			sku["capacity"] = r.SKUCapacity
+		}
+
+		out["sku"] = sku
+	}
+
+	if r.ManagedBy != "" {
+		out["managedBy"] = r.ManagedBy
+	}
+
+	if r.Kind != "" {
+		out["kind"] = r.Kind
+	}
+
+	if len(r.Zones) > 0 {
+		out["zones"] = r.Zones
+	}
+
+	if len(r.Properties) > 0 {
+		out["properties"] = r.Properties
+	}
+
 	return out
+}
+
+// resourceGroupOrDefault pulls the resource group out of an Azure resource ID
+// (/subscriptions/<id>/resourceGroups/<rg>/...), case-insensitively. Falls back
+// to "default" for IDs that don't carry one.
+func resourceGroupOrDefault(id string) string {
+	const key = "/resourcegroups/"
+
+	i := strings.Index(strings.ToLower(id), key)
+	if i < 0 {
+		return "default"
+	}
+
+	rest := id[i+len(key):]
+	if j := strings.IndexByte(rest, '/'); j >= 0 {
+		return rest[:j]
+	}
+
+	return rest
 }
 
 func tagsOrEmpty(tags map[string]string) map[string]string {
@@ -255,17 +321,23 @@ func extractSubscription(arn string) string {
 // pairs grow.
 var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	"compute/Instance":                    "microsoft.compute/virtualmachines",
+	"compute/Volume":                      "microsoft.compute/disks",
+	"compute/ScaleSet":                    "microsoft.compute/virtualmachinescalesets",
 	"networking/VPC":                      "microsoft.network/virtualnetworks",
 	"networking/Subnet":                   "microsoft.network/subnets",
 	"networking/SecurityGroup":            "microsoft.network/networksecuritygroups",
+	"networking/NetworkInterface":         "microsoft.network/networkinterfaces",
+	"networking/ElasticIP":                "microsoft.network/publicipaddresses",
 	"storage/Bucket":                      "microsoft.storage/storageaccounts",
 	"database/Table":                      "microsoft.documentdb/databaseaccounts",
 	"serverless/Function":                 "microsoft.web/sites",
+	"appservice/AppServicePlan":           "microsoft.web/serverfarms",
 	"databricks/Workspace":                "microsoft.databricks/workspaces",
 	"kubernetes/Cluster":                  "microsoft.containerservice/managedclusters",
 	"kubernetes/NodeGroup":                "microsoft.containerservice/managedclusters/agentpools",
 	"relationaldb/SqlServer":              "microsoft.sql/servers",
 	"relationaldb/SqlManagedInstance":     "microsoft.sql/managedinstances",
+	"relationaldb/SqlDatabase":            "microsoft.sql/servers/databases",
 	"relationaldb/MySqlFlexibleServer":    "microsoft.dbformysql/flexibleservers",
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 }

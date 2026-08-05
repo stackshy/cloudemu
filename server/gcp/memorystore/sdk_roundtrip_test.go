@@ -53,6 +53,49 @@ func instanceName(id string) string {
 	return parent() + "/instances/" + id
 }
 
+// TestSDKMemorystoreConfigRoundTrip guards the #321 fixes: memorySizeGb,
+// redisVersion and displayName round-trip (not hardcoded), and Update (PATCH)
+// applies a new size.
+func TestSDKMemorystoreConfigRoundTrip(t *testing.T) {
+	svc := newRedisService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Projects.Locations.Instances.Create(parent(), &redis.Instance{
+		Tier:         "STANDARD_HA",
+		MemorySizeGb: 5,
+		RedisVersion: "REDIS_7_0",
+		DisplayName:  "prod cache",
+	}).InstanceId("big").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Instances.Get(instanceName("big")).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.MemorySizeGb != 5 || got.RedisVersion != "REDIS_7_0" || got.DisplayName != "prod cache" {
+		t.Fatalf("config did not round-trip: size=%d version=%q display=%q",
+			got.MemorySizeGb, got.RedisVersion, got.DisplayName)
+	}
+
+	// Update the size via PATCH.
+	if _, err := svc.Projects.Locations.Instances.Patch(instanceName("big"), &redis.Instance{
+		MemorySizeGb: 8,
+	}).UpdateMask("memorySizeGb").Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch (the #321 Update fix): %v", err)
+	}
+
+	after, err := svc.Projects.Locations.Instances.Get(instanceName("big")).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get after patch: %v", err)
+	}
+
+	if after.MemorySizeGb != 8 {
+		t.Errorf("after patch memorySizeGb=%d want 8", after.MemorySizeGb)
+	}
+}
+
 func TestSDKMemorystoreLifecycle(t *testing.T) {
 	svc := newRedisService(t)
 	ctx := context.Background()

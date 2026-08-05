@@ -32,6 +32,7 @@ type pubsubMessage struct {
 	Attributes  map[string]string `json:"attributes,omitempty"`
 	OrderingKey string            `json:"orderingKey,omitempty"`
 	MessageID   string            `json:"messageId,omitempty"`
+	PublishTime string            `json:"publishTime,omitempty"`
 }
 
 type publishResponse struct {

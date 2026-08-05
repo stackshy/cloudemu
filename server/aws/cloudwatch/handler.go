@@ -21,6 +21,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 const (
@@ -33,26 +34,46 @@ const (
 )
 
 // Handler serves CloudWatch rpc-v2-cbor requests against a monitoring driver.
+// An optional IPAM metrics source lets the handler surface derived AWS/IPAM
+// metrics that the monitoring store itself doesn't hold.
 type Handler struct {
 	monitoring mondriver.Monitoring
+	ipam       netdriver.IPAMMetrics
 }
 
-// New returns a CloudWatch handler backed by m.
+// New returns a CloudWatch handler backed by m. Use SetIPAMMetrics to attach
+// the optional derived AWS/IPAM metrics source. Kept single-argument so callers
+// that don't wire IPAM (e.g. the base query-protocol tests) construct it
+// unchanged.
 func New(m mondriver.Monitoring) *Handler {
 	return &Handler{monitoring: m}
 }
 
-// Matches returns true for Smithy rpc-v2-cbor requests.
+// SetIPAMMetrics attaches an optional IPAMMetrics source (nil-safe) supplying
+// the derived AWS/IPAM namespace metrics, following the same setter-injection
+// pattern as the other CloudEmu handlers.
+func (h *Handler) SetIPAMMetrics(ipam netdriver.IPAMMetrics) {
+	h.ipam = ipam
+}
+
+// Matches returns true for Smithy rpc-v2-cbor requests, and for classic
+// query-protocol CloudWatch requests (used by the AWS CLI and older SDKs),
+// disambiguated from EC2 by the SigV4 "monitoring" credential scope.
 func (*Handler) Matches(r *http.Request) bool {
-	if r.Header.Get(protocolHeader) != protocolValue {
-		return false
+	if r.Header.Get(protocolHeader) == protocolValue && strings.HasPrefix(r.URL.Path, pathPrefix) {
+		return true
 	}
 
-	return strings.HasPrefix(r.URL.Path, pathPrefix)
+	return isQueryRequest(r)
 }
 
 // ServeHTTP parses the URL path for the operation name and dispatches.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isQueryRequest(r) {
+		h.serveQuery(w, r)
+		return
+	}
+
 	op := extractOperation(r.URL.Path)
 	if op == "" {
 		writeCBORError(w, http.StatusBadRequest, "InvalidRequest", "missing operation in path")

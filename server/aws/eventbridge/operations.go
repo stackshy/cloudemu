@@ -103,7 +103,7 @@ func (h *Handler) putRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, putRuleResponse{RuleArn: ruleARN(rule.EventBus, rule.Name)})
+	wire.WriteJSON(w, putRuleResponse{RuleArn: h.ruleARN(rule.EventBus, rule.Name)})
 }
 
 func (h *Handler) describeRule(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +119,7 @@ func (h *Handler) describeRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, describeRuleResponse{
-		Arn:          ruleARN(rule.EventBus, rule.Name),
+		Arn:          h.ruleARN(rule.EventBus, rule.Name),
 		Name:         rule.Name,
 		EventBusName: rule.EventBus,
 		Description:  rule.Description,
@@ -143,7 +143,7 @@ func (h *Handler) listRules(w http.ResponseWriter, r *http.Request) {
 	entries := make([]ruleEntry, 0, len(rules))
 	for i := range rules {
 		entries = append(entries, ruleEntry{
-			Arn:          ruleARN(rules[i].EventBus, rules[i].Name),
+			Arn:          h.ruleARN(rules[i].EventBus, rules[i].Name),
 			Name:         rules[i].Name,
 			EventBusName: rules[i].EventBus,
 			Description:  rules[i].Description,

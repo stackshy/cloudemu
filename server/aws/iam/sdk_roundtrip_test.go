@@ -110,6 +110,63 @@ func TestSDKIAMUserLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKInlineRolePolicy is a regression guard for issue #319: PutRolePolicy
+// and the inline-role-policy operations returned InvalidAction.
+func TestSDKInlineRolePolicy(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateRole(ctx, &awsiam.CreateRoleInput{
+		RoleName:                 aws.String("inline-role"),
+		AssumeRolePolicyDocument: aws.String(trustPolicy),
+	}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+
+	if _, err := client.PutRolePolicy(ctx, &awsiam.PutRolePolicyInput{
+		RoleName:       aws.String("inline-role"),
+		PolicyName:     aws.String("s3access"),
+		PolicyDocument: aws.String(samplePolicy),
+	}); err != nil {
+		t.Fatalf("PutRolePolicy: %v", err)
+	}
+
+	list, err := client.ListRolePolicies(ctx, &awsiam.ListRolePoliciesInput{RoleName: aws.String("inline-role")})
+	if err != nil {
+		t.Fatalf("ListRolePolicies: %v", err)
+	}
+
+	if len(list.PolicyNames) != 1 || list.PolicyNames[0] != "s3access" {
+		t.Fatalf("ListRolePolicies = %v", list.PolicyNames)
+	}
+
+	got, err := client.GetRolePolicy(ctx, &awsiam.GetRolePolicyInput{
+		RoleName: aws.String("inline-role"), PolicyName: aws.String("s3access"),
+	})
+	if err != nil {
+		t.Fatalf("GetRolePolicy: %v", err)
+	}
+
+	if aws.ToString(got.PolicyDocument) == "" {
+		t.Fatal("GetRolePolicy returned empty document")
+	}
+
+	if _, err := client.DeleteRolePolicy(ctx, &awsiam.DeleteRolePolicyInput{
+		RoleName: aws.String("inline-role"), PolicyName: aws.String("s3access"),
+	}); err != nil {
+		t.Fatalf("DeleteRolePolicy: %v", err)
+	}
+
+	list, err = client.ListRolePolicies(ctx, &awsiam.ListRolePoliciesInput{RoleName: aws.String("inline-role")})
+	if err != nil {
+		t.Fatalf("ListRolePolicies after delete: %v", err)
+	}
+
+	if len(list.PolicyNames) != 0 {
+		t.Fatalf("ListRolePolicies after delete = %v, want empty", list.PolicyNames)
+	}
+}
+
 func TestSDKIAMRoleAndPolicy(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

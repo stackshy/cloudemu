@@ -87,7 +87,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeVpcPeering,
 		h.routeFlowLogs,
 		h.routeNetworkACLs,
+		h.routeTransitGateways,
+		h.routeVPN,
+		h.routeDHCPOptions,
+		h.routePrefixLists,
+		h.routeEgressOnlyIGW,
+		h.routeEndpointServices,
+		h.routeClientVPN,
+		h.routeIPAM,
+		h.routeIPAMResources,
+		h.routeIPAMDiscovery,
+		h.routeIPAMByoip,
+		h.routeIPAMResolver,
+		h.routeIPAMPolicy,
+		h.routeTrafficMirroring,
+		h.routeNetworkInsights,
+		h.routeVPCBlockPublicAccess,
 		h.routeVPC,
+		h.routeTags,
+		h.routeMetadata,
+		h.routeInstanceStatus,
 	}
 	for _, route := range routes {
 		if route(w, r, action) {
@@ -225,7 +244,6 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateAutoScalingGroup":
@@ -436,6 +454,8 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 		h.associateRouteTable(w, r)
 	case "DisassociateRouteTable":
 		h.disassociateRouteTable(w, r)
+	case "CreateNetworkInterface":
+		h.createNetworkInterface(w, r)
 	case "DescribeNetworkInterfaces":
 		h.describeNetworkInterfaces(w, r)
 	case "DetachNetworkInterface":

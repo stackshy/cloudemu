@@ -43,7 +43,13 @@ type Mock struct {
 	policies    *memstore.Store[*driver.ClusterPolicy]
 	libraries   *memstore.Store[[]driver.LibraryStatus]
 	permissions *memstore.Store[*driver.ObjectPermissions]
-	opts        *config.Options
+
+	// Extended ARM control-plane resources (issue #209).
+	accessConnectors *memstore.Store[*driver.AccessConnector]
+	privateEndpoints *memstore.Store[*driver.PrivateEndpointConnection]
+	vnetPeerings     *memstore.Store[*driver.VirtualNetworkPeering]
+
+	opts *config.Options
 
 	jobSeq atomic.Int64
 	runSeq atomic.Int64
@@ -60,7 +66,12 @@ func New(opts *config.Options) *Mock {
 		policies:    memstore.New[*driver.ClusterPolicy](),
 		libraries:   memstore.New[[]driver.LibraryStatus](),
 		permissions: memstore.New[*driver.ObjectPermissions](),
-		opts:        opts,
+
+		accessConnectors: memstore.New[*driver.AccessConnector](),
+		privateEndpoints: memstore.New[*driver.PrivateEndpointConnection](),
+		vnetPeerings:     memstore.New[*driver.VirtualNetworkPeering](),
+
+		opts: opts,
 	}
 }
 

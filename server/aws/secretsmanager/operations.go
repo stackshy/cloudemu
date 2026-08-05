@@ -176,3 +176,65 @@ func (h *Handler) listSecretVersionIDs(w http.ResponseWriter, r *http.Request) {
 
 	wire.WriteJSON(w, listSecretVersionIDsResponse{ARN: info.ResourceID, Name: info.Name, Versions: out})
 }
+
+func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request) {
+	mut, ok := h.secrets.(secretMutator)
+	if !ok {
+		writeErr(w, errNotSupported)
+		return
+	}
+
+	var req updateSecretRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	info, err := mut.UpdateSecret(r.Context(), resolveSecretID(req.SecretID),
+		req.Description, secretValue(req.SecretString, req.SecretBinary))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, updateSecretResponse{ARN: info.ResourceID, Name: info.Name})
+}
+
+func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
+	mut, ok := h.secrets.(secretMutator)
+	if !ok {
+		writeErr(w, errNotSupported)
+		return
+	}
+
+	var req tagResourceRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := mut.TagSecret(r.Context(), resolveSecretID(req.SecretID), tagsToMap(req.Tags)); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, struct{}{})
+}
+
+func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
+	mut, ok := h.secrets.(secretMutator)
+	if !ok {
+		writeErr(w, errNotSupported)
+		return
+	}
+
+	var req untagResourceRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := mut.UntagSecret(r.Context(), resolveSecretID(req.SecretID), req.TagKeys); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, struct{}{})
+}

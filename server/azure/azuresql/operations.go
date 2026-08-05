@@ -1,6 +1,7 @@
 package azuresql
 
 import (
+	"context"
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -108,131 +109,120 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurea
 	azurearm.WriteJSON(w, http.StatusOK, armList[armServer]{Value: out})
 }
 
-// ---- Database ops ----
+// ---- Database ops (Databases capability) ----
 
-//nolint:gocyclo // sequential field defaulting + restore path keeps the body linear.
-func (h *Handler) createOrUpdateDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+// databases returns the optional Databases capability. Logical Azure SQL
+// databases are backed by this capability (not the RDS instance path) so a
+// database created over the wire is the same record Resource Graph enumerates
+// via ListDatabases.
+func (h *Handler) databases() (rdsdriver.Databases, bool) {
+	d, ok := h.db.(rdsdriver.Databases)
+	return d, ok
+}
+
+func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.DatabaseConfig {
+	cfg := rdsdriver.DatabaseConfig{Server: rp.ResourceName, Name: rp.SubResourceName}
+	if body.SKU != nil {
+		cfg.SKUName = body.SKU.Name
+		cfg.SKUTier = body.SKU.Tier
+	}
+
+	if body.Properties != nil {
+		cfg.Collation = body.Properties.Collation
+		if body.Properties.ZoneRedundant != nil {
+			cfg.ZoneRedundant = *body.Properties.ZoneRedundant
+		}
+	}
+
+	return cfg
+}
+
+// putDatabase serves both PUT (CreateOrUpdate) and PATCH (Update): create when
+// absent, otherwise apply the body's sku/tier/zoneRedundant to the existing
+// record. The Databases capability has no update verb, so an upsert merges the
+// body over the stored fields and re-creates.
+func (*Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
 	var body armDatabase
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
 
-	server := rp.ResourceName
-	dbName := rp.SubResourceName
+	cfg := dbCfgFromBody(&body, rp)
 
-	// Restore path: createMode=Restore + sourceDatabaseId.
-	if body.Properties != nil && body.Properties.CreateMode == "Restore" {
-		input := rdsdriver.RestoreInstanceInput{
-			NewInstanceID: server + "/" + dbName,
-			SnapshotID:    body.Properties.SourceDatabaseID,
-		}
-
-		if body.SKU != nil {
-			input.InstanceClass = body.SKU.Name
-		}
-
-		inst, err := h.db.RestoreInstanceFromSnapshot(r.Context(), input)
-		if err != nil {
-			azurearm.WriteCErr(w, err)
-			return
-		}
-
-		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(inst, rp.Subscription, rp.ResourceGroup))
-
-		return
-	}
-
-	cfg := rdsdriver.InstanceConfig{
-		ID:               dbName,
-		ClusterID:        server,
-		Engine:           "SQLServer",
-		AvailabilityZone: body.Location,
-		Tags:             body.Tags,
-	}
-
-	if body.SKU != nil {
-		cfg.InstanceClass = body.SKU.Name
-	}
-
-	if body.Properties != nil {
-		if body.Properties.MaxSizeBytes > 0 {
-			cfg.AllocatedStorage = int(body.Properties.MaxSizeBytes / (1 << 30))
-		}
-
-		cfg.ElasticPoolID = body.Properties.ElasticPoolID
-	}
-
-	inst, err := h.db.CreateInstance(r.Context(), cfg)
+	out, err := db.CreateDatabase(r.Context(), cfg)
 	if err != nil {
 		if !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
 			return
 		}
 
-		// Upsert: PUT on an existing database applies the body (SKU/maxSize/tags).
-		inst, err = h.db.ModifyInstance(r.Context(), server+"/"+dbName, rdsdriver.ModifyInstanceInput{
-			InstanceClass:    cfg.InstanceClass,
-			AllocatedStorage: cfg.AllocatedStorage,
-			ElasticPoolID:    cfg.ElasticPoolID,
-			Tags:             body.Tags,
-		})
+		out, err = replaceDatabase(r.Context(), db, &body, &cfg)
 		if err != nil {
 			azurearm.WriteCErr(w, err)
 			return
 		}
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(inst, rp.Subscription, rp.ResourceGroup))
+	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
 }
 
-func (h *Handler) updateDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	var body armDatabase
-	if !azurearm.DecodeJSON(w, r, &body) {
-		return
+// replaceDatabase merges the request body over the stored database and
+// re-creates it, so a PUT/PATCH against an existing database changes sku/tier/
+// HA while leaving omitted fields intact.
+func replaceDatabase(
+	ctx context.Context, db rdsdriver.Databases, body *armDatabase, cfg *rdsdriver.DatabaseConfig,
+) (*rdsdriver.Database, error) {
+	existing, err := db.GetDatabase(ctx, cfg.Server, cfg.Name)
+	if err != nil {
+		return nil, err
 	}
 
-	input := rdsdriver.ModifyInstanceInput{
-		Tags: body.Tags,
+	merged := *existing
+	if cfg.SKUName != "" {
+		merged.SKUName = cfg.SKUName
 	}
 
-	if body.SKU != nil {
-		input.InstanceClass = body.SKU.Name
+	if cfg.SKUTier != "" {
+		merged.SKUTier = cfg.SKUTier
 	}
 
-	if body.Properties != nil {
-		if body.Properties.MaxSizeBytes > 0 {
-			input.AllocatedStorage = int(body.Properties.MaxSizeBytes / (1 << 30))
-		}
-
-		input.ElasticPoolID = body.Properties.ElasticPoolID
+	if cfg.Collation != "" {
+		merged.Collation = cfg.Collation
 	}
 
-	inst, err := h.db.ModifyInstance(r.Context(), rp.ResourceName+"/"+rp.SubResourceName, input)
+	if body.Properties != nil && body.Properties.ZoneRedundant != nil {
+		merged.ZoneRedundant = *body.Properties.ZoneRedundant
+	}
+
+	if err := db.DeleteDatabase(ctx, cfg.Server, cfg.Name); err != nil {
+		return nil, err
+	}
+
+	return db.CreateDatabase(ctx, rdsdriver.DatabaseConfig{
+		Server:        merged.Server,
+		Name:          merged.Name,
+		Charset:       merged.Charset,
+		Collation:     merged.Collation,
+		SKUName:       merged.SKUName,
+		SKUTier:       merged.SKUTier,
+		ZoneRedundant: merged.ZoneRedundant,
+	})
+}
+
+func (*Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
+	out, err := db.GetDatabase(r.Context(), rp.ResourceName, rp.SubResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(inst, rp.Subscription, rp.ResourceGroup))
+	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
 }
 
-func (h *Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	insts, err := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName + "/" + rp.SubResourceName})
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	if len(insts) == 0 {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "database "+rp.SubResourceName+" not found")
-		return
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(&insts[0], rp.Subscription, rp.ResourceGroup))
-}
-
-func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.db.DeleteInstance(r.Context(), rp.ResourceName+"/"+rp.SubResourceName); err != nil {
+func (*Handler) deleteDatabase(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases,
+) {
+	if err := db.DeleteDatabase(r.Context(), rp.ResourceName, rp.SubResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -240,21 +230,18 @@ func (h *Handler) deleteDatabase(w http.ResponseWriter, r *http.Request, rp *azu
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) listDatabases(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	all, err := h.db.DescribeInstances(r.Context(), nil)
+func (*Handler) listDatabases(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases,
+) {
+	items, err := db.ListDatabases(r.Context(), rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	out := make([]armDatabase, 0)
-
-	for i := range all {
-		if all[i].ClusterID != rp.ResourceName {
-			continue
-		}
-
-		out = append(out, toARMDatabase(&all[i], rp.Subscription, rp.ResourceGroup))
+	out := make([]armDatabase, 0, len(items))
+	for i := range items {
+		out = append(out, toARMDatabase(&items[i], rp))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, armList[armDatabase]{Value: out})

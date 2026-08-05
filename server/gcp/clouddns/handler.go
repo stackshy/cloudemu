@@ -21,6 +21,7 @@ package clouddns
 import (
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
@@ -42,7 +43,8 @@ const (
 
 // Handler serves dns.googleapis.com v1 requests against a dns driver.
 type Handler struct {
-	dns dnsdriver.DNS
+	dns       dnsdriver.DNS
+	changeSeq atomic.Uint64
 }
 
 // New returns a Cloud DNS handler backed by d.

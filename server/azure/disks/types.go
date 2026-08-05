@@ -12,8 +12,11 @@ type diskRequest struct {
 }
 
 type diskRequestProps struct {
-	CreationData *creationData `json:"creationData,omitempty"`
-	DiskSizeGB   int           `json:"diskSizeGB,omitempty"`
+	CreationData      *creationData `json:"creationData,omitempty"`
+	DiskSizeGB        int           `json:"diskSizeGB,omitempty"`
+	DiskIOPSReadWrite int           `json:"diskIOPSReadWrite"`
+	DiskMBpsReadWrite int           `json:"diskMBpsReadWrite"`
+	Tier              string        `json:"tier"`
 }
 
 type creationData struct {
@@ -42,6 +45,9 @@ type diskResponseProps struct {
 	DiskSizeGB        int           `json:"diskSizeGB"`
 	DiskState         string        `json:"diskState"`
 	CreationData      *creationData `json:"creationData,omitempty"`
+	DiskIOPSReadWrite int           `json:"diskIOPSReadWrite,omitempty"`
+	DiskMBpsReadWrite int           `json:"diskMBpsReadWrite,omitempty"`
+	Tier              string        `json:"tier,omitempty"`
 }
 
 type diskListResponse struct {

@@ -10,6 +10,7 @@ package virtualmachines
 type vmRequest struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
+	Zones      []string          `json:"zones,omitempty"`
 	Properties vmRequestProps    `json:"properties"`
 }
 
@@ -18,6 +19,10 @@ type vmRequestProps struct {
 	StorageProfile  *storageProfile  `json:"storageProfile,omitempty"`
 	NetworkProfile  *networkProfile  `json:"networkProfile,omitempty"`
 	OSProfile       *osProfile       `json:"osProfile,omitempty"`
+	// Priority ("Spot"/"Regular") and LicenseType (hybrid-benefit marker) are
+	// cost inputs the SDK sends under properties; we carry them to the driver.
+	Priority    string `json:"priority,omitempty"`
+	LicenseType string `json:"licenseType,omitempty"`
 }
 
 type hardwareProfile struct {
@@ -26,6 +31,12 @@ type hardwareProfile struct {
 
 type storageProfile struct {
 	ImageReference *imageReference `json:"imageReference,omitempty"`
+	OSDisk         *osDisk         `json:"osDisk,omitempty"`
+}
+
+// osDisk carries the OS-disk shape; we only model osType, a cost input.
+type osDisk struct {
+	OSType string `json:"osType,omitempty"`
 }
 
 type imageReference struct {
@@ -58,6 +69,7 @@ type vmResponse struct {
 	Type       string            `json:"type"`
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
+	Zones      []string          `json:"zones,omitempty"`
 	Properties vmResponseProps   `json:"properties"`
 }
 
@@ -68,6 +80,8 @@ type vmResponseProps struct {
 	StorageProfile    *storageProfile  `json:"storageProfile,omitempty"`
 	NetworkProfile    *networkProfile  `json:"networkProfile,omitempty"`
 	OSProfile         *osProfile       `json:"osProfile,omitempty"`
+	Priority          string           `json:"priority,omitempty"`
+	LicenseType       string           `json:"licenseType,omitempty"`
 	InstanceView      *instanceView    `json:"instanceView,omitempty"`
 }
 

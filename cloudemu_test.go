@@ -7097,13 +7097,10 @@ func TestVolumeLifecycleAWS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vols, err = p.EC2.DescribeVolumes(ctx, []string{vol.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(vols) != 0 {
-		t.Errorf("expected 0 volumes after delete, got %d", len(vols))
+	// Describing the deleted volume by ID now yields NotFound (issue #319,
+	// theme C: InvalidVolume.NotFound), not an empty success.
+	if _, err = p.EC2.DescribeVolumes(ctx, []string{vol.ID}); err == nil {
+		t.Error("expected NotFound describing a deleted volume, got nil")
 	}
 }
 

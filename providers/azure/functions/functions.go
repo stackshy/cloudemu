@@ -60,6 +60,7 @@ type Mock struct {
 	funcs      *memstore.Store[funcData]
 	layers     *memstore.Store[*layerData]
 	mappings   *memstore.Store[*driver.EventSourceMappingInfo]
+	plans      *memstore.Store[*AppServicePlan]
 	opts       *config.Options
 	handlersMu sync.RWMutex
 	handlers   map[string]driver.HandlerFunc
@@ -100,6 +101,7 @@ func New(opts *config.Options) *Mock {
 		funcs:    memstore.New[funcData](),
 		layers:   memstore.New[*layerData](),
 		mappings: memstore.New[*driver.EventSourceMappingInfo](),
+		plans:    memstore.New[*AppServicePlan](),
 		opts:     opts,
 		handlers: make(map[string]driver.HandlerFunc),
 	}
@@ -208,7 +210,20 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	}
 
 	if h == nil {
-		return &driver.InvokeOutput{StatusCode: 500, Error: "no handler registered"}, nil
+		// The emulator can't execute uploaded function code, so with no Go
+		// handler registered we return a successful stub echoing the request
+		// payload rather than a FunctionError — mirroring the AWS Lambda
+		// provider so identical cross-provider tests behave the same.
+		m.emitMetric(input.FunctionName, map[string]float64{
+			"FunctionExecutionCount": 1, "FunctionExecutionUnits": 1,
+		})
+
+		payload := input.Payload
+		if len(payload) == 0 {
+			payload = []byte("{}")
+		}
+
+		return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
 	}
 
 	payload, err := h(ctx, input.Payload)

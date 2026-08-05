@@ -15,6 +15,9 @@ const (
 	// Canonical "owner" returned in responses. SDK clients don't validate it;
 	// any 12-digit account id works.
 	ownerID = "123456789012"
+
+	// stateRunning is the driver's string name for a running instance.
+	stateRunning = "running"
 )
 
 // stateCode maps the driver's string state to AWS's numeric code.
@@ -22,7 +25,7 @@ func stateCode(name string) int {
 	switch name {
 	case "pending":
 		return stateCodePending
-	case "running":
+	case stateRunning:
 		return stateCodeRunning
 	case "shutting-down":
 		return stateCodeShuttingDown

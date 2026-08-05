@@ -2,9 +2,8 @@
 package vpc
 
 import (
-	"sync"
-
 	"context"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -26,9 +25,28 @@ const (
 // interface and every call would answer InvalidAction at runtime instead of
 // failing the build.
 var (
-	_ driver.Networking        = (*Mock)(nil)
-	_ driver.NetworkInterfaces = (*Mock)(nil)
-	_ driver.VPCAttributes     = (*Mock)(nil)
+	_ driver.Networking                 = (*Mock)(nil)
+	_ driver.NetworkInterfaces          = (*Mock)(nil)
+	_ driver.VPCAttributes              = (*Mock)(nil)
+	_ driver.TransitGateways            = (*Mock)(nil)
+	_ driver.VPNConnections             = (*Mock)(nil)
+	_ driver.DHCPOptionSets             = (*Mock)(nil)
+	_ driver.PrefixLists                = (*Mock)(nil)
+	_ driver.EgressOnlyInternetGateways = (*Mock)(nil)
+	_ driver.VPCEndpointServices        = (*Mock)(nil)
+	_ driver.ClientVPN                  = (*Mock)(nil)
+	_ driver.IPAM                       = (*Mock)(nil)
+	_ driver.IPAMResources              = (*Mock)(nil)
+	_ driver.IPAMDiscovery              = (*Mock)(nil)
+	_ driver.IPAMByoasn                 = (*Mock)(nil)
+	_ driver.IPAMByoip                  = (*Mock)(nil)
+	_ driver.IPAMPrefixListResolver     = (*Mock)(nil)
+	_ driver.IPAMExternalToken          = (*Mock)(nil)
+	_ driver.IPAMPolicy                 = (*Mock)(nil)
+	_ driver.IPAMMetrics                = (*Mock)(nil)
+	_ driver.TrafficMirroring           = (*Mock)(nil)
+	_ driver.NetworkInsights            = (*Mock)(nil)
+	_ driver.VPCBlockPublicAccess       = (*Mock)(nil)
 )
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
@@ -53,7 +71,68 @@ type Mock struct {
 	rtAssocs       *memstore.Store[*rtAssocData]
 	enis           *memstore.Store[*eniData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
-	opts           *config.Options
+
+	// AWS-specific networking capabilities (optional interfaces).
+	transitGateways    *memstore.Store[*driver.TransitGateway]
+	tgwAttachments     *memstore.Store[*driver.TransitGatewayVPCAttachment]
+	tgwRouteTables     *memstore.Store[*driver.TransitGatewayRouteTable]
+	tgwRoutes          *memstore.Store[*driver.TransitGatewayRoute]
+	tgwAssociations    *memstore.Store[*driver.TransitGatewayRouteTableAssociation]
+	customerGateways   *memstore.Store[*driver.CustomerGateway]
+	vpnGateways        *memstore.Store[*driver.VPNGateway]
+	vpnConnections     *memstore.Store[*driver.VPNConnection]
+	dhcpOptions        *memstore.Store[*driver.DHCPOptions]
+	prefixLists        *memstore.Store[*driver.PrefixList]
+	egressOnlyIGWs     *memstore.Store[*driver.EgressOnlyInternetGateway]
+	endpointServices   *memstore.Store[*driver.EndpointService]
+	clientVPNEndpoints *memstore.Store[*driver.ClientVPNEndpoint]
+	clientVPNAssocs    *memstore.Store[*driver.ClientVPNTargetNetwork]
+	clientVPNAuthRules *memstore.Store[*driver.ClientVPNAuthorizationRule]
+	clientVPNRoutes    *memstore.Store[*driver.ClientVPNRoute]
+
+	ipams               *memstore.Store[*driver.Ipam]
+	ipamScopes          *memstore.Store[*driver.IpamScope]
+	ipamPools           *memstore.Store[*driver.IpamPool]
+	ipamPoolCidrs       *memstore.Store[*driver.IpamPoolCidr]
+	ipamAllocations     *memstore.Store[*driver.IpamPoolAllocation]
+	ipamDiscoveries     *memstore.Store[*driver.IpamResourceDiscovery]
+	ipamRDAssociations  *memstore.Store[*driver.IpamResourceDiscoveryAssociation]
+	ipamByoasns         *memstore.Store[*driver.Byoasn]
+	ipamByoipCidrs      *memstore.Store[*driver.ByoipCidr]
+	ipamResolvers       *memstore.Store[*driver.IpamPrefixListResolver]
+	ipamResolverTargets *memstore.Store[*driver.IpamPrefixListResolverTarget]
+	ipamTokens          *memstore.Store[*driver.IpamExternalResourceVerificationToken]
+	ipamPolicies        *memstore.Store[*driver.IpamPolicy]
+
+	// Stage B EC2-family capabilities (optional interfaces).
+	trafficMirrorTargets               *memstore.Store[*driver.TrafficMirrorTarget]
+	trafficMirrorFilters               *memstore.Store[*driver.TrafficMirrorFilter]
+	trafficMirrorSessions              *memstore.Store[*driver.TrafficMirrorSession]
+	networkInsightsPaths               *memstore.Store[*driver.NetworkInsightsPath]
+	networkInsightsAnalyses            *memstore.Store[*driver.NetworkInsightsAnalysis]
+	networkInsightsAccessScopes        *memstore.Store[*driver.NetworkInsightsAccessScope]
+	networkInsightsAccessScopeAnalyses *memstore.Store[*driver.NetworkInsightsAccessScopeAnalysis]
+	vpcBPAExclusions                   *memstore.Store[*driver.VPCBlockPublicAccessExclusion]
+
+	// vpcBPAOptions is the account/region-level Block Public Access singleton,
+	// nil until first modified. Guarded by mu.
+	vpcBPAOptions *driver.VPCBlockPublicAccessOptions
+
+	// endpointServicePerms holds allowed principals per endpoint-service id,
+	// guarded by mu.
+	endpointServicePerms map[string][]string
+
+	// ipamPoolByCidr / ipamPoolByAllocation map a provisioned CIDR id and an
+	// allocation id to their owning pool id, guarded by mu.
+	ipamPoolByCidr       map[string]string
+	ipamPoolByAllocation map[string]string
+
+	// ipamResourceOverrides persists ModifyIpamResourceCidr scope/unmonitor
+	// changes, keyed by resourceID, since the base resource-CIDR list is
+	// re-derived from VPCs/subnets on every read. Guarded by mu.
+	ipamResourceOverrides map[string]ipamResourceOverride
+
+	opts *config.Options
 }
 
 type vpcData struct {
@@ -100,7 +179,53 @@ func New(opts *config.Options) *Mock {
 		rtAssocs:       memstore.New[*rtAssocData](),
 		enis:           memstore.New[*eniData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
-		opts:           opts,
+
+		transitGateways:    memstore.New[*driver.TransitGateway](),
+		tgwAttachments:     memstore.New[*driver.TransitGatewayVPCAttachment](),
+		tgwRouteTables:     memstore.New[*driver.TransitGatewayRouteTable](),
+		tgwRoutes:          memstore.New[*driver.TransitGatewayRoute](),
+		tgwAssociations:    memstore.New[*driver.TransitGatewayRouteTableAssociation](),
+		customerGateways:   memstore.New[*driver.CustomerGateway](),
+		vpnGateways:        memstore.New[*driver.VPNGateway](),
+		vpnConnections:     memstore.New[*driver.VPNConnection](),
+		dhcpOptions:        memstore.New[*driver.DHCPOptions](),
+		prefixLists:        memstore.New[*driver.PrefixList](),
+		egressOnlyIGWs:     memstore.New[*driver.EgressOnlyInternetGateway](),
+		endpointServices:   memstore.New[*driver.EndpointService](),
+		clientVPNEndpoints: memstore.New[*driver.ClientVPNEndpoint](),
+		clientVPNAssocs:    memstore.New[*driver.ClientVPNTargetNetwork](),
+		clientVPNAuthRules: memstore.New[*driver.ClientVPNAuthorizationRule](),
+		clientVPNRoutes:    memstore.New[*driver.ClientVPNRoute](),
+
+		ipams:               memstore.New[*driver.Ipam](),
+		ipamScopes:          memstore.New[*driver.IpamScope](),
+		ipamPools:           memstore.New[*driver.IpamPool](),
+		ipamPoolCidrs:       memstore.New[*driver.IpamPoolCidr](),
+		ipamAllocations:     memstore.New[*driver.IpamPoolAllocation](),
+		ipamDiscoveries:     memstore.New[*driver.IpamResourceDiscovery](),
+		ipamRDAssociations:  memstore.New[*driver.IpamResourceDiscoveryAssociation](),
+		ipamByoasns:         memstore.New[*driver.Byoasn](),
+		ipamByoipCidrs:      memstore.New[*driver.ByoipCidr](),
+		ipamResolvers:       memstore.New[*driver.IpamPrefixListResolver](),
+		ipamResolverTargets: memstore.New[*driver.IpamPrefixListResolverTarget](),
+		ipamTokens:          memstore.New[*driver.IpamExternalResourceVerificationToken](),
+		ipamPolicies:        memstore.New[*driver.IpamPolicy](),
+
+		trafficMirrorTargets:               memstore.New[*driver.TrafficMirrorTarget](),
+		trafficMirrorFilters:               memstore.New[*driver.TrafficMirrorFilter](),
+		trafficMirrorSessions:              memstore.New[*driver.TrafficMirrorSession](),
+		networkInsightsPaths:               memstore.New[*driver.NetworkInsightsPath](),
+		networkInsightsAnalyses:            memstore.New[*driver.NetworkInsightsAnalysis](),
+		networkInsightsAccessScopes:        memstore.New[*driver.NetworkInsightsAccessScope](),
+		networkInsightsAccessScopeAnalyses: memstore.New[*driver.NetworkInsightsAccessScopeAnalysis](),
+		vpcBPAExclusions:                   memstore.New[*driver.VPCBlockPublicAccessExclusion](),
+
+		endpointServicePerms:  map[string][]string{},
+		ipamPoolByCidr:        map[string]string{},
+		ipamPoolByAllocation:  map[string]string{},
+		ipamResourceOverrides: map[string]ipamResourceOverride{},
+
+		opts: opts,
 	}
 }
 
@@ -201,6 +326,12 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 func (m *Mock) DescribeVPCs(_ context.Context, ids []string) ([]driver.VPCInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	for _, id := range ids {
+		if !m.vpcs.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "vpc %q not found", id)
+		}
+	}
 
 	return describeResources(m.vpcs, ids, toVPCInfo), nil
 }
@@ -327,13 +458,21 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 
 // DescribeSecurityGroups returns security groups matching the given IDs, or all if ids is empty.
 func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver.SecurityGroupInfo, error) {
+	for _, id := range ids {
+		if !m.securityGroups.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "security group %q not found", id)
+		}
+	}
+
 	return describeResources(m.securityGroups, ids, toSGInfo), nil
 }
 
 // describeResources is a generic helper for Describe* methods that list or filter by IDs.
 func describeResources[T any, R any](store *memstore.Store[T], ids []string, toInfo func(T) R) []R {
 	if len(ids) == 0 {
-		all := store.All()
+		// SortedValues (not All) so no-filter Describe* output is deterministic,
+		// matching the repo's list-ordering contract.
+		all := store.SortedValues()
 		result := make([]R, 0, len(all))
 
 		for _, item := range all {

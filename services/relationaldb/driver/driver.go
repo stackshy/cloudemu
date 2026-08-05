@@ -267,6 +267,12 @@ type DatabaseConfig struct {
 	Name      string
 	Charset   string
 	Collation string
+	// SKUName / SKUTier are the database compute SKU (e.g. "GP_Gen5_2" /
+	// "GeneralPurpose") and ZoneRedundant is the HA flag — cost inputs a
+	// discoverer reads from an Azure SQL database's sku / properties.
+	SKUName       string
+	SKUTier       string
+	ZoneRedundant bool
 }
 
 // Database is a logical database hosted by a managed server (Azure MySQL /
@@ -277,6 +283,11 @@ type Database struct {
 	Charset   string
 	Collation string
 	ARN       string
+	// SKUName / SKUTier / ZoneRedundant are echoed on read for cost discovery
+	// (Azure SQL database sku.name + properties.currentSku / zoneRedundant).
+	SKUName       string
+	SKUTier       string
+	ZoneRedundant bool
 }
 
 // Databases is an OPTIONAL capability for managing the logical databases inside
@@ -492,7 +503,10 @@ type ManagedInstanceConfig struct {
 	SubnetID    string
 	VCores      int
 	StorageGB   int
-	Tags        map[string]string
+	// StorageAccountType is the backup storage redundancy (GRS/ZRS/LRS →
+	// GeoRedundant/ZoneRedundant/LocalRedundant), a per-instance cost input.
+	StorageAccountType string
+	Tags               map[string]string
 }
 
 // ManagedInstance is a SQL Managed Instance — a fully-managed instance that
@@ -507,10 +521,12 @@ type ManagedInstance struct {
 	SubnetID    string
 	VCores      int
 	StorageGB   int
-	State       string
-	FQDN        string
-	ARN         string
-	Tags        map[string]string
+	// StorageAccountType is the backup storage redundancy echoed on read.
+	StorageAccountType string
+	State              string
+	FQDN               string
+	ARN                string
+	Tags               map[string]string
 }
 
 // ManagedDatabaseConfig describes a database on a managed instance.

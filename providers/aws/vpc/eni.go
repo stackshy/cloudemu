@@ -24,6 +24,36 @@ type eniData struct {
 	Tags         map[string]string
 }
 
+// CreateNetworkInterface creates a standalone, unattached ENI in the given
+// subnet (ec2:CreateNetworkInterface). The VPC is resolved from the subnet, so
+// an unknown subnet is NotFound.
+func (m *Mock) CreateNetworkInterface(
+	_ context.Context, subnetID, description string, tags map[string]string,
+) (*driver.NetworkInterface, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sub, ok := m.subnets.Get(subnetID)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "InvalidSubnetID.NotFound: subnet %q not found", subnetID)
+	}
+
+	id := idgen.GenerateID("eni-")
+	eni := &eniData{
+		ID:          id,
+		VPCID:       sub.VPCID,
+		SubnetID:    subnetID,
+		Status:      ENIStatusAvailable,
+		Description: description,
+		Tags:        copyTags(tags),
+	}
+	m.enis.Set(id, eni)
+
+	info := toENIInfo(eni)
+
+	return &info, nil
+}
+
 // DescribeNetworkInterfaces returns ENIs matching the given IDs, or all if empty.
 //
 // An explicitly named ID that does not exist is NotFound rather than an empty

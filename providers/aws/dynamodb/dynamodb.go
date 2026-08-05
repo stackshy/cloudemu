@@ -347,6 +347,12 @@ func (m *Mock) matchQueryItems(
 			}
 		}
 
+		// Apply the FilterExpression (post key-condition), matching real
+		// DynamoDB: Query filters the key-matched set the same way Scan does.
+		if !matchesFilters(item, input.Filters) {
+			continue
+		}
+
 		matched = append(matched, item)
 	}
 

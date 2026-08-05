@@ -32,6 +32,10 @@ const providerName = "Microsoft.Compute"
 // resourceType is the ARM resource type this handler serves.
 const resourceType = "virtualMachines"
 
+// resourceTypeScaleSets is the ARM resource type for VM Scale Sets, served by
+// the same handler when the backing driver exposes scale-set methods.
+const resourceTypeScaleSets = "virtualMachineScaleSets"
+
 // resourceTypeLocations is the resource type used for async operation
 // status endpoints (Microsoft.Compute/locations/{loc}/operationStatuses/{id}).
 const resourceTypeLocations = "locations"
@@ -59,7 +63,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceType, resourceTypeLocations:
+	case resourceType, resourceTypeScaleSets, resourceTypeLocations:
 		return true
 	}
 
@@ -78,6 +82,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.ResourceType == resourceTypeLocations && rp.SubResource == "operationStatuses" {
 		serveOperationStatus(w, r, rp)
+		return
+	}
+
+	if rp.ResourceType == resourceTypeScaleSets {
+		h.serveScaleSet(w, r, rp)
 		return
 	}
 

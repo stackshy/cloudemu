@@ -421,6 +421,10 @@ type computeConfigCompat = struct {
 	UserData       string
 	Managed        bool
 	Principal      string
+	OSType         string
+	Priority       string
+	LicenseType    string
+	Zones          []string
 }
 
 // computeInstanceConfig reproduces the helper used elsewhere in the package

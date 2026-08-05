@@ -38,6 +38,7 @@ type repoData struct {
 	images        *memstore.Store[*imageData]
 	scans         *memstore.Store[*driver.ScanResult]
 	policy        *driver.LifecyclePolicy
+	repoPolicy    string // resource (permissions) policy JSON, set via SetRepositoryPolicy
 	scanOnPush    bool
 	tagMutability string
 }

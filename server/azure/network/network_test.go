@@ -115,6 +115,58 @@ func TestSDKVNetRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSDKPublicIPRoundTrip(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{Network: cloudP.VNet})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+	opts := clientOpts(ts)
+
+	pipClient, err := armnetwork.NewPublicIPAddressesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	poller, err := pipClient.BeginCreateOrUpdate(ctx, "rg-1", "pip-1",
+		armnetwork.PublicIPAddress{
+			Location: to.Ptr("eastus"),
+			SKU: &armnetwork.PublicIPAddressSKU{
+				Name: to.Ptr(armnetwork.PublicIPAddressSKUNameStandard),
+			},
+			Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+				PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+			},
+		}, nil)
+	if err != nil {
+		t.Fatalf("publicIP BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}); err != nil {
+		t.Fatalf("publicIP poll: %v", err)
+	}
+
+	got, err := pipClient.Get(ctx, "rg-1", "pip-1", nil)
+	if err != nil {
+		t.Fatalf("publicIP Get: %v", err)
+	}
+
+	if got.SKU == nil || got.SKU.Name == nil || *got.SKU.Name != armnetwork.PublicIPAddressSKUNameStandard {
+		t.Errorf("sku.name=%v want Standard", got.SKU)
+	}
+
+	if got.Properties == nil || got.Properties.PublicIPAllocationMethod == nil ||
+		*got.Properties.PublicIPAllocationMethod != armnetwork.IPAllocationMethodStatic {
+		t.Errorf("publicIPAllocationMethod=%v want Static", got.Properties)
+	}
+
+	if got.Properties == nil || got.Properties.IPAddress == nil || *got.Properties.IPAddress == "" {
+		t.Errorf("ipAddress empty, want non-empty")
+	}
+}
+
 func TestSDKNSGRoundTrip(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	srv := azureserver.New(azureserver.Drivers{Network: cloudP.VNet})

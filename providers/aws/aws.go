@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
 	"github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/providers/aws/route53"
@@ -84,7 +85,7 @@ func (a eksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 			return nil, err
 		}
 
-		dc := resourcediscovery.DiscoveredCluster{Name: name, NodeGroups: ngs}
+		dc := resourcediscovery.DiscoveredCluster{Name: name, NodeGroups: resourcediscovery.NodeGroupsFromNames(ngs)}
 		if c != nil {
 			dc.ARN = c.ARN // use the EKS mock's own ARN verbatim
 			// Keep Region in step with the verbatim ARN so the node-group ARN
@@ -128,6 +129,7 @@ type Provider struct {
 	ElastiCache         *elasticache.Mock
 	Keyspaces           *keyspaces.Mock
 	MemoryDB            *memorydb.Mock
+	NetworkFirewall     *networkfirewall.Mock
 	SecretsManager      *secretsmanager.Mock
 	CloudWatchLogs      *cloudwatchlogs.Mock
 	SNS                 *sns.Mock
@@ -164,6 +166,7 @@ func New(opts ...config.Option) *Provider {
 		ElastiCache:         elasticache.New(o),
 		Keyspaces:           keyspaces.New(o),
 		MemoryDB:            memorydb.New(o),
+		NetworkFirewall:     networkfirewall.New(o),
 		SecretsManager:      secretsmanager.New(o),
 		CloudWatchLogs:      cloudwatchlogs.New(o),
 		SNS:                 sns.New(o),
@@ -202,6 +205,12 @@ func New(opts ...config.Option) *Provider {
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	p.SageMaker.SetMonitoring(p.CloudWatch)
+	// SNS -> SQS fan-out: publishes deliver to SQS-protocol subscriptions.
+	p.SNS.SetSQSDeliverer(p.SQS)
+	// EventBridge -> SQS: matched rules deliver events to SQS targets.
+	p.EventBridge.SetSQSDeliverer(p.SQS)
+	// S3 -> SQS: object-create events deliver to bucket notification targets.
+	p.S3.SetSQSDeliverer(p.SQS)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAWS, o.AccountID, o.Region,

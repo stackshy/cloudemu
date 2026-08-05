@@ -143,9 +143,47 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := rdsActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
+	if _, ok := rdsActions[action]; !ok {
+		return false
+	}
 
-	return ok
+	// AddTagsToResource/RemoveTagsFromResource/ListTagsForResource are generic
+	// tag verbs RDS shares with other query-protocol services (e.g. ElastiCache
+	// on the same wire). RDS registers before them, so claim these only when
+	// the SigV4 credential scope names "rds"; otherwise let them fall through
+	// to the owning handler.
+	if _, ambiguous := rdsAmbiguousTagActions[action]; ambiguous {
+		return sigV4ScopeService(r.Header.Get("Authorization")) == "rds"
+	}
+
+	return true
+}
+
+// rdsAmbiguousTagActions are the tag verbs RDS shares with other
+// query-protocol services on the same wire.
+var rdsAmbiguousTagActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"AddTagsToResource":      {},
+	"RemoveTagsFromResource": {},
+	"ListTagsForResource":    {},
+}
+
+// sigV4ScopeService extracts the service from a SigV4 Authorization credential
+// scope: "Credential=AKID/20260101/us-east-1/<service>/aws4_request".
+func sigV4ScopeService(auth string) string {
+	i := strings.Index(auth, "Credential=")
+	if i < 0 {
+		return ""
+	}
+
+	parts := strings.Split(auth[i+len("Credential="):], "/")
+
+	const serviceField = 3
+	if len(parts) <= serviceField {
+		return ""
+	}
+
+	return parts[serviceField]
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.

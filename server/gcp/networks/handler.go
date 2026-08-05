@@ -23,8 +23,10 @@ package networks
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -39,7 +41,11 @@ const (
 	resourceAddresses   = "addresses"
 	netNameTag          = "cloudemu:gcpNetName"
 	subnetNameTag       = "cloudemu:gcpSubnetName"
+	subnetNetworkTag    = "cloudemu:gcpSubnetNet"
+	autoSubnetTag       = "cloudemu:gcpAutoSubnet"
 	firewallNameTag     = "cloudemu:gcpFwName"
+	firewallSpecTag     = "cloudemu:gcpFwSpec"
+	trueValue           = "true"
 )
 
 // Handler serves the GCP networking REST surface.
@@ -188,14 +194,26 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
+	if _, err := findNetByName(r.Context(), h.net, req.Name); err == nil {
+		gcprest.WriteError(w, http.StatusConflict, "alreadyExists",
+			"network "+req.Name+" already exists")
+
+		return
+	}
+
 	cidr := "10.0.0.0/16"
 	if req.IPv4Range != "" {
 		cidr = req.IPv4Range
 	}
 
+	tags := map[string]string{netNameTag: req.Name}
+	if req.AutoCreateSubnetworks != nil && *req.AutoCreateSubnetworks {
+		tags[autoSubnetTag] = trueValue
+	}
+
 	cfg := netdriver.VPCConfig{
 		CIDRBlock: cidr,
-		Tags:      map[string]string{netNameTag: req.Name},
+		Tags:      tags,
 	}
 
 	if _, err := h.net.CreateVPC(r.Context(), cfg); err != nil {
@@ -294,7 +312,7 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		VPCID:            vpcID,
 		CIDRBlock:        req.IPCIDRRange,
 		AvailabilityZone: rp.ScopeName,
-		Tags:             map[string]string{subnetNameTag: req.Name},
+		Tags:             map[string]string{subnetNameTag: req.Name, subnetNetworkTag: lastSegment(req.Network)},
 	}
 
 	if _, err := h.net.CreateSubnet(r.Context(), cfg); err != nil {
@@ -401,11 +419,20 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		}
 	}
 
+	// The driver's SecurityGroup model can't express GCP's firewall shape
+	// (allowed/denied/direction/priority/targetTags), so persist the rule spec
+	// verbatim in a reserved tag and reconstruct it on read. Without this a
+	// created firewall reads back with no rules.
+	tags := map[string]string{firewallNameTag: req.Name}
+	if spec := marshalFirewallSpec(&req); spec != "" {
+		tags[firewallSpecTag] = spec
+	}
+
 	cfg := netdriver.SecurityGroupConfig{
 		Name:        req.Name,
 		Description: req.Description,
 		VPCID:       vpcID,
-		Tags:        map[string]string{firewallNameTag: req.Name},
+		Tags:        tags,
 	}
 
 	if _, err := h.net.CreateSecurityGroup(r.Context(), cfg); err != nil {
@@ -564,9 +591,19 @@ func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host st
 		ID:                    numericID(info.ID),
 		Name:                  name,
 		IPv4Range:             info.CIDRBlock,
-		AutoCreateSubnetworks: false,
+		AutoCreateSubnetworks: info.Tags[autoSubnetTag] == trueValue,
 		SelfLink:              gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", name),
 	}
+}
+
+// lastSegment returns the final path/URL segment (e.g. a network self-link or
+// partial ref reduced to its bare name).
+func lastSegment(ref string) string {
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		return ref[i+1:]
+	}
+
+	return ref
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -578,7 +615,7 @@ func toSubnetworkResponse(info *netdriver.SubnetInfo, rp gcprest.ResourcePath, h
 		region = info.AvailabilityZone
 	}
 
-	return subnetworkResponse{
+	resp := subnetworkResponse{
 		Kind:        "compute#subnetwork",
 		ID:          numericID(info.ID),
 		Name:        name,
@@ -586,19 +623,83 @@ func toSubnetworkResponse(info *netdriver.SubnetInfo, rp gcprest.ResourcePath, h
 		Region:      host + "/compute/v1/projects/" + rp.Project + "/regions/" + region,
 		SelfLink:    gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, region, "subnetworks", name),
 	}
+
+	// Echo the parent network self-link so clients can discover a subnet's
+	// network (real GCP always returns it).
+	if net := info.Tags[subnetNetworkTag]; net != "" {
+		resp.Network = gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", net)
+	}
+
+	return resp
 }
 
 //nolint:gocritic // rp is a request-scoped value
 func toFirewallResponse(info *netdriver.SecurityGroupInfo, rp gcprest.ResourcePath, host string) firewallResponse {
 	name := tagOr(info.Tags, firewallNameTag, info.ID)
 
-	return firewallResponse{
+	resp := firewallResponse{
 		Kind:        "compute#firewall",
 		ID:          numericID(info.ID),
 		Name:        name,
 		Description: info.Description,
 		SelfLink:    gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "firewalls", name),
 	}
+
+	if spec, ok := unmarshalFirewallSpec(info.Tags[firewallSpecTag]); ok {
+		resp.Network = spec.Network
+		resp.Priority = spec.Priority
+		resp.Direction = spec.Direction
+		resp.Allowed = spec.Allowed
+		resp.Denied = spec.Denied
+		resp.SourceRanges = spec.SourceRanges
+		resp.TargetTags = spec.TargetTags
+	}
+
+	return resp
+}
+
+// firewallSpec is the GCP firewall rule shape persisted verbatim (as JSON in a
+// reserved tag) because the driver's SecurityGroup model can't express it.
+type firewallSpec struct {
+	Network      string         `json:"network,omitempty"`
+	Priority     int            `json:"priority,omitempty"`
+	Direction    string         `json:"direction,omitempty"`
+	Allowed      []firewallRule `json:"allowed,omitempty"`
+	Denied       []firewallRule `json:"denied,omitempty"`
+	SourceRanges []string       `json:"sourceRanges,omitempty"`
+	TargetTags   []string       `json:"targetTags,omitempty"`
+}
+
+func marshalFirewallSpec(req *firewallRequest) string {
+	spec := firewallSpec{
+		Network:      req.Network,
+		Priority:     req.Priority,
+		Direction:    req.Direction,
+		Allowed:      req.Allowed,
+		Denied:       req.Denied,
+		SourceRanges: req.SourceRanges,
+		TargetTags:   req.TargetTags,
+	}
+
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return ""
+	}
+
+	return string(b)
+}
+
+func unmarshalFirewallSpec(s string) (firewallSpec, bool) {
+	if s == "" {
+		return firewallSpec{}, false
+	}
+
+	var spec firewallSpec
+	if err := json.Unmarshal([]byte(s), &spec); err != nil {
+		return firewallSpec{}, false
+	}
+
+	return spec, true
 }
 
 func tagOr(m map[string]string, key, fallback string) string {

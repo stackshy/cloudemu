@@ -109,6 +109,84 @@ func TestSDKPubSubPublishPullAck(t *testing.T) {
 	}
 }
 
+// TestSDKPubSubSubscriptionMetadata guards the #321 fixes: a subscription may
+// have a name distinct from its topic, and its ackDeadline + labels must
+// round-trip on Get (not be hardcoded). Delete must also be effective.
+func TestSDKPubSubSubscriptionMetadata(t *testing.T) {
+	svc := newSDKService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Projects.Topics.Create("projects/demo/topics/events",
+		&pubsubv1.Topic{}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Topic.Create: %v", err)
+	}
+
+	// Distinct subscription name (not "events").
+	if _, err := svc.Projects.Subscriptions.Create("projects/demo/subscriptions/billing-sub",
+		&pubsubv1.Subscription{
+			Topic:              "projects/demo/topics/events",
+			AckDeadlineSeconds: 45,
+			Labels:             map[string]string{"team": "fin"},
+		}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Subscription.Create (distinct name): %v", err)
+	}
+
+	got, err := svc.Projects.Subscriptions.Get("projects/demo/subscriptions/billing-sub").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Subscription.Get: %v", err)
+	}
+
+	if !strings.HasSuffix(got.Topic, "/topics/events") {
+		t.Errorf("topic=%q want .../topics/events", got.Topic)
+	}
+
+	if got.AckDeadlineSeconds != 45 {
+		t.Errorf("ackDeadlineSeconds=%d want 45", got.AckDeadlineSeconds)
+	}
+
+	if got.Labels["team"] != "fin" {
+		t.Errorf("labels=%v want team=fin", got.Labels)
+	}
+
+	// Second subscription so List order is observable. Created after billing-sub
+	// but sorts before it — proving List sorts by name rather than echoing
+	// insertion or map-iteration order.
+	if _, err := svc.Projects.Subscriptions.Create("projects/demo/subscriptions/analytics-sub",
+		&pubsubv1.Subscription{Topic: "projects/demo/topics/events"}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Subscription.Create (second): %v", err)
+	}
+
+	// List must return the real subscriptions (distinct names + metadata), not a
+	// phantom one named after the topic queue, in deterministic sorted order.
+	list, err := svc.Projects.Subscriptions.List("projects/demo").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Subscriptions.List: %v", err)
+	}
+
+	if len(list.Subscriptions) != 2 {
+		t.Fatalf("List returned %d subs, want 2: %+v", len(list.Subscriptions), list.Subscriptions)
+	}
+
+	if !strings.HasSuffix(list.Subscriptions[0].Name, "/subscriptions/analytics-sub") ||
+		!strings.HasSuffix(list.Subscriptions[1].Name, "/subscriptions/billing-sub") {
+		t.Fatalf("List not sorted by name: [%q, %q]",
+			list.Subscriptions[0].Name, list.Subscriptions[1].Name)
+	}
+
+	ls := list.Subscriptions[1] // billing-sub carries the metadata under test
+	if !strings.HasSuffix(ls.Topic, "/topics/events") || ls.AckDeadlineSeconds != 45 {
+		t.Errorf("List sub metadata wrong: topic=%q ackDeadline=%d", ls.Topic, ls.AckDeadlineSeconds)
+	}
+
+	if _, err := svc.Projects.Subscriptions.Delete("projects/demo/subscriptions/billing-sub").Context(ctx).Do(); err != nil {
+		t.Fatalf("Subscription.Delete: %v", err)
+	}
+
+	if _, err := svc.Projects.Subscriptions.Get("projects/demo/subscriptions/billing-sub").Context(ctx).Do(); err == nil {
+		t.Fatal("Get after Delete returned nil error, want NotFound")
+	}
+}
+
 func TestSDKPubSubPublishToMissingTopic(t *testing.T) {
 	svc := newSDKService(t)
 

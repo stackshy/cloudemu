@@ -21,13 +21,20 @@ type armManagedInstance struct {
 }
 
 type armManagedInstanceCfg struct {
-	AdministratorLogin       string `json:"administratorLogin,omitempty"`
-	VCores                   int    `json:"vCores,omitempty"`
-	StorageSizeInGB          int    `json:"storageSizeInGB,omitempty"`
-	LicenseType              string `json:"licenseType,omitempty"`
-	SubnetID                 string `json:"subnetId,omitempty"`
-	State                    string `json:"state,omitempty"`
-	FullyQualifiedDomainName string `json:"fullyQualifiedDomainName,omitempty"`
+	AdministratorLogin string `json:"administratorLogin,omitempty"`
+	VCores             int    `json:"vCores,omitempty"`
+	StorageSizeInGB    int    `json:"storageSizeInGB,omitempty"`
+	LicenseType        string `json:"licenseType,omitempty"`
+	SubnetID           string `json:"subnetId,omitempty"`
+	// RequestedBackupStorageRedundancy is the write field the armsql SDK sends
+	// (Geo/GeoZone/Local/Zone). StorageAccountType is the CloudEmu read echo in
+	// the driver's normalized form (…Redundant); CurrentBackupStorageRedundancy
+	// echoes the enum form the SDK reads back.
+	RequestedBackupStorageRedundancy string `json:"requestedBackupStorageRedundancy,omitempty"`
+	StorageAccountType               string `json:"storageAccountType,omitempty"`
+	CurrentBackupStorageRedundancy   string `json:"currentBackupStorageRedundancy,omitempty"`
+	State                            string `json:"state,omitempty"`
+	FullyQualifiedDomainName         string `json:"fullyQualifiedDomainName,omitempty"`
 }
 
 type armManagedDatabase struct {
@@ -108,9 +115,58 @@ func miCfgFromBody(body *armManagedInstance, rp *azurearm.ResourcePath) rdsdrive
 		cfg.StorageGB = body.Properties.StorageSizeInGB
 		cfg.LicenseType = body.Properties.LicenseType
 		cfg.SubnetID = body.Properties.SubnetID
+		cfg.StorageAccountType = normalizeBackupRedundancy(body.Properties.RequestedBackupStorageRedundancy)
 	}
 
 	return cfg
+}
+
+// Backup storage redundancy: the armsql SDK enum (…) and the driver's stored
+// read form (…Redundant).
+const (
+	backupGeo              = "Geo"
+	backupGeoRedundant     = "GeoRedundant"
+	backupGeoZone          = "GeoZone"
+	backupGeoZoneRedundant = "GeoZoneRedundant"
+	backupLocal            = "Local"
+	backupLocalRedundant   = "LocalRedundant"
+	backupZone             = "Zone"
+	backupZoneRedundant    = "ZoneRedundant"
+)
+
+// normalizeBackupRedundancy maps the armsql requestedBackupStorageRedundancy
+// enum (Geo/GeoZone/Local/Zone) to the driver's read form (…Redundant). An
+// empty/unknown value returns "" so the provider applies its own default.
+func normalizeBackupRedundancy(v string) string {
+	switch v {
+	case backupGeo:
+		return backupGeoRedundant
+	case backupGeoZone:
+		return backupGeoZoneRedundant
+	case backupLocal:
+		return backupLocalRedundant
+	case backupZone:
+		return backupZoneRedundant
+	default:
+		return ""
+	}
+}
+
+// backupRedundancyEnum reverses normalizeBackupRedundancy so the armsql SDK,
+// which reads currentBackupStorageRedundancy, observes the stored redundancy.
+func backupRedundancyEnum(v string) string {
+	switch v {
+	case backupGeoRedundant:
+		return backupGeo
+	case backupGeoZoneRedundant:
+		return backupGeoZone
+	case backupLocalRedundant:
+		return backupLocal
+	case backupZoneRedundant:
+		return backupZone
+	default:
+		return ""
+	}
 }
 
 func (*Handler) putManagedInstance(
@@ -228,13 +284,16 @@ func toARMManagedInstance(mi *rdsdriver.ManagedInstance, rp *azurearm.ResourcePa
 		Tags:     mi.Tags,
 		SKU:      &armSKU{Name: mi.SKUName, Tier: mi.SKUTier},
 		Properties: &armManagedInstanceCfg{
-			AdministratorLogin:       mi.AdminLogin,
-			VCores:                   mi.VCores,
-			StorageSizeInGB:          mi.StorageGB,
-			LicenseType:              mi.LicenseType,
-			SubnetID:                 mi.SubnetID,
-			State:                    mi.State,
-			FullyQualifiedDomainName: mi.FQDN,
+			AdministratorLogin:               mi.AdminLogin,
+			VCores:                           mi.VCores,
+			StorageSizeInGB:                  mi.StorageGB,
+			LicenseType:                      mi.LicenseType,
+			SubnetID:                         mi.SubnetID,
+			StorageAccountType:               mi.StorageAccountType,
+			RequestedBackupStorageRedundancy: backupRedundancyEnum(mi.StorageAccountType),
+			CurrentBackupStorageRedundancy:   backupRedundancyEnum(mi.StorageAccountType),
+			State:                            mi.State,
+			FullyQualifiedDomainName:         mi.FQDN,
 		},
 	}
 }

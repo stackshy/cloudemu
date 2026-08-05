@@ -64,10 +64,13 @@ func (m *Mock) CreateManagedInstance(
 		SubnetID:    cfg.SubnetID,
 		VCores:      orDefaultInt(cfg.VCores, miDefaultVCores),
 		StorageGB:   orDefaultInt(cfg.StorageGB, miDefaultStorage),
-		State:       miStateReady,
-		FQDN:        cfg.Name + ".managed.database.windows.net",
-		ARN:         m.miARN(cfg.Name),
-		Tags:        copyTags(cfg.Tags),
+		// Real Azure defaults a managed instance's backup redundancy to
+		// GeoRedundant when the request omits it.
+		StorageAccountType: orDefault(cfg.StorageAccountType, "GeoRedundant"),
+		State:              miStateReady,
+		FQDN:               cfg.Name + ".managed.database.windows.net",
+		ARN:                m.miARN(cfg.Name),
+		Tags:               copyTags(cfg.Tags),
 	}
 
 	m.managedInstances.Set(cfg.Name, mi)
@@ -124,6 +127,7 @@ func (m *Mock) UpdateManagedInstance(
 	mi.SubnetID = orDefault(cfg.SubnetID, mi.SubnetID)
 	mi.VCores = orDefaultInt(cfg.VCores, mi.VCores)
 	mi.StorageGB = orDefaultInt(cfg.StorageGB, mi.StorageGB)
+	mi.StorageAccountType = orDefault(cfg.StorageAccountType, mi.StorageAccountType)
 
 	if cfg.Tags != nil {
 		mi.Tags = copyTags(cfg.Tags)

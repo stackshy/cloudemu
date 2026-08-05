@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -234,7 +235,11 @@ func TestInvokeReturnsHandlerPayload(t *testing.T) {
 	}
 }
 
-func TestInvokeMissingHandlerSignalsError(t *testing.T) {
+// TestInvokeNoHandlerEchoesStub is a regression guard for issue #319: with no
+// Go handler registered, invoke used to return a FunctionError ("no handler
+// registered"). The emulator can't run an uploaded zip, so it now returns a
+// successful stub that echoes the request payload — invoke is testable.
+func TestInvokeNoHandlerEchoesStub(t *testing.T) {
 	srv, _ := newServer(t)
 
 	if r := postJSON(t, srv.URL+"/2015-03-31/functions",
@@ -243,17 +248,68 @@ func TestInvokeMissingHandlerSignalsError(t *testing.T) {
 	}
 
 	resp, err := http.Post(srv.URL+"/2015-03-31/functions/nohandler/invocations",
-		"application/json", bytes.NewReader([]byte(`{}`)))
+		"application/json", bytes.NewReader([]byte(`{"hi":1}`)))
 	if err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 
 	defer resp.Body.Close()
 
-	if resp.Header.Get("X-Amz-Function-Error") == "" {
-		t.Fatal("expected X-Amz-Function-Error on no-handler invoke")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("invoke status = %d, want 200", resp.StatusCode)
+	}
+
+	if resp.Header.Get("X-Amz-Function-Error") != "" {
+		t.Fatal("no-handler invoke must not signal a FunctionError")
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != `{"hi":1}` {
+		t.Fatalf("stub invoke body = %q, want the echoed payload", string(body))
 	}
 }
+
+// TestEventSourceMappings is a regression guard for issue #319:
+// CreateEventSourceMapping (and the ESM lifecycle) returned 405.
+func TestEventSourceMappings(t *testing.T) {
+	srv, _ := newServer(t)
+
+	if r := postJSON(t, srv.URL+"/2015-03-31/functions",
+		`{"FunctionName":"fx","Runtime":"go1.x"}`); r.StatusCode != http.StatusCreated {
+		t.Fatalf("create fn: %d", r.StatusCode)
+	}
+
+	esmURL := srv.URL + esmBasePath
+	create := postJSON(t, esmURL,
+		`{"FunctionName":"fx","EventSourceArn":"arn:aws:sqs:us-east-1:000000000000:q","BatchSize":5}`)
+	if create.StatusCode != http.StatusCreated {
+		t.Fatalf("create ESM status = %d", create.StatusCode)
+	}
+
+	var esm struct {
+		UUID  string `json:"UUID"`
+		State string `json:"State"`
+	}
+
+	decode(t, create, &esm)
+
+	if esm.UUID == "" {
+		t.Fatal("CreateEventSourceMapping returned empty UUID")
+	}
+
+	// GET by UUID.
+	got := doJSON(t, http.MethodGet, esmURL+"/"+esm.UUID, "")
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("get ESM status = %d", got.StatusCode)
+	}
+
+	// DELETE by UUID.
+	if del := doJSON(t, http.MethodDelete, esmURL+"/"+esm.UUID, ""); del.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete ESM status = %d", del.StatusCode)
+	}
+}
+
+const esmBasePath = "/2015-03-31/event-source-mappings"
 
 func TestInvokeOnMissingFunctionReturns404(t *testing.T) {
 	srv, _ := newServer(t)
@@ -325,6 +381,8 @@ type functionShape struct {
 	FunctionArn  string    `json:"FunctionArn"`
 	Runtime      string    `json:"Runtime"`
 	Handler      string    `json:"Handler"`
+	Timeout      int       `json:"Timeout"`
+	Version      string    `json:"Version"`
 	Environment  *envShape `json:"Environment"`
 }
 
@@ -337,4 +395,187 @@ func postJSON(t *testing.T, url, body string) *http.Response {
 	}
 
 	return resp
+}
+
+func doJSON(t *testing.T, method, url, body string) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new %s %s: %v", method, url, err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+
+	return resp
+}
+
+// TestConfigurationVersionsAliases is a regression guard for issue #319: the
+// Lambda handler previously returned 404 "unsupported Lambda path" for
+// UpdateFunctionConfiguration, PublishVersion, and the alias sub-resources.
+func TestConfigurationVersionsAliases(t *testing.T) {
+	srv, _ := newServer(t)
+	base := srv.URL + "/2015-03-31/functions"
+
+	if resp := postJSON(t, base,
+		`{"FunctionName":"fn","Runtime":"go1.x","Handler":"main","Timeout":10}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", resp.StatusCode)
+	}
+
+	// UpdateFunctionConfiguration.
+	resp := doJSON(t, http.MethodPut, base+"/fn/configuration", `{"Timeout":60,"MemorySize":256}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update-configuration status = %d", resp.StatusCode)
+	}
+
+	var cfg functionShape
+	decode(t, resp, &cfg)
+
+	if cfg.Timeout != 60 {
+		t.Fatalf("Timeout = %d, want 60", cfg.Timeout)
+	}
+
+	// PublishVersion.
+	resp = postJSON(t, base+"/fn/versions", `{"Description":"v1"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("publish-version status = %d", resp.StatusCode)
+	}
+
+	var ver functionShape
+	decode(t, resp, &ver)
+
+	if ver.Version != "1" {
+		t.Fatalf("Version = %q, want 1", ver.Version)
+	}
+
+	// CreateAlias + GetAlias.
+	resp = postJSON(t, base+"/fn/aliases", `{"Name":"prod","FunctionVersion":"1"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create-alias status = %d", resp.StatusCode)
+	}
+
+	resp = doJSON(t, http.MethodGet, base+"/fn/aliases/prod", "")
+
+	var alias struct {
+		Name            string `json:"Name"`
+		FunctionVersion string `json:"FunctionVersion"`
+		AliasArn        string `json:"AliasArn"`
+	}
+
+	decode(t, resp, &alias)
+
+	if alias.Name != "prod" || alias.FunctionVersion != "1" {
+		t.Fatalf("get-alias = %+v", alias)
+	}
+
+	if !strings.Contains(alias.AliasArn, ":function:fn:prod") {
+		t.Fatalf("AliasArn = %q", alias.AliasArn)
+	}
+}
+
+// TestResourcePolicy is a regression guard for issue #319: AddPermission,
+// GetPolicy, and RemovePermission (Terraform's aws_lambda_permission) were
+// unreachable. It also verifies the AWS-local policyManager assertion path.
+func TestResourcePolicy(t *testing.T) {
+	srv, _ := newServer(t)
+	base := srv.URL + "/2015-03-31/functions"
+
+	if resp := postJSON(t, base,
+		`{"FunctionName":"pf","Runtime":"go1.x","Handler":"main"}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", resp.StatusCode)
+	}
+
+	// AddPermission.
+	resp := postJSON(t, base+"/pf/policy",
+		`{"StatementId":"s3invoke","Action":"lambda:InvokeFunction","Principal":"s3.amazonaws.com","SourceArn":"arn:aws:s3:::b"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("add-permission status = %d", resp.StatusCode)
+	}
+
+	// GetPolicy surfaces the statement.
+	resp = doJSON(t, http.MethodGet, base+"/pf/policy", "")
+
+	var got struct {
+		Policy string `json:"Policy"`
+	}
+
+	decode(t, resp, &got)
+
+	if !strings.Contains(got.Policy, `"Sid":"s3invoke"`) {
+		t.Fatalf("policy missing statement: %s", got.Policy)
+	}
+
+	// RemovePermission, then GetPolicy must 404.
+	if resp := doJSON(t, http.MethodDelete, base+"/pf/policy/s3invoke", ""); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove-permission status = %d", resp.StatusCode)
+	}
+
+	if resp := doJSON(t, http.MethodGet, base+"/pf/policy", ""); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get-policy after remove status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestTagging is a regression guard for issue #319: the Lambda tagging API
+// (/2017-03-31/tags/{arn}) was unmatched, so it fell through to the S3
+// catch-all and returned a 405 + HTML body the SDK couldn't deserialize.
+func TestTagging(t *testing.T) {
+	srv, _ := newServer(t)
+
+	if resp := postJSON(t, srv.URL+"/2015-03-31/functions",
+		`{"FunctionName":"tf","Runtime":"go1.x","Handler":"main"}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", resp.StatusCode)
+	}
+
+	// The SDK percent-encodes the ARN in the path; mirror that here so the
+	// server's URL parser keeps the query string separate.
+	tagsURL := srv.URL + "/2017-03-31/tags/" +
+		url.PathEscape("arn:aws:lambda:us-east-1:000000000000:function:tf")
+
+	// TagResource.
+	if resp := postJSON(t, tagsURL, `{"Tags":{"env":"prod","team":"sls"}}`); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("tag-resource status = %d", resp.StatusCode)
+	}
+
+	// ListTags.
+	resp := doJSON(t, http.MethodGet, tagsURL, "")
+
+	var got struct {
+		Tags map[string]string `json:"Tags"`
+	}
+
+	decode(t, resp, &got)
+
+	if got.Tags["env"] != "prod" || got.Tags["team"] != "sls" {
+		t.Fatalf("ListTags = %+v", got.Tags)
+	}
+
+	// UntagResource.
+	if resp := doJSON(t, http.MethodDelete, tagsURL+"?tagKeys=env", ""); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("untag-resource status = %d", resp.StatusCode)
+	}
+
+	var after struct {
+		Tags map[string]string `json:"Tags"`
+	}
+
+	decode(t, doJSON(t, http.MethodGet, tagsURL, ""), &after)
+
+	if _, has := after.Tags["env"]; has || after.Tags["team"] != "sls" {
+		t.Fatalf("after untag = %+v", after.Tags)
+	}
+}
+
+func decode(t *testing.T, resp *http.Response, v any) {
+	t.Helper()
+
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
 }

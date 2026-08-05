@@ -309,6 +309,37 @@ func (m *Mock) ListMetrics(_ context.Context, namespace string) ([]string, error
 	return names, nil
 }
 
+// ListMetricsDetailed returns every stored metric as a (namespace, name) pair.
+// ListMetrics filters by an exact namespace, so a namespace-less "list all"
+// call needs this to return real metrics tagged with their true namespace.
+func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	seen := make(map[metricKey]bool, len(m.metrics))
+	out := make([]driver.MetricIdentifier, 0, len(m.metrics))
+
+	for key := range m.metrics {
+		if seen[key] {
+			continue
+		}
+
+		seen[key] = true
+
+		out = append(out, driver.MetricIdentifier{Namespace: key.Namespace, MetricName: key.MetricName})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace != out[j].Namespace {
+			return out[i].Namespace < out[j].Namespace
+		}
+
+		return out[i].MetricName < out[j].MetricName
+	})
+
+	return out, nil
+}
+
 // CreateAlarm creates or updates an alarm with the given configuration.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.

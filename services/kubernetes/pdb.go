@@ -35,7 +35,7 @@ func (s *ClusterState) servePDBs(w http.ResponseWriter, r *http.Request, route *
 			return
 		}
 
-		s.listPDBs(w, "")
+		s.listPDBs(w, r, "")
 
 		return
 	}
@@ -58,7 +58,7 @@ func (s *ClusterState) servePDBs(w http.ResponseWriter, r *http.Request, route *
 func (s *ClusterState) servePDBCollection(w http.ResponseWriter, r *http.Request, route *Route) {
 	switch r.Method {
 	case http.MethodGet:
-		s.listPDBs(w, route.Namespace)
+		s.listPDBs(w, r, route.Namespace)
 	case http.MethodPost:
 		s.createPDB(w, r, route)
 	default:
@@ -73,7 +73,7 @@ func (s *ClusterState) servePDBItem(w http.ResponseWriter, r *http.Request, rout
 	case http.MethodPut:
 		s.replacePDB(w, r, route)
 	case http.MethodDelete:
-		s.deletePDB(w, route)
+		s.deletePDB(w, r, route)
 	default:
 		writeMethodNotAllowed(w, "k8s api: poddisruptionbudget: method not allowed: "+r.Method)
 	}
@@ -104,13 +104,19 @@ func (s *ClusterState) createPDB(w http.ResponseWriter, r *http.Request, route *
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"}
 
 	// Real PDB status is computed by the disruption controller from live pods.
 	// There is no controller here, so report the shape a client expects without
 	// inventing eviction semantics the emulator cannot honor.
 	in.Status = policyv1.PodDisruptionBudgetStatus{ObservedGeneration: 1}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
 
 	s.pdbs[pdbKey(in.Namespace, in.Name)] = &in
 
@@ -156,12 +162,18 @@ func (s *ClusterState) replacePDB(w http.ResponseWriter, r *http.Request, route 
 	in.TypeMeta = metav1.TypeMeta{Kind: "PodDisruptionBudget", APIVersion: "policy/v1"}
 	in.Status = existing.Status
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	s.pdbs[key] = &in
 
 	writeJSON(w, http.StatusOK, &in)
 }
 
-func (s *ClusterState) deletePDB(w http.ResponseWriter, route *Route) {
+func (s *ClusterState) deletePDB(w http.ResponseWriter, r *http.Request, route *Route) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -172,13 +184,19 @@ func (s *ClusterState) deletePDB(w http.ResponseWriter, route *Route) {
 		return
 	}
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &metav1.Status{Status: metav1.StatusSuccess})
+
+		return
+	}
+
 	delete(s.pdbs, key)
 
 	writeJSON(w, http.StatusOK, &metav1.Status{Status: metav1.StatusSuccess})
 }
 
 // listPDBs lists one namespace, or every namespace when namespace is "".
-func (s *ClusterState) listPDBs(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listPDBs(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -198,8 +216,14 @@ func (s *ClusterState) listPDBs(w http.ResponseWriter, namespace string) {
 		return items[i].Name < items[j].Name
 	})
 
+	items, cont, ok := listPage(items, w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &policyv1.PodDisruptionBudgetList{
 		TypeMeta: metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudgetList"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }

@@ -27,6 +27,7 @@ import (
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
+	networkfirewallsrv "github.com/stackshy/cloudemu/v2/server/aws/networkfirewall"
 	"github.com/stackshy/cloudemu/v2/server/aws/rds"
 	"github.com/stackshy/cloudemu/v2/server/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/server/aws/resourceexplorer2"
@@ -57,6 +58,7 @@ import (
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
@@ -117,6 +119,9 @@ type Drivers struct {
 	// MemoryDB serves the AWS MemoryDB JSON 1.1 protocol (Redis/Valkey cluster
 	// control plane) against the memorydb driver.
 	MemoryDB mdbdriver.MemoryDB
+	// NetworkFirewall serves the AWS Network Firewall JSON 1.0 protocol against
+	// the networkfirewall driver.
+	NetworkFirewall nfdriver.NetworkFirewall
 	// SNS serves the SNS query protocol against the notification driver.
 	SNS notifdriver.Notification
 	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
@@ -171,6 +176,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		ElastiCache:         p.ElastiCache,
 		Keyspaces:           p.Keyspaces,
 		MemoryDB:            p.MemoryDB,
+		NetworkFirewall:     p.NetworkFirewall,
 		SNS:                 p.SNS,
 		STS:                 true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
@@ -211,7 +217,12 @@ func New(d Drivers) *server.Server {
 	srv := server.New()
 
 	if d.CloudWatch != nil {
-		srv.Register(cloudwatch.New(d.CloudWatch))
+		// The VPC driver optionally supplies derived AWS/IPAM metrics; surface
+		// them through CloudWatch when it implements the capability.
+		ipamMetrics, _ := d.VPC.(netdriver.IPAMMetrics)
+		cw := cloudwatch.New(d.CloudWatch)
+		cw.SetIPAMMetrics(ipamMetrics)
+		srv.Register(cw)
 	}
 
 	if d.DynamoDB != nil {
@@ -272,7 +283,7 @@ func New(d Drivers) *server.Server {
 	// EventBridge matches the X-Amz-Target prefix "AWSEvents." — disjoint from
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.EventBridge != nil {
-		srv.Register(eventbridge.New(d.EventBridge))
+		srv.Register(eventbridge.New(d.EventBridge, d.AccountID, d.Region))
 	}
 
 	// CloudWatch Logs matches the X-Amz-Target prefix "Logs_20140328." —
@@ -311,6 +322,13 @@ func New(d Drivers) *server.Server {
 	// registration order relative to the EC2 catch-all does not matter.
 	if d.MemoryDB != nil {
 		srv.Register(memorydbsrv.New(d.MemoryDB))
+	}
+
+	// Network Firewall speaks AWS JSON 1.0 and matches on the
+	// "NetworkFirewall_20201112." target prefix, so its dispatch is disjoint
+	// from every other handler.
+	if d.NetworkFirewall != nil {
+		srv.Register(networkfirewallsrv.New(d.NetworkFirewall))
 	}
 
 	// Keyspaces speaks AWS JSON 1.0 and matches on the "KeyspacesService." target

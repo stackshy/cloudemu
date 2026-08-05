@@ -10,7 +10,8 @@ This document lists every service and operation available in CloudEmu across all
 | 2 | Compute | `ec2` | `virtualmachines` | `gce` |
 | 3 | Database | `dynamodb` | `cosmosdb` | `firestore` |
 | 4 | Serverless | `lambda` | `functions` | `cloudfunctions` |
-| 5 | Networking | `vpc` | `vnet` | `gcpvpc` |
+| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` | `gcpvpc` |
+| 5a | Network Firewall | `network-firewall` | — | — |
 | 6 | Monitoring | `cloudwatch` | `azuremonitor` | `cloudmonitoring` |
 | 7 | IAM | `awsiam` | `azureiam` | `gcpiam` |
 | 8 | DNS | `route53` | `azuredns` | `clouddns` |
@@ -26,6 +27,7 @@ This document lists every service and operation available in CloudEmu across all
 | 17a | In-memory Database (Redis/Valkey) | `memorydb` | — | — |
 | 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | — |
 | 17c | Wide-column (Bigtable) | — | — | `bigtable` |
+| 17d | Distributed PostgreSQL (Citus) | — | `cosmospostgresql` | — |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
@@ -531,6 +533,36 @@ DNS hostnames off.
 | `ModifyVPCEndpoint` | `(ctx, id, config) (*VPCEndpoint, error)` |
 
 **Total: 47 operations**
+
+### AWS-specific networking (optional capabilities)
+
+AWS models several networking resources that don't map cleanly across clouds.
+These are **AWS-only optional capability interfaces** (discovered by type
+assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
+`providers/aws/vpc` and served by the EC2 handler — no Azure/GCP stubs.
+
+| Capability | Operations |
+|-----------|-----------|
+| Transit Gateway | CreateTransitGateway, DeleteTransitGateway, DescribeTransitGateways; VPC attachments (Create/Delete/Describe); route tables (Create/Delete/Describe); routes (Create/Delete/Search); route-table Associate + Enable/DisableRouteTablePropagation |
+| VPN | CustomerGateway (Create/Delete/Describe); VpnGateway (Create/Delete/Describe/Attach/Detach); VpnConnection (Create/Delete/Describe/ModifyVpnConnection); VpnConnectionRoute (Create/Delete) |
+| DHCP option sets | Create, Delete, Describe, Associate |
+| Managed prefix lists | Create, Delete, Describe, GetEntries, Modify |
+| Egress-only internet gateways | Create, Delete, Describe |
+| VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
+| Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
+| Traffic Mirroring | Target (Create/Delete/Describe); Filter (Create/Delete/Describe) + ModifyFilterNetworkServices; FilterRule (Create/Modify/Delete/Describe); Session (Create/Modify/Delete/Describe) |
+| Network Insights — Reachability Analyzer | Path (Create/Delete/Describe); Analysis (Start/Delete/Describe) |
+| Network Insights — Network Access Analyzer | AccessScope (Create/Delete/Describe) + GetContent; AccessScopeAnalysis (Start/Delete/Describe) + GetAnalysisFindings |
+| VPC Block Public Access | Options (Describe/Modify); Exclusion (Create/Modify/Delete/Describe) |
+| IPAM (IP Address Manager) — full | Ipam/Scope/Pool CRUD+Modify; Cidr Provision/Deprovision/Get; Allocation Allocate/Release/Get/Modify; ResourceCidrs (Get/Modify) + AddressHistory; ResourceDiscovery CRUD + Associate/Disassociate + Discovered Accounts/ResourceCidrs/PublicAddresses; BYOASN (Provision/Deprovision/Associate/Disassociate/Describe); BYOIP (Move/Provision/Deprovision/Describe/Advertise/Withdraw); PrefixListResolver + Targets + Versions/Rules/Entries; ExternalResourceVerificationToken (Create/Delete/Describe); Policy (Create/Delete/Describe/Enable/Disable/GetEnabled/AllocationRules/OrgTargets) + OrganizationAdminAccount (Enable/Disable) |
+
+**AWS-specific total: 162 operations**
+
+IPAM is fully covered (~69 operations). Cross-account/organization and live-network features (Resource Discovery, discovered accounts/resources/public addresses, BYOASN/BYOIP, policies, org-admin) are modeled against the emulator's own single-account state: discovered resources are derived from the stored VPCs/subnets/EIPs, and organization targets resolve to the configured account.
+
+### IPAM metrics (`AWS/IPAM` CloudWatch namespace)
+
+IPAM publishes derived metrics through the CloudWatch service (ListMetrics / GetMetricStatistics): `TotalActiveIpCount`; pool `PercentAllocated`/`PercentAssigned`/`PercentAvailable`/`Compliant`/`NoncompliantResourceCidrs`; scope `Managed`/`Unmanaged`/`Overlapping`/`Compliant`/`NoncompliantResourceCidrs`; public-IP insight counts; and resource utilization `VpcIPUsage`/`SubnetIPUsage`. Values are computed live from IPAM + VPC/subnet/EIP state.
 
 ---
 
@@ -1222,6 +1254,57 @@ counts are bounded; clone-on-read on every path.
 
 ---
 
+## 11e. Cosmos DB for PostgreSQL (Azure)
+
+**Driver interface:** `services/cosmospostgresql/driver/driver.go`
+**Azure:** Cosmos DB for PostgreSQL (Citus) — `Microsoft.DBforPostgreSQL/serverGroupsv2`
+
+Real `armcosmosforpostgresql` clients configured with a custom endpoint hit the
+ARM handler (`server/azure/cosmospostgresql`) the same way they hit
+management.azure.com. Create/update RPCs return the resource inline with a
+terminal `provisioningState`; the cluster start/stop/restart/promote actions
+reply `202` + `Location` and the poller reads a terminal status from the
+`operationStatuses` URL.
+
+### Clusters (server groups)
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateOrUpdateCluster` | `(ctx, CreateClusterConfig) (*Cluster, error)` |
+| `GetCluster` / `ListClustersByResourceGroup` / `ListClustersBySubscription` | cluster reads |
+| `UpdateCluster` | `(ctx, rg, name, ClusterPatch) (*Cluster, error)` (PATCH) |
+| `DeleteCluster` | `(ctx, rg, name) error` |
+| `RestartCluster` / `StartCluster` / `StopCluster` | lifecycle actions (LRO) |
+| `PromoteReadReplica` | `(ctx, rg, name) error` — detach a replica |
+| `CheckNameAvailability` | `(ctx, name, type) (*NameAvailability, error)` |
+
+### Firewall Rules & Roles
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateOrUpdateFirewallRule` / `GetFirewallRule` / `ListFirewallRules` / `DeleteFirewallRule` | IP allow-list CRUD |
+| `CreateRole` / `GetRole` / `ListRoles` / `DeleteRole` | Postgres role CRUD |
+
+### Servers (nodes), Configurations & Private Endpoints
+
+| Operation | Signature |
+|-----------|-----------|
+| `GetServer` / `ListServers` | read-only derived nodes (coordinator + workers) |
+| `ListConfigurations` / `GetConfiguration` | cluster-wide server parameters (per-role values) |
+| `GetCoordinatorConfiguration` / `GetNodeConfiguration` / `ListServerConfigurations` | server-scoped parameter reads |
+| `UpdateCoordinatorConfiguration` / `UpdateNodeConfiguration` | per-role parameter updates (LRO) |
+| `CreateOrUpdatePrivateEndpointConnection` / `GetPrivateEndpointConnection` / `ListPrivateEndpointConnections` / `DeletePrivateEndpointConnection` | private-endpoint CRUD |
+| `GetPrivateLinkResource` / `ListPrivateLinkResources` | private-link resource reads |
+
+Modeling: a cluster owns its firewall rules, roles, configurations, and
+private-endpoint connections (parent linkage, cascade delete); nodes are derived
+from the cluster shape (one coordinator + N workers); read replicas link back to
+a source cluster and detach on promote; clone-on-read on every path.
+
+**Total: 34 operations**
+
+---
+
 ## 12. Secrets
 
 **Driver interface:** `services/secrets/driver/driver.go`
@@ -1668,19 +1751,37 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 **Core (`core/v1`)**: Namespace, ConfigMap, Secret (StringData merged into Data), ServiceAccount (`default` auto-created per namespace), Pod (driven **Running** with a synthetic Pod IP — a directly-created Pod with a terminal phase is preserved), Service (ClusterIP from 10.96.0.0/12, immutable on update), Endpoints (get/list/watch only — auto-managed per Service), PersistentVolumeClaim (→ Bound), PersistentVolume (→ Available), Node, Event, ResourceQuota, LimitRange.
 
-**Workload controllers (`apps/v1`)**: Deployment, ReplicaSet, StatefulSet (stable `-0..-N` names + one Bound PVC per `volumeClaimTemplate`), DaemonSet (one Pod per node). All materialize Running Pods owned via `ownerReferences`; deleting a controller cascade-deletes its Pods and drains Endpoints. A change to the pod template (e.g. image) is a **rolling update** — stale-hash Pods (tracked by a `pod-template-hash` label) are replaced. Deployments/StatefulSets expose **`/scale`** and **`/status`** subresources.
+**Workload controllers (`apps/v1`)**: Deployment, ReplicaSet, StatefulSet (stable `-0..-N` names + one Bound PVC per `volumeClaimTemplate`), DaemonSet (one Pod per node whose labels satisfy the template `nodeSelector` — zero Pods when it doesn't match the synthetic node). A **Deployment interposes a ReplicaSet** per pod-template revision (Deployment→RS→Pod, matching real topology), and a template change creates a new ReplicaSet and deletes the old one outright — an instantaneous swap (no `revisionHistoryLimit`, no `kubectl rollout undo`, no surge/unavailable pacing). All materialize Running Pods owned via `ownerReferences`; deleting a controller cascade-deletes the chain and drains Endpoints. Deployments/StatefulSets expose **`/scale`** and **`/status`** subresources. CronJob scheduling is driven explicitly via `TickCronJobs()` (no background timer), which performs real due-evaluation against the cluster clock: it parses the standard 5-field `spec.schedule` (`*`, `*/n`, lists, `a-b` ranges) and materializes a Job only when a scheduled time falls in `(status.lastScheduleTime, now]` — advancing `lastScheduleTime` to the fired slot so re-ticking the same instant never double-creates — and honors `concurrencyPolicy` (`Forbid`/`Replace`/`Allow`) and `startingDeadlineSeconds`.
 
-**Other groups** (registry-backed CRUD + list/watch/patch/delete): `batch/v1` Job (→ Succeeded Pods) / CronJob; `networking.k8s.io/v1` Ingress (→ load-balancer IP) / IngressClass / NetworkPolicy; `rbac.authorization.k8s.io/v1` Role / RoleBinding / ClusterRole / ClusterRoleBinding; `storage.k8s.io/v1` StorageClass; `autoscaling/v2` HorizontalPodAutoscaler; `discovery.k8s.io/v1` EndpointSlice; `policy/v1` PodDisruptionBudget.
+**Other groups** (registry-backed CRUD + list/watch/patch/delete): `batch/v1` Job (→ Succeeded Pods) / CronJob; `networking.k8s.io/v1` Ingress (→ load-balancer IP) / IngressClass / NetworkPolicy; `rbac.authorization.k8s.io/v1` Role / RoleBinding / ClusterRole / ClusterRoleBinding; `storage.k8s.io/v1` StorageClass; `autoscaling/v2` HorizontalPodAutoscaler; `discovery.k8s.io/v1` EndpointSlice; `policy/v1` PodDisruptionBudget; `apiextensions.k8s.io/v1` CustomResourceDefinition; `admissionregistration.k8s.io/v1` Mutating/ValidatingWebhookConfiguration.
 
-**Selectors**: label selectors on list, and field selectors for the fields the store can answer (`metadata.name`, `metadata.namespace`, Pod `status.phase` / `spec.nodeName`). List responses are unpaginated — `limit`/`continue` are not honored (an emulation simplification; every list returns the full set in one response).
+**Custom resources (CRDs)**: creating a `CustomResourceDefinition` dynamically materializes a servable store for every served version — the custom-resource kind is then served by the generic handler (CRUD/list/watch/`/status`) and advertised in discovery immediately; the CRD is marked `Established`. Deleting the CRD deregisters the kind and cascade-deletes its custom resources — including when the CRD carries a finalizer, in which case teardown runs once the last finalizer drains. Structural schema validation of CRs is a documented simplification (accept-and-store).
 
-**Patch**: all four content types — JSON-merge-patch, JSONPatch (RFC 6902), and strategic-merge-patch (real strategic merge against the typed struct for core/apps kinds, so `kubectl set image` merges the container list by name). Server-side-apply is accepted and applied as a merge (an emulation simplification — apply field-ownership is not tracked).
+**Selectors & pagination**: label selectors on list; field selectors for `metadata.name` / `metadata.namespace`, Pod `status.phase` / `spec.nodeName`, and Event fields (`involvedObject.name/namespace/kind/uid`, `reason`, `type`). List responses honor **`?limit=&continue=`** chunked pagination across the registry and typed list paths: the `metadata.continue` token is key-anchored (it encodes the last object's `namespace/name`), so an insert or delete before that key cannot skip or duplicate later items under concurrent mutation, and a malformed token returns `410 Gone` (reason `Expired`) per client-go's pager contract. A well-formed token whose key was since deleted resumes gracefully at the next greater key rather than `410`-ing on a compacted resourceVersion — strictly more forgiving than upstream.
+
+**Patch & server-side apply**: JSON-merge-patch, JSONPatch (RFC 6902), and strategic-merge-patch (real strategic merge against the typed struct for core/apps kinds, so `kubectl set image` merges the container list by name). **Server-side apply** (`application/apply-patch+yaml`) tracks per-`fieldManager` field ownership in `metadata.managedFields`; an apply that changes a field owned by another manager returns **409 Conflict** unless `?force=true` (which transfers ownership), and an owner re-applying the same value is a no-op. A re-apply by the same manager that omits a field it previously owned removes that field, unless another manager also owns it. Plain PUT/PATCH updates record an `Update`-operation `managedFields` entry for their `fieldManager` (defaulted from the User-Agent when absent), taking or sharing ownership rather than conflicting (only Apply-vs-Apply is a 409). Ownership is tracked at leaf granularity (map keys / whole arrays) — per-element list merging is not modeled, a documented subset of upstream SSA.
+
+**Dry-run**: writes with `?dryRun=All` (`kubectl apply|create|delete --dry-run=server`) run validation, defaulting, and quota admission (a create against an at-limit namespace returns the same `403` a real create would), echo the object the server would store, and persist nothing — no resourceVersion bump, reconcile, quota reservation, or watch event.
+
+**Finalizers**: an object carrying `metadata.finalizers` goes **Terminating** on delete (`deletionTimestamp` stamped, object retained) and is removed only when the last finalizer is cleared via update/patch — on the registry path and typed Namespace/Pod. Finalizers are also honored during cascade: a finalizer-bearing child reached by owner garbage-collection or namespace teardown goes Terminating rather than being reaped, until its finalizers drain. The server-owned `deletionTimestamp` survives a merge-patch — an RFC-7396 `null` cannot resurrect a Terminating object.
+
+**Pod subresources**: `pods/{name}/log` returns synthetic container output; `exec`/`attach`/`portforward` return a typed `501` (they need a streaming protocol upgrade the emulator doesn't implement); `pods/{name}/eviction` honors PodDisruptionBudgets.
+
+**Metrics & autoscaling**: `metrics.k8s.io/v1beta1` (`kubectl top`) serves synthetic Pod/Node metrics from the live pods + synthetic node; a HorizontalPodAutoscaler reconcile drives its target Deployment on a Resource CPU `averageUtilization` metric — sampling the target Pods' CPU from that metrics source and applying the real HPA ratio `desiredReplicas = ceil(currentReplicas × currentUtilization ÷ targetUtilization)`, clamped into `[minReplicas, maxReplicas]` — and falls back to a plain min/max clamp when no CPU metric is configured or the target Pods declare no CPU request, reporting `currentReplicas`/`desiredReplicas`/`currentMetrics` on status.
+
+**Policy enforcement**: object-count **ResourceQuota** is enforced on create (403 over limit) and on server-side dry-run; `status.used` is updated on create and recomputed from the live count on delete (it tracks the live object count rather than climbing monotonically); **LimitRange** applies container defaults and min/max validation on pod create; **PodDisruptionBudget** gates `pods/eviction` (429 when eviction would violate the budget); **RBAC** is queryable via `authorization.k8s.io/v1` SubjectAccessReview (evaluated against stored Roles/ClusterRoles + bindings); **NetworkPolicy** is queryable via an in-process evaluation (no live traffic).
+
+**Admission webhooks** (opt-in): Mutating/ValidatingWebhookConfiguration objects store and round-trip through `kubectl apply`. With admission explicitly enabled (`APIServer.SetAdmissionEnabled`), create/update/patch calls matching webhooks apply mutations and honor denials (4xx); it is off by default so the data plane stays zero-network and deterministic.
+
+**Watch resume**: a watch with `resourceVersion>0` skips the initial snapshot replay and streams only subsequent events; `allowWatchBookmarks=true` emits a post-sync BOOKMARK carrying the current resourceVersion. A slow watcher that overflows its buffer gets a `410 Gone` so `client-go` relists.
+
+**Deterministic time**: every data-plane timestamp (creationTimestamp, pod start/conditions, managedFields) is sourced from an injectable clock (`APIServer.SetClock`); a `config.FakeClock` makes them fully deterministic for tests.
 
 **Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, and the request's `labelSelector`/`fieldSelector` filters both the initial snapshot and live events, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) — including selective informers — just works. A fresh cluster bootstraps a synthetic Ready node (`cloudemu-node-0`), and each selector Service's endpoints are mirrored into a `discovery.k8s.io` **EndpointSlice** so EndpointSlice-mode consumers see the same backends as the `Endpoints` object.
 
-**Cascade**: deleting a Namespace or an owning controller publishes DELETED events for every child resource (garbage collection follows `ownerReferences`).
+**Cascade**: deleting a Namespace or an owning controller publishes DELETED events for every child resource (garbage collection follows `ownerReferences`) — finalizer-bearing children instead go Terminating (MODIFIED) until drained.
 
-**Non-goals** (deliberate emulation boundaries): no kubelet-backed Pod subresources (`/log`, `/exec`, `/attach`, `/portforward`); no real scheduling (all Pods land on a single synthetic node, no affinity/taints/resource-fit); no admission/quota/policy **enforcement** (ResourceQuota, LimitRange, NetworkPolicy, PodDisruptionBudget, RBAC are stored and served but not enforced); HPA does not actually autoscale; CronJob does not fire on a schedule; rollouts converge instantly with no surge/unavailable pacing or revision history; no aggregated API servers, admission webhooks, or CRD registration.
+**Emulation boundaries** (deliberate simplifications, not gaps): there is no real kubelet — Pods are driven Running synthetically and `pods/log` is synthetic while `exec`/`attach`/`portforward` return a typed 501; no real scheduling beyond the single synthetic node (DaemonSet `nodeSelector` is honored, but affinity/taints/resource-fit are not); admission webhooks make outbound calls only when explicitly enabled (off by default to stay zero-network); server-side apply tracks ownership at leaf granularity (no per-element list merge); NetworkPolicy and RBAC are **queryable** (SubjectAccessReview / EvaluateNetworkPolicy) rather than request-time-enforced, since the emulator has no packet path or authenticated identity; CronJob has no wall-clock timer (schedules are evaluated only when `TickCronJobs` is called) and supports only the standard 5-field cron syntax (nonstandard `@`-macros, `L`/`W`/`#`/`?` characters, and seconds/year fields are rejected); rollouts converge instantly (no surge/unavailable pacing, minimal revision history); and OpenAPI is served cluster-independently, so CRD schemas aren't published there (custom resources still work via discovery).
 
 ---
 
@@ -1741,6 +1842,38 @@ Relational databases follow the same pattern via a `RelationalDatabases` adapter
 | Operation | Notes |
 |-----------|-------|
 | `Resources` | `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` — KQL-shaped query over the unified inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
+
+**Cost-discovery field projection.** Each row projects the `sku` (name/tier/capacity)
+and `properties` a real discoverer prices on, per Azure type:
+
+| Azure type | Projected fields |
+|---|---|
+| `microsoft.compute/virtualmachines` | `properties.priority` (Spot), `properties.licenseType`, `properties.storageProfile.osDisk.osType`, `sku.name`, `zones` |
+| `microsoft.compute/disks` | `properties.diskIOPSReadWrite`, `properties.diskMBpsReadWrite`, `properties.diskSizeGB`, `properties.tier`, `sku.name`/`sku.tier` |
+| `microsoft.compute/virtualmachinescalesets` | `sku.name`/`sku.capacity`, nested `properties.virtualMachineProfile.{priority,licenseType,storageProfile.osDisk.osType}` |
+| `microsoft.network/publicipaddresses` | `sku.name` (Basic/Standard), `properties.publicIPAllocationMethod` |
+| `microsoft.network/virtualnetworks` / `subnets` | `properties.addressSpace.addressPrefixes` / `properties.addressPrefix` |
+| `microsoft.sql/managedinstances` | `sku.name`, `properties.vCores`, `properties.tier`, `properties.licenseType`, `properties.storageSizeInGB`, `properties.storageAccountType` (backup redundancy) |
+| `microsoft.sql/servers` | `properties.version` (engine version of the logical server) |
+| `microsoft.sql/servers/databases` | `sku.name`, `properties.currentSku`, `properties.zoneRedundant` |
+| `microsoft.dbformysql`/`dbforpostgresql` `flexibleservers` | `sku.name`/`sku.tier` (derived), `properties.version`, nested `properties.storage.storageSizeGB` + `properties.highAvailability.mode` |
+| `microsoft.containerservice/managedclusters` | `sku.tier`, `properties.powerState.code`, `properties.kubernetesVersion` |
+| `.../managedclusters/agentpools` | `sku.name` (vmSize), `properties.scaleSetPriority` (Spot), `properties.count`, `properties.mode`/`osType` |
+| `microsoft.databricks/workspaces` | `sku.name`/`sku.tier`, `properties.workspaceId`/`provisioningState` |
+| `microsoft.storage/storageaccounts` | `sku.name` (redundancy), `kind`, `properties.accessTier` |
+| `microsoft.documentdb/databaseaccounts` | `kind`, `properties.databaseAccountOfferType`, `properties.capabilities` (serverless), `properties.enableFreeTier` |
+| `microsoft.web/serverfarms` (App Service plan) | `sku.name`/`sku.tier`/`sku.capacity` (pricing tier), `kind` |
+
+Fields are seeded through the portable driver configs (`VolumeConfig.IOPS/Throughput/Tier`,
+`InstanceConfig.OSType/Priority/LicenseType/Zones`, `ManagedInstanceConfig.StorageAccountType`,
+`ElasticIPConfig.SKU/AllocationMethod`, the AKS `Tier`/`ScaleSetPriority` inputs, the
+`Databases` capability on Azure SQL, the VMSS `ScaleSets` + serverfarms `AppServicePlans`
+discovery capabilities, and the optional `BucketAttributes` / `TableAttributes` capabilities
+that enrich storage accounts and Cosmos DB) so a value set at create time round-trips over
+the real `armresourcegraph` SDK. Storage/Cosmos/serverfarms follow the established discovery
+patterns — optional type-asserted capabilities (like networking's `NetworkInterfaces`) for
+per-resource enrichment, and provider-projected discovery adapters (like the relational-DB
+and Kubernetes walkers) for the net-new plan/scale-set resources.
 
 ### GCP — Cloud Asset Inventory (`server/gcp/cloudasset`)
 
@@ -1842,6 +1975,32 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 | `ListWorkspacesByResourceGroup` | `(ctx, resourceGroup) ([]Workspace, error)` |
 | `ListWorkspaces` | `(ctx) ([]Workspace, error)` |
 
+### Extended ARM resources (control plane)
+
+The rest of the `Microsoft.Databricks` ARM surface beyond workspaces
+(`services/databricks/driver/arm_resources.go`), reachable over the real
+`armdatabricks` SDK:
+
+| Resource | Operations |
+|----------|------------|
+| **Access Connectors** (`accessConnectors`) | `CreateOrUpdateAccessConnector`, `GetAccessConnector`, `UpdateAccessConnector`, `DeleteAccessConnector`, `ListAccessConnectorsByResourceGroup`, `ListAccessConnectors` |
+| **Private Endpoint Connections** (`workspaces/{w}/privateEndpointConnections`) | `PutPrivateEndpointConnection`, `GetPrivateEndpointConnection`, `DeletePrivateEndpointConnection`, `ListPrivateEndpointConnections` |
+| **Private Link Resources** (`workspaces/{w}/privateLinkResources`) | `GetPrivateLinkResource`, `ListPrivateLinkResources` |
+| **VNet Peering** (`workspaces/{w}/virtualNetworkPeerings`) | `CreateOrUpdateVNetPeering`, `GetVNetPeering`, `DeleteVNetPeering`, `ListVNetPeerings` |
+| **Outbound Network Dependencies** (`workspaces/{w}/outboundNetworkDependenciesEndpoints`) | `ListOutboundNetworkDependencies` |
+| **Operations** (`/providers/Microsoft.Databricks/operations`) | `ListOperations` |
+
+*Modeled store-and-echo:* the ARM resources round-trip faithfully over the SDK
+(access connectors and peerings persist and are listed/described; a
+system-assigned access-connector identity gets synthesized principal/tenant
+IDs; a created peering springs to `Connected`/`Succeeded`), but the underlying
+Azure networking side effects are **not** simulated — a private-endpoint
+connection stores its approval state without a real private endpoint on the
+platform side, private-link resources and outbound-dependency endpoints are a
+synthesized (workspace-scoped) catalog rather than a live probe, and a VNet
+peering does not actually peer networks. The provider operations list is a
+static catalog of the RBAC operations the namespace exposes.
+
 ### Instance Pool Operations
 
 | Operation | Signature |
@@ -1923,7 +2082,7 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 | `SetPermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
 | `UpdatePermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
 
-**Total: 52 operations**
+**Total: 70 operations**
 
 ---
 
@@ -2189,6 +2348,8 @@ still sees success.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
+| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / Traffic Mirroring / Network Insights / VPC Block Public Access / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 162 |
+| Network Firewall — AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
 | DNS | 15 |
@@ -2199,6 +2360,7 @@ still sees success.
 | Keyspaces — AWS (Cassandra control plane) | 18 (+1 optional) |
 | Managed Cassandra — Azure (Cosmos DB) | 15 |
 | Bigtable — GCP (wide-column NoSQL) | 38 |
+| Cosmos DB for PostgreSQL — Azure (Citus) | 34 |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
@@ -2212,13 +2374,13 @@ still sees success.
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI — AWS Bedrock (control plane + runtime) | 65 |
 | Generative AI — AWS Bedrock Agent (control plane + runtime) | 32 |
-| Databricks — Azure (control + data plane) | 52 |
+| Databricks — Azure (control + data plane) | 70 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1381** (+138 optional) |
+| **Grand Total** | **1562** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

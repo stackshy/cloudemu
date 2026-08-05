@@ -65,20 +65,22 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		Tags:        tags,
 	}
 
-	data := make([]byte, len(value))
-	copy(data, value)
+	sd := &secretData{info: info}
 
-	versionID := idgen.GenerateID("ver-")
-	version := driver.SecretVersion{
-		VersionID: versionID,
-		Value:     data,
-		CreatedAt: now,
-		Current:   true,
-	}
+	// GCP's secrets.create makes an empty container — the first version is added
+	// separately via addVersion. Only seed a version when a value is actually
+	// supplied (the AWS-style create-with-value path); otherwise the secret has
+	// zero versions and access(latest) fails until one is added, matching GCP.
+	if len(value) > 0 {
+		data := make([]byte, len(value))
+		copy(data, value)
 
-	sd := &secretData{
-		info:     info,
-		versions: []driver.SecretVersion{version},
+		sd.versions = []driver.SecretVersion{{
+			VersionID: idgen.GenerateID("ver-"),
+			Value:     data,
+			CreatedAt: now,
+			Current:   true,
+		}}
 	}
 
 	m.secrets.Set(cfg.Name, sd)

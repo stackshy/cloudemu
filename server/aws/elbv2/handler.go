@@ -37,6 +37,8 @@ var elbActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"ModifyLoadBalancerAttributes":   {},
 	"DescribeLoadBalancerAttributes": {},
 	"DescribeTags":                   {},
+	"AddTags":                        {},
+	"RemoveTags":                     {},
 	"DescribeLoadBalancers":          {},
 	"DeleteLoadBalancer":             {},
 	"CreateTargetGroup":              {},
@@ -107,6 +109,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeLoadBalancerAttributes(w, r)
 	case "DescribeTags":
 		h.describeTags(w, r)
+	case "AddTags":
+		h.addTags(w, r)
+	case "RemoveTags":
+		h.removeTags(w, r)
 	case "DeleteLoadBalancer":
 		h.deleteLoadBalancer(w, r)
 	case "CreateTargetGroup":

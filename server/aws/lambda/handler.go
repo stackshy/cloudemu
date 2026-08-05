@@ -3,13 +3,18 @@
 // registered with this handler and operations work against an in-memory
 // serverless driver.
 //
-// MVP coverage: CreateFunction, GetFunction, ListFunctions, DeleteFunction,
-// Invoke (synchronous). Versions, aliases, layers, concurrency configs, and
-// event source mappings are not yet wired through — the driver supports them
-// but the wire surface is deferred to a follow-up.
+// Coverage: CreateFunction, GetFunction, ListFunctions, DeleteFunction,
+// Invoke (synchronous), UpdateFunctionConfiguration, PublishVersion /
+// ListVersionsByFunction, the alias lifecycle (create/get/list/update/
+// delete), and resource policies (AddPermission / GetPolicy /
+// RemovePermission), and tagging (TagResource / UntagResource / ListTags at
+// the /2017-03-31/tags prefix). Layers, concurrency configs, and event source
+// mappings remain deferred — the driver supports some of them but the wire
+// surface is not yet wired through.
 package lambda
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -24,10 +29,38 @@ import (
 // REST traffic that should fall through to the S3 catch-all.
 const pathPrefix = "/2015-03-31/functions"
 
+// tagsPrefix is the Lambda tagging API prefix (TagResource / UntagResource /
+// ListTags). It's a different version prefix than the function control plane,
+// so it needs its own Matches clause — otherwise tag requests fall through to
+// the S3 catch-all and return a 405 HTML body the SDK can't deserialize.
+const tagsPrefix = "/2017-03-31/tags"
+
+// esmPrefix is the Lambda event-source-mapping API prefix (SQS/DynamoDB-stream
+// -> Lambda triggers). Its own version prefix, so it needs a Matches clause.
+const esmPrefix = "/2015-03-31/event-source-mappings"
+
 const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 6 << 20 // 6 MiB — Lambda's sync invocation payload limit.
 )
+
+// policyManager is the AWS-specific resource-policy surface (AddPermission /
+// GetPolicy / RemovePermission). It's not part of the portable Serverless
+// driver — resource policies are a Lambda concept — so the handler type-asserts
+// for it rather than requiring every cloud's function provider to implement it.
+type policyManager interface {
+	AddPermission(ctx context.Context, functionName string, stmt sdrv.PermissionStatement) error
+	RemovePermission(ctx context.Context, functionName, statementID string) error
+	GetPolicy(ctx context.Context, functionName string) (string, error)
+}
+
+// functionTagger is the AWS-specific Lambda tagging surface (not part of the
+// portable Serverless driver), asserted the same way as policyManager.
+type functionTagger interface {
+	TagFunction(ctx context.Context, name string, tags map[string]string) error
+	UntagFunction(ctx context.Context, name string, keys []string) error
+	ListFunctionTags(ctx context.Context, name string) (map[string]string, error)
+}
 
 // Handler serves AWS Lambda REST requests against a serverless.Serverless
 // driver.
@@ -43,7 +76,9 @@ func New(fn sdrv.Serverless) *Handler {
 // Matches returns true for any URL under /2015-03-31/functions — that's the
 // Lambda control-plane prefix the SDK uses for every operation in our MVP.
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, pathPrefix)
+	return strings.HasPrefix(r.URL.Path, pathPrefix) ||
+		strings.HasPrefix(r.URL.Path, tagsPrefix) ||
+		strings.HasPrefix(r.URL.Path, esmPrefix)
 }
 
 // ServeHTTP dispatches Lambda operations based on path shape and method.
@@ -52,6 +87,20 @@ func (*Handler) Matches(r *http.Request) bool {
 //	/2015-03-31/functions/{name}                GET=get, DELETE=delete
 //	/2015-03-31/functions/{name}/invocations    POST=invoke
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
+		arn := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, tagsPrefix), "/")
+		h.serveTags(w, r, arn)
+
+		return
+	}
+
+	if strings.HasPrefix(r.URL.Path, esmPrefix) {
+		uuid := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, esmPrefix), "/")
+		h.serveEventSourceMappings(w, r, uuid)
+
+		return
+	}
+
 	rest := strings.TrimPrefix(r.URL.Path, pathPrefix)
 	rest = strings.TrimPrefix(rest, "/")
 
@@ -64,22 +113,348 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := parts[0]
 
 	const (
-		partsResource = 1 // /functions/{name}
-		partsInvoke   = 2 // /functions/{name}/invocations
+		partsResource    = 1 // /functions/{name}
+		partsSubresource = 2 // /functions/{name}/{sub}
+		partsSubItem     = 3 // /functions/{name}/{sub}/{id}
 	)
 
 	switch len(parts) {
 	case partsResource:
 		h.serveResource(w, r, name)
-	case partsInvoke:
-		if parts[1] == "invocations" {
-			h.serveInvoke(w, r, name)
+	case partsSubresource:
+		h.serveSubresource(w, r, name, parts[1])
+	case partsSubItem:
+		switch parts[1] {
+		case "aliases":
+			h.serveAlias(w, r, name, parts[2])
+		case "policy":
+			h.serveRemovePermission(w, r, name, parts[2])
+		default:
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
+		}
+	default:
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
+	}
+}
+
+// serveSubresource dispatches /functions/{name}/{sub} paths.
+func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name, sub string) {
+	switch sub {
+	case "invocations":
+		h.serveInvoke(w, r, name)
+	case "configuration":
+		h.serveConfiguration(w, r, name)
+	case "versions":
+		h.serveVersions(w, r, name)
+	case "aliases":
+		h.serveAliases(w, r, name)
+	case "policy":
+		h.servePolicy(w, r, name)
+	default:
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
+	}
+}
+
+// serveTags handles the Lambda tagging API at /2017-03-31/tags/{arn}:
+// POST=TagResource, DELETE=UntagResource (?tagKeys=...), GET=ListTags.
+func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, arn string) {
+	tagger, ok := h.fn.(functionTagger)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "tagging not supported")
+		return
+	}
+
+	name := functionNameFromARN(arn)
+
+	switch r.Method {
+	case http.MethodPost:
+		var req struct {
+			Tags map[string]string `json:"Tags"`
+		}
+
+		if !decodeJSON(w, r, &req) {
 			return
 		}
 
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
+		if err := tagger.TagFunction(r.Context(), name, req.Tags); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		if err := tagger.UntagFunction(r.Context(), name, r.URL.Query()["tagKeys"]); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodGet:
+		tags, err := tagger.ListFunctionTags(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{"Tags": tags})
 	default:
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+// functionNameFromARN extracts the function name from a Lambda ARN
+// (arn:aws:lambda:<region>:<account>:function:<name>). A value that isn't an
+// ARN is returned unchanged.
+func functionNameFromARN(arn string) string {
+	const marker = ":function:"
+
+	if i := strings.LastIndex(arn, marker); i >= 0 {
+		return arn[i+len(marker):]
+	}
+
+	return arn
+}
+
+// servePolicy handles POST (AddPermission) and GET (GetPolicy) on
+// .../{name}/policy.
+func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name string) {
+	pm, ok := h.fn.(policyManager)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "resource policies not supported")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		var req addPermissionRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		err := pm.AddPermission(r.Context(), name, sdrv.PermissionStatement{
+			StatementID: req.StatementID, Action: req.Action,
+			Principal: req.Principal, SourceARN: req.SourceArn,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		stmt, jerr := json.Marshal(map[string]any{
+			"Sid":       req.StatementID,
+			"Effect":    "Allow",
+			"Principal": map[string]string{"Service": req.Principal},
+			"Action":    req.Action,
+		})
+		if jerr != nil {
+			writeErr(w, jerr)
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, map[string]string{"Statement": string(stmt)})
+	case http.MethodGet:
+		policy, err := pm.GetPolicy(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"Policy": policy, "RevisionId": "1"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+// serveRemovePermission handles DELETE .../{name}/policy/{statementId}.
+func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, name, statementID string) {
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+		return
+	}
+
+	pm, ok := h.fn.(policyManager)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "resource policies not supported")
+		return
+	}
+
+	if err := pm.RemovePermission(r.Context(), name, statementID); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// serveConfiguration handles PUT .../{name}/configuration
+// (UpdateFunctionConfiguration).
+func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+		return
+	}
+
+	var req updateFunctionConfigurationRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	cfg := sdrv.FunctionConfig{
+		Name:    name,
+		Runtime: req.Runtime,
+		Handler: req.Handler,
+		Memory:  req.MemorySize,
+		Timeout: req.Timeout,
+	}
+	if req.Environment != nil {
+		cfg.Environment = req.Environment.Variables
+	}
+
+	info, err := h.fn.UpdateFunction(r.Context(), name, cfg)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toConfiguration(info))
+}
+
+// serveVersions handles POST (PublishVersion) and GET (ListVersionsByFunction)
+// on .../{name}/versions.
+func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name string) {
+	switch r.Method {
+	case http.MethodPost:
+		var req publishVersionRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		ver, err := h.fn.PublishVersion(r.Context(), name, req.Description)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		info, err := h.fn.GetFunction(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		cfg := toConfiguration(info)
+		cfg.Version = ver.Version
+		cfg.Description = ver.Description
+		writeJSON(w, http.StatusCreated, cfg)
+	case http.MethodGet:
+		vers, err := h.fn.ListVersions(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		info, err := h.fn.GetFunction(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, len(vers))}
+		for i := range vers {
+			cfg := toConfiguration(info)
+			cfg.Version = vers[i].Version
+			cfg.Description = vers[i].Description
+			out.Versions = append(out.Versions, cfg)
+		}
+
+		writeJSON(w, http.StatusOK, out)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+// serveAliases handles POST (CreateAlias) and GET (ListAliases) on
+// .../{name}/aliases.
+func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name string) {
+	switch r.Method {
+	case http.MethodPost:
+		var req aliasRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		a, err := h.fn.CreateAlias(r.Context(), sdrv.AliasConfig{
+			FunctionName: name, Name: req.Name,
+			FunctionVersion: req.FunctionVersion, Description: req.Description,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, toAliasResponse(a))
+	case http.MethodGet:
+		aliases, err := h.fn.ListAliases(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		out := listAliasesResponse{Aliases: make([]aliasResponse, 0, len(aliases))}
+		for i := range aliases {
+			out.Aliases = append(out.Aliases, toAliasResponse(&aliases[i]))
+		}
+
+		writeJSON(w, http.StatusOK, out)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+// serveAlias handles GET/PUT/DELETE on .../{name}/aliases/{aliasName}.
+func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, aliasName string) {
+	switch r.Method {
+	case http.MethodGet:
+		a, err := h.fn.GetAlias(r.Context(), name, aliasName)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, toAliasResponse(a))
+	case http.MethodPut:
+		var req aliasRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		a, err := h.fn.UpdateAlias(r.Context(), sdrv.AliasConfig{
+			FunctionName: name, Name: aliasName,
+			FunctionVersion: req.FunctionVersion, Description: req.Description,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, toAliasResponse(a))
+	case http.MethodDelete:
+		if err := h.fn.DeleteAlias(r.Context(), name, aliasName); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	}
+}
+
+func toAliasResponse(a *sdrv.Alias) aliasResponse {
+	return aliasResponse{
+		AliasArn:        a.AliasARN,
+		Name:            a.Name,
+		FunctionVersion: a.FunctionVersion,
+		Description:     a.Description,
 	}
 }
 

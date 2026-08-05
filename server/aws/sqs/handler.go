@@ -2,14 +2,17 @@
 // Modern aws-sdk-go-v2 SQS uses AwsJson1_0 with X-Amz-Target headers (since
 // SQS migrated off the legacy Query protocol in 2023).
 //
-// MVP coverage: queue lifecycle + the synchronous send/receive/delete loop
-// every consumer needs. Batch ops, ChangeMessageVisibility, attributes, and
-// PurgeQueue are deferred to a follow-up — the portable
+// Coverage: queue lifecycle, the synchronous send/receive/delete loop,
+// queue attributes (GetQueueAttributes exposes the QueueArn that event-source
+// mappings, DLQ wiring, and S3->SQS notifications depend on), and PurgeQueue.
+// Batch ops and ChangeMessageVisibility remain deferred — the portable
 // messagequeue.MessageQueue driver supports them.
 package sqs
 
 import (
+	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -56,6 +59,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.receiveMessage(w, r)
 	case "DeleteMessage":
 		h.deleteMessage(w, r)
+	case "GetQueueAttributes":
+		h.getQueueAttributes(w, r)
+	case "SetQueueAttributes":
+		h.setQueueAttributes(w, r)
+	case "PurgeQueue":
+		h.purgeQueue(w, r)
+	case "TagQueue":
+		h.tagQueue(w, r)
+	case "UntagQueue":
+		h.untagQueue(w, r)
+	case "ListQueueTags":
+		h.listQueueTags(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown operation: "+op)
@@ -233,6 +248,200 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.mq.DeleteMessage(r.Context(), req.QueueURL, req.ReceiptHandle); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+// queueTagger is the AWS-specific SQS tagging surface. It's not part of the
+// portable MessageQueue driver, so the handler type-asserts for it.
+type queueTagger interface {
+	TagQueue(ctx context.Context, queueURL string, tags map[string]string) error
+	UntagQueue(ctx context.Context, queueURL string, keys []string) error
+	ListQueueTags(ctx context.Context, queueURL string) (map[string]string, error)
+}
+
+func (h *Handler) tagQueue(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.mq.(queueTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL string            `json:"QueueUrl"`
+		Tags     map[string]string `json:"Tags"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := tagger.TagQueue(r.Context(), req.QueueURL, req.Tags); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) untagQueue(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.mq.(queueTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL string   `json:"QueueUrl"`
+		TagKeys  []string `json:"TagKeys"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := tagger.UntagQueue(r.Context(), req.QueueURL, req.TagKeys); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) listQueueTags(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.mq.(queueTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL string `json:"QueueUrl"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tags, err := tagger.ListQueueTags(r.Context(), req.QueueURL)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"Tags": tags})
+}
+
+// numericAttrKeys are the SetQueueAttributes attributes the provider applies.
+var numericAttrKeys = []string{
+	"DelaySeconds", "VisibilityTimeout", "MaximumMessageSize",
+	"MessageRetentionPeriod", "ReceiveMessageWaitTimeSeconds",
+}
+
+func (h *Handler) getQueueAttributes(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueURL       string   `json:"QueueUrl"`
+		AttributeNames []string `json:"AttributeNames"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	attrs, err := h.mq.GetQueueAttributes(r.Context(), req.QueueURL)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	info, err := h.mq.GetQueueInfo(r.Context(), req.QueueURL)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	all := map[string]string{
+		"QueueArn":                              info.ARN,
+		"ApproximateNumberOfMessages":           strconv.Itoa(attrs.ApproximateMessageCount),
+		"ApproximateNumberOfMessagesNotVisible": strconv.Itoa(attrs.ApproximateNotVisibleCount),
+		"VisibilityTimeout":                     strconv.Itoa(attrs.VisibilityTimeout),
+		"DelaySeconds":                          strconv.Itoa(attrs.DelaySeconds),
+		"MaximumMessageSize":                    strconv.Itoa(attrs.MaximumMessageSize),
+		"MessageRetentionPeriod":                strconv.Itoa(attrs.MessageRetentionPeriod),
+		"CreatedTimestamp":                      strconv.FormatInt(attrs.CreatedAt.Unix(), 10),
+		"LastModifiedTimestamp":                 strconv.FormatInt(attrs.LastModifiedAt.Unix(), 10),
+		"FifoQueue":                             strconv.FormatBool(attrs.FifoQueue),
+	}
+	if attrs.RedrivePolicy != "" {
+		all["RedrivePolicy"] = attrs.RedrivePolicy
+	}
+
+	wire.WriteJSON(w, map[string]any{"Attributes": selectAttributes(all, req.AttributeNames)})
+}
+
+// selectAttributes returns the requested subset, or all when the caller asks
+// for "All" or names nothing (real SQS semantics).
+func selectAttributes(all map[string]string, names []string) map[string]string {
+	if len(names) == 0 {
+		return all
+	}
+
+	for _, n := range names {
+		if n == "All" {
+			return all
+		}
+	}
+
+	out := make(map[string]string, len(names))
+	for _, n := range names {
+		if v, ok := all[n]; ok {
+			out[n] = v
+		}
+	}
+
+	return out
+}
+
+func (h *Handler) setQueueAttributes(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueURL   string            `json:"QueueUrl"`
+		Attributes map[string]string `json:"Attributes"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	attrs := make(map[string]int, len(numericAttrKeys))
+	for _, k := range numericAttrKeys {
+		if v, ok := req.Attributes[k]; ok {
+			if n, err := strconv.Atoi(v); err == nil {
+				attrs[k] = n
+			}
+		}
+	}
+
+	if err := h.mq.SetQueueAttributes(r.Context(), req.QueueURL, attrs); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) purgeQueue(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueURL string `json:"QueueUrl"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := h.mq.PurgeQueue(r.Context(), req.QueueURL); err != nil {
 		writeErr(w, err)
 		return
 	}

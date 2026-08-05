@@ -376,10 +376,10 @@ func TestDeleteVolume(t *testing.T) {
 		err = m.DeleteVolume(ctx, vol.ID)
 		requireNoError(t, err)
 
-		// Should be gone
-		vols, err := m.DescribeVolumes(ctx, []string{vol.ID})
-		requireNoError(t, err)
-		assertEqual(t, 0, len(vols))
+		// Should be gone: describing the deleted ID now yields NotFound,
+		// matching real EC2 (InvalidVolume.NotFound) rather than empty success.
+		_, err = m.DescribeVolumes(ctx, []string{vol.ID})
+		assertError(t, err, true)
 	})
 
 	t.Run("not found", func(t *testing.T) {

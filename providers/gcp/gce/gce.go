@@ -291,6 +291,20 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	return m.transitionInstances(ctx, instanceIDs, terminateTransition)
 }
 
+// RemoveInstance hard-deletes an instance, mirroring GCP's instances.delete
+// (which removes the resource, unlike EC2 terminate which leaves a TERMINATED
+// tombstone). GCP-specific; reached via a type assertion from the GCE handler.
+func (m *Mock) RemoveInstance(_ context.Context, instanceID string) error {
+	if !m.instances.Has(instanceID) {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	m.instances.Delete(instanceID)
+	m.sm.Remove(instanceID)
+
+	return nil
+}
+
 func (m *Mock) DescribeInstances(
 	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
 ) ([]driver.Instance, error) {
@@ -415,6 +429,9 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		AvailabilityZone: cfg.AvailabilityZone,
 		CreatedAt:        m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:             copyTags(cfg.Tags),
+		IOPS:             cfg.IOPS,
+		Throughput:       cfg.Throughput,
+		Tier:             cfg.Tier,
 	}
 	m.volumes.Set(id, vol)
 
@@ -514,8 +531,13 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 }
 
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", cfg.InstanceID)
+	// GCP images are created from a disk, snapshot, or import — not from a
+	// source instance. An empty InstanceID is one of those source-based paths,
+	// so only validate when a specific instance was named (the EC2-style path).
+	if cfg.InstanceID != "" {
+		if _, ok := m.instances.Get(cfg.InstanceID); !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", cfg.InstanceID)
+		}
 	}
 
 	id := fmt.Sprintf("projects/%s/global/images/img-%d",

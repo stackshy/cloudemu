@@ -11,6 +11,69 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
+func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.notif.(topicTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	name := topicNameFromARN(r.Form.Get("ResourceArn"))
+
+	if err := tagger.TagTopic(r.Context(), name, awsquery.FlatTags(r.Form, "Tags.member")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, tagResourceResponse{
+		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
+	tagger, ok := h.notif.(topicTagger)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	name := topicNameFromARN(r.Form.Get("ResourceArn"))
+
+	if err := tagger.UntagTopic(r.Context(), name, awsquery.ListStrings(r.Form, "TagKeys.member")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, untagResourceResponse{
+		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// parseMessageAttributes reads SNS Publish MessageAttributes.entry.N.Name /
+// .Value.StringValue form parameters into a flat name->value map. Only string
+// values are modeled (the common case); binary values are ignored.
+func parseMessageAttributes(form url.Values) map[string]string {
+	idx := awsquery.CollectIndices(form, "MessageAttributes.entry")
+	if len(idx) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(idx))
+
+	for _, i := range idx {
+		base := "MessageAttributes.entry." + strconv.Itoa(i)
+
+		name := form.Get(base + ".Name")
+		if name == "" {
+			continue
+		}
+
+		out[name] = form.Get(base + ".Value.StringValue")
+	}
+
+	return out
+}
+
 // createTopic maps CreateTopic to Notification.CreateTopic. SNS CreateTopic is
 // idempotent: creating a topic that already exists returns the existing ARN
 // rather than an error, so we translate the driver's AlreadyExists into a
@@ -63,6 +126,27 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request) {
 // getTopicAttributes maps GetTopicAttributes to Notification.GetTopic and
 // exposes the topic's ARN, display name, and subscription count as the standard
 // SNS attribute map.
+// setTopicAttributes maps SetTopicAttributes to Notification.UpdateTopic for
+// the DisplayName attribute. Other attribute names (Policy, DeliveryPolicy) are
+// accepted but not modeled — the emulator doesn't evaluate topic policies, so
+// storing them would have no observable effect.
+func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {
+	name := topicNameFromARN(r.Form.Get("TopicArn"))
+
+	if r.Form.Get("AttributeName") == "DisplayName" {
+		if _, err := h.notif.UpdateTopic(r.Context(), notifdriver.TopicConfig{
+			Name: name, DisplayName: r.Form.Get("AttributeValue"),
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	awsquery.WriteXMLResponse(w, setTopicAttributesResponse{
+		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
 func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	name := topicNameFromARN(r.Form.Get("TopicArn"))
 
@@ -197,9 +281,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.notif.Publish(r.Context(), notifdriver.PublishInput{
-		TopicID: topicNameFromARN(arn),
-		Subject: r.Form.Get("Subject"),
-		Message: r.Form.Get("Message"),
+		TopicID:    topicNameFromARN(arn),
+		Subject:    r.Form.Get("Subject"),
+		Message:    r.Form.Get("Message"),
+		Attributes: parseMessageAttributes(r.Form),
 	})
 	if err != nil {
 		writeErr(w, err)

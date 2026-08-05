@@ -77,11 +77,50 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	// Direct media URLs are /{bucket}/{object}. Two or more path segments
-	// suffices.
+	// suffices — but NOT when the first segment is a reserved API prefix
+	// (v1, v2, sql, compute, …): those are other services' endpoints that no
+	// earlier handler claimed, and swallowing them here yields a misleading
+	// "bucket \"v1\" not found" instead of a clean not-implemented/not-found.
 	trimmed := strings.TrimPrefix(p, "/")
 	parts := strings.SplitN(trimmed, "/", pathBucketAndKey)
 
-	return len(parts) == pathBucketAndKey && parts[0] != "" && parts[1] != ""
+	if len(parts) != pathBucketAndKey || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+
+	return !isReservedAPIPrefix(parts[0])
+}
+
+// isReservedAPIPrefix reports whether a first path segment is a Google API
+// version/service prefix rather than a plausible bucket name. GCS bucket names
+// are lowercase and never collide with these in practice.
+func isReservedAPIPrefix(seg string) bool {
+	switch seg {
+	case "sql", "compute", "dns", "upload", "storage", "download", "batch", "_cloudemu":
+		return true
+	}
+
+	// A whole-segment API version token (v1, v3, v1beta4, v2beta) — but NOT a
+	// bucket that merely starts that way (e.g. "v2-assets", "v1data").
+	return isVersionToken(seg)
+}
+
+// isVersionToken reports whether seg is exactly an API version like v1, v3,
+// v1beta4, v2beta — "v" + digits, optionally a beta/alpha qualifier, nothing
+// else. A hyphen or other suffix (a real bucket name) is not a version.
+func isVersionToken(seg string) bool {
+	if len(seg) < 2 || seg[0] != 'v' || seg[1] < '0' || seg[1] > '9' {
+		return false
+	}
+
+	i := 1
+	for i < len(seg) && seg[i] >= '0' && seg[i] <= '9' {
+		i++
+	}
+
+	rest := seg[i:]
+
+	return rest == "" || strings.HasPrefix(rest, "beta") || strings.HasPrefix(rest, "alpha")
 }
 
 // ServeHTTP routes the request based on URL path shape.
@@ -146,6 +185,8 @@ func (h *Handler) bucketResource(w http.ResponseWriter, r *http.Request, name st
 	switch r.Method {
 	case http.MethodGet:
 		h.getBucket(w, r, name)
+	case http.MethodPatch, http.MethodPut:
+		h.patchBucket(w, r, name)
 	case http.MethodDelete:
 		h.deleteBucket(w, r, name)
 	default:
@@ -154,9 +195,7 @@ func (h *Handler) bucketResource(w http.ResponseWriter, r *http.Request, name st
 }
 
 func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"name"`
-	}
+	var body bucketResource
 
 	if !decodeJSON(w, r, &body) {
 		return
@@ -172,14 +211,21 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, bucketResource{
-		Kind:        "storage#bucket",
-		ID:          body.Name,
-		Name:        body.Name,
-		SelfLink:    selfLink(r, "/storage/v1/b/"+body.Name),
-		Location:    "US",
-		TimeCreated: time.Now().UTC().Format(time.RFC3339),
-	})
+	// Persist configuration supplied at create so it round-trips on read.
+	if len(body.Labels) > 0 {
+		_ = h.bucket.PutBucketTagging(r.Context(), body.Name, body.Labels)
+	}
+
+	if body.Versioning != nil && body.Versioning.Enabled {
+		_ = h.bucket.SetBucketVersioning(r.Context(), body.Name, true)
+	}
+
+	res := h.bucketView(r, body.Name, time.Now().UTC().Format(time.RFC3339))
+	if body.Location != "" {
+		res.Location = body.Location
+	}
+
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
@@ -213,20 +259,63 @@ func (h *Handler) getBucket(w http.ResponseWriter, r *http.Request, name string)
 
 	for _, b := range buckets {
 		if b.Name == name {
-			writeJSON(w, http.StatusOK, bucketResource{
-				Kind:        "storage#bucket",
-				ID:          b.Name,
-				Name:        b.Name,
-				SelfLink:    selfLink(r, "/storage/v1/b/"+b.Name),
-				Location:    "US",
-				TimeCreated: b.CreatedAt,
-			})
-
+			writeJSON(w, http.StatusOK, h.bucketView(r, b.Name, b.CreatedAt))
 			return
 		}
 	}
 
 	writeError(w, http.StatusNotFound, "notFound", "bucket "+name+" not found")
+}
+
+// bucketView builds the bucket JSON with its configured versioning + labels
+// reflected (real GCS returns these; the driver stores them so a read must
+// surface them).
+func (h *Handler) bucketView(r *http.Request, name, created string) bucketResource {
+	res := bucketResource{
+		Kind:         "storage#bucket",
+		ID:           name,
+		Name:         name,
+		SelfLink:     selfLink(r, "/storage/v1/b/"+name),
+		Location:     "US",
+		StorageClass: "STANDARD",
+		TimeCreated:  created,
+	}
+
+	if enabled, err := h.bucket.GetBucketVersioning(r.Context(), name); err == nil && enabled {
+		res.Versioning = &bucketVersioning{Enabled: true}
+	}
+
+	if labels, err := h.bucket.GetBucketTagging(r.Context(), name); err == nil && len(labels) > 0 {
+		res.Labels = labels
+	}
+
+	return res
+}
+
+// patchBucket applies a bucket configuration update (versioning + labels),
+// which real clients set via Buckets.Patch/Update. Without this the driver's
+// versioning/label capabilities are unreachable over the wire.
+func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name string) {
+	var body bucketResource
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	if body.Versioning != nil {
+		if err := h.bucket.SetBucketVersioning(r.Context(), name, body.Versioning.Enabled); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	if body.Labels != nil {
+		if err := h.bucket.PutBucketTagging(r.Context(), name, body.Labels); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, h.bucketView(r, name, ""))
 }
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, name string) {

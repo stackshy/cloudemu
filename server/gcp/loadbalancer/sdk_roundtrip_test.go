@@ -52,9 +52,12 @@ func TestSDKGCPBackendServiceRoundTrip(t *testing.T) {
 	insertOp, err := client.Insert(ctx, &computepb.InsertBackendServiceRequest{
 		Project: testProject,
 		BackendServiceResource: &computepb.BackendService{
-			Name:     ptrStr("web-backend"),
-			Protocol: ptrStr("HTTP"),
-			Port:     func() *int32 { p := int32(80); return &p }(),
+			Name:         ptrStr("web-backend"),
+			Protocol:     ptrStr("HTTP"),
+			Port:         func() *int32 { p := int32(80); return &p }(),
+			Description:  ptrStr("web tier"),
+			PortName:     ptrStr("http"),
+			HealthChecks: []string{"projects/p1/global/healthChecks/hc1"},
 		},
 	})
 	if err != nil {
@@ -79,6 +82,19 @@ func TestSDKGCPBackendServiceRoundTrip(t *testing.T) {
 
 	if got.GetProtocol() != "HTTP" {
 		t.Fatalf("protocol = %q, want HTTP", got.GetProtocol())
+	}
+
+	// description / portName / healthChecks must round-trip, not be dropped.
+	if got.GetDescription() != "web tier" {
+		t.Errorf("description = %q, want 'web tier'", got.GetDescription())
+	}
+
+	if got.GetPortName() != "http" {
+		t.Errorf("portName = %q, want http", got.GetPortName())
+	}
+
+	if len(got.GetHealthChecks()) != 1 || got.GetHealthChecks()[0] != "projects/p1/global/healthChecks/hc1" {
+		t.Errorf("healthChecks = %v, want [.../hc1]", got.GetHealthChecks())
 	}
 
 	// List.

@@ -36,6 +36,7 @@ const (
 // (parsing assetType filters AND emitting type in response rows).
 const (
 	atComputeInstance = "compute.googleapis.com/Instance"
+	atComputeDisk     = "compute.googleapis.com/Disk"
 	atNetwork         = "compute.googleapis.com/Network"
 	atSubnetwork      = "compute.googleapis.com/Subnetwork"
 	atFirewall        = "compute.googleapis.com/Firewall"
@@ -238,6 +239,7 @@ type portableResourceType struct{ service, typ string }
 // gocyclo under the gate as the pairs grow.
 var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
 	atComputeInstance: {portableCompute, "Instance"},
+	atComputeDisk:     {portableCompute, "Volume"},
 	atNetwork:         {portableNetworking, "VPC"},
 	atSubnetwork:      {portableNetworking, "Subnet"},
 	atFirewall:        {portableNetworking, "SecurityGroup"},
@@ -254,6 +256,7 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
 var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	portableCompute + "/Instance":         atComputeInstance,
+	portableCompute + "/Volume":           atComputeDisk,
 	portableNetworking + "/VPC":           atNetwork,
 	portableNetworking + "/Subnet":        atSubnetwork,
 	portableNetworking + "/SecurityGroup": atFirewall,

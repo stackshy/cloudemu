@@ -28,6 +28,9 @@ import (
 // pathPrefix roots every Route 53 REST URL. The version segment is fixed.
 const pathPrefix = "/2013-04-01/hostedzone"
 
+// tagsPrefix roots the Route 53 tagging API: /2013-04-01/tags/{type}/{id}.
+const tagsPrefix = "/2013-04-01/tags/"
+
 const rrsetSeg = "rrset"
 
 // Handler serves Route 53 REST requests against a dns driver.
@@ -44,11 +47,18 @@ func New(d dnsdriver.DNS) *Handler {
 // path space, disjoint from every other AWS handler. Registered before the S3
 // REST fallback so those paths aren't swallowed by the catch-all.
 func (*Handler) Matches(r *http.Request) bool {
-	return r.URL.Path == pathPrefix || strings.HasPrefix(r.URL.Path, pathPrefix+"/")
+	return r.URL.Path == pathPrefix ||
+		strings.HasPrefix(r.URL.Path, pathPrefix+"/") ||
+		strings.HasPrefix(r.URL.Path, tagsPrefix)
 }
 
 // ServeHTTP routes on the path tail and method.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
+		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
+		return
+	}
+
 	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
 	if tail == "" {
 		h.serveZoneCollection(w, r)

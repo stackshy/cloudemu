@@ -18,6 +18,10 @@ const apiGroupApps = "apps"
 // resourceDeployments is the plural resource segment for Deployments.
 const resourceDeployments = "deployments"
 
+// resourcePods is the pods resource path segment, shared by the typed dispatch
+// and the pod subresource (log/exec) router.
+const resourcePods = "pods"
+
 // serveDeployments dispatches /apis/apps/v1/{namespaces/{ns}/deployments|
 // deployments} requests. Deployments are the first apps/v1 resource so the
 // route group check is different from the core/v1 handlers.
@@ -41,7 +45,7 @@ func (s *ClusterState) serveDeployments(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
-		s.listDeploymentsAllNamespaces(w)
+		s.listDeploymentsAllNamespaces(w, r)
 
 		return
 	}
@@ -70,7 +74,7 @@ func (s *ClusterState) serveDeploymentCollection(w http.ResponseWriter, r *http.
 			return
 		}
 
-		s.listDeployments(w, namespace)
+		s.listDeployments(w, r, namespace)
 	case http.MethodPost:
 		s.createDeployment(w, r, namespace)
 	default:
@@ -96,7 +100,7 @@ func (s *ClusterState) serveDeploymentItem(w http.ResponseWriter, r *http.Reques
 	case http.MethodPatch:
 		s.patchDeployment(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deleteDeployment(w, namespace, name)
+		s.deleteDeployment(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: deployment item: method not allowed: "+r.Method)
 	}
@@ -127,9 +131,19 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
 	in.Generation = 1
+
+	if handled := s.admit(w, opCreate, gvrDeployments(), &in); handled {
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
 
 	dep := in
 	s.deployments[key] = &dep
@@ -140,24 +154,34 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusCreated, &dep)
 }
 
-func (s *ClusterState) listDeployments(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listDeployments(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectDeploymentsLocked(namespace)
+	items, cont, ok := listPage(s.collectDeploymentsLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{Kind: "DeploymentList", APIVersion: "apps/v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listDeploymentsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listDeploymentsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectDeploymentsLocked("")
+	items, cont, ok := listPage(s.collectDeploymentsLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{Kind: "DeploymentList", APIVersion: "apps/v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -226,6 +250,12 @@ func (s *ClusterState) updateDeployment(w http.ResponseWriter, r *http.Request, 
 	in.TypeMeta = cur.TypeMeta
 	in.Generation = generationFor(cur.Generation, &in.Spec, &cur.Spec)
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	dep := in
 	s.deployments[key] = &dep
 	s.reconcileDeploymentLocked(&dep)
@@ -254,6 +284,12 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	patched.Generation = generationFor(cur.Generation, &patched.Spec, &cur.Spec)
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.deployments[key] = patched
 	s.reconcileDeploymentLocked(patched)
 	s.wDeployments.publish(EventModified, namespace, *patched.DeepCopy())
@@ -271,7 +307,7 @@ func generationFor(cur int64, newSpec, oldSpec *appsv1.DeploymentSpec) int64 {
 	return cur + 1
 }
 
-func (s *ClusterState) deleteDeployment(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deleteDeployment(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := deploymentKey(namespace, name)
 
 	s.mu.Lock()
@@ -280,6 +316,12 @@ func (s *ClusterState) deleteDeployment(w http.ResponseWriter, namespace, name s
 	dep, ok := s.deployments[key]
 	if !ok {
 		writeNotFound(w, "k8s api: deployment not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, dep.DeepCopy())
 
 		return
 	}
