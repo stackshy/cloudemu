@@ -21,8 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2"
-	"github.com/stackshy/cloudemu/v2/server"
-	"github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 type fakeCred struct{}
@@ -35,7 +34,7 @@ func newAccountsClient(t *testing.T) *armstorage.AccountsClient {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
-	srv := server.New(storageaccount.New(cloudP.BlobStorage))
+	srv := azureserver.New(azureserver.Drivers{BlobStorage: cloudP.BlobStorage})
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)

@@ -21,8 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2"
-	"github.com/stackshy/cloudemu/v2/server"
-	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 type fakeCred struct{}
@@ -35,7 +34,7 @@ func newDatabaseAccountsClient(t *testing.T) *armcosmos.DatabaseAccountsClient {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
-	srv := server.New(cosmosaccount.New(cloudP.CosmosDB))
+	srv := azureserver.New(azureserver.Drivers{CosmosDB: cloudP.CosmosDB})
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
