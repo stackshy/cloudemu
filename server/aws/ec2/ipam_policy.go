@@ -2,7 +2,9 @@ package ec2
 
 import (
 	"encoding/xml"
+	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -148,42 +150,85 @@ func (*Handler) getEnabledIpamPolicy(w http.ResponseWriter, r *http.Request, ip 
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, IpamPolicyID: id, IpamPolicyEnabled: enabled, ManagedBy: managedBy})
 }
 
+// allocationRuleXML is one <allocationRuleSet><item>; matches the SDK's
+// IpamPolicyAllocationRule (sourceIpamPoolId only).
+type allocationRuleXML struct {
+	SourceIpamPoolID string `xml:"sourceIpamPoolId,omitempty"`
+}
+
+// ipamPolicyDocumentXML matches types.IpamPolicyDocument: an allocationRuleSet
+// plus the ipamPolicyId/locale/resourceType the rules are scoped to.
+type ipamPolicyDocumentXML struct {
+	IpamPolicyID   string              `xml:"ipamPolicyId,omitempty"`
+	Locale         string              `xml:"locale,omitempty"`
+	ResourceType   string              `xml:"resourceType,omitempty"`
+	AllocationRule []allocationRuleXML `xml:"allocationRuleSet>item,omitempty"`
+}
+
+// parseAllocationRules reads the request's flattened AllocationRule.N list.
+func parseAllocationRules(form url.Values) []netdriver.IpamAllocationRule {
+	idx := awsquery.CollectIndices(form, "AllocationRule")
+	rules := make([]netdriver.IpamAllocationRule, 0, len(idx))
+
+	for _, i := range idx {
+		pool := form.Get(fmt.Sprintf("AllocationRule.%d.SourceIpamPoolId", i))
+		rules = append(rules, netdriver.IpamAllocationRule{SourceIpamPoolID: pool})
+	}
+
+	return rules
+}
+
+func toIpamPolicyDocumentXML(p *netdriver.IpamPolicy) ipamPolicyDocumentXML {
+	doc := ipamPolicyDocumentXML{
+		IpamPolicyID: p.ID,
+		Locale:       p.Locale,
+		ResourceType: p.ResourceType,
+	}
+
+	for _, rule := range p.AllocationRules {
+		doc.AllocationRule = append(doc.AllocationRule, allocationRuleXML{SourceIpamPoolID: rule.SourceIpamPoolID})
+	}
+
+	return doc
+}
+
 func (*Handler) modifyIpamPolicyAllocationRules(w http.ResponseWriter, r *http.Request, ip netdriver.IPAMPolicy) {
-	err := ip.ModifyIpamPolicyAllocationRules(r.Context(), r.Form.Get("IpamPolicyId"), awsquery.ListStrings(r.Form, "AddAllocationRule"))
+	out, err := ip.ModifyIpamPolicyAllocationRules(r.Context(),
+		r.Form.Get("IpamPolicyId"), r.Form.Get("Locale"), r.Form.Get("ResourceType"),
+		parseAllocationRules(r.Form))
 	if err != nil {
 		writeIPAMErr(w, err)
 		return
 	}
 
-	writeReturnTrue(w, "ModifyIpamPolicyAllocationRulesResponse")
-}
-
-//nolint:dupl // parallel single-field list marshaling
-func (*Handler) getIpamPolicyAllocationRules(w http.ResponseWriter, r *http.Request, ip netdriver.IPAMPolicy) {
-	rules, err := ip.GetIpamPolicyAllocationRules(r.Context(), r.Form.Get("IpamPolicyId"))
-	if err != nil {
-		writeIPAMErr(w, err)
-		return
-	}
-
-	type docXML struct {
-		Document string `xml:"document"`
-	}
-
-	out := make([]docXML, 0, len(rules))
-	for _, d := range rules {
-		out = append(out, docXML{Document: d})
-	}
-
+	// The SDK output carries IpamPolicyDocument (element ipamPolicyDocument),
+	// not a Return field — emit the modified document so the caller sees it.
 	awsquery.WriteXMLResponse(w, struct {
-		XMLName xml.Name `xml:"GetIpamPolicyAllocationRulesResponse"`
-		Xmlns   string   `xml:"xmlns,attr"`
-		Req     string   `xml:"requestId"`
-		Set     []docXML `xml:"ipamPolicyDocumentSet>item"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+		XMLName  xml.Name              `xml:"ModifyIpamPolicyAllocationRulesResponse"`
+		Xmlns    string                `xml:"xmlns,attr"`
+		Req      string                `xml:"requestId"`
+		Document ipamPolicyDocumentXML `xml:"ipamPolicyDocument"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Document: toIpamPolicyDocumentXML(out)})
 }
 
-//nolint:dupl // parallel single-field list marshaling
+func (*Handler) getIpamPolicyAllocationRules(w http.ResponseWriter, r *http.Request, ip netdriver.IPAMPolicy) {
+	p, err := ip.GetIpamPolicyAllocationRules(r.Context(), r.Form.Get("IpamPolicyId"))
+	if err != nil {
+		writeIPAMErr(w, err)
+		return
+	}
+
+	// Output is IpamPolicyDocuments []IpamPolicyDocument + NextToken. The
+	// emulator models one document (the policy's rules) per policy.
+	awsquery.WriteXMLResponse(w, struct {
+		XMLName   xml.Name                `xml:"GetIpamPolicyAllocationRulesResponse"`
+		Xmlns     string                  `xml:"xmlns,attr"`
+		Req       string                  `xml:"requestId"`
+		Set       []ipamPolicyDocumentXML `xml:"ipamPolicyDocumentSet>item"`
+		NextToken string                  `xml:"nextToken,omitempty"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: []ipamPolicyDocumentXML{toIpamPolicyDocumentXML(p)}})
+}
+
 func (*Handler) getIpamPolicyOrganizationTargets(w http.ResponseWriter, r *http.Request, ip netdriver.IPAMPolicy) {
 	targets, err := ip.GetIpamPolicyOrganizationTargets(r.Context(), r.Form.Get("IpamPolicyId"))
 	if err != nil {

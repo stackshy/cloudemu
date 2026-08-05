@@ -477,6 +477,32 @@ func TestEC2IPAMFullSDK(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, aws.ToBool(enabled.IpamPolicyEnabled))
 
+		// Modify allocation rules — the response must carry a non-nil
+		// IpamPolicyDocument (not a dropped <return>true>), and Get must return
+		// the rule's sourceIpamPoolId + ipamPolicyId (not an empty document).
+		mod, err := client.ModifyIpamPolicyAllocationRules(ctx, &ec2.ModifyIpamPolicyAllocationRulesInput{
+			IpamPolicyId: aws.String(polID),
+			Locale:       aws.String("us-east-1"),
+			ResourceType: ec2types.IpamPolicyResourceTypeEip,
+			AllocationRules: []ec2types.IpamPolicyAllocationRuleRequest{
+				{SourceIpamPoolId: aws.String("ipam-pool-abc123")},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, mod.IpamPolicyDocument, "ModifyIpamPolicyAllocationRules dropped the document")
+		require.Len(t, mod.IpamPolicyDocument.AllocationRules, 1)
+		assert.Equal(t, "ipam-pool-abc123", aws.ToString(mod.IpamPolicyDocument.AllocationRules[0].SourceIpamPoolId))
+
+		got, err := client.GetIpamPolicyAllocationRules(ctx, &ec2.GetIpamPolicyAllocationRulesInput{
+			IpamPolicyId: aws.String(polID),
+		})
+		require.NoError(t, err)
+		require.Len(t, got.IpamPolicyDocuments, 1)
+		assert.Equal(t, polID, aws.ToString(got.IpamPolicyDocuments[0].IpamPolicyId))
+		require.Len(t, got.IpamPolicyDocuments[0].AllocationRules, 1)
+		assert.Equal(t, "ipam-pool-abc123",
+			aws.ToString(got.IpamPolicyDocuments[0].AllocationRules[0].SourceIpamPoolId))
+
 		admin, err := client.EnableIpamOrganizationAdminAccount(ctx, &ec2.EnableIpamOrganizationAdminAccountInput{
 			DelegatedAdminAccountId: aws.String("111122223333"),
 		})

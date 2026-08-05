@@ -565,6 +565,51 @@ func TestIPAMLifecycle(t *testing.T) {
 	}
 }
 
+// TestIPAMProvisionNoCrossPoolOverlap guards the review fix: two top-level
+// pools each provisioning a netmask-only /16 must receive DISTINCT,
+// non-overlapping CIDRs — both carve from the same shared base, so the
+// second must skip the first's block instead of both getting 10.0.0.0/16.
+func TestIPAMProvisionNoCrossPoolOverlap(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	ip, err := m.CreateIpam(ctx, driver.IpamConfig{})
+	if err != nil {
+		t.Fatalf("CreateIpam: %v", err)
+	}
+
+	poolA, err := m.CreateIpamPool(ctx, driver.IpamPoolConfig{IpamScopeID: ip.PrivateDefaultScopeID, AddressFamily: "ipv4"})
+	if err != nil {
+		t.Fatalf("CreateIpamPool A: %v", err)
+	}
+
+	poolB, err := m.CreateIpamPool(ctx, driver.IpamPoolConfig{IpamScopeID: ip.PrivateDefaultScopeID, AddressFamily: "ipv4"})
+	if err != nil {
+		t.Fatalf("CreateIpamPool B: %v", err)
+	}
+
+	a, err := m.ProvisionIpamPoolCidr(ctx, poolA.ID, "", 16)
+	if err != nil {
+		t.Fatalf("Provision A: %v", err)
+	}
+
+	b, err := m.ProvisionIpamPoolCidr(ctx, poolB.ID, "", 16)
+	if err != nil {
+		t.Fatalf("Provision B: %v", err)
+	}
+
+	if a.CIDR == b.CIDR {
+		t.Fatalf("cross-pool overlap: both pools provisioned %q", a.CIDR)
+	}
+
+	sa, ea, _ := ipv4Range(a.CIDR)
+	sb, eb, _ := ipv4Range(b.CIDR)
+
+	if sa <= eb && sb <= ea {
+		t.Fatalf("provisioned CIDRs overlap: %q and %q", a.CIDR, b.CIDR)
+	}
+}
+
 // TestIPAMConcurrentAccess exercises the IPAM locking under -race.
 func TestIPAMConcurrentAccess(t *testing.T) {
 	m := newMock()

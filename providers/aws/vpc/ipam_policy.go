@@ -101,23 +101,32 @@ func (m *Mock) GetEnabledIpamPolicy(_ context.Context) (policyID string, enabled
 	return "", false, "", nil
 }
 
-// ModifyIpamPolicyAllocationRules replaces a policy's allocation rules.
-func (m *Mock) ModifyIpamPolicyAllocationRules(_ context.Context, id string, rules []string) error {
+// ModifyIpamPolicyAllocationRules replaces a policy's allocation rules and the
+// locale/resource-type the document is scoped to, returning the updated policy.
+func (m *Mock) ModifyIpamPolicyAllocationRules(
+	_ context.Context, id, locale, resourceType string, rules []driver.IpamAllocationRule,
+) (*driver.IpamPolicy, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	p, ok := m.ipamPolicies.Get(id)
 	if !ok {
-		return errors.Newf(errors.NotFound, "ipam policy %q not found", id)
+		return nil, errors.Newf(errors.NotFound, "ipam policy %q not found", id)
 	}
 
-	p.AllocationRules = append([]string(nil), rules...)
+	p.Locale = locale
+	p.ResourceType = resourceType
 
-	return nil
+	p.AllocationRules = append([]driver.IpamAllocationRule(nil), rules...)
+
+	out := cloneIpamPolicy(p)
+
+	return &out, nil
 }
 
-// GetIpamPolicyAllocationRules returns a policy's allocation rule documents.
-func (m *Mock) GetIpamPolicyAllocationRules(_ context.Context, id string) ([]string, error) {
+// GetIpamPolicyAllocationRules returns the policy carrying its allocation-rule
+// document (rules + locale + resource type).
+func (m *Mock) GetIpamPolicyAllocationRules(_ context.Context, id string) (*driver.IpamPolicy, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -126,7 +135,9 @@ func (m *Mock) GetIpamPolicyAllocationRules(_ context.Context, id string) ([]str
 		return nil, errors.Newf(errors.NotFound, "ipam policy %q not found", id)
 	}
 
-	return append([]string(nil), p.AllocationRules...), nil
+	out := cloneIpamPolicy(p)
+
+	return &out, nil
 }
 
 // GetIpamPolicyOrganizationTargets returns the org targets a policy applies to.
@@ -162,7 +173,7 @@ func (*Mock) DisableIpamOrganizationAdminAccount(_ context.Context, accountID st
 
 func cloneIpamPolicy(p *driver.IpamPolicy) driver.IpamPolicy {
 	out := *p
-	out.AllocationRules = append([]string(nil), p.AllocationRules...)
+	out.AllocationRules = append([]driver.IpamAllocationRule(nil), p.AllocationRules...)
 	out.Tags = copyTags(p.Tags)
 
 	return out

@@ -113,9 +113,13 @@ func (m *Mock) deriveAllocationCIDR(poolID string, netmask int) (string, bool) {
 // deriveProvisionCIDR synthesizes a /netmask block for a top-level pool from
 // the default private base, skipping CIDRs already provisioned into the pool.
 // Caller holds mu.
-func (m *Mock) deriveProvisionCIDR(poolID string, netmask int) (string, bool) {
+func (m *Mock) deriveProvisionCIDR(_ string, netmask int) (string, bool) {
 	s, e, _ := ipv4Range(defaultIPv4Base)
-	used := usedRanges(m.poolProvisionedCIDRs(poolID))
+	// Every top-level pool carves from the same shared base, so a new block must
+	// avoid CIDRs already provisioned into ANY pool — otherwise two pools each
+	// asking for a /16 would both receive 10.0.0.0/16 and overlap, defeating
+	// IPAM's non-overlap guarantee.
+	used := usedRanges(m.allProvisionedCIDRs())
 
 	return nextFreeIPv4Block(s, e, used, netmask)
 }
@@ -127,6 +131,21 @@ func (m *Mock) poolProvisionedCIDRs(poolID string) []string {
 
 	for _, c := range m.ipamPoolCidrs.SortedValues() {
 		if m.ipamPoolByCidr[c.ID] == poolID && c.CIDR != "" {
+			out = append(out, c.CIDR)
+		}
+	}
+
+	return out
+}
+
+// allProvisionedCIDRs lists every non-empty provisioned CIDR across all pools.
+// Used to keep provisioning non-overlapping when pools share a carve base.
+// Caller holds mu.
+func (m *Mock) allProvisionedCIDRs() []string {
+	var out []string
+
+	for _, c := range m.ipamPoolCidrs.SortedValues() {
+		if c.CIDR != "" {
 			out = append(out, c.CIDR)
 		}
 	}
