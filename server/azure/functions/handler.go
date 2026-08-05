@@ -223,16 +223,16 @@ func (h *Handler) servePlan(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 	switch r.Method {
 	case http.MethodPut:
-		h.createPlan(w, r, rp, store)
+		createPlan(w, r, rp, store)
 	case http.MethodGet:
-		h.getPlan(w, r, rp, store)
+		getPlan(w, r, rp, store)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
 //nolint:gocritic // rp travels the dispatch chain once per request.
-func (h *Handler) createPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
+func createPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
 	if rp.ResourceGroup == "" {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "missing resourceGroups segment")
 		return
@@ -263,7 +263,7 @@ func (h *Handler) createPlan(w http.ResponseWriter, r *http.Request, rp azurearm
 }
 
 //nolint:gocritic // rp travels the dispatch chain once per request.
-func (h *Handler) getPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
+func getPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
 	plans, err := store.ListAppServicePlans(r.Context())
 	if err != nil {
 		azurearm.WriteCErr(w, err)
