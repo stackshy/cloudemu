@@ -108,7 +108,7 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 
 	data := make([]map[string]any, 0, len(results))
 	for i := range results {
-		data = append(data, resourceToWire(&results[i]))
+		data = append(data, h.resourceToWire(&results[i]))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
@@ -215,14 +215,24 @@ func applyLimit(results []resourcediscovery.Resource, kqlLimit, top, skip int) [
 // slots only when set — the same rendering for every resource type, with no
 // per-type branching. id is the ARM resource ID and resourceGroup is derived
 // from it (real Resource Graph consumers parse both).
-func resourceToWire(r *resourcediscovery.Resource) map[string]any {
+func (h *Handler) resourceToWire(r *resourcediscovery.Resource) map[string]any {
+	// The emulator is single-subscription: every resource belongs to the
+	// configured subscription the ARM clients use. Stamp that, rather than
+	// parsing it out of each mock's ARN — those embed inconsistent placeholders
+	// (empty, a region, a zero id), which would make a subscription-scoped ARG
+	// query return nothing. Fall back to the ARN only when unset.
+	subscription := h.subscriptionID
+	if subscription == "" {
+		subscription = extractSubscription(r.ARN)
+	}
+
 	out := map[string]any{
 		"id":             r.ARN,
 		"name":           r.ID,
 		"type":           portableToAzureType(r.Service, r.Type),
 		"location":       r.Region,
 		"resourceGroup":  resourceGroupOrDefault(r.ARN),
-		"subscriptionId": extractSubscription(r.ARN),
+		"subscriptionId": subscription,
 		"tags":           tagsOrEmpty(r.Tags),
 	}
 
