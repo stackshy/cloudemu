@@ -589,3 +589,204 @@ func TestIPAMMetricsSDK(t *testing.T) {
 	require.Len(t, stat.Datapoints, 1)
 	assert.InDelta(t, 0.39, aws.ToFloat64(stat.Datapoints[0].Average), 0.05)
 }
+
+// TestEC2StageBNetworkingParitySDK drives the real aws-sdk-go-v2 EC2 client
+// against the Stage B EC2-family capabilities (Traffic Mirroring, Network
+// Insights / Access Analyzer, VPC Block Public Access), proving the
+// query-protocol XML round-trips through the SDK deserializers.
+func TestEC2StageBNetworkingParitySDK(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	vpcOut, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpcOut.Vpc.VpcId)
+
+	subnetOut, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId: aws.String(vpcID), CidrBlock: aws.String("10.0.1.0/24"),
+	})
+	require.NoError(t, err)
+	subnetID := aws.ToString(subnetOut.Subnet.SubnetId)
+
+	t.Run("traffic mirroring", func(t *testing.T) {
+		target, err := client.CreateTrafficMirrorTarget(ctx, &ec2.CreateTrafficMirrorTargetInput{
+			NetworkInterfaceId: aws.String("eni-abc"), Description: aws.String("t"),
+		})
+		require.NoError(t, err)
+		targetID := aws.ToString(target.TrafficMirrorTarget.TrafficMirrorTargetId)
+		assert.NotEmpty(t, targetID)
+		assert.Equal(t, ec2types.TrafficMirrorTargetTypeNetworkInterface, target.TrafficMirrorTarget.Type)
+
+		filter, err := client.CreateTrafficMirrorFilter(ctx, &ec2.CreateTrafficMirrorFilterInput{
+			Description: aws.String("f"),
+		})
+		require.NoError(t, err)
+		filterID := aws.ToString(filter.TrafficMirrorFilter.TrafficMirrorFilterId)
+		assert.NotEmpty(t, filterID)
+
+		rule, err := client.CreateTrafficMirrorFilterRule(ctx, &ec2.CreateTrafficMirrorFilterRuleInput{
+			TrafficMirrorFilterId: aws.String(filterID),
+			TrafficDirection:      ec2types.TrafficDirectionIngress,
+			RuleNumber:            aws.Int32(100),
+			RuleAction:            ec2types.TrafficMirrorRuleActionAccept,
+			SourceCidrBlock:       aws.String("0.0.0.0/0"),
+			DestinationCidrBlock:  aws.String("10.0.0.0/16"),
+			Protocol:              aws.Int32(6),
+			DestinationPortRange:  &ec2types.TrafficMirrorPortRangeRequest{FromPort: aws.Int32(443), ToPort: aws.Int32(443)},
+		})
+		require.NoError(t, err)
+		ruleID := aws.ToString(rule.TrafficMirrorFilterRule.TrafficMirrorFilterRuleId)
+		assert.NotEmpty(t, ruleID)
+		assert.EqualValues(t, 443, aws.ToInt32(rule.TrafficMirrorFilterRule.DestinationPortRange.FromPort))
+
+		rules, err := client.DescribeTrafficMirrorFilterRules(ctx, &ec2.DescribeTrafficMirrorFilterRulesInput{
+			TrafficMirrorFilterId: aws.String(filterID),
+		})
+		require.NoError(t, err)
+		require.Len(t, rules.TrafficMirrorFilterRules, 1)
+
+		session, err := client.CreateTrafficMirrorSession(ctx, &ec2.CreateTrafficMirrorSessionInput{
+			NetworkInterfaceId:    aws.String("eni-src"),
+			TrafficMirrorTargetId: aws.String(targetID),
+			TrafficMirrorFilterId: aws.String(filterID),
+			SessionNumber:         aws.Int32(1),
+		})
+		require.NoError(t, err)
+		sessionID := aws.ToString(session.TrafficMirrorSession.TrafficMirrorSessionId)
+		assert.NotEmpty(t, sessionID)
+		assert.EqualValues(t, 1, aws.ToInt32(session.TrafficMirrorSession.VirtualNetworkId))
+
+		sessions, err := client.DescribeTrafficMirrorSessions(ctx, &ec2.DescribeTrafficMirrorSessionsInput{
+			TrafficMirrorSessionIds: []string{sessionID},
+		})
+		require.NoError(t, err)
+		require.Len(t, sessions.TrafficMirrorSessions, 1)
+
+		_, err = client.DeleteTrafficMirrorSession(ctx, &ec2.DeleteTrafficMirrorSessionInput{
+			TrafficMirrorSessionId: aws.String(sessionID),
+		})
+		require.NoError(t, err)
+		_, err = client.DeleteTrafficMirrorFilterRule(ctx, &ec2.DeleteTrafficMirrorFilterRuleInput{
+			TrafficMirrorFilterRuleId: aws.String(ruleID),
+		})
+		require.NoError(t, err)
+		_, err = client.DeleteTrafficMirrorFilter(ctx, &ec2.DeleteTrafficMirrorFilterInput{
+			TrafficMirrorFilterId: aws.String(filterID),
+		})
+		require.NoError(t, err)
+		_, err = client.DeleteTrafficMirrorTarget(ctx, &ec2.DeleteTrafficMirrorTargetInput{
+			TrafficMirrorTargetId: aws.String(targetID),
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("reachability analyzer", func(t *testing.T) {
+		path, err := client.CreateNetworkInsightsPath(ctx, &ec2.CreateNetworkInsightsPathInput{
+			Protocol: ec2types.ProtocolTcp, Source: aws.String("igw-1"),
+			Destination: aws.String("eni-1"), DestinationPort: aws.Int32(443),
+		})
+		require.NoError(t, err)
+		pathID := aws.ToString(path.NetworkInsightsPath.NetworkInsightsPathId)
+		assert.NotEmpty(t, pathID)
+		assert.NotEmpty(t, aws.ToString(path.NetworkInsightsPath.NetworkInsightsPathArn))
+
+		analysis, err := client.StartNetworkInsightsAnalysis(ctx, &ec2.StartNetworkInsightsAnalysisInput{
+			NetworkInsightsPathId: aws.String(pathID),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, ec2types.AnalysisStatusSucceeded, analysis.NetworkInsightsAnalysis.Status)
+		assert.True(t, aws.ToBool(analysis.NetworkInsightsAnalysis.NetworkPathFound))
+
+		analyses, err := client.DescribeNetworkInsightsAnalyses(ctx, &ec2.DescribeNetworkInsightsAnalysesInput{
+			NetworkInsightsPathId: aws.String(pathID),
+		})
+		require.NoError(t, err)
+		require.Len(t, analyses.NetworkInsightsAnalyses, 1)
+
+		_, err = client.DeleteNetworkInsightsPath(ctx, &ec2.DeleteNetworkInsightsPathInput{
+			NetworkInsightsPathId: aws.String(pathID),
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("access analyzer", func(t *testing.T) {
+		scope, err := client.CreateNetworkInsightsAccessScope(ctx, &ec2.CreateNetworkInsightsAccessScopeInput{
+			MatchPaths: []ec2types.AccessScopePathRequest{{
+				Source: &ec2types.PathStatementRequest{
+					ResourceStatement: &ec2types.ResourceStatementRequest{
+						ResourceTypes: []string{"AWS::EC2::InternetGateway"},
+					},
+				},
+			}},
+		})
+		require.NoError(t, err)
+		scopeID := aws.ToString(scope.NetworkInsightsAccessScope.NetworkInsightsAccessScopeId)
+		assert.NotEmpty(t, scopeID)
+		require.Len(t, scope.NetworkInsightsAccessScopeContent.MatchPaths, 1)
+
+		content, err := client.GetNetworkInsightsAccessScopeContent(ctx, &ec2.GetNetworkInsightsAccessScopeContentInput{
+			NetworkInsightsAccessScopeId: aws.String(scopeID),
+		})
+		require.NoError(t, err)
+		require.Len(t, content.NetworkInsightsAccessScopeContent.MatchPaths, 1)
+		assert.Equal(t, "AWS::EC2::InternetGateway",
+			content.NetworkInsightsAccessScopeContent.MatchPaths[0].Source.ResourceStatement.ResourceTypes[0])
+
+		analysis, err := client.StartNetworkInsightsAccessScopeAnalysis(ctx, &ec2.StartNetworkInsightsAccessScopeAnalysisInput{
+			NetworkInsightsAccessScopeId: aws.String(scopeID),
+		})
+		require.NoError(t, err)
+		analysisID := aws.ToString(analysis.NetworkInsightsAccessScopeAnalysis.NetworkInsightsAccessScopeAnalysisId)
+		assert.Equal(t, ec2types.AnalysisStatusSucceeded, analysis.NetworkInsightsAccessScopeAnalysis.Status)
+
+		findings, err := client.GetNetworkInsightsAccessScopeAnalysisFindings(ctx,
+			&ec2.GetNetworkInsightsAccessScopeAnalysisFindingsInput{
+				NetworkInsightsAccessScopeAnalysisId: aws.String(analysisID),
+			})
+		require.NoError(t, err)
+		assert.Equal(t, ec2types.AnalysisStatusSucceeded, findings.AnalysisStatus)
+
+		_, err = client.DeleteNetworkInsightsAccessScope(ctx, &ec2.DeleteNetworkInsightsAccessScopeInput{
+			NetworkInsightsAccessScopeId: aws.String(scopeID),
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("vpc block public access", func(t *testing.T) {
+		opts, err := client.DescribeVpcBlockPublicAccessOptions(ctx, &ec2.DescribeVpcBlockPublicAccessOptionsInput{})
+		require.NoError(t, err)
+		assert.Equal(t, ec2types.InternetGatewayBlockModeOff, opts.VpcBlockPublicAccessOptions.InternetGatewayBlockMode)
+
+		mod, err := client.ModifyVpcBlockPublicAccessOptions(ctx, &ec2.ModifyVpcBlockPublicAccessOptionsInput{
+			InternetGatewayBlockMode: ec2types.InternetGatewayBlockModeBlockBidirectional,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, ec2types.InternetGatewayBlockModeBlockBidirectional,
+			mod.VpcBlockPublicAccessOptions.InternetGatewayBlockMode)
+
+		excl, err := client.CreateVpcBlockPublicAccessExclusion(ctx, &ec2.CreateVpcBlockPublicAccessExclusionInput{
+			SubnetId:                     aws.String(subnetID),
+			InternetGatewayExclusionMode: ec2types.InternetGatewayExclusionModeAllowBidirectional,
+		})
+		require.NoError(t, err)
+		exclID := aws.ToString(excl.VpcBlockPublicAccessExclusion.ExclusionId)
+		assert.NotEmpty(t, exclID)
+
+		modExcl, err := client.ModifyVpcBlockPublicAccessExclusion(ctx, &ec2.ModifyVpcBlockPublicAccessExclusionInput{
+			ExclusionId:                  aws.String(exclID),
+			InternetGatewayExclusionMode: ec2types.InternetGatewayExclusionModeAllowEgress,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, ec2types.InternetGatewayExclusionModeAllowEgress,
+			modExcl.VpcBlockPublicAccessExclusion.InternetGatewayExclusionMode)
+
+		list, err := client.DescribeVpcBlockPublicAccessExclusions(ctx, &ec2.DescribeVpcBlockPublicAccessExclusionsInput{})
+		require.NoError(t, err)
+		require.Len(t, list.VpcBlockPublicAccessExclusions, 1)
+
+		_, err = client.DeleteVpcBlockPublicAccessExclusion(ctx, &ec2.DeleteVpcBlockPublicAccessExclusionInput{
+			ExclusionId: aws.String(exclID),
+		})
+		require.NoError(t, err)
+	})
+}

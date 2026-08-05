@@ -819,3 +819,203 @@ func TestIPAMFullProvider(t *testing.T) {
 		t.Fatalf("expected pool metrics, got %v", seen)
 	}
 }
+
+func TestTrafficMirroringLifecycle(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	target, err := m.CreateTrafficMirrorTarget(ctx, driver.TrafficMirrorTargetConfig{
+		NetworkInterfaceID: "eni-123", Description: "t", Tags: map[string]string{"Name": "tm"},
+	})
+	if err != nil || target.ID == "" || target.Type != "network-interface" {
+		t.Fatalf("CreateTrafficMirrorTarget: %v %+v", err, target)
+	}
+
+	filter, err := m.CreateTrafficMirrorFilter(ctx, "f", nil)
+	if err != nil || filter.ID == "" {
+		t.Fatalf("CreateTrafficMirrorFilter: %v %+v", err, filter)
+	}
+
+	rule, err := m.CreateTrafficMirrorFilterRule(ctx, driver.TrafficMirrorFilterRuleConfig{
+		FilterID: filter.ID, TrafficDirection: "ingress", RuleNumber: 100, RuleAction: "accept",
+		Protocol: 6, SourceCIDR: "0.0.0.0/0", DestinationCIDR: "10.0.0.0/16",
+		DestinationPortRange: &driver.TrafficMirrorPortRange{FromPort: 80, ToPort: 80},
+	})
+	if err != nil || rule.ID == "" || rule.RuleAction != "accept" {
+		t.Fatalf("CreateTrafficMirrorFilterRule: %v %+v", err, rule)
+	}
+
+	rules, err := m.DescribeTrafficMirrorFilterRules(ctx, filter.ID, nil)
+	if err != nil || len(rules) != 1 || rules[0].DestinationPortRange == nil {
+		t.Fatalf("DescribeTrafficMirrorFilterRules: %v %+v", err, rules)
+	}
+
+	mod, err := m.ModifyTrafficMirrorFilterRule(ctx, rule.ID,
+		driver.TrafficMirrorFilterRuleConfig{RuleAction: "reject"}, []string{"destination-port-range"})
+	if err != nil || mod.RuleAction != "reject" || mod.DestinationPortRange != nil {
+		t.Fatalf("ModifyTrafficMirrorFilterRule: %v %+v", err, mod)
+	}
+
+	session, err := m.CreateTrafficMirrorSession(ctx, driver.TrafficMirrorSessionConfig{
+		NetworkInterfaceID: "eni-999", TrafficMirrorTargetID: target.ID,
+		TrafficMirrorFilterID: filter.ID, SessionNumber: 1,
+	})
+	if err != nil || session.ID == "" || session.VirtualNetworkID != defaultVirtualNetworkID {
+		t.Fatalf("CreateTrafficMirrorSession: %v %+v", err, session)
+	}
+
+	if _, err := m.CreateTrafficMirrorSession(ctx, driver.TrafficMirrorSessionConfig{
+		TrafficMirrorTargetID: "tmt-missing", TrafficMirrorFilterID: filter.ID, SessionNumber: 1,
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("expected InvalidArgument for missing target, got %v", err)
+	}
+
+	if err := m.DeleteTrafficMirrorSession(ctx, session.ID); err != nil {
+		t.Fatalf("DeleteTrafficMirrorSession: %v", err)
+	}
+
+	if err := m.DeleteTrafficMirrorFilterRule(ctx, rule.ID); err != nil {
+		t.Fatalf("DeleteTrafficMirrorFilterRule: %v", err)
+	}
+
+	if err := m.DeleteTrafficMirrorFilter(ctx, filter.ID); err != nil {
+		t.Fatalf("DeleteTrafficMirrorFilter: %v", err)
+	}
+
+	if err := m.DeleteTrafficMirrorTarget(ctx, target.ID); err != nil {
+		t.Fatalf("DeleteTrafficMirrorTarget: %v", err)
+	}
+
+	if err := m.DeleteTrafficMirrorTarget(ctx, target.ID); !cerrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound on second delete, got %v", err)
+	}
+}
+
+func TestNetworkInsightsReachability(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	path, err := m.CreateNetworkInsightsPath(ctx, driver.NetworkInsightsPathConfig{
+		Protocol: "tcp", Source: "igw-1", Destination: "eni-1", DestinationPort: 443,
+	})
+	if err != nil || path.ID == "" || path.ARN == "" {
+		t.Fatalf("CreateNetworkInsightsPath: %v %+v", err, path)
+	}
+
+	if _, err := m.CreateNetworkInsightsPath(ctx, driver.NetworkInsightsPathConfig{}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("expected InvalidArgument for missing source, got %v", err)
+	}
+
+	analysis, err := m.StartNetworkInsightsAnalysis(ctx, driver.NetworkInsightsAnalysisConfig{PathID: path.ID})
+	if err != nil || analysis.Status != "succeeded" || !analysis.NetworkPathFound {
+		t.Fatalf("StartNetworkInsightsAnalysis: %v %+v", err, analysis)
+	}
+
+	got, err := m.DescribeNetworkInsightsAnalyses(ctx, nil, path.ID)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("DescribeNetworkInsightsAnalyses: %v %+v", err, got)
+	}
+
+	// Deleting the path cascades to its analyses.
+	if err := m.DeleteNetworkInsightsPath(ctx, path.ID); err != nil {
+		t.Fatalf("DeleteNetworkInsightsPath: %v", err)
+	}
+
+	if got, _ := m.DescribeNetworkInsightsAnalyses(ctx, nil, ""); len(got) != 0 {
+		t.Fatalf("expected analyses cascaded on path delete, got %+v", got)
+	}
+}
+
+func TestNetworkInsightsAccessScope(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	scope, err := m.CreateNetworkInsightsAccessScope(ctx, driver.NetworkInsightsAccessScopeConfig{
+		MatchPaths: []driver.AccessScopePath{{
+			Source: &driver.AccessScopeStatement{
+				ResourceStatement: &driver.AccessScopeResourceStatement{ResourceTypes: []string{"AWS::EC2::InternetGateway"}},
+			},
+		}},
+	})
+	if err != nil || scope.ID == "" || len(scope.MatchPaths) != 1 {
+		t.Fatalf("CreateNetworkInsightsAccessScope: %v %+v", err, scope)
+	}
+
+	content, err := m.GetNetworkInsightsAccessScopeContent(ctx, scope.ID)
+	if err != nil || len(content.MatchPaths) != 1 ||
+		content.MatchPaths[0].Source.ResourceStatement.ResourceTypes[0] != "AWS::EC2::InternetGateway" {
+		t.Fatalf("GetNetworkInsightsAccessScopeContent: %v %+v", err, content)
+	}
+
+	analysis, err := m.StartNetworkInsightsAccessScopeAnalysis(ctx, scope.ID, nil)
+	if err != nil || analysis.Status != "succeeded" {
+		t.Fatalf("StartNetworkInsightsAccessScopeAnalysis: %v %+v", err, analysis)
+	}
+
+	findings, status, err := m.GetNetworkInsightsAccessScopeAnalysisFindings(ctx, analysis.ID)
+	if err != nil || status != "succeeded" || len(findings) != 0 {
+		t.Fatalf("GetNetworkInsightsAccessScopeAnalysisFindings: %v %q %+v", err, status, findings)
+	}
+
+	if err := m.DeleteNetworkInsightsAccessScope(ctx, scope.ID); err != nil {
+		t.Fatalf("DeleteNetworkInsightsAccessScope: %v", err)
+	}
+
+	if got, _ := m.DescribeNetworkInsightsAccessScopeAnalyses(ctx, nil, ""); len(got) != 0 {
+		t.Fatalf("expected scope analyses cascaded on delete, got %+v", got)
+	}
+}
+
+func TestVPCBlockPublicAccess(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	vpcID, subnetID := mustVPC(t, m)
+
+	opts, err := m.DescribeVPCBlockPublicAccessOptions(ctx)
+	if err != nil || opts.InternetGatewayBlockMode != "off" || opts.State != "default-state" {
+		t.Fatalf("DescribeVPCBlockPublicAccessOptions default: %v %+v", err, opts)
+	}
+
+	opts, err = m.ModifyVPCBlockPublicAccessOptions(ctx, "block-bidirectional")
+	if err != nil || opts.InternetGatewayBlockMode != "block-bidirectional" || opts.State != "update-complete" {
+		t.Fatalf("ModifyVPCBlockPublicAccessOptions: %v %+v", err, opts)
+	}
+
+	excl, err := m.CreateVPCBlockPublicAccessExclusion(ctx, driver.VPCBlockPublicAccessExclusionConfig{
+		SubnetID: subnetID, InternetGatewayExclusionMode: "allow-bidirectional",
+	})
+	if err != nil || excl.ExclusionID == "" || excl.State != "create-complete" {
+		t.Fatalf("CreateVPCBlockPublicAccessExclusion: %v %+v", err, excl)
+	}
+
+	if _, err := m.CreateVPCBlockPublicAccessExclusion(ctx, driver.VPCBlockPublicAccessExclusionConfig{
+		VPCID: "vpc-missing", InternetGatewayExclusionMode: "allow-egress",
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("expected InvalidArgument for missing vpc, got %v", err)
+	}
+
+	if _, err := m.CreateVPCBlockPublicAccessExclusion(ctx, driver.VPCBlockPublicAccessExclusionConfig{
+		VPCID: vpcID, InternetGatewayExclusionMode: "allow-egress",
+	}); err != nil {
+		t.Fatalf("CreateVPCBlockPublicAccessExclusion vpc: %v", err)
+	}
+
+	mod, err := m.ModifyVPCBlockPublicAccessExclusion(ctx, excl.ExclusionID, "allow-egress")
+	if err != nil || mod.InternetGatewayExclusionMode != "allow-egress" {
+		t.Fatalf("ModifyVPCBlockPublicAccessExclusion: %v %+v", err, mod)
+	}
+
+	list, err := m.DescribeVPCBlockPublicAccessExclusions(ctx, nil)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("DescribeVPCBlockPublicAccessExclusions: %v %+v", err, list)
+	}
+
+	del, err := m.DeleteVPCBlockPublicAccessExclusion(ctx, excl.ExclusionID)
+	if err != nil || del.State != "delete-complete" {
+		t.Fatalf("DeleteVPCBlockPublicAccessExclusion: %v %+v", err, del)
+	}
+
+	if _, err := m.DeleteVPCBlockPublicAccessExclusion(ctx, excl.ExclusionID); !cerrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound on second delete, got %v", err)
+	}
+}

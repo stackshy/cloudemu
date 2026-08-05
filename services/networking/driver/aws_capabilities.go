@@ -1,6 +1,9 @@
 package driver
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // This file defines AWS-specific networking capabilities as OPTIONAL interfaces
 // discovered by type assertion, following the VPCAttributes / NetworkInterfaces
@@ -353,4 +356,309 @@ type ClientVPN interface {
 	CreateClientVPNRoute(ctx context.Context, endpointID, destinationCIDR, targetSubnetID string) (*ClientVPNRoute, error)
 	DeleteClientVPNRoute(ctx context.Context, endpointID, destinationCIDR, targetSubnetID string) error
 	DescribeClientVPNRoutes(ctx context.Context, endpointID string) ([]ClientVPNRoute, error)
+}
+
+// ---- Traffic Mirroring ----
+
+// TrafficMirrorTarget is the destination (ENI, NLB, or GWLB endpoint) that
+// mirrored packets are copied to.
+type TrafficMirrorTarget struct {
+	ID                            string
+	Description                   string
+	NetworkInterfaceID            string
+	NetworkLoadBalancerARN        string
+	GatewayLoadBalancerEndpointID string
+	Type                          string
+	OwnerID                       string
+	Tags                          map[string]string
+}
+
+// TrafficMirrorTargetConfig is the input to CreateTrafficMirrorTarget.
+type TrafficMirrorTargetConfig struct {
+	Description                   string
+	NetworkInterfaceID            string
+	NetworkLoadBalancerARN        string
+	GatewayLoadBalancerEndpointID string
+	Tags                          map[string]string
+}
+
+// TrafficMirrorPortRange is a from/to TCP or UDP port range on a filter rule.
+type TrafficMirrorPortRange struct {
+	FromPort int32
+	ToPort   int32
+}
+
+// TrafficMirrorFilterRule is one ingress or egress rule within a filter.
+type TrafficMirrorFilterRule struct {
+	ID                   string
+	FilterID             string
+	TrafficDirection     string // ingress | egress
+	RuleNumber           int32
+	RuleAction           string // accept | reject
+	Protocol             int32
+	DestinationCIDR      string
+	SourceCIDR           string
+	DestinationPortRange *TrafficMirrorPortRange
+	SourcePortRange      *TrafficMirrorPortRange
+	Description          string
+}
+
+// TrafficMirrorFilterRuleConfig is the input to Create/ModifyTrafficMirrorFilterRule.
+type TrafficMirrorFilterRuleConfig struct {
+	FilterID             string
+	TrafficDirection     string
+	RuleNumber           int32
+	RuleAction           string
+	Protocol             int32
+	DestinationCIDR      string
+	SourceCIDR           string
+	DestinationPortRange *TrafficMirrorPortRange
+	SourcePortRange      *TrafficMirrorPortRange
+	Description          string
+}
+
+// TrafficMirrorFilter groups the rules that select which traffic to mirror.
+type TrafficMirrorFilter struct {
+	ID              string
+	Description     string
+	NetworkServices []string
+	IngressRules    []TrafficMirrorFilterRule
+	EgressRules     []TrafficMirrorFilterRule
+	Tags            map[string]string
+}
+
+// TrafficMirrorSession binds a source ENI to a target and filter.
+type TrafficMirrorSession struct {
+	ID                    string
+	NetworkInterfaceID    string
+	TrafficMirrorTargetID string
+	TrafficMirrorFilterID string
+	PacketLength          int32
+	SessionNumber         int32
+	VirtualNetworkID      int32
+	Description           string
+	OwnerID               string
+	Tags                  map[string]string
+}
+
+// TrafficMirrorSessionConfig is the input to Create/ModifyTrafficMirrorSession.
+type TrafficMirrorSessionConfig struct {
+	NetworkInterfaceID    string
+	TrafficMirrorTargetID string
+	TrafficMirrorFilterID string
+	PacketLength          int32
+	SessionNumber         int32
+	VirtualNetworkID      int32
+	Description           string
+	Tags                  map[string]string
+}
+
+// TrafficMirroring is an OPTIONAL AWS capability (type-asserted).
+type TrafficMirroring interface {
+	CreateTrafficMirrorTarget(ctx context.Context, cfg TrafficMirrorTargetConfig) (*TrafficMirrorTarget, error)
+	DeleteTrafficMirrorTarget(ctx context.Context, id string) error
+	DescribeTrafficMirrorTargets(ctx context.Context, ids []string) ([]TrafficMirrorTarget, error)
+
+	CreateTrafficMirrorFilter(ctx context.Context, description string, tags map[string]string) (*TrafficMirrorFilter, error)
+	DeleteTrafficMirrorFilter(ctx context.Context, id string) error
+	DescribeTrafficMirrorFilters(ctx context.Context, ids []string) ([]TrafficMirrorFilter, error)
+	ModifyTrafficMirrorFilterNetworkServices(ctx context.Context, filterID string, add, remove []string) (*TrafficMirrorFilter, error)
+
+	CreateTrafficMirrorFilterRule(ctx context.Context, cfg TrafficMirrorFilterRuleConfig) (*TrafficMirrorFilterRule, error)
+	ModifyTrafficMirrorFilterRule(
+		ctx context.Context, id string, cfg TrafficMirrorFilterRuleConfig, removeFields []string,
+	) (*TrafficMirrorFilterRule, error)
+	DeleteTrafficMirrorFilterRule(ctx context.Context, id string) error
+	DescribeTrafficMirrorFilterRules(ctx context.Context, filterID string, ruleIDs []string) ([]TrafficMirrorFilterRule, error)
+
+	CreateTrafficMirrorSession(ctx context.Context, cfg TrafficMirrorSessionConfig) (*TrafficMirrorSession, error)
+	ModifyTrafficMirrorSession(
+		ctx context.Context, id string, cfg TrafficMirrorSessionConfig, removeFields []string,
+	) (*TrafficMirrorSession, error)
+	DeleteTrafficMirrorSession(ctx context.Context, id string) error
+	DescribeTrafficMirrorSessions(ctx context.Context, ids []string) ([]TrafficMirrorSession, error)
+}
+
+// ---- Network Insights (Reachability Analyzer & Network Access Analyzer) ----
+
+// NetworkInsightsPath describes a source→destination path to analyze for
+// reachability.
+type NetworkInsightsPath struct {
+	ID              string
+	ARN             string
+	Protocol        string
+	Source          string
+	SourceARN       string
+	SourceIP        string
+	Destination     string
+	DestinationARN  string
+	DestinationIP   string
+	DestinationPort int32
+	CreatedDate     time.Time
+	Tags            map[string]string
+}
+
+// NetworkInsightsPathConfig is the input to CreateNetworkInsightsPath.
+type NetworkInsightsPathConfig struct {
+	Protocol        string
+	Source          string
+	Destination     string
+	SourceIP        string
+	DestinationIP   string
+	DestinationPort int32
+	Tags            map[string]string
+}
+
+// NetworkInsightsAnalysis is the result of running reachability analysis on a
+// path. The mock completes analyses synchronously.
+type NetworkInsightsAnalysis struct {
+	ID                 string
+	ARN                string
+	PathID             string
+	StartDate          time.Time
+	Status             string
+	StatusMessage      string
+	NetworkPathFound   bool
+	FilterInARNs       []string
+	FilterOutARNs      []string
+	AdditionalAccounts []string
+	Tags               map[string]string
+}
+
+// NetworkInsightsAnalysisConfig is the input to StartNetworkInsightsAnalysis.
+type NetworkInsightsAnalysisConfig struct {
+	PathID             string
+	FilterInARNs       []string
+	FilterOutARNs      []string
+	AdditionalAccounts []string
+	Tags               map[string]string
+}
+
+// AccessScopeResourceStatement selects resources by type and/or id.
+type AccessScopeResourceStatement struct {
+	ResourceTypes []string
+	Resources     []string
+}
+
+// AccessScopeStatement is one end (source or destination) of an access-scope path.
+type AccessScopeStatement struct {
+	ResourceStatement *AccessScopeResourceStatement
+}
+
+// AccessScopePath is one match/exclude path in a Network Access Analyzer scope.
+type AccessScopePath struct {
+	Source      *AccessScopeStatement
+	Destination *AccessScopeStatement
+}
+
+// NetworkInsightsAccessScope is a Network Access Analyzer scope definition.
+type NetworkInsightsAccessScope struct {
+	ID           string
+	ARN          string
+	MatchPaths   []AccessScopePath
+	ExcludePaths []AccessScopePath
+	CreatedDate  time.Time
+	UpdatedDate  time.Time
+	Tags         map[string]string
+}
+
+// NetworkInsightsAccessScopeConfig is the input to CreateNetworkInsightsAccessScope.
+type NetworkInsightsAccessScopeConfig struct {
+	MatchPaths   []AccessScopePath
+	ExcludePaths []AccessScopePath
+	Tags         map[string]string
+}
+
+// NetworkInsightsAccessScopeAnalysis is the result of analyzing an access scope.
+type NetworkInsightsAccessScopeAnalysis struct {
+	ID               string
+	ARN              string
+	AccessScopeID    string
+	Status           string
+	StatusMessage    string
+	StartDate        time.Time
+	EndDate          time.Time
+	FindingsFound    string
+	AnalyzedEniCount int32
+	Tags             map[string]string
+}
+
+// AccessScopeAnalysisFinding is one finding from an access-scope analysis.
+type AccessScopeAnalysisFinding struct {
+	FindingID     string
+	AnalysisID    string
+	AccessScopeID string
+}
+
+// NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both
+// Reachability Analyzer (paths + analyses) and Network Access Analyzer (access
+// scopes + scope analyses).
+type NetworkInsights interface {
+	CreateNetworkInsightsPath(ctx context.Context, cfg NetworkInsightsPathConfig) (*NetworkInsightsPath, error)
+	DeleteNetworkInsightsPath(ctx context.Context, id string) error
+	DescribeNetworkInsightsPaths(ctx context.Context, ids []string) ([]NetworkInsightsPath, error)
+
+	StartNetworkInsightsAnalysis(ctx context.Context, cfg NetworkInsightsAnalysisConfig) (*NetworkInsightsAnalysis, error)
+	DeleteNetworkInsightsAnalysis(ctx context.Context, id string) error
+	DescribeNetworkInsightsAnalyses(ctx context.Context, ids []string, pathID string) ([]NetworkInsightsAnalysis, error)
+
+	CreateNetworkInsightsAccessScope(ctx context.Context, cfg NetworkInsightsAccessScopeConfig) (*NetworkInsightsAccessScope, error)
+	DeleteNetworkInsightsAccessScope(ctx context.Context, id string) error
+	DescribeNetworkInsightsAccessScopes(ctx context.Context, ids []string) ([]NetworkInsightsAccessScope, error)
+	GetNetworkInsightsAccessScopeContent(ctx context.Context, id string) (*NetworkInsightsAccessScope, error)
+
+	StartNetworkInsightsAccessScopeAnalysis(
+		ctx context.Context, accessScopeID string, tags map[string]string,
+	) (*NetworkInsightsAccessScopeAnalysis, error)
+	DeleteNetworkInsightsAccessScopeAnalysis(ctx context.Context, id string) error
+	DescribeNetworkInsightsAccessScopeAnalyses(
+		ctx context.Context, ids []string, accessScopeID string,
+	) ([]NetworkInsightsAccessScopeAnalysis, error)
+	GetNetworkInsightsAccessScopeAnalysisFindings(ctx context.Context, analysisID string) ([]AccessScopeAnalysisFinding, string, error)
+}
+
+// ---- VPC Block Public Access ----
+
+// VPCBlockPublicAccessOptions is the account/region-level BPA configuration
+// singleton.
+type VPCBlockPublicAccessOptions struct {
+	AWSAccountID             string
+	AWSRegion                string
+	State                    string
+	InternetGatewayBlockMode string
+	ExclusionsAllowed        string
+	ManagedBy                string
+	Reason                   string
+	LastUpdateTimestamp      time.Time
+}
+
+// VPCBlockPublicAccessExclusion exempts a VPC or subnet from the BPA options.
+type VPCBlockPublicAccessExclusion struct {
+	ExclusionID                  string
+	InternetGatewayExclusionMode string
+	ResourceARN                  string
+	State                        string
+	Reason                       string
+	CreationTimestamp            time.Time
+	LastUpdateTimestamp          time.Time
+	Tags                         map[string]string
+}
+
+// VPCBlockPublicAccessExclusionConfig is the input to CreateVPCBlockPublicAccessExclusion.
+type VPCBlockPublicAccessExclusionConfig struct {
+	VPCID                        string
+	SubnetID                     string
+	InternetGatewayExclusionMode string
+	Tags                         map[string]string
+}
+
+// VPCBlockPublicAccess is an OPTIONAL AWS capability (type-asserted).
+type VPCBlockPublicAccess interface {
+	DescribeVPCBlockPublicAccessOptions(ctx context.Context) (*VPCBlockPublicAccessOptions, error)
+	ModifyVPCBlockPublicAccessOptions(ctx context.Context, internetGatewayBlockMode string) (*VPCBlockPublicAccessOptions, error)
+
+	CreateVPCBlockPublicAccessExclusion(ctx context.Context, cfg VPCBlockPublicAccessExclusionConfig) (*VPCBlockPublicAccessExclusion, error)
+	ModifyVPCBlockPublicAccessExclusion(ctx context.Context, id, internetGatewayExclusionMode string) (*VPCBlockPublicAccessExclusion, error)
+	DeleteVPCBlockPublicAccessExclusion(ctx context.Context, id string) (*VPCBlockPublicAccessExclusion, error)
+	DescribeVPCBlockPublicAccessExclusions(ctx context.Context, ids []string) ([]VPCBlockPublicAccessExclusion, error)
 }

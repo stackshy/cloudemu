@@ -44,6 +44,9 @@ var (
 	_ driver.IPAMExternalToken          = (*Mock)(nil)
 	_ driver.IPAMPolicy                 = (*Mock)(nil)
 	_ driver.IPAMMetrics                = (*Mock)(nil)
+	_ driver.TrafficMirroring           = (*Mock)(nil)
+	_ driver.NetworkInsights            = (*Mock)(nil)
+	_ driver.VPCBlockPublicAccess       = (*Mock)(nil)
 )
 
 // Mock is an in-memory mock implementation of the AWS VPC networking service.
@@ -100,6 +103,20 @@ type Mock struct {
 	ipamResolverTargets *memstore.Store[*driver.IpamPrefixListResolverTarget]
 	ipamTokens          *memstore.Store[*driver.IpamExternalResourceVerificationToken]
 	ipamPolicies        *memstore.Store[*driver.IpamPolicy]
+
+	// Stage B EC2-family capabilities (optional interfaces).
+	trafficMirrorTargets               *memstore.Store[*driver.TrafficMirrorTarget]
+	trafficMirrorFilters               *memstore.Store[*driver.TrafficMirrorFilter]
+	trafficMirrorSessions              *memstore.Store[*driver.TrafficMirrorSession]
+	networkInsightsPaths               *memstore.Store[*driver.NetworkInsightsPath]
+	networkInsightsAnalyses            *memstore.Store[*driver.NetworkInsightsAnalysis]
+	networkInsightsAccessScopes        *memstore.Store[*driver.NetworkInsightsAccessScope]
+	networkInsightsAccessScopeAnalyses *memstore.Store[*driver.NetworkInsightsAccessScopeAnalysis]
+	vpcBPAExclusions                   *memstore.Store[*driver.VPCBlockPublicAccessExclusion]
+
+	// vpcBPAOptions is the account/region-level Block Public Access singleton,
+	// nil until first modified. Guarded by mu.
+	vpcBPAOptions *driver.VPCBlockPublicAccessOptions
 
 	// endpointServicePerms holds allowed principals per endpoint-service id,
 	// guarded by mu.
@@ -193,6 +210,15 @@ func New(opts *config.Options) *Mock {
 		ipamResolverTargets: memstore.New[*driver.IpamPrefixListResolverTarget](),
 		ipamTokens:          memstore.New[*driver.IpamExternalResourceVerificationToken](),
 		ipamPolicies:        memstore.New[*driver.IpamPolicy](),
+
+		trafficMirrorTargets:               memstore.New[*driver.TrafficMirrorTarget](),
+		trafficMirrorFilters:               memstore.New[*driver.TrafficMirrorFilter](),
+		trafficMirrorSessions:              memstore.New[*driver.TrafficMirrorSession](),
+		networkInsightsPaths:               memstore.New[*driver.NetworkInsightsPath](),
+		networkInsightsAnalyses:            memstore.New[*driver.NetworkInsightsAnalysis](),
+		networkInsightsAccessScopes:        memstore.New[*driver.NetworkInsightsAccessScope](),
+		networkInsightsAccessScopeAnalyses: memstore.New[*driver.NetworkInsightsAccessScopeAnalysis](),
+		vpcBPAExclusions:                   memstore.New[*driver.VPCBlockPublicAccessExclusion](),
 
 		endpointServicePerms:  map[string][]string{},
 		ipamPoolByCidr:        map[string]string{},
