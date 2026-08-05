@@ -41,10 +41,19 @@ type Handler struct {
 	ipam       netdriver.IPAMMetrics
 }
 
-// New returns a CloudWatch handler backed by m. An optional IPAMMetrics source
-// (nil-safe) supplies the derived AWS/IPAM namespace metrics.
-func New(m mondriver.Monitoring, ipam netdriver.IPAMMetrics) *Handler {
-	return &Handler{monitoring: m, ipam: ipam}
+// New returns a CloudWatch handler backed by m. Use SetIPAMMetrics to attach
+// the optional derived AWS/IPAM metrics source. Kept single-argument so callers
+// that don't wire IPAM (e.g. the base query-protocol tests) construct it
+// unchanged.
+func New(m mondriver.Monitoring) *Handler {
+	return &Handler{monitoring: m}
+}
+
+// SetIPAMMetrics attaches an optional IPAMMetrics source (nil-safe) supplying
+// the derived AWS/IPAM namespace metrics, following the same setter-injection
+// pattern as the other CloudEmu handlers.
+func (h *Handler) SetIPAMMetrics(ipam netdriver.IPAMMetrics) {
+	h.ipam = ipam
 }
 
 // Matches returns true for Smithy rpc-v2-cbor requests.

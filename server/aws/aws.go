@@ -220,7 +220,9 @@ func New(d Drivers) *server.Server {
 		// The VPC driver optionally supplies derived AWS/IPAM metrics; surface
 		// them through CloudWatch when it implements the capability.
 		ipamMetrics, _ := d.VPC.(netdriver.IPAMMetrics)
-		srv.Register(cloudwatch.New(d.CloudWatch, ipamMetrics))
+		cw := cloudwatch.New(d.CloudWatch)
+		cw.SetIPAMMetrics(ipamMetrics)
+		srv.Register(cw)
 	}
 
 	if d.DynamoDB != nil {
