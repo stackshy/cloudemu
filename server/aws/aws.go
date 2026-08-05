@@ -40,6 +40,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
+	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
@@ -68,6 +69,7 @@ import (
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
+	vpclatticedriver "github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
 )
 
 // Drivers bundles the driver interfaces the AWS server can expose. Leave a
@@ -93,6 +95,10 @@ type Drivers struct {
 	// ECS serves the Amazon ECS JSON 1.1 protocol (X-Amz-Target prefix
 	// AmazonEC2ContainerServiceV20141113.) against the ecs driver.
 	ECS ecsdriver.ECS
+
+	// VPCLattice serves the AWS VPC Lattice REST-JSON API (path + method
+	// routing) against the vpclattice driver.
+	VPCLattice vpclatticedriver.VPCLattice
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
@@ -167,6 +173,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		BedrockAgentRuntime: p.BedrockAgentRuntime,
 		SageMaker:           p.SageMaker,
 		ECS:                 p.ECS,
+		VPCLattice:          p.VPCLattice,
 		SecretsManager:      p.SecretsManager,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
@@ -271,6 +278,13 @@ func New(d Drivers) *server.Server {
 	// EventBridge, and the tagging API, so registration order is unconstrained.
 	if d.ECS != nil {
 		srv.Register(ecssrv.New(d.ECS))
+	}
+
+	// VPC Lattice is a REST/JSON service rooted at path prefixes like
+	// /servicenetworks, /services, /targetgroups — disjoint from every
+	// X-Amz-Target service; its Matches predicate claims those prefixes.
+	if d.VPCLattice != nil {
+		srv.Register(vpclatticesrv.New(d.VPCLattice))
 	}
 
 	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —

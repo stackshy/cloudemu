@@ -35,6 +35,7 @@ This document lists every service and operation available in CloudEmu across all
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
 | 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
 | 24 | Container Orchestration | `ecs` | — | — |
+| 25 | Application Networking | `vpclattice` | — | — |
 
 ---
 
@@ -2218,6 +2219,52 @@ real EC2 instance subject to managed-resource visibility.
 
 ---
 
+## 25. Application Networking
+
+**Driver interface:** `services/vpclattice/driver/driver.go`
+**AWS:** VPC Lattice (REST-JSON, `awsRestjson1`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/vpclattice` clients work against the
+SDK-compat server (`awsserver.Drivers{VPCLattice: cloud.VPCLattice}`). Full
+parity: **all 73 SDK operations**, no stubs.
+
+Unlike the AWS JSON 1.1 services, VPC Lattice uses **REST-JSON**: the operation
+is selected by HTTP method + URL path (e.g. `POST /services`, `GET
+/services/{id}/listeners/{id}`, `PATCH /servicenetworks/{id}`) rather than an
+`X-Amz-Target` header. The handler claims its top-level path prefixes and
+dispatches by segment + method; identifiers accept either a bare ID or a full
+ARN. Union-typed fields (a listener's `defaultAction`, a rule's
+`match`/`action`, a target group's `config`, a resource configuration's
+`resourceConfigurationDefinition`) are stored as raw JSON and echoed back
+verbatim for full fidelity. Service-network association counts are computed on
+read across the association stores.
+
+| Family | Operations |
+|--------|-----------|
+| Service networks | Create/Get/Update/Delete/ListServiceNetwork(s) |
+| Services | Create/Get/Update/Delete/ListService(s) |
+| Listeners | Create/Get/Update/Delete/ListListener(s) |
+| Rules | Create/Get/Update/Delete/ListRule(s), BatchUpdateRule |
+| Target groups & targets | Create/Get/Update/Delete/ListTargetGroup(s), Register/Deregister/ListTargets |
+| Service-network associations | Create/Get/Update/Delete/List ServiceNetworkVpcAssociation(s) + ListServiceNetworkVpcEndpointAssociations; Create/Get/Delete/List ServiceNetworkService & ServiceNetworkResource Association(s) |
+| Resource configurations | Create/Get/Update/Delete/ListResourceConfiguration(s) |
+| Resource gateways | Create/Get/Update/Delete/ListResourceGateway(s) |
+| Resource endpoint associations | List/DeleteResourceEndpointAssociation(s) |
+| Access-log subscriptions | Create/Get/Update/Delete/ListAccessLogSubscription(s) |
+| Auth & resource policies | Put/Get/DeleteAuthPolicy, Put/Get/DeleteResourcePolicy |
+| Domain verifications | Start/Get/Delete/ListDomainVerification(s) |
+| Tagging | TagResource, UntagResource, ListTagsForResource |
+
+*Accepted but not simulated* (stored/echoed so SDK calls succeed, no behavioral
+effect): resources are created directly in a terminal `ACTIVE`/`PENDING` status
+(no async state machine); VPC-endpoint and resource-endpoint associations are a
+managed surface returned as empty lists; `Forward`/health-check targeting is
+stored but not used to route real traffic.
+
+**Total: 73 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -2330,7 +2377,8 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1562** (+138 optional) |
+| Application Networking — AWS VPC Lattice | 73 |
+| **Grand Total** | **1635** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
