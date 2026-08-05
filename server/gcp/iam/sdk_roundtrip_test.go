@@ -2,6 +2,7 @@ package iam_test
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http/httptest"
 	"testing"
@@ -213,5 +214,72 @@ func TestSDKGCPIAMNotFoundIsTyped(t *testing.T) {
 
 	if apiErr.Code != 404 {
 		t.Fatalf("got HTTP %d, want 404", apiErr.Code)
+	}
+}
+
+// TestSDKGCPIAMServiceAccountVerbs guards the #321 additions: SA-level
+// getIamPolicy/setIamPolicy round-trip, signBlob returns a blob, and
+// disable/enable toggle the SA's disabled bit.
+func TestSDKGCPIAMServiceAccountVerbs(t *testing.T) {
+	svc := newSDKService(t)
+	ctx := context.Background()
+
+	parent := "projects/" + testProject
+
+	created, err := svc.Projects.ServiceAccounts.Create(parent, &iamv1.CreateServiceAccountRequest{
+		AccountId:      "verb-sa",
+		ServiceAccount: &iamv1.ServiceAccount{DisplayName: "Verb SA"},
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	resource := "projects/" + testProject + "/serviceAccounts/" + created.Email
+
+	// setIamPolicy then getIamPolicy must round-trip the binding.
+	if _, err := svc.Projects.ServiceAccounts.SetIamPolicy(resource, &iamv1.SetIamPolicyRequest{
+		Policy: &iamv1.Policy{
+			Bindings: []*iamv1.Binding{{
+				Role:    "roles/iam.serviceAccountUser",
+				Members: []string{"user:alice@example.com"},
+			}},
+		},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("SetIamPolicy: %v", err)
+	}
+
+	pol, err := svc.Projects.ServiceAccounts.GetIamPolicy(resource).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("GetIamPolicy: %v", err)
+	}
+
+	if len(pol.Bindings) != 1 || pol.Bindings[0].Role != "roles/iam.serviceAccountUser" {
+		t.Fatalf("policy did not round-trip: %+v", pol.Bindings)
+	}
+
+	// signBlob returns a non-empty blob.
+	sign, err := svc.Projects.ServiceAccounts.SignBlob(resource, &iamv1.SignBlobRequest{
+		BytesToSign: base64.StdEncoding.EncodeToString([]byte("hello")),
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("SignBlob: %v", err)
+	}
+
+	if sign.Signature == "" {
+		t.Error("SignBlob returned empty signature")
+	}
+
+	// disable then Get shows disabled=true.
+	if _, err := svc.Projects.ServiceAccounts.Disable(resource, &iamv1.DisableServiceAccountRequest{}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+
+	got, err := svc.Projects.ServiceAccounts.Get(resource).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get after disable: %v", err)
+	}
+
+	if !got.Disabled {
+		t.Error("SA not marked disabled after Disable")
 	}
 }

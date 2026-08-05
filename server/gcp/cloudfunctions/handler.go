@@ -104,6 +104,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if parts.action == "generateUploadUrl" {
+		h.generateUploadURL(w, r, parts)
+		return
+	}
+
 	if parts.name != "" {
 		h.serveResource(w, r, parts)
 		return
@@ -134,6 +139,22 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, p func
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 	}
+}
+
+// generateUploadURL answers functions:generateUploadUrl — the first step of a
+// source-upload deploy. Real Cloud Functions returns a signed GCS URL the
+// client PUTs the source zip to; the emulator returns a usable stub URL so the
+// deploy flow proceeds.
+func (*Handler) generateUploadURL(w http.ResponseWriter, r *http.Request, p functionPath) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+
+	url := "https://storage.googleapis.com/cloudemu-gcf-uploads/" + p.project + "/" + p.location +
+		"/source-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".zip"
+
+	writeJSON(w, http.StatusOK, map[string]string{"uploadUrl": url})
 }
 
 // serveOperation answers GET /v1/operations/{name}. We always return done=true
@@ -401,6 +422,11 @@ func toCloudFunction(info *sdrv.FunctionInfo, p functionPath) cloudFunction {
 		EnvVariables:    info.Environment,
 		UpdateTime:      info.LastModified,
 		VersionID:       "1",
+		// Real Cloud Functions always advertises the HTTPS trigger URL; clients
+		// read it to invoke the function.
+		HTTPSTrigger: &httpsTrigger{
+			URL: "https://" + scope.location + "-" + scope.project + ".cloudfunctions.net/" + scope.name,
+		},
 	}
 
 	if info.Timeout > 0 {

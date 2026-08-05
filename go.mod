@@ -3,7 +3,9 @@ module github.com/stackshy/cloudemu/v2
 go 1.25.0
 
 require (
+	cloud.google.com/go/artifactregistry v1.20.0
 	cloud.google.com/go/compute v1.60.0
+	cloud.google.com/go/eventarc v1.18.0
 	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/storage v1.62.1
 	github.com/Azure/azure-sdk-for-go/sdk/ai/azopenai v0.7.2

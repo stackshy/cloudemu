@@ -167,6 +167,58 @@ func TestSDKCloudDNSRecordChanges(t *testing.T) {
 	}
 }
 
+// TestSDKCloudDNSUpdateRecord guards the #321 fix: the canonical record update
+// (delete old rrset + add new one with the SAME name+type in one change) must
+// succeed, not fail with AlreadyExists. It also asserts dnsName round-trips.
+func TestSDKCloudDNSUpdateRecord(t *testing.T) {
+	svc := newDNSService(t)
+	ctx := context.Background()
+
+	zone, err := svc.ManagedZones.Create(testProject, &dns.ManagedZone{
+		Name:    "upd-zone",
+		DnsName: "upd.example.com.",
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("ManagedZones.Create: %v", err)
+	}
+
+	if zone.DnsName != "upd.example.com." {
+		t.Errorf("dnsName=%q want upd.example.com. (should not be the zone name)", zone.DnsName)
+	}
+
+	old := &dns.ResourceRecordSet{Name: "www.upd.example.com.", Type: "A", Ttl: 300, Rrdatas: []string{"192.0.2.1"}}
+
+	if _, err := svc.Changes.Create(testProject, "upd-zone", &dns.Change{
+		Additions: []*dns.ResourceRecordSet{old},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Changes.Create(add): %v", err)
+	}
+
+	// Update = delete old + add new, same name+type, one atomic change.
+	updated := &dns.ResourceRecordSet{Name: "www.upd.example.com.", Type: "A", Ttl: 600, Rrdatas: []string{"192.0.2.2"}}
+
+	change, err := svc.Changes.Create(testProject, "upd-zone", &dns.Change{
+		Deletions: []*dns.ResourceRecordSet{old},
+		Additions: []*dns.ResourceRecordSet{updated},
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Changes.Create(delete+add same rrset) failed (the #321 bug): %v", err)
+	}
+
+	if change.Id == "" || change.Id == "1" {
+		t.Errorf("change id=%q want a unique non-placeholder id", change.Id)
+	}
+
+	rrsets, err := svc.ResourceRecordSets.List(testProject, "upd-zone").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	if len(rrsets.Rrsets) != 1 || rrsets.Rrsets[0].Ttl != 600 || rrsets.Rrsets[0].Rrdatas[0] != "192.0.2.2" {
+		t.Fatalf("after update rrsets=%+v want single 600/192.0.2.2", rrsets.Rrsets)
+	}
+}
+
 func TestSDKCloudDNSErrors(t *testing.T) {
 	svc := newDNSService(t)
 	ctx := context.Background()

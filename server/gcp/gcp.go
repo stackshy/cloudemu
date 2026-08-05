@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/gke"
 	"github.com/stackshy/cloudemu/v2/server/gcp/iam"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/gcp/loadbalancer"
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	memorystoresrv "github.com/stackshy/cloudemu/v2/server/gcp/memorystore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server/gcp/networks"
@@ -132,6 +133,13 @@ func New(d Drivers) *server.Server {
 	}
 
 	srv := server.New()
+
+	// Shared location-operations poller. Registered FIRST so it owns every
+	// GET /v1/projects/{p}/locations/{l}/operations/{op} uniformly, instead of
+	// alloydb/gke greedily claiming (and 404ing) operations created by
+	// artifactregistry, eventarc, memorystore, etc. All emulated ops are
+	// synchronous, so a done response is always correct.
+	srv.Register(lro.New())
 
 	if d.Compute != nil {
 		srv.Register(compute.New(d.Compute))

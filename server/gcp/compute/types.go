@@ -29,8 +29,10 @@ type diskInitializeParams struct {
 }
 
 type networkInterface struct {
+	Name       string `json:"name,omitempty"`
 	Network    string `json:"network,omitempty"`
 	Subnetwork string `json:"subnetwork,omitempty"`
+	NetworkIP  string `json:"networkIP,omitempty"`
 }
 
 type tagsBlock struct {

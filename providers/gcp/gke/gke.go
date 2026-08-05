@@ -60,6 +60,8 @@ type Cluster struct {
 	IPRotationActive  bool
 	NodePoolNames     []string
 	Status            string
+	MasterVersion     string
+	NodeVersion       string
 	CreatedAt         time.Time
 }
 
@@ -390,6 +392,14 @@ func (m *Mock) UpdateCluster(
 
 		if input.ResourceLabels != nil {
 			c.ResourceLabels = copyLabels(input.ResourceLabels)
+		}
+
+		if input.MasterVersion != "" {
+			c.MasterVersion = input.MasterVersion
+		}
+
+		if input.NodeVersion != "" {
+			c.NodeVersion = input.NodeVersion
 		}
 	})
 }

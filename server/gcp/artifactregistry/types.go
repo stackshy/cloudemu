@@ -47,7 +47,11 @@ type operationJSON struct {
 	Response any    `json:"response,omitempty"`
 }
 
-const dockerFormat = "DOCKER"
+const (
+	dockerFormat   = "DOCKER"
+	formatTag      = "cloudemu:gcpArFormat"
+	descriptionTag = "cloudemu:gcpArDescription"
+)
 
 func repositoryResourceName(project, location, id string) string {
 	return "projects/" + project + "/locations/" + location + "/repositories/" + id
@@ -69,13 +73,42 @@ func repoName(name string) string {
 }
 
 func toRepositoryJSON(project, location string, r *crdriver.Repository) repositoryJSON {
-	return repositoryJSON{
-		Name:       repositoryResourceName(project, location, repoName(r.Name)),
-		Format:     dockerFormat,
-		Labels:     r.Tags,
-		CreateTime: r.CreatedAt,
-		UpdateTime: r.CreatedAt,
+	format := dockerFormat
+	if f := r.Tags[formatTag]; f != "" {
+		format = f
 	}
+
+	return repositoryJSON{
+		Name:        repositoryResourceName(project, location, repoName(r.Name)),
+		Format:      format,
+		Description: r.Tags[descriptionTag],
+		Labels:      stripReservedTags(r.Tags),
+		CreateTime:  r.CreatedAt,
+		UpdateTime:  r.CreatedAt,
+	}
+}
+
+// stripReservedTags returns user labels without cloudemu-internal keys.
+func stripReservedTags(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(in))
+
+	for k, v := range in {
+		if strings.HasPrefix(k, "cloudemu:") {
+			continue
+		}
+
+		out[k] = v
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 func toDockerImageJSON(project, location, repo string, d *crdriver.ImageDetail) dockerImageJSON {

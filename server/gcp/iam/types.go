@@ -20,6 +20,7 @@ type serviceAccount struct {
 	DisplayName    string `json:"displayName,omitempty"`
 	Description    string `json:"description,omitempty"`
 	OAuth2ClientID string `json:"oauth2ClientId,omitempty"`
+	Disabled       bool   `json:"disabled,omitempty"`
 	Etag           string `json:"etag,omitempty"`
 }
 

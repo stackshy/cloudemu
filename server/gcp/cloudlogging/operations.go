@@ -2,13 +2,15 @@ package cloudlogging
 
 import (
 	"context"
-	"github.com/stackshy/cloudemu/v2/services/scope"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // writeEntries maps WriteLogEntries onto the driver. Cloud Logging creates a log
@@ -43,7 +45,7 @@ func (h *Handler) writeEntries(w http.ResponseWriter, r *http.Request) {
 
 		byLog[logID] = append(byLog[logID], logdriver.LogEvent{
 			Timestamp: parseTimestamp(e.Timestamp, now),
-			Message:   e.TextPayload,
+			Message:   encodeEntryPayload(e),
 		})
 	}
 
@@ -103,9 +105,24 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]logEntryJSON, 0, len(events))
-	for i := range events {
-		out = append(out, toLogEntryJSON(project, logID, &events[i]))
+	// Cloud Logging orders by timestamp — ascending by default, descending for
+	// "timestamp desc". Sort by the entry timestamp rather than assuming the
+	// driver's insertion order matches (out-of-order writes must still sort).
+	desc := strings.Contains(strings.ToLower(req.OrderBy), "desc")
+
+	sorted := make([]logdriver.LogEvent, len(events))
+	copy(sorted, events)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if desc {
+			return sorted[i].Timestamp.After(sorted[j].Timestamp)
+		}
+
+		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
+	})
+
+	out := make([]logEntryJSON, 0, len(sorted))
+	for i := range sorted {
+		out = append(out, toLogEntryJSON(project, logID, &sorted[i]))
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, listLogEntriesResponse{Entries: out})

@@ -52,6 +52,11 @@ func (h *Handler) getServiceAccount(w http.ResponseWriter, r *http.Request, proj
 	}
 
 	sa := saFromUser(user)
+
+	h.mu.RLock()
+	sa.Disabled = h.disabled[email]
+	h.mu.RUnlock()
+
 	writeJSON(w, toServiceAccountJSON(project, email, &sa))
 }
 

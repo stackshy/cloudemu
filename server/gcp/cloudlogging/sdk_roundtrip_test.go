@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/api/googleapi"
 	logging "google.golang.org/api/logging/v2"
 	"google.golang.org/api/option"
 
@@ -74,6 +75,60 @@ func TestSDKCloudLoggingWriteAndList(t *testing.T) {
 
 	if resp.Entries[0].LogName != logName {
 		t.Fatalf("first entry logName = %q, want %q", resp.Entries[0].LogName, logName)
+	}
+}
+
+// TestSDKCloudLoggingStructuredFields guards the #321 fix: severity, labels and
+// jsonPayload round-trip through write→list, and orderBy "timestamp desc" is
+// honored.
+func TestSDKCloudLoggingStructuredFields(t *testing.T) {
+	svc := newLoggingService(t)
+	ctx := context.Background()
+
+	logName := "projects/" + testProject + "/logs/structured"
+	base := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Write OUT of timestamp order (ERROR is later but written first) so the
+	// test guards a real timestamp sort, not a mere reversal of insertion order.
+	if _, err := svc.Entries.Write(&logging.WriteLogEntriesRequest{
+		LogName: logName,
+		Entries: []*logging.LogEntry{
+			{
+				Timestamp:   base.Add(time.Second).Format(time.RFC3339Nano),
+				Severity:    "ERROR",
+				Labels:      map[string]string{"component": "api"},
+				JsonPayload: googleapi.RawMessage(`{"code":500}`),
+			},
+			{Timestamp: base.Format(time.RFC3339Nano), TextPayload: "first", Severity: "INFO"},
+		},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Entries.Write: %v", err)
+	}
+
+	resp, err := svc.Entries.List(&logging.ListLogEntriesRequest{
+		ResourceNames: []string{"projects/" + testProject},
+		Filter:        `logName="` + logName + `"`,
+		OrderBy:       "timestamp desc",
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Entries.List: %v", err)
+	}
+
+	if len(resp.Entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(resp.Entries))
+	}
+
+	// desc order: the ERROR entry (written second) comes first.
+	if resp.Entries[0].Severity != "ERROR" {
+		t.Errorf("first (desc) severity = %q, want ERROR", resp.Entries[0].Severity)
+	}
+
+	if resp.Entries[0].Labels["component"] != "api" {
+		t.Errorf("labels did not round-trip: %v", resp.Entries[0].Labels)
+	}
+
+	if len(resp.Entries[0].JsonPayload) == 0 {
+		t.Error("jsonPayload did not round-trip")
 	}
 }
 

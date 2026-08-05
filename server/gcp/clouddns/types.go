@@ -4,11 +4,16 @@ import (
 	"context"
 	"hash/fnv"
 	"strconv"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
+
+// dnsNameTag stores a zone's DNS suffix (dnsName), which the dns driver does
+// not model, so it round-trips through the zone's tags.
+const dnsNameTag = "cloudemu:gcpDnsName"
 
 // Kind values Cloud DNS stamps on its resources; the SDK tolerates them being
 // absent but real responses carry them, so we mirror the wire faithfully.
@@ -92,14 +97,45 @@ func numericID(id string) string {
 }
 
 func toManagedZoneJSON(info *dnsdriver.ZoneInfo) managedZoneJSON {
+	// dnsName is the DNS suffix (e.g. "example.com."), which the driver doesn't
+	// model, so it's stashed in a reserved tag at create. Fall back to the zone
+	// name only when absent.
+	dnsName := info.Name
+	if v, ok := info.Tags[dnsNameTag]; ok && v != "" {
+		dnsName = v
+	}
+
 	return managedZoneJSON{
 		Kind:       kindManagedZone,
 		Name:       info.Name,
 		ID:         numericID(info.ID),
 		Visibility: visibilityFor(info.Private),
-		Labels:     info.Tags,
-		DNSName:    info.Name,
+		Labels:     stripReservedTags(info.Tags),
+		DNSName:    dnsName,
 	}
+}
+
+// stripReservedTags returns the user labels with cloudemu-internal keys removed.
+func stripReservedTags(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(in))
+
+	for k, v := range in {
+		if strings.HasPrefix(k, "cloudemu:") {
+			continue
+		}
+
+		out[k] = v
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 func toRecordSetJSON(rec *dnsdriver.RecordInfo) resourceRecordSetJSON {

@@ -139,6 +139,8 @@ func (h *Handler) serveInstances(w http.ResponseWriter, r *http.Request, rt rout
 	switch r.Method {
 	case http.MethodGet:
 		h.getInstance(w, r, rt)
+	case http.MethodPatch:
+		h.patchInstance(w, r, rt)
 	case http.MethodDelete:
 		h.deleteInstance(w, r, rt)
 	default:

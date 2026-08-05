@@ -100,7 +100,7 @@ func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClust
 		DatabaseVersion: info.DatabaseVersion,
 		Network:         info.Network,
 		ClusterType:     info.ClusterType,
-		State:           "READY",
+		State:           alloyDBState(c.State),
 		Uid:             c.ID,
 		ContinuousBackupConfig: &alloydb.ContinuousBackupConfig{
 			Enabled: info.ContinuousBackup,
@@ -125,9 +125,31 @@ func (*Handler) toWireInstance(inst *rdsdriver.Instance, info *rdsdriver.AlloyDB
 		AvailabilityType: info.AvailabilityType,
 		IpAddress:        info.IPAddress,
 		GceZone:          info.GceZone,
-		State:            "READY",
+		State:            alloyDBState(inst.State),
 		Uid:              inst.ID,
 		MachineConfig:    &alloydb.MachineConfig{CpuCount: int64(info.CPUCount)},
+	}
+}
+
+// alloyDBState maps the relationaldb driver's lifecycle state to AlloyDB's
+// wire state enum, so a just-created or stopped resource reports its real
+// state instead of always "READY".
+const stateReady = "READY"
+
+func alloyDBState(driverState string) string {
+	switch driverState {
+	case rdsdriver.StateAvailable, "":
+		return stateReady
+	case rdsdriver.StateCreating, rdsdriver.StateStarting:
+		return "CREATING"
+	case rdsdriver.StateDeleting:
+		return "DELETING"
+	case rdsdriver.StateStopped, rdsdriver.StateStopping:
+		return "STOPPED"
+	case rdsdriver.StateModifying, rdsdriver.StateRebooting, rdsdriver.StateBackingUp:
+		return "MAINTENANCE"
+	default:
+		return stateReady
 	}
 }
 

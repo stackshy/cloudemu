@@ -54,31 +54,13 @@ func (h *Handler) insertImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	// GCP images can be created from a disk, snapshot, or imported. The
-	// driver's CreateImage takes an InstanceID — we fake one from any
-	// existing instance just so the driver lets the create succeed.
-	insts, err := h.compute.DescribeInstances(r.Context(), nil, nil)
-	if err != nil {
-		gcprest.WriteCErr(w, err)
-		return
-	}
-
-	instanceID := ""
-	if len(insts) > 0 {
-		instanceID = insts[0].ID
-	}
-
-	if instanceID == "" {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
-			"images mock requires at least one running instance to derive the image from")
-
-		return
-	}
-
+	// GCP images are created from a disk, snapshot, or import — never from a
+	// source instance (that is EC2's model). Pass an empty InstanceID so the
+	// driver takes the source-based path; record the source in the description
+	// so a read reflects what it was built from.
 	cfg := computedriver.ImageConfig{
-		InstanceID:  instanceID,
 		Name:        req.Name,
-		Description: req.Name,
+		Description: imageSourceDescription(&req),
 		Tags:        mergeImageTags(req.Labels, req.Name),
 	}
 
@@ -146,6 +128,19 @@ func (h *Handler) deleteImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		"images", rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// imageSourceDescription records the source the image was built from so a read
+// reflects it. Falls back to the image name when no source was given (import).
+func imageSourceDescription(req *imageRequest) string {
+	switch {
+	case req.SourceDisk != "":
+		return "sourceDisk: " + req.SourceDisk
+	case req.SourceSnapshot != "":
+		return "sourceSnapshot: " + req.SourceSnapshot
+	default:
+		return req.Name
+	}
 }
 
 func findImageByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.ImageInfo, error) {

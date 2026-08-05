@@ -30,6 +30,9 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 		Name:     req.Name,
 		Protocol: req.Protocol,
 		Port:     req.Port,
+		// The driver TargetGroup can't hold these GCP fields, so round-trip them
+		// through tags rather than dropping them on read.
+		Tags: backendServiceTags(&req),
 	}); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -231,7 +234,7 @@ func (h *Handler) findLBByName(ctx context.Context, name string) (*lbdriver.LBIn
 
 //nolint:gocritic // rp is a request-scoped value
 func toBackendServiceResponse(tg *lbdriver.TargetGroupInfo, rp gcprest.ResourcePath, host string) backendServiceResponse {
-	return backendServiceResponse{
+	resp := backendServiceResponse{
 		Kind:     "compute#backendService",
 		ID:       numericID(tg.ID),
 		Name:     tg.Name,
@@ -239,6 +242,43 @@ func toBackendServiceResponse(tg *lbdriver.TargetGroupInfo, rp gcprest.ResourceP
 		Port:     tg.Port,
 		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", resourceBackendServices, tg.Name),
 	}
+
+	resp.Description = tg.Tags[bsDescriptionTag]
+	resp.PortName = tg.Tags[bsPortNameTag]
+
+	if hc := tg.Tags[bsHealthChecksTag]; hc != "" {
+		resp.HealthChecks = strings.Split(hc, ",")
+	}
+
+	return resp
+}
+
+// Reserved tag keys carry the GCP backend-service fields the driver's target
+// group can't model.
+const (
+	bsDescriptionTag  = "cloudemu:gcpBsDescription"
+	bsPortNameTag     = "cloudemu:gcpBsPortName"
+	bsHealthChecksTag = "cloudemu:gcpBsHealthChecks"
+)
+
+// backendServiceTags folds the GCP-specific backend-service fields into a tag
+// map so they round-trip through the driver.
+func backendServiceTags(req *backendServiceRequest) map[string]string {
+	tags := map[string]string{}
+
+	if req.Description != "" {
+		tags[bsDescriptionTag] = req.Description
+	}
+
+	if req.PortName != "" {
+		tags[bsPortNameTag] = req.PortName
+	}
+
+	if len(req.HealthChecks) > 0 {
+		tags[bsHealthChecksTag] = strings.Join(req.HealthChecks, ",")
+	}
+
+	return tags
 }
 
 //nolint:gocritic // rp is a request-scoped value
