@@ -2,19 +2,13 @@ package databricks_test
 
 import (
 	"context"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/databricks/armdatabricks"
-
-	"github.com/stackshy/cloudemu/v2"
-	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
 const (
@@ -32,28 +26,9 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 func newWorkspacesClient(t *testing.T) *armdatabricks.WorkspacesClient {
 	t.Helper()
 
-	cloudP := cloudemu.NewAzure()
-	srv := azureserver.New(azureserver.Drivers{Databricks: cloudP.Databricks})
+	opts, sub := newARMOptions(t)
 
-	ts := httptest.NewTLSServer(srv)
-	t.Cleanup(ts.Close)
-
-	myCloud := cloud.Configuration{
-		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
-		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-			cloud.ResourceManager: {Endpoint: ts.URL, Audience: "https://management.azure.com"},
-		},
-	}
-
-	opts := &arm.ClientOptions{
-		ClientOptions: azcore.ClientOptions{
-			Cloud:     myCloud,
-			Transport: ts.Client(),
-			Retry:     policy.RetryOptions{MaxRetries: -1},
-		},
-	}
-
-	client, err := armdatabricks.NewWorkspacesClient("sub-1", fakeCred{}, opts)
+	client, err := armdatabricks.NewWorkspacesClient(sub, fakeCred{}, opts)
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}

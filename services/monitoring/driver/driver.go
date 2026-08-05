@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// MetricIdentifier names one metric by namespace + name. It's used by the
+// AWS-local detailed metric listing that backs a namespace-less ListMetrics
+// ("list all") so each returned metric keeps its real namespace.
+type MetricIdentifier struct {
+	Namespace  string
+	MetricName string
+}
+
 // MetricDatum is a single metric data point.
 type MetricDatum struct {
 	Namespace  string

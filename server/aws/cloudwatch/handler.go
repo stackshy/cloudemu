@@ -21,6 +21,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 const (
@@ -33,13 +34,26 @@ const (
 )
 
 // Handler serves CloudWatch rpc-v2-cbor requests against a monitoring driver.
+// An optional IPAM metrics source lets the handler surface derived AWS/IPAM
+// metrics that the monitoring store itself doesn't hold.
 type Handler struct {
 	monitoring mondriver.Monitoring
+	ipam       netdriver.IPAMMetrics
 }
 
-// New returns a CloudWatch handler backed by m.
+// New returns a CloudWatch handler backed by m. Use SetIPAMMetrics to attach
+// the optional derived AWS/IPAM metrics source. Kept single-argument so callers
+// that don't wire IPAM (e.g. the base query-protocol tests) construct it
+// unchanged.
 func New(m mondriver.Monitoring) *Handler {
 	return &Handler{monitoring: m}
+}
+
+// SetIPAMMetrics attaches an optional IPAMMetrics source (nil-safe) supplying
+// the derived AWS/IPAM namespace metrics, following the same setter-injection
+// pattern as the other CloudEmu handlers.
+func (h *Handler) SetIPAMMetrics(ipam netdriver.IPAMMetrics) {
+	h.ipam = ipam
 }
 
 // Matches returns true for Smithy rpc-v2-cbor requests, and for classic

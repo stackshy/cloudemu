@@ -550,8 +550,15 @@ assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
 | Egress-only internet gateways | Create, Delete, Describe |
 | VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
 | Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
+| IPAM (IP Address Manager) — full | Ipam/Scope/Pool CRUD+Modify; Cidr Provision/Deprovision/Get; Allocation Allocate/Release/Get/Modify; ResourceCidrs (Get/Modify) + AddressHistory; ResourceDiscovery CRUD + Associate/Disassociate + Discovered Accounts/ResourceCidrs/PublicAddresses; BYOASN (Provision/Deprovision/Associate/Disassociate/Describe); BYOIP (Move/Provision/Deprovision/Describe/Advertise/Withdraw); PrefixListResolver + Targets + Versions/Rules/Entries; ExternalResourceVerificationToken (Create/Delete/Describe); Policy (Create/Delete/Describe/Enable/Disable/GetEnabled/AllocationRules/OrgTargets) + OrganizationAdminAccount (Enable/Disable) |
 
-**AWS-specific total: 58 operations**
+**AWS-specific total: 127 operations**
+
+IPAM is fully covered (~69 operations). Cross-account/organization and live-network features (Resource Discovery, discovered accounts/resources/public addresses, BYOASN/BYOIP, policies, org-admin) are modeled against the emulator's own single-account state: discovered resources are derived from the stored VPCs/subnets/EIPs, and organization targets resolve to the configured account.
+
+### IPAM metrics (`AWS/IPAM` CloudWatch namespace)
+
+IPAM publishes derived metrics through the CloudWatch service (ListMetrics / GetMetricStatistics): `TotalActiveIpCount`; pool `PercentAllocated`/`PercentAssigned`/`PercentAvailable`/`Compliant`/`NoncompliantResourceCidrs`; scope `Managed`/`Unmanaged`/`Overlapping`/`Compliant`/`NoncompliantResourceCidrs`; public-IP insight counts; and resource utilization `VpcIPUsage`/`SubnetIPUsage`. Values are computed live from IPAM + VPC/subnet/EIP state.
 
 ---
 
@@ -1914,6 +1921,32 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 | `ListWorkspacesByResourceGroup` | `(ctx, resourceGroup) ([]Workspace, error)` |
 | `ListWorkspaces` | `(ctx) ([]Workspace, error)` |
 
+### Extended ARM resources (control plane)
+
+The rest of the `Microsoft.Databricks` ARM surface beyond workspaces
+(`services/databricks/driver/arm_resources.go`), reachable over the real
+`armdatabricks` SDK:
+
+| Resource | Operations |
+|----------|------------|
+| **Access Connectors** (`accessConnectors`) | `CreateOrUpdateAccessConnector`, `GetAccessConnector`, `UpdateAccessConnector`, `DeleteAccessConnector`, `ListAccessConnectorsByResourceGroup`, `ListAccessConnectors` |
+| **Private Endpoint Connections** (`workspaces/{w}/privateEndpointConnections`) | `PutPrivateEndpointConnection`, `GetPrivateEndpointConnection`, `DeletePrivateEndpointConnection`, `ListPrivateEndpointConnections` |
+| **Private Link Resources** (`workspaces/{w}/privateLinkResources`) | `GetPrivateLinkResource`, `ListPrivateLinkResources` |
+| **VNet Peering** (`workspaces/{w}/virtualNetworkPeerings`) | `CreateOrUpdateVNetPeering`, `GetVNetPeering`, `DeleteVNetPeering`, `ListVNetPeerings` |
+| **Outbound Network Dependencies** (`workspaces/{w}/outboundNetworkDependenciesEndpoints`) | `ListOutboundNetworkDependencies` |
+| **Operations** (`/providers/Microsoft.Databricks/operations`) | `ListOperations` |
+
+*Modeled store-and-echo:* the ARM resources round-trip faithfully over the SDK
+(access connectors and peerings persist and are listed/described; a
+system-assigned access-connector identity gets synthesized principal/tenant
+IDs; a created peering springs to `Connected`/`Succeeded`), but the underlying
+Azure networking side effects are **not** simulated — a private-endpoint
+connection stores its approval state without a real private endpoint on the
+platform side, private-link resources and outbound-dependency endpoints are a
+synthesized (workspace-scoped) catalog rather than a live probe, and a VNet
+peering does not actually peer networks. The provider operations list is a
+static catalog of the RBAC operations the namespace exposes.
+
 ### Instance Pool Operations
 
 | Operation | Signature |
@@ -1995,7 +2028,7 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 | `SetPermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
 | `UpdatePermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
 
-**Total: 52 operations**
+**Total: 70 operations**
 
 ---
 
@@ -2261,7 +2294,7 @@ still sees success.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
-| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN) | 58 |
+| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 127 |
 | Network Firewall — AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
@@ -2287,13 +2320,13 @@ still sees success.
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI — AWS Bedrock (control plane + runtime) | 65 |
 | Generative AI — AWS Bedrock Agent (control plane + runtime) | 32 |
-| Databricks — Azure (control + data plane) | 52 |
+| Databricks — Azure (control + data plane) | 70 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1493** (+138 optional) |
+| **Grand Total** | **1562** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

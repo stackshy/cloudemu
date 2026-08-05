@@ -2,13 +2,22 @@ package aws_test
 
 import (
 	"context"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/stackshy/cloudemu/v2"
+	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 // TestEC2NetworkingParitySDK drives the real aws-sdk-go-v2 EC2 client against
@@ -265,4 +274,318 @@ func TestEC2NetworkingParitySDK(t *testing.T) {
 		require.Len(t, vpnRoutes.Routes, 1)
 		assert.Equal(t, "0.0.0.0/0", aws.ToString(vpnRoutes.Routes[0].DestinationCidr))
 	})
+}
+
+// TestEC2IPAMParitySDK drives the real aws-sdk-go-v2 EC2 client across the
+// IPAM core lifecycle (IPAM + scopes + pools + provisioned CIDRs + allocations),
+// proving the query-protocol XML round-trips.
+func TestEC2IPAMParitySDK(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	ipam, err := client.CreateIpam(ctx, &ec2.CreateIpamInput{Description: aws.String("corp")})
+	require.NoError(t, err)
+	require.NotNil(t, ipam.Ipam)
+	ipamID := aws.ToString(ipam.Ipam.IpamId)
+	assert.NotEmpty(t, ipamID)
+	// Creating an IPAM implicitly creates a public + private default scope.
+	privScopeID := aws.ToString(ipam.Ipam.PrivateDefaultScopeId)
+	assert.NotEmpty(t, aws.ToString(ipam.Ipam.PublicDefaultScopeId))
+	assert.NotEmpty(t, privScopeID)
+	assert.EqualValues(t, 2, aws.ToInt32(ipam.Ipam.ScopeCount))
+
+	desc, err := client.DescribeIpams(ctx, &ec2.DescribeIpamsInput{IpamIds: []string{ipamID}})
+	require.NoError(t, err)
+	require.Len(t, desc.Ipams, 1)
+
+	scope, err := client.CreateIpamScope(ctx, &ec2.CreateIpamScopeInput{
+		IpamId: aws.String(ipamID), Description: aws.String("extra"),
+	})
+	require.NoError(t, err)
+	assert.False(t, aws.ToBool(scope.IpamScope.IsDefault))
+
+	pool, err := client.CreateIpamPool(ctx, &ec2.CreateIpamPoolInput{
+		IpamScopeId:   aws.String(privScopeID),
+		AddressFamily: ec2types.AddressFamilyIpv4,
+		Locale:        aws.String("us-east-1"),
+	})
+	require.NoError(t, err)
+	poolID := aws.ToString(pool.IpamPool.IpamPoolId)
+	assert.NotEmpty(t, poolID)
+	assert.Equal(t, ec2types.AddressFamilyIpv4, pool.IpamPool.AddressFamily)
+
+	// Provision supply into the pool, then read it back.
+	_, err = client.ProvisionIpamPoolCidr(ctx, &ec2.ProvisionIpamPoolCidrInput{
+		IpamPoolId: aws.String(poolID), Cidr: aws.String("10.0.0.0/16"),
+	})
+	require.NoError(t, err)
+
+	cidrs, err := client.GetIpamPoolCidrs(ctx, &ec2.GetIpamPoolCidrsInput{IpamPoolId: aws.String(poolID)})
+	require.NoError(t, err)
+	require.Len(t, cidrs.IpamPoolCidrs, 1)
+	assert.Equal(t, "10.0.0.0/16", aws.ToString(cidrs.IpamPoolCidrs[0].Cidr))
+
+	// Allocate a CIDR out of the pool, then read + release it.
+	alloc, err := client.AllocateIpamPoolCidr(ctx, &ec2.AllocateIpamPoolCidrInput{
+		IpamPoolId: aws.String(poolID), Cidr: aws.String("10.0.1.0/24"),
+	})
+	require.NoError(t, err)
+	allocID := aws.ToString(alloc.IpamPoolAllocation.IpamPoolAllocationId)
+	assert.NotEmpty(t, allocID)
+
+	allocs, err := client.GetIpamPoolAllocations(ctx, &ec2.GetIpamPoolAllocationsInput{IpamPoolId: aws.String(poolID)})
+	require.NoError(t, err)
+	require.Len(t, allocs.IpamPoolAllocations, 1)
+	assert.Equal(t, "10.0.1.0/24", aws.ToString(allocs.IpamPoolAllocations[0].Cidr))
+
+	rel, err := client.ReleaseIpamPoolAllocation(ctx, &ec2.ReleaseIpamPoolAllocationInput{
+		IpamPoolId: aws.String(poolID), IpamPoolAllocationId: aws.String(allocID), Cidr: aws.String("10.0.1.0/24"),
+	})
+	require.NoError(t, err)
+	assert.True(t, aws.ToBool(rel.Success))
+
+	// Teardown in dependency order: pool (deprovision first) → scope → ipam.
+	_, err = client.DeprovisionIpamPoolCidr(ctx, &ec2.DeprovisionIpamPoolCidrInput{
+		IpamPoolId: aws.String(poolID), Cidr: aws.String("10.0.0.0/16"),
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeleteIpamPool(ctx, &ec2.DeleteIpamPoolInput{IpamPoolId: aws.String(poolID)})
+	require.NoError(t, err)
+
+	_, err = client.DeleteIpamScope(ctx, &ec2.DeleteIpamScopeInput{IpamScopeId: scope.IpamScope.IpamScopeId})
+	require.NoError(t, err)
+
+	_, err = client.DeleteIpam(ctx, &ec2.DeleteIpamInput{IpamId: aws.String(ipamID)})
+	require.NoError(t, err)
+
+	// Error path: describing a deleted IPAM by id returns an empty set.
+	after, err := client.DescribeIpams(ctx, &ec2.DescribeIpamsInput{IpamIds: []string{ipamID}})
+	require.NoError(t, err)
+	assert.Empty(t, after.Ipams)
+}
+
+// TestEC2IPAMFullSDK drives the real EC2 client across the full IPAM surface
+// beyond the core lifecycle: resource CIDRs + history, resource discovery +
+// discovered getters, BYOASN + BYOIP, prefix-list resolver + targets,
+// verification tokens, and policy + org-admin — proving the query wire.
+func TestEC2IPAMFullSDK(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := context.Background()
+
+	// Prerequisite VPC + subnet so resource CIDRs / discovery / utilization
+	// have something to report.
+	vpcOut, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpcOut.Vpc.VpcId)
+	_, err = client.CreateSubnet(ctx, &ec2.CreateSubnetInput{VpcId: aws.String(vpcID), CidrBlock: aws.String("10.0.1.0/24")})
+	require.NoError(t, err)
+
+	ipam, err := client.CreateIpam(ctx, &ec2.CreateIpamInput{})
+	require.NoError(t, err)
+	ipamID := aws.ToString(ipam.Ipam.IpamId)
+	privScopeID := aws.ToString(ipam.Ipam.PrivateDefaultScopeId)
+	// A default resource discovery + association is created with the IPAM.
+	rdID := aws.ToString(ipam.Ipam.DefaultResourceDiscoveryId)
+	require.NotEmpty(t, rdID)
+
+	t.Run("resource cidrs + history", func(t *testing.T) {
+		rc, err := client.GetIpamResourceCidrs(ctx, &ec2.GetIpamResourceCidrsInput{IpamScopeId: aws.String(privScopeID)})
+		require.NoError(t, err)
+		require.NotEmpty(t, rc.IpamResourceCidrs)
+
+		hist, err := client.GetIpamAddressHistory(ctx, &ec2.GetIpamAddressHistoryInput{
+			Cidr: aws.String("10.0.0.0/16"), IpamScopeId: aws.String(privScopeID),
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, hist.HistoryRecords)
+	})
+
+	t.Run("resource discovery", func(t *testing.T) {
+		descRD, err := client.DescribeIpamResourceDiscoveries(ctx, &ec2.DescribeIpamResourceDiscoveriesInput{
+			IpamResourceDiscoveryIds: []string{rdID},
+		})
+		require.NoError(t, err)
+		require.Len(t, descRD.IpamResourceDiscoveries, 1)
+		assert.True(t, aws.ToBool(descRD.IpamResourceDiscoveries[0].IsDefault))
+
+		accts, err := client.GetIpamDiscoveredAccounts(ctx, &ec2.GetIpamDiscoveredAccountsInput{
+			IpamResourceDiscoveryId: aws.String(rdID), DiscoveryRegion: aws.String("us-east-1"),
+		})
+		require.NoError(t, err)
+		require.Len(t, accts.IpamDiscoveredAccounts, 1)
+
+		cidrs, err := client.GetIpamDiscoveredResourceCidrs(ctx, &ec2.GetIpamDiscoveredResourceCidrsInput{
+			IpamResourceDiscoveryId: aws.String(rdID), ResourceRegion: aws.String("us-east-1"),
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, cidrs.IpamDiscoveredResourceCidrs)
+	})
+
+	t.Run("byoip + byoasn", func(t *testing.T) {
+		_, err := client.ProvisionByoipCidr(ctx, &ec2.ProvisionByoipCidrInput{Cidr: aws.String("203.0.113.0/24")})
+		require.NoError(t, err)
+
+		byoip, err := client.DescribeByoipCidrs(ctx, &ec2.DescribeByoipCidrsInput{MaxResults: aws.Int32(10)})
+		require.NoError(t, err)
+		require.Len(t, byoip.ByoipCidrs, 1)
+
+		_, err = client.ProvisionIpamByoasn(ctx, &ec2.ProvisionIpamByoasnInput{
+			IpamId: aws.String(ipamID), Asn: aws.String("64512"),
+			AsnAuthorizationContext: &ec2types.AsnAuthorizationContext{
+				Message: aws.String("msg"), Signature: aws.String("sig"),
+			},
+		})
+		require.NoError(t, err)
+
+		asns, err := client.DescribeIpamByoasn(ctx, &ec2.DescribeIpamByoasnInput{})
+		require.NoError(t, err)
+		require.Len(t, asns.Byoasns, 1)
+	})
+
+	t.Run("prefix list resolver + token", func(t *testing.T) {
+		res, err := client.CreateIpamPrefixListResolver(ctx, &ec2.CreateIpamPrefixListResolverInput{
+			IpamId: aws.String(ipamID), AddressFamily: ec2types.AddressFamilyIpv4,
+		})
+		require.NoError(t, err)
+		resID := aws.ToString(res.IpamPrefixListResolver.IpamPrefixListResolverId)
+		assert.NotEmpty(t, resID)
+
+		descRes, err := client.DescribeIpamPrefixListResolvers(ctx, &ec2.DescribeIpamPrefixListResolversInput{
+			IpamPrefixListResolverIds: []string{resID},
+		})
+		require.NoError(t, err)
+		require.Len(t, descRes.IpamPrefixListResolvers, 1)
+
+		tok, err := client.CreateIpamExternalResourceVerificationToken(ctx, &ec2.CreateIpamExternalResourceVerificationTokenInput{
+			IpamId: aws.String(ipamID),
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, aws.ToString(tok.IpamExternalResourceVerificationToken.IpamExternalResourceVerificationTokenId))
+	})
+
+	t.Run("policy + org admin", func(t *testing.T) {
+		pol, err := client.CreateIpamPolicy(ctx, &ec2.CreateIpamPolicyInput{IpamId: aws.String(ipamID)})
+		require.NoError(t, err)
+		polID := aws.ToString(pol.IpamPolicy.IpamPolicyId)
+		assert.NotEmpty(t, polID)
+
+		_, err = client.EnableIpamPolicy(ctx, &ec2.EnableIpamPolicyInput{IpamPolicyId: aws.String(polID)})
+		require.NoError(t, err)
+
+		enabled, err := client.GetEnabledIpamPolicy(ctx, &ec2.GetEnabledIpamPolicyInput{})
+		require.NoError(t, err)
+		assert.True(t, aws.ToBool(enabled.IpamPolicyEnabled))
+
+		// Modify allocation rules — the response must carry a non-nil
+		// IpamPolicyDocument (not a dropped <return>true>), and Get must return
+		// the rule's sourceIpamPoolId + ipamPolicyId (not an empty document).
+		mod, err := client.ModifyIpamPolicyAllocationRules(ctx, &ec2.ModifyIpamPolicyAllocationRulesInput{
+			IpamPolicyId: aws.String(polID),
+			Locale:       aws.String("us-east-1"),
+			ResourceType: ec2types.IpamPolicyResourceTypeEip,
+			AllocationRules: []ec2types.IpamPolicyAllocationRuleRequest{
+				{SourceIpamPoolId: aws.String("ipam-pool-abc123")},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, mod.IpamPolicyDocument, "ModifyIpamPolicyAllocationRules dropped the document")
+		require.Len(t, mod.IpamPolicyDocument.AllocationRules, 1)
+		assert.Equal(t, "ipam-pool-abc123", aws.ToString(mod.IpamPolicyDocument.AllocationRules[0].SourceIpamPoolId))
+
+		got, err := client.GetIpamPolicyAllocationRules(ctx, &ec2.GetIpamPolicyAllocationRulesInput{
+			IpamPolicyId: aws.String(polID),
+		})
+		require.NoError(t, err)
+		require.Len(t, got.IpamPolicyDocuments, 1)
+		assert.Equal(t, polID, aws.ToString(got.IpamPolicyDocuments[0].IpamPolicyId))
+		require.Len(t, got.IpamPolicyDocuments[0].AllocationRules, 1)
+		assert.Equal(t, "ipam-pool-abc123",
+			aws.ToString(got.IpamPolicyDocuments[0].AllocationRules[0].SourceIpamPoolId))
+
+		admin, err := client.EnableIpamOrganizationAdminAccount(ctx, &ec2.EnableIpamOrganizationAdminAccountInput{
+			DelegatedAdminAccountId: aws.String("111122223333"),
+		})
+		require.NoError(t, err)
+		assert.True(t, aws.ToBool(admin.Success))
+	})
+}
+
+// TestIPAMMetricsSDK proves the derived AWS/IPAM metrics surface through the
+// real CloudWatch SDK (ListMetrics + GetMetricStatistics), wired via the
+// VPC driver's optional IPAMMetrics capability.
+func TestIPAMMetricsSDK(t *testing.T) {
+	provider := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{EC2: provider.EC2, VPC: provider.VPC, CloudWatch: provider.CloudWatch})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("t", "t", "")))
+	require.NoError(t, err)
+
+	ec2c := ec2.NewFromConfig(cfg, func(o *ec2.Options) { o.BaseEndpoint = aws.String(ts.URL) })
+	cw := cloudwatch.NewFromConfig(cfg, func(o *cloudwatch.Options) { o.BaseEndpoint = aws.String(ts.URL) })
+	ctx := context.Background()
+
+	// Build IPAM state: a VPC with a subnet (drives VpcIPUsage) and an IPAM.
+	vpcOut, err := ec2c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	require.NoError(t, err)
+	_, err = ec2c.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId: vpcOut.Vpc.VpcId, CidrBlock: aws.String("10.0.0.0/24"),
+	})
+	require.NoError(t, err)
+	_, err = ec2c.CreateIpam(ctx, &ec2.CreateIpamInput{})
+	require.NoError(t, err)
+
+	// ListMetrics on AWS/IPAM returns the derived metric set.
+	list, err := cw.ListMetrics(ctx, &cloudwatch.ListMetricsInput{Namespace: aws.String("AWS/IPAM")})
+	require.NoError(t, err)
+	names := map[string]bool{}
+	for _, m := range list.Metrics {
+		names[aws.ToString(m.MetricName)] = true
+	}
+	assert.True(t, names["TotalActiveIpCount"], "expected TotalActiveIpCount metric")
+	assert.True(t, names["VpcIPUsage"], "expected VpcIPUsage metric")
+
+	// Regression (#318 review): a real metric plus an empty-namespace
+	// "list all" call must return BOTH the real namespace and AWS/IPAM — the
+	// IPAM shortcut must not drop every non-IPAM metric.
+	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace:  aws.String("MyApp"),
+		MetricData: []cwtypes.MetricDatum{{MetricName: aws.String("RequestCount"), Value: aws.Float64(1)}},
+	})
+	require.NoError(t, err)
+
+	all, err := cw.ListMetrics(ctx, &cloudwatch.ListMetricsInput{})
+	require.NoError(t, err)
+
+	namespaces := map[string]bool{}
+	for _, m := range all.Metrics {
+		namespaces[aws.ToString(m.Namespace)] = true
+	}
+	assert.True(t, namespaces["MyApp"], "empty-namespace ListMetrics dropped the real MyApp metric")
+	assert.True(t, namespaces["AWS/IPAM"], "empty-namespace ListMetrics dropped the AWS/IPAM metrics")
+
+	// GetMetricStatistics for VpcIPUsage returns the computed utilization (a
+	// /24 subnet in a /16 VPC = 256/65536 = ~0.39%).
+	vpcID := aws.ToString(vpcOut.Vpc.VpcId)
+	end := time.Now().UTC()
+	stat, err := cw.GetMetricStatistics(ctx, &cloudwatch.GetMetricStatisticsInput{
+		Namespace:  aws.String("AWS/IPAM"),
+		MetricName: aws.String("VpcIPUsage"),
+		Dimensions: []cwtypes.Dimension{
+			{Name: aws.String("VpcID"), Value: aws.String(vpcID)},
+			{Name: aws.String("AddressFamily"), Value: aws.String("IPv4")},
+			{Name: aws.String("Region"), Value: aws.String("us-east-1")},
+		},
+		StartTime:  aws.Time(end.Add(-time.Hour)),
+		EndTime:    aws.Time(end),
+		Period:     aws.Int32(60),
+		Statistics: []cwtypes.Statistic{cwtypes.StatisticAverage},
+	})
+	require.NoError(t, err)
+	require.Len(t, stat.Datapoints, 1)
+	assert.InDelta(t, 0.39, aws.ToFloat64(stat.Datapoints[0].Average), 0.05)
 }
