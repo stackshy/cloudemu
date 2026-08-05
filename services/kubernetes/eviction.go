@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 
 	corev1 "k8s.io/api/core/v1"
@@ -162,13 +163,27 @@ func updatePDBStatusLocked(pdb *policyv1.PodDisruptionBudget, healthy, desiredHe
 	pdb.Status.CurrentHealthy = int32(healthy)        //nolint:gosec // pod counts are far below int32 range
 	pdb.Status.DesiredHealthy = int32(desiredHealthy) //nolint:gosec // pod counts are far below int32 range
 	pdb.Status.ExpectedPods = int32(expected)         //nolint:gosec // pod counts are far below int32 range
-
-	if allowed < 0 {
-		allowed = 0
-	}
-
-	pdb.Status.DisruptionsAllowed = int32(allowed)
+	pdb.Status.DisruptionsAllowed = clampToInt32(allowed)
 	pdb.Status.ObservedGeneration = pdb.Generation
+}
+
+// clampToInt32 narrows a disruption count to int32, clamping to [0,
+// math.MaxInt32]. allowed can go negative when a PDB is already violated
+// (more disruptions have happened than the budget permits), which the 429
+// decision in checkPDBAllowsEvictionLocked relies on seeing as "no budget
+// left" rather than a negative DisruptionsAllowed on the wire — matching
+// what a real PodDisruptionBudgetStatus reports. The upper clamp makes the
+// int->int32 narrowing a deliberate, bound-checked conversion instead of
+// gosec G115's unchecked one (mirrors safeInt32 in server/aws/eks/operations.go).
+func clampToInt32(v int) int32 {
+	switch {
+	case v < 0:
+		return 0
+	case v > math.MaxInt32:
+		return math.MaxInt32
+	default:
+		return int32(v)
+	}
 }
 
 // pdbBlockedStatus builds the 429 Status a real apiserver returns when an

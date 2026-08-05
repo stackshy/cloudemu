@@ -144,7 +144,11 @@ func (s *ClusterState) listServiceAccounts(w http.ResponseWriter, r *http.Reques
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectServiceAccountsLocked(namespace), r)
+	items, cont, ok := listPage(s.collectServiceAccountsLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ServiceAccountList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccountList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
@@ -156,7 +160,11 @@ func (s *ClusterState) listServiceAccountsAllNamespaces(w http.ResponseWriter, r
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectServiceAccountsLocked(""), r)
+	items, cont, ok := listPage(s.collectServiceAccountsLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ServiceAccountList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccountList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},

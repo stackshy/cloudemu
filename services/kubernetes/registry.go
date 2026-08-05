@@ -240,7 +240,11 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 	defer s.mu.RUnlock()
 
 	items := st.snapshotLocked(namespace, r)
-	items, cont := listPage(items, r)
+
+	items, cont, ok := listPage(items, w, r)
+	if !ok {
+		return
+	}
 
 	list := &unstructured.UnstructuredList{}
 	list.SetAPIVersion(st.def.apiVersion())
@@ -339,6 +343,14 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 	}
 
 	if isDryRun(r) {
+		// A dry-run must report the same 403 a real create would when the
+		// namespace is at its quota limit — check (without reserving) before echo.
+		if status := s.checkQuotaLocked(namespace, st.def.kind, st.def.plural); status != nil {
+			writeJSON(w, int(status.Code), status)
+
+			return
+		}
+
 		obj.SetResourceVersion(strconv.Itoa(st.rv + 1))
 		writeJSON(w, http.StatusCreated, obj)
 
@@ -420,6 +432,10 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 		return
 	}
 
+	// A plain PUT takes/shares ownership: preserve prior managedFields and record
+	// an Update entry for this fieldManager covering the fields it set.
+	s.stampUpdateOwnership(in, managedFieldsOf(cur), updateFieldManager(r), st.def.apiVersion(), ownedLeaves(in.Object))
+
 	if isDryRun(r) {
 		in.SetResourceVersion(strconv.Itoa(st.rv + 1))
 		writeJSON(w, http.StatusOK, in)
@@ -429,10 +445,10 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 
 	st.stampRVLocked(in)
 
-	// Last finalizer removed on a Terminating object → complete the delete.
+	// Last finalizer removed on a Terminating object → complete the delete
+	// (same teardown the immediate-delete path runs: cascade + onDelete + quota).
 	if finalizersDrainedUnstructured(in) {
-		delete(st.items, objKey(namespace, name))
-		s.garbageCollectLocked(in.GetUID())
+		s.teardownRegistryObjectLocked(st, objKey(namespace, name), in)
 		st.watch.publish(EventDeleted, in.GetNamespace(), *in.DeepCopy())
 		writeJSON(w, http.StatusOK, in)
 
@@ -460,6 +476,13 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 		return
 	}
 
+	// Snapshot server-owned metadata before the patch so an RFC-7396 null-delete
+	// (e.g. `{"metadata":{"deletionTimestamp":null}}`) cannot resurrect or
+	// re-identify the object — mirrors the PUT path's guard.
+	prevDeletion := cur.GetDeletionTimestamp()
+	prevUID := cur.GetUID()
+	prevCreation := cur.GetCreationTimestamp()
+
 	// Server-side apply tracks field ownership + conflicts (managedFields); every
 	// other patch content-type is a plain merge/strategic/JSONPatch.
 	var patched *unstructured.Unstructured
@@ -472,6 +495,18 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 
 	if !ok {
 		return
+	}
+
+	patched.SetDeletionTimestamp(prevDeletion)
+	patched.SetUID(prevUID)
+	patched.SetCreationTimestamp(prevCreation)
+
+	// A non-apply patch takes/shares ownership: record an Update entry for its
+	// fieldManager covering the fields it changed. Apply-patch handled its own
+	// managedFields in serverSideApply.
+	if r.Header.Get("Content-Type") != contentTypeApplyPatch {
+		s.stampUpdateOwnership(patched, managedFieldsOf(cur), updateFieldManager(r),
+			st.def.apiVersion(), changedLeaves(cur.Object, patched.Object))
 	}
 
 	if specChanged(cur, patched) {
@@ -493,10 +528,9 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 
 	// A patch that removes the last finalizer from a Terminating object completes
 	// the delete (the patch was applied onto cur, so it inherits its
-	// deletionTimestamp).
+	// deletionTimestamp), running the same teardown as the immediate-delete path.
 	if finalizersDrainedUnstructured(patched) {
-		delete(st.items, objKey(namespace, name))
-		s.garbageCollectLocked(patched.GetUID())
+		s.teardownRegistryObjectLocked(st, objKey(namespace, name), patched)
 		st.watch.publish(EventDeleted, patched.GetNamespace(), *patched.DeepCopy())
 		writeJSON(w, http.StatusOK, patched)
 
@@ -543,8 +577,22 @@ func (s *ClusterState) registryDelete(w http.ResponseWriter, r *http.Request, st
 		return
 	}
 
-	delete(st.items, key)
 	st.bumpRVLocked()
+	s.teardownRegistryObjectLocked(st, key, obj)
+
+	st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
+	writeJSON(w, http.StatusOK, obj.DeepCopy())
+}
+
+// teardownRegistryObjectLocked performs the final removal of a registry object
+// once it is finalizer-free (never had finalizers, or the last one just
+// drained): it drops the object, cascades to anything it owns, runs
+// kind-specific teardown (the CRD kind deregisters its CR store + discovery
+// entry here), and recomputes any quota it counted against. Shared by the
+// immediate-delete path and the finalizer-drain completions in registryUpdate/
+// registryPatch so every path finalizes identically. Callers hold s.mu.
+func (s *ClusterState) teardownRegistryObjectLocked(st *registryStore, key string, obj *unstructured.Unstructured) {
+	delete(st.items, key)
 
 	// Cascade: garbage-collect anything this object owns (its controlled Pods
 	// and any registry-backed children carrying its ownerReference).
@@ -555,8 +603,9 @@ func (s *ClusterState) registryDelete(w http.ResponseWriter, r *http.Request, st
 		st.def.onDelete(s, obj)
 	}
 
-	st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
-	writeJSON(w, http.StatusOK, obj.DeepCopy())
+	// A quota-counted object going away must drop status.used back to the live
+	// count (recompute so a cascade that removed several at once stays correct).
+	s.releaseQuotaLocked(obj.GetNamespace(), st.def.kind, st.def.plural)
 }
 
 // stampRVLocked bumps the store's resourceVersion counter and stamps it on obj.

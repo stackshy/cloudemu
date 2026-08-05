@@ -142,7 +142,11 @@ func (s *ClusterState) listNamespaces(w http.ResponseWriter, r *http.Request) {
 		items = append(items, *s.namespaces[n].DeepCopy())
 	}
 
-	items, cont := listPage(items, r)
+	items, cont, ok := listPage(items, w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.NamespaceList{
 		TypeMeta: metav1.TypeMeta{Kind: "NamespaceList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
@@ -234,6 +238,12 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
+	// must not resurrect a Terminating namespace — carry it (and uid/creation)
+	// forward, mirroring updateNamespace.
+	patched.DeletionTimestamp = cur.DeletionTimestamp
+	patched.UID = cur.UID
+	patched.CreationTimestamp = cur.CreationTimestamp
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, patched)
@@ -297,36 +307,54 @@ func (s *ClusterState) deleteNamespaceLocked(ns *corev1.Namespace) {
 	s.wNamespaces.publish(EventDeleted, "", *ns.DeepCopy())
 
 	prefix := name + "/"
-	cascadeDeleteWithEvents(s.configMaps, prefix, name, s.wConfigMaps)
-	cascadeDeleteWithEvents(s.pods, prefix, name, s.wPods)
-	cascadeDeleteWithEvents(s.secrets, prefix, name, s.wSecrets)
-	cascadeDeleteWithEvents(s.serviceAccounts, prefix, name, s.wServiceAccounts)
-	cascadeDeleteWithEvents(s.services, prefix, name, s.wServices)
-	cascadeDeleteWithEvents(s.deployments, prefix, name, s.wDeployments)
-	cascadeDeleteWithEvents(s.endpoints, prefix, name, s.wEndpoints)
+	cascadeDeleteWithEvents(s, s.configMaps, prefix, name, s.wConfigMaps)
+	cascadeDeleteWithEvents(s, s.pods, prefix, name, s.wPods)
+	cascadeDeleteWithEvents(s, s.secrets, prefix, name, s.wSecrets)
+	cascadeDeleteWithEvents(s, s.serviceAccounts, prefix, name, s.wServiceAccounts)
+	cascadeDeleteWithEvents(s, s.services, prefix, name, s.wServices)
+	cascadeDeleteWithEvents(s, s.deployments, prefix, name, s.wDeployments)
+	cascadeDeleteWithEvents(s, s.endpoints, prefix, name, s.wEndpoints)
 }
 
 // deepCopier constrains the element type of a per-resource map: it must be
 // a pointer whose underlying type has the upstream Kubernetes-codegen
-// DeepCopy() *V method. Every corev1/appsv1 type we store satisfies this,
-// so cascadeDeleteWithEvents can publish its own copy of every event
-// instead of aliasing the stored object's inner maps to all subscribers.
+// DeepCopy() *V method and the metav1.Object metadata accessors. Every
+// corev1/appsv1 type we store satisfies this, so cascadeDeleteWithEvents can
+// publish its own copy of every event (instead of aliasing the stored object's
+// inner maps to all subscribers) and honor per-child finalizers.
 type deepCopier[V any] interface {
 	*V
+	metav1.Object
 	DeepCopy() *V
 }
 
-// cascadeDeleteWithEvents drops every entry in m whose key starts with
-// prefix and publishes a DELETED Watch event for each removed object.
-// Each event ships a freshly DeepCopy()'d value so subscribers see their
-// own independent copy of the inner maps/slices — mutation by one
-// subscriber can't corrupt another's view.
-func cascadeDeleteWithEvents[V any, P deepCopier[V]](m map[string]P, prefix, ns string, b *broadcaster) {
+// cascadeDeleteWithEvents removes (or, for finalizer-bearing children, marks
+// Terminating) every entry in m whose key starts with prefix. A child carrying
+// finalizers is not hard-deleted: it gets a deletionTimestamp and a MODIFIED
+// event, matching a normal finalizer-gated delete, and is only reaped once its
+// finalizers drain. Finalizer-free children are deleted and get a DELETED event.
+// Each event ships a freshly DeepCopy()'d value so subscribers see their own
+// independent copy of the inner maps/slices.
+func cascadeDeleteWithEvents[V any, P deepCopier[V]](s *ClusterState, m map[string]P, prefix, ns string, b *broadcaster) {
 	for k, v := range m {
-		if strings.HasPrefix(k, prefix) {
-			b.publish(EventDeleted, ns, *v.DeepCopy())
-			delete(m, k)
+		if !strings.HasPrefix(k, prefix) {
+			continue
 		}
+
+		if len(v.GetFinalizers()) > 0 {
+			if v.GetDeletionTimestamp() == nil {
+				t := s.now()
+				v.SetDeletionTimestamp(&t)
+			}
+
+			v.SetResourceVersion(bumpResourceVersion(v.GetResourceVersion()))
+			b.publish(EventModified, ns, *v.DeepCopy())
+
+			continue
+		}
+
+		b.publish(EventDeleted, ns, *v.DeepCopy())
+		delete(m, k)
 	}
 }
 

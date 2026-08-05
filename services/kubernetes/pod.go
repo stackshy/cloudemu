@@ -139,6 +139,14 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 	}
 
 	if isDryRun(r) {
+		// A dry-run must still report the 403 a real create would when the
+		// namespace is at its Pod quota — check (without reserving) before echo.
+		if status := s.checkQuotaLocked(namespace, "Pod", resourcePods); status != nil {
+			writeJSON(w, int(status.Code), status)
+
+			return
+		}
+
 		writeJSON(w, http.StatusCreated, &in)
 
 		return
@@ -169,7 +177,12 @@ func (s *ClusterState) listPods(w http.ResponseWriter, r *http.Request, namespac
 	defer s.mu.RUnlock()
 
 	items := filterPods(s.collectPodsLocked(namespace), r)
-	items, cont := listPage(items, r)
+
+	items, cont, ok := listPage(items, w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.PodList{
 		TypeMeta: metav1.TypeMeta{Kind: "PodList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
@@ -182,7 +195,12 @@ func (s *ClusterState) listPodsAllNamespaces(w http.ResponseWriter, r *http.Requ
 	defer s.mu.RUnlock()
 
 	items := filterPods(s.collectPodsLocked(""), r)
-	items, cont := listPage(items, r)
+
+	items, cont, ok := listPage(items, w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.PodList{
 		TypeMeta: metav1.TypeMeta{Kind: "PodList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
@@ -301,6 +319,10 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	in.TypeMeta = cur.TypeMeta
 	// deletionTimestamp is server-owned — preserve it across a PUT.
 	in.DeletionTimestamp = cur.DeletionTimestamp
+	// A plain PUT takes/shares ownership: preserve prior managedFields and record
+	// an Update entry for this fieldManager covering the fields it set.
+	in.ManagedFields = upsertTypedUpdateEntry(cur.ManagedFields, updateFieldManager(r),
+		ownedLeaves(objectMap(&in)), apiVersionV1, s.now())
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, &in)
@@ -311,6 +333,7 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	// Last finalizer removed on a Terminating Pod → complete the delete.
 	if finalizersDrained(&in.ObjectMeta) {
 		delete(s.pods, key)
+		s.releaseQuotaLocked(namespace, "Pod", resourcePods)
 		s.resyncEndpointsForNamespaceLocked(namespace)
 		s.wPods.publish(EventDeleted, namespace, *in.DeepCopy())
 		writeJSON(w, http.StatusOK, &in)
@@ -353,6 +376,16 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
+	// must not resurrect a Terminating Pod — carry it (and uid/creation) forward,
+	// mirroring updatePod.
+	patched.DeletionTimestamp = cur.DeletionTimestamp
+	patched.UID = cur.UID
+	patched.CreationTimestamp = cur.CreationTimestamp
+	// A patch takes/shares ownership: record an Update entry covering the fields it
+	// changed. (Pods have no apply-patch handler, so every patch takes this path.)
+	patched.ManagedFields = upsertTypedUpdateEntry(cur.ManagedFields, updateFieldManager(r),
+		changedLeaves(objectMap(cur), objectMap(patched)), apiVersionV1, s.now())
 
 	if isDryRun(r) {
 		writeJSON(w, http.StatusOK, patched)
@@ -364,6 +397,7 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 	// delete (patch inherits cur's deletionTimestamp).
 	if finalizersDrained(&patched.ObjectMeta) {
 		delete(s.pods, key)
+		s.releaseQuotaLocked(namespace, "Pod", resourcePods)
 		s.resyncEndpointsForNamespaceLocked(namespace)
 		s.wPods.publish(EventDeleted, namespace, *patched.DeepCopy())
 		writeJSON(w, http.StatusOK, patched)
@@ -408,6 +442,8 @@ func (s *ClusterState) deletePod(w http.ResponseWriter, r *http.Request, namespa
 	}
 
 	delete(s.pods, key)
+	// A quota-counted Pod going away must drop status.used back to the live count.
+	s.releaseQuotaLocked(namespace, "Pod", resourcePods)
 	// A Service may have been pointing at this Pod — refresh its endpoints.
 	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventDeleted, namespace, *pod.DeepCopy())

@@ -17,17 +17,27 @@ import (
 // fieldManager; the server records which leaf fields that manager owns in
 // metadata.managedFields. A later apply by a DIFFERENT manager that changes a
 // field the first manager owns is a conflict (HTTP 409) unless force=true, which
-// transfers ownership. This is a pragmatic subset of upstream SSA: ownership and
-// conflict detection are tracked at leaf-field granularity (map keys, whole
-// arrays), which is enough for the apply/re-apply/conflict flows tooling relies
-// on; sub-array structural merging is not modeled.
+// transfers ownership. A re-apply by the SAME manager that OMITS a field it
+// previously owned removes that field from the object (upstream apply semantics),
+// unless another manager also owns it. Plain PUT/PATCH updates record an
+// Update-operation managedFields entry for their fieldManager so ownership
+// reflects reality; they take/share ownership rather than conflicting (only
+// Apply-vs-Apply is a 409). The one residual shortcut versus upstream SSA is
+// granularity: ownership and conflict detection track leaf fields (map keys and
+// whole arrays), so per-element structural merging of list items is not modeled.
 
 // pathSep joins path segments internally. A null byte can't appear in a JSON key
 // (labels contain dots and slashes, so dot-joining would be ambiguous).
 const pathSep = "\x00"
 
-// defaultFieldManager is used when an apply request omits ?fieldManager=.
+// defaultFieldManager is used when a request omits ?fieldManager=.
 const defaultFieldManager = "cloudemu"
+
+// managedFields operation values.
+const (
+	applyOperation  = "Apply"
+	updateOperation = "Update"
+)
 
 // ssaSkipTop are the top-level fields never tracked as owned (identity + server-
 // owned metadata + status, which flows through its own subresource).
@@ -71,6 +81,7 @@ func (s *ClusterState) serverSideApply(
 
 	force := r.URL.Query().Get("force") == "true"
 	appliedLeaves := ownedLeaves(applied)
+	prevLeaves := managerApplyLeaves(cur, manager)
 
 	if conflicts := s.applyConflicts(cur, applied, appliedLeaves, manager); len(conflicts) > 0 && !force {
 		writeStatus(w, http.StatusConflict, metav1.StatusReasonConflict,
@@ -85,8 +96,66 @@ func (s *ClusterState) serverSideApply(
 	}
 
 	setManagedFields(merged, updateManagedFields(cur, manager, appliedLeaves, st.def.apiVersion(), s.now()))
+	// Upstream apply removes fields this manager previously owned but now omits,
+	// unless another manager still owns them.
+	removeDroppedLeaves(merged, diffLeaves(prevLeaves, appliedLeaves))
 
 	return merged, true
+}
+
+// managerApplyLeaves returns the leaves currently owned by manager's Apply entry.
+func managerApplyLeaves(obj *unstructured.Unstructured, manager string) map[string]bool {
+	out := map[string]bool{}
+
+	entries, _, _ := unstructured.NestedSlice(obj.Object, "metadata", "managedFields")
+	for _, e := range entries {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		mgr, _, _ := unstructured.NestedString(em, "manager")
+		if op, _, _ := unstructured.NestedString(em, "operation"); mgr != manager || op != applyOperation {
+			continue
+		}
+
+		for leaf := range leavesOfEntry(em) {
+			out[leaf] = true
+		}
+	}
+
+	return out
+}
+
+// diffLeaves returns leaves present in prev but not in keep.
+func diffLeaves(prev, keep map[string]bool) map[string]bool {
+	out := map[string]bool{}
+
+	for leaf := range prev {
+		if !keep[leaf] {
+			out[leaf] = true
+		}
+	}
+
+	return out
+}
+
+// removeDroppedLeaves deletes each dropped leaf from obj unless some managedFields
+// entry still owns it (shared ownership survives an omit).
+func removeDroppedLeaves(obj *unstructured.Unstructured, dropped map[string]bool) {
+	if len(dropped) == 0 {
+		return
+	}
+
+	owners := ownerByLeaf(obj)
+
+	for leaf := range dropped {
+		if _, stillOwned := owners[leaf]; stillOwned {
+			continue
+		}
+
+		unstructured.RemoveNestedField(obj.Object, strings.Split(leaf, pathSep)...)
+	}
 }
 
 // applyConflicts returns the human-readable paths the applied config would
@@ -235,12 +304,216 @@ func subtractLeaves(entry map[string]any, remove map[string]bool) map[string]any
 func managedFieldsEntry(manager string, leaves map[string]bool, apiVersion string, now metav1.Time) map[string]any {
 	return map[string]any{
 		"manager":    manager,
-		"operation":  "Apply",
+		"operation":  applyOperation,
 		"apiVersion": apiVersion,
 		"time":       now.Format(time.RFC3339),
 		"fieldsType": "FieldsV1",
 		"fieldsV1":   fieldsV1FromLeaves(leaves),
 	}
+}
+
+// leavesOfEntry returns the leaf set recorded in a managedFields entry's fieldsV1.
+func leavesOfEntry(em map[string]any) map[string]bool {
+	fields, _, _ := unstructured.NestedMap(em, "fieldsV1")
+	out := map[string]bool{}
+
+	for _, leaf := range leavesFromFieldsV1(fields, nil) {
+		out[leaf] = true
+	}
+
+	return out
+}
+
+// unionLeaves returns the union of two leaf sets.
+func unionLeaves(a, b map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(a)+len(b))
+
+	for leaf := range a {
+		out[leaf] = true
+	}
+
+	for leaf := range b {
+		out[leaf] = true
+	}
+
+	return out
+}
+
+// updateFieldManager resolves the fieldManager for a plain PUT/PATCH: the query
+// param when present, else the leading component of the User-Agent (matching real
+// k8s deriving the manager from the client binary), else the default.
+func updateFieldManager(r *http.Request) string {
+	if m := r.URL.Query().Get("fieldManager"); m != "" {
+		return m
+	}
+
+	if ua := r.UserAgent(); ua != "" {
+		if i := strings.IndexAny(ua, "/ "); i > 0 {
+			return ua[:i]
+		}
+
+		return ua
+	}
+
+	return defaultFieldManager
+}
+
+// stampUpdateOwnership records an Update-operation managedFields entry for the
+// leaves an update set, merged onto base (the object's prior managedFields). It
+// takes/shares ownership without removing other managers' entries.
+func (s *ClusterState) stampUpdateOwnership(
+	obj *unstructured.Unstructured, base []any, manager, apiVersion string, leaves map[string]bool,
+) {
+	if len(leaves) == 0 {
+		setManagedFields(obj, base)
+
+		return
+	}
+
+	setManagedFields(obj, upsertUpdateEntry(base, manager, leaves, apiVersion, s.now()))
+}
+
+// upsertUpdateEntry merges leaves into manager's existing Update entry, or appends
+// a new one; all other entries are preserved unchanged.
+func upsertUpdateEntry(existing []any, manager string, leaves map[string]bool, apiVersion string, now metav1.Time) []any {
+	out := make([]any, 0, len(existing)+1)
+	merged := false
+
+	for _, e := range existing {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		mgr, _, _ := unstructured.NestedString(em, "manager")
+		if op, _, _ := unstructured.NestedString(em, "operation"); mgr == manager && op == updateOperation {
+			out = append(out, updateEntry(manager, unionLeaves(leavesOfEntry(em), leaves), apiVersion, now))
+			merged = true
+
+			continue
+		}
+
+		out = append(out, em)
+	}
+
+	if !merged {
+		out = append(out, updateEntry(manager, leaves, apiVersion, now))
+	}
+
+	return out
+}
+
+// updateEntry builds an Update-operation managedFields entry.
+func updateEntry(manager string, leaves map[string]bool, apiVersion string, now metav1.Time) map[string]any {
+	e := managedFieldsEntry(manager, leaves, apiVersion, now)
+	e["operation"] = updateOperation
+
+	return e
+}
+
+// changedLeaves returns the owned leaves whose value differs between cur and
+// patched — the fields a patch actually set.
+func changedLeaves(cur, patched map[string]any) map[string]bool {
+	out := ownedLeaves(patched)
+
+	for leaf := range out {
+		segs := strings.Split(leaf, pathSep)
+		a, _, _ := unstructured.NestedFieldNoCopy(cur, segs...)
+		b, _, _ := unstructured.NestedFieldNoCopy(patched, segs...)
+
+		if jsonEqual(a, b) {
+			delete(out, leaf)
+		}
+	}
+
+	return out
+}
+
+// managedFieldsOf returns an object's current managedFields slice.
+func managedFieldsOf(obj *unstructured.Unstructured) []any {
+	entries, _, _ := unstructured.NestedSlice(obj.Object, "metadata", "managedFields")
+
+	return entries
+}
+
+// objectMap marshals a typed object to a generic JSON map for leaf computation.
+func objectMap(v any) map[string]any {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+
+	m := map[string]any{}
+	if json.Unmarshal(b, &m) != nil {
+		return nil
+	}
+
+	return m
+}
+
+// typedEntryLeaves returns the leaf set recorded in a typed managedFields entry.
+func typedEntryLeaves(e *metav1.ManagedFieldsEntry) map[string]bool {
+	out := map[string]bool{}
+	if e.FieldsV1 == nil {
+		return out
+	}
+
+	fields := map[string]any{}
+	if json.Unmarshal(e.FieldsV1.Raw, &fields) != nil {
+		return out
+	}
+
+	for _, leaf := range leavesFromFieldsV1(fields, nil) {
+		out[leaf] = true
+	}
+
+	return out
+}
+
+// typedUpdateEntry builds an Update-operation managedFields entry for a typed object.
+func typedUpdateEntry(manager string, leaves map[string]bool, apiVersion string, now metav1.Time) metav1.ManagedFieldsEntry {
+	raw, _ := json.Marshal(fieldsV1FromLeaves(leaves))
+	stamp := now
+
+	return metav1.ManagedFieldsEntry{
+		Manager:    manager,
+		Operation:  metav1.ManagedFieldsOperationUpdate,
+		APIVersion: apiVersion,
+		Time:       &stamp,
+		FieldsType: "FieldsV1",
+		FieldsV1:   &metav1.FieldsV1{Raw: raw},
+	}
+}
+
+// upsertTypedUpdateEntry merges leaves into manager's existing Update entry or
+// appends a new one, returning a fresh slice (never mutates existing).
+func upsertTypedUpdateEntry(
+	existing []metav1.ManagedFieldsEntry, manager string, leaves map[string]bool, apiVersion string, now metav1.Time,
+) []metav1.ManagedFieldsEntry {
+	if len(leaves) == 0 {
+		return append([]metav1.ManagedFieldsEntry(nil), existing...)
+	}
+
+	out := make([]metav1.ManagedFieldsEntry, 0, len(existing)+1)
+	merged := false
+
+	for i := range existing {
+		e := &existing[i]
+		if e.Manager == manager && e.Operation == metav1.ManagedFieldsOperationUpdate {
+			out = append(out, typedUpdateEntry(manager, unionLeaves(typedEntryLeaves(e), leaves), apiVersion, now))
+			merged = true
+
+			continue
+		}
+
+		out = append(out, *e)
+	}
+
+	if !merged {
+		out = append(out, typedUpdateEntry(manager, leaves, apiVersion, now))
+	}
+
+	return out
 }
 
 func setManagedFields(obj *unstructured.Unstructured, entries []any) {

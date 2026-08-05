@@ -147,7 +147,11 @@ func (s *ClusterState) listSecrets(w http.ResponseWriter, r *http.Request, names
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectSecretsLocked(namespace), r)
+	items, cont, ok := listPage(s.collectSecretsLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.SecretList{
 		TypeMeta: metav1.TypeMeta{Kind: "SecretList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
@@ -159,7 +163,11 @@ func (s *ClusterState) listSecretsAllNamespaces(w http.ResponseWriter, r *http.R
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectSecretsLocked(""), r)
+	items, cont, ok := listPage(s.collectSecretsLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.SecretList{
 		TypeMeta: metav1.TypeMeta{Kind: "SecretList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},

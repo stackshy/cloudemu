@@ -158,7 +158,11 @@ func (s *ClusterState) listDeployments(w http.ResponseWriter, r *http.Request, n
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectDeploymentsLocked(namespace), r)
+	items, cont, ok := listPage(s.collectDeploymentsLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{Kind: "DeploymentList", APIVersion: "apps/v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
@@ -170,7 +174,11 @@ func (s *ClusterState) listDeploymentsAllNamespaces(w http.ResponseWriter, r *ht
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectDeploymentsLocked(""), r)
+	items, cont, ok := listPage(s.collectDeploymentsLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{Kind: "DeploymentList", APIVersion: "apps/v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},

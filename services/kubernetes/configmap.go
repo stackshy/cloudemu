@@ -146,7 +146,11 @@ func (s *ClusterState) listConfigMaps(w http.ResponseWriter, r *http.Request, na
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectConfigMapsLocked(namespace), r)
+	items, cont, ok := listPage(s.collectConfigMapsLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ConfigMapList{
 		TypeMeta: metav1.TypeMeta{Kind: "ConfigMapList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
@@ -158,7 +162,11 @@ func (s *ClusterState) listConfigMapsAllNamespaces(w http.ResponseWriter, r *htt
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectConfigMapsLocked(""), r)
+	items, cont, ok := listPage(s.collectConfigMapsLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ConfigMapList{
 		TypeMeta: metav1.TypeMeta{Kind: "ConfigMapList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},

@@ -216,7 +216,11 @@ func (s *ClusterState) listPDBs(w http.ResponseWriter, r *http.Request, namespac
 		return items[i].Name < items[j].Name
 	})
 
-	items, cont := listPage(items, r)
+	items, cont, ok := listPage(items, w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &policyv1.PodDisruptionBudgetList{
 		TypeMeta: metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudgetList"},
 		ListMeta: metav1.ListMeta{Continue: cont},

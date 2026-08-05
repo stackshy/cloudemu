@@ -82,7 +82,7 @@ func (s *ClusterState) selectingIngressPoliciesLocked(namespace string, dstLabel
 		return nil
 	}
 
-	var out []networkingv1.NetworkPolicy
+	out := make([]networkingv1.NetworkPolicy, 0, len(st.items))
 
 	for _, obj := range st.items {
 		if obj.GetNamespace() != namespace {

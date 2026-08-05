@@ -47,6 +47,36 @@ func (s *ClusterState) checkAndReserveQuota(namespace, kind, resourcePlural stri
 
 	matches := matchingQuotas(store, namespace, keys)
 
+	if status := quotaEnforce(matches, count, resourcePlural, group); status != nil {
+		return status
+	}
+
+	for _, m := range matches {
+		bumpQuotaUsedLocked(store, m.obj, m.key, count+1)
+	}
+
+	return nil
+}
+
+// checkQuotaLocked is the reservation-free variant used on the dry-run path: it
+// returns the same 403 a real create would, WITHOUT mutating any quota's
+// status.used. A --dry-run=server create against an at-limit namespace must
+// report the 403 a real apply would, not a false success. Callers hold s.mu.
+func (s *ClusterState) checkQuotaLocked(namespace, kind, resourcePlural string) *metav1.Status {
+	store := s.reg.stores[regKey("", "v1", "resourcequotas")]
+	if store == nil {
+		return nil
+	}
+
+	count, group := s.quotaTargetCountLocked(namespace, kind, resourcePlural)
+	keys := quotaHardKeys(resourcePlural, group)
+
+	return quotaEnforce(matchingQuotas(store, namespace, keys), count, resourcePlural, group)
+}
+
+// quotaEnforce returns the 403 Status when creating one more object would meet
+// or exceed any matching quota's hard limit, else nil.
+func quotaEnforce(matches []quotaMatch, count int, resourcePlural, group string) *metav1.Status {
 	for _, m := range matches {
 		limit, err := resource.ParseQuantity(m.hardValue)
 		if err != nil {
@@ -58,11 +88,26 @@ func (s *ClusterState) checkAndReserveQuota(namespace, kind, resourcePlural stri
 		}
 	}
 
-	for _, m := range matches {
-		bumpQuotaUsedLocked(store, m.obj, m.key, count+1)
+	return nil
+}
+
+// releaseQuotaLocked recomputes every matching ResourceQuota's status.used for
+// kind/resourcePlural from the live object count in namespace, after an object
+// has been removed. Recompute-from-live (rather than decrement) keeps the count
+// correct even when a cascade removed several objects at once. Callers hold
+// s.mu and must call this AFTER the object(s) have left the store.
+func (s *ClusterState) releaseQuotaLocked(namespace, kind, resourcePlural string) {
+	store := s.reg.stores[regKey("", "v1", "resourcequotas")]
+	if store == nil {
+		return
 	}
 
-	return nil
+	count, group := s.quotaTargetCountLocked(namespace, kind, resourcePlural)
+	keys := quotaHardKeys(resourcePlural, group)
+
+	for _, m := range matchingQuotas(store, namespace, keys) {
+		bumpQuotaUsedLocked(store, m.obj, m.key, count)
+	}
 }
 
 // quotaMatch is one ResourceQuota object whose hard map references the

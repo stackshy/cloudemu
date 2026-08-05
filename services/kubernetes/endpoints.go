@@ -84,7 +84,11 @@ func (s *ClusterState) listEndpoints(w http.ResponseWriter, r *http.Request, nam
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectEndpointsLocked(namespace), r)
+	items, cont, ok := listPage(s.collectEndpointsLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.EndpointsList{
 		TypeMeta: metav1.TypeMeta{Kind: "EndpointsList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
@@ -96,7 +100,11 @@ func (s *ClusterState) listEndpointsAllNamespaces(w http.ResponseWriter, r *http
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items, cont := listPage(s.collectEndpointsLocked(""), r)
+	items, cont, ok := listPage(s.collectEndpointsLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.EndpointsList{
 		TypeMeta: metav1.TypeMeta{Kind: "EndpointsList", APIVersion: "v1"},
 		ListMeta: metav1.ListMeta{Continue: cont},
