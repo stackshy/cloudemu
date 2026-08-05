@@ -35,6 +35,7 @@ This document lists every service and operation available in CloudEmu across all
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
 | 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
 | 24 | Container Orchestration | `ecs` | — | — |
+| 25 | DNS Resolver | `route53resolver` | — | — |
 
 ---
 
@@ -2218,6 +2219,47 @@ real EC2 instance subject to managed-resource visibility.
 
 ---
 
+## 25. DNS Resolver
+
+**Driver interface:** `services/route53resolver/driver/driver.go`
+**AWS:** Route 53 Resolver (`Route53Resolver.*`, AWS JSON 1.1) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/route53resolver` clients work against the
+SDK-compat server (`awsserver.Drivers{Route53Resolver: cloud.Route53Resolver}`).
+Full parity: **all 72 SDK operations**, no stubs. Each resource group is stored
+in an in-memory `memstore.Store` guarded by a single mutex; reads are
+copy-on-write clones. Every group is covered by a real-SDK round-trip test.
+
+Per-VPC configs (Resolver autodefined-reverse, DNSSEC validation, firewall
+fail-open) are **lazily materialized** on first Get with their AWS defaults
+(reverse ENABLED, DNSSEC DISABLED, fail-open DISABLED) and only appear in the
+corresponding List once touched. Firewall rules are identified within a group by
+`(FirewallDomainListId, Qtype)`; deleting a rule group cascades to its rules.
+
+| Family | Operations |
+|--------|-----------|
+| Resolver endpoints | Create/Get/Update/Delete/ListResolverEndpoint(s), Associate/DisassociateResolverEndpointIpAddress, ListResolverEndpointIpAddresses |
+| Resolver rules | Create/Get/Update/Delete/ListResolverRule(s), Associate/DisassociateResolverRule, Get/ListResolverRuleAssociation(s), Put/GetResolverRulePolicy |
+| Query-log configs | Create/Get/Delete/ListResolverQueryLogConfig(s), Associate/DisassociateResolverQueryLogConfig, Get/ListResolverQueryLogConfigAssociation(s), Put/GetResolverQueryLogConfigPolicy |
+| Resolver & DNSSEC configs | Get/Update/ListResolverConfig(s), Get/Update/ListResolverDnssecConfig(s) |
+| DNS Firewall — domain lists | Create/Get/Delete/ListFirewallDomainList(s), Update/Import/ListFirewallDomains |
+| DNS Firewall — rules | Create/Update/Delete/ListFirewallRule(s), BatchCreate/BatchUpdate/BatchDeleteFirewallRule |
+| DNS Firewall — rule groups | Create/Get/Delete/ListFirewallRuleGroup(s), Put/GetFirewallRuleGroupPolicy |
+| DNS Firewall — associations | Associate/Disassociate/Get/Update/ListFirewallRuleGroupAssociation(s) |
+| DNS Firewall — configs | Get/Update/ListFirewallConfig(s), ListFirewallRuleTypes |
+| Outpost resolvers | Create/Get/Update/Delete/ListOutpostResolver(s) |
+| Tagging | TagResource, UntagResource, ListTagsForResource |
+
+*Accepted but not simulated* (stored/echoed so SDK calls succeed, no behavioral
+effect): endpoint/rule/config status stays terminal (no async CREATING→OPERATIONAL
+transitions); `ImportFirewallDomains` records the request without fetching the S3
+file; `ListFirewallRuleTypes` returns an empty descriptor list; resource-share
+policies are stored verbatim without RAM enforcement.
+
+**Total: 72 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -2330,7 +2372,8 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1562** (+138 optional) |
+| DNS Resolver — AWS Route 53 Resolver | 72 |
+| **Grand Total** | **1634** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

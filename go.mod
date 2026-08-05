@@ -68,6 +68,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/resourceexplorer2 v1.23.6
 	github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.31.12
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.64.0
+	github.com/aws/aws-sdk-go-v2/service/route53resolver v1.48.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0
 	github.com/aws/aws-sdk-go-v2/service/sagemaker v1.254.0
 	github.com/aws/aws-sdk-go-v2/service/sagemakerfeaturestoreruntime v1.35.7

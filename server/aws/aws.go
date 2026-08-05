@@ -33,6 +33,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/resourceexplorer2"
 	"github.com/stackshy/cloudemu/v2/server/aws/resourcegroupstaggingapi"
 	"github.com/stackshy/cloudemu/v2/server/aws/route53"
+	route53resolversrv "github.com/stackshy/cloudemu/v2/server/aws/route53resolver"
 	"github.com/stackshy/cloudemu/v2/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
 	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
@@ -64,6 +65,7 @@ import (
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
+	route53resolverdriver "github.com/stackshy/cloudemu/v2/services/route53resolver/driver"
 	sagemakerdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -93,6 +95,10 @@ type Drivers struct {
 	// ECS serves the Amazon ECS JSON 1.1 protocol (X-Amz-Target prefix
 	// AmazonEC2ContainerServiceV20141113.) against the ecs driver.
 	ECS ecsdriver.ECS
+
+	// Route53Resolver serves the AWS Route 53 Resolver JSON 1.1 protocol
+	// (X-Amz-Target prefix "Route53Resolver.") against the route53resolver driver.
+	Route53Resolver route53resolverdriver.Route53Resolver
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
@@ -167,6 +173,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		BedrockAgentRuntime: p.BedrockAgentRuntime,
 		SageMaker:           p.SageMaker,
 		ECS:                 p.ECS,
+		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
@@ -271,6 +278,12 @@ func New(d Drivers) *server.Server {
 	// EventBridge, and the tagging API, so registration order is unconstrained.
 	if d.ECS != nil {
 		srv.Register(ecssrv.New(d.ECS))
+	}
+
+	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.Route53Resolver != nil {
+		srv.Register(route53resolversrv.New(d.Route53Resolver))
 	}
 
 	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —
