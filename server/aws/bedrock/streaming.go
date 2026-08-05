@@ -67,6 +67,13 @@ func (h *Handler) converseStream(w http.ResponseWriter, r *http.Request, modelID
 		return
 	}
 
+	// Drain any unread request body before streaming the response. decodeJSON
+	// stops at the end of the JSON value, not EOF; returning from the handler
+	// with a half-read body makes net/http reset (RST) the connection instead
+	// of closing it cleanly, which the SDK's eventstream reader observes as
+	// "use of closed network connection" instead of io.EOF — a CI-load flake.
+	_, _ = io.Copy(io.Discard, r.Body)
+
 	out, err := h.bedrock.Converse(r.Context(), toConverseInput(modelID, &in))
 	if err != nil {
 		writeErr(w, err)
