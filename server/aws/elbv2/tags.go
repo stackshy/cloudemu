@@ -1,11 +1,81 @@
 package elbv2
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 )
+
+// tagMutator is the AWS-specific ELBv2 tag-write surface, asserted against the
+// provider (not part of the portable LoadBalancer driver).
+type tagMutator interface {
+	AddResourceTags(ctx context.Context, arn string, tags map[string]string) error
+	RemoveResourceTags(ctx context.Context, arn string, keys []string) error
+}
+
+// The ELBv2 SDK unmarshaler expects the empty <FooResult/> wrapper element.
+type addTagsResponse struct {
+	XMLName  xml.Name         `xml:"AddTagsResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   struct{}         `xml:"AddTagsResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type removeTagsResponse struct {
+	XMLName  xml.Name         `xml:"RemoveTagsResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   struct{}         `xml:"RemoveTagsResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+func (h *Handler) tagMutator() (tagMutator, bool) {
+	m, ok := h.lb.(tagMutator)
+
+	return m, ok
+}
+
+func (h *Handler) addTags(w http.ResponseWriter, r *http.Request) {
+	mut, ok := h.tagMutator()
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	tags := awsquery.FlatTags(r.Form, "Tags.member")
+	for _, arn := range awsquery.ListStrings(r.Form, "ResourceArns.member") {
+		if err := mut.AddResourceTags(r.Context(), arn, tags); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	awsquery.WriteXMLResponse(w, addTagsResponse{
+		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) removeTags(w http.ResponseWriter, r *http.Request) {
+	mut, ok := h.tagMutator()
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "tagging not supported"))
+		return
+	}
+
+	keys := awsquery.ListStrings(r.Form, "TagKeys.member")
+	for _, arn := range awsquery.ListStrings(r.Form, "ResourceArns.member") {
+		if err := mut.RemoveResourceTags(r.Context(), arn, keys); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	awsquery.WriteXMLResponse(w, removeTagsResponse{
+		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
 
 type tagMemberXML struct {
 	Key   string `xml:"Key"`

@@ -21,6 +21,57 @@ type functionConfiguration struct {
 	CodeSha256   string       `json:"CodeSha256,omitempty"`
 	Environment  *envEnvelope `json:"Environment,omitempty"`
 	PackageType  string       `json:"PackageType,omitempty"`
+	Version      string       `json:"Version,omitempty"`
+}
+
+// updateFunctionConfigurationRequest captures the mutable fields of
+// UpdateFunctionConfiguration (PUT .../{name}/configuration).
+type updateFunctionConfigurationRequest struct {
+	Runtime     string       `json:"Runtime"`
+	Role        string       `json:"Role"`
+	Handler     string       `json:"Handler"`
+	Description string       `json:"Description"`
+	MemorySize  int          `json:"MemorySize"`
+	Timeout     int          `json:"Timeout"`
+	Environment *envEnvelope `json:"Environment"`
+}
+
+// publishVersionRequest is the body of PublishVersion (POST .../{name}/versions).
+type publishVersionRequest struct {
+	Description string `json:"Description"`
+}
+
+// listVersionsResponse is the ListVersionsByFunction envelope.
+type listVersionsResponse struct {
+	Versions []functionConfiguration `json:"Versions"`
+}
+
+// aliasRequest is the body of Create/UpdateAlias.
+type aliasRequest struct {
+	Name            string `json:"Name"`
+	FunctionVersion string `json:"FunctionVersion"`
+	Description     string `json:"Description"`
+}
+
+// aliasResponse is the AWS AliasConfiguration shape.
+type aliasResponse struct {
+	AliasArn        string `json:"AliasArn"`
+	Name            string `json:"Name"`
+	FunctionVersion string `json:"FunctionVersion"`
+	Description     string `json:"Description,omitempty"`
+}
+
+// listAliasesResponse is the ListAliases envelope.
+type listAliasesResponse struct {
+	Aliases []aliasResponse `json:"Aliases"`
+}
+
+// addPermissionRequest is the body of AddPermission (POST .../{name}/policy).
+type addPermissionRequest struct {
+	StatementID string `json:"StatementId"`
+	Action      string `json:"Action"`
+	Principal   string `json:"Principal"`
+	SourceArn   string `json:"SourceArn"`
 }
 
 // functionResource is the shape returned by GetFunction:

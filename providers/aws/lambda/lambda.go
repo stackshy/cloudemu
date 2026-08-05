@@ -51,6 +51,7 @@ type funcData struct {
 	nextVersion int
 	aliases     *memstore.Store[*aliasData]
 	concurrency *driver.ConcurrencyConfig
+	policy      map[string]driver.PermissionStatement
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
@@ -190,10 +191,21 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	}
 
 	if h == nil {
+		// The emulator can't execute an uploaded zip (arbitrary Python/Node/
+		// etc.), so with no Go handler registered we return a successful stub
+		// that echoes the request payload rather than a FunctionError. This
+		// lets users exercise invoke control flow (wiring, permissions,
+		// event-source mappings) without a real runtime. Register a handler via
+		// RegisterHandler to run real logic.
 		m.emitMetric(ctx, "Invocations", 1, dims)
-		m.emitMetric(ctx, "Errors", 1, dims)
+		m.emitMetric(ctx, "Duration", 1.0, dims)
 
-		return &driver.InvokeOutput{StatusCode: 500, Error: "no handler registered"}, nil
+		payload := input.Payload
+		if len(payload) == 0 {
+			payload = []byte("{}")
+		}
+
+		return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
 	}
 
 	payload, err := h(ctx, input.Payload)

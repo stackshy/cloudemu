@@ -47,6 +47,42 @@ func newSDKClient(t *testing.T) *awselasticache.Client {
 	})
 }
 
+// TestSDKModifyCacheCluster is a regression guard for issue #319:
+// ModifyCacheCluster was unimplemented (InvalidAction).
+func TestSDKModifyCacheCluster(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateCacheCluster(ctx, &awselasticache.CreateCacheClusterInput{
+		CacheClusterId: aws.String("mc"), Engine: aws.String("redis"),
+		CacheNodeType: aws.String("cache.t3.micro"), NumCacheNodes: aws.Int32(1),
+	}); err != nil {
+		t.Fatalf("CreateCacheCluster: %v", err)
+	}
+
+	out, err := client.ModifyCacheCluster(ctx, &awselasticache.ModifyCacheClusterInput{
+		CacheClusterId: aws.String("mc"), CacheNodeType: aws.String("cache.t3.medium"),
+	})
+	if err != nil {
+		t.Fatalf("ModifyCacheCluster: %v", err)
+	}
+
+	if aws.ToString(out.CacheCluster.CacheNodeType) != "cache.t3.medium" {
+		t.Fatalf("node type = %q, want cache.t3.medium", aws.ToString(out.CacheCluster.CacheNodeType))
+	}
+
+	got, err := client.DescribeCacheClusters(ctx, &awselasticache.DescribeCacheClustersInput{
+		CacheClusterId: aws.String("mc"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeCacheClusters: %v", err)
+	}
+
+	if aws.ToString(got.CacheClusters[0].CacheNodeType) != "cache.t3.medium" {
+		t.Fatalf("persisted node type = %q", aws.ToString(got.CacheClusters[0].CacheNodeType))
+	}
+}
+
 func TestSDKElastiCacheLifecycle(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

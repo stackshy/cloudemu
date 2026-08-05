@@ -283,7 +283,7 @@ func New(d Drivers) *server.Server {
 	// EventBridge matches the X-Amz-Target prefix "AWSEvents." — disjoint from
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.EventBridge != nil {
-		srv.Register(eventbridge.New(d.EventBridge))
+		srv.Register(eventbridge.New(d.EventBridge, d.AccountID, d.Region))
 	}
 
 	// CloudWatch Logs matches the X-Amz-Target prefix "Logs_20140328." —

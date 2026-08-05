@@ -128,6 +128,29 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 	return &result, nil
 }
 
+// ModifyCache updates the mutable fields (node type, engine) of an existing
+// cache cluster (ElastiCache ModifyCacheCluster). Empty arguments leave the
+// corresponding field unchanged.
+func (m *Mock) ModifyCache(_ context.Context, name, nodeType, engine string) (*driver.CacheInfo, error) {
+	cd, ok := m.caches.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "cache %q not found", name)
+	}
+
+	if nodeType != "" {
+		cd.info.NodeType = nodeType
+	}
+	if engine != "" {
+		cd.info.Engine = engine
+	}
+
+	m.caches.Set(name, cd)
+
+	result := cd.info
+
+	return &result, nil
+}
+
 // DeleteCache deletes an ElastiCache cluster by name.
 func (m *Mock) DeleteCache(_ context.Context, name string) error {
 	if !m.caches.Delete(name) {

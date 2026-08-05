@@ -404,7 +404,7 @@ func (m *Mock) describeCandidates(instanceIDs []string, hidden, includeManaged b
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
-			continue
+			return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
 		}
 
 		if hiddenManaged(inst, hidden, includeManaged) {
@@ -607,8 +607,16 @@ func (m *Mock) DeleteVolume(_ context.Context, id string) error {
 	return nil
 }
 
-// DescribeVolumes returns volumes matching the given IDs.
+// DescribeVolumes returns volumes matching the given IDs. An explicit ID that
+// does not exist yields InvalidVolume.NotFound, matching real EC2 (an empty
+// success would break existence checks and Terraform drift detection).
 func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.VolumeInfo, error) {
+	for _, id := range ids {
+		if !m.volumes.Has(id) {
+			return nil, cerrors.Newf(cerrors.NotFound, "volume %q not found", id)
+		}
+	}
+
 	return describeResources(m.volumes, ids), nil
 }
 

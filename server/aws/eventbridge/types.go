@@ -190,12 +190,12 @@ func epochSeconds(iso string) float64 {
 // EventBridge rule ARNs are "arn:aws:events:<region>:<account>:rule/<bus>/<rule>";
 // region/account aren't threaded into this handler, so they're left as
 // placeholders that keep the ARN shape recognizable.
-func ruleARN(bus, rule string) string {
+func (h *Handler) ruleARN(bus, rule string) string {
 	if bus == "" {
 		bus = defaultBusName
 	}
 
-	return "arn:aws:events:::rule/" + bus + "/" + rule
+	return "arn:aws:events:" + h.region + ":" + h.accountID + ":rule/" + bus + "/" + rule
 }
 
 func toTargetJSON(t *ebdriver.Target) targetJSON {

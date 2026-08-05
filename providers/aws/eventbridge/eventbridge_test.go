@@ -559,6 +559,19 @@ func TestPutEvents(t *testing.T) {
 		assert.Equal(t, 1, result.SuccessCount)
 		assert.Equal(t, 1, result.FailCount)
 	})
+
+	t.Run("byte-identical events in one call get unique ids", func(t *testing.T) {
+		// Under the deterministic FakeClock the timestamp is identical, so the
+		// batch index must keep the ids distinct — real EventBridge never
+		// repeats an EventId, and consumers use it as an idempotency key.
+		result, err := m.PutEvents(ctx, []driver.Event{
+			{Source: "dup.app", DetailType: "Same", Detail: `{"k":"v"}`},
+			{Source: "dup.app", DetailType: "Same", Detail: `{"k":"v"}`},
+		})
+		require.NoError(t, err)
+		require.Len(t, result.EventIDs, 2)
+		assert.NotEqual(t, result.EventIDs[0], result.EventIDs[1], "identical events must get distinct EventIds")
+	})
 }
 
 func TestEventPatternMatching(t *testing.T) {
@@ -770,4 +783,35 @@ func TestMetricsEmission(t *testing.T) {
 		assert.Contains(t, metrics, "PutEventsRequestCount")
 		assert.Contains(t, metrics, "MatchedEvents")
 	})
+}
+
+// TestResourceTagging is a regression guard for issue #319: EventBridge
+// TagResource/UntagResource/ListTagsForResource were unimplemented.
+func TestResourceTagging(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	arn := "arn:aws:events:us-east-1:000000000000:rule/r1"
+
+	if err := m.TagResource(ctx, arn, map[string]string{"env": "prod", "team": "evt"}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	tags, err := m.ListResourceTags(ctx, arn)
+	if err != nil {
+		t.Fatalf("ListResourceTags: %v", err)
+	}
+
+	if tags["env"] != "prod" || tags["team"] != "evt" {
+		t.Fatalf("tags = %v", tags)
+	}
+
+	if err := m.UntagResource(ctx, arn, []string{"env"}); err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	tags, _ = m.ListResourceTags(ctx, arn)
+	if _, has := tags["env"]; has || tags["team"] != "evt" {
+		t.Fatalf("after untag = %v", tags)
+	}
 }

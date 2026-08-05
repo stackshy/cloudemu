@@ -64,6 +64,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.sendCommand(w, r)
 	case "GetCommandInvocation":
 		h.getCommandInvocation(w, r)
+	case "AddTagsToResource":
+		h.addTagsToResource(w, r)
+	case "RemoveTagsFromResource":
+		h.removeTagsFromResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown SSM operation: "+op)

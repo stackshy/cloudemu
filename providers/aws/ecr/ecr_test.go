@@ -801,3 +801,28 @@ func TestMetricsEmission(t *testing.T) {
 		assert.Contains(t, metrics, "ImagePullCount")
 	})
 }
+
+// TestRepositoryTagging is a regression guard for issue #319: ECR
+// TagResource/UntagResource/ListTagsForResource were unimplemented.
+func TestRepositoryTagging(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "r1")
+
+	require.NoError(t, m.TagRepository(ctx, "r1", map[string]string{"env": "prod", "team": "img"}))
+
+	tags, err := m.ListRepositoryTags(ctx, "r1")
+	require.NoError(t, err)
+	assert.Equal(t, "prod", tags["env"])
+	assert.Equal(t, "img", tags["team"])
+
+	require.NoError(t, m.UntagRepository(ctx, "r1", []string{"env"}))
+
+	tags, err = m.ListRepositoryTags(ctx, "r1")
+	require.NoError(t, err)
+	_, has := tags["env"]
+	assert.False(t, has)
+
+	assert.Error(t, m.TagRepository(ctx, "missing", map[string]string{"a": "b"}))
+}

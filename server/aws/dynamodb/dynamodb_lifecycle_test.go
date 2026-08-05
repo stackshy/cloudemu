@@ -199,6 +199,42 @@ func TestDDBTableLifecycle(t *testing.T) {
 	require.ErrorAs(t, err, &rnf, "DescribeTable on a deleted table should be ResourceNotFoundException")
 }
 
+// TestDDBTagging is a regression guard for issue #319: TagResource /
+// UntagResource / ListTagsOfResource returned UnknownOperationException.
+func TestDDBTagging(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "tagged", "pk", "sk")
+
+	arn := "arn:aws:dynamodb:us-east-1:000000000000:table/tagged"
+
+	if _, err := client.TagResource(ctx, &dynamodb.TagResourceInput{
+		ResourceArn: aws.String(arn),
+		Tags: []ddbtypes.Tag{
+			{Key: aws.String("env"), Value: aws.String("prod")},
+			{Key: aws.String("team"), Value: aws.String("data")},
+		},
+	}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	list, err := client.ListTagsOfResource(ctx, &dynamodb.ListTagsOfResourceInput{ResourceArn: aws.String(arn)})
+	require.NoError(t, err)
+	require.Len(t, list.Tags, 2)
+
+	if _, err := client.UntagResource(ctx, &dynamodb.UntagResourceInput{
+		ResourceArn: aws.String(arn), TagKeys: []string{"env"},
+	}); err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	list, err = client.ListTagsOfResource(ctx, &dynamodb.ListTagsOfResourceInput{ResourceArn: aws.String(arn)})
+	require.NoError(t, err)
+	require.Len(t, list.Tags, 1)
+	assert.Equal(t, "team", aws.ToString(list.Tags[0].Key))
+}
+
 // TestDDBItemJourney: put an item with varied attribute types
 // (S, N incl. negative decimal, BOOL, NULL, L, M, empty string, ~100KB blob),
 // read it back through the SDK, update with SET+REMOVE (ReturnValues ALL_NEW),
@@ -363,6 +399,72 @@ func TestDDBQueryPartitionAndSort(t *testing.T) {
 		map[string]string{"#c": "customer"})
 	require.Equal(t, int32(1), out.Count)
 	assert.Equal(t, "99", attrN(t, out.Items[0], "total"))
+}
+
+// TestDDBTimeToLive is a regression guard for issue #319:
+// DescribeTimeToLive / UpdateTimeToLive returned UnknownOperationException.
+func TestDDBTimeToLive(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "ttl-table", "pk", "")
+
+	desc, err := client.DescribeTimeToLive(ctx, &dynamodb.DescribeTimeToLiveInput{
+		TableName: aws.String("ttl-table"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ddbtypes.TimeToLiveStatusDisabled, desc.TimeToLiveDescription.TimeToLiveStatus)
+
+	if _, err := client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
+		TableName: aws.String("ttl-table"),
+		TimeToLiveSpecification: &ddbtypes.TimeToLiveSpecification{
+			Enabled: aws.Bool(true), AttributeName: aws.String("expiresAt"),
+		},
+	}); err != nil {
+		t.Fatalf("UpdateTimeToLive: %v", err)
+	}
+
+	desc, err = client.DescribeTimeToLive(ctx, &dynamodb.DescribeTimeToLiveInput{
+		TableName: aws.String("ttl-table"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ddbtypes.TimeToLiveStatusEnabled, desc.TimeToLiveDescription.TimeToLiveStatus)
+	assert.Equal(t, "expiresAt", aws.ToString(desc.TimeToLiveDescription.AttributeName))
+}
+
+// TestDDBQueryWithFilterExpression is a regression guard for issue #319: Query
+// ignored FilterExpression and returned the full key-matched set (silent wrong
+// data), while Scan applied it correctly.
+func TestDDBQueryWithFilterExpression(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "orders", "customer", "orderDate")
+
+	for _, o := range []struct{ date, total string }{
+		{"2024-01-01", "10"},
+		{"2024-02-15", "70"},
+		{"2024-03-10", "40"},
+	} {
+		suiteDDBPut(t, client, "orders", map[string]ddbtypes.AttributeValue{
+			"customer":  sAttr("alice"),
+			"orderDate": sAttr(o.date),
+			"total":     nAttr(o.total),
+		})
+	}
+
+	// Key matches 3 rows; the filter (total > 50) should leave only 1.
+	out, err := client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String("orders"),
+		KeyConditionExpression: aws.String("customer = :c"),
+		FilterExpression:       aws.String("total > :m"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":c": sAttr("alice"), ":m": nAttr("50"),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), out.Count, "FilterExpression must prune the key-matched set")
+	assert.Equal(t, "70", attrN(t, out.Items[0], "total"))
 }
 
 // TestDDBQueryEdges: query on an empty table returns zero items;
@@ -781,13 +883,9 @@ func TestDDBTypedErrors(t *testing.T) {
 	})
 
 	t.Run("unrouted operation is UnknownOperationException", func(t *testing.T) {
-		// UpdateTimeToLive has no HTTP surface in the emulator.
-		_, err := client.UpdateTimeToLive(ctx, &dynamodb.UpdateTimeToLiveInput{
+		// DescribeContinuousBackups has no HTTP surface in the emulator.
+		_, err := client.DescribeContinuousBackups(ctx, &dynamodb.DescribeContinuousBackupsInput{
 			TableName: aws.String("errs"),
-			TimeToLiveSpecification: &ddbtypes.TimeToLiveSpecification{
-				AttributeName: aws.String("ttl"),
-				Enabled:       aws.Bool(true),
-			},
 		})
 		require.Error(t, err)
 

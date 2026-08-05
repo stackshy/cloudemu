@@ -56,17 +56,24 @@ func (h *Handler) SetIPAMMetrics(ipam netdriver.IPAMMetrics) {
 	h.ipam = ipam
 }
 
-// Matches returns true for Smithy rpc-v2-cbor requests.
+// Matches returns true for Smithy rpc-v2-cbor requests, and for classic
+// query-protocol CloudWatch requests (used by the AWS CLI and older SDKs),
+// disambiguated from EC2 by the SigV4 "monitoring" credential scope.
 func (*Handler) Matches(r *http.Request) bool {
-	if r.Header.Get(protocolHeader) != protocolValue {
-		return false
+	if r.Header.Get(protocolHeader) == protocolValue && strings.HasPrefix(r.URL.Path, pathPrefix) {
+		return true
 	}
 
-	return strings.HasPrefix(r.URL.Path, pathPrefix)
+	return isQueryRequest(r)
 }
 
 // ServeHTTP parses the URL path for the operation name and dispatches.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isQueryRequest(r) {
+		h.serveQuery(w, r)
+		return
+	}
+
 	op := extractOperation(r.URL.Path)
 	if op == "" {
 		writeCBORError(w, http.StatusBadRequest, "InvalidRequest", "missing operation in path")

@@ -55,10 +55,11 @@ type Handler struct {
 	accountID string
 	region    string
 
-	mu          sync.RWMutex
-	views       map[string]*view  // keyed by ViewArn
-	viewsByName map[string]string // ViewName → ViewArn, for collision detection
-	indexes     map[string]*index // keyed by region
+	mu             sync.RWMutex
+	views          map[string]*view  // keyed by ViewArn
+	viewsByName    map[string]string // ViewName → ViewArn, for collision detection
+	indexes        map[string]*index // keyed by region
+	defaultViewARN string            // account default view (first created), for GetDefaultView
 }
 
 type view struct {
@@ -103,14 +104,16 @@ func New(engine *resourcediscovery.Engine, accountID, region string) *Handler {
 //
 //nolint:gochecknoglobals // immutable lookup table.
 var knownPaths = map[string]struct{}{
-	"/CreateView":    {},
-	"/DeleteView":    {},
-	"/ListViews":     {},
-	"/GetView":       {},
-	"/Search":        {},
-	"/ListResources": {},
-	"/ListIndexes":   {},
-	"/GetIndex":      {},
+	"/CreateView":     {},
+	"/DeleteView":     {},
+	"/ListViews":      {},
+	"/GetView":        {},
+	"/Search":         {},
+	"/ListResources":  {},
+	"/ListIndexes":    {},
+	"/GetIndex":       {},
+	"/CreateIndex":    {},
+	"/GetDefaultView": {},
 }
 
 // Matches returns true for POST requests whose path is one of the known
@@ -143,6 +146,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listIndexes(w, r)
 	case "/GetIndex":
 		h.getIndex(w, r)
+	case "/CreateIndex":
+		h.createIndex(w, r)
+	case "/GetDefaultView":
+		h.getDefaultView(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusNotFound, "ResourceNotFoundException", "unknown path: "+r.URL.Path)
 	}
@@ -188,6 +195,11 @@ func (h *Handler) createView(w http.ResponseWriter, r *http.Request) {
 	}
 	h.views[arn] = v
 	h.viewsByName[req.ViewName] = arn
+
+	// AWS auto-associates the first view in an account as its default view.
+	if h.defaultViewARN == "" {
+		h.defaultViewARN = arn
+	}
 
 	wire.WriteJSON(w, map[string]any{
 		"View": viewToWire(v, h.accountID),
@@ -378,6 +390,36 @@ func (h *Handler) getIndex(w http.ResponseWriter, _ *http.Request) {
 		"CreatedAt":   idx.CreatedAt.Format(time.RFC3339),
 		"LastUpdated": idx.CreatedAt.Format(time.RFC3339),
 	})
+}
+
+// createIndex creates the LOCAL index for the calling region. Real Resource
+// Explorer requires this before Search; the emulator bootstraps one at New(),
+// so this is idempotent — it returns the existing index rather than erroring.
+func (h *Handler) createIndex(w http.ResponseWriter, _ *http.Request) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	idx, ok := h.indexes[h.region]
+	if !ok {
+		idx = &index{ARN: h.indexARN(h.region), Region: h.region, Type: "LOCAL", CreatedAt: time.Now().UTC()}
+		h.indexes[h.region] = idx
+	}
+
+	wire.WriteJSON(w, map[string]any{
+		"Arn":       idx.ARN,
+		"State":     "CREATING",
+		"CreatedAt": idx.CreatedAt.Format(time.RFC3339),
+	})
+}
+
+// getDefaultView returns the account's default view. The first view created
+// becomes the default (mirroring AWS auto-associating it); with no views the
+// ViewArn is empty, which real Resource Explorer also returns.
+func (h *Handler) getDefaultView(w http.ResponseWriter, _ *http.Request) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	wire.WriteJSON(w, map[string]any{"ViewArn": h.defaultViewARN})
 }
 
 func (h *Handler) viewARN(name string) string {

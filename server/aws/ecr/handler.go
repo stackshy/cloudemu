@@ -8,8 +8,10 @@
 package ecr
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -17,6 +19,14 @@ import (
 )
 
 const targetPrefix = "AmazonEC2ContainerRegistry_V20150921."
+
+// authTokenProvider is the AWS-specific GetAuthorizationToken surface. ECR
+// registry auth is not part of the portable ContainerRegistry driver (Azure
+// ACR and GCP Artifact Registry authenticate differently), so the handler
+// type-asserts for it rather than widening the shared interface.
+type authTokenProvider interface {
+	GetAuthorizationToken(ctx context.Context) (token, proxyEndpoint string, expiresAt time.Time, err error)
+}
 
 // Handler serves ECR JSON-RPC requests against a ContainerRegistry driver.
 type Handler struct {
@@ -51,11 +61,51 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeImages(w, r)
 	case "BatchDeleteImage":
 		h.batchDeleteImage(w, r)
+	case "GetAuthorizationToken":
+		h.getAuthorizationToken(w, r)
+	case "TagResource":
+		h.tagResource(w, r)
+	case "UntagResource":
+		h.untagResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
+	case "SetRepositoryPolicy":
+		h.setRepositoryPolicy(w, r)
+	case "GetRepositoryPolicy":
+		h.getRepositoryPolicy(w, r)
+	case "DeleteRepositoryPolicy":
+		h.deleteRepositoryPolicy(w, r)
 	default:
 		op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown ECR operation: "+op)
 	}
+}
+
+// getAuthorizationToken returns a docker-login credential. The response shape
+// matches the AWS SDK's AuthorizationData: a base64 token, an expiry, and the
+// registry proxy endpoint.
+func (h *Handler) getAuthorizationToken(w http.ResponseWriter, r *http.Request) {
+	auth, ok := h.registry.(authTokenProvider)
+	if !ok {
+		wire.WriteJSONError(w, http.StatusBadRequest,
+			"ServerException", "authorization token not supported")
+		return
+	}
+
+	token, endpoint, expiresAt, err := auth.GetAuthorizationToken(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{
+		"authorizationData": []map[string]any{{
+			"authorizationToken": token,
+			"proxyEndpoint":      endpoint,
+			"expiresAt":          expiresAt.Unix(),
+		}},
+	})
 }
 
 // writeErr maps canonical cloudemu errors to ECR JSON error responses. ECR

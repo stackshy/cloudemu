@@ -45,6 +45,7 @@ type paramData struct {
 	tier        string
 	versions    []*version
 	latest      int64
+	tags        map[string]string
 	mu          sync.RWMutex
 }
 

@@ -301,6 +301,12 @@ func (m *Mock) DescribeVPCs(_ context.Context, ids []string) ([]driver.VPCInfo, 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	for _, id := range ids {
+		if !m.vpcs.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "vpc %q not found", id)
+		}
+	}
+
 	return describeResources(m.vpcs, ids, toVPCInfo), nil
 }
 
@@ -426,6 +432,12 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 
 // DescribeSecurityGroups returns security groups matching the given IDs, or all if ids is empty.
 func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver.SecurityGroupInfo, error) {
+	for _, id := range ids {
+		if !m.securityGroups.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "security group %q not found", id)
+		}
+	}
+
 	return describeResources(m.securityGroups, ids, toSGInfo), nil
 }
 

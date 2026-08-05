@@ -12,10 +12,12 @@
 package redshift
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	redshiftprovider "github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -31,15 +33,34 @@ const (
 // redshiftActions is the set of Action values this handler recognizes. Matches
 // uses it to decide whether to claim a request.
 var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateCluster":              {},
-	"DescribeClusters":           {},
-	"ModifyCluster":              {},
-	"DeleteCluster":              {},
-	"RebootCluster":              {},
-	"CreateClusterSnapshot":      {},
-	"DescribeClusterSnapshots":   {},
-	"DeleteClusterSnapshot":      {},
-	"RestoreFromClusterSnapshot": {},
+	"CreateCluster":               {},
+	"DescribeClusters":            {},
+	"ModifyCluster":               {},
+	"DeleteCluster":               {},
+	"RebootCluster":               {},
+	"CreateClusterSnapshot":       {},
+	"DescribeClusterSnapshots":    {},
+	"DeleteClusterSnapshot":       {},
+	"RestoreFromClusterSnapshot":  {},
+	"CreateClusterParameterGroup": {},
+	"CreateClusterSubnetGroup":    {},
+	"CreateTags":                  {},
+	"DeleteTags":                  {},
+	"DescribeTags":                {},
+}
+
+// clusterGroupManager is the AWS-specific parameter/subnet-group surface, not
+// part of the shared relationaldb driver; the handler type-asserts for it.
+type clusterGroupManager interface {
+	CreateClusterParameterGroup(ctx context.Context, name, family, description string) (*redshiftprovider.ParameterGroup, error)
+	CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*redshiftprovider.SubnetGroup, error)
+}
+
+// resourceTagger is the AWS-specific Redshift tagging surface.
+type resourceTagger interface {
+	CreateTags(ctx context.Context, resourceName string, tags map[string]string) error
+	DeleteTags(ctx context.Context, resourceName string, keys []string) error
+	DescribeTags(ctx context.Context, resourceName string) (map[string]string, error)
 }
 
 // Handler serves Redshift query-protocol requests.
@@ -74,9 +95,46 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := redshiftActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
+	if _, ok := redshiftActions[action]; !ok {
+		return false
+	}
 
-	return ok
+	// CreateTags/DeleteTags/DescribeTags are generic tag verbs shared with EC2
+	// and ELBv2 on the same query protocol. Redshift registers before both, so
+	// claim these only when the SigV4 credential scope names "redshift";
+	// otherwise let them fall through to the owning handler.
+	if _, ambiguous := ambiguousTagActions[action]; ambiguous {
+		return sigV4ScopeService(r.Header.Get("Authorization")) == "redshift"
+	}
+
+	return true
+}
+
+// ambiguousTagActions are the tag verbs Redshift shares with other
+// query-protocol services (EC2 CreateTags/DeleteTags, ELBv2 DescribeTags).
+var ambiguousTagActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"CreateTags":   {},
+	"DeleteTags":   {},
+	"DescribeTags": {},
+}
+
+// sigV4ScopeService extracts the service from a SigV4 Authorization credential
+// scope: "Credential=AKID/20260101/us-east-1/<service>/aws4_request".
+func sigV4ScopeService(auth string) string {
+	i := strings.Index(auth, "Credential=")
+	if i < 0 {
+		return ""
+	}
+
+	parts := strings.Split(auth[i+len("Credential="):], "/")
+
+	const serviceField = 3
+	if len(parts) <= serviceField {
+		return ""
+	}
+
+	return parts[serviceField]
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
@@ -102,6 +160,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteClusterSnapshot(w, r)
 	case "RestoreFromClusterSnapshot":
 		h.restoreFromClusterSnapshot(w, r)
+	case "CreateClusterParameterGroup":
+		h.createClusterParameterGroup(w, r)
+	case "CreateClusterSubnetGroup":
+		h.createClusterSubnetGroup(w, r)
+	case "CreateTags":
+		h.createTags(w, r)
+	case "DeleteTags":
+		h.deleteTags(w, r)
+	case "DescribeTags":
+		h.describeTags(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown Redshift action: "+action)

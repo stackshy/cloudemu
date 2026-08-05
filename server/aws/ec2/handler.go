@@ -101,6 +101,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeIPAMResolver,
 		h.routeIPAMPolicy,
 		h.routeVPC,
+		h.routeTags,
+		h.routeMetadata,
+		h.routeInstanceStatus,
 	}
 	for _, route := range routes {
 		if route(w, r, action) {
@@ -448,6 +451,8 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 		h.associateRouteTable(w, r)
 	case "DisassociateRouteTable":
 		h.disassociateRouteTable(w, r)
+	case "CreateNetworkInterface":
+		h.createNetworkInterface(w, r)
 	case "DescribeNetworkInterfaces":
 		h.describeNetworkInterfaces(w, r)
 	case "DetachNetworkInterface":

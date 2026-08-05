@@ -86,6 +86,41 @@ func TestSDKRedshiftCreateDescribeCluster(t *testing.T) {
 	}
 }
 
+// TestSDKRedshiftParameterAndSubnetGroups is a regression guard for issue
+// #319: CreateClusterParameterGroup / CreateClusterSubnetGroup returned
+// InvalidAction, blocking IaC that provisions a warehouse with a custom group.
+func TestSDKRedshiftParameterAndSubnetGroups(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	pg, err := client.CreateClusterParameterGroup(ctx, &awsredshift.CreateClusterParameterGroupInput{
+		ParameterGroupName:   aws.String("pg1"),
+		ParameterGroupFamily: aws.String("redshift-1.0"),
+		Description:          aws.String("my pg"),
+	})
+	if err != nil {
+		t.Fatalf("CreateClusterParameterGroup: %v", err)
+	}
+
+	if aws.ToString(pg.ClusterParameterGroup.ParameterGroupName) != "pg1" ||
+		aws.ToString(pg.ClusterParameterGroup.ParameterGroupFamily) != "redshift-1.0" {
+		t.Fatalf("parameter group = %+v", pg.ClusterParameterGroup)
+	}
+
+	sg, err := client.CreateClusterSubnetGroup(ctx, &awsredshift.CreateClusterSubnetGroupInput{
+		ClusterSubnetGroupName: aws.String("sg1"),
+		Description:            aws.String("my sg"),
+		SubnetIds:              []string{"subnet-1", "subnet-2"},
+	})
+	if err != nil {
+		t.Fatalf("CreateClusterSubnetGroup: %v", err)
+	}
+
+	if aws.ToString(sg.ClusterSubnetGroup.ClusterSubnetGroupName) != "sg1" {
+		t.Fatalf("subnet group = %+v", sg.ClusterSubnetGroup)
+	}
+}
+
 func TestSDKRedshiftClusterLifecycle(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

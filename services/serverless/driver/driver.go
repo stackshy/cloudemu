@@ -12,6 +12,15 @@ type FunctionVersion struct {
 	CreatedAt    string
 }
 
+// PermissionStatement is one statement of a function's resource-based policy,
+// added via AddPermission (Terraform's aws_lambda_permission).
+type PermissionStatement struct {
+	StatementID string
+	Action      string
+	Principal   string
+	SourceARN   string
+}
+
 // AliasConfig configures a function alias.
 type AliasConfig struct {
 	FunctionName    string
