@@ -19,6 +19,7 @@ const (
 )
 
 func ptrStr(s string) *string { return &s }
+func ptrInt32(i int32) *int32 { return &i }
 
 func newGCPNetServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -126,8 +127,12 @@ func TestSDKFirewallRoundTrip(t *testing.T) {
 			Name: ptrStr("fw-1"),
 			Allowed: []*computepb.Allowed{{
 				IPProtocol: ptrStr("tcp"),
-				Ports:      []string{"80"},
+				Ports:      []string{"80", "443"},
 			}},
+			SourceRanges: []string{"10.0.0.0/8"},
+			Direction:    ptrStr("INGRESS"),
+			Priority:     ptrInt32(900),
+			TargetTags:   []string{"web"},
 		},
 	})
 	if err != nil {
@@ -147,6 +152,24 @@ func TestSDKFirewallRoundTrip(t *testing.T) {
 
 	if got.GetName() != "fw-1" {
 		t.Errorf("name=%s want fw-1", got.GetName())
+	}
+
+	// #321: firewall rules must round-trip, not read back empty.
+	allowed := got.GetAllowed()
+	if len(allowed) != 1 || allowed[0].GetIPProtocol() != "tcp" || len(allowed[0].GetPorts()) != 2 {
+		t.Fatalf("allowed did not round-trip: %+v", allowed)
+	}
+
+	if len(got.GetSourceRanges()) != 1 || got.GetSourceRanges()[0] != "10.0.0.0/8" {
+		t.Errorf("sourceRanges=%v", got.GetSourceRanges())
+	}
+
+	if got.GetDirection() != "INGRESS" || got.GetPriority() != 900 {
+		t.Errorf("direction=%s priority=%d", got.GetDirection(), got.GetPriority())
+	}
+
+	if len(got.GetTargetTags()) != 1 || got.GetTargetTags()[0] != "web" {
+		t.Errorf("targetTags=%v", got.GetTargetTags())
 	}
 
 	delOp, err := client.Delete(ctx, &computepb.DeleteFirewallRequest{

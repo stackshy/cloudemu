@@ -678,10 +678,9 @@ func TestStorageTrailingBoundaryBytes(t *testing.T) {
 	}
 }
 
-// TestStorageVersioningSurface documents the provider-specific
-// surface: versioning is a driver-level boolean only. The bucket resource
-// reports it disabled, and the JSON API exposes no PATCH endpoint, so the
-// SDK cannot enable it over HTTP.
+// TestStorageVersioningSurface guards the #321 fix: bucket Update (PATCH) is
+// now part of the HTTP surface, so enabling versioning over HTTP works and
+// round-trips on a subsequent Attrs read.
 func TestStorageVersioningSurface(t *testing.T) {
 	ctx, client := newStorageClient(t)
 	bkt := mustCreateBucket(t, ctx, client, "e2e-versioning")
@@ -695,12 +694,16 @@ func TestStorageVersioningSurface(t *testing.T) {
 		t.Errorf("fresh bucket reports VersioningEnabled=true, want false (survey: default false)")
 	}
 
-	// The GCS handler serves only GET/DELETE on /b/{bucket}; bucket Update
-	// (PATCH) is not part of the HTTP surface — versioning is driver-only.
-	_, err = bkt.Update(ctx, storage.BucketAttrsToUpdate{VersioningEnabled: true})
-	if err == nil {
-		t.Fatalf("bucket Update(VersioningEnabled) unexpectedly succeeded; HTTP surface was believed to be GET/DELETE only")
+	if _, err := bkt.Update(ctx, storage.BucketAttrsToUpdate{VersioningEnabled: true}); err != nil {
+		t.Fatalf("bucket Update(VersioningEnabled) failed (the #321 fix): %v", err)
 	}
 
-	t.Logf("bucket Update over HTTP rejected as expected: %v", err)
+	updated, err := bkt.Attrs(ctx)
+	if err != nil {
+		t.Fatalf("bucket Attrs after update: %v", err)
+	}
+
+	if !updated.VersioningEnabled {
+		t.Error("VersioningEnabled did not round-trip after Update")
+	}
 }

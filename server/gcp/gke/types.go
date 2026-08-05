@@ -197,8 +197,8 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 			ClusterCaCertificate: k8spki.CertificatePEM(),
 		},
 		Status:           c.Status,
-		CurrentMasterVer: gke.StubMasterVer,
-		CurrentNodeVer:   gke.StubMasterVer,
+		CurrentMasterVer: versionOr(c.MasterVersion),
+		CurrentNodeVer:   versionOr(c.NodeVersion),
 		SelfLink:         "projects/" + project + "/locations/" + c.Location + "/clusters/" + c.Name,
 		CreateTime:       c.CreatedAt.Format("2006-01-02T15:04:05.000Z"),
 	}
@@ -208,6 +208,16 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 	}
 
 	return out
+}
+
+// versionOr returns the cluster's applied version, falling back to the stub
+// version when none was set (i.e. no upgrade has been requested yet).
+func versionOr(v string) string {
+	if v == "" {
+		return gke.StubMasterVer
+	}
+
+	return v
 }
 
 func toNodePoolResource(np *gke.NodePool, project string) gkeNodePool {

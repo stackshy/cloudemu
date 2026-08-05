@@ -106,10 +106,6 @@ func (h *Handler) servePublishers(w http.ResponseWriter, r *http.Request) {
 	h.runGenAI(w, r, model, action)
 }
 
-func (h *Handler) endpointGenerateContent(w http.ResponseWriter, r *http.Request, endpoint string) {
-	h.runGenAI(w, r, endpoint, "generateContent")
-}
-
 // runGenAI dispatches generateContent / countTokens for either a publisher
 // model path or an endpoint resource name.
 func (h *Handler) runGenAI(w http.ResponseWriter, r *http.Request, model, action string) {
@@ -119,7 +115,7 @@ func (h *Handler) runGenAI(w http.ResponseWriter, r *http.Request, model, action
 	}
 
 	switch action {
-	case "generateContent":
+	case actionGenerateContent:
 		resp, err := h.svc.GenerateContent(r.Context(), model, toDriverRequest(req))
 		if err != nil {
 			writeCErr(w, err)
@@ -140,7 +136,7 @@ func (h *Handler) runGenAI(w http.ResponseWriter, r *http.Request, model, action
 		// single-element array so SDK stream decoders iterate it correctly
 		// (a lone object fails array-decoding / yields zero chunks).
 		writeJSON(w, []map[string]any{generateResponseJSON(resp)})
-	case "countTokens":
+	case actionCountTokens:
 		resp, err := h.svc.CountTokens(r.Context(), model, toDriverRequest(req))
 		if err != nil {
 			writeCErr(w, err)

@@ -82,6 +82,46 @@ func TestSDKArtifactRegistryRepositoryLifecycle(t *testing.T) {
 	assertGoogleAPICode(t, err, 404)
 }
 
+// TestSDKArtifactRegistryOperationAndFormat guards two #321 fixes: the LRO
+// operation endpoint is reachable (Operations.Get resolves the create op), and
+// a non-DOCKER format + description round-trip instead of being dropped.
+func TestSDKArtifactRegistryOperationAndFormat(t *testing.T) {
+	svc, _ := newARService(t)
+	ctx := context.Background()
+
+	op, err := svc.Projects.Locations.Repositories.Create(testParent, &ar.Repository{
+		Format:      "MAVEN",
+		Description: "team maven repo",
+	}).RepositoryId("mvn").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Poll the operation the create returned — this hits the /operations/{op}
+	// route that previously 404'd.
+	polled, err := svc.Projects.Locations.Operations.Get(op.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Operations.Get (the #321 LRO route): %v", err)
+	}
+
+	if !polled.Done {
+		t.Errorf("polled operation not done: %+v", polled)
+	}
+
+	repo, err := svc.Projects.Locations.Repositories.Get(testParent + "/repositories/mvn").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if repo.Format != "MAVEN" {
+		t.Errorf("format=%q want MAVEN (dropped on create)", repo.Format)
+	}
+
+	if repo.Description != "team maven repo" {
+		t.Errorf("description=%q want 'team maven repo'", repo.Description)
+	}
+}
+
 func TestSDKArtifactRegistryDockerImages(t *testing.T) {
 	svc, reg := newARService(t)
 	ctx := context.Background()

@@ -43,6 +43,51 @@ func parent() string {
 	return "projects/" + testProject + "/locations/" + testLocation
 }
 
+// TestSDKEventarcOperationAndMetadata guards two #321 fixes: the LRO operation
+// endpoint resolves (Operations.Get), and serviceAccount + labels round-trip
+// on the trigger instead of being dropped.
+func TestSDKEventarcOperationAndMetadata(t *testing.T) {
+	svc := newEventarcService(t)
+	ctx := context.Background()
+
+	trigger := &eventarc.Trigger{
+		EventFilters: []*eventarc.EventFilter{
+			{Attribute: "type", Value: "google.cloud.pubsub.topic.v1.messagePublished"},
+		},
+		Destination:    &eventarc.Destination{CloudRun: &eventarc.CloudRun{Service: "svc", Region: testLocation}},
+		ServiceAccount: "runner@demo.iam.gserviceaccount.com",
+		Labels:         map[string]string{"env": "prod"},
+	}
+
+	op, err := svc.Projects.Locations.Triggers.Create(parent(), trigger).
+		TriggerId("meta-trig").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Triggers.Create: %v", err)
+	}
+
+	polled, err := svc.Projects.Locations.Operations.Get(op.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Operations.Get (the #321 LRO route): %v", err)
+	}
+
+	if !polled.Done {
+		t.Errorf("polled operation not done: %+v", polled)
+	}
+
+	got, err := svc.Projects.Locations.Triggers.Get(parent() + "/triggers/meta-trig").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Triggers.Get: %v", err)
+	}
+
+	if got.ServiceAccount != "runner@demo.iam.gserviceaccount.com" {
+		t.Errorf("serviceAccount=%q dropped", got.ServiceAccount)
+	}
+
+	if got.Labels["env"] != "prod" {
+		t.Errorf("labels=%v want env=prod", got.Labels)
+	}
+}
+
 func TestSDKEventarcTriggerLifecycle(t *testing.T) {
 	svc := newEventarcService(t)
 	ctx := context.Background()

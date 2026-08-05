@@ -16,13 +16,15 @@ type backendServiceRequest struct {
 }
 
 type backendServiceResponse struct {
-	Kind        string `json:"kind"`
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Protocol    string `json:"protocol,omitempty"`
-	Port        int    `json:"port,omitempty"`
-	SelfLink    string `json:"selfLink"`
+	Kind         string   `json:"kind"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
+	Protocol     string   `json:"protocol,omitempty"`
+	Port         int      `json:"port,omitempty"`
+	PortName     string   `json:"portName,omitempty"`
+	HealthChecks []string `json:"healthChecks,omitempty"`
+	SelfLink     string   `json:"selfLink"`
 }
 
 type backendServiceListResponse struct {

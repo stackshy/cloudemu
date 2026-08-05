@@ -118,6 +118,8 @@ func TestSDKGKEUpdateAndDelete(t *testing.T) {
 			Update: &container.ClusterUpdate{
 				DesiredLoggingService:    "none",
 				DesiredMonitoringService: "none",
+				DesiredMasterVersion:     "1.31.1-gke.0",
+				DesiredNodeVersion:       "1.31.1-gke.0",
 			},
 		}).Context(ctx).Do(); err != nil {
 		t.Fatalf("update: %v", err)
@@ -136,6 +138,15 @@ func TestSDKGKEUpdateAndDelete(t *testing.T) {
 
 	if got.LoggingService != "none" {
 		t.Fatalf("got logging %q, want none", got.LoggingService)
+	}
+
+	// The version upgrade must apply, not stay pinned at the stub version.
+	if got.CurrentMasterVersion != "1.31.1-gke.0" {
+		t.Fatalf("got currentMasterVersion %q, want 1.31.1-gke.0", got.CurrentMasterVersion)
+	}
+
+	if got.CurrentNodeVersion != "1.31.1-gke.0" {
+		t.Fatalf("got currentNodeVersion %q, want 1.31.1-gke.0", got.CurrentNodeVersion)
 	}
 
 	if got.ResourceLabels["env"] != "test" {

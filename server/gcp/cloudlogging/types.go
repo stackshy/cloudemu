@@ -1,6 +1,7 @@
 package cloudlogging
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 	"time"
@@ -8,15 +9,72 @@ import (
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
-// logEntryJSON is the subset of the Cloud Logging LogEntry resource we model:
-// a text payload plus a timestamp, keyed by logName. The driver has no notion
-// of severity or structured payloads, so only textPayload round-trips.
+// logEntryJSON is the subset of the Cloud Logging LogEntry resource we model.
+// The driver stores only a message string, so the structured fields
+// (severity, jsonPayload, labels, insertId) are JSON-enveloped into it on
+// write and reconstructed on read — see encode/decodeEntryPayload.
 type logEntryJSON struct {
-	LogName     string `json:"logName,omitempty"`
-	Timestamp   string `json:"timestamp,omitempty"`
-	TextPayload string `json:"textPayload,omitempty"`
-	InsertID    string `json:"insertId,omitempty"`
-	Severity    string `json:"severity,omitempty"`
+	LogName     string            `json:"logName,omitempty"`
+	Timestamp   string            `json:"timestamp,omitempty"`
+	TextPayload string            `json:"textPayload,omitempty"`
+	JSONPayload map[string]any    `json:"jsonPayload,omitempty"`
+	InsertID    string            `json:"insertId,omitempty"`
+	Severity    string            `json:"severity,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+}
+
+// entryPayload is the JSON envelope stored in the driver's message string so a
+// log entry's structured fields survive a write→read round-trip.
+type entryPayload struct {
+	Text        string            `json:"t,omitempty"`
+	JSONPayload map[string]any    `json:"j,omitempty"`
+	Severity    string            `json:"s,omitempty"`
+	InsertID    string            `json:"i,omitempty"`
+	Labels      map[string]string `json:"l,omitempty"`
+}
+
+// entryPayloadPrefix marks a driver message that carries an encoded envelope.
+// A message without it is treated as a plain textPayload (backward compatible).
+const entryPayloadPrefix = "\x00cloudemu-log\x00"
+
+func encodeEntryPayload(e *logEntryJSON) string {
+	// Plain text with no structured fields stays a bare string, so logs written
+	// by other means still read back naturally.
+	if e.Severity == "" && e.InsertID == "" && len(e.JSONPayload) == 0 && len(e.Labels) == 0 {
+		return e.TextPayload
+	}
+
+	b, err := json.Marshal(entryPayload{
+		Text:        e.TextPayload,
+		JSONPayload: e.JSONPayload,
+		Severity:    e.Severity,
+		InsertID:    e.InsertID,
+		Labels:      e.Labels,
+	})
+	if err != nil {
+		return e.TextPayload
+	}
+
+	return entryPayloadPrefix + string(b)
+}
+
+func decodeEntryPayload(msg string, out *logEntryJSON) {
+	if !strings.HasPrefix(msg, entryPayloadPrefix) {
+		out.TextPayload = msg
+		return
+	}
+
+	var p entryPayload
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(msg, entryPayloadPrefix)), &p); err != nil {
+		out.TextPayload = msg
+		return
+	}
+
+	out.TextPayload = p.Text
+	out.JSONPayload = p.JSONPayload
+	out.Severity = p.Severity
+	out.InsertID = p.InsertID
+	out.Labels = p.Labels
 }
 
 // writeLogEntriesRequest is the entries:write body. logName/resource may be set
@@ -173,9 +231,12 @@ func parseTimestamp(ts string, now time.Time) time.Time {
 }
 
 func toLogEntryJSON(project, logID string, e *logdriver.LogEvent) logEntryJSON {
-	return logEntryJSON{
-		LogName:     logNameFor(project, logID),
-		Timestamp:   e.Timestamp.UTC().Format(time.RFC3339Nano),
-		TextPayload: e.Message,
+	out := logEntryJSON{
+		LogName:   logNameFor(project, logID),
+		Timestamp: e.Timestamp.UTC().Format(time.RFC3339Nano),
 	}
+
+	decodeEntryPayload(e.Message, &out)
+
+	return out
 }

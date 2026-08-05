@@ -4,12 +4,19 @@ package gcs
 // Names map directly to the wire format the SDK expects.
 
 type bucketResource struct {
-	Kind        string `json:"kind"`
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	SelfLink    string `json:"selfLink,omitempty"`
-	Location    string `json:"location,omitempty"`
-	TimeCreated string `json:"timeCreated,omitempty"`
+	Kind         string            `json:"kind"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	SelfLink     string            `json:"selfLink,omitempty"`
+	Location     string            `json:"location,omitempty"`
+	StorageClass string            `json:"storageClass,omitempty"`
+	Versioning   *bucketVersioning `json:"versioning,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	TimeCreated  string            `json:"timeCreated,omitempty"`
+}
+
+type bucketVersioning struct {
+	Enabled bool `json:"enabled"`
 }
 
 type bucketsListResponse struct {

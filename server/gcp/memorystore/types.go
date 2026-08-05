@@ -104,18 +104,94 @@ func toInstanceJSON(project, location, instanceID string, info *cachedriver.Cach
 		tier = info.NodeType
 	}
 
-	return instanceJSON{
-		Name:         instanceResourceName(project, location, instanceID),
-		Tier:         tier,
-		MemorySizeGb: 1,
-		RedisVersion: defaultRedisVersion,
-		State:        stateOrReady(info.Status),
-		Host:         host,
-		Port:         port,
-		CreateTime:   info.CreatedAt,
-		Labels:       info.Tags,
-		LocationID:   location,
+	memSize := int64(1)
+	if v, err := strconv.ParseInt(info.Tags[memorySizeTag], 10, 64); err == nil && v > 0 {
+		memSize = v
 	}
+
+	redisVersion := defaultRedisVersion
+	if v := info.Tags[redisVersionTag]; v != "" {
+		redisVersion = v
+	}
+
+	return instanceJSON{
+		Name:          instanceResourceName(project, location, instanceID),
+		DisplayName:   info.Tags[displayNameTag],
+		Tier:          tier,
+		MemorySizeGb:  memSize,
+		RedisVersion:  redisVersion,
+		State:         stateOrReady(info.Status),
+		Host:          host,
+		Port:          port,
+		CreateTime:    info.CreatedAt,
+		Labels:        stripReservedTags(info.Tags),
+		LocationID:    location,
+		ReservedIPRng: info.Tags[reservedIPTag],
+	}
+}
+
+// Reserved tag keys carry GCP-specific fields the cache driver can't model, so
+// they round-trip through the cache's tags.
+const (
+	memorySizeTag   = "cloudemu:gcpMemorySizeGb"
+	redisVersionTag = "cloudemu:gcpRedisVersion"
+	displayNameTag  = "cloudemu:gcpDisplayName"
+	reservedIPTag   = "cloudemu:gcpReservedIpRange"
+)
+
+// instanceTags folds the GCP-specific request fields into the tag map, layered
+// over existing tags so a partial PATCH keeps unspecified values.
+func instanceTags(body *instanceJSON, existing map[string]string) map[string]string {
+	out := make(map[string]string, len(existing)+len(body.Labels))
+
+	for k, v := range existing {
+		out[k] = v
+	}
+
+	for k, v := range body.Labels {
+		out[k] = v
+	}
+
+	if body.MemorySizeGb > 0 {
+		out[memorySizeTag] = strconv.FormatInt(body.MemorySizeGb, 10)
+	}
+
+	if body.RedisVersion != "" {
+		out[redisVersionTag] = body.RedisVersion
+	}
+
+	if body.DisplayName != "" {
+		out[displayNameTag] = body.DisplayName
+	}
+
+	if body.ReservedIPRng != "" {
+		out[reservedIPTag] = body.ReservedIPRng
+	}
+
+	return out
+}
+
+// stripReservedTags returns user labels without cloudemu-internal keys.
+func stripReservedTags(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(in))
+
+	for k, v := range in {
+		if strings.HasPrefix(k, "cloudemu:") {
+			continue
+		}
+
+		out[k] = v
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 // stateOrReady maps the driver status onto Memorystore's state enum, defaulting

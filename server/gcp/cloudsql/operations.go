@@ -204,7 +204,14 @@ func (h *Handler) listBackupRuns(w http.ResponseWriter, r *http.Request, p *sqlP
 
 func (h *Handler) getBackupRun(w http.ResponseWriter, r *http.Request, p *sqlPath) {
 	snaps, err := h.db.DescribeSnapshots(r.Context(), []string{p.subName}, p.name)
-	if err != nil || len(snaps) == 0 {
+	if err != nil {
+		// Surface the real backend error rather than masking every failure as
+		// NOT_FOUND (which would send callers debugging the wrong subsystem).
+		writeErr(w, err)
+		return
+	}
+
+	if len(snaps) == 0 {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "backup run "+p.subName+" not found")
 		return
 	}

@@ -2,6 +2,7 @@ package cloudasset
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -220,6 +221,7 @@ func (h *Handler) searchAllResources(w http.ResponseWriter, r *http.Request, _ s
 	}
 
 	pageSize := intParam(r, body, "pageSize")
+	assetTypes := searchAssetTypes(r, body)
 
 	parsed := parseFilter(filter)
 	if parsed.ForceEmpty {
@@ -233,16 +235,74 @@ func (h *Handler) searchAllResources(w http.ResponseWriter, r *http.Request, _ s
 		return
 	}
 
-	if pageSize > 0 && pageSize < len(results) {
-		results = results[:pageSize]
-	}
-
 	out := make([]map[string]any, 0, len(results))
 	for i := range results {
-		out = append(out, resourceToSearchResult(&results[i], h.projectID))
+		res := resourceToSearchResult(&results[i], h.projectID)
+		if !matchesAssetTypes(res["assetType"], assetTypes) {
+			continue
+		}
+
+		out = append(out, res)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"results": out})
+	// Offset-based pagination: pageToken carries the next start index.
+	start := decodePageToken(strParam(r, body, "pageToken"))
+	if start > len(out) {
+		start = len(out)
+	}
+
+	page := out[start:]
+
+	resp := map[string]any{}
+
+	if pageSize > 0 && pageSize < len(page) {
+		page = page[:pageSize]
+		resp["nextPageToken"] = encodePageToken(start + pageSize)
+	}
+
+	resp["results"] = page
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// searchAssetTypes collects the assetTypes filter from repeated query params or
+// a body array.
+func searchAssetTypes(r *http.Request, body map[string]any) []string {
+	if v := r.URL.Query()["assetTypes"]; len(v) > 0 {
+		return v
+	}
+
+	raw, ok := body["assetTypes"].([]any)
+	if !ok {
+		return nil
+	}
+
+	out := make([]string, 0, len(raw))
+
+	for _, x := range raw {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		}
+	}
+
+	return out
+}
+
+// matchesAssetTypes reports whether the result's assetType is in the filter
+// (empty filter matches everything).
+func matchesAssetTypes(assetType any, filter []string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+
+	at, _ := assetType.(string)
+	for _, f := range filter {
+		if f == at {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ----- searchAllIamPolicies -----
@@ -394,19 +454,30 @@ func (h *Handler) listAssets(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 
-	if pageSize > 0 && pageSize < len(allResults) {
-		allResults = allResults[:pageSize]
+	// Offset pagination: emit a nextPageToken when truncating so paged callers
+	// don't silently miss the remainder.
+	start := decodePageToken(r.URL.Query().Get("pageToken"))
+	if start > len(allResults) {
+		start = len(allResults)
 	}
 
-	out := make([]map[string]any, 0, len(allResults))
-	for i := range allResults {
-		out = append(out, resourceToAsset(&allResults[i]))
+	page := allResults[start:]
+
+	resp := map[string]any{"readTime": nowRFC()}
+
+	if pageSize > 0 && pageSize < len(page) {
+		page = page[:pageSize]
+		resp["nextPageToken"] = encodePageToken(start + pageSize)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"assets":   out,
-		"readTime": nowRFC(),
-	})
+	out := make([]map[string]any, 0, len(page))
+	for i := range page {
+		out = append(out, resourceToAsset(&page[i]))
+	}
+
+	resp["assets"] = out
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // collectAssetsForTypes runs one engine query per assetType filter and
@@ -625,6 +696,37 @@ func intParam(r *http.Request, body map[string]any, key string) int {
 	}
 
 	return 0
+}
+
+func strParam(r *http.Request, body map[string]any, key string) string {
+	if v, ok := body[key].(string); ok && v != "" {
+		return v
+	}
+
+	return r.URL.Query().Get(key)
+}
+
+// encodePageToken/decodePageToken carry an offset as an opaque base64 token.
+func encodePageToken(offset int) string {
+	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+func decodePageToken(tok string) int {
+	if tok == "" {
+		return 0
+	}
+
+	b, err := base64.StdEncoding.DecodeString(tok)
+	if err != nil {
+		return 0
+	}
+
+	n, err := strconv.Atoi(string(b))
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
 }
 
 func nowRFC() string {

@@ -153,10 +153,10 @@ func TestSDKSecretManagerVersionsAndAccess(t *testing.T) {
 		t.Fatalf("Versions.List: %v", err)
 	}
 
-	// The driver seeds an initial version on create, so two AddVersion calls
-	// yield three versions.
-	if len(versions.Versions) != 3 {
-		t.Fatalf("got %d versions, want 3", len(versions.Versions))
+	// GCP secrets.create makes an empty container (no seeded version), so two
+	// AddVersion calls yield exactly two versions — matching real Secret Manager.
+	if len(versions.Versions) != 2 {
+		t.Fatalf("got %d versions, want 2", len(versions.Versions))
 	}
 }
 

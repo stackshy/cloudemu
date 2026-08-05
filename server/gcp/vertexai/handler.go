@@ -40,6 +40,7 @@ const (
 	actionCancel                = "cancel"
 	actionGenerateContent       = "generateContent"
 	actionStreamGenerateContent = "streamGenerateContent"
+	actionCountTokens           = "countTokens"
 )
 
 // vertexCollections are the resource collections this handler serves. Listed

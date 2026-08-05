@@ -74,6 +74,22 @@ func TestSDKCloudFunctionsCreateGetListDelete(t *testing.T) {
 		t.Fatalf("Name = %q, want suffix /functions/hello", got.Name)
 	}
 
+	// The HTTPS trigger URL must be advertised (clients invoke via it).
+	if got.HttpsTrigger == nil || got.HttpsTrigger.Url == "" {
+		t.Fatalf("httpsTrigger.url missing: %+v", got.HttpsTrigger)
+	}
+
+	// generateUploadUrl (first step of a source deploy) must return a URL.
+	up, err := svc.Projects.Locations.Functions.GenerateUploadUrl(parent,
+		&cloudfunctions.GenerateUploadUrlRequest{}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("GenerateUploadUrl: %v", err)
+	}
+
+	if up.UploadUrl == "" {
+		t.Fatal("GenerateUploadUrl returned no uploadUrl")
+	}
+
 	listResp, err := svc.Projects.Locations.Functions.List(parent).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("List: %v", err)
