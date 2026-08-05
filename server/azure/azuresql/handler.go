@@ -145,6 +145,12 @@ func (h *Handler) serveServerCollection(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *Handler) serveDatabaseRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	db, ok := h.databases()
+	if !ok {
+		writeUnsupported(w, "databases")
+		return
+	}
+
 	// rp.ResourceName is the server name; rp.SubResourceName is the database
 	// name (or empty for the collection).
 	if rp.SubResourceName == "" {
@@ -153,20 +159,18 @@ func (h *Handler) serveDatabaseRoute(w http.ResponseWriter, r *http.Request, rp 
 			return
 		}
 
-		h.listDatabases(w, r, rp)
+		h.listDatabases(w, r, rp, db)
 
 		return
 	}
 
 	switch r.Method {
-	case http.MethodPut:
-		h.createOrUpdateDatabase(w, r, rp)
-	case http.MethodPatch:
-		h.updateDatabase(w, r, rp)
+	case http.MethodPut, http.MethodPatch:
+		h.putDatabase(w, r, rp, db)
 	case http.MethodGet:
-		h.getDatabase(w, r, rp)
+		h.getDatabase(w, r, rp, db)
 	case http.MethodDelete:
-		h.deleteDatabase(w, r, rp)
+		h.deleteDatabase(w, r, rp, db)
 	default:
 		writeMethodNotAllowed(w)
 	}

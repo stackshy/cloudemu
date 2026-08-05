@@ -16,14 +16,52 @@ import (
 // engine usable in partial test wirings and during the staged rollout of
 // per-service walkers in later phases.
 type Drivers struct {
-	Compute      computedriver.Compute
-	Networking   netdriver.Networking
-	Storage      storagedriver.Bucket
-	Database     dbdriver.Database
-	Serverless   serverlessdriver.Serverless
-	Databricks   dbxdriver.Databricks
-	Kubernetes   KubernetesClusters
-	RelationalDB RelationalDatabases
+	Compute         computedriver.Compute
+	Networking      netdriver.Networking
+	Storage         storagedriver.Bucket
+	Database        dbdriver.Database
+	Serverless      serverlessdriver.Serverless
+	Databricks      dbxdriver.Databricks
+	Kubernetes      KubernetesClusters
+	RelationalDB    RelationalDatabases
+	ScaleSets       ScaleSets
+	AppServicePlans AppServicePlans
+}
+
+// AppServicePlans is the discovery capability for App Service plans (Azure
+// serverfarms) — the resource that carries the SKU/tier an App Service or
+// Function App is billed on. Provider-projected, like the other adapters.
+type AppServicePlans interface {
+	DiscoverAppServicePlans(ctx context.Context) ([]DiscoveredAppServicePlan, error)
+}
+
+// DiscoveredAppServicePlan is a provider-neutral projection of an App Service
+// plan. Attrs.SKU/SKUTier carry the plan's pricing tier (F1/B1/P1v3/…), the
+// primary cost signal for App Service / Functions.
+type DiscoveredAppServicePlan struct {
+	Name   string
+	ARN    string
+	Region string
+	Tags   map[string]string
+	Attrs  Attributes
+}
+
+// ScaleSets is the discovery capability for VM scale sets (Azure VMSS). Like the
+// other adapter-projected capabilities, each cloud's mock lives in its provider
+// package and wires a thin adapter that projects onto DiscoveredScaleSet.
+type ScaleSets interface {
+	DiscoverScaleSets(ctx context.Context) ([]DiscoveredScaleSet, error)
+}
+
+// DiscoveredScaleSet is a provider-neutral projection of a VM scale set. Attrs
+// carries the SKU (name/tier/capacity) and the nested virtualMachineProfile
+// properties (priority/licenseType/osType) a discoverer prices on.
+type DiscoveredScaleSet struct {
+	Name   string
+	ARN    string
+	Region string
+	Tags   map[string]string
+	Attrs  Attributes
 }
 
 // RelationalDatabases is the discovery capability for managed relational
@@ -59,11 +97,13 @@ type DiscoveredDatabase struct {
 // projection can carry, mirroring the slots on Resource. The walker copies it
 // onto the emitted Resource verbatim, so no walker branches on resource type.
 type Attributes struct {
-	SKU        string
-	Kind       string
-	ManagedBy  string
-	Zones      []string
-	Properties map[string]any
+	SKU         string
+	SKUTier     string
+	SKUCapacity int
+	Kind        string
+	ManagedBy   string
+	Zones       []string
+	Properties  map[string]any
 }
 
 // KubernetesClusters is the discovery capability for managed Kubernetes —
@@ -93,10 +133,30 @@ type DiscoveredCluster struct {
 	ResourceGroup string
 	ARN           string
 	Tags          map[string]string
-	NodeGroups    []string
+	NodeGroups    []DiscoveredNodeGroup
 
 	// Attrs carries the generic slots (SKU/Properties/…) for the cluster
 	// resource, mirroring Resource.
+	Attrs Attributes
+}
+
+// NodeGroupsFromNames builds name-only node groups (no per-pool attributes),
+// for providers that don't yet project per-pool cost signals (EKS/GKE).
+func NodeGroupsFromNames(names []string) []DiscoveredNodeGroup {
+	out := make([]DiscoveredNodeGroup, 0, len(names))
+	for _, n := range names {
+		out = append(out, DiscoveredNodeGroup{Name: n})
+	}
+
+	return out
+}
+
+// DiscoveredNodeGroup is a cluster's node-group / node-pool / agent-pool
+// projection. Name is surfaced as the NodeGroup resource's id; Attrs carries
+// per-pool cost signals (SKU/vmSize, scaleSetPriority for Spot, count, …) that
+// a provider adapter fills and the walker copies onto the emitted Resource.
+type DiscoveredNodeGroup struct {
+	Name  string
 	Attrs Attributes
 }
 
@@ -208,6 +268,14 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.RelationalDB != nil {
 		ws = append(ws, e.walkRelationalDB)
+	}
+
+	if e.drivers.ScaleSets != nil {
+		ws = append(ws, e.walkVMSS)
+	}
+
+	if e.drivers.AppServicePlans != nil {
+		ws = append(ws, e.walkAppServicePlans)
 	}
 
 	return ws

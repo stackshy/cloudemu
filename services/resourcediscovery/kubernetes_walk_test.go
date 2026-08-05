@@ -31,7 +31,7 @@ func TestWalkKubernetesSurfacesClustersAndNodeGroups(t *testing.T) {
 			Name:       "prod",
 			Region:     "us-west-2",
 			Tags:       map[string]string{"env": "prod"},
-			NodeGroups: []string{"ng-a", "ng-b"},
+			NodeGroups: NodeGroupsFromNames([]string{"ng-a", "ng-b"}),
 		},
 		{Name: "bare"}, // no region, no node groups
 	}}

@@ -75,6 +75,10 @@ type instanceData struct {
 	SecurityGroups []string
 	Tags           map[string]string
 	LaunchTime     string
+	OSType         string
+	Priority       string
+	LicenseType    string
+	Zones          []string
 }
 
 type asgData struct {
@@ -92,6 +96,7 @@ type Mock struct {
 	snapshots    *memstore.Store[*driver.SnapshotInfo]
 	images       *memstore.Store[*driver.ImageInfo]
 	keyPairs     *memstore.Store[*driver.KeyPairInfo]
+	scaleSets    *memstore.Store[*ScaleSet]
 	sm           *statemachine.Machine
 	opts         *config.Options
 	ipCounter    atomic.Int64
@@ -172,6 +177,7 @@ func New(opts *config.Options) *Mock {
 		snapshots:    memstore.New[*driver.SnapshotInfo](),
 		images:       memstore.New[*driver.ImageInfo](),
 		keyPairs:     memstore.New[*driver.KeyPairInfo](),
+		scaleSets:    memstore.New[*ScaleSet](),
 		sm:           statemachine.New(compute.VMTransitions()),
 		opts:         opts,
 	}
@@ -196,6 +202,8 @@ func toInstance(d *instanceData) driver.Instance {
 		ID: d.ID, ImageID: d.ImageID, InstanceType: d.InstanceType, State: d.State,
 		PrivateIP: d.PrivateIP, PublicIP: d.PublicIP, SubnetID: d.SubnetID, VPCID: d.VPCID,
 		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime,
+		OSType: d.OSType, Priority: d.Priority, LicenseType: d.LicenseType,
+		Zones: append([]string(nil), d.Zones...),
 	}
 }
 
@@ -228,11 +236,17 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		sg := make([]string, len(cfg.SecurityGroups))
 		copy(sg, cfg.SecurityGroups)
 
+		zones := append([]string(nil), cfg.Zones...)
+
 		inst := &instanceData{
 			ID: id, ImageID: cfg.ImageID, InstanceType: cfg.InstanceType,
 			State: compute.StatePending, PrivateIP: m.nextIP(), SubnetID: cfg.SubnetID,
 			SecurityGroups: sg, Tags: tags,
-			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			LaunchTime:  m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			OSType:      cfg.OSType,
+			Priority:    cfg.Priority,
+			LicenseType: cfg.LicenseType,
+			Zones:       zones,
 		}
 		m.instances.Set(id, inst)
 		m.sm.SetState(id, compute.StatePending)
@@ -412,6 +426,9 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		AvailabilityZone: cfg.AvailabilityZone,
 		CreatedAt:        m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:             copyTags(cfg.Tags),
+		IOPS:             cfg.IOPS,
+		Throughput:       cfg.Throughput,
+		Tier:             cfg.Tier,
 	}
 	m.volumes.Set(id, vol)
 

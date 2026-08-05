@@ -105,3 +105,38 @@ type nsgResponseProps struct {
 type nsgListResponse struct {
 	Value []nsgResponse `json:"value"`
 }
+
+type publicIPRequest struct {
+	Location   string            `json:"location"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	SKU        *publicIPSKU      `json:"sku,omitempty"`
+	Properties publicIPReqProps  `json:"properties"`
+}
+
+type publicIPSKU struct {
+	Name string `json:"name,omitempty"`
+}
+
+type publicIPReqProps struct {
+	PublicIPAllocationMethod string `json:"publicIPAllocationMethod,omitempty"`
+}
+
+type publicIPResponse struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	SKU        *publicIPSKU      `json:"sku,omitempty"`
+	Properties publicIPRespProps `json:"properties"`
+}
+
+type publicIPRespProps struct {
+	ProvisioningState        string `json:"provisioningState"`
+	PublicIPAllocationMethod string `json:"publicIPAllocationMethod,omitempty"`
+	IPAddress                string `json:"ipAddress,omitempty"`
+}
+
+type publicIPListResponse struct {
+	Value []publicIPResponse `json:"value"`
+}

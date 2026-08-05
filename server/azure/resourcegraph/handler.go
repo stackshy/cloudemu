@@ -108,7 +108,7 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 
 	data := make([]map[string]any, 0, len(results))
 	for i := range results {
-		data = append(data, resourceToWire(&results[i]))
+		data = append(data, h.resourceToWire(&results[i]))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
@@ -215,19 +215,42 @@ func applyLimit(results []resourcediscovery.Resource, kqlLimit, top, skip int) [
 // slots only when set — the same rendering for every resource type, with no
 // per-type branching. id is the ARM resource ID and resourceGroup is derived
 // from it (real Resource Graph consumers parse both).
-func resourceToWire(r *resourcediscovery.Resource) map[string]any {
+func (h *Handler) resourceToWire(r *resourcediscovery.Resource) map[string]any {
+	// The emulator is single-subscription: every resource belongs to the
+	// configured subscription the ARM clients use. Stamp that, rather than
+	// parsing it out of each mock's ARN — those embed inconsistent placeholders
+	// (empty, a region, a zero id), which would make a subscription-scoped ARG
+	// query return nothing. Fall back to the ARN only when unset.
+	subscription := h.subscriptionID
+	if subscription == "" {
+		subscription = extractSubscription(r.ARN)
+	}
+
 	out := map[string]any{
 		"id":             r.ARN,
 		"name":           r.ID,
 		"type":           portableToAzureType(r.Service, r.Type),
 		"location":       r.Region,
 		"resourceGroup":  resourceGroupOrDefault(r.ARN),
-		"subscriptionId": extractSubscription(r.ARN),
+		"subscriptionId": subscription,
 		"tags":           tagsOrEmpty(r.Tags),
 	}
 
-	if r.SKU != "" {
-		out["sku"] = map[string]any{"name": r.SKU}
+	if r.SKU != "" || r.SKUTier != "" || r.SKUCapacity > 0 {
+		sku := map[string]any{}
+		if r.SKU != "" {
+			sku["name"] = r.SKU
+		}
+
+		if r.SKUTier != "" {
+			sku["tier"] = r.SKUTier
+		}
+
+		if r.SKUCapacity > 0 {
+			sku["capacity"] = r.SKUCapacity
+		}
+
+		out["sku"] = sku
 	}
 
 	if r.ManagedBy != "" {
@@ -299,17 +322,22 @@ func extractSubscription(arn string) string {
 var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	"compute/Instance":                    "microsoft.compute/virtualmachines",
 	"compute/Volume":                      "microsoft.compute/disks",
+	"compute/ScaleSet":                    "microsoft.compute/virtualmachinescalesets",
 	"networking/VPC":                      "microsoft.network/virtualnetworks",
 	"networking/Subnet":                   "microsoft.network/subnets",
 	"networking/SecurityGroup":            "microsoft.network/networksecuritygroups",
+	"networking/NetworkInterface":         "microsoft.network/networkinterfaces",
+	"networking/ElasticIP":                "microsoft.network/publicipaddresses",
 	"storage/Bucket":                      "microsoft.storage/storageaccounts",
 	"database/Table":                      "microsoft.documentdb/databaseaccounts",
 	"serverless/Function":                 "microsoft.web/sites",
+	"appservice/AppServicePlan":           "microsoft.web/serverfarms",
 	"databricks/Workspace":                "microsoft.databricks/workspaces",
 	"kubernetes/Cluster":                  "microsoft.containerservice/managedclusters",
 	"kubernetes/NodeGroup":                "microsoft.containerservice/managedclusters/agentpools",
 	"relationaldb/SqlServer":              "microsoft.sql/servers",
 	"relationaldb/SqlManagedInstance":     "microsoft.sql/managedinstances",
+	"relationaldb/SqlDatabase":            "microsoft.sql/servers/databases",
 	"relationaldb/MySqlFlexibleServer":    "microsoft.dbformysql/flexibleservers",
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 }

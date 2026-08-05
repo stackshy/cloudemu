@@ -6,7 +6,9 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 // Provider name constants used for routing per-provider ARN construction.
@@ -28,26 +30,32 @@ const (
 	ServiceDatabricks   = "databricks"
 	ServiceKubernetes   = "kubernetes"
 	ServiceRelationalDB = "relationaldb"
+	// ServiceAppService buckets App Service plans (Azure serverfarms). They are
+	// not serverless — they carry a provisioned SKU/tier — so they get their own
+	// discriminator rather than sharing ServiceServerless with Functions.
+	ServiceAppService = "appservice"
 )
 
 // Resource type constants emitted by the walkers.
 const (
-	TypeInstance      = "Instance"
-	TypeVolume        = "Volume"
-	TypeVPC           = "VPC"
-	TypeSubnet        = "Subnet"
-	TypeSecurityGroup = "SecurityGroup"
-	TypeNetworkIface  = "NetworkInterface"
-	TypeElasticIP     = "ElasticIP"
-	TypeBucket        = "Bucket"
-	TypeTable         = "Table"
-	TypeFunction      = "Function"
-	TypeWorkspace     = "Workspace"
-	TypeCluster       = "Cluster"
-	TypeNodeGroup     = "NodeGroup"
-	TypeDBInstance    = "DBInstance"
-	TypeDBCluster     = "DBCluster"
-	TypeDBSnapshot    = "DBSnapshot"
+	TypeInstance       = "Instance"
+	TypeVolume         = "Volume"
+	TypeVPC            = "VPC"
+	TypeSubnet         = "Subnet"
+	TypeSecurityGroup  = "SecurityGroup"
+	TypeNetworkIface   = "NetworkInterface"
+	TypeElasticIP      = "ElasticIP"
+	TypeBucket         = "Bucket"
+	TypeTable          = "Table"
+	TypeFunction       = "Function"
+	TypeWorkspace      = "Workspace"
+	TypeCluster        = "Cluster"
+	TypeNodeGroup      = "NodeGroup"
+	TypeDBInstance     = "DBInstance"
+	TypeDBCluster      = "DBCluster"
+	TypeDBSnapshot     = "DBSnapshot"
+	TypeScaleSet       = "ScaleSet"
+	TypeAppServicePlan = "AppServicePlan"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -60,6 +68,7 @@ const (
 	TypeSQLInstance     = "SqlInstance"            // GCP Cloud SQL instance
 	TypeManagedInstance = "SqlManagedInstance"     // Azure SQL Managed Instance
 	TypeAlloyDBCluster  = "AlloyDBCluster"         // GCP AlloyDB cluster
+	TypeSQLDatabase     = "SqlDatabase"            // Azure SQL logical database
 )
 
 func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
@@ -78,9 +87,14 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		inst := &instances[i]
 
 		props := map[string]any{}
-		putStr(props, "osType", inst.OSType)
 		putStr(props, "priority", inst.Priority)
 		putStr(props, "licenseType", inst.LicenseType)
+		// osType nests under storageProfile.osDisk to match the real Azure ARG
+		// VM shape (a discoverer reads it there). Only Azure VMs set OSType — the
+		// AWS/GCP compute mocks leave it empty, so no Azure shape leaks onto them.
+		if inst.OSType != "" {
+			props["storageProfile"] = map[string]any{"osDisk": map[string]any{"osType": inst.OSType}}
+		}
 
 		out = append(out, Resource{
 			Provider:   e.provider,
@@ -122,6 +136,7 @@ func (e *Engine) walkVolumes(ctx context.Context) ([]Resource, error) {
 		putInt(props, "diskIOPSReadWrite", v.IOPS)
 		putInt(props, "diskMBpsReadWrite", v.Throughput)
 		putStr(props, "diskState", v.State)
+		putStr(props, "tier", v.Tier)
 
 		managedBy := ""
 		if v.AttachedTo != "" {
@@ -137,6 +152,7 @@ func (e *Engine) walkVolumes(ctx context.Context) ([]Resource, error) {
 			Region:     e.region,
 			Tags:       copyTags(v.Tags),
 			SKU:        v.VolumeType,
+			SKUTier:    v.Tier,
 			ManagedBy:  managedBy,
 			Zones:      zonesOf(v.AvailabilityZone),
 			Properties: props,
@@ -155,11 +171,17 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 	}
 
 	for _, v := range vpcs {
+		var props map[string]any
+		if v.CIDRBlock != "" {
+			props = map[string]any{"addressSpace": map[string]any{"addressPrefixes": []string{v.CIDRBlock}}}
+		}
+
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeVPC,
 			ID:     v.ID,
 			ARN:    e.networkARN(netKindVPC, v.ID),
 			Region: e.region, Tags: copyTags(v.Tags),
+			Properties: props,
 		})
 	}
 
@@ -169,11 +191,17 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 	}
 
 	for _, s := range subnets {
+		var props map[string]any
+		if s.CIDRBlock != "" {
+			props = map[string]any{"addressPrefix": s.CIDRBlock}
+		}
+
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeSubnet,
 			ID:     s.ID,
 			ARN:    e.networkARN(netKindSubnet, s.ID),
 			Region: e.region, Tags: copyTags(s.Tags),
+			Properties: props,
 		})
 	}
 
@@ -197,11 +225,18 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 	}
 
 	for _, eip := range eips {
+		var props map[string]any
+		if eip.AllocationMethod != "" {
+			props = map[string]any{"publicIPAllocationMethod": eip.AllocationMethod}
+		}
+
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeElasticIP,
 			ID:     eip.AllocationID,
 			ARN:    e.networkARN(netKindElasticIP, eip.AllocationID),
 			Region: e.region, Tags: copyTags(eip.Tags),
+			SKU:        eip.SKU,
+			Properties: props,
 		})
 	}
 
@@ -272,12 +307,33 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 			region = e.region
 		}
 
-		out = append(out, Resource{
+		res := Resource{
 			Provider: e.provider, Service: ServiceStorage, Type: TypeBucket,
 			ID:     b.Name,
 			ARN:    e.storageBucketARN(b.Name),
 			Region: region, Tags: tags,
-		})
+		}
+
+		// Optional capability: providers whose buckets carry storage-account
+		// attributes (Azure) project SKU/kind/access-tier for cost discovery.
+		// A non-nil error here is load-bearing: silently dropping it would leave
+		// the cost fields absent — the exact failure this projection closes — so
+		// propagate it rather than swallow.
+		if attrer, ok := e.drivers.Storage.(storagedriver.BucketAttributes); ok {
+			a, aErr := attrer.BucketAttributes(ctx, b.Name)
+			if aErr != nil {
+				return nil, fmt.Errorf("walkStorage attributes %q: %w", b.Name, aErr)
+			}
+
+			res.SKU = a.SKU
+			res.Kind = a.Kind
+
+			if a.AccessTier != "" {
+				res.Properties = map[string]any{"accessTier": a.AccessTier}
+			}
+		}
+
+		out = append(out, res)
 	}
 
 	return out, nil
@@ -304,12 +360,46 @@ func (e *Engine) walkDatabase(ctx context.Context) ([]Resource, error) {
 			return nil, fmt.Errorf("walkDatabase tags %q: %w", name, tagErr)
 		}
 
-		out = append(out, Resource{
+		res := Resource{
 			Provider: e.provider, Service: ServiceDatabase, Type: TypeTable,
 			ID:     name,
 			ARN:    e.databaseTableARN(name),
 			Region: e.region, Tags: tags,
-		})
+		}
+
+		// Optional capability: providers whose tables map to a richer account
+		// resource (Azure Cosmos DB) project the account's cost attributes.
+		// A non-nil error here is load-bearing: silently dropping it would leave
+		// the cost attributes absent — the exact failure this projection closes —
+		// so propagate it rather than swallow.
+		if attrer, ok := e.drivers.Database.(dbdriver.TableAttributes); ok {
+			a, aErr := attrer.TableAttributes(ctx, name)
+			if aErr != nil {
+				return nil, fmt.Errorf("walkDatabase attributes %q: %w", name, aErr)
+			}
+
+			res.Kind = a.Kind
+
+			props := map[string]any{}
+			putStr(props, "databaseAccountOfferType", a.OfferType)
+
+			if len(a.Capabilities) > 0 {
+				caps := make([]any, 0, len(a.Capabilities))
+				for _, c := range a.Capabilities {
+					caps = append(caps, map[string]any{"name": c})
+				}
+
+				props["capabilities"] = caps
+			}
+
+			if a.EnableFreeTier {
+				props["enableFreeTier"] = true
+			}
+
+			res.Properties = orNilProps(props)
+		}
+
+		out = append(out, res)
 	}
 
 	return out, nil
@@ -361,11 +451,20 @@ func (e *Engine) walkDatabricks(ctx context.Context) ([]Resource, error) {
 			region = e.region
 		}
 
+		w := &workspaces[i]
+
+		props := map[string]any{}
+		putStr(props, "workspaceId", w.WorkspaceID)
+		putStr(props, "provisioningState", w.ProvisioningState)
+
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceDatabricks, Type: TypeWorkspace,
-			ID:     workspaces[i].Name,
-			ARN:    workspaces[i].ID,
-			Region: region, Tags: copyTags(workspaces[i].Tags),
+			ID:     w.Name,
+			ARN:    w.ID,
+			Region: region, Tags: copyTags(w.Tags),
+			SKU:        w.SKUName,
+			SKUTier:    w.SKUTier,
+			Properties: orNilProps(props),
 		})
 	}
 
@@ -407,13 +506,17 @@ func (e *Engine) walkKubernetes(ctx context.Context) ([]Resource, error) {
 		applyAttrs(&cluster, &c.Attrs)
 		out = append(out, cluster)
 
-		for _, ng := range c.NodeGroups {
-			out = append(out, Resource{
+		for j := range c.NodeGroups {
+			ng := &c.NodeGroups[j]
+
+			pool := Resource{
 				Provider: e.provider, Service: ServiceKubernetes, Type: TypeNodeGroup,
-				ID:     ng,
-				ARN:    e.kubernetesNodeGroupARN(region, c.ResourceGroup, c.Name, ng),
+				ID:     ng.Name,
+				ARN:    e.kubernetesNodeGroupARN(region, c.ResourceGroup, c.Name, ng.Name),
 				Region: region,
-			})
+			}
+			applyAttrs(&pool, &ng.Attrs)
+			out = append(out, pool)
 		}
 	}
 
@@ -459,6 +562,69 @@ func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
 	return out, nil
 }
 
+// walkVMSS surfaces VM scale sets (Azure VMSS) from the ScaleSets discovery
+// adapter, each with its SKU (name/tier/capacity) and nested
+// virtualMachineProfile properties.
+func (e *Engine) walkVMSS(ctx context.Context) ([]Resource, error) {
+	sets, err := e.drivers.ScaleSets.DiscoverScaleSets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkVMSS: %w", err)
+	}
+
+	out := make([]Resource, 0, len(sets))
+
+	for i := range sets {
+		s := sets[i]
+
+		region := s.Region
+		if region == "" {
+			region = e.region
+		}
+
+		r := Resource{
+			Provider: e.provider, Service: ServiceCompute, Type: TypeScaleSet,
+			ID:     s.Name,
+			ARN:    s.ARN,
+			Region: region, Tags: copyTags(s.Tags),
+		}
+		applyAttrs(&r, &s.Attrs)
+		out = append(out, r)
+	}
+
+	return out, nil
+}
+
+// walkAppServicePlans surfaces App Service plans (Azure serverfarms) from the
+// AppServicePlans discovery adapter, each carrying its pricing tier as sku.
+func (e *Engine) walkAppServicePlans(ctx context.Context) ([]Resource, error) {
+	plans, err := e.drivers.AppServicePlans.DiscoverAppServicePlans(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkAppServicePlans: %w", err)
+	}
+
+	out := make([]Resource, 0, len(plans))
+
+	for i := range plans {
+		p := plans[i]
+
+		region := p.Region
+		if region == "" {
+			region = e.region
+		}
+
+		r := Resource{
+			Provider: e.provider, Service: ServiceAppService, Type: TypeAppServicePlan,
+			ID:     p.Name,
+			ARN:    p.ARN,
+			Region: region, Tags: copyTags(p.Tags),
+		}
+		applyAttrs(&r, &p.Attrs)
+		out = append(out, r)
+	}
+
+	return out, nil
+}
+
 func copyTags(src map[string]string) map[string]string {
 	if len(src) == 0 {
 		return nil
@@ -477,6 +643,8 @@ func copyTags(src map[string]string) map[string]string {
 // identically, with no per-type branching.
 func applyAttrs(r *Resource, a *Attributes) {
 	r.SKU = a.SKU
+	r.SKUTier = a.SKUTier
+	r.SKUCapacity = a.SKUCapacity
 	r.Kind = a.Kind
 	r.ManagedBy = a.ManagedBy
 	r.Zones = cloneStrings(a.Zones)

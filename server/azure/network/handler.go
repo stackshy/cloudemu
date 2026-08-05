@@ -25,15 +25,17 @@ import (
 )
 
 const (
-	providerName  = "Microsoft.Network"
-	typeVNet      = "virtualNetworks"
-	typeNSG       = "networkSecurityGroups"
-	typeLocations = "locations"
-	armNameTag    = "cloudemu:azureNetName"
-	armSubnetTag  = "cloudemu:azureSubnet"
-	armNSGTag     = "cloudemu:azureNSGName"
-	defaultLoc    = "eastus"
-	subResSubnets = "subnets"
+	providerName   = "Microsoft.Network"
+	typeVNet       = "virtualNetworks"
+	typeNSG        = "networkSecurityGroups"
+	typePublicIP   = "publicIPAddresses"
+	typeLocations  = "locations"
+	armNameTag     = "cloudemu:azureNetName"
+	armSubnetTag   = "cloudemu:azureSubnet"
+	armNSGTag      = "cloudemu:azureNSGName"
+	armPublicIPTag = "cloudemu:azurePublicIP"
+	defaultLoc     = "eastus"
+	subResSubnets  = "subnets"
 )
 
 // Handler serves Microsoft.Network ARM requests against a networking driver.
@@ -60,7 +62,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case typeVNet, typeNSG, typeLocations:
+	case typeVNet, typeNSG, typePublicIP, typeLocations:
 		return true
 	}
 
@@ -89,6 +91,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeVNet(w, r, rp)
 	case typeNSG:
 		h.routeNSG(w, r, rp)
+	case typePublicIP:
+		h.routePublicIP(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"unsupported resource type: "+rp.ResourceType)
@@ -428,6 +432,95 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 	writeAcceptedAsync(w, r, rp.Subscription, "nsg-delete-"+rp.ResourceName, nil)
 }
 
+// PublicIP operations.
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routePublicIP(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if rp.ResourceName == "" {
+		h.listPublicIPs(w, r, rp)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		h.createPublicIP(w, r, rp)
+	case http.MethodGet:
+		h.getPublicIP(w, r, rp)
+	default:
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	}
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if rp.ResourceGroup == "" {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "missing resourceGroups segment")
+		return
+	}
+
+	var req publicIPRequest
+
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	sku := ""
+	if req.SKU != nil {
+		sku = req.SKU.Name
+	}
+
+	cfg := netdriver.ElasticIPConfig{
+		SKU:              sku,
+		AllocationMethod: req.Properties.PublicIPAllocationMethod,
+		Tags:             mergeTags(req.Tags, armPublicIPTag, rp.ResourceName),
+	}
+
+	info, err := h.net.AllocateAddress(r.Context(), cfg)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	loc := req.Location
+	if loc == "" {
+		loc = defaultLoc
+	}
+
+	body := toPublicIPResponse(info, rp, loc)
+
+	writeAcceptedAsync(w, r, rp.Subscription, "publicip-create-"+rp.ResourceName, body)
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) getPublicIP(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	info, err := findPublicIPByName(r.Context(), h.net, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toPublicIPResponse(info, rp, defaultLoc))
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	infos, err := h.net.DescribeAddresses(r.Context(), nil)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	out := publicIPListResponse{}
+
+	for i := range infos {
+		scope := rp
+		scope.ResourceName = tagOr(infos[i].Tags, armPublicIPTag, infos[i].AllocationID)
+		out.Value = append(out.Value, toPublicIPResponse(&infos[i], scope, defaultLoc))
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, out)
+}
+
 // Lookup helpers — driver indexes by its own ID, so we match by tag.
 
 func findVNetByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.VPCInfo, error) {
@@ -473,6 +566,21 @@ func findNSGByName(ctx context.Context, n netdriver.Networking, name string) (*n
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "networkSecurityGroup %s not found", name)
+}
+
+func findPublicIPByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.ElasticIP, error) {
+	infos, err := n.DescribeAddresses(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range infos {
+		if tagOr(infos[i].Tags, armPublicIPTag, "") == name {
+			return &infos[i], nil
+		}
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "publicIPAddress %s not found", name)
 }
 
 // Response shaping helpers.
@@ -551,6 +659,32 @@ func toNSGResponse(info *netdriver.SecurityGroupInfo, rp azurearm.ResourcePath, 
 			SecurityRules:     rules,
 		},
 	}
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func toPublicIPResponse(info *netdriver.ElasticIP, rp azurearm.ResourcePath, location string) publicIPResponse {
+	if location == "" {
+		location = defaultLoc
+	}
+
+	out := publicIPResponse{
+		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName),
+		Name:     rp.ResourceName,
+		Type:     providerName + "/" + typePublicIP,
+		Location: location,
+		Tags:     stripInternal(info.Tags),
+		Properties: publicIPRespProps{
+			ProvisioningState:        "Succeeded",
+			PublicIPAllocationMethod: info.AllocationMethod,
+			IPAddress:                info.PublicIP,
+		},
+	}
+
+	if info.SKU != "" {
+		out.SKU = &publicIPSKU{Name: info.SKU}
+	}
+
+	return out
 }
 
 // writeAcceptedAsync replies for create/delete operations. armnetwork's

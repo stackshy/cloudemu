@@ -46,8 +46,11 @@ type ManagedCluster struct {
 	NodeResourceGroup string
 	ProvisioningState string
 	PowerState        string
-	Tags              map[string]string
-	AgentPoolNames    []string
+	// Tier is the cluster SKU tier (Free / Standard / Premium) — the uptime-SLA
+	// cost input a discoverer reads from `sku.tier`.
+	Tier           string
+	Tags           map[string]string
+	AgentPoolNames []string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -65,8 +68,11 @@ type AgentPool struct {
 	Mode              string
 	OrchestratorVer   string
 	ProvisioningState string
-	NodeLabels        map[string]string
-	NodeTaints        []string
+	// ScaleSetPriority is Regular or Spot — the Spot marker a discoverer reads
+	// for Spot node-pool pricing.
+	ScaleSetPriority string
+	NodeLabels       map[string]string
+	NodeTaints       []string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -227,7 +233,9 @@ type ClusterInput struct {
 	KubernetesVersion string
 	DNSPrefix         string
 	NodeResourceGroup string
-	Tags              map[string]string
+	// Tier is the cluster SKU tier (Free / Standard / Premium); defaults to Free.
+	Tier string
+	Tags map[string]string
 	// AgentPools may be nil for an empty cluster; otherwise these are the
 	// pools shipped inline at create time (system pool typically).
 	AgentPools []AgentPoolInput
@@ -235,15 +243,16 @@ type ClusterInput struct {
 
 // AgentPoolInput captures the mutable fields of an AgentPool CreateOrUpdate.
 type AgentPoolInput struct {
-	Name            string
-	Count           int32
-	VMSize          string
-	OSDiskSizeGB    int32
-	OSType          string
-	Mode            string
-	OrchestratorVer string
-	NodeLabels      map[string]string
-	NodeTaints      []string
+	Name             string
+	Count            int32
+	VMSize           string
+	OSDiskSizeGB     int32
+	OSType           string
+	Mode             string
+	OrchestratorVer  string
+	ScaleSetPriority string
+	NodeLabels       map[string]string
+	NodeTaints       []string
 }
 
 // CreateOrUpdateCluster creates a new managed cluster or updates an existing
@@ -281,6 +290,7 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	cluster.FQDN = cluster.DNSPrefix + ".hcp." + defaultIfEmpty(input.Location, "eastus") + ".azmk8s.io"
 	cluster.ProvisioningState = "Succeeded"
 	cluster.PowerState = "Running"
+	cluster.Tier = defaultIfEmpty(input.Tier, "Free")
 	cluster.Tags = copyTags(input.Tags)
 	cluster.UpdatedAt = now
 
@@ -357,6 +367,7 @@ func buildAgentPool(rg, cluster string, in AgentPoolInput, now time.Time) AgentP
 		Mode:              defaultIfEmpty(in.Mode, "User"),
 		OrchestratorVer:   defaultIfEmpty(in.OrchestratorVer, defaultK8sVersion),
 		ProvisioningState: "Succeeded",
+		ScaleSetPriority:  defaultIfEmpty(in.ScaleSetPriority, "Regular"),
 		NodeLabels:        copyLabels(in.NodeLabels),
 		NodeTaints:        copyTaints(in.NodeTaints),
 		CreatedAt:         now,

@@ -1825,6 +1825,38 @@ Relational databases follow the same pattern via a `RelationalDatabases` adapter
 |-----------|-------|
 | `Resources` | `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` — KQL-shaped query over the unified inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
 
+**Cost-discovery field projection.** Each row projects the `sku` (name/tier/capacity)
+and `properties` a real discoverer prices on, per Azure type:
+
+| Azure type | Projected fields |
+|---|---|
+| `microsoft.compute/virtualmachines` | `properties.priority` (Spot), `properties.licenseType`, `properties.storageProfile.osDisk.osType`, `sku.name`, `zones` |
+| `microsoft.compute/disks` | `properties.diskIOPSReadWrite`, `properties.diskMBpsReadWrite`, `properties.diskSizeGB`, `properties.tier`, `sku.name`/`sku.tier` |
+| `microsoft.compute/virtualmachinescalesets` | `sku.name`/`sku.capacity`, nested `properties.virtualMachineProfile.{priority,licenseType,storageProfile.osDisk.osType}` |
+| `microsoft.network/publicipaddresses` | `sku.name` (Basic/Standard), `properties.publicIPAllocationMethod` |
+| `microsoft.network/virtualnetworks` / `subnets` | `properties.addressSpace.addressPrefixes` / `properties.addressPrefix` |
+| `microsoft.sql/managedinstances` | `sku.name`, `properties.vCores`, `properties.tier`, `properties.licenseType`, `properties.storageSizeInGB`, `properties.storageAccountType` (backup redundancy) |
+| `microsoft.sql/servers` | `properties.version` (engine version of the logical server) |
+| `microsoft.sql/servers/databases` | `sku.name`, `properties.currentSku`, `properties.zoneRedundant` |
+| `microsoft.dbformysql`/`dbforpostgresql` `flexibleservers` | `sku.name`/`sku.tier` (derived), `properties.version`, nested `properties.storage.storageSizeGB` + `properties.highAvailability.mode` |
+| `microsoft.containerservice/managedclusters` | `sku.tier`, `properties.powerState.code`, `properties.kubernetesVersion` |
+| `.../managedclusters/agentpools` | `sku.name` (vmSize), `properties.scaleSetPriority` (Spot), `properties.count`, `properties.mode`/`osType` |
+| `microsoft.databricks/workspaces` | `sku.name`/`sku.tier`, `properties.workspaceId`/`provisioningState` |
+| `microsoft.storage/storageaccounts` | `sku.name` (redundancy), `kind`, `properties.accessTier` |
+| `microsoft.documentdb/databaseaccounts` | `kind`, `properties.databaseAccountOfferType`, `properties.capabilities` (serverless), `properties.enableFreeTier` |
+| `microsoft.web/serverfarms` (App Service plan) | `sku.name`/`sku.tier`/`sku.capacity` (pricing tier), `kind` |
+
+Fields are seeded through the portable driver configs (`VolumeConfig.IOPS/Throughput/Tier`,
+`InstanceConfig.OSType/Priority/LicenseType/Zones`, `ManagedInstanceConfig.StorageAccountType`,
+`ElasticIPConfig.SKU/AllocationMethod`, the AKS `Tier`/`ScaleSetPriority` inputs, the
+`Databases` capability on Azure SQL, the VMSS `ScaleSets` + serverfarms `AppServicePlans`
+discovery capabilities, and the optional `BucketAttributes` / `TableAttributes` capabilities
+that enrich storage accounts and Cosmos DB) so a value set at create time round-trips over
+the real `armresourcegraph` SDK. Storage/Cosmos/serverfarms follow the established discovery
+patterns — optional type-asserted capabilities (like networking's `NetworkInterfaces`) for
+per-resource enrichment, and provider-projected discovery adapters (like the relational-DB
+and Kubernetes walkers) for the net-new plan/scale-set resources.
+
 ### GCP — Cloud Asset Inventory (`server/gcp/cloudasset`)
 
 | Resource | Operations |

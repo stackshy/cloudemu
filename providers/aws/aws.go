@@ -85,7 +85,7 @@ func (a eksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 			return nil, err
 		}
 
-		dc := resourcediscovery.DiscoveredCluster{Name: name, NodeGroups: ngs}
+		dc := resourcediscovery.DiscoveredCluster{Name: name, NodeGroups: resourcediscovery.NodeGroupsFromNames(ngs)}
 		if c != nil {
 			dc.ARN = c.ARN // use the EKS mock's own ARN verbatim
 			// Keep Region in step with the verbatim ARN so the node-group ARN

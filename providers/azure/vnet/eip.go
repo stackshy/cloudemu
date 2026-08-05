@@ -9,11 +9,13 @@ import (
 )
 
 type eipData struct {
-	AllocationID  string
-	PublicIP      string
-	AssociationID string
-	InstanceID    string
-	Tags          map[string]string
+	AllocationID     string
+	PublicIP         string
+	AssociationID    string
+	InstanceID       string
+	Tags             map[string]string
+	SKU              string
+	AllocationMethod string
 }
 
 // AllocateAddress allocates a new public IP address.
@@ -22,10 +24,24 @@ func (m *Mock) AllocateAddress(
 ) (*driver.ElasticIP, error) {
 	allocID := idgen.GenerateID("ipalloc-")
 
+	// Real Azure defaults a public IP to the Standard SKU with Static allocation
+	// when the request omits them.
+	sku := cfg.SKU
+	if sku == "" {
+		sku = "Standard"
+	}
+
+	allocMethod := cfg.AllocationMethod
+	if allocMethod == "" {
+		allocMethod = "Static"
+	}
+
 	eip := &eipData{
-		AllocationID: allocID,
-		PublicIP:     mockPublicIP(allocID),
-		Tags:         copyTags(cfg.Tags),
+		AllocationID:     allocID,
+		PublicIP:         mockPublicIP(allocID),
+		Tags:             copyTags(cfg.Tags),
+		SKU:              sku,
+		AllocationMethod: allocMethod,
 	}
 	m.eips.Set(allocID, eip)
 
@@ -113,10 +129,12 @@ func (m *Mock) DisassociateAddress(
 
 func toEIPInfo(eip *eipData) driver.ElasticIP {
 	return driver.ElasticIP{
-		AllocationID:  eip.AllocationID,
-		PublicIP:      eip.PublicIP,
-		AssociationID: eip.AssociationID,
-		InstanceID:    eip.InstanceID,
-		Tags:          copyTags(eip.Tags),
+		AllocationID:     eip.AllocationID,
+		PublicIP:         eip.PublicIP,
+		AssociationID:    eip.AssociationID,
+		InstanceID:       eip.InstanceID,
+		Tags:             copyTags(eip.Tags),
+		SKU:              eip.SKU,
+		AllocationMethod: eip.AllocationMethod,
 	}
 }

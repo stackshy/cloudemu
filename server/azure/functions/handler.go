@@ -5,11 +5,13 @@
 //
 // MVP coverage:
 //
-//	PUT    .../sites/{name}      — CreateOrUpdate
-//	GET    .../sites/{name}      — Get
-//	GET    .../sites             — List in resource group / subscription
-//	DELETE .../sites/{name}      — Delete
-//	POST   /api/{name}           — Synchronous invoke (non-ARM, mirrors how
+//	PUT    .../sites/{name}        — CreateOrUpdate
+//	GET    .../sites/{name}        — Get
+//	GET    .../sites               — List in resource group / subscription
+//	DELETE .../sites/{name}        — Delete
+//	PUT    .../serverfarms/{name}  — CreateOrUpdate App Service plan
+//	GET    .../serverfarms/{name}  — Get App Service plan
+//	POST   /api/{name}             — Synchronous invoke (non-ARM, mirrors how
 //	                               real Function Apps are hit at
 //	                               <app>.azurewebsites.net/api/<name>)
 //
@@ -17,6 +19,7 @@
 package functions
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -24,13 +27,15 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	azfunctions "github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
 const (
-	providerName = "Microsoft.Web"
-	resourceType = "sites"
+	providerName    = "Microsoft.Web"
+	resourceType    = "sites"
+	serverFarmsType = "serverfarms"
 
 	functionAppKind  = "functionapp"
 	defaultLocation  = "eastus"
@@ -38,6 +43,14 @@ const (
 	maxInvokeBytes   = 1 << 20 // 1 MiB
 	maxControlBytes  = 1 << 20
 )
+
+// appServicePlanStore is the App Service plan surface the handler needs on top
+// of the serverless driver. The Azure provider Mock (*azfunctions.Mock)
+// satisfies it; backends that don't model plans fall through to 501.
+type appServicePlanStore interface {
+	CreateAppServicePlan(ctx context.Context, p azfunctions.AppServicePlan) (*azfunctions.AppServicePlan, error)
+	ListAppServicePlans(ctx context.Context) ([]azfunctions.AppServicePlan, error)
+}
 
 // Handler serves ARM JSON requests for Microsoft.Web/sites and direct invoke
 // requests at /api/{name}.
@@ -62,7 +75,11 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.Provider == providerName && rp.ResourceType == resourceType
+	if rp.Provider != providerName {
+		return false
+	}
+
+	return rp.ResourceType == resourceType || strings.EqualFold(rp.ResourceType, serverFarmsType)
 }
 
 // ServeHTTP routes requests by URL shape.
@@ -75,6 +92,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	if strings.EqualFold(rp.ResourceType, serverFarmsType) {
+		h.servePlan(w, r, rp)
 		return
 	}
 
@@ -179,6 +201,113 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// servePlan routes Microsoft.Web/serverfarms (App Service plan) requests. Only
+// backends that model plans (the Azure provider Mock) are served; others 501.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (h *Handler) servePlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	store, ok := h.fn.(appServicePlanStore)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
+			"app service plans not supported by this backend")
+		return
+	}
+
+	if rp.ResourceName == "" {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
+			"serverfarms collection operations are not supported")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		createPlan(w, r, rp, store)
+	case http.MethodGet:
+		getPlan(w, r, rp, store)
+	default:
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	}
+}
+
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func createPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
+	if rp.ResourceGroup == "" {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "missing resourceGroups segment")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxControlBytes)
+
+	var req createServerFarmRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error())
+		return
+	}
+
+	plan, err := store.CreateAppServicePlan(r.Context(), azfunctions.AppServicePlan{
+		Name:     rp.ResourceName,
+		SKUName:  req.SKU.Name,
+		SKUTier:  req.SKU.Tier,
+		Kind:     req.Kind,
+		Capacity: req.SKU.Capacity,
+		Tags:     req.Tags,
+	})
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toServerFarmResource(rp, plan))
+}
+
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func getPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store appServicePlanStore) {
+	plans, err := store.ListAppServicePlans(r.Context())
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	for i := range plans {
+		if plans[i].Name == rp.ResourceName {
+			azurearm.WriteJSON(w, http.StatusOK, toServerFarmResource(rp, &plans[i]))
+			return
+		}
+	}
+
+	azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+		"app service plan "+rp.ResourceName+" not found")
+}
+
+//nolint:gocritic // rp is request-scoped.
+func toServerFarmResource(rp azurearm.ResourcePath, plan *azfunctions.AppServicePlan) serverFarmResource {
+	location := plan.Location
+	if location == "" {
+		location = defaultLocation
+	}
+
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup,
+		providerName, serverFarmsType, rp.ResourceName)
+
+	return serverFarmResource{
+		ID:       id,
+		Name:     plan.Name,
+		Type:     providerName + "/" + serverFarmsType,
+		Kind:     plan.Kind,
+		Location: location,
+		Tags:     plan.Tags,
+		SKU: &serverFarmSKU{
+			Name:     plan.SKUName,
+			Tier:     plan.SKUTier,
+			Capacity: plan.Capacity,
+		},
+		Properties: serverFarmProperties{
+			ProvisioningState: "Succeeded",
+			Status:            "Ready",
+		},
+	}
 }
 
 func (h *Handler) serveInvoke(w http.ResponseWriter, r *http.Request) {

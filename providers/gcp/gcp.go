@@ -48,7 +48,7 @@ func (a gkeDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 			Name:       c.Name,
 			Region:     c.Location,
 			Tags:       c.ResourceLabels,
-			NodeGroups: c.NodePoolNames,
+			NodeGroups: resourcediscovery.NodeGroupsFromNames(c.NodePoolNames),
 		})
 	}
 
