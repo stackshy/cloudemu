@@ -7,7 +7,6 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
@@ -22,6 +21,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"

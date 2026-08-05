@@ -17,15 +17,15 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/fcm"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/firestore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gce"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/vpc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/vpc"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
