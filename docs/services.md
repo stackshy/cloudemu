@@ -550,8 +550,15 @@ assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
 | Egress-only internet gateways | Create, Delete, Describe |
 | VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
 | Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
+| IPAM (IP Address Manager) — full | Ipam/Scope/Pool CRUD+Modify; Cidr Provision/Deprovision/Get; Allocation Allocate/Release/Get/Modify; ResourceCidrs (Get/Modify) + AddressHistory; ResourceDiscovery CRUD + Associate/Disassociate + Discovered Accounts/ResourceCidrs/PublicAddresses; BYOASN (Provision/Deprovision/Associate/Disassociate/Describe); BYOIP (Move/Provision/Deprovision/Describe/Advertise/Withdraw); PrefixListResolver + Targets + Versions/Rules/Entries; ExternalResourceVerificationToken (Create/Delete/Describe); Policy (Create/Delete/Describe/Enable/Disable/GetEnabled/AllocationRules/OrgTargets) + OrganizationAdminAccount (Enable/Disable) |
 
-**AWS-specific total: 58 operations**
+**AWS-specific total: 127 operations**
+
+IPAM is fully covered (~69 operations). Cross-account/organization and live-network features (Resource Discovery, discovered accounts/resources/public addresses, BYOASN/BYOIP, policies, org-admin) are modeled against the emulator's own single-account state: discovered resources are derived from the stored VPCs/subnets/EIPs, and organization targets resolve to the configured account.
+
+### IPAM metrics (`AWS/IPAM` CloudWatch namespace)
+
+IPAM publishes derived metrics through the CloudWatch service (ListMetrics / GetMetricStatistics): `TotalActiveIpCount`; pool `PercentAllocated`/`PercentAssigned`/`PercentAvailable`/`Compliant`/`NoncompliantResourceCidrs`; scope `Managed`/`Unmanaged`/`Overlapping`/`Compliant`/`NoncompliantResourceCidrs`; public-IP insight counts; and resource utilization `VpcIPUsage`/`SubnetIPUsage`. Values are computed live from IPAM + VPC/subnet/EIP state.
 
 ---
 
@@ -2261,7 +2268,7 @@ still sees success.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
-| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN) | 58 |
+| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 127 |
 | Network Firewall — AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
@@ -2293,7 +2300,7 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1493** (+138 optional) |
+| **Grand Total** | **1562** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
