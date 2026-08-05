@@ -107,6 +107,14 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+  structure:
+    name: Structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: naming & layout convention (docs/STRUCTURE.md)
+        run: bash scripts/check_structure.sh
+
   format:
     name: Format
     runs-on: ubuntu-latest
