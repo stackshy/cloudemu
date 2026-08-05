@@ -870,6 +870,26 @@ func TestTrafficMirroringLifecycle(t *testing.T) {
 		t.Fatalf("expected NotFound for missing target, got %v", err)
 	}
 
+	// Modify must re-validate a re-pointed target/filter, matching Create — a
+	// Modify can't bind a live session to a nonexistent target or filter.
+	if _, err := m.ModifyTrafficMirrorSession(ctx, session.ID,
+		driver.TrafficMirrorSessionConfig{TrafficMirrorTargetID: "tmt-missing"}, nil); !cerrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound modifying session to missing target, got %v", err)
+	}
+
+	if _, err := m.ModifyTrafficMirrorSession(ctx, session.ID,
+		driver.TrafficMirrorSessionConfig{TrafficMirrorFilterID: "tmf-missing"}, nil); !cerrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound modifying session to missing filter, got %v", err)
+	}
+
+	// A valid modify that doesn't re-point leaves the existing refs intact.
+	if mod, err := m.ModifyTrafficMirrorSession(ctx, session.ID,
+		driver.TrafficMirrorSessionConfig{SessionNumber: 7}, nil); err != nil ||
+		mod.SessionNumber != 7 || mod.TrafficMirrorTargetID != target.ID ||
+		mod.TrafficMirrorFilterID != filter.ID {
+		t.Fatalf("ModifyTrafficMirrorSession valid update: %v %+v", err, mod)
+	}
+
 	if err := m.DeleteTrafficMirrorSession(ctx, session.ID); err != nil {
 		t.Fatalf("DeleteTrafficMirrorSession: %v", err)
 	}
