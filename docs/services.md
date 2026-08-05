@@ -10,7 +10,7 @@ This document lists every service and operation available in CloudEmu across all
 | 2 | Compute | `ec2` | `virtualmachines` | `gce` |
 | 3 | Database | `dynamodb` | `cosmosdb` | `firestore` |
 | 4 | Serverless | `lambda` | `functions` | `cloudfunctions` |
-| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN) | `vnet` | `gcpvpc` |
+| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` | `gcpvpc` |
 | 5a | Network Firewall | `network-firewall` | — | — |
 | 6 | Monitoring | `cloudwatch` | `azuremonitor` | `cloudmonitoring` |
 | 7 | IAM | `awsiam` | `azureiam` | `gcpiam` |
@@ -550,9 +550,13 @@ assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
 | Egress-only internet gateways | Create, Delete, Describe |
 | VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
 | Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
+| Traffic Mirroring | Target (Create/Delete/Describe); Filter (Create/Delete/Describe) + ModifyFilterNetworkServices; FilterRule (Create/Modify/Delete/Describe); Session (Create/Modify/Delete/Describe) |
+| Network Insights — Reachability Analyzer | Path (Create/Delete/Describe); Analysis (Start/Delete/Describe) |
+| Network Insights — Network Access Analyzer | AccessScope (Create/Delete/Describe) + GetContent; AccessScopeAnalysis (Start/Delete/Describe) + GetAnalysisFindings |
+| VPC Block Public Access | Options (Describe/Modify); Exclusion (Create/Modify/Delete/Describe) |
 | IPAM (IP Address Manager) — full | Ipam/Scope/Pool CRUD+Modify; Cidr Provision/Deprovision/Get; Allocation Allocate/Release/Get/Modify; ResourceCidrs (Get/Modify) + AddressHistory; ResourceDiscovery CRUD + Associate/Disassociate + Discovered Accounts/ResourceCidrs/PublicAddresses; BYOASN (Provision/Deprovision/Associate/Disassociate/Describe); BYOIP (Move/Provision/Deprovision/Describe/Advertise/Withdraw); PrefixListResolver + Targets + Versions/Rules/Entries; ExternalResourceVerificationToken (Create/Delete/Describe); Policy (Create/Delete/Describe/Enable/Disable/GetEnabled/AllocationRules/OrgTargets) + OrganizationAdminAccount (Enable/Disable) |
 
-**AWS-specific total: 127 operations**
+**AWS-specific total: 162 operations**
 
 IPAM is fully covered (~69 operations). Cross-account/organization and live-network features (Resource Discovery, discovered accounts/resources/public addresses, BYOASN/BYOIP, policies, org-admin) are modeled against the emulator's own single-account state: discovered resources are derived from the stored VPCs/subnets/EIPs, and organization targets resolve to the configured account.
 
@@ -2294,7 +2298,7 @@ still sees success.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
-| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 127 |
+| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / Traffic Mirroring / Network Insights / VPC Block Public Access / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 162 |
 | Network Firewall — AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
