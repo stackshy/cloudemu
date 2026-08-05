@@ -8,10 +8,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
+	"sync"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -33,6 +32,9 @@ type resourceDef struct {
 	// reconcile runs (under s.mu) after a successful create/update/patch to
 	// materialize children and refresh status. nil = plain CRUD store.
 	reconcile func(s *ClusterState, obj *unstructured.Unstructured)
+	// onDelete runs (under s.mu) after a successful delete. Used by the CRD kind
+	// to deregister the custom resource's store and cascade-delete its objects.
+	onDelete func(s *ClusterState, obj *unstructured.Unstructured)
 }
 
 func (d *resourceDef) apiVersion() string {
@@ -54,8 +56,13 @@ type registryStore struct {
 	rv    int // monotonic resourceVersion source, bumped on every mutation
 }
 
-// registry maps a group/version/plural to its store.
+// registry maps a group/version/plural to its store. The stores map is fixed at
+// construction for built-in kinds but grows/shrinks at runtime as CRDs are
+// created/deleted, so all access is guarded by mu. (Store CONTENTS — items/rv —
+// remain guarded by the owning ClusterState's mutex; mu guards only the set of
+// stores.)
 type registry struct {
+	mu     sync.RWMutex
 	stores map[string]*registryStore
 }
 
@@ -79,7 +86,71 @@ func (r *registry) lookup(route *Route) *registryStore {
 		return nil
 	}
 
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	return r.stores[regKey(route.APIGroup, route.APIVersion, route.Resource)]
+}
+
+// getStore returns the store for a group/version/plural, or nil. Safe against
+// concurrent CRD add/remove.
+func (r *registry) getStore(group, version, plural string) *registryStore {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.stores[regKey(group, version, plural)]
+}
+
+// addStore materializes a store for a (CRD-defined) kind if absent, returning
+// the store. Idempotent — re-applying a CRD keeps the existing store and its
+// objects.
+func (r *registry) addStore(d *resourceDef) *registryStore {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key := regKey(d.group, d.version, d.plural)
+	if st, ok := r.stores[key]; ok {
+		return st
+	}
+
+	st := &registryStore{def: d, items: make(map[string]*unstructured.Unstructured), watch: newBroadcaster()}
+	r.stores[key] = st
+
+	return st
+}
+
+// removeStore drops a (CRD-defined) kind's store. Idempotent.
+func (r *registry) removeStore(group, version, plural string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	delete(r.stores, regKey(group, version, plural))
+}
+
+// allDefs returns every live store's resourceDef, sorted for deterministic
+// discovery output. Includes both built-in and CRD-added kinds.
+func (r *registry) allDefs() []*resourceDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make([]*resourceDef, 0, len(r.stores))
+	for _, st := range r.stores {
+		out = append(out, st.def)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].group != out[j].group {
+			return out[i].group < out[j].group
+		}
+
+		if out[i].version != out[j].version {
+			return out[i].version < out[j].version
+		}
+
+		return out[i].plural < out[j].plural
+	})
+
+	return out
 }
 
 func objKey(namespace, name string) string { return namespace + "/" + name }
@@ -138,7 +209,7 @@ func (s *ClusterState) serveRegistryItem(w http.ResponseWriter, r *http.Request,
 	case http.MethodPatch:
 		s.registryPatch(w, r, st, route.Namespace, route.Name)
 	case http.MethodDelete:
-		s.registryDelete(w, st, route.Namespace, route.Name)
+		s.registryDelete(w, r, st, route.Namespace, route.Name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: "+st.def.plural+" item: method not allowed: "+r.Method)
 	}
@@ -154,8 +225,13 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 		s.mu.RLock()
 		sub := st.watch.subscribe(namespace)
 		items := st.snapshotLocked(namespace, r)
+		rv := st.rv
 		s.mu.RUnlock()
-		streamWatch(r.Context(), w, sub, items, keep)
+		streamWatch(r.Context(), w, sub, items, keep, watchOpts{
+			resume:      watchResume(r),
+			bookmarks:   watchBookmarksEnabled(r),
+			bookmarkObj: registryBookmark(st, rv),
+		})
 
 		return
 	}
@@ -165,13 +241,31 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 
 	items := st.snapshotLocked(namespace, r)
 
+	items, cont, ok := listPage(items, w, r)
+	if !ok {
+		return
+	}
+
 	list := &unstructured.UnstructuredList{}
 	list.SetAPIVersion(st.def.apiVersion())
 	list.SetKind(st.def.listKind)
 	list.SetResourceVersion(strconv.Itoa(st.rv))
+	list.SetContinue(cont)
 	list.Items = items
 
 	writeJSON(w, http.StatusOK, list)
+}
+
+// registryBookmark builds the minimal object a BOOKMARK watch event carries for
+// a registry-backed kind: just the kind's apiVersion/kind and the store's
+// current resourceVersion.
+func registryBookmark(st *registryStore, rv int) *unstructured.Unstructured {
+	bm := &unstructured.Unstructured{}
+	bm.SetAPIVersion(st.def.apiVersion())
+	bm.SetKind(st.def.kind)
+	bm.SetResourceVersion(strconv.Itoa(rv))
+
+	return bm
 }
 
 // snapshotLocked returns a sorted, selector-filtered copy of the store's items
@@ -239,8 +333,37 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 	obj.SetAPIVersion(st.def.apiVersion())
 	obj.SetKind(st.def.kind)
 	obj.SetUID(types.UID(newUID()))
-	obj.SetCreationTimestamp(metav1.NewTime(time.Now()))
+	obj.SetCreationTimestamp(s.now())
 	obj.SetGeneration(1)
+
+	// Admission (opt-in) is the first gate — before dry-run echoes or quota is
+	// reserved, so a denied create leaks neither.
+	if handled := s.admit(w, opCreate, st.def.gvr(), obj); handled {
+		return
+	}
+
+	if isDryRun(r) {
+		// A dry-run must report the same 403 a real create would when the
+		// namespace is at its quota limit — check (without reserving) before echo.
+		if status := s.checkQuotaLocked(namespace, st.def.kind, st.def.plural); status != nil {
+			writeJSON(w, int(status.Code), status)
+
+			return
+		}
+
+		obj.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		writeJSON(w, http.StatusCreated, obj)
+
+		return
+	}
+
+	// Quota is reserved only on a real (non-dry-run) create.
+	if status := s.checkAndReserveQuota(namespace, st.def.kind, st.def.plural); status != nil {
+		writeJSON(w, int(status.Code), status)
+
+		return
+	}
+
 	st.stampRVLocked(obj)
 
 	st.items[key] = obj
@@ -294,6 +417,9 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 	in.SetCreationTimestamp(cur.GetCreationTimestamp())
 	in.SetAPIVersion(st.def.apiVersion())
 	in.SetKind(st.def.kind)
+	// deletionTimestamp is server-owned: a PUT can drop a finalizer but must not
+	// resurrect a Terminating object by omitting the timestamp.
+	in.SetDeletionTimestamp(cur.GetDeletionTimestamp())
 	// Bump generation when the spec changed — controllers compare it against
 	// status.observedGeneration.
 	if specChanged(cur, in) {
@@ -302,7 +428,32 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 		in.SetGeneration(cur.GetGeneration())
 	}
 
+	if handled := s.admit(w, opUpdate, st.def.gvr(), in); handled {
+		return
+	}
+
+	// A plain PUT takes/shares ownership: preserve prior managedFields and record
+	// an Update entry for this fieldManager covering the fields it set.
+	s.stampUpdateOwnership(in, managedFieldsOf(cur), updateFieldManager(r), st.def.apiVersion(), ownedLeaves(in.Object))
+
+	if isDryRun(r) {
+		in.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		writeJSON(w, http.StatusOK, in)
+
+		return
+	}
+
 	st.stampRVLocked(in)
+
+	// Last finalizer removed on a Terminating object → complete the delete
+	// (same teardown the immediate-delete path runs: cascade + onDelete + quota).
+	if finalizersDrainedUnstructured(in) {
+		s.teardownRegistryObjectLocked(st, objKey(namespace, name), in)
+		st.watch.publish(EventDeleted, in.GetNamespace(), *in.DeepCopy())
+		writeJSON(w, http.StatusOK, in)
+
+		return
+	}
 
 	st.items[objKey(namespace, name)] = in
 
@@ -325,16 +476,66 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 		return
 	}
 
-	patched, ok := s.applyUnstructuredPatch(w, r, cur)
+	// Snapshot server-owned metadata before the patch so an RFC-7396 null-delete
+	// (e.g. `{"metadata":{"deletionTimestamp":null}}`) cannot resurrect or
+	// re-identify the object — mirrors the PUT path's guard.
+	prevDeletion := cur.GetDeletionTimestamp()
+	prevUID := cur.GetUID()
+	prevCreation := cur.GetCreationTimestamp()
+
+	// Server-side apply tracks field ownership + conflicts (managedFields); every
+	// other patch content-type is a plain merge/strategic/JSONPatch.
+	var patched *unstructured.Unstructured
+
+	if r.Header.Get("Content-Type") == contentTypeApplyPatch {
+		patched, ok = s.serverSideApply(w, r, st, cur)
+	} else {
+		patched, ok = s.applyUnstructuredPatch(w, r, cur)
+	}
+
 	if !ok {
 		return
+	}
+
+	patched.SetDeletionTimestamp(prevDeletion)
+	patched.SetUID(prevUID)
+	patched.SetCreationTimestamp(prevCreation)
+
+	// A non-apply patch takes/shares ownership: record an Update entry for its
+	// fieldManager covering the fields it changed. Apply-patch handled its own
+	// managedFields in serverSideApply.
+	if r.Header.Get("Content-Type") != contentTypeApplyPatch {
+		s.stampUpdateOwnership(patched, managedFieldsOf(cur), updateFieldManager(r),
+			st.def.apiVersion(), changedLeaves(cur.Object, patched.Object))
 	}
 
 	if specChanged(cur, patched) {
 		patched.SetGeneration(cur.GetGeneration() + 1)
 	}
 
+	if handled := s.admit(w, opUpdate, st.def.gvr(), patched); handled {
+		return
+	}
+
+	if isDryRun(r) {
+		patched.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	st.stampRVLocked(patched)
+
+	// A patch that removes the last finalizer from a Terminating object completes
+	// the delete (the patch was applied onto cur, so it inherits its
+	// deletionTimestamp), running the same teardown as the immediate-delete path.
+	if finalizersDrainedUnstructured(patched) {
+		s.teardownRegistryObjectLocked(st, objKey(namespace, name), patched)
+		st.watch.publish(EventDeleted, patched.GetNamespace(), *patched.DeepCopy())
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
 
 	st.items[objKey(namespace, name)] = patched
 
@@ -346,7 +547,7 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) registryDelete(w http.ResponseWriter, st *registryStore, namespace, name string) {
+func (s *ClusterState) registryDelete(w http.ResponseWriter, r *http.Request, st *registryStore, namespace, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -359,15 +560,52 @@ func (s *ClusterState) registryDelete(w http.ResponseWriter, st *registryStore, 
 		return
 	}
 
-	delete(st.items, key)
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, obj.DeepCopy())
+
+		return
+	}
+
+	// Finalizer-gated deletion: an object with finalizers goes Terminating
+	// (deletionTimestamp stamped) and stays until the last finalizer is removed
+	// via a later update/patch, rather than being deleted now.
+	if s.markForDeletionUnstructured(obj) {
+		st.stampRVLocked(obj)
+		st.watch.publish(EventModified, obj.GetNamespace(), *obj.DeepCopy())
+		writeJSON(w, http.StatusOK, obj.DeepCopy())
+
+		return
+	}
+
 	st.bumpRVLocked()
+	s.teardownRegistryObjectLocked(st, key, obj)
+
+	st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
+	writeJSON(w, http.StatusOK, obj.DeepCopy())
+}
+
+// teardownRegistryObjectLocked performs the final removal of a registry object
+// once it is finalizer-free (never had finalizers, or the last one just
+// drained): it drops the object, cascades to anything it owns, runs
+// kind-specific teardown (the CRD kind deregisters its CR store + discovery
+// entry here), and recomputes any quota it counted against. Shared by the
+// immediate-delete path and the finalizer-drain completions in registryUpdate/
+// registryPatch so every path finalizes identically. Callers hold s.mu.
+func (s *ClusterState) teardownRegistryObjectLocked(st *registryStore, key string, obj *unstructured.Unstructured) {
+	delete(st.items, key)
 
 	// Cascade: garbage-collect anything this object owns (its controlled Pods
 	// and any registry-backed children carrying its ownerReference).
 	s.garbageCollectLocked(obj.GetUID())
 
-	st.watch.publish(EventDeleted, obj.GetNamespace(), *obj.DeepCopy())
-	writeJSON(w, http.StatusOK, obj.DeepCopy())
+	// Kind-specific cleanup (the CRD kind deregisters its CR store here).
+	if st.def.onDelete != nil {
+		st.def.onDelete(s, obj)
+	}
+
+	// A quota-counted object going away must drop status.used back to the live
+	// count (recompute so a cascade that removed several at once stays correct).
+	s.releaseQuotaLocked(obj.GetNamespace(), st.def.kind, st.def.plural)
 }
 
 // stampRVLocked bumps the store's resourceVersion counter and stamps it on obj.
@@ -502,30 +740,57 @@ const (
 	fieldMetadataNamespace = "metadata.namespace"
 	fieldStatusPhase       = "status.phase"
 	fieldSpecNodeName      = "spec.nodeName"
+	// Event field selectors — `kubectl get events --field-selector` and
+	// controllers filtering their own Events rely on these. Without them the
+	// generic store fell closed (returned nothing) for any Event filter.
+	fieldInvolvedName      = "involvedObject.name"
+	fieldInvolvedNamespace = "involvedObject.namespace"
+	fieldInvolvedKind      = "involvedObject.kind"
+	fieldInvolvedUID       = "involvedObject.uid"
+	fieldEventReason       = "reason"
+	fieldEventType         = "type"
 )
 
 func matchesFields(obj *unstructured.Unstructured, fields map[string]string) bool {
 	for k, v := range fields {
-		switch k {
-		case fieldMetadataName:
-			if obj.GetName() != v {
-				return false
-			}
-		case fieldMetadataNamespace:
-			if obj.GetNamespace() != v {
-				return false
-			}
-		case fieldStatusPhase:
-			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
-			if phase != v {
-				return false
-			}
-		default:
-			// Unknown field selector: match nothing rather than silently
-			// returning everything (a data-correctness hazard for callers).
+		if !matchesField(obj, k, v) {
 			return false
 		}
 	}
 
 	return true
+}
+
+// matchesField answers a single field-selector clause. Unknown keys fail closed
+// (match nothing) rather than silently returning everything — a data-correctness
+// hazard for callers that expect the filter to be honored.
+func matchesField(obj *unstructured.Unstructured, key, want string) bool {
+	switch key {
+	case fieldMetadataName:
+		return obj.GetName() == want
+	case fieldMetadataNamespace:
+		return obj.GetNamespace() == want
+	case fieldStatusPhase:
+		return nestedStringField(obj, want, "status", "phase")
+	case fieldInvolvedName:
+		return nestedStringField(obj, want, "involvedObject", "name")
+	case fieldInvolvedNamespace:
+		return nestedStringField(obj, want, "involvedObject", "namespace")
+	case fieldInvolvedKind:
+		return nestedStringField(obj, want, "involvedObject", "kind")
+	case fieldInvolvedUID:
+		return nestedStringField(obj, want, "involvedObject", "uid")
+	case fieldEventReason:
+		return nestedStringField(obj, want, "reason")
+	case fieldEventType:
+		return nestedStringField(obj, want, "type")
+	default:
+		return false
+	}
+}
+
+func nestedStringField(obj *unstructured.Unstructured, want string, path ...string) bool {
+	got, _, _ := unstructured.NestedString(obj.Object, path...)
+
+	return got == want
 }

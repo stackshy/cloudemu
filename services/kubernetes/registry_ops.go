@@ -36,6 +36,16 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 					continue
 				}
 
+				// A child carrying finalizers goes Terminating (like a normal
+				// finalizer-gated delete), not hard-reaped. It keeps owning its own
+				// children until drained, so it is not enqueued as a deleted owner.
+				if s.markForDeletionUnstructured(obj) {
+					st.stampRVLocked(obj)
+					st.watch.publish(EventModified, obj.GetNamespace(), *obj.DeepCopy())
+
+					continue
+				}
+
 				uid := obj.GetUID()
 				owners[uid] = true
 
@@ -51,19 +61,33 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 	touched := map[string]bool{}
 
 	for key, pod := range s.pods {
-		if ownedByAny(pod.OwnerReferences, owners) {
-			delete(s.pods, key)
-
-			touched[pod.Namespace] = true
-
-			s.wPods.publish(EventDeleted, pod.Namespace, *pod.DeepCopy())
+		if !ownedByAny(pod.OwnerReferences, owners) {
+			continue
 		}
+
+		// Same finalizer gating for owned Pods: a Pod with finalizers is marked
+		// Terminating and left in place until its finalizers drain.
+		if s.markForDeletion(&pod.ObjectMeta) {
+			pod.ResourceVersion = bumpResourceVersion(pod.ResourceVersion)
+			s.wPods.publish(EventModified, pod.Namespace, *pod.DeepCopy())
+
+			continue
+		}
+
+		delete(s.pods, key)
+
+		touched[pod.Namespace] = true
+
+		s.wPods.publish(EventDeleted, pod.Namespace, *pod.DeepCopy())
 	}
 
 	// The endpoints controller must drop the addresses of the Pods we just
-	// garbage-collected, or a Service keeps pointing at gone Pods.
+	// garbage-collected, or a Service keeps pointing at gone Pods; and the Pod
+	// quota's status.used must fall back to the live count in each namespace we
+	// reaped from.
 	for ns := range touched {
 		s.resyncEndpointsForNamespaceLocked(ns)
+		s.releaseQuotaLocked(ns, "Pod", resourcePods)
 	}
 }
 

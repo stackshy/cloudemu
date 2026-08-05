@@ -42,7 +42,7 @@ func (s *ClusterState) serveServices(w http.ResponseWriter, r *http.Request, rou
 			return
 		}
 
-		s.listServicesAllNamespaces(w)
+		s.listServicesAllNamespaces(w, r)
 
 		return
 	}
@@ -71,7 +71,7 @@ func (s *ClusterState) serveServiceCollection(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		s.listServices(w, namespace)
+		s.listServices(w, r, namespace)
 	case http.MethodPost:
 		s.createService(w, r, namespace)
 	default:
@@ -97,7 +97,7 @@ func (s *ClusterState) serveServiceItem(w http.ResponseWriter, r *http.Request, 
 	case http.MethodPatch:
 		s.patchService(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deleteService(w, namespace, name)
+		s.deleteService(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: service item: method not allowed: "+r.Method)
 	}
@@ -128,7 +128,7 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "Service", APIVersion: "v1"}
 
 	if in.Spec.Type == "" {
@@ -147,12 +147,18 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 		in.Spec.ClusterIPs = []string{in.Spec.ClusterIP}
 	}
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
+
 	svc := in
 	s.services[key] = &svc
 
 	// Auto-create the Endpoints object, then let the endpoints controller fill
 	// its Subsets from Running Pods that match the Service selector.
-	ep := newEndpointsObject(namespace, svc.Name)
+	ep := s.newEndpointsObject(namespace, svc.Name)
 	s.endpoints[endpointsKey(namespace, svc.Name)] = ep
 
 	s.wServices.publish(EventAdded, namespace, *svc.DeepCopy())
@@ -162,24 +168,34 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 	writeJSON(w, http.StatusCreated, &svc)
 }
 
-func (s *ClusterState) listServices(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listServices(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectServicesLocked(namespace)
+	items, cont, ok := listPage(s.collectServicesLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ServiceList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listServicesAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listServicesAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectServicesLocked("")
+	items, cont, ok := listPage(s.collectServicesLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ServiceList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -259,6 +275,12 @@ func (s *ClusterState) updateService(w http.ResponseWriter, r *http.Request, nam
 		in.Spec.Type = cur.Spec.Type
 	}
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	svc := in
 	s.services[key] = &svc
 	s.wServices.publish(EventModified, namespace, *svc.DeepCopy())
@@ -287,12 +309,19 @@ func (s *ClusterState) patchService(w http.ResponseWriter, r *http.Request, name
 	// Same ClusterIP-immutable rule as updateService.
 	patched.Spec.ClusterIP = cur.Spec.ClusterIP
 	patched.Spec.ClusterIPs = cur.Spec.ClusterIPs
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.services[key] = patched
 	s.wServices.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteService(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deleteService(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := serviceKey(namespace, name)
 
 	s.mu.Lock()
@@ -301,6 +330,12 @@ func (s *ClusterState) deleteService(w http.ResponseWriter, namespace, name stri
 	svc, ok := s.services[key]
 	if !ok {
 		writeNotFound(w, "k8s api: service not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, svc.DeepCopy())
 
 		return
 	}

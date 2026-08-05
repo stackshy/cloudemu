@@ -112,7 +112,7 @@ func openAPIV3Root() map[string]any {
 		"api/v1": groupV3Ref("api/v1"),
 	}
 
-	for _, gv := range discoveryGroups() {
+	for _, gv := range discoveryGroupsFrom(registeredResources()) {
 		p := "apis/" + gv.group + "/" + gv.version
 		paths[p] = groupV3Ref(p)
 	}
@@ -172,15 +172,17 @@ func parseGVPath(p string) (group, version string) {
 func kindsForGroupVersion(group, version string) []string {
 	var res []apiResource
 
+	defs := registeredResources()
+
 	switch {
 	case group == "" && version == apiVersionV1:
-		res = coreResources()
+		res = coreResourcesFrom(defs)
 	case group == apiGroupApps && version == apiVersionV1:
-		res = appsResources()
+		res = appsResourcesFrom(defs)
 	case group == apiGroupPolicy && version == apiVersionV1:
 		res = policyResources()
 	default:
-		res = registryAPIResources(group, version)
+		res = registryAPIResourcesFrom(defs, group, version)
 	}
 
 	seen := map[string]bool{}

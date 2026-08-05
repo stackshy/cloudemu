@@ -21,7 +21,41 @@ func serveWatch[T any](
 	sub := b.subscribe(namespace)
 	items := collect()
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items, keep)
+	streamWatch(r.Context(), w, sub, items, keep, watchOpts{
+		resume:    watchResume(r),
+		bookmarks: watchBookmarksEnabled(r),
+	})
+}
+
+// watchOpts carries the per-request watch behaviors parsed from the query.
+type watchOpts struct {
+	// resume is true when the client passed resourceVersion>0 — it already has
+	// the current state, so the initial full-snapshot replay is skipped and only
+	// subsequent events are streamed. (There is no watch-cache history, so events
+	// strictly between the client's RV and watch establishment are not backfilled
+	// — a documented emulation simplification; a client that needs a guarantee
+	// relists.)
+	resume bool
+	// bookmarks is true when the client passed allowWatchBookmarks=true.
+	bookmarks bool
+	// bookmarkObj, when non-nil and bookmarks is set, is emitted once after the
+	// initial sync as a BOOKMARK event carrying the current resourceVersion, so
+	// the client can resume from it without a relist. Only registry-backed kinds
+	// (which track a store resourceVersion) supply one.
+	bookmarkObj any
+}
+
+// watchResume reports whether the request is resuming from a known
+// resourceVersion (anything other than absent or "0").
+func watchResume(r *http.Request) bool {
+	rv := r.URL.Query().Get("resourceVersion")
+
+	return rv != "" && rv != "0"
+}
+
+// watchBookmarksEnabled reports whether the client opted into BOOKMARK events.
+func watchBookmarksEnabled(r *http.Request) bool {
+	return r.URL.Query().Get("allowWatchBookmarks") == watchQueryValue
 }
 
 // parseListSelectors extracts the labelSelector and fieldSelector from a list
@@ -69,6 +103,10 @@ const (
 	// EventError carries a Status object (e.g. 410 Gone) that tells a client-go
 	// reflector to relist — used when a slow watcher overflowed its buffer.
 	EventError = "ERROR"
+	// EventBookmark carries an object holding only the latest resourceVersion, so
+	// a client that opted in (allowWatchBookmarks=true) can resume from it after a
+	// disconnect without a full relist.
+	EventBookmark = "BOOKMARK"
 )
 
 // expiredWatchStatus is the 410 Gone a real apiserver sends when a watch has
@@ -221,6 +259,7 @@ func streamWatch[T any](
 	sub *subscriber,
 	initial []T,
 	keep func(T) bool,
+	opts watchOpts,
 ) {
 	defer close(sub.done)
 
@@ -238,12 +277,24 @@ func streamWatch[T any](
 
 	enc := json.NewEncoder(w)
 
-	for _, item := range initial {
-		if keep != nil && !keep(item) {
-			continue
-		}
+	// A resuming watch (resourceVersion>0) already holds the current state, so
+	// the full ADDED replay is skipped — only subsequent events are streamed.
+	if !opts.resume {
+		for _, item := range initial {
+			if keep != nil && !keep(item) {
+				continue
+			}
 
-		if !encodeWatchEvent(enc, flusher, watchEvent{Type: EventAdded, Object: item}) {
+			if !encodeWatchEvent(enc, flusher, watchEvent{Type: EventAdded, Object: item}) {
+				return
+			}
+		}
+	}
+
+	// Emit a single post-sync BOOKMARK so an opted-in client learns the current
+	// resourceVersion to resume from. Bypasses keep (a bookmark is not a T).
+	if opts.bookmarks && opts.bookmarkObj != nil {
+		if !encodeWatchEvent(enc, flusher, watchEvent{Type: EventBookmark, Object: opts.bookmarkObj}) {
 			return
 		}
 	}

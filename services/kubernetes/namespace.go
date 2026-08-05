@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,7 +38,7 @@ func (s *ClusterState) serveNamespaceCollection(w http.ResponseWriter, r *http.R
 			return
 		}
 
-		s.listNamespaces(w)
+		s.listNamespaces(w, r)
 	case http.MethodPost:
 		s.createNamespace(w, r)
 	default:
@@ -56,7 +55,7 @@ func (s *ClusterState) serveNamespaceItem(w http.ResponseWriter, r *http.Request
 	case http.MethodPatch:
 		s.patchNamespace(w, r, name)
 	case http.MethodDelete:
-		s.deleteNamespace(w, name)
+		s.deleteNamespace(w, r, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: namespace item: method not allowed: "+r.Method)
 	}
@@ -102,14 +101,21 @@ func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ns := newNamespaceObject(in.Name)
+	ns := s.newNamespaceObject(in.Name)
 	ns.Labels = in.Labels
 	ns.Annotations = in.Annotations
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, ns)
+
+		return
+	}
+
 	s.namespaces[in.Name] = ns
 
 	// Real apiserver auto-creates a "default" ServiceAccount in every new
 	// namespace. Mirror that so `kubectl --namespace=<new>` finds an SA.
-	sa := newServiceAccountObject(in.Name, "default")
+	sa := s.newServiceAccountObject(in.Name, "default")
 	s.serviceAccounts[serviceAccountKey(in.Name, "default")] = sa
 
 	s.wNamespaces.publish(EventAdded, "", *ns.DeepCopy())
@@ -118,7 +124,7 @@ func (s *ClusterState) createNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, ns)
 }
 
-func (s *ClusterState) listNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -136,8 +142,14 @@ func (s *ClusterState) listNamespaces(w http.ResponseWriter) {
 		items = append(items, *s.namespaces[n].DeepCopy())
 	}
 
+	items, cont, ok := listPage(items, w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.NamespaceList{
 		TypeMeta: metav1.TypeMeta{Kind: "NamespaceList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -182,9 +194,26 @@ func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, n
 	in.CreationTimestamp = cur.CreationTimestamp
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
+	// deletionTimestamp is server-owned — carry it forward so a finalizer-removing
+	// PUT can't resurrect a Terminating namespace.
+	in.DeletionTimestamp = cur.DeletionTimestamp
 
 	if in.Status.Phase == "" {
 		in.Status.Phase = corev1.NamespaceActive
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
+	// Last finalizer removed on a Terminating namespace → complete the delete.
+	if finalizersDrained(&in.ObjectMeta) {
+		s.deleteNamespaceLocked(&in)
+		writeJSON(w, http.StatusOK, &in)
+
+		return
 	}
 
 	s.namespaces[name] = &in
@@ -209,12 +238,34 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
+	// must not resurrect a Terminating namespace — carry it (and uid/creation)
+	// forward, mirroring updateNamespace.
+	patched.DeletionTimestamp = cur.DeletionTimestamp
+	patched.UID = cur.UID
+	patched.CreationTimestamp = cur.CreationTimestamp
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
+	// A patch removing the last finalizer from a Terminating namespace completes
+	// the delete (patch inherits cur's deletionTimestamp).
+	if finalizersDrained(&patched.ObjectMeta) {
+		s.deleteNamespaceLocked(patched)
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.namespaces[name] = patched
 	s.wNamespaces.publish(EventModified, "", *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
+func (s *ClusterState) deleteNamespace(w http.ResponseWriter, r *http.Request, name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -225,57 +276,97 @@ func (s *ClusterState) deleteNamespace(w http.ResponseWriter, name string) {
 		return
 	}
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, ns.DeepCopy())
+
+		return
+	}
+
+	// Finalizer-gated deletion: a namespace with finalizers goes Terminating and
+	// is only removed once the last finalizer is dropped via update/patch.
+	if s.markForDeletion(&ns.ObjectMeta) {
+		ns.ResourceVersion = bumpResourceVersion(ns.ResourceVersion)
+		s.wNamespaces.publish(EventModified, "", *ns.DeepCopy())
+		writeJSON(w, http.StatusOK, ns.DeepCopy())
+
+		return
+	}
+
+	s.deleteNamespaceLocked(ns)
+	writeJSON(w, http.StatusOK, ns.DeepCopy())
+}
+
+// deleteNamespaceLocked removes a namespace and cascades to every namespaced
+// resource keyed under it. Each helper publishes a DELETED event so Watch
+// subscribers see the cascade alongside the namespace going away. Callers hold
+// s.mu.
+func (s *ClusterState) deleteNamespaceLocked(ns *corev1.Namespace) {
+	name := ns.Name
+
 	delete(s.namespaces, name)
 	s.wNamespaces.publish(EventDeleted, "", *ns.DeepCopy())
 
-	// Cascading delete: drop every namespaced resource keyed under this
-	// namespace. Each helper publishes a DELETED event so Watch subscribers
-	// see the cascade alongside the namespace going away.
 	prefix := name + "/"
-	cascadeDeleteWithEvents(s.configMaps, prefix, name, s.wConfigMaps)
-	cascadeDeleteWithEvents(s.pods, prefix, name, s.wPods)
-	cascadeDeleteWithEvents(s.secrets, prefix, name, s.wSecrets)
-	cascadeDeleteWithEvents(s.serviceAccounts, prefix, name, s.wServiceAccounts)
-	cascadeDeleteWithEvents(s.services, prefix, name, s.wServices)
-	cascadeDeleteWithEvents(s.deployments, prefix, name, s.wDeployments)
-	cascadeDeleteWithEvents(s.endpoints, prefix, name, s.wEndpoints)
-
-	writeJSON(w, http.StatusOK, ns.DeepCopy())
+	cascadeDeleteWithEvents(s, s.configMaps, prefix, name, s.wConfigMaps)
+	cascadeDeleteWithEvents(s, s.pods, prefix, name, s.wPods)
+	cascadeDeleteWithEvents(s, s.secrets, prefix, name, s.wSecrets)
+	cascadeDeleteWithEvents(s, s.serviceAccounts, prefix, name, s.wServiceAccounts)
+	cascadeDeleteWithEvents(s, s.services, prefix, name, s.wServices)
+	cascadeDeleteWithEvents(s, s.deployments, prefix, name, s.wDeployments)
+	cascadeDeleteWithEvents(s, s.endpoints, prefix, name, s.wEndpoints)
 }
 
 // deepCopier constrains the element type of a per-resource map: it must be
 // a pointer whose underlying type has the upstream Kubernetes-codegen
-// DeepCopy() *V method. Every corev1/appsv1 type we store satisfies this,
-// so cascadeDeleteWithEvents can publish its own copy of every event
-// instead of aliasing the stored object's inner maps to all subscribers.
+// DeepCopy() *V method and the metav1.Object metadata accessors. Every
+// corev1/appsv1 type we store satisfies this, so cascadeDeleteWithEvents can
+// publish its own copy of every event (instead of aliasing the stored object's
+// inner maps to all subscribers) and honor per-child finalizers.
 type deepCopier[V any] interface {
 	*V
+	metav1.Object
 	DeepCopy() *V
 }
 
-// cascadeDeleteWithEvents drops every entry in m whose key starts with
-// prefix and publishes a DELETED Watch event for each removed object.
-// Each event ships a freshly DeepCopy()'d value so subscribers see their
-// own independent copy of the inner maps/slices — mutation by one
-// subscriber can't corrupt another's view.
-func cascadeDeleteWithEvents[V any, P deepCopier[V]](m map[string]P, prefix, ns string, b *broadcaster) {
+// cascadeDeleteWithEvents removes (or, for finalizer-bearing children, marks
+// Terminating) every entry in m whose key starts with prefix. A child carrying
+// finalizers is not hard-deleted: it gets a deletionTimestamp and a MODIFIED
+// event, matching a normal finalizer-gated delete, and is only reaped once its
+// finalizers drain. Finalizer-free children are deleted and get a DELETED event.
+// Each event ships a freshly DeepCopy()'d value so subscribers see their own
+// independent copy of the inner maps/slices.
+func cascadeDeleteWithEvents[V any, P deepCopier[V]](s *ClusterState, m map[string]P, prefix, ns string, b *broadcaster) {
 	for k, v := range m {
-		if strings.HasPrefix(k, prefix) {
-			b.publish(EventDeleted, ns, *v.DeepCopy())
-			delete(m, k)
+		if !strings.HasPrefix(k, prefix) {
+			continue
 		}
+
+		if len(v.GetFinalizers()) > 0 {
+			if v.GetDeletionTimestamp() == nil {
+				t := s.now()
+				v.SetDeletionTimestamp(&t)
+			}
+
+			v.SetResourceVersion(bumpResourceVersion(v.GetResourceVersion()))
+			b.publish(EventModified, ns, *v.DeepCopy())
+
+			continue
+		}
+
+		b.publish(EventDeleted, ns, *v.DeepCopy())
+		delete(m, k)
 	}
 }
 
 // newNamespaceObject builds a fresh Namespace with the implicit fields a
 // real apiserver fills in on creation (UID, creationTimestamp, status).
-func newNamespaceObject(name string) *corev1.Namespace {
+func (s *ClusterState) newNamespaceObject(name string) *corev1.Namespace {
 	return &corev1.Namespace{
 		TypeMeta: metav1.TypeMeta{Kind: "Namespace", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
 			UID:               types.UID(newUID()),
-			CreationTimestamp: metav1.NewTime(time.Now()),
+			CreationTimestamp: s.now(),
 			ResourceVersion:   "1",
 		},
 		Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive},

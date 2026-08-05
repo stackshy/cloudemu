@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/k8spki"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -740,12 +741,17 @@ func (m *Mock) Kubeconfig(rg, name string) []byte {
 		}
 	}
 
+	// Even on the Wave-1 fallback path (no wired data plane), advertise the
+	// shared cluster CA so the kubeconfig is structurally identical to EKS/GKE,
+	// which return a real certificate-authority-data unconditionally. Only the
+	// server host differs (the NOT-IMPLEMENTED sentinel).
 	return fmt.Appendf(nil, `apiVersion: v1
 kind: Config
 clusters:
 - name: %s
   cluster:
     server: https://AKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local
+    certificate-authority-data: %s
 contexts:
 - name: %s
   context:
@@ -756,7 +762,7 @@ users:
 - name: clusterUser_%s_%s
   user:
     token: cloudemu-stub-token
-`, name, name, name, rg, name, name, rg, name)
+`, name, k8spki.CertificatePEM(), name, name, rg, name, name, rg, name)
 }
 
 func defaultIfEmpty(v, def string) string {

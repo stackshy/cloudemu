@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/stackshy/cloudemu/v2/config"
 )
 
 // pathPrefix is the URL segment that namespaces every cluster's data plane.
@@ -37,11 +39,35 @@ type APIServer struct {
 	mu       sync.RWMutex
 	clusters map[string]*ClusterState
 	baseURL  string
+	// clock is handed to every ClusterState registered after it is set, so a
+	// FakeClock injected before RegisterCluster makes the data plane's
+	// timestamps deterministic. Defaults to config.RealClock.
+	clock config.Clock
+
+	// admissionEnabled and admissionClient configure the opt-in admission
+	// webhook chain (see SetAdmissionEnabled, admission.go). Captured onto
+	// each ClusterState at RegisterCluster time, the same way the rest of
+	// this server's options are threaded down.
+	admissionEnabled bool
+	admissionClient  *http.Client
 }
 
 // NewAPIServer returns an empty APIServer with no registered clusters.
 func NewAPIServer() *APIServer {
-	return &APIServer{clusters: make(map[string]*ClusterState)}
+	return &APIServer{clusters: make(map[string]*ClusterState), clock: config.RealClock{}}
+}
+
+// SetClock sets the clock handed to ClusterStates registered from now on. Wire
+// a config.FakeClock before RegisterCluster to make all data-plane timestamps
+// deterministic.
+func (s *APIServer) SetClock(c config.Clock) {
+	if c == nil {
+		return
+	}
+
+	s.mu.Lock()
+	s.clock = c
+	s.mu.Unlock()
 }
 
 // RegisterCluster allocates fresh state for a new cluster and returns its
@@ -49,13 +75,36 @@ func NewAPIServer() *APIServer {
 // server URL — kubeconfig "server" becomes "<base>/k8s/<uid>".
 func (s *APIServer) RegisterCluster() (string, *ClusterState) {
 	uid := newUID()
-	state := newClusterState()
 
 	s.mu.Lock()
+	state := newClusterState(s.clock, s.admissionEnabled, s.admissionClient)
 	s.clusters[uid] = state
 	s.mu.Unlock()
 
 	return uid, state
+}
+
+// SetAdmissionEnabled turns the admission webhook chain on or off for
+// clusters registered after the call. Default is false: MutatingWebhook/
+// ValidatingWebhookConfiguration objects still store and round-trip through
+// `kubectl apply`, but are never invoked — a create/update/patch behaves
+// exactly as before. Outbound HTTPS calls to webhook endpoints fight
+// cloudemu's zero-network, deterministic-by-default pillar, so this is
+// opt-in rather than derived from the presence of webhook configs.
+func (s *APIServer) SetAdmissionEnabled(enabled bool) {
+	s.mu.Lock()
+	s.admissionEnabled = enabled
+	s.mu.Unlock()
+}
+
+// SetAdmissionHTTPClient overrides the HTTP client used to call admission
+// webhooks for clusters registered after the call. Tests use this to inject
+// a client that trusts an httptest.NewTLSServer's certificate instead of
+// wiring up real TLS trust for a fake webhook endpoint.
+func (s *APIServer) SetAdmissionHTTPClient(c *http.Client) {
+	s.mu.Lock()
+	s.admissionClient = c
+	s.mu.Unlock()
 }
 
 // DeregisterCluster removes a cluster's state. Called by control-plane

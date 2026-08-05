@@ -26,6 +26,15 @@ const (
 	subresourceScale  = "scale"
 )
 
+// Pod subresource path segments. `log` is served with synthetic output; the
+// streaming ones (exec/attach/portforward) return a typed "not implemented".
+const (
+	subresourcePodLog         = "log"
+	subresourcePodExec        = "exec"
+	subresourcePodAttach      = "attach"
+	subresourcePodPortForward = "portforward"
+)
+
 // watchQuery is the ?watch=true value clients pass to upgrade a list
 // request into a stream. Centralized so dispatchers don't all hold a
 // "true" literal.
