@@ -1921,6 +1921,32 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 | `ListWorkspacesByResourceGroup` | `(ctx, resourceGroup) ([]Workspace, error)` |
 | `ListWorkspaces` | `(ctx) ([]Workspace, error)` |
 
+### Extended ARM resources (control plane)
+
+The rest of the `Microsoft.Databricks` ARM surface beyond workspaces
+(`services/databricks/driver/arm_resources.go`), reachable over the real
+`armdatabricks` SDK:
+
+| Resource | Operations |
+|----------|------------|
+| **Access Connectors** (`accessConnectors`) | `CreateOrUpdateAccessConnector`, `GetAccessConnector`, `UpdateAccessConnector`, `DeleteAccessConnector`, `ListAccessConnectorsByResourceGroup`, `ListAccessConnectors` |
+| **Private Endpoint Connections** (`workspaces/{w}/privateEndpointConnections`) | `PutPrivateEndpointConnection`, `GetPrivateEndpointConnection`, `DeletePrivateEndpointConnection`, `ListPrivateEndpointConnections` |
+| **Private Link Resources** (`workspaces/{w}/privateLinkResources`) | `GetPrivateLinkResource`, `ListPrivateLinkResources` |
+| **VNet Peering** (`workspaces/{w}/virtualNetworkPeerings`) | `CreateOrUpdateVNetPeering`, `GetVNetPeering`, `DeleteVNetPeering`, `ListVNetPeerings` |
+| **Outbound Network Dependencies** (`workspaces/{w}/outboundNetworkDependenciesEndpoints`) | `ListOutboundNetworkDependencies` |
+| **Operations** (`/providers/Microsoft.Databricks/operations`) | `ListOperations` |
+
+*Modeled store-and-echo:* the ARM resources round-trip faithfully over the SDK
+(access connectors and peerings persist and are listed/described; a
+system-assigned access-connector identity gets synthesized principal/tenant
+IDs; a created peering springs to `Connected`/`Succeeded`), but the underlying
+Azure networking side effects are **not** simulated — a private-endpoint
+connection stores its approval state without a real private endpoint on the
+platform side, private-link resources and outbound-dependency endpoints are a
+synthesized (workspace-scoped) catalog rather than a live probe, and a VNet
+peering does not actually peer networks. The provider operations list is a
+static catalog of the RBAC operations the namespace exposes.
+
 ### Instance Pool Operations
 
 | Operation | Signature |
@@ -2002,7 +2028,7 @@ Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane
 | `SetPermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
 | `UpdatePermissions` | `(ctx, objectType, objectID, acl) (*ObjectPermissions, error)` |
 
-**Total: 52 operations**
+**Total: 70 operations**
 
 ---
 
@@ -2294,7 +2320,7 @@ still sees success.
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI — AWS Bedrock (control plane + runtime) | 65 |
 | Generative AI — AWS Bedrock Agent (control plane + runtime) | 32 |
-| Databricks — Azure (control + data plane) | 52 |
+| Databricks — Azure (control + data plane) | 70 |
 | Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
 | Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |

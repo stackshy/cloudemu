@@ -40,7 +40,9 @@ type Workspace struct {
 }
 
 // Databricks is the interface that workspace service implementations must
-// satisfy.
+// satisfy. It also embeds the extended Microsoft.Databricks ARM surface
+// (access connectors, private endpoint connections, private link resources,
+// VNet peerings, outbound network dependencies, operations — issue #209).
 type Databricks interface {
 	CreateWorkspace(ctx context.Context, cfg WorkspaceConfig) (*Workspace, error)
 	GetWorkspace(ctx context.Context, resourceGroup, name string) (*Workspace, error)
@@ -48,4 +50,6 @@ type Databricks interface {
 	UpdateWorkspaceTags(ctx context.Context, resourceGroup, name string, tags map[string]string) (*Workspace, error)
 	ListWorkspacesByResourceGroup(ctx context.Context, resourceGroup string) ([]Workspace, error)
 	ListWorkspaces(ctx context.Context) ([]Workspace, error)
+
+	ARMResources
 }
