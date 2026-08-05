@@ -50,6 +50,23 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request, rt route) 
 		return
 	}
 
+	// FCM requires exactly one target — token, topic, or condition. Reject a
+	// message that sets more than one (real FCM returns INVALID_ARGUMENT).
+	targets := 0
+
+	for _, t := range []string{body.Message.Token, body.Message.Topic, body.Message.Condition} {
+		if t != "" {
+			targets++
+		}
+	}
+
+	if targets > 1 {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+			"exactly one of token, topic, condition may be set")
+
+		return
+	}
+
 	if body.ValidateOnly {
 		// Dry run: validate the request only — do NOT auto-create the topic,
 		// publish, or emit metrics. Real FCM returns a fabricated message name.
