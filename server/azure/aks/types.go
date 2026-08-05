@@ -22,7 +22,15 @@ type armManagedCluster struct {
 	Type       string                       `json:"type,omitempty"`
 	Location   string                       `json:"location,omitempty"`
 	Tags       map[string]*string           `json:"tags,omitempty"`
+	SKU        *armManagedClusterSKU        `json:"sku,omitempty"`
 	Properties *armManagedClusterProperties `json:"properties,omitempty"`
+}
+
+// armManagedClusterSKU mirrors armcontainerservice.ManagedClusterSKU. The tier
+// (Free / Standard / Premium) is the uptime-SLA cost input a discoverer reads.
+type armManagedClusterSKU struct {
+	Name string `json:"name,omitempty"`
+	Tier string `json:"tier,omitempty"`
 }
 
 type armManagedClusterProperties struct {
@@ -48,6 +56,7 @@ type armAgentPoolProfile struct {
 	OSType            string             `json:"osType,omitempty"`
 	Mode              string             `json:"mode,omitempty"`
 	OrchestratorVer   string             `json:"orchestratorVersion,omitempty"`
+	ScaleSetPriority  string             `json:"scaleSetPriority,omitempty"`
 	NodeLabels        map[string]*string `json:"nodeLabels,omitempty"`
 	NodeTaints        []string           `json:"nodeTaints,omitempty"`
 	ProvisioningState string             `json:"provisioningState,omitempty"`
@@ -70,6 +79,7 @@ type armAgentPoolProperties struct {
 	OSType            string             `json:"osType,omitempty"`
 	Mode              string             `json:"mode,omitempty"`
 	OrchestratorVer   string             `json:"orchestratorVersion,omitempty"`
+	ScaleSetPriority  string             `json:"scaleSetPriority,omitempty"`
 	NodeLabels        map[string]*string `json:"nodeLabels,omitempty"`
 	NodeTaints        []string           `json:"nodeTaints,omitempty"`
 	ProvisioningState string             `json:"provisioningState,omitempty"`
@@ -116,6 +126,7 @@ func toARMCluster(c *aks.ManagedCluster, pools []aks.AgentPool, subscription str
 		Type:     resourceTypeManagedClusterFull,
 		Location: c.Location,
 		Tags:     toPtrTags(c.Tags),
+		SKU:      &armManagedClusterSKU{Name: "Base", Tier: c.Tier},
 		Properties: &armManagedClusterProperties{
 			ProvisioningState: c.ProvisioningState,
 			KubernetesVersion: c.KubernetesVersion,
@@ -143,6 +154,7 @@ func toAgentPoolProfiles(pools []aks.AgentPool) []armAgentPoolProfile {
 			OSType:            pools[i].OSType,
 			Mode:              pools[i].Mode,
 			OrchestratorVer:   pools[i].OrchestratorVer,
+			ScaleSetPriority:  pools[i].ScaleSetPriority,
 			NodeLabels:        toPtrTags(pools[i].NodeLabels),
 			NodeTaints:        pools[i].NodeTaints,
 			ProvisioningState: pools[i].ProvisioningState,
@@ -166,6 +178,7 @@ func toARMAgentPool(p *aks.AgentPool, subscription string) armAgentPool {
 			OSType:            p.OSType,
 			Mode:              p.Mode,
 			OrchestratorVer:   p.OrchestratorVer,
+			ScaleSetPriority:  p.ScaleSetPriority,
 			NodeLabels:        toPtrTags(p.NodeLabels),
 			NodeTaints:        p.NodeTaints,
 			ProvisioningState: p.ProvisioningState,

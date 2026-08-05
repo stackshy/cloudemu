@@ -35,6 +35,10 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 		Tags:          fromPtrTags(body.Tags),
 	}
 
+	if body.SKU != nil {
+		in.Tier = body.SKU.Tier
+	}
+
 	if body.Properties != nil {
 		in.KubernetesVersion = body.Properties.KubernetesVersion
 		in.DNSPrefix = body.Properties.DNSPrefix
@@ -43,15 +47,16 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 		for i := range body.Properties.AgentPoolProfiles {
 			p := &body.Properties.AgentPoolProfiles[i]
 			in.AgentPools = append(in.AgentPools, aks.AgentPoolInput{
-				Name:            p.Name,
-				Count:           p.Count,
-				VMSize:          p.VMSize,
-				OSDiskSizeGB:    p.OSDiskSizeGB,
-				OSType:          p.OSType,
-				Mode:            p.Mode,
-				OrchestratorVer: p.OrchestratorVer,
-				NodeLabels:      fromPtrTags(p.NodeLabels),
-				NodeTaints:      p.NodeTaints,
+				Name:             p.Name,
+				Count:            p.Count,
+				VMSize:           p.VMSize,
+				OSDiskSizeGB:     p.OSDiskSizeGB,
+				OSType:           p.OSType,
+				Mode:             p.Mode,
+				OrchestratorVer:  p.OrchestratorVer,
+				ScaleSetPriority: p.ScaleSetPriority,
+				NodeLabels:       fromPtrTags(p.NodeLabels),
+				NodeTaints:       p.NodeTaints,
 			})
 		}
 	}
@@ -141,6 +146,7 @@ func (h *Handler) createOrUpdateAgentPool(w http.ResponseWriter, r *http.Request
 		in.OSType = body.Properties.OSType
 		in.Mode = body.Properties.Mode
 		in.OrchestratorVer = body.Properties.OrchestratorVer
+		in.ScaleSetPriority = body.Properties.ScaleSetPriority
 		in.NodeLabels = fromPtrTags(body.Properties.NodeLabels)
 		in.NodeTaints = body.Properties.NodeTaints
 	}

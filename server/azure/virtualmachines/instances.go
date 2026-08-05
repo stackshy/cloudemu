@@ -46,6 +46,10 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		SubnetID:     firstNicID(req.Properties.NetworkProfile),
 		KeyName:      computerName(req.Properties.OSProfile),
 		Tags:         mergeTags(req.Tags, rp.ResourceName),
+		Priority:     req.Properties.Priority,
+		LicenseType:  req.Properties.LicenseType,
+		OSType:       osTypeFromStorage(req.Properties.StorageProfile),
+		Zones:        req.Zones,
 	}
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, 1)
@@ -238,6 +242,14 @@ func computerName(o *osProfile) string {
 	return o.ComputerName
 }
 
+func osTypeFromStorage(s *storageProfile) string {
+	if s == nil || s.OSDisk == nil {
+		return ""
+	}
+
+	return s.OSDisk.OSType
+}
+
 func mergeTags(in map[string]string, armName string) map[string]string {
 	out := make(map[string]string, len(in)+1)
 
@@ -270,10 +282,14 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 		Type:     providerName + "/" + resourceType,
 		Location: defaultIfEmpty(req.Location, "eastus"),
 		Tags:     stripInternalTags(inst.Tags),
+		Zones:    inst.Zones,
 		Properties: vmResponseProps{
 			VMID:              inst.ID,
 			ProvisioningState: "Succeeded",
 			HardwareProfile:   &hardwareProfile{VMSize: inst.InstanceType},
+			StorageProfile:    osDiskProfile(inst.OSType),
+			Priority:          inst.Priority,
+			LicenseType:       inst.LicenseType,
 			InstanceView: &instanceView{
 				Statuses: []instanceViewStatus{
 					{Code: "ProvisioningState/succeeded", Level: "Info", DisplayStatus: "Provisioning succeeded"},
@@ -282,6 +298,17 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 			},
 		},
 	}
+}
+
+// osDiskProfile echoes the guest OS family under the storageProfile.osDisk
+// path the SDK reads it from. Returns nil when the OS type is unknown so the
+// field is omitted rather than emitted empty.
+func osDiskProfile(osType string) *storageProfile {
+	if osType == "" {
+		return nil
+	}
+
+	return &storageProfile{OSDisk: &osDisk{OSType: osType}}
 }
 
 func defaultIfEmpty(v, fallback string) string {

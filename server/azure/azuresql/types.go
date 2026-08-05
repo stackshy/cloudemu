@@ -1,16 +1,13 @@
 package azuresql
 
 import (
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
-// Azure SQL Database.status enum values used in ARM responses.
-const (
-	dbStatusOnline   = "Online"
-	dbStatusPaused   = "Paused"
-	dbStatusCreating = "Creating"
-	dbStatusDeleting = "Deleting"
-)
+// dbStatusOnline is the Azure SQL Database.status value echoed on read. Logical
+// databases are always-on, so read responses report Online.
+const dbStatusOnline = "Online"
 
 // armServer is the JSON shape Azure ARM expects for Microsoft.Sql/servers.
 type armServer struct {
@@ -49,15 +46,17 @@ type armSKU struct {
 }
 
 type armDatabaseProps struct {
-	Status                      string `json:"status,omitempty"`
-	CreateMode                  string `json:"createMode,omitempty"`
-	SourceDatabaseID            string `json:"sourceDatabaseId,omitempty"`
-	RestorePointInTime          string `json:"restorePointInTime,omitempty"`
-	MaxSizeBytes                int64  `json:"maxSizeBytes,omitempty"`
-	Collation                   string `json:"collation,omitempty"`
-	DatabaseID                  string `json:"databaseId,omitempty"`
-	CurrentServiceObjectiveName string `json:"currentServiceObjectiveName,omitempty"`
-	ElasticPoolID               string `json:"elasticPoolId,omitempty"`
+	Status                      string  `json:"status,omitempty"`
+	CreateMode                  string  `json:"createMode,omitempty"`
+	SourceDatabaseID            string  `json:"sourceDatabaseId,omitempty"`
+	RestorePointInTime          string  `json:"restorePointInTime,omitempty"`
+	MaxSizeBytes                int64   `json:"maxSizeBytes,omitempty"`
+	Collation                   string  `json:"collation,omitempty"`
+	DatabaseID                  string  `json:"databaseId,omitempty"`
+	CurrentServiceObjectiveName string  `json:"currentServiceObjectiveName,omitempty"`
+	CurrentSKU                  *armSKU `json:"currentSku,omitempty"`
+	ZoneRedundant               *bool   `json:"zoneRedundant,omitempty"`
+	ElasticPoolID               string  `json:"elasticPoolId,omitempty"`
 }
 
 // armList is the ARM list-response envelope.
@@ -84,24 +83,24 @@ func toARMServer(cluster *rdsdriver.Cluster, subscription, resourceGroup string)
 	}
 }
 
-// toARMDatabase converts a portable Instance (database) to ARM JSON.
-func toARMDatabase(inst *rdsdriver.Instance, subscription, resourceGroup string) armDatabase {
+// toARMDatabase converts a portable Database (Databases capability) to ARM JSON.
+// SKU.name plus properties.currentSku / zoneRedundant are echoed so SKU/tier
+// and HA are observable to both the armsql SDK and Resource Graph discovery.
+func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath) armDatabase {
+	zoneRedundant := db.ZoneRedundant
+
 	return armDatabase{
-		ID:       armDatabaseID(subscription, resourceGroup, inst.ClusterID, inst.ID),
-		Name:     inst.ID,
-		Type:     providerName + "/servers/databases",
-		Location: inst.AvailabilityZone,
-		Tags:     inst.Tags,
-		SKU: &armSKU{
-			Name: inst.InstanceClass,
-		},
+		ID:   armDatabaseID(rp.Subscription, rp.ResourceGroup, db.Server, db.Name),
+		Name: db.Name,
+		Type: providerName + "/servers/databases",
+		SKU:  &armSKU{Name: db.SKUName, Tier: db.SKUTier},
 		Properties: &armDatabaseProps{
-			Status:                      databaseStatus(inst.State),
-			MaxSizeBytes:                int64(inst.AllocatedStorage) * (1 << 30),
-			Collation:                   "SQL_Latin1_General_CP1_CI_AS",
-			DatabaseID:                  inst.ARN,
-			CurrentServiceObjectiveName: inst.InstanceClass,
-			ElasticPoolID:               inst.ElasticPoolID,
+			Status:                      dbStatusOnline,
+			Collation:                   db.Collation,
+			DatabaseID:                  db.ARN,
+			CurrentServiceObjectiveName: db.SKUName,
+			CurrentSKU:                  &armSKU{Name: db.SKUName, Tier: db.SKUTier},
+			ZoneRedundant:               &zoneRedundant,
 		},
 	}
 }
@@ -114,21 +113,4 @@ func armServerID(subscription, resourceGroup, server string) string {
 
 func armDatabaseID(subscription, resourceGroup, server, database string) string {
 	return armServerID(subscription, resourceGroup, server) + "/databases/" + database
-}
-
-// databaseStatus maps the portable lifecycle to the Azure SQL Database.status
-// enum (Online, Offline, Restoring, Creating, Disabled).
-func databaseStatus(state string) string {
-	switch state {
-	case rdsdriver.StateAvailable:
-		return dbStatusOnline
-	case rdsdriver.StateStopped:
-		return dbStatusPaused
-	case rdsdriver.StateCreating:
-		return dbStatusCreating
-	case rdsdriver.StateDeleting:
-		return dbStatusDeleting
-	default:
-		return dbStatusOnline
-	}
 }
