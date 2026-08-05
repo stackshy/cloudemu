@@ -396,7 +396,10 @@ func (a appServicePlanDiscovery) DiscoverAppServicePlans(
 // flexTier derives the Azure Flexible Server SKU tier (Burstable /
 // GeneralPurpose / MemoryOptimized) from the SKU name, which encodes it as a
 // prefix in both the current ("Standard_B1ms") and legacy ("B_Gen5_1") naming.
-// Empty when the name doesn't match a known family.
+// The prefix list is known-incomplete on purpose: a name outside the listed
+// families (e.g. Standard_F*) returns "" as an intentional best-effort fallback
+// — a pricing consumer then falls back to sku.name — so an empty tier here is
+// deliberate, not a bug, and this is not meant to enumerate every Azure family.
 func flexTier(skuName string) string {
 	switch {
 	case strings.HasPrefix(skuName, "Standard_B"), strings.HasPrefix(skuName, "B_"):
@@ -437,8 +440,13 @@ func appendFlexServers(
 	return out
 }
 
-// nonEmptyProps drops zero-valued entries so the Properties bag only carries
-// attributes the resource actually has, and returns nil for an empty result.
+// nonEmptyProps prunes entries that carry no cost information so the Properties
+// bag only holds attributes the resource actually has: it drops empty strings,
+// zero ints, nil values, and nested map[string]any entries that are (or become,
+// after their own recursive pruning) empty. Bools are intentionally preserved
+// as-is, including false — real Azure ARG genuinely surfaces properties such as
+// properties.zoneRedundant as a bool including false, so emitting false is
+// faithful. Returns nil for an empty result.
 func nonEmptyProps(m map[string]any) map[string]any {
 	for k, v := range m {
 		switch val := v.(type) {
@@ -450,6 +458,14 @@ func nonEmptyProps(m map[string]any) map[string]any {
 			if val == 0 {
 				delete(m, k)
 			}
+		case map[string]any:
+			// An inner map that prunes down to nothing carries no cost info —
+			// drop it so an empty currentSku/storage object isn't emitted.
+			if nonEmptyProps(val) == nil {
+				delete(m, k)
+			}
+		case nil:
+			delete(m, k)
 		}
 	}
 

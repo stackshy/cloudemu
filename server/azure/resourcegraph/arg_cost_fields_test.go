@@ -224,6 +224,9 @@ func TestARGCostFields_ManagedInstance(t *testing.T) {
 	_, err := cloudP.SQL.CreateManagedInstance(ctx, rdsdriver.ManagedInstanceConfig{
 		Name:               "mi-cost",
 		SubnetID:           "/subscriptions/123456789012/resourceGroups/rg-1/providers/Microsoft.Network/virtualNetworks/vn/subnets/mi",
+		SKUName:            "GP_Gen5",
+		SKUTier:            "GeneralPurpose",
+		LicenseType:        "LicenseIncluded",
 		VCores:             8,
 		StorageGB:          256,
 		StorageAccountType: "ZoneRedundant",
@@ -234,10 +237,17 @@ func TestARGCostFields_ManagedInstance(t *testing.T) {
 
 	row := queryOne(t, client, "microsoft.sql/managedinstances")
 	assert.Equal(t, "mi-cost", row["name"])
+	assert.Equal(t, "GP_Gen5", rowSKU(t, row)["name"])
 
 	props := rowProps(t, row)
 	assert.Equal(t, "ZoneRedundant", props["storageAccountType"])
 	assert.EqualValues(t, 256, props["storageSizeInGB"])
+	assert.EqualValues(t, 8, props["vCores"])
+	// The SKU tier is surfaced as properties.tier, not sku.tier: the managed
+	// instance discovery adapter never sets Attrs.SKUTier, so no sku.tier key
+	// is emitted for this type.
+	assert.Equal(t, "GeneralPurpose", props["tier"])
+	assert.Equal(t, "LicenseIncluded", props["licenseType"])
 }
 
 // TestARGCostFields_MySQLFlex proves the MySQL Flexible Server projects its
@@ -267,6 +277,37 @@ func TestARGCostFields_MySQLFlex(t *testing.T) {
 	props := rowProps(t, row)
 	assert.Equal(t, "8.0.21", props["version"])
 	assert.EqualValues(t, 64, rowObj(t, props, "storage")["storageSizeGB"])
+	assert.Equal(t, "ZoneRedundant", rowObj(t, props, "highAvailability")["mode"])
+}
+
+// TestARGCostFields_PostgresFlex mirrors TestARGCostFields_MySQLFlex for the
+// PostgreSQL Flexible Server family: both flavors share the same
+// appendFlexServers discovery path, so the derived tier, engine version,
+// storage size, and HA mode must round-trip identically.
+func TestARGCostFields_PostgresFlex(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	_, err := cloudP.PostgresFlex.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:               "postgres-cost",
+		InstanceClass:    "Standard_B1ms",
+		EngineVersion:    "14",
+		AllocatedStorage: 32,
+		MultiAZ:          true,
+	})
+	require.NoError(t, err)
+
+	client := argCostClient(t, cloudP)
+
+	row := queryOne(t, client, "microsoft.dbforpostgresql/flexibleservers")
+
+	sku := rowSKU(t, row)
+	assert.Equal(t, "Standard_B1ms", sku["name"])
+	assert.Equal(t, "Burstable", sku["tier"], "tier is derived from the SKU family prefix")
+
+	props := rowProps(t, row)
+	assert.Equal(t, "14", props["version"])
+	assert.EqualValues(t, 32, rowObj(t, props, "storage")["storageSizeGB"])
 	assert.Equal(t, "ZoneRedundant", rowObj(t, props, "highAvailability")["mode"])
 }
 
@@ -342,9 +383,7 @@ func TestARGCostFields_Databricks(t *testing.T) {
 	sku := rowSKU(t, row)
 	assert.Equal(t, "premium", sku["name"])
 
-	if tier, ok := sku["tier"]; ok {
-		assert.Equal(t, "premium", tier)
-	}
+	assert.Equal(t, "premium", sku["tier"])
 
 	// provisioningState and workspaceId are populated by the mock on create, so
 	// the properties bag must surface them for a cost/discovery consumer.
@@ -394,6 +433,27 @@ func TestARGCostFields_SQLDatabase(t *testing.T) {
 	currentSku := rowObj(t, props, "currentSku")
 	assert.Equal(t, "GP_Gen5_4", currentSku["name"])
 	assert.Equal(t, "GeneralPurpose", currentSku["tier"])
+}
+
+// TestARGCostFields_SQLServer proves the SQL logical server itself (not just
+// the databases hosted on it) surfaces its engine version through Resource
+// Graph, as microsoft.sql/servers -> properties.version.
+func TestARGCostFields_SQLServer(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	server, err := cloudP.SQL.CreateCluster(ctx, rdsdriver.ClusterConfig{
+		ID:             "sql-server-cost",
+		MasterUsername: "admin",
+		EngineVersion:  "12.0",
+	})
+	require.NoError(t, err)
+
+	client := argCostClient(t, cloudP)
+
+	row := queryOne(t, client, "microsoft.sql/servers")
+	assert.Equal(t, server.ID, row["name"])
+	assert.Equal(t, server.EngineVersion, rowProps(t, row)["version"])
 }
 
 // TestARGCostFields_StorageAccount proves a blob container's seeded

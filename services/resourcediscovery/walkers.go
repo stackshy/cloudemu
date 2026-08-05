@@ -30,6 +30,10 @@ const (
 	ServiceDatabricks   = "databricks"
 	ServiceKubernetes   = "kubernetes"
 	ServiceRelationalDB = "relationaldb"
+	// ServiceAppService buckets App Service plans (Azure serverfarms). They are
+	// not serverless — they carry a provisioned SKU/tier — so they get their own
+	// discriminator rather than sharing ServiceServerless with Functions.
+	ServiceAppService = "appservice"
 )
 
 // Resource type constants emitted by the walkers.
@@ -312,13 +316,20 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 
 		// Optional capability: providers whose buckets carry storage-account
 		// attributes (Azure) project SKU/kind/access-tier for cost discovery.
+		// A non-nil error here is load-bearing: silently dropping it would leave
+		// the cost fields absent — the exact failure this projection closes — so
+		// propagate it rather than swallow.
 		if attrer, ok := e.drivers.Storage.(storagedriver.BucketAttributes); ok {
-			if a, aErr := attrer.BucketAttributes(ctx, b.Name); aErr == nil {
-				res.SKU = a.SKU
-				res.Kind = a.Kind
-				if a.AccessTier != "" {
-					res.Properties = map[string]any{"accessTier": a.AccessTier}
-				}
+			a, aErr := attrer.BucketAttributes(ctx, b.Name)
+			if aErr != nil {
+				return nil, fmt.Errorf("walkStorage attributes %q: %w", b.Name, aErr)
+			}
+
+			res.SKU = a.SKU
+			res.Kind = a.Kind
+
+			if a.AccessTier != "" {
+				res.Properties = map[string]any{"accessTier": a.AccessTier}
 			}
 		}
 
@@ -358,27 +369,34 @@ func (e *Engine) walkDatabase(ctx context.Context) ([]Resource, error) {
 
 		// Optional capability: providers whose tables map to a richer account
 		// resource (Azure Cosmos DB) project the account's cost attributes.
+		// A non-nil error here is load-bearing: silently dropping it would leave
+		// the cost attributes absent — the exact failure this projection closes —
+		// so propagate it rather than swallow.
 		if attrer, ok := e.drivers.Database.(dbdriver.TableAttributes); ok {
-			if a, aErr := attrer.TableAttributes(ctx, name); aErr == nil {
-				res.Kind = a.Kind
-
-				props := map[string]any{}
-				putStr(props, "databaseAccountOfferType", a.OfferType)
-				if len(a.Capabilities) > 0 {
-					caps := make([]any, 0, len(a.Capabilities))
-					for _, c := range a.Capabilities {
-						caps = append(caps, map[string]any{"name": c})
-					}
-
-					props["capabilities"] = caps
-				}
-
-				if a.EnableFreeTier {
-					props["enableFreeTier"] = true
-				}
-
-				res.Properties = orNilProps(props)
+			a, aErr := attrer.TableAttributes(ctx, name)
+			if aErr != nil {
+				return nil, fmt.Errorf("walkDatabase attributes %q: %w", name, aErr)
 			}
+
+			res.Kind = a.Kind
+
+			props := map[string]any{}
+			putStr(props, "databaseAccountOfferType", a.OfferType)
+
+			if len(a.Capabilities) > 0 {
+				caps := make([]any, 0, len(a.Capabilities))
+				for _, c := range a.Capabilities {
+					caps = append(caps, map[string]any{"name": c})
+				}
+
+				props["capabilities"] = caps
+			}
+
+			if a.EnableFreeTier {
+				props["enableFreeTier"] = true
+			}
+
+			res.Properties = orNilProps(props)
 		}
 
 		out = append(out, res)
@@ -595,7 +613,7 @@ func (e *Engine) walkAppServicePlans(ctx context.Context) ([]Resource, error) {
 		}
 
 		r := Resource{
-			Provider: e.provider, Service: ServiceServerless, Type: TypeAppServicePlan,
+			Provider: e.provider, Service: ServiceAppService, Type: TypeAppServicePlan,
 			ID:     p.Name,
 			ARN:    p.ARN,
 			Region: region, Tags: copyTags(p.Tags),

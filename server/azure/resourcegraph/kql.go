@@ -66,6 +66,7 @@ const (
 	portableStorage      = "storage"
 	portableDatabase     = "database"
 	portableServerless   = "serverless"
+	portableAppService   = "appservice"
 	portableDatabricks   = "databricks"
 	portableKubernetes   = "kubernetes"
 	portableRelationalDB = "relationaldb"
@@ -317,7 +318,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeCosmos:    {portableDatabase, "Table"},
 	azureTypeCosmosC:   {portableDatabase, "Table"},
 	azureTypeWebSite:   {portableServerless, "Function"},
-	azureTypeServerfrm: {portableServerless, "AppServicePlan"},
+	azureTypeServerfrm: {portableAppService, "AppServicePlan"},
 	azureTypeDatabrick: {portableDatabricks, "Workspace"},
 	azureTypeAKS:       {portableKubernetes, "Cluster"},
 	azureTypeAgentPool: {portableKubernetes, "NodeGroup"},

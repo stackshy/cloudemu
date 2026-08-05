@@ -77,6 +77,11 @@ type Mock struct {
 	monitoring  mondriver.Monitoring
 }
 
+// Compile-time check that Mock satisfies the optional BucketAttributes
+// discovery capability, so a signature typo fails the build rather than
+// silently failing the runtime type assertion in walkStorage.
+var _ driver.BucketAttributes = (*Mock)(nil)
+
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon

@@ -331,7 +331,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"storage/Bucket":                      "microsoft.storage/storageaccounts",
 	"database/Table":                      "microsoft.documentdb/databaseaccounts",
 	"serverless/Function":                 "microsoft.web/sites",
-	"serverless/AppServicePlan":           "microsoft.web/serverfarms",
+	"appservice/AppServicePlan":           "microsoft.web/serverfarms",
 	"databricks/Workspace":                "microsoft.databricks/workspaces",
 	"kubernetes/Cluster":                  "microsoft.containerservice/managedclusters",
 	"kubernetes/NodeGroup":                "microsoft.containerservice/managedclusters/agentpools",

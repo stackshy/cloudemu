@@ -64,6 +64,11 @@ type Mock struct {
 	monitoring   mondriver.Monitoring
 }
 
+// Compile-time check that Mock satisfies the optional TableAttributes
+// discovery capability, so a signature typo fails the build rather than
+// silently failing the runtime type assertion in walkDatabase.
+var _ driver.TableAttributes = (*Mock)(nil)
+
 // SetTableAttributes seeds the Cosmos-account cost attributes for a table.
 func (m *Mock) SetTableAttributes(table string, attrs driver.AccountAttributes) {
 	m.mu.Lock()

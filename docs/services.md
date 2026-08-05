@@ -1830,12 +1830,13 @@ and `properties` a real discoverer prices on, per Azure type:
 
 | Azure type | Projected fields |
 |---|---|
-| `microsoft.compute/virtualmachines` | `properties.priority` (Spot), `properties.licenseType`, `properties.osType`, `sku.name`, `zones` |
+| `microsoft.compute/virtualmachines` | `properties.priority` (Spot), `properties.licenseType`, `properties.storageProfile.osDisk.osType`, `sku.name`, `zones` |
 | `microsoft.compute/disks` | `properties.diskIOPSReadWrite`, `properties.diskMBpsReadWrite`, `properties.diskSizeGB`, `properties.tier`, `sku.name`/`sku.tier` |
 | `microsoft.compute/virtualmachinescalesets` | `sku.name`/`sku.capacity`, nested `properties.virtualMachineProfile.{priority,licenseType,storageProfile.osDisk.osType}` |
 | `microsoft.network/publicipaddresses` | `sku.name` (Basic/Standard), `properties.publicIPAllocationMethod` |
 | `microsoft.network/virtualnetworks` / `subnets` | `properties.addressSpace.addressPrefixes` / `properties.addressPrefix` |
-| `microsoft.sql/managedinstances` | `properties.storageSizeInGB`, `properties.storageAccountType` (backup redundancy) |
+| `microsoft.sql/managedinstances` | `sku.name`, `properties.vCores`, `properties.tier`, `properties.licenseType`, `properties.storageSizeInGB`, `properties.storageAccountType` (backup redundancy) |
+| `microsoft.sql/servers` | `properties.version` (engine version of the logical server) |
 | `microsoft.sql/servers/databases` | `sku.name`, `properties.currentSku`, `properties.zoneRedundant` |
 | `microsoft.dbformysql`/`dbforpostgresql` `flexibleservers` | `sku.name`/`sku.tier` (derived), `properties.version`, nested `properties.storage.storageSizeGB` + `properties.highAvailability.mode` |
 | `microsoft.containerservice/managedclusters` | `sku.tier`, `properties.powerState.code`, `properties.kubernetesVersion` |
