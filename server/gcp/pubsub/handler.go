@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -174,10 +175,21 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, projec
 	case resSubscriptions:
 		// List from the subscription registry (not one phantom sub per queue),
 		// so distinct sub/topic names and their ackDeadline/labels round-trip.
+		// Emit in sorted name order: Go map iteration is randomized, and the
+		// repo's list endpoints are deterministic.
 		h.mu.RLock()
-		out := listSubscriptionsResponse{Subscriptions: make([]subscription, 0, len(h.subs))}
+		subNames := make([]string, 0, len(h.subs))
 
-		for subName, meta := range h.subs {
+		for subName := range h.subs {
+			subNames = append(subNames, subName)
+		}
+
+		sort.Strings(subNames)
+
+		out := listSubscriptionsResponse{Subscriptions: make([]subscription, 0, len(subNames))}
+
+		for _, subName := range subNames {
+			meta := h.subs[subName]
 			out.Subscriptions = append(out.Subscriptions, subscription{
 				Name:               subscriptionName(project, subName),
 				Topic:              topicName(project, meta.topic),
