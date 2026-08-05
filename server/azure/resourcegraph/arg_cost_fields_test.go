@@ -158,7 +158,8 @@ func TestARGCostFields_Compute(t *testing.T) {
 
 		assert.Equal(t, "Spot", props["priority"])
 		assert.Equal(t, "Windows_Server", props["licenseType"])
-		assert.Equal(t, "Linux", props["osType"])
+		osDisk := rowObj(t, rowObj(t, props, "storageProfile"), "osDisk")
+		assert.Equal(t, "Linux", osDisk["osType"])
 		assert.Equal(t, "Standard_D2s_v3", sku["name"])
 
 		zones, ok := row["zones"].([]any)

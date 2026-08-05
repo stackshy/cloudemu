@@ -83,9 +83,14 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		inst := &instances[i]
 
 		props := map[string]any{}
-		putStr(props, "osType", inst.OSType)
 		putStr(props, "priority", inst.Priority)
 		putStr(props, "licenseType", inst.LicenseType)
+		// osType nests under storageProfile.osDisk to match the real Azure ARG
+		// VM shape (a discoverer reads it there). Only Azure VMs set OSType — the
+		// AWS/GCP compute mocks leave it empty, so no Azure shape leaks onto them.
+		if inst.OSType != "" {
+			props["storageProfile"] = map[string]any{"osDisk": map[string]any{"osType": inst.OSType}}
+		}
 
 		out = append(out, Resource{
 			Provider:   e.provider,
