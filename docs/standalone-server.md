@@ -61,6 +61,29 @@ cloudemu — standalone server
   Kubernetes  http://127.0.0.1:4570
 ```
 
+## Background mode (`start` / `stop` / `status`)
+
+`cloudemu serve` runs in the foreground. For a minikube-style "leave it running"
+workflow, the lifecycle commands manage a detached background server:
+
+```sh
+cloudemu start                 # launch in the background; prints the endpoints
+cloudemu status                # is it running? show pid + endpoints
+cloudemu logs -f               # follow the server log
+cloudemu stop                  # graceful shutdown
+cloudemu delete                # stop and remove the run directory
+```
+
+`start` accepts every `serve` flag and passes it through, e.g.
+`cloudemu start --providers aws --aws-port 4599`. It waits for the server to
+become healthy before returning, and is idempotent (a second `start` reports the
+already-running instance).
+
+Run state (pid, log, resolved endpoints) lives under `~/.cloudemu/` by default;
+point it elsewhere with `--home <dir>` (pass the same `--home` to the other
+lifecycle commands). State is **not** yet persisted across `stop`/`start` — the
+server still starts empty each time (see "Not yet included").
+
 ## Ports
 
 | Provider   | Default | Protocol | Notes                                    |
