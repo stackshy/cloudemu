@@ -25,14 +25,20 @@ func TestMatchesDoesNotShadowS3(t *testing.T) {
 		method, path string
 		claim        bool
 	}{
-		{http.MethodGet, "/servicenetworks", true},         // Lattice ListServiceNetworks
-		{http.MethodPost, "/services", true},               // Lattice CreateService
-		{http.MethodPatch, "/servicenetworks/sn-1", true},  // Lattice UpdateServiceNetwork
-		{http.MethodGet, "/tags/arn%3Aaws%3A%2Fsvc", true}, // Lattice ListTagsForResource
-		{http.MethodPut, "/services/mykey", false},         // S3 PutObject into bucket "services"
-		{http.MethodGet, "/tags", false},                   // S3 ListObjects on bucket "tags"
-		{http.MethodPost, "/tags", false},                  // S3 op on bucket "tags" (no ARN)
-		{http.MethodGet, "/notalatticeroot", false},        // unrelated
+		{http.MethodGet, "/servicenetworks", true},                                            // Lattice ListServiceNetworks
+		{http.MethodPost, "/services", true},                                                  // Lattice CreateService
+		{http.MethodPatch, "/servicenetworks/sn-1", true},                                     // Lattice UpdateServiceNetwork (id-shaped)
+		{http.MethodGet, "/services/svc-123", true},                                           // Lattice GetService (id-shaped)
+		{http.MethodDelete, "/targetgroups/tg-1", true},                                       // Lattice DeleteTargetGroup (id-shaped)
+		{http.MethodGet, "/tags/arn:aws:vpc-lattice:us-east-1:1:servicenetwork%2Fsn-1", true}, // ListTagsForResource
+		{http.MethodPut, "/services/mykey", false},                                            // S3 PutObject into bucket "services"
+		{http.MethodGet, "/services/mykey", false},                                            // S3 GetObject in bucket "services"
+		{http.MethodDelete, "/targetgroups/mykey", false},                                     // S3 DeleteObject in bucket "targetgroups"
+		{http.MethodGet, "/servicenetworks/mykey", false},                                     // S3 GetObject in bucket "servicenetworks"
+		{http.MethodGet, "/tags", false},                                                      // S3 ListObjects on bucket "tags"
+		{http.MethodGet, "/tags/mykey", false},                                                // S3 GetObject in bucket "tags"
+		{http.MethodPost, "/tags", false},                                                     // S3 op on bucket "tags" (no ARN)
+		{http.MethodGet, "/notalatticeroot", false},                                           // unrelated
 	}
 
 	for _, c := range cases {

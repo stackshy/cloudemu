@@ -72,27 +72,77 @@ func (h *Handler) Matches(r *http.Request) bool {
 }
 
 // latticeClaims reports whether (method, segments) maps to a served route.
+//
+// The resource-scoped forms additionally require the identifier segment to look
+// like a VPC Lattice identifier (a known ID prefix or a vpc-lattice ARN). This
+// is what lets a path-style S3 object op on a bucket named exactly like a
+// Lattice root — e.g. `GET /services/mykey`, `DELETE /targetgroups/mykey` — fall
+// through to the S3 catch-all instead of being mis-claimed here.
 func latticeClaims(method string, segs []string) bool {
 	rest := segs[1:]
 
 	switch segs[0] {
 	case "authpolicy", "resourcepolicy":
-		// /<root>/{resourceArn}: an identifier is always present; PUT/GET/DELETE.
-		return len(rest) >= 1 &&
-			(method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete)
+		return claimsPolicyRoot(method, rest)
 	case "tags":
-		// /tags/{resourceArn}: an identifier is always present; POST/GET/DELETE.
-		return len(rest) >= 1 &&
-			(method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete)
+		return claimsTagsRoot(method, rest)
 	default:
-		return isLatticeMethod(method)
+		return claimsResourceRoot(method, rest)
 	}
+}
+
+// claimsPolicyRoot: /authpolicy|/resourcepolicy/{resourceIdentifier} —
+// PUT/GET/DELETE, identifier required and Lattice-shaped.
+func claimsPolicyRoot(method string, rest []string) bool {
+	return len(rest) >= 1 && isLatticeIdentifier(strings.Join(rest, "/")) &&
+		(method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete)
+}
+
+// claimsTagsRoot: /tags/{resourceArn} — POST/GET/DELETE, ARN required.
+func claimsTagsRoot(method string, rest []string) bool {
+	return len(rest) >= 1 && isLatticeIdentifier(strings.Join(rest, "/")) &&
+		(method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete)
+}
+
+// claimsResourceRoot handles the collection/resource roots. A bare collection
+// path is POST create / GET list — `GET /<root>` still overlaps an S3
+// list-bucket on a like-named bucket, the one unavoidable residual for two REST
+// services sharing an endpoint. A resource-scoped path is claimed only when the
+// id segment is Lattice-shaped, so an S3 object key (e.g. "mykey") falls
+// through to the S3 catch-all.
+func claimsResourceRoot(method string, rest []string) bool {
+	if len(rest) == 0 {
+		return method == http.MethodPost || method == http.MethodGet
+	}
+
+	return isLatticeMethod(method) && isLatticeIdentifier(rest[0])
 }
 
 // isLatticeMethod reports whether m is one of the verbs the collection/resource
 // routes use (PUT is used only by the policy roots, handled separately).
 func isLatticeMethod(m string) bool {
 	return m == http.MethodGet || m == http.MethodPost || m == http.MethodPatch || m == http.MethodDelete
+}
+
+// isLatticeIdentifier reports whether s looks like a VPC Lattice resource
+// identifier — a generated ID prefix or a vpc-lattice ARN — rather than an
+// arbitrary S3 object key. Used to keep resource-scoped routes from claiming
+// path-style S3 requests on buckets named like a Lattice root.
+func isLatticeIdentifier(s string) bool {
+	if strings.Contains(s, "arn:aws:vpc-lattice") {
+		return true
+	}
+
+	for _, p := range []string{
+		"sn-", "svc-", "listener-", "rule-", "tg-",
+		"snva-", "snsa-", "snra-", "rcfg-", "rgw-", "als-", "dv-", "rea-",
+	} {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ServeHTTP dispatches on the first path segment via the routes table.

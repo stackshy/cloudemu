@@ -2323,9 +2323,12 @@ parity: **all 73 SDK operations**, no stubs.
 Unlike the AWS JSON 1.1 services, VPC Lattice uses **REST-JSON**: the operation
 is selected by HTTP method + URL path (e.g. `POST /services`, `GET
 /services/{id}/listeners/{id}`, `PATCH /servicenetworks/{id}`) rather than an
-`X-Amz-Target` header. The handler gates on path root + method + segment shape
-so path-style S3 requests on like-named buckets fall through to the S3
-catch-all; identifiers accept either a bare ID or a full ARN. Union-typed fields
+`X-Amz-Target` header. The handler gates on path root + method + **identifier
+shape**, so a path-style S3 object op on a bucket named like a Lattice root
+(e.g. `GET /services/mykey`) falls through to the S3 catch-all — only a
+Lattice-shaped id (a known prefix or a `vpc-lattice` ARN) is claimed. The single
+unavoidable residual is a bare `GET /<root>` (list) vs. an S3 list-bucket on an
+identically-named bucket. Identifiers accept either a bare ID or a full ARN. Union-typed fields
 (a listener's `defaultAction`, a rule's `match`/`action`, a target group's
 `config`, a resource configuration's `resourceConfigurationDefinition`) are
 stored as raw JSON and echoed back verbatim. Create-time tags are persisted;
