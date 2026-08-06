@@ -250,7 +250,7 @@ server/
 │   ├── azure.go                    # azureserver.New(Drivers{...})
 │   ├── virtualmachines/  disks/  snapshots/  images/  sshpublickeys/
 │   ├── blob/  cosmos/  network/  monitor/  functions/  servicebus/
-│   ├── azuresql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
+│   ├── sql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
 │   ├── aks/                        # ARM AKS control-plane handler
 │   └── databricks/                 # ARM workspace + workspace data-plane families
 │       ├── secrets/  token/  gitcredentials/  repos/  dbfs/  wsfs/
