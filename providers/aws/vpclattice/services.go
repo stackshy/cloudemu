@@ -50,6 +50,7 @@ func (m *Mock) CreateService(_ context.Context, in *driver.CreateServiceInput) (
 		LastUpdatedAt:      m.now(),
 	}
 	m.services.Set(id, svc)
+	m.writeTags(svc.ARN, in.Tags)
 
 	out := cloneService(svc)
 
@@ -110,6 +111,29 @@ func (m *Mock) DeleteService(_ context.Context, identifier string) error {
 
 	if !m.services.Has(id) {
 		return serviceNotFound(id)
+	}
+
+	// Real AWS refuses to delete a service still associated with a network.
+	for _, a := range m.snSvcAssocs.All() {
+		if a.ServiceID == id {
+			return errors.Newf(errors.FailedPrecondition,
+				"service %q is still associated with a service network", id)
+		}
+	}
+
+	// Cascade the service's contained listeners and their rules.
+	for lid, l := range m.listeners.All() {
+		if l.ServiceID != id {
+			continue
+		}
+
+		for rid, r := range m.rules.All() {
+			if r.ServiceID == id && r.ListenerID == lid {
+				m.rules.Delete(rid)
+			}
+		}
+
+		m.listeners.Delete(lid)
 	}
 
 	m.services.Delete(id)

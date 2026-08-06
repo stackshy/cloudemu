@@ -77,6 +77,21 @@ func (m *Mock) arn(resource string) string {
 	return idgen.AWSARN("vpc-lattice", m.opts.Region, m.opts.AccountID, resource)
 }
 
+// writeTags stores create-time tags against a resource ARN so the standard
+// create-with-tags → ListTagsForResource flow round-trips. Caller holds m.mu.
+func (m *Mock) writeTags(arn string, tags map[string]string) {
+	if len(tags) == 0 {
+		return
+	}
+
+	cur := make(map[string]string, len(tags))
+	for k, v := range tags {
+		cur[k] = v
+	}
+
+	m.tags.Set(arn, cur)
+}
+
 // idFromIdentifier accepts either a bare ID or a full ARN and returns the ID
 // (the segment after the last "/"). VPC Lattice APIs accept both forms.
 func idFromIdentifier(identifier string) string {

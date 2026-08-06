@@ -47,6 +47,7 @@ func (m *Mock) CreateResourceConfiguration(
 		LastUpdatedAt:            m.now(),
 	}
 	m.resourceConfigs.Set(id, c)
+	m.writeTags(c.ARN, in.Tags)
 
 	out := cloneResourceConfig(c)
 
@@ -90,7 +91,10 @@ func (m *Mock) UpdateResourceConfiguration(
 		c.Definition = append([]byte(nil), in.Definition...)
 	}
 
-	c.AllowAssociationToShared = in.AllowAssociationToShared
+	if in.AllowAssociationToShared != nil {
+		c.AllowAssociationToShared = *in.AllowAssociationToShared
+	}
+
 	c.LastUpdatedAt = m.now()
 
 	out := cloneResourceConfig(c)

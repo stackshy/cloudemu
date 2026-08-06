@@ -3,6 +3,7 @@ package vpclattice_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -14,7 +15,33 @@ import (
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 )
+
+func TestMatchesDoesNotShadowS3(t *testing.T) {
+	h := vpclatticesrv.New(nil)
+
+	cases := []struct {
+		method, path string
+		claim        bool
+	}{
+		{http.MethodGet, "/servicenetworks", true},         // Lattice ListServiceNetworks
+		{http.MethodPost, "/services", true},               // Lattice CreateService
+		{http.MethodPatch, "/servicenetworks/sn-1", true},  // Lattice UpdateServiceNetwork
+		{http.MethodGet, "/tags/arn%3Aaws%3A%2Fsvc", true}, // Lattice ListTagsForResource
+		{http.MethodPut, "/services/mykey", false},         // S3 PutObject into bucket "services"
+		{http.MethodGet, "/tags", false},                   // S3 ListObjects on bucket "tags"
+		{http.MethodPost, "/tags", false},                  // S3 op on bucket "tags" (no ARN)
+		{http.MethodGet, "/notalatticeroot", false},        // unrelated
+	}
+
+	for _, c := range cases {
+		got := h.Matches(httptest.NewRequest(c.method, c.path, nil))
+		if got != c.claim {
+			t.Errorf("Matches(%s %s) = %v, want %v", c.method, c.path, got, c.claim)
+		}
+	}
+}
 
 // newClient builds an httptest-backed VPC Lattice client driving the real
 // aws-sdk-go-v2 client against the in-memory driver.
@@ -427,6 +454,28 @@ func TestSDKAssociations(t *testing.T) {
 	}
 	if lr, e := client.ListServiceNetworkResourceAssociations(ctx, &awsvpcl.ListServiceNetworkResourceAssociationsInput{}); e != nil || len(lr.Items) != 1 {
 		t.Fatalf("ListSNResourceAssociations: %v %+v", e, lr)
+	}
+
+	// Get by id (wire-level coverage for both association Get paths).
+	if gs, e := client.GetServiceNetworkServiceAssociation(ctx, &awsvpcl.GetServiceNetworkServiceAssociationInput{
+		ServiceNetworkServiceAssociationIdentifier: svcA.Id,
+	}); e != nil || aws.ToString(gs.ServiceId) != svcID {
+		t.Fatalf("GetSNServiceAssociation: %v %+v", e, gs)
+	}
+	if _, e := client.GetServiceNetworkResourceAssociation(ctx, &awsvpcl.GetServiceNetworkResourceAssociationInput{
+		ServiceNetworkResourceAssociationIdentifier: resA.Id,
+	}); e != nil {
+		t.Fatalf("GetSNResourceAssociation: %v", e)
+	}
+
+	// ResourceEndpointAssociations aren't synthesized by the emulator, so a
+	// delete resolves to NotFound — exercises the otherwise-unreachable handler.
+	_, e := client.DeleteResourceEndpointAssociation(ctx, &awsvpcl.DeleteResourceEndpointAssociationInput{
+		ResourceEndpointAssociationIdentifier: aws.String("rea-none"),
+	})
+	var nfe *vpcltypes.ResourceNotFoundException
+	if !errors.As(e, &nfe) {
+		t.Fatalf("DeleteResourceEndpointAssociation: expected ResourceNotFoundException, got %v", e)
 	}
 
 	// Deletes.

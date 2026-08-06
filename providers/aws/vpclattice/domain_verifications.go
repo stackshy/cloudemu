@@ -17,7 +17,7 @@ func domainVerificationNotFound(id string) error {
 func cloneDomainVerification(d *driver.DomainVerification) driver.DomainVerification { return *d }
 
 func (m *Mock) StartDomainVerification(
-	_ context.Context, domainName string, _ map[string]string,
+	_ context.Context, domainName string, tags map[string]string,
 ) (*driver.DomainVerification, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -31,6 +31,7 @@ func (m *Mock) StartDomainVerification(
 		CreatedAt:  m.now(),
 	}
 	m.domainVerifs.Set(id, d)
+	m.writeTags(d.ARN, tags)
 
 	out := cloneDomainVerification(d)
 

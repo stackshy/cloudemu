@@ -56,6 +56,7 @@ func (m *Mock) CreateListener(_ context.Context, in *driver.CreateListenerInput)
 		LastUpdatedAt: m.now(),
 	}
 	m.listeners.Set(id, l)
+	m.writeTags(l.ARN, in.Tags)
 
 	out := cloneListener(l)
 
@@ -118,6 +119,13 @@ func (m *Mock) DeleteListener(_ context.Context, serviceID, listenerID string) e
 	l, err := m.getListenerLocked(serviceID, listenerID)
 	if err != nil {
 		return err
+	}
+
+	// Cascade the listener's contained rules.
+	for rid, r := range m.rules.All() {
+		if r.ListenerID == l.ID {
+			m.rules.Delete(rid)
+		}
 	}
 
 	m.listeners.Delete(l.ID)

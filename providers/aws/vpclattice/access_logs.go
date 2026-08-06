@@ -2,7 +2,6 @@ package vpclattice
 
 import (
 	"context"
-	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -16,15 +15,10 @@ func accessLogSubNotFound(id string) error {
 func cloneAccessLogSub(a *driver.AccessLogSubscription) driver.AccessLogSubscription { return *a }
 
 func (m *Mock) CreateAccessLogSubscription(
-	_ context.Context, resourceIdentifier, destinationARN, logType string, _ map[string]string,
+	_ context.Context, resourceIdentifier, destinationARN, logType string, tags map[string]string,
 ) (*driver.AccessLogSubscription, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	resourceARN := resourceIdentifier
-	if !strings.Contains(resourceARN, ":") {
-		resourceARN = ""
-	}
 
 	id := idgen.GenerateID("als-")
 	a := &driver.AccessLogSubscription{
@@ -32,12 +26,13 @@ func (m *Mock) CreateAccessLogSubscription(
 		ARN:                   m.arn("accesslogsubscription/" + id),
 		DestinationARN:        destinationARN,
 		ResourceID:            idFromIdentifier(resourceIdentifier),
-		ResourceARN:           resourceARN,
+		ResourceARN:           resourceIdentifier,
 		ServiceNetworkLogType: logType,
 		CreatedAt:             m.now(),
 		LastUpdatedAt:         m.now(),
 	}
 	m.accessLogSubs.Set(id, a)
+	m.writeTags(a.ARN, tags)
 
 	out := cloneAccessLogSub(a)
 

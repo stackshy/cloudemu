@@ -374,12 +374,14 @@ type CreateResourceConfigurationInput struct {
 	Tags                     map[string]string
 }
 
-// UpdateResourceConfigurationInput carries the mutable fields.
+// UpdateResourceConfigurationInput carries the mutable fields. A nil pointer
+// means "absent, leave unchanged" so a partial update never resets a
+// previously-true value.
 type UpdateResourceConfigurationInput struct {
 	ID                       string
 	PortRanges               []string
 	Definition               []byte
-	AllowAssociationToShared bool
+	AllowAssociationToShared *bool
 }
 
 // ResourceConfigurations is the resource-configuration resource group.

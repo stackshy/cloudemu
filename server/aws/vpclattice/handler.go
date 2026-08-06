@@ -49,11 +49,50 @@ func New(d driver.VPCLattice) *Handler {
 	return h
 }
 
-// Matches claims requests whose first path segment belongs to VPC Lattice.
+// Matches claims a request only when its path root, HTTP method, and segment
+// shape all correspond to a real VPC Lattice route. This is deliberately strict
+// so that path-style S3 requests against a bucket literally named like a Lattice
+// root (e.g. `PUT /services/key`, `GET /tags`) are NOT hijacked and instead fall
+// through to the S3 catch-all handler registered after this one.
+//
+// A residual ambiguity remains for verbs Lattice and S3 share on an identical
+// path (e.g. `GET /services` — list-services vs. S3 list-bucket-"services"),
+// which is unavoidable for two REST services co-located on one endpoint.
 func (h *Handler) Matches(r *http.Request) bool {
-	_, ok := h.routes[firstSegment(r.URL.Path)]
+	segs := splitPath(r.URL.Path)
+	if len(segs) == 0 {
+		return false
+	}
 
-	return ok
+	if _, ok := h.routes[segs[0]]; !ok {
+		return false
+	}
+
+	return latticeClaims(r.Method, segs)
+}
+
+// latticeClaims reports whether (method, segments) maps to a served route.
+func latticeClaims(method string, segs []string) bool {
+	rest := segs[1:]
+
+	switch segs[0] {
+	case "authpolicy", "resourcepolicy":
+		// /<root>/{resourceArn}: an identifier is always present; PUT/GET/DELETE.
+		return len(rest) >= 1 &&
+			(method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete)
+	case "tags":
+		// /tags/{resourceArn}: an identifier is always present; POST/GET/DELETE.
+		return len(rest) >= 1 &&
+			(method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete)
+	default:
+		return isLatticeMethod(method)
+	}
+}
+
+// isLatticeMethod reports whether m is one of the verbs the collection/resource
+// routes use (PUT is used only by the policy roots, handled separately).
+func isLatticeMethod(m string) bool {
+	return m == http.MethodGet || m == http.MethodPost || m == http.MethodPatch || m == http.MethodDelete
 }
 
 // ServeHTTP dispatches on the first path segment via the routes table.
@@ -106,16 +145,6 @@ func routeByID(w http.ResponseWriter, r *http.Request, id string, get, update, d
 	default:
 		methodNotAllowed(w)
 	}
-}
-
-// firstSegment returns the first non-empty path segment, or "".
-func firstSegment(p string) string {
-	segs := splitPath(p)
-	if len(segs) == 0 {
-		return ""
-	}
-
-	return segs[0]
 }
 
 // splitPath splits a URL path into its non-empty segments.

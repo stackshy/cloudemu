@@ -100,7 +100,7 @@ func (h *Handler) updateResourceConfig(w http.ResponseWriter, r *http.Request, i
 	var req struct {
 		PortRanges               []string        `json:"portRanges"`
 		Definition               json.RawMessage `json:"resourceConfigurationDefinition"`
-		AllowAssociationToShared bool            `json:"allowAssociationToShareableServiceNetwork"`
+		AllowAssociationToShared *bool           `json:"allowAssociationToShareableServiceNetwork"`
 	}
 
 	if !decodeJSON(w, r, &req) {

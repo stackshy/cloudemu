@@ -69,6 +69,7 @@ func (m *Mock) CreateSNVpcAssociation(
 		LastUpdatedAt:      m.now(),
 	}
 	m.snVpcAssocs.Set(id, a)
+	m.writeTags(a.ARN, in.Tags)
 
 	out := cloneSNVpc(a)
 
@@ -145,7 +146,7 @@ func (*Mock) ListSNVpcEndpointAssociations(
 func cloneSNSvc(a *driver.SNServiceAssociation) driver.SNServiceAssociation { return *a }
 
 func (m *Mock) CreateSNServiceAssociation(
-	_ context.Context, serviceNetworkID, serviceID string, _ map[string]string,
+	_ context.Context, serviceNetworkID, serviceID string, tags map[string]string,
 ) (*driver.SNServiceAssociation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -178,6 +179,7 @@ func (m *Mock) CreateSNServiceAssociation(
 		CreatedAt:          m.now(),
 	}
 	m.snSvcAssocs.Set(id, a)
+	m.writeTags(a.ARN, tags)
 
 	out := cloneSNSvc(a)
 
@@ -224,7 +226,7 @@ func (m *Mock) ListSNServiceAssociations(_ context.Context) ([]driver.SNServiceA
 func cloneSNRes(a *driver.SNResourceAssociation) driver.SNResourceAssociation { return *a }
 
 func (m *Mock) CreateSNResourceAssociation(
-	_ context.Context, serviceNetworkID, resourceConfigID string, privateDNS bool, _ map[string]string,
+	_ context.Context, serviceNetworkID, resourceConfigID string, privateDNS bool, tags map[string]string,
 ) (*driver.SNResourceAssociation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -251,6 +253,7 @@ func (m *Mock) CreateSNResourceAssociation(
 		LastUpdatedAt:            m.now(),
 	}
 	m.snResAssocs.Set(id, a)
+	m.writeTags(a.ARN, tags)
 
 	out := cloneSNRes(a)
 

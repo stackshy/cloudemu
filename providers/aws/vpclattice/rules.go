@@ -43,6 +43,7 @@ func (m *Mock) CreateRule(_ context.Context, in *driver.CreateRuleInput) (*drive
 		LastUpdatedAt: m.now(),
 	}
 	m.rules.Set(id, rule)
+	m.writeTags(rule.ARN, in.Tags)
 
 	out := cloneRule(rule)
 

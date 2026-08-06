@@ -19,8 +19,10 @@ func cloneServiceNetwork(s *driver.ServiceNetwork) driver.ServiceNetwork { retur
 func (m *Mock) applyAssocCounts(s *driver.ServiceNetwork) {
 	var svcs, vpcs, res int64
 
+	// Skip associations whose target resource no longer exists so a Get never
+	// reports a phantom associated service/resource.
 	for _, a := range m.snSvcAssocs.All() {
-		if a.ServiceNetworkID == s.ID {
+		if a.ServiceNetworkID == s.ID && m.services.Has(a.ServiceID) {
 			svcs++
 		}
 	}
@@ -32,7 +34,7 @@ func (m *Mock) applyAssocCounts(s *driver.ServiceNetwork) {
 	}
 
 	for _, a := range m.snResAssocs.All() {
-		if a.ServiceNetworkID == s.ID {
+		if a.ServiceNetworkID == s.ID && m.resourceConfigs.Has(a.ResourceConfigurationID) {
 			res++
 		}
 	}
@@ -64,6 +66,7 @@ func (m *Mock) CreateServiceNetwork(
 		LastUpdatedAt:        m.now(),
 	}
 	m.serviceNetworks.Set(id, sn)
+	m.writeTags(sn.ARN, in.Tags)
 
 	out := cloneServiceNetwork(sn)
 
@@ -107,6 +110,7 @@ func (m *Mock) UpdateServiceNetwork(
 	sn.LastUpdatedAt = m.now()
 
 	out := cloneServiceNetwork(sn)
+	m.applyAssocCounts(&out)
 
 	return &out, nil
 }
@@ -121,9 +125,40 @@ func (m *Mock) DeleteServiceNetwork(_ context.Context, identifier string) error 
 		return serviceNetworkNotFound(id)
 	}
 
+	// Real AWS refuses to delete a service network that still has live
+	// associations.
+	if m.serviceNetworkHasAssociations(id) {
+		return errors.Newf(errors.FailedPrecondition,
+			"service network %q still has active associations", id)
+	}
+
 	m.serviceNetworks.Delete(id)
 
 	return nil
+}
+
+// serviceNetworkHasAssociations reports whether any VPC/service/resource
+// association still references the network. Caller holds m.mu.
+func (m *Mock) serviceNetworkHasAssociations(snID string) bool {
+	for _, a := range m.snVpcAssocs.All() {
+		if a.ServiceNetworkID == snID {
+			return true
+		}
+	}
+
+	for _, a := range m.snSvcAssocs.All() {
+		if a.ServiceNetworkID == snID {
+			return true
+		}
+	}
+
+	for _, a := range m.snResAssocs.All() {
+		if a.ServiceNetworkID == snID {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Mock) ListServiceNetworks(_ context.Context) ([]driver.ServiceNetwork, error) {

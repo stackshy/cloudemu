@@ -59,6 +59,7 @@ func (m *Mock) CreateTargetGroup(_ context.Context, in *driver.CreateTargetGroup
 	}
 	m.targetGroups.Set(id, tg)
 	m.targets.Set(id, nil)
+	m.writeTags(tg.ARN, in.Tags)
 
 	out := cloneTargetGroup(tg)
 

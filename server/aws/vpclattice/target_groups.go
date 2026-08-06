@@ -201,20 +201,32 @@ func targetsToWire(ts []driver.RegisteredTarget) []wireTarget {
 	return out
 }
 
+func targetFailuresToWire(fs []driver.TargetFailure) []map[string]any {
+	out := make([]map[string]any, 0, len(fs))
+	for i := range fs {
+		out = append(out, map[string]any{
+			"id": fs[i].ID, "port": fs[i].Port,
+			"failureCode": fs[i].FailureCode, "failureMessage": fs[i].FailureMessage,
+		})
+	}
+
+	return out
+}
+
 func (h *Handler) registerTargets(w http.ResponseWriter, r *http.Request, id string) {
 	in, ok := decodeTargets(w, r)
 	if !ok {
 		return
 	}
 
-	success, _, err := h.lattice.RegisterTargets(r.Context(), id, in)
+	success, failed, err := h.lattice.RegisterTargets(r.Context(), id, in)
 	if err != nil {
 		writeErr(w, err)
 
 		return
 	}
 
-	writeJSON(w, map[string]any{"successful": targetsToWire(success), "unsuccessful": []any{}})
+	writeJSON(w, map[string]any{"successful": targetsToWire(success), "unsuccessful": targetFailuresToWire(failed)})
 }
 
 func (h *Handler) deregisterTargets(w http.ResponseWriter, r *http.Request, id string) {
@@ -223,14 +235,14 @@ func (h *Handler) deregisterTargets(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 
-	success, _, err := h.lattice.DeregisterTargets(r.Context(), id, in)
+	success, failed, err := h.lattice.DeregisterTargets(r.Context(), id, in)
 	if err != nil {
 		writeErr(w, err)
 
 		return
 	}
 
-	writeJSON(w, map[string]any{"successful": targetsToWire(success), "unsuccessful": []any{}})
+	writeJSON(w, map[string]any{"successful": targetsToWire(success), "unsuccessful": targetFailuresToWire(failed)})
 }
 
 func (h *Handler) listTargets(w http.ResponseWriter, r *http.Request, id string) {

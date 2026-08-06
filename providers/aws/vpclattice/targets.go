@@ -2,6 +2,7 @@ package vpclattice
 
 import (
 	"context"
+	"sort"
 	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
@@ -107,5 +108,10 @@ func (m *Mock) ListTargets(_ context.Context, tgID string) ([]driver.RegisteredT
 
 	cur, _ := m.targets.Get(id)
 
-	return append([]driver.RegisteredTarget(nil), cur...), nil
+	out := append([]driver.RegisteredTarget(nil), cur...)
+	sort.Slice(out, func(i, j int) bool {
+		return targetKey(out[i]) < targetKey(out[j])
+	})
+
+	return out, nil
 }

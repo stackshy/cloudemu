@@ -20,6 +20,8 @@ func newTestMock() *Mock {
 	return New(opts)
 }
 
+func ptr[T any](v T) *T { return &v }
+
 func TestServiceNetworkCRUDAndIdentifierResolution(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -47,12 +49,13 @@ func TestServiceNetworkAssocCounts(t *testing.T) {
 
 	sn, _ := m.CreateServiceNetwork(ctx, &driver.CreateServiceNetworkInput{Name: "sn"})
 	svc, _ := m.CreateService(ctx, &driver.CreateServiceInput{Name: "svc"})
+	rc, _ := m.CreateResourceConfiguration(ctx, &driver.CreateResourceConfigurationInput{Name: "rc", Type: "SINGLE"})
 
 	_, err := m.CreateSNVpcAssociation(ctx, &driver.CreateSNVpcAssociationInput{ServiceNetworkID: sn.ID, VpcID: "vpc-1"})
 	require.NoError(t, err)
 	_, err = m.CreateSNServiceAssociation(ctx, sn.ID, svc.ID, nil)
 	require.NoError(t, err)
-	_, err = m.CreateSNResourceAssociation(ctx, sn.ID, "rcfg-1", true, nil)
+	_, err = m.CreateSNResourceAssociation(ctx, sn.ID, rc.ID, true, nil)
 	require.NoError(t, err)
 
 	got, err := m.GetServiceNetwork(ctx, sn.ID)
@@ -60,6 +63,12 @@ func TestServiceNetworkAssocCounts(t *testing.T) {
 	assert.Equal(t, int64(1), got.NumberOfAssociatedVPCs)
 	assert.Equal(t, int64(1), got.NumberOfAssociatedServices)
 	assert.Equal(t, int64(1), got.NumberOfAssociatedResourceConfigurations)
+
+	// A resource association whose target no longer exists is not counted.
+	require.NoError(t, m.DeleteResourceConfiguration(ctx, rc.ID))
+	got, err = m.GetServiceNetwork(ctx, sn.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), got.NumberOfAssociatedResourceConfigurations)
 
 	// Association against a missing network fails.
 	_, err = m.CreateSNVpcAssociation(ctx, &driver.CreateSNVpcAssociationInput{ServiceNetworkID: "sn-x", VpcID: "v"})
@@ -343,4 +352,79 @@ func TestListenerAndRuleListAndUpdate(t *testing.T) {
 	ep, err := m.ListSNVpcEndpointAssociations(ctx, sn.ID)
 	require.NoError(t, err)
 	assert.Empty(t, ep)
+}
+
+// --- review-driven correctness behaviors ---
+
+func TestCreateWritesTags(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	sn, err := m.CreateServiceNetwork(ctx, &driver.CreateServiceNetworkInput{
+		Name: "sn", Tags: map[string]string{"team": "net", "env": "test"},
+	})
+	require.NoError(t, err)
+
+	tags, err := m.ListTagsForResource(ctx, sn.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"team": "net", "env": "test"}, tags)
+}
+
+func TestServiceNetworkDeleteBlockedByAssociation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	sn, _ := m.CreateServiceNetwork(ctx, &driver.CreateServiceNetworkInput{Name: "sn"})
+	_, err := m.CreateSNVpcAssociation(ctx, &driver.CreateSNVpcAssociationInput{ServiceNetworkID: sn.ID, VpcID: "vpc-1"})
+	require.NoError(t, err)
+
+	err = m.DeleteServiceNetwork(ctx, sn.ID)
+	assert.True(t, cerrors.IsFailedPrecondition(err))
+}
+
+func TestServiceDeleteGuardAndCascade(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	sn, _ := m.CreateServiceNetwork(ctx, &driver.CreateServiceNetworkInput{Name: "sn"})
+	svc, _ := m.CreateService(ctx, &driver.CreateServiceInput{Name: "svc"})
+
+	// Associated service can't be deleted.
+	_, err := m.CreateSNServiceAssociation(ctx, sn.ID, svc.ID, nil)
+	require.NoError(t, err)
+	assert.True(t, cerrors.IsFailedPrecondition(m.DeleteService(ctx, svc.ID)))
+
+	// A standalone service with a listener + rule cascades on delete.
+	svc2, _ := m.CreateService(ctx, &driver.CreateServiceInput{Name: "svc2"})
+	l, _ := m.CreateListener(ctx, &driver.CreateListenerInput{ServiceID: svc2.ID, Protocol: "HTTP", Port: 80})
+	r, _ := m.CreateRule(ctx, &driver.CreateRuleInput{ServiceID: svc2.ID, ListenerID: l.ID, Name: "r", Priority: 1})
+
+	require.NoError(t, m.DeleteService(ctx, svc2.ID))
+	_, err = m.GetListener(ctx, svc2.ID, l.ID)
+	assert.True(t, cerrors.IsNotFound(err))
+	_, err = m.GetRule(ctx, svc2.ID, l.ID, r.ID)
+	assert.True(t, cerrors.IsNotFound(err))
+}
+
+func TestUpdateResourceConfigKeepsAllowFlag(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	rc, _ := m.CreateResourceConfiguration(ctx, &driver.CreateResourceConfigurationInput{
+		Name: "rc", Type: "SINGLE", AllowAssociationToShared: true,
+	})
+
+	// A partial update that omits the flag (nil) must not reset it to false.
+	upd, err := m.UpdateResourceConfiguration(ctx, &driver.UpdateResourceConfigurationInput{
+		ID: rc.ID, PortRanges: []string{"443"},
+	})
+	require.NoError(t, err)
+	assert.True(t, upd.AllowAssociationToShared)
+
+	// An explicit false clears it.
+	upd, err = m.UpdateResourceConfiguration(ctx, &driver.UpdateResourceConfigurationInput{
+		ID: rc.ID, AllowAssociationToShared: ptr(false),
+	})
+	require.NoError(t, err)
+	assert.False(t, upd.AllowAssociationToShared)
 }

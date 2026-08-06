@@ -42,6 +42,7 @@ func (m *Mock) CreateResourceGateway(
 		LastUpdatedAt:               m.now(),
 	}
 	m.resourceGws.Set(id, g)
+	m.writeTags(g.ARN, in.Tags)
 
 	out := cloneResourceGateway(g)
 
