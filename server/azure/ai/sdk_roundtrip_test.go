@@ -61,7 +61,7 @@ func newServer(t *testing.T) string {
 	t.Helper()
 
 	cloud := cloudemu.NewAzure()
-	srv := azureserver.New(azureserver.Drivers{CognitiveServices: cloud.AzureAI})
+	srv := azureserver.New(azureserver.Drivers{CognitiveServices: cloud.AI})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
@@ -219,7 +219,7 @@ func newCSAccountsClient(t *testing.T) *armcognitiveservices.AccountsClient {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
-	srv := azureserver.New(azureserver.Drivers{CognitiveServices: cloudP.AzureAI})
+	srv := azureserver.New(azureserver.Drivers{CognitiveServices: cloudP.AI})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 

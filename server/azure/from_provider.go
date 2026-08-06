@@ -56,14 +56,14 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 
 		// Azure AI mock satisfies CognitiveServices, MachineLearning and the
 		// inference/Assistants data plane.
-		CognitiveServices: p.AzureAI,
-		MachineLearning:   p.AzureAI,
-		AzureAIDataPlane:  p.AzureAI,
+		CognitiveServices: p.AI,
+		MachineLearning:   p.AI,
+		AzureAIDataPlane:  p.AI,
 
 		// Azure AI Search mock satisfies both the ARM control plane and the
 		// search data plane.
-		SearchControl:   p.AzureSearch,
-		SearchDataPlane: p.AzureSearch,
+		SearchControl:   p.Search,
+		SearchDataPlane: p.Search,
 
 		// K8sAPI is a shared handle with no provider source; the standalone
 		// server has no shared cluster by default.

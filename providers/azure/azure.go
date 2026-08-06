@@ -144,8 +144,8 @@ type Provider struct {
 	MySQLFlex        *mysqlflex.Mock
 	AKS              *aks.Mock
 	Databricks       *databricks.Mock
-	AzureAI          *ai.Mock
-	AzureSearch      *search.Mock
+	AI               *ai.Mock
+	Search           *search.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -186,8 +186,8 @@ func New(opts ...config.Option) *Provider {
 		MySQLFlex:        mysqlflex.New(o),
 		AKS:              aks.New(o),
 		Databricks:       databricks.New(o),
-		AzureAI:          ai.New(o),
-		AzureSearch:      search.New(o),
+		AI:               ai.New(o),
+		Search:           search.New(o),
 		SubscriptionID:   o.AccountID,
 		Region:           o.Region,
 	}
@@ -205,8 +205,8 @@ func New(opts ...config.Option) *Provider {
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
 	p.AKS.SetMonitoring(p.Monitor)
-	p.AzureAI.SetMonitoring(p.Monitor)
-	p.AzureSearch.SetMonitoring(p.Monitor)
+	p.AI.SetMonitoring(p.Monitor)
+	p.Search.SetMonitoring(p.Monitor)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAzure, o.AccountID, o.Region,

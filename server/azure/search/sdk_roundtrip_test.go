@@ -60,8 +60,8 @@ func newServer(t *testing.T) string {
 
 	cloud := cloudemu.NewAzure()
 	srv := azureserver.New(azureserver.Drivers{
-		SearchControl:   cloud.AzureSearch,
-		SearchDataPlane: cloud.AzureSearch,
+		SearchControl:   cloud.Search,
+		SearchDataPlane: cloud.Search,
 	})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
@@ -206,7 +206,7 @@ func newSearchClientFactory(t *testing.T) *armsearch.ClientFactory {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
-	srv := azureserver.New(azureserver.Drivers{SearchControl: cloudP.AzureSearch})
+	srv := azureserver.New(azureserver.Drivers{SearchControl: cloudP.Search})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 

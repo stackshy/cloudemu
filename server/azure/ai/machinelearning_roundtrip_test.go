@@ -23,7 +23,7 @@ func newMLServer(t *testing.T) string {
 	t.Helper()
 
 	cloud := cloudemu.NewAzure()
-	srv := azureserver.New(azureserver.Drivers{MachineLearning: cloud.AzureAI})
+	srv := azureserver.New(azureserver.Drivers{MachineLearning: cloud.AI})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
@@ -166,7 +166,7 @@ func newMLClientFactory(t *testing.T) *armmachinelearning.ClientFactory {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
-	srv := azureserver.New(azureserver.Drivers{MachineLearning: cloudP.AzureAI})
+	srv := azureserver.New(azureserver.Drivers{MachineLearning: cloudP.AI})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
