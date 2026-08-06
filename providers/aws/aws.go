@@ -29,6 +29,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
 	"github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/providers/aws/route53"
+	"github.com/stackshy/cloudemu/v2/providers/aws/route53resolver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/s3"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
 	"github.com/stackshy/cloudemu/v2/providers/aws/secretsmanager"
@@ -144,6 +145,7 @@ type Provider struct {
 	SageMaker           *sagemaker.Mock
 	SSM                 *ssm.Mock
 	ECS                 *ecs.Mock
+	Route53Resolver     *route53resolver.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -181,6 +183,7 @@ func New(opts ...config.Option) *Provider {
 		SageMaker:           sagemaker.New(o),
 		SSM:                 ssm.New(o),
 		ECS:                 ecs.New(o),
+		Route53Resolver:     route53resolver.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}
