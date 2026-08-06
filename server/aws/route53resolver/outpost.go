@@ -83,10 +83,10 @@ func (h *Handler) getOutpostResolver(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateOutpostResolver(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID                    string `json:"Id"`
-		Name                  string `json:"Name"`
-		PreferredInstanceType string `json:"PreferredInstanceType"`
-		InstanceCount         int32  `json:"InstanceCount"`
+		ID                    string  `json:"Id"`
+		Name                  *string `json:"Name"`
+		PreferredInstanceType *string `json:"PreferredInstanceType"`
+		InstanceCount         *int32  `json:"InstanceCount"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {

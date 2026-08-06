@@ -40,7 +40,7 @@ type wireResolverEndpoint struct {
 	CreatorRequestID          string   `json:"CreatorRequestId,omitempty"`
 	Direction                 string   `json:"Direction,omitempty"`
 	HostVPCID                 string   `json:"HostVPCId,omitempty"`
-	IPAddressCount            int32    `json:"IpAddressCount,omitempty"`
+	IPAddressCount            int32    `json:"IpAddressCount"`
 	SecurityGroupIDs          []string `json:"SecurityGroupIds,omitempty"`
 	Status                    string   `json:"Status,omitempty"`
 	StatusMessage             string   `json:"StatusMessage,omitempty"`

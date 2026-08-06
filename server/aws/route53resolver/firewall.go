@@ -681,10 +681,10 @@ func (h *Handler) listFirewallRuleGroupAssociations(w http.ResponseWriter, r *ht
 
 func (h *Handler) updateFirewallRuleGroupAssociation(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		FirewallRuleGroupAssociationID string `json:"FirewallRuleGroupAssociationId"`
-		MutationProtection             string `json:"MutationProtection"`
-		Name                           string `json:"Name"`
-		Priority                       int32  `json:"Priority"`
+		FirewallRuleGroupAssociationID string  `json:"FirewallRuleGroupAssociationId"`
+		MutationProtection             *string `json:"MutationProtection"`
+		Name                           *string `json:"Name"`
+		Priority                       *int32  `json:"Priority"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -762,11 +762,17 @@ func (h *Handler) listFirewallConfigs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listFirewallRuleTypes(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.r53r.ListFirewallRuleTypes(r.Context()); err != nil {
+	types, err := h.r53r.ListFirewallRuleTypes(r.Context())
+	if err != nil {
 		writeErr(w, err)
 
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"FirewallRuleTypes": []any{}})
+	out := make([]map[string]any, 0, len(types))
+	for i := range types {
+		out = append(out, map[string]any{"Name": types[i].Name})
+	}
+
+	wire.WriteJSON(w, map[string]any{"FirewallRuleTypes": out})
 }

@@ -30,6 +30,14 @@ func (m *Mock) CreateFirewallDomainList(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if prior, ok := m.idempotentID("fwdomainlist", creatorRequestID); ok {
+		if d, found := m.fwDomLists.Get(prior); found {
+			out := cloneFWDomainList(d)
+
+			return &out, nil
+		}
+	}
+
 	id := idgen.GenerateID("rslvr-fdl-")
 	d := &driver.FirewallDomainList{
 		ID:               id,
@@ -43,6 +51,7 @@ func (m *Mock) CreateFirewallDomainList(
 	}
 	m.fwDomLists.Set(id, d)
 	m.fwDomains.Set(id, nil)
+	m.rememberIdempotent("fwdomainlist", creatorRequestID, id)
 
 	if len(tags) > 0 {
 		m.tags.Set(d.ARN, copyTags(tags))
@@ -74,6 +83,13 @@ func (m *Mock) DeleteFirewallDomainList(_ context.Context, id string) (*driver.F
 	d, ok := m.fwDomLists.Get(id)
 	if !ok {
 		return nil, fwDomainListNotFound(id)
+	}
+
+	for _, r := range m.fwRules.All() {
+		if r.FirewallDomainListID == id {
+			return nil, errors.Newf(errors.FailedPrecondition,
+				"firewall domain list %q is still referenced by firewall rules", id)
+		}
 	}
 
 	m.fwDomLists.Delete(id)

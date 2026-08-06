@@ -61,8 +61,15 @@ func (m *Mock) createRuleLocked(in *driver.FirewallRuleInput) (*driver.FirewallR
 		return nil, fwRuleGroupNotFound(in.FirewallRuleGroupID)
 	}
 
+	key := fwRuleKey(in.FirewallRuleGroupID, in.FirewallDomainListID, in.Qtype)
+	if m.fwRules.Has(key) {
+		return nil, errors.Newf(errors.AlreadyExists,
+			"firewall rule already exists in group %q for domain-list %q qtype %q",
+			in.FirewallRuleGroupID, in.FirewallDomainListID, in.Qtype)
+	}
+
 	r := m.ruleFromInput(in)
-	m.fwRules.Set(fwRuleKey(in.FirewallRuleGroupID, in.FirewallDomainListID, in.Qtype), r)
+	m.fwRules.Set(key, r)
 	m.refreshRuleCount(in.FirewallRuleGroupID)
 
 	return r, nil
@@ -151,67 +158,114 @@ func (m *Mock) ListFirewallRules(_ context.Context, groupID string) ([]driver.Fi
 		}
 	}
 
+	// Deterministic order: by priority, then a stable tiebreaker on
+	// (domain-list, qtype) so equal-priority rules never reorder across calls.
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].Priority < out[j].Priority
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority < out[j].Priority
+		}
+
+		if out[i].FirewallDomainListID != out[j].FirewallDomainListID {
+			return out[i].FirewallDomainListID < out[j].FirewallDomainListID
+		}
+
+		return out[i].Qtype < out[j].Qtype
 	})
 
 	return out, nil
 }
 
+// BatchCreateFirewallRules is atomic: it validates every entry (group exists,
+// no existing or in-batch duplicate key) before applying any, so the returned
+// slice can never exceed what was stored.
 func (m *Mock) BatchCreateFirewallRules(
 	_ context.Context, in []driver.FirewallRuleInput,
 ) ([]driver.FirewallRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	seen := make(map[string]struct{}, len(in))
+
+	for i := range in {
+		if !m.fwRuleGroups.Has(in[i].FirewallRuleGroupID) {
+			return nil, fwRuleGroupNotFound(in[i].FirewallRuleGroupID)
+		}
+
+		key := fwRuleKey(in[i].FirewallRuleGroupID, in[i].FirewallDomainListID, in[i].Qtype)
+		if _, dup := seen[key]; dup || m.fwRules.Has(key) {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"duplicate firewall rule in group %q for domain-list %q qtype %q",
+				in[i].FirewallRuleGroupID, in[i].FirewallDomainListID, in[i].Qtype)
+		}
+
+		seen[key] = struct{}{}
+	}
+
+	return m.applyRuleBatch(in), nil
+}
+
+// applyRuleBatch stores each validated rule and refreshes its group's count.
+// Caller holds m.mu and has already validated the batch.
+func (m *Mock) applyRuleBatch(in []driver.FirewallRuleInput) []driver.FirewallRule {
 	out := make([]driver.FirewallRule, 0, len(in))
 
 	for i := range in {
-		r, err := m.createRuleLocked(&in[i])
-		if err != nil {
-			return nil, err
-		}
-
+		r := m.ruleFromInput(&in[i])
 		out = append(out, cloneFWRule(r))
+
+		m.fwRules.Set(fwRuleKey(in[i].FirewallRuleGroupID, in[i].FirewallDomainListID, in[i].Qtype), r)
+		m.refreshRuleCount(in[i].FirewallRuleGroupID)
 	}
 
-	return out, nil
+	return out
 }
 
+// BatchUpdateFirewallRules is atomic: every target rule must exist before any
+// update is applied.
 func (m *Mock) BatchUpdateFirewallRules(
 	_ context.Context, in []driver.FirewallRuleInput,
 ) ([]driver.FirewallRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	for i := range in {
+		key := fwRuleKey(in[i].FirewallRuleGroupID, in[i].FirewallDomainListID, in[i].Qtype)
+		if !m.fwRules.Has(key) {
+			return nil, errors.Newf(errors.NotFound,
+				"firewall rule for group %q domain-list %q not found",
+				in[i].FirewallRuleGroupID, in[i].FirewallDomainListID)
+		}
+	}
+
 	out := make([]driver.FirewallRule, 0, len(in))
 
 	for i := range in {
-		r, err := m.updateRuleLocked(&in[i])
-		if err != nil {
-			return nil, err
-		}
-
+		r, _ := m.updateRuleLocked(&in[i])
 		out = append(out, cloneFWRule(r))
 	}
 
 	return out, nil
 }
 
+// BatchDeleteFirewallRules is atomic: every target rule must exist before any
+// deletion is applied.
 func (m *Mock) BatchDeleteFirewallRules(
 	_ context.Context, groupID string, keys []driver.FirewallRuleKey,
 ) ([]driver.FirewallRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	for _, k := range keys {
+		if !m.fwRules.Has(fwRuleKey(groupID, k.FirewallDomainListID, k.Qtype)) {
+			return nil, errors.Newf(errors.NotFound,
+				"firewall rule for group %q domain-list %q not found", groupID, k.FirewallDomainListID)
+		}
+	}
+
 	out := make([]driver.FirewallRule, 0, len(keys))
 
 	for _, k := range keys {
-		r, err := m.deleteRuleLocked(groupID, k.FirewallDomainListID, k.Qtype)
-		if err != nil {
-			return nil, err
-		}
-
+		r, _ := m.deleteRuleLocked(groupID, k.FirewallDomainListID, k.Qtype)
 		out = append(out, *r)
 	}
 

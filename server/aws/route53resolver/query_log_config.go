@@ -12,7 +12,7 @@ import (
 type wireQueryLogConfig struct {
 	ID               string `json:"Id,omitempty"`
 	Arn              string `json:"Arn,omitempty"`
-	AssociationCount int32  `json:"AssociationCount,omitempty"`
+	AssociationCount int32  `json:"AssociationCount"`
 	CreatorRequestID string `json:"CreatorRequestId,omitempty"`
 	DestinationArn   string `json:"DestinationArn,omitempty"`
 	Name             string `json:"Name,omitempty"`

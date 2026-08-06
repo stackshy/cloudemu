@@ -20,6 +20,8 @@ func newTestMock() *Mock {
 	return New(opts)
 }
 
+func ptr[T any](v T) *T { return &v }
+
 // ---- resolver endpoints ----
 
 func TestEndpointCreateGetUpdateDeleteAndIPs(t *testing.T) {
@@ -57,7 +59,7 @@ func TestEndpointCreateGetUpdateDeleteAndIPs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), afterDel.IPAddressCount)
 
-	upd, err := m.UpdateResolverEndpoint(ctx, ep.ID, driver.UpdateResolverEndpointInput{Name: "in-renamed"})
+	upd, err := m.UpdateResolverEndpoint(ctx, ep.ID, driver.UpdateResolverEndpointInput{Name: ptr("in-renamed")})
 	require.NoError(t, err)
 	assert.Equal(t, "in-renamed", upd.Name)
 
@@ -76,7 +78,7 @@ func TestEndpointErrorPaths(t *testing.T) {
 	_, err := m.GetResolverEndpoint(ctx, "rslvr-in-missing")
 	assert.True(t, cerrors.IsNotFound(err))
 
-	_, err = m.UpdateResolverEndpoint(ctx, "nope", driver.UpdateResolverEndpointInput{Name: "x"})
+	_, err = m.UpdateResolverEndpoint(ctx, "nope", driver.UpdateResolverEndpointInput{Name: ptr("x")})
 	assert.True(t, cerrors.IsNotFound(err))
 
 	_, err = m.DeleteResolverEndpoint(ctx, "nope")
@@ -128,7 +130,7 @@ func TestRuleLifecycleAssociationsAndPolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, rule.ID, "rslvr-rr-")
 
-	upd, err := m.UpdateResolverRule(ctx, rule.ID, driver.UpdateResolverRuleInput{Name: "fwd2"})
+	upd, err := m.UpdateResolverRule(ctx, rule.ID, driver.UpdateResolverRuleInput{Name: ptr("fwd2")})
 	require.NoError(t, err)
 	assert.Equal(t, "fwd2", upd.Name)
 
@@ -259,9 +261,18 @@ func TestResolverConfigLazyDefaultAndUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, list)
 
+	// A pure Get returns the default but must NOT persist a phantom config.
 	got, err := m.GetResolverConfig(ctx, "vpc-1")
 	require.NoError(t, err)
 	assert.Equal(t, autodefinedReverseEnabled, got.AutodefinedReverse)
+
+	list, err = m.ListResolverConfigs(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, list)
+
+	// Update materializes it; now it appears in the List.
+	_, err = m.UpdateResolverConfig(ctx, "vpc-1", flagEnable)
+	require.NoError(t, err)
 
 	list, err = m.ListResolverConfigs(ctx)
 	require.NoError(t, err)
@@ -420,7 +431,7 @@ func TestFirewallAssociationsConfigAndPolicy(t *testing.T) {
 	assert.Equal(t, mutationProtectionDisabled, a.MutationProtection) // defaulted
 
 	uAssoc, err := m.UpdateFirewallRuleGroupAssociation(ctx, &driver.UpdateFirewallRuleGroupAssociationInput{
-		ID: a.ID, Name: "assoc2", Priority: 202, MutationProtection: "ENABLED",
+		ID: a.ID, Name: ptr("assoc2"), Priority: ptr(int32(202)), MutationProtection: ptr("ENABLED"),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "assoc2", uAssoc.Name)
@@ -469,7 +480,7 @@ func TestOutpostResolverLifecycleAndErrors(t *testing.T) {
 	assert.Contains(t, o.ID, "rslvr-op-")
 
 	// Zero-value fields on update leave existing values unchanged.
-	upd, err := m.UpdateOutpostResolver(ctx, &driver.UpdateOutpostResolverInput{ID: o.ID, InstanceCount: 8})
+	upd, err := m.UpdateOutpostResolver(ctx, &driver.UpdateOutpostResolverInput{ID: o.ID, InstanceCount: ptr(int32(8))})
 	require.NoError(t, err)
 	assert.Equal(t, int32(8), upd.InstanceCount)
 	assert.Equal(t, "op", upd.Name)
@@ -497,7 +508,14 @@ func TestTaggingMergeAndUntag(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	const arn = "arn:aws:route53resolver:us-east-1:123456789012:resolver-endpoint/rslvr-in-x"
+	// Tagging targets a real, live resource — a bogus ARN is rejected.
+	ep, err := m.CreateResolverEndpoint(ctx, &driver.CreateResolverEndpointInput{
+		Name: "ep", Direction: directionInbound,
+		IPAddresses: []driver.IPAddress{{SubnetID: "s"}, {SubnetID: "s2"}},
+	})
+	require.NoError(t, err)
+
+	arn := ep.ARN
 
 	require.NoError(t, m.TagResource(ctx, arn, []driver.Tag{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}}))
 	// Overlapping key overwrites by key.
@@ -517,8 +535,152 @@ func TestTaggingMergeAndUntag(t *testing.T) {
 	assert.Len(t, tags, 1)
 	assert.Equal(t, "b", tags[0].Key)
 
-	// Unknown ARN lists empty, not an error.
-	empty, err := m.ListTagsForResource(ctx, "arn:none")
+	// Tagging / listing an ARN that names no live resource is a NotFound.
+	assert.True(t, cerrors.IsNotFound(m.TagResource(ctx, "arn:none", nil)))
+
+	_, err = m.ListTagsForResource(ctx, "arn:none")
+	assert.True(t, cerrors.IsNotFound(err))
+}
+
+// --- review-driven correctness behaviors ---
+
+func TestDeleteBlockedByDependents(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	// Endpoint referenced by a rule cannot be deleted.
+	ep, _ := m.CreateResolverEndpoint(ctx, &driver.CreateResolverEndpointInput{
+		Direction: "OUTBOUND", IPAddresses: []driver.IPAddress{{SubnetID: "s"}, {SubnetID: "s2"}},
+	})
+	rule, _ := m.CreateResolverRule(ctx, &driver.CreateResolverRuleInput{
+		Name: "r", RuleType: "FORWARD", DomainName: "x.com", ResolverEndpointID: ep.ID,
+	})
+	_, err := m.DeleteResolverEndpoint(ctx, ep.ID)
+	assert.True(t, cerrors.IsFailedPrecondition(err))
+
+	// Rule with a VPC association cannot be deleted.
+	_, err = m.AssociateResolverRule(ctx, rule.ID, "vpc-1", "a")
 	require.NoError(t, err)
-	assert.Empty(t, empty)
+	_, err = m.DeleteResolverRule(ctx, rule.ID)
+	assert.True(t, cerrors.IsFailedPrecondition(err))
+
+	// Domain list referenced by a firewall rule cannot be deleted.
+	rg, _ := m.CreateFirewallRuleGroup(ctx, "", "rg", nil)
+	dl, _ := m.CreateFirewallDomainList(ctx, "", "dl", nil)
+	_, err = m.CreateFirewallRule(ctx, &driver.FirewallRuleInput{
+		FirewallRuleGroupID: rg.ID, FirewallDomainListID: dl.ID, Priority: 1, Action: "BLOCK",
+	})
+	require.NoError(t, err)
+	_, err = m.DeleteFirewallDomainList(ctx, dl.ID)
+	assert.True(t, cerrors.IsFailedPrecondition(err))
+
+	// Rule group with a VPC association cannot be deleted.
+	_, err = m.AssociateFirewallRuleGroup(ctx, &driver.AssociateFirewallRuleGroupInput{
+		FirewallRuleGroupID: rg.ID, VPCID: "vpc-1",
+	})
+	require.NoError(t, err)
+	_, err = m.DeleteFirewallRuleGroup(ctx, rg.ID)
+	assert.True(t, cerrors.IsFailedPrecondition(err))
+}
+
+func TestFirewallRuleDuplicateAndAtomicBatch(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	rg, _ := m.CreateFirewallRuleGroup(ctx, "", "rg", nil)
+
+	_, err := m.CreateFirewallRule(ctx, &driver.FirewallRuleInput{
+		FirewallRuleGroupID: rg.ID, FirewallDomainListID: "dl-1", Priority: 1, Action: "BLOCK",
+	})
+	require.NoError(t, err)
+
+	// Duplicate (group, domain-list, qtype) is rejected.
+	_, err = m.CreateFirewallRule(ctx, &driver.FirewallRuleInput{
+		FirewallRuleGroupID: rg.ID, FirewallDomainListID: "dl-1", Priority: 2, Action: "ALLOW",
+	})
+	assert.True(t, cerrors.IsAlreadyExists(err))
+
+	// A batch containing an in-batch duplicate is rejected atomically — nothing
+	// from the batch is stored, so RuleCount stays at the single prior rule.
+	_, err = m.BatchCreateFirewallRules(ctx, []driver.FirewallRuleInput{
+		{FirewallRuleGroupID: rg.ID, FirewallDomainListID: "dl-2", Priority: 3, Action: "BLOCK"},
+		{FirewallRuleGroupID: rg.ID, FirewallDomainListID: "dl-2", Priority: 4, Action: "BLOCK"},
+	})
+	assert.True(t, cerrors.IsAlreadyExists(err))
+
+	rules, _ := m.ListFirewallRules(ctx, rg.ID)
+	assert.Len(t, rules, 1)
+
+	got, _ := m.GetFirewallRuleGroup(ctx, rg.ID)
+	assert.Equal(t, int32(1), got.RuleCount)
+}
+
+func TestAssociationDedupe(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	rule, _ := m.CreateResolverRule(ctx, &driver.CreateResolverRuleInput{Name: "r", RuleType: "FORWARD", DomainName: "x"})
+	_, err := m.AssociateResolverRule(ctx, rule.ID, "vpc-1", "a")
+	require.NoError(t, err)
+	_, err = m.AssociateResolverRule(ctx, rule.ID, "vpc-1", "a")
+	assert.True(t, cerrors.IsAlreadyExists(err))
+
+	qlc, _ := m.CreateResolverQueryLogConfig(ctx, &driver.CreateQueryLogConfigInput{Name: "q"})
+	_, err = m.AssociateResolverQueryLogConfig(ctx, qlc.ID, "vpc-1")
+	require.NoError(t, err)
+	_, err = m.AssociateResolverQueryLogConfig(ctx, qlc.ID, "vpc-1")
+	assert.True(t, cerrors.IsAlreadyExists(err))
+
+	rg, _ := m.CreateFirewallRuleGroup(ctx, "", "rg", nil)
+	_, err = m.AssociateFirewallRuleGroup(ctx, &driver.AssociateFirewallRuleGroupInput{FirewallRuleGroupID: rg.ID, VPCID: "vpc-1"})
+	require.NoError(t, err)
+	_, err = m.AssociateFirewallRuleGroup(ctx, &driver.AssociateFirewallRuleGroupInput{FirewallRuleGroupID: rg.ID, VPCID: "vpc-1"})
+	assert.True(t, cerrors.IsAlreadyExists(err))
+}
+
+func TestCreatorRequestIDIdempotency(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	in := &driver.CreateResolverEndpointInput{
+		CreatorRequestID: "tok-1", Name: "ep", Direction: directionInbound,
+		IPAddresses: []driver.IPAddress{{SubnetID: "s"}, {SubnetID: "s2"}},
+	}
+	first, _ := m.CreateResolverEndpoint(ctx, in)
+	second, _ := m.CreateResolverEndpoint(ctx, in)
+	assert.Equal(t, first.ID, second.ID)
+
+	list, _ := m.ListResolverEndpoints(ctx)
+	assert.Len(t, list, 1)
+}
+
+func TestDisassociateIPMinimumTwo(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	ep, _ := m.CreateResolverEndpoint(ctx, &driver.CreateResolverEndpointInput{
+		Direction: directionInbound, IPAddresses: []driver.IPAddress{{SubnetID: "s1"}, {SubnetID: "s2"}},
+	})
+
+	// At exactly two IPs, a disassociate is rejected.
+	_, err := m.DisassociateResolverEndpointIPAddress(ctx, ep.ID, &driver.IPAddress{SubnetID: "s1"})
+	assert.True(t, cerrors.IsFailedPrecondition(err))
+}
+
+func TestPointerUpdateAppliesExplicitEmpty(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	ep, _ := m.CreateResolverEndpoint(ctx, &driver.CreateResolverEndpointInput{
+		Name: "named", Direction: directionInbound,
+		IPAddresses: []driver.IPAddress{{SubnetID: "s"}, {SubnetID: "s2"}},
+	})
+
+	// nil pointer leaves the name unchanged...
+	unchanged, _ := m.UpdateResolverEndpoint(ctx, ep.ID, driver.UpdateResolverEndpointInput{})
+	assert.Equal(t, "named", unchanged.Name)
+
+	// ...an explicit empty string clears it (distinct from "absent").
+	cleared, _ := m.UpdateResolverEndpoint(ctx, ep.ID, driver.UpdateResolverEndpointInput{Name: ptr("")})
+	assert.Equal(t, "", cleared.Name)
 }

@@ -90,9 +90,19 @@ func (m *Mock) GetResolverConfig(_ context.Context, resourceID string) (*driver.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	out := cloneResolverConfig(m.resolverConfigFor(resourceID))
+	if c, ok := m.rslvrConfigs.Get(resourceID); ok {
+		out := cloneResolverConfig(c)
 
-	return &out, nil
+		return &out, nil
+	}
+
+	// A pure read never persists: return the AWS default (autodefined reverse
+	// enabled) without materializing a record that would then pollute the List.
+	return &driver.ResolverConfig{
+		OwnerID:            m.opts.AccountID,
+		ResourceID:         resourceID,
+		AutodefinedReverse: autodefinedReverseEnabled,
+	}, nil
 }
 
 func (m *Mock) UpdateResolverConfig(
@@ -122,9 +132,18 @@ func (m *Mock) GetResolverDnssecConfig(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	out := cloneDnssecConfig(m.dnssecConfigFor(resourceID))
+	if c, ok := m.dnssecCfgs.Get(resourceID); ok {
+		out := cloneDnssecConfig(c)
 
-	return &out, nil
+		return &out, nil
+	}
+
+	// A pure read never persists: return the AWS default (validation disabled).
+	return &driver.ResolverDnssecConfig{
+		OwnerID:          m.opts.AccountID,
+		ResourceID:       resourceID,
+		ValidationStatus: dnssecStatusDisabled,
+	}, nil
 }
 
 func (m *Mock) UpdateResolverDnssecConfig(

@@ -36,6 +36,14 @@ func (m *Mock) CreateFirewallRuleGroup(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if prior, ok := m.idempotentID("fwrulegroup", creatorRequestID); ok {
+		if g, found := m.fwRuleGroups.Get(prior); found {
+			out := cloneFWRuleGroup(g)
+
+			return &out, nil
+		}
+	}
+
 	id := idgen.GenerateID("rslvr-frg-")
 	g := &driver.FirewallRuleGroup{
 		ID:               id,
@@ -49,6 +57,7 @@ func (m *Mock) CreateFirewallRuleGroup(
 		ModifiedAt:       m.now(),
 	}
 	m.fwRuleGroups.Set(id, g)
+	m.rememberIdempotent("fwrulegroup", creatorRequestID, id)
 
 	if len(tags) > 0 {
 		m.tags.Set(g.ARN, copyTags(tags))
@@ -80,6 +89,13 @@ func (m *Mock) DeleteFirewallRuleGroup(_ context.Context, id string) (*driver.Fi
 	g, ok := m.fwRuleGroups.Get(id)
 	if !ok {
 		return nil, fwRuleGroupNotFound(id)
+	}
+
+	for _, a := range m.fwAssocs.All() {
+		if a.FirewallRuleGroupID == id {
+			return nil, errors.Newf(errors.FailedPrecondition,
+				"firewall rule group %q still has VPC associations", id)
+		}
 	}
 
 	for key, rule := range m.fwRules.All() {
@@ -133,6 +149,13 @@ func (m *Mock) AssociateFirewallRuleGroup(
 
 	if !m.fwRuleGroups.Has(in.FirewallRuleGroupID) {
 		return nil, fwRuleGroupNotFound(in.FirewallRuleGroupID)
+	}
+
+	for _, a := range m.fwAssocs.All() {
+		if a.FirewallRuleGroupID == in.FirewallRuleGroupID && a.VPCID == in.VPCID {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"firewall rule group %q is already associated with vpc %q", in.FirewallRuleGroupID, in.VPCID)
+		}
 	}
 
 	id := idgen.GenerateID("rslvr-frgassoc-")
@@ -222,16 +245,16 @@ func (m *Mock) UpdateFirewallRuleGroupAssociation(
 		return nil, fwAssocNotFound(in.ID)
 	}
 
-	if in.Name != "" {
-		a.Name = in.Name
+	if in.Name != nil {
+		a.Name = *in.Name
 	}
 
-	if in.Priority != 0 {
-		a.Priority = in.Priority
+	if in.Priority != nil {
+		a.Priority = *in.Priority
 	}
 
-	if in.MutationProtection != "" {
-		a.MutationProtection = in.MutationProtection
+	if in.MutationProtection != nil {
+		a.MutationProtection = *in.MutationProtection
 	}
 
 	a.ModifiedAt = m.now()
@@ -270,9 +293,18 @@ func (m *Mock) GetFirewallConfig(_ context.Context, resourceID string) (*driver.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	out := cloneFWConfig(m.firewallConfigFor(resourceID))
+	if c, ok := m.fwConfigs.Get(resourceID); ok {
+		out := cloneFWConfig(c)
 
-	return &out, nil
+		return &out, nil
+	}
+
+	// A pure read never persists: return the AWS default (fail-open disabled).
+	return &driver.FirewallConfig{
+		OwnerID:          m.opts.AccountID,
+		ResourceID:       resourceID,
+		FirewallFailOpen: failOpenDisabled,
+	}, nil
 }
 
 func (m *Mock) UpdateFirewallConfig(

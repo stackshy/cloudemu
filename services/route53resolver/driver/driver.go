@@ -81,10 +81,12 @@ type CreateResolverEndpointInput struct {
 	Tags                      []Tag
 }
 
-// UpdateResolverEndpointInput carries the mutable fields; empty/nil = unchanged.
+// UpdateResolverEndpointInput carries the mutable fields; a nil pointer (or nil
+// slice) means "absent from the request, leave unchanged" — distinct from an
+// explicit empty value.
 type UpdateResolverEndpointInput struct {
-	Name                 string
-	ResolverEndpointType string
+	Name                 *string
+	ResolverEndpointType *string
 	Protocols            []string
 }
 
@@ -150,10 +152,11 @@ type CreateResolverRuleInput struct {
 	Tags               []Tag
 }
 
-// UpdateResolverRuleInput carries the mutable fields (ResolverRuleConfig).
+// UpdateResolverRuleInput carries the mutable fields (ResolverRuleConfig); a
+// nil pointer (or nil slice) means "absent, leave unchanged".
 type UpdateResolverRuleInput struct {
-	Name               string
-	ResolverEndpointID string
+	Name               *string
+	ResolverEndpointID *string
 	TargetIPs          []TargetAddress
 }
 
@@ -283,12 +286,13 @@ type CreateOutpostResolverInput struct {
 	Tags                  []Tag
 }
 
-// UpdateOutpostResolverInput carries the mutable fields; empty/zero = unchanged.
+// UpdateOutpostResolverInput carries the mutable fields; a nil pointer means
+// "absent, leave unchanged". ID identifies the target resolver.
 type UpdateOutpostResolverInput struct {
 	ID                    string
-	Name                  string
-	PreferredInstanceType string
-	InstanceCount         int32
+	Name                  *string
+	PreferredInstanceType *string
+	InstanceCount         *int32
 }
 
 // OutpostResolvers is the Outpost-resolver resource group.

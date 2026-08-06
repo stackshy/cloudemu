@@ -44,8 +44,8 @@ type wireRuleAssociation struct {
 }
 
 type wireResolverRuleConfig struct {
-	Name               string              `json:"Name"`
-	ResolverEndpointID string              `json:"ResolverEndpointId"`
+	Name               *string             `json:"Name"`
+	ResolverEndpointID *string             `json:"ResolverEndpointId"`
 	TargetIPs          []wireTargetAddress `json:"TargetIps"`
 }
 

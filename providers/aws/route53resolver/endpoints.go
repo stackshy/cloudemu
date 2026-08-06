@@ -23,8 +23,22 @@ func endpointIDPrefix(direction string) string {
 	return "rslvr-out-"
 }
 
+// minEndpointIPs is the minimum number of IP addresses AWS requires a Resolver
+// endpoint to retain.
+const minEndpointIPs = 2
+
 func notFound(id string) error {
 	return errors.Newf(errors.NotFound, "resolver endpoint %q not found", id)
+}
+
+// ipMatches reports whether a stored IP matches a disassociate selector, which
+// targets either an explicit IP ID or a subnet (optionally pinned to an IP).
+func ipMatches(cur, want *driver.IPAddress) bool {
+	if want.IPID != "" {
+		return cur.IPID == want.IPID
+	}
+
+	return cur.SubnetID == want.SubnetID && (want.IP == "" || cur.IP == want.IP)
 }
 
 func (m *Mock) CreateResolverEndpoint(
@@ -32,6 +46,14 @@ func (m *Mock) CreateResolverEndpoint(
 ) (*driver.ResolverEndpoint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if prior, ok := m.idempotentID("endpoint", in.CreatorRequestID); ok {
+		if e, found := m.endpoints.Get(prior); found {
+			out := cloneEndpoint(e)
+
+			return &out, nil
+		}
+	}
 
 	id := idgen.GenerateID(endpointIDPrefix(in.Direction))
 	now := m.now()
@@ -75,6 +97,7 @@ func (m *Mock) CreateResolverEndpoint(
 		ModifiedAt:                now,
 	}
 	m.endpoints.Set(id, e)
+	m.rememberIdempotent("endpoint", in.CreatorRequestID, id)
 
 	if len(in.Tags) > 0 {
 		m.tags.Set(e.ARN, copyTags(in.Tags))
@@ -111,12 +134,12 @@ func (m *Mock) UpdateResolverEndpoint(
 	}
 
 	updated := cloneEndpoint(e)
-	if in.Name != "" {
-		updated.Name = in.Name
+	if in.Name != nil {
+		updated.Name = *in.Name
 	}
 
-	if in.ResolverEndpointType != "" {
-		updated.ResolverEndpointType = in.ResolverEndpointType
+	if in.ResolverEndpointType != nil {
+		updated.ResolverEndpointType = *in.ResolverEndpointType
 	}
 
 	if in.Protocols != nil {
@@ -138,6 +161,13 @@ func (m *Mock) DeleteResolverEndpoint(_ context.Context, id string) (*driver.Res
 	e, ok := m.endpoints.Get(id)
 	if !ok {
 		return nil, notFound(id)
+	}
+
+	for _, r := range m.rules.All() {
+		if r.ResolverEndpointID == id {
+			return nil, errors.Newf(errors.FailedPrecondition,
+				"resolver endpoint %q still has associated resolver rules", id)
+		}
 	}
 
 	m.endpoints.Delete(id)
@@ -201,15 +231,19 @@ func (m *Mock) DisassociateResolverEndpointIPAddress(
 		return nil, notFound(id)
 	}
 
+	// AWS requires a Resolver endpoint to keep at least two IP addresses; a
+	// disassociate that would drop below that minimum is rejected.
+	if len(e.IPAddresses) <= minEndpointIPs {
+		return nil, errors.Newf(errors.FailedPrecondition,
+			"resolver endpoint %q must retain at least %d IP addresses", id, minEndpointIPs)
+	}
+
 	updated := cloneEndpoint(e)
 
 	idx := -1
 
-	for i, cur := range updated.IPAddresses {
-		byID := ip.IPID != "" && cur.IPID == ip.IPID
-		bySubnet := ip.IPID == "" && cur.SubnetID == ip.SubnetID && (ip.IP == "" || cur.IP == ip.IP)
-
-		if byID || bySubnet {
+	for i := range updated.IPAddresses {
+		if ipMatches(&updated.IPAddresses[i], ip) {
 			idx = i
 
 			break

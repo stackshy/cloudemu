@@ -26,6 +26,14 @@ func (m *Mock) CreateResolverRule(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if prior, ok := m.idempotentID("rule", in.CreatorRequestID); ok {
+		if r, found := m.rules.Get(prior); found {
+			out := cloneRule(r)
+
+			return &out, nil
+		}
+	}
+
 	id := idgen.GenerateID("rslvr-rr-")
 	now := m.now()
 
@@ -46,6 +54,7 @@ func (m *Mock) CreateResolverRule(
 		ModifiedAt:         now,
 	}
 	m.rules.Set(id, r)
+	m.rememberIdempotent("rule", in.CreatorRequestID, id)
 
 	if len(in.Tags) > 0 {
 		m.tags.Set(r.ARN, copyTags(in.Tags))
@@ -82,12 +91,12 @@ func (m *Mock) UpdateResolverRule(
 	}
 
 	updated := cloneRule(r)
-	if in.Name != "" {
-		updated.Name = in.Name
+	if in.Name != nil {
+		updated.Name = *in.Name
 	}
 
-	if in.ResolverEndpointID != "" {
-		updated.ResolverEndpointID = in.ResolverEndpointID
+	if in.ResolverEndpointID != nil {
+		updated.ResolverEndpointID = *in.ResolverEndpointID
 	}
 
 	if in.TargetIPs != nil {
@@ -109,6 +118,13 @@ func (m *Mock) DeleteResolverRule(_ context.Context, id string) (*driver.Resolve
 	r, ok := m.rules.Get(id)
 	if !ok {
 		return nil, ruleNotFound(id)
+	}
+
+	for _, a := range m.ruleAssocs.All() {
+		if a.ResolverRuleID == id {
+			return nil, errors.Newf(errors.FailedPrecondition,
+				"resolver rule %q still has VPC associations", id)
+		}
 	}
 
 	m.rules.Delete(id)
@@ -137,6 +153,13 @@ func (m *Mock) AssociateResolverRule(
 
 	if !m.rules.Has(ruleID) {
 		return nil, ruleNotFound(ruleID)
+	}
+
+	for _, a := range m.ruleAssocs.All() {
+		if a.ResolverRuleID == ruleID && a.VPCID == vpcID {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"resolver rule %q is already associated with vpc %q", ruleID, vpcID)
+		}
 	}
 
 	id := idgen.GenerateID("rslvr-rrassoc-")

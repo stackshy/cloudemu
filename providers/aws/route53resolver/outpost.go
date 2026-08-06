@@ -20,6 +20,14 @@ func (m *Mock) CreateOutpostResolver(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if prior, ok := m.idempotentID("outpost", in.CreatorRequestID); ok {
+		if o, found := m.outposts.Get(prior); found {
+			out := cloneOutpost(o)
+
+			return &out, nil
+		}
+	}
+
 	id := idgen.GenerateID("rslvr-op-")
 	o := &driver.OutpostResolver{
 		ID:                    id,
@@ -34,6 +42,7 @@ func (m *Mock) CreateOutpostResolver(
 		ModifiedAt:            m.now(),
 	}
 	m.outposts.Set(id, o)
+	m.rememberIdempotent("outpost", in.CreatorRequestID, id)
 
 	if len(in.Tags) > 0 {
 		m.tags.Set(o.ARN, copyTags(in.Tags))
@@ -69,16 +78,16 @@ func (m *Mock) UpdateOutpostResolver(
 		return nil, outpostNotFound(in.ID)
 	}
 
-	if in.Name != "" {
-		o.Name = in.Name
+	if in.Name != nil {
+		o.Name = *in.Name
 	}
 
-	if in.PreferredInstanceType != "" {
-		o.PreferredInstanceType = in.PreferredInstanceType
+	if in.PreferredInstanceType != nil {
+		o.PreferredInstanceType = *in.PreferredInstanceType
 	}
 
-	if in.InstanceCount != 0 {
-		o.InstanceCount = in.InstanceCount
+	if in.InstanceCount != nil {
+		o.InstanceCount = *in.InstanceCount
 	}
 
 	o.ModifiedAt = m.now()

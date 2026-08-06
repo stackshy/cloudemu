@@ -42,6 +42,14 @@ func (m *Mock) CreateResolverQueryLogConfig(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if prior, ok := m.idempotentID("qlc", in.CreatorRequestID); ok {
+		if c, found := m.qlcs.Get(prior); found {
+			out := cloneQLC(c)
+
+			return &out, nil
+		}
+	}
+
 	id := idgen.GenerateID("rqlc-")
 	c := &driver.QueryLogConfig{
 		ID:               id,
@@ -55,6 +63,7 @@ func (m *Mock) CreateResolverQueryLogConfig(
 		CreatedAt:        m.now(),
 	}
 	m.qlcs.Set(id, c)
+	m.rememberIdempotent("qlc", in.CreatorRequestID, id)
 
 	if len(in.Tags) > 0 {
 		m.tags.Set(c.ARN, copyTags(in.Tags))
@@ -119,6 +128,13 @@ func (m *Mock) AssociateResolverQueryLogConfig(
 
 	if !m.qlcs.Has(configID) {
 		return nil, qlcNotFound(configID)
+	}
+
+	for _, a := range m.qlcAssocs.All() {
+		if a.ResolverQueryLogConfigID == configID && a.ResourceID == resourceID {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"query log config %q is already associated with resource %q", configID, resourceID)
+		}
 	}
 
 	id := idgen.GenerateID("rqlca-")

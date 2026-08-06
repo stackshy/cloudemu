@@ -162,12 +162,14 @@ type AssociateFirewallRuleGroupInput struct {
 	Tags                []Tag
 }
 
-// UpdateFirewallRuleGroupAssociationInput carries the mutable association fields.
+// UpdateFirewallRuleGroupAssociationInput carries the mutable association
+// fields; a nil pointer means "absent, leave unchanged". ID identifies the
+// target association.
 type UpdateFirewallRuleGroupAssociationInput struct {
 	ID                 string
-	MutationProtection string
-	Name               string
-	Priority           int32
+	MutationProtection *string
+	Name               *string
+	Priority           *int32
 }
 
 // FirewallRuleType is one entry of the rule-type descriptor enumeration.

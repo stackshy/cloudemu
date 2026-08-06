@@ -3,12 +3,21 @@ package route53resolver
 import (
 	"context"
 
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/route53resolver/driver"
 )
+
+func tagResourceNotFound(arn string) error {
+	return errors.Newf(errors.NotFound, "resource %q not found", arn)
+}
 
 func (m *Mock) TagResource(_ context.Context, arn string, tags []driver.Tag) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if !m.arnExists(arn) {
+		return tagResourceNotFound(arn)
+	}
 
 	existing, _ := m.tags.Get(arn)
 	m.tags.Set(arn, mergeTags(existing, tags))
@@ -19,6 +28,10 @@ func (m *Mock) TagResource(_ context.Context, arn string, tags []driver.Tag) err
 func (m *Mock) UntagResource(_ context.Context, arn string, keys []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if !m.arnExists(arn) {
+		return tagResourceNotFound(arn)
+	}
 
 	existing, ok := m.tags.Get(arn)
 	if !ok {
@@ -46,6 +59,10 @@ func (m *Mock) UntagResource(_ context.Context, arn string, keys []string) error
 func (m *Mock) ListTagsForResource(_ context.Context, arn string) ([]driver.Tag, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if !m.arnExists(arn) {
+		return nil, tagResourceNotFound(arn)
+	}
 
 	existing, _ := m.tags.Get(arn)
 

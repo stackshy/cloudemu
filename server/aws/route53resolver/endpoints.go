@@ -72,8 +72,8 @@ func (h *Handler) getResolverEndpoint(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) updateResolverEndpoint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResolverEndpointID   string   `json:"ResolverEndpointId"`
-		Name                 string   `json:"Name"`
-		ResolverEndpointType string   `json:"ResolverEndpointType"`
+		Name                 *string  `json:"Name"`
+		ResolverEndpointType *string  `json:"ResolverEndpointType"`
 		Protocols            []string `json:"Protocols"`
 	}
 

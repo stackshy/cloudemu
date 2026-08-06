@@ -46,6 +46,7 @@ type Mock struct {
 	fwPolicies   *memstore.Store[string]                               // keyed by rule-group ARN
 	outposts     *memstore.Store[*driver.OutpostResolver]              // keyed by outpost-resolver ID
 	tags         *memstore.Store[[]driver.Tag]                         // keyed by resource ARN
+	idem         *memstore.Store[string]                               // "kind|creatorRequestID" -> resource ID
 	opts         *config.Options
 	mu           sync.Mutex // serializes read-modify-write on stored records
 }
@@ -71,8 +72,52 @@ func New(opts *config.Options) *Mock {
 		fwPolicies:   memstore.New[string](),
 		outposts:     memstore.New[*driver.OutpostResolver](),
 		tags:         memstore.New[[]driver.Tag](),
+		idem:         memstore.New[string](),
 		opts:         opts,
 	}
+}
+
+// idempotentID returns the resource ID a prior create recorded for this
+// (kind, creatorRequestID), if any. An empty token never matches. Caller holds
+// m.mu.
+func (m *Mock) idempotentID(kind, token string) (string, bool) {
+	if token == "" {
+		return "", false
+	}
+
+	return m.idem.Get(kind + "|" + token)
+}
+
+// rememberIdempotent records the resource ID minted for a (kind,
+// creatorRequestID) so a replayed create returns the same resource. Caller
+// holds m.mu.
+func (m *Mock) rememberIdempotent(kind, token, id string) {
+	if token != "" {
+		m.idem.Set(kind+"|"+token, id)
+	}
+}
+
+// storeHasARN reports whether any value in a store carries the given ARN.
+func storeHasARN[T any](all map[string]*T, arn string, getARN func(*T) string) bool {
+	for _, v := range all {
+		if getARN(v) == arn {
+			return true
+		}
+	}
+
+	return false
+}
+
+// arnExists reports whether arn names a live, taggable resource in the service.
+// Caller holds m.mu.
+func (m *Mock) arnExists(arn string) bool {
+	return storeHasARN(m.endpoints.All(), arn, func(e *driver.ResolverEndpoint) string { return e.ARN }) ||
+		storeHasARN(m.rules.All(), arn, func(r *driver.ResolverRule) string { return r.ARN }) ||
+		storeHasARN(m.qlcs.All(), arn, func(c *driver.QueryLogConfig) string { return c.ARN }) ||
+		storeHasARN(m.fwDomLists.All(), arn, func(d *driver.FirewallDomainList) string { return d.ARN }) ||
+		storeHasARN(m.fwRuleGroups.All(), arn, func(g *driver.FirewallRuleGroup) string { return g.ARN }) ||
+		storeHasARN(m.fwAssocs.All(), arn, func(a *driver.FirewallRuleGroupAssociation) string { return a.ARN }) ||
+		storeHasARN(m.outposts.All(), arn, func(o *driver.OutpostResolver) string { return o.ARN })
 }
 
 // now returns the current time (via the injectable clock) in RFC 3339.

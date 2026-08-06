@@ -23,6 +23,10 @@ func writeErr(w http.ResponseWriter, err error) {
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", msg)
 	case cerrors.IsFailedPrecondition(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", msg)
+	case cerrors.IsThrottled(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "ThrottlingException", msg)
+	case cerrors.IsPermissionDenied(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "AccessDeniedException", msg)
 	default:
 		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServiceErrorException", msg)
 	}
