@@ -16,23 +16,23 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudfunctions"
 	cloudloggingsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudlogging"
+	"github.com/stackshy/cloudemu/v2/server/gcp/cloudmonitoring"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudsql"
-	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/server/gcp/eventarc"
 	fcmsrv "github.com/stackshy/cloudemu/v2/server/gcp/fcm"
 	"github.com/stackshy/cloudemu/v2/server/gcp/firestore"
+	"github.com/stackshy/cloudemu/v2/server/gcp/gce"
 	"github.com/stackshy/cloudemu/v2/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/server/gcp/gke"
 	"github.com/stackshy/cloudemu/v2/server/gcp/iam"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	memorystoresrv "github.com/stackshy/cloudemu/v2/server/gcp/memorystore"
-	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
-	"github.com/stackshy/cloudemu/v2/server/gcp/networks"
 	"github.com/stackshy/cloudemu/v2/server/gcp/pubsub"
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
+	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -142,11 +142,11 @@ func New(d Drivers) *server.Server {
 	srv.Register(lro.New())
 
 	if d.Compute != nil {
-		srv.Register(compute.New(d.Compute))
+		srv.Register(gce.New(d.Compute))
 	}
 
 	if d.Networking != nil {
-		srv.Register(networks.New(d.Networking))
+		srv.Register(vpc.New(d.Networking))
 	}
 
 	// Service Networking has no driver: a private-services connection is a
@@ -289,7 +289,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Monitoring != nil {
-		srv.Register(monitoring.New(d.Monitoring))
+		srv.Register(cloudmonitoring.New(d.Monitoring))
 	}
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from every

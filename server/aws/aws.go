@@ -21,7 +21,7 @@ import (
 	ecssrv "github.com/stackshy/cloudemu/v2/server/aws/ecs"
 	"github.com/stackshy/cloudemu/v2/server/aws/eks"
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
-	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
+	"github.com/stackshy/cloudemu/v2/server/aws/elb"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
@@ -306,7 +306,7 @@ func New(d Drivers) *server.Server {
 	// RDS, IAM, Redshift, and EC2. It must register before the EC2 catch-all so
 	// the EC2 handler doesn't claim ELBv2 form bodies first.
 	if d.ELB != nil {
-		srv.Register(elbv2.New(d.ELB))
+		srv.Register(elb.New(d.ELB))
 	}
 
 	// ElastiCache is another AWS query-protocol handler; register before the
