@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -39,6 +38,9 @@ var (
 	errNoEndpoints = errors.New("no endpoints to probe")
 	errUnknownCmd  = errors.New("unknown lifecycle command")
 )
+
+// endpointOrder is the canonical provider order for probing and printing.
+func endpointOrder() []string { return []string{"aws", "azure", "gcp", "kubernetes"} }
 
 // daemonState is the run-dir record describing a running standalone server.
 type daemonState struct {
@@ -159,13 +161,11 @@ func killChild(cmd *exec.Cmd) {
 
 // daemonReachable reports whether the recorded endpoints answer — a portable
 // identity check that guards against a recycled PID (a live but unrelated
-// process) before we signal it.
+// process) before we signal it. It TCP-probes the first present endpoint: a
+// plain accept works regardless of provider mix, TLS, or whether the admin
+// control plane is mounted (which /_cloudemu/health depends on).
 func daemonReachable(eps map[string]string) bool {
-	if u := httpHealthURL(eps); u != "" {
-		return pollHealth(u, dialTimeout) == nil
-	}
-
-	for _, k := range []string{"azure", "kubernetes"} {
+	for _, k := range endpointOrder() {
 		if ep := eps[k]; ep != "" {
 			if hp, err := hostPortOf(ep); err == nil {
 				return pollTCP(hp, dialTimeout) == nil
@@ -176,38 +176,10 @@ func daemonReachable(eps map[string]string) bool {
 	return false
 }
 
-// pollHealth polls an HTTP health URL until it returns 200 or timeout elapses.
-// It is used only for the plain-HTTP endpoints (AWS/GCP); the self-signed HTTPS
-// endpoints use pollTCP instead so no TLS verification has to be disabled.
-func pollHealth(healthURL string, timeout time.Duration) error {
-	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(timeout)
-
-	for {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, healthURL, http.NoBody)
-		if err != nil {
-			return err
-		}
-
-		if resp, err := client.Do(req); err == nil {
-			_ = resp.Body.Close()
-
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-
-		if time.Now().After(deadline) {
-			return fmt.Errorf("waiting for %s to become healthy: %w", healthURL, errTimeout)
-		}
-
-		time.Sleep(healthInterval)
-	}
-}
-
 // pollTCP polls until a TCP connection to hostPort succeeds or timeout elapses.
-// It confirms a listener is accepting without needing TLS trust — used for the
-// self-signed HTTPS endpoints (Azure/Kubernetes).
+// It confirms a listener is accepting without needing TLS trust or the admin
+// control plane — serve binds every listener before writing the endpoints file,
+// so "accepts a connection" is a sufficient, admin-independent readiness signal.
 func pollTCP(hostPort string, timeout time.Duration) error {
 	var dialer net.Dialer
 
@@ -233,47 +205,37 @@ func pollTCP(hostPort string, timeout time.Duration) error {
 	}
 }
 
-// waitServerReady blocks until every present endpoint is accepting requests:
-// an HTTP health probe for the plain-HTTP endpoints (AWS/GCP) and a TCP probe
-// for the self-signed HTTPS endpoints (Azure/Kubernetes).
+// waitServerReady blocks until every present endpoint is accepting TCP
+// connections. A TCP-accept probe is used for all providers (not an HTTP
+// /_cloudemu/health check) so readiness does not depend on the admin control
+// plane being mounted — otherwise `start --admin=false` would boot a healthy
+// server the probe could never see, time out, and kill it.
 func waitServerReady(eps map[string]string, timeout time.Duration) error {
-	if len(eps) == 0 {
+	present := 0
+
+	for _, k := range endpointOrder() {
+		ep := eps[k]
+		if ep == "" {
+			continue
+		}
+
+		present++
+
+		hp, err := hostPortOf(ep)
+		if err != nil {
+			return err
+		}
+
+		if err := pollTCP(hp, timeout); err != nil {
+			return err
+		}
+	}
+
+	if present == 0 {
 		return errNoEndpoints
 	}
 
-	for _, k := range []string{"aws", "gcp"} {
-		if ep := eps[k]; ep != "" {
-			if err := pollHealth(strings.TrimRight(ep, "/")+"/_cloudemu/health", timeout); err != nil {
-				return err
-			}
-		}
-	}
-
-	for _, k := range []string{"azure", "kubernetes"} {
-		if ep := eps[k]; ep != "" {
-			hp, err := hostPortOf(ep)
-			if err != nil {
-				return err
-			}
-
-			if err := pollTCP(hp, timeout); err != nil {
-				return err
-			}
-		}
-	}
-
 	return nil
-}
-
-// httpHealthURL returns a plain-HTTP /_cloudemu/health URL, or "" if none.
-func httpHealthURL(eps map[string]string) string {
-	for _, k := range []string{"aws", "gcp"} {
-		if ep := eps[k]; ep != "" {
-			return strings.TrimRight(ep, "/") + "/_cloudemu/health"
-		}
-	}
-
-	return ""
 }
 
 // hostPortOf extracts host:port from an endpoint URL.
@@ -310,6 +272,34 @@ func splitHomeFlag(args []string) (home string, rest []string) {
 	}
 
 	return home, rest
+}
+
+// stripFlag removes every occurrence of a flag (both --flag / -flag forms) from
+// args. When takesValue is set, the following token is dropped too (unless the
+// flag used --flag=value form). Used to drop serve flags that `start` manages
+// itself (--endpoints-file, --quiet): forwarding a user-supplied one would win
+// under Go's last-wins flag parsing and break start's readiness handshake.
+func stripFlag(args []string, name string, takesValue bool) []string {
+	out := make([]string, 0, len(args))
+
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--"+name || a == "-"+name {
+			if takesValue && i+1 < len(args) {
+				i++
+			}
+
+			continue
+		}
+
+		if strings.HasPrefix(a, "--"+name+"=") || strings.HasPrefix(a, "-"+name+"=") {
+			continue
+		}
+
+		out = append(out, a)
+	}
+
+	return out
 }
 
 // readEndpoints loads and prunes the endpoints file serve writes on startup.
@@ -357,7 +347,7 @@ func printEndpoints(eps map[string]string) {
 	fmt.Println("cloudemu — running")
 	fmt.Println("──────────────────")
 
-	for _, k := range []string{"aws", "azure", "gcp", "kubernetes"} {
+	for _, k := range endpointOrder() {
 		if ep := eps[k]; ep != "" {
 			fmt.Printf("  %-11s %s\n", k, ep)
 		}
@@ -368,6 +358,12 @@ func printEndpoints(eps map[string]string) {
 // for it to become ready. Remaining args (after --home) pass through to serve.
 func runStart(args []string) error {
 	home, rest := splitHomeFlag(args)
+
+	// start owns --endpoints-file (it points serve at the run dir so the readiness
+	// handshake can find it) and always adds --quiet; drop any user-supplied copies
+	// so last-wins flag parsing can't redirect the file or duplicate the flag.
+	rest = stripFlag(rest, "endpoints-file", true)
+	rest = stripFlag(rest, "quiet", false)
 
 	dir, err := runDir(home)
 	if err != nil {

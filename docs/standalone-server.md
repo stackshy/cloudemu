@@ -75,9 +75,11 @@ cloudemu delete                # stop and remove the run directory
 ```
 
 `start` accepts every `serve` flag and passes it through, e.g.
-`cloudemu start --providers aws --aws-port 4599`. It waits for the server to
-become healthy before returning, and is idempotent (a second `start` reports the
-already-running instance).
+`cloudemu start --providers aws --aws-port 4599`. It waits for every listener to
+start accepting connections before returning (a TCP-accept probe, so it also
+works with `--admin=false`), and is idempotent (a second `start` reports the
+already-running instance). `--endpoints-file` and `--quiet` are managed by
+`start` itself, so passing your own copies has no effect.
 
 Run state (pid, log, resolved endpoints) lives under `~/.cloudemu/` by default;
 point it elsewhere with `--home <dir>` (pass the same `--home` to the other

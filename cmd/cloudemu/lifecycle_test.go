@@ -80,24 +80,6 @@ func TestProcessAlive(t *testing.T) {
 	}
 }
 
-func TestPollHealthReady(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	if err := pollHealth(srv.URL, time.Second); err != nil {
-		t.Fatalf("pollHealth(ready) = %v", err)
-	}
-}
-
-func TestPollHealthTimeout(t *testing.T) {
-	// Nothing listening on this address → should time out, not hang.
-	if err := pollHealth("http://127.0.0.1:1", 200*time.Millisecond); err == nil {
-		t.Fatal("pollHealth(dead) = nil, want timeout error")
-	}
-}
-
 func TestSplitHomeFlag(t *testing.T) {
 	// --home is extracted; the rest passes through to serve untouched.
 	home, rest := splitHomeFlag([]string{"--home", "/tmp/h", "--region", "eu-west-1", "--aws-port", "4600"})
@@ -121,17 +103,32 @@ func TestSplitHomeFlag(t *testing.T) {
 	}
 }
 
-func TestHTTPHealthURLAndHostPort(t *testing.T) {
-	if got := httpHealthURL(map[string]string{"aws": "http://127.0.0.1:4566"}); got != "http://127.0.0.1:4566/_cloudemu/health" {
-		t.Fatalf("httpHealthURL(aws) = %q", got)
-	}
-	if got := httpHealthURL(map[string]string{"azure": "https://127.0.0.1:4568"}); got != "" {
-		t.Fatalf("httpHealthURL(azure-only) = %q, want empty", got)
-	}
-
+func TestHostPortOf(t *testing.T) {
 	hp, err := hostPortOf("https://127.0.0.1:4568")
 	if err != nil || hp != "127.0.0.1:4568" {
 		t.Fatalf("hostPortOf = %q, %v", hp, err)
+	}
+}
+
+func TestStripFlag(t *testing.T) {
+	// --endpoints-file (with value) and --quiet are dropped; everything else stays.
+	in := []string{"--endpoints-file", "/user/eps.json", "--region", "eu-west-1", "--quiet", "--aws-port", "4600"}
+	got := stripFlag(in, "endpoints-file", true)
+	got = stripFlag(got, "quiet", false)
+
+	want := []string{"--region", "eu-west-1", "--aws-port", "4600"}
+	if len(got) != len(want) {
+		t.Fatalf("stripFlag = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("stripFlag = %v, want %v", got, want)
+		}
+	}
+
+	// --endpoints-file=value form is dropped too.
+	if got := stripFlag([]string{"--endpoints-file=/x", "--region", "us-east-1"}, "endpoints-file", true); len(got) != 2 || got[0] != "--region" {
+		t.Fatalf("stripFlag(=form) = %v", got)
 	}
 }
 
@@ -158,14 +155,20 @@ func TestWaitForEndpointsTimeout(t *testing.T) {
 }
 
 func TestWaitServerReady(t *testing.T) {
-	// HTTP branch: a healthy AWS endpoint.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
-	defer srv.Close()
-	if err := waitServerReady(map[string]string{"aws": srv.URL}, time.Second); err != nil {
-		t.Fatalf("waitServerReady(http) = %v", err)
+	// M1 regression guard: readiness is a plain TCP-accept probe, so an AWS
+	// endpoint that is NOT serving /_cloudemu/health (e.g. `serve --admin=false`,
+	// modeled here by a bare listener with no HTTP handler) is still seen as
+	// ready — it must not time out and get the healthy server killed.
+	awsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer awsLn.Close()
+	if err := waitServerReady(map[string]string{"aws": "http://" + awsLn.Addr().String()}, time.Second); err != nil {
+		t.Fatalf("waitServerReady(aws, no admin plane) = %v", err)
 	}
 
-	// TCP branch: a bare listener stands in for the self-signed HTTPS endpoint.
+	// A self-signed HTTPS endpoint is probed the same way (TCP accept).
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
