@@ -19,7 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
-	"github.com/stackshy/cloudemu/v2/providers/aws/elb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
@@ -124,7 +124,7 @@ type Provider struct {
 	CloudWatch          *cloudwatch.Mock
 	IAM                 *iam.Mock
 	Route53             *route53.Mock
-	ELB                 *elb.Mock
+	ELB                 *elbv2.Mock
 	SQS                 *sqs.Mock
 	ElastiCache         *elasticache.Mock
 	Keyspaces           *keyspaces.Mock
@@ -161,7 +161,7 @@ func New(opts ...config.Option) *Provider {
 		CloudWatch:          cloudwatch.New(o),
 		IAM:                 iam.New(o),
 		Route53:             route53.New(o),
-		ELB:                 elb.New(o),
+		ELB:                 elbv2.New(o),
 		SQS:                 sqs.New(o),
 		ElastiCache:         elasticache.New(o),
 		Keyspaces:           keyspaces.New(o),

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudmonitoring"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -21,11 +21,11 @@ func newTestMock() (*Mock, *config.FakeClock) {
 	return New(opts), fc
 }
 
-func newTestMockWithMonitoring() (*Mock, *cloudmonitoring.Mock, *config.FakeClock) {
+func newTestMockWithMonitoring() (*Mock, *monitoring.Mock, *config.FakeClock) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-central1"), config.WithProjectID("test-project"))
 
-	mon := cloudmonitoring.New(opts)
+	mon := monitoring.New(opts)
 	m := New(opts)
 	m.SetMonitoring(mon)
 

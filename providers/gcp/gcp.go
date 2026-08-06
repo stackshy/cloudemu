@@ -11,17 +11,17 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudlogging"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudmonitoring"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudsql"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/eventarc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/fcm"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/firestore"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/gce"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
@@ -58,11 +58,11 @@ func (a gkeDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 // Provider holds all GCP mock services.
 type Provider struct {
 	GCS              *gcs.Mock
-	GCE              *gce.Mock
+	GCE              *compute.Mock
 	Firestore        *firestore.Mock
 	CloudFunctions   *cloudfunctions.Mock
 	VPC              *vpc.Mock
-	CloudMonitoring  *cloudmonitoring.Mock
+	CloudMonitoring  *monitoring.Mock
 	IAM              *iam.Mock
 	CloudDNS         *clouddns.Mock
 	LB               *loadbalancer.Mock
@@ -93,11 +93,11 @@ func New(opts ...config.Option) *Provider {
 	o := config.NewOptions(opts...)
 	p := &Provider{
 		GCS:              gcs.New(o),
-		GCE:              gce.New(o),
+		GCE:              compute.New(o),
 		Firestore:        firestore.New(o),
 		CloudFunctions:   cloudfunctions.New(o),
 		VPC:              vpc.New(o),
-		CloudMonitoring:  cloudmonitoring.New(o),
+		CloudMonitoring:  monitoring.New(o),
 		IAM:              iam.New(o),
 		CloudDNS:         clouddns.New(o),
 		LB:               loadbalancer.New(o),
