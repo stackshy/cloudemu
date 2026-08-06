@@ -150,6 +150,17 @@ sub-API earns its own same-named subdirectory across the layers it touches. Smal
 sub-surfaces stay as flat `<feature>.go` files. Either way the filename/dirname is the
 same in every layer, so a feature always has one home.
 
+### This rule is for NEW services — existing coupled mocks stay flat
+Subdirectory promotion applies to **new services designed that way from the start**,
+where each sub-surface owns its state. It is **not** retrofitted onto existing large
+single-`Mock` providers such as `providers/aws/vpc` and `providers/azure/databricks`,
+which are an **accepted flat exception**. In Go a directory is a package, so promoting
+a sub-surface there would mean splitting one `Mock` (vpc: 256 methods, 57 fields under a
+single mutex) into sub-packages — forcing a shared internal helper package, cross-surface
+callback injection, and a change to the single-lock concurrency model. That trades real
+behavior risk for a navigation win the per-feature `snake_case` files (§3) already deliver.
+For these services, keep one cohesive package with one `<feature>.go` per sub-surface.
+
 ---
 
 ## 6. Adding to the codebase — where things go
