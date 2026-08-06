@@ -58,7 +58,7 @@ cloudemu — standalone server
   AWS         http://127.0.0.1:4566
   Azure       https://127.0.0.1:4568   (self-signed TLS)
   GCP         http://127.0.0.1:4569
-  Kubernetes  http://127.0.0.1:4570
+  Kubernetes  https://127.0.0.1:4570
 ```
 
 ## Background mode (`start` / `stop` / `status`)
@@ -91,7 +91,7 @@ server still starts empty each time (see "Not yet included").
 | AWS        | `4566`  | HTTP     | same port LocalStack uses                |
 | Azure      | `4568`  | HTTPS    | the ARM SDK requires TLS                 |
 | GCP        | `4569`  | HTTP     |                                          |
-| Kubernetes | `4570`  | HTTP     | shared data-plane for EKS/AKS/GKE        |
+| Kubernetes | `4570`  | HTTPS    | shared data-plane for EKS/AKS/GKE        |
 
 Override with `--aws-port`, `--azure-port`, `--gcp-port`, `--k8s-port`. Start a
 subset with `--providers=aws,gcp`. Bind an interface with `--host 0.0.0.0` (the
@@ -179,7 +179,7 @@ app at the whole emulated cloud at once:
   "aws": "http://127.0.0.1:4566",
   "azure": "https://127.0.0.1:4568",
   "gcp": "http://127.0.0.1:4569",
-  "kubernetes": "http://127.0.0.1:4570"
+  "kubernetes": "https://127.0.0.1:4570"
 }
 ```
 

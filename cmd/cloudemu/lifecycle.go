@@ -1,3 +1,5 @@
+//go:build unix
+
 package main
 
 import (
@@ -29,12 +31,6 @@ const (
 
 	dirPerm  = 0o755
 	filePerm = 0o600
-
-	cmdStart  = "start"
-	cmdStop   = "stop"
-	cmdStatus = "status"
-	cmdLogs   = "logs"
-	cmdDelete = "delete"
 )
 
 // Sentinel errors so callers (and err113) get static, wrappable failures.
@@ -121,6 +117,65 @@ func processAlive(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
+// terminate stops another process (not our child) gracefully (SIGTERM), then
+// escalates to SIGKILL if it hasn't exited within stopTimeout. Used by `stop`,
+// where the target daemon was started by a previous CLI invocation and has been
+// reparented to init (so it's reaped on death and signal-0 reports it gone).
+func terminate(p *os.Process) error {
+	_ = p.Signal(syscall.SIGTERM)
+
+	if waitExit(p.Pid, stopTimeout) == nil {
+		return nil
+	}
+
+	_ = p.Kill()
+
+	return waitExit(p.Pid, stopTimeout)
+}
+
+// killChild stops a process we started (our direct child), reaping it so it
+// doesn't linger as a zombie. SIGTERM first, escalate to SIGKILL after
+// stopTimeout. Reaping via Wait is what makes this safe on the spawnServe
+// failure path, where the CLI is still the child's parent.
+func killChild(cmd *exec.Cmd) {
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+
+	done := make(chan struct{})
+
+	go func() {
+		_, _ = cmd.Process.Wait()
+
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(stopTimeout):
+		_ = cmd.Process.Kill()
+
+		<-done
+	}
+}
+
+// daemonReachable reports whether the recorded endpoints answer — a portable
+// identity check that guards against a recycled PID (a live but unrelated
+// process) before we signal it.
+func daemonReachable(eps map[string]string) bool {
+	if u := httpHealthURL(eps); u != "" {
+		return pollHealth(u, dialTimeout) == nil
+	}
+
+	for _, k := range []string{"azure", "kubernetes"} {
+		if ep := eps[k]; ep != "" {
+			if hp, err := hostPortOf(ep); err == nil {
+				return pollTCP(hp, dialTimeout) == nil
+			}
+		}
+	}
+
+	return false
+}
+
 // pollHealth polls an HTTP health URL until it returns 200 or timeout elapses.
 // It is used only for the plain-HTTP endpoints (AWS/GCP); the self-signed HTTPS
 // endpoints use pollTCP instead so no TLS verification has to be disabled.
@@ -178,12 +233,20 @@ func pollTCP(hostPort string, timeout time.Duration) error {
 	}
 }
 
-// waitServerReady blocks until the server behind eps is accepting requests,
-// using an HTTP health probe when a plain-HTTP endpoint exists and a TCP probe
-// otherwise.
+// waitServerReady blocks until every present endpoint is accepting requests:
+// an HTTP health probe for the plain-HTTP endpoints (AWS/GCP) and a TCP probe
+// for the self-signed HTTPS endpoints (Azure/Kubernetes).
 func waitServerReady(eps map[string]string, timeout time.Duration) error {
-	if u := httpHealthURL(eps); u != "" {
-		return pollHealth(u, timeout)
+	if len(eps) == 0 {
+		return errNoEndpoints
+	}
+
+	for _, k := range []string{"aws", "gcp"} {
+		if ep := eps[k]; ep != "" {
+			if err := pollHealth(strings.TrimRight(ep, "/")+"/_cloudemu/health", timeout); err != nil {
+				return err
+			}
+		}
 	}
 
 	for _, k := range []string{"azure", "kubernetes"} {
@@ -193,11 +256,13 @@ func waitServerReady(eps map[string]string, timeout time.Duration) error {
 				return err
 			}
 
-			return pollTCP(hp, timeout)
+			if err := pollTCP(hp, timeout); err != nil {
+				return err
+			}
 		}
 	}
 
-	return errNoEndpoints
+	return nil
 }
 
 // httpHealthURL returns a plain-HTTP /_cloudemu/health URL, or "" if none.
@@ -309,7 +374,7 @@ func runStart(args []string) error {
 		return err
 	}
 
-	if s, rErr := readState(dir); rErr == nil && processAlive(s.PID) {
+	if s, rErr := readState(dir); rErr == nil && processAlive(s.PID) && daemonReachable(s.Endpoints) {
 		fmt.Printf("cloudemu already running (pid %d)\n", s.PID)
 		printEndpoints(s.Endpoints)
 
@@ -364,7 +429,7 @@ func spawnServe(dir string, serveArgs []string, epPath string) (map[string]strin
 	}
 
 	if readyErr != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+		killChild(cmd) // don't leave an untracked, detached child
 
 		return nil, fmt.Errorf("cloudemu failed to start (see %s): %w", logPath(dir), readyErr)
 	}
@@ -376,7 +441,15 @@ func spawnServe(dir string, serveArgs []string, epPath string) (map[string]strin
 		Args:      serveArgs,
 	}
 
-	return eps, writeState(dir, state)
+	// A persisted state is what makes the daemon findable by stop/status; if we
+	// can't record it, kill the child rather than orphan it.
+	if err := writeState(dir, state); err != nil {
+		killChild(cmd)
+
+		return nil, fmt.Errorf("failed to persist daemon state (daemon killed): %w", err)
+	}
+
+	return eps, nil
 }
 
 // runStop signals the running daemon to shut down and waits for it to exit.
@@ -389,13 +462,19 @@ func runStop(args []string) error {
 	}
 
 	s, err := readState(dir)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		fmt.Println("cloudemu is not running")
 
 		return nil
 	}
 
-	if !processAlive(s.PID) {
+	if err != nil {
+		return fmt.Errorf("reading state (daemon may still be running): %w", err)
+	}
+
+	// Treat a dead pid, or a live pid whose endpoints don't answer (PID reused
+	// by an unrelated process), as stale — clean up without signaling it.
+	if !processAlive(s.PID) || !daemonReachable(s.Endpoints) {
 		_ = removeState(dir)
 
 		fmt.Println("cloudemu is not running (cleaned up stale state)")
@@ -408,12 +487,8 @@ func runStop(args []string) error {
 		return err
 	}
 
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		return err
-	}
-
-	if err := waitExit(s.PID, stopTimeout); err != nil {
-		return err
+	if err := terminate(proc); err != nil {
+		return fmt.Errorf("stopping pid %d: %w", s.PID, err)
 	}
 
 	_ = removeState(dir)
@@ -448,7 +523,17 @@ func runStatus(args []string) error {
 	}
 
 	s, err := readState(dir)
-	if err != nil || !processAlive(s.PID) {
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Println("cloudemu: stopped")
+
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("reading state (daemon may still be running): %w", err)
+	}
+
+	if !processAlive(s.PID) {
 		fmt.Println("cloudemu: stopped")
 
 		return nil
@@ -479,7 +564,8 @@ func runLogs(args []string) error {
 	return tailLog(logPath(dir), follow)
 }
 
-// runDelete stops the daemon (if running) and removes its run directory.
+// runDelete stops the daemon (if running) and removes only cloudemu's own files
+// from the run directory — never a blanket RemoveAll of a user-supplied --home.
 func runDelete(args []string) error {
 	home, _ := splitHomeFlag(args)
 
@@ -492,17 +578,23 @@ func runDelete(args []string) error {
 		return err
 	}
 
-	if err := os.RemoveAll(dir); err != nil {
-		return err
+	for _, p := range []string{statePath(dir), logPath(dir), endpointsPath(dir)} {
+		if rmErr := os.Remove(p); rmErr != nil && !os.IsNotExist(rmErr) {
+			return rmErr
+		}
 	}
 
-	fmt.Printf("cloudemu: removed %s\n", dir)
+	// Remove the dir only if it's now empty (ignore "not empty" / "not exist").
+	_ = os.Remove(dir)
+
+	fmt.Printf("cloudemu: removed cloudemu files under %s\n", dir)
 
 	return nil
 }
 
 // tailLog prints the log file. When follow is set it streams appended output
-// until interrupted.
+// until interrupted, re-seeking to the start if the log is truncated (e.g. a
+// restart reopens it with O_TRUNC).
 func tailLog(path string, follow bool) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -510,7 +602,8 @@ func tailLog(path string, follow bool) error {
 	}
 	defer f.Close()
 
-	if _, err := io.Copy(os.Stdout, f); err != nil {
+	offset, err := io.Copy(os.Stdout, f)
+	if err != nil {
 		return err
 	}
 
@@ -521,9 +614,25 @@ func tailLog(path string, follow bool) error {
 	for {
 		time.Sleep(healthInterval)
 
-		if _, err := io.Copy(os.Stdout, f); err != nil {
+		fi, err := f.Stat()
+		if err != nil {
 			return err
 		}
+
+		if fi.Size() < offset {
+			if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+				return seekErr
+			}
+
+			offset = 0
+		}
+
+		n, err := io.Copy(os.Stdout, f)
+		if err != nil {
+			return err
+		}
+
+		offset += n
 	}
 }
 

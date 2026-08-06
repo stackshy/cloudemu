@@ -28,6 +28,16 @@ Lifecycle commands keep run state (pid, log, endpoints) under ~/.cloudemu by
 default; override with --home <dir>. Run "cloudemu serve -h" for serve flags.
 `
 
+// Lifecycle subcommand names. Defined here (not in the Unix-tagged
+// lifecycle.go) so the dispatch compiles on every platform.
+const (
+	cmdStart  = "start"
+	cmdStop   = "stop"
+	cmdStatus = "status"
+	cmdLogs   = "logs"
+	cmdDelete = "delete"
+)
+
 // version is overridable at build time with
 // -ldflags "-X main.version=vX.Y.Z".
 var version = "dev"
