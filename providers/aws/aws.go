@@ -7,7 +7,6 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/providers/aws/awsiam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
@@ -20,8 +19,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
-	"github.com/stackshy/cloudemu/v2/providers/aws/elb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
@@ -29,6 +29,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
 	"github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/providers/aws/route53"
+	"github.com/stackshy/cloudemu/v2/providers/aws/route53resolver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/s3"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
 	"github.com/stackshy/cloudemu/v2/providers/aws/secretsmanager"
@@ -86,7 +87,7 @@ func (a eksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 			return nil, err
 		}
 
-		dc := resourcediscovery.DiscoveredCluster{Name: name, NodeGroups: ngs}
+		dc := resourcediscovery.DiscoveredCluster{Name: name, NodeGroups: resourcediscovery.NodeGroupsFromNames(ngs)}
 		if c != nil {
 			dc.ARN = c.ARN // use the EKS mock's own ARN verbatim
 			// Keep Region in step with the verbatim ARN so the node-group ARN
@@ -123,9 +124,9 @@ type Provider struct {
 	Lambda              *lambda.Mock
 	VPC                 *vpc.Mock
 	CloudWatch          *cloudwatch.Mock
-	IAM                 *awsiam.Mock
+	IAM                 *iam.Mock
 	Route53             *route53.Mock
-	ELB                 *elb.Mock
+	ELB                 *elbv2.Mock
 	SQS                 *sqs.Mock
 	ElastiCache         *elasticache.Mock
 	Keyspaces           *keyspaces.Mock
@@ -146,6 +147,7 @@ type Provider struct {
 	SSM                 *ssm.Mock
 	ECS                 *ecs.Mock
 	VPCLattice          *vpclattice.Mock
+	Route53Resolver     *route53resolver.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -161,9 +163,9 @@ func New(opts ...config.Option) *Provider {
 		Lambda:              lambda.New(o),
 		VPC:                 vpc.New(o),
 		CloudWatch:          cloudwatch.New(o),
-		IAM:                 awsiam.New(o),
+		IAM:                 iam.New(o),
 		Route53:             route53.New(o),
-		ELB:                 elb.New(o),
+		ELB:                 elbv2.New(o),
 		SQS:                 sqs.New(o),
 		ElastiCache:         elasticache.New(o),
 		Keyspaces:           keyspaces.New(o),
@@ -184,6 +186,7 @@ func New(opts ...config.Option) *Provider {
 		SSM:                 ssm.New(o),
 		ECS:                 ecs.New(o),
 		VPCLattice:          vpclattice.New(o),
+		Route53Resolver:     route53resolver.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}

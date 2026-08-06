@@ -139,9 +139,9 @@ SDK-compat coverage across AWS, Azure, and GCP:
 The Kubernetes story is two layers, both shipped:
 
 - **Control plane** (EKS / AKS / GKE) — cluster, node-pool, addon / Fargate / maintenance-config lifecycle via the real cloud SDKs.
-- **Data plane** (in-memory Kubernetes API) — Namespace, Pod, Service, ConfigMap, Secret, ServiceAccount, Deployment, Endpoints. Supports CRUD + JSON-merge Patch + Watch streaming, so real `client-go` `Informer`/`Reflector` machinery works against a cloudemu-emulated cluster. Kubeconfigs returned by the control plane point at the in-memory data plane — `kubectl apply -f deployment.yaml` followed by `kubectl get pods` round-trips end-to-end.
+- **Data plane** (in-memory Kubernetes API) — core, apps, batch, networking, rbac, storage, autoscaling, policy, discovery, **apiextensions** (CRDs) and **admissionregistration** kinds. Supports CRUD, all patch types + **server-side apply** (field ownership + conflicts), `?dryRun=All`, finalizers, `limit`/`continue` pagination, watch streaming with `resourceVersion` resume + BOOKMARK — so real `client-go` `Informer`/`Reflector` machinery works against a cloudemu-emulated cluster. Kubeconfigs returned by the control plane point at the in-memory data plane — `kubectl apply -f deployment.yaml` followed by `kubectl get pods` round-trips end-to-end.
 
-What's intentionally out of scope: real controllers (Deployment ↛ ReplicaSet ↛ Pod), scheduler (Pods stay Pending), RBAC, PV/PVC, StatefulSet/DaemonSet/Job/CronJob, Ingress.
+Emulation model: there is no scheduler or kubelet, so controllers converge **synchronously** — a Deployment interposes a ReplicaSet and materializes Pods straight to Running (a Job's straight to Succeeded), and Services get Endpoints, on every write. On top of the raw object store it also serves **CRDs** (dynamic servable kinds), **`metrics.k8s.io`** + **HPA** actuation, object-count **ResourceQuota** / **LimitRange** / **PDB-gated eviction** enforcement, **RBAC** SubjectAccessReview + **NetworkPolicy** evaluation, and **opt-in admission webhooks**. See [docs/services.md](docs/services.md) §18 for the authoritative capability list.
 
 Full per-service operation list: [docs/services.md](docs/services.md).
 Per-handler protocol details and limitations: [docs/sdk-server.md](docs/sdk-server.md).

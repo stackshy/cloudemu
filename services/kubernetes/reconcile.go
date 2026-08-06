@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -46,7 +45,7 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 		return
 	}
 
-	now := metav1.NewTime(time.Now())
+	now := s.now()
 
 	if pod.Status.PodIP == "" {
 		ip := s.allocatePodIPLocked()
@@ -115,7 +114,7 @@ func (s *ClusterState) buildControllerPod(
 			Name:              name,
 			Namespace:         namespace,
 			UID:               types.UID(newUID()),
-			CreationTimestamp: metav1.NewTime(time.Now()),
+			CreationTimestamp: s.now(),
 			ResourceVersion:   "1",
 			Labels:            labels,
 			Annotations:       tmpl.Annotations,
@@ -308,7 +307,7 @@ func (s *ClusterState) writeEndpointsLocked(svc *corev1.Service, subsets []corev
 	existed := ep != nil
 
 	if !existed {
-		ep = newEndpointsObject(svc.Namespace, svc.Name)
+		ep = s.newEndpointsObject(svc.Namespace, svc.Name)
 	}
 
 	if existed && reflect.DeepEqual(ep.Subsets, subsets) {
@@ -331,7 +330,7 @@ const serviceNameLabel = "kubernetes.io/service-name"
 // EndpointSlice, so EndpointSlice-mode consumers (kube-proxy, Gateway API) see
 // the same backends the typed Endpoints object carries.
 func (s *ClusterState) syncEndpointSliceLocked(svc *corev1.Service, addrs []corev1.EndpointAddress) {
-	store := s.reg.stores[regKey(apiGroupDiscovery, "v1", "endpointslices")]
+	store := s.reg.getStore(apiGroupDiscovery, "v1", "endpointslices")
 	if store == nil {
 		return
 	}
@@ -415,21 +414,17 @@ func labelsMatch(selector, labels map[string]string) bool {
 // ReplicaSet object is not yet materialized; Pods are owned by the Deployment
 // directly — a documented simplification.) Callers hold s.mu.
 func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
-	desired := 1
+	requested := 1
 	if dep.Spec.Replicas != nil {
-		desired = int(*dep.Spec.Replicas)
+		requested = int(*dep.Spec.Replicas)
 	}
 
-	desired = clampPodCount(desired)
+	desired := clampPodCount(requested)
+	noteClampMeta(&dep.ObjectMeta, requested, desired)
 
-	owner := metav1.OwnerReference{
-		APIVersion: "apps/v1", Kind: "Deployment", Name: dep.Name, UID: dep.UID,
-		Controller: boolPtr(true), BlockOwnerDeletion: boolPtr(true),
-	}
-
-	// syncScaledPods returns a count already clamped to maxReconciledPods, so the
-	// int32 conversion cannot overflow.
-	ready := int32(s.syncScaledPods(dep.Namespace, dep.Name, owner, dep.Spec.Template, desired)) //nolint:gosec // bounded by maxReconciledPods
+	// Interpose a ReplicaSet (Deployment→RS→Pod) rather than owning Pods
+	// directly, matching real Deployment topology.
+	ready := s.syncDeploymentReplicaSetLocked(dep, desired)
 
 	dep.Status.Replicas = ready
 	dep.Status.ReadyReplicas = ready
@@ -447,14 +442,20 @@ func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
 // --- Registry reconcile hooks (apps/v1 workloads + PVC) ----------------------
 
 func reconcileReplicaSet(s *ClusterState, obj *unstructured.Unstructured) {
+	requested := rawReplicasOf(obj)
+	desired := clampPodCount(requested)
+	noteClampUnstructured(obj, requested, desired)
+
 	ready := s.syncScaledPods(obj.GetNamespace(), obj.GetName(), ownerRefOf(obj),
-		podTemplateFromUnstructured(obj), replicasOf(obj))
+		podTemplateFromUnstructured(obj), desired)
 	setWorkloadStatus(obj, ready)
 	s.resyncEndpointsForNamespaceLocked(obj.GetNamespace())
 }
 
 func reconcileStatefulSet(s *ClusterState, obj *unstructured.Unstructured) {
-	desired := replicasOf(obj)
+	requested := rawReplicasOf(obj)
+	desired := clampPodCount(requested)
+	noteClampUnstructured(obj, requested, desired)
 
 	names := make([]string, desired)
 	for i := range names {
@@ -468,7 +469,14 @@ func reconcileStatefulSet(s *ClusterState, obj *unstructured.Unstructured) {
 }
 
 func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
-	names := []string{obj.GetName() + "-" + nodeName}
+	// A DaemonSet runs one Pod per node whose labels satisfy the template's
+	// nodeSelector. With a single synthetic node, a non-matching selector yields
+	// zero Pods (rather than the previous unconditional one).
+	var names []string
+	if s.daemonSetSchedulesToNode(obj) {
+		names = []string{obj.GetName() + "-" + nodeName}
+	}
+
 	ready := int64(s.syncStablePods(obj.GetNamespace(), ownerRefOf(obj), podTemplateFromUnstructured(obj), names))
 
 	set := func(field string) { _ = unstructured.SetNestedField(obj.Object, ready, "status", field) }
@@ -480,6 +488,41 @@ func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
 	_ = unstructured.SetNestedField(obj.Object, obj.GetGeneration(), "status", "observedGeneration")
 
 	s.resyncEndpointsForNamespaceLocked(obj.GetNamespace())
+}
+
+// daemonSetSchedulesToNode reports whether the DaemonSet's template nodeSelector
+// matches the single synthetic node's labels (empty selector always matches).
+func (s *ClusterState) daemonSetSchedulesToNode(obj *unstructured.Unstructured) bool {
+	sel, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "spec", "nodeSelector")
+	if len(sel) == 0 {
+		return true
+	}
+
+	labels := s.nodeLabels()
+	for k, v := range sel {
+		if labels[k] != v {
+			return false
+		}
+	}
+
+	return true
+}
+
+// nodeLabels returns the synthetic node's labels (nil if the node is absent).
+func (s *ClusterState) nodeLabels() map[string]string {
+	st := s.reg.getStore("", "v1", "nodes")
+	if st == nil {
+		return nil
+	}
+
+	node := st.items[objKey("", nodeName)]
+	if node == nil {
+		return nil
+	}
+
+	labels, _, _ := unstructured.NestedStringMap(node.Object, "metadata", "labels")
+
+	return labels
 }
 
 // reconcilePVC marks a PersistentVolumeClaim Bound — cloudemu dynamically
@@ -509,33 +552,53 @@ func reconcileIngress(_ *ClusterState, obj *unstructured.Unstructured) {
 		[]any{map[string]any{"ip": ingressLBIP}}, "status", "loadBalancer", "ingress")
 }
 
-// reconcileJob runs a Job to completion: it creates `completions` Pods (default
-// 1) that go straight to Succeeded, and marks the Job Complete.
+// reconcileJob runs a Job to completion: it reconciles the Job's owned Pods to
+// exactly `completions` (default 1) Succeeded Pods and marks the Job Complete.
+// Reconciling to the exact count — rather than only topping up — means a lowered
+// completions drops the surplus Pods, so status.succeeded reflects the current
+// spec instead of overstating it with Pods from a previous, larger run.
 func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
-	completions := 1
+	requested := 1
 	if c, found, _ := unstructured.NestedInt64(obj.Object, "spec", "completions"); found && c > 0 {
-		completions = clampPodCount(int(c))
+		requested = int(c)
 	}
+
+	completions := clampPodCount(requested)
+	noteClampUnstructured(obj, requested, completions)
 
 	ns := obj.GetNamespace()
 	owner := ownerRefOf(obj)
 	tmpl := podTemplateFromUnstructured(obj)
 
-	// Count owned Pods once, then top up — re-scanning s.pods each iteration
-	// would make this O(n²).
-	have := len(s.podsOwnedByLocked(ns, owner.UID))
-	for ; have < completions; have++ {
+	owned := s.podsOwnedByLocked(ns, owner.UID)
+
+	// Shrink first: drop Pods above the desired completions (highest-sorted
+	// names) so a re-reconcile after a lowered completions cleans up.
+	for len(owned) > completions {
+		last := owned[len(owned)-1]
+		delete(s.pods, podKey(ns, last.Name))
+		s.wPods.publish(EventDeleted, ns, *last.DeepCopy())
+
+		owned = owned[:len(owned)-1]
+	}
+
+	// Top up the rest with Pods driven straight to Succeeded.
+	for len(owned) < completions {
 		pod := s.buildControllerPod(ns, obj.GetName()+"-"+shortID(), tmpl, owner)
 		s.markPodSucceededLocked(pod)
 		s.pods[podKey(ns, pod.Name)] = pod
 		s.wPods.publish(EventAdded, ns, *pod.DeepCopy())
+		owned = append(owned, pod)
 	}
 
-	succeeded := int64(len(s.podsOwnedByLocked(ns, owner.UID)))
+	succeeded := int64(len(owned))
 	_ = unstructured.SetNestedField(obj.Object, succeeded, "status", "succeeded")
 	_ = unstructured.SetNestedField(obj.Object, int64(0), "status", "active")
-	_ = unstructured.SetNestedSlice(obj.Object,
-		[]any{map[string]any{"type": "Complete", "status": "True"}}, "status", "conditions")
+
+	if completions > 0 {
+		_ = unstructured.SetNestedSlice(obj.Object,
+			[]any{map[string]any{"type": "Complete", "status": "True"}}, "status", "conditions")
+	}
 }
 
 // markPodSucceededLocked drives a Pod to the completed (Succeeded) terminal
@@ -543,7 +606,7 @@ func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 func (s *ClusterState) markPodSucceededLocked(pod *corev1.Pod) {
 	s.markPodRunningLocked(pod)
 
-	now := metav1.NewTime(time.Now())
+	now := s.now()
 	pod.Status.Phase = corev1.PodSucceeded
 
 	for i := range pod.Status.ContainerStatuses {
@@ -564,7 +627,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 		return
 	}
 
-	store := s.reg.stores[regKey("", "v1", "persistentvolumeclaims")]
+	store := s.reg.getStore("", "v1", "persistentvolumeclaims")
 	if store == nil {
 		return
 	}
@@ -600,7 +663,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 				"status": map[string]any{"phase": "Bound"},
 			}}
 			pvc.SetUID(types.UID(newUID()))
-			pvc.SetCreationTimestamp(metav1.NewTime(time.Now()))
+			pvc.SetCreationTimestamp(s.now())
 			pvc.SetOwnerReferences([]metav1.OwnerReference{ownerRefOf(sts)})
 			store.stampRVLocked(pvc)
 			store.items[key] = pvc
@@ -669,13 +732,59 @@ func clampPodCount(n int) int {
 	}
 }
 
-func replicasOf(obj *unstructured.Unstructured) int {
+// clampAnnotation records, on an object whose spec asked for more Pods than the
+// reconciler will materialize, exactly how many were requested vs materialized.
+// The spec is preserved unchanged; this annotation is the only surfacing of the
+// cap, so a caller can see why status.replicas is below spec instead of the
+// clamp being silent.
+const clampAnnotation = "cloudemu.io/pod-count-clamped"
+
+func clampNote(requested, materialized int) string {
+	return fmt.Sprintf("requested=%d materialized=%d cap=%d", requested, materialized, maxReconciledPods)
+}
+
+// noteClampUnstructured stamps clampAnnotation on a registry-backed object.
+func noteClampUnstructured(obj *unstructured.Unstructured, requested, materialized int) {
+	if requested <= materialized {
+		return
+	}
+
+	anns := obj.GetAnnotations()
+	if anns == nil {
+		anns = make(map[string]string, 1)
+	}
+
+	anns[clampAnnotation] = clampNote(requested, materialized)
+	obj.SetAnnotations(anns)
+}
+
+// noteClampMeta stamps clampAnnotation on a typed object's ObjectMeta.
+func noteClampMeta(meta *metav1.ObjectMeta, requested, materialized int) {
+	if requested <= materialized {
+		return
+	}
+
+	if meta.Annotations == nil {
+		meta.Annotations = make(map[string]string, 1)
+	}
+
+	meta.Annotations[clampAnnotation] = clampNote(requested, materialized)
+}
+
+// rawReplicasOf returns the object's requested spec.replicas WITHOUT clamping
+// (default 1, negatives floored to 0), so callers can compare it against the
+// clamped count and surface the difference via noteClamp.
+func rawReplicasOf(obj *unstructured.Unstructured) int {
 	n, found, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
 	if !found {
 		return 1
 	}
 
-	return clampPodCount(int(n))
+	if n < 0 {
+		return 0
+	}
+
+	return int(n)
 }
 
 func podTemplateFromUnstructured(obj *unstructured.Unstructured) corev1.PodTemplateSpec {

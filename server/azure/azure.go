@@ -9,13 +9,12 @@ package azure
 import (
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
+	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
-	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/azureai"
-	azuresearchserver "github.com/stackshy/cloudemu/v2/server/azure/azuresearch"
-	"github.com/stackshy/cloudemu/v2/server/azure/azuresql"
-	"github.com/stackshy/cloudemu/v2/server/azure/blob"
+	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
-	"github.com/stackshy/cloudemu/v2/server/azure/cosmos"
+	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
+	"github.com/stackshy/cloudemu/v2/server/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/dbfs"
@@ -44,18 +43,21 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
 	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
-	"github.com/stackshy/cloudemu/v2/server/azure/network"
 	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/server/azure/postgresflex"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
+	azuresearchserver "github.com/stackshy/cloudemu/v2/server/azure/search"
 	"github.com/stackshy/cloudemu/v2/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/server/azure/snapshots"
+	"github.com/stackshy/cloudemu/v2/server/azure/sql"
 	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
+	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
-	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/table"
+	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
+	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 	azuresearchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -205,7 +207,12 @@ func New(d Drivers) *server.Server {
 	// Cosmos DB matches on /dbs/* paths — register before the catch-all
 	// blob handler.
 	if d.CosmosDB != nil {
-		srv.Register(cosmos.New(d.CosmosDB))
+		srv.Register(cosmosdb.New(d.CosmosDB))
+		// Cosmos-account ARM control plane (Microsoft.DocumentDB/databaseAccounts).
+		// Claims only the /providers/Microsoft.DocumentDB/databaseAccounts/
+		// management path — disjoint from the /dbs data plane above and from
+		// managedcassandra (cassandraClusters), so order is unconstrained.
+		srv.Register(cosmosaccount.New(d.CosmosDB))
 	}
 
 	// Managed Cassandra matches ARM Microsoft.DocumentDB/cassandraClusters paths
@@ -219,7 +226,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Network != nil {
-		srv.Register(network.New(d.Network))
+		srv.Register(vnet.New(d.Network))
 	}
 
 	// Azure DNS shares the Microsoft.Network ARM provider with the network
@@ -284,7 +291,7 @@ func New(d Drivers) *server.Server {
 	// Microsoft.Sql provider — distinct ARM provider name from compute and
 	// network so registration order is unconstrained.
 	if d.SQL != nil {
-		srv.Register(azuresql.New(d.SQL))
+		srv.Register(sql.New(d.SQL))
 	}
 
 	// Postgres Flex matches on a distinct provider name
@@ -398,11 +405,19 @@ func New(d Drivers) *server.Server {
 		srv.Register(queue.New(d.QueueStorage))
 	}
 
+	// Storage-account ARM control plane (Microsoft.Storage/storageAccounts).
+	// Claims only the /providers/Microsoft.Storage/storageAccounts/ management
+	// path (which starts with /subscriptions/), disjoint from the blob
+	// data-plane fallback below, so it must register before that fallback.
+	if d.BlobStorage != nil {
+		srv.Register(storageaccountsrv.New(d.BlobStorage))
+	}
+
 	// BlobStorage handler is the data-plane fallback for non-ARM URLs. It
 	// must register last so its permissive Matches() doesn't shadow the
 	// ARM-specific resource handlers.
 	if d.BlobStorage != nil {
-		srv.Register(blob.New(d.BlobStorage))
+		srv.Register(blobstorage.New(d.BlobStorage))
 	}
 
 	return srv

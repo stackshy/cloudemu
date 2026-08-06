@@ -62,3 +62,36 @@ type createSiteConfig struct {
 	LinuxFxVersion string      `json:"linuxFxVersion"`
 	AppSettings    []nameValue `json:"appSettings"`
 }
+
+// serverFarmResource is the ARM JSON shape for Microsoft.Web/serverfarms (App
+// Service plans) returned to the SDK. The SKU carries the pricing tier a plan
+// bills on — the fields an armappservice PlansClient reads back.
+type serverFarmResource struct {
+	ID         string               `json:"id"`
+	Name       string               `json:"name"`
+	Type       string               `json:"type"`
+	Kind       string               `json:"kind,omitempty"`
+	Location   string               `json:"location"`
+	SKU        *serverFarmSKU       `json:"sku,omitempty"`
+	Tags       map[string]string    `json:"tags,omitempty"`
+	Properties serverFarmProperties `json:"properties"`
+}
+
+type serverFarmSKU struct {
+	Name     string `json:"name,omitempty"`
+	Tier     string `json:"tier,omitempty"`
+	Capacity int    `json:"capacity,omitempty"`
+}
+
+type serverFarmProperties struct {
+	ProvisioningState string `json:"provisioningState,omitempty"`
+	Status            string `json:"status,omitempty"`
+}
+
+// createServerFarmRequest captures the fields read from a serverfarms PUT body.
+type createServerFarmRequest struct {
+	Kind     string            `json:"kind"`
+	Location string            `json:"location"`
+	Tags     map[string]string `json:"tags"`
+	SKU      serverFarmSKU     `json:"sku"`
+}

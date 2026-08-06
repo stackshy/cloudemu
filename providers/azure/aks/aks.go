@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/k8spki"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -46,8 +47,11 @@ type ManagedCluster struct {
 	NodeResourceGroup string
 	ProvisioningState string
 	PowerState        string
-	Tags              map[string]string
-	AgentPoolNames    []string
+	// Tier is the cluster SKU tier (Free / Standard / Premium) — the uptime-SLA
+	// cost input a discoverer reads from `sku.tier`.
+	Tier           string
+	Tags           map[string]string
+	AgentPoolNames []string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -65,8 +69,11 @@ type AgentPool struct {
 	Mode              string
 	OrchestratorVer   string
 	ProvisioningState string
-	NodeLabels        map[string]string
-	NodeTaints        []string
+	// ScaleSetPriority is Regular or Spot — the Spot marker a discoverer reads
+	// for Spot node-pool pricing.
+	ScaleSetPriority string
+	NodeLabels       map[string]string
+	NodeTaints       []string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -227,7 +234,9 @@ type ClusterInput struct {
 	KubernetesVersion string
 	DNSPrefix         string
 	NodeResourceGroup string
-	Tags              map[string]string
+	// Tier is the cluster SKU tier (Free / Standard / Premium); defaults to Free.
+	Tier string
+	Tags map[string]string
 	// AgentPools may be nil for an empty cluster; otherwise these are the
 	// pools shipped inline at create time (system pool typically).
 	AgentPools []AgentPoolInput
@@ -235,15 +244,16 @@ type ClusterInput struct {
 
 // AgentPoolInput captures the mutable fields of an AgentPool CreateOrUpdate.
 type AgentPoolInput struct {
-	Name            string
-	Count           int32
-	VMSize          string
-	OSDiskSizeGB    int32
-	OSType          string
-	Mode            string
-	OrchestratorVer string
-	NodeLabels      map[string]string
-	NodeTaints      []string
+	Name             string
+	Count            int32
+	VMSize           string
+	OSDiskSizeGB     int32
+	OSType           string
+	Mode             string
+	OrchestratorVer  string
+	ScaleSetPriority string
+	NodeLabels       map[string]string
+	NodeTaints       []string
 }
 
 // CreateOrUpdateCluster creates a new managed cluster or updates an existing
@@ -281,6 +291,7 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	cluster.FQDN = cluster.DNSPrefix + ".hcp." + defaultIfEmpty(input.Location, "eastus") + ".azmk8s.io"
 	cluster.ProvisioningState = "Succeeded"
 	cluster.PowerState = "Running"
+	cluster.Tier = defaultIfEmpty(input.Tier, "Free")
 	cluster.Tags = copyTags(input.Tags)
 	cluster.UpdatedAt = now
 
@@ -357,6 +368,7 @@ func buildAgentPool(rg, cluster string, in AgentPoolInput, now time.Time) AgentP
 		Mode:              defaultIfEmpty(in.Mode, "User"),
 		OrchestratorVer:   defaultIfEmpty(in.OrchestratorVer, defaultK8sVersion),
 		ProvisioningState: "Succeeded",
+		ScaleSetPriority:  defaultIfEmpty(in.ScaleSetPriority, "Regular"),
 		NodeLabels:        copyLabels(in.NodeLabels),
 		NodeTaints:        copyTaints(in.NodeTaints),
 		CreatedAt:         now,
@@ -729,12 +741,17 @@ func (m *Mock) Kubeconfig(rg, name string) []byte {
 		}
 	}
 
+	// Even on the Wave-1 fallback path (no wired data plane), advertise the
+	// shared cluster CA so the kubeconfig is structurally identical to EKS/GKE,
+	// which return a real certificate-authority-data unconditionally. Only the
+	// server host differs (the NOT-IMPLEMENTED sentinel).
 	return fmt.Appendf(nil, `apiVersion: v1
 kind: Config
 clusters:
 - name: %s
   cluster:
     server: https://AKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local
+    certificate-authority-data: %s
 contexts:
 - name: %s
   context:
@@ -745,7 +762,7 @@ users:
 - name: clusterUser_%s_%s
   user:
     token: cloudemu-stub-token
-`, name, name, name, rg, name, name, rg, name)
+`, name, k8spki.CertificatePEM(), name, name, rg, name, name, rg, name)
 }
 
 func defaultIfEmpty(v, def string) string {

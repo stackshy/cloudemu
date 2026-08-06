@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,7 +39,7 @@ func (s *ClusterState) serveConfigMaps(w http.ResponseWriter, r *http.Request, r
 			return
 		}
 
-		s.listConfigMapsAllNamespaces(w)
+		s.listConfigMapsAllNamespaces(w, r)
 
 		return
 	}
@@ -69,7 +68,7 @@ func (s *ClusterState) serveConfigMapCollection(w http.ResponseWriter, r *http.R
 			return
 		}
 
-		s.listConfigMaps(w, namespace)
+		s.listConfigMaps(w, r, namespace)
 	case http.MethodPost:
 		s.createConfigMap(w, r, namespace)
 	default:
@@ -95,7 +94,7 @@ func (s *ClusterState) serveConfigMapItem(w http.ResponseWriter, r *http.Request
 	case http.MethodPatch:
 		s.patchConfigMap(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deleteConfigMap(w, namespace, name)
+		s.deleteConfigMap(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: configmap item: method not allowed: "+r.Method)
 	}
@@ -128,8 +127,14 @@ func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
 
 	cm := in
 	s.configMaps[key] = &cm
@@ -137,24 +142,34 @@ func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, n
 	writeJSON(w, http.StatusCreated, &cm)
 }
 
-func (s *ClusterState) listConfigMaps(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listConfigMaps(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectConfigMapsLocked(namespace)
+	items, cont, ok := listPage(s.collectConfigMapsLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ConfigMapList{
 		TypeMeta: metav1.TypeMeta{Kind: "ConfigMapList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listConfigMapsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listConfigMapsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectConfigMapsLocked("")
+	items, cont, ok := listPage(s.collectConfigMapsLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ConfigMapList{
 		TypeMeta: metav1.TypeMeta{Kind: "ConfigMapList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -227,6 +242,12 @@ func (s *ClusterState) updateConfigMap(w http.ResponseWriter, r *http.Request, n
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	cm := in
 	s.configMaps[key] = &cm
 	s.wConfigMaps.publish(EventModified, namespace, *cm.DeepCopy())
@@ -256,12 +277,19 @@ func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, na
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.configMaps[key] = patched
 	s.wConfigMaps.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := configMapKey(namespace, name)
 
 	s.mu.Lock()
@@ -270,6 +298,12 @@ func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, namespace, name st
 	cm, ok := s.configMaps[key]
 	if !ok {
 		writeNotFound(w, "k8s api: configmap not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, cm.DeepCopy())
 
 		return
 	}
@@ -293,9 +327,9 @@ func configMapKey(namespace, name string) string {
 }
 
 // stamp fills in the implicit fields a real apiserver writes on Create:
-// UID, creationTimestamp, resourceVersion.
-func stamp(om *metav1.ObjectMeta) {
+// UID, creationTimestamp (from the cluster clock), resourceVersion.
+func (s *ClusterState) stamp(om *metav1.ObjectMeta) {
 	om.UID = types.UID(newUID())
-	om.CreationTimestamp = metav1.NewTime(time.Now())
+	om.CreationTimestamp = s.now()
 	om.ResourceVersion = "1"
 }

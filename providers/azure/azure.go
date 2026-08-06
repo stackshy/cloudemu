@@ -3,31 +3,32 @@ package azure
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
+	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azureai"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azurecache"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuredns"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azureiam"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azurelb"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuremonitor"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuresearch"
-	"github.com/stackshy/cloudemu/v2/providers/azure/azuresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
+	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
+	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
+	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
+	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
+	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
+	"github.com/stackshy/cloudemu/v2/providers/azure/sql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
@@ -50,16 +51,66 @@ func (a aksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 
 	for i := range clusters {
 		c := clusters[i]
+
+		props := map[string]any{}
+		if c.PowerState != "" {
+			props["powerState"] = map[string]any{"code": c.PowerState}
+		}
+
+		if c.KubernetesVersion != "" {
+			props["kubernetesVersion"] = c.KubernetesVersion
+		}
+
+		pools, err := a.m.ListAgentPools(ctx, c.ResourceGroup, c.Name)
+		if err != nil {
+			return nil, err
+		}
+
 		out = append(out, resourcediscovery.DiscoveredCluster{
 			Name:          c.Name,
 			Region:        c.Location,
 			ResourceGroup: c.ResourceGroup,
 			Tags:          c.Tags,
-			NodeGroups:    c.AgentPoolNames,
+			NodeGroups:    aksNodeGroups(pools),
+			Attrs: resourcediscovery.Attributes{
+				SKUTier:    c.Tier,
+				Properties: props,
+			},
 		})
 	}
 
 	return out, nil
+}
+
+// aksNodeGroups projects each agent pool's cost signals (vmSize as sku,
+// scaleSetPriority for Spot detection, count, mode, osType) onto the
+// per-node-group Attributes the walker emits.
+func aksNodeGroups(pools []aks.AgentPool) []resourcediscovery.DiscoveredNodeGroup {
+	out := make([]resourcediscovery.DiscoveredNodeGroup, 0, len(pools))
+
+	for i := range pools {
+		p := &pools[i]
+
+		props := map[string]any{"count": int(p.Count)}
+		if p.ScaleSetPriority != "" {
+			props["scaleSetPriority"] = p.ScaleSetPriority
+		}
+
+		if p.Mode != "" {
+			props["mode"] = p.Mode
+		}
+
+		if p.OSType != "" {
+			props["osType"] = p.OSType
+		}
+
+		out = append(out, resourcediscovery.DiscoveredNodeGroup{
+			Name:  p.Name,
+			Attrs: resourcediscovery.Attributes{SKU: p.VMSize, Properties: props},
+		})
+	}
+
+	return out
 }
 
 // Provider holds all Azure mock services.
@@ -71,10 +122,10 @@ type Provider struct {
 	CosmosPostgreSQL *cosmospostgresql.Mock
 	Functions        *functions.Mock
 	VNet             *vnet.Mock
-	Monitor          *azuremonitor.Mock
-	IAM              *azureiam.Mock
-	DNS              *azuredns.Mock
-	LB               *azurelb.Mock
+	Monitor          *monitor.Mock
+	IAM              *iam.Mock
+	DNS              *dns.Mock
+	LB               *loadbalancer.Mock
 	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
@@ -82,19 +133,19 @@ type Provider struct {
 	QueueStorage *servicebus.Mock
 	// TableStorage backs the Azure Table Storage data-plane handler.
 	TableStorage     *tablestorage.Mock
-	Cache            *azurecache.Mock
+	Cache            *cache.Mock
 	KeyVault         *keyvault.Mock
 	LogAnalytics     *loganalytics.Mock
 	NotificationHubs *notificationhubs.Mock
 	ACR              *acr.Mock
 	EventGrid        *eventgrid.Mock
-	SQL              *azuresql.Mock
+	SQL              *sql.Mock
 	PostgresFlex     *postgresflex.Mock
 	MySQLFlex        *mysqlflex.Mock
 	AKS              *aks.Mock
 	Databricks       *databricks.Mock
-	AzureAI          *azureai.Mock
-	AzureSearch      *azuresearch.Mock
+	AI               *ai.Mock
+	Search           *search.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -117,26 +168,26 @@ func New(opts ...config.Option) *Provider {
 		CosmosPostgreSQL: cosmospostgresql.New(o),
 		Functions:        functions.New(o),
 		VNet:             vnet.New(o),
-		Monitor:          azuremonitor.New(o),
-		IAM:              azureiam.New(o),
-		DNS:              azuredns.New(o),
-		LB:               azurelb.New(o),
+		Monitor:          monitor.New(o),
+		IAM:              iam.New(o),
+		DNS:              dns.New(o),
+		LB:               loadbalancer.New(o),
 		ServiceBus:       servicebus.New(o),
 		QueueStorage:     servicebus.New(o),
 		TableStorage:     tablestorage.New(o),
-		Cache:            azurecache.New(o),
+		Cache:            cache.New(o),
 		KeyVault:         keyvault.New(o),
 		LogAnalytics:     loganalytics.New(o),
 		NotificationHubs: notificationhubs.New(o),
 		ACR:              acr.New(o),
 		EventGrid:        eventgrid.New(o),
-		SQL:              azuresql.New(o),
+		SQL:              sql.New(o),
 		PostgresFlex:     postgresflex.New(o),
 		MySQLFlex:        mysqlflex.New(o),
 		AKS:              aks.New(o),
 		Databricks:       databricks.New(o),
-		AzureAI:          azureai.New(o),
-		AzureSearch:      azuresearch.New(o),
+		AI:               ai.New(o),
+		Search:           search.New(o),
 		SubscriptionID:   o.AccountID,
 		Region:           o.Region,
 	}
@@ -154,20 +205,22 @@ func New(opts ...config.Option) *Provider {
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
 	p.AKS.SetMonitoring(p.Monitor)
-	p.AzureAI.SetMonitoring(p.Monitor)
-	p.AzureSearch.SetMonitoring(p.Monitor)
+	p.AI.SetMonitoring(p.Monitor)
+	p.Search.SetMonitoring(p.Monitor)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
 		&resourcediscovery.Drivers{
-			Compute:      p.VirtualMachines,
-			Networking:   p.VNet,
-			Storage:      p.BlobStorage,
-			Database:     p.CosmosDB,
-			Serverless:   p.Functions,
-			Databricks:   p.Databricks,
-			Kubernetes:   aksDiscovery{p.AKS},
-			RelationalDB: sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
+			Compute:         p.VirtualMachines,
+			Networking:      p.VNet,
+			Storage:         p.BlobStorage,
+			Database:        p.CosmosDB,
+			Serverless:      p.Functions,
+			Databricks:      p.Databricks,
+			Kubernetes:      aksDiscovery{p.AKS},
+			RelationalDB:    sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
+			ScaleSets:       vmssDiscovery{p.VirtualMachines},
+			AppServicePlans: appServicePlanDiscovery{p.Functions},
 		},
 	)
 
@@ -178,7 +231,7 @@ func New(opts ...config.Option) *Provider {
 // MySQL/PostgreSQL Flexible Servers) to the resourcediscovery
 // RelationalDatabases capability, so they surface in Resource Graph.
 type sqlDiscovery struct {
-	sql   *azuresql.Mock
+	sql   *sql.Mock
 	mysql *mysqlflex.Mock
 	pg    *postgresflex.Mock
 }
@@ -197,7 +250,30 @@ func (d sqlDiscovery) DiscoverDatabases(
 		out = append(out, resourcediscovery.DiscoveredDatabase{
 			Name: clusters[i].ID, Type: resourcediscovery.TypeSQLServer,
 			ARN: clusters[i].ARN, Tags: clusters[i].Tags,
+			Attrs: resourcediscovery.Attributes{
+				Properties: nonEmptyProps(map[string]any{"version": clusters[i].EngineVersion}),
+			},
 		})
+
+		dbs, dbErr := d.sql.ListDatabases(ctx, clusters[i].ID)
+		if dbErr != nil {
+			return nil, dbErr
+		}
+
+		for j := range dbs {
+			db := &dbs[j]
+			out = append(out, resourcediscovery.DiscoveredDatabase{
+				Name: db.Name, Type: resourcediscovery.TypeSQLDatabase, ARN: db.ARN,
+				Attrs: resourcediscovery.Attributes{
+					SKU:     db.SKUName,
+					SKUTier: db.SKUTier,
+					Properties: nonEmptyProps(map[string]any{
+						"zoneRedundant": db.ZoneRedundant,
+						"currentSku":    map[string]any{"name": db.SKUName, "tier": db.SKUTier},
+					}),
+				},
+			})
+		}
 	}
 
 	myInsts, err := d.mysql.DescribeInstances(ctx, nil)
@@ -226,16 +302,115 @@ func (d sqlDiscovery) DiscoverDatabases(
 			Attrs: resourcediscovery.Attributes{
 				SKU: mis[i].SKUName,
 				Properties: nonEmptyProps(map[string]any{
-					"vCores":          mis[i].VCores,
-					"storageSizeInGB": mis[i].StorageGB,
-					"tier":            mis[i].SKUTier,
-					"licenseType":     mis[i].LicenseType,
+					"vCores":             mis[i].VCores,
+					"storageSizeInGB":    mis[i].StorageGB,
+					"tier":               mis[i].SKUTier,
+					"licenseType":        mis[i].LicenseType,
+					"storageAccountType": mis[i].StorageAccountType,
 				}),
 			},
 		})
 	}
 
 	return out, nil
+}
+
+// vmssDiscovery projects the VM Scale Sets stored on the virtualmachines mock
+// onto DiscoveredScaleSet for Resource Graph.
+type vmssDiscovery struct{ m *virtualmachines.Mock }
+
+func (v vmssDiscovery) DiscoverScaleSets(ctx context.Context) ([]resourcediscovery.DiscoveredScaleSet, error) {
+	sets, err := v.m.ListScaleSets(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredScaleSet, 0, len(sets))
+
+	for i := range sets {
+		s := &sets[i]
+
+		profile := map[string]any{}
+		if s.Priority != "" {
+			profile["priority"] = s.Priority
+		}
+
+		if s.LicenseType != "" {
+			profile["licenseType"] = s.LicenseType
+		}
+
+		if s.OSType != "" {
+			profile["storageProfile"] = map[string]any{"osDisk": map[string]any{"osType": s.OSType}}
+		}
+
+		props := map[string]any{}
+		if len(profile) > 0 {
+			props["virtualMachineProfile"] = profile
+		}
+
+		out = append(out, resourcediscovery.DiscoveredScaleSet{
+			Name: s.Name, ARN: s.ID, Region: s.Location, Tags: s.Tags,
+			Attrs: resourcediscovery.Attributes{
+				SKU:         s.SKUName,
+				SKUTier:     s.SKUTier,
+				SKUCapacity: s.Capacity,
+				Properties:  props,
+			},
+		})
+	}
+
+	return out, nil
+}
+
+// appServicePlanDiscovery projects the App Service plans stored on the functions
+// mock onto DiscoveredAppServicePlan for Resource Graph.
+type appServicePlanDiscovery struct{ m *functions.Mock }
+
+func (a appServicePlanDiscovery) DiscoverAppServicePlans(
+	ctx context.Context,
+) ([]resourcediscovery.DiscoveredAppServicePlan, error) {
+	plans, err := a.m.ListAppServicePlans(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]resourcediscovery.DiscoveredAppServicePlan, 0, len(plans))
+
+	for i := range plans {
+		p := &plans[i]
+
+		out = append(out, resourcediscovery.DiscoveredAppServicePlan{
+			Name: p.Name, ARN: p.ID, Region: p.Location, Tags: p.Tags,
+			Attrs: resourcediscovery.Attributes{
+				SKU:         p.SKUName,
+				SKUTier:     p.SKUTier,
+				SKUCapacity: p.Capacity,
+				Kind:        p.Kind,
+			},
+		})
+	}
+
+	return out, nil
+}
+
+// flexTier derives the Azure Flexible Server SKU tier (Burstable /
+// GeneralPurpose / MemoryOptimized) from the SKU name, which encodes it as a
+// prefix in both the current ("Standard_B1ms") and legacy ("B_Gen5_1") naming.
+// The prefix list is known-incomplete on purpose: a name outside the listed
+// families (e.g. Standard_F*) returns "" as an intentional best-effort fallback
+// — a pricing consumer then falls back to sku.name — so an empty tier here is
+// deliberate, not a bug, and this is not meant to enumerate every Azure family.
+func flexTier(skuName string) string {
+	switch {
+	case strings.HasPrefix(skuName, "Standard_B"), strings.HasPrefix(skuName, "B_"):
+		return "Burstable"
+	case strings.HasPrefix(skuName, "Standard_E"), strings.HasPrefix(skuName, "MO_"):
+		return "MemoryOptimized"
+	case strings.HasPrefix(skuName, "Standard_D"), strings.HasPrefix(skuName, "GP_"):
+		return "GeneralPurpose"
+	default:
+		return ""
+	}
 }
 
 func appendFlexServers(
@@ -251,10 +426,12 @@ func appendFlexServers(
 			Name: insts[i].ID, Type: typ, Region: insts[i].AvailabilityZone,
 			ARN: insts[i].ARN, Tags: insts[i].Tags,
 			Attrs: resourcediscovery.Attributes{
-				SKU: insts[i].InstanceClass,
+				SKU:     insts[i].InstanceClass,
+				SKUTier: flexTier(insts[i].InstanceClass),
 				Properties: nonEmptyProps(map[string]any{
 					"storage":          map[string]any{"storageSizeGB": insts[i].AllocatedStorage},
 					"highAvailability": map[string]any{"mode": ha},
+					"version":          insts[i].EngineVersion,
 				}),
 			},
 		})
@@ -263,8 +440,13 @@ func appendFlexServers(
 	return out
 }
 
-// nonEmptyProps drops zero-valued entries so the Properties bag only carries
-// attributes the resource actually has, and returns nil for an empty result.
+// nonEmptyProps prunes entries that carry no cost information so the Properties
+// bag only holds attributes the resource actually has: it drops empty strings,
+// zero ints, nil values, and nested map[string]any entries that are (or become,
+// after their own recursive pruning) empty. Bools are intentionally preserved
+// as-is, including false — real Azure ARG genuinely surfaces properties such as
+// properties.zoneRedundant as a bool including false, so emitting false is
+// faithful. Returns nil for an empty result.
 func nonEmptyProps(m map[string]any) map[string]any {
 	for k, v := range m {
 		switch val := v.(type) {
@@ -276,6 +458,14 @@ func nonEmptyProps(m map[string]any) map[string]any {
 			if val == 0 {
 				delete(m, k)
 			}
+		case map[string]any:
+			// An inner map that prunes down to nothing carries no cost info —
+			// drop it so an empty currentSku/storage object isn't emitted.
+			if nonEmptyProps(val) == nil {
+				delete(m, k)
+			}
+		case nil:
+			delete(m, k)
 		}
 	}
 

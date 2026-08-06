@@ -33,6 +33,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/resourceexplorer2"
 	"github.com/stackshy/cloudemu/v2/server/aws/resourcegroupstaggingapi"
 	"github.com/stackshy/cloudemu/v2/server/aws/route53"
+	route53resolversrv "github.com/stackshy/cloudemu/v2/server/aws/route53resolver"
 	"github.com/stackshy/cloudemu/v2/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
 	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
@@ -65,6 +66,7 @@ import (
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
+	route53resolverdriver "github.com/stackshy/cloudemu/v2/services/route53resolver/driver"
 	sagemakerdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -99,6 +101,10 @@ type Drivers struct {
 	// VPCLattice serves the AWS VPC Lattice REST-JSON API (path + method
 	// routing) against the vpclattice driver.
 	VPCLattice vpclatticedriver.VPCLattice
+
+	// Route53Resolver serves the AWS Route 53 Resolver JSON 1.1 protocol
+	// (X-Amz-Target prefix "Route53Resolver.") against the route53resolver driver.
+	Route53Resolver route53resolverdriver.Route53Resolver
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
@@ -174,6 +180,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SageMaker:           p.SageMaker,
 		ECS:                 p.ECS,
 		VPCLattice:          p.VPCLattice,
+		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
@@ -281,10 +288,16 @@ func New(d Drivers) *server.Server {
 	}
 
 	// VPC Lattice is a REST/JSON service rooted at path prefixes like
-	// /servicenetworks, /services, /targetgroups — disjoint from every
-	// X-Amz-Target service; its Matches predicate claims those prefixes.
+	// /servicenetworks, /services, /targetgroups; its Matches predicate gates on
+	// method+shape and must run before the S3 catch-all.
 	if d.VPCLattice != nil {
 		srv.Register(vpclatticesrv.New(d.VPCLattice))
+	}
+
+	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.Route53Resolver != nil {
+		srv.Register(route53resolversrv.New(d.Route53Resolver))
 	}
 
 	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —

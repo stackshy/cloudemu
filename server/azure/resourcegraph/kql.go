@@ -36,20 +36,25 @@ import (
 const (
 	azureTypeVM        = "microsoft.compute/virtualmachines"
 	azureTypeDisk      = "microsoft.compute/disks"
+	azureTypeVMSS      = "microsoft.compute/virtualmachinescalesets"
 	azureTypeVNet      = "microsoft.network/virtualnetworks"
 	azureTypeSubnet    = "microsoft.network/subnets"
 	azureTypeSubnetN   = "microsoft.network/virtualnetworks/subnets"
 	azureTypeNSG       = "microsoft.network/networksecuritygroups"
+	azureTypeNIC       = "microsoft.network/networkinterfaces"
+	azureTypePublicIP  = "microsoft.network/publicipaddresses"
 	azureTypeStorage   = "microsoft.storage/storageaccounts"
 	azureTypeStoCnt    = "microsoft.storage/storageaccounts/blobservices/containers"
 	azureTypeCosmos    = "microsoft.documentdb/databaseaccounts"
 	azureTypeCosmosC   = "microsoft.documentdb/databaseaccounts/sqldatabases/containers"
 	azureTypeWebSite   = "microsoft.web/sites"
+	azureTypeServerfrm = "microsoft.web/serverfarms"
 	azureTypeDatabrick = "microsoft.databricks/workspaces"
 	azureTypeAKS       = "microsoft.containerservice/managedclusters"
 	azureTypeAgentPool = "microsoft.containerservice/managedclusters/agentpools"
 	azureTypeSQL       = "microsoft.sql/servers"
 	azureTypeSQLMI     = "microsoft.sql/managedinstances"
+	azureTypeSQLDB     = "microsoft.sql/servers/databases"
 	azureTypeMySQLFlex = "microsoft.dbformysql/flexibleservers"
 	azureTypePgFlex    = "microsoft.dbforpostgresql/flexibleservers"
 )
@@ -61,6 +66,7 @@ const (
 	portableStorage      = "storage"
 	portableDatabase     = "database"
 	portableServerless   = "serverless"
+	portableAppService   = "appservice"
 	portableDatabricks   = "databricks"
 	portableKubernetes   = "kubernetes"
 	portableRelationalDB = "relationaldb"
@@ -300,20 +306,25 @@ type portableResourceType struct{ service, typ string }
 var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
 	azureTypeVM:        {portableCompute, "Instance"},
 	azureTypeDisk:      {portableCompute, "Volume"},
+	azureTypeVMSS:      {portableCompute, "ScaleSet"},
 	azureTypeVNet:      {portableNetworking, "VPC"},
 	azureTypeSubnet:    {portableNetworking, "Subnet"},
 	azureTypeSubnetN:   {portableNetworking, "Subnet"},
 	azureTypeNSG:       {portableNetworking, "SecurityGroup"},
+	azureTypeNIC:       {portableNetworking, "NetworkInterface"},
+	azureTypePublicIP:  {portableNetworking, "ElasticIP"},
 	azureTypeStorage:   {portableStorage, "Bucket"},
 	azureTypeStoCnt:    {portableStorage, "Bucket"},
 	azureTypeCosmos:    {portableDatabase, "Table"},
 	azureTypeCosmosC:   {portableDatabase, "Table"},
 	azureTypeWebSite:   {portableServerless, "Function"},
+	azureTypeServerfrm: {portableAppService, "AppServicePlan"},
 	azureTypeDatabrick: {portableDatabricks, "Workspace"},
 	azureTypeAKS:       {portableKubernetes, "Cluster"},
 	azureTypeAgentPool: {portableKubernetes, "NodeGroup"},
 	azureTypeSQL:       {portableRelationalDB, "SqlServer"},
 	azureTypeSQLMI:     {portableRelationalDB, "SqlManagedInstance"},
+	azureTypeSQLDB:     {portableRelationalDB, "SqlDatabase"},
 	azureTypeMySQLFlex: {portableRelationalDB, "MySqlFlexibleServer"},
 	azureTypePgFlex:    {portableRelationalDB, "PostgresFlexibleServer"},
 }

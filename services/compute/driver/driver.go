@@ -16,6 +16,14 @@ type InstanceConfig struct {
 	// launch time. Principal names the managing service provider.
 	Managed   bool
 	Principal string
+	// OSType ("Linux"/"Windows"), Priority ("Spot"/"Regular"), and LicenseType
+	// (hybrid-benefit marker) are cost inputs a discoverer prices on; carried
+	// through to the Instance so Resource Graph / discovery can echo them. Zones
+	// are the availability zones the instance is placed in.
+	OSType      string
+	Priority    string
+	LicenseType string
+	Zones       []string
 }
 
 // Instance describes a running virtual machine.
@@ -156,6 +164,14 @@ type VolumeConfig struct {
 	VolumeType       string
 	AvailabilityZone string
 	Tags             map[string]string
+	// IOPS / Throughput are the provisioned performance for io2/gp3 and Azure
+	// Premium SSD v2 / Ultra disks — cost inputs a discoverer prices on. Zero
+	// means unset (the volume then reports 0, omitted downstream).
+	IOPS       int
+	Throughput int
+	// Tier is the performance tier (Azure P10/P4, or a storage tier name),
+	// echoed as properties.tier / sku.tier for cost tiering.
+	Tier string
 }
 
 // VolumeInfo describes a block storage volume.
@@ -173,6 +189,8 @@ type VolumeInfo struct {
 	IOPS int
 	// Throughput is the provisioned throughput in MB/s, when set.
 	Throughput int
+	// Tier is the performance tier (e.g. Azure P10/P4), when set.
+	Tier string
 }
 
 // SnapshotConfig describes a snapshot to create.

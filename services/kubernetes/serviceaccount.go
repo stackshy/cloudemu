@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,7 +38,7 @@ func (s *ClusterState) serveServiceAccounts(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		s.listServiceAccountsAllNamespaces(w)
+		s.listServiceAccountsAllNamespaces(w, r)
 
 		return
 	}
@@ -68,7 +67,7 @@ func (s *ClusterState) serveServiceAccountCollection(w http.ResponseWriter, r *h
 			return
 		}
 
-		s.listServiceAccounts(w, namespace)
+		s.listServiceAccounts(w, r, namespace)
 	case http.MethodPost:
 		s.createServiceAccount(w, r, namespace)
 	default:
@@ -94,7 +93,7 @@ func (s *ClusterState) serveServiceAccountItem(w http.ResponseWriter, r *http.Re
 	case http.MethodPatch:
 		s.patchServiceAccount(w, r, namespace, name)
 	case http.MethodDelete:
-		s.deleteServiceAccount(w, namespace, name)
+		s.deleteServiceAccount(w, r, namespace, name)
 	default:
 		writeMethodNotAllowed(w, "k8s api: serviceaccount item: method not allowed: "+r.Method)
 	}
@@ -126,8 +125,14 @@ func (s *ClusterState) createServiceAccount(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	stamp(&in.ObjectMeta)
+	s.stamp(&in.ObjectMeta)
 	in.TypeMeta = metav1.TypeMeta{Kind: "ServiceAccount", APIVersion: "v1"}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusCreated, &in)
+
+		return
+	}
 
 	sa := in
 	s.serviceAccounts[key] = &sa
@@ -135,24 +140,34 @@ func (s *ClusterState) createServiceAccount(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, &sa)
 }
 
-func (s *ClusterState) listServiceAccounts(w http.ResponseWriter, namespace string) {
+func (s *ClusterState) listServiceAccounts(w http.ResponseWriter, r *http.Request, namespace string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectServiceAccountsLocked(namespace)
+	items, cont, ok := listPage(s.collectServiceAccountsLocked(namespace), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ServiceAccountList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccountList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
 
-func (s *ClusterState) listServiceAccountsAllNamespaces(w http.ResponseWriter) {
+func (s *ClusterState) listServiceAccountsAllNamespaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	items := s.collectServiceAccountsLocked("")
+	items, cont, ok := listPage(s.collectServiceAccountsLocked(""), w, r)
+	if !ok {
+		return
+	}
+
 	writeJSON(w, http.StatusOK, &corev1.ServiceAccountList{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccountList", APIVersion: "v1"},
+		ListMeta: metav1.ListMeta{Continue: cont},
 		Items:    items,
 	})
 }
@@ -220,6 +235,12 @@ func (s *ClusterState) updateServiceAccount(w http.ResponseWriter, r *http.Reque
 	in.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 	in.TypeMeta = cur.TypeMeta
 
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, &in)
+
+		return
+	}
+
 	sa := in
 	s.serviceAccounts[key] = &sa
 	s.wServiceAccounts.publish(EventModified, namespace, *sa.DeepCopy())
@@ -249,12 +270,19 @@ func (s *ClusterState) patchServiceAccount(w http.ResponseWriter, r *http.Reques
 	}
 
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
 	s.serviceAccounts[key] = patched
 	s.wServiceAccounts.publish(EventModified, namespace, *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
 }
 
-func (s *ClusterState) deleteServiceAccount(w http.ResponseWriter, namespace, name string) {
+func (s *ClusterState) deleteServiceAccount(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := serviceAccountKey(namespace, name)
 
 	s.mu.Lock()
@@ -263,6 +291,12 @@ func (s *ClusterState) deleteServiceAccount(w http.ResponseWriter, namespace, na
 	sa, ok := s.serviceAccounts[key]
 	if !ok {
 		writeNotFound(w, "k8s api: serviceaccount not found: "+key)
+
+		return
+	}
+
+	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, sa.DeepCopy())
 
 		return
 	}
@@ -280,14 +314,14 @@ func serviceAccountKey(namespace, name string) string {
 // fields a real apiserver fills in on create. Token Secrets used to be
 // auto-created here (pre-1.24); Wave 2 follows current behavior and leaves
 // .secrets empty.
-func newServiceAccountObject(namespace, name string) *corev1.ServiceAccount {
+func (s *ClusterState) newServiceAccountObject(namespace, name string) *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{
 		TypeMeta: metav1.TypeMeta{Kind: "ServiceAccount", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
 			Namespace:         namespace,
 			UID:               types.UID(newUID()),
-			CreationTimestamp: metav1.NewTime(time.Now()),
+			CreationTimestamp: s.now(),
 			ResourceVersion:   "1",
 		},
 	}

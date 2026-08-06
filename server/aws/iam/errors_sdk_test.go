@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	awsiam "github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 
 	"github.com/stackshy/cloudemu/v2"
@@ -19,7 +19,7 @@ import (
 // newClient is a shared helper for error-path tests. Lives here (rather than
 // sharing newSDKClient) so the SDK-driver wiring used to assert error codes
 // is colocated with those tests.
-func newClient(t *testing.T) *awsiam.Client {
+func newClient(t *testing.T) *iam.Client {
 	t.Helper()
 
 	cloud := cloudemu.NewAWS()
@@ -41,7 +41,7 @@ func newClient(t *testing.T) *awsiam.Client {
 		t.Fatalf("aws config: %v", err)
 	}
 
-	return awsiam.NewFromConfig(cfg, func(o *awsiam.Options) {
+	return iam.NewFromConfig(cfg, func(o *iam.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)
 	})
 }
@@ -54,7 +54,7 @@ func TestSDKIAMNoSuchEntityIsTyped(t *testing.T) {
 	client := newClient(t)
 	ctx := context.Background()
 
-	_, err := client.GetUser(ctx, &awsiam.GetUserInput{
+	_, err := client.GetUser(ctx, &iam.GetUserInput{
 		UserName: aws.String("nobody"),
 	})
 	if err == nil {
@@ -73,13 +73,13 @@ func TestSDKIAMEntityAlreadyExistsIsTyped(t *testing.T) {
 	client := newClient(t)
 	ctx := context.Background()
 
-	if _, err := client.CreateUser(ctx, &awsiam.CreateUserInput{
+	if _, err := client.CreateUser(ctx, &iam.CreateUserInput{
 		UserName: aws.String("dupe"),
 	}); err != nil {
 		t.Fatalf("first CreateUser: %v", err)
 	}
 
-	_, err := client.CreateUser(ctx, &awsiam.CreateUserInput{
+	_, err := client.CreateUser(ctx, &iam.CreateUserInput{
 		UserName: aws.String("dupe"),
 	})
 	if err == nil {
@@ -103,7 +103,7 @@ func TestSDKIAMClaimsActionsBeforeEC2(t *testing.T) {
 	client := newClient(t)
 	ctx := context.Background()
 
-	out, err := client.CreateUser(ctx, &awsiam.CreateUserInput{
+	out, err := client.CreateUser(ctx, &iam.CreateUserInput{
 		UserName: aws.String("precedence"),
 	})
 	if err != nil {

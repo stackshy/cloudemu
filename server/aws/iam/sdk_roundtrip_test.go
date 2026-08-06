@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	awsiam "github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 
 	"github.com/stackshy/cloudemu/v2"
@@ -34,7 +34,7 @@ const samplePolicy = `{
   }]
 }`
 
-func newSDKClient(t *testing.T) *awsiam.Client {
+func newSDKClient(t *testing.T) *iam.Client {
 	t.Helper()
 
 	cloud := cloudemu.NewAWS()
@@ -59,7 +59,7 @@ func newSDKClient(t *testing.T) *awsiam.Client {
 		t.Fatalf("aws config: %v", err)
 	}
 
-	return awsiam.NewFromConfig(cfg, func(o *awsiam.Options) {
+	return iam.NewFromConfig(cfg, func(o *iam.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)
 	})
 }
@@ -68,7 +68,7 @@ func TestSDKIAMUserLifecycle(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
 
-	created, err := client.CreateUser(ctx, &awsiam.CreateUserInput{
+	created, err := client.CreateUser(ctx, &iam.CreateUserInput{
 		UserName: aws.String("alice"),
 		Path:     aws.String("/team/"),
 		Tags: []iamtypes.Tag{
@@ -83,7 +83,7 @@ func TestSDKIAMUserLifecycle(t *testing.T) {
 		t.Fatalf("got user name %q, want alice", aws.ToString(created.User.UserName))
 	}
 
-	got, err := client.GetUser(ctx, &awsiam.GetUserInput{UserName: aws.String("alice")})
+	got, err := client.GetUser(ctx, &iam.GetUserInput{UserName: aws.String("alice")})
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestSDKIAMUserLifecycle(t *testing.T) {
 		t.Fatalf("got user name %q after roundtrip, want alice", aws.ToString(got.User.UserName))
 	}
 
-	listed, err := client.ListUsers(ctx, &awsiam.ListUsersInput{})
+	listed, err := client.ListUsers(ctx, &iam.ListUsersInput{})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -101,11 +101,11 @@ func TestSDKIAMUserLifecycle(t *testing.T) {
 		t.Fatalf("got %d users, want 1", len(listed.Users))
 	}
 
-	if _, err := client.DeleteUser(ctx, &awsiam.DeleteUserInput{UserName: aws.String("alice")}); err != nil {
+	if _, err := client.DeleteUser(ctx, &iam.DeleteUserInput{UserName: aws.String("alice")}); err != nil {
 		t.Fatalf("DeleteUser: %v", err)
 	}
 
-	if _, err := client.GetUser(ctx, &awsiam.GetUserInput{UserName: aws.String("alice")}); err == nil {
+	if _, err := client.GetUser(ctx, &iam.GetUserInput{UserName: aws.String("alice")}); err == nil {
 		t.Fatalf("GetUser after delete: expected error, got nil")
 	}
 }
@@ -116,14 +116,14 @@ func TestSDKInlineRolePolicy(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
 
-	if _, err := client.CreateRole(ctx, &awsiam.CreateRoleInput{
+	if _, err := client.CreateRole(ctx, &iam.CreateRoleInput{
 		RoleName:                 aws.String("inline-role"),
 		AssumeRolePolicyDocument: aws.String(trustPolicy),
 	}); err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
 
-	if _, err := client.PutRolePolicy(ctx, &awsiam.PutRolePolicyInput{
+	if _, err := client.PutRolePolicy(ctx, &iam.PutRolePolicyInput{
 		RoleName:       aws.String("inline-role"),
 		PolicyName:     aws.String("s3access"),
 		PolicyDocument: aws.String(samplePolicy),
@@ -131,7 +131,7 @@ func TestSDKInlineRolePolicy(t *testing.T) {
 		t.Fatalf("PutRolePolicy: %v", err)
 	}
 
-	list, err := client.ListRolePolicies(ctx, &awsiam.ListRolePoliciesInput{RoleName: aws.String("inline-role")})
+	list, err := client.ListRolePolicies(ctx, &iam.ListRolePoliciesInput{RoleName: aws.String("inline-role")})
 	if err != nil {
 		t.Fatalf("ListRolePolicies: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestSDKInlineRolePolicy(t *testing.T) {
 		t.Fatalf("ListRolePolicies = %v", list.PolicyNames)
 	}
 
-	got, err := client.GetRolePolicy(ctx, &awsiam.GetRolePolicyInput{
+	got, err := client.GetRolePolicy(ctx, &iam.GetRolePolicyInput{
 		RoleName: aws.String("inline-role"), PolicyName: aws.String("s3access"),
 	})
 	if err != nil {
@@ -151,13 +151,13 @@ func TestSDKInlineRolePolicy(t *testing.T) {
 		t.Fatal("GetRolePolicy returned empty document")
 	}
 
-	if _, err := client.DeleteRolePolicy(ctx, &awsiam.DeleteRolePolicyInput{
+	if _, err := client.DeleteRolePolicy(ctx, &iam.DeleteRolePolicyInput{
 		RoleName: aws.String("inline-role"), PolicyName: aws.String("s3access"),
 	}); err != nil {
 		t.Fatalf("DeleteRolePolicy: %v", err)
 	}
 
-	list, err = client.ListRolePolicies(ctx, &awsiam.ListRolePoliciesInput{RoleName: aws.String("inline-role")})
+	list, err = client.ListRolePolicies(ctx, &iam.ListRolePoliciesInput{RoleName: aws.String("inline-role")})
 	if err != nil {
 		t.Fatalf("ListRolePolicies after delete: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestSDKIAMRoleAndPolicy(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
 
-	role, err := client.CreateRole(ctx, &awsiam.CreateRoleInput{
+	role, err := client.CreateRole(ctx, &iam.CreateRoleInput{
 		RoleName:                 aws.String("app-role"),
 		AssumeRolePolicyDocument: aws.String(trustPolicy),
 	})
@@ -183,7 +183,7 @@ func TestSDKIAMRoleAndPolicy(t *testing.T) {
 		t.Fatalf("got role %q, want app-role", aws.ToString(role.Role.RoleName))
 	}
 
-	policy, err := client.CreatePolicy(ctx, &awsiam.CreatePolicyInput{
+	policy, err := client.CreatePolicy(ctx, &iam.CreatePolicyInput{
 		PolicyName:     aws.String("list-bucket"),
 		PolicyDocument: aws.String(samplePolicy),
 		Description:    aws.String("allow listing"),
@@ -197,14 +197,14 @@ func TestSDKIAMRoleAndPolicy(t *testing.T) {
 		t.Fatalf("CreatePolicy returned empty ARN")
 	}
 
-	if _, err := client.AttachRolePolicy(ctx, &awsiam.AttachRolePolicyInput{
+	if _, err := client.AttachRolePolicy(ctx, &iam.AttachRolePolicyInput{
 		RoleName:  aws.String("app-role"),
 		PolicyArn: aws.String(policyArn),
 	}); err != nil {
 		t.Fatalf("AttachRolePolicy: %v", err)
 	}
 
-	attached, err := client.ListAttachedRolePolicies(ctx, &awsiam.ListAttachedRolePoliciesInput{
+	attached, err := client.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{
 		RoleName: aws.String("app-role"),
 	})
 	if err != nil {
@@ -220,7 +220,7 @@ func TestSDKIAMRoleAndPolicy(t *testing.T) {
 			aws.ToString(attached.AttachedPolicies[0].PolicyArn), policyArn)
 	}
 
-	if _, err := client.DetachRolePolicy(ctx, &awsiam.DetachRolePolicyInput{
+	if _, err := client.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{
 		RoleName:  aws.String("app-role"),
 		PolicyArn: aws.String(policyArn),
 	}); err != nil {
@@ -232,26 +232,26 @@ func TestSDKIAMGroupsAndMembership(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
 
-	if _, err := client.CreateUser(ctx, &awsiam.CreateUserInput{
+	if _, err := client.CreateUser(ctx, &iam.CreateUserInput{
 		UserName: aws.String("bob"),
 	}); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	if _, err := client.CreateGroup(ctx, &awsiam.CreateGroupInput{
+	if _, err := client.CreateGroup(ctx, &iam.CreateGroupInput{
 		GroupName: aws.String("admins"),
 	}); err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 
-	if _, err := client.AddUserToGroup(ctx, &awsiam.AddUserToGroupInput{
+	if _, err := client.AddUserToGroup(ctx, &iam.AddUserToGroupInput{
 		UserName:  aws.String("bob"),
 		GroupName: aws.String("admins"),
 	}); err != nil {
 		t.Fatalf("AddUserToGroup: %v", err)
 	}
 
-	groups, err := client.ListGroupsForUser(ctx, &awsiam.ListGroupsForUserInput{
+	groups, err := client.ListGroupsForUser(ctx, &iam.ListGroupsForUserInput{
 		UserName: aws.String("bob"),
 	})
 	if err != nil {
@@ -262,7 +262,7 @@ func TestSDKIAMGroupsAndMembership(t *testing.T) {
 		t.Fatalf("got groups %+v, want one entry named admins", groups.Groups)
 	}
 
-	if _, err := client.RemoveUserFromGroup(ctx, &awsiam.RemoveUserFromGroupInput{
+	if _, err := client.RemoveUserFromGroup(ctx, &iam.RemoveUserFromGroupInput{
 		UserName:  aws.String("bob"),
 		GroupName: aws.String("admins"),
 	}); err != nil {
@@ -274,13 +274,13 @@ func TestSDKIAMAccessKeys(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
 
-	if _, err := client.CreateUser(ctx, &awsiam.CreateUserInput{
+	if _, err := client.CreateUser(ctx, &iam.CreateUserInput{
 		UserName: aws.String("carol"),
 	}); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	created, err := client.CreateAccessKey(ctx, &awsiam.CreateAccessKeyInput{
+	created, err := client.CreateAccessKey(ctx, &iam.CreateAccessKeyInput{
 		UserName: aws.String("carol"),
 	})
 	if err != nil {
@@ -296,7 +296,7 @@ func TestSDKIAMAccessKeys(t *testing.T) {
 		t.Fatalf("CreateAccessKey returned empty secret")
 	}
 
-	listed, err := client.ListAccessKeys(ctx, &awsiam.ListAccessKeysInput{
+	listed, err := client.ListAccessKeys(ctx, &iam.ListAccessKeysInput{
 		UserName: aws.String("carol"),
 	})
 	if err != nil {
@@ -307,7 +307,7 @@ func TestSDKIAMAccessKeys(t *testing.T) {
 		t.Fatalf("got %d keys, want 1", len(listed.AccessKeyMetadata))
 	}
 
-	if _, err := client.DeleteAccessKey(ctx, &awsiam.DeleteAccessKeyInput{
+	if _, err := client.DeleteAccessKey(ctx, &iam.DeleteAccessKeyInput{
 		UserName:    aws.String("carol"),
 		AccessKeyId: aws.String(keyID),
 	}); err != nil {
@@ -319,14 +319,14 @@ func TestSDKIAMInstanceProfiles(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
 
-	if _, err := client.CreateRole(ctx, &awsiam.CreateRoleInput{
+	if _, err := client.CreateRole(ctx, &iam.CreateRoleInput{
 		RoleName:                 aws.String("ec2-role"),
 		AssumeRolePolicyDocument: aws.String(trustPolicy),
 	}); err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
 
-	profile, err := client.CreateInstanceProfile(ctx, &awsiam.CreateInstanceProfileInput{
+	profile, err := client.CreateInstanceProfile(ctx, &iam.CreateInstanceProfileInput{
 		InstanceProfileName: aws.String("ec2-profile"),
 	})
 	if err != nil {
@@ -338,14 +338,14 @@ func TestSDKIAMInstanceProfiles(t *testing.T) {
 			aws.ToString(profile.InstanceProfile.InstanceProfileName))
 	}
 
-	if _, err := client.AddRoleToInstanceProfile(ctx, &awsiam.AddRoleToInstanceProfileInput{
+	if _, err := client.AddRoleToInstanceProfile(ctx, &iam.AddRoleToInstanceProfileInput{
 		InstanceProfileName: aws.String("ec2-profile"),
 		RoleName:            aws.String("ec2-role"),
 	}); err != nil {
 		t.Fatalf("AddRoleToInstanceProfile: %v", err)
 	}
 
-	got, err := client.GetInstanceProfile(ctx, &awsiam.GetInstanceProfileInput{
+	got, err := client.GetInstanceProfile(ctx, &iam.GetInstanceProfileInput{
 		InstanceProfileName: aws.String("ec2-profile"),
 	})
 	if err != nil {
@@ -358,24 +358,24 @@ func TestSDKIAMInstanceProfiles(t *testing.T) {
 			got.InstanceProfile.Roles)
 	}
 
-	if _, err := client.RemoveRoleFromInstanceProfile(ctx, &awsiam.RemoveRoleFromInstanceProfileInput{
+	if _, err := client.RemoveRoleFromInstanceProfile(ctx, &iam.RemoveRoleFromInstanceProfileInput{
 		InstanceProfileName: aws.String("ec2-profile"),
 		RoleName:            aws.String("ec2-role"),
 	}); err != nil {
 		t.Fatalf("RemoveRoleFromInstanceProfile: %v", err)
 	}
 
-	if _, err := client.DeleteInstanceProfile(ctx, &awsiam.DeleteInstanceProfileInput{
+	if _, err := client.DeleteInstanceProfile(ctx, &iam.DeleteInstanceProfileInput{
 		InstanceProfileName: aws.String("ec2-profile"),
 	}); err != nil {
 		t.Fatalf("DeleteInstanceProfile: %v", err)
 	}
 }
 
-func createPolicyForVersions(t *testing.T, client *awsiam.Client, name string) string {
+func createPolicyForVersions(t *testing.T, client *iam.Client, name string) string {
 	t.Helper()
 
-	out, err := client.CreatePolicy(context.Background(), &awsiam.CreatePolicyInput{
+	out, err := client.CreatePolicy(context.Background(), &iam.CreatePolicyInput{
 		PolicyName:     aws.String(name),
 		PolicyDocument: aws.String(samplePolicy),
 	})
@@ -392,7 +392,7 @@ func TestSDKIAMPolicyVersionLifecycle(t *testing.T) {
 	arn := createPolicyForVersions(t, client, "versioned")
 
 	// CreatePolicy auto-seeds a default v1.
-	listed, err := client.ListPolicyVersions(ctx, &awsiam.ListPolicyVersionsInput{PolicyArn: aws.String(arn)})
+	listed, err := client.ListPolicyVersions(ctx, &iam.ListPolicyVersionsInput{PolicyArn: aws.String(arn)})
 	if err != nil {
 		t.Fatalf("ListPolicyVersions: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestSDKIAMPolicyVersionLifecycle(t *testing.T) {
 
 	const docV2 = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`
 
-	created, err := client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+	created, err := client.CreatePolicyVersion(ctx, &iam.CreatePolicyVersionInput{
 		PolicyArn:      aws.String(arn),
 		PolicyDocument: aws.String(docV2),
 		SetAsDefault:   true,
@@ -418,7 +418,7 @@ func TestSDKIAMPolicyVersionLifecycle(t *testing.T) {
 	}
 
 	// GetPolicyVersion round-trips the stored document.
-	gotVer, err := client.GetPolicyVersion(ctx, &awsiam.GetPolicyVersionInput{
+	gotVer, err := client.GetPolicyVersion(ctx, &iam.GetPolicyVersionInput{
 		PolicyArn: aws.String(arn), VersionId: aws.String("v2"),
 	})
 	if err != nil {
@@ -432,7 +432,7 @@ func TestSDKIAMPolicyVersionLifecycle(t *testing.T) {
 	// GetPolicy reflects the new default, then tracks SetDefaultPolicyVersion.
 	assertDefaultVersion(t, client, arn, "v2")
 
-	if _, err := client.SetDefaultPolicyVersion(ctx, &awsiam.SetDefaultPolicyVersionInput{
+	if _, err := client.SetDefaultPolicyVersion(ctx, &iam.SetDefaultPolicyVersionInput{
 		PolicyArn: aws.String(arn), VersionId: aws.String("v1"),
 	}); err != nil {
 		t.Fatalf("SetDefaultPolicyVersion: %v", err)
@@ -441,10 +441,10 @@ func TestSDKIAMPolicyVersionLifecycle(t *testing.T) {
 	assertDefaultVersion(t, client, arn, "v1")
 }
 
-func assertDefaultVersion(t *testing.T, client *awsiam.Client, arn, want string) {
+func assertDefaultVersion(t *testing.T, client *iam.Client, arn, want string) {
 	t.Helper()
 
-	pol, err := client.GetPolicy(context.Background(), &awsiam.GetPolicyInput{PolicyArn: aws.String(arn)})
+	pol, err := client.GetPolicy(context.Background(), &iam.GetPolicyInput{PolicyArn: aws.String(arn)})
 	if err != nil {
 		t.Fatalf("GetPolicy: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestSDKIAMPolicyVersionEdgeCases(t *testing.T) {
 	arn := createPolicyForVersions(t, client, "edge")
 
 	// The default version cannot be deleted (AWS DeleteConflict).
-	_, err := client.DeletePolicyVersion(ctx, &awsiam.DeletePolicyVersionInput{
+	_, err := client.DeletePolicyVersion(ctx, &iam.DeletePolicyVersionInput{
 		PolicyArn: aws.String(arn), VersionId: aws.String("v1"),
 	})
 
@@ -470,13 +470,13 @@ func TestSDKIAMPolicyVersionEdgeCases(t *testing.T) {
 	}
 
 	// A non-default version can be deleted.
-	if _, err := client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+	if _, err := client.CreatePolicyVersion(ctx, &iam.CreatePolicyVersionInput{
 		PolicyArn: aws.String(arn), PolicyDocument: aws.String(samplePolicy),
 	}); err != nil {
 		t.Fatalf("CreatePolicyVersion: %v", err)
 	}
 
-	if _, err := client.DeletePolicyVersion(ctx, &awsiam.DeletePolicyVersionInput{
+	if _, err := client.DeletePolicyVersion(ctx, &iam.DeletePolicyVersionInput{
 		PolicyArn: aws.String(arn), VersionId: aws.String("v2"),
 	}); err != nil {
 		t.Fatalf("DeletePolicyVersion(v2): %v", err)
@@ -485,14 +485,14 @@ func TestSDKIAMPolicyVersionEdgeCases(t *testing.T) {
 	// Unknown version and unknown policy both map to NoSuchEntity.
 	var notFound *iamtypes.NoSuchEntityException
 
-	_, err = client.GetPolicyVersion(ctx, &awsiam.GetPolicyVersionInput{
+	_, err = client.GetPolicyVersion(ctx, &iam.GetPolicyVersionInput{
 		PolicyArn: aws.String(arn), VersionId: aws.String("v99"),
 	})
 	if !errors.As(err, &notFound) {
 		t.Fatalf("get unknown version: want NoSuchEntityException, got %v", err)
 	}
 
-	_, err = client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+	_, err = client.CreatePolicyVersion(ctx, &iam.CreatePolicyVersionInput{
 		PolicyArn:      aws.String("arn:aws:iam::123456789012:policy/missing"),
 		PolicyDocument: aws.String(samplePolicy),
 	})
@@ -508,14 +508,14 @@ func TestSDKIAMPolicyVersionLimit(t *testing.T) {
 
 	// v1 is seeded; four more reach the maximum of five.
 	for range 4 {
-		if _, err := client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+		if _, err := client.CreatePolicyVersion(ctx, &iam.CreatePolicyVersionInput{
 			PolicyArn: aws.String(arn), PolicyDocument: aws.String(samplePolicy),
 		}); err != nil {
 			t.Fatalf("CreatePolicyVersion: %v", err)
 		}
 	}
 
-	_, err := client.CreatePolicyVersion(ctx, &awsiam.CreatePolicyVersionInput{
+	_, err := client.CreatePolicyVersion(ctx, &iam.CreatePolicyVersionInput{
 		PolicyArn: aws.String(arn), PolicyDocument: aws.String(samplePolicy),
 	})
 

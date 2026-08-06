@@ -115,6 +115,9 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	cfg := computedriver.VolumeConfig{
 		Size:       req.Properties.DiskSizeGB,
 		VolumeType: skuName(req.SKU),
+		IOPS:       req.Properties.DiskIOPSReadWrite,
+		Throughput: req.Properties.DiskMBpsReadWrite,
+		Tier:       diskTier(req.Properties.Tier, skuTier(req.SKU)),
 		Tags:       mergeDiskTags(req.Tags, rp.ResourceName),
 	}
 
@@ -213,19 +216,37 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp azurearm.ResourcePath, loc
 
 	name := tagOr(vol.Tags, armNameTag, rp.ResourceName)
 
+	var sku *diskSKU
+	if vol.VolumeType != "" || vol.Tier != "" {
+		sku = &diskSKU{Name: vol.VolumeType, Tier: vol.Tier}
+	}
+
 	return diskResponse{
 		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
 		Name:     name,
 		Type:     providerName + "/" + resourceType,
 		Location: location,
+		SKU:      sku,
 		Tags:     stripInternalDiskTags(vol.Tags),
 		Properties: diskResponseProps{
 			ProvisioningState: "Succeeded",
 			DiskSizeGB:        vol.Size,
 			DiskState:         diskStateFor(vol.State),
 			CreationData:      &creationData{CreateOption: "Empty"},
+			DiskIOPSReadWrite: vol.IOPS,
+			DiskMBpsReadWrite: vol.Throughput,
+			Tier:              vol.Tier,
 		},
 	}
+}
+
+// diskTier prefers properties.tier, falling back to sku.tier.
+func diskTier(propTier, skuTier string) string {
+	if propTier != "" {
+		return propTier
+	}
+
+	return skuTier
 }
 
 // ARM disk states we expose. Real Azure has more (ActiveSAS, ReadyToUpload,
@@ -249,6 +270,14 @@ func skuName(s *diskSKU) string {
 	}
 
 	return s.Name
+}
+
+func skuTier(s *diskSKU) string {
+	if s == nil {
+		return ""
+	}
+
+	return s.Tier
 }
 
 func mergeDiskTags(in map[string]string, name string) map[string]string {

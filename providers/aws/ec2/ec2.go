@@ -582,6 +582,9 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		AvailabilityZone: az,
 		CreatedAt:        m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:             copyTags(cfg.Tags),
+		IOPS:             cfg.IOPS,
+		Throughput:       cfg.Throughput,
+		Tier:             cfg.Tier,
 	}
 
 	m.volumes.Set(id, vol)
