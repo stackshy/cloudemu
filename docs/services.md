@@ -7,23 +7,23 @@ This document lists every service and operation available in CloudEmu across all
 | # | Service Category | AWS | Azure | GCP |
 |---|-----------------|-----|-------|-----|
 | 1 | Storage | `s3` | `blobstorage` | `gcs` |
-| 2 | Compute | `ec2` | `virtualmachines` | `gce` |
+| 2 | Compute | `ec2` | `virtualmachines` | `compute` |
 | 3 | Database | `dynamodb` | `cosmosdb` | `firestore` |
 | 4 | Serverless | `lambda` | `functions` | `cloudfunctions` |
-| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` | `gcpvpc` |
+| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` | `vpc` |
 | 5a | Network Firewall | `network-firewall` | — | — |
-| 6 | Monitoring | `cloudwatch` | `azuremonitor` | `cloudmonitoring` |
-| 7 | IAM | `awsiam` | `azureiam` | `gcpiam` |
-| 8 | DNS | `route53` | `azuredns` | `clouddns` |
-| 9 | Load Balancer | `elb` | `azurelb` | `gcplb` |
+| 6 | Monitoring | `cloudwatch` | `monitor` | `monitoring` |
+| 7 | IAM | `iam` | `iam` | `iam` |
+| 8 | DNS | `route53` | `dns` | `clouddns` |
+| 9 | Load Balancer | `elb` | `loadbalancer` | `loadbalancer` |
 | 10 | Message Queue | `sqs` | `servicebus` | `pubsub` |
-| 11 | Cache | `elasticache` | `azurecache` | `memorystore` |
+| 11 | Cache | `elasticache` | `cache` | `memorystore` |
 | 12 | Secrets | `secretsmanager` | `keyvault` | `secretmanager` |
 | 13 | Logging | `cloudwatchlogs` | `loganalytics` | `cloudlogging` |
 | 14 | Notification | `sns` | `notificationhubs` | `fcm` |
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
-| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
+| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `sql`, `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
 | 17a | In-memory Database (Redis/Valkey) | `memorydb` | — | — |
 | 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | — |
 | 17c | Wide-column (Bigtable) | — | — | `bigtable` |
@@ -32,8 +32,8 @@ This document lists every service and operation available in CloudEmu across all
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
-| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
-| 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
+| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `ai` (CognitiveServices + MachineLearningServices) | `vertexai` |
+| 23 | AI Search | — | `search` (Microsoft.Search) | — |
 | 24 | Container Orchestration | `ecs` | — | — |
 
 ---
@@ -1500,7 +1500,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 ## 17. Relational Database
 
 **Driver interface:** `services/relationaldb/driver/driver.go`
-**AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `azuresql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`, `alloydb`
+**AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `sql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`, `alloydb`
 
 A single portable interface backs every RDBMS handler. Engine selection (MySQL / PostgreSQL / Aurora / Neptune / DocumentDB / Redshift / Cloud SQL / Azure SQL / AlloyDB / …) is a field on the input config, not a separate driver.
 
@@ -1662,18 +1662,18 @@ cascade-delete children when their parent server/instance is deleted.
 | Capability | Operations | Implemented by |
 |-----------|-----------|----------------|
 | `Databases` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `cloudsql`, `alloydb` |
-| `FirewallRules` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `azuresql` |
+| `FirewallRules` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `sql` |
 | `Configurations` | Set / Get / List (server parameters) | `mysqlflex`, `postgresflex` |
 | `Failover` | `FailoverInstance` | `mysqlflex`, `cloudsql` |
-| `VNetRules` | Create / Get / List / Delete | `azuresql` |
-| `ElasticPools` | Create / Get / List / Delete | `azuresql` |
-| `FailoverGroups` | Create / Get / List / Delete / Failover | `azuresql` |
-| `AADAdmins` | Set / Get / List / Delete | `azuresql` |
+| `VNetRules` | Create / Get / List / Delete | `sql` |
+| `ElasticPools` | Create / Get / List / Delete | `sql` |
+| `FailoverGroups` | Create / Get / List / Delete / Failover | `sql` |
+| `AADAdmins` | Set / Get / List / Delete | `sql` |
 | `Users` | Create / Get / List / Update / Delete | `cloudsql`, `alloydb` |
 | `SslCerts` | Create / Get / List / Delete | `cloudsql` |
 | `Clonable` | `CloneInstance` | `cloudsql` |
 | `ReplicaPromotion` | `PromoteReplica` | `cloudsql` |
-| `ManagedInstances` | managed-instance CRUD + Start/Stop/Failover, managed-database CRUD/List | `azuresql` |
+| `ManagedInstances` | managed-instance CRUD + Start/Stop/Failover, managed-database CRUD/List | `sql` |
 | `AlloyDB` | AlloyDB cluster/instance create, CreateSecondary/Promote, instance Failover/Restart, `*Info` accessors | `alloydb` |
 
 Cloud SQL also serves the `startReplica`/`stopReplica` instance actions (mapped
@@ -2147,7 +2147,7 @@ rates integrate Vertex with the cross-cutting layers like every other service.
 
 ### Azure — Azure AI
 
-**Driver interface:** `services/azureai/driver/` — spans both ARM providers plus the data planes.
+**Driver interface:** `services/ai/driver/` — spans both ARM providers plus the data planes.
 **Azure:** Azure AI Foundry / AI Studio / Azure OpenAI (`Microsoft.CognitiveServices`) and
 Azure Machine Learning (`Microsoft.MachineLearningServices`).
 
@@ -2176,7 +2176,7 @@ Azure Monitor via `SetMonitoring`.
 | AML scoring | online-endpoint `/score` data plane |
 
 Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
-Layer-1 wrapper (`azureai/azureai.go`), chaos injection (`chaos.WrapAzureAI`), and cost rates
+Layer-1 wrapper (`ai/ai.go`), chaos injection (`chaos.WrapAzureAI`), and cost rates
 integrate Azure AI with the cross-cutting layers like every other service.
 **Total: 92 operations** (Go API/driver) — 31 CognitiveServices + 46 MachineLearningServices
 + 15 data plane — all exposed over the SDK-compat HTTP server.
@@ -2185,7 +2185,7 @@ integrate Azure AI with the cross-cutting layers like every other service.
 
 ## 23. AI Search
 
-**Driver interface:** `services/azuresearch/driver/` — `Microsoft.Search/searchServices` (ARM control
+**Driver interface:** `services/search/driver/` — `Microsoft.Search/searchServices` (ARM control
 plane) plus the `{service}.search.windows.net` data plane.
 **Azure:** Azure AI Search (the RAG / retrieval backbone). **AWS / GCP:** _not applicable_.
 
@@ -2207,7 +2207,7 @@ push to Azure Monitor via `SetMonitoring`.
 | Service statistics | counts + storage usage |
 
 Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
-Layer-1 wrapper (`azuresearch/azuresearch.go`), chaos injection (`chaos.WrapAzureSearch`), and
+Layer-1 wrapper (`search/search.go`), chaos injection (`chaos.WrapAzureSearch`), and
 cost rates integrate Azure AI Search with the cross-cutting layers like every other service.
 **Total: 53 operations** (Go API/driver) — 19 control plane + 34 data plane.
 

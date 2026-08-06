@@ -42,20 +42,23 @@ The shared abstraction is named for the **capability**, never a product:
 Product-specific services with no cross-cloud abstraction keep their **product name**
 consistently (`bedrock`, `vertexai`, `databricks`, `bigtable`, `ecs`, `sagemaker`, …).
 
-### 2.2 `providers/<cloud>/<service>` and `server/<cloud>/<service>` — real SDK name, no cloud prefix
-The mock and wire layers use the **service's own short name as that cloud knows it**:
+### 2.2 `providers/<cloud>/<service>` and `server/<cloud>/<service>` — short service name, no cloud prefix
+The mock and wire layers use the **service's own short name, without a cloud prefix** —
+the real SDK/CLI name where a service clearly has one (`s3`, `ec2`, `elbv2`), and a short
+capability name otherwise (`cache`, `dns`, `monitor`, `sql` — Azure's SDK spells these
+`armredis`/`armdns`/`armmonitor`, but the short form reads better and stays prefix-free):
 
 | Capability | AWS | Azure | GCP |
 |---|---|---|---|
 | Storage | `s3` | `blobstorage` | `gcs` |
-| Compute | `ec2` | `virtualmachines` | `gce` |
+| Compute | `ec2` | `virtualmachines` | `compute` |
 | Networking | `vpc` | `vnet` | `vpc` |
 | IAM | `iam` | `iam` | `iam` |
-| Load balancer | `elb` | `loadbalancer` | `loadbalancer` |
+| Load balancer | `elbv2` | `loadbalancer` | `loadbalancer` |
 | Database (NoSQL) | `dynamodb` | `cosmosdb` | `firestore` |
 | DNS | `route53` | `dns` | `clouddns` |
 | Cache | `elasticache` | `cache` | `memorystore` |
-| Monitoring | `cloudwatch` | `monitor` | `cloudmonitoring` |
+| Monitoring | `cloudwatch` | `monitor` | `monitoring` |
 
 Two hard rules:
 
@@ -70,8 +73,18 @@ Two hard rules:
   service map by name (e.g. `providers/azure/blobstorage` ↔ `server/azure/blobstorage`).
 
 > Names are **not** forced to be identical *across* clouds at the provider/wire layer —
-> `s3` / `blobstorage` / `gcs` are each faithful to their own SDK, which is the point.
+> `s3` / `blobstorage` / `gcs` each read naturally for their own cloud, which is the point.
 > Cross-cloud unification lives in the `services/` name only.
+
+**Documented exceptions to the "provider ↔ wire same name" rule:**
+- **AWS `providers/aws/vpc` ↔ `server/aws/ec2`.** AWS's own SDK folds VPC operations under
+  the EC2 service, so the wire handler lives in `ec2`; the mock keeps the clearer `vpc` name.
+  Pre-existing and intentional.
+- **`services/azureai` / `services/azuresearch` keep the `azure` in their name**, while their
+  providers dropped it (`providers/azure/ai`, `providers/azure/search`). These are
+  **product-specific** services (Azure AI, Azure AI Search) with no cross-cloud abstraction,
+  so per §2.1 the product name — including the `azure` that is part of the product — is kept
+  at the `services/` layer.
 
 ---
 
@@ -137,10 +150,13 @@ If you add a genuine portable-API service, it **must** have `driver/`.
 ## 5. Sub-surfaces → same-named subdirectories
 
 When a service grows a large or self-contained sub-surface, promote it to a
-**same-named subdirectory in each layer** instead of a pile of flat files:
+**same-named subdirectory in each layer** instead of a pile of flat files.
+*Illustrative only* (no service is laid out this way today — see the flat-exception note
+below; in the current tree traffic mirroring is the flat `providers/aws/vpc/traffic_mirror.go`
+/ `server/aws/ec2/traffic_mirror.go`):
 
 ```
-services/networking/traffic_mirror/       # interface fragment
+services/networking/traffic_mirror/        # interface fragment
 providers/aws/networking/traffic_mirror/   # mock
 server/aws/networking/traffic_mirror/      # wire
 ```

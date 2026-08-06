@@ -135,7 +135,7 @@ services/                             # emulated cloud services (portable API + 
     compute/  database/  relationaldb/  serverless/  networking/  monitoring/
     iam/  dns/  loadbalancer/  messagequeue/  cache/  secrets/  logging/
     notification/  eventbus/  containerregistry/  kubernetes/  resourcediscovery/
-    bedrock/  sagemaker/  vertexai/  databricks/  azureai/  azuresearch/
+    bedrock/  sagemaker/  vertexai/  databricks/  ai/  search/
     memorydb/  keyspaces/  managedcassandra/  ecs/
     parameterstore/  tablestorage/  cost/
                                       # each: <name>.go (portable API) + driver/ (interface)
@@ -155,7 +155,7 @@ providers/
         lambda/                       # Lambda mock
         vpc/                          # VPC mock
         cloudwatch/                   # CloudWatch mock
-        awsiam/                       # IAM mock
+        iam/                       # IAM mock
         route53/                      # Route 53 mock
         elb/                          # ELB mock
         sqs/                          # SQS mock
@@ -179,18 +179,18 @@ providers/
         managedcassandra/             # Managed Instance for Apache Cassandra mock
         functions/                    # Azure Functions mock
         vnet/                         # VNet mock
-        azuremonitor/                 # Azure Monitor mock
-        azureiam/                     # Azure IAM mock
-        azuredns/                     # Azure DNS mock
-        azurelb/                      # Azure LB mock
+        monitor/                 # Azure Monitor mock
+        iam/                     # Azure IAM mock
+        dns/                     # Azure DNS mock
+        loadbalancer/                      # Azure LB mock
         servicebus/                   # Service Bus mock
-        azurecache/                   # Azure Cache mock
+        cache/                   # Azure Cache mock
         keyvault/                     # Key Vault mock
         loganalytics/                 # Log Analytics mock
         notificationhubs/             # Notification Hubs mock
         acr/                          # ACR mock
         eventgrid/                    # Event Grid mock
-        azuresql/                     # Azure SQL Database mock
+        sql/                     # Azure SQL Database mock
         postgresflex/                 # Azure PostgreSQL Flexible Server mock
         mysqlflex/                    # Azure MySQL Flexible Server mock
         aks/                          # AKS control-plane mock (managed clusters,
@@ -198,14 +198,14 @@ providers/
     gcp/
         gcp.go                        # GCP factory (wires all services)
         gcs/                          # GCS mock
-        gce/                          # GCE mock
+        compute/                          # GCE mock
         firestore/                    # Firestore mock
         cloudfunctions/               # Cloud Functions mock
-        gcpvpc/                       # GCP VPC mock
-        cloudmonitoring/              # Cloud Monitoring mock
-        gcpiam/                       # GCP IAM mock
+        vpc/                       # GCP VPC mock
+        monitoring/              # Cloud Monitoring mock
+        iam/                       # GCP IAM mock
         clouddns/                     # Cloud DNS mock
-        gcplb/                        # GCP LB mock
+        loadbalancer/                        # GCP LB mock
         pubsub/                       # Pub/Sub mock
         memorystore/                  # Memorystore mock
         secretmanager/                # Secret Manager mock
@@ -235,7 +235,7 @@ server/                               # SDK-compat HTTP servers (real cloud SDKs
         azure.go                      # azureserver.New(Drivers{...})
         virtualmachines/  disks/  snapshots/  images/  sshpublickeys/
         blob/  cosmos/  network/  monitor/  functions/  servicebus/
-        azuresql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
+        sql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
         managedcassandra/             # ARM Managed Cassandra handler
         aks/                          # ARM AKS control-plane handler
     gcp/
