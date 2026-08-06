@@ -113,7 +113,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: naming & layout convention (docs/STRUCTURE.md)
-        run: bash scripts/check_structure.sh
+        run: |
+          # No cloud-prefixed directory at ANY depth under providers/<cloud> or
+          # server/<cloud> — the parent aws/azure/gcp already encodes the cloud,
+          # so the prefix is redundant (docs/STRUCTURE.md §2.2). Recursive so a
+          # promoted sub-surface subdir (§4/§5) can't smuggle a prefix back in.
+          fail=0
+          for cloud in aws azure gcp; do
+            for layer in providers server; do
+              [ -d "$layer/$cloud" ] || continue
+              for d in $(find "$layer/$cloud" -mindepth 1 -type d); do
+                case "$(basename "$d")" in
+                  "$cloud"?*)
+                    echo "structure: '$d' has a redundant '$cloud' prefix — drop it (docs/STRUCTURE.md §2.2)"
+                    fail=1 ;;
+                esac
+              done
+            done
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "Structure check failed. See docs/STRUCTURE.md."
+            exit 1
+          fi
+          echo "structure: no cloud-prefixed provider/wire directories — OK"
 
   format:
     name: Format
