@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -58,6 +60,7 @@ type serveConfig struct {
 	persist         bool
 	stateFile       string
 	persistMetaOnly bool
+	initDir         string
 }
 
 // stringList is a repeatable string flag (e.g. --tls-host a --tls-host b).
@@ -93,6 +96,7 @@ func runServe(args []string) error {
 	fs.BoolVar(&c.persist, "persist", false, "save state to --state-file on shutdown and restore it on startup (includes object bodies)")
 	fs.StringVar(&c.stateFile, "state-file", "", "path to the JSON state snapshot (required with --persist)")
 	fs.BoolVar(&c.persistMetaOnly, "persist-metadata-only", false, "persist resource structure but omit object bodies (smaller snapshot)")
+	fs.StringVar(&c.initDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
 		fs.PrintDefaults()
@@ -220,6 +224,14 @@ func runServe(args []string) error {
 	if c.persist {
 		if err := restoreState(context.Background(), c.stateFile, targets); err != nil {
 			return fmt.Errorf("restore persisted state: %w", err)
+		}
+	}
+
+	// Apply init fixtures on top of the built (and possibly restored) providers,
+	// before serving, so the first request already sees the boot state.
+	if c.initDir != "" {
+		if err := applyInitDir(context.Background(), c.initDir, targets); err != nil {
+			return fmt.Errorf("apply init dir: %w", err)
 		}
 	}
 
@@ -444,6 +456,62 @@ func restoreState(ctx context.Context, path string, targets map[string]seed.Targ
 	}
 
 	return persist.RestoreAll(ctx, &snap, targets)
+}
+
+// applyInitDir applies every *.json fixture in dir (lexical order) to every
+// running provider on boot, bringing the emulator up to a known state. A
+// missing dir is a no-op. A parse error fails startup (clear misconfiguration);
+// an apply error only warns and continues, so a fixture that collides with
+// already-restored state can't wedge the boot.
+func applyInitDir(ctx context.Context, dir string, targets map[string]seed.Target) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	names := make([]string, 0, len(entries))
+
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			names = append(names, e.Name())
+		}
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names {
+		if err := applyInitFile(ctx, filepath.Join(dir, name), name, targets); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// applyInitFile loads one fixture file and applies it to every provider. A load
+// (parse) error is returned; per-provider apply errors are warned and skipped.
+func applyInitFile(ctx context.Context, path, name string, targets map[string]seed.Target) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	f, err := seed.Load(data)
+	if err != nil {
+		return fmt.Errorf("init fixture %s: %w", name, err)
+	}
+
+	for prov, t := range targets {
+		if err := seed.Apply(ctx, f, t); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: init %s on %s: %v\n", name, prov, err)
+		}
+	}
+
+	return nil
 }
 
 // snapshotState exports every running provider's state and writes the snapshot
