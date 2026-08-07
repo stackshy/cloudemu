@@ -217,19 +217,17 @@ func snapshotList(dir string) error {
 			continue
 		}
 
-		if printed == 0 {
-			fmt.Printf("%-24s %-20s %10s\n", "NAME", "CREATED", "SIZE")
-		}
-
 		info, iErr := e.Info()
 		if iErr != nil {
 			return iErr
 		}
 
-		fmt.Printf("%-24s %-20s %10d\n",
-			strings.TrimSuffix(e.Name(), ".json"),
-			info.ModTime().UTC().Format(time.DateTime),
-			info.Size())
+		if printed == 0 {
+			fmt.Printf("%-24s %-20s %-18s %10s\n", "NAME", "CREATED", "PROVIDERS", "SIZE")
+		}
+
+		name, created, providers := snapshotRow(snapshotsDir(dir), e, info)
+		fmt.Printf("%-24s %-20s %-18s %10d\n", name, created, providers, info.Size())
 
 		printed++
 	}
@@ -239,6 +237,50 @@ func snapshotList(dir string) error {
 	}
 
 	return nil
+}
+
+// snapshotRow derives the display columns for one snapshot file, preferring the
+// stored Meta header (accurate created-at + captured providers) and falling
+// back to the filename / file mtime when Meta is absent or unreadable.
+func snapshotRow(dir string, e os.DirEntry, info os.FileInfo) (name, created, providers string) {
+	name = strings.TrimSuffix(e.Name(), ".json")
+	created = info.ModTime().UTC().Format(time.DateTime)
+	providers = "-"
+
+	meta := readSnapshotMeta(filepath.Join(dir, e.Name()))
+	if meta == nil {
+		return name, created, providers
+	}
+
+	if meta.Name != "" {
+		name = meta.Name
+	}
+
+	if meta.CreatedAt != "" {
+		created = meta.CreatedAt
+	}
+
+	if len(meta.Providers) > 0 {
+		providers = strings.Join(meta.Providers, ",")
+	}
+
+	return name, created, providers
+}
+
+// readSnapshotMeta returns the Meta header of a snapshot file, or nil if the
+// file can't be read or parsed.
+func readSnapshotMeta(path string) *persist.Meta {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var s persist.Snapshot
+	if err := json.Unmarshal(b, &s); err != nil {
+		return nil
+	}
+
+	return s.Meta
 }
 
 // adminBaseURL reads the daemon's endpoints file and returns a plain-HTTP base

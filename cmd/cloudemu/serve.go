@@ -250,7 +250,10 @@ func runServe(args []string) error {
 	// could POST /_cloudemu/reset.
 	if c.admin && !isLoopbackHost(c.host) {
 		fmt.Fprintf(os.Stderr,
-			"warning: --admin control plane (POST /_cloudemu/reset wipes all state) is reachable on non-loopback host %q; pass --admin=false to disable it\n",
+			"warning: --admin control plane is reachable on non-loopback host %q — "+
+				"POST /_cloudemu/reset wipes all state, and GET /_cloudemu/snapshot dumps "+
+				"all emulated state (including secret values) to any caller; "+
+				"pass --admin=false to disable it\n",
 			c.host)
 	}
 
@@ -279,6 +282,10 @@ func runServe(args []string) error {
 			return fmt.Errorf("%w: got %d, want %d", errUnsupportedSnapshot, snap.SchemaVersion, persist.SchemaVersion)
 		}
 
+		// Destructive load (reset semantics): wipe to empty, then repopulate. If
+		// RestoreAll fails partway the running state is already gone — acceptable
+		// for a local emulator, but a future hardening is to restore into a
+		// staging build and swap it in only on success.
 		rebuild() // wipe to empty before loading
 
 		rebuildMu.Lock()

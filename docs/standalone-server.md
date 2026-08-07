@@ -149,6 +149,12 @@ and `delete` are file operations that work without a running server. Snapshots
 cover the same services as persistence (object storage, NoSQL tables, secrets,
 compute instances). Names must match `[A-Za-z0-9._-]` (1–64 chars).
 
+`load` is destructive: it wipes the running state (reset semantics) and then
+repopulates from the snapshot, so anything created since the snapshot is
+discarded. If a restore fails partway the running state is already cleared —
+fine for a local emulator, but don't point `load` at a server whose current
+state you haven't snapshotted.
+
 ## Ports
 
 | Provider   | Default | Protocol | Notes                                    |
