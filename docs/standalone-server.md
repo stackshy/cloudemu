@@ -58,8 +58,33 @@ cloudemu — standalone server
   AWS         http://127.0.0.1:4566
   Azure       https://127.0.0.1:4568   (self-signed TLS)
   GCP         http://127.0.0.1:4569
-  Kubernetes  http://127.0.0.1:4570
+  Kubernetes  https://127.0.0.1:4570
 ```
+
+## Background mode (`start` / `stop` / `status`)
+
+`cloudemu serve` runs in the foreground. For a minikube-style "leave it running"
+workflow, the lifecycle commands manage a detached background server:
+
+```sh
+cloudemu start                 # launch in the background; prints the endpoints
+cloudemu status                # is it running? show pid + endpoints
+cloudemu logs -f               # follow the server log
+cloudemu stop                  # graceful shutdown
+cloudemu delete                # stop and remove the run directory
+```
+
+`start` accepts every `serve` flag and passes it through, e.g.
+`cloudemu start --providers aws --aws-port 4599`. It waits for every listener to
+start accepting connections before returning (a TCP-accept probe, so it also
+works with `--admin=false`), and is idempotent (a second `start` reports the
+already-running instance). `--endpoints-file` and `--quiet` are managed by
+`start` itself, so passing your own copies has no effect.
+
+Run state (pid, log, resolved endpoints) lives under `~/.cloudemu/` by default;
+point it elsewhere with `--home <dir>` (pass the same `--home` to the other
+lifecycle commands). State is **not** yet persisted across `stop`/`start` — the
+server still starts empty each time (see "Not yet included").
 
 ## Ports
 
@@ -68,7 +93,7 @@ cloudemu — standalone server
 | AWS        | `4566`  | HTTP     | same port LocalStack uses                |
 | Azure      | `4568`  | HTTPS    | the ARM SDK requires TLS                 |
 | GCP        | `4569`  | HTTP     |                                          |
-| Kubernetes | `4570`  | HTTP     | shared data-plane for EKS/AKS/GKE        |
+| Kubernetes | `4570`  | HTTPS    | shared data-plane for EKS/AKS/GKE        |
 
 Override with `--aws-port`, `--azure-port`, `--gcp-port`, `--k8s-port`. Start a
 subset with `--providers=aws,gcp`. Bind an interface with `--host 0.0.0.0` (the
@@ -156,7 +181,7 @@ app at the whole emulated cloud at once:
   "aws": "http://127.0.0.1:4566",
   "azure": "https://127.0.0.1:4568",
   "gcp": "http://127.0.0.1:4569",
-  "kubernetes": "http://127.0.0.1:4570"
+  "kubernetes": "https://127.0.0.1:4570"
 }
 ```
 
