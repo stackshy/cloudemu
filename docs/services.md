@@ -36,6 +36,7 @@ This document lists every service and operation available in CloudEmu across all
 | 23 | AI Search | — | `search` (Microsoft.Search) | — |
 | 24 | Container Orchestration | `ecs` | — | — |
 | 25 | DNS Resolver | `route53resolver` | — | — |
+| 26 | Application Networking | `vpclattice` | — | — |
 
 ---
 
@@ -2310,6 +2311,57 @@ policies are stored verbatim without RAM enforcement.
 
 ---
 
+## 26. Application Networking
+
+**Driver interface:** `services/vpclattice/driver/driver.go`
+**AWS:** VPC Lattice (REST-JSON, `awsRestjson1`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/vpclattice` clients work against the
+SDK-compat server (`awsserver.Drivers{VPCLattice: cloud.VPCLattice}`). Full
+parity: **all 73 SDK operations**, no stubs.
+
+Unlike the AWS JSON 1.1 services, VPC Lattice uses **REST-JSON**: the operation
+is selected by HTTP method + URL path (e.g. `POST /services`, `GET
+/services/{id}/listeners/{id}`, `PATCH /servicenetworks/{id}`) rather than an
+`X-Amz-Target` header. The handler gates on path root + method + **identifier
+shape**, so a path-style S3 object op on a bucket named like a Lattice root
+(e.g. `GET /services/mykey`) falls through to the S3 catch-all — only a
+Lattice-shaped id (a known prefix or a `vpc-lattice` ARN) is claimed. The single
+unavoidable residual is a bare `GET /<root>` (list) vs. an S3 list-bucket on an
+identically-named bucket. Identifiers accept either a bare ID or a full ARN. Union-typed fields
+(a listener's `defaultAction`, a rule's `match`/`action`, a target group's
+`config`, a resource configuration's `resourceConfigurationDefinition`) are
+stored as raw JSON and echoed back verbatim. Create-time tags are persisted;
+deletes block on live service-network associations and cascade contained
+children (service→listeners→rules); association counts are recomputed on read
+and skip targets that no longer exist.
+
+| Family | Operations |
+|--------|-----------|
+| Service networks | Create/Get/Update/Delete/ListServiceNetwork(s) |
+| Services | Create/Get/Update/Delete/ListService(s) |
+| Listeners | Create/Get/Update/Delete/ListListener(s) |
+| Rules | Create/Get/Update/Delete/ListRule(s), BatchUpdateRule |
+| Target groups & targets | Create/Get/Update/Delete/ListTargetGroup(s), Register/Deregister/ListTargets |
+| Service-network associations | Create/Get/Update/Delete/List ServiceNetworkVpcAssociation(s) + ListServiceNetworkVpcEndpointAssociations; Create/Get/Delete/List ServiceNetworkService & ServiceNetworkResource Association(s) |
+| Resource configurations | Create/Get/Update/Delete/ListResourceConfiguration(s) |
+| Resource gateways | Create/Get/Update/Delete/ListResourceGateway(s) |
+| Resource endpoint associations | List/DeleteResourceEndpointAssociation(s) |
+| Access-log subscriptions | Create/Get/Update/Delete/ListAccessLogSubscription(s) |
+| Auth & resource policies | Put/Get/DeleteAuthPolicy, Put/Get/DeleteResourcePolicy |
+| Domain verifications | Start/Get/Delete/ListDomainVerification(s) |
+| Tagging | TagResource, UntagResource, ListTagsForResource |
+
+*Accepted but not simulated* (stored/echoed so SDK calls succeed, no behavioral
+effect): resources are created directly in a terminal `ACTIVE`/`PENDING` status
+(no async state machine); VPC-endpoint and resource-endpoint associations are a
+managed surface returned as empty lists; `Forward`/health-check targeting is
+stored but not used to route real traffic.
+
+**Total: 73 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -2423,7 +2475,8 @@ still sees success.
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
 | DNS Resolver — AWS Route 53 Resolver | 72 |
-| **Grand Total** | **1634** (+138 optional) |
+| Application Networking — AWS VPC Lattice | 73 |
+| **Grand Total** | **1707** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

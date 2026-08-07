@@ -37,6 +37,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
+	"github.com/stackshy/cloudemu/v2/providers/aws/vpclattice"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
@@ -145,6 +146,7 @@ type Provider struct {
 	SageMaker           *sagemaker.Mock
 	SSM                 *ssm.Mock
 	ECS                 *ecs.Mock
+	VPCLattice          *vpclattice.Mock
 	Route53Resolver     *route53resolver.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
@@ -183,6 +185,7 @@ func New(opts ...config.Option) *Provider {
 		SageMaker:           sagemaker.New(o),
 		SSM:                 ssm.New(o),
 		ECS:                 ecs.New(o),
+		VPCLattice:          vpclattice.New(o),
 		Route53Resolver:     route53resolver.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
