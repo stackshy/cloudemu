@@ -10,3 +10,9 @@ import "errors"
 func runLifecycle(_ string, _ []string) error {
 	return errors.New("start/stop/status/logs/delete are only supported on Unix/macOS; run `cloudemu serve` instead")
 }
+
+// runSnapshot is unavailable off Unix for the same reason as the lifecycle
+// commands: it operates on the background daemon's run directory.
+func runSnapshot(_ []string) error {
+	return errors.New("snapshot is only supported on Unix/macOS")
+}

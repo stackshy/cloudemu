@@ -44,7 +44,18 @@ var (
 // as one JSON document.
 type Snapshot struct {
 	SchemaVersion int                      `json:"schemaVersion"`
+	Meta          *Meta                    `json:"meta,omitempty"`
 	Providers     map[string]ProviderState `json:"providers,omitempty"`
+}
+
+// Meta is optional descriptive header for a named snapshot (the auto
+// persist-on-stop file leaves it nil). It lets tooling describe a snapshot
+// without restoring it.
+type Meta struct {
+	Name            string   `json:"name,omitempty"`
+	CreatedAt       string   `json:"createdAt,omitempty"`
+	CloudemuVersion string   `json:"cloudemuVersion,omitempty"`
+	Providers       []string `json:"providers,omitempty"`
 }
 
 // ProviderState is a single provider's persisted resources.
@@ -103,6 +114,43 @@ type Options struct {
 	// snapshot is metadata-only — bucket/object/table structure without the
 	// object bytes — which keeps the file small.
 	IncludeAssets bool
+}
+
+// ExportAll captures the state of every provider in targets into one Snapshot.
+// It is the whole-emulator core shared by the persist-on-stop path and the
+// snapshot admin endpoint.
+func ExportAll(ctx context.Context, targets map[string]seed.Target, opts Options) (Snapshot, error) {
+	snap := Snapshot{SchemaVersion: SchemaVersion, Providers: make(map[string]ProviderState, len(targets))}
+
+	for name, t := range targets {
+		ps, err := Export(ctx, t, opts)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("export %s: %w", name, err)
+		}
+
+		snap.Providers[name] = ps
+	}
+
+	return snap, nil
+}
+
+// RestoreAll restores each provider present in snap into the matching target.
+// Providers in the snapshot with no matching running target are skipped, and
+// targets should be freshly rebuilt (empty) before calling.
+func RestoreAll(ctx context.Context, snap *Snapshot, targets map[string]seed.Target) error {
+	for name := range snap.Providers {
+		t, ok := targets[name]
+		if !ok {
+			continue
+		}
+
+		ps := snap.Providers[name]
+		if err := Restore(ctx, t, &ps); err != nil {
+			return fmt.Errorf("restore %s: %w", name, err)
+		}
+	}
+
+	return nil
 }
 
 // Export reads a provider's current state through its drivers. A nil driver for

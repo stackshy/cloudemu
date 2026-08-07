@@ -123,6 +123,38 @@ restored objects then come back as zero-byte keys until you re-upload them.
 Compute instances are recreated via `RunInstances`, so image/type/tags are
 preserved but the emulator assigns fresh instance IDs and IPs on restore.
 
+### Named snapshots (`snapshot save` / `load` / `list` / `delete`)
+
+Persistence auto-saves a single state on stop. **Snapshots** let you capture,
+name, and switch between *multiple* states on a running server — a local, free
+equivalent of LocalStack's Cloud Pods.
+
+```sh
+cloudemu start
+# … create buckets / tables / secrets / instances …
+cloudemu snapshot save baseline     # capture current state as "baseline"
+# … run a destructive test …
+cloudemu snapshot load baseline     # restore it instantly — no restart
+cloudemu snapshot list              # NAME  CREATED  SIZE
+cloudemu snapshot delete baseline
+```
+
+Each snapshot is a single JSON file under `~/.cloudemu/snapshots/<name>.json`
+(override the dir with `--home`) — inspectable, `git`-diffable, and shareable:
+copy the file to a teammate and they `snapshot load` the identical state.
+
+`save` and `load` talk to the running server's control plane, so they need the
+`--admin` plane (on by default) and the `aws` or `gcp` provider running; `list`
+and `delete` are file operations that work without a running server. Snapshots
+cover the same services as persistence (object storage, NoSQL tables, secrets,
+compute instances). Names must match `[A-Za-z0-9._-]` (1–64 chars).
+
+`load` is destructive: it wipes the running state (reset semantics) and then
+repopulates from the snapshot, so anything created since the snapshot is
+discarded. If a restore fails partway the running state is already cleared —
+fine for a local emulator, but don't point `load` at a server whose current
+state you haven't snapshotted.
+
 ## Ports
 
 | Provider   | Default | Protocol | Notes                                    |
