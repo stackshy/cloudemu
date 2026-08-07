@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +17,8 @@ import (
 
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/persist"
+	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	"github.com/stackshy/cloudemu/v2/seed"
 	"github.com/stackshy/cloudemu/v2/server/admin"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -26,26 +27,32 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
+// errStateFileRequired is returned when --persist is set without --state-file.
+var errStateFileRequired = errors.New("--persist requires --state-file")
+
 // serveConfig holds the resolved serve flags.
 type serveConfig struct {
-	providers  string
-	host       string
-	awsPort    string
-	azurePort  string
-	gcpPort    string
-	k8sPort    string
-	accountID  string
-	region     string
-	projectID  string
-	latency    time.Duration
-	tlsCert    string
-	tlsKey     string
-	tlsHosts   stringList
-	endpoints  string
-	admin      bool
-	logReqs    bool
-	quiet      bool
-	shutdownTO time.Duration
+	providers       string
+	host            string
+	awsPort         string
+	azurePort       string
+	gcpPort         string
+	k8sPort         string
+	accountID       string
+	region          string
+	projectID       string
+	latency         time.Duration
+	tlsCert         string
+	tlsKey          string
+	tlsHosts        stringList
+	endpoints       string
+	admin           bool
+	logReqs         bool
+	quiet           bool
+	shutdownTO      time.Duration
+	persist         bool
+	stateFile       string
+	persistMetaOnly bool
 }
 
 // stringList is a repeatable string flag (e.g. --tls-host a --tls-host b).
@@ -78,6 +85,9 @@ func runServe(args []string) error {
 	fs.BoolVar(&c.logReqs, "log-requests", false, "log every HTTP request (method, path, status, duration)")
 	fs.BoolVar(&c.quiet, "quiet", false, "suppress the startup banner")
 	fs.DurationVar(&c.shutdownTO, "shutdown-timeout", 10*time.Second, "grace period for in-flight requests on shutdown")
+	fs.BoolVar(&c.persist, "persist", false, "save state to --state-file on shutdown and restore it on startup (includes object bodies)")
+	fs.StringVar(&c.stateFile, "state-file", "", "path to the JSON state snapshot (required with --persist)")
+	fs.BoolVar(&c.persistMetaOnly, "persist-metadata-only", false, "persist resource structure but omit object bodies (smaller snapshot)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage: cloudemu serve [flags]\n\nStart the standalone emulator. Flags:\n")
 		fs.PrintDefaults()
@@ -87,6 +97,10 @@ func runServe(args []string) error {
 	}
 	if (c.tlsCert == "") != (c.tlsKey == "") {
 		return errors.New("--tls-cert and --tls-key must be given together")
+	}
+
+	if c.persist && c.stateFile == "" {
+		return errStateFileRequired
 	}
 
 	sel, err := parseProviders(c.providers)
@@ -195,6 +209,14 @@ func runServe(args []string) error {
 		targets = freshTargets
 	}
 	rebuild() // populate the backends before serving
+
+	// Restore persisted state into the freshly-built providers before serving,
+	// so the first request already sees the resources from the last run.
+	if c.persist {
+		if err := restoreState(context.Background(), c.stateFile, targets); err != nil {
+			return fmt.Errorf("restore persisted state: %w", err)
+		}
+	}
 
 	// seedFor applies a fixture body to a provider's current drivers. It shares
 	// rebuildMu with reset so a seed and a reset can't run against each other's
@@ -343,7 +365,66 @@ func runServe(args []string) error {
 			shutErr = err
 		}
 	}
+
+	// Snapshot after Shutdown so no in-flight request can mutate state mid-read.
+	if c.persist {
+		if err := snapshotState(context.Background(), c.stateFile, !c.persistMetaOnly, targets); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save state to %s: %v\n", c.stateFile, err)
+		} else if !c.quiet {
+			fmt.Fprintf(os.Stdout, "state saved to %s\n", c.stateFile)
+		}
+	}
+
 	return shutErr
+}
+
+// restoreState loads the snapshot at path (if any) into the freshly-built
+// providers. A missing file is not an error — the server just starts empty,
+// exactly as it does without --persist. Providers present in the snapshot but
+// not running now are skipped.
+func restoreState(ctx context.Context, path string, targets map[string]seed.Target) error {
+	snap, err := persist.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	for name := range snap.Providers {
+		t, ok := targets[name]
+		if !ok {
+			continue
+		}
+
+		ps := snap.Providers[name]
+		if err := persist.Restore(ctx, t, &ps); err != nil {
+			return fmt.Errorf("restore %s: %w", name, err)
+		}
+	}
+
+	return nil
+}
+
+// snapshotState exports every running provider's state and writes the snapshot
+// file. Called after Shutdown, so the providers are quiescent.
+func snapshotState(ctx context.Context, path string, includeAssets bool, targets map[string]seed.Target) error {
+	snap := persist.Snapshot{
+		SchemaVersion: persist.SchemaVersion,
+		Providers:     make(map[string]persist.ProviderState, len(targets)),
+	}
+
+	for name, t := range targets {
+		ps, err := persist.Export(ctx, t, persist.Options{IncludeAssets: includeAssets})
+		if err != nil {
+			return fmt.Errorf("export %s: %w", name, err)
+		}
+
+		snap.Providers[name] = ps
+	}
+
+	return snap.WriteFile(path)
 }
 
 type namedServer struct {

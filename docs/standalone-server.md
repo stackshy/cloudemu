@@ -83,8 +83,44 @@ already-running instance). `--endpoints-file` and `--quiet` are managed by
 
 Run state (pid, log, resolved endpoints) lives under `~/.cloudemu/` by default;
 point it elsewhere with `--home <dir>` (pass the same `--home` to the other
-lifecycle commands). State is **not** yet persisted across `stop`/`start` — the
-server still starts empty each time (see "Not yet included").
+lifecycle commands).
+
+### Persistence across restarts
+
+By default the emulator starts empty every time. Pass `--persist` to `start` and
+your resources survive `stop`→`start`:
+
+```sh
+cloudemu start --persist          # save on stop, restore on start
+# create buckets/tables/objects…
+cloudemu stop                     # writes ~/.cloudemu/<home>/snapshot.json
+cloudemu start --persist          # your resources are back
+cloudemu delete                   # also removes the snapshot + assets
+```
+
+`start` manages the snapshot path for you (in the run dir). Persistence is
+**opt-in**; when on, it saves your resources *including* object bodies, so an S3
+object comes back with its contents intact. If you only care about the resource
+structure and want a smaller snapshot, add `--persist-metadata-only` to skip
+object bytes:
+
+```sh
+cloudemu start --persist                       # full: structure + object bodies
+cloudemu start --persist --persist-metadata-only   # smaller: structure only
+```
+
+Coverage is currently the data-bearing services that share a cross-provider
+driver interface — object storage (S3/Blob/GCS), NoSQL tables
+(DynamoDB/Firestore/Cosmos), secrets (Secrets Manager/Key Vault/Secret Manager),
+and compute instances (EC2/VMs/GCE); other services still start empty. The
+snapshot is a single human-readable JSON file spanning all three providers, so
+you can inspect or `git diff` it.
+
+Fidelity notes: object bodies, secret values, and table items are all saved by
+default; pass `--persist-metadata-only` to drop object *bodies* (structure only)
+for a smaller snapshot. Compute instances are recreated via `RunInstances`, so
+image/type/tags are preserved but the emulator assigns fresh instance IDs and
+IPs on restore.
 
 ## Ports
 
@@ -169,6 +205,9 @@ cloudemu serve --tls-host myhost.local --tls-host 192.168.1.10
 | `--tls-cert` / `--tls-key` | — | supply your own Azure cert (else self-signed) |
 | `--tls-host` | — | extra SAN for the generated cert (repeatable) |
 | `--endpoints-file` | — | write resolved endpoints as JSON |
+| `--persist` | `false` | save state on shutdown and restore it on startup, including object bodies (requires `--state-file`) |
+| `--state-file` | — | path to the JSON state snapshot (`start` manages this for you) |
+| `--persist-metadata-only` | `false` | persist resource structure but omit object bodies (smaller snapshot) |
 | `--log-requests` | `false` | log every request |
 | `--quiet` | `false` | suppress the startup banner |
 | `--shutdown-timeout` | `10s` | grace period for in-flight requests on Ctrl-C |
@@ -239,7 +278,7 @@ seed.Apply(ctx, f, seed.Target{Storage: aws.S3, Database: aws.DynamoDB})
 
 ## Not yet included
 
-**Persistence** across restarts and **snapshot/restore** aren't part of this
-mode yet — snapshot/restore needs the state model tracked in #107. Docker
-packaging (#247) and a Testcontainers module (#248) build directly on this
-binary.
+**Persistence** covers object storage and NoSQL tables today (see "Persistence
+across restarts" above); the remaining services and full **snapshot/restore**
+fidelity are tracked in #107. Docker packaging (#247) and a Testcontainers
+module (#248) build directly on this binary.

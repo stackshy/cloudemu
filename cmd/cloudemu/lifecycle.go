@@ -22,6 +22,8 @@ const (
 	stateFileName     = "state.json"
 	logFileName       = "cloudemu.log"
 	endpointsFileName = "endpoints.json"
+	persistFileName   = "snapshot.json"
+	assetsDirName     = "assets"
 
 	startupTimeout = 15 * time.Second
 	stopTimeout    = 12 * time.Second
@@ -68,6 +70,20 @@ func runDir(home string) (string, error) {
 func statePath(dir string) string     { return filepath.Join(dir, stateFileName) }
 func logPath(dir string) string       { return filepath.Join(dir, logFileName) }
 func endpointsPath(dir string) string { return filepath.Join(dir, endpointsFileName) }
+func persistPath(dir string) string   { return filepath.Join(dir, persistFileName) }
+func assetsDir(dir string) string     { return filepath.Join(dir, assetsDirName) }
+
+// hasFlag reports whether args contains --name / -name (bare or =value form).
+func hasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == "--"+name || a == "-"+name ||
+			strings.HasPrefix(a, "--"+name+"=") || strings.HasPrefix(a, "-"+name+"=") {
+			return true
+		}
+	}
+
+	return false
+}
 
 func writeState(dir string, s daemonState) error {
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
@@ -364,10 +380,24 @@ func runStart(args []string) error {
 	// so last-wins flag parsing can't redirect the file or duplicate the flag.
 	rest = stripFlag(rest, "endpoints-file", true)
 	rest = stripFlag(rest, "quiet", false)
+	// start also manages the persistence snapshot path under the run dir; drop a
+	// user --state-file so it can't point elsewhere.
+	rest = stripFlag(rest, "state-file", true)
 
 	dir, err := runDir(home)
 	if err != nil {
 		return err
+	}
+
+	// Opt-in persistence: if the user asked to persist, point serve at a snapshot
+	// file in the run dir (and imply --persist when only --persist-metadata-only
+	// is given).
+	if hasFlag(rest, "persist") || hasFlag(rest, "persist-metadata-only") {
+		if !hasFlag(rest, "persist") {
+			rest = append(rest, "--persist")
+		}
+
+		rest = append(rest, "--state-file", persistPath(dir))
 	}
 
 	if s, rErr := readState(dir); rErr == nil && processAlive(s.PID) && daemonReachable(s.Endpoints) {
@@ -574,10 +604,14 @@ func runDelete(args []string) error {
 		return err
 	}
 
-	for _, p := range []string{statePath(dir), logPath(dir), endpointsPath(dir)} {
+	for _, p := range []string{statePath(dir), logPath(dir), endpointsPath(dir), persistPath(dir)} {
 		if rmErr := os.Remove(p); rmErr != nil && !os.IsNotExist(rmErr) {
 			return rmErr
 		}
+	}
+
+	if rmErr := os.RemoveAll(assetsDir(dir)); rmErr != nil {
+		return rmErr
 	}
 
 	// Remove the dir only if it's now empty (ignore "not empty" / "not exist").
