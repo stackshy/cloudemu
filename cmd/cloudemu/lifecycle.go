@@ -23,7 +23,6 @@ const (
 	logFileName       = "cloudemu.log"
 	endpointsFileName = "endpoints.json"
 	persistFileName   = "snapshot.json"
-	assetsDirName     = "assets"
 
 	startupTimeout = 15 * time.Second
 	stopTimeout    = 12 * time.Second
@@ -71,7 +70,6 @@ func statePath(dir string) string     { return filepath.Join(dir, stateFileName)
 func logPath(dir string) string       { return filepath.Join(dir, logFileName) }
 func endpointsPath(dir string) string { return filepath.Join(dir, endpointsFileName) }
 func persistPath(dir string) string   { return filepath.Join(dir, persistFileName) }
-func assetsDir(dir string) string     { return filepath.Join(dir, assetsDirName) }
 
 // hasFlag reports whether args contains --name / -name (bare or =value form).
 func hasFlag(args []string, name string) bool {
@@ -608,10 +606,6 @@ func runDelete(args []string) error {
 		if rmErr := os.Remove(p); rmErr != nil && !os.IsNotExist(rmErr) {
 			return rmErr
 		}
-	}
-
-	if rmErr := os.RemoveAll(assetsDir(dir)); rmErr != nil {
-		return rmErr
 	}
 
 	// Remove the dir only if it's now empty (ignore "not empty" / "not exist").

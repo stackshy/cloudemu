@@ -117,10 +117,11 @@ snapshot is a single human-readable JSON file spanning all three providers, so
 you can inspect or `git diff` it.
 
 Fidelity notes: object bodies, secret values, and table items are all saved by
-default; pass `--persist-metadata-only` to drop object *bodies* (structure only)
-for a smaller snapshot. Compute instances are recreated via `RunInstances`, so
-image/type/tags are preserved but the emulator assigns fresh instance IDs and
-IPs on restore.
+default, along with any secondary indexes present in a table's configuration.
+Pass `--persist-metadata-only` to drop object *bodies* for a smaller snapshot —
+restored objects then come back as zero-byte keys until you re-upload them.
+Compute instances are recreated via `RunInstances`, so image/type/tags are
+preserved but the emulator assigns fresh instance IDs and IPs on restore.
 
 ## Ports
 

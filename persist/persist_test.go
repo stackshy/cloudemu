@@ -146,6 +146,39 @@ func TestRestoreEmptyIsNoError(t *testing.T) {
 	}
 }
 
+// TestExportRestorePreservesGSIs covers L2: a table's secondary indexes must
+// survive snapshot/restore, or a Query against a GSI breaks after a restart.
+func TestExportRestorePreservesGSIs(t *testing.T) {
+	ctx := context.Background()
+
+	src := cloudemu.NewAWS()
+	if err := src.DynamoDB.CreateTable(ctx, dbdriver.TableConfig{
+		Name:         "orders",
+		PartitionKey: "id",
+		GSIs:         []dbdriver.GSIConfig{{Name: "by-customer", PartitionKey: "customerId"}},
+	}); err != nil {
+		t.Fatalf("create table with GSI: %v", err)
+	}
+
+	ps, err := persist.Export(ctx, seed.Target{Database: src.DynamoDB}, persist.Options{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	dst := cloudemu.NewAWS()
+	if err := persist.Restore(ctx, seed.Target{Database: dst.DynamoDB}, &ps); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	idxs, err := dst.DynamoDB.ListIndexes(ctx, "orders")
+	if err != nil {
+		t.Fatalf("list indexes: %v", err)
+	}
+	if len(idxs) != 1 || idxs[0].Name != "by-customer" || idxs[0].PartitionKey != "customerId" {
+		t.Fatalf("GSI not restored: %+v", idxs)
+	}
+}
+
 // TestSnapshotFileRoundTrip covers the on-disk layer: WriteFile then ReadFile
 // preserves content, and an unknown schema version is rejected rather than
 // silently mis-restored.

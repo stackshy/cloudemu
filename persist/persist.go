@@ -31,8 +31,7 @@ const SchemaVersion = 1
 const (
 	defaultContentType = "application/octet-stream"
 
-	dirPerm  = 0o755
-	filePerm = 0o600
+	dirPerm = 0o755
 )
 
 // Sentinel errors so callers (and err113) get static, wrappable failures.
@@ -70,12 +69,13 @@ type Object struct {
 	Body        []byte `json:"body,omitempty"`
 }
 
-// Table is a NoSQL table and its items.
+// Table is a NoSQL table, its secondary indexes, and its items.
 type Table struct {
-	Name         string           `json:"name"`
-	PartitionKey string           `json:"partitionKey"`
-	SortKey      string           `json:"sortKey,omitempty"`
-	Items        []map[string]any `json:"items,omitempty"`
+	Name         string               `json:"name"`
+	PartitionKey string               `json:"partitionKey"`
+	SortKey      string               `json:"sortKey,omitempty"`
+	GSIs         []dbdriver.GSIConfig `json:"gsis,omitempty"`
+	Items        []map[string]any     `json:"items,omitempty"`
 }
 
 // Secret is a secret and its current value. The value is always captured (a
@@ -233,7 +233,13 @@ func exportTables(ctx context.Context, d dbdriver.Database) ([]Table, error) {
 			return nil, err
 		}
 
-		out = append(out, Table{Name: name, PartitionKey: cfg.PartitionKey, SortKey: cfg.SortKey, Items: items})
+		out = append(out, Table{
+			Name:         name,
+			PartitionKey: cfg.PartitionKey,
+			SortKey:      cfg.SortKey,
+			GSIs:         cfg.GSIs,
+			Items:        items,
+		})
 	}
 
 	return out, nil
@@ -357,7 +363,7 @@ func restoreTables(ctx context.Context, d dbdriver.Database, tables []Table) err
 	}
 
 	for _, tb := range tables {
-		cfg := dbdriver.TableConfig{Name: tb.Name, PartitionKey: tb.PartitionKey, SortKey: tb.SortKey}
+		cfg := dbdriver.TableConfig{Name: tb.Name, PartitionKey: tb.PartitionKey, SortKey: tb.SortKey, GSIs: tb.GSIs}
 		if err := d.CreateTable(ctx, cfg); err != nil {
 			return fmt.Errorf("restore table %q: %w", tb.Name, err)
 		}
@@ -412,7 +418,8 @@ func restoreInstances(ctx context.Context, d computedriver.Compute, instances []
 
 // WriteFile writes the snapshot as indented JSON, creating parent directories.
 func (s Snapshot) WriteFile(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return err
 	}
 
@@ -421,7 +428,37 @@ func (s Snapshot) WriteFile(path string) error {
 		return err
 	}
 
-	return os.WriteFile(path, b, filePerm)
+	// Write to a temp file in the same dir, then rename onto the target. Rename
+	// is atomic on the same filesystem, so an interrupted write (disk-full, OOM,
+	// SIGKILL) leaves the previous snapshot — or none — but never a truncated
+	// file that would fail the next start.
+	tmp, err := os.CreateTemp(dir, ".snapshot-*.tmp")
+	if err != nil {
+		return err
+	}
+
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+
+		return err
+	}
+
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+
+		return err
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+
+		return err
+	}
+
+	return nil
 }
 
 // ReadFile loads a snapshot from disk, rejecting an unknown schema version.

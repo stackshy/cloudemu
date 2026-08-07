@@ -384,12 +384,17 @@ func runServe(args []string) error {
 // not running now are skipped.
 func restoreState(ctx context.Context, path string, targets map[string]seed.Target) error {
 	snap, err := persist.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-
 	if err != nil {
-		return err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // first run — nothing to restore
+		}
+
+		// A corrupt / truncated / unknown-schema snapshot must not wedge startup
+		// on the very stop→start path this feature serves: warn and start empty
+		// rather than aborting.
+		fmt.Fprintf(os.Stderr, "warning: ignoring unreadable state file %s: %v\n", path, err)
+
+		return nil
 	}
 
 	for name := range snap.Providers {
