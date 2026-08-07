@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,6 +30,10 @@ import (
 
 // errStateFileRequired is returned when --persist is set without --state-file.
 var errStateFileRequired = errors.New("--persist requires --state-file")
+
+// errUnsupportedSnapshot is returned when a posted snapshot has an unknown
+// schema version.
+var errUnsupportedSnapshot = errors.New("unsupported snapshot schema version")
 
 // serveConfig holds the resolved serve flags.
 type serveConfig struct {
@@ -249,13 +254,47 @@ func runServe(args []string) error {
 			c.host)
 	}
 
+	// snapshotFn/restoreFn back /_cloudemu/snapshot; both act on the whole
+	// emulator like reset. snapshot captures current state as JSON; restore
+	// rebuilds to empty then loads the posted state.
+	snapshotFn := func() ([]byte, error) {
+		rebuildMu.Lock()
+		cur := targets
+		rebuildMu.Unlock()
+
+		snap, err := persist.ExportAll(context.Background(), cur, persist.Options{IncludeAssets: true})
+		if err != nil {
+			return nil, err
+		}
+
+		return json.MarshalIndent(snap, "", "  ")
+	}
+	restoreFn := func(body []byte) error {
+		var snap persist.Snapshot
+		if err := json.Unmarshal(body, &snap); err != nil {
+			return fmt.Errorf("parse snapshot: %w", err)
+		}
+
+		if snap.SchemaVersion != persist.SchemaVersion {
+			return fmt.Errorf("%w: got %d, want %d", errUnsupportedSnapshot, snap.SchemaVersion, persist.SchemaVersion)
+		}
+
+		rebuild() // wipe to empty before loading
+
+		rebuildMu.Lock()
+		cur := targets
+		rebuildMu.Unlock()
+
+		return persist.RestoreAll(context.Background(), &snap, cur)
+	}
+
 	// handlerFor fronts a backend with the /_cloudemu control plane. With the
 	// admin API off the backend serves directly, so control paths fall through
 	// to the wire handlers (whatever they return for an unrouted path). seedFn
 	// may be nil (e.g. the Kubernetes port), which disables the seed endpoint.
 	handlerFor := func(b *admin.Backend, seedFn func([]byte) (int, error)) http.Handler {
 		if c.admin {
-			return admin.NewControl(b, rebuild, seedFn)
+			return admin.NewControl(b, rebuild, seedFn, snapshotFn, restoreFn)
 		}
 		return b
 	}
@@ -397,36 +436,15 @@ func restoreState(ctx context.Context, path string, targets map[string]seed.Targ
 		return nil
 	}
 
-	for name := range snap.Providers {
-		t, ok := targets[name]
-		if !ok {
-			continue
-		}
-
-		ps := snap.Providers[name]
-		if err := persist.Restore(ctx, t, &ps); err != nil {
-			return fmt.Errorf("restore %s: %w", name, err)
-		}
-	}
-
-	return nil
+	return persist.RestoreAll(ctx, &snap, targets)
 }
 
 // snapshotState exports every running provider's state and writes the snapshot
 // file. Called after Shutdown, so the providers are quiescent.
 func snapshotState(ctx context.Context, path string, includeAssets bool, targets map[string]seed.Target) error {
-	snap := persist.Snapshot{
-		SchemaVersion: persist.SchemaVersion,
-		Providers:     make(map[string]persist.ProviderState, len(targets)),
-	}
-
-	for name, t := range targets {
-		ps, err := persist.Export(ctx, t, persist.Options{IncludeAssets: includeAssets})
-		if err != nil {
-			return fmt.Errorf("export %s: %w", name, err)
-		}
-
-		snap.Providers[name] = ps
+	snap, err := persist.ExportAll(ctx, targets, persist.Options{IncludeAssets: includeAssets})
+	if err != nil {
+		return err
 	}
 
 	return snap.WriteFile(path)

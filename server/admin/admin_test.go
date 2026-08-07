@@ -61,7 +61,7 @@ func TestBackendConcurrentSwap(t *testing.T) {
 func TestControlReset(t *testing.T) {
 	resets := 0
 	b := admin.NewBackend(handler("backend"))
-	c := admin.NewControl(b, func() { resets++; b.Swap(handler("rebuilt")) }, nil)
+	c := admin.NewControl(b, func() { resets++; b.Swap(handler("rebuilt")) }, nil, nil, nil)
 
 	// Non-control paths pass through to the backend.
 	if got := do(t, c, http.MethodGet, "/some/aws/request"); got != "backend" {
@@ -84,7 +84,7 @@ func TestControlReset(t *testing.T) {
 
 func TestControlRoutes(t *testing.T) {
 	b := admin.NewBackend(handler("backend"))
-	c := admin.NewControl(b, func() {}, nil) // nil seed → seed endpoint disabled
+	c := admin.NewControl(b, func() {}, nil, nil, nil) // nil seed → seed endpoint disabled
 
 	cases := []struct {
 		method, path string
@@ -111,7 +111,7 @@ func TestControlSeed(t *testing.T) {
 	c := admin.NewControl(b, func() {}, func(fixture []byte) (int, error) {
 		gotFixture = string(fixture)
 		return 4, nil
-	})
+	}, nil, nil)
 
 	rec := httptest.NewRecorder()
 	c.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, admin.Prefix+"seed", strings.NewReader(`{"buckets":[]}`)))
@@ -128,11 +128,43 @@ func TestControlSeed(t *testing.T) {
 	// A seeder error surfaces as 400.
 	cErr := admin.NewControl(b, func() {}, func([]byte) (int, error) {
 		return 0, errFixture
-	})
+	}, nil, nil)
 	rec = httptest.NewRecorder()
 	cErr.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, admin.Prefix+"seed", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("seed error status = %d, want 400", rec.Code)
+	}
+}
+
+func TestControlSnapshot(t *testing.T) {
+	b := admin.NewBackend(handler("backend"))
+
+	var restored string
+	c := admin.NewControl(b, func() {}, nil,
+		func() ([]byte, error) { return []byte(`{"schemaVersion":1}`), nil },
+		func(body []byte) error { restored = string(body); return nil },
+	)
+
+	// GET returns the snapshot bytes verbatim.
+	rec := httptest.NewRecorder()
+	c.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, admin.Prefix+"snapshot", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"schemaVersion":1}` {
+		t.Fatalf("GET snapshot = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// POST hands the body to restore.
+	rec = httptest.NewRecorder()
+	c.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, admin.Prefix+"snapshot", strings.NewReader(`{"schemaVersion":1}`)))
+	if rec.Code != http.StatusOK || restored != `{"schemaVersion":1}` {
+		t.Fatalf("POST snapshot = %d, restored %q", rec.Code, restored)
+	}
+
+	// With nil snapshot/restore the endpoint is disabled (501).
+	off := admin.NewControl(b, func() {}, nil, nil, nil)
+	rec = httptest.NewRecorder()
+	off.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, admin.Prefix+"snapshot", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("disabled snapshot = %d, want 501", rec.Code)
 	}
 }
 

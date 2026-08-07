@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/persist"
 	"github.com/stackshy/cloudemu/v2/seed"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 // TestExportRestoreRoundTrip is the core persistence guarantee: state exported
@@ -99,6 +100,66 @@ func TestExportRestoreRoundTrip(t *testing.T) {
 	if insts[0].ImageID != "ami-123" || insts[0].Tags["Name"] != "web" {
 		t.Fatalf("restored instance = %+v, want ami-123 / Name=web", insts[0])
 	}
+}
+
+// TestExportAllRestoreAllMultiProvider covers the whole-emulator core used by
+// both the persist-on-stop path and the snapshot admin endpoint: ExportAll
+// captures every provider into one Snapshot, and RestoreAll puts each back into
+// the matching target.
+func TestExportAllRestoreAllMultiProvider(t *testing.T) {
+	ctx := context.Background()
+
+	aws, gcp := cloudemu.NewAWS(), cloudemu.NewGCP()
+	src := map[string]seed.Target{
+		"aws": {Storage: aws.S3, Database: aws.DynamoDB},
+		"gcp": {Storage: gcp.GCS, Database: gcp.Firestore},
+	}
+	if err := seed.Apply(ctx, seed.Fixtures{Buckets: []seed.Bucket{{Name: "a", Objects: []seed.Object{{Key: "k", Body: "av"}}}}}, src["aws"]); err != nil {
+		t.Fatalf("seed aws: %v", err)
+	}
+	if err := seed.Apply(ctx, seed.Fixtures{Buckets: []seed.Bucket{{Name: "g", Objects: []seed.Object{{Key: "k", Body: "gv"}}}}}, src["gcp"]); err != nil {
+		t.Fatalf("seed gcp: %v", err)
+	}
+
+	snap, err := persist.ExportAll(ctx, src, persist.Options{IncludeAssets: true})
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if snap.SchemaVersion != persist.SchemaVersion || len(snap.Providers) != 2 {
+		t.Fatalf("ExportAll snapshot = %+v", snap)
+	}
+
+	raw, _ := json.Marshal(snap)
+	var got persist.Snapshot
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	aws2, gcp2 := cloudemu.NewAWS(), cloudemu.NewGCP()
+	dst := map[string]seed.Target{
+		"aws": {Storage: aws2.S3, Database: aws2.DynamoDB},
+		"gcp": {Storage: gcp2.GCS, Database: gcp2.Firestore},
+	}
+	if err := persist.RestoreAll(ctx, &got, dst); err != nil {
+		t.Fatalf("RestoreAll: %v", err)
+	}
+
+	ao, err := aws2.S3.GetObject(ctx, "a", "k")
+	if err != nil || string(ao.Data) != "av" {
+		t.Fatalf("aws restore = %v / %q", err, dataOf(ao))
+	}
+	go_, err := gcp2.GCS.GetObject(ctx, "g", "k")
+	if err != nil || string(go_.Data) != "gv" {
+		t.Fatalf("gcp restore = %v / %q", err, dataOf(go_))
+	}
+}
+
+func dataOf(o *storagedriver.Object) []byte {
+	if o == nil {
+		return nil
+	}
+
+	return o.Data
 }
 
 // TestExportMetadataOnlyOmitsBodies verifies the default (metadata-only) export

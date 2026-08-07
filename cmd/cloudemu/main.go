@@ -20,6 +20,7 @@ Usage:
   cloudemu status            Show whether the emulator is running and its endpoints
   cloudemu logs [-f]         Print (or follow) the background emulator's log
   cloudemu delete            Stop the emulator and remove its run directory
+  cloudemu snapshot ...      Save/load/list/delete named state snapshots
   cloudemu serve [flags]     Run the server in the foreground (see: cloudemu serve -h)
   cloudemu version           Print the version
   cloudemu help              Show this message
@@ -31,11 +32,12 @@ default; override with --home <dir>. Run "cloudemu serve -h" for serve flags.
 // Lifecycle subcommand names. Defined here (not in the Unix-tagged
 // lifecycle.go) so the dispatch compiles on every platform.
 const (
-	cmdStart  = "start"
-	cmdStop   = "stop"
-	cmdStatus = "status"
-	cmdLogs   = "logs"
-	cmdDelete = "delete"
+	cmdStart    = "start"
+	cmdStop     = "stop"
+	cmdStatus   = "status"
+	cmdLogs     = "logs"
+	cmdDelete   = "delete"
+	cmdSnapshot = "snapshot"
 )
 
 // version is overridable at build time with
@@ -56,6 +58,11 @@ func main() {
 		}
 	case cmdStart, cmdStop, cmdStatus, cmdLogs, cmdDelete:
 		if err := runLifecycle(os.Args[1], os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "cloudemu:", err)
+			os.Exit(1)
+		}
+	case cmdSnapshot:
+		if err := runSnapshot(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "cloudemu:", err)
 			os.Exit(1)
 		}
