@@ -72,20 +72,24 @@ type Control struct {
 	seed     func(fixture []byte) (int, error)
 	snapshot func() ([]byte, error)
 	restore  func(snapshot []byte) error
+	extra    http.Handler
 }
 
 // NewControl wraps backend with the control plane. reset must rebuild every
 // backend (including this one) to a clean state. seed, snapshot, and restore
 // may each be nil, which disables the corresponding endpoint. snapshot returns
-// the whole-emulator state as JSON; restore replaces it from that JSON.
+// the whole-emulator state as JSON; restore replaces it from that JSON. extra,
+// if non-nil, handles any /_cloudemu/* path the built-in endpoints don't (e.g.
+// the network-topology endpoints); a nil extra leaves those paths a 404.
 func NewControl(
 	backend *Backend,
 	reset func(),
 	seed func(fixture []byte) (int, error),
 	snapshot func() ([]byte, error),
 	restore func(snapshot []byte) error,
+	extra http.Handler,
 ) *Control {
-	return &Control{backend: backend, reset: reset, seed: seed, snapshot: snapshot, restore: restore}
+	return &Control{backend: backend, reset: reset, seed: seed, snapshot: snapshot, restore: restore, extra: extra}
 }
 
 // ServeHTTP routes control-plane paths to the control handler and everything
@@ -138,6 +142,11 @@ func (c *Control) serveControl(w http.ResponseWriter, r *http.Request) {
 	case "snapshot":
 		c.serveSnapshot(w, r)
 	default:
+		if c.extra != nil {
+			c.extra.ServeHTTP(w, r)
+			return
+		}
+
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown control endpoint"})
 	}
 }

@@ -155,6 +155,37 @@ discarded. If a restore fails partway the running state is already cleared —
 fine for a local emulator, but don't point `load` at a server whose current
 state you haven't snapshotted.
 
+## Network reachability (`net can-connect` / `net trace`)
+
+cloudemu doesn't just emulate EC2/VPC APIs — it evaluates whether your security
+groups, route tables, NACLs, and VPC peering would *actually* let traffic flow.
+The `net` commands surface that engine, so you can answer "will my app reach the
+database?" locally, before deploying to real AWS:
+
+```sh
+# after creating VPC/subnets/security-groups/instances (e.g. via Terraform or
+# the aws CLI pointed at cloudemu):
+cloudemu net can-connect i-app i-db --port 5432        # YES / NO + why
+cloudemu net trace       i-app 10.0.2.15               # hop-by-hop path
+cloudemu net can-connect i-app i-db --port 5432 --json # machine-readable, for CI
+```
+
+`can-connect` reports whether the two instances can talk on a port/protocol
+(default `tcp`), and if not, which rule blocks it. `trace` shows the route a
+packet from an instance to a destination IP takes (route table → gateway / NAT /
+peering / local), or where it's dropped.
+
+This is AWS-only (VPC/security-group/route concepts) and needs the `aws` provider
+running with the `--admin` control plane (both on by default). No other local
+emulator evaluates network reachability — it's cloudemu's standout capability for
+catching connectivity misconfigurations before they reach production.
+
+Note: unlike real AWS, a security group created in cloudemu has **no implicit
+allow-all egress** rule, so `can-connect` requires an explicit egress rule on the
+source group (`authorize-security-group-egress`) in addition to the ingress rule
+on the destination. Launch instances with `--subnet-id` so they inherit the
+subnet's VPC (that's what reachability and `trace` resolve against).
+
 ## Ports
 
 | Provider   | Default | Protocol | Notes                                    |

@@ -61,7 +61,7 @@ func TestBackendConcurrentSwap(t *testing.T) {
 func TestControlReset(t *testing.T) {
 	resets := 0
 	b := admin.NewBackend(handler("backend"))
-	c := admin.NewControl(b, func() { resets++; b.Swap(handler("rebuilt")) }, nil, nil, nil)
+	c := admin.NewControl(b, func() { resets++; b.Swap(handler("rebuilt")) }, nil, nil, nil, nil)
 
 	// Non-control paths pass through to the backend.
 	if got := do(t, c, http.MethodGet, "/some/aws/request"); got != "backend" {
@@ -84,7 +84,7 @@ func TestControlReset(t *testing.T) {
 
 func TestControlRoutes(t *testing.T) {
 	b := admin.NewBackend(handler("backend"))
-	c := admin.NewControl(b, func() {}, nil, nil, nil) // nil seed → seed endpoint disabled
+	c := admin.NewControl(b, func() {}, nil, nil, nil, nil) // nil seed → seed endpoint disabled
 
 	cases := []struct {
 		method, path string
@@ -111,7 +111,7 @@ func TestControlSeed(t *testing.T) {
 	c := admin.NewControl(b, func() {}, func(fixture []byte) (int, error) {
 		gotFixture = string(fixture)
 		return 4, nil
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	rec := httptest.NewRecorder()
 	c.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, admin.Prefix+"seed", strings.NewReader(`{"buckets":[]}`)))
@@ -128,7 +128,7 @@ func TestControlSeed(t *testing.T) {
 	// A seeder error surfaces as 400.
 	cErr := admin.NewControl(b, func() {}, func([]byte) (int, error) {
 		return 0, errFixture
-	}, nil, nil)
+	}, nil, nil, nil)
 	rec = httptest.NewRecorder()
 	cErr.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, admin.Prefix+"seed", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusBadRequest {
@@ -143,6 +143,7 @@ func TestControlSnapshot(t *testing.T) {
 	c := admin.NewControl(b, func() {}, nil,
 		func() ([]byte, error) { return []byte(`{"schemaVersion":1}`), nil },
 		func(body []byte) error { restored = string(body); return nil },
+		nil,
 	)
 
 	// GET returns the snapshot bytes verbatim.
@@ -160,11 +161,36 @@ func TestControlSnapshot(t *testing.T) {
 	}
 
 	// With nil snapshot/restore the endpoint is disabled (501).
-	off := admin.NewControl(b, func() {}, nil, nil, nil)
+	off := admin.NewControl(b, func() {}, nil, nil, nil, nil)
 	rec = httptest.NewRecorder()
 	off.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, admin.Prefix+"snapshot", nil))
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("disabled snapshot = %d, want 501", rec.Code)
+	}
+}
+
+func TestControlExtraHandler(t *testing.T) {
+	b := admin.NewBackend(handler("backend"))
+
+	extra := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("extra:" + r.URL.Path))
+	})
+	c := admin.NewControl(b, func() {}, nil, nil, nil, extra)
+
+	// An unknown control path is delegated to the extra handler.
+	rec := httptest.NewRecorder()
+	c.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, admin.Prefix+"net/can-connect", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "net/can-connect") {
+		t.Fatalf("extra delegation = %d %q", rec.Code, rec.Body.String())
+	}
+
+	// With no extra handler, an unknown control path is still a 404.
+	c2 := admin.NewControl(b, func() {}, nil, nil, nil, nil)
+	rec = httptest.NewRecorder()
+	c2.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, admin.Prefix+"unknown", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("nil extra unknown path = %d, want 404", rec.Code)
 	}
 }
 

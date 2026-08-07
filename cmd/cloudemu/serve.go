@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/topology"
 	"github.com/stackshy/cloudemu/v2/persist"
 	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	"github.com/stackshy/cloudemu/v2/seed"
@@ -144,6 +146,7 @@ func runServe(args []string) error {
 	var (
 		rebuildMu sync.Mutex
 		targets   map[string]seed.Target // provider → current drivers, for seeding
+		netEngine *topology.Engine       // AWS network-reachability engine (nil if aws not selected)
 	)
 	rebuild := func() {
 		// Serialise resets so two concurrent /_cloudemu/reset calls can't
@@ -176,6 +179,9 @@ func runServe(args []string) error {
 		}
 		fresh := make(map[string]http.Handler, len(sel))
 		freshTargets := make(map[string]seed.Target, len(sel))
+
+		var freshEngine *topology.Engine
+
 		for _, p := range sel {
 			switch p {
 			case "aws":
@@ -189,6 +195,7 @@ func runServe(args []string) error {
 				cloud.EKS.SetK8sAPI(k8s)
 				fresh["aws"] = wrap(awsserver.New(d), "aws", c.logReqs)
 				freshTargets["aws"] = seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2}
+				freshEngine = topology.New(cloud.EC2, cloud.VPC, cloud.Route53)
 			case "gcp":
 				cloud := cloudemu.NewGCP(opts...)
 				d := gcpserver.DriversFrom(cloud)
@@ -212,6 +219,7 @@ func runServe(args []string) error {
 			backends[p].Swap(h)
 		}
 		targets = freshTargets
+		netEngine = freshEngine
 	}
 	rebuild() // populate the backends before serving
 
@@ -295,13 +303,38 @@ func runServe(args []string) error {
 		return persist.RestoreAll(context.Background(), &snap, cur)
 	}
 
+	// netHandler serves the network-topology control endpoints
+	// (/_cloudemu/net/*) using the live AWS reachability engine. Topology is an
+	// AWS concept (VPC/SG/route/NACL), so a nil engine (aws not selected) yields
+	// a clear error rather than a wrong answer.
+	netHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rebuildMu.Lock()
+		eng := netEngine
+		rebuildMu.Unlock()
+
+		if eng == nil {
+			writeNetErr(w, http.StatusServiceUnavailable, "network topology requires the aws provider")
+
+			return
+		}
+
+		switch strings.TrimPrefix(r.URL.Path, admin.Prefix) {
+		case "net/can-connect":
+			serveCanConnect(w, r, eng)
+		case "net/trace":
+			serveTrace(w, r, eng)
+		default:
+			writeNetErr(w, http.StatusNotFound, "unknown control endpoint")
+		}
+	})
+
 	// handlerFor fronts a backend with the /_cloudemu control plane. With the
 	// admin API off the backend serves directly, so control paths fall through
 	// to the wire handlers (whatever they return for an unrouted path). seedFn
 	// may be nil (e.g. the Kubernetes port), which disables the seed endpoint.
 	handlerFor := func(b *admin.Backend, seedFn func([]byte) (int, error)) http.Handler {
 		if c.admin {
-			return admin.NewControl(b, rebuild, seedFn, snapshotFn, restoreFn)
+			return admin.NewControl(b, rebuild, seedFn, snapshotFn, restoreFn, netHandler)
 		}
 		return b
 	}
@@ -444,6 +477,97 @@ func restoreState(ctx context.Context, path string, targets map[string]seed.Targ
 	}
 
 	return persist.RestoreAll(ctx, &snap, targets)
+}
+
+// serveCanConnect answers GET /_cloudemu/net/can-connect?from&to&port&protocol
+// with the engine's ConnectivityResult as JSON.
+func serveCanConnect(w http.ResponseWriter, r *http.Request, eng *topology.Engine) {
+	q := r.URL.Query()
+
+	from, to := q.Get("from"), q.Get("to")
+	if from == "" || to == "" {
+		writeNetErr(w, http.StatusBadRequest, "from and to instance IDs are required")
+
+		return
+	}
+
+	port, err := netPort(q.Get("port"))
+	if err != nil {
+		writeNetErr(w, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
+	proto := q.Get("protocol")
+	if proto == "" {
+		proto = "tcp"
+	}
+
+	res, err := eng.CanConnect(r.Context(), topology.ConnectivityQuery{
+		SrcInstanceID: from, DstInstanceID: to, Port: port, Protocol: proto,
+	})
+	if err != nil {
+		writeNetErr(w, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
+	writeNetJSON(w, res)
+}
+
+// serveTrace answers GET /_cloudemu/net/trace?from&to (to is a destination IP)
+// with the route hops as JSON.
+func serveTrace(w http.ResponseWriter, r *http.Request, eng *topology.Engine) {
+	q := r.URL.Query()
+
+	from, dest := q.Get("from"), q.Get("to")
+	if from == "" || dest == "" {
+		writeNetErr(w, http.StatusBadRequest, "from instance ID and to IP are required")
+
+		return
+	}
+
+	hops, err := eng.TraceRoute(r.Context(), from, dest)
+	if err != nil {
+		writeNetErr(w, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
+	writeNetJSON(w, map[string]any{"hops": hops})
+}
+
+// netPort parses an optional port query value (empty → 0 = any).
+func netPort(s string) (int, error) {
+	if s == "" {
+		return 0, nil
+	}
+
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid port %q: %w", s, err)
+	}
+
+	return n, nil
+}
+
+func writeNetJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		writeNetErr(w, http.StatusInternalServerError, err.Error())
+
+		return
+	}
+
+	_, _ = w.Write(b)
+}
+
+func writeNetErr(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // snapshotState exports every running provider's state and writes the snapshot
