@@ -226,6 +226,7 @@ func New(opts ...config.Option) *Provider {
 			MessageQueue:    p.ServiceBus,
 			Notification:    p.NotificationHubs,
 			DNS:             p.DNS,
+			Logging:         p.LogAnalytics,
 		},
 	)
 

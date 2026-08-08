@@ -234,6 +234,7 @@ func New(opts ...config.Option) *Provider {
 			MessageQueue: p.SQS,
 			Notification: p.SNS,
 			DNS:          p.Route53,
+			Logging:      p.CloudWatchLogs,
 		},
 	)
 

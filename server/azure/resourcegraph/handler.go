@@ -345,6 +345,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"messagequeue/Queue":                  "microsoft.servicebus/namespaces/queues",
 	"notification/Topic":                  "microsoft.notificationhubs/namespaces/notificationhubs",
 	"dns/Zone":                            "microsoft.network/dnszones",
+	"logging/LogGroup":                    "microsoft.operationalinsights/workspaces",
 }
 
 func portableToAzureType(service, typ string) string {

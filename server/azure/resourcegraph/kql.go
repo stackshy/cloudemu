@@ -62,6 +62,7 @@ const (
 	azureTypeSBQueue   = "microsoft.servicebus/namespaces/queues"
 	azureTypeNotifHub  = "microsoft.notificationhubs/namespaces/notificationhubs"
 	azureTypeDNSZone   = "microsoft.network/dnszones"
+	azureTypeLogWS     = "microsoft.operationalinsights/workspaces"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -80,6 +81,7 @@ const (
 	portableQueue        = "messagequeue"
 	portableNotif        = "notification"
 	portableDNS          = "dns"
+	portableLogging      = "logging"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -342,6 +344,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeSBQueue:   {portableQueue, "Queue"},
 	azureTypeNotifHub:  {portableNotif, "Topic"},
 	azureTypeDNSZone:   {portableDNS, "Zone"},
+	azureTypeLogWS:     {portableLogging, "LogGroup"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

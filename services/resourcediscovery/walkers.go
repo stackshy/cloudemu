@@ -41,6 +41,7 @@ const (
 	ServiceQueue      = "messagequeue"
 	ServiceNotif      = "notification"
 	ServiceDNS        = "dns"
+	ServiceLogging    = "logging"
 )
 
 // Resource type constants emitted by the walkers.
@@ -68,6 +69,7 @@ const (
 	TypeQueue          = "Queue"
 	TypeTopic          = "Topic"
 	TypeZone           = "Zone"
+	TypeLogGroup       = "LogGroup"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -831,5 +833,19 @@ func (e *Engine) walkDNS(ctx context.Context) ([]Resource, error) {
 	return e.emitSimple(ServiceDNS, TypeZone, len(zones),
 		func(i int) (string, string, map[string]string) {
 			return zones[i].Name, zones[i].ID, zones[i].Tags
+		}), nil
+}
+
+// walkLogging surfaces log groups (CloudWatch Logs / Cloud Logging / Log
+// Analytics) so they appear in the inventory/search APIs.
+func (e *Engine) walkLogging(ctx context.Context) ([]Resource, error) {
+	groups, err := e.drivers.Logging.ListLogGroups(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkLogging: %w", err)
+	}
+
+	return e.emitSimple(ServiceLogging, TypeLogGroup, len(groups),
+		func(i int) (string, string, map[string]string) {
+			return groups[i].Name, groups[i].ResourceID, groups[i].Tags
 		}), nil
 }

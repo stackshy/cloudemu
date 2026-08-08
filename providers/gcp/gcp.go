@@ -146,6 +146,7 @@ func New(opts ...config.Option) *Provider {
 			MessageQueue: p.PubSub,
 			Notification: p.FCM,
 			DNS:          p.CloudDNS,
+			Logging:      p.CloudLogging,
 		},
 	)
 
