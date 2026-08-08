@@ -16,3 +16,9 @@ func runLifecycle(_ string, _ []string) error {
 func runSnapshot(_ []string) error {
 	return errors.New("snapshot is only supported on Unix/macOS")
 }
+
+// runNet is unavailable off Unix for the same reason: it talks to the
+// background daemon via its run directory.
+func runNet(_ []string) error {
+	return errors.New("net is only supported on Unix/macOS")
+}
