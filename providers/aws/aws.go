@@ -238,6 +238,7 @@ func New(opts ...config.Option) *Provider {
 			Cache:        p.ElastiCache,
 			LoadBalancer: p.ELB,
 			Monitoring:   p.CloudWatch,
+			IAM:          p.IAM,
 		},
 	)
 

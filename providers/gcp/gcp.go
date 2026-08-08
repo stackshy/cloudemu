@@ -150,6 +150,7 @@ func New(opts ...config.Option) *Provider {
 			Cache:        p.Memorystore,
 			LoadBalancer: p.LB,
 			Monitoring:   p.CloudMonitoring,
+			IAM:          p.IAM,
 		},
 	)
 

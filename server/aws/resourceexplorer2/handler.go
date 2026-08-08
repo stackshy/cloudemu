@@ -45,6 +45,7 @@ const (
 	awsServiceCache    = "elasticache"
 	awsServiceELB      = "elasticloadbalancing"
 	awsServiceCW       = "cloudwatch"
+	awsServiceIAM      = "iam"
 )
 
 // Portable-API service identifiers as emitted by resourcediscovery walkers.
@@ -64,6 +65,7 @@ const (
 	portableServiceCache        = "cache"
 	portableServiceLB           = "loadbalancer"
 	portableServiceMonitoring   = "monitoring"
+	portableServiceIAM          = "iam"
 )
 
 // Handler serves Resource Explorer 2 REST-JSON requests.
@@ -497,6 +499,8 @@ func portableToAWSService(s string) string {
 		return awsServiceELB
 	case portableServiceMonitoring:
 		return awsServiceCW
+	case portableServiceIAM:
+		return awsServiceIAM
 	default:
 		return s
 	}

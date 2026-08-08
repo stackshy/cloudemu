@@ -66,6 +66,8 @@ const (
 	azureTypeRedis     = "microsoft.cache/redis"
 	azureTypeLB        = "microsoft.network/loadbalancers"
 	azureTypeAlert     = "microsoft.insights/metricalerts"
+	azureTypeIdentity  = "microsoft.managedidentity/userassignedidentities"
+	azureTypeRoleDef   = "microsoft.authorization/roledefinitions"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -88,6 +90,7 @@ const (
 	portableCache        = "cache"
 	portableLB           = "loadbalancer"
 	portableMonitoring   = "monitoring"
+	portableIAM          = "iam"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -354,6 +357,8 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeRedis:     {portableCache, "CacheCluster"},
 	azureTypeLB:        {portableLB, "LoadBalancer"},
 	azureTypeAlert:     {portableMonitoring, "Alarm"},
+	azureTypeIdentity:  {portableIAM, "User"},
+	azureTypeRoleDef:   {portableIAM, "Role"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

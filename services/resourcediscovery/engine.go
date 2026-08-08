@@ -9,6 +9,7 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	loggingdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
@@ -44,6 +45,7 @@ type Drivers struct {
 	Cache           cachedriver.Cache
 	LoadBalancer    lbdriver.LoadBalancer
 	Monitoring      monitoringdriver.Monitoring
+	IAM             iamdriver.IAM
 }
 
 // AppServicePlans is the discovery capability for App Service plans (Azure
@@ -326,6 +328,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.Monitoring != nil {
 		ws = append(ws, e.walkMonitoring)
+	}
+
+	if e.drivers.IAM != nil {
+		ws = append(ws, e.walkIAM)
 	}
 
 	if e.drivers.AppServicePlans != nil {

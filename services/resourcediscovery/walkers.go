@@ -45,6 +45,7 @@ const (
 	ServiceCache      = "cache"
 	ServiceLB         = "loadbalancer"
 	ServiceMonitoring = "monitoring"
+	ServiceIAM        = "iam"
 )
 
 // Resource type constants emitted by the walkers.
@@ -76,6 +77,10 @@ const (
 	TypeCacheCluster   = "CacheCluster"
 	TypeLoadBalancer   = "LoadBalancer"
 	TypeAlarm          = "Alarm"
+	TypeUser           = "User"
+	TypeRole           = "Role"
+	TypePolicy         = "Policy"
+	TypeGroup          = "Group"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -896,4 +901,48 @@ func (e *Engine) walkMonitoring(ctx context.Context) ([]Resource, error) {
 		func(i int) (string, string, map[string]string) {
 			return alarms[i].Name, "", nil
 		}), nil
+}
+
+// walkIAM surfaces identity resources — users, roles, policies, and groups
+// (IAM / Azure managed identities & role definitions / GCP service accounts &
+// roles) — so they appear in the inventory/search APIs.
+func (e *Engine) walkIAM(ctx context.Context) ([]Resource, error) {
+	users, err := e.drivers.IAM.ListUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkIAM users: %w", err)
+	}
+
+	roles, err := e.drivers.IAM.ListRoles(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkIAM roles: %w", err)
+	}
+
+	policies, err := e.drivers.IAM.ListPolicies(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkIAM policies: %w", err)
+	}
+
+	groups, err := e.drivers.IAM.ListGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkIAM groups: %w", err)
+	}
+
+	out := e.emitSimple(ServiceIAM, TypeUser, len(users),
+		func(i int) (string, string, map[string]string) {
+			return users[i].Name, users[i].ARN, users[i].Tags
+		})
+	out = append(out, e.emitSimple(ServiceIAM, TypeRole, len(roles),
+		func(i int) (string, string, map[string]string) {
+			return roles[i].Name, roles[i].ARN, roles[i].Tags
+		})...)
+	out = append(out, e.emitSimple(ServiceIAM, TypePolicy, len(policies),
+		func(i int) (string, string, map[string]string) {
+			return policies[i].Name, policies[i].ARN, nil
+		})...)
+	out = append(out, e.emitSimple(ServiceIAM, TypeGroup, len(groups),
+		func(i int) (string, string, map[string]string) {
+			return groups[i].Name, groups[i].ARN, nil
+		})...)
+
+	return out, nil
 }

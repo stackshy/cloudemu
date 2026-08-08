@@ -57,6 +57,8 @@ const (
 	atRedisInstance   = "redis.googleapis.com/Instance"
 	atForwardingRule  = "compute.googleapis.com/ForwardingRule"
 	atAlertPolicy     = "monitoring.googleapis.com/AlertPolicy"
+	atServiceAccount  = "iam.googleapis.com/ServiceAccount"
+	atIAMRole         = "iam.googleapis.com/Role"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -77,6 +79,7 @@ const (
 	portableCache        = "cache"
 	portableLB           = "loadbalancer"
 	portableMonitoring   = "monitoring"
+	portableIAM          = "iam"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -278,6 +281,8 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 	atRedisInstance:   {portableCache, "CacheCluster"},
 	atForwardingRule:  {portableLB, "LoadBalancer"},
 	atAlertPolicy:     {portableMonitoring, "Alarm"},
+	atServiceAccount:  {portableIAM, "User"},
+	atIAMRole:         {portableIAM, "Role"},
 }
 
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
@@ -302,6 +307,8 @@ var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // 
 	portableCache + "/CacheCluster":       atRedisInstance,
 	portableLB + "/LoadBalancer":          atForwardingRule,
 	portableMonitoring + "/Alarm":         atAlertPolicy,
+	portableIAM + "/User":                 atServiceAccount,
+	portableIAM + "/Role":                 atIAMRole,
 }
 
 // mapGCPAssetType translates a fully-qualified GCP asset type
