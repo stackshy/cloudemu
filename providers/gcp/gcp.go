@@ -148,6 +148,7 @@ func New(opts ...config.Option) *Provider {
 			DNS:          p.CloudDNS,
 			Logging:      p.CloudLogging,
 			Cache:        p.Memorystore,
+			LoadBalancer: p.LB,
 		},
 	)
 

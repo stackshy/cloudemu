@@ -43,6 +43,7 @@ const (
 	ServiceDNS        = "dns"
 	ServiceLogging    = "logging"
 	ServiceCache      = "cache"
+	ServiceLB         = "loadbalancer"
 )
 
 // Resource type constants emitted by the walkers.
@@ -72,6 +73,7 @@ const (
 	TypeZone           = "Zone"
 	TypeLogGroup       = "LogGroup"
 	TypeCacheCluster   = "CacheCluster"
+	TypeLoadBalancer   = "LoadBalancer"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -863,5 +865,19 @@ func (e *Engine) walkCache(ctx context.Context) ([]Resource, error) {
 	return e.emitSimple(ServiceCache, TypeCacheCluster, len(caches),
 		func(i int) (string, string, map[string]string) {
 			return caches[i].Name, caches[i].Endpoint, caches[i].Tags
+		}), nil
+}
+
+// walkLoadBalancer surfaces load balancers (ELB/ALB/NLB / Azure Load Balancer /
+// GCP forwarding rules) so they appear in the inventory/search APIs.
+func (e *Engine) walkLoadBalancer(ctx context.Context) ([]Resource, error) {
+	lbs, err := e.drivers.LoadBalancer.DescribeLoadBalancers(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkLoadBalancer: %w", err)
+	}
+
+	return e.emitSimple(ServiceLB, TypeLoadBalancer, len(lbs),
+		func(i int) (string, string, map[string]string) {
+			return lbs[i].Name, lbs[i].ARN, lbs[i].Tags
 		}), nil
 }

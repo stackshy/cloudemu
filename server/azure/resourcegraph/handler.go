@@ -347,6 +347,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"dns/Zone":                            "microsoft.network/dnszones",
 	"logging/LogGroup":                    "microsoft.operationalinsights/workspaces",
 	"cache/CacheCluster":                  "microsoft.cache/redis",
+	"loadbalancer/LoadBalancer":           "microsoft.network/loadbalancers",
 }
 
 func portableToAzureType(service, typ string) string {

@@ -236,6 +236,7 @@ func New(opts ...config.Option) *Provider {
 			DNS:          p.Route53,
 			Logging:      p.CloudWatchLogs,
 			Cache:        p.ElastiCache,
+			LoadBalancer: p.ELB,
 		},
 	)
 

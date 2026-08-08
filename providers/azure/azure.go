@@ -228,6 +228,7 @@ func New(opts ...config.Option) *Provider {
 			DNS:             p.DNS,
 			Logging:         p.LogAnalytics,
 			Cache:           p.Cache,
+			LoadBalancer:    p.LB,
 		},
 	)
 

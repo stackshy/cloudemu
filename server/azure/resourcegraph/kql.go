@@ -64,6 +64,7 @@ const (
 	azureTypeDNSZone   = "microsoft.network/dnszones"
 	azureTypeLogWS     = "microsoft.operationalinsights/workspaces"
 	azureTypeRedis     = "microsoft.cache/redis"
+	azureTypeLB        = "microsoft.network/loadbalancers"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -84,6 +85,7 @@ const (
 	portableDNS          = "dns"
 	portableLogging      = "logging"
 	portableCache        = "cache"
+	portableLB           = "loadbalancer"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -348,6 +350,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeDNSZone:   {portableDNS, "Zone"},
 	azureTypeLogWS:     {portableLogging, "LogGroup"},
 	azureTypeRedis:     {portableCache, "CacheCluster"},
+	azureTypeLB:        {portableLB, "LoadBalancer"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the
