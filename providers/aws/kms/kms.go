@@ -3,6 +3,7 @@ package kms
 
 import (
 	"crypto"
+	"crypto/rsa"
 	"fmt"
 	"strings"
 	"sync"
@@ -44,6 +45,11 @@ type keyData struct {
 	rotationPeriodDays int32
 	rotations          []driver.RotationEvent
 	onDemandCount      int
+
+	// Import state (EXTERNAL-origin keys): the wrapping key pair and token
+	// minted by GetParametersForImport, used to unwrap ImportKeyMaterial.
+	importWrappingKey *rsa.PrivateKey
+	importToken       []byte
 
 	mu sync.RWMutex
 }

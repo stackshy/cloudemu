@@ -42,27 +42,41 @@ func epochOrNil(t time.Time) *float64 {
 	return &secs
 }
 
+// mrkKeyRef is a {Arn, Region} entry in MultiRegionConfiguration.
+type mrkKeyRef struct {
+	Arn    string `json:"Arn,omitempty"`
+	Region string `json:"Region,omitempty"`
+}
+
+// multiRegionConfigJSON is the KMS MultiRegionConfiguration wire shape.
+type multiRegionConfigJSON struct {
+	MultiRegionKeyType string      `json:"MultiRegionKeyType,omitempty"`
+	PrimaryKey         *mrkKeyRef  `json:"PrimaryKey,omitempty"`
+	ReplicaKeys        []mrkKeyRef `json:"ReplicaKeys,omitempty"`
+}
+
 // keyMetadataJSON is the KMS KeyMetadata wire shape.
 type keyMetadataJSON struct {
-	KeyID                 string   `json:"KeyId"`
-	Arn                   string   `json:"Arn"`
-	AWSAccountID          string   `json:"AWSAccountId"`
-	Description           string   `json:"Description,omitempty"`
-	Enabled               bool     `json:"Enabled"`
-	KeyUsage              string   `json:"KeyUsage"`
-	KeyState              string   `json:"KeyState"`
-	KeySpec               string   `json:"KeySpec"`
-	CustomerMasterKeySpec string   `json:"CustomerMasterKeySpec"`
-	Origin                string   `json:"Origin"`
-	KeyManager            string   `json:"KeyManager"`
-	MultiRegion           bool     `json:"MultiRegion"`
-	CreationDate          *float64 `json:"CreationDate,omitempty"`
-	DeletionDate          *float64 `json:"DeletionDate,omitempty"`
-	ValidTo               *float64 `json:"ValidTo,omitempty"`
+	KeyID                    string                 `json:"KeyId"`
+	Arn                      string                 `json:"Arn"`
+	AWSAccountID             string                 `json:"AWSAccountId"`
+	Description              string                 `json:"Description,omitempty"`
+	Enabled                  bool                   `json:"Enabled"`
+	KeyUsage                 string                 `json:"KeyUsage"`
+	KeyState                 string                 `json:"KeyState"`
+	KeySpec                  string                 `json:"KeySpec"`
+	CustomerMasterKeySpec    string                 `json:"CustomerMasterKeySpec"`
+	Origin                   string                 `json:"Origin"`
+	KeyManager               string                 `json:"KeyManager"`
+	MultiRegion              bool                   `json:"MultiRegion"`
+	CreationDate             *float64               `json:"CreationDate,omitempty"`
+	DeletionDate             *float64               `json:"DeletionDate,omitempty"`
+	ValidTo                  *float64               `json:"ValidTo,omitempty"`
+	MultiRegionConfiguration *multiRegionConfigJSON `json:"MultiRegionConfiguration,omitempty"`
 }
 
 func metadataJSON(md *kmsdriver.KeyMetadata) keyMetadataJSON {
-	return keyMetadataJSON{
+	out := keyMetadataJSON{
 		KeyID:                 md.KeyID,
 		Arn:                   md.ARN,
 		AWSAccountID:          md.AWSAccountID,
@@ -79,6 +93,21 @@ func metadataJSON(md *kmsdriver.KeyMetadata) keyMetadataJSON {
 		DeletionDate:          epochOrNil(md.DeletionDate),
 		ValidTo:               epochOrNil(md.ValidTo),
 	}
+
+	if md.MultiRegion {
+		cfg := &multiRegionConfigJSON{MultiRegionKeyType: md.MultiRegionKeyType}
+		if md.PrimaryRegion != "" {
+			cfg.PrimaryKey = &mrkKeyRef{Region: md.PrimaryRegion}
+		}
+
+		for _, rr := range md.ReplicaRegions {
+			cfg.ReplicaKeys = append(cfg.ReplicaKeys, mrkKeyRef{Region: rr})
+		}
+
+		out.MultiRegionConfiguration = cfg
+	}
+
+	return out
 }
 
 // --- request shapes ---

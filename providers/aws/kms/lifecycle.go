@@ -57,6 +57,11 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 		policies: map[string]string{driver.DefaultPolicyName: defaultKeyPolicy(in.Policy, m.opts.AccountID)},
 	}
 
+	if in.MultiRegion {
+		kd.meta.MultiRegionKeyType = "PRIMARY"
+		kd.meta.PrimaryRegion = m.opts.Region
+	}
+
 	// EXTERNAL-origin keys have no material until it is imported; they start
 	// PendingImport and disabled.
 	switch {

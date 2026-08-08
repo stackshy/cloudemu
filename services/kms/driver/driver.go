@@ -69,6 +69,12 @@ type KeyMetadata struct {
 	DeletionDate time.Time // zero unless KeyState is PendingDeletion
 	// ValidTo is the expiry of imported key material (zero when not set).
 	ValidTo time.Time
+
+	// Multi-region configuration (populated only when MultiRegion is true).
+	// MultiRegionKeyType is "PRIMARY" or "REPLICA".
+	MultiRegionKeyType string
+	PrimaryRegion      string
+	ReplicaRegions     []string
 }
 
 // CreateKeyInput describes a key to create.
@@ -97,6 +103,7 @@ type Alias struct {
 type KMS interface {
 	Crypto
 	Management
+	KeyImport
 
 	// Key lifecycle.
 	CreateKey(ctx context.Context, in CreateKeyInput) (*KeyMetadata, error)

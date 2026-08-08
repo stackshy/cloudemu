@@ -71,6 +71,12 @@ func New(k kmsdriver.KMS) *Handler {
 		"GetKeyPolicy":         h.getKeyPolicy,
 		"PutKeyPolicy":         h.putKeyPolicy,
 		"ListKeyPolicies":      h.listKeyPolicies,
+
+		"GetParametersForImport":    h.getParametersForImport,
+		"ImportKeyMaterial":         h.importKeyMaterial,
+		"DeleteImportedKeyMaterial": h.deleteImportedKeyMaterial,
+		"ReplicateKey":              h.replicateKey,
+		"UpdatePrimaryRegion":       h.updatePrimaryRegion,
 	}
 
 	return h
