@@ -233,6 +233,7 @@ func New(opts ...config.Option) *Provider {
 			ContainerReg: p.ECR,
 			MessageQueue: p.SQS,
 			Notification: p.SNS,
+			DNS:          p.Route53,
 		},
 	)
 

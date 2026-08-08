@@ -225,6 +225,7 @@ func New(opts ...config.Option) *Provider {
 			ContainerReg:    p.ACR,
 			MessageQueue:    p.ServiceBus,
 			Notification:    p.NotificationHubs,
+			DNS:             p.DNS,
 		},
 	)
 

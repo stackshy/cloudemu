@@ -52,6 +52,7 @@ const (
 	atArtifactRepo    = "artifactregistry.googleapis.com/Repository"
 	atPubSubSub       = "pubsub.googleapis.com/Subscription"
 	atPubSubTopic     = "pubsub.googleapis.com/Topic"
+	atDNSZone         = "dns.googleapis.com/ManagedZone"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -67,6 +68,7 @@ const (
 	portableContainer    = "containerregistry"
 	portableQueue        = "messagequeue"
 	portableNotif        = "notification"
+	portableDNS          = "dns"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -263,6 +265,7 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 	atArtifactRepo:    {portableContainer, "Repository"},
 	atPubSubSub:       {portableQueue, "Queue"},
 	atPubSubTopic:     {portableNotif, "Topic"},
+	atDNSZone:         {portableDNS, "Zone"},
 }
 
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
@@ -282,6 +285,7 @@ var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // 
 	portableContainer + "/Repository":     atArtifactRepo,
 	portableQueue + "/Queue":              atPubSubSub,
 	portableNotif + "/Topic":              atPubSubTopic,
+	portableDNS + "/Zone":                 atDNSZone,
 }
 
 // mapGCPAssetType translates a fully-qualified GCP asset type

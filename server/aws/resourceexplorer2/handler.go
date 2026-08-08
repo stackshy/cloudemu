@@ -40,6 +40,7 @@ const (
 	awsServiceECR      = "ecr"
 	awsServiceSQS      = "sqs"
 	awsServiceSNS      = "sns"
+	awsServiceRoute53  = "route53"
 )
 
 // Portable-API service identifiers as emitted by resourcediscovery walkers.
@@ -54,6 +55,7 @@ const (
 	portableServiceContainer    = "containerregistry"
 	portableServiceQueue        = "messagequeue"
 	portableServiceNotif        = "notification"
+	portableServiceDNS          = "dns"
 )
 
 // Handler serves Resource Explorer 2 REST-JSON requests.
@@ -477,6 +479,8 @@ func portableToAWSService(s string) string {
 		return awsServiceSQS
 	case portableServiceNotif:
 		return awsServiceSNS
+	case portableServiceDNS:
+		return awsServiceRoute53
 	default:
 		return s
 	}

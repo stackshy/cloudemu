@@ -145,6 +145,7 @@ func New(opts ...config.Option) *Provider {
 			ContainerReg: p.ArtifactRegistry,
 			MessageQueue: p.PubSub,
 			Notification: p.FCM,
+			DNS:          p.CloudDNS,
 		},
 	)
 

@@ -61,6 +61,7 @@ const (
 	azureTypeACR       = "microsoft.containerregistry/registries"
 	azureTypeSBQueue   = "microsoft.servicebus/namespaces/queues"
 	azureTypeNotifHub  = "microsoft.notificationhubs/namespaces/notificationhubs"
+	azureTypeDNSZone   = "microsoft.network/dnszones"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -78,6 +79,7 @@ const (
 	portableContainer    = "containerregistry"
 	portableQueue        = "messagequeue"
 	portableNotif        = "notification"
+	portableDNS          = "dns"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -339,6 +341,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeACR:       {portableContainer, "Repository"},
 	azureTypeSBQueue:   {portableQueue, "Queue"},
 	azureTypeNotifHub:  {portableNotif, "Topic"},
+	azureTypeDNSZone:   {portableDNS, "Zone"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

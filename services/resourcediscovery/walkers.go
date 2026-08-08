@@ -40,6 +40,7 @@ const (
 	ServiceContainer  = "containerregistry"
 	ServiceQueue      = "messagequeue"
 	ServiceNotif      = "notification"
+	ServiceDNS        = "dns"
 )
 
 // Resource type constants emitted by the walkers.
@@ -66,6 +67,7 @@ const (
 	TypeRepository     = "Repository"
 	TypeQueue          = "Queue"
 	TypeTopic          = "Topic"
+	TypeZone           = "Zone"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -815,5 +817,19 @@ func (e *Engine) walkNotification(ctx context.Context) ([]Resource, error) {
 			}
 
 			return topics[i].Name, arn, topics[i].Tags
+		}), nil
+}
+
+// walkDNS surfaces DNS hosted zones (Route 53 / Azure DNS / Cloud DNS) so they
+// appear in the inventory/search APIs.
+func (e *Engine) walkDNS(ctx context.Context) ([]Resource, error) {
+	zones, err := e.drivers.DNS.ListZones(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkDNS: %w", err)
+	}
+
+	return e.emitSimple(ServiceDNS, TypeZone, len(zones),
+		func(i int) (string, string, map[string]string) {
+			return zones[i].Name, zones[i].ID, zones[i].Tags
 		}), nil
 }
