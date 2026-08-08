@@ -506,7 +506,10 @@ func applyInitFile(ctx context.Context, path, name string, targets map[string]se
 	}
 
 	for prov, t := range targets {
-		if err := seed.Apply(ctx, f, t); err != nil {
+		// IgnoreExisting so a resource that already exists (from restored state or
+		// an earlier init file) is skipped rather than aborting the rest of the
+		// fixture; other errors still warn.
+		if err := seed.Apply(ctx, f, t, seed.IgnoreExisting()); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: init %s on %s: %v\n", name, prov, err)
 		}
 	}

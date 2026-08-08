@@ -67,19 +67,30 @@ func TestApplyInitDirParseErrorFailsBoot(t *testing.T) {
 func TestApplyInitDirDuplicateWarnsNotFails(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "b.json"), []byte(`{"buckets":[{"name":"dup"}]}`), 0o600); err != nil {
+
+	// A fixture whose FIRST resource (bucket "dup") already exists, followed by a
+	// NEW resource (table "fresh"). The collision must not truncate the rest of
+	// the fixture — "fresh" must still be created.
+	fixture := `{"buckets":[{"name":"dup"}],"tables":[{"name":"fresh","partitionKey":"id"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "b.json"), []byte(fixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	aws := cloudemu.NewAWS()
-	targets := map[string]seed.Target{"aws": {Storage: aws.S3}}
-	// Pre-create the bucket so the init apply hits AlreadyExists.
+	targets := map[string]seed.Target{"aws": {Storage: aws.S3, Database: aws.DynamoDB}}
+	// Pre-create the bucket so the init apply hits AlreadyExists on the first item.
 	if err := aws.S3.CreateBucket(ctx, "dup"); err != nil {
 		t.Fatal(err)
 	}
 
-	// A duplicate must warn and continue, not fail boot.
+	// The collision must warn-and-continue, not fail boot.
 	if err := applyInitDir(ctx, dir, targets); err != nil {
 		t.Fatalf("applyInitDir(duplicate) = %v, want nil (warn+continue)", err)
+	}
+
+	// The resource AFTER the collision must still have been created.
+	tables, err := aws.DynamoDB.ListTables(ctx)
+	if err != nil || len(tables) != 1 || tables[0] != "fresh" {
+		t.Fatalf("post-collision table not created: %v %v", tables, err)
 	}
 }
