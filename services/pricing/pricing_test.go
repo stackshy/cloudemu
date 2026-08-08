@@ -60,8 +60,10 @@ func TestMonthlyDBAndFlat(t *testing.T) {
 }
 
 func TestMonthlyVolumeBySize(t *testing.T) {
+	// Uses the exact props key the volume walker emits ("diskSizeGB"), so the
+	// wired discovery→pricing path is exercised, not a synthetic key.
 	// A 100 GB gp3 volume ≈ 0.08 × 100 = $8/mo.
-	got := pricing.Monthly("aws", "compute", "Volume", "gp3", "us-east-1", map[string]any{"SizeGiB": float64(100)})
+	got := pricing.Monthly("aws", "compute", "Volume", "gp3", "us-east-1", map[string]any{"diskSizeGB": float64(100)})
 	if !approx(got, 0.08*100) {
 		t.Fatalf("100GB gp3 = %.2f, want ~8.00", got)
 	}
@@ -69,6 +71,36 @@ func TestMonthlyVolumeBySize(t *testing.T) {
 	// No size → not estimated.
 	if got := pricing.Monthly("aws", "compute", "Volume", "gp3", "us-east-1", nil); got != 0 {
 		t.Fatalf("volume without size = %.2f, want 0", got)
+	}
+}
+
+// Azure managed disks and GCE PDs must price too — the walker's VolumeType maps
+// to the provider's disk rate, not a hardcoded AWS prefix.
+func TestMonthlyVolumeAzureGCP(t *testing.T) {
+	// Azure Premium_LRS 100 GB ≈ 0.135 × 100 = $13.50/mo.
+	got := pricing.Monthly("azure", "compute", "Volume", "Premium_LRS", "eastus",
+		map[string]any{"diskSizeGB": float64(100)})
+	if !approx(got, 0.135*100) {
+		t.Fatalf("100GB Premium_LRS = %.2f, want ~13.50", got)
+	}
+
+	// GCP pd-ssd 50 GB ≈ 0.17 × 50 = $8.50/mo.
+	got = pricing.Monthly("gcp", "compute", "Volume", "pd-ssd", "us-central1",
+		map[string]any{"diskSizeGB": float64(50)})
+	if !approx(got, 0.17*50) {
+		t.Fatalf("50GB pd-ssd = %.2f, want ~8.50", got)
+	}
+}
+
+// Load balancers and NAT gateways are priced by their flat provisioned rate,
+// per provider.
+func TestMonthlyLoadBalancerAndNAT(t *testing.T) {
+	if got := pricing.Monthly("aws", "loadbalancer", "LoadBalancer", "", "us-east-1", nil); got <= 0 {
+		t.Fatal("AWS load balancer should be priced")
+	}
+
+	if got := pricing.Monthly("gcp", "networking", "NatGateway", "", "us-central1", nil); got <= 0 {
+		t.Fatal("GCP NAT gateway should be priced")
 	}
 }
 

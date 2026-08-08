@@ -213,8 +213,11 @@ var flatHourly = map[string]float64{
 	"gcp:static-ip-idle":      0.01,
 }
 
-// storageGBMonth entries are approximate on-demand rates gathered from public
-// pricing knowledge (not a live feed); accurate to ~2 significant figures.
+// storageGBMonth holds per-GB-month disk rates, keyed by provider disk SKU.
+// Only block-volume disks are priced here — object storage (S3/Blob/GCS) is
+// usage-based (per-GB *stored*), which discovery can't observe, so buckets are
+// left to the usage-based $0 path rather than given a misleading flat estimate.
+// Rates are approximate on-demand prices (not a live feed), ~2 significant figs.
 //
 //nolint:gochecknoglobals // static pricing table
 var storageGBMonth = map[string]float64{
@@ -223,18 +226,9 @@ var storageGBMonth = map[string]float64{
 	"aws:ebs-io2":                     0.125,
 	"aws:ebs-sc1":                     0.015,
 	"aws:ebs-st1":                     0.045,
-	"aws:s3-glacier-instant":          0.004,
-	"aws:s3-standard":                 0.023,
-	"aws:s3-standard-ia":              0.0125,
-	"azure:blob-archive":              0.00099,
-	"azure:blob-cool":                 0.01,
-	"azure:blob-hot":                  0.018,
 	"azure:managed-disk-premium-ssd":  0.135,
 	"azure:managed-disk-standard-hdd": 0.045,
 	"azure:managed-disk-standard-ssd": 0.075,
-	"gcp:cloud-storage-coldline":      0.004,
-	"gcp:cloud-storage-nearline":      0.01,
-	"gcp:cloud-storage-standard":      0.02,
 	"gcp:pd-balanced":                 0.1,
 	"gcp:pd-ssd":                      0.17,
 	"gcp:pd-standard":                 0.04,
@@ -273,6 +267,35 @@ func controlPlaneKey(provider string) string {
 	}
 }
 
+// lbKey maps a provider to a representative load-balancer flat rate key
+// (application/standard LB; NLB and classic ELB share the same order of cost).
+func lbKey(provider string) string {
+	switch provider {
+	case provAWS:
+		return "aws:alb"
+	case provGCP:
+		return "gcp:forwarding-rule"
+	case provAzure:
+		return "azure:standard-lb"
+	default:
+		return ""
+	}
+}
+
+// natKey maps a provider to its NAT gateway flat rate key.
+func natKey(provider string) string {
+	switch provider {
+	case provAWS:
+		return "aws:nat-gateway"
+	case provGCP:
+		return "gcp:cloud-nat"
+	case provAzure:
+		return "azure:nat-gateway"
+	default:
+		return ""
+	}
+}
+
 // eipKey maps a provider to its idle-public-IP flat rate key.
 func eipKey(provider string) string {
 	switch provider {
@@ -290,7 +313,7 @@ func eipKey(provider string) string {
 // sizeFromProps extracts a resource size in GB from the discovery properties,
 // tolerating the several key spellings walkers use. Returns 0 when unknown.
 func sizeFromProps(props map[string]any) float64 {
-	for _, k := range []string{"SizeGiB", "SizeGB", "sizeGb", "size", "Size", "sizeGiB"} {
+	for _, k := range []string{"diskSizeGB", "SizeGiB", "SizeGB", "sizeGb", "size", "Size", "sizeGiB"} {
 		if v, ok := props[k]; ok {
 			switch n := v.(type) {
 			case float64:
@@ -306,23 +329,52 @@ func sizeFromProps(props map[string]any) float64 {
 	return 0
 }
 
-// volumeMonthly prices an AWS EBS volume by its type (SKU) and size, or 0 when
-// the size or tier is unknown.
+// diskRateKey maps a provider and its volume type (the SKU the compute walker
+// emits) to the storageGBMonth key for that disk. Returns "" for a provider or
+// SKU with no known disk rate, so the caller prices it at 0 rather than guessing.
+func diskRateKey(provider, sku string) string {
+	switch provider {
+	case provAWS:
+		return "aws:ebs-" + sku
+	case provGCP:
+		// GCE emits the rate-key suffix directly (pd-ssd / pd-balanced / pd-standard).
+		return "gcp:" + sku
+	case provAzure:
+		switch sku {
+		case "Premium_LRS":
+			return "azure:managed-disk-premium-ssd"
+		case "StandardSSD_LRS":
+			return "azure:managed-disk-standard-ssd"
+		case "Standard_LRS":
+			return "azure:managed-disk-standard-hdd"
+		default:
+			return ""
+		}
+	default:
+		return ""
+	}
+}
+
+// volumeMonthly prices a block volume by its provider, type (SKU), and size, or
+// 0 when the size is unknown or the SKU has no known disk rate.
 func volumeMonthly(provider, sku string, props map[string]any) float64 {
 	size := sizeFromProps(props)
-	if size <= 0 || provider != provAWS {
+	if size <= 0 {
 		return 0
 	}
 
-	rate := storageGBMonth["aws:ebs-"+sku]
+	rate := storageGBMonth[diskRateKey(provider, sku)]
 
 	return rate * size
 }
 
 // Monthly returns an approximate monthly USD cost for one discovered resource.
-// Always-on resources (compute, DB instances, Kubernetes control planes, idle
-// IPs, sized volumes) are priced; usage-based services and unknown types
-// return 0.
+// Always-on resources are priced: compute instances, managed DB instances,
+// Kubernetes control planes, idle IPs, block volumes (AWS/Azure/GCP), load
+// balancers, and NAT gateways. Usage-based services (object storage, etc.) and
+// unknown types return 0. Load balancers and NAT gateways price only once they
+// are discoverable in the inventory (see #365); the rates are wired here so
+// they light up automatically.
 func Monthly(provider, service, resourceType, sku, region string, props map[string]any) float64 {
 	mult := regionMult(region)
 
@@ -339,6 +391,10 @@ func Monthly(provider, service, resourceType, sku, region string, props map[stri
 		return flatHourly[controlPlaneKey(provider)] * mult * HoursPerMonth
 	case "networking/ElasticIP":
 		return flatHourly[eipKey(provider)] * mult * HoursPerMonth
+	case "loadbalancer/LoadBalancer":
+		return flatHourly[lbKey(provider)] * mult * HoursPerMonth
+	case "networking/NatGateway":
+		return flatHourly[natKey(provider)] * mult * HoursPerMonth
 	case "compute/Volume":
 		return volumeMonthly(provider, sku, props) * mult
 	default:
