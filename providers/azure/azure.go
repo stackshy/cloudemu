@@ -227,6 +227,7 @@ func New(opts ...config.Option) *Provider {
 			Notification:    p.NotificationHubs,
 			DNS:             p.DNS,
 			Logging:         p.LogAnalytics,
+			Cache:           p.Cache,
 		},
 	)
 

@@ -54,6 +54,7 @@ const (
 	atPubSubTopic     = "pubsub.googleapis.com/Topic"
 	atDNSZone         = "dns.googleapis.com/ManagedZone"
 	atLogBucket       = "logging.googleapis.com/LogBucket"
+	atRedisInstance   = "redis.googleapis.com/Instance"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -71,6 +72,7 @@ const (
 	portableNotif        = "notification"
 	portableDNS          = "dns"
 	portableLogging      = "logging"
+	portableCache        = "cache"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -269,6 +271,7 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 	atPubSubTopic:     {portableNotif, "Topic"},
 	atDNSZone:         {portableDNS, "Zone"},
 	atLogBucket:       {portableLogging, "LogGroup"},
+	atRedisInstance:   {portableCache, "CacheCluster"},
 }
 
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
@@ -290,6 +293,7 @@ var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // 
 	portableNotif + "/Topic":              atPubSubTopic,
 	portableDNS + "/Zone":                 atDNSZone,
 	portableLogging + "/LogGroup":         atLogBucket,
+	portableCache + "/CacheCluster":       atRedisInstance,
 }
 
 // mapGCPAssetType translates a fully-qualified GCP asset type

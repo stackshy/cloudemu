@@ -42,6 +42,7 @@ const (
 	ServiceNotif      = "notification"
 	ServiceDNS        = "dns"
 	ServiceLogging    = "logging"
+	ServiceCache      = "cache"
 )
 
 // Resource type constants emitted by the walkers.
@@ -70,6 +71,7 @@ const (
 	TypeTopic          = "Topic"
 	TypeZone           = "Zone"
 	TypeLogGroup       = "LogGroup"
+	TypeCacheCluster   = "CacheCluster"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -847,5 +849,19 @@ func (e *Engine) walkLogging(ctx context.Context) ([]Resource, error) {
 	return e.emitSimple(ServiceLogging, TypeLogGroup, len(groups),
 		func(i int) (string, string, map[string]string) {
 			return groups[i].Name, groups[i].ResourceID, groups[i].Tags
+		}), nil
+}
+
+// walkCache surfaces in-memory cache clusters (ElastiCache / Memorystore /
+// Azure Cache for Redis) so they appear in the inventory/search APIs.
+func (e *Engine) walkCache(ctx context.Context) ([]Resource, error) {
+	caches, err := e.drivers.Cache.ListCaches(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkCache: %w", err)
+	}
+
+	return e.emitSimple(ServiceCache, TypeCacheCluster, len(caches),
+		func(i int) (string, string, map[string]string) {
+			return caches[i].Name, caches[i].Endpoint, caches[i].Tags
 		}), nil
 }

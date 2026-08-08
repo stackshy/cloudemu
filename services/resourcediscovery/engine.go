@@ -3,6 +3,7 @@ package resourcediscovery
 import (
 	"context"
 
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
@@ -38,6 +39,7 @@ type Drivers struct {
 	Notification    notifdriver.Notification
 	DNS             dnsdriver.DNS
 	Logging         loggingdriver.Logging
+	Cache           cachedriver.Cache
 }
 
 // AppServicePlans is the discovery capability for App Service plans (Azure
@@ -308,6 +310,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.Logging != nil {
 		ws = append(ws, e.walkLogging)
+	}
+
+	if e.drivers.Cache != nil {
+		ws = append(ws, e.walkCache)
 	}
 
 	if e.drivers.AppServicePlans != nil {

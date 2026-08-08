@@ -147,6 +147,7 @@ func New(opts ...config.Option) *Provider {
 			Notification: p.FCM,
 			DNS:          p.CloudDNS,
 			Logging:      p.CloudLogging,
+			Cache:        p.Memorystore,
 		},
 	)
 

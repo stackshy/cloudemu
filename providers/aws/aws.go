@@ -235,6 +235,7 @@ func New(opts ...config.Option) *Provider {
 			Notification: p.SNS,
 			DNS:          p.Route53,
 			Logging:      p.CloudWatchLogs,
+			Cache:        p.ElastiCache,
 		},
 	)
 
