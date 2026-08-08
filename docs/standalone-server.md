@@ -155,6 +155,30 @@ discarded. If a restore fails partway the running state is already cleared —
 fine for a local emulator, but don't point `load` at a server whose current
 state you haven't snapshotted.
 
+### Init hooks (auto-seed on boot)
+
+Drop `*.json` seed fixtures in an init directory and they're applied on every
+startup, so the emulator comes up in a known state without manual seeding:
+
+```sh
+mkdir -p ~/.cloudemu/init.d
+echo '{"buckets":[{"name":"app-data"}],"tables":[{"name":"users","partitionKey":"id"}]}' \
+  > ~/.cloudemu/init.d/01-baseline.json
+cloudemu start          # applies init.d automatically
+```
+
+`start` auto-loads `<run-dir>/init.d` when it exists (point `--home` elsewhere to
+change the run dir). For the foreground server, pass the directory explicitly:
+`cloudemu serve --init-dir ./fixtures`.
+
+Files are applied in lexical order (`01-…`, `02-…`) to **every** running provider
+— the fixtures are provider-agnostic, so one file seeds S3, Blob, and GCS alike.
+A malformed fixture fails startup; an apply error (e.g. a resource that already
+exists from restored persistence) logs a warning and boot continues. Fixtures use
+the same schema as [`/_cloudemu/seed`](#resetting-state-between-tests-_cloudemu)
+(buckets, tables, secrets, instances). Running setup **scripts** on boot is a
+planned follow-up.
+
 ## Network reachability (`net can-connect` / `net trace`)
 
 cloudemu doesn't just emulate EC2/VPC APIs — it evaluates whether your security
