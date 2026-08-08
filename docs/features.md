@@ -390,7 +390,7 @@ all, _ := aws.ResourceDiscovery.ListAll(ctx)
 // for every bucket, instance, VPC, subnet, security group, table, and function
 ```
 
-The same field exists on Azure and GCP providers (`azure.ResourceDiscovery`, `gcp.ResourceDiscovery`). Internally, the engine reads from the Compute, Networking, Storage, Database, Serverless, Databricks, Kubernetes, and Relational Database drivers — any field that's nil is silently skipped, so partial test wirings work. Managed relational servers (AWS RDS, Azure SQL, the MySQL/PostgreSQL Flexible Servers, and Cloud SQL) surface through their cloud's inventory type strings.
+The same field exists on Azure and GCP providers (`azure.ResourceDiscovery`, `gcp.ResourceDiscovery`). Internally, the engine reads from the Compute, Networking, Storage, Database, Serverless, Databricks, Kubernetes, Relational Database, Secrets, Container Registry, Message Queue, Notification, DNS, Logging, Cache, Load Balancer, Monitoring, and IAM drivers — any field that's nil is silently skipped, so partial test wirings work. Managed relational servers (AWS RDS, Azure SQL, the MySQL/PostgreSQL Flexible Servers, and Cloud SQL) surface through their cloud's inventory type strings, as do secrets, container repositories, queues, topics, DNS zones, log groups, cache clusters, load balancers, metric alarms, and IAM users/roles/policies/groups.
 
 ### Engine API
 
