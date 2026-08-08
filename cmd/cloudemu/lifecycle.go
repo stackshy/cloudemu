@@ -23,6 +23,7 @@ const (
 	logFileName       = "cloudemu.log"
 	endpointsFileName = "endpoints.json"
 	persistFileName   = "snapshot.json"
+	initDirName       = "init.d"
 
 	startupTimeout = 15 * time.Second
 	stopTimeout    = 12 * time.Second
@@ -70,6 +71,13 @@ func statePath(dir string) string     { return filepath.Join(dir, stateFileName)
 func logPath(dir string) string       { return filepath.Join(dir, logFileName) }
 func endpointsPath(dir string) string { return filepath.Join(dir, endpointsFileName) }
 func persistPath(dir string) string   { return filepath.Join(dir, persistFileName) }
+
+// isDir reports whether path exists and is a directory.
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+
+	return err == nil && fi.IsDir()
+}
 
 // hasFlag reports whether args contains --name / -name (bare or =value form).
 func hasFlag(args []string, name string) bool {
@@ -396,6 +404,14 @@ func runStart(args []string) error {
 		}
 
 		rest = append(rest, "--state-file", persistPath(dir))
+	}
+
+	// Auto-load a drop-in init.d under the run dir (docker-entrypoint.d style)
+	// unless the user pointed --init-dir elsewhere.
+	if !hasFlag(rest, "init-dir") {
+		if d := filepath.Join(dir, initDirName); isDir(d) {
+			rest = append(rest, "--init-dir", d)
+		}
 	}
 
 	if s, rErr := readState(dir); rErr == nil && processAlive(s.PID) && daemonReachable(s.Endpoints) {

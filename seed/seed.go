@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io/fs"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -163,32 +164,63 @@ func (f Fixtures) Validate(t Target) error {
 	return nil
 }
 
+// Option configures Apply.
+type Option func(*applyOptions)
+
+type applyOptions struct{ ignoreExisting bool }
+
+// IgnoreExisting makes Apply skip a resource that already exists (an
+// AlreadyExists error) and continue with the rest of the fixture, instead of
+// failing at the first collision. Use it for boot-time init, where a fixture may
+// overlap resources already present from restored state or an earlier file — so
+// a duplicate skips just that resource rather than truncating everything after
+// it in the fixture.
+func IgnoreExisting() Option {
+	return func(o *applyOptions) { o.ignoreExisting = true }
+}
+
 // Apply validates the whole fixture set, then writes it through t's drivers in
 // a fixed order (buckets, tables, secrets, instances). Validation runs first so
 // an invalid fixture is rejected before anything is created. Writes are not
 // transactional: on a mid-write failure (e.g. seeding a backend that isn't
-// empty), earlier resources remain — reset and retry against a fresh backend.
-func Apply(ctx context.Context, f Fixtures, t Target) error {
+// empty), earlier resources remain — reset and retry against a fresh backend,
+// or pass IgnoreExisting to tolerate resources that already exist.
+//
+//nolint:gocritic // hugeParam: Fixtures is passed by value to keep the stable public Apply signature.
+func Apply(ctx context.Context, f Fixtures, t Target, opts ...Option) error {
+	var o applyOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	if err := f.Validate(t); err != nil {
 		return err
 	}
-	if err := applyBuckets(ctx, f.Buckets, t.Storage); err != nil {
+
+	if err := applyBuckets(ctx, f.Buckets, t.Storage, o.ignoreExisting); err != nil {
 		return err
 	}
-	if err := applyTables(ctx, f.Tables, t.Database); err != nil {
+
+	if err := applyTables(ctx, f.Tables, t.Database, o.ignoreExisting); err != nil {
 		return err
 	}
-	if err := applySecrets(ctx, f.Secrets, t.Secrets); err != nil {
+
+	if err := applySecrets(ctx, f.Secrets, t.Secrets, o.ignoreExisting); err != nil {
 		return err
 	}
-	return applyInstances(ctx, f.Instances, t.Compute)
+
+	return applyInstances(ctx, f.Instances, t.Compute, o.ignoreExisting)
 }
 
-func applyBuckets(ctx context.Context, buckets []Bucket, d storagedriver.Bucket) error {
+func applyBuckets(ctx context.Context, buckets []Bucket, d storagedriver.Bucket, ignoreExisting bool) error {
 	for _, b := range buckets {
 		if err := d.CreateBucket(ctx, b.Name); err != nil {
-			return fmt.Errorf("seed bucket %q: %w", b.Name, err)
+			if !ignoreExisting || !cerrors.IsAlreadyExists(err) {
+				return fmt.Errorf("seed bucket %q: %w", b.Name, err)
+			}
+			// Bucket already exists — still (re)put its declared objects below.
 		}
+
 		for _, o := range b.Objects {
 			ct := o.ContentType
 			if ct == "" {
@@ -202,15 +234,19 @@ func applyBuckets(ctx context.Context, buckets []Bucket, d storagedriver.Bucket)
 	return nil
 }
 
-func applyTables(ctx context.Context, tables []Table, d dbdriver.Database) error {
+func applyTables(ctx context.Context, tables []Table, d dbdriver.Database, ignoreExisting bool) error {
 	for _, tb := range tables {
 		if err := d.CreateTable(ctx, dbdriver.TableConfig{
 			Name:         tb.Name,
 			PartitionKey: tb.PartitionKey,
 			SortKey:      tb.SortKey,
 		}); err != nil {
-			return fmt.Errorf("seed table %q: %w", tb.Name, err)
+			if !ignoreExisting || !cerrors.IsAlreadyExists(err) {
+				return fmt.Errorf("seed table %q: %w", tb.Name, err)
+			}
+			// Table already exists — still (re)put its declared items below.
 		}
+
 		for i, item := range tb.Items {
 			if err := d.PutItem(ctx, tb.Name, item); err != nil {
 				return fmt.Errorf("seed table %q item %d: %w", tb.Name, i, err)
@@ -220,19 +256,21 @@ func applyTables(ctx context.Context, tables []Table, d dbdriver.Database) error
 	return nil
 }
 
-func applySecrets(ctx context.Context, secrets []Secret, d secretsdriver.Secrets) error {
+func applySecrets(ctx context.Context, secrets []Secret, d secretsdriver.Secrets, ignoreExisting bool) error {
 	for _, s := range secrets {
 		if _, err := d.CreateSecret(ctx, secretsdriver.SecretConfig{
 			Name:        s.Name,
 			Description: s.Description,
 		}, []byte(s.Value)); err != nil {
-			return fmt.Errorf("seed secret %q: %w", s.Name, err)
+			if !ignoreExisting || !cerrors.IsAlreadyExists(err) {
+				return fmt.Errorf("seed secret %q: %w", s.Name, err)
+			}
 		}
 	}
 	return nil
 }
 
-func applyInstances(ctx context.Context, instances []Instance, d computedriver.Compute) error {
+func applyInstances(ctx context.Context, instances []Instance, d computedriver.Compute, ignoreExisting bool) error {
 	for _, in := range instances {
 		count := in.Count
 		if count < 1 {
@@ -243,7 +281,9 @@ func applyInstances(ctx context.Context, instances []Instance, d computedriver.C
 			cfg.Tags = map[string]string{"Name": in.Name}
 		}
 		if _, err := d.RunInstances(ctx, cfg, count); err != nil {
-			return fmt.Errorf("seed instance (%s): %w", in.ImageID, err)
+			if !ignoreExisting || !cerrors.IsAlreadyExists(err) {
+				return fmt.Errorf("seed instance (%s): %w", in.ImageID, err)
+			}
 		}
 	}
 	return nil
