@@ -37,6 +37,7 @@ const (
 	ServiceAppService = "appservice"
 	ServiceSecrets    = "secrets"
 	ServiceContainer  = "containerregistry"
+	ServiceQueue      = "messagequeue"
 )
 
 // Resource type constants emitted by the walkers.
@@ -61,6 +62,7 @@ const (
 	TypeAppServicePlan = "AppServicePlan"
 	TypeSecret         = "Secret"
 	TypeRepository     = "Repository"
+	TypeQueue          = "Queue"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -772,5 +774,24 @@ func (e *Engine) walkContainerRegistry(ctx context.Context) ([]Resource, error) 
 	return e.emitSimple(ServiceContainer, TypeRepository, len(repos),
 		func(i int) (string, string, map[string]string) {
 			return repos[i].Name, repos[i].URI, repos[i].Tags
+		}), nil
+}
+
+// walkMessageQueue surfaces message queues (SQS / Service Bus / Pub-Sub) so they
+// appear in the inventory/search APIs.
+func (e *Engine) walkMessageQueue(ctx context.Context) ([]Resource, error) {
+	queues, err := e.drivers.MessageQueue.ListQueues(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("walkMessageQueue: %w", err)
+	}
+
+	return e.emitSimple(ServiceQueue, TypeQueue, len(queues),
+		func(i int) (string, string, map[string]string) {
+			arn := queues[i].ARN
+			if arn == "" {
+				arn = queues[i].URL
+			}
+
+			return queues[i].Name, arn, queues[i].Tags
 		}), nil
 }

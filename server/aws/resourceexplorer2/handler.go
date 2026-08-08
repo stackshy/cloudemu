@@ -38,6 +38,7 @@ const (
 	awsServiceRDS      = "rds"
 	awsServiceSecrets  = "secretsmanager"
 	awsServiceECR      = "ecr"
+	awsServiceSQS      = "sqs"
 )
 
 // Portable-API service identifiers as emitted by resourcediscovery walkers.
@@ -50,6 +51,7 @@ const (
 	portableServiceRelationalDB = "relationaldb"
 	portableServiceSecrets      = "secrets"
 	portableServiceContainer    = "containerregistry"
+	portableServiceQueue        = "messagequeue"
 )
 
 // Handler serves Resource Explorer 2 REST-JSON requests.
@@ -469,6 +471,8 @@ func portableToAWSService(s string) string {
 		return awsServiceSecrets
 	case portableServiceContainer:
 		return awsServiceECR
+	case portableServiceQueue:
+		return awsServiceSQS
 	default:
 		return s
 	}

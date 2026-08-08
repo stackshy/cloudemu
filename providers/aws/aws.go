@@ -231,6 +231,7 @@ func New(opts ...config.Option) *Provider {
 			RelationalDB: rdsDiscovery{p.RDS},
 			Secrets:      p.SecretsManager,
 			ContainerReg: p.ECR,
+			MessageQueue: p.SQS,
 		},
 	)
 

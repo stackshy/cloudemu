@@ -342,6 +342,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 	"secrets/Secret":                      "microsoft.keyvault/vaults/secrets",
 	"containerregistry/Repository":        "microsoft.containerregistry/registries",
+	"messagequeue/Queue":                  "microsoft.servicebus/namespaces/queues",
 }
 
 func portableToAzureType(service, typ string) string {

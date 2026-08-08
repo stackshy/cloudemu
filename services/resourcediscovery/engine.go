@@ -7,6 +7,7 @@ import (
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	serverlessdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -30,6 +31,7 @@ type Drivers struct {
 	AppServicePlans AppServicePlans
 	Secrets         secretsdriver.Secrets
 	ContainerReg    crdriver.ContainerRegistry
+	MessageQueue    mqdriver.MessageQueue
 }
 
 // AppServicePlans is the discovery capability for App Service plans (Azure
@@ -284,6 +286,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.ContainerReg != nil {
 		ws = append(ws, e.walkContainerRegistry)
+	}
+
+	if e.drivers.MessageQueue != nil {
+		ws = append(ws, e.walkMessageQueue)
 	}
 
 	if e.drivers.AppServicePlans != nil {

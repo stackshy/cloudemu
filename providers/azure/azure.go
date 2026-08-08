@@ -223,6 +223,7 @@ func New(opts ...config.Option) *Provider {
 			AppServicePlans: appServicePlanDiscovery{p.Functions},
 			Secrets:         p.KeyVault,
 			ContainerReg:    p.ACR,
+			MessageQueue:    p.ServiceBus,
 		},
 	)
 

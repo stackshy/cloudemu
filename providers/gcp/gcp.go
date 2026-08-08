@@ -143,6 +143,7 @@ func New(opts ...config.Option) *Provider {
 			RelationalDB: gcpRelationalDiscovery{sql: p.CloudSQL, alloy: p.AlloyDB},
 			Secrets:      p.SecretManager,
 			ContainerReg: p.ArtifactRegistry,
+			MessageQueue: p.PubSub,
 		},
 	)
 
