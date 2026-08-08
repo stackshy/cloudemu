@@ -46,6 +46,7 @@ const (
 	ServiceLB         = "loadbalancer"
 	ServiceMonitoring = "monitoring"
 	ServiceIAM        = "iam"
+	ServiceRedshift   = "redshift"
 )
 
 // Resource type constants emitted by the walkers.
@@ -66,6 +67,7 @@ const (
 	TypeDBInstance        = "DBInstance"
 	TypeDBCluster         = "DBCluster"
 	TypeDBSnapshot        = "DBSnapshot"
+	TypeDBProxy           = "DBProxy"
 	TypeScaleSet          = "ScaleSet"
 	TypeAppServicePlan    = "AppServicePlan"
 	TypeSecret            = "Secret"
@@ -634,8 +636,13 @@ func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
 			typ = TypeDBInstance
 		}
 
+		svc := d.Service
+		if svc == "" {
+			svc = ServiceRelationalDB
+		}
+
 		r := Resource{
-			Provider: e.provider, Service: ServiceRelationalDB, Type: typ,
+			Provider: e.provider, Service: svc, Type: typ,
 			ID:     d.Name,
 			ARN:    d.ARN,
 			Region: region, Tags: copyTags(d.Tags),

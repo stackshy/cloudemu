@@ -228,7 +228,7 @@ func New(opts ...config.Option) *Provider {
 			Database:     p.DynamoDB,
 			Serverless:   p.Lambda,
 			Kubernetes:   eksDiscovery{p.EKS},
-			RelationalDB: rdsDiscovery{p.RDS},
+			RelationalDB: rdsDiscovery{m: p.RDS, redshift: p.Redshift},
 			Secrets:      p.SecretsManager,
 			ContainerReg: p.ECR,
 			MessageQueue: p.SQS,

@@ -107,6 +107,11 @@ type DiscoveredDatabase struct {
 	Type   string
 	Tags   map[string]string
 
+	// Service overrides the emitted Resource.Service. Empty means the default
+	// relationaldb bucket; adapters set it for engines that a real cloud
+	// exposes under a distinct service (e.g. AWS Redshift → "redshift").
+	Service string
+
 	// Attrs carries the same generic slots as Resource (SKU/Properties/…) so a
 	// provider adapter can project a DB's compute SKU, storage, and HA mode
 	// without a bespoke per-cloud struct.
