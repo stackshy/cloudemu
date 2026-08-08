@@ -22,3 +22,9 @@ func runSnapshot(_ []string) error {
 func runNet(_ []string) error {
 	return errors.New("net is only supported on Unix/macOS")
 }
+
+// runCost is unavailable off Unix for the same reason: it talks to the
+// background daemon via its run directory.
+func runCost(_ []string) error {
+	return errors.New("cost is only supported on Unix/macOS")
+}

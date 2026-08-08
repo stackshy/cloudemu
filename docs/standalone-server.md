@@ -210,6 +210,31 @@ source group (`authorize-security-group-egress`) in addition to the ingress rule
 on the destination. Launch instances with `--subnet-id` so they inherit the
 subnet's VPC (that's what reachability and `trace` resolve against).
 
+## Cost estimate (`cloudemu cost`)
+
+Get a rough monthly-cost estimate of what you've provisioned, before it hits a
+real cloud bill:
+
+```sh
+cloudemu cost          # PROVIDER/SERVICE  EST. MONTHLY, plus a total
+cloudemu cost --json   # machine-readable, for CI budgets
+```
+
+It walks the current inventory (the cross-cloud resource-discovery engine) and
+prices the **always-on** resources — compute instances (per instance type/SKU),
+relational-DB instances (per class), Kubernetes control planes, idle public IPs,
+and sized volumes — using **per-SKU hourly rates × a per-region multiplier × 730h**,
+grouped by provider and service. SKU and region come from each resource's own
+attributes, so an `m5.4xlarge` in `sa-east-1` prices higher than a `t3.micro` in
+`us-east-1`.
+
+The rate tables are **representative on-demand prices** (AWS/Azure/GCP compute,
+DB, storage, and networking), not a live pricing-API feed — accurate to roughly
+two significant figures. Usage-based dimensions (object-storage operations, NoSQL
+throughput, data transfer, per-request) are **not** estimated. It's meant to
+catch "why is this so expensive?" surprises early, not to reconcile invoices; a
+live pricing-API integration is a planned follow-up.
+
 ## Ports
 
 | Provider   | Default | Protocol | Notes                                    |
