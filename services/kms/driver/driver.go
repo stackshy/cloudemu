@@ -96,6 +96,7 @@ type Alias struct {
 // and resolve them uniformly.
 type KMS interface {
 	Crypto
+	Management
 
 	// Key lifecycle.
 	CreateKey(ctx context.Context, in CreateKeyInput) (*KeyMetadata, error)

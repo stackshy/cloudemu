@@ -28,14 +28,22 @@ const (
 // keyData is the full server-side state of a key: its public metadata plus the
 // secret material and settings never exposed in KeyMetadata.
 type keyData struct {
-	meta   driver.KeyMetadata
-	tags   map[string]string
-	policy string
+	meta driver.KeyMetadata
+	tags map[string]string
 
 	// material holds the raw key bytes for symmetric/HMAC keys; asymmetric
 	// keys keep their parsed private key in privKey.
 	material []byte
 	privKey  crypto.PrivateKey
+
+	// policies maps a policy name (only "default") to its policy document.
+	policies map[string]string
+
+	// Rotation state.
+	rotationEnabled    bool
+	rotationPeriodDays int32
+	rotations          []driver.RotationEvent
+	onDemandCount      int
 
 	mu sync.RWMutex
 }
@@ -53,6 +61,7 @@ type aliasData struct {
 type Mock struct {
 	keys    *memstore.Store[*keyData]
 	aliases *memstore.Store[*aliasData]
+	grants  *memstore.Store[*driver.Grant]
 	opts    *config.Options
 }
 
@@ -61,6 +70,7 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		keys:    memstore.New[*keyData](),
 		aliases: memstore.New[*aliasData](),
+		grants:  memstore.New[*driver.Grant](),
 		opts:    opts,
 	}
 }

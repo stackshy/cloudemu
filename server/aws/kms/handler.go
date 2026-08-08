@@ -57,6 +57,20 @@ func New(k kmsdriver.KMS) *Handler {
 		"Verify":                              h.verify,
 		"GenerateMac":                         h.generateMac,
 		"VerifyMac":                           h.verifyMac,
+
+		"CreateGrant":          h.createGrant,
+		"ListGrants":           h.listGrants,
+		"RevokeGrant":          h.revokeGrant,
+		"RetireGrant":          h.retireGrant,
+		"ListRetirableGrants":  h.listRetirableGrants,
+		"EnableKeyRotation":    h.enableKeyRotation,
+		"DisableKeyRotation":   h.disableKeyRotation,
+		"GetKeyRotationStatus": h.getKeyRotationStatus,
+		"ListKeyRotations":     h.listKeyRotations,
+		"RotateKeyOnDemand":    h.rotateKeyOnDemand,
+		"GetKeyPolicy":         h.getKeyPolicy,
+		"PutKeyPolicy":         h.putKeyPolicy,
+		"ListKeyPolicies":      h.listKeyPolicies,
 	}
 
 	return h

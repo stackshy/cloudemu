@@ -53,8 +53,8 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 			MultiRegion:  in.MultiRegion,
 			CreationDate: now,
 		},
-		tags:   copyTags(in.Tags),
-		policy: in.Policy,
+		tags:     copyTags(in.Tags),
+		policies: map[string]string{driver.DefaultPolicyName: defaultKeyPolicy(in.Policy, m.opts.AccountID)},
 	}
 
 	// EXTERNAL-origin keys have no material until it is imported; they start
