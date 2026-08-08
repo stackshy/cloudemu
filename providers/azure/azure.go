@@ -229,6 +229,7 @@ func New(opts ...config.Option) *Provider {
 			Logging:         p.LogAnalytics,
 			Cache:           p.Cache,
 			LoadBalancer:    p.LB,
+			Monitoring:      p.Monitor,
 		},
 	)
 

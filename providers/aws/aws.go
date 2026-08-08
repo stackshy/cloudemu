@@ -237,6 +237,7 @@ func New(opts ...config.Option) *Provider {
 			Logging:      p.CloudWatchLogs,
 			Cache:        p.ElastiCache,
 			LoadBalancer: p.ELB,
+			Monitoring:   p.CloudWatch,
 		},
 	)
 

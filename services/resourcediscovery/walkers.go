@@ -44,6 +44,7 @@ const (
 	ServiceLogging    = "logging"
 	ServiceCache      = "cache"
 	ServiceLB         = "loadbalancer"
+	ServiceMonitoring = "monitoring"
 )
 
 // Resource type constants emitted by the walkers.
@@ -74,6 +75,7 @@ const (
 	TypeLogGroup       = "LogGroup"
 	TypeCacheCluster   = "CacheCluster"
 	TypeLoadBalancer   = "LoadBalancer"
+	TypeAlarm          = "Alarm"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -879,5 +881,19 @@ func (e *Engine) walkLoadBalancer(ctx context.Context) ([]Resource, error) {
 	return e.emitSimple(ServiceLB, TypeLoadBalancer, len(lbs),
 		func(i int) (string, string, map[string]string) {
 			return lbs[i].Name, lbs[i].ARN, lbs[i].Tags
+		}), nil
+}
+
+// walkMonitoring surfaces metric alarms (CloudWatch alarms / Azure metric
+// alerts / GCP alert policies) so they appear in the inventory/search APIs.
+func (e *Engine) walkMonitoring(ctx context.Context) ([]Resource, error) {
+	alarms, err := e.drivers.Monitoring.DescribeAlarms(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkMonitoring: %w", err)
+	}
+
+	return e.emitSimple(ServiceMonitoring, TypeAlarm, len(alarms),
+		func(i int) (string, string, map[string]string) {
+			return alarms[i].Name, "", nil
 		}), nil
 }

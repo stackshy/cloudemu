@@ -65,6 +65,7 @@ const (
 	azureTypeLogWS     = "microsoft.operationalinsights/workspaces"
 	azureTypeRedis     = "microsoft.cache/redis"
 	azureTypeLB        = "microsoft.network/loadbalancers"
+	azureTypeAlert     = "microsoft.insights/metricalerts"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -86,6 +87,7 @@ const (
 	portableLogging      = "logging"
 	portableCache        = "cache"
 	portableLB           = "loadbalancer"
+	portableMonitoring   = "monitoring"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -351,6 +353,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeLogWS:     {portableLogging, "LogGroup"},
 	azureTypeRedis:     {portableCache, "CacheCluster"},
 	azureTypeLB:        {portableLB, "LoadBalancer"},
+	azureTypeAlert:     {portableMonitoring, "Alarm"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the
