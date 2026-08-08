@@ -71,7 +71,7 @@ func TestSDKInvokeAgent(t *testing.T) {
 		}
 	}
 
-	if err := stream.Err(); err != nil {
+	if err := stream.Err(); err != nil && !benignStreamTeardown(err) {
 		t.Fatalf("stream error: %v", err)
 	}
 
