@@ -12,6 +12,7 @@ CloudEmu is a zero-cost, in-memory cloud emulation library for Go. It provides m
 - [Integration](integration.md) -- Wire CloudEmu into your real app and tests (not a throwaway demo)
 - [Topology](topology.md) -- Network topology simulation engine
 - [Getting Started](getting-started.md) -- Installation, provider creation, basic examples, configuration
+- [OCI Conventions](oci-conventions.md) -- The contract every OCI service implementation follows
 
 ## Quick Links
 
