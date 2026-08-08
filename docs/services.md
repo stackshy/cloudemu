@@ -616,6 +616,29 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 
 **Total: 12 operations**
 
+### OCI Monitoring
+
+**Optional capability:** `services/monitoring/driver.OCIMonitoring` — OCI scopes
+metrics and alarms to a compartment and identifies alarms by OCID, neither of
+which the portable model carries.
+**Provider:** `providers/oci/monitoring` | **Wire:** `server/oci/monitoring`
+
+| Operation | Route |
+|-----------|-------|
+| `PostMetricData` | `POST /20180401/metrics` |
+| `ListMetrics` | `POST /20180401/metrics/actions/listMetrics` |
+| `SummarizeMetricsData` | `POST /20180401/metrics/actions/summarizeMetricsData` |
+| `CreateAlarm` | `POST /20180401/alarms` |
+| `ListAlarms` | `GET /20180401/alarms` |
+| `ListAlarmsStatus` | `GET /20180401/alarms/status` |
+| `GetAlarm` | `GET /20180401/alarms/{alarmId}` |
+| `UpdateAlarm` | `PUT /20180401/alarms/{alarmId}` |
+| `DeleteAlarm` | `DELETE /20180401/alarms/{alarmId}` |
+| `GetAlarmHistory` | `GET /20180401/alarms/{alarmId}/history` |
+
+Every list route requires `compartmentId`. Alarm mutations are synchronous in
+real OCI Monitoring, so none of them returns a work request.
+
 ---
 
 ## 7. IAM
