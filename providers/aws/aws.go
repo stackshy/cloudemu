@@ -232,6 +232,7 @@ func New(opts ...config.Option) *Provider {
 			Secrets:      p.SecretsManager,
 			ContainerReg: p.ECR,
 			MessageQueue: p.SQS,
+			Notification: p.SNS,
 		},
 	)
 

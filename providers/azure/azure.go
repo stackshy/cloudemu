@@ -224,6 +224,7 @@ func New(opts ...config.Option) *Provider {
 			Secrets:         p.KeyVault,
 			ContainerReg:    p.ACR,
 			MessageQueue:    p.ServiceBus,
+			Notification:    p.NotificationHubs,
 		},
 	)
 

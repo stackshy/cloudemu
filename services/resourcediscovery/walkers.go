@@ -8,6 +8,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -38,6 +39,7 @@ const (
 	ServiceSecrets    = "secrets"
 	ServiceContainer  = "containerregistry"
 	ServiceQueue      = "messagequeue"
+	ServiceNotif      = "notification"
 )
 
 // Resource type constants emitted by the walkers.
@@ -63,6 +65,7 @@ const (
 	TypeSecret         = "Secret"
 	TypeRepository     = "Repository"
 	TypeQueue          = "Queue"
+	TypeTopic          = "Topic"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -793,5 +796,24 @@ func (e *Engine) walkMessageQueue(ctx context.Context) ([]Resource, error) {
 			}
 
 			return queues[i].Name, arn, queues[i].Tags
+		}), nil
+}
+
+// walkNotification surfaces notification topics (SNS / FCM / Notification Hubs)
+// so they appear in the inventory/search APIs.
+func (e *Engine) walkNotification(ctx context.Context) ([]Resource, error) {
+	topics, err := e.drivers.Notification.ListTopics(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkNotification: %w", err)
+	}
+
+	return e.emitSimple(ServiceNotif, TypeTopic, len(topics),
+		func(i int) (string, string, map[string]string) {
+			arn := topics[i].ResourceID
+			if arn == "" {
+				arn = topics[i].ID
+			}
+
+			return topics[i].Name, arn, topics[i].Tags
 		}), nil
 }

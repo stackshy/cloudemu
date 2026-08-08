@@ -60,6 +60,7 @@ const (
 	azureTypeSecret    = "microsoft.keyvault/vaults/secrets"
 	azureTypeACR       = "microsoft.containerregistry/registries"
 	azureTypeSBQueue   = "microsoft.servicebus/namespaces/queues"
+	azureTypeNotifHub  = "microsoft.notificationhubs/namespaces/notificationhubs"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -76,6 +77,7 @@ const (
 	portableSecrets      = "secrets"
 	portableContainer    = "containerregistry"
 	portableQueue        = "messagequeue"
+	portableNotif        = "notification"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -336,6 +338,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeSecret:    {portableSecrets, "Secret"},
 	azureTypeACR:       {portableContainer, "Repository"},
 	azureTypeSBQueue:   {portableQueue, "Queue"},
+	azureTypeNotifHub:  {portableNotif, "Topic"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

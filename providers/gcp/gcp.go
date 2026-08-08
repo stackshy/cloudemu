@@ -144,6 +144,7 @@ func New(opts ...config.Option) *Provider {
 			Secrets:      p.SecretManager,
 			ContainerReg: p.ArtifactRegistry,
 			MessageQueue: p.PubSub,
+			Notification: p.FCM,
 		},
 	)
 

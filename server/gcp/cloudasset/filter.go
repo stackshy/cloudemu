@@ -51,6 +51,7 @@ const (
 	atSecret          = "secretmanager.googleapis.com/Secret"
 	atArtifactRepo    = "artifactregistry.googleapis.com/Repository"
 	atPubSubSub       = "pubsub.googleapis.com/Subscription"
+	atPubSubTopic     = "pubsub.googleapis.com/Topic"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -65,6 +66,7 @@ const (
 	portableSecrets      = "secrets"
 	portableContainer    = "containerregistry"
 	portableQueue        = "messagequeue"
+	portableNotif        = "notification"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -260,6 +262,7 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 	atSecret:          {portableSecrets, "Secret"},
 	atArtifactRepo:    {portableContainer, "Repository"},
 	atPubSubSub:       {portableQueue, "Queue"},
+	atPubSubTopic:     {portableNotif, "Topic"},
 }
 
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
@@ -278,6 +281,7 @@ var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // 
 	portableSecrets + "/Secret":           atSecret,
 	portableContainer + "/Repository":     atArtifactRepo,
 	portableQueue + "/Queue":              atPubSubSub,
+	portableNotif + "/Topic":              atPubSubTopic,
 }
 
 // mapGCPAssetType translates a fully-qualified GCP asset type
