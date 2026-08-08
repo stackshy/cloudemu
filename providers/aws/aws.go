@@ -229,6 +229,7 @@ func New(opts ...config.Option) *Provider {
 			Serverless:   p.Lambda,
 			Kubernetes:   eksDiscovery{p.EKS},
 			RelationalDB: rdsDiscovery{p.RDS},
+			Secrets:      p.SecretsManager,
 		},
 	)
 

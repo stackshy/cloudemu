@@ -48,6 +48,7 @@ const (
 	atGKECluster      = "container.googleapis.com/Cluster"
 	atGKENodePool     = "container.googleapis.com/NodePool"
 	atCloudSQLInst    = "sqladmin.googleapis.com/Instance"
+	atSecret          = "secretmanager.googleapis.com/Secret"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -59,6 +60,7 @@ const (
 	portableServerless   = "serverless"
 	portableKubernetes   = "kubernetes"
 	portableRelationalDB = "relationaldb"
+	portableSecrets      = "secrets"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -251,6 +253,7 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 	atGKECluster:      {portableKubernetes, "Cluster"},
 	atGKENodePool:     {portableKubernetes, "NodeGroup"},
 	atCloudSQLInst:    {portableRelationalDB, "SqlInstance"},
+	atSecret:          {portableSecrets, "Secret"},
 }
 
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
@@ -266,6 +269,7 @@ var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // 
 	portableKubernetes + "/Cluster":       atGKECluster,
 	portableKubernetes + "/NodeGroup":     atGKENodePool,
 	portableRelationalDB + "/SqlInstance": atCloudSQLInst,
+	portableSecrets + "/Secret":           atSecret,
 }
 
 // mapGCPAssetType translates a fully-qualified GCP asset type

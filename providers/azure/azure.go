@@ -221,6 +221,7 @@ func New(opts ...config.Option) *Provider {
 			RelationalDB:    sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
 			ScaleSets:       vmssDiscovery{p.VirtualMachines},
 			AppServicePlans: appServicePlanDiscovery{p.Functions},
+			Secrets:         p.KeyVault,
 		},
 	)
 

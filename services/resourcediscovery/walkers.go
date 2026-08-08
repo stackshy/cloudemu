@@ -35,6 +35,7 @@ const (
 	// not serverless — they carry a provisioned SKU/tier — so they get their own
 	// discriminator rather than sharing ServiceServerless with Functions.
 	ServiceAppService = "appservice"
+	ServiceSecrets    = "secrets"
 )
 
 // Resource type constants emitted by the walkers.
@@ -57,6 +58,7 @@ const (
 	TypeDBSnapshot     = "DBSnapshot"
 	TypeScaleSet       = "ScaleSet"
 	TypeAppServicePlan = "AppServicePlan"
+	TypeSecret         = "Secret"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -713,4 +715,34 @@ func shortName(id string) string {
 	}
 
 	return id
+}
+
+// walkSecrets surfaces managed secrets (Secrets Manager / Secret Manager / Key
+// Vault) so they appear in the inventory/search APIs.
+func (e *Engine) walkSecrets(ctx context.Context) ([]Resource, error) {
+	secrets, err := e.drivers.Secrets.ListSecrets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkSecrets: %w", err)
+	}
+
+	out := make([]Resource, 0, len(secrets))
+
+	for i := range secrets {
+		s := &secrets[i]
+
+		arn := s.ResourceID
+		if arn == "" {
+			arn = s.ID
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceSecrets, Type: TypeSecret,
+			ID:     s.Name,
+			ARN:    arn,
+			Region: e.region,
+			Tags:   s.Tags,
+		})
+	}
+
+	return out, nil
 }

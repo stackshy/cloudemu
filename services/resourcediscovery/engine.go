@@ -7,6 +7,7 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	serverlessdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -26,6 +27,7 @@ type Drivers struct {
 	RelationalDB    RelationalDatabases
 	ScaleSets       ScaleSets
 	AppServicePlans AppServicePlans
+	Secrets         secretsdriver.Secrets
 }
 
 // AppServicePlans is the discovery capability for App Service plans (Azure
@@ -272,6 +274,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.ScaleSets != nil {
 		ws = append(ws, e.walkVMSS)
+	}
+
+	if e.drivers.Secrets != nil {
+		ws = append(ws, e.walkSecrets)
 	}
 
 	if e.drivers.AppServicePlans != nil {
