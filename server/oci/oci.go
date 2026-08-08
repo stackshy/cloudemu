@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
+	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -89,6 +90,10 @@ func New(d Drivers) *server.Server {
 
 	if d.Monitoring != nil {
 		srv.Register(monitoring.New(d.Monitoring))
+	}
+
+	if d.VCN != nil {
+		srv.Register(vcn.New(d.VCN, d.WorkRequests))
 	}
 
 	return srv

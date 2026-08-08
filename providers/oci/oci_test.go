@@ -49,20 +49,16 @@ func TestResourceDiscoveryIsWired(t *testing.T) {
 	require.NotNil(t, p.ResourceDiscovery, "discovery engine must exist even with no services")
 }
 
-func TestUnimplementedServicesAreNil(t *testing.T) {
-	// Every service slot is declared up front, so a service that has not
-	// landed yet reads as nil rather than failing to compile.
-	p := oci.New()
-
-	assert.Nil(t, p.ObjectStorage)
-	assert.Nil(t, p.Compute)
-	assert.Nil(t, p.VCN)
-}
-
 func TestIdentityIsWired(t *testing.T) {
 	p := oci.New()
 
 	require.NotNil(t, p.Identity, "the Identity slot is filled by the identity mock")
+}
+
+func TestVCNIsWired(t *testing.T) {
+	p := oci.New()
+
+	require.NotNil(t, p.VCN, "the VCN slot is filled by the vcn mock")
 }
 
 func TestNewOCIFactory(t *testing.T) {
