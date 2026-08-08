@@ -49,6 +49,8 @@ const (
 	ServiceRedshift   = "redshift"
 	ServiceSageMaker  = "sagemaker"
 	ServiceVertexAI   = "aiplatform"
+	ServiceAzureML    = "machinelearningservices"
+	ServiceCognitive  = "cognitiveservices"
 )
 
 // Resource type constants emitted by the walkers.
@@ -94,6 +96,7 @@ const (
 	TypeEndpoint          = "Endpoint"
 	TypeNotebookInstance  = "NotebookInstance"
 	TypeDataset           = "Dataset"
+	TypeAccount           = "Account"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud

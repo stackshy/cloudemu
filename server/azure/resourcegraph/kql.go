@@ -72,6 +72,8 @@ const (
 	azureTypeNATGw     = "microsoft.network/natgateways"
 	azureTypeRouteTbl  = "microsoft.network/routetables"
 	azureTypeVNetPeer  = "microsoft.network/virtualnetworks/virtualnetworkpeerings"
+	azureTypeMLWorkspc = "microsoft.machinelearningservices/workspaces"
+	azureTypeCognitive = "microsoft.cognitiveservices/accounts"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -95,6 +97,8 @@ const (
 	portableLB           = "loadbalancer"
 	portableMonitoring   = "monitoring"
 	portableIAM          = "iam"
+	portableAzureML      = "machinelearningservices"
+	portableCognitive    = "cognitiveservices"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -367,6 +371,8 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeNATGw:     {portableNetworking, "NatGateway"},
 	azureTypeRouteTbl:  {portableNetworking, "RouteTable"},
 	azureTypeVNetPeer:  {portableNetworking, "PeeringConnection"},
+	azureTypeMLWorkspc: {portableAzureML, "Workspace"},
+	azureTypeCognitive: {portableCognitive, "Account"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

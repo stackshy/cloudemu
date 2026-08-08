@@ -231,6 +231,9 @@ func New(opts ...config.Option) *Provider {
 			LoadBalancer:    p.LB,
 			Monitoring:      p.Monitor,
 			IAM:             p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				azureMLDiscovery{p.AI},
+			},
 		},
 	)
 

@@ -355,6 +355,8 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"networking/NatGateway":               "microsoft.network/natgateways",
 	"networking/RouteTable":               "microsoft.network/routetables",
 	"networking/PeeringConnection":        "microsoft.network/virtualnetworks/virtualnetworkpeerings",
+	"machinelearningservices/Workspace":   "microsoft.machinelearningservices/workspaces",
+	"cognitiveservices/Account":           "microsoft.cognitiveservices/accounts",
 }
 
 func portableToAzureType(service, typ string) string {

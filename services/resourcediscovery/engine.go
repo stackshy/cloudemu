@@ -369,6 +369,10 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	for i := range e.drivers.Extra {
 		gr := e.drivers.Extra[i]
+		if gr == nil {
+			continue
+		}
+
 		walk := func(ctx context.Context) ([]Resource, error) {
 			return e.walkGeneric(ctx, gr)
 		}
