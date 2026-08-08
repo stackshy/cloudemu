@@ -29,6 +29,7 @@ import (
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
+	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	"github.com/stackshy/cloudemu/v2/services/pricing"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
@@ -48,6 +49,7 @@ type serveConfig struct {
 	awsPort         string
 	azurePort       string
 	gcpPort         string
+	ociPort         string
 	k8sPort         string
 	accountID       string
 	region          string
@@ -79,11 +81,14 @@ func (s *stringList) Set(v string) error {
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var c serveConfig
-	fs.StringVar(&c.providers, "providers", "aws,azure,gcp", "comma-separated providers to start: aws,azure,gcp")
+	// OCI is not started by default: it stays opt-in until its services land,
+	// so the default set never binds a port that serves nothing.
+	fs.StringVar(&c.providers, "providers", "aws,azure,gcp", "comma-separated providers to start: aws,azure,gcp,oci")
 	fs.StringVar(&c.host, "host", "127.0.0.1", "host/interface to bind (use 0.0.0.0 to expose on the network)")
 	fs.StringVar(&c.awsPort, "aws-port", "4566", "port for the AWS endpoint (HTTP)")
 	fs.StringVar(&c.azurePort, "azure-port", "4568", "port for the Azure endpoint (HTTPS)")
 	fs.StringVar(&c.gcpPort, "gcp-port", "4569", "port for the GCP endpoint (HTTP)")
+	fs.StringVar(&c.ociPort, "oci-port", "4571", "port for the OCI endpoint (HTTP)")
 	fs.StringVar(&c.k8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTPS); empty to disable")
 	fs.StringVar(&c.accountID, "account-id", "000000000000", "AWS account ID / Azure subscription ID reported by the emulator")
 	fs.StringVar(&c.region, "region", "us-east-1", "default region reported by the emulator")
@@ -221,6 +226,15 @@ func runServe(args []string) error {
 				fresh["azure"] = wrap(azureserver.New(d), "azure", c.logReqs)
 				freshTargets["azure"] = seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines}
 				freshDiscovery["azure"] = cloud.ResourceDiscovery
+			case "oci":
+				cloud := cloudemu.NewOCI(opts...)
+				d := ociserver.DriversFrom(cloud)
+				d.K8sAPI = k8s
+				fresh["oci"] = wrap(ociserver.New(d), "oci", c.logReqs)
+				freshTargets["oci"] = seed.Target{
+					Storage: cloud.ObjectStorage, Database: cloud.NoSQL,
+					Secrets: cloud.Vault, Compute: cloud.Compute,
+				}
 			}
 		}
 		if k8sBackend != nil {
@@ -379,6 +393,9 @@ func runServe(args []string) error {
 		case "gcp":
 			addr = net.JoinHostPort(c.host, c.gcpPort)
 			eps.GCP = fmt.Sprintf("http://%s", addr)
+		case "oci":
+			addr = net.JoinHostPort(c.host, c.ociPort)
+			eps.OCI = fmt.Sprintf("http://%s", addr)
 		case "azure":
 			addr = net.JoinHostPort(c.host, c.azurePort)
 			var err error
@@ -443,7 +460,7 @@ func runServe(args []string) error {
 	}
 
 	if !c.quiet {
-		printBanner(os.Stdout, eps, c.admin)
+		printBanner(os.Stdout, &eps, c.admin)
 	}
 	if c.endpoints != "" {
 		if err := eps.writeFile(c.endpoints); err != nil {
@@ -744,8 +761,8 @@ func parseProviders(s string) ([]string, error) {
 		if p == "" {
 			continue
 		}
-		if p != "aws" && p != "azure" && p != "gcp" {
-			return nil, fmt.Errorf("unknown provider %q (want aws, azure, or gcp)", p)
+		if p != "aws" && p != "azure" && p != "gcp" && p != "oci" {
+			return nil, fmt.Errorf("unknown provider %q (want aws, azure, gcp, or oci)", p)
 		}
 		if !seen[p] {
 			seen[p] = true
