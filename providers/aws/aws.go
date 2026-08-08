@@ -239,6 +239,9 @@ func New(opts ...config.Option) *Provider {
 			LoadBalancer: p.ELB,
 			Monitoring:   p.CloudWatch,
 			IAM:          p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				sagemakerDiscovery{p.SageMaker},
+			},
 		},
 	)
 

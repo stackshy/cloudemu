@@ -46,6 +46,30 @@ type Drivers struct {
 	LoadBalancer    lbdriver.LoadBalancer
 	Monitoring      monitoringdriver.Monitoring
 	IAM             iamdriver.IAM
+
+	// Extra holds provider-projected capabilities for services that don't fit
+	// the shared driver interfaces (e.g. ML/GenAI). Each is walked generically.
+	Extra []GenericResources
+}
+
+// GenericResources lets a provider project arbitrary services/resources into
+// the inventory when there is no shared services/*/driver interface to walk —
+// the provider adapter does the projection and returns fully-formed rows.
+type GenericResources interface {
+	DiscoverResources(ctx context.Context) ([]DiscoveredResource, error)
+}
+
+// DiscoveredResource is a provider-neutral, fully-projected inventory row. The
+// walker copies it onto an emitted Resource verbatim (filling Region from the
+// engine default when empty), so the adapter owns service/type/id/arn/tags.
+type DiscoveredResource struct {
+	Service string
+	Type    string
+	ID      string
+	ARN     string
+	Region  string
+	Tags    map[string]string
+	Attrs   Attributes
 }
 
 // AppServicePlans is the discovery capability for App Service plans (Azure
@@ -341,6 +365,14 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 
 	if e.drivers.AppServicePlans != nil {
 		ws = append(ws, e.walkAppServicePlans)
+	}
+
+	for i := range e.drivers.Extra {
+		gr := e.drivers.Extra[i]
+		walk := func(ctx context.Context) ([]Resource, error) {
+			return e.walkGeneric(ctx, gr)
+		}
+		ws = append(ws, walk)
 	}
 
 	return ws

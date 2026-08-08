@@ -61,6 +61,8 @@ const (
 	atIAMRole         = "iam.googleapis.com/Role"
 	atRouter          = "compute.googleapis.com/Router"
 	atRoute           = "compute.googleapis.com/Route"
+	atVertexEndpoint  = "aiplatform.googleapis.com/Endpoint"
+	atVertexDataset   = "aiplatform.googleapis.com/Dataset"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -82,6 +84,7 @@ const (
 	portableLB           = "loadbalancer"
 	portableMonitoring   = "monitoring"
 	portableIAM          = "iam"
+	portableVertexAI     = "aiplatform"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -287,6 +290,8 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 	atIAMRole:         {portableIAM, "Role"},
 	atRouter:          {portableNetworking, "NatGateway"},
 	atRoute:           {portableNetworking, "RouteTable"},
+	atVertexEndpoint:  {portableVertexAI, "Endpoint"},
+	atVertexDataset:   {portableVertexAI, "Dataset"},
 }
 
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
@@ -315,6 +320,8 @@ var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // 
 	portableIAM + "/Role":                 atIAMRole,
 	portableNetworking + "/NatGateway":    atRouter,
 	portableNetworking + "/RouteTable":    atRoute,
+	portableVertexAI + "/Endpoint":        atVertexEndpoint,
+	portableVertexAI + "/Dataset":         atVertexDataset,
 }
 
 // mapGCPAssetType translates a fully-qualified GCP asset type

@@ -151,6 +151,9 @@ func New(opts ...config.Option) *Provider {
 			LoadBalancer: p.LB,
 			Monitoring:   p.CloudMonitoring,
 			IAM:          p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				vertexDiscovery{p.VertexAI},
+			},
 		},
 	)
 

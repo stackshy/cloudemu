@@ -47,6 +47,8 @@ const (
 	ServiceMonitoring = "monitoring"
 	ServiceIAM        = "iam"
 	ServiceRedshift   = "redshift"
+	ServiceSageMaker  = "sagemaker"
+	ServiceVertexAI   = "aiplatform"
 )
 
 // Resource type constants emitted by the walkers.
@@ -87,6 +89,10 @@ const (
 	TypeInternetGateway   = "InternetGateway"
 	TypePeeringConnection = "PeeringConnection"
 	TypeRouteTable        = "RouteTable"
+	TypeModel             = "Model"
+	TypeEndpoint          = "Endpoint"
+	TypeNotebookInstance  = "NotebookInstance"
+	TypeDataset           = "Dataset"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -1010,6 +1016,37 @@ func (e *Engine) walkIAM(ctx context.Context) ([]Resource, error) {
 		func(i int) (string, string, map[string]string) {
 			return groups[i].Name, groups[i].ARN, nil
 		})...)
+
+	return out, nil
+}
+
+// walkGeneric surfaces resources from a provider-projected GenericResources
+// capability (e.g. ML/GenAI services that have no shared driver interface).
+func (e *Engine) walkGeneric(ctx context.Context, gr GenericResources) ([]Resource, error) {
+	items, err := gr.DiscoverResources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkGeneric: %w", err)
+	}
+
+	out := make([]Resource, 0, len(items))
+
+	for i := range items {
+		d := items[i]
+
+		region := d.Region
+		if region == "" {
+			region = e.region
+		}
+
+		r := Resource{
+			Provider: e.provider, Service: d.Service, Type: d.Type,
+			ID:     d.ID,
+			ARN:    d.ARN,
+			Region: region, Tags: copyTags(d.Tags),
+		}
+		applyAttrs(&r, &d.Attrs)
+		out = append(out, r)
+	}
 
 	return out, nil
 }
