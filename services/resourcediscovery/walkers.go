@@ -16,6 +16,7 @@ const (
 	ProviderAWS   = "aws"
 	ProviderAzure = "azure"
 	ProviderGCP   = "gcp"
+	ProviderOCI   = "oci"
 )
 
 // Service name constants embedded in Resource.Service. These are the

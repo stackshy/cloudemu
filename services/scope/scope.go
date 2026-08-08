@@ -1,8 +1,9 @@
 // Package scope identifies the cloud-side container a resource lives in —
-// the Azure subscription/resource group or the GCP project. Drivers record
-// a resource's scope at create time and filter lists by it, so scoped list
-// endpoints (ListByResourceGroup, per-project lists) return only what the
-// caller's scope actually contains.
+// the Azure subscription/resource group, the GCP project, or the OCI
+// compartment. Drivers record a resource's scope at create time and filter
+// lists by it, so scoped list endpoints (ListByResourceGroup, per-project
+// lists, compartmentId queries) return only what the caller's scope actually
+// contains.
 package scope
 
 // Scope locates a resource. The zero value means "unscoped": AWS resources
@@ -12,6 +13,9 @@ type Scope struct {
 	Subscription  string
 	ResourceGroup string
 	Project       string
+	// Compartment is the OCI compartment OCID. Matching is exact: real OCI
+	// only descends the compartment tree when compartmentIdInSubtree is set.
+	Compartment string
 }
 
 // IsZero reports whether no scope information is set.
@@ -35,6 +39,9 @@ func (s Scope) Matches(f Scope) bool {
 		return false
 	}
 	if f.Project != "" && s.Project != f.Project {
+		return false
+	}
+	if f.Compartment != "" && s.Compartment != f.Compartment {
 		return false
 	}
 	return true
