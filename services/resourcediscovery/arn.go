@@ -238,3 +238,19 @@ func (e *Engine) serverlessFunctionARN(name string) string {
 		return name
 	}
 }
+
+// monitoringAlarmARN builds the canonical identifier for a metric alarm/alert,
+// so the emitted resource carries a stable ARN rather than falling back to the
+// bare alarm name.
+func (e *Engine) monitoringAlarmARN(name string) string {
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("cloudwatch", e.region, e.accountID, "alarm:"+name)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Insights", "metricAlerts", name)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "alertPolicies", name)
+	default:
+		return name
+	}
+}

@@ -356,6 +356,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"networking/RouteTable":               "microsoft.network/routetables",
 	"networking/PeeringConnection":        "microsoft.network/virtualnetworks/virtualnetworkpeerings",
 	"machinelearningservices/Workspace":   "microsoft.machinelearningservices/workspaces",
+	"machinelearningservices/Endpoint":    "microsoft.machinelearningservices/workspaces/onlineendpoints",
 	"cognitiveservices/Account":           "microsoft.cognitiveservices/accounts",
 }
 

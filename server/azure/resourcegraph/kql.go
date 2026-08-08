@@ -73,6 +73,7 @@ const (
 	azureTypeRouteTbl  = "microsoft.network/routetables"
 	azureTypeVNetPeer  = "microsoft.network/virtualnetworks/virtualnetworkpeerings"
 	azureTypeMLWorkspc = "microsoft.machinelearningservices/workspaces"
+	azureTypeMLEndpt   = "microsoft.machinelearningservices/workspaces/onlineendpoints"
 	azureTypeCognitive = "microsoft.cognitiveservices/accounts"
 )
 
@@ -372,6 +373,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeRouteTbl:  {portableNetworking, "RouteTable"},
 	azureTypeVNetPeer:  {portableNetworking, "PeeringConnection"},
 	azureTypeMLWorkspc: {portableAzureML, "Workspace"},
+	azureTypeMLEndpt:   {portableAzureML, "Endpoint"},
 	azureTypeCognitive: {portableCognitive, "Account"},
 }
 

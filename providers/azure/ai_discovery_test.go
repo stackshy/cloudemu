@@ -22,6 +22,12 @@ func TestResourceDiscoverySurfacesAzureML(t *testing.T) {
 		t.Fatalf("CreateMLWorkspace: %v", err)
 	}
 
+	if _, err := p.AI.CreateEndpoint(ctx, aidriver.EndpointConfig{
+		Workspace: "ml-hub", ResourceGroup: "rg1", Name: "score-ep", Kind: "online",
+	}); err != nil {
+		t.Fatalf("CreateEndpoint: %v", err)
+	}
+
 	res, err := p.ResourceDiscovery.List(ctx, resourcediscovery.Query{
 		Services: []string{resourcediscovery.ServiceAzureML},
 	})
@@ -29,7 +35,7 @@ func TestResourceDiscoverySurfacesAzureML(t *testing.T) {
 		t.Fatalf("discovery List: %v", err)
 	}
 
-	var found bool
+	var found, foundEndpoint bool
 	for _, r := range res {
 		if r.Type == resourcediscovery.TypeWorkspace && r.ID == "ml-hub" {
 			found = true
@@ -37,6 +43,14 @@ func TestResourceDiscoverySurfacesAzureML(t *testing.T) {
 				t.Errorf("workspace tags not surfaced: %+v", r.Tags)
 			}
 		}
+
+		if r.Type == resourcediscovery.TypeEndpoint && r.ID == "score-ep" {
+			foundEndpoint = true
+		}
+	}
+
+	if !foundEndpoint {
+		t.Errorf("expected Azure ML online endpoint in discovery output")
 	}
 
 	if !found {

@@ -78,6 +78,24 @@ func awsToPortableServices(s string) []string {
 		return []string{portableServiceServerless}
 	case awsServiceRDS:
 		return []string{portableServiceRelationalDB}
+	case awsServiceSecrets:
+		return []string{portableServiceSecrets}
+	case awsServiceECR:
+		return []string{portableServiceContainer}
+	case awsServiceSQS:
+		return []string{portableServiceQueue}
+	case awsServiceSNS:
+		return []string{portableServiceNotif}
+	case awsServiceRoute53:
+		return []string{portableServiceDNS}
+	case awsServiceLogs:
+		return []string{portableServiceLogging}
+	case awsServiceCache:
+		return []string{portableServiceCache}
+	case awsServiceELB:
+		return []string{portableServiceLB}
+	case awsServiceCW:
+		return []string{portableServiceMonitoring}
 	default:
 		return []string{s}
 	}

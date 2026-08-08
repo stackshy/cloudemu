@@ -997,7 +997,7 @@ func (e *Engine) walkMonitoring(ctx context.Context) ([]Resource, error) {
 
 	return e.emitSimple(ServiceMonitoring, TypeAlarm, len(alarms),
 		func(i int) (string, string, map[string]string) {
-			return alarms[i].Name, "", nil
+			return alarms[i].Name, e.monitoringAlarmARN(alarms[i].Name), nil
 		}), nil
 }
 
