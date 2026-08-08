@@ -322,6 +322,7 @@ func extractSubscription(arn string) string {
 var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	"compute/Instance":                    "microsoft.compute/virtualmachines",
 	"compute/Volume":                      "microsoft.compute/disks",
+	"compute/Snapshot":                    "microsoft.compute/snapshots",
 	"compute/ScaleSet":                    "microsoft.compute/virtualmachinescalesets",
 	"networking/VPC":                      "microsoft.network/virtualnetworks",
 	"networking/Subnet":                   "microsoft.network/subnets",

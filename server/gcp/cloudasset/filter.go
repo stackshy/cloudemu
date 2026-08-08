@@ -37,6 +37,7 @@ const (
 const (
 	atComputeInstance = "compute.googleapis.com/Instance"
 	atComputeDisk     = "compute.googleapis.com/Disk"
+	atComputeSnapshot = "compute.googleapis.com/Snapshot"
 	atNetwork         = "compute.googleapis.com/Network"
 	atSubnetwork      = "compute.googleapis.com/Subnetwork"
 	atFirewall        = "compute.googleapis.com/Firewall"
@@ -266,6 +267,7 @@ type portableResourceType struct{ service, typ string }
 var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
 	atComputeInstance: {portableCompute, "Instance"},
 	atComputeDisk:     {portableCompute, "Volume"},
+	atComputeSnapshot: {portableCompute, "Snapshot"},
 	atNetwork:         {portableNetworking, "VPC"},
 	atSubnetwork:      {portableNetworking, "Subnet"},
 	atFirewall:        {portableNetworking, "SecurityGroup"},
@@ -298,6 +300,7 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	portableCompute + "/Instance":         atComputeInstance,
 	portableCompute + "/Volume":           atComputeDisk,
+	portableCompute + "/Snapshot":         atComputeSnapshot,
 	portableNetworking + "/VPC":           atNetwork,
 	portableNetworking + "/Subnet":        atSubnetwork,
 	portableNetworking + "/SecurityGroup": atFirewall,

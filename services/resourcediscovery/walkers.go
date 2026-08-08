@@ -55,6 +55,7 @@ const (
 const (
 	TypeInstance          = "Instance"
 	TypeVolume            = "Volume"
+	TypeSnapshot          = "Snapshot"
 	TypeVPC               = "VPC"
 	TypeSubnet            = "Subnet"
 	TypeSecurityGroup     = "SecurityGroup"
@@ -152,7 +153,28 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		return nil, err
 	}
 
-	return append(out, vols...), nil
+	out = append(out, vols...)
+
+	snaps, err := e.walkSnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(out, snaps...), nil
+}
+
+// walkSnapshots surfaces block-storage snapshots (EBS / GCE / Azure disk
+// snapshots) so they appear in the inventory/search APIs.
+func (e *Engine) walkSnapshots(ctx context.Context) ([]Resource, error) {
+	snaps, err := e.drivers.Compute.DescribeSnapshots(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkCompute snapshots: %w", err)
+	}
+
+	return e.emitSimple(ServiceCompute, TypeSnapshot, len(snaps),
+		func(i int) (string, string, map[string]string) {
+			return shortName(snaps[i].ID), e.computeSnapshotARN(snaps[i].ID), snaps[i].Tags
+		}), nil
 }
 
 // walkVolumes surfaces block volumes (EBS / Azure managed disks / GCE PDs) as

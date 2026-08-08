@@ -61,6 +61,25 @@ func (e *Engine) computeVolumeARN(id string) string {
 	}
 }
 
+// computeSnapshotARN canonicalizes a block-storage snapshot id, using an
+// already-qualified id verbatim and otherwise building a per-provider one.
+func (e *Engine) computeSnapshotARN(id string) string {
+	if isQualifiedID(id) {
+		return id
+	}
+
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("ec2", e.region, e.accountID, "snapshot/"+id)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Compute", "snapshots", id)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "global/snapshots", id)
+	default:
+		return id
+	}
+}
+
 // isQualifiedID reports whether id is already a canonical cloud identifier and
 // should be used as-is rather than rebuilt.
 func isQualifiedID(id string) bool {

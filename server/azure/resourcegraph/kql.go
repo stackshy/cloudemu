@@ -36,6 +36,7 @@ import (
 const (
 	azureTypeVM        = "microsoft.compute/virtualmachines"
 	azureTypeDisk      = "microsoft.compute/disks"
+	azureTypeSnapshot  = "microsoft.compute/snapshots"
 	azureTypeVMSS      = "microsoft.compute/virtualmachinescalesets"
 	azureTypeVNet      = "microsoft.network/virtualnetworks"
 	azureTypeSubnet    = "microsoft.network/subnets"
@@ -330,6 +331,7 @@ type portableResourceType struct{ service, typ string }
 var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
 	azureTypeVM:        {portableCompute, "Instance"},
 	azureTypeDisk:      {portableCompute, "Volume"},
+	azureTypeSnapshot:  {portableCompute, "Snapshot"},
 	azureTypeVMSS:      {portableCompute, "ScaleSet"},
 	azureTypeVNet:      {portableNetworking, "VPC"},
 	azureTypeSubnet:    {portableNetworking, "Subnet"},
