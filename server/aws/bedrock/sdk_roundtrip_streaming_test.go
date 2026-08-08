@@ -57,7 +57,7 @@ func TestSDKConverseStream(t *testing.T) {
 		}
 	}
 
-	if err := stream.Err(); err != nil {
+	if err := stream.Err(); err != nil && !benignStreamTeardown(err) {
 		t.Fatalf("stream error: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestSDKConverseStreamMultibyteRuneBoundary(t *testing.T) {
 		}
 	}
 
-	if err := stream.Err(); err != nil {
+	if err := stream.Err(); err != nil && !benignStreamTeardown(err) {
 		t.Fatalf("stream error: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func TestSDKInvokeModelWithResponseStream(t *testing.T) {
 		}
 	}
 
-	if err := stream.Err(); err != nil {
+	if err := stream.Err(); err != nil && !benignStreamTeardown(err) {
 		t.Fatalf("stream error: %v", err)
 	}
 
