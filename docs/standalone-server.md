@@ -223,15 +223,18 @@ cloudemu cost --json   # machine-readable, for CI budgets
 It walks the current inventory (the cross-cloud resource-discovery engine) and
 prices the **always-on** resources — compute instances (per instance type/SKU),
 relational-DB instances (per class), Kubernetes control planes, idle public IPs,
-and sized volumes — using **per-SKU hourly rates × a per-region multiplier × 730h**,
-grouped by provider and service. SKU and region come from each resource's own
-attributes, so an `m5.4xlarge` in `sa-east-1` prices higher than a `t3.micro` in
-`us-east-1`.
+and block volumes across AWS/Azure/GCP (per disk type × size) — using **per-SKU
+hourly rates × a per-region multiplier × 730h**, grouped by provider and service.
+SKU and region come from each resource's own attributes, so an `m5.4xlarge` in
+`sa-east-1` prices higher than a `t3.micro` in `us-east-1`. Load balancers and
+NAT gateways have flat rates wired and price as soon as they become discoverable
+in the inventory.
 
 The rate tables are **representative on-demand prices** (AWS/Azure/GCP compute,
-DB, storage, and networking), not a live pricing-API feed — accurate to roughly
-two significant figures. Usage-based dimensions (object-storage operations, NoSQL
-throughput, data transfer, per-request) are **not** estimated. It's meant to
+DB, disk, and networking), not a live pricing-API feed — accurate to roughly
+two significant figures. Usage-based dimensions are **not** estimated — including
+**object storage** (billed per-GB stored, which the inventory can't observe), as
+well as NoSQL throughput, data transfer, and per-request charges. It's meant to
 catch "why is this so expensive?" surprises early, not to reconcile invoices; a
 live pricing-API integration is a planned follow-up.
 
