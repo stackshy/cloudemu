@@ -80,7 +80,8 @@ scope.Scope{Compartment: compartmentID}
 Matching is exact — real OCI only descends the compartment tree when the caller
 passes `compartmentIdInSubtree=true`. Handlers get the parameter with
 `ocirest.RequireCompartmentID(w, r)`, which writes the 400 for you when it is
-missing.
+missing. Use it on every list endpoint; do not fall back to listing across all
+compartments, which real OCI never does.
 
 ## Wire handlers
 
@@ -88,13 +89,17 @@ Use `server/wire/ocirest` for everything that touches the response:
 
 | Helper | Use |
 |---|---|
-| `WriteJSON(w, status, v)` | Success. Stamps `opc-request-id` |
-| `WriteDriverError(w, err)` | Driver errors. Maps the canonical code to OCI's status and code |
-| `WriteError(w, status, code, msg)` | Errors raised in the handler itself |
+| `WriteJSON(w, r, status, v)` | Success. Stamps `opc-request-id` |
+| `WriteDriverError(w, r, err)` | Driver errors. Maps the canonical code to OCI's status and code |
+| `WriteError(w, r, status, code, msg)` | Errors raised in the handler itself |
 | `DecodeJSON(w, r, &v)` | Request bodies. Returns false once it has written the 400 |
 | `RequireCompartmentID(w, r)` | The required list parameter |
-| `Limit(r)` / `Page(r)` / `SetNextPage(w, tok)` | Pagination |
+| `Limit(r)` / `Page(r)` / `SetNextPage(w, tok)` | Pagination. `Limit` caps at `MaxLimit` |
 | `SetWorkRequestID(w, id)` | Async mutations |
+
+The write helpers take the `*http.Request` so they can echo the caller's
+`opc-request-id`, which SDKs and logs correlate on, and mint one only when the
+caller sent none. Pass the request through; do not pass nil.
 
 Never write an error body by hand. `WriteDriverError` is what keeps
 `NotFound` and `PermissionDenied` collapsing into the single
@@ -124,7 +129,7 @@ id := d.WorkRequests.Accept("CREATE_INSTANCE", compartmentID, workrequest.Resour
     Identifier: inst.ID,
 })
 ocirest.SetWorkRequestID(w, id)
-ocirest.WriteJSON(w, http.StatusAccepted, nil)
+ocirest.WriteJSON(w, r, http.StatusAccepted, nil)
 ```
 
 Every CloudEmu mutation completes synchronously, so the request is already

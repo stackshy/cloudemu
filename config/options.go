@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
+)
 
 // Defaults applied when a caller sets no corresponding option.
 const (
@@ -11,8 +15,9 @@ const (
 	// DefaultOCIRegion is used when Region is still DefaultRegion.
 	DefaultOCIRegion = "us-ashburn-1"
 
-	// DefaultRealm is the OCI realm new OCIDs are minted in.
-	DefaultRealm = "oc1"
+	// DefaultRealm is the OCI realm new OCIDs are minted in. Aliased from
+	// idgen, which owns the OCID format, so the two cannot drift.
+	DefaultRealm = idgen.DefaultRealm
 
 	// DefaultTenancyOCID is the built-in tenancy, and the root compartment.
 	DefaultTenancyOCID = "ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy"

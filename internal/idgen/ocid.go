@@ -56,8 +56,10 @@ var regionCodes = map[string]string{
 }
 
 // RegionCode returns the three-letter code for an OCI region name. An
-// unrecognized region falls back to its city segment, so regions this table
-// predates still get distinct codes.
+// unrecognized region falls back to the first three letters of its city
+// segment, which is not the real IATA code and can collide with another
+// unmapped city sharing that prefix. The table covers every current
+// commercial region, so the fallback only applies to ones added later.
 func RegionCode(region string) string {
 	if code, ok := regionCodes[region]; ok {
 		return code

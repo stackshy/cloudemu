@@ -156,21 +156,32 @@ func (*Handler) Matches(r *http.Request) bool {
 }
 
 // ServeHTTP answers a single work request, its sub-collections, or a list.
+//
+// The malformed-path branch is unreachable through server.Server, which calls
+// Matches first, but ServeHTTP is exported and stays correct when mounted on a
+// plain mux.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id, sub, ok := parse(r.URL.Path)
 	if !ok {
-		ocirest.WriteError(w, http.StatusBadRequest, "InvalidParameter", "malformed work request path")
+		ocirest.WriteError(w, r, http.StatusBadRequest, "InvalidParameter", "malformed work request path")
 		return
 	}
 
 	if id == "" {
-		ocirest.WriteJSON(w, http.StatusOK, h.store.List(ocirest.CompartmentID(r)))
+		// ListWorkRequests requires compartmentId in real OCI.
+		compartmentID, given := ocirest.RequireCompartmentID(w, r)
+		if !given {
+			return
+		}
+
+		ocirest.WriteJSON(w, r, http.StatusOK, h.store.List(compartmentID))
+
 		return
 	}
 
 	wr, found := h.store.Get(id)
 	if !found {
-		ocirest.WriteError(w, http.StatusNotFound, "NotAuthorizedOrNotFound", "work request "+id+" not found")
+		ocirest.WriteError(w, r, http.StatusNotFound, "NotAuthorizedOrNotFound", "work request "+id+" not found")
 		return
 	}
 
@@ -179,9 +190,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// after a terminal status.
 	switch sub {
 	case "errors", "logs":
-		ocirest.WriteJSON(w, http.StatusOK, []any{})
+		ocirest.WriteJSON(w, r, http.StatusOK, []any{})
 	default:
-		ocirest.WriteJSON(w, http.StatusOK, wr)
+		ocirest.WriteJSON(w, r, http.StatusOK, wr)
 	}
 }
 

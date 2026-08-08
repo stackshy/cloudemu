@@ -16,8 +16,9 @@ import (
 
 func TestWriteJSONStampsRequestID(t *testing.T) {
 	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/20160918/instances", nil)
 
-	ocirest.WriteJSON(rec, http.StatusOK, map[string]string{"id": "ocid1.instance.oc1.iad.abc"})
+	ocirest.WriteJSON(rec, req, http.StatusOK, map[string]string{"id": "ocid1.instance.oc1.iad.abc"})
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
@@ -25,10 +26,42 @@ func TestWriteJSONStampsRequestID(t *testing.T) {
 	assert.JSONEq(t, `{"id":"ocid1.instance.oc1.iad.abc"}`, rec.Body.String())
 }
 
+func TestRequestIDIsEchoedWhenCallerSendsOne(t *testing.T) {
+	// SDKs and logs correlate on the caller's opc-request-id, so it must come
+	// back rather than being replaced by a freshly minted one.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/20160918/instances", nil)
+	req.Header.Set(ocirest.HeaderRequestID, "caller-supplied-id")
+
+	ocirest.WriteJSON(rec, req, http.StatusOK, nil)
+
+	assert.Equal(t, "caller-supplied-id", rec.Header().Get(ocirest.HeaderRequestID))
+}
+
+func TestRequestIDIsMintedWhenCallerSendsNone(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/20160918/instances", nil)
+
+	ocirest.WriteJSON(rec, req, http.StatusOK, nil)
+
+	assert.NotEmpty(t, rec.Header().Get(ocirest.HeaderRequestID))
+}
+
+func TestRequestIDEchoedOnErrorsToo(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/20160918/instances", nil)
+	req.Header.Set(ocirest.HeaderRequestID, "caller-supplied-id")
+
+	ocirest.WriteDriverError(rec, req, cerrors.New(cerrors.NotFound, "gone"))
+
+	assert.Equal(t, "caller-supplied-id", rec.Header().Get(ocirest.HeaderRequestID))
+}
+
 func TestWriteJSONNilBodyWritesNothing(t *testing.T) {
 	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/20160918/instances", nil)
 
-	ocirest.WriteJSON(rec, http.StatusNoContent, nil)
+	ocirest.WriteJSON(rec, req, http.StatusNoContent, nil)
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Empty(t, rec.Body.String())
@@ -100,8 +133,9 @@ func TestWriteDriverError(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/20160918/instances", nil)
 
-			ocirest.WriteDriverError(rec, tc.err)
+			ocirest.WriteDriverError(rec, req, tc.err)
 
 			assert.Equal(t, tc.expectStatus, rec.Code)
 
@@ -197,6 +231,8 @@ func TestLimit(t *testing.T) {
 		{name: "unparseable falls back", url: "/x?limit=abc", expect: ocirest.DefaultLimit},
 		{name: "zero falls back", url: "/x?limit=0", expect: ocirest.DefaultLimit},
 		{name: "negative falls back", url: "/x?limit=-5", expect: ocirest.DefaultLimit},
+		{name: "at the cap", url: "/x?limit=1000", expect: ocirest.MaxLimit},
+		{name: "above the cap is clamped", url: "/x?limit=999999", expect: ocirest.MaxLimit},
 	}
 
 	for _, tc := range tests {

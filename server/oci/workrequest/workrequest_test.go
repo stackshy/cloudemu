@@ -178,3 +178,34 @@ func TestHandlerListsByCompartment(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "CREATE_INSTANCE", got[0].OperationType)
 }
+
+func TestHandlerListRequiresCompartmentID(t *testing.T) {
+	// Real OCI ListWorkRequests 400s without compartmentId rather than
+	// listing across every compartment.
+	s := newStore()
+	s.Accept("CREATE_INSTANCE", "compartment-a")
+	h := workrequest.NewHandler(s)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/20160918/workRequests", nil))
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var body ocirest.ErrorBody
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "InvalidParameter", body.Code)
+}
+
+func TestHandlerEchoesRequestID(t *testing.T) {
+	s := newStore()
+	id := s.Accept("CREATE_INSTANCE", "compartment-a")
+	h := workrequest.NewHandler(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/20160918/workRequests/"+id, nil)
+	req.Header.Set(ocirest.HeaderRequestID, "caller-supplied-id")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, "caller-supplied-id", rec.Header().Get(ocirest.HeaderRequestID))
+}

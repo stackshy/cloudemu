@@ -43,7 +43,7 @@ func TestNewCreatesWorkRequestStoreWhenAbsent(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	resp, err := ts.Client().Get(ts.URL + "/20160918/workRequests")
+	resp, err := ts.Client().Get(ts.URL + "/20160918/workRequests?compartmentId=ocid1.compartment.oc1..abc")
 	require.NoError(t, err)
 
 	defer resp.Body.Close()
@@ -94,7 +94,7 @@ func TestDriversFromProviderBuildsServer(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	resp, err := ts.Client().Get(ts.URL + "/20160918/workRequests")
+	resp, err := ts.Client().Get(ts.URL + "/20160918/workRequests?compartmentId=ocid1.compartment.oc1..abc")
 	require.NoError(t, err)
 
 	defer resp.Body.Close()

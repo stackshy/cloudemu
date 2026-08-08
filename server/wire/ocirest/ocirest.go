@@ -22,8 +22,12 @@ const (
 // codeInternalServerError is OCI's error code for an unmapped failure.
 const codeInternalServerError = "InternalServerError"
 
-// DefaultLimit is the page size used when a list request omits limit.
-const DefaultLimit = 100
+// Page size bounds. Real OCI caps a page at 1000 regardless of what the
+// caller asks for.
+const (
+	DefaultLimit = 100
+	MaxLimit     = 1000
+)
 
 // ErrorBody is OCI's error response shape.
 type ErrorBody struct {
@@ -31,11 +35,11 @@ type ErrorBody struct {
 	Message string `json:"message"`
 }
 
-// WriteJSON writes a JSON response with the given status code, stamping an
+// WriteJSON writes a JSON response with the given status code, stamping the
 // opc-request-id.
-func WriteJSON(w http.ResponseWriter, status int, v any) {
+func WriteJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	setRequestID(w)
+	setRequestID(w, r)
 	w.WriteHeader(status)
 
 	if v == nil {
@@ -46,9 +50,9 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // WriteError writes an OCI error response.
-func WriteError(w http.ResponseWriter, status int, code, message string) {
+func WriteError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
-	setRequestID(w)
+	setRequestID(w, r)
 	w.WriteHeader(status)
 
 	json.NewEncoder(w).Encode(ErrorBody{ //nolint:errcheck // best-effort response
@@ -58,9 +62,9 @@ func WriteError(w http.ResponseWriter, status int, code, message string) {
 }
 
 // WriteDriverError maps a driver error onto OCI's status and error code.
-func WriteDriverError(w http.ResponseWriter, err error) {
+func WriteDriverError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code := statusFor(cerrors.GetCode(err))
-	WriteError(w, status, code, err.Error())
+	WriteError(w, r, status, code, err.Error())
 }
 
 // statusFor maps a canonical error code onto OCI's HTTP status and error code.
@@ -97,7 +101,7 @@ func statusFor(code cerrors.Code) (status int, ociCode string) {
 // returning false if it cannot be decoded.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		WriteError(w, http.StatusBadRequest, "InvalidParameter", "invalid JSON: "+err.Error())
+		WriteError(w, r, http.StatusBadRequest, "InvalidParameter", "invalid JSON: "+err.Error())
 		return false
 	}
 
@@ -115,7 +119,7 @@ func CompartmentID(r *http.Request) string {
 func RequireCompartmentID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := CompartmentID(r)
 	if id == "" {
-		WriteError(w, http.StatusBadRequest, "InvalidParameter", "compartmentId is required")
+		WriteError(w, r, http.StatusBadRequest, "InvalidParameter", "compartmentId is required")
 		return "", false
 	}
 
@@ -123,7 +127,7 @@ func RequireCompartmentID(w http.ResponseWriter, r *http.Request) (string, bool)
 }
 
 // Limit returns the limit query parameter, falling back to DefaultLimit when
-// it is absent or unparseable.
+// it is absent or unparseable and capping at MaxLimit.
 func Limit(r *http.Request) int {
 	raw := r.URL.Query().Get("limit")
 	if raw == "" {
@@ -135,7 +139,7 @@ func Limit(r *http.Request) int {
 		return DefaultLimit
 	}
 
-	return n
+	return min(n, MaxLimit)
 }
 
 // Page returns the page query parameter, OCI's opaque pagination cursor.
@@ -156,9 +160,19 @@ func SetWorkRequestID(w http.ResponseWriter, id string) {
 	w.Header().Set(HeaderWorkRequestID, id)
 }
 
-// setRequestID echoes the caller's opc-request-id, or mints one.
-func setRequestID(w http.ResponseWriter) {
-	if w.Header().Get(HeaderRequestID) == "" {
-		w.Header().Set(HeaderRequestID, idgen.GenerateID("cloudemu"))
+// setRequestID echoes the caller's opc-request-id, which SDKs and logs
+// correlate on, and mints one when the caller sent none.
+func setRequestID(w http.ResponseWriter, r *http.Request) {
+	if w.Header().Get(HeaderRequestID) != "" {
+		return
 	}
+
+	if r != nil {
+		if id := r.Header.Get(HeaderRequestID); id != "" {
+			w.Header().Set(HeaderRequestID, id)
+			return
+		}
+	}
+
+	w.Header().Set(HeaderRequestID, idgen.GenerateID("cloudemu"))
 }
