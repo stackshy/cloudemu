@@ -2,6 +2,7 @@
 package kms
 
 import (
+	"crypto"
 	"fmt"
 	"strings"
 	"sync"
@@ -32,8 +33,9 @@ type keyData struct {
 	policy string
 
 	// material holds the raw key bytes for symmetric/HMAC keys; asymmetric
-	// keys keep their parsed key in signer (populated in the crypto phase).
+	// keys keep their parsed private key in privKey.
 	material []byte
+	privKey  crypto.PrivateKey
 
 	mu sync.RWMutex
 }

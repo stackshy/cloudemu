@@ -8,6 +8,7 @@
 package kms
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -43,6 +44,19 @@ func New(k kmsdriver.KMS) *Handler {
 		"TagResource":          h.tagResource,
 		"UntagResource":        h.untagResource,
 		"ListResourceTags":     h.listResourceTags,
+
+		"Encrypt":                             h.encrypt,
+		"Decrypt":                             h.decrypt,
+		"ReEncrypt":                           h.reEncrypt,
+		"GenerateDataKey":                     h.generateDataKey,
+		"GenerateDataKeyWithoutPlaintext":     h.generateDataKeyWithoutPlaintext,
+		"GenerateDataKeyPair":                 h.generateDataKeyPair,
+		"GenerateDataKeyPairWithoutPlaintext": h.generateDataKeyPairWithoutPlaintext,
+		"GenerateRandom":                      h.generateRandom,
+		"Sign":                                h.sign,
+		"Verify":                              h.verify,
+		"GenerateMac":                         h.generateMac,
+		"VerifyMac":                           h.verifyMac,
 	}
 
 	return h
@@ -66,6 +80,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	wire.WriteJSONError(w, http.StatusBadRequest, "UnknownOperationException",
 		"unsupported KMS operation: "+r.Header.Get("X-Amz-Target"))
+}
+
+// dispatch decodes a JSON request of type Req, invokes call, and writes the
+// returned value as JSON (or maps the error). It collapses the identical
+// decode/call/respond boilerplate every operation would otherwise repeat.
+func dispatch[Req any](
+	h *Handler, w http.ResponseWriter, r *http.Request,
+	call func(*Handler, context.Context, *Req) (any, error),
+) {
+	var req Req
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	out, err := call(h, r.Context(), &req)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, out)
 }
 
 // writeErr maps a driver error to the closest KMS JSON error type.

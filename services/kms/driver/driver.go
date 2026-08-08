@@ -95,6 +95,8 @@ type Alias struct {
 // identifier accept a key ID, key ARN, alias name ("alias/foo"), or alias ARN
 // and resolve them uniformly.
 type KMS interface {
+	Crypto
+
 	// Key lifecycle.
 	CreateKey(ctx context.Context, in CreateKeyInput) (*KeyMetadata, error)
 	DescribeKey(ctx context.Context, keyID string) (*KeyMetadata, error)

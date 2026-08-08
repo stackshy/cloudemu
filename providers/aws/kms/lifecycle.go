@@ -59,10 +59,18 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 
 	// EXTERNAL-origin keys have no material until it is imported; they start
 	// PendingImport and disabled.
-	if origin == driver.OriginExternal {
+	switch {
+	case origin == driver.OriginExternal:
 		kd.meta.Enabled = false
 		kd.meta.KeyState = driver.StatePendingImport
-	} else {
+	case isAsymmetricSpec(spec):
+		priv, err := generateAsymmetric(spec)
+		if err != nil {
+			return nil, err
+		}
+
+		kd.privKey = priv
+	default:
 		mat, err := generateMaterial(spec)
 		if err != nil {
 			return nil, err
