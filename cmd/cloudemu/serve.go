@@ -31,6 +31,8 @@ import (
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
+	"github.com/stackshy/cloudemu/v2/services/pricing"
+	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
 // errStateFileRequired is returned when --persist is set without --state-file.
@@ -154,8 +156,9 @@ func runServe(args []string) error {
 
 	var (
 		rebuildMu sync.Mutex
-		targets   map[string]seed.Target // provider → current drivers, for seeding
-		netEngine *topology.Engine       // AWS network-reachability engine (nil if aws not selected)
+		targets   map[string]seed.Target               // provider → current drivers, for seeding
+		netEngine *topology.Engine                     // AWS network-reachability engine (nil if aws not selected)
+		discovery map[string]*resourcediscovery.Engine // provider → inventory engine, for cost estimation
 	)
 	rebuild := func() {
 		// Serialise resets so two concurrent /_cloudemu/reset calls can't
@@ -188,6 +191,7 @@ func runServe(args []string) error {
 		}
 		fresh := make(map[string]http.Handler, len(sel))
 		freshTargets := make(map[string]seed.Target, len(sel))
+		freshDiscovery := make(map[string]*resourcediscovery.Engine, len(sel))
 
 		var freshEngine *topology.Engine
 
@@ -205,6 +209,7 @@ func runServe(args []string) error {
 				fresh["aws"] = wrap(awsserver.New(d), "aws", c.logReqs)
 				freshTargets["aws"] = seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2}
 				freshEngine = topology.New(cloud.EC2, cloud.VPC, cloud.Route53)
+				freshDiscovery["aws"] = cloud.ResourceDiscovery
 			case "gcp":
 				cloud := cloudemu.NewGCP(opts...)
 				d := gcpserver.DriversFrom(cloud)
@@ -212,6 +217,7 @@ func runServe(args []string) error {
 				cloud.GKE.SetK8sAPI(k8s)
 				fresh["gcp"] = wrap(gcpserver.New(d), "gcp", c.logReqs)
 				freshTargets["gcp"] = seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE}
+				freshDiscovery["gcp"] = cloud.ResourceDiscovery
 			case "azure":
 				cloud := cloudemu.NewAzure(opts...)
 				d := azureserver.DriversFrom(cloud)
@@ -219,6 +225,7 @@ func runServe(args []string) error {
 				cloud.AKS.SetK8sAPI(k8s)
 				fresh["azure"] = wrap(azureserver.New(d), "azure", c.logReqs)
 				freshTargets["azure"] = seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines}
+				freshDiscovery["azure"] = cloud.ResourceDiscovery
 			case "oci":
 				cloud := cloudemu.NewOCI(opts...)
 				d := ociserver.DriversFrom(cloud)
@@ -238,6 +245,7 @@ func runServe(args []string) error {
 		}
 		targets = freshTargets
 		netEngine = freshEngine
+		discovery = freshDiscovery
 	}
 	rebuild() // populate the backends before serving
 
@@ -329,26 +337,33 @@ func runServe(args []string) error {
 		return persist.RestoreAll(context.Background(), &snap, cur)
 	}
 
-	// netHandler serves the network-topology control endpoints
-	// (/_cloudemu/net/*) using the live AWS reachability engine. Topology is an
-	// AWS concept (VPC/SG/route/NACL), so a nil engine (aws not selected) yields
-	// a clear error rather than a wrong answer.
-	netHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rebuildMu.Lock()
-		eng := netEngine
-		rebuildMu.Unlock()
-
-		if eng == nil {
-			writeNetErr(w, http.StatusServiceUnavailable, "network topology requires the aws provider")
-
-			return
-		}
-
+	// extraHandler serves the control-plane endpoints that plug into admin:
+	// network reachability (/net/*, AWS-only, needs the topology engine) and
+	// cost estimation (/cost, all providers, needs the discovery engines).
+	extraHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch strings.TrimPrefix(r.URL.Path, admin.Prefix) {
-		case "net/can-connect":
-			serveCanConnect(w, r, eng)
-		case "net/trace":
-			serveTrace(w, r, eng)
+		case "net/can-connect", "net/trace":
+			rebuildMu.Lock()
+			eng := netEngine
+			rebuildMu.Unlock()
+
+			if eng == nil {
+				writeNetErr(w, http.StatusServiceUnavailable, "network topology requires the aws provider")
+
+				return
+			}
+
+			if strings.HasSuffix(r.URL.Path, "trace") {
+				serveTrace(w, r, eng)
+			} else {
+				serveCanConnect(w, r, eng)
+			}
+		case "cost":
+			rebuildMu.Lock()
+			ds := discovery
+			rebuildMu.Unlock()
+
+			serveCost(w, r, ds)
 		default:
 			writeNetErr(w, http.StatusNotFound, "unknown control endpoint")
 		}
@@ -360,7 +375,7 @@ func runServe(args []string) error {
 	// may be nil (e.g. the Kubernetes port), which disables the seed endpoint.
 	handlerFor := func(b *admin.Backend, seedFn func([]byte) (int, error)) http.Handler {
 		if c.admin {
-			return admin.NewControl(b, rebuild, seedFn, snapshotFn, restoreFn, netHandler)
+			return admin.NewControl(b, rebuild, seedFn, snapshotFn, restoreFn, extraHandler)
 		}
 		return b
 	}
@@ -506,6 +521,57 @@ func restoreState(ctx context.Context, path string, targets map[string]seed.Targ
 	}
 
 	return persist.RestoreAll(ctx, &snap, targets)
+}
+
+// costLine is one always-on resource with its estimated monthly cost.
+type costLine struct {
+	Provider   string  `json:"provider"`
+	Service    string  `json:"service"`
+	Type       string  `json:"type"`
+	ID         string  `json:"id"`
+	MonthlyUSD float64 `json:"monthlyUsd"`
+}
+
+// serveCost answers GET /_cloudemu/cost with an estimated monthly cost of the
+// current inventory (always-on resources only; usage-based services excluded).
+func serveCost(w http.ResponseWriter, r *http.Request, engines map[string]*resourcediscovery.Engine) {
+	var (
+		lines     []costLine
+		total     float64
+		byService = map[string]float64{}
+	)
+
+	for prov, eng := range engines {
+		if eng == nil {
+			continue
+		}
+
+		res, err := eng.ListAll(r.Context())
+		if err != nil {
+			writeNetErr(w, http.StatusInternalServerError, err.Error())
+
+			return
+		}
+
+		for i := range res {
+			rr := &res[i]
+
+			est := pricing.Monthly(rr.Provider, rr.Service, rr.Type, rr.SKU, rr.Region, rr.Properties)
+			if est <= 0 {
+				continue
+			}
+
+			lines = append(lines, costLine{Provider: prov, Service: rr.Service, Type: rr.Type, ID: rr.ID, MonthlyUSD: est})
+			total += est
+			byService[prov+"/"+rr.Service] += est
+		}
+	}
+
+	writeNetJSON(w, map[string]any{
+		"estimatedMonthlyUsd": total,
+		"byService":           byService,
+		"resources":           lines,
+	})
 }
 
 // serveCanConnect answers GET /_cloudemu/net/can-connect?from&to&port&protocol

@@ -22,6 +22,7 @@ Usage:
   cloudemu delete            Stop the emulator and remove its run directory
   cloudemu snapshot ...      Save/load/list/delete named state snapshots
   cloudemu net ...           Check network reachability (can-connect, trace)
+  cloudemu cost              Estimate the monthly cost of the current resources
   cloudemu serve [flags]     Run the server in the foreground (see: cloudemu serve -h)
   cloudemu version           Print the version
   cloudemu help              Show this message
@@ -40,6 +41,7 @@ const (
 	cmdDelete   = "delete"
 	cmdSnapshot = "snapshot"
 	cmdNet      = "net"
+	cmdCost     = "cost"
 )
 
 // version is overridable at build time with
@@ -70,6 +72,11 @@ func main() {
 		}
 	case cmdNet:
 		if err := runNet(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "cloudemu:", err)
+			os.Exit(1)
+		}
+	case cmdCost:
+		if err := runCost(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "cloudemu:", err)
 			os.Exit(1)
 		}

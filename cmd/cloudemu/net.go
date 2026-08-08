@@ -19,6 +19,9 @@ import (
 // (can-connect A B; trace A destIP).
 const netPositionalArgs = 2
 
+// flagJSON requests machine-readable JSON output (net and cost commands).
+const flagJSON = "--json"
+
 var (
 	errNetUsage = errors.New("usage: cloudemu net <can-connect <A> <B> [--port N] [--protocol tcp] | " +
 		"trace <A> <destIP>> [--json] [--home dir]")
@@ -33,7 +36,7 @@ func parseNetFlags(args []string) (home, port, proto string, jsonOut bool, pos [
 
 	for i := 0; i < len(rest); i++ {
 		switch a := rest[i]; {
-		case a == "--json":
+		case a == flagJSON:
 			jsonOut = true
 		case a == "--port" && i+1 < len(rest):
 			port = rest[i+1]
