@@ -341,6 +341,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"relationaldb/MySqlFlexibleServer":    "microsoft.dbformysql/flexibleservers",
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 	"secrets/Secret":                      "microsoft.keyvault/vaults/secrets",
+	"containerregistry/Repository":        "microsoft.containerregistry/registries",
 }
 
 func portableToAzureType(service, typ string) string {

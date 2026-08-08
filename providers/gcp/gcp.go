@@ -142,6 +142,7 @@ func New(opts ...config.Option) *Provider {
 			Kubernetes:   gkeDiscovery{p.GKE},
 			RelationalDB: gcpRelationalDiscovery{sql: p.CloudSQL, alloy: p.AlloyDB},
 			Secrets:      p.SecretManager,
+			ContainerReg: p.ArtifactRegistry,
 		},
 	)
 

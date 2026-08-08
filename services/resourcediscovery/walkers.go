@@ -36,6 +36,7 @@ const (
 	// discriminator rather than sharing ServiceServerless with Functions.
 	ServiceAppService = "appservice"
 	ServiceSecrets    = "secrets"
+	ServiceContainer  = "containerregistry"
 )
 
 // Resource type constants emitted by the walkers.
@@ -59,6 +60,7 @@ const (
 	TypeScaleSet       = "ScaleSet"
 	TypeAppServicePlan = "AppServicePlan"
 	TypeSecret         = "Secret"
+	TypeRepository     = "Repository"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -717,6 +719,34 @@ func shortName(id string) string {
 	return id
 }
 
+// emitSimple builds one Resource per item for the flat, region-agnostic
+// resource kinds (secrets, repositories, queues, topics, …) whose walkers
+// differ only by which driver they list and how they project an item onto an
+// (id, arn, tags) triple. Empty arn falls back to id. Keeping the boilerplate
+// here lets each walker be a one-line list + projection.
+func (e *Engine) emitSimple(
+	service, typ string, n int, at func(i int) (id, arn string, tags map[string]string),
+) []Resource {
+	out := make([]Resource, 0, n)
+
+	for i := range n {
+		id, arn, tags := at(i)
+		if arn == "" {
+			arn = id
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: service, Type: typ,
+			ID:     id,
+			ARN:    arn,
+			Region: e.region,
+			Tags:   tags,
+		})
+	}
+
+	return out
+}
+
 // walkSecrets surfaces managed secrets (Secrets Manager / Secret Manager / Key
 // Vault) so they appear in the inventory/search APIs.
 func (e *Engine) walkSecrets(ctx context.Context) ([]Resource, error) {
@@ -725,24 +755,22 @@ func (e *Engine) walkSecrets(ctx context.Context) ([]Resource, error) {
 		return nil, fmt.Errorf("walkSecrets: %w", err)
 	}
 
-	out := make([]Resource, 0, len(secrets))
+	return e.emitSimple(ServiceSecrets, TypeSecret, len(secrets),
+		func(i int) (string, string, map[string]string) {
+			return secrets[i].Name, secrets[i].ResourceID, secrets[i].Tags
+		}), nil
+}
 
-	for i := range secrets {
-		s := &secrets[i]
-
-		arn := s.ResourceID
-		if arn == "" {
-			arn = s.ID
-		}
-
-		out = append(out, Resource{
-			Provider: e.provider, Service: ServiceSecrets, Type: TypeSecret,
-			ID:     s.Name,
-			ARN:    arn,
-			Region: e.region,
-			Tags:   s.Tags,
-		})
+// walkContainerRegistry surfaces container repositories (ECR / Artifact Registry
+// / ACR) so they appear in the inventory/search APIs.
+func (e *Engine) walkContainerRegistry(ctx context.Context) ([]Resource, error) {
+	repos, err := e.drivers.ContainerReg.ListRepositories(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkContainerRegistry: %w", err)
 	}
 
-	return out, nil
+	return e.emitSimple(ServiceContainer, TypeRepository, len(repos),
+		func(i int) (string, string, map[string]string) {
+			return repos[i].Name, repos[i].URI, repos[i].Tags
+		}), nil
 }

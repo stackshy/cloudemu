@@ -37,6 +37,7 @@ const (
 	awsServiceLambda   = "lambda"
 	awsServiceRDS      = "rds"
 	awsServiceSecrets  = "secretsmanager"
+	awsServiceECR      = "ecr"
 )
 
 // Portable-API service identifiers as emitted by resourcediscovery walkers.
@@ -48,6 +49,7 @@ const (
 	portableServiceServerless   = "serverless"
 	portableServiceRelationalDB = "relationaldb"
 	portableServiceSecrets      = "secrets"
+	portableServiceContainer    = "containerregistry"
 )
 
 // Handler serves Resource Explorer 2 REST-JSON requests.
@@ -465,6 +467,8 @@ func portableToAWSService(s string) string {
 		return awsServiceRDS
 	case portableServiceSecrets:
 		return awsServiceSecrets
+	case portableServiceContainer:
+		return awsServiceECR
 	default:
 		return s
 	}

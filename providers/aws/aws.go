@@ -230,6 +230,7 @@ func New(opts ...config.Option) *Provider {
 			Kubernetes:   eksDiscovery{p.EKS},
 			RelationalDB: rdsDiscovery{p.RDS},
 			Secrets:      p.SecretsManager,
+			ContainerReg: p.ECR,
 		},
 	)
 

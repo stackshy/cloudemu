@@ -58,6 +58,7 @@ const (
 	azureTypeMySQLFlex = "microsoft.dbformysql/flexibleservers"
 	azureTypePgFlex    = "microsoft.dbforpostgresql/flexibleservers"
 	azureTypeSecret    = "microsoft.keyvault/vaults/secrets"
+	azureTypeACR       = "microsoft.containerregistry/registries"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -72,6 +73,7 @@ const (
 	portableKubernetes   = "kubernetes"
 	portableRelationalDB = "relationaldb"
 	portableSecrets      = "secrets"
+	portableContainer    = "containerregistry"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -330,6 +332,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeMySQLFlex: {portableRelationalDB, "MySqlFlexibleServer"},
 	azureTypePgFlex:    {portableRelationalDB, "PostgresFlexibleServer"},
 	azureTypeSecret:    {portableSecrets, "Secret"},
+	azureTypeACR:       {portableContainer, "Repository"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the
