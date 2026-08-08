@@ -228,7 +228,20 @@ func New(opts ...config.Option) *Provider {
 			Database:     p.DynamoDB,
 			Serverless:   p.Lambda,
 			Kubernetes:   eksDiscovery{p.EKS},
-			RelationalDB: rdsDiscovery{p.RDS},
+			RelationalDB: rdsDiscovery{m: p.RDS, redshift: p.Redshift},
+			Secrets:      p.SecretsManager,
+			ContainerReg: p.ECR,
+			MessageQueue: p.SQS,
+			Notification: p.SNS,
+			DNS:          p.Route53,
+			Logging:      p.CloudWatchLogs,
+			Cache:        p.ElastiCache,
+			LoadBalancer: p.ELB,
+			Monitoring:   p.CloudWatch,
+			IAM:          p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				sagemakerDiscovery{p.SageMaker},
+			},
 		},
 	)
 

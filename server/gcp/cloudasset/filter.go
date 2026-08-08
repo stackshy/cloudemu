@@ -37,6 +37,7 @@ const (
 const (
 	atComputeInstance = "compute.googleapis.com/Instance"
 	atComputeDisk     = "compute.googleapis.com/Disk"
+	atComputeSnapshot = "compute.googleapis.com/Snapshot"
 	atNetwork         = "compute.googleapis.com/Network"
 	atSubnetwork      = "compute.googleapis.com/Subnetwork"
 	atFirewall        = "compute.googleapis.com/Firewall"
@@ -48,6 +49,21 @@ const (
 	atGKECluster      = "container.googleapis.com/Cluster"
 	atGKENodePool     = "container.googleapis.com/NodePool"
 	atCloudSQLInst    = "sqladmin.googleapis.com/Instance"
+	atSecret          = "secretmanager.googleapis.com/Secret"
+	atArtifactRepo    = "artifactregistry.googleapis.com/Repository"
+	atPubSubSub       = "pubsub.googleapis.com/Subscription"
+	atPubSubTopic     = "pubsub.googleapis.com/Topic"
+	atDNSZone         = "dns.googleapis.com/ManagedZone"
+	atLogBucket       = "logging.googleapis.com/LogBucket"
+	atRedisInstance   = "redis.googleapis.com/Instance"
+	atForwardingRule  = "compute.googleapis.com/ForwardingRule"
+	atAlertPolicy     = "monitoring.googleapis.com/AlertPolicy"
+	atServiceAccount  = "iam.googleapis.com/ServiceAccount"
+	atIAMRole         = "iam.googleapis.com/Role"
+	atRouter          = "compute.googleapis.com/Router"
+	atRoute           = "compute.googleapis.com/Route"
+	atVertexEndpoint  = "aiplatform.googleapis.com/Endpoint"
+	atVertexDataset   = "aiplatform.googleapis.com/Dataset"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -59,6 +75,17 @@ const (
 	portableServerless   = "serverless"
 	portableKubernetes   = "kubernetes"
 	portableRelationalDB = "relationaldb"
+	portableSecrets      = "secrets"
+	portableContainer    = "containerregistry"
+	portableQueue        = "messagequeue"
+	portableNotif        = "notification"
+	portableDNS          = "dns"
+	portableLogging      = "logging"
+	portableCache        = "cache"
+	portableLB           = "loadbalancer"
+	portableMonitoring   = "monitoring"
+	portableIAM          = "iam"
+	portableVertexAI     = "aiplatform"
 )
 
 // parsedFilter is the result of filter parsing — an engine Query plus
@@ -240,6 +267,7 @@ type portableResourceType struct{ service, typ string }
 var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
 	atComputeInstance: {portableCompute, "Instance"},
 	atComputeDisk:     {portableCompute, "Volume"},
+	atComputeSnapshot: {portableCompute, "Snapshot"},
 	atNetwork:         {portableNetworking, "VPC"},
 	atSubnetwork:      {portableNetworking, "Subnet"},
 	atFirewall:        {portableNetworking, "SecurityGroup"},
@@ -251,12 +279,28 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 	atGKECluster:      {portableKubernetes, "Cluster"},
 	atGKENodePool:     {portableKubernetes, "NodeGroup"},
 	atCloudSQLInst:    {portableRelationalDB, "SqlInstance"},
+	atSecret:          {portableSecrets, "Secret"},
+	atArtifactRepo:    {portableContainer, "Repository"},
+	atPubSubSub:       {portableQueue, "Queue"},
+	atPubSubTopic:     {portableNotif, "Topic"},
+	atDNSZone:         {portableDNS, "Zone"},
+	atLogBucket:       {portableLogging, "LogGroup"},
+	atRedisInstance:   {portableCache, "CacheCluster"},
+	atForwardingRule:  {portableLB, "LoadBalancer"},
+	atAlertPolicy:     {portableMonitoring, "Alarm"},
+	atServiceAccount:  {portableIAM, "User"},
+	atIAMRole:         {portableIAM, "Role"},
+	atRouter:          {portableNetworking, "NatGateway"},
+	atRoute:           {portableNetworking, "RouteTable"},
+	atVertexEndpoint:  {portableVertexAI, "Endpoint"},
+	atVertexDataset:   {portableVertexAI, "Dataset"},
 }
 
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
 var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	portableCompute + "/Instance":         atComputeInstance,
 	portableCompute + "/Volume":           atComputeDisk,
+	portableCompute + "/Snapshot":         atComputeSnapshot,
 	portableNetworking + "/VPC":           atNetwork,
 	portableNetworking + "/Subnet":        atSubnetwork,
 	portableNetworking + "/SecurityGroup": atFirewall,
@@ -266,6 +310,21 @@ var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // 
 	portableKubernetes + "/Cluster":       atGKECluster,
 	portableKubernetes + "/NodeGroup":     atGKENodePool,
 	portableRelationalDB + "/SqlInstance": atCloudSQLInst,
+	portableSecrets + "/Secret":           atSecret,
+	portableContainer + "/Repository":     atArtifactRepo,
+	portableQueue + "/Queue":              atPubSubSub,
+	portableNotif + "/Topic":              atPubSubTopic,
+	portableDNS + "/Zone":                 atDNSZone,
+	portableLogging + "/LogGroup":         atLogBucket,
+	portableCache + "/CacheCluster":       atRedisInstance,
+	portableLB + "/LoadBalancer":          atForwardingRule,
+	portableMonitoring + "/Alarm":         atAlertPolicy,
+	portableIAM + "/User":                 atServiceAccount,
+	portableIAM + "/Role":                 atIAMRole,
+	portableNetworking + "/NatGateway":    atRouter,
+	portableNetworking + "/RouteTable":    atRoute,
+	portableVertexAI + "/Endpoint":        atVertexEndpoint,
+	portableVertexAI + "/Dataset":         atVertexDataset,
 }
 
 // mapGCPAssetType translates a fully-qualified GCP asset type

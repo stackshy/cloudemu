@@ -195,6 +195,18 @@ func TestARNShapes(t *testing.T) {
 		case TypeFunction:
 			// Lambda mock builds its own ARN; we just require non-empty.
 			assert.NotEmpty(t, r.ARN)
+		case TypeRouteTable:
+			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:route-table/"),
+				"unexpected route table ARN: %s", r.ARN)
+		case TypeNATGateway:
+			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:natgateway/"),
+				"unexpected nat gateway ARN: %s", r.ARN)
+		case TypeInternetGateway:
+			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:internet-gateway/"),
+				"unexpected internet gateway ARN: %s", r.ARN)
+		case TypePeeringConnection:
+			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:vpc-peering-connection/"),
+				"unexpected peering connection ARN: %s", r.ARN)
 		default:
 			t.Fatalf("unexpected resource type: %s", r.Type)
 		}

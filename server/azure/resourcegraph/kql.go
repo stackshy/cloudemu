@@ -36,6 +36,7 @@ import (
 const (
 	azureTypeVM        = "microsoft.compute/virtualmachines"
 	azureTypeDisk      = "microsoft.compute/disks"
+	azureTypeSnapshot  = "microsoft.compute/snapshots"
 	azureTypeVMSS      = "microsoft.compute/virtualmachinescalesets"
 	azureTypeVNet      = "microsoft.network/virtualnetworks"
 	azureTypeSubnet    = "microsoft.network/subnets"
@@ -57,6 +58,23 @@ const (
 	azureTypeSQLDB     = "microsoft.sql/servers/databases"
 	azureTypeMySQLFlex = "microsoft.dbformysql/flexibleservers"
 	azureTypePgFlex    = "microsoft.dbforpostgresql/flexibleservers"
+	azureTypeSecret    = "microsoft.keyvault/vaults/secrets"
+	azureTypeACR       = "microsoft.containerregistry/registries"
+	azureTypeSBQueue   = "microsoft.servicebus/namespaces/queues"
+	azureTypeNotifHub  = "microsoft.notificationhubs/namespaces/notificationhubs"
+	azureTypeDNSZone   = "microsoft.network/dnszones"
+	azureTypeLogWS     = "microsoft.operationalinsights/workspaces"
+	azureTypeRedis     = "microsoft.cache/redis"
+	azureTypeLB        = "microsoft.network/loadbalancers"
+	azureTypeAlert     = "microsoft.insights/metricalerts"
+	azureTypeIdentity  = "microsoft.managedidentity/userassignedidentities"
+	azureTypeRoleDef   = "microsoft.authorization/roledefinitions"
+	azureTypeNATGw     = "microsoft.network/natgateways"
+	azureTypeRouteTbl  = "microsoft.network/routetables"
+	azureTypeVNetPeer  = "microsoft.network/virtualnetworks/virtualnetworkpeerings"
+	azureTypeMLWorkspc = "microsoft.machinelearningservices/workspaces"
+	azureTypeMLEndpt   = "microsoft.machinelearningservices/workspaces/onlineendpoints"
+	azureTypeCognitive = "microsoft.cognitiveservices/accounts"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -70,6 +88,18 @@ const (
 	portableDatabricks   = "databricks"
 	portableKubernetes   = "kubernetes"
 	portableRelationalDB = "relationaldb"
+	portableSecrets      = "secrets"
+	portableContainer    = "containerregistry"
+	portableQueue        = "messagequeue"
+	portableNotif        = "notification"
+	portableDNS          = "dns"
+	portableLogging      = "logging"
+	portableCache        = "cache"
+	portableLB           = "loadbalancer"
+	portableMonitoring   = "monitoring"
+	portableIAM          = "iam"
+	portableAzureML      = "machinelearningservices"
+	portableCognitive    = "cognitiveservices"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -306,6 +336,7 @@ type portableResourceType struct{ service, typ string }
 var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
 	azureTypeVM:        {portableCompute, "Instance"},
 	azureTypeDisk:      {portableCompute, "Volume"},
+	azureTypeSnapshot:  {portableCompute, "Snapshot"},
 	azureTypeVMSS:      {portableCompute, "ScaleSet"},
 	azureTypeVNet:      {portableNetworking, "VPC"},
 	azureTypeSubnet:    {portableNetworking, "Subnet"},
@@ -327,6 +358,23 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeSQLDB:     {portableRelationalDB, "SqlDatabase"},
 	azureTypeMySQLFlex: {portableRelationalDB, "MySqlFlexibleServer"},
 	azureTypePgFlex:    {portableRelationalDB, "PostgresFlexibleServer"},
+	azureTypeSecret:    {portableSecrets, "Secret"},
+	azureTypeACR:       {portableContainer, "Repository"},
+	azureTypeSBQueue:   {portableQueue, "Queue"},
+	azureTypeNotifHub:  {portableNotif, "Topic"},
+	azureTypeDNSZone:   {portableDNS, "Zone"},
+	azureTypeLogWS:     {portableLogging, "LogGroup"},
+	azureTypeRedis:     {portableCache, "CacheCluster"},
+	azureTypeLB:        {portableLB, "LoadBalancer"},
+	azureTypeAlert:     {portableMonitoring, "Alarm"},
+	azureTypeIdentity:  {portableIAM, "User"},
+	azureTypeRoleDef:   {portableIAM, "Role"},
+	azureTypeNATGw:     {portableNetworking, "NatGateway"},
+	azureTypeRouteTbl:  {portableNetworking, "RouteTable"},
+	azureTypeVNetPeer:  {portableNetworking, "PeeringConnection"},
+	azureTypeMLWorkspc: {portableAzureML, "Workspace"},
+	azureTypeMLEndpt:   {portableAzureML, "Endpoint"},
+	azureTypeCognitive: {portableCognitive, "Account"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

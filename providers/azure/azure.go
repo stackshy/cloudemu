@@ -221,6 +221,19 @@ func New(opts ...config.Option) *Provider {
 			RelationalDB:    sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
 			ScaleSets:       vmssDiscovery{p.VirtualMachines},
 			AppServicePlans: appServicePlanDiscovery{p.Functions},
+			Secrets:         p.KeyVault,
+			ContainerReg:    p.ACR,
+			MessageQueue:    p.ServiceBus,
+			Notification:    p.NotificationHubs,
+			DNS:             p.DNS,
+			Logging:         p.LogAnalytics,
+			Cache:           p.Cache,
+			LoadBalancer:    p.LB,
+			Monitoring:      p.Monitor,
+			IAM:             p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				azureMLDiscovery{p.AI},
+			},
 		},
 	)
 

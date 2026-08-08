@@ -141,6 +141,19 @@ func New(opts ...config.Option) *Provider {
 			Serverless:   p.CloudFunctions,
 			Kubernetes:   gkeDiscovery{p.GKE},
 			RelationalDB: gcpRelationalDiscovery{sql: p.CloudSQL, alloy: p.AlloyDB},
+			Secrets:      p.SecretManager,
+			ContainerReg: p.ArtifactRegistry,
+			MessageQueue: p.PubSub,
+			Notification: p.FCM,
+			DNS:          p.CloudDNS,
+			Logging:      p.CloudLogging,
+			Cache:        p.Memorystore,
+			LoadBalancer: p.LB,
+			Monitoring:   p.CloudMonitoring,
+			IAM:          p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				vertexDiscovery{p.VertexAI},
+			},
 		},
 	)
 
