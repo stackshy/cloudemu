@@ -196,8 +196,10 @@ func TestSDKResourceExplorer2_BugFixes(t *testing.T) {
 			QueryString: aws.String("service:ec2"),
 		})
 		require.NoError(t, err)
-		assert.Len(t, out.Resources, 1, "service:ec2 should expand to compute+networking; only the VPC matches")
-		assert.Equal(t, "ec2", aws.ToString(out.Resources[0].Service))
+		require.NotEmpty(t, out.Resources, "service:ec2 should expand to compute+networking and match the VPC (+ its main route table)")
+		for _, r := range out.Resources {
+			assert.Equal(t, "ec2", aws.ToString(r.Service), "service:ec2 must only match compute+networking, never s3")
+		}
 	})
 
 	t.Run("CreateView rejects duplicate name", func(t *testing.T) {

@@ -21,6 +21,10 @@ const (
 	netKindSecurityGroup = "security-group"
 	netKindNetworkIface  = "network-interface"
 	netKindElasticIP     = "elastic-ip"
+	netKindNATGateway    = "natgateway"
+	netKindInternetGW    = "internet-gateway"
+	netKindPeering       = "vpc-peering-connection"
+	netKindRouteTable    = "route-table"
 )
 
 func (e *Engine) computeInstanceARN(id string) string {
@@ -98,6 +102,14 @@ func azureNetworkType(kind string) string {
 		return "networkInterfaces"
 	case netKindElasticIP:
 		return "publicIPAddresses"
+	case netKindNATGateway:
+		return "natGateways"
+	case netKindInternetGW:
+		return "internetGateways"
+	case netKindPeering:
+		return "virtualNetworkPeerings"
+	case netKindRouteTable:
+		return "routeTables"
 	default:
 		return kind
 	}
@@ -115,6 +127,14 @@ func gcpNetworkCollection(kind string) string {
 		return "networkInterfaces"
 	case netKindElasticIP:
 		return "addresses"
+	case netKindNATGateway:
+		return "routers"
+	case netKindInternetGW:
+		return "gateways"
+	case netKindPeering:
+		return "networkPeerings"
+	case netKindRouteTable:
+		return "routes"
 	default:
 		return kind
 	}

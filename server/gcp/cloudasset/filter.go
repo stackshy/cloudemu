@@ -59,6 +59,8 @@ const (
 	atAlertPolicy     = "monitoring.googleapis.com/AlertPolicy"
 	atServiceAccount  = "iam.googleapis.com/ServiceAccount"
 	atIAMRole         = "iam.googleapis.com/Role"
+	atRouter          = "compute.googleapis.com/Router"
+	atRoute           = "compute.googleapis.com/Route"
 )
 
 // Portable service identifiers as emitted by resourcediscovery walkers.
@@ -283,6 +285,8 @@ var gcpAssetToPortable = map[string]portableResourceType{ //nolint:gochecknoglob
 	atAlertPolicy:     {portableMonitoring, "Alarm"},
 	atServiceAccount:  {portableIAM, "User"},
 	atIAMRole:         {portableIAM, "Role"},
+	atRouter:          {portableNetworking, "NatGateway"},
+	atRoute:           {portableNetworking, "RouteTable"},
 }
 
 // portableToGCPAssetTypeMap is the inverse of gcpAssetToPortable.
@@ -309,6 +313,8 @@ var portableToGCPAssetTypeMap = map[string]string{ //nolint:gochecknoglobals // 
 	portableMonitoring + "/Alarm":         atAlertPolicy,
 	portableIAM + "/User":                 atServiceAccount,
 	portableIAM + "/Role":                 atIAMRole,
+	portableNetworking + "/NatGateway":    atRouter,
+	portableNetworking + "/RouteTable":    atRoute,
 }
 
 // mapGCPAssetType translates a fully-qualified GCP asset type

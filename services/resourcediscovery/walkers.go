@@ -50,37 +50,41 @@ const (
 
 // Resource type constants emitted by the walkers.
 const (
-	TypeInstance       = "Instance"
-	TypeVolume         = "Volume"
-	TypeVPC            = "VPC"
-	TypeSubnet         = "Subnet"
-	TypeSecurityGroup  = "SecurityGroup"
-	TypeNetworkIface   = "NetworkInterface"
-	TypeElasticIP      = "ElasticIP"
-	TypeBucket         = "Bucket"
-	TypeTable          = "Table"
-	TypeFunction       = "Function"
-	TypeWorkspace      = "Workspace"
-	TypeCluster        = "Cluster"
-	TypeNodeGroup      = "NodeGroup"
-	TypeDBInstance     = "DBInstance"
-	TypeDBCluster      = "DBCluster"
-	TypeDBSnapshot     = "DBSnapshot"
-	TypeScaleSet       = "ScaleSet"
-	TypeAppServicePlan = "AppServicePlan"
-	TypeSecret         = "Secret"
-	TypeRepository     = "Repository"
-	TypeQueue          = "Queue"
-	TypeTopic          = "Topic"
-	TypeZone           = "Zone"
-	TypeLogGroup       = "LogGroup"
-	TypeCacheCluster   = "CacheCluster"
-	TypeLoadBalancer   = "LoadBalancer"
-	TypeAlarm          = "Alarm"
-	TypeUser           = "User"
-	TypeRole           = "Role"
-	TypePolicy         = "Policy"
-	TypeGroup          = "Group"
+	TypeInstance          = "Instance"
+	TypeVolume            = "Volume"
+	TypeVPC               = "VPC"
+	TypeSubnet            = "Subnet"
+	TypeSecurityGroup     = "SecurityGroup"
+	TypeNetworkIface      = "NetworkInterface"
+	TypeElasticIP         = "ElasticIP"
+	TypeBucket            = "Bucket"
+	TypeTable             = "Table"
+	TypeFunction          = "Function"
+	TypeWorkspace         = "Workspace"
+	TypeCluster           = "Cluster"
+	TypeNodeGroup         = "NodeGroup"
+	TypeDBInstance        = "DBInstance"
+	TypeDBCluster         = "DBCluster"
+	TypeDBSnapshot        = "DBSnapshot"
+	TypeScaleSet          = "ScaleSet"
+	TypeAppServicePlan    = "AppServicePlan"
+	TypeSecret            = "Secret"
+	TypeRepository        = "Repository"
+	TypeQueue             = "Queue"
+	TypeTopic             = "Topic"
+	TypeZone              = "Zone"
+	TypeLogGroup          = "LogGroup"
+	TypeCacheCluster      = "CacheCluster"
+	TypeLoadBalancer      = "LoadBalancer"
+	TypeAlarm             = "Alarm"
+	TypeUser              = "User"
+	TypeRole              = "Role"
+	TypePolicy            = "Policy"
+	TypeGroup             = "Group"
+	TypeNATGateway        = "NatGateway"
+	TypeInternetGateway   = "InternetGateway"
+	TypePeeringConnection = "PeeringConnection"
+	TypeRouteTable        = "RouteTable"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -262,6 +266,62 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 			Region: e.region, Tags: copyTags(eip.Tags),
 			SKU:        eip.SKU,
 			Properties: props,
+		})
+	}
+
+	natgws, err := e.drivers.Networking.DescribeNATGateways(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking nat gateways: %w", err)
+	}
+
+	for _, ng := range natgws {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeNATGateway,
+			ID:     ng.ID,
+			ARN:    e.networkARN(netKindNATGateway, ng.ID),
+			Region: e.region, Tags: copyTags(ng.Tags),
+		})
+	}
+
+	igws, err := e.drivers.Networking.DescribeInternetGateways(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking internet gateways: %w", err)
+	}
+
+	for _, igw := range igws {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeInternetGateway,
+			ID:     igw.ID,
+			ARN:    e.networkARN(netKindInternetGW, igw.ID),
+			Region: e.region, Tags: copyTags(igw.Tags),
+		})
+	}
+
+	peerings, err := e.drivers.Networking.DescribePeeringConnections(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking peering connections: %w", err)
+	}
+
+	for _, pc := range peerings {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypePeeringConnection,
+			ID:     pc.ID,
+			ARN:    e.networkARN(netKindPeering, pc.ID),
+			Region: e.region, Tags: copyTags(pc.Tags),
+		})
+	}
+
+	rts, err := e.drivers.Networking.DescribeRouteTables(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking route tables: %w", err)
+	}
+
+	for _, rt := range rts {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeRouteTable,
+			ID:     rt.ID,
+			ARN:    e.networkARN(netKindRouteTable, rt.ID),
+			Region: e.region, Tags: copyTags(rt.Tags),
 		})
 	}
 

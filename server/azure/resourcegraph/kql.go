@@ -68,6 +68,9 @@ const (
 	azureTypeAlert     = "microsoft.insights/metricalerts"
 	azureTypeIdentity  = "microsoft.managedidentity/userassignedidentities"
 	azureTypeRoleDef   = "microsoft.authorization/roledefinitions"
+	azureTypeNATGw     = "microsoft.network/natgateways"
+	azureTypeRouteTbl  = "microsoft.network/routetables"
+	azureTypeVNetPeer  = "microsoft.network/virtualnetworks/virtualnetworkpeerings"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -359,6 +362,9 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeAlert:     {portableMonitoring, "Alarm"},
 	azureTypeIdentity:  {portableIAM, "User"},
 	azureTypeRoleDef:   {portableIAM, "Role"},
+	azureTypeNATGw:     {portableNetworking, "NatGateway"},
+	azureTypeRouteTbl:  {portableNetworking, "RouteTable"},
+	azureTypeVNetPeer:  {portableNetworking, "PeeringConnection"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the
