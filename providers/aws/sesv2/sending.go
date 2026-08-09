@@ -86,6 +86,58 @@ func verifiedForSending(d *identityData) error {
 	return nil
 }
 
+// SendBulkEmail sends one templated message per entry, validating the shared
+// from-identity, template, and configuration set once, then recording an
+// accepted message per entry and returning the per-entry result.
+//
+//nolint:gocritic // in is a large value struct; kept by value to match the driver interface.
+func (m *Mock) SendBulkEmail(_ context.Context, in driver.SendBulkEmailInput) ([]driver.BulkEmailResult, error) {
+	if in.FromAddress == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "FromEmailAddress is required")
+	}
+
+	if err := m.checkFromIdentity(in.FromAddress); err != nil {
+		return nil, err
+	}
+
+	if in.TemplateName != "" {
+		if _, err := m.getTemplate(in.TemplateName); err != nil {
+			return nil, err
+		}
+	}
+
+	if in.ConfigurationSetName != "" && !m.configSetExists(in.ConfigurationSetName) {
+		return nil, errConfigSetNotFound(in.ConfigurationSetName)
+	}
+
+	results := make([]driver.BulkEmailResult, 0, len(in.Entries))
+
+	for i := range in.Entries {
+		results = append(results, m.recordBulkEntry(&in, &in.Entries[i]))
+	}
+
+	return results, nil
+}
+
+func (m *Mock) recordBulkEntry(in *driver.SendBulkEmailInput, e *driver.BulkEmailEntry) driver.BulkEmailResult {
+	msgID := idgen.GenerateID("")
+
+	m.sentMu.Lock()
+	m.sent = append(m.sent, driver.SentMessage{
+		MessageID:            msgID,
+		FromAddress:          in.FromAddress,
+		ToAddresses:          append([]string(nil), e.ToAddresses...),
+		CcAddresses:          append([]string(nil), e.CcAddresses...),
+		BccAddresses:         append([]string(nil), e.BccAddresses...),
+		ConfigurationSetName: in.ConfigurationSetName,
+		TemplateName:         in.TemplateName,
+		SentAt:               m.now(),
+	})
+	m.sentMu.Unlock()
+
+	return driver.BulkEmailResult{Status: "SUCCESS", MessageID: msgID}
+}
+
 // ListSentMessages returns a copy of all recorded sent messages.
 func (m *Mock) ListSentMessages(_ context.Context) []driver.SentMessage {
 	m.sentMu.RLock()

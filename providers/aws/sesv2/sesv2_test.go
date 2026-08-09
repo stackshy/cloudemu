@@ -316,3 +316,63 @@ func TestTagResourceInvalidARN(t *testing.T) {
 		t.Fatalf("invalid ARN should be InvalidArgument, got %v", err)
 	}
 }
+
+func TestExportJobCancel(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	jobID, err := m.CreateExportJob(ctx)
+	if err != nil {
+		t.Fatalf("CreateExportJob: %v", err)
+	}
+
+	if err := m.CancelExportJob(ctx, jobID); err != nil {
+		t.Fatalf("CancelExportJob: %v", err)
+	}
+
+	job, err := m.GetExportJob(ctx, jobID)
+	if err != nil || job.Status != driver.JobStatusCancelled {
+		t.Fatalf("job should be cancelled, got %+v %v", job, err)
+	}
+
+	if err := m.CancelExportJob(ctx, "missing"); !errors.IsNotFound(err) {
+		t.Fatalf("missing job should be NotFound, got %v", err)
+	}
+}
+
+func TestBatchGetMetricDataZeroed(t *testing.T) {
+	m := newMock(t)
+
+	data, err := m.BatchGetMetricData(context.Background(), []string{"q1", "q2"})
+	if err != nil {
+		t.Fatalf("BatchGetMetricData: %v", err)
+	}
+
+	if len(data) != 2 || len(data["q1"]) == 0 {
+		t.Fatalf("expected zeroed series per query, got %+v", data)
+	}
+}
+
+func TestReputationEntityMaterializesHealthy(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	e, err := m.GetReputationEntity(ctx, driver.ReputationEntityTypeResource, "ref1")
+	if err != nil || e.CustomerManagedStatus != driver.ReputationStatusHealthy {
+		t.Fatalf("expected healthy materialized entity, got %+v %v", e, err)
+	}
+
+	if err := m.UpdateReputationEntityCustomerManagedStatus(ctx, driver.ReputationEntityTypeResource, "ref1", "DISABLED"); err != nil {
+		t.Fatalf("UpdateReputationEntityCustomerManagedStatus: %v", err)
+	}
+
+	e, _ = m.GetReputationEntity(ctx, driver.ReputationEntityTypeResource, "ref1")
+	if e.CustomerManagedStatus != "DISABLED" {
+		t.Fatalf("status should update, got %s", e.CustomerManagedStatus)
+	}
+
+	all, err := m.ListReputationEntities(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("ListReputationEntities = %d, %v", len(all), err)
+	}
+}

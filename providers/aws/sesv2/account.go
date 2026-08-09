@@ -36,3 +36,29 @@ func (m *Mock) PutAccountSuppressionAttributes(_ context.Context, suppressedReas
 
 	return nil
 }
+
+// PutAccountDetails sets production access from the submitted account details.
+func (m *Mock) PutAccountDetails(_ context.Context, _, _ string, productionAccess bool) error {
+	m.acctMu.Lock()
+	defer m.acctMu.Unlock()
+
+	m.account.ProductionAccessEnabled = productionAccess
+
+	return nil
+}
+
+// PutAccountVdmAttributes toggles account-wide VDM.
+func (m *Mock) PutAccountVdmAttributes(_ context.Context, enabled bool) error {
+	m.dashMu.Lock()
+	defer m.dashMu.Unlock()
+
+	m.vdmEnabled = enabled
+
+	return nil
+}
+
+// PutAccountPricingAttributes is accepted as a no-op; the emulator has no
+// pricing tier to configure.
+func (*Mock) PutAccountPricingAttributes(_ context.Context) error {
+	return nil
+}

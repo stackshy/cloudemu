@@ -37,13 +37,41 @@ type Mock struct {
 	templates  *memstore.Store[*templateData]
 	suppressed *memstore.Store[driver.SuppressedDestination]
 
+	contactLists *memstore.Store[*contactListData]
+	cvTemplates  *memstore.Store[*driver.CustomVerificationEmailTemplate]
+	ipPools      *memstore.Store[*driver.DedicatedIPPool]
+	dedicatedIps *memstore.Store[*driver.DedicatedIP]
+	testReports  *memstore.Store[*driver.DeliverabilityTestReport]
+	importJobs   *memstore.Store[*driver.Job]
+	exportJobs   *memstore.Store[*driver.Job]
+	tenants      *memstore.Store[*tenantData]
+	repEntities  *memstore.Store[*driver.ReputationEntity]
+	endpoints    *memstore.Store[*driver.MultiRegionEndpoint]
+
 	sentMu sync.RWMutex
 	sent   []driver.SentMessage
 
 	acctMu  sync.RWMutex
 	account driver.Account
 
+	dashMu            sync.RWMutex
+	dashboardEnabled  bool
+	vdmEnabled        bool
+	autoWarmupEnabled bool
+
 	opts *config.Options
+}
+
+type contactListData struct {
+	cl       driver.ContactList
+	contacts *memstore.Store[*driver.Contact]
+	mu       sync.RWMutex
+}
+
+type tenantData struct {
+	t         driver.Tenant
+	resources *memstore.Store[driver.TenantResource]
+	mu        sync.RWMutex
 }
 
 type identityData struct {
@@ -64,10 +92,20 @@ type templateData struct {
 // New creates a new SES v2 mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		identities: memstore.New[*identityData](),
-		configSets: memstore.New[*configSetData](),
-		templates:  memstore.New[*templateData](),
-		suppressed: memstore.New[driver.SuppressedDestination](),
+		identities:   memstore.New[*identityData](),
+		configSets:   memstore.New[*configSetData](),
+		templates:    memstore.New[*templateData](),
+		suppressed:   memstore.New[driver.SuppressedDestination](),
+		contactLists: memstore.New[*contactListData](),
+		cvTemplates:  memstore.New[*driver.CustomVerificationEmailTemplate](),
+		ipPools:      memstore.New[*driver.DedicatedIPPool](),
+		dedicatedIps: memstore.New[*driver.DedicatedIP](),
+		testReports:  memstore.New[*driver.DeliverabilityTestReport](),
+		importJobs:   memstore.New[*driver.Job](),
+		exportJobs:   memstore.New[*driver.Job](),
+		tenants:      memstore.New[*tenantData](),
+		repEntities:  memstore.New[*driver.ReputationEntity](),
+		endpoints:    memstore.New[*driver.MultiRegionEndpoint](),
 		account: driver.Account{
 			SendingEnabled:          true,
 			ProductionAccessEnabled: false,
