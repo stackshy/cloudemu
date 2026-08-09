@@ -21,16 +21,31 @@ const (
 	wrapRSA4096            = 4096
 )
 
-func wrappingKeyBits(spec string) (int, error) {
+// wrappingKeySpecValid reports whether spec is a supported wrapping key spec,
+// returning a validation error otherwise. Its bool result lets callers validate
+// up front without generating a key.
+func wrappingKeySpecValid(spec string) (bool, error) {
+	switch spec {
+	case driver.WrapKeySpecRSA2048, "", driver.WrapKeySpecRSA3072, driver.WrapKeySpecRSA4096:
+		return true, nil
+	default:
+		return false, errors.Newf(errors.InvalidArgument, "unsupported WrappingKeySpec %q", spec)
+	}
+}
+
+// newWrappingKey generates the RSA wrapping key pair for a WrappingKeySpec.
+// The sizes are passed as literals (never below 2048) so the minimum-key-size
+// guarantee is statically verifiable rather than hidden behind a variable.
+func newWrappingKey(spec string) (*rsa.PrivateKey, error) {
 	switch spec {
 	case driver.WrapKeySpecRSA2048, "":
-		return wrapRSA2048, nil
+		return rsa.GenerateKey(rand.Reader, wrapRSA2048)
 	case driver.WrapKeySpecRSA3072:
-		return wrapRSA3072, nil
+		return rsa.GenerateKey(rand.Reader, wrapRSA3072)
 	case driver.WrapKeySpecRSA4096:
-		return wrapRSA4096, nil
+		return rsa.GenerateKey(rand.Reader, wrapRSA4096)
 	default:
-		return 0, errors.Newf(errors.InvalidArgument, "unsupported WrappingKeySpec %q", spec)
+		return nil, errors.Newf(errors.InvalidArgument, "unsupported WrappingKeySpec %q", spec)
 	}
 }
 
@@ -40,8 +55,7 @@ func wrappingKeyBits(spec string) (int, error) {
 func (m *Mock) GetParametersForImport(
 	_ context.Context, in driver.GetParametersForImportInput,
 ) (*driver.GetParametersForImportOutput, error) {
-	bits, err := wrappingKeyBits(in.WrappingKeySpec)
-	if err != nil {
+	if _, err := wrappingKeySpecValid(in.WrappingKeySpec); err != nil {
 		return nil, err
 	}
 
@@ -57,7 +71,7 @@ func (m *Mock) GetParametersForImport(
 		return nil, errors.New(errors.InvalidArgument, "GetParametersForImport requires an EXTERNAL-origin key")
 	}
 
-	wrapKey, err := rsa.GenerateKey(rand.Reader, bits)
+	wrapKey, err := newWrappingKey(in.WrappingKeySpec)
 	if err != nil {
 		return nil, errors.Newf(errors.Internal, "wrapping key: %v", err)
 	}
