@@ -128,3 +128,44 @@ func TestRetentionGuards(t *testing.T) {
 		t.Fatal("increasing to a lower value should fail")
 	}
 }
+
+func TestPutRecordRejectsOversizeData(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	if err := m.CreateStream(ctx, driver.CreateStreamInput{StreamName: "s", ShardCount: 1}); err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+
+	_, err := m.PutRecord(ctx, driver.PutRecordInput{
+		StreamName:   "s",
+		PartitionKey: "k",
+		Data:         make([]byte, (1<<20)+1),
+	})
+
+	apiErr, ok := err.(*driver.APIError)
+	if !ok || apiErr.Exception != driver.ExValidation {
+		t.Fatalf("oversize record should be ValidationException, got %v", err)
+	}
+}
+
+func TestPutRecordsRejectsTooManyRecords(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	if err := m.CreateStream(ctx, driver.CreateStreamInput{StreamName: "s", ShardCount: 1}); err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+
+	entries := make([]driver.PutRecordsRequestEntry, 501)
+	for i := range entries {
+		entries[i] = driver.PutRecordsRequestEntry{PartitionKey: "k", Data: []byte("x")}
+	}
+
+	_, _, err := m.PutRecords(ctx, "s", "", entries)
+
+	apiErr, ok := err.(*driver.APIError)
+	if !ok || apiErr.Exception != driver.ExValidation {
+		t.Fatalf("501-record batch should be ValidationException, got %v", err)
+	}
+}

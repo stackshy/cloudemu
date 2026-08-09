@@ -4,8 +4,8 @@ package driver
 // wire layer for exceptions that don't map one-to-one to canonical codes.
 const (
 	ExExpiredIterator = "ExpiredIteratorException"
-	ExLimitExceeded   = "LimitExceededException"
 	ExInvalidArgument = "InvalidArgumentException"
+	ExValidation      = "ValidationException"
 )
 
 // APIError tags a canonical cloudemu error with the Kinesis exception name it

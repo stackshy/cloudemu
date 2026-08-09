@@ -10,7 +10,48 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
 
-const defaultGetRecordsLimit = 10000
+const (
+	defaultGetRecordsLimit = 10000
+	// maxRecordBytes is Kinesis's per-record data cap (1 MiB) when the stream has
+	// no explicit MaxRecordSize configured.
+	maxRecordBytes = 1 << 20
+	bytesPerKiB    = 1024
+	// maxBatchRecords / maxBatchBytes are the PutRecords request limits.
+	maxBatchRecords = 500
+	maxBatchBytes   = 5 << 20
+)
+
+// recordSizeLimit returns the per-record byte cap for a stream, honoring a
+// configured MaxRecordSize (KiB) or falling back to the 1 MiB default.
+func recordSizeLimit(sd *streamData) int {
+	if sd.maxRecKiB > 0 {
+		return int(sd.maxRecKiB) * bytesPerKiB
+	}
+
+	return maxRecordBytes
+}
+
+// validateBatchSize enforces the PutRecords per-record and aggregate byte caps.
+// The aggregate counts each record's data plus partition key, matching Kinesis.
+func validateBatchSize(sd *streamData, entries []driver.PutRecordsRequestEntry) error {
+	limit := recordSizeLimit(sd)
+	total := 0
+
+	for i := range entries {
+		if len(entries[i].Data) > limit {
+			return validationErr("record %d data of %d bytes exceeds the %d-byte limit",
+				i, len(entries[i].Data), limit)
+		}
+
+		total += len(entries[i].Data) + len(entries[i].PartitionKey)
+	}
+
+	if total > maxBatchBytes {
+		return validationErr("PutRecords batch of %d bytes exceeds the %d-byte limit", total, maxBatchBytes)
+	}
+
+	return nil
+}
 
 // iteratorToken is the opaque state a shard iterator carries. Records are never
 // trimmed in the emulator, so a stable slice index is a sufficient cursor.
@@ -75,6 +116,10 @@ func (m *Mock) PutRecord(_ context.Context, in driver.PutRecordInput) (*driver.P
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
+	if limit := recordSizeLimit(sd); len(in.Data) > limit {
+		return nil, validationErr("record data of %d bytes exceeds the %d-byte limit", len(in.Data), limit)
+	}
+
 	shard, seq, err := m.appendRecord(sd, in.PartitionKey, in.ExplicitHashKey, in.Data)
 	if err != nil {
 		return nil, err
@@ -96,6 +141,11 @@ func (m *Mock) PutRecords(
 		return nil, 0, invalidArg("Records must contain at least one entry")
 	}
 
+	if len(entries) > maxBatchRecords {
+		return nil, 0, validationErr("a PutRecords request may contain at most %d records, got %d",
+			maxBatchRecords, len(entries))
+	}
+
 	sd, err := m.resolve(name, arn)
 	if err != nil {
 		return nil, 0, err
@@ -103,6 +153,10 @@ func (m *Mock) PutRecords(
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
+
+	if err := validateBatchSize(sd, entries); err != nil {
+		return nil, 0, err
+	}
 
 	out := make([]driver.PutRecordsResultEntry, 0, len(entries))
 

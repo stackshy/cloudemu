@@ -26,3 +26,9 @@ func invalidArg(format string, args ...any) error {
 func expiredIterator(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExExpiredIterator, Err: errors.Newf(errors.InvalidArgument, format, args...)}
 }
+
+// validationErr builds a ValidationException-tagged error (used for record/batch
+// size and count limits).
+func validationErr(format string, args ...any) error {
+	return &driver.APIError{Exception: driver.ExValidation, Err: errors.Newf(errors.InvalidArgument, format, args...)}
+}

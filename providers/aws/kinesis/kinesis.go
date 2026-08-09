@@ -6,6 +6,7 @@ package kinesis
 
 import (
 	"crypto/md5" //nolint:gosec // MD5 is the Kinesis partition-key hash, not used for security
+	"fmt"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -25,8 +26,10 @@ const (
 	minRetentionHours     = 24
 	maxRetentionHours     = 8760
 	// seqPrefix pads sequence numbers to a fixed 56-char width so string and
-	// numeric ordering agree; the trailing counter is zero-padded to 8 digits.
-	seqPrefix   = "495900000000000000000000000000000000000000000000"
+	// numeric ordering agree; the trailing counter is zero-padded to seqWidth
+	// digits, wide enough to hold any int64 counter without collision.
+	seqPrefix   = "495900000000000000000000000000000000"
+	seqWidth    = 20
 	shardIDFmt  = "shardId-%012d"
 	hashKeyBits = 128
 	base10      = 10
@@ -114,18 +117,7 @@ func (sd *streamData) nextSeq() string {
 }
 
 func formatSeq(n int64) string {
-	const width = 8
-
-	s := seqPrefix
-	// zero-pad n to width digits.
-	digits := []byte("00000000")
-
-	for i := width - 1; i >= 0 && n > 0; i-- {
-		digits[i] = byte('0' + n%10)
-		n /= 10
-	}
-
-	return s + string(digits)
+	return seqPrefix + fmt.Sprintf("%0*d", seqWidth, n)
 }
 
 // hashKeyOf returns the 128-bit MD5 hash of a partition key as a decimal string.
