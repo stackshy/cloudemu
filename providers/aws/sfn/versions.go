@@ -113,15 +113,78 @@ func (m *Mock) CreateStateMachineAlias(
 			routing[0].StateMachineVersionArn)
 	}
 
+	if err := m.validateRouting(smName, routing); err != nil {
+		return "", time.Time{}, err
+	}
+
 	arn = m.aliasARN(smName, name)
 	now := m.now()
 	alias := driver.Alias{
 		ARN: arn, Name: name, Description: description,
 		Routing: append([]driver.RouteEntry(nil), routing...), CreationDate: now, UpdateDate: now,
 	}
-	m.aliases.Set(arn, &aliasData{alias: alias})
+
+	// Alias names are unique per state machine; reject a duplicate atomically.
+	if !m.aliases.SetIfAbsent(arn, &aliasData{alias: alias}) {
+		return "", time.Time{}, conflict("state machine alias %q already exists", name)
+	}
 
 	return arn, now, nil
+}
+
+// maxAliasRoutes is SFN's cap on routing entries in a state-machine alias.
+const maxAliasRoutes = 2
+
+// totalRouteWeight is the required sum of routing weights in an alias.
+const totalRouteWeight = 100
+
+// validateRouting checks alias routing against real SFN rules: at most two
+// entries, weights summing to 100, and every referenced version must exist on
+// the same state machine.
+func (m *Mock) validateRouting(smName string, routing []driver.RouteEntry) error {
+	if len(routing) > maxAliasRoutes {
+		return validationErr("an alias routing configuration may reference at most %d versions", maxAliasRoutes)
+	}
+
+	var sum int32
+
+	for i := range routing {
+		if smNameFromVersionARN(routing[i].StateMachineVersionArn) != smName {
+			return validationErr("all routing versions must belong to the same state machine")
+		}
+
+		sd, err := m.getSM(m.smARN(smName))
+		if err != nil {
+			return err
+		}
+
+		if !versionExists(sd, routing[i].StateMachineVersionArn) {
+			return resourceNotFound(routing[i].StateMachineVersionArn)
+		}
+
+		sum += routing[i].Weight
+	}
+
+	if sum != totalRouteWeight {
+		return validationErr("routing weights must sum to %d, got %d", totalRouteWeight, sum)
+	}
+
+	return nil
+}
+
+// versionExists reports whether a published version with the given ARN exists on
+// the state machine.
+func versionExists(sd *smData, versionArn string) bool {
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	for i := range sd.sm.PublishedVersions {
+		if sd.sm.PublishedVersions[i].ARN == versionArn {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Mock) DescribeStateMachineAlias(_ context.Context, arn string) (*driver.Alias, error) {

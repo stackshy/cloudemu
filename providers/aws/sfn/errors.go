@@ -80,3 +80,13 @@ func invalidToken(format string, args ...any) error {
 func tooManyTags(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExTooManyTags, Err: errors.Newf(errors.InvalidArgument, format, args...)}
 }
+
+// conflict builds a ConflictException-tagged error.
+func conflict(format string, args ...any) error {
+	return &driver.APIError{Exception: driver.ExConflict, Err: errors.Newf(errors.AlreadyExists, format, args...)}
+}
+
+// validationErr builds a ValidationException-tagged error.
+func validationErr(format string, args ...any) error {
+	return &driver.APIError{Exception: driver.ExValidation, Err: errors.Newf(errors.InvalidArgument, format, args...)}
+}

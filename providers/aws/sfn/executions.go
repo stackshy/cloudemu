@@ -45,10 +45,6 @@ func (m *Mock) runExecution(in driver.StartExecutionInput) (*driver.Execution, e
 	}
 
 	arn := m.execARN(smName, name)
-	if m.executions.Has(arn) {
-		return nil, execAlreadyExists(name)
-	}
-
 	now := m.now()
 
 	output := in.Input
@@ -61,7 +57,10 @@ func (m *Mock) runExecution(in driver.StartExecutionInput) (*driver.Execution, e
 		Status: driver.ExecStatusSucceeded, Input: in.Input, Output: output,
 		StartDate: now, StopDate: now,
 	}
-	m.executions.Set(arn, &execData{exec: exec})
+
+	if !m.executions.SetIfAbsent(arn, &execData{exec: exec}) {
+		return nil, execAlreadyExists(name)
+	}
 
 	out := exec
 

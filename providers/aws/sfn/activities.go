@@ -28,14 +28,13 @@ func (m *Mock) CreateActivity(
 	}
 
 	arn = m.activityARN(name)
-	if m.activities.Has(arn) {
+	now := m.now()
+
+	if !m.activities.SetIfAbsent(arn, &actData{act: driver.Activity{
+		ARN: arn, Name: name, CreationDate: now, Tags: copyTags(tags),
+	}}) {
 		return "", time.Time{}, activityAlreadyExists(name)
 	}
-
-	now := m.now()
-	m.activities.Set(arn, &actData{act: driver.Activity{
-		ARN: arn, Name: name, CreationDate: now, Tags: copyTags(tags),
-	}})
 
 	return arn, now, nil
 }

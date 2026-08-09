@@ -16,6 +16,8 @@ const (
 	ExInvalidToken              = "InvalidToken"
 	ExTaskDoesNotExist          = "TaskDoesNotExist"
 	ExTooManyTags               = "TooManyTags"
+	ExConflict                  = "ConflictException"
+	ExValidation                = "ValidationException"
 )
 
 // APIError tags a canonical cloudemu error with the SFN exception name it

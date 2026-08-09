@@ -43,10 +43,6 @@ func (m *Mock) CreateStateMachine(
 	}
 
 	arn = m.smARN(in.Name)
-	if m.machines.Has(arn) {
-		return "", "", time.Time{}, smAlreadyExists(in.Name)
-	}
-
 	now := m.now()
 	sm := driver.StateMachine{
 		ARN: arn, Name: in.Name, Definition: in.Definition, RoleArn: in.RoleArn,
@@ -60,7 +56,11 @@ func (m *Mock) CreateStateMachine(
 		versionArn = publishLocked(&sm, in.Description, now)
 	}
 
-	m.machines.Set(arn, &smData{sm: sm})
+	// Claim the name atomically so two concurrent same-name creates can't both
+	// succeed (uniqueness invariant under concurrency).
+	if !m.machines.SetIfAbsent(arn, &smData{sm: sm}) {
+		return "", "", time.Time{}, smAlreadyExists(in.Name)
+	}
 
 	return arn, versionArn, now, nil
 }
