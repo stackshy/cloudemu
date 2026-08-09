@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
@@ -195,12 +196,43 @@ func openShardCount(shards []*shardState) int32 {
 	return n
 }
 
-// ListStreams returns stream names and summaries.
-func (m *Mock) ListStreams(_ context.Context, _ string, limit int32) (*driver.ListStreamsOutput, error) {
+// ListStreams returns stream names and summaries, ordered by name and paginated
+// by limit (a returned NextToken/HasMoreStreams resumes after the last name).
+func (m *Mock) ListStreams(_ context.Context, nextToken string, limit int32) (*driver.ListStreamsOutput, error) {
 	all := m.streams.All()
-	out := &driver.ListStreamsOutput{}
 
-	for _, sd := range all {
+	names := make([]string, 0, len(all))
+	for name := range all {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	maxOut := len(names)
+	if limit > 0 && int(limit) < maxOut {
+		maxOut = int(limit)
+	}
+
+	out := &driver.ListStreamsOutput{}
+	started := nextToken == ""
+
+	for _, name := range names {
+		if !started {
+			if name == nextToken {
+				started = true
+			}
+
+			continue
+		}
+
+		if len(out.StreamNames) == maxOut {
+			out.HasMoreStreams = true
+			out.NextToken = out.StreamNames[len(out.StreamNames)-1]
+
+			break
+		}
+
+		sd := all[name]
 		sd.mu.RLock()
 		out.StreamNames = append(out.StreamNames, sd.desc.StreamName)
 		out.StreamSummaries = append(out.StreamSummaries, driver.StreamSummary{
@@ -216,8 +248,6 @@ func (m *Mock) ListStreams(_ context.Context, _ string, limit int32) (*driver.Li
 		})
 		sd.mu.RUnlock()
 	}
-
-	_ = limit
 
 	return out, nil
 }
@@ -280,14 +310,54 @@ func (m *Mock) UpdateShardCount(
 	endSeq := sd.nextSeq()
 	nextIdx := len(sd.shards)
 
+	// Snapshot the open shards' hash ranges, then close them, so each new shard
+	// can be linked to the parent(s) whose range it overlaps.
+	type parentRange struct {
+		id         string
+		start, end *big.Int
+	}
+
+	var parents []parentRange
+
 	for _, ss := range sd.shards {
-		if !ss.closed {
-			ss.closed = true
-			ss.shard.SequenceNumberRange.EndingSequenceNumber = endSeq
+		if ss.closed {
+			continue
+		}
+
+		s, _ := new(big.Int).SetString(ss.shard.HashKeyRange.StartingHashKey, base10)
+		e, _ := new(big.Int).SetString(ss.shard.HashKeyRange.EndingHashKey, base10)
+		parents = append(parents, parentRange{ss.shard.ShardID, s, e})
+		ss.closed = true
+		ss.shard.SequenceNumberRange.EndingSequenceNumber = endSeq
+	}
+
+	children := m.buildShards(targetCount, nextIdx, sd.nextSeq())
+
+	// Link each child to the parent shard(s) it overlaps, so draining a closed
+	// shard reports its children (closed-shard→child contract), matching
+	// SplitShard/MergeShards — otherwise a following consumer dead-ends.
+	for _, ch := range children {
+		cs, _ := new(big.Int).SetString(ch.shard.HashKeyRange.StartingHashKey, base10)
+		ce, _ := new(big.Int).SetString(ch.shard.HashKeyRange.EndingHashKey, base10)
+
+		var overlap []string
+
+		for i := range parents {
+			if cs.Cmp(parents[i].end) <= 0 && ce.Cmp(parents[i].start) >= 0 {
+				overlap = append(overlap, parents[i].id)
+			}
+		}
+
+		if len(overlap) > 0 {
+			ch.shard.ParentShardID = overlap[0]
+		}
+
+		if len(overlap) > 1 {
+			ch.shard.AdjacentParentShardID = overlap[1]
 		}
 	}
 
-	sd.shards = append(sd.shards, m.buildShards(targetCount, nextIdx, sd.nextSeq())...)
+	sd.shards = append(sd.shards, children...)
 
 	return before, targetCount, nil
 }

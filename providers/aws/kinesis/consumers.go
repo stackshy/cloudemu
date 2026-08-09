@@ -2,6 +2,7 @@ package kinesis
 
 import (
 	"context"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
@@ -79,9 +80,10 @@ func (m *Mock) DescribeStreamConsumer(
 	return &out, nil
 }
 
-// ListStreamConsumers lists a stream's consumers.
+// ListStreamConsumers lists a stream's consumers, ordered by name and paginated
+// by maxResults (a returned NextToken resumes after the last consumer name).
 func (m *Mock) ListStreamConsumers(
-	_ context.Context, streamARN, _ string, _ int32,
+	_ context.Context, streamARN, nextToken string, maxResults int32,
 ) ([]driver.Consumer, string, error) {
 	sd, err := m.resolve("", streamARN)
 	if err != nil {
@@ -91,9 +93,35 @@ func (m *Mock) ListStreamConsumers(
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	out := make([]driver.Consumer, 0, len(sd.consumers))
-	for _, c := range sd.consumers {
-		out = append(out, *c)
+	names := make([]string, 0, len(sd.consumers))
+	for name := range sd.consumers {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	maxOut := len(names)
+	if maxResults > 0 && int(maxResults) < maxOut {
+		maxOut = int(maxResults)
+	}
+
+	out := make([]driver.Consumer, 0, maxOut)
+	started := nextToken == ""
+
+	for _, name := range names {
+		if !started {
+			if name == nextToken {
+				started = true
+			}
+
+			continue
+		}
+
+		if len(out) == maxOut {
+			return out, out[len(out)-1].ConsumerName, nil
+		}
+
+		out = append(out, *sd.consumers[name])
 	}
 
 	return out, "", nil

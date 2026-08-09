@@ -152,8 +152,16 @@ func (m *Mock) appendRecord(
 		return "", "", invalidArg("ExplicitHashKey %q is not a valid hash key", explicitHashKey)
 	}
 
+	// An explicit hash key must fall within the 128-bit key space. Real Kinesis
+	// returns InvalidArgumentException for out-of-range values.
+	if key.Sign() < 0 || key.Cmp(maxHashKey()) > 0 {
+		return "", "", invalidArg("ExplicitHashKey %q is out of range [0, 2^128)", explicitHashKey)
+	}
+
 	shard := shardForHashKey(sd.shards, key)
 	if shard == nil {
+		// Unreachable for MD5-routed keys (they tile the full range) and for
+		// bounds-checked explicit keys — a genuine internal invariant.
 		return "", "", errInUse("no open shard covers the record's hash key")
 	}
 
@@ -323,7 +331,18 @@ func (m *Mock) ListShards(_ context.Context, in driver.ListShardsInput) (*driver
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	shards, _ := pageShards(sd.shards, in.MaxResults, in.ExclusiveStartShardID)
+	// A NextToken from a prior page resumes after the last shard it returned.
+	start := in.ExclusiveStartShardID
+	if start == "" {
+		start = in.NextToken
+	}
 
-	return &driver.ListShardsOutput{Shards: shards}, nil
+	shards, more := pageShards(sd.shards, in.MaxResults, start)
+
+	out := &driver.ListShardsOutput{Shards: shards}
+	if more && len(shards) > 0 {
+		out.NextToken = shards[len(shards)-1].ShardID
+	}
+
+	return out, nil
 }
