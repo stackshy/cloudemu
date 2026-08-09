@@ -43,6 +43,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpclattice"
+	"github.com/stackshy/cloudemu/v2/providers/aws/wafv2"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
@@ -157,6 +158,7 @@ type Provider struct {
 	Kinesis             *kinesis.Mock
 	SESV2               *sesv2.Mock
 	VPCLattice          *vpclattice.Mock
+	WAFv2               *wafv2.Mock
 	Route53Resolver     *route53resolver.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
@@ -201,6 +203,7 @@ func New(opts ...config.Option) *Provider {
 		Kinesis:             kinesis.New(o),
 		SESV2:               sesv2.New(o),
 		VPCLattice:          vpclattice.New(o),
+		WAFv2:               wafv2.New(o),
 		Route53Resolver:     route53resolver.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
