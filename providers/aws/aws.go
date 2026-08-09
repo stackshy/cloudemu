@@ -37,6 +37,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/s3"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
 	"github.com/stackshy/cloudemu/v2/providers/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sesv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
@@ -154,6 +155,7 @@ type Provider struct {
 	ECS                 *ecs.Mock
 	EFS                 *efs.Mock
 	Kinesis             *kinesis.Mock
+	SESV2               *sesv2.Mock
 	VPCLattice          *vpclattice.Mock
 	Route53Resolver     *route53resolver.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
@@ -197,6 +199,7 @@ func New(opts ...config.Option) *Provider {
 		ECS:                 ecs.New(o),
 		EFS:                 efs.New(o),
 		Kinesis:             kinesis.New(o),
+		SESV2:               sesv2.New(o),
 		VPCLattice:          vpclattice.New(o),
 		Route53Resolver:     route53resolver.New(o),
 		AccountID:           o.AccountID,
