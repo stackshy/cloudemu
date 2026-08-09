@@ -2,54 +2,55 @@
 # Capability coverage
 
 Every service cloudemu emulates and the native name each provider exposes it under.
-Each row links to the full, operation-level list. This page is generated from the
-driver interfaces in `services/*/driver`, so it cannot promise a capability the code
-does not implement. A machine-readable version lives in [`coverage.json`](./coverage.json).
+Each cell links to that provider's operation-level page; per-provider indexes are in
+[aws/](./aws/), [azure/](./azure/), [gcp/](./gcp/), and [oci/](./oci/). This page is
+generated from the driver interfaces in `services/*/driver`, so it cannot promise a
+capability the code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 
 | Service | AWS | Azure | GCP | OCI | Operations |
 | --- | --- | --- | --- | --- | --- |
-| [acm](./acm.md) | ACM | — | — | — | 17 |
-| [azureai](./azureai.md) | — | AI | — | — | 92 |
-| [azuresearch](./azuresearch.md) | — | Search | — | — | 53 |
-| [bedrock](./bedrock.md) | Bedrock | — | — | — | 65 |
-| [bedrockagent](./bedrockagent.md) | BedrockAgent | — | — | — | 29 |
-| [bedrockagentruntime](./bedrockagentruntime.md) | BedrockAgentRuntime | — | — | — | 3 |
-| [bigtable](./bigtable.md) | — | — | Bigtable | — | 38 |
-| [cache](./cache.md) | ElastiCache | Cache | Memorystore | — | 17 |
-| [compute](./compute.md) | EC2 | VirtualMachines | GCE | — | 37 |
-| [containerregistry](./containerregistry.md) | ECR | ACR | ArtifactRegistry | — | 14 |
-| [cosmospostgresql](./cosmospostgresql.md) | — | CosmosPostgreSQL | — | — | 34 |
-| [database](./database.md) | DynamoDB | CosmosDB | Firestore | — | 24 |
-| [databricks](./databricks.md) | — | Databricks | — | — | 46 |
-| [dns](./dns.md) | Route53 | DNS | CloudDNS | — | 16 |
-| [ecs](./ecs.md) | ECS | — | — | — | 37 |
-| [efs](./efs.md) | EFS | — | — | — | 27 |
-| [eventbus](./eventbus.md) | EventBridge | EventGrid | Eventarc | — | 16 |
-| [iam](./iam.md) | IAM | IAM | IAM | — | 40 |
-| [keyspaces](./keyspaces.md) | Keyspaces | — | — | — | 18 |
-| [kinesis](./kinesis.md) | Kinesis | — | — | — | 39 |
-| [kms](./kms.md) | KMS | — | — | — | 45 |
-| [loadbalancer](./loadbalancer.md) | ELB | LB | LB | — | 19 |
-| [logging](./logging.md) | CloudWatchLogs | LogAnalytics | CloudLogging | — | 14 |
-| [managedcassandra](./managedcassandra.md) | — | ManagedCassandra | — | — | 15 |
-| [memorydb](./memorydb.md) | MemoryDB | — | — | — | 33 |
-| [messagequeue](./messagequeue.md) | SQS | QueueStorage | PubSub | — | 14 |
-| [monitoring](./monitoring.md) | CloudWatch | Monitor | CloudMonitoring | — | 12 |
-| [networkfirewall](./networkfirewall.md) | NetworkFirewall | — | — | — | 20 |
-| [networking](./networking.md) | VPC | — | — | — | 3 |
-| [notification](./notification.md) | SNS | NotificationHubs | FCM | — | 9 |
-| [parameterstore](./parameterstore.md) | SSM | — | — | — | 9 |
-| [relationaldb](./relationaldb.md) | Redshift | MySQLFlex | AlloyDB | — | 21 |
-| [route53resolver](./route53resolver.md) | Route53Resolver | — | — | — | 72 |
-| [sagemaker](./sagemaker.md) | SageMaker | — | — | — | 121 |
-| [secrets](./secrets.md) | SecretsManager | KeyVault | SecretManager | — | 7 |
-| [serverless](./serverless.md) | Lambda | Functions | CloudFunctions | — | 27 |
-| [sesv2](./sesv2.md) | SESV2 | — | — | — | 113 |
-| [sfn](./sfn.md) | SFN | — | — | — | 37 |
-| [storage](./storage.md) | S3 | BlobStorage | GCS | — | 35 |
-| [tablestorage](./tablestorage.md) | — | TableStorage | — | — | 8 |
-| [vertexai](./vertexai.md) | — | — | VertexAI | — | 125 |
-| [vpclattice](./vpclattice.md) | VPCLattice | — | — | — | 73 |
-| [wafv2](./wafv2.md) | WAFv2 | — | — | — | 39 |
+| `acm` | [ACM](./aws/acm.md) | — | — | — | 17 |
+| `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
+| `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
+| `bedrock` | [Bedrock](./aws/bedrock.md) | — | — | — | 65 |
+| `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | — | — | — | 29 |
+| `bedrockagentruntime` | [BedrockAgentRuntime](./aws/bedrockagentruntime.md) | — | — | — | 3 |
+| `bigtable` | — | — | [Bigtable](./gcp/bigtable.md) | — | 38 |
+| `cache` | [ElastiCache](./aws/elasticache.md) | [Cache](./azure/cache.md) | [Memorystore](./gcp/memorystore.md) | — | 17 |
+| `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
+| `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 14 |
+| `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
+| `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
+| `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
+| `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | — | 16 |
+| `ecs` | [ECS](./aws/ecs.md) | — | — | — | 37 |
+| `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |
+| `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
+| `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | — | 40 |
+| `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
+| `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
+| `kms` | [KMS](./aws/kms.md) | — | — | — | 45 |
+| `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | — | 19 |
+| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 14 |
+| `managedcassandra` | — | [ManagedCassandra](./azure/managedcassandra.md) | — | — | 15 |
+| `memorydb` | [MemoryDB](./aws/memorydb.md) | — | — | — | 33 |
+| `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | — | 14 |
+| `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | — | 12 |
+| `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 20 |
+| `networking` | [VPC](./aws/vpc.md) | — | — | — | 3 |
+| `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | — | 9 |
+| `parameterstore` | [SSM](./aws/ssm.md) | — | — | — | 9 |
+| `relationaldb` | [Redshift](./aws/redshift.md) | [MySQLFlex](./azure/mysqlflex.md) | [AlloyDB](./gcp/alloydb.md) | — | 21 |
+| `route53resolver` | [Route53Resolver](./aws/route53resolver.md) | — | — | — | 72 |
+| `sagemaker` | [SageMaker](./aws/sagemaker.md) | — | — | — | 121 |
+| `secrets` | [SecretsManager](./aws/secretsmanager.md) | [KeyVault](./azure/keyvault.md) | [SecretManager](./gcp/secretmanager.md) | — | 7 |
+| `serverless` | [Lambda](./aws/lambda.md) | [Functions](./azure/functions.md) | [CloudFunctions](./gcp/cloudfunctions.md) | — | 27 |
+| `sesv2` | [SESV2](./aws/sesv2.md) | — | — | — | 113 |
+| `sfn` | [SFN](./aws/sfn.md) | — | — | — | 37 |
+| `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | — | 35 |
+| `tablestorage` | — | [TableStorage](./azure/tablestorage.md) | — | — | 8 |
+| `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 125 |
+| `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |
+| `wafv2` | [WAFv2](./aws/wafv2.md) | — | — | — | 39 |
 
-> **OCI**: foundation only — the provider scaffold exists (identity, IDs, wire layer) but no services are implemented yet, so every row above is `—`.
+> **OCI**: foundation only — the provider scaffold exists (identity, IDs, wire layer) but no services are implemented yet, so every row above is `—`. See [oci/](./oci/).

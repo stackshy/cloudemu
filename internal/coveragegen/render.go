@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -13,7 +14,7 @@ const (
 
 	dirPerm  = 0o755 // generated docs directories
 	filePerm = 0o644 // generated docs files
-	twoCols  = 2     // two-column tables (Provider/Exposed as, Operation/Description)
+	twoCols  = 2     // two-column tables (Operation/Description)
 )
 
 func render(root string, services []*Service) error {
@@ -22,30 +23,78 @@ func render(root string, services []*Service) error {
 		return err
 	}
 
-	if err := writeFile(filepath.Join(outDir, "README.md"), renderIndex(services)); err != nil {
+	if err := writeFile(filepath.Join(outDir, "README.md"), renderMatrix(services)); err != nil {
 		return err
 	}
 
-	for _, svc := range services {
-		page := renderService(outDir, svc)
-		if err := writeFile(filepath.Join(outDir, svc.Name+".md"), page); err != nil {
+	if err := writeJSON(filepath.Join(outDir, "coverage.json"), services); err != nil {
+		return err
+	}
+
+	for _, prov := range providerOrder {
+		if err := renderProvider(outDir, prov, services); err != nil {
 			return err
 		}
 	}
 
-	return writeJSON(filepath.Join(outDir, "coverage.json"), services)
+	return nil
 }
 
-func renderIndex(services []*Service) string {
+// renderProvider writes a provider folder: an index plus one native-named page
+// per service that provider implements. A provider that implements nothing
+// (OCI today) gets only a foundation-only index.
+func renderProvider(outDir, prov string, services []*Service) error {
+	provDir := filepath.Join(outDir, prov)
+	if err := os.MkdirAll(provDir, dirPerm); err != nil {
+		return err
+	}
+
+	owned := providerServices(prov, services)
+	if err := writeFile(filepath.Join(provDir, "README.md"), renderProviderIndex(prov, owned)); err != nil {
+		return err
+	}
+
+	for _, svc := range owned {
+		native := svc.Providers[prov]
+		page := renderProviderPage(outDir, prov, native, svc)
+
+		if err := writeFile(filepath.Join(provDir, pageBase(native)+".md"), page); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// providerServices returns the services a provider implements, ordered by
+// native name.
+func providerServices(prov string, services []*Service) []*Service {
+	var owned []*Service
+
+	for _, svc := range services {
+		if svc.Providers[prov] != "" {
+			owned = append(owned, svc)
+		}
+	}
+
+	sort.Slice(owned, func(i, j int) bool {
+		return owned[i].Providers[prov] < owned[j].Providers[prov]
+	})
+
+	return owned
+}
+
+func renderMatrix(services []*Service) string {
 	var b strings.Builder
 
 	fmt.Fprintln(&b, genNotice)
 	fmt.Fprintln(&b, "# Capability coverage")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "Every service cloudemu emulates and the native name each provider exposes it under.")
-	fmt.Fprintln(&b, "Each row links to the full, operation-level list. This page is generated from the")
-	fmt.Fprintln(&b, "driver interfaces in `services/*/driver`, so it cannot promise a capability the code")
-	fmt.Fprintln(&b, "does not implement. A machine-readable version lives in [`coverage.json`](./coverage.json).")
+	fmt.Fprintln(&b, "Each cell links to that provider's operation-level page; per-provider indexes are in")
+	fmt.Fprintln(&b, "[aws/](./aws/), [azure/](./azure/), [gcp/](./gcp/), and [oci/](./oci/). This page is")
+	fmt.Fprintln(&b, "generated from the driver interfaces in `services/*/driver`, so it cannot promise a")
+	fmt.Fprintln(&b, "capability the code does not implement. Machine-readable: [`coverage.json`](./coverage.json).")
 	fmt.Fprintln(&b)
 
 	header := append([]string{"Service"}, providerTitles()...)
@@ -55,10 +104,10 @@ func renderIndex(services []*Service) string {
 
 	for _, svc := range services {
 		cells := make([]string, 0, len(providerOrder)+twoCols)
-		cells = append(cells, fmt.Sprintf("[%s](./%s.md)", svc.Name, svc.Name))
+		cells = append(cells, "`"+svc.Name+"`")
 
 		for _, prov := range providerOrder {
-			cells = append(cells, orDash(svc.Providers[prov]))
+			cells = append(cells, matrixCell(prov, svc))
 		}
 
 		cells = append(cells, fmt.Sprintf("%d", len(svc.Operations)))
@@ -70,33 +119,68 @@ func renderIndex(services []*Service) string {
 	return b.String()
 }
 
+// matrixCell links a provider's native name to its page, or "—" if unsupported.
+func matrixCell(prov string, svc *Service) string {
+	native := svc.Providers[prov]
+	if native == "" {
+		return "—"
+	}
+
+	return fmt.Sprintf("[%s](./%s/%s.md)", native, prov, pageBase(native))
+}
+
 // renderProviderNotes flags any provider whose services are all unimplemented,
 // so an all-dash column reads as "foundation only" rather than "not a provider".
 func renderProviderNotes(b *strings.Builder, services []*Service) {
 	for i, prov := range providerOrder {
-		implemented := 0
-
-		for _, svc := range services {
-			if svc.Providers[prov] != "" {
-				implemented++
-			}
-		}
-
-		if implemented == 0 {
+		if len(providerServices(prov, services)) == 0 {
 			fmt.Fprintf(b, "\n> **%s**: foundation only — the provider scaffold exists "+
 				"(identity, IDs, wire layer) but no services are implemented yet, so every "+
-				"row above is `—`.\n", providerTitles()[i])
+				"row above is `—`. See [%s/](./%s/).\n", providerTitles()[i], prov, prov)
 		}
 	}
 }
 
-func renderService(outDir string, svc *Service) string {
+func renderProviderIndex(prov string, owned []*Service) string {
+	var b strings.Builder
+
+	title := providerTitle(prov)
+
+	fmt.Fprintln(&b, genNotice)
+	fmt.Fprintf(&b, "# %s coverage\n\n", title)
+
+	if len(owned) == 0 {
+		fmt.Fprintf(&b, "**%s is foundation only.** The provider scaffold exists (identity, IDs, "+
+			"wire layer, shared driver interfaces) but no services are implemented yet, so there "+
+			"are no pages here. See the [architecture notes](../../architecture.md) for status.\n", title)
+
+		return b.String()
+	}
+
+	fmt.Fprintf(&b, "Services cloudemu emulates for %s, by native name. "+
+		"Back to the [cross-provider matrix](../README.md).\n\n", title)
+	fmt.Fprintln(&b, tableRow([]string{title + " service", "Portable service", "Operations"}))
+	fmt.Fprintln(&b, tableRule(3)) //nolint:mnd // three-column index table
+
+	for _, svc := range owned {
+		native := svc.Providers[prov]
+		fmt.Fprintln(&b, tableRow([]string{
+			fmt.Sprintf("[%s](./%s.md)", native, pageBase(native)),
+			"`" + svc.Name + "`",
+			fmt.Sprintf("%d", len(svc.Operations)),
+		}))
+	}
+
+	return b.String()
+}
+
+func renderProviderPage(outDir, prov, native string, svc *Service) string {
 	var b strings.Builder
 
 	fmt.Fprintln(&b, genNotice)
-	fmt.Fprintf(&b, "# %s\n\n", svc.Name)
-	fmt.Fprintf(&b, "Portable interface: `driver.%s`\n\n", svc.Interface)
-	renderProviderTable(&b, svc)
+	fmt.Fprintf(&b, "# %s\n\n", native)
+	fmt.Fprintf(&b, "%s's %s service · portable interface `driver.%s` · [%s index](./README.md)\n\n",
+		providerTitle(prov), "`"+svc.Name+"`", svc.Interface, providerTitle(prov))
 	fmt.Fprintf(&b, "## Operations (%d)\n\n", len(svc.Operations))
 	renderOpTable(&b, svc.Operations)
 
@@ -106,14 +190,14 @@ func renderService(outDir string, svc *Service) string {
 		fmt.Fprintln(&b, "Discovered by type assertion; only some providers implement these.")
 		fmt.Fprintln(&b)
 
-		for _, cap := range svc.Capabilities {
-			fmt.Fprintf(&b, "### %s\n\n", cap.Name)
+		for _, capability := range svc.Capabilities {
+			fmt.Fprintf(&b, "### %s\n\n", capability.Name)
 
-			if cap.Doc != "" {
-				fmt.Fprintf(&b, "%s\n\n", cap.Doc)
+			if capability.Doc != "" {
+				fmt.Fprintf(&b, "%s\n\n", capability.Doc)
 			}
 
-			renderOpTable(&b, cap.Operations)
+			renderOpTable(&b, capability.Operations)
 		}
 	}
 
@@ -122,17 +206,6 @@ func renderService(outDir string, svc *Service) string {
 	fmt.Fprint(&b, nonGoals(outDir, svc.Name))
 
 	return b.String()
-}
-
-func renderProviderTable(b *strings.Builder, svc *Service) {
-	fmt.Fprintln(b, tableRow([]string{"Provider", "Exposed as"}))
-	fmt.Fprintln(b, tableRule(twoCols))
-
-	for i, prov := range providerOrder {
-		fmt.Fprintln(b, tableRow([]string{providerTitles()[i], orDash(svc.Providers[prov])}))
-	}
-
-	fmt.Fprintln(b)
 }
 
 func renderOpTable(b *strings.Builder, ops []Operation) {
@@ -147,13 +220,14 @@ func renderOpTable(b *strings.Builder, ops []Operation) {
 }
 
 // nonGoals inlines a hand-maintained fragment if present, else a default line.
+// Fragments are keyed by portable service name and shared across providers.
 func nonGoals(outDir, service string) string {
 	data, err := os.ReadFile(filepath.Join(outDir, "nongoals", service+".md"))
 	if err == nil && strings.TrimSpace(string(data)) != "" {
 		return strings.TrimRight(string(data), "\n") + "\n"
 	}
 
-	return "_Not documented yet. See the [emulator boundary](../README.md) for cloudemu-wide non-goals._\n"
+	return "_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._\n"
 }
 
 func writeJSON(path string, services []*Service) error {
@@ -173,28 +247,26 @@ func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), filePerm)
 }
 
-func providerTitles() []string {
+func providerTitle(prov string) string {
 	titles := map[string]string{"aws": "AWS", "azure": "Azure", "gcp": "GCP", "oci": "OCI"}
-	out := make([]string, len(providerOrder))
+	if t, ok := titles[prov]; ok {
+		return t
+	}
 
+	return strings.ToUpper(prov)
+}
+
+func providerTitles() []string {
+	out := make([]string, len(providerOrder))
 	for i, p := range providerOrder {
-		if t, ok := titles[p]; ok {
-			out[i] = t
-		} else {
-			out[i] = strings.ToUpper(p)
-		}
+		out[i] = providerTitle(p)
 	}
 
 	return out
 }
 
-func orDash(s string) string {
-	if s == "" {
-		return "—"
-	}
-
-	return s
-}
+// pageBase is the file stem for a native service name (S3 -> s3).
+func pageBase(native string) string { return strings.ToLower(native) }
 
 func tableRow(cells []string) string { return "| " + strings.Join(cells, " | ") + " |" }
 
