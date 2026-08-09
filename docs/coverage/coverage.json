@@ -2811,10 +2811,109 @@
         "name": "SetDefaultPolicyVersion"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "Compartments",
+        "doc": "Compartments is an OPTIONAL capability, discovered by type assertion (like",
+        "operations": [
+          {
+            "name": "CreateCompartment"
+          },
+          {
+            "name": "DeleteCompartment"
+          },
+          {
+            "name": "GetCompartment"
+          },
+          {
+            "name": "ListCompartments",
+            "doc": "ListCompartments returns the direct children of parentID, or every"
+          },
+          {
+            "name": "UpdateCompartment"
+          }
+        ]
+      },
+      {
+        "name": "OCIIdentity",
+        "doc": "OCIIdentity is an OPTIONAL capability, discovered by type assertion. The",
+        "operations": [
+          {
+            "name": "CreateOCIGroup"
+          },
+          {
+            "name": "CreateOCIGroupMembership"
+          },
+          {
+            "name": "CreateOCIUser"
+          },
+          {
+            "name": "DeleteOCIGroup"
+          },
+          {
+            "name": "DeleteOCIGroupMembership"
+          },
+          {
+            "name": "DeleteOCIUser"
+          },
+          {
+            "name": "GetOCIGroup"
+          },
+          {
+            "name": "GetOCIGroupMembership"
+          },
+          {
+            "name": "GetOCIUser"
+          },
+          {
+            "name": "ListOCIGroupMemberships",
+            "doc": "ListOCIGroupMemberships filters by compartment, and further by userID or"
+          },
+          {
+            "name": "ListOCIGroups"
+          },
+          {
+            "name": "ListOCIUsers"
+          },
+          {
+            "name": "UpdateOCIGroup"
+          },
+          {
+            "name": "UpdateOCIUser"
+          }
+        ]
+      },
+      {
+        "name": "StatementPolicies",
+        "doc": "StatementPolicies is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "CreateStatementPolicy"
+          },
+          {
+            "name": "DeleteStatementPolicy"
+          },
+          {
+            "name": "Evaluate",
+            "doc": "Evaluate reports whether any statement grants the request. OCI policies"
+          },
+          {
+            "name": "GetStatementPolicy"
+          },
+          {
+            "name": "ListStatementPolicies"
+          },
+          {
+            "name": "UpdateStatementPolicy"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "IAM",
       "azure": "IAM",
-      "gcp": "IAM"
+      "gcp": "IAM",
+      "oci": "Identity"
     }
   },
   {

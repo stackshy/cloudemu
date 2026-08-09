@@ -26,7 +26,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `ecs` | [ECS](./aws/ecs.md) | — | — | — | 37 |
 | `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |
 | `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
-| `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | — | 40 |
+| `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | [Identity](./oci/identity.md) | 40 |
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
 | `kms` | [KMS](./aws/kms.md) | — | — | — | 45 |
@@ -52,5 +52,3 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 125 |
 | `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |
 | `wafv2` | [WAFv2](./aws/wafv2.md) | — | — | — | 39 |
-
-> **OCI**: foundation only — the provider scaffold exists (identity, IDs, wire layer) but no services are implemented yet, so every row above is `—`. See [oci/](./oci/).
