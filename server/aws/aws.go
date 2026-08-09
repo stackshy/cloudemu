@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/server/aws/ecr"
 	ecssrv "github.com/stackshy/cloudemu/v2/server/aws/ecs"
+	efssrv "github.com/stackshy/cloudemu/v2/server/aws/efs"
 	"github.com/stackshy/cloudemu/v2/server/aws/eks"
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
@@ -51,6 +52,7 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
+	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
@@ -101,6 +103,10 @@ type Drivers struct {
 	// VPCLattice serves the AWS VPC Lattice REST-JSON API (path + method
 	// routing) against the vpclattice driver.
 	VPCLattice vpclatticedriver.VPCLattice
+
+	// EFS serves the AWS EFS REST-JSON API (path + method routing under the
+	// /2015-02-01/ version prefix) against the efs driver.
+	EFS efsdriver.EFS
 
 	// Route53Resolver serves the AWS Route 53 Resolver JSON 1.1 protocol
 	// (X-Amz-Target prefix "Route53Resolver.") against the route53resolver driver.
@@ -180,6 +186,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SageMaker:           p.SageMaker,
 		ECS:                 p.ECS,
 		VPCLattice:          p.VPCLattice,
+		EFS:                 p.EFS,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
 		SSM:                 p.SSM,
@@ -292,6 +299,13 @@ func New(d Drivers) *server.Server {
 	// method+shape and must run before the S3 catch-all.
 	if d.VPCLattice != nil {
 		srv.Register(vpclatticesrv.New(d.VPCLattice))
+	}
+
+	// EFS uses REST-JSON path routing under the /2015-02-01/ version prefix; its
+	// Matches predicate gates on that prefix, so it must run before the S3
+	// catch-all (no real bucket path begins with /2015-02-01/).
+	if d.EFS != nil {
+		srv.Register(efssrv.New(d.EFS))
 	}
 
 	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver." —
