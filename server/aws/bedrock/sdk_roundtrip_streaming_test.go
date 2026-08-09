@@ -19,6 +19,57 @@ import (
 // frame, so a completed attempt never retries; only a benign teardown does.
 const streamAttempts = 5
 
+// collectConverseStream runs one ConverseStream attempt and returns the
+// reassembled assistant text and whether the stream completed — i.e. carried
+// its full start/stop/metadata lifecycle. Since metadata is emitted last, a
+// complete stream is guaranteed to have delivered every contentBlockDelta;
+// an incomplete result means a benign mid-flight teardown truncated the frames
+// and the caller should retry.
+func collectConverseStream(t *testing.T, client *awsruntime.Client, msg []runtimetypes.Message) (string, bool) {
+	t.Helper()
+
+	streamOut, err := client.ConverseStream(context.Background(), &awsruntime.ConverseStreamInput{
+		ModelId:  aws.String(claudeModel),
+		Messages: msg,
+	})
+	if err != nil {
+		t.Fatalf("ConverseStream: %v", err)
+	}
+
+	stream := streamOut.GetStream()
+
+	var (
+		text     strings.Builder
+		sawStart bool
+		sawStop  bool
+		sawMeta  bool
+	)
+
+	for ev := range stream.Events() {
+		switch e := ev.(type) {
+		case *runtimetypes.ConverseStreamOutputMemberMessageStart:
+			sawStart = true
+		case *runtimetypes.ConverseStreamOutputMemberContentBlockDelta:
+			if td, ok := e.Value.Delta.(*runtimetypes.ContentBlockDeltaMemberText); ok {
+				text.WriteString(td.Value)
+			}
+		case *runtimetypes.ConverseStreamOutputMemberMessageStop:
+			sawStop = true
+		case *runtimetypes.ConverseStreamOutputMemberMetadata:
+			sawMeta = true
+		}
+	}
+
+	err = stream.Err()
+	stream.Close()
+
+	if err != nil && !benignStreamTeardown(err) {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	return text.String(), sawStart && sawStop && sawMeta
+}
+
 func TestSDKConverseStream(t *testing.T) {
 	client := newRuntimeClient(t)
 
@@ -114,32 +165,22 @@ func TestSDKConverseStreamMultibyteRuneBoundary(t *testing.T) {
 		},
 	}
 
-	streamOut, err := client.ConverseStream(context.Background(), &awsruntime.ConverseStreamInput{
-		ModelId:  aws.String(claudeModel),
-		Messages: msg,
-	})
-	if err != nil {
-		t.Fatalf("ConverseStream: %v", err)
-	}
+	// Retry on a benign mid-stream teardown (same artifact TestSDKConverseStream
+	// tolerates): a complete stream carries the full deterministic text, so only
+	// a truncated attempt re-runs.
+	var got string
 
-	stream := streamOut.GetStream()
-	defer stream.Close()
+	complete := false
 
-	var streamed strings.Builder
-
-	for ev := range stream.Events() {
-		if d, ok := ev.(*runtimetypes.ConverseStreamOutputMemberContentBlockDelta); ok {
-			if td, ok := d.Value.Delta.(*runtimetypes.ContentBlockDeltaMemberText); ok {
-				streamed.WriteString(td.Value)
-			}
+	for attempt := 0; attempt < streamAttempts; attempt++ {
+		if got, complete = collectConverseStream(t, client, msg); complete {
+			break
 		}
 	}
 
-	if err := stream.Err(); err != nil && !benignStreamTeardown(err) {
-		t.Fatalf("stream error: %v", err)
+	if !complete {
+		t.Fatalf("stream never completed after %d attempts", streamAttempts)
 	}
-
-	got := streamed.String()
 
 	if !utf8.ValidString(got) {
 		t.Fatalf("streamed text is not valid UTF-8: %q", got)

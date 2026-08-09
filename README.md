@@ -27,6 +27,23 @@ It ships two surfaces you can mix and match:
 - **SDK-compat HTTP server** — point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, `cloud.google.com/go`, or `databricks-sdk-go` clients at a local endpoint and they just work. No code changes in your app.
 - **Go API** — typed in-memory mocks (`aws.S3`, `azure.VirtualMachines`, `gcp.GCE`, …) for tests written against cloudemu directly.
 
+## What it is / isn't
+
+cloudemu emulates cloud **control surfaces** — the APIs — so your code exercises real request/response behavior without a real account. It is **not** a cloud.
+
+**It does:**
+- ✅ Emulate cloud **APIs** for fast, deterministic, Docker-free testing — via the Go API, the SDK-compat HTTP server, the standalone `serve` process, and an in-memory Kubernetes API with built-in controllers.
+- ✅ Keep all state in process memory, with a fake clock and deterministic IDs for reproducible tests.
+
+**It does not:**
+- ❌ **Run real workloads or containers.** Kubernetes controllers converge synchronously (no scheduler/kubelet); there is no real `kubectl logs`/`exec`, no container runtime, no VM.
+- ❌ **Serve real traffic.** A created load balancer, DNS record, or queue models the API object — it does not route packets or deliver over the network.
+- ❌ **Authenticate or authorize requests.** Any credentials are accepted and signatures are not verified. The IAM service evaluates policies only when you explicitly call it; it does not gate other services' operations.
+- ❌ **Enforce quotas, limits, or billing.**
+- ❌ **Persist state across restarts.** Everything is in memory and gone when the process exits.
+
+Per-service "Not in scope" notes live alongside each service in the generated [capability coverage](docs/coverage/README.md).
+
 ## Install
 
 ```bash
@@ -105,6 +122,8 @@ desc, _ := aws.EC2.DescribeInstances(ctx, []string{instances[0].ID}, nil)
 The same pattern works across all services and all three providers — swap `aws.EC2` for `azure.VirtualMachines` or `gcp.GCE`.
 
 ## What's supported
+
+The authoritative, always-current list is the generated [capability coverage](docs/coverage/README.md) — one page listing every service and every operation, produced from the driver interfaces by `go generate` so it cannot drift. The table below is a curated overview.
 
 SDK-compat coverage across AWS, Azure, and GCP:
 

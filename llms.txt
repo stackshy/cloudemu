@@ -1,0 +1,24 @@
+# cloudemu
+
+> Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs** for Go tests. Point the real cloud SDKs at a local endpoint, or use typed Go mocks directly — no accounts, Docker, or network calls. It emulates control surfaces, not a real cloud: it does not run workloads, serve traffic, authenticate requests, enforce quotas, or persist across restarts.
+
+## Capabilities (start here)
+
+- [Capability coverage index](docs/coverage/README.md): every service and the native name each provider exposes it under, generated from the driver interfaces so it cannot drift.
+- [coverage.json](docs/coverage/coverage.json): the full capability set, machine-readable (service → operations → providers) — parse this instead of scraping the docs.
+
+## Docs
+
+- [README](README.md): what cloudemu is / isn't, install, quickstarts for the SDK-compat server and the Go API.
+- [Getting started](docs/getting-started.md): set up a test in five minutes.
+- [Architecture](docs/architecture.md): the three-layer design (portable API → driver interfaces → provider backends) and provider status (AWS/Azure/GCP implemented; OCI foundation only).
+- [SDK-compat server](docs/sdk-server.md): per-handler wire-protocol details and limitations.
+- [Services](docs/services.md): prose per-service capability reference.
+- [Integration](docs/integration.md): wiring cloudemu into an existing app and test suite.
+
+## Behavior & features
+
+- [Features](docs/features.md): auto-metrics, alarm evaluation, IAM policy evaluation, FIFO dedup, error injection, fake clock.
+- [Chaos](docs/chaos.md): deliberately fail or slow services to test retry/timeout paths.
+- [Topology](docs/topology.md): network connectivity simulation across VPC, peering, security groups, ACLs.
+- [Standalone server](docs/standalone-server.md): run the emulator as a long-lived process for out-of-process apps.

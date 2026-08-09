@@ -1,0 +1,8583 @@
+[
+  {
+    "service": "acm",
+    "interface": "ACM",
+    "operations": [
+      {
+        "name": "AddTagsToCertificate"
+      },
+      {
+        "name": "DeleteCertificate"
+      },
+      {
+        "name": "DescribeCertificate"
+      },
+      {
+        "name": "ExportCertificate"
+      },
+      {
+        "name": "GetAccountConfiguration"
+      },
+      {
+        "name": "GetCertificate"
+      },
+      {
+        "name": "ImportCertificate"
+      },
+      {
+        "name": "ListCertificates"
+      },
+      {
+        "name": "ListTagsForCertificate"
+      },
+      {
+        "name": "PutAccountConfiguration"
+      },
+      {
+        "name": "RemoveTagsFromCertificate"
+      },
+      {
+        "name": "RenewCertificate"
+      },
+      {
+        "name": "RequestCertificate"
+      },
+      {
+        "name": "ResendValidationEmail"
+      },
+      {
+        "name": "RevokeCertificate"
+      },
+      {
+        "name": "SearchCertificates"
+      },
+      {
+        "name": "UpdateCertificateOptions"
+      }
+    ],
+    "providers": {
+      "aws": "ACM"
+    }
+  },
+  {
+    "service": "azureai",
+    "interface": "AzureAI",
+    "operations": [
+      {
+        "name": "CancelJob"
+      },
+      {
+        "name": "ChatCompletions",
+        "doc": "Azure OpenAI inference."
+      },
+      {
+        "name": "Completions"
+      },
+      {
+        "name": "CreateAccount",
+        "doc": "Accounts."
+      },
+      {
+        "name": "CreateAsset",
+        "doc": "Versioned assets (models / data / environments / components / featuresets)."
+      },
+      {
+        "name": "CreateAssistant",
+        "doc": "Agents / Assistants."
+      },
+      {
+        "name": "CreateCommitmentPlan",
+        "doc": "Commitment plans (accounts/commitmentPlans)."
+      },
+      {
+        "name": "CreateCompute",
+        "doc": "Computes."
+      },
+      {
+        "name": "CreateConnection",
+        "doc": "Connections."
+      },
+      {
+        "name": "CreateDatastore",
+        "doc": "Datastores."
+      },
+      {
+        "name": "CreateDeployment",
+        "doc": "Deployments (accounts/deployments)."
+      },
+      {
+        "name": "CreateEndpoint",
+        "doc": "Endpoints (online + batch) and their deployments."
+      },
+      {
+        "name": "CreateEndpointDeployment"
+      },
+      {
+        "name": "CreateJob",
+        "doc": "Jobs."
+      },
+      {
+        "name": "CreateMLSchedule",
+        "doc": "Schedules."
+      },
+      {
+        "name": "CreateMLWorkspace",
+        "doc": "Workspaces."
+      },
+      {
+        "name": "CreateMessage"
+      },
+      {
+        "name": "CreateProject",
+        "doc": "Projects (accounts/projects)."
+      },
+      {
+        "name": "CreateRaiPolicy",
+        "doc": "RAI policies (accounts/raiPolicies)."
+      },
+      {
+        "name": "CreateRegistry",
+        "doc": "Registries (subscription/RG-scoped, cross-workspace)."
+      },
+      {
+        "name": "CreateRun"
+      },
+      {
+        "name": "CreateThread"
+      },
+      {
+        "name": "DeleteAccount"
+      },
+      {
+        "name": "DeleteAsset"
+      },
+      {
+        "name": "DeleteAssistant"
+      },
+      {
+        "name": "DeleteCommitmentPlan"
+      },
+      {
+        "name": "DeleteCompute"
+      },
+      {
+        "name": "DeleteConnection"
+      },
+      {
+        "name": "DeleteDatastore"
+      },
+      {
+        "name": "DeleteDeployment"
+      },
+      {
+        "name": "DeleteEndpoint"
+      },
+      {
+        "name": "DeleteEndpointDeployment"
+      },
+      {
+        "name": "DeleteMLSchedule"
+      },
+      {
+        "name": "DeleteMLWorkspace"
+      },
+      {
+        "name": "DeletePrivateEndpointConnection"
+      },
+      {
+        "name": "DeleteProject"
+      },
+      {
+        "name": "DeleteRaiPolicy"
+      },
+      {
+        "name": "DeleteRegistry"
+      },
+      {
+        "name": "DeleteThread"
+      },
+      {
+        "name": "Embeddings"
+      },
+      {
+        "name": "GetAccount"
+      },
+      {
+        "name": "GetAsset"
+      },
+      {
+        "name": "GetAssistant"
+      },
+      {
+        "name": "GetCommitmentPlan"
+      },
+      {
+        "name": "GetCompute"
+      },
+      {
+        "name": "GetConnection"
+      },
+      {
+        "name": "GetDatastore"
+      },
+      {
+        "name": "GetDeployment"
+      },
+      {
+        "name": "GetEndpoint"
+      },
+      {
+        "name": "GetEndpointDeployment"
+      },
+      {
+        "name": "GetJob"
+      },
+      {
+        "name": "GetMLSchedule"
+      },
+      {
+        "name": "GetMLWorkspace"
+      },
+      {
+        "name": "GetPrivateEndpointConnection"
+      },
+      {
+        "name": "GetProject"
+      },
+      {
+        "name": "GetRaiPolicy"
+      },
+      {
+        "name": "GetRegistry"
+      },
+      {
+        "name": "GetRun"
+      },
+      {
+        "name": "GetThread"
+      },
+      {
+        "name": "ListAccountKeys"
+      },
+      {
+        "name": "ListAccountModels"
+      },
+      {
+        "name": "ListAccountSkus"
+      },
+      {
+        "name": "ListAccountUsages"
+      },
+      {
+        "name": "ListAccounts"
+      },
+      {
+        "name": "ListAccountsByResourceGroup"
+      },
+      {
+        "name": "ListAssetContainers"
+      },
+      {
+        "name": "ListAssetVersions"
+      },
+      {
+        "name": "ListAssistants"
+      },
+      {
+        "name": "ListCommitmentPlans"
+      },
+      {
+        "name": "ListComputes"
+      },
+      {
+        "name": "ListConnections"
+      },
+      {
+        "name": "ListDatastores"
+      },
+      {
+        "name": "ListDeployments"
+      },
+      {
+        "name": "ListEndpointDeployments"
+      },
+      {
+        "name": "ListEndpoints"
+      },
+      {
+        "name": "ListJobs"
+      },
+      {
+        "name": "ListMLSchedules"
+      },
+      {
+        "name": "ListMLWorkspaces"
+      },
+      {
+        "name": "ListMLWorkspacesByResourceGroup"
+      },
+      {
+        "name": "ListMessages"
+      },
+      {
+        "name": "ListPrivateEndpointConnections"
+      },
+      {
+        "name": "ListProjects"
+      },
+      {
+        "name": "ListRaiPolicies"
+      },
+      {
+        "name": "ListRegistries"
+      },
+      {
+        "name": "PutPrivateEndpointConnection",
+        "doc": "Private-endpoint connections (accounts/privateEndpointConnections)."
+      },
+      {
+        "name": "RegenerateAccountKey"
+      },
+      {
+        "name": "RestartCompute"
+      },
+      {
+        "name": "ScoreOnlineEndpoint",
+        "doc": "AML online-endpoint scoring."
+      },
+      {
+        "name": "StartCompute"
+      },
+      {
+        "name": "StopCompute"
+      },
+      {
+        "name": "UpdateAccountTags"
+      },
+      {
+        "name": "UpdateMLWorkspaceTags"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "CognitiveServices",
+        "doc": "CognitiveServices is the Microsoft.CognitiveServices control-plane surface.",
+        "operations": [
+          {
+            "name": "CreateAccount",
+            "doc": "Accounts."
+          },
+          {
+            "name": "CreateCommitmentPlan",
+            "doc": "Commitment plans (accounts/commitmentPlans)."
+          },
+          {
+            "name": "CreateDeployment",
+            "doc": "Deployments (accounts/deployments)."
+          },
+          {
+            "name": "CreateProject",
+            "doc": "Projects (accounts/projects)."
+          },
+          {
+            "name": "CreateRaiPolicy",
+            "doc": "RAI policies (accounts/raiPolicies)."
+          },
+          {
+            "name": "DeleteAccount"
+          },
+          {
+            "name": "DeleteCommitmentPlan"
+          },
+          {
+            "name": "DeleteDeployment"
+          },
+          {
+            "name": "DeletePrivateEndpointConnection"
+          },
+          {
+            "name": "DeleteProject"
+          },
+          {
+            "name": "DeleteRaiPolicy"
+          },
+          {
+            "name": "GetAccount"
+          },
+          {
+            "name": "GetCommitmentPlan"
+          },
+          {
+            "name": "GetDeployment"
+          },
+          {
+            "name": "GetPrivateEndpointConnection"
+          },
+          {
+            "name": "GetProject"
+          },
+          {
+            "name": "GetRaiPolicy"
+          },
+          {
+            "name": "ListAccountKeys"
+          },
+          {
+            "name": "ListAccountModels"
+          },
+          {
+            "name": "ListAccountSkus"
+          },
+          {
+            "name": "ListAccountUsages"
+          },
+          {
+            "name": "ListAccounts"
+          },
+          {
+            "name": "ListAccountsByResourceGroup"
+          },
+          {
+            "name": "ListCommitmentPlans"
+          },
+          {
+            "name": "ListDeployments"
+          },
+          {
+            "name": "ListPrivateEndpointConnections"
+          },
+          {
+            "name": "ListProjects"
+          },
+          {
+            "name": "ListRaiPolicies"
+          },
+          {
+            "name": "PutPrivateEndpointConnection",
+            "doc": "Private-endpoint connections (accounts/privateEndpointConnections)."
+          },
+          {
+            "name": "RegenerateAccountKey"
+          },
+          {
+            "name": "UpdateAccountTags"
+          }
+        ]
+      },
+      {
+        "name": "DataPlane",
+        "doc": "DataPlane is the Azure AI data-plane surface: Azure OpenAI inference, the AI",
+        "operations": [
+          {
+            "name": "ChatCompletions",
+            "doc": "Azure OpenAI inference."
+          },
+          {
+            "name": "Completions"
+          },
+          {
+            "name": "CreateAssistant",
+            "doc": "Agents / Assistants."
+          },
+          {
+            "name": "CreateMessage"
+          },
+          {
+            "name": "CreateRun"
+          },
+          {
+            "name": "CreateThread"
+          },
+          {
+            "name": "DeleteAssistant"
+          },
+          {
+            "name": "DeleteThread"
+          },
+          {
+            "name": "Embeddings"
+          },
+          {
+            "name": "GetAssistant"
+          },
+          {
+            "name": "GetRun"
+          },
+          {
+            "name": "GetThread"
+          },
+          {
+            "name": "ListAssistants"
+          },
+          {
+            "name": "ListMessages"
+          },
+          {
+            "name": "ScoreOnlineEndpoint",
+            "doc": "AML online-endpoint scoring."
+          }
+        ]
+      },
+      {
+        "name": "MachineLearning",
+        "doc": "MachineLearning is the Microsoft.MachineLearningServices control-plane",
+        "operations": [
+          {
+            "name": "CancelJob"
+          },
+          {
+            "name": "CreateAsset",
+            "doc": "Versioned assets (models / data / environments / components / featuresets)."
+          },
+          {
+            "name": "CreateCompute",
+            "doc": "Computes."
+          },
+          {
+            "name": "CreateConnection",
+            "doc": "Connections."
+          },
+          {
+            "name": "CreateDatastore",
+            "doc": "Datastores."
+          },
+          {
+            "name": "CreateEndpoint",
+            "doc": "Endpoints (online + batch) and their deployments."
+          },
+          {
+            "name": "CreateEndpointDeployment"
+          },
+          {
+            "name": "CreateJob",
+            "doc": "Jobs."
+          },
+          {
+            "name": "CreateMLSchedule",
+            "doc": "Schedules."
+          },
+          {
+            "name": "CreateMLWorkspace",
+            "doc": "Workspaces."
+          },
+          {
+            "name": "CreateRegistry",
+            "doc": "Registries (subscription/RG-scoped, cross-workspace)."
+          },
+          {
+            "name": "DeleteAsset"
+          },
+          {
+            "name": "DeleteCompute"
+          },
+          {
+            "name": "DeleteConnection"
+          },
+          {
+            "name": "DeleteDatastore"
+          },
+          {
+            "name": "DeleteEndpoint"
+          },
+          {
+            "name": "DeleteEndpointDeployment"
+          },
+          {
+            "name": "DeleteMLSchedule"
+          },
+          {
+            "name": "DeleteMLWorkspace"
+          },
+          {
+            "name": "DeleteRegistry"
+          },
+          {
+            "name": "GetAsset"
+          },
+          {
+            "name": "GetCompute"
+          },
+          {
+            "name": "GetConnection"
+          },
+          {
+            "name": "GetDatastore"
+          },
+          {
+            "name": "GetEndpoint"
+          },
+          {
+            "name": "GetEndpointDeployment"
+          },
+          {
+            "name": "GetJob"
+          },
+          {
+            "name": "GetMLSchedule"
+          },
+          {
+            "name": "GetMLWorkspace"
+          },
+          {
+            "name": "GetRegistry"
+          },
+          {
+            "name": "ListAssetContainers"
+          },
+          {
+            "name": "ListAssetVersions"
+          },
+          {
+            "name": "ListComputes"
+          },
+          {
+            "name": "ListConnections"
+          },
+          {
+            "name": "ListDatastores"
+          },
+          {
+            "name": "ListEndpointDeployments"
+          },
+          {
+            "name": "ListEndpoints"
+          },
+          {
+            "name": "ListJobs"
+          },
+          {
+            "name": "ListMLSchedules"
+          },
+          {
+            "name": "ListMLWorkspaces"
+          },
+          {
+            "name": "ListMLWorkspacesByResourceGroup"
+          },
+          {
+            "name": "ListRegistries"
+          },
+          {
+            "name": "RestartCompute"
+          },
+          {
+            "name": "StartCompute"
+          },
+          {
+            "name": "StopCompute"
+          },
+          {
+            "name": "UpdateMLWorkspaceTags"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "azure": "AI"
+    }
+  },
+  {
+    "service": "azuresearch",
+    "interface": "AzureSearch",
+    "operations": [
+      {
+        "name": "AutocompleteDocuments"
+      },
+      {
+        "name": "CountDocuments"
+      },
+      {
+        "name": "CreateOrUpdateAlias",
+        "doc": "Aliases."
+      },
+      {
+        "name": "CreateOrUpdateDataSource",
+        "doc": "Data sources."
+      },
+      {
+        "name": "CreateOrUpdateIndex",
+        "doc": "Indexes."
+      },
+      {
+        "name": "CreateOrUpdateIndexer",
+        "doc": "Indexers."
+      },
+      {
+        "name": "CreateOrUpdateSkillset",
+        "doc": "Skillsets."
+      },
+      {
+        "name": "CreateOrUpdateSynonymMap",
+        "doc": "Synonym maps."
+      },
+      {
+        "name": "CreateQueryKey"
+      },
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "DeleteAlias"
+      },
+      {
+        "name": "DeleteDataSource"
+      },
+      {
+        "name": "DeleteIndex"
+      },
+      {
+        "name": "DeleteIndexer"
+      },
+      {
+        "name": "DeletePrivateEndpointConnection"
+      },
+      {
+        "name": "DeleteQueryKey"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeleteSharedPrivateLink"
+      },
+      {
+        "name": "DeleteSkillset"
+      },
+      {
+        "name": "DeleteSynonymMap"
+      },
+      {
+        "name": "GetAlias"
+      },
+      {
+        "name": "GetDataSource"
+      },
+      {
+        "name": "GetDocument"
+      },
+      {
+        "name": "GetIndex"
+      },
+      {
+        "name": "GetIndexer"
+      },
+      {
+        "name": "GetIndexerStatus"
+      },
+      {
+        "name": "GetPrivateEndpointConnection"
+      },
+      {
+        "name": "GetService"
+      },
+      {
+        "name": "GetServiceStatistics",
+        "doc": "Service statistics."
+      },
+      {
+        "name": "GetSharedPrivateLink"
+      },
+      {
+        "name": "GetSkillset"
+      },
+      {
+        "name": "GetSynonymMap"
+      },
+      {
+        "name": "IndexDocuments",
+        "doc": "Documents."
+      },
+      {
+        "name": "ListAdminKeys"
+      },
+      {
+        "name": "ListAliases"
+      },
+      {
+        "name": "ListDataSources"
+      },
+      {
+        "name": "ListIndexers"
+      },
+      {
+        "name": "ListIndexes"
+      },
+      {
+        "name": "ListPrivateEndpointConnections"
+      },
+      {
+        "name": "ListQueryKeys"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListServicesByResourceGroup"
+      },
+      {
+        "name": "ListSharedPrivateLinks"
+      },
+      {
+        "name": "ListSkillsets"
+      },
+      {
+        "name": "ListSynonymMaps"
+      },
+      {
+        "name": "PutPrivateEndpointConnection"
+      },
+      {
+        "name": "PutSharedPrivateLink"
+      },
+      {
+        "name": "RegenerateAdminKey"
+      },
+      {
+        "name": "ResetIndexer"
+      },
+      {
+        "name": "RunIndexer"
+      },
+      {
+        "name": "SearchDocuments"
+      },
+      {
+        "name": "SuggestDocuments"
+      },
+      {
+        "name": "UpdateService"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "SearchControl",
+        "doc": "SearchControl is the Microsoft.Search ARM control-plane surface.",
+        "operations": [
+          {
+            "name": "CreateQueryKey"
+          },
+          {
+            "name": "CreateService"
+          },
+          {
+            "name": "DeletePrivateEndpointConnection"
+          },
+          {
+            "name": "DeleteQueryKey"
+          },
+          {
+            "name": "DeleteService"
+          },
+          {
+            "name": "DeleteSharedPrivateLink"
+          },
+          {
+            "name": "GetPrivateEndpointConnection"
+          },
+          {
+            "name": "GetService"
+          },
+          {
+            "name": "GetSharedPrivateLink"
+          },
+          {
+            "name": "ListAdminKeys"
+          },
+          {
+            "name": "ListPrivateEndpointConnections"
+          },
+          {
+            "name": "ListQueryKeys"
+          },
+          {
+            "name": "ListServices"
+          },
+          {
+            "name": "ListServicesByResourceGroup"
+          },
+          {
+            "name": "ListSharedPrivateLinks"
+          },
+          {
+            "name": "PutPrivateEndpointConnection"
+          },
+          {
+            "name": "PutSharedPrivateLink"
+          },
+          {
+            "name": "RegenerateAdminKey"
+          },
+          {
+            "name": "UpdateService"
+          }
+        ]
+      },
+      {
+        "name": "SearchDataPlane",
+        "doc": "SearchDataPlane is the {service}.search.windows.net data-plane surface.",
+        "operations": [
+          {
+            "name": "AutocompleteDocuments"
+          },
+          {
+            "name": "CountDocuments"
+          },
+          {
+            "name": "CreateOrUpdateAlias",
+            "doc": "Aliases."
+          },
+          {
+            "name": "CreateOrUpdateDataSource",
+            "doc": "Data sources."
+          },
+          {
+            "name": "CreateOrUpdateIndex",
+            "doc": "Indexes."
+          },
+          {
+            "name": "CreateOrUpdateIndexer",
+            "doc": "Indexers."
+          },
+          {
+            "name": "CreateOrUpdateSkillset",
+            "doc": "Skillsets."
+          },
+          {
+            "name": "CreateOrUpdateSynonymMap",
+            "doc": "Synonym maps."
+          },
+          {
+            "name": "DeleteAlias"
+          },
+          {
+            "name": "DeleteDataSource"
+          },
+          {
+            "name": "DeleteIndex"
+          },
+          {
+            "name": "DeleteIndexer"
+          },
+          {
+            "name": "DeleteSkillset"
+          },
+          {
+            "name": "DeleteSynonymMap"
+          },
+          {
+            "name": "GetAlias"
+          },
+          {
+            "name": "GetDataSource"
+          },
+          {
+            "name": "GetDocument"
+          },
+          {
+            "name": "GetIndex"
+          },
+          {
+            "name": "GetIndexer"
+          },
+          {
+            "name": "GetIndexerStatus"
+          },
+          {
+            "name": "GetServiceStatistics",
+            "doc": "Service statistics."
+          },
+          {
+            "name": "GetSkillset"
+          },
+          {
+            "name": "GetSynonymMap"
+          },
+          {
+            "name": "IndexDocuments",
+            "doc": "Documents."
+          },
+          {
+            "name": "ListAliases"
+          },
+          {
+            "name": "ListDataSources"
+          },
+          {
+            "name": "ListIndexers"
+          },
+          {
+            "name": "ListIndexes"
+          },
+          {
+            "name": "ListSkillsets"
+          },
+          {
+            "name": "ListSynonymMaps"
+          },
+          {
+            "name": "ResetIndexer"
+          },
+          {
+            "name": "RunIndexer"
+          },
+          {
+            "name": "SearchDocuments"
+          },
+          {
+            "name": "SuggestDocuments"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "azure": "Search"
+    }
+  },
+  {
+    "service": "bedrock",
+    "interface": "Bedrock",
+    "operations": [
+      {
+        "name": "ApplyGuardrail"
+      },
+      {
+        "name": "Converse"
+      },
+      {
+        "name": "CountTokens"
+      },
+      {
+        "name": "CreateAutomatedReasoningPolicy"
+      },
+      {
+        "name": "CreateEvaluationJob"
+      },
+      {
+        "name": "CreateFoundationModelAgreement"
+      },
+      {
+        "name": "CreateGuardrail"
+      },
+      {
+        "name": "CreateGuardrailVersion"
+      },
+      {
+        "name": "CreateInferenceProfile"
+      },
+      {
+        "name": "CreateMarketplaceModelEndpoint"
+      },
+      {
+        "name": "CreateModelCopyJob"
+      },
+      {
+        "name": "CreateModelCustomizationJob"
+      },
+      {
+        "name": "CreateModelImportJob"
+      },
+      {
+        "name": "CreatePromptRouter"
+      },
+      {
+        "name": "CreateProvisionedModelThroughput"
+      },
+      {
+        "name": "DeleteAutomatedReasoningPolicy"
+      },
+      {
+        "name": "DeleteCustomModel"
+      },
+      {
+        "name": "DeleteFoundationModelAgreement"
+      },
+      {
+        "name": "DeleteGuardrail"
+      },
+      {
+        "name": "DeleteInferenceProfile"
+      },
+      {
+        "name": "DeleteMarketplaceModelEndpoint"
+      },
+      {
+        "name": "DeleteModelInvocationLoggingConfiguration"
+      },
+      {
+        "name": "DeletePromptRouter"
+      },
+      {
+        "name": "DeleteProvisionedModelThroughput"
+      },
+      {
+        "name": "DeregisterMarketplaceModelEndpoint"
+      },
+      {
+        "name": "GetAsyncInvoke"
+      },
+      {
+        "name": "GetAutomatedReasoningPolicy"
+      },
+      {
+        "name": "GetCustomModel"
+      },
+      {
+        "name": "GetEvaluationJob"
+      },
+      {
+        "name": "GetFoundationModel"
+      },
+      {
+        "name": "GetFoundationModelAvailability"
+      },
+      {
+        "name": "GetGuardrail"
+      },
+      {
+        "name": "GetInferenceProfile"
+      },
+      {
+        "name": "GetMarketplaceModelEndpoint"
+      },
+      {
+        "name": "GetModelCopyJob"
+      },
+      {
+        "name": "GetModelCustomizationJob"
+      },
+      {
+        "name": "GetModelImportJob"
+      },
+      {
+        "name": "GetModelInvocationLoggingConfiguration"
+      },
+      {
+        "name": "GetPromptRouter"
+      },
+      {
+        "name": "GetProvisionedModelThroughput"
+      },
+      {
+        "name": "InvokeModel"
+      },
+      {
+        "name": "ListAsyncInvokes"
+      },
+      {
+        "name": "ListAutomatedReasoningPolicies"
+      },
+      {
+        "name": "ListCustomModels"
+      },
+      {
+        "name": "ListEvaluationJobs"
+      },
+      {
+        "name": "ListFoundationModelAgreementOffers"
+      },
+      {
+        "name": "ListFoundationModels"
+      },
+      {
+        "name": "ListGuardrails"
+      },
+      {
+        "name": "ListInferenceProfiles"
+      },
+      {
+        "name": "ListMarketplaceModelEndpoints"
+      },
+      {
+        "name": "ListModelCopyJobs"
+      },
+      {
+        "name": "ListModelCustomizationJobs"
+      },
+      {
+        "name": "ListModelImportJobs"
+      },
+      {
+        "name": "ListPromptRouters"
+      },
+      {
+        "name": "ListProvisionedModelThroughputs"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "PutModelInvocationLoggingConfiguration"
+      },
+      {
+        "name": "RegisterMarketplaceModelEndpoint"
+      },
+      {
+        "name": "StartAsyncInvoke"
+      },
+      {
+        "name": "StopEvaluationJob"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAutomatedReasoningPolicy"
+      },
+      {
+        "name": "UpdateGuardrail"
+      },
+      {
+        "name": "UpdateMarketplaceModelEndpoint"
+      }
+    ],
+    "providers": {
+      "aws": "Bedrock"
+    }
+  },
+  {
+    "service": "bedrockagent",
+    "interface": "BedrockAgent",
+    "operations": [
+      {
+        "name": "CreateAgent"
+      },
+      {
+        "name": "CreateAgentAlias"
+      },
+      {
+        "name": "CreateDataSource"
+      },
+      {
+        "name": "CreateFlow"
+      },
+      {
+        "name": "CreateKnowledgeBase"
+      },
+      {
+        "name": "CreatePrompt"
+      },
+      {
+        "name": "DeleteAgent"
+      },
+      {
+        "name": "DeleteDataSource"
+      },
+      {
+        "name": "DeleteFlow"
+      },
+      {
+        "name": "DeleteKnowledgeBase"
+      },
+      {
+        "name": "DeletePrompt"
+      },
+      {
+        "name": "GetAgent"
+      },
+      {
+        "name": "GetDataSource"
+      },
+      {
+        "name": "GetFlow"
+      },
+      {
+        "name": "GetKnowledgeBase"
+      },
+      {
+        "name": "GetPrompt"
+      },
+      {
+        "name": "ListAgents"
+      },
+      {
+        "name": "ListDataSources"
+      },
+      {
+        "name": "ListFlows"
+      },
+      {
+        "name": "ListKnowledgeBases"
+      },
+      {
+        "name": "ListPrompts"
+      },
+      {
+        "name": "PrepareAgent"
+      },
+      {
+        "name": "PrepareFlow"
+      },
+      {
+        "name": "StartIngestionJob"
+      },
+      {
+        "name": "UpdateAgent"
+      },
+      {
+        "name": "UpdateDataSource"
+      },
+      {
+        "name": "UpdateFlow"
+      },
+      {
+        "name": "UpdateKnowledgeBase"
+      },
+      {
+        "name": "UpdatePrompt"
+      }
+    ],
+    "providers": {
+      "aws": "BedrockAgent"
+    }
+  },
+  {
+    "service": "bedrockagentruntime",
+    "interface": "BedrockAgentRuntime",
+    "operations": [
+      {
+        "name": "InvokeAgent"
+      },
+      {
+        "name": "Retrieve"
+      },
+      {
+        "name": "RetrieveAndGenerate"
+      }
+    ],
+    "providers": {
+      "aws": "BedrockAgentRuntime"
+    }
+  },
+  {
+    "service": "bigtable",
+    "interface": "Admin",
+    "operations": [
+      {
+        "name": "CheckConsistency"
+      },
+      {
+        "name": "CopyBackup"
+      },
+      {
+        "name": "CreateAppProfile"
+      },
+      {
+        "name": "CreateBackup"
+      },
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateInstance"
+      },
+      {
+        "name": "CreateTable"
+      },
+      {
+        "name": "DeleteAppProfile"
+      },
+      {
+        "name": "DeleteBackup"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteTable"
+      },
+      {
+        "name": "DropRowRange"
+      },
+      {
+        "name": "GenerateConsistencyToken"
+      },
+      {
+        "name": "GetAppProfile"
+      },
+      {
+        "name": "GetBackup"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetClusterMemoryLayer"
+      },
+      {
+        "name": "GetIamPolicy"
+      },
+      {
+        "name": "GetInstance"
+      },
+      {
+        "name": "GetOperation"
+      },
+      {
+        "name": "GetTable"
+      },
+      {
+        "name": "ListAppProfiles"
+      },
+      {
+        "name": "ListBackups"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListInstances"
+      },
+      {
+        "name": "ListTables"
+      },
+      {
+        "name": "ModifyColumnFamilies"
+      },
+      {
+        "name": "PartialUpdateInstance"
+      },
+      {
+        "name": "RestoreTable"
+      },
+      {
+        "name": "SetIamPolicy"
+      },
+      {
+        "name": "TestIamPermissions"
+      },
+      {
+        "name": "UndeleteTable"
+      },
+      {
+        "name": "UpdateAppProfile"
+      },
+      {
+        "name": "UpdateBackup"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateInstance"
+      },
+      {
+        "name": "UpdateTable"
+      }
+    ],
+    "providers": {
+      "gcp": "Bigtable"
+    }
+  },
+  {
+    "service": "cache",
+    "interface": "Cache",
+    "operations": [
+      {
+        "name": "CreateCache"
+      },
+      {
+        "name": "Decr"
+      },
+      {
+        "name": "DecrBy"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DeleteCache"
+      },
+      {
+        "name": "Expire",
+        "doc": "TTL management"
+      },
+      {
+        "name": "FlushAll"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "GetCache"
+      },
+      {
+        "name": "GetTTL"
+      },
+      {
+        "name": "Incr",
+        "doc": "Atomic counters"
+      },
+      {
+        "name": "IncrBy"
+      },
+      {
+        "name": "Keys"
+      },
+      {
+        "name": "ListCaches"
+      },
+      {
+        "name": "Persist"
+      },
+      {
+        "name": "Set"
+      },
+      {
+        "name": "UpdateCache",
+        "doc": "UpdateCache replaces the mutable fields (node type, tags) of an"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "ReplicationGroups",
+        "doc": "ReplicationGroups is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "CreateReplicationGroup"
+          },
+          {
+            "name": "DeleteReplicationGroup"
+          },
+          {
+            "name": "DescribeReplicationGroups"
+          },
+          {
+            "name": "ModifyReplicationGroup"
+          }
+        ]
+      },
+      {
+        "name": "SubnetGroups",
+        "doc": "SubnetGroups is an OPTIONAL capability, discovered by type assertion. Cache",
+        "operations": [
+          {
+            "name": "CreateCacheSubnetGroup"
+          },
+          {
+            "name": "DeleteCacheSubnetGroup"
+          },
+          {
+            "name": "DescribeCacheSubnetGroups"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "ElastiCache",
+      "azure": "Cache",
+      "gcp": "Memorystore"
+    }
+  },
+  {
+    "service": "compute",
+    "interface": "Compute",
+    "operations": [
+      {
+        "name": "AttachVolume"
+      },
+      {
+        "name": "CancelSpotRequests"
+      },
+      {
+        "name": "CreateAutoScalingGroup",
+        "doc": "Auto-Scaling Groups"
+      },
+      {
+        "name": "CreateImage",
+        "doc": "Images"
+      },
+      {
+        "name": "CreateKeyPair",
+        "doc": "Key Pairs"
+      },
+      {
+        "name": "CreateLaunchTemplate",
+        "doc": "Launch Templates"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Snapshots"
+      },
+      {
+        "name": "CreateVolume",
+        "doc": "Volumes"
+      },
+      {
+        "name": "DeleteAutoScalingGroup"
+      },
+      {
+        "name": "DeleteKeyPair"
+      },
+      {
+        "name": "DeleteLaunchTemplate"
+      },
+      {
+        "name": "DeleteScalingPolicy"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DeleteVolume"
+      },
+      {
+        "name": "DeregisterImage"
+      },
+      {
+        "name": "DescribeImages"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeKeyPairs"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "DescribeSpotRequests"
+      },
+      {
+        "name": "DescribeVolumes"
+      },
+      {
+        "name": "DetachVolume"
+      },
+      {
+        "name": "ExecuteScalingPolicy"
+      },
+      {
+        "name": "GetAutoScalingGroup"
+      },
+      {
+        "name": "GetLaunchTemplate"
+      },
+      {
+        "name": "ListAutoScalingGroups"
+      },
+      {
+        "name": "ListLaunchTemplates"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "PutScalingPolicy",
+        "doc": "Scaling Policies"
+      },
+      {
+        "name": "RebootInstances"
+      },
+      {
+        "name": "RequestSpotInstances",
+        "doc": "Spot/Preemptible Instances"
+      },
+      {
+        "name": "RunInstances"
+      },
+      {
+        "name": "SetDesiredCapacity"
+      },
+      {
+        "name": "StartInstances"
+      },
+      {
+        "name": "StopInstances"
+      },
+      {
+        "name": "TerminateInstances"
+      },
+      {
+        "name": "UpdateAutoScalingGroup"
+      }
+    ],
+    "providers": {
+      "aws": "EC2",
+      "azure": "VirtualMachines",
+      "gcp": "GCE"
+    }
+  },
+  {
+    "service": "containerregistry",
+    "interface": "ContainerRegistry",
+    "operations": [
+      {
+        "name": "CreateRepository",
+        "doc": "Repository management"
+      },
+      {
+        "name": "DeleteImage"
+      },
+      {
+        "name": "DeleteRepository"
+      },
+      {
+        "name": "EvaluateLifecyclePolicy"
+      },
+      {
+        "name": "GetImage"
+      },
+      {
+        "name": "GetImageScanResults"
+      },
+      {
+        "name": "GetLifecyclePolicy"
+      },
+      {
+        "name": "GetRepository"
+      },
+      {
+        "name": "ListImages"
+      },
+      {
+        "name": "ListRepositories"
+      },
+      {
+        "name": "PutImage",
+        "doc": "Image management"
+      },
+      {
+        "name": "PutLifecyclePolicy",
+        "doc": "Lifecycle policies"
+      },
+      {
+        "name": "StartImageScan",
+        "doc": "Image scanning"
+      },
+      {
+        "name": "TagImage"
+      }
+    ],
+    "providers": {
+      "aws": "ECR",
+      "azure": "ACR",
+      "gcp": "ArtifactRegistry"
+    }
+  },
+  {
+    "service": "cosmospostgresql",
+    "interface": "CosmosPostgreSQL",
+    "operations": [
+      {
+        "name": "CheckNameAvailability"
+      },
+      {
+        "name": "CreateOrUpdateCluster",
+        "doc": "Clusters (server groups). CreateOrUpdateCluster reports whether the cluster"
+      },
+      {
+        "name": "CreateOrUpdateFirewallRule",
+        "doc": "Firewall rules."
+      },
+      {
+        "name": "CreateOrUpdatePrivateEndpointConnection",
+        "doc": "Private endpoints / links."
+      },
+      {
+        "name": "CreateRole",
+        "doc": "Roles."
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteFirewallRule"
+      },
+      {
+        "name": "DeletePrivateEndpointConnection"
+      },
+      {
+        "name": "DeleteRole"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetConfiguration"
+      },
+      {
+        "name": "GetCoordinatorConfiguration"
+      },
+      {
+        "name": "GetFirewallRule"
+      },
+      {
+        "name": "GetNodeConfiguration"
+      },
+      {
+        "name": "GetPrivateEndpointConnection"
+      },
+      {
+        "name": "GetPrivateLinkResource"
+      },
+      {
+        "name": "GetRole"
+      },
+      {
+        "name": "GetServer",
+        "doc": "Servers (nodes, read-only)."
+      },
+      {
+        "name": "ListClustersByResourceGroup"
+      },
+      {
+        "name": "ListClustersBySubscription"
+      },
+      {
+        "name": "ListConfigurations",
+        "doc": "Configurations."
+      },
+      {
+        "name": "ListFirewallRules"
+      },
+      {
+        "name": "ListPrivateEndpointConnections"
+      },
+      {
+        "name": "ListPrivateLinkResources"
+      },
+      {
+        "name": "ListRoles"
+      },
+      {
+        "name": "ListServerConfigurations"
+      },
+      {
+        "name": "ListServers"
+      },
+      {
+        "name": "PromoteReadReplica"
+      },
+      {
+        "name": "RestartCluster"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateCoordinatorConfiguration"
+      },
+      {
+        "name": "UpdateNodeConfiguration"
+      }
+    ],
+    "providers": {
+      "azure": "CosmosPostgreSQL"
+    }
+  },
+  {
+    "service": "database",
+    "interface": "Database",
+    "operations": [
+      {
+        "name": "BatchGetItems"
+      },
+      {
+        "name": "BatchPutItems"
+      },
+      {
+        "name": "CreateIndex",
+        "doc": "Global Secondary Indexes"
+      },
+      {
+        "name": "CreateTable"
+      },
+      {
+        "name": "DeleteIndex"
+      },
+      {
+        "name": "DeleteItem"
+      },
+      {
+        "name": "DeleteTable"
+      },
+      {
+        "name": "DescribeIndex"
+      },
+      {
+        "name": "DescribeTTL"
+      },
+      {
+        "name": "DescribeTable"
+      },
+      {
+        "name": "GetItem"
+      },
+      {
+        "name": "GetStreamRecords"
+      },
+      {
+        "name": "ListIndexes"
+      },
+      {
+        "name": "ListTables"
+      },
+      {
+        "name": "ListTagsOfResource"
+      },
+      {
+        "name": "PutItem"
+      },
+      {
+        "name": "Query"
+      },
+      {
+        "name": "Scan"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tagging"
+      },
+      {
+        "name": "TransactWriteItems",
+        "doc": "Transactional writes"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateItem"
+      },
+      {
+        "name": "UpdateStreamConfig",
+        "doc": "Streams / Change Feed"
+      },
+      {
+        "name": "UpdateTTL",
+        "doc": "TTL"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "TableAttributes",
+        "doc": "TableAttributes is an OPTIONAL capability, discovered by type assertion (like",
+        "operations": [
+          {
+            "name": "TableAttributes"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "DynamoDB",
+      "azure": "CosmosDB",
+      "gcp": "Firestore"
+    }
+  },
+  {
+    "service": "databricks",
+    "interface": "DataPlane",
+    "operations": [
+      {
+        "name": "AllClusterLibraryStatuses"
+      },
+      {
+        "name": "CancelAllRuns"
+      },
+      {
+        "name": "CancelRun"
+      },
+      {
+        "name": "ClusterLibraryStatuses"
+      },
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateClusterPolicy"
+      },
+      {
+        "name": "CreateInstancePool"
+      },
+      {
+        "name": "CreateJob"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterPolicy"
+      },
+      {
+        "name": "DeleteInstancePool"
+      },
+      {
+        "name": "DeleteJob"
+      },
+      {
+        "name": "DeleteRun"
+      },
+      {
+        "name": "EditCluster"
+      },
+      {
+        "name": "EditClusterPolicy"
+      },
+      {
+        "name": "EditInstancePool"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetClusterPolicy"
+      },
+      {
+        "name": "GetInstancePool"
+      },
+      {
+        "name": "GetJob"
+      },
+      {
+        "name": "GetPermissions"
+      },
+      {
+        "name": "GetRun"
+      },
+      {
+        "name": "GetRunOutput"
+      },
+      {
+        "name": "InstallLibraries"
+      },
+      {
+        "name": "ListClusterPolicies"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListInstancePools"
+      },
+      {
+        "name": "ListJobs"
+      },
+      {
+        "name": "ListNodeTypes"
+      },
+      {
+        "name": "ListRuns"
+      },
+      {
+        "name": "ListSparkVersions"
+      },
+      {
+        "name": "ListZones"
+      },
+      {
+        "name": "PermanentDeleteCluster"
+      },
+      {
+        "name": "PinCluster"
+      },
+      {
+        "name": "RepairRun"
+      },
+      {
+        "name": "ResetJob"
+      },
+      {
+        "name": "ResizeCluster"
+      },
+      {
+        "name": "RestartCluster"
+      },
+      {
+        "name": "RunJobNow"
+      },
+      {
+        "name": "SetPermissions"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "SubmitRun"
+      },
+      {
+        "name": "UninstallLibraries"
+      },
+      {
+        "name": "UnpinCluster"
+      },
+      {
+        "name": "UpdateJob"
+      },
+      {
+        "name": "UpdatePermissions"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "ARMResources",
+        "doc": "ARMResources is the extended Microsoft.Databricks ARM surface (issue #209).",
+        "operations": [
+          {
+            "name": "CreateOrUpdateAccessConnector",
+            "doc": "Access connectors (top-level Microsoft.Databricks/accessConnectors)."
+          },
+          {
+            "name": "CreateOrUpdateVNetPeering",
+            "doc": "Virtual network peerings (workspaces/{w}/virtualNetworkPeerings)."
+          },
+          {
+            "name": "DeleteAccessConnector"
+          },
+          {
+            "name": "DeletePrivateEndpointConnection"
+          },
+          {
+            "name": "DeleteVNetPeering"
+          },
+          {
+            "name": "GetAccessConnector"
+          },
+          {
+            "name": "GetPrivateEndpointConnection"
+          },
+          {
+            "name": "GetPrivateLinkResource",
+            "doc": "Private link resources (workspaces/{w}/privateLinkResources)."
+          },
+          {
+            "name": "GetVNetPeering"
+          },
+          {
+            "name": "ListAccessConnectors"
+          },
+          {
+            "name": "ListAccessConnectorsByResourceGroup"
+          },
+          {
+            "name": "ListOperations",
+            "doc": "Provider operations (/providers/Microsoft.Databricks/operations)."
+          },
+          {
+            "name": "ListOutboundNetworkDependencies",
+            "doc": "Outbound network dependencies (workspaces/{w}/outboundNetworkDependenciesEndpoints)."
+          },
+          {
+            "name": "ListPrivateEndpointConnections"
+          },
+          {
+            "name": "ListPrivateLinkResources"
+          },
+          {
+            "name": "ListVNetPeerings"
+          },
+          {
+            "name": "PutPrivateEndpointConnection",
+            "doc": "Private endpoint connections (workspaces/{w}/privateEndpointConnections)."
+          },
+          {
+            "name": "UpdateAccessConnector"
+          }
+        ]
+      },
+      {
+        "name": "Databricks",
+        "doc": "Databricks is the interface that workspace service implementations must",
+        "operations": [
+          {
+            "name": "CreateOrUpdateAccessConnector",
+            "doc": "Access connectors (top-level Microsoft.Databricks/accessConnectors)."
+          },
+          {
+            "name": "CreateOrUpdateVNetPeering",
+            "doc": "Virtual network peerings (workspaces/{w}/virtualNetworkPeerings)."
+          },
+          {
+            "name": "CreateWorkspace"
+          },
+          {
+            "name": "DeleteAccessConnector"
+          },
+          {
+            "name": "DeletePrivateEndpointConnection"
+          },
+          {
+            "name": "DeleteVNetPeering"
+          },
+          {
+            "name": "DeleteWorkspace"
+          },
+          {
+            "name": "GetAccessConnector"
+          },
+          {
+            "name": "GetPrivateEndpointConnection"
+          },
+          {
+            "name": "GetPrivateLinkResource",
+            "doc": "Private link resources (workspaces/{w}/privateLinkResources)."
+          },
+          {
+            "name": "GetVNetPeering"
+          },
+          {
+            "name": "GetWorkspace"
+          },
+          {
+            "name": "ListAccessConnectors"
+          },
+          {
+            "name": "ListAccessConnectorsByResourceGroup"
+          },
+          {
+            "name": "ListOperations",
+            "doc": "Provider operations (/providers/Microsoft.Databricks/operations)."
+          },
+          {
+            "name": "ListOutboundNetworkDependencies",
+            "doc": "Outbound network dependencies (workspaces/{w}/outboundNetworkDependenciesEndpoints)."
+          },
+          {
+            "name": "ListPrivateEndpointConnections"
+          },
+          {
+            "name": "ListPrivateLinkResources"
+          },
+          {
+            "name": "ListVNetPeerings"
+          },
+          {
+            "name": "ListWorkspaces"
+          },
+          {
+            "name": "ListWorkspacesByResourceGroup"
+          },
+          {
+            "name": "PutPrivateEndpointConnection",
+            "doc": "Private endpoint connections (workspaces/{w}/privateEndpointConnections)."
+          },
+          {
+            "name": "UpdateAccessConnector"
+          },
+          {
+            "name": "UpdateWorkspaceTags"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "azure": "Databricks"
+    }
+  },
+  {
+    "service": "dns",
+    "interface": "DNS",
+    "operations": [
+      {
+        "name": "CreateHealthCheck",
+        "doc": "Health Checks"
+      },
+      {
+        "name": "CreateRecord"
+      },
+      {
+        "name": "CreateZone"
+      },
+      {
+        "name": "DeleteHealthCheck"
+      },
+      {
+        "name": "DeleteRecord"
+      },
+      {
+        "name": "DeleteZone"
+      },
+      {
+        "name": "GetHealthCheck"
+      },
+      {
+        "name": "GetRecord"
+      },
+      {
+        "name": "GetZone"
+      },
+      {
+        "name": "ListHealthChecks"
+      },
+      {
+        "name": "ListRecords"
+      },
+      {
+        "name": "ListZones"
+      },
+      {
+        "name": "SetHealthCheckStatus"
+      },
+      {
+        "name": "UpdateHealthCheck"
+      },
+      {
+        "name": "UpdateRecord"
+      },
+      {
+        "name": "UpdateZone",
+        "doc": "UpdateZone applies the mutable fields (tags) of an existing zone,"
+      }
+    ],
+    "providers": {
+      "aws": "Route53",
+      "azure": "DNS",
+      "gcp": "CloudDNS"
+    }
+  },
+  {
+    "service": "ecs",
+    "interface": "ECS",
+    "operations": [
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "DeleteAccountSetting"
+      },
+      {
+        "name": "DeleteAttributes"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeregisterContainerInstance"
+      },
+      {
+        "name": "DeregisterTaskDefinition"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeContainerInstances"
+      },
+      {
+        "name": "DescribeServices"
+      },
+      {
+        "name": "DescribeTaskDefinition"
+      },
+      {
+        "name": "DescribeTasks"
+      },
+      {
+        "name": "ExecuteCommand"
+      },
+      {
+        "name": "ListAccountSettings"
+      },
+      {
+        "name": "ListAttributes"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListContainerInstances"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTaskDefinitionFamilies"
+      },
+      {
+        "name": "ListTaskDefinitions"
+      },
+      {
+        "name": "ListTasks"
+      },
+      {
+        "name": "PutAccountSetting"
+      },
+      {
+        "name": "PutAccountSettingDefault"
+      },
+      {
+        "name": "PutAttributes"
+      },
+      {
+        "name": "PutClusterCapacityProviders"
+      },
+      {
+        "name": "RegisterContainerInstance"
+      },
+      {
+        "name": "RegisterTaskDefinition"
+      },
+      {
+        "name": "RunTask"
+      },
+      {
+        "name": "StopTask"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateClusterSettings"
+      },
+      {
+        "name": "UpdateContainerInstancesState"
+      },
+      {
+        "name": "UpdateService"
+      }
+    ],
+    "providers": {
+      "aws": "ECS"
+    }
+  },
+  {
+    "service": "efs",
+    "interface": "EFS",
+    "operations": [
+      {
+        "name": "CreateAccessPoint"
+      },
+      {
+        "name": "CreateFileSystem",
+        "doc": "File systems."
+      },
+      {
+        "name": "CreateMountTarget"
+      },
+      {
+        "name": "CreateReplicationConfiguration"
+      },
+      {
+        "name": "DeleteAccessPoint"
+      },
+      {
+        "name": "DeleteFileSystem"
+      },
+      {
+        "name": "DeleteFileSystemPolicy"
+      },
+      {
+        "name": "DeleteMountTarget"
+      },
+      {
+        "name": "DeleteReplicationConfiguration"
+      },
+      {
+        "name": "DescribeAccessPoints"
+      },
+      {
+        "name": "DescribeAccountPreferences"
+      },
+      {
+        "name": "DescribeBackupPolicy"
+      },
+      {
+        "name": "DescribeFileSystemPolicy"
+      },
+      {
+        "name": "DescribeFileSystems"
+      },
+      {
+        "name": "DescribeLifecycleConfiguration"
+      },
+      {
+        "name": "DescribeMountTargetSecurityGroups"
+      },
+      {
+        "name": "DescribeMountTargets"
+      },
+      {
+        "name": "DescribeReplicationConfigurations"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ModifyMountTargetSecurityGroups"
+      },
+      {
+        "name": "PutAccountPreferences"
+      },
+      {
+        "name": "PutBackupPolicy"
+      },
+      {
+        "name": "PutFileSystemPolicy",
+        "doc": "File system policy."
+      },
+      {
+        "name": "PutLifecycleConfiguration"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags (current + legacy APIs share this backing)."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateFileSystem"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AccessPoints",
+        "doc": "AccessPoints is the access-point surface of EFS.",
+        "operations": [
+          {
+            "name": "CreateAccessPoint"
+          },
+          {
+            "name": "DeleteAccessPoint"
+          },
+          {
+            "name": "DescribeAccessPoints"
+          }
+        ]
+      },
+      {
+        "name": "Config",
+        "doc": "Config is the lifecycle/backup/replication/account-preference surface of EFS.",
+        "operations": [
+          {
+            "name": "CreateReplicationConfiguration"
+          },
+          {
+            "name": "DeleteReplicationConfiguration"
+          },
+          {
+            "name": "DescribeAccountPreferences"
+          },
+          {
+            "name": "DescribeBackupPolicy"
+          },
+          {
+            "name": "DescribeLifecycleConfiguration"
+          },
+          {
+            "name": "DescribeReplicationConfigurations"
+          },
+          {
+            "name": "PutAccountPreferences"
+          },
+          {
+            "name": "PutBackupPolicy"
+          },
+          {
+            "name": "PutLifecycleConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "MountTargets",
+        "doc": "MountTargets is the mount-target + access-point surface of EFS.",
+        "operations": [
+          {
+            "name": "CreateMountTarget"
+          },
+          {
+            "name": "DeleteMountTarget"
+          },
+          {
+            "name": "DescribeMountTargetSecurityGroups"
+          },
+          {
+            "name": "DescribeMountTargets"
+          },
+          {
+            "name": "ModifyMountTargetSecurityGroups"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "EFS"
+    }
+  },
+  {
+    "service": "eventbus",
+    "interface": "EventBus",
+    "operations": [
+      {
+        "name": "CreateEventBus",
+        "doc": "Bus management"
+      },
+      {
+        "name": "DeleteEventBus"
+      },
+      {
+        "name": "DeleteRule"
+      },
+      {
+        "name": "DisableRule"
+      },
+      {
+        "name": "EnableRule"
+      },
+      {
+        "name": "GetEventBus"
+      },
+      {
+        "name": "GetEventHistory",
+        "doc": "Event history (replay)"
+      },
+      {
+        "name": "GetRule"
+      },
+      {
+        "name": "ListEventBuses"
+      },
+      {
+        "name": "ListRules"
+      },
+      {
+        "name": "ListTargets"
+      },
+      {
+        "name": "PutEvents",
+        "doc": "Event publishing"
+      },
+      {
+        "name": "PutRule",
+        "doc": "Rule management"
+      },
+      {
+        "name": "PutTargets",
+        "doc": "Target management"
+      },
+      {
+        "name": "RemoveTargets"
+      },
+      {
+        "name": "UpdateEventBus",
+        "doc": "UpdateEventBus replaces the mutable fields (tags) of an existing"
+      }
+    ],
+    "providers": {
+      "aws": "EventBridge",
+      "azure": "EventGrid",
+      "gcp": "Eventarc"
+    }
+  },
+  {
+    "service": "iam",
+    "interface": "IAM",
+    "operations": [
+      {
+        "name": "AddRoleToInstanceProfile"
+      },
+      {
+        "name": "AddUserToGroup"
+      },
+      {
+        "name": "AttachRolePolicy"
+      },
+      {
+        "name": "AttachUserPolicy"
+      },
+      {
+        "name": "CheckPermission"
+      },
+      {
+        "name": "CreateAccessKey"
+      },
+      {
+        "name": "CreateGroup"
+      },
+      {
+        "name": "CreateInstanceProfile"
+      },
+      {
+        "name": "CreatePolicy"
+      },
+      {
+        "name": "CreatePolicyVersion"
+      },
+      {
+        "name": "CreateRole"
+      },
+      {
+        "name": "CreateUser"
+      },
+      {
+        "name": "DeleteAccessKey"
+      },
+      {
+        "name": "DeleteGroup"
+      },
+      {
+        "name": "DeleteInstanceProfile"
+      },
+      {
+        "name": "DeletePolicy"
+      },
+      {
+        "name": "DeletePolicyVersion"
+      },
+      {
+        "name": "DeleteRole"
+      },
+      {
+        "name": "DeleteUser"
+      },
+      {
+        "name": "DetachRolePolicy"
+      },
+      {
+        "name": "DetachUserPolicy"
+      },
+      {
+        "name": "GetGroup"
+      },
+      {
+        "name": "GetInstanceProfile"
+      },
+      {
+        "name": "GetPolicy"
+      },
+      {
+        "name": "GetPolicyVersion"
+      },
+      {
+        "name": "GetRole"
+      },
+      {
+        "name": "GetUser"
+      },
+      {
+        "name": "ListAccessKeys"
+      },
+      {
+        "name": "ListAttachedRolePolicies"
+      },
+      {
+        "name": "ListAttachedUserPolicies"
+      },
+      {
+        "name": "ListGroups"
+      },
+      {
+        "name": "ListGroupsForUser"
+      },
+      {
+        "name": "ListInstanceProfiles"
+      },
+      {
+        "name": "ListPolicies"
+      },
+      {
+        "name": "ListPolicyVersions"
+      },
+      {
+        "name": "ListRoles"
+      },
+      {
+        "name": "ListUsers"
+      },
+      {
+        "name": "RemoveRoleFromInstanceProfile"
+      },
+      {
+        "name": "RemoveUserFromGroup"
+      },
+      {
+        "name": "SetDefaultPolicyVersion"
+      }
+    ],
+    "providers": {
+      "aws": "IAM",
+      "azure": "IAM",
+      "gcp": "IAM"
+    }
+  },
+  {
+    "service": "keyspaces",
+    "interface": "Keyspaces",
+    "operations": [
+      {
+        "name": "CreateKeyspace"
+      },
+      {
+        "name": "CreateTable"
+      },
+      {
+        "name": "CreateType"
+      },
+      {
+        "name": "DeleteKeyspace"
+      },
+      {
+        "name": "DeleteTable"
+      },
+      {
+        "name": "DeleteType"
+      },
+      {
+        "name": "GetKeyspace"
+      },
+      {
+        "name": "GetTable"
+      },
+      {
+        "name": "GetType"
+      },
+      {
+        "name": "ListKeyspaces"
+      },
+      {
+        "name": "ListTables"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTypes"
+      },
+      {
+        "name": "RestoreTable"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateKeyspace"
+      },
+      {
+        "name": "UpdateTable"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AutoScaling",
+        "doc": "AutoScaling is an OPTIONAL capability (provisioned-throughput tables),",
+        "operations": [
+          {
+            "name": "GetTableAutoScalingSettings"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "Keyspaces"
+    }
+  },
+  {
+    "service": "kinesis",
+    "interface": "Kinesis",
+    "operations": [
+      {
+        "name": "AddTagsToStream",
+        "doc": "Tags."
+      },
+      {
+        "name": "CreateStream",
+        "doc": "Stream lifecycle \u0026 configuration."
+      },
+      {
+        "name": "DecreaseStreamRetentionPeriod"
+      },
+      {
+        "name": "DeleteResourcePolicy"
+      },
+      {
+        "name": "DeleteStream"
+      },
+      {
+        "name": "DeregisterStreamConsumer"
+      },
+      {
+        "name": "DescribeAccountSettings"
+      },
+      {
+        "name": "DescribeLimits",
+        "doc": "Account \u0026 limits."
+      },
+      {
+        "name": "DescribeStream"
+      },
+      {
+        "name": "DescribeStreamConsumer"
+      },
+      {
+        "name": "DescribeStreamSummary"
+      },
+      {
+        "name": "DisableEnhancedMonitoring"
+      },
+      {
+        "name": "EnableEnhancedMonitoring",
+        "doc": "Enhanced monitoring."
+      },
+      {
+        "name": "GetRecords"
+      },
+      {
+        "name": "GetResourcePolicy"
+      },
+      {
+        "name": "GetShardIterator"
+      },
+      {
+        "name": "IncreaseStreamRetentionPeriod"
+      },
+      {
+        "name": "ListShards"
+      },
+      {
+        "name": "ListStreamConsumers"
+      },
+      {
+        "name": "ListStreams"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTagsForStream"
+      },
+      {
+        "name": "MergeShards"
+      },
+      {
+        "name": "PutRecord",
+        "doc": "Records."
+      },
+      {
+        "name": "PutRecords"
+      },
+      {
+        "name": "PutResourcePolicy",
+        "doc": "Resource policy."
+      },
+      {
+        "name": "RegisterStreamConsumer",
+        "doc": "Enhanced fan-out consumers."
+      },
+      {
+        "name": "RemoveTagsFromStream"
+      },
+      {
+        "name": "SplitShard"
+      },
+      {
+        "name": "StartStreamEncryption"
+      },
+      {
+        "name": "StopStreamEncryption"
+      },
+      {
+        "name": "SubscribeToShard"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccountSettings"
+      },
+      {
+        "name": "UpdateMaxRecordSize"
+      },
+      {
+        "name": "UpdateShardCount"
+      },
+      {
+        "name": "UpdateStreamMode"
+      },
+      {
+        "name": "UpdateStreamWarmThroughput"
+      }
+    ],
+    "providers": {
+      "aws": "Kinesis"
+    }
+  },
+  {
+    "service": "kms",
+    "interface": "KMS",
+    "operations": [
+      {
+        "name": "CancelKeyDeletion"
+      },
+      {
+        "name": "CreateAlias",
+        "doc": "Aliases."
+      },
+      {
+        "name": "CreateGrant",
+        "doc": "Grants."
+      },
+      {
+        "name": "CreateKey",
+        "doc": "Key lifecycle."
+      },
+      {
+        "name": "Decrypt"
+      },
+      {
+        "name": "DeleteAlias"
+      },
+      {
+        "name": "DeleteImportedKeyMaterial"
+      },
+      {
+        "name": "DescribeKey"
+      },
+      {
+        "name": "DisableKey"
+      },
+      {
+        "name": "DisableKeyRotation"
+      },
+      {
+        "name": "EnableKey"
+      },
+      {
+        "name": "EnableKeyRotation",
+        "doc": "Rotation."
+      },
+      {
+        "name": "Encrypt"
+      },
+      {
+        "name": "GenerateDataKey"
+      },
+      {
+        "name": "GenerateDataKeyPair"
+      },
+      {
+        "name": "GenerateDataKeyPairWithoutPlaintext"
+      },
+      {
+        "name": "GenerateDataKeyWithoutPlaintext"
+      },
+      {
+        "name": "GenerateMac"
+      },
+      {
+        "name": "GenerateRandom"
+      },
+      {
+        "name": "GetKeyPolicy",
+        "doc": "Key policies."
+      },
+      {
+        "name": "GetKeyRotationStatus"
+      },
+      {
+        "name": "GetParametersForImport"
+      },
+      {
+        "name": "ImportKeyMaterial"
+      },
+      {
+        "name": "ListAliases"
+      },
+      {
+        "name": "ListGrants"
+      },
+      {
+        "name": "ListKeyPolicies"
+      },
+      {
+        "name": "ListKeyRotations"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "ListResourceTags"
+      },
+      {
+        "name": "ListRetirableGrants"
+      },
+      {
+        "name": "PutKeyPolicy"
+      },
+      {
+        "name": "ReEncrypt"
+      },
+      {
+        "name": "ReplicateKey"
+      },
+      {
+        "name": "RetireGrant"
+      },
+      {
+        "name": "RevokeGrant"
+      },
+      {
+        "name": "RotateKeyOnDemand"
+      },
+      {
+        "name": "ScheduleKeyDeletion"
+      },
+      {
+        "name": "Sign"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAlias"
+      },
+      {
+        "name": "UpdateKeyDescription"
+      },
+      {
+        "name": "UpdatePrimaryRegion"
+      },
+      {
+        "name": "Verify"
+      },
+      {
+        "name": "VerifyMac"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "Crypto",
+        "doc": "Crypto is the cryptographic surface of KMS. It is embedded in the KMS",
+        "operations": [
+          {
+            "name": "Decrypt"
+          },
+          {
+            "name": "Encrypt"
+          },
+          {
+            "name": "GenerateDataKey"
+          },
+          {
+            "name": "GenerateDataKeyPair"
+          },
+          {
+            "name": "GenerateDataKeyPairWithoutPlaintext"
+          },
+          {
+            "name": "GenerateDataKeyWithoutPlaintext"
+          },
+          {
+            "name": "GenerateMac"
+          },
+          {
+            "name": "GenerateRandom"
+          },
+          {
+            "name": "ReEncrypt"
+          },
+          {
+            "name": "Sign"
+          },
+          {
+            "name": "Verify"
+          },
+          {
+            "name": "VerifyMac"
+          }
+        ]
+      },
+      {
+        "name": "KeyImport",
+        "doc": "KeyImport is the import-material and multi-region surface of KMS.",
+        "operations": [
+          {
+            "name": "DeleteImportedKeyMaterial"
+          },
+          {
+            "name": "GetParametersForImport"
+          },
+          {
+            "name": "ImportKeyMaterial"
+          },
+          {
+            "name": "ReplicateKey"
+          },
+          {
+            "name": "UpdatePrimaryRegion"
+          }
+        ]
+      },
+      {
+        "name": "Management",
+        "doc": "Management is the grants/rotation/policy surface of KMS.",
+        "operations": [
+          {
+            "name": "CreateGrant",
+            "doc": "Grants."
+          },
+          {
+            "name": "DisableKeyRotation"
+          },
+          {
+            "name": "EnableKeyRotation",
+            "doc": "Rotation."
+          },
+          {
+            "name": "GetKeyPolicy",
+            "doc": "Key policies."
+          },
+          {
+            "name": "GetKeyRotationStatus"
+          },
+          {
+            "name": "ListGrants"
+          },
+          {
+            "name": "ListKeyPolicies"
+          },
+          {
+            "name": "ListKeyRotations"
+          },
+          {
+            "name": "ListRetirableGrants"
+          },
+          {
+            "name": "PutKeyPolicy"
+          },
+          {
+            "name": "RetireGrant"
+          },
+          {
+            "name": "RevokeGrant"
+          },
+          {
+            "name": "RotateKeyOnDemand"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "KMS"
+    }
+  },
+  {
+    "service": "loadbalancer",
+    "interface": "LoadBalancer",
+    "operations": [
+      {
+        "name": "CreateListener"
+      },
+      {
+        "name": "CreateLoadBalancer"
+      },
+      {
+        "name": "CreateRule"
+      },
+      {
+        "name": "CreateTargetGroup"
+      },
+      {
+        "name": "DeleteListener"
+      },
+      {
+        "name": "DeleteLoadBalancer"
+      },
+      {
+        "name": "DeleteRule"
+      },
+      {
+        "name": "DeleteTargetGroup"
+      },
+      {
+        "name": "DeregisterTargets"
+      },
+      {
+        "name": "DescribeListeners"
+      },
+      {
+        "name": "DescribeLoadBalancers"
+      },
+      {
+        "name": "DescribeRules"
+      },
+      {
+        "name": "DescribeTargetGroups"
+      },
+      {
+        "name": "DescribeTargetHealth"
+      },
+      {
+        "name": "GetLBAttributes"
+      },
+      {
+        "name": "ModifyListener"
+      },
+      {
+        "name": "PutLBAttributes"
+      },
+      {
+        "name": "RegisterTargets"
+      },
+      {
+        "name": "SetTargetHealth"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "LBAttributeUpdater",
+        "doc": "LBAttributeUpdater is implemented by drivers that can apply a partial",
+        "operations": [
+          {
+            "name": "UpdateLBAttributes"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "ELB",
+      "azure": "LB",
+      "gcp": "LB"
+    }
+  },
+  {
+    "service": "logging",
+    "interface": "Logging",
+    "operations": [
+      {
+        "name": "CreateLogGroup"
+      },
+      {
+        "name": "CreateLogStream"
+      },
+      {
+        "name": "DeleteLogGroup"
+      },
+      {
+        "name": "DeleteLogStream"
+      },
+      {
+        "name": "DeleteMetricFilter"
+      },
+      {
+        "name": "DescribeMetricFilters"
+      },
+      {
+        "name": "FilterLogEvents"
+      },
+      {
+        "name": "GetLogEvents"
+      },
+      {
+        "name": "GetLogGroup"
+      },
+      {
+        "name": "ListLogGroups"
+      },
+      {
+        "name": "ListLogStreams"
+      },
+      {
+        "name": "PutLogEvents"
+      },
+      {
+        "name": "PutMetricFilter"
+      },
+      {
+        "name": "UpdateLogGroup",
+        "doc": "UpdateLogGroup replaces the mutable fields (retention, tags) of an"
+      }
+    ],
+    "providers": {
+      "aws": "CloudWatchLogs",
+      "azure": "LogAnalytics",
+      "gcp": "CloudLogging"
+    }
+  },
+  {
+    "service": "managedcassandra",
+    "interface": "ManagedCassandra",
+    "operations": [
+      {
+        "name": "ClusterStatus"
+      },
+      {
+        "name": "CreateOrUpdateCluster"
+      },
+      {
+        "name": "CreateOrUpdateDataCenter"
+      },
+      {
+        "name": "DeallocateCluster"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteDataCenter"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetDataCenter"
+      },
+      {
+        "name": "InvokeCommand"
+      },
+      {
+        "name": "ListClustersByResourceGroup"
+      },
+      {
+        "name": "ListClustersBySubscription"
+      },
+      {
+        "name": "ListDataCenters"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateDataCenter"
+      }
+    ],
+    "providers": {
+      "azure": "ManagedCassandra"
+    }
+  },
+  {
+    "service": "memorydb",
+    "interface": "MemoryDB",
+    "operations": [
+      {
+        "name": "CopySnapshot"
+      },
+      {
+        "name": "CreateACL",
+        "doc": "ACLs"
+      },
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters"
+      },
+      {
+        "name": "CreateParameterGroup",
+        "doc": "Parameter groups"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Snapshots"
+      },
+      {
+        "name": "CreateSubnetGroup",
+        "doc": "Subnet groups"
+      },
+      {
+        "name": "CreateUser",
+        "doc": "Users"
+      },
+      {
+        "name": "DeleteACL"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteParameterGroup"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DeleteSubnetGroup"
+      },
+      {
+        "name": "DeleteUser"
+      },
+      {
+        "name": "DescribeACLs"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeEngineVersions",
+        "doc": "Catalogs"
+      },
+      {
+        "name": "DescribeEvents"
+      },
+      {
+        "name": "DescribeParameterGroups"
+      },
+      {
+        "name": "DescribeParameters"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "DescribeSubnetGroups"
+      },
+      {
+        "name": "DescribeUsers"
+      },
+      {
+        "name": "FailoverShard"
+      },
+      {
+        "name": "ListAllowedNodeTypeUpdates"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "ResetParameterGroup"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags (resource addressed by ARN)"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateACL"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateParameterGroup"
+      },
+      {
+        "name": "UpdateSubnetGroup"
+      },
+      {
+        "name": "UpdateUser"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "MultiRegion",
+        "doc": "MultiRegion is an OPTIONAL capability (cross-region clusters), discovered by",
+        "operations": [
+          {
+            "name": "CreateMultiRegionCluster"
+          },
+          {
+            "name": "DeleteMultiRegionCluster"
+          },
+          {
+            "name": "DescribeMultiRegionClusters"
+          },
+          {
+            "name": "DescribeMultiRegionParameterGroups"
+          },
+          {
+            "name": "DescribeMultiRegionParameters"
+          },
+          {
+            "name": "ListAllowedMultiRegionClusterUpdates"
+          },
+          {
+            "name": "UpdateMultiRegionCluster"
+          }
+        ]
+      },
+      {
+        "name": "ReservedNodes",
+        "doc": "ReservedNodes is an OPTIONAL capability (billing), discovered by type",
+        "operations": [
+          {
+            "name": "DescribeReservedNodes"
+          },
+          {
+            "name": "DescribeReservedNodesOfferings"
+          },
+          {
+            "name": "PurchaseReservedNodesOffering"
+          }
+        ]
+      },
+      {
+        "name": "ServiceUpdates",
+        "doc": "ServiceUpdates is an OPTIONAL capability (fleet maintenance), discovered by",
+        "operations": [
+          {
+            "name": "BatchUpdateCluster"
+          },
+          {
+            "name": "DescribeServiceUpdates"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "MemoryDB"
+    }
+  },
+  {
+    "service": "messagequeue",
+    "interface": "MessageQueue",
+    "operations": [
+      {
+        "name": "ChangeVisibility"
+      },
+      {
+        "name": "CreateQueue"
+      },
+      {
+        "name": "DeleteMessage"
+      },
+      {
+        "name": "DeleteMessageBatch"
+      },
+      {
+        "name": "DeleteQueue"
+      },
+      {
+        "name": "GetQueueAttributes",
+        "doc": "Queue attributes"
+      },
+      {
+        "name": "GetQueueInfo"
+      },
+      {
+        "name": "ListQueues"
+      },
+      {
+        "name": "PurgeQueue",
+        "doc": "Purge"
+      },
+      {
+        "name": "ReceiveMessages"
+      },
+      {
+        "name": "ReceiveMessagesWithOptions",
+        "doc": "Enhanced receive with options"
+      },
+      {
+        "name": "SendMessage"
+      },
+      {
+        "name": "SendMessageBatch",
+        "doc": "Batch operations"
+      },
+      {
+        "name": "SetQueueAttributes"
+      }
+    ],
+    "providers": {
+      "aws": "SQS",
+      "azure": "QueueStorage",
+      "gcp": "PubSub"
+    }
+  },
+  {
+    "service": "monitoring",
+    "interface": "Monitoring",
+    "operations": [
+      {
+        "name": "CreateAlarm"
+      },
+      {
+        "name": "CreateNotificationChannel",
+        "doc": "Notification Channels"
+      },
+      {
+        "name": "DeleteAlarm"
+      },
+      {
+        "name": "DeleteNotificationChannel"
+      },
+      {
+        "name": "DescribeAlarms"
+      },
+      {
+        "name": "GetAlarmHistory",
+        "doc": "Alarm History"
+      },
+      {
+        "name": "GetMetricData"
+      },
+      {
+        "name": "GetNotificationChannel"
+      },
+      {
+        "name": "ListMetrics"
+      },
+      {
+        "name": "ListNotificationChannels"
+      },
+      {
+        "name": "PutMetricData"
+      },
+      {
+        "name": "SetAlarmState"
+      }
+    ],
+    "providers": {
+      "aws": "CloudWatch",
+      "azure": "Monitor",
+      "gcp": "CloudMonitoring"
+    }
+  },
+  {
+    "service": "networkfirewall",
+    "interface": "NetworkFirewall",
+    "operations": [
+      {
+        "name": "AssociateFirewallPolicy"
+      },
+      {
+        "name": "AssociateSubnets"
+      },
+      {
+        "name": "CreateFirewall"
+      },
+      {
+        "name": "CreateFirewallPolicy"
+      },
+      {
+        "name": "CreateRuleGroup"
+      },
+      {
+        "name": "DeleteFirewall"
+      },
+      {
+        "name": "DeleteFirewallPolicy"
+      },
+      {
+        "name": "DeleteRuleGroup"
+      },
+      {
+        "name": "DescribeFirewall"
+      },
+      {
+        "name": "DescribeFirewallPolicy"
+      },
+      {
+        "name": "DescribeLoggingConfiguration"
+      },
+      {
+        "name": "DescribeRuleGroup"
+      },
+      {
+        "name": "DisassociateSubnets"
+      },
+      {
+        "name": "ListFirewallPolicies"
+      },
+      {
+        "name": "ListFirewalls"
+      },
+      {
+        "name": "ListRuleGroups"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateFirewallDeleteProtection"
+      },
+      {
+        "name": "UpdateLoggingConfiguration"
+      }
+    ],
+    "providers": {
+      "aws": "NetworkFirewall"
+    }
+  },
+  {
+    "service": "networking",
+    "interface": "NetworkInterfaces",
+    "operations": [
+      {
+        "name": "DeleteNetworkInterface"
+      },
+      {
+        "name": "DescribeNetworkInterfaces"
+      },
+      {
+        "name": "DetachNetworkInterface"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "ClientVPN",
+        "doc": "ClientVPN is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "AssociateClientVPNTargetNetwork"
+          },
+          {
+            "name": "AuthorizeClientVPNIngress"
+          },
+          {
+            "name": "CreateClientVPNEndpoint"
+          },
+          {
+            "name": "CreateClientVPNRoute"
+          },
+          {
+            "name": "DeleteClientVPNEndpoint"
+          },
+          {
+            "name": "DeleteClientVPNRoute"
+          },
+          {
+            "name": "DescribeClientVPNAuthorizationRules"
+          },
+          {
+            "name": "DescribeClientVPNEndpoints"
+          },
+          {
+            "name": "DescribeClientVPNRoutes"
+          },
+          {
+            "name": "DescribeClientVPNTargetNetworks"
+          },
+          {
+            "name": "DisassociateClientVPNTargetNetwork"
+          },
+          {
+            "name": "RevokeClientVPNIngress"
+          }
+        ]
+      },
+      {
+        "name": "DHCPOptionSets",
+        "doc": "DHCPOptionSets is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "AssociateDHCPOptions"
+          },
+          {
+            "name": "CreateDHCPOptions"
+          },
+          {
+            "name": "DeleteDHCPOptions"
+          },
+          {
+            "name": "DescribeDHCPOptions"
+          }
+        ]
+      },
+      {
+        "name": "EgressOnlyInternetGateways",
+        "doc": "EgressOnlyInternetGateways is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "CreateEgressOnlyInternetGateway"
+          },
+          {
+            "name": "DeleteEgressOnlyInternetGateway"
+          },
+          {
+            "name": "DescribeEgressOnlyInternetGateways"
+          }
+        ]
+      },
+      {
+        "name": "IPAM",
+        "doc": "IPAM is an OPTIONAL AWS capability (type-asserted on the vpc driver).",
+        "operations": [
+          {
+            "name": "AllocateIpamPoolCidr"
+          },
+          {
+            "name": "CreateIpam"
+          },
+          {
+            "name": "CreateIpamPool"
+          },
+          {
+            "name": "CreateIpamScope"
+          },
+          {
+            "name": "DeleteIpam"
+          },
+          {
+            "name": "DeleteIpamPool"
+          },
+          {
+            "name": "DeleteIpamScope"
+          },
+          {
+            "name": "DeprovisionIpamPoolCidr"
+          },
+          {
+            "name": "DescribeIpamPools"
+          },
+          {
+            "name": "DescribeIpamScopes"
+          },
+          {
+            "name": "DescribeIpams"
+          },
+          {
+            "name": "GetIpamPoolAllocations"
+          },
+          {
+            "name": "GetIpamPoolCidrs"
+          },
+          {
+            "name": "ModifyIpam"
+          },
+          {
+            "name": "ModifyIpamPool"
+          },
+          {
+            "name": "ModifyIpamPoolAllocation"
+          },
+          {
+            "name": "ModifyIpamScope"
+          },
+          {
+            "name": "ProvisionIpamPoolCidr"
+          },
+          {
+            "name": "ReleaseIpamPoolAllocation"
+          }
+        ]
+      },
+      {
+        "name": "IPAMByoasn",
+        "doc": "IPAMByoasn is an OPTIONAL AWS capability for bring-your-own ASN.",
+        "operations": [
+          {
+            "name": "AssociateIpamByoasn"
+          },
+          {
+            "name": "DeprovisionIpamByoasn"
+          },
+          {
+            "name": "DescribeIpamByoasn"
+          },
+          {
+            "name": "DisassociateIpamByoasn"
+          },
+          {
+            "name": "ProvisionIpamByoasn"
+          }
+        ]
+      },
+      {
+        "name": "IPAMByoip",
+        "doc": "IPAMByoip is an OPTIONAL AWS capability for bring-your-own public IP CIDRs",
+        "operations": [
+          {
+            "name": "AdvertiseByoipCidr"
+          },
+          {
+            "name": "DeprovisionByoipCidr"
+          },
+          {
+            "name": "DescribeByoipCidrs"
+          },
+          {
+            "name": "MoveByoipCidrToIpam"
+          },
+          {
+            "name": "ProvisionByoipCidr"
+          },
+          {
+            "name": "WithdrawByoipCidr"
+          }
+        ]
+      },
+      {
+        "name": "IPAMDiscovery",
+        "doc": "IPAMDiscovery is an OPTIONAL AWS capability for IPAM resource discovery.",
+        "operations": [
+          {
+            "name": "AssociateIpamResourceDiscovery"
+          },
+          {
+            "name": "CreateIpamResourceDiscovery"
+          },
+          {
+            "name": "DeleteIpamResourceDiscovery"
+          },
+          {
+            "name": "DescribeIpamResourceDiscoveries"
+          },
+          {
+            "name": "DescribeIpamResourceDiscoveryAssociations"
+          },
+          {
+            "name": "DisassociateIpamResourceDiscovery"
+          },
+          {
+            "name": "GetIpamDiscoveredAccounts"
+          },
+          {
+            "name": "GetIpamDiscoveredPublicAddresses"
+          },
+          {
+            "name": "GetIpamDiscoveredResourceCidrs"
+          },
+          {
+            "name": "ModifyIpamResourceDiscovery"
+          }
+        ]
+      },
+      {
+        "name": "IPAMExternalToken",
+        "doc": "IPAMExternalToken is an OPTIONAL AWS capability for external-resource",
+        "operations": [
+          {
+            "name": "CreateIpamExternalResourceVerificationToken"
+          },
+          {
+            "name": "DeleteIpamExternalResourceVerificationToken"
+          },
+          {
+            "name": "DescribeIpamExternalResourceVerificationTokens"
+          }
+        ]
+      },
+      {
+        "name": "IPAMMetrics",
+        "doc": "IPAMMetrics is an OPTIONAL capability that exposes the AWS/IPAM CloudWatch",
+        "operations": [
+          {
+            "name": "IpamMetrics"
+          }
+        ]
+      },
+      {
+        "name": "IPAMPolicy",
+        "doc": "IPAMPolicy is an OPTIONAL AWS capability for IPAM policies and the",
+        "operations": [
+          {
+            "name": "CreateIpamPolicy"
+          },
+          {
+            "name": "DeleteIpamPolicy"
+          },
+          {
+            "name": "DescribeIpamPolicies"
+          },
+          {
+            "name": "DisableIpamOrganizationAdminAccount"
+          },
+          {
+            "name": "DisableIpamPolicy"
+          },
+          {
+            "name": "EnableIpamOrganizationAdminAccount"
+          },
+          {
+            "name": "EnableIpamPolicy"
+          },
+          {
+            "name": "GetEnabledIpamPolicy"
+          },
+          {
+            "name": "GetIpamPolicyAllocationRules"
+          },
+          {
+            "name": "GetIpamPolicyOrganizationTargets"
+          },
+          {
+            "name": "ModifyIpamPolicyAllocationRules"
+          }
+        ]
+      },
+      {
+        "name": "IPAMPrefixListResolver",
+        "doc": "IPAMPrefixListResolver is an OPTIONAL AWS capability for IPAM prefix-list",
+        "operations": [
+          {
+            "name": "CreateIpamPrefixListResolver"
+          },
+          {
+            "name": "CreateIpamPrefixListResolverTarget"
+          },
+          {
+            "name": "DeleteIpamPrefixListResolver"
+          },
+          {
+            "name": "DeleteIpamPrefixListResolverTarget"
+          },
+          {
+            "name": "DescribeIpamPrefixListResolverTargets"
+          },
+          {
+            "name": "DescribeIpamPrefixListResolvers"
+          },
+          {
+            "name": "GetIpamPrefixListResolverRules"
+          },
+          {
+            "name": "GetIpamPrefixListResolverVersionEntries"
+          },
+          {
+            "name": "GetIpamPrefixListResolverVersions"
+          },
+          {
+            "name": "ModifyIpamPrefixListResolver"
+          },
+          {
+            "name": "ModifyIpamPrefixListResolverTarget"
+          }
+        ]
+      },
+      {
+        "name": "IPAMResources",
+        "doc": "IPAMResources is an OPTIONAL AWS capability exposing IPAM's view of the",
+        "operations": [
+          {
+            "name": "GetIpamAddressHistory"
+          },
+          {
+            "name": "GetIpamResourceCidrs"
+          },
+          {
+            "name": "ModifyIpamResourceCidr"
+          }
+        ]
+      },
+      {
+        "name": "NetworkInsights",
+        "doc": "NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both",
+        "operations": [
+          {
+            "name": "CreateNetworkInsightsAccessScope"
+          },
+          {
+            "name": "CreateNetworkInsightsPath"
+          },
+          {
+            "name": "DeleteNetworkInsightsAccessScope"
+          },
+          {
+            "name": "DeleteNetworkInsightsAccessScopeAnalysis"
+          },
+          {
+            "name": "DeleteNetworkInsightsAnalysis"
+          },
+          {
+            "name": "DeleteNetworkInsightsPath"
+          },
+          {
+            "name": "DescribeNetworkInsightsAccessScopeAnalyses"
+          },
+          {
+            "name": "DescribeNetworkInsightsAccessScopes"
+          },
+          {
+            "name": "DescribeNetworkInsightsAnalyses"
+          },
+          {
+            "name": "DescribeNetworkInsightsPaths"
+          },
+          {
+            "name": "GetNetworkInsightsAccessScopeAnalysisFindings"
+          },
+          {
+            "name": "GetNetworkInsightsAccessScopeContent"
+          },
+          {
+            "name": "StartNetworkInsightsAccessScopeAnalysis"
+          },
+          {
+            "name": "StartNetworkInsightsAnalysis"
+          }
+        ]
+      },
+      {
+        "name": "NetworkInterfaceCreator",
+        "doc": "NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept",
+        "operations": [
+          {
+            "name": "CreateNetworkInterface"
+          }
+        ]
+      },
+      {
+        "name": "Networking",
+        "doc": "Networking is the interface that networking provider",
+        "operations": [
+          {
+            "name": "AcceptPeeringConnection"
+          },
+          {
+            "name": "AddEgressRule"
+          },
+          {
+            "name": "AddIngressRule"
+          },
+          {
+            "name": "AddNetworkACLRule"
+          },
+          {
+            "name": "AllocateAddress",
+            "doc": "Elastic IPs"
+          },
+          {
+            "name": "AssociateAddress"
+          },
+          {
+            "name": "AssociateRouteTable",
+            "doc": "Route Table Associations"
+          },
+          {
+            "name": "AttachInternetGateway"
+          },
+          {
+            "name": "CreateFlowLog",
+            "doc": "Flow Logs"
+          },
+          {
+            "name": "CreateInternetGateway",
+            "doc": "Internet Gateways"
+          },
+          {
+            "name": "CreateNATGateway",
+            "doc": "NAT Gateways"
+          },
+          {
+            "name": "CreateNetworkACL",
+            "doc": "Network ACLs"
+          },
+          {
+            "name": "CreatePeeringConnection",
+            "doc": "VPC Peering"
+          },
+          {
+            "name": "CreateRoute"
+          },
+          {
+            "name": "CreateRouteTable",
+            "doc": "Route Tables"
+          },
+          {
+            "name": "CreateSecurityGroup"
+          },
+          {
+            "name": "CreateSubnet"
+          },
+          {
+            "name": "CreateVPC"
+          },
+          {
+            "name": "CreateVPCEndpoint",
+            "doc": "VPC Endpoints"
+          },
+          {
+            "name": "DeleteFlowLog"
+          },
+          {
+            "name": "DeleteInternetGateway"
+          },
+          {
+            "name": "DeleteNATGateway"
+          },
+          {
+            "name": "DeleteNetworkACL"
+          },
+          {
+            "name": "DeletePeeringConnection"
+          },
+          {
+            "name": "DeleteRoute"
+          },
+          {
+            "name": "DeleteRouteTable"
+          },
+          {
+            "name": "DeleteSecurityGroup"
+          },
+          {
+            "name": "DeleteSubnet"
+          },
+          {
+            "name": "DeleteVPC"
+          },
+          {
+            "name": "DeleteVPCEndpoint"
+          },
+          {
+            "name": "DescribeAddresses"
+          },
+          {
+            "name": "DescribeFlowLogs"
+          },
+          {
+            "name": "DescribeInternetGateways"
+          },
+          {
+            "name": "DescribeNATGateways"
+          },
+          {
+            "name": "DescribeNetworkACLs"
+          },
+          {
+            "name": "DescribePeeringConnections"
+          },
+          {
+            "name": "DescribeRouteTables"
+          },
+          {
+            "name": "DescribeSecurityGroups"
+          },
+          {
+            "name": "DescribeSubnets"
+          },
+          {
+            "name": "DescribeVPCEndpoints"
+          },
+          {
+            "name": "DescribeVPCs"
+          },
+          {
+            "name": "DetachInternetGateway"
+          },
+          {
+            "name": "DisassociateAddress"
+          },
+          {
+            "name": "DisassociateRouteTable"
+          },
+          {
+            "name": "GetFlowLogRecords"
+          },
+          {
+            "name": "ModifyVPCEndpoint"
+          },
+          {
+            "name": "RejectPeeringConnection"
+          },
+          {
+            "name": "ReleaseAddress"
+          },
+          {
+            "name": "RemoveEgressRule"
+          },
+          {
+            "name": "RemoveIngressRule"
+          },
+          {
+            "name": "RemoveNetworkACLRule"
+          },
+          {
+            "name": "RemoveSecurityGroupTags"
+          },
+          {
+            "name": "RemoveSubnetTags"
+          },
+          {
+            "name": "RemoveVPCTags"
+          },
+          {
+            "name": "UpdateSecurityGroupTags"
+          },
+          {
+            "name": "UpdateSubnetTags"
+          },
+          {
+            "name": "UpdateVPCTags",
+            "doc": "Tag mutation. Update* merges keys into the resource's existing Tags"
+          }
+        ]
+      },
+      {
+        "name": "PrefixLists",
+        "doc": "PrefixLists is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "CreateManagedPrefixList"
+          },
+          {
+            "name": "DeleteManagedPrefixList"
+          },
+          {
+            "name": "DescribeManagedPrefixLists"
+          },
+          {
+            "name": "GetManagedPrefixListEntries"
+          },
+          {
+            "name": "ModifyManagedPrefixList"
+          }
+        ]
+      },
+      {
+        "name": "TrafficMirroring",
+        "doc": "TrafficMirroring is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "CreateTrafficMirrorFilter"
+          },
+          {
+            "name": "CreateTrafficMirrorFilterRule"
+          },
+          {
+            "name": "CreateTrafficMirrorSession"
+          },
+          {
+            "name": "CreateTrafficMirrorTarget"
+          },
+          {
+            "name": "DeleteTrafficMirrorFilter"
+          },
+          {
+            "name": "DeleteTrafficMirrorFilterRule"
+          },
+          {
+            "name": "DeleteTrafficMirrorSession"
+          },
+          {
+            "name": "DeleteTrafficMirrorTarget"
+          },
+          {
+            "name": "DescribeTrafficMirrorFilterRules"
+          },
+          {
+            "name": "DescribeTrafficMirrorFilters"
+          },
+          {
+            "name": "DescribeTrafficMirrorSessions"
+          },
+          {
+            "name": "DescribeTrafficMirrorTargets"
+          },
+          {
+            "name": "ModifyTrafficMirrorFilterNetworkServices"
+          },
+          {
+            "name": "ModifyTrafficMirrorFilterRule"
+          },
+          {
+            "name": "ModifyTrafficMirrorSession"
+          }
+        ]
+      },
+      {
+        "name": "TransitGateways",
+        "doc": "TransitGateways is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "AssociateTransitGatewayRouteTable"
+          },
+          {
+            "name": "CreateTransitGateway"
+          },
+          {
+            "name": "CreateTransitGatewayRoute"
+          },
+          {
+            "name": "CreateTransitGatewayRouteTable"
+          },
+          {
+            "name": "CreateTransitGatewayVPCAttachment"
+          },
+          {
+            "name": "DeleteTransitGateway"
+          },
+          {
+            "name": "DeleteTransitGatewayRoute"
+          },
+          {
+            "name": "DeleteTransitGatewayRouteTable"
+          },
+          {
+            "name": "DeleteTransitGatewayVPCAttachment"
+          },
+          {
+            "name": "DescribeTransitGatewayRouteTables"
+          },
+          {
+            "name": "DescribeTransitGatewayVPCAttachments"
+          },
+          {
+            "name": "DescribeTransitGateways"
+          },
+          {
+            "name": "DisableTransitGatewayRouteTablePropagation"
+          },
+          {
+            "name": "EnableTransitGatewayRouteTablePropagation"
+          },
+          {
+            "name": "SearchTransitGatewayRoutes"
+          }
+        ]
+      },
+      {
+        "name": "VPCAttributes",
+        "doc": "VPCAttributes is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "ModifyVPCAttribute"
+          }
+        ]
+      },
+      {
+        "name": "VPCBlockPublicAccess",
+        "doc": "VPCBlockPublicAccess is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "CreateVPCBlockPublicAccessExclusion"
+          },
+          {
+            "name": "DeleteVPCBlockPublicAccessExclusion"
+          },
+          {
+            "name": "DescribeVPCBlockPublicAccessExclusions"
+          },
+          {
+            "name": "DescribeVPCBlockPublicAccessOptions"
+          },
+          {
+            "name": "ModifyVPCBlockPublicAccessExclusion"
+          },
+          {
+            "name": "ModifyVPCBlockPublicAccessOptions"
+          }
+        ]
+      },
+      {
+        "name": "VPCEndpointServices",
+        "doc": "VPCEndpointServices is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "CreateVPCEndpointServiceConfiguration"
+          },
+          {
+            "name": "DeleteVPCEndpointServiceConfiguration"
+          },
+          {
+            "name": "DescribeVPCEndpointServiceConfigurations"
+          },
+          {
+            "name": "DescribeVPCEndpointServicePermissions"
+          },
+          {
+            "name": "ModifyVPCEndpointServicePermissions"
+          }
+        ]
+      },
+      {
+        "name": "VPNConnections",
+        "doc": "VPNConnections is an OPTIONAL AWS capability (type-asserted).",
+        "operations": [
+          {
+            "name": "AttachVPNGateway"
+          },
+          {
+            "name": "CreateCustomerGateway"
+          },
+          {
+            "name": "CreateVPNConnection"
+          },
+          {
+            "name": "CreateVPNConnectionRoute"
+          },
+          {
+            "name": "CreateVPNGateway"
+          },
+          {
+            "name": "DeleteCustomerGateway"
+          },
+          {
+            "name": "DeleteVPNConnection"
+          },
+          {
+            "name": "DeleteVPNConnectionRoute"
+          },
+          {
+            "name": "DeleteVPNGateway"
+          },
+          {
+            "name": "DescribeCustomerGateways"
+          },
+          {
+            "name": "DescribeVPNConnections"
+          },
+          {
+            "name": "DescribeVPNGateways"
+          },
+          {
+            "name": "DetachVPNGateway"
+          },
+          {
+            "name": "ModifyVPNConnection"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "VPC"
+    }
+  },
+  {
+    "service": "notification",
+    "interface": "Notification",
+    "operations": [
+      {
+        "name": "CreateTopic"
+      },
+      {
+        "name": "DeleteTopic"
+      },
+      {
+        "name": "GetTopic"
+      },
+      {
+        "name": "ListSubscriptions"
+      },
+      {
+        "name": "ListTopics"
+      },
+      {
+        "name": "Publish"
+      },
+      {
+        "name": "Subscribe"
+      },
+      {
+        "name": "Unsubscribe"
+      },
+      {
+        "name": "UpdateTopic",
+        "doc": "UpdateTopic replaces the mutable fields (display name, tags) of an"
+      }
+    ],
+    "providers": {
+      "aws": "SNS",
+      "azure": "NotificationHubs",
+      "gcp": "FCM"
+    }
+  },
+  {
+    "service": "parameterstore",
+    "interface": "ParameterStore",
+    "operations": [
+      {
+        "name": "DeleteParameter"
+      },
+      {
+        "name": "DeleteParameters"
+      },
+      {
+        "name": "DescribeParameters"
+      },
+      {
+        "name": "GetParameter"
+      },
+      {
+        "name": "GetParameterHistory",
+        "doc": "GetParameterHistory returns every version of a parameter, oldest first."
+      },
+      {
+        "name": "GetParameters"
+      },
+      {
+        "name": "GetParametersByPath"
+      },
+      {
+        "name": "LabelParameterVersion",
+        "doc": "LabelParameterVersion attaches labels to a specific version (0 = latest)."
+      },
+      {
+        "name": "PutParameter"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "RunCommand",
+        "doc": "RunCommand is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "GetCommandInvocation"
+          },
+          {
+            "name": "SendCommand"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "SSM"
+    }
+  },
+  {
+    "service": "relationaldb",
+    "interface": "RelationalDB",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (Aurora-style)"
+      },
+      {
+        "name": "CreateClusterSnapshot",
+        "doc": "Cluster snapshots"
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "Instances"
+      },
+      {
+        "name": "CreateSnapshot",
+        "doc": "Instance snapshots"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterSnapshot"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "DeleteSnapshot"
+      },
+      {
+        "name": "DescribeClusterSnapshots"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeInstances"
+      },
+      {
+        "name": "DescribeSnapshots"
+      },
+      {
+        "name": "ModifyCluster"
+      },
+      {
+        "name": "ModifyInstance"
+      },
+      {
+        "name": "RebootInstance"
+      },
+      {
+        "name": "RestoreClusterFromSnapshot"
+      },
+      {
+        "name": "RestoreInstanceFromSnapshot"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StartInstance"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
+        "name": "StopInstance"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AADAdmins",
+        "doc": "AADAdmins is an OPTIONAL Azure SQL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "DeleteAADAdmin"
+          },
+          {
+            "name": "GetAADAdmin"
+          },
+          {
+            "name": "ListAADAdmins"
+          },
+          {
+            "name": "SetAADAdmin"
+          }
+        ]
+      },
+      {
+        "name": "AdvancedRestore",
+        "doc": "AdvancedRestore is an OPTIONAL capability covering snapshot copy and",
+        "operations": [
+          {
+            "name": "CopyDBClusterSnapshot"
+          },
+          {
+            "name": "CopyDBSnapshot"
+          },
+          {
+            "name": "RestoreDBClusterToPointInTime"
+          },
+          {
+            "name": "RestoreDBInstanceToPointInTime"
+          }
+        ]
+      },
+      {
+        "name": "AlloyDB",
+        "doc": "AlloyDB is an OPTIONAL capability for AlloyDB-specific cluster/instance",
+        "operations": [
+          {
+            "name": "AlloyDBClusterInfo"
+          },
+          {
+            "name": "AlloyDBInstanceInfo"
+          },
+          {
+            "name": "CreateAlloyDBCluster"
+          },
+          {
+            "name": "CreateAlloyDBInstance"
+          },
+          {
+            "name": "CreateSecondaryCluster"
+          },
+          {
+            "name": "FailoverInstance"
+          },
+          {
+            "name": "PromoteCluster"
+          },
+          {
+            "name": "RestartInstance"
+          }
+        ]
+      },
+      {
+        "name": "BackupRestorer",
+        "doc": "BackupRestorer is an OPTIONAL capability for restoring a backup in place",
+        "operations": [
+          {
+            "name": "RestoreBackup"
+          }
+        ]
+      },
+      {
+        "name": "BatchConfigurations",
+        "doc": "BatchConfigurations is an OPTIONAL capability for applying several server",
+        "operations": [
+          {
+            "name": "BatchSetConfigurations"
+          }
+        ]
+      },
+      {
+        "name": "Clonable",
+        "doc": "Clonable is an OPTIONAL capability that copies an instance to a new one",
+        "operations": [
+          {
+            "name": "CloneInstance"
+          }
+        ]
+      },
+      {
+        "name": "ClusterEndpoints",
+        "doc": "ClusterEndpoints is an OPTIONAL capability for Aurora custom cluster",
+        "operations": [
+          {
+            "name": "CreateDBClusterEndpoint"
+          },
+          {
+            "name": "DeleteDBClusterEndpoint"
+          },
+          {
+            "name": "DescribeDBClusterEndpoints"
+          },
+          {
+            "name": "ModifyDBClusterEndpoint"
+          }
+        ]
+      },
+      {
+        "name": "ClusterFailover",
+        "doc": "ClusterFailover is an OPTIONAL capability to fail a cluster over to a",
+        "operations": [
+          {
+            "name": "FailoverDBCluster"
+          }
+        ]
+      },
+      {
+        "name": "Configurations",
+        "doc": "Configurations is an OPTIONAL capability for reading and setting server",
+        "operations": [
+          {
+            "name": "GetConfiguration"
+          },
+          {
+            "name": "ListConfigurations"
+          },
+          {
+            "name": "SetConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "DBProxies",
+        "doc": "DBProxies is an OPTIONAL capability for RDS Proxy, discovered by type",
+        "operations": [
+          {
+            "name": "CreateDBProxy"
+          },
+          {
+            "name": "DeleteDBProxy"
+          },
+          {
+            "name": "DeregisterDBProxyTargets"
+          },
+          {
+            "name": "DescribeDBProxies"
+          },
+          {
+            "name": "DescribeDBProxyTargetGroups"
+          },
+          {
+            "name": "DescribeDBProxyTargets"
+          },
+          {
+            "name": "ModifyDBProxy"
+          },
+          {
+            "name": "RegisterDBProxyTargets"
+          }
+        ]
+      },
+      {
+        "name": "Databases",
+        "doc": "Databases is an OPTIONAL capability for managing the logical databases inside",
+        "operations": [
+          {
+            "name": "CreateDatabase"
+          },
+          {
+            "name": "DeleteDatabase"
+          },
+          {
+            "name": "GetDatabase"
+          },
+          {
+            "name": "ListDatabases"
+          }
+        ]
+      },
+      {
+        "name": "ElasticPools",
+        "doc": "ElasticPools is an OPTIONAL Azure SQL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "CreateElasticPool"
+          },
+          {
+            "name": "DeleteElasticPool"
+          },
+          {
+            "name": "GetElasticPool"
+          },
+          {
+            "name": "ListElasticPools"
+          },
+          {
+            "name": "UpdateElasticPool"
+          }
+        ]
+      },
+      {
+        "name": "EventSubscriptions",
+        "doc": "EventSubscriptions is an OPTIONAL capability for RDS event subscriptions and",
+        "operations": [
+          {
+            "name": "CreateEventSubscription"
+          },
+          {
+            "name": "DeleteEventSubscription"
+          },
+          {
+            "name": "DescribeEventCategories"
+          },
+          {
+            "name": "DescribeEventSubscriptions"
+          },
+          {
+            "name": "DescribeEvents"
+          },
+          {
+            "name": "ModifyEventSubscription"
+          }
+        ]
+      },
+      {
+        "name": "Failover",
+        "doc": "Failover is an OPTIONAL capability that triggers a server failover to its",
+        "operations": [
+          {
+            "name": "FailoverInstance"
+          }
+        ]
+      },
+      {
+        "name": "FailoverGroups",
+        "doc": "FailoverGroups is an OPTIONAL Azure SQL capability, discovered by type",
+        "operations": [
+          {
+            "name": "CreateFailoverGroup"
+          },
+          {
+            "name": "DeleteFailoverGroup"
+          },
+          {
+            "name": "FailoverFailoverGroup"
+          },
+          {
+            "name": "GetFailoverGroup"
+          },
+          {
+            "name": "ListFailoverGroups"
+          },
+          {
+            "name": "UpdateFailoverGroup"
+          }
+        ]
+      },
+      {
+        "name": "FirewallRules",
+        "doc": "FirewallRules is an OPTIONAL capability for managing server firewall rules,",
+        "operations": [
+          {
+            "name": "CreateFirewallRule"
+          },
+          {
+            "name": "DeleteFirewallRule"
+          },
+          {
+            "name": "GetFirewallRule"
+          },
+          {
+            "name": "ListFirewallRules"
+          }
+        ]
+      },
+      {
+        "name": "GlobalClusters",
+        "doc": "GlobalClusters is an OPTIONAL capability for Aurora global clusters,",
+        "operations": [
+          {
+            "name": "CreateGlobalCluster"
+          },
+          {
+            "name": "DeleteGlobalCluster"
+          },
+          {
+            "name": "DescribeGlobalClusters"
+          },
+          {
+            "name": "ModifyGlobalCluster"
+          },
+          {
+            "name": "RemoveFromGlobalCluster"
+          }
+        ]
+      },
+      {
+        "name": "ManagedInstances",
+        "doc": "ManagedInstances is an OPTIONAL Azure SQL capability covering SQL Managed",
+        "operations": [
+          {
+            "name": "CreateManagedDatabase"
+          },
+          {
+            "name": "CreateManagedInstance"
+          },
+          {
+            "name": "DeleteManagedDatabase"
+          },
+          {
+            "name": "DeleteManagedInstance"
+          },
+          {
+            "name": "FailoverManagedInstance"
+          },
+          {
+            "name": "GetManagedDatabase"
+          },
+          {
+            "name": "GetManagedInstance"
+          },
+          {
+            "name": "ListManagedDatabases"
+          },
+          {
+            "name": "ListManagedInstances"
+          },
+          {
+            "name": "StartManagedInstance"
+          },
+          {
+            "name": "StopManagedInstance"
+          },
+          {
+            "name": "UpdateManagedInstance"
+          }
+        ]
+      },
+      {
+        "name": "Metadata",
+        "doc": "Metadata is an OPTIONAL capability exposing the engine-version and",
+        "operations": [
+          {
+            "name": "DescribeDBEngineVersions"
+          },
+          {
+            "name": "DescribeOrderableDBInstanceOptions"
+          }
+        ]
+      },
+      {
+        "name": "OptionGroups",
+        "doc": "OptionGroups is an OPTIONAL capability. Option groups are an AWS-only",
+        "operations": [
+          {
+            "name": "CopyOptionGroup"
+          },
+          {
+            "name": "CreateOptionGroup"
+          },
+          {
+            "name": "DeleteOptionGroup"
+          },
+          {
+            "name": "DescribeOptionGroupOptions"
+          },
+          {
+            "name": "DescribeOptionGroups"
+          },
+          {
+            "name": "ModifyOptionGroup"
+          }
+        ]
+      },
+      {
+        "name": "ParameterGroups",
+        "doc": "ParameterGroups is an OPTIONAL capability covering both DB parameter groups",
+        "operations": [
+          {
+            "name": "CopyDBClusterParameterGroup"
+          },
+          {
+            "name": "CopyDBParameterGroup"
+          },
+          {
+            "name": "CreateDBClusterParameterGroup"
+          },
+          {
+            "name": "CreateDBParameterGroup"
+          },
+          {
+            "name": "DeleteDBClusterParameterGroup"
+          },
+          {
+            "name": "DeleteDBParameterGroup"
+          },
+          {
+            "name": "DescribeDBClusterParameterGroups"
+          },
+          {
+            "name": "DescribeDBClusterParameters"
+          },
+          {
+            "name": "DescribeDBParameterGroups"
+          },
+          {
+            "name": "DescribeDBParameters"
+          },
+          {
+            "name": "ModifyDBClusterParameterGroup"
+          },
+          {
+            "name": "ModifyDBParameterGroup"
+          },
+          {
+            "name": "ResetDBClusterParameterGroup"
+          },
+          {
+            "name": "ResetDBParameterGroup"
+          }
+        ]
+      },
+      {
+        "name": "ReadReplicas",
+        "doc": "ReadReplicas is an OPTIONAL capability for creating and promoting read",
+        "operations": [
+          {
+            "name": "CreateDBInstanceReadReplica"
+          },
+          {
+            "name": "PromoteReadReplica"
+          }
+        ]
+      },
+      {
+        "name": "ReplicaPromotion",
+        "doc": "ReplicaPromotion is an OPTIONAL capability that promotes a read replica to a",
+        "operations": [
+          {
+            "name": "PromoteReplica"
+          }
+        ]
+      },
+      {
+        "name": "SslCerts",
+        "doc": "SslCerts is an OPTIONAL capability for managing client SSL certificates,",
+        "operations": [
+          {
+            "name": "CreateSslCert"
+          },
+          {
+            "name": "DeleteSslCert"
+          },
+          {
+            "name": "GetSslCert"
+          },
+          {
+            "name": "ListSslCerts"
+          }
+        ]
+      },
+      {
+        "name": "SubnetGroups",
+        "doc": "SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —",
+        "operations": [
+          {
+            "name": "CreateDBSubnetGroup"
+          },
+          {
+            "name": "DeleteDBSubnetGroup"
+          },
+          {
+            "name": "DescribeDBSubnetGroups"
+          }
+        ]
+      },
+      {
+        "name": "Tagging",
+        "doc": "Tagging is an OPTIONAL capability for resource-level tag operations,",
+        "operations": [
+          {
+            "name": "AddTagsToResource"
+          },
+          {
+            "name": "ListTagsForResource"
+          },
+          {
+            "name": "RemoveTagsFromResource"
+          }
+        ]
+      },
+      {
+        "name": "Users",
+        "doc": "Users is an OPTIONAL capability for managing database user accounts,",
+        "operations": [
+          {
+            "name": "CreateUser"
+          },
+          {
+            "name": "DeleteUser"
+          },
+          {
+            "name": "GetUser"
+          },
+          {
+            "name": "ListUsers"
+          },
+          {
+            "name": "UpdateUser"
+          }
+        ]
+      },
+      {
+        "name": "VNetRules",
+        "doc": "VNetRules is an OPTIONAL Azure SQL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "CreateVNetRule"
+          },
+          {
+            "name": "DeleteVNetRule"
+          },
+          {
+            "name": "GetVNetRule"
+          },
+          {
+            "name": "ListVNetRules"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "Redshift",
+      "azure": "MySQLFlex",
+      "gcp": "AlloyDB"
+    }
+  },
+  {
+    "service": "route53resolver",
+    "interface": "Route53Resolver",
+    "operations": [
+      {
+        "name": "AssociateFirewallRuleGroup",
+        "doc": "Rule-group associations"
+      },
+      {
+        "name": "AssociateResolverEndpointIPAddress"
+      },
+      {
+        "name": "AssociateResolverQueryLogConfig"
+      },
+      {
+        "name": "AssociateResolverRule"
+      },
+      {
+        "name": "BatchCreateFirewallRules"
+      },
+      {
+        "name": "BatchDeleteFirewallRules"
+      },
+      {
+        "name": "BatchUpdateFirewallRules"
+      },
+      {
+        "name": "CreateFirewallDomainList",
+        "doc": "Domain lists"
+      },
+      {
+        "name": "CreateFirewallRule",
+        "doc": "Rules"
+      },
+      {
+        "name": "CreateFirewallRuleGroup",
+        "doc": "Rule groups"
+      },
+      {
+        "name": "CreateOutpostResolver"
+      },
+      {
+        "name": "CreateResolverEndpoint"
+      },
+      {
+        "name": "CreateResolverQueryLogConfig"
+      },
+      {
+        "name": "CreateResolverRule"
+      },
+      {
+        "name": "DeleteFirewallDomainList"
+      },
+      {
+        "name": "DeleteFirewallRule"
+      },
+      {
+        "name": "DeleteFirewallRuleGroup"
+      },
+      {
+        "name": "DeleteOutpostResolver"
+      },
+      {
+        "name": "DeleteResolverEndpoint"
+      },
+      {
+        "name": "DeleteResolverQueryLogConfig"
+      },
+      {
+        "name": "DeleteResolverRule"
+      },
+      {
+        "name": "DisassociateFirewallRuleGroup"
+      },
+      {
+        "name": "DisassociateResolverEndpointIPAddress"
+      },
+      {
+        "name": "DisassociateResolverQueryLogConfig"
+      },
+      {
+        "name": "DisassociateResolverRule"
+      },
+      {
+        "name": "GetFirewallConfig",
+        "doc": "Firewall configs"
+      },
+      {
+        "name": "GetFirewallDomainList"
+      },
+      {
+        "name": "GetFirewallRuleGroup"
+      },
+      {
+        "name": "GetFirewallRuleGroupAssociation"
+      },
+      {
+        "name": "GetFirewallRuleGroupPolicy"
+      },
+      {
+        "name": "GetOutpostResolver"
+      },
+      {
+        "name": "GetResolverConfig"
+      },
+      {
+        "name": "GetResolverDnssecConfig"
+      },
+      {
+        "name": "GetResolverEndpoint"
+      },
+      {
+        "name": "GetResolverQueryLogConfig"
+      },
+      {
+        "name": "GetResolverQueryLogConfigAssociation"
+      },
+      {
+        "name": "GetResolverQueryLogConfigPolicy"
+      },
+      {
+        "name": "GetResolverRule"
+      },
+      {
+        "name": "GetResolverRuleAssociation"
+      },
+      {
+        "name": "GetResolverRulePolicy"
+      },
+      {
+        "name": "ImportFirewallDomains"
+      },
+      {
+        "name": "ListFirewallConfigs"
+      },
+      {
+        "name": "ListFirewallDomainLists"
+      },
+      {
+        "name": "ListFirewallDomains"
+      },
+      {
+        "name": "ListFirewallRuleGroupAssociations"
+      },
+      {
+        "name": "ListFirewallRuleGroups"
+      },
+      {
+        "name": "ListFirewallRuleTypes",
+        "doc": "Rule-type enumeration (static descriptor list; empty in the mock)."
+      },
+      {
+        "name": "ListFirewallRules"
+      },
+      {
+        "name": "ListOutpostResolvers"
+      },
+      {
+        "name": "ListResolverConfigs"
+      },
+      {
+        "name": "ListResolverDnssecConfigs"
+      },
+      {
+        "name": "ListResolverEndpointIPAddresses"
+      },
+      {
+        "name": "ListResolverEndpoints"
+      },
+      {
+        "name": "ListResolverQueryLogConfigAssociations"
+      },
+      {
+        "name": "ListResolverQueryLogConfigs"
+      },
+      {
+        "name": "ListResolverRuleAssociations"
+      },
+      {
+        "name": "ListResolverRules"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "PutFirewallRuleGroupPolicy"
+      },
+      {
+        "name": "PutResolverQueryLogConfigPolicy"
+      },
+      {
+        "name": "PutResolverRulePolicy"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateFirewallConfig"
+      },
+      {
+        "name": "UpdateFirewallDomains"
+      },
+      {
+        "name": "UpdateFirewallRule"
+      },
+      {
+        "name": "UpdateFirewallRuleGroupAssociation"
+      },
+      {
+        "name": "UpdateOutpostResolver"
+      },
+      {
+        "name": "UpdateResolverConfig"
+      },
+      {
+        "name": "UpdateResolverDnssecConfig"
+      },
+      {
+        "name": "UpdateResolverEndpoint"
+      },
+      {
+        "name": "UpdateResolverRule"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "DnssecConfigs",
+        "doc": "DnssecConfigs is the DNSSEC-config resource group (per-VPC DNSSEC validation).",
+        "operations": [
+          {
+            "name": "GetResolverDnssecConfig"
+          },
+          {
+            "name": "ListResolverDnssecConfigs"
+          },
+          {
+            "name": "UpdateResolverDnssecConfig"
+          }
+        ]
+      },
+      {
+        "name": "FirewallService",
+        "doc": "FirewallService is the DNS Firewall resource group.",
+        "operations": [
+          {
+            "name": "AssociateFirewallRuleGroup",
+            "doc": "Rule-group associations"
+          },
+          {
+            "name": "BatchCreateFirewallRules"
+          },
+          {
+            "name": "BatchDeleteFirewallRules"
+          },
+          {
+            "name": "BatchUpdateFirewallRules"
+          },
+          {
+            "name": "CreateFirewallDomainList",
+            "doc": "Domain lists"
+          },
+          {
+            "name": "CreateFirewallRule",
+            "doc": "Rules"
+          },
+          {
+            "name": "CreateFirewallRuleGroup",
+            "doc": "Rule groups"
+          },
+          {
+            "name": "DeleteFirewallDomainList"
+          },
+          {
+            "name": "DeleteFirewallRule"
+          },
+          {
+            "name": "DeleteFirewallRuleGroup"
+          },
+          {
+            "name": "DisassociateFirewallRuleGroup"
+          },
+          {
+            "name": "GetFirewallConfig",
+            "doc": "Firewall configs"
+          },
+          {
+            "name": "GetFirewallDomainList"
+          },
+          {
+            "name": "GetFirewallRuleGroup"
+          },
+          {
+            "name": "GetFirewallRuleGroupAssociation"
+          },
+          {
+            "name": "GetFirewallRuleGroupPolicy"
+          },
+          {
+            "name": "ImportFirewallDomains"
+          },
+          {
+            "name": "ListFirewallConfigs"
+          },
+          {
+            "name": "ListFirewallDomainLists"
+          },
+          {
+            "name": "ListFirewallDomains"
+          },
+          {
+            "name": "ListFirewallRuleGroupAssociations"
+          },
+          {
+            "name": "ListFirewallRuleGroups"
+          },
+          {
+            "name": "ListFirewallRuleTypes",
+            "doc": "Rule-type enumeration (static descriptor list; empty in the mock)."
+          },
+          {
+            "name": "ListFirewallRules"
+          },
+          {
+            "name": "PutFirewallRuleGroupPolicy"
+          },
+          {
+            "name": "UpdateFirewallConfig"
+          },
+          {
+            "name": "UpdateFirewallDomains"
+          },
+          {
+            "name": "UpdateFirewallRule"
+          },
+          {
+            "name": "UpdateFirewallRuleGroupAssociation"
+          }
+        ]
+      },
+      {
+        "name": "OutpostResolvers",
+        "doc": "OutpostResolvers is the Outpost-resolver resource group.",
+        "operations": [
+          {
+            "name": "CreateOutpostResolver"
+          },
+          {
+            "name": "DeleteOutpostResolver"
+          },
+          {
+            "name": "GetOutpostResolver"
+          },
+          {
+            "name": "ListOutpostResolvers"
+          },
+          {
+            "name": "UpdateOutpostResolver"
+          }
+        ]
+      },
+      {
+        "name": "QueryLogConfigs",
+        "doc": "QueryLogConfigs is the query-log-config resource group.",
+        "operations": [
+          {
+            "name": "AssociateResolverQueryLogConfig"
+          },
+          {
+            "name": "CreateResolverQueryLogConfig"
+          },
+          {
+            "name": "DeleteResolverQueryLogConfig"
+          },
+          {
+            "name": "DisassociateResolverQueryLogConfig"
+          },
+          {
+            "name": "GetResolverQueryLogConfig"
+          },
+          {
+            "name": "GetResolverQueryLogConfigAssociation"
+          },
+          {
+            "name": "GetResolverQueryLogConfigPolicy"
+          },
+          {
+            "name": "ListResolverQueryLogConfigAssociations"
+          },
+          {
+            "name": "ListResolverQueryLogConfigs"
+          },
+          {
+            "name": "PutResolverQueryLogConfigPolicy"
+          }
+        ]
+      },
+      {
+        "name": "ResolverConfigs",
+        "doc": "ResolverConfigs is the Resolver-config resource group (per-VPC autodefined",
+        "operations": [
+          {
+            "name": "GetResolverConfig"
+          },
+          {
+            "name": "ListResolverConfigs"
+          },
+          {
+            "name": "UpdateResolverConfig"
+          }
+        ]
+      },
+      {
+        "name": "ResolverEndpoints",
+        "doc": "ResolverEndpoints is the endpoint resource group.",
+        "operations": [
+          {
+            "name": "AssociateResolverEndpointIPAddress"
+          },
+          {
+            "name": "CreateResolverEndpoint"
+          },
+          {
+            "name": "DeleteResolverEndpoint"
+          },
+          {
+            "name": "DisassociateResolverEndpointIPAddress"
+          },
+          {
+            "name": "GetResolverEndpoint"
+          },
+          {
+            "name": "ListResolverEndpointIPAddresses"
+          },
+          {
+            "name": "ListResolverEndpoints"
+          },
+          {
+            "name": "UpdateResolverEndpoint"
+          }
+        ]
+      },
+      {
+        "name": "ResolverRules",
+        "doc": "ResolverRules is the resolver-rule resource group.",
+        "operations": [
+          {
+            "name": "AssociateResolverRule"
+          },
+          {
+            "name": "CreateResolverRule"
+          },
+          {
+            "name": "DeleteResolverRule"
+          },
+          {
+            "name": "DisassociateResolverRule"
+          },
+          {
+            "name": "GetResolverRule"
+          },
+          {
+            "name": "GetResolverRuleAssociation"
+          },
+          {
+            "name": "GetResolverRulePolicy"
+          },
+          {
+            "name": "ListResolverRuleAssociations"
+          },
+          {
+            "name": "ListResolverRules"
+          },
+          {
+            "name": "PutResolverRulePolicy"
+          },
+          {
+            "name": "UpdateResolverRule"
+          }
+        ]
+      },
+      {
+        "name": "Tagging",
+        "doc": "Tagging is the shared tag surface (ARN-addressed, like real Route 53 Resolver).",
+        "operations": [
+          {
+            "name": "ListTagsForResource"
+          },
+          {
+            "name": "TagResource"
+          },
+          {
+            "name": "UntagResource"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "Route53Resolver"
+    }
+  },
+  {
+    "service": "sagemaker",
+    "interface": "Service",
+    "operations": [
+      {
+        "name": "AddTags"
+      },
+      {
+        "name": "CreateApp"
+      },
+      {
+        "name": "CreateAutoMLJobV2"
+      },
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateCodeRepository"
+      },
+      {
+        "name": "CreateCompilationJob"
+      },
+      {
+        "name": "CreateDomain"
+      },
+      {
+        "name": "CreateEndpoint"
+      },
+      {
+        "name": "CreateEndpointConfig"
+      },
+      {
+        "name": "CreateExperiment"
+      },
+      {
+        "name": "CreateFeatureGroup"
+      },
+      {
+        "name": "CreateHyperParameterTuningJob"
+      },
+      {
+        "name": "CreateInferenceComponent"
+      },
+      {
+        "name": "CreateLabelingJob"
+      },
+      {
+        "name": "CreateModel"
+      },
+      {
+        "name": "CreateModelPackage"
+      },
+      {
+        "name": "CreateModelPackageGroup"
+      },
+      {
+        "name": "CreateNotebookInstance"
+      },
+      {
+        "name": "CreateNotebookInstanceLifecycleConfig"
+      },
+      {
+        "name": "CreatePipeline"
+      },
+      {
+        "name": "CreateProcessingJob"
+      },
+      {
+        "name": "CreateSpace"
+      },
+      {
+        "name": "CreateTrainingJob"
+      },
+      {
+        "name": "CreateTransformJob"
+      },
+      {
+        "name": "CreateTrial"
+      },
+      {
+        "name": "CreateUserProfile"
+      },
+      {
+        "name": "DeleteApp"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteCodeRepository"
+      },
+      {
+        "name": "DeleteDomain"
+      },
+      {
+        "name": "DeleteEndpoint"
+      },
+      {
+        "name": "DeleteEndpointConfig"
+      },
+      {
+        "name": "DeleteExperiment"
+      },
+      {
+        "name": "DeleteFeatureGroup"
+      },
+      {
+        "name": "DeleteInferenceComponent"
+      },
+      {
+        "name": "DeleteModel"
+      },
+      {
+        "name": "DeleteModelPackage"
+      },
+      {
+        "name": "DeleteModelPackageGroup"
+      },
+      {
+        "name": "DeleteNotebookInstance"
+      },
+      {
+        "name": "DeleteNotebookInstanceLifecycleConfig"
+      },
+      {
+        "name": "DeletePipeline"
+      },
+      {
+        "name": "DeleteRecord"
+      },
+      {
+        "name": "DeleteSpace"
+      },
+      {
+        "name": "DeleteTags"
+      },
+      {
+        "name": "DeleteTrial"
+      },
+      {
+        "name": "DeleteUserProfile"
+      },
+      {
+        "name": "DescribeApp"
+      },
+      {
+        "name": "DescribeAutoMLJobV2"
+      },
+      {
+        "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeClusterNode"
+      },
+      {
+        "name": "DescribeCodeRepository"
+      },
+      {
+        "name": "DescribeCompilationJob"
+      },
+      {
+        "name": "DescribeDomain"
+      },
+      {
+        "name": "DescribeEndpoint"
+      },
+      {
+        "name": "DescribeEndpointConfig"
+      },
+      {
+        "name": "DescribeExperiment"
+      },
+      {
+        "name": "DescribeFeatureGroup"
+      },
+      {
+        "name": "DescribeHyperParameterTuningJob"
+      },
+      {
+        "name": "DescribeInferenceComponent"
+      },
+      {
+        "name": "DescribeLabelingJob"
+      },
+      {
+        "name": "DescribeModel"
+      },
+      {
+        "name": "DescribeModelPackage"
+      },
+      {
+        "name": "DescribeModelPackageGroup"
+      },
+      {
+        "name": "DescribeNotebookInstance"
+      },
+      {
+        "name": "DescribeNotebookInstanceLifecycleConfig"
+      },
+      {
+        "name": "DescribePipeline"
+      },
+      {
+        "name": "DescribePipelineExecution"
+      },
+      {
+        "name": "DescribeProcessingJob"
+      },
+      {
+        "name": "DescribeSpace"
+      },
+      {
+        "name": "DescribeTrainingJob"
+      },
+      {
+        "name": "DescribeTransformJob"
+      },
+      {
+        "name": "DescribeTrial"
+      },
+      {
+        "name": "DescribeUserProfile"
+      },
+      {
+        "name": "GetRecord"
+      },
+      {
+        "name": "InvokeEndpoint"
+      },
+      {
+        "name": "InvokeEndpointAsync"
+      },
+      {
+        "name": "ListApps"
+      },
+      {
+        "name": "ListAutoMLJobs"
+      },
+      {
+        "name": "ListClusterNodes"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListCodeRepositories"
+      },
+      {
+        "name": "ListCompilationJobs"
+      },
+      {
+        "name": "ListDomains"
+      },
+      {
+        "name": "ListEndpointConfigs"
+      },
+      {
+        "name": "ListEndpoints"
+      },
+      {
+        "name": "ListExperiments"
+      },
+      {
+        "name": "ListFeatureGroups"
+      },
+      {
+        "name": "ListHyperParameterTuningJobs"
+      },
+      {
+        "name": "ListInferenceComponents"
+      },
+      {
+        "name": "ListLabelingJobs"
+      },
+      {
+        "name": "ListModelPackageGroups"
+      },
+      {
+        "name": "ListModelPackages"
+      },
+      {
+        "name": "ListModels"
+      },
+      {
+        "name": "ListNotebookInstanceLifecycleConfigs"
+      },
+      {
+        "name": "ListNotebookInstances"
+      },
+      {
+        "name": "ListPipelineExecutions"
+      },
+      {
+        "name": "ListPipelines"
+      },
+      {
+        "name": "ListProcessingJobs"
+      },
+      {
+        "name": "ListSpaces"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "ListTrainingJobs"
+      },
+      {
+        "name": "ListTransformJobs"
+      },
+      {
+        "name": "ListTrials"
+      },
+      {
+        "name": "ListUserProfiles"
+      },
+      {
+        "name": "PutRecord"
+      },
+      {
+        "name": "StartNotebookInstance"
+      },
+      {
+        "name": "StartPipelineExecution"
+      },
+      {
+        "name": "StopAutoMLJob"
+      },
+      {
+        "name": "StopCompilationJob"
+      },
+      {
+        "name": "StopHyperParameterTuningJob"
+      },
+      {
+        "name": "StopLabelingJob"
+      },
+      {
+        "name": "StopNotebookInstance"
+      },
+      {
+        "name": "StopPipelineExecution"
+      },
+      {
+        "name": "StopProcessingJob"
+      },
+      {
+        "name": "StopTrainingJob"
+      },
+      {
+        "name": "StopTransformJob"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateEndpoint"
+      },
+      {
+        "name": "UpdateEndpointWeightsAndCapacities"
+      },
+      {
+        "name": "UpdateModelPackage"
+      },
+      {
+        "name": "UpdatePipeline"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "Runtime",
+        "doc": "Runtime is the SageMaker inference runtime (the sagemaker-runtime service):",
+        "operations": [
+          {
+            "name": "InvokeEndpoint"
+          },
+          {
+            "name": "InvokeEndpointAsync"
+          }
+        ]
+      },
+      {
+        "name": "SageMaker",
+        "doc": "SageMaker is the interface that SageMaker AI control-plane implementations",
+        "operations": [
+          {
+            "name": "AddTags"
+          },
+          {
+            "name": "CreateApp"
+          },
+          {
+            "name": "CreateAutoMLJobV2"
+          },
+          {
+            "name": "CreateCluster"
+          },
+          {
+            "name": "CreateCodeRepository"
+          },
+          {
+            "name": "CreateCompilationJob"
+          },
+          {
+            "name": "CreateDomain"
+          },
+          {
+            "name": "CreateEndpoint"
+          },
+          {
+            "name": "CreateEndpointConfig"
+          },
+          {
+            "name": "CreateExperiment"
+          },
+          {
+            "name": "CreateFeatureGroup"
+          },
+          {
+            "name": "CreateHyperParameterTuningJob"
+          },
+          {
+            "name": "CreateInferenceComponent"
+          },
+          {
+            "name": "CreateLabelingJob"
+          },
+          {
+            "name": "CreateModel"
+          },
+          {
+            "name": "CreateModelPackage"
+          },
+          {
+            "name": "CreateModelPackageGroup"
+          },
+          {
+            "name": "CreateNotebookInstance"
+          },
+          {
+            "name": "CreateNotebookInstanceLifecycleConfig"
+          },
+          {
+            "name": "CreatePipeline"
+          },
+          {
+            "name": "CreateProcessingJob"
+          },
+          {
+            "name": "CreateSpace"
+          },
+          {
+            "name": "CreateTrainingJob"
+          },
+          {
+            "name": "CreateTransformJob"
+          },
+          {
+            "name": "CreateTrial"
+          },
+          {
+            "name": "CreateUserProfile"
+          },
+          {
+            "name": "DeleteApp"
+          },
+          {
+            "name": "DeleteCluster"
+          },
+          {
+            "name": "DeleteCodeRepository"
+          },
+          {
+            "name": "DeleteDomain"
+          },
+          {
+            "name": "DeleteEndpoint"
+          },
+          {
+            "name": "DeleteEndpointConfig"
+          },
+          {
+            "name": "DeleteExperiment"
+          },
+          {
+            "name": "DeleteFeatureGroup"
+          },
+          {
+            "name": "DeleteInferenceComponent"
+          },
+          {
+            "name": "DeleteModel"
+          },
+          {
+            "name": "DeleteModelPackage"
+          },
+          {
+            "name": "DeleteModelPackageGroup"
+          },
+          {
+            "name": "DeleteNotebookInstance"
+          },
+          {
+            "name": "DeleteNotebookInstanceLifecycleConfig"
+          },
+          {
+            "name": "DeletePipeline"
+          },
+          {
+            "name": "DeleteRecord"
+          },
+          {
+            "name": "DeleteSpace"
+          },
+          {
+            "name": "DeleteTags"
+          },
+          {
+            "name": "DeleteTrial"
+          },
+          {
+            "name": "DeleteUserProfile"
+          },
+          {
+            "name": "DescribeApp"
+          },
+          {
+            "name": "DescribeAutoMLJobV2"
+          },
+          {
+            "name": "DescribeCluster"
+          },
+          {
+            "name": "DescribeClusterNode"
+          },
+          {
+            "name": "DescribeCodeRepository"
+          },
+          {
+            "name": "DescribeCompilationJob"
+          },
+          {
+            "name": "DescribeDomain"
+          },
+          {
+            "name": "DescribeEndpoint"
+          },
+          {
+            "name": "DescribeEndpointConfig"
+          },
+          {
+            "name": "DescribeExperiment"
+          },
+          {
+            "name": "DescribeFeatureGroup"
+          },
+          {
+            "name": "DescribeHyperParameterTuningJob"
+          },
+          {
+            "name": "DescribeInferenceComponent"
+          },
+          {
+            "name": "DescribeLabelingJob"
+          },
+          {
+            "name": "DescribeModel"
+          },
+          {
+            "name": "DescribeModelPackage"
+          },
+          {
+            "name": "DescribeModelPackageGroup"
+          },
+          {
+            "name": "DescribeNotebookInstance"
+          },
+          {
+            "name": "DescribeNotebookInstanceLifecycleConfig"
+          },
+          {
+            "name": "DescribePipeline"
+          },
+          {
+            "name": "DescribePipelineExecution"
+          },
+          {
+            "name": "DescribeProcessingJob"
+          },
+          {
+            "name": "DescribeSpace"
+          },
+          {
+            "name": "DescribeTrainingJob"
+          },
+          {
+            "name": "DescribeTransformJob"
+          },
+          {
+            "name": "DescribeTrial"
+          },
+          {
+            "name": "DescribeUserProfile"
+          },
+          {
+            "name": "GetRecord"
+          },
+          {
+            "name": "ListApps"
+          },
+          {
+            "name": "ListAutoMLJobs"
+          },
+          {
+            "name": "ListClusterNodes"
+          },
+          {
+            "name": "ListClusters"
+          },
+          {
+            "name": "ListCodeRepositories"
+          },
+          {
+            "name": "ListCompilationJobs"
+          },
+          {
+            "name": "ListDomains"
+          },
+          {
+            "name": "ListEndpointConfigs"
+          },
+          {
+            "name": "ListEndpoints"
+          },
+          {
+            "name": "ListExperiments"
+          },
+          {
+            "name": "ListFeatureGroups"
+          },
+          {
+            "name": "ListHyperParameterTuningJobs"
+          },
+          {
+            "name": "ListInferenceComponents"
+          },
+          {
+            "name": "ListLabelingJobs"
+          },
+          {
+            "name": "ListModelPackageGroups"
+          },
+          {
+            "name": "ListModelPackages"
+          },
+          {
+            "name": "ListModels"
+          },
+          {
+            "name": "ListNotebookInstanceLifecycleConfigs"
+          },
+          {
+            "name": "ListNotebookInstances"
+          },
+          {
+            "name": "ListPipelineExecutions"
+          },
+          {
+            "name": "ListPipelines"
+          },
+          {
+            "name": "ListProcessingJobs"
+          },
+          {
+            "name": "ListSpaces"
+          },
+          {
+            "name": "ListTags"
+          },
+          {
+            "name": "ListTrainingJobs"
+          },
+          {
+            "name": "ListTransformJobs"
+          },
+          {
+            "name": "ListTrials"
+          },
+          {
+            "name": "ListUserProfiles"
+          },
+          {
+            "name": "PutRecord"
+          },
+          {
+            "name": "StartNotebookInstance"
+          },
+          {
+            "name": "StartPipelineExecution"
+          },
+          {
+            "name": "StopAutoMLJob"
+          },
+          {
+            "name": "StopCompilationJob"
+          },
+          {
+            "name": "StopHyperParameterTuningJob"
+          },
+          {
+            "name": "StopLabelingJob"
+          },
+          {
+            "name": "StopNotebookInstance"
+          },
+          {
+            "name": "StopPipelineExecution"
+          },
+          {
+            "name": "StopProcessingJob"
+          },
+          {
+            "name": "StopTrainingJob"
+          },
+          {
+            "name": "StopTransformJob"
+          },
+          {
+            "name": "UpdateCluster"
+          },
+          {
+            "name": "UpdateEndpoint"
+          },
+          {
+            "name": "UpdateEndpointWeightsAndCapacities"
+          },
+          {
+            "name": "UpdateModelPackage"
+          },
+          {
+            "name": "UpdatePipeline"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "SageMaker"
+    }
+  },
+  {
+    "service": "secrets",
+    "interface": "Secrets",
+    "operations": [
+      {
+        "name": "CreateSecret"
+      },
+      {
+        "name": "DeleteSecret"
+      },
+      {
+        "name": "GetSecret"
+      },
+      {
+        "name": "GetSecretValue"
+      },
+      {
+        "name": "ListSecretVersions"
+      },
+      {
+        "name": "ListSecrets"
+      },
+      {
+        "name": "PutSecretValue"
+      }
+    ],
+    "providers": {
+      "aws": "SecretsManager",
+      "azure": "KeyVault",
+      "gcp": "SecretManager"
+    }
+  },
+  {
+    "service": "serverless",
+    "interface": "Serverless",
+    "operations": [
+      {
+        "name": "CreateAlias",
+        "doc": "Aliases"
+      },
+      {
+        "name": "CreateEventSourceMapping",
+        "doc": "Event Source Mappings"
+      },
+      {
+        "name": "CreateFunction"
+      },
+      {
+        "name": "DeleteAlias"
+      },
+      {
+        "name": "DeleteEventSourceMapping"
+      },
+      {
+        "name": "DeleteFunction"
+      },
+      {
+        "name": "DeleteFunctionConcurrency"
+      },
+      {
+        "name": "DeleteLayerVersion"
+      },
+      {
+        "name": "GetAlias"
+      },
+      {
+        "name": "GetEventSourceMapping"
+      },
+      {
+        "name": "GetFunction"
+      },
+      {
+        "name": "GetFunctionConcurrency"
+      },
+      {
+        "name": "GetLayerVersion"
+      },
+      {
+        "name": "Invoke"
+      },
+      {
+        "name": "ListAliases"
+      },
+      {
+        "name": "ListEventSourceMappings"
+      },
+      {
+        "name": "ListFunctions"
+      },
+      {
+        "name": "ListLayerVersions"
+      },
+      {
+        "name": "ListLayers"
+      },
+      {
+        "name": "ListVersions"
+      },
+      {
+        "name": "PublishLayerVersion",
+        "doc": "Layers"
+      },
+      {
+        "name": "PublishVersion",
+        "doc": "Versions"
+      },
+      {
+        "name": "PutFunctionConcurrency",
+        "doc": "Concurrency"
+      },
+      {
+        "name": "RegisterHandler"
+      },
+      {
+        "name": "UpdateAlias"
+      },
+      {
+        "name": "UpdateEventSourceMapping"
+      },
+      {
+        "name": "UpdateFunction"
+      }
+    ],
+    "providers": {
+      "aws": "Lambda",
+      "azure": "Functions",
+      "gcp": "CloudFunctions"
+    }
+  },
+  {
+    "service": "sesv2",
+    "interface": "SESV2",
+    "operations": [
+      {
+        "name": "BatchGetMetricData",
+        "doc": "Insights, metrics and recommendations."
+      },
+      {
+        "name": "CancelExportJob"
+      },
+      {
+        "name": "CreateConfigurationSet",
+        "doc": "Configuration sets."
+      },
+      {
+        "name": "CreateConfigurationSetEventDestination",
+        "doc": "Configuration-set event destinations."
+      },
+      {
+        "name": "CreateContact",
+        "doc": "Contacts."
+      },
+      {
+        "name": "CreateContactList",
+        "doc": "Contact lists."
+      },
+      {
+        "name": "CreateCustomVerificationEmailTemplate",
+        "doc": "Custom verification email templates."
+      },
+      {
+        "name": "CreateDedicatedIPPool",
+        "doc": "Dedicated IP pools and IPs."
+      },
+      {
+        "name": "CreateDeliverabilityTestReport"
+      },
+      {
+        "name": "CreateEmailIdentity",
+        "doc": "Email identities."
+      },
+      {
+        "name": "CreateEmailIdentityPolicy",
+        "doc": "Email identity policies and attributes."
+      },
+      {
+        "name": "CreateEmailTemplate",
+        "doc": "Email templates."
+      },
+      {
+        "name": "CreateExportJob"
+      },
+      {
+        "name": "CreateImportJob",
+        "doc": "Import / export jobs."
+      },
+      {
+        "name": "CreateMultiRegionEndpoint",
+        "doc": "Multi-region endpoints."
+      },
+      {
+        "name": "CreateTenant",
+        "doc": "Tenants."
+      },
+      {
+        "name": "CreateTenantResourceAssociation"
+      },
+      {
+        "name": "DeleteConfigurationSet"
+      },
+      {
+        "name": "DeleteConfigurationSetEventDestination"
+      },
+      {
+        "name": "DeleteContact"
+      },
+      {
+        "name": "DeleteContactList"
+      },
+      {
+        "name": "DeleteCustomVerificationEmailTemplate"
+      },
+      {
+        "name": "DeleteDedicatedIPPool"
+      },
+      {
+        "name": "DeleteEmailIdentity"
+      },
+      {
+        "name": "DeleteEmailIdentityPolicy"
+      },
+      {
+        "name": "DeleteEmailTemplate"
+      },
+      {
+        "name": "DeleteMultiRegionEndpoint"
+      },
+      {
+        "name": "DeleteSuppressedDestination"
+      },
+      {
+        "name": "DeleteTenant"
+      },
+      {
+        "name": "DeleteTenantResourceAssociation"
+      },
+      {
+        "name": "GetAccount",
+        "doc": "Account."
+      },
+      {
+        "name": "GetBlacklistReports"
+      },
+      {
+        "name": "GetConfigurationSet"
+      },
+      {
+        "name": "GetConfigurationSetEventDestinations"
+      },
+      {
+        "name": "GetContact"
+      },
+      {
+        "name": "GetContactList"
+      },
+      {
+        "name": "GetCustomVerificationEmailTemplate"
+      },
+      {
+        "name": "GetDedicatedIP"
+      },
+      {
+        "name": "GetDedicatedIPPool"
+      },
+      {
+        "name": "GetDedicatedIPs"
+      },
+      {
+        "name": "GetDeliverabilityDashboardOptions"
+      },
+      {
+        "name": "GetDeliverabilityTestReport"
+      },
+      {
+        "name": "GetDomainDeliverabilityCampaign"
+      },
+      {
+        "name": "GetDomainStatisticsReport"
+      },
+      {
+        "name": "GetEmailAddressInsights"
+      },
+      {
+        "name": "GetEmailIdentity"
+      },
+      {
+        "name": "GetEmailIdentityPolicies"
+      },
+      {
+        "name": "GetEmailTemplate"
+      },
+      {
+        "name": "GetExportJob"
+      },
+      {
+        "name": "GetImportJob"
+      },
+      {
+        "name": "GetMessageInsights"
+      },
+      {
+        "name": "GetMultiRegionEndpoint"
+      },
+      {
+        "name": "GetReputationEntity",
+        "doc": "Reputation entities."
+      },
+      {
+        "name": "GetSuppressedDestination"
+      },
+      {
+        "name": "GetTenant"
+      },
+      {
+        "name": "ListConfigurationSets"
+      },
+      {
+        "name": "ListContactLists"
+      },
+      {
+        "name": "ListContacts"
+      },
+      {
+        "name": "ListCustomVerificationEmailTemplates"
+      },
+      {
+        "name": "ListDedicatedIPPools"
+      },
+      {
+        "name": "ListDeliverabilityTestReports"
+      },
+      {
+        "name": "ListDomainDeliverabilityCampaigns"
+      },
+      {
+        "name": "ListEmailIdentities"
+      },
+      {
+        "name": "ListEmailTemplates"
+      },
+      {
+        "name": "ListExportJobs"
+      },
+      {
+        "name": "ListImportJobs"
+      },
+      {
+        "name": "ListMultiRegionEndpoints"
+      },
+      {
+        "name": "ListRecommendations"
+      },
+      {
+        "name": "ListReputationEntities"
+      },
+      {
+        "name": "ListResourceTenants"
+      },
+      {
+        "name": "ListSentMessages"
+      },
+      {
+        "name": "ListSuppressedDestinations"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTenantResources"
+      },
+      {
+        "name": "ListTenants"
+      },
+      {
+        "name": "PutAccountDedicatedIPWarmupAttributes"
+      },
+      {
+        "name": "PutAccountDetails",
+        "doc": "Account extras."
+      },
+      {
+        "name": "PutAccountPricingAttributes"
+      },
+      {
+        "name": "PutAccountSendingAttributes"
+      },
+      {
+        "name": "PutAccountSuppressionAttributes"
+      },
+      {
+        "name": "PutAccountVdmAttributes"
+      },
+      {
+        "name": "PutConfigurationSetArchivingOptions",
+        "doc": "Configuration-set put-options."
+      },
+      {
+        "name": "PutConfigurationSetDeliveryOptions"
+      },
+      {
+        "name": "PutConfigurationSetReputationOptions"
+      },
+      {
+        "name": "PutConfigurationSetSendingOptions"
+      },
+      {
+        "name": "PutConfigurationSetSuppressionOptions"
+      },
+      {
+        "name": "PutConfigurationSetTrackingOptions"
+      },
+      {
+        "name": "PutConfigurationSetVdmOptions"
+      },
+      {
+        "name": "PutDedicatedIPInPool"
+      },
+      {
+        "name": "PutDedicatedIPPoolScalingAttributes"
+      },
+      {
+        "name": "PutDedicatedIPWarmupAttributes"
+      },
+      {
+        "name": "PutDeliverabilityDashboardOption",
+        "doc": "Deliverability dashboard."
+      },
+      {
+        "name": "PutEmailIdentityConfigurationSetAttributes"
+      },
+      {
+        "name": "PutEmailIdentityDkimAttributes"
+      },
+      {
+        "name": "PutEmailIdentityDkimSigningAttributes"
+      },
+      {
+        "name": "PutEmailIdentityFeedbackAttributes"
+      },
+      {
+        "name": "PutEmailIdentityMailFromAttributes"
+      },
+      {
+        "name": "PutSuppressedDestination",
+        "doc": "Suppression list."
+      },
+      {
+        "name": "PutTenantSuppressionAttributes"
+      },
+      {
+        "name": "SendBulkEmail",
+        "doc": "Bulk send."
+      },
+      {
+        "name": "SendCustomVerificationEmail"
+      },
+      {
+        "name": "SendEmail",
+        "doc": "Sending."
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags."
+      },
+      {
+        "name": "TestRenderEmailTemplate"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateConfigurationSetEventDestination"
+      },
+      {
+        "name": "UpdateContact"
+      },
+      {
+        "name": "UpdateContactList"
+      },
+      {
+        "name": "UpdateCustomVerificationEmailTemplate"
+      },
+      {
+        "name": "UpdateEmailIdentityPolicy"
+      },
+      {
+        "name": "UpdateEmailTemplate"
+      },
+      {
+        "name": "UpdateReputationEntityCustomerManagedStatus"
+      },
+      {
+        "name": "UpdateReputationEntityPolicy"
+      }
+    ],
+    "providers": {
+      "aws": "SESV2"
+    }
+  },
+  {
+    "service": "sfn",
+    "interface": "SFN",
+    "operations": [
+      {
+        "name": "CreateActivity",
+        "doc": "Activities."
+      },
+      {
+        "name": "CreateStateMachine",
+        "doc": "State machines."
+      },
+      {
+        "name": "CreateStateMachineAlias"
+      },
+      {
+        "name": "DeleteActivity"
+      },
+      {
+        "name": "DeleteStateMachine"
+      },
+      {
+        "name": "DeleteStateMachineAlias"
+      },
+      {
+        "name": "DeleteStateMachineVersion"
+      },
+      {
+        "name": "DescribeActivity"
+      },
+      {
+        "name": "DescribeExecution"
+      },
+      {
+        "name": "DescribeMapRun",
+        "doc": "Map Runs (distributed-map child executions)."
+      },
+      {
+        "name": "DescribeStateMachine"
+      },
+      {
+        "name": "DescribeStateMachineAlias"
+      },
+      {
+        "name": "DescribeStateMachineForExecution"
+      },
+      {
+        "name": "GetActivityTask"
+      },
+      {
+        "name": "GetExecutionHistory"
+      },
+      {
+        "name": "ListActivities"
+      },
+      {
+        "name": "ListExecutions"
+      },
+      {
+        "name": "ListMapRuns"
+      },
+      {
+        "name": "ListStateMachineAliases"
+      },
+      {
+        "name": "ListStateMachineVersions"
+      },
+      {
+        "name": "ListStateMachines"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "PublishStateMachineVersion",
+        "doc": "Versions and aliases."
+      },
+      {
+        "name": "RedriveExecution"
+      },
+      {
+        "name": "SendTaskFailure"
+      },
+      {
+        "name": "SendTaskHeartbeat"
+      },
+      {
+        "name": "SendTaskSuccess"
+      },
+      {
+        "name": "StartExecution",
+        "doc": "Executions."
+      },
+      {
+        "name": "StartSyncExecution"
+      },
+      {
+        "name": "StopExecution"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags."
+      },
+      {
+        "name": "TestState",
+        "doc": "Definition tooling."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateMapRun"
+      },
+      {
+        "name": "UpdateStateMachine"
+      },
+      {
+        "name": "UpdateStateMachineAlias"
+      },
+      {
+        "name": "ValidateStateMachineDefinition"
+      }
+    ],
+    "providers": {
+      "aws": "SFN"
+    }
+  },
+  {
+    "service": "storage",
+    "interface": "Bucket",
+    "operations": [
+      {
+        "name": "AbortMultipartUpload"
+      },
+      {
+        "name": "CompleteMultipartUpload"
+      },
+      {
+        "name": "CopyObject"
+      },
+      {
+        "name": "CreateBucket"
+      },
+      {
+        "name": "CreateMultipartUpload",
+        "doc": "Multipart uploads"
+      },
+      {
+        "name": "DeleteBucket"
+      },
+      {
+        "name": "DeleteBucketPolicy"
+      },
+      {
+        "name": "DeleteBucketTagging"
+      },
+      {
+        "name": "DeleteCORSConfig"
+      },
+      {
+        "name": "DeleteObject"
+      },
+      {
+        "name": "DeleteObjectTagging"
+      },
+      {
+        "name": "EvaluateLifecycle"
+      },
+      {
+        "name": "GeneratePresignedURL",
+        "doc": "Presigned URLs"
+      },
+      {
+        "name": "GetBucketPolicy"
+      },
+      {
+        "name": "GetBucketTagging"
+      },
+      {
+        "name": "GetBucketVersioning"
+      },
+      {
+        "name": "GetCORSConfig"
+      },
+      {
+        "name": "GetEncryptionConfig"
+      },
+      {
+        "name": "GetLifecycleConfig"
+      },
+      {
+        "name": "GetObject"
+      },
+      {
+        "name": "GetObjectTagging"
+      },
+      {
+        "name": "HeadObject"
+      },
+      {
+        "name": "ListBuckets"
+      },
+      {
+        "name": "ListMultipartUploads"
+      },
+      {
+        "name": "ListObjects"
+      },
+      {
+        "name": "ListParts",
+        "doc": "ListParts returns the parts buffered so far for an in-progress upload,"
+      },
+      {
+        "name": "PutBucketPolicy",
+        "doc": "Bucket Policy"
+      },
+      {
+        "name": "PutBucketTagging",
+        "doc": "Bucket Tagging"
+      },
+      {
+        "name": "PutCORSConfig",
+        "doc": "CORS"
+      },
+      {
+        "name": "PutEncryptionConfig",
+        "doc": "Encryption"
+      },
+      {
+        "name": "PutLifecycleConfig",
+        "doc": "Lifecycle policies"
+      },
+      {
+        "name": "PutObject"
+      },
+      {
+        "name": "PutObjectTagging",
+        "doc": "Object Tagging"
+      },
+      {
+        "name": "SetBucketVersioning",
+        "doc": "Versioning"
+      },
+      {
+        "name": "UploadPart"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "BucketAttributes",
+        "doc": "BucketAttributes is an OPTIONAL capability, discovered by type assertion (like",
+        "operations": [
+          {
+            "name": "BucketAttributes"
+          }
+        ]
+      },
+      {
+        "name": "VersionedBucket",
+        "doc": "VersionedBucket is an optional extension a storage provider implements when",
+        "operations": [
+          {
+            "name": "AbortMultipartUpload"
+          },
+          {
+            "name": "CompleteMultipartUpload"
+          },
+          {
+            "name": "CopyObject"
+          },
+          {
+            "name": "CreateBucket"
+          },
+          {
+            "name": "CreateMultipartUpload",
+            "doc": "Multipart uploads"
+          },
+          {
+            "name": "DeleteBucket"
+          },
+          {
+            "name": "DeleteBucketPolicy"
+          },
+          {
+            "name": "DeleteBucketTagging"
+          },
+          {
+            "name": "DeleteCORSConfig"
+          },
+          {
+            "name": "DeleteObject"
+          },
+          {
+            "name": "DeleteObjectTagging"
+          },
+          {
+            "name": "DeleteObjectVersion",
+            "doc": "DeleteObjectVersion removes a specific version when versionID != \"\"."
+          },
+          {
+            "name": "EvaluateLifecycle"
+          },
+          {
+            "name": "GeneratePresignedURL",
+            "doc": "Presigned URLs"
+          },
+          {
+            "name": "GetBucketPolicy"
+          },
+          {
+            "name": "GetBucketTagging"
+          },
+          {
+            "name": "GetBucketVersioning"
+          },
+          {
+            "name": "GetCORSConfig"
+          },
+          {
+            "name": "GetEncryptionConfig"
+          },
+          {
+            "name": "GetLifecycleConfig"
+          },
+          {
+            "name": "GetObject"
+          },
+          {
+            "name": "GetObjectTagging"
+          },
+          {
+            "name": "GetObjectVersion",
+            "doc": "GetObjectVersion / HeadObjectVersion fetch a specific version by ID. A"
+          },
+          {
+            "name": "HeadObject"
+          },
+          {
+            "name": "HeadObjectVersion"
+          },
+          {
+            "name": "ListBuckets"
+          },
+          {
+            "name": "ListMultipartUploads"
+          },
+          {
+            "name": "ListObjectVersions",
+            "doc": "ListObjectVersions returns the full version history matching opts."
+          },
+          {
+            "name": "ListObjects"
+          },
+          {
+            "name": "ListParts",
+            "doc": "ListParts returns the parts buffered so far for an in-progress upload,"
+          },
+          {
+            "name": "PutBucketPolicy",
+            "doc": "Bucket Policy"
+          },
+          {
+            "name": "PutBucketTagging",
+            "doc": "Bucket Tagging"
+          },
+          {
+            "name": "PutCORSConfig",
+            "doc": "CORS"
+          },
+          {
+            "name": "PutEncryptionConfig",
+            "doc": "Encryption"
+          },
+          {
+            "name": "PutLifecycleConfig",
+            "doc": "Lifecycle policies"
+          },
+          {
+            "name": "PutObject"
+          },
+          {
+            "name": "PutObjectTagging",
+            "doc": "Object Tagging"
+          },
+          {
+            "name": "SetBucketVersioning",
+            "doc": "Versioning"
+          },
+          {
+            "name": "SetVersioningStatus",
+            "doc": "SetVersioningStatus sets the bucket's versioning status: \"Enabled\" or"
+          },
+          {
+            "name": "UploadPart"
+          },
+          {
+            "name": "VersioningStatus"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "S3",
+      "azure": "BlobStorage",
+      "gcp": "GCS"
+    }
+  },
+  {
+    "service": "tablestorage",
+    "interface": "TableStorage",
+    "operations": [
+      {
+        "name": "CreateTable"
+      },
+      {
+        "name": "DeleteEntity"
+      },
+      {
+        "name": "DeleteTable"
+      },
+      {
+        "name": "GetEntity"
+      },
+      {
+        "name": "InsertEntity"
+      },
+      {
+        "name": "ListTables"
+      },
+      {
+        "name": "QueryEntities"
+      },
+      {
+        "name": "UpdateEntity"
+      }
+    ],
+    "providers": {
+      "azure": "TableStorage"
+    }
+  },
+  {
+    "service": "vertexai",
+    "interface": "VertexAI",
+    "operations": [
+      {
+        "name": "AssignNotebookRuntime"
+      },
+      {
+        "name": "CancelBatchPredictionJob"
+      },
+      {
+        "name": "CancelCustomJob"
+      },
+      {
+        "name": "CancelHyperparameterTuningJob"
+      },
+      {
+        "name": "CancelPipelineJob"
+      },
+      {
+        "name": "CancelTrainingPipeline"
+      },
+      {
+        "name": "CancelTuningJob"
+      },
+      {
+        "name": "CountTokens"
+      },
+      {
+        "name": "CreateBatchPredictionJob"
+      },
+      {
+        "name": "CreateCachedContent"
+      },
+      {
+        "name": "CreateCustomJob"
+      },
+      {
+        "name": "CreateDataset"
+      },
+      {
+        "name": "CreateEndpoint"
+      },
+      {
+        "name": "CreateEntityType"
+      },
+      {
+        "name": "CreateFeature"
+      },
+      {
+        "name": "CreateFeatureGroup"
+      },
+      {
+        "name": "CreateFeatureOnlineStore"
+      },
+      {
+        "name": "CreateFeatureView"
+      },
+      {
+        "name": "CreateFeaturestore"
+      },
+      {
+        "name": "CreateHyperparameterTuningJob"
+      },
+      {
+        "name": "CreateIndex"
+      },
+      {
+        "name": "CreateIndexEndpoint"
+      },
+      {
+        "name": "CreateMetadataStore"
+      },
+      {
+        "name": "CreateNotebookRuntimeTemplate"
+      },
+      {
+        "name": "CreatePipelineJob"
+      },
+      {
+        "name": "CreateSchedule"
+      },
+      {
+        "name": "CreateTensorboard"
+      },
+      {
+        "name": "CreateTrainingPipeline"
+      },
+      {
+        "name": "CreateTuningJob"
+      },
+      {
+        "name": "DeleteBatchPredictionJob"
+      },
+      {
+        "name": "DeleteCachedContent"
+      },
+      {
+        "name": "DeleteCustomJob"
+      },
+      {
+        "name": "DeleteDataset"
+      },
+      {
+        "name": "DeleteEndpoint"
+      },
+      {
+        "name": "DeleteEntityType"
+      },
+      {
+        "name": "DeleteFeature"
+      },
+      {
+        "name": "DeleteFeatureGroup"
+      },
+      {
+        "name": "DeleteFeatureOnlineStore"
+      },
+      {
+        "name": "DeleteFeatureView"
+      },
+      {
+        "name": "DeleteFeaturestore"
+      },
+      {
+        "name": "DeleteIndex"
+      },
+      {
+        "name": "DeleteIndexEndpoint"
+      },
+      {
+        "name": "DeleteMetadataStore"
+      },
+      {
+        "name": "DeleteModel"
+      },
+      {
+        "name": "DeleteModelVersion"
+      },
+      {
+        "name": "DeleteNotebookRuntime"
+      },
+      {
+        "name": "DeleteNotebookRuntimeTemplate"
+      },
+      {
+        "name": "DeletePipelineJob"
+      },
+      {
+        "name": "DeleteSchedule"
+      },
+      {
+        "name": "DeleteTensorboard"
+      },
+      {
+        "name": "DeleteTrainingPipeline"
+      },
+      {
+        "name": "DeployIndex"
+      },
+      {
+        "name": "DeployModel"
+      },
+      {
+        "name": "ExportData"
+      },
+      {
+        "name": "FetchFeatureValues"
+      },
+      {
+        "name": "FindNeighbors"
+      },
+      {
+        "name": "GenerateContent"
+      },
+      {
+        "name": "GetBatchPredictionJob"
+      },
+      {
+        "name": "GetCachedContent"
+      },
+      {
+        "name": "GetCustomJob"
+      },
+      {
+        "name": "GetDataset"
+      },
+      {
+        "name": "GetEndpoint"
+      },
+      {
+        "name": "GetEntityType"
+      },
+      {
+        "name": "GetFeature"
+      },
+      {
+        "name": "GetFeatureGroup"
+      },
+      {
+        "name": "GetFeatureOnlineStore"
+      },
+      {
+        "name": "GetFeatureView"
+      },
+      {
+        "name": "GetFeaturestore"
+      },
+      {
+        "name": "GetHyperparameterTuningJob"
+      },
+      {
+        "name": "GetIndex"
+      },
+      {
+        "name": "GetIndexEndpoint"
+      },
+      {
+        "name": "GetMetadataStore"
+      },
+      {
+        "name": "GetModel"
+      },
+      {
+        "name": "GetModelEvaluation"
+      },
+      {
+        "name": "GetNotebookRuntime"
+      },
+      {
+        "name": "GetNotebookRuntimeTemplate"
+      },
+      {
+        "name": "GetOperation"
+      },
+      {
+        "name": "GetPipelineJob"
+      },
+      {
+        "name": "GetSchedule"
+      },
+      {
+        "name": "GetTensorboard"
+      },
+      {
+        "name": "GetTrainingPipeline"
+      },
+      {
+        "name": "GetTuningJob"
+      },
+      {
+        "name": "ImportData"
+      },
+      {
+        "name": "ImportModelEvaluation"
+      },
+      {
+        "name": "ListBatchPredictionJobs"
+      },
+      {
+        "name": "ListCachedContents"
+      },
+      {
+        "name": "ListCustomJobs"
+      },
+      {
+        "name": "ListDatasets"
+      },
+      {
+        "name": "ListEndpoints"
+      },
+      {
+        "name": "ListEntityTypes"
+      },
+      {
+        "name": "ListFeatureGroups"
+      },
+      {
+        "name": "ListFeatureOnlineStores"
+      },
+      {
+        "name": "ListFeatureViews"
+      },
+      {
+        "name": "ListFeatures"
+      },
+      {
+        "name": "ListFeaturestores"
+      },
+      {
+        "name": "ListHyperparameterTuningJobs"
+      },
+      {
+        "name": "ListIndexEndpoints"
+      },
+      {
+        "name": "ListIndexes"
+      },
+      {
+        "name": "ListMetadataStores"
+      },
+      {
+        "name": "ListModelEvaluations"
+      },
+      {
+        "name": "ListModelVersions"
+      },
+      {
+        "name": "ListModels"
+      },
+      {
+        "name": "ListNotebookRuntimeTemplates"
+      },
+      {
+        "name": "ListNotebookRuntimes"
+      },
+      {
+        "name": "ListOperations"
+      },
+      {
+        "name": "ListPipelineJobs"
+      },
+      {
+        "name": "ListSchedules"
+      },
+      {
+        "name": "ListTensorboards"
+      },
+      {
+        "name": "ListTrainingPipelines"
+      },
+      {
+        "name": "ListTuningJobs"
+      },
+      {
+        "name": "PatchDataset"
+      },
+      {
+        "name": "PatchModel"
+      },
+      {
+        "name": "PauseSchedule"
+      },
+      {
+        "name": "Predict"
+      },
+      {
+        "name": "RawPredict"
+      },
+      {
+        "name": "ReadFeatureValues"
+      },
+      {
+        "name": "RemoveDatapoints"
+      },
+      {
+        "name": "ResumeSchedule"
+      },
+      {
+        "name": "StartNotebookRuntime"
+      },
+      {
+        "name": "StopNotebookRuntime"
+      },
+      {
+        "name": "UndeployIndex"
+      },
+      {
+        "name": "UndeployModel"
+      },
+      {
+        "name": "UploadModel"
+      },
+      {
+        "name": "UpsertDatapoints"
+      },
+      {
+        "name": "WriteFeatureValues",
+        "doc": "Classic online serving, keyed by entityType + entity id."
+      }
+    ],
+    "providers": {
+      "gcp": "VertexAI"
+    }
+  },
+  {
+    "service": "vpclattice",
+    "interface": "VPCLattice",
+    "operations": [
+      {
+        "name": "BatchUpdateRules"
+      },
+      {
+        "name": "CreateAccessLogSubscription"
+      },
+      {
+        "name": "CreateListener"
+      },
+      {
+        "name": "CreateResourceConfiguration"
+      },
+      {
+        "name": "CreateResourceGateway"
+      },
+      {
+        "name": "CreateRule"
+      },
+      {
+        "name": "CreateSNResourceAssociation"
+      },
+      {
+        "name": "CreateSNServiceAssociation"
+      },
+      {
+        "name": "CreateSNVpcAssociation"
+      },
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "CreateServiceNetwork"
+      },
+      {
+        "name": "CreateTargetGroup"
+      },
+      {
+        "name": "DeleteAccessLogSubscription"
+      },
+      {
+        "name": "DeleteAuthPolicy"
+      },
+      {
+        "name": "DeleteDomainVerification"
+      },
+      {
+        "name": "DeleteListener"
+      },
+      {
+        "name": "DeleteResourceConfiguration"
+      },
+      {
+        "name": "DeleteResourceEndpointAssociation"
+      },
+      {
+        "name": "DeleteResourceGateway"
+      },
+      {
+        "name": "DeleteResourcePolicy"
+      },
+      {
+        "name": "DeleteRule"
+      },
+      {
+        "name": "DeleteSNResourceAssociation"
+      },
+      {
+        "name": "DeleteSNServiceAssociation"
+      },
+      {
+        "name": "DeleteSNVpcAssociation"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeleteServiceNetwork"
+      },
+      {
+        "name": "DeleteTargetGroup"
+      },
+      {
+        "name": "DeregisterTargets"
+      },
+      {
+        "name": "GetAccessLogSubscription"
+      },
+      {
+        "name": "GetAuthPolicy"
+      },
+      {
+        "name": "GetDomainVerification"
+      },
+      {
+        "name": "GetListener"
+      },
+      {
+        "name": "GetResourceConfiguration"
+      },
+      {
+        "name": "GetResourceGateway"
+      },
+      {
+        "name": "GetResourcePolicy"
+      },
+      {
+        "name": "GetRule"
+      },
+      {
+        "name": "GetSNResourceAssociation"
+      },
+      {
+        "name": "GetSNServiceAssociation"
+      },
+      {
+        "name": "GetSNVpcAssociation"
+      },
+      {
+        "name": "GetService"
+      },
+      {
+        "name": "GetServiceNetwork"
+      },
+      {
+        "name": "GetTargetGroup"
+      },
+      {
+        "name": "ListAccessLogSubscriptions"
+      },
+      {
+        "name": "ListDomainVerifications"
+      },
+      {
+        "name": "ListListeners"
+      },
+      {
+        "name": "ListResourceConfigurations"
+      },
+      {
+        "name": "ListResourceEndpointAssociations"
+      },
+      {
+        "name": "ListResourceGateways"
+      },
+      {
+        "name": "ListRules"
+      },
+      {
+        "name": "ListSNResourceAssociations"
+      },
+      {
+        "name": "ListSNServiceAssociations"
+      },
+      {
+        "name": "ListSNVpcAssociations"
+      },
+      {
+        "name": "ListSNVpcEndpointAssociations"
+      },
+      {
+        "name": "ListServiceNetworks"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTargetGroups"
+      },
+      {
+        "name": "ListTargets"
+      },
+      {
+        "name": "PutAuthPolicy"
+      },
+      {
+        "name": "PutResourcePolicy"
+      },
+      {
+        "name": "RegisterTargets"
+      },
+      {
+        "name": "StartDomainVerification"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccessLogSubscription"
+      },
+      {
+        "name": "UpdateListener"
+      },
+      {
+        "name": "UpdateResourceConfiguration"
+      },
+      {
+        "name": "UpdateResourceGateway"
+      },
+      {
+        "name": "UpdateRule"
+      },
+      {
+        "name": "UpdateSNVpcAssociation"
+      },
+      {
+        "name": "UpdateService"
+      },
+      {
+        "name": "UpdateServiceNetwork"
+      },
+      {
+        "name": "UpdateTargetGroup"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AccessLogSubscriptions",
+        "doc": "AccessLogSubscriptions is the access-log-subscription resource group.",
+        "operations": [
+          {
+            "name": "CreateAccessLogSubscription"
+          },
+          {
+            "name": "DeleteAccessLogSubscription"
+          },
+          {
+            "name": "GetAccessLogSubscription"
+          },
+          {
+            "name": "ListAccessLogSubscriptions"
+          },
+          {
+            "name": "UpdateAccessLogSubscription"
+          }
+        ]
+      },
+      {
+        "name": "Associations",
+        "doc": "Associations is the service-network association surface (VPC, service, and",
+        "operations": [
+          {
+            "name": "CreateSNResourceAssociation"
+          },
+          {
+            "name": "CreateSNServiceAssociation"
+          },
+          {
+            "name": "CreateSNVpcAssociation"
+          },
+          {
+            "name": "DeleteSNResourceAssociation"
+          },
+          {
+            "name": "DeleteSNServiceAssociation"
+          },
+          {
+            "name": "DeleteSNVpcAssociation"
+          },
+          {
+            "name": "GetSNResourceAssociation"
+          },
+          {
+            "name": "GetSNServiceAssociation"
+          },
+          {
+            "name": "GetSNVpcAssociation"
+          },
+          {
+            "name": "ListSNResourceAssociations"
+          },
+          {
+            "name": "ListSNServiceAssociations"
+          },
+          {
+            "name": "ListSNVpcAssociations"
+          },
+          {
+            "name": "ListSNVpcEndpointAssociations"
+          },
+          {
+            "name": "UpdateSNVpcAssociation"
+          }
+        ]
+      },
+      {
+        "name": "DomainVerifications",
+        "doc": "DomainVerifications is the domain-verification resource group.",
+        "operations": [
+          {
+            "name": "DeleteDomainVerification"
+          },
+          {
+            "name": "GetDomainVerification"
+          },
+          {
+            "name": "ListDomainVerifications"
+          },
+          {
+            "name": "StartDomainVerification"
+          }
+        ]
+      },
+      {
+        "name": "Listeners",
+        "doc": "Listeners is the listener resource group (nested under a service).",
+        "operations": [
+          {
+            "name": "CreateListener"
+          },
+          {
+            "name": "DeleteListener"
+          },
+          {
+            "name": "GetListener"
+          },
+          {
+            "name": "ListListeners"
+          },
+          {
+            "name": "UpdateListener"
+          }
+        ]
+      },
+      {
+        "name": "Policies",
+        "doc": "Policies is the auth-policy and resource-policy surface.",
+        "operations": [
+          {
+            "name": "DeleteAuthPolicy"
+          },
+          {
+            "name": "DeleteResourcePolicy"
+          },
+          {
+            "name": "GetAuthPolicy"
+          },
+          {
+            "name": "GetResourcePolicy"
+          },
+          {
+            "name": "PutAuthPolicy"
+          },
+          {
+            "name": "PutResourcePolicy"
+          }
+        ]
+      },
+      {
+        "name": "ResourceConfigurations",
+        "doc": "ResourceConfigurations is the resource-configuration resource group.",
+        "operations": [
+          {
+            "name": "CreateResourceConfiguration"
+          },
+          {
+            "name": "DeleteResourceConfiguration"
+          },
+          {
+            "name": "GetResourceConfiguration"
+          },
+          {
+            "name": "ListResourceConfigurations"
+          },
+          {
+            "name": "UpdateResourceConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "ResourceEndpointAssociations",
+        "doc": "ResourceEndpointAssociations is the resource-endpoint-association group.",
+        "operations": [
+          {
+            "name": "DeleteResourceEndpointAssociation"
+          },
+          {
+            "name": "ListResourceEndpointAssociations"
+          }
+        ]
+      },
+      {
+        "name": "ResourceGateways",
+        "doc": "ResourceGateways is the resource-gateway resource group.",
+        "operations": [
+          {
+            "name": "CreateResourceGateway"
+          },
+          {
+            "name": "DeleteResourceGateway"
+          },
+          {
+            "name": "GetResourceGateway"
+          },
+          {
+            "name": "ListResourceGateways"
+          },
+          {
+            "name": "UpdateResourceGateway"
+          }
+        ]
+      },
+      {
+        "name": "Rules",
+        "doc": "Rules is the listener-rule resource group (nested under a listener).",
+        "operations": [
+          {
+            "name": "BatchUpdateRules"
+          },
+          {
+            "name": "CreateRule"
+          },
+          {
+            "name": "DeleteRule"
+          },
+          {
+            "name": "GetRule"
+          },
+          {
+            "name": "ListRules"
+          },
+          {
+            "name": "UpdateRule"
+          }
+        ]
+      },
+      {
+        "name": "ServiceNetworks",
+        "doc": "ServiceNetworks is the service-network resource group.",
+        "operations": [
+          {
+            "name": "CreateServiceNetwork"
+          },
+          {
+            "name": "DeleteServiceNetwork"
+          },
+          {
+            "name": "GetServiceNetwork"
+          },
+          {
+            "name": "ListServiceNetworks"
+          },
+          {
+            "name": "UpdateServiceNetwork"
+          }
+        ]
+      },
+      {
+        "name": "Services",
+        "doc": "Services is the service resource group.",
+        "operations": [
+          {
+            "name": "CreateService"
+          },
+          {
+            "name": "DeleteService"
+          },
+          {
+            "name": "GetService"
+          },
+          {
+            "name": "ListServices"
+          },
+          {
+            "name": "UpdateService"
+          }
+        ]
+      },
+      {
+        "name": "Tagging",
+        "doc": "Tagging is the resource-tagging surface (ARN-addressed).",
+        "operations": [
+          {
+            "name": "ListTagsForResource"
+          },
+          {
+            "name": "TagResource"
+          },
+          {
+            "name": "UntagResource"
+          }
+        ]
+      },
+      {
+        "name": "TargetGroups",
+        "doc": "TargetGroups is the target-group resource group and its target membership.",
+        "operations": [
+          {
+            "name": "CreateTargetGroup"
+          },
+          {
+            "name": "DeleteTargetGroup"
+          },
+          {
+            "name": "DeregisterTargets"
+          },
+          {
+            "name": "GetTargetGroup"
+          },
+          {
+            "name": "ListTargetGroups"
+          },
+          {
+            "name": "ListTargets"
+          },
+          {
+            "name": "RegisterTargets"
+          },
+          {
+            "name": "UpdateTargetGroup"
+          }
+        ]
+      }
+    ],
+    "providers": {
+      "aws": "VPCLattice"
+    }
+  },
+  {
+    "service": "wafv2",
+    "interface": "WAFV2",
+    "operations": [
+      {
+        "name": "AssociateWebACL"
+      },
+      {
+        "name": "CheckCapacity"
+      },
+      {
+        "name": "CreateAPIKey"
+      },
+      {
+        "name": "CreateIPSet"
+      },
+      {
+        "name": "CreateRegexPatternSet"
+      },
+      {
+        "name": "CreateRuleGroup"
+      },
+      {
+        "name": "CreateWebACL"
+      },
+      {
+        "name": "DeleteAPIKey"
+      },
+      {
+        "name": "DeleteIPSet"
+      },
+      {
+        "name": "DeleteLoggingConfiguration"
+      },
+      {
+        "name": "DeletePermissionPolicy"
+      },
+      {
+        "name": "DeleteRegexPatternSet"
+      },
+      {
+        "name": "DeleteRuleGroup"
+      },
+      {
+        "name": "DeleteWebACL"
+      },
+      {
+        "name": "DisassociateWebACL"
+      },
+      {
+        "name": "GetDecryptedAPIKey"
+      },
+      {
+        "name": "GetIPSet"
+      },
+      {
+        "name": "GetLoggingConfiguration"
+      },
+      {
+        "name": "GetPermissionPolicy"
+      },
+      {
+        "name": "GetRegexPatternSet"
+      },
+      {
+        "name": "GetRuleGroup"
+      },
+      {
+        "name": "GetWebACL"
+      },
+      {
+        "name": "GetWebACLForResource"
+      },
+      {
+        "name": "ListAPIKeys"
+      },
+      {
+        "name": "ListIPSets"
+      },
+      {
+        "name": "ListLoggingConfigurations"
+      },
+      {
+        "name": "ListRegexPatternSets"
+      },
+      {
+        "name": "ListResourcesForWebACL"
+      },
+      {
+        "name": "ListRuleGroups"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListWebACLs"
+      },
+      {
+        "name": "PutLoggingConfiguration"
+      },
+      {
+        "name": "PutPermissionPolicy"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateIPSet"
+      },
+      {
+        "name": "UpdateRegexPatternSet"
+      },
+      {
+        "name": "UpdateRuleGroup"
+      },
+      {
+        "name": "UpdateWebACL"
+      }
+    ],
+    "providers": {
+      "aws": "WAFv2"
+    }
+  }
+]
