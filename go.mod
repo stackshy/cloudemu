@@ -84,6 +84,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.71.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10
 	github.com/aws/aws-sdk-go-v2/service/vpclattice v1.25.5
+	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.77.3
 	github.com/aws/smithy-go v1.27.6
 	github.com/databricks/databricks-sdk-go v0.144.0
 	github.com/fxamacker/cbor/v2 v2.9.1

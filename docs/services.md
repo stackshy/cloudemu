@@ -41,6 +41,7 @@ This document lists every service and operation available in CloudEmu across all
 | 28 | File System | `efs` | — | — |
 | 29 | Certificate Manager | `acm` | — | — |
 | 30 | Email Service | `sesv2` | — | — |
+| 31 | Web Application Firewall | `wafv2` | — | — |
 
 ---
 
@@ -2489,6 +2490,61 @@ validated public certificate.
 
 ---
 
+## 31. Web Application Firewall (WAFv2)
+
+**Driver interface:** `services/wafv2/driver/`
+**AWS:** WAFv2 (AWS JSON 1.1, `X-Amz-Target: AWSWAF_20190729.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/wafv2` clients (and the `aws wafv2` CLI)
+work against the SDK-compat server (`awsserver.Drivers{WAFv2: cloud.WAFv2}`).
+Full parity across WebACLs, IPSets, RuleGroups and RegexPatternSets, web-ACL /
+resource associations, and tags.
+
+**Scope-partitioned namespace with optimistic locking.** Every resource is keyed
+by the tuple `(Scope, Id)`, so `REGIONAL` and `CLOUDFRONT` resources never
+collide. Each resource carries a `LockToken` that rotates on every mutation;
+`Update*` and `Delete*` must present the current token or the backend returns a
+`WAFOptimisticLockException`, exactly as real WAF. Rule, statement,
+default-action and visibility-config blocks are stored verbatim (as raw JSON), so
+`Get*` returns exactly what `Create*`/`Update*` wrote.
+
+| Family | Operations |
+|--------|-----------|
+| Web ACLs | CreateWebACL, GetWebACL, UpdateWebACL, DeleteWebACL, ListWebACLs |
+| IP sets | CreateIPSet, GetIPSet, UpdateIPSet, DeleteIPSet, ListIPSets |
+| Rule groups | CreateRuleGroup, GetRuleGroup, UpdateRuleGroup, DeleteRuleGroup, ListRuleGroups |
+| Regex pattern sets | CreateRegexPatternSet, GetRegexPatternSet, UpdateRegexPatternSet, DeleteRegexPatternSet, ListRegexPatternSets |
+| Associations | AssociateWebACL, DisassociateWebACL, GetWebACLForResource, ListResourcesForWebACL |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+| Capacity | CheckCapacity |
+| Logging config | PutLoggingConfiguration, GetLoggingConfiguration, DeleteLoggingConfiguration, ListLoggingConfigurations |
+| Permission policy | PutPermissionPolicy, GetPermissionPolicy, DeletePermissionPolicy |
+| API keys | CreateAPIKey, DeleteAPIKey, ListAPIKeys, GetDecryptedAPIKey |
+| Managed products / rule groups / sets | DescribeAllManagedProducts, DescribeManagedProductsByVendor, DescribeManagedRuleGroup, ListAvailableManagedRuleGroups, ListAvailableManagedRuleGroupVersions, ListManagedRuleSets, GetManagedRuleSet, PutManagedRuleSetVersions, UpdateManagedRuleSetVersionExpiryDate |
+| Mobile SDK | GenerateMobileSdkReleaseUrl, GetMobileSdkRelease, ListMobileSdkReleases |
+| Traffic / statistics | GetRateBasedStatementManagedKeys, GetSampledRequests, GetTopPathStatisticsByTraffic, GetRevenueStatistics, GetRevenueStatisticsSummary, GetRevenueStatisticsTimeSeries, ListSettlementRecords |
+| Firewall Manager | DeleteFirewallManagerRuleGroups |
+
+Distinct exceptions (`WAFNonexistentItemException`, `WAFDuplicateItemException`,
+`WAFOptimisticLockException`, `WAFInvalidParameterException`) surface as their
+real typed errors so SDK `errors.As` checks work.
+
+**Stateful additions.** `CheckCapacity` computes a deterministic, self-consistent
+WCU estimate from the submitted rules (documented, non-authoritative — the full
+WCU cost table is not modeled). Logging configurations are stored and echoed
+verbatim keyed by `ResourceArn`; permission policies are stored per rule-group
+ARN; API keys are issued as opaque base64 tokens stored per scope with their
+token domains.
+
+**Synthesized read-only ops.** Managed-product/rule-group/rule-set catalogs,
+mobile-SDK releases, sampled requests, top-path traffic and revenue/settlement
+statistics depend on AWS-managed vendor catalogs and live traffic the emulator
+does not model. These return plausible empty (or, for `GenerateMobileSdkReleaseUrl`,
+synthesized) results so SDK/CLI calls succeed and round-trip; managed rule set
+Get/Put/Update report `WAFNonexistentItemException` since no managed rule sets are
+hosted, and `DeleteFirewallManagerRuleGroups` echoes back the presented lock token.
+
+**Total: 59 operations.**
 ## 30. Email Service (SES v2)
 
 **Driver interface:** `services/sesv2/driver/`
@@ -2550,7 +2606,6 @@ Resource identifiers are ARNs (`arn:aws:ses:<region>:<account>:identity/…`,
 the referenced identity, configuration set, or template.
 
 **Total: 113 operations.**
-
 ---
 
 ## Provider-specific resources
@@ -2671,7 +2726,8 @@ still sees success.
 | File System — AWS EFS | 30 |
 | Certificate Manager — AWS ACM | 17 |
 | Email Service — AWS SES v2 | 113 |
-| **Grand Total** | **1912** (+138 optional) |
+| Web Application Firewall — AWS WAFv2 | 59 |
+| **Grand Total** | **1971** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

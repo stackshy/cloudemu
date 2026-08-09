@@ -46,6 +46,7 @@ import (
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
+	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -80,6 +81,7 @@ import (
 	sesv2driver "github.com/stackshy/cloudemu/v2/services/sesv2/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	vpclatticedriver "github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
+	wafv2driver "github.com/stackshy/cloudemu/v2/services/wafv2/driver"
 )
 
 // Drivers bundles the driver interfaces the AWS server can expose. Leave a
@@ -109,6 +111,10 @@ type Drivers struct {
 	// VPCLattice serves the AWS VPC Lattice REST-JSON API (path + method
 	// routing) against the vpclattice driver.
 	VPCLattice vpclatticedriver.VPCLattice
+
+	// WAFv2 serves the AWS WAFv2 JSON 1.1 protocol (X-Amz-Target prefix
+	// "AWSWAF_20190729.") against the wafv2 driver.
+	WAFv2 wafv2driver.WAFV2
 
 	// EFS serves the AWS EFS REST-JSON API (path + method routing under the
 	// /2015-02-01/ version prefix) against the efs driver.
@@ -200,6 +206,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SageMaker:           p.SageMaker,
 		ECS:                 p.ECS,
 		VPCLattice:          p.VPCLattice,
+		WAFv2:               p.WAFv2,
 		EFS:                 p.EFS,
 		SESV2:               p.SESV2,
 		Route53Resolver:     p.Route53Resolver,
@@ -314,6 +321,12 @@ func New(d Drivers) *server.Server {
 	// from the other JSON 1.1 services.
 	if d.ACM != nil {
 		srv.Register(acmsrv.New(d.ACM))
+	}
+
+	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729." — disjoint from
+	// the other JSON 1.1 services, so registration order is unconstrained.
+	if d.WAFv2 != nil {
+		srv.Register(wafv2srv.New(d.WAFv2))
 	}
 
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
