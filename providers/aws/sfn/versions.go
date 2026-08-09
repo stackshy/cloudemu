@@ -53,6 +53,12 @@ func (m *Mock) DeleteStateMachineVersion(_ context.Context, versionArn string) e
 		return err
 	}
 
+	// A version an alias still routes to can't be deleted — real SFN returns
+	// ConflictException rather than silently orphaning the alias.
+	if alias := m.aliasRoutingTo(versionArn); alias != "" {
+		return conflict("state machine version %q is referenced by alias %q", versionArn, alias)
+	}
+
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
@@ -70,6 +76,25 @@ func (m *Mock) DeleteStateMachineVersion(_ context.Context, versionArn string) e
 	}
 
 	return nil
+}
+
+// aliasRoutingTo returns the ARN of an alias whose routing configuration
+// references the given version ARN, or "" if none do.
+func (m *Mock) aliasRoutingTo(versionArn string) string {
+	for _, ad := range m.aliases.All() {
+		ad.mu.RLock()
+		for i := range ad.alias.Routing {
+			if ad.alias.Routing[i].StateMachineVersionArn == versionArn {
+				arn := ad.alias.ARN
+				ad.mu.RUnlock()
+
+				return arn
+			}
+		}
+		ad.mu.RUnlock()
+	}
+
+	return ""
 }
 
 func (m *Mock) getAlias(arn string) (*aliasData, error) {

@@ -89,27 +89,19 @@ func (m *Mock) DescribeExecution(_ context.Context, arn string) (*driver.Executi
 	return &out, nil
 }
 
-func (m *Mock) StopExecution(_ context.Context, arn, errCode, cause string) (time.Time, error) {
+func (m *Mock) StopExecution(_ context.Context, arn, _, _ string) (time.Time, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	ed.mu.Lock()
-	defer ed.mu.Unlock()
+	ed.mu.RLock()
+	defer ed.mu.RUnlock()
 
-	now := m.now()
-
-	// Only a still-running execution transitions to ABORTED; already-terminal
-	// executions keep their terminal state but report a stop date.
-	if ed.exec.Status == driver.ExecStatusRunning {
-		ed.exec.Status = driver.ExecStatusAborted
-		ed.exec.Error = errCode
-		ed.exec.Cause = cause
-		ed.exec.StopDate = now
-	}
-
-	return now, nil
+	// Executions complete synchronously (SUCCEEDED) in the emulator — there is no
+	// RUNNING execution to abort — so StopExecution is a no-op that returns the
+	// execution's actual recorded stop date rather than a fabricated timestamp.
+	return ed.exec.StopDate, nil
 }
 
 func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter string) ([]driver.Execution, error) {
