@@ -104,6 +104,10 @@ func TestParseStatementRejects(t *testing.T) {
 		{name: "no location keyword", text: "Allow group Admins to manage buckets"},
 		{name: "unknown location", text: "Allow group Admins to manage buckets in region iad"},
 		{name: "compartment names nothing", text: "Allow group Admins to manage buckets in compartment"},
+		{name: "nested path spaced around the colon", text: "Allow group Admins to manage buckets in compartment dev : team"},
+		{name: "nested path with a leading space", text: "Allow group Admins to manage buckets in compartment dev :team"},
+		{name: "nested path with a trailing space", text: "Allow group Admins to manage buckets in compartment dev: team"},
+		{name: "trailing token after the compartment", text: "Allow group Admins to manage buckets in compartment dev team"},
 	}
 
 	for _, tc := range tests {

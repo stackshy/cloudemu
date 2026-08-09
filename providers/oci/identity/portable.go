@@ -16,6 +16,9 @@ const statementSeparator = "\n"
 
 // CreateUser creates a user in the configured compartment.
 func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.UserInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	info, err := m.createPrincipal(m.users, kindUser, driver.PrincipalSpec{
 		Name:         cfg.Name,
 		FreeformTags: cfg.Tags,
@@ -28,17 +31,23 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 }
 
 // DeleteUser deletes the user with the given name.
-func (m *Mock) DeleteUser(ctx context.Context, name string) error {
+func (m *Mock) DeleteUser(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	u, ok := findByName(m.users, name)
 	if !ok {
 		return namedNotFound(kindUser, name)
 	}
 
-	return m.DeleteOCIUser(ctx, u.ID)
+	return m.deleteUser(u.ID)
 }
 
 // GetUser returns the user with the given name.
 func (m *Mock) GetUser(_ context.Context, name string) (*driver.UserInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	u, ok := findByName(m.users, name)
 	if !ok {
 		return nil, namedNotFound(kindUser, name)
@@ -49,6 +58,9 @@ func (m *Mock) GetUser(_ context.Context, name string) (*driver.UserInfo, error)
 
 // ListUsers returns every user, across compartments.
 func (m *Mock) ListUsers(_ context.Context) ([]driver.UserInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	all := m.users.SortedValues()
 	out := make([]driver.UserInfo, 0, len(all))
 
@@ -61,6 +73,9 @@ func (m *Mock) ListUsers(_ context.Context) ([]driver.UserInfo, error) {
 
 // CreateGroup creates a group in the configured compartment.
 func (m *Mock) CreateGroup(_ context.Context, cfg driver.GroupConfig) (*driver.GroupInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	info, err := m.createPrincipal(m.groups, kindGroup, driver.PrincipalSpec{Name: cfg.Name})
 	if err != nil {
 		return nil, err
@@ -70,17 +85,23 @@ func (m *Mock) CreateGroup(_ context.Context, cfg driver.GroupConfig) (*driver.G
 }
 
 // DeleteGroup deletes the group with the given name.
-func (m *Mock) DeleteGroup(ctx context.Context, name string) error {
+func (m *Mock) DeleteGroup(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	g, ok := findByName(m.groups, name)
 	if !ok {
 		return namedNotFound(kindGroup, name)
 	}
 
-	return m.DeleteOCIGroup(ctx, g.ID)
+	return m.deleteGroup(g.ID)
 }
 
 // GetGroup returns the group with the given name.
 func (m *Mock) GetGroup(_ context.Context, name string) (*driver.GroupInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	g, ok := findByName(m.groups, name)
 	if !ok {
 		return nil, namedNotFound(kindGroup, name)
@@ -91,6 +112,9 @@ func (m *Mock) GetGroup(_ context.Context, name string) (*driver.GroupInfo, erro
 
 // ListGroups returns every group, across compartments.
 func (m *Mock) ListGroups(_ context.Context) ([]driver.GroupInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	all := m.groups.SortedValues()
 	out := make([]driver.GroupInfo, 0, len(all))
 
@@ -102,19 +126,25 @@ func (m *Mock) ListGroups(_ context.Context) ([]driver.GroupInfo, error) {
 }
 
 // AddUserToGroup adds a user to a group by name.
-func (m *Mock) AddUserToGroup(ctx context.Context, userName, groupName string) error {
+func (m *Mock) AddUserToGroup(_ context.Context, userName, groupName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	u, g, err := m.principalsNamed(userName, groupName)
 	if err != nil {
 		return err
 	}
 
-	_, err = m.CreateOCIGroupMembership(ctx, u.ID, g.ID)
+	_, err = m.createMembership(u.ID, g.ID)
 
 	return err
 }
 
 // RemoveUserFromGroup removes a user from a group by name.
-func (m *Mock) RemoveUserFromGroup(ctx context.Context, userName, groupName string) error {
+func (m *Mock) RemoveUserFromGroup(_ context.Context, userName, groupName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	u, g, err := m.principalsNamed(userName, groupName)
 	if err != nil {
 		return err
@@ -125,11 +155,14 @@ func (m *Mock) RemoveUserFromGroup(ctx context.Context, userName, groupName stri
 		return cerrors.Newf(cerrors.NotFound, "user %q is not a member of group %q", userName, groupName)
 	}
 
-	return m.DeleteOCIGroupMembership(ctx, mem.ID)
+	return m.deleteMembership(mem.ID)
 }
 
 // ListGroupsForUser returns the groups a user belongs to.
 func (m *Mock) ListGroupsForUser(_ context.Context, userName string) ([]driver.GroupInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	u, ok := findByName(m.users, userName)
 	if !ok {
 		return nil, namedNotFound(kindUser, userName)
@@ -168,6 +201,9 @@ func (m *Mock) principalsNamed(userName, groupName string) (u, g *principal, err
 // CreateRole creates a dynamic group, the OCI resource that grants an identity
 // to something other than a user. The assume-role document is its matching rule.
 func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.RoleInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "dynamic group name is required")
 	}
@@ -191,6 +227,9 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 
 // DeleteRole deletes the dynamic group with the given name.
 func (m *Mock) DeleteRole(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	dg, ok := m.dynamicGroupNamed(name)
 	if !ok {
 		return namedNotFound(kindDynamicGroup, name)
@@ -203,6 +242,9 @@ func (m *Mock) DeleteRole(_ context.Context, name string) error {
 
 // GetRole returns the dynamic group with the given name.
 func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	dg, ok := m.dynamicGroupNamed(name)
 	if !ok {
 		return nil, namedNotFound(kindDynamicGroup, name)
@@ -213,6 +255,9 @@ func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error)
 
 // ListRoles returns every dynamic group.
 func (m *Mock) ListRoles(_ context.Context) ([]driver.RoleInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	all := m.dynamicGroups.SortedValues()
 	out := make([]driver.RoleInfo, 0, len(all))
 
@@ -223,10 +268,11 @@ func (m *Mock) ListRoles(_ context.Context) ([]driver.RoleInfo, error) {
 	return out, nil
 }
 
-// dynamicGroupNamed returns the dynamic group with the given name.
+// dynamicGroupNamed returns the dynamic group with the given name, which
+// policy statements match without regard to case.
 func (m *Mock) dynamicGroupNamed(name string) (*dynamicGroup, bool) {
 	for _, dg := range m.dynamicGroups.SortedValues() {
-		if dg.Name == name {
+		if strings.EqualFold(dg.Name, name) {
 			return dg, true
 		}
 	}
@@ -235,8 +281,11 @@ func (m *Mock) dynamicGroupNamed(name string) (*dynamicGroup, bool) {
 }
 
 // CreatePolicy creates a policy whose document is its statements, one per line.
-func (m *Mock) CreatePolicy(ctx context.Context, cfg driver.PolicyConfig) (*driver.PolicyInfo, error) {
-	info, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver.PolicyInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	info, err := m.createPolicy(&driver.PolicySpec{
 		Name:        cfg.Name,
 		Description: cfg.Description,
 		Statements:  splitStatements(cfg.PolicyDocument),
@@ -254,8 +303,11 @@ func (m *Mock) DeletePolicy(ctx context.Context, arn string) error {
 }
 
 // GetPolicy returns the policy with the given OCID.
-func (m *Mock) GetPolicy(ctx context.Context, arn string) (*driver.PolicyInfo, error) {
-	info, err := m.GetStatementPolicy(ctx, arn)
+func (m *Mock) GetPolicy(_ context.Context, arn string) (*driver.PolicyInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	info, err := m.statementPolicy(arn)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +317,9 @@ func (m *Mock) GetPolicy(ctx context.Context, arn string) (*driver.PolicyInfo, e
 
 // ListPolicies returns every policy, across compartments.
 func (m *Mock) ListPolicies(_ context.Context) ([]driver.PolicyInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	all := m.policies.SortedValues()
 	out := make([]driver.PolicyInfo, 0, len(all))
 
@@ -277,6 +332,9 @@ func (m *Mock) ListPolicies(_ context.Context) ([]driver.PolicyInfo, error) {
 
 // CreateAccessKey issues an auth token for a user.
 func (m *Mock) CreateAccessKey(_ context.Context, cfg driver.AccessKeyConfig) (*driver.AccessKeyInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if _, ok := findByName(m.users, cfg.UserName); !ok {
 		return nil, namedNotFound(kindUser, cfg.UserName)
 	}
@@ -294,6 +352,9 @@ func (m *Mock) CreateAccessKey(_ context.Context, cfg driver.AccessKeyConfig) (*
 
 // DeleteAccessKey revokes a user's auth token.
 func (m *Mock) DeleteAccessKey(_ context.Context, userName, accessKeyID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	tok, ok := m.authTokens.Get(accessKeyID)
 	if !ok || tok.UserName != userName {
 		return cerrors.Newf(cerrors.NotFound, "auth token %q not found for user %q", accessKeyID, userName)
@@ -306,6 +367,9 @@ func (m *Mock) DeleteAccessKey(_ context.Context, userName, accessKeyID string) 
 
 // ListAccessKeys returns a user's auth tokens.
 func (m *Mock) ListAccessKeys(_ context.Context, userName string) ([]driver.AccessKeyInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if _, ok := findByName(m.users, userName); !ok {
 		return nil, namedNotFound(kindUser, userName)
 	}
@@ -323,13 +387,16 @@ func (m *Mock) ListAccessKeys(_ context.Context, userName string) ([]driver.Acce
 
 // CheckPermission evaluates the policy statements covering a user. The portable
 // signature carries no compartment, so the check runs against the user's own.
-func (m *Mock) CheckPermission(ctx context.Context, principal, action, resource string) (bool, error) {
+func (m *Mock) CheckPermission(_ context.Context, principal, action, resource string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	u, ok := findByName(m.users, principal)
 	if !ok {
 		return false, nil
 	}
 
-	return m.Evaluate(ctx, &driver.AccessRequest{
+	return m.evaluate(&driver.AccessRequest{
 		Groups:        m.groupNamesFor(u.ID),
 		AnyUser:       true,
 		Verb:          action,

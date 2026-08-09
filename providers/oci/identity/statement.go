@@ -194,6 +194,14 @@ func (s *statement) parseLocation(tokens []string, text string) error {
 		return cerrors.Newf(cerrors.InvalidArgument, "policy statement %q: names no compartment", text)
 	}
 
+	// A nested path is written "parent:child", unspaced. Keeping only the first
+	// token would drop the rest and grant the parent's whole subtree instead.
+	if len(tokens) > 1 {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"policy statement %q: compartment %q must be one token; write a nested path as parent%schild",
+			text, strings.Join(tokens, " "), pathSeparator)
+	}
+
 	s.Location = tokens[0]
 
 	return nil

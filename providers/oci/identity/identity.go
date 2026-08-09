@@ -3,6 +3,8 @@ package identity
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -80,6 +82,11 @@ type authToken struct {
 
 // Mock is an in-memory mock implementation of the OCI Identity service.
 type Mock struct {
+	// mu guards the fields of stored values. Each store locks its own map, but
+	// update paths mutate the pointers that map hands back, which readers such
+	// as Evaluate walk at the same time.
+	mu sync.RWMutex
+
 	users         *memstore.Store[*principal]
 	groups        *memstore.Store[*principal]
 	memberships   *memstore.Store[*membership]
@@ -192,10 +199,12 @@ func updatePrincipal(
 	return toPrincipalInfo(p), nil
 }
 
-// findByName returns the first principal with the given name.
+// findByName returns the first principal with the given name. OCI user and
+// group names are unique per tenancy regardless of case, and policy statements
+// match them the same way.
 func findByName(store *memstore.Store[*principal], name string) (*principal, bool) {
 	for _, p := range store.SortedValues() {
-		if p.Name == name {
+		if strings.EqualFold(p.Name, name) {
 			return p, true
 		}
 	}
@@ -238,16 +247,25 @@ func copyTags(tags map[string]string) map[string]string {
 
 // CreateOCIUser creates a compartment-scoped user.
 func (m *Mock) CreateOCIUser(_ context.Context, spec driver.PrincipalSpec) (*driver.PrincipalInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.createPrincipal(m.users, kindUser, spec)
 }
 
 // GetOCIUser returns the user with the given OCID.
 func (m *Mock) GetOCIUser(_ context.Context, id string) (*driver.PrincipalInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return getPrincipal(m.users, kindUser, id)
 }
 
 // ListOCIUsers returns the users in one compartment.
 func (m *Mock) ListOCIUsers(_ context.Context, compartmentID string) ([]driver.PrincipalInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return listPrincipals(m.users, compartmentID), nil
 }
 
@@ -255,11 +273,22 @@ func (m *Mock) ListOCIUsers(_ context.Context, compartmentID string) ([]driver.P
 func (m *Mock) UpdateOCIUser(
 	_ context.Context, id string, upd driver.IdentityUpdate,
 ) (*driver.PrincipalInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return updatePrincipal(m.users, kindUser, id, upd)
 }
 
 // DeleteOCIUser deletes a user and its group memberships.
 func (m *Mock) DeleteOCIUser(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.deleteUser(id)
+}
+
+// deleteUser deletes a user and its group memberships. Callers hold m.mu.
+func (m *Mock) deleteUser(id string) error {
 	if !m.users.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "user %q not found", id)
 	}
@@ -271,16 +300,25 @@ func (m *Mock) DeleteOCIUser(_ context.Context, id string) error {
 
 // CreateOCIGroup creates a compartment-scoped group.
 func (m *Mock) CreateOCIGroup(_ context.Context, spec driver.PrincipalSpec) (*driver.PrincipalInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.createPrincipal(m.groups, kindGroup, spec)
 }
 
 // GetOCIGroup returns the group with the given OCID.
 func (m *Mock) GetOCIGroup(_ context.Context, id string) (*driver.PrincipalInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return getPrincipal(m.groups, kindGroup, id)
 }
 
 // ListOCIGroups returns the groups in one compartment.
 func (m *Mock) ListOCIGroups(_ context.Context, compartmentID string) ([]driver.PrincipalInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return listPrincipals(m.groups, compartmentID), nil
 }
 
@@ -288,11 +326,22 @@ func (m *Mock) ListOCIGroups(_ context.Context, compartmentID string) ([]driver.
 func (m *Mock) UpdateOCIGroup(
 	_ context.Context, id string, upd driver.IdentityUpdate,
 ) (*driver.PrincipalInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return updatePrincipal(m.groups, kindGroup, id, upd)
 }
 
 // DeleteOCIGroup deletes a group and its memberships.
 func (m *Mock) DeleteOCIGroup(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.deleteGroup(id)
+}
+
+// deleteGroup deletes a group and its memberships. Callers hold m.mu.
+func (m *Mock) deleteGroup(id string) error {
 	if !m.groups.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "group %q not found", id)
 	}
@@ -304,6 +353,14 @@ func (m *Mock) DeleteOCIGroup(_ context.Context, id string) error {
 
 // CreateOCIGroupMembership adds a user to a group.
 func (m *Mock) CreateOCIGroupMembership(_ context.Context, userID, groupID string) (*driver.MembershipInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.createMembership(userID, groupID)
+}
+
+// createMembership binds a user to a group. Callers hold m.mu.
+func (m *Mock) createMembership(userID, groupID string) (*driver.MembershipInfo, error) {
 	if !m.users.Has(userID) {
 		return nil, cerrors.Newf(cerrors.NotFound, "user %q not found", userID)
 	}
@@ -332,6 +389,9 @@ func (m *Mock) CreateOCIGroupMembership(_ context.Context, userID, groupID strin
 
 // GetOCIGroupMembership returns the membership with the given OCID.
 func (m *Mock) GetOCIGroupMembership(_ context.Context, id string) (*driver.MembershipInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	mem, ok := m.memberships.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "user group membership %q not found", id)
@@ -345,6 +405,9 @@ func (m *Mock) GetOCIGroupMembership(_ context.Context, id string) (*driver.Memb
 func (m *Mock) ListOCIGroupMemberships(
 	_ context.Context, compartmentID, userID, groupID string,
 ) ([]driver.MembershipInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	filter := scope.Scope{Compartment: compartmentID}
 	all := m.memberships.SortedValues()
 	out := make([]driver.MembershipInfo, 0, len(all))
@@ -364,6 +427,14 @@ func (m *Mock) ListOCIGroupMemberships(
 
 // DeleteOCIGroupMembership removes a user from a group.
 func (m *Mock) DeleteOCIGroupMembership(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.deleteMembership(id)
+}
+
+// deleteMembership removes a user from a group. Callers hold m.mu.
+func (m *Mock) deleteMembership(id string) error {
 	if !m.memberships.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "user group membership %q not found", id)
 	}

@@ -41,6 +41,14 @@ type policyRevision struct {
 
 // CreateStatementPolicy creates a policy from its statements.
 func (m *Mock) CreateStatementPolicy(_ context.Context, spec *driver.PolicySpec) (*driver.StatementPolicyInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.createPolicy(spec)
+}
+
+// createPolicy creates a policy from its statements. Callers hold m.mu.
+func (m *Mock) createPolicy(spec *driver.PolicySpec) (*driver.StatementPolicyInfo, error) {
 	if spec.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "policy name is required")
 	}
@@ -76,6 +84,14 @@ func (m *Mock) CreateStatementPolicy(_ context.Context, spec *driver.PolicySpec)
 
 // GetStatementPolicy returns the policy with the given OCID.
 func (m *Mock) GetStatementPolicy(_ context.Context, id string) (*driver.StatementPolicyInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.statementPolicy(id)
+}
+
+// statementPolicy returns the policy with the given OCID. Callers hold m.mu.
+func (m *Mock) statementPolicy(id string) (*driver.StatementPolicyInfo, error) {
 	p, ok := m.policies.Get(id)
 	if !ok {
 		return nil, policyNotFound(id)
@@ -86,6 +102,9 @@ func (m *Mock) GetStatementPolicy(_ context.Context, id string) (*driver.Stateme
 
 // ListStatementPolicies returns the policies attached to one compartment.
 func (m *Mock) ListStatementPolicies(_ context.Context, compartmentID string) ([]driver.StatementPolicyInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	filter := scope.Scope{Compartment: compartmentID}
 	all := m.policies.SortedValues()
 	out := make([]driver.StatementPolicyInfo, 0, len(all))
@@ -104,6 +123,9 @@ func (m *Mock) ListStatementPolicies(_ context.Context, compartmentID string) ([
 func (m *Mock) UpdateStatementPolicy(
 	_ context.Context, id string, upd driver.PolicyUpdate,
 ) (*driver.StatementPolicyInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	p, ok := m.policies.Get(id)
 	if !ok {
 		return nil, policyNotFound(id)
@@ -138,6 +160,14 @@ func (m *Mock) UpdateStatementPolicy(
 
 // DeleteStatementPolicy deletes the policy with the given OCID.
 func (m *Mock) DeleteStatementPolicy(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.deletePolicy(id)
+}
+
+// deletePolicy deletes the policy with the given OCID. Callers hold m.mu.
+func (m *Mock) deletePolicy(id string) error {
 	if !m.policies.Delete(id) {
 		return policyNotFound(id)
 	}
@@ -148,6 +178,14 @@ func (m *Mock) DeleteStatementPolicy(_ context.Context, id string) error {
 // Evaluate reports whether any statement grants the request. OCI policies only
 // ever allow, so the first match settles it.
 func (m *Mock) Evaluate(_ context.Context, req *driver.AccessRequest) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.evaluate(req)
+}
+
+// evaluate resolves an access request against every policy. Callers hold m.mu.
+func (m *Mock) evaluate(req *driver.AccessRequest) (bool, error) {
 	if verbRank(strings.ToLower(req.Verb)) == rankUnknown {
 		return false, cerrors.Newf(cerrors.InvalidArgument,
 			"unknown verb %q, want inspect, read, use or manage", req.Verb)

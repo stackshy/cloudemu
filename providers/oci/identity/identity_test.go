@@ -335,6 +335,37 @@ func TestPortableUsersAndGroups(t *testing.T) {
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 }
 
+// Names are unique per tenancy regardless of case, and lookups follow, the way
+// compartment and policy names already do and the way statements match groups.
+func TestPrincipalNamesIgnoreCase(t *testing.T) {
+	m := newMock(t)
+	ctx := t.Context()
+
+	_, err := m.CreateUser(ctx, driver.UserConfig{Name: "Alice"})
+	require.NoError(t, err)
+
+	_, err = m.CreateUser(ctx, driver.UserConfig{Name: "ALICE"})
+	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
+
+	got, err := m.GetUser(ctx, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", got.Name)
+
+	_, err = m.CreateGroup(ctx, driver.GroupConfig{Name: adminName})
+	require.NoError(t, err)
+
+	group, err := m.GetGroup(ctx, "ADMINS")
+	require.NoError(t, err)
+	assert.Equal(t, adminName, group.Name)
+
+	_, err = m.CreateRole(ctx, driver.RoleConfig{Name: "Fleet"})
+	require.NoError(t, err)
+
+	role, err := m.GetRole(ctx, "fleet")
+	require.NoError(t, err)
+	assert.Equal(t, "Fleet", role.Name)
+}
+
 func TestPortableRolesAreDynamicGroups(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()

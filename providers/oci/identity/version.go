@@ -16,6 +16,9 @@ import (
 func (m *Mock) CreatePolicyVersion(
 	_ context.Context, cfg driver.PolicyVersionConfig,
 ) (*driver.PolicyVersionInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	p, ok := m.policies.Get(cfg.PolicyARN)
 	if !ok {
 		return nil, policyNotFound(cfg.PolicyARN)
@@ -44,6 +47,9 @@ func (m *Mock) CreatePolicyVersion(
 
 // GetPolicyVersion returns one revision of a policy's statements.
 func (m *Mock) GetPolicyVersion(_ context.Context, policyARN, versionID string) (*driver.PolicyVersionInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	p, ok := m.policies.Get(policyARN)
 	if !ok {
 		return nil, policyNotFound(policyARN)
@@ -59,6 +65,9 @@ func (m *Mock) GetPolicyVersion(_ context.Context, policyARN, versionID string) 
 
 // ListPolicyVersions returns every recorded revision of a policy.
 func (m *Mock) ListPolicyVersions(_ context.Context, policyARN string) ([]driver.PolicyVersionInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	p, ok := m.policies.Get(policyARN)
 	if !ok {
 		return nil, policyNotFound(policyARN)
@@ -74,6 +83,9 @@ func (m *Mock) ListPolicyVersions(_ context.Context, policyARN string) ([]driver
 
 // DeletePolicyVersion removes a revision that is not the current one.
 func (m *Mock) DeletePolicyVersion(_ context.Context, policyARN, versionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	p, ok := m.policies.Get(policyARN)
 	if !ok {
 		return policyNotFound(policyARN)
@@ -101,6 +113,9 @@ func (m *Mock) DeletePolicyVersion(_ context.Context, policyARN, versionID strin
 // SetDefaultPolicyVersion makes a recorded revision the policy's current
 // statements.
 func (m *Mock) SetDefaultPolicyVersion(_ context.Context, policyARN, versionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	p, ok := m.policies.Get(policyARN)
 	if !ok {
 		return policyNotFound(policyARN)

@@ -31,6 +31,9 @@ type compartment struct {
 
 // CreateCompartment creates a compartment under an existing parent.
 func (m *Mock) CreateCompartment(_ context.Context, spec driver.CompartmentSpec) (*driver.CompartmentInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if spec.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "compartment name is required")
 	}
@@ -61,6 +64,9 @@ func (m *Mock) CreateCompartment(_ context.Context, spec driver.CompartmentSpec)
 // GetCompartment returns a compartment by OCID. The tenancy is the root
 // compartment and is returned even though nothing created it.
 func (m *Mock) GetCompartment(_ context.Context, id string) (*driver.CompartmentInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if id == m.opts.TenancyOCID {
 		return m.rootInfo(), nil
 	}
@@ -76,6 +82,9 @@ func (m *Mock) GetCompartment(_ context.Context, id string) (*driver.Compartment
 // ListCompartments returns the direct children of parentID, or every
 // descendant when inSubtree is set.
 func (m *Mock) ListCompartments(_ context.Context, parentID string, inSubtree bool) ([]driver.CompartmentInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if !m.compartmentExists(parentID) {
 		return nil, cerrors.Newf(cerrors.NotFound, "compartment %q not found", parentID)
 	}
@@ -98,6 +107,9 @@ func (m *Mock) ListCompartments(_ context.Context, parentID string, inSubtree bo
 func (m *Mock) UpdateCompartment(
 	_ context.Context, id string, upd driver.IdentityUpdate,
 ) (*driver.CompartmentInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	c, ok := m.compartments.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "compartment %q not found", id)
@@ -128,6 +140,9 @@ func (m *Mock) UpdateCompartment(
 // DeleteCompartment deletes an empty compartment. Real OCI refuses while
 // anything still lives in it.
 func (m *Mock) DeleteCompartment(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.compartments.Has(id) {
 		return cerrors.Newf(cerrors.NotFound, "compartment %q not found", id)
 	}
@@ -203,7 +218,10 @@ func (m *Mock) covers(ancestor, target string) bool {
 		return false
 	}
 
-	for id := target; id != ""; {
+	// A chain of distinct compartments cannot be longer than the store, so a
+	// longer walk means a cycle. Nothing reparents a compartment today; the
+	// bound is what keeps a future move operation from looping forever.
+	for id, steps := target, m.compartments.Len(); id != "" && steps >= 0; steps-- {
 		if id == ancestor {
 			return true
 		}

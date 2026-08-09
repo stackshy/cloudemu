@@ -247,6 +247,54 @@ func TestEvaluateHonoursTheStatementLocationForms(t *testing.T) {
 	}
 }
 
+// A nested path written with spaces around the colon must be rejected. Keeping
+// only its first token would grant the parent's whole subtree instead.
+func TestSpacedNestedPathIsRejectedRatherThanBroadened(t *testing.T) {
+	m := newMock(t)
+	ctx := t.Context()
+	dev := newCompartment(t, m, tenancy, devName)
+	team := newCompartment(t, m, dev, "team")
+	other := newCompartment(t, m, dev, "other")
+
+	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+		CompartmentID: tenancy,
+		Name:          "spaced",
+		Statements:    []string{"Allow group Admins to manage buckets in compartment dev : team"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+	_, err = m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+		CompartmentID: tenancy,
+		Name:          "canonical",
+		Statements:    []string{"Allow group Admins to manage buckets in compartment dev:team"},
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		{name: "the named nested compartment", target: team, want: true},
+		{name: "its parent", target: dev},
+		{name: "a sibling under the same parent", target: other},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+				Groups:        []string{adminName},
+				Verb:          verbManage,
+				ResourceType:  "buckets",
+				CompartmentID: tc.target,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, ok)
+		})
+	}
+}
+
 func TestPolicyNeverReachesOutsideItsOwnCompartment(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
