@@ -40,6 +40,7 @@ This document lists every service and operation available in CloudEmu across all
 | 27 | Key Management | `kms` | — | — |
 | 28 | File System | `efs` | — | — |
 | 29 | Certificate Manager | `acm` | — | — |
+| 30 | Email Service | `sesv2` | — | — |
 
 ---
 
@@ -2488,6 +2489,43 @@ validated public certificate.
 
 ---
 
+## 30. Email Service (SES v2)
+
+**Driver interface:** `services/sesv2/driver/`
+**AWS:** SES v2 (REST-JSON `awsRestjson1`, path prefix `/v2/email/…`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/sesv2` clients (and the `aws sesv2` CLI)
+work against the SDK-compat server (`awsserver.Drivers{SESV2: cloud.SESV2}`).
+SES v2 uses REST-JSON path + method routing under the `/v2/email/` version
+prefix, so its handler gates on that prefix ahead of the S3 catch-all.
+
+**Identities auto-verify.** `CreateEmailIdentity` marks an address or domain
+verified for sending immediately (status `SUCCESS`) — the emulator can't perform
+a real DNS/email round-trip — and domains receive three Easy-DKIM CNAME tokens.
+`SendEmail` validates the from-identity (the address itself or its domain must be
+a verified identity) and any referenced configuration set / template, then
+returns a generated `MessageId`; accepted messages are retained so tests can
+assert on what was sent. `TestRenderEmailTemplate` substitutes `{{key}}`
+placeholders from the JSON template data.
+
+| Family | Operations |
+|--------|-----------|
+| Email identities | CreateEmailIdentity, GetEmailIdentity, DeleteEmailIdentity, ListEmailIdentities, PutEmailIdentityDkimAttributes, PutEmailIdentityMailFromAttributes |
+| Configuration sets | CreateConfigurationSet, GetConfigurationSet, DeleteConfigurationSet, ListConfigurationSets |
+| Email templates | CreateEmailTemplate, GetEmailTemplate, UpdateEmailTemplate, DeleteEmailTemplate, ListEmailTemplates, TestRenderEmailTemplate |
+| Sending | SendEmail |
+| Suppression list | PutSuppressedDestination, GetSuppressedDestination, DeleteSuppressedDestination, ListSuppressedDestinations |
+| Account | GetAccount, PutAccountSendingAttributes, PutAccountSuppressionAttributes |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+Resource identifiers are ARNs (`arn:aws:ses:<region>:<account>:identity/…`,
+`…:configuration-set/…`, `…:template/…`); the tag operations resolve the ARN to
+the referenced identity, configuration set, or template.
+
+**Total: 28 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -2605,7 +2643,8 @@ still sees success.
 | Key Management — AWS KMS | 45 |
 | File System — AWS EFS | 30 |
 | Certificate Manager — AWS ACM | 17 |
-| **Grand Total** | **1799** (+138 optional) |
+| Email Service — AWS SES v2 | 28 |
+| **Grand Total** | **1827** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
