@@ -36,6 +36,32 @@ const (
 	ExecStatusAborted   = "ABORTED"
 )
 
+// Map Run statuses.
+const (
+	MapRunStatusRunning   = "RUNNING"
+	MapRunStatusSucceeded = "SUCCEEDED"
+	MapRunStatusFailed    = "FAILED"
+	MapRunStatusAborted   = "ABORTED"
+)
+
+// Test state execution statuses.
+const (
+	TestStatusSucceeded = "SUCCEEDED"
+	TestStatusFailed    = "FAILED"
+)
+
+// State machine definition validation result codes.
+const (
+	ValidationResultOK   = "OK"
+	ValidationResultFail = "FAIL"
+)
+
+// Validation diagnostic severities.
+const (
+	ValidationSeverityError   = "ERROR"
+	ValidationSeverityWarning = "WARNING"
+)
+
 // StateMachine is the full description of a Step Functions state machine.
 type StateMachine struct {
 	ARN               string
@@ -155,6 +181,84 @@ type StartExecutionInput struct {
 	Input           string
 }
 
+// MapRunCounts holds the per-status tallies shared by a Map Run's execution
+// counts and item counts. Every field is a plain count of child workflow
+// executions (or items) in the corresponding state.
+type MapRunCounts struct {
+	Aborted        int64
+	Failed         int64
+	Pending        int64
+	ResultsWritten int64
+	Running        int64
+	Succeeded      int64
+	TimedOut       int64
+	Total          int64
+}
+
+// MapRun models a distributed-map child-execution run. The emulator does not
+// interpret Amazon States Language, so Map Runs are not produced by executing a
+// state machine; SeedMapRun populates one for describe/list/update to operate on.
+type MapRun struct {
+	ARN                        string
+	ExecutionArn               string
+	StateMachineArn            string
+	Status                     string
+	MaxConcurrency             int32
+	ToleratedFailureCount      int64
+	ToleratedFailurePercentage float32
+	RedriveCount               int32
+	StartDate                  time.Time
+	StopDate                   time.Time
+	RedriveDate                time.Time
+	ExecutionCounts            MapRunCounts
+	ItemCounts                 MapRunCounts
+}
+
+// UpdateMapRunInput mutates the concurrency and failure tolerances of a Map Run.
+// Nil pointers leave the corresponding field unchanged.
+type UpdateMapRunInput struct {
+	MapRunArn                  string
+	MaxConcurrency             *int32
+	ToleratedFailureCount      *int64
+	ToleratedFailurePercentage *float32
+}
+
+// RedriveResult reports the effect of RedriveExecution.
+type RedriveResult struct {
+	RedriveDate time.Time
+}
+
+// TestStateInput evaluates a single state definition against an input.
+type TestStateInput struct {
+	Definition string
+	Input      string
+}
+
+// TestStateResult echoes the outcome of a TestState evaluation. The emulator
+// runs no interpreter: a valid, non-empty definition succeeds and echoes input.
+type TestStateResult struct {
+	Output    string
+	Status    string
+	NextState string
+	Error     string
+	Cause     string
+}
+
+// ValidationDiagnostic is one finding from ValidateStateMachineDefinition.
+type ValidationDiagnostic struct {
+	Severity string
+	Code     string
+	Message  string
+	Location string
+}
+
+// ValidationResult reports the outcome of ValidateStateMachineDefinition.
+type ValidationResult struct {
+	Result      string
+	Diagnostics []ValidationDiagnostic
+	Truncated   bool
+}
+
 // SFN is the interface a Step Functions backend implements.
 type SFN interface {
 	// State machines.
@@ -172,6 +276,16 @@ type SFN interface {
 	ListExecutions(ctx context.Context, stateMachineArn, statusFilter string) ([]Execution, error)
 	GetExecutionHistory(ctx context.Context, arn string, reverse bool) ([]HistoryEvent, error)
 	DescribeStateMachineForExecution(ctx context.Context, executionArn string) (*StateMachine, error)
+	RedriveExecution(ctx context.Context, arn string) (*RedriveResult, error)
+
+	// Map Runs (distributed-map child executions).
+	DescribeMapRun(ctx context.Context, mapRunArn string) (*MapRun, error)
+	ListMapRuns(ctx context.Context, executionArn string) ([]MapRun, error)
+	UpdateMapRun(ctx context.Context, in UpdateMapRunInput) error
+
+	// Definition tooling.
+	TestState(ctx context.Context, in TestStateInput) (*TestStateResult, error)
+	ValidateStateMachineDefinition(ctx context.Context, definition, smType string) (*ValidationResult, error)
 
 	// Versions and aliases.
 	PublishStateMachineVersion(ctx context.Context, arn, description string) (versionArn string, created time.Time, err error)

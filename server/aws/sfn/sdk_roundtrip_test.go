@@ -13,6 +13,8 @@ import (
 	awssfn "github.com/aws/aws-sdk-go-v2/service/sfn"
 	sfntypes "github.com/aws/aws-sdk-go-v2/service/sfn/types"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -237,6 +239,129 @@ func TestSDKActivities(t *testing.T) {
 
 	if aws.ToString(da.Name) != "worker" {
 		t.Fatalf("activity name = %s", aws.ToString(da.Name))
+	}
+}
+
+func TestSDKRedriveExecution(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+	arn := createSM(t, c, "redrive")
+
+	start, err := c.StartExecution(ctx, &awssfn.StartExecutionInput{
+		StateMachineArn: aws.String(arn), Name: aws.String("r1"),
+	})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	out, err := c.RedriveExecution(ctx, &awssfn.RedriveExecutionInput{ExecutionArn: start.ExecutionArn})
+	if err != nil {
+		t.Fatalf("RedriveExecution: %v", err)
+	}
+
+	if out.RedriveDate == nil {
+		t.Fatal("RedriveExecution: expected a redriveDate")
+	}
+}
+
+func TestSDKListMapRunsEmpty(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+	arn := createSM(t, c, "maprun")
+
+	start, err := c.StartExecution(ctx, &awssfn.StartExecutionInput{
+		StateMachineArn: aws.String(arn), Name: aws.String("mr1"),
+	})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	out, err := c.ListMapRuns(ctx, &awssfn.ListMapRunsInput{ExecutionArn: start.ExecutionArn})
+	if err != nil {
+		t.Fatalf("ListMapRuns: %v", err)
+	}
+
+	if len(out.MapRuns) != 0 {
+		t.Fatalf("want 0 map runs for a non-map execution, got %d", len(out.MapRuns))
+	}
+}
+
+// disableHostPrefix returns an API-option that disables the "sync-" endpoint
+// host prefix (used by TestState / StartSyncExecution) so the SDK talks to the
+// local httptest server instead of a rewritten, unresolvable host.
+func disableHostPrefix(stack *middleware.Stack) error {
+	return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("disableHostPrefix",
+		func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler,
+		) (middleware.InitializeOutput, middleware.Metadata, error) {
+			return next.HandleInitialize(smithyhttp.DisableEndpointHostPrefix(ctx, true), in)
+		}), middleware.Before)
+}
+
+func TestSDKTestState(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	out, err := c.TestState(ctx, &awssfn.TestStateInput{
+		Definition: aws.String(`{"Type":"Pass","End":true}`),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/svc"),
+		Input:      aws.String(`{"x":1}`),
+	}, func(o *awssfn.Options) {
+		o.APIOptions = append(o.APIOptions, disableHostPrefix)
+	})
+	if err != nil {
+		t.Fatalf("TestState: %v", err)
+	}
+
+	if out.Status != sfntypes.TestExecutionStatusSucceeded {
+		t.Fatalf("status = %s, want SUCCEEDED", out.Status)
+	}
+
+	if aws.ToString(out.Output) != `{"x":1}` {
+		t.Fatalf("output = %q, want echoed input", aws.ToString(out.Output))
+	}
+}
+
+func TestSDKValidateStateMachineDefinition(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	ok, err := c.ValidateStateMachineDefinition(ctx, &awssfn.ValidateStateMachineDefinitionInput{
+		Definition: aws.String(definition),
+	})
+	if err != nil {
+		t.Fatalf("ValidateStateMachineDefinition: %v", err)
+	}
+
+	if ok.Result != sfntypes.ValidateStateMachineDefinitionResultCodeOk {
+		t.Fatalf("result = %s, want OK", ok.Result)
+	}
+
+	bad, err := c.ValidateStateMachineDefinition(ctx, &awssfn.ValidateStateMachineDefinitionInput{
+		Definition: aws.String("{not json"),
+	})
+	if err != nil {
+		t.Fatalf("ValidateStateMachineDefinition(bad): %v", err)
+	}
+
+	if bad.Result != sfntypes.ValidateStateMachineDefinitionResultCodeFail || len(bad.Diagnostics) == 0 {
+		t.Fatalf("bad definition should FAIL with diagnostics: %+v", bad)
+	}
+}
+
+func TestSDKDescribeMissingMapRun(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	_, err := c.DescribeMapRun(ctx, &awssfn.DescribeMapRunInput{
+		MapRunArn: aws.String("arn:aws:states:us-east-1:123456789012:mapRun:sm/e:missing"),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing map run")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want smithy API error, got %v", err)
 	}
 }
 

@@ -166,6 +166,42 @@ type resourceArnRequest struct {
 	ResourceArn string `json:"resourceArn"`
 }
 
+type redriveExecutionRequest struct {
+	ExecutionArn string `json:"executionArn"`
+	ClientToken  string `json:"clientToken"`
+}
+
+type mapRunArnRequest struct {
+	MapRunArn string `json:"mapRunArn"`
+}
+
+type listMapRunsRequest struct {
+	ExecutionArn string `json:"executionArn"`
+	MaxResults   int32  `json:"maxResults"`
+	NextToken    string `json:"nextToken"`
+}
+
+type updateMapRunRequest struct {
+	MapRunArn                  string   `json:"mapRunArn"`
+	MaxConcurrency             *int32   `json:"maxConcurrency"`
+	ToleratedFailureCount      *int64   `json:"toleratedFailureCount"`
+	ToleratedFailurePercentage *float32 `json:"toleratedFailurePercentage"`
+}
+
+type testStateRequest struct {
+	Definition      string `json:"definition"`
+	RoleArn         string `json:"roleArn"`
+	Input           string `json:"input"`
+	InspectionLevel string `json:"inspectionLevel"`
+}
+
+type validateDefinitionRequest struct {
+	Definition string `json:"definition"`
+	Type       string `json:"type"`
+	Severity   string `json:"severity"`
+	MaxResults int32  `json:"maxResults"`
+}
+
 // --- response shapes ---
 
 type createStateMachineResponse struct {
@@ -359,6 +395,72 @@ type listTagsResponse struct {
 	Tags []tag `json:"tags"`
 }
 
+type redriveExecutionResponse struct {
+	RedriveDate *float64 `json:"redriveDate"`
+}
+
+// mapRunCounts is the wire shape shared by a Map Run's executionCounts and
+// itemCounts objects.
+type mapRunCounts struct {
+	Aborted        int64 `json:"aborted"`
+	Failed         int64 `json:"failed"`
+	Pending        int64 `json:"pending"`
+	ResultsWritten int64 `json:"resultsWritten"`
+	Running        int64 `json:"running"`
+	Succeeded      int64 `json:"succeeded"`
+	TimedOut       int64 `json:"timedOut"`
+	Total          int64 `json:"total"`
+}
+
+type describeMapRunResponse struct {
+	MapRunArn                  string       `json:"mapRunArn"`
+	ExecutionArn               string       `json:"executionArn"`
+	Status                     string       `json:"status"`
+	MaxConcurrency             int32        `json:"maxConcurrency"`
+	ToleratedFailureCount      int64        `json:"toleratedFailureCount"`
+	ToleratedFailurePercentage float32      `json:"toleratedFailurePercentage"`
+	RedriveCount               int32        `json:"redriveCount"`
+	StartDate                  *float64     `json:"startDate"`
+	StopDate                   *float64     `json:"stopDate,omitempty"`
+	RedriveDate                *float64     `json:"redriveDate,omitempty"`
+	ExecutionCounts            mapRunCounts `json:"executionCounts"`
+	ItemCounts                 mapRunCounts `json:"itemCounts"`
+}
+
+type mapRunListItem struct {
+	ExecutionArn    string   `json:"executionArn"`
+	MapRunArn       string   `json:"mapRunArn"`
+	StateMachineArn string   `json:"stateMachineArn"`
+	StartDate       *float64 `json:"startDate"`
+	StopDate        *float64 `json:"stopDate,omitempty"`
+}
+
+type listMapRunsResponse struct {
+	MapRuns   []mapRunListItem `json:"mapRuns"`
+	NextToken string           `json:"nextToken,omitempty"`
+}
+
+type testStateResponse struct {
+	Output    string `json:"output,omitempty"`
+	Status    string `json:"status"`
+	NextState string `json:"nextState,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Cause     string `json:"cause,omitempty"`
+}
+
+type validationDiagnostic struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Location string `json:"location,omitempty"`
+}
+
+type validateDefinitionResponse struct {
+	Result      string                 `json:"result"`
+	Diagnostics []validationDiagnostic `json:"diagnostics"`
+	Truncated   bool                   `json:"truncated"`
+}
+
 // --- converters ---
 
 func routingFromWire(in []routingItem) []sfndriver.RouteEntry {
@@ -368,6 +470,13 @@ func routingFromWire(in []routingItem) []sfndriver.RouteEntry {
 	}
 
 	return out
+}
+
+func countsToWire(c sfndriver.MapRunCounts) mapRunCounts {
+	return mapRunCounts{
+		Aborted: c.Aborted, Failed: c.Failed, Pending: c.Pending, ResultsWritten: c.ResultsWritten,
+		Running: c.Running, Succeeded: c.Succeeded, TimedOut: c.TimedOut, Total: c.Total,
+	}
 }
 
 func routingToWire(in []sfndriver.RouteEntry) []routingItem {

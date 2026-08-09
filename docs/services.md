@@ -2503,9 +2503,11 @@ returned unchanged by `DescribeStateMachine`.
 | Family | Operations |
 |--------|-----------|
 | State machines | CreateStateMachine, DescribeStateMachine, UpdateStateMachine, DeleteStateMachine, ListStateMachines |
-| Executions | StartExecution, StartSyncExecution, DescribeExecution, StopExecution, ListExecutions, GetExecutionHistory, DescribeStateMachineForExecution |
+| Executions | StartExecution, StartSyncExecution, DescribeExecution, StopExecution, ListExecutions, GetExecutionHistory, DescribeStateMachineForExecution, RedriveExecution |
+| Map Runs | DescribeMapRun, ListMapRuns, UpdateMapRun |
 | Versions / aliases | PublishStateMachineVersion, ListStateMachineVersions, DeleteStateMachineVersion, CreateStateMachineAlias, DescribeStateMachineAlias, UpdateStateMachineAlias, DeleteStateMachineAlias, ListStateMachineAliases |
 | Activities | CreateActivity, DescribeActivity, DeleteActivity, ListActivities, GetActivityTask, SendTaskSuccess, SendTaskFailure, SendTaskHeartbeat |
+| Definition tooling | TestState, ValidateStateMachineDefinition |
 | Tags | TagResource, UntagResource, ListTagsForResource |
 
 **No ASL interpreter — a deliberate simplification.** The emulator does not
@@ -2519,7 +2521,16 @@ and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`. This
 keeps behaviour deterministic and dependency-free while preserving the SDK wire
 shapes for build-and-orchestrate testing.
 
-**Total: 31 operations.**
+Consistent with the no-interpreter model: `RedriveExecution` records a fresh
+redrive date on an existing execution rather than re-running it; `TestState`
+succeeds for any non-empty definition and echoes the input as output;
+`ValidateStateMachineDefinition` returns `OK` for a non-empty, valid-JSON
+definition and `FAIL` with a diagnostic otherwise (no semantic ASL validation).
+Distributed-map Map Runs are never produced by execution, so `ListMapRuns`
+returns empty for ordinary executions; `DescribeMapRun`/`UpdateMapRun` operate on
+Map Run records seeded through the provider's `SeedMapRun` helper.
+
+**Total: 36 operations.**
 
 ---
 
@@ -2640,8 +2651,8 @@ still sees success.
 | Key Management — AWS KMS | 45 |
 | File System — AWS EFS | 30 |
 | Certificate Manager — AWS ACM | 17 |
-| Step Functions — AWS SFN | 31 |
-| **Grand Total** | **1830** (+138 optional) |
+| Step Functions — AWS SFN | 36 |
+| **Grand Total** | **1835** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

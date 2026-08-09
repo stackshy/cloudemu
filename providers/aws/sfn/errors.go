@@ -47,6 +47,13 @@ func activityAlreadyExists(name string) error {
 	}
 }
 
+func mapRunNotFound(arn string) error {
+	return &driver.APIError{
+		Exception: driver.ExResourceNotFound,
+		Err:       errors.Newf(errors.NotFound, "map run %q does not exist", arn),
+	}
+}
+
 func resourceNotFound(arn string) error {
 	return &driver.APIError{
 		Exception: driver.ExResourceNotFound,

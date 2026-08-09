@@ -319,6 +319,110 @@ func TestTags(t *testing.T) {
 	}
 }
 
+func TestRedriveExecution(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	arn := createSM(t, m, "redrive")
+
+	exec, err := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: "r1"})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	res, err := m.RedriveExecution(ctx, exec.ARN)
+	if err != nil || res == nil {
+		t.Fatalf("RedriveExecution: %v %+v", err, res)
+	}
+
+	if _, err := m.RedriveExecution(ctx,
+		"arn:aws:states:us-east-1:000000000000:execution:sm:missing"); !errors.IsNotFound(err) {
+		t.Fatalf("redrive missing execution should be NotFound, got %v", err)
+	}
+}
+
+func TestMapRuns(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	arn := createSM(t, m, "maprun")
+
+	exec, err := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: "mr1"})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	mapRunArn, err := m.SeedMapRun(exec.ARN, driver.MapRun{
+		MaxConcurrency:  5,
+		ExecutionCounts: driver.MapRunCounts{Total: 3, Succeeded: 3},
+		ItemCounts:      driver.MapRunCounts{Total: 3, Succeeded: 3},
+	})
+	if err != nil {
+		t.Fatalf("SeedMapRun: %v", err)
+	}
+
+	run, err := m.DescribeMapRun(ctx, mapRunArn)
+	if err != nil || run.MaxConcurrency != 5 || run.ExecutionCounts.Total != 3 {
+		t.Fatalf("DescribeMapRun: %v %+v", err, run)
+	}
+
+	runs, err := m.ListMapRuns(ctx, exec.ARN)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("ListMapRuns: %v len=%d", err, len(runs))
+	}
+
+	newMax := int32(10)
+	if err := m.UpdateMapRun(ctx, driver.UpdateMapRunInput{MapRunArn: mapRunArn, MaxConcurrency: &newMax}); err != nil {
+		t.Fatalf("UpdateMapRun: %v", err)
+	}
+
+	run, _ = m.DescribeMapRun(ctx, mapRunArn)
+	if run.MaxConcurrency != 10 {
+		t.Fatalf("UpdateMapRun did not apply: %+v", run)
+	}
+
+	if _, err := m.DescribeMapRun(ctx,
+		"arn:aws:states:us-east-1:000000000000:mapRun:sm/e:missing"); !errors.IsNotFound(err) {
+		t.Fatalf("describe missing map run should be NotFound, got %v", err)
+	}
+}
+
+func TestTestState(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	res, err := m.TestState(ctx, driver.TestStateInput{Definition: definition, Input: `{"a":1}`})
+	if err != nil {
+		t.Fatalf("TestState: %v", err)
+	}
+
+	if res.Status != driver.TestStatusSucceeded || res.Output != `{"a":1}` {
+		t.Fatalf("unexpected TestState result: %+v", res)
+	}
+
+	if _, err := m.TestState(ctx, driver.TestStateInput{}); !errors.IsInvalidArgument(err) {
+		t.Fatalf("empty definition should be InvalidArgument, got %v", err)
+	}
+}
+
+func TestValidateStateMachineDefinition(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	ok, err := m.ValidateStateMachineDefinition(ctx, definition, driver.TypeStandard)
+	if err != nil || ok.Result != driver.ValidationResultOK || len(ok.Diagnostics) != 0 {
+		t.Fatalf("valid definition: %v %+v", err, ok)
+	}
+
+	bad, err := m.ValidateStateMachineDefinition(ctx, "{not json", driver.TypeStandard)
+	if err != nil || bad.Result != driver.ValidationResultFail || len(bad.Diagnostics) == 0 {
+		t.Fatalf("invalid JSON: %v %+v", err, bad)
+	}
+
+	empty, _ := m.ValidateStateMachineDefinition(ctx, "", driver.TypeStandard)
+	if empty.Result != driver.ValidationResultFail {
+		t.Fatalf("empty definition should FAIL: %+v", empty)
+	}
+}
+
 func TestInvalidArnFormats(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()

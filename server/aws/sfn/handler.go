@@ -62,6 +62,12 @@ func New(d sfndriver.SFN) *Handler {
 		"TagResource":                      h.tagResource,
 		"UntagResource":                    h.untagResource,
 		"ListTagsForResource":              h.listTagsForResource,
+		"RedriveExecution":                 h.redriveExecution,
+		"DescribeMapRun":                   h.describeMapRun,
+		"ListMapRuns":                      h.listMapRuns,
+		"UpdateMapRun":                     h.updateMapRun,
+		"TestState":                        h.testState,
+		"ValidateStateMachineDefinition":   h.validateStateMachineDefinition,
 	}
 
 	return h

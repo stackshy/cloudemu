@@ -29,6 +29,8 @@ const (
 	arnScheme = "arn"
 	// statesService is the SFN service segment of a states ARN.
 	statesService = "states"
+	// emptyJSON is the default output/input payload when none is supplied.
+	emptyJSON = "{}"
 )
 
 // Mock is an in-memory implementation of AWS Step Functions.
@@ -37,6 +39,7 @@ type Mock struct {
 	executions *memstore.Store[*execData]
 	activities *memstore.Store[*actData]
 	aliases    *memstore.Store[*aliasData]
+	mapRuns    *memstore.Store[*mapRunData]
 
 	tasksMu sync.RWMutex
 	tasks   map[string]string // taskToken -> executionArn (activity task bookkeeping)
@@ -68,6 +71,12 @@ type aliasData struct {
 	mu    sync.RWMutex
 }
 
+// mapRunData is a Map Run plus its own lock.
+type mapRunData struct {
+	run driver.MapRun
+	mu  sync.RWMutex
+}
+
 // New creates a new Step Functions mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
@@ -75,6 +84,7 @@ func New(opts *config.Options) *Mock {
 		executions: memstore.New[*execData](),
 		activities: memstore.New[*actData](),
 		aliases:    memstore.New[*aliasData](),
+		mapRuns:    memstore.New[*mapRunData](),
 		tasks:      make(map[string]string),
 		opts:       opts,
 	}
@@ -98,6 +108,10 @@ func (m *Mock) activityARN(name string) string {
 
 func (m *Mock) aliasARN(smName, alias string) string {
 	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "stateMachine:"+smName+":"+alias)
+}
+
+func (m *Mock) mapRunARN(smName, execName, id string) string {
+	return idgen.AWSARN("states", m.opts.Region, m.opts.AccountID, "mapRun:"+smName+"/"+execName+":"+id)
 }
 
 // smNameFromARN extracts the state machine name from a state machine ARN.
@@ -134,6 +148,11 @@ func validExecutionARN(arn string) bool {
 // validActivityARN reports whether arn has the SFN activity ARN shape.
 func validActivityARN(arn string) bool {
 	return statesResourcePrefix(arn, "activity:")
+}
+
+// validMapRunARN reports whether arn has the SFN Map Run ARN shape.
+func validMapRunARN(arn string) bool {
+	return statesResourcePrefix(arn, "mapRun:")
 }
 
 func copyTags(in map[string]string) map[string]string {
