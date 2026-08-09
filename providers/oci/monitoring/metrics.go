@@ -15,9 +15,17 @@ const (
 	// defaultPeriod is the aggregation interval, in seconds, applied when a
 	// query names none.
 	defaultPeriod = 60
-	// minResolution is the finest interval that still forms a non-empty bucket.
-	minResolution   = time.Second
+	// minResolution is the finest interval real OCI aggregates at; a finer one
+	// is a query it answers with a 400 rather than an empty result.
+	minResolution   = time.Minute
 	defaultLookback = 3 * time.Hour
+)
+
+// Metric shape limits real OCI enforces on PostMetricData, in characters.
+const (
+	maxNamespaceLength = 255
+	maxNameLength      = 255
+	maxDimensionLength = 256
 )
 
 // metricPoint is one recorded sample.
@@ -48,6 +56,12 @@ func (m *Mock) PostMetricData(_ context.Context, compartmentID, resourceGroup st
 	}
 
 	for i := range data {
+		if err := validateDatum(&data[i]); err != nil {
+			return err
+		}
+	}
+
+	for i := range data {
 		m.appendPoint(compartmentID, resourceGroup, &data[i])
 	}
 
@@ -64,7 +78,7 @@ func (m *Mock) ListOCIMetrics(
 		return nil, cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
 	}
 
-	selected := m.selectSeries(compartmentID, filter)
+	selected := m.selectSeries(compartmentID, filter, nil)
 	out := make([]driver.OCIMetric, 0, len(selected))
 
 	for _, s := range selected {
@@ -91,9 +105,9 @@ func (m *Mock) SummarizeOCIMetrics(
 		return nil, cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
 	}
 
-	sel, ok := parseSelector(query.Query)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "malformed query %q", query.Query)
+	sel, err := parseSelector(query.Query)
+	if err != nil {
+		return nil, err
 	}
 
 	step, err := resolutionOf(sel.interval, query.Resolution)
@@ -105,11 +119,11 @@ func (m *Mock) SummarizeOCIMetrics(
 		Namespace:     query.Namespace,
 		ResourceGroup: query.ResourceGroup,
 		Name:          sel.metricName,
-		Dimensions:    mergeTags(query.Dimensions, sel.dimensions),
+		Dimensions:    query.Dimensions,
 	}
 
 	start, end := m.window(query.StartTime, query.EndTime)
-	selected := m.selectSeries(compartmentID, filter)
+	selected := m.selectSeries(compartmentID, filter, sel.dimensions)
 	out := make([]driver.OCIMetric, 0, len(selected))
 
 	for _, s := range selected {
@@ -160,8 +174,11 @@ func (m *Mock) appendPoint(compartmentID, resourceGroup string, d *driver.Metric
 	s.points = append(s.points, metricPoint{timestamp: ts, value: d.Value})
 }
 
-// selectSeries returns the series in a compartment matching the filter.
-func (m *Mock) selectSeries(compartmentID string, filter driver.OCIMetricFilter) []*metricSeries {
+// selectSeries returns the series in a compartment matching the filter and
+// every dimension predicate a query's selector carried.
+func (m *Mock) selectSeries(
+	compartmentID string, filter driver.OCIMetricFilter, preds []dimensionPredicate,
+) []*metricSeries {
 	want := scope.Scope{Compartment: compartmentID}
 
 	m.mu.RLock()
@@ -170,7 +187,7 @@ func (m *Mock) selectSeries(compartmentID string, filter driver.OCIMetricFilter)
 	var out []*metricSeries
 
 	for _, s := range m.series.SortedValues() {
-		if !s.place.Matches(want) || !s.matches(filter) {
+		if !s.place.Matches(want) || !s.matches(filter, preds) {
 			continue
 		}
 
@@ -201,21 +218,30 @@ func (m *Mock) window(start, end time.Time) (from, to time.Time) {
 	return start, end
 }
 
-func (s *metricSeries) matches(filter driver.OCIMetricFilter) bool {
-	if filter.Namespace != "" && s.namespace != filter.Namespace {
+func (s *metricSeries) matches(filter driver.OCIMetricFilter, preds []dimensionPredicate) bool {
+	switch {
+	case filter.Namespace != "" && s.namespace != filter.Namespace:
+		return false
+	case filter.ResourceGroup != "" && s.resourceGroup != filter.ResourceGroup:
+		return false
+	case filter.Name != "" && s.name != filter.Name:
 		return false
 	}
 
-	if filter.ResourceGroup != "" && s.resourceGroup != filter.ResourceGroup {
-		return false
-	}
+	return s.matchesDimensions(filter.Dimensions, preds)
+}
 
-	if filter.Name != "" && s.name != filter.Name {
-		return false
-	}
-
-	for k, v := range filter.Dimensions {
+// matchesDimensions tests a series against a filter's equality dimensions and
+// a selector's predicates, both of which must hold.
+func (s *metricSeries) matchesDimensions(dimensions map[string]string, preds []dimensionPredicate) bool {
+	for k, v := range dimensions {
 		if s.dimensions[k] != v {
+			return false
+		}
+	}
+
+	for i := range preds {
+		if !preds[i].matches(s.dimensions) {
 			return false
 		}
 	}
@@ -243,7 +269,7 @@ func seriesKey(compartmentID, resourceGroup string, d *driver.MetricDatum) strin
 
 // resolutionOf returns the interval a summarize query aggregates by, preferring
 // an explicit resolution over the selector's own. Anything finer than
-// minResolution would collapse to a zero-width bucket, so it is refused.
+// minResolution is a query real OCI refuses, so this one refuses it too.
 func resolutionOf(interval time.Duration, resolution string) (time.Duration, error) {
 	step := interval
 	if resolution != "" {
@@ -252,10 +278,72 @@ func resolutionOf(interval time.Duration, resolution string) (time.Duration, err
 
 	if step < minResolution {
 		return 0, cerrors.Newf(cerrors.InvalidArgument,
-			"resolution %s is finer than the %s minimum", step, minResolution)
+			"resolution %s is finer than OCI's %s minimum", step, resolutionLabel(minResolution))
 	}
 
 	return step, nil
+}
+
+// validateDatum rejects a data point real OCI would reject. Namespace and
+// dimension shapes are checked; the metadata, per-request datapoint cap and
+// ingestion time window are not.
+func validateDatum(d *driver.MetricDatum) error {
+	switch {
+	case d.Namespace == "":
+		return cerrors.New(cerrors.InvalidArgument, "namespace is required")
+	case len(d.Namespace) > maxNamespaceLength:
+		return cerrors.Newf(cerrors.InvalidArgument, "namespace exceeds %d characters", maxNamespaceLength)
+	case !validNamespace(d.Namespace):
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"namespace %q must start with a letter and hold only letters, digits and underscores", d.Namespace)
+	case reservedNamespace(d.Namespace):
+		return cerrors.Newf(cerrors.InvalidArgument, "namespace %q uses a prefix Oracle reserves", d.Namespace)
+	case d.MetricName == "":
+		return cerrors.New(cerrors.InvalidArgument, "metric name is required")
+	case len(d.MetricName) > maxNameLength:
+		return cerrors.Newf(cerrors.InvalidArgument, "metric name exceeds %d characters", maxNameLength)
+	}
+
+	return validateDimensions(d.Dimensions)
+}
+
+// validateDimensions enforces OCI's dimension key and value shapes. A key
+// excludes periods and spaces; neither key nor value may be empty.
+func validateDimensions(dimensions map[string]string) error {
+	for k, v := range dimensions {
+		switch {
+		case k == "" || v == "":
+			return cerrors.New(cerrors.InvalidArgument, "dimension keys and values must not be empty")
+		case len(k) > maxDimensionLength || len(v) > maxDimensionLength:
+			return cerrors.Newf(cerrors.InvalidArgument, "dimension %q exceeds %d characters", k, maxDimensionLength)
+		case strings.ContainsAny(k, ". "):
+			return cerrors.Newf(cerrors.InvalidArgument, "dimension key %q must not hold a period or a space", k)
+		}
+	}
+
+	return nil
+}
+
+// validNamespace reports OCI's namespace shape: a letter, then letters, digits
+// or underscores.
+func validNamespace(s string) bool {
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case i > 0 && (r == '_' || (r >= '0' && r <= '9')):
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+// reservedNamespace reports the prefixes OCI keeps for its own service metrics.
+func reservedNamespace(s string) bool {
+	lower := strings.ToLower(s)
+
+	return strings.HasPrefix(lower, "oci_") || strings.HasPrefix(lower, "oracle_")
 }
 
 // aggregate buckets samples into fixed periods and reduces each with stat. A

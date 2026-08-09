@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -512,4 +513,83 @@ func TestDriverWithoutOCICapability(t *testing.T) {
 	resp, raw := do(t, ts, http.MethodGet, alarmsPath+"?compartmentId="+compartmentA, "")
 	require.Equal(t, http.StatusNotImplemented, resp.StatusCode)
 	assert.Equal(t, "NotImplemented", decode[ocirest.ErrorBody](t, raw).Code)
+}
+
+// TestCreateAlarmRejectsUnsupportedFields covers the alarm fields the wire
+// shape carries that this emulator does not act on: they are refused rather
+// than accepted and dropped.
+func TestCreateAlarmRejectsUnsupportedFields(t *testing.T) {
+	ts := newServer(t)
+	created := createAlarm(t, ts, compartmentA, "patchable", "CpuUtilization[1m].mean() > 80")
+
+	id, ok := created["id"].(string)
+	require.True(t, ok)
+
+	base := `"displayName":"suppressed","compartmentId":"` + compartmentA +
+		`","namespace":"` + namespace + `","query":"CpuUtilization[1m].mean() > 80"`
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"create with suppression", http.MethodPost, alarmsPath,
+			`{` + base + `,"suppression":{"timeSuppressFrom":"2026-08-01T00:00:00Z"}}`},
+		{"create with overrides", http.MethodPost, alarmsPath,
+			`{` + base + `,"overrides":[{"severity":"INFO"}]}`},
+		{"update with suppression", http.MethodPut, alarmsPath + "/" + id,
+			`{"suppression":{"timeSuppressFrom":"2026-08-01T00:00:00Z"}}`},
+		{"update with overrides", http.MethodPut, alarmsPath + "/" + id, `{"overrides":[{"severity":"INFO"}]}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, raw := do(t, ts, tc.method, tc.path, tc.body)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode, string(raw))
+
+			body := decode[ocirest.ErrorBody](t, raw)
+			assert.Equal(t, "InvalidParameter", body.Code)
+			assert.Contains(t, body.Message, "not supported")
+		})
+	}
+}
+
+// TestPostMetricDataLimits covers the batch and shape limits real OCI enforces
+// on ingestion.
+func TestPostMetricDataLimits(t *testing.T) {
+	ts := newServer(t)
+
+	entries := make([]string, 0, 51)
+	for i := range 51 {
+		entries = append(entries, `{"namespace":"`+namespace+`","compartmentId":"`+compartmentA+
+			`","name":"Cpu`+strconv.Itoa(i)+`","datapoints":[{"timestamp":"2026-08-01T12:00:00Z","value":1}]}`)
+	}
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"batch over the limit", `{"metricData":[` + strings.Join(entries, ",") + `]}`},
+		{"reserved namespace", `{"metricData":[{"namespace":"oci_computeagent","compartmentId":"` + compartmentA +
+			`","name":"Cpu","datapoints":[{"timestamp":"2026-08-01T12:00:00Z","value":1}]}]}`},
+		{"dimension key with a period", `{"metricData":[{"namespace":"` + namespace + `","compartmentId":"` +
+			compartmentA + `","name":"Cpu","dimensions":{"resource.id":"vm-1"},` +
+			`"datapoints":[{"timestamp":"2026-08-01T12:00:00Z","value":1}]}]}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, raw := do(t, ts, http.MethodPost, metricsPath, tc.body)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode, string(raw))
+			assert.Equal(t, "InvalidParameter", decode[ocirest.ErrorBody](t, raw).Code)
+		})
+	}
+
+	t.Run("the limit itself is accepted", func(t *testing.T) {
+		body := `{"metricData":[` + strings.Join(entries[:50], ",") + `]}`
+
+		resp, raw := do(t, ts, http.MethodPost, metricsPath, body)
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	})
 }

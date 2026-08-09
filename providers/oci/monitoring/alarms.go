@@ -2,6 +2,8 @@ package monitoring
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -18,13 +20,6 @@ func (m *Mock) CreateOCIAlarm(_ context.Context, spec driver.OCIAlarmSpec) (*dri
 		return nil, err
 	}
 
-	// Real OCI allows duplicate display names; the portable driver addresses
-	// alarms by name, so this mock requires them unique per compartment.
-	if a := m.lookupByName(spec.CompartmentID, spec.DisplayName); a != nil {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "alarm %q already exists in compartment %s",
-			spec.DisplayName, spec.CompartmentID)
-	}
-
 	now := m.opts.Clock.Now().UTC()
 	rec := &alarmRecord{
 		id:             idgen.OCID("alarm", m.opts.Realm, m.opts.OCIRegion()),
@@ -36,10 +31,33 @@ func (m *Mock) CreateOCIAlarm(_ context.Context, spec driver.OCIAlarmSpec) (*dri
 		timeUpdated:    now,
 	}
 
-	m.alarms.Set(rec.id, rec)
+	if err := m.insertAlarm(rec); err != nil {
+		return nil, err
+	}
+
 	m.evaluateAlarm(rec)
 
 	return m.snapshot(rec), nil
+}
+
+// insertAlarm stores an alarm unless its compartment already holds its display
+// name. Real OCI allows duplicate display names; the portable driver addresses
+// alarms by name, so this mock requires them unique per compartment. The scan
+// and the insert share one lock, so two concurrent creates cannot both win.
+func (m *Mock) insertAlarm(rec *alarmRecord) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, other := range m.alarms.SortedValues() {
+		if other.place.Compartment == rec.place.Compartment && other.spec.DisplayName == rec.spec.DisplayName {
+			return cerrors.Newf(cerrors.AlreadyExists, "alarm %q already exists in compartment %s",
+				rec.spec.DisplayName, rec.place.Compartment)
+		}
+	}
+
+	m.alarms.Set(rec.id, rec)
+
+	return nil
 }
 
 // GetOCIAlarm returns the alarm with the given OCID.
@@ -90,6 +108,7 @@ func (m *Mock) UpdateOCIAlarm(_ context.Context, id string, spec driver.OCIAlarm
 	m.mu.Lock()
 	rec.spec = spec
 	rec.timeUpdated = m.opts.Clock.Now().UTC()
+	rec.breachSince = time.Time{} // A new condition starts a new pending window.
 	m.mu.Unlock()
 
 	m.evaluateAlarm(rec)
@@ -144,8 +163,8 @@ func (m *Mock) evaluateAlarm(rec *alarmRecord) {
 // any status change. The spec is passed in rather than read off rec because
 // PostMetricData evaluates outside m.mu, where a concurrent update races it.
 func (m *Mock) evaluate(rec *alarmRecord, spec *driver.OCIAlarmSpec) {
-	cond, ok := parseQuery(spec.Query)
-	if !ok {
+	cond, err := parseQuery(spec.Query)
+	if err != nil {
 		return
 	}
 
@@ -159,12 +178,11 @@ func (m *Mock) evaluate(rec *alarmRecord, spec *driver.OCIAlarmSpec) {
 		Namespace:     spec.Namespace,
 		ResourceGroup: spec.ResourceGroup,
 		Name:          cond.metricName,
-		Dimensions:    cond.dimensions,
 	}
 
 	var values []float64
 
-	for _, s := range m.selectSeries(spec.MetricCompartmentID, filter) {
+	for _, s := range m.selectSeries(spec.MetricCompartmentID, filter, cond.dimensions) {
 		values = append(values, valuesIn(m.pointsOf(s), end.Add(-cond.interval), end, true)...)
 	}
 
@@ -173,11 +191,37 @@ func (m *Mock) evaluate(rec *alarmRecord, spec *driver.OCIAlarmSpec) {
 	}
 
 	if compare(computeStat(values, cond.stat), cond.threshold, cond.operator) {
-		m.transition(rec, StatusFiring, "Alarm query matched")
+		if m.breaching(rec, end, pendingOf(spec.PendingDuration)) {
+			m.transition(rec, StatusFiring, "Alarm query matched")
+		}
+
 		return
 	}
 
+	m.clearBreach(rec)
 	m.transition(rec, StatusOK, "Alarm query did not match")
+}
+
+// breaching records when a breach was first seen and reports whether it has
+// since persisted for the alarm's pending duration, which real OCI requires
+// before an alarm fires.
+func (m *Mock) breaching(rec *alarmRecord, now time.Time, pending time.Duration) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if rec.breachSince.IsZero() {
+		rec.breachSince = now
+	}
+
+	return now.Sub(rec.breachSince) >= pending
+}
+
+// clearBreach forgets a breach the alarm has recovered from.
+func (m *Mock) clearBreach(rec *alarmRecord) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rec.breachSince = time.Time{}
 }
 
 // transition records a status change and its history entry.
@@ -252,6 +296,10 @@ func validateSpec(spec *driver.OCIAlarmSpec) error {
 		return cerrors.New(cerrors.InvalidArgument, "query is required")
 	}
 
+	if err := checkDimensions(spec.Query); err != nil {
+		return err
+	}
+
 	if spec.MetricCompartmentID == "" {
 		spec.MetricCompartmentID = spec.CompartmentID
 	}
@@ -278,4 +326,56 @@ func alarmDuration(raw string) time.Duration {
 	}
 
 	return defaultPeriod * time.Second
+}
+
+// pendingOf reads OCI's pendingDuration, an ISO-8601 duration such as PT5M.
+// An absent or unreadable one fires on the first breach: this mock evaluates
+// on PostMetricData rather than on a timer, so OCI's PT1M default would never
+// elapse on its own.
+func pendingOf(raw string) time.Duration {
+	body, found := strings.CutPrefix(strings.ToUpper(strings.TrimSpace(raw)), "P")
+	if !found {
+		return 0
+	}
+
+	date, clock, _ := strings.Cut(body, "T")
+
+	days, ok := isoParts(date, map[byte]time.Duration{'D': 24 * time.Hour})
+	if !ok {
+		return 0
+	}
+
+	rest, ok := isoParts(clock, map[byte]time.Duration{'H': time.Hour, 'M': time.Minute, 'S': time.Second})
+	if !ok {
+		return 0
+	}
+
+	return days + rest
+}
+
+// isoParts sums the <number><unit> pairs of one half of an ISO-8601 duration.
+func isoParts(s string, units map[byte]time.Duration) (total time.Duration, ok bool) {
+	digits := 0
+
+	for i := range len(s) {
+		if s[i] >= '0' && s[i] <= '9' {
+			digits++
+			continue
+		}
+
+		unit, known := units[s[i]]
+		if !known || digits == 0 {
+			return 0, false
+		}
+
+		n, err := strconv.Atoi(s[i-digits : i])
+		if err != nil {
+			return 0, false
+		}
+
+		total += time.Duration(n) * unit
+		digits = 0
+	}
+
+	return total, digits == 0
 }

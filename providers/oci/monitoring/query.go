@@ -27,13 +27,31 @@ const (
 	fnCount = "count"
 )
 
+// Dimension operators MQL's predicate accepts. The two equality operators are
+// exact string tests; the two pattern operators are recognized only to refuse
+// them, since guessing their pattern flavor would answer wrongly rather than
+// emptily.
+const (
+	opEqual    = "="
+	opNotEqual = "!="
+	opMatch    = "=~"
+	opNotMatch = "!~"
+)
+
+// dimensionPredicate is one {k <op> "v"} test from a selector's predicate.
+type dimensionPredicate struct {
+	key   string
+	op    string
+	value string
+}
+
 // selector is the metric half of an OCI query, e.g. CpuUtilization[1m].mean().
 // Dimensions come from the optional {k = "v"} predicate between the two.
 type selector struct {
 	metricName string
 	stat       string
 	interval   time.Duration
-	dimensions map[string]string
+	dimensions []dimensionPredicate
 }
 
 // condition is a selector plus the threshold comparison an alarm query adds.
@@ -61,39 +79,40 @@ func comparisons() []comparison {
 	}
 }
 
-// parseSelector reads the metric half of OCI's query language, returning the
-// unconsumed remainder for a caller that expects a comparison after it.
-func parseSelector(query string) (selector, bool) {
-	sel, _, ok := splitSelector(query)
+// parseSelector reads the metric half of OCI's query language.
+func parseSelector(query string) (selector, error) {
+	sel, _, err := splitSelector(query)
 
-	return sel, ok
+	return sel, err
 }
 
-func splitSelector(query string) (sel selector, rest string, ok bool) {
+// splitSelector parses a selector and returns the unconsumed remainder for a
+// caller that expects a comparison after it.
+func splitSelector(query string) (sel selector, rest string, err error) {
 	q := strings.TrimSpace(query)
 
 	openIdx := strings.Index(q, "[")
 	closeIdx := strings.Index(q, "]")
 
 	if openIdx <= 0 || closeIdx <= openIdx {
-		return selector{}, "", false
+		return selector{}, "", malformed(query)
 	}
 
-	dimensions, tail, ok := splitDimensions(q[closeIdx+1:])
-	if !ok {
-		return selector{}, "", false
+	dimensions, tail, err := splitDimensions(q[closeIdx+1:], query)
+	if err != nil {
+		return selector{}, "", err
 	}
 
 	paren := strings.Index(tail, "(")
 	end := strings.Index(tail, ")")
 
 	if !strings.HasPrefix(tail, ".") || paren < 1 || end < paren {
-		return selector{}, "", false
+		return selector{}, "", malformed(query)
 	}
 
 	stat, ok := statFor(tail[1:paren])
 	if !ok {
-		return selector{}, "", false
+		return selector{}, "", malformed(query)
 	}
 
 	return selector{
@@ -101,50 +120,124 @@ func splitSelector(query string) (sel selector, rest string, ok bool) {
 		stat:       stat,
 		interval:   alarmDuration(strings.TrimSpace(q[openIdx+1 : closeIdx])),
 		dimensions: dimensions,
-	}, tail[end+1:], true
+	}, tail[end+1:], nil
 }
 
 // splitDimensions reads MQL's optional dimension predicate — the
 // {k = "v", ...} that scopes a selector to one series — and the rest after it.
-// Only the equality conjunction is understood; anything richer fails to parse.
-func splitDimensions(tail string) (dimensions map[string]string, rest string, ok bool) {
+func splitDimensions(tail, query string) (dimensions []dimensionPredicate, rest string, err error) {
 	if !strings.HasPrefix(tail, "{") {
-		return nil, tail, true
+		return nil, tail, nil
 	}
 
 	closeIdx := strings.Index(tail, "}")
 	if closeIdx < 0 {
-		return nil, "", false
+		return nil, "", malformed(query)
 	}
 
-	dimensions = make(map[string]string)
+	dimensions, err = parsePredicates(tail[1:closeIdx])
+	if err != nil {
+		return nil, "", err
+	}
 
-	for _, pair := range strings.Split(tail[1:closeIdx], ",") {
-		key, value, found := strings.Cut(pair, "=")
-		if !found || strings.TrimSpace(key) == "" {
-			return nil, "", false
+	return dimensions, tail[closeIdx+1:], nil
+}
+
+// parsePredicates reads the comma-separated body of a dimension predicate.
+func parsePredicates(body string) ([]dimensionPredicate, error) {
+	out := make([]dimensionPredicate, 0, strings.Count(body, ",")+1)
+
+	for _, pair := range strings.Split(body, ",") {
+		key, op, value, ok := splitPredicate(pair)
+		if !ok || key == "" {
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "malformed dimension predicate %q", pair)
 		}
 
-		dimensions[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"`)
+		if op == opMatch || op == opNotMatch {
+			return nil, cerrors.Newf(cerrors.InvalidArgument,
+				"dimension operator %q is not supported; use %q or %q", op, opEqual, opNotEqual)
+		}
+
+		out = append(out, dimensionPredicate{key: key, op: op, value: value})
 	}
 
-	return dimensions, tail[closeIdx+1:], true
+	return out, nil
+}
+
+// splitPredicate cuts one k <op> "v" pair at its operator. The earliest
+// operator wins, and the longest at that position, so neither is a value
+// containing one mistaken for the operator nor "=~" read as "=".
+func splitPredicate(pair string) (key, op, value string, ok bool) {
+	at := -1
+
+	for _, candidate := range []string{opEqual, opNotEqual, opMatch, opNotMatch} {
+		i := strings.Index(pair, candidate)
+		if i < 0 {
+			continue
+		}
+
+		if at < 0 || i < at || (i == at && len(candidate) > len(op)) {
+			at, op = i, candidate
+		}
+	}
+
+	if at < 0 {
+		return "", "", "", false
+	}
+
+	return strings.TrimSpace(pair[:at]), op, unquote(pair[at+len(op):]), true
+}
+
+func unquote(value string) string {
+	return strings.Trim(strings.TrimSpace(value), `"`)
+}
+
+// checkDimensions reports a dimension predicate this parser refuses, so an
+// alarm carrying one is rejected rather than stored to never fire.
+func checkDimensions(query string) error {
+	open := strings.Index(query, "{")
+	if open < 0 {
+		return nil
+	}
+
+	end := strings.Index(query[open:], "}")
+	if end < 0 {
+		return nil
+	}
+
+	_, err := parsePredicates(query[open+1 : open+end])
+
+	return err
 }
 
 // parseQuery reads the single-metric threshold form of OCI's query language.
 // Anything richer is stored verbatim and simply never fires.
-func parseQuery(query string) (condition, bool) {
-	sel, rest, ok := splitSelector(query)
-	if !ok {
-		return condition{}, false
+func parseQuery(query string) (condition, error) {
+	sel, rest, err := splitSelector(query)
+	if err != nil {
+		return condition{}, err
 	}
 
 	operator, threshold, ok := parseComparison(rest)
 	if !ok {
-		return condition{}, false
+		return condition{}, malformed(query)
 	}
 
-	return condition{selector: sel, operator: operator, threshold: threshold}, true
+	return condition{selector: sel, operator: operator, threshold: threshold}, nil
+}
+
+func malformed(query string) error {
+	return cerrors.Newf(cerrors.InvalidArgument, "malformed query %q", query)
+}
+
+// matches evaluates one predicate against a series' dimensions. A series
+// without the key reads as empty, which "!=" therefore accepts.
+func (p *dimensionPredicate) matches(dimensions map[string]string) bool {
+	if p.op == opNotEqual {
+		return dimensions[p.key] != p.value
+	}
+
+	return dimensions[p.key] == p.value
 }
 
 func parseComparison(raw string) (operator string, threshold float64, ok bool) {

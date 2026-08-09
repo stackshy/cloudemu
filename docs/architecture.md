@@ -2,7 +2,7 @@
 
 ## Overview
 
-CloudEmu follows a three-layer architecture that separates portable API concerns, driver interfaces, and provider-specific implementations. This design allows each cloud provider to implement the same driver interface while the portable API layer adds cross-cutting concerns such as recording, metrics collection, rate limiting, error injection, and latency simulation. AWS, Azure, and GCP are fully implemented; OCI is an in-progress fourth provider whose foundation is in place but whose services are not yet built (see [Fourth provider: OCI](#fourth-provider-oci-foundation-only)).
+CloudEmu follows a three-layer architecture that separates portable API concerns, driver interfaces, and provider-specific implementations. This design allows each cloud provider to implement the same driver interface while the portable API layer adds cross-cutting concerns such as recording, metrics collection, rate limiting, error injection, and latency simulation. AWS, Azure, and GCP are fully implemented; OCI is an in-progress fourth provider whose foundation is in place and whose services arrive incrementally, with the generated [capability coverage](coverage/README.md) as the source of truth for which exist (see [Fourth provider: OCI](#fourth-provider-oci-in-progress)).
 
 ## Three-Layer Architecture
 
@@ -41,18 +41,16 @@ Each service defines a minimal Go interface in `<service>/driver/driver.go`. The
 
 ### Layer 3: Provider Implementations
 
-The bottom layer contains the actual mock implementations for each cloud provider. These live in `providers/aws/`, `providers/azure/`, and `providers/gcp/`. Each implementation uses `internal/memstore.Store[V]` as its backing data structure -- a generic, thread-safe in-memory store. All state lives in process memory with no external dependencies.
+The bottom layer contains the actual mock implementations for each cloud provider. These live in `providers/aws/`, `providers/azure/`, `providers/gcp/`, and — for the services built so far — `providers/oci/`. Each implementation uses `internal/memstore.Store[V]` as its backing data structure -- a generic, thread-safe in-memory store. All state lives in process memory with no external dependencies.
 
-### Fourth provider: OCI (foundation only)
+### Fourth provider: OCI (in progress)
 
-A fourth provider, OCI, exists in `providers/oci/` but is **not yet a Layer 3 implementation**. Its foundation is deliberately staged on `development` (identity options, OCID generation in `internal/idgen/ocid.go`, the shared `services/scope` compartment scoping, the `server/wire/ocirest` wire format, and the `server/oci/workrequest` async envelope), and services are meant to land one PR at a time — see [oci-conventions.md](oci-conventions.md).
+A fourth provider, OCI, lives in `providers/oci/`. Its foundation is staged on `development` (identity options, OCID generation in `internal/idgen/ocid.go`, the shared `services/scope` compartment scoping, the `server/wire/ocirest` wire format, and the `server/oci/workrequest` async envelope), and its services land one PR at a time — see [oci-conventions.md](oci-conventions.md). Each one that lands follows the same three-layer shape as the others: a `providers/oci/<service>/` package with a `memstore`-backed mock implementing the shared `services/<service>/driver` interface, plus a `server/oci/<service>/` wire handler.
 
-Because no services are built yet, OCI diverges from the pattern above in two documented ways:
+Until every service has landed, OCI diverges from the pattern above in two documented ways:
 
-- **No per-service backends.** `providers/oci/` has no `<service>/` subpackages and no `memstore`-backed mocks. `providers/oci.Provider` declares each service as a bare driver interface rather than a concrete mock, so an unimplemented service reads as `nil`; `oci.New()` populates only identity, never a service. A fresh `NewOCI()` therefore emulates nothing. The generated [capability coverage](coverage/README.md) reflects this — every OCI cell is `—`.
-- **Resource discovery has no OCI branch.** The per-resource ARN/ID formatters in `services/resourcediscovery` switch on AWS/Azure/GCP and fall through to a default for OCI, so OCI resources would not get native OCIDs from discovery. This is harmless until OCI services exist, but must be filled in alongside them.
-
-When a service does land it follows the same three-layer shape as the others — `providers/oci/<service>/` with a `memstore`-backed mock implementing the shared `services/<service>/driver` interface.
+- **A partially populated provider.** `providers/oci.Provider` declares each service as a bare driver interface rather than a concrete mock, so a service that has not landed yet reads as `nil` instead of failing to compile. The generated [capability coverage](coverage/README.md) is the source of truth for which OCI services exist and what each one implements — read it rather than any list in prose.
+- **Resource discovery has no OCI branch.** The per-resource ARN/ID formatters in `services/resourcediscovery` switch on AWS/Azure/GCP and fall through to a default for OCI, so OCI resources do not yet get native OCIDs from discovery. This must be filled in alongside the services that produce discoverable resources.
 
 ## Cross-Service Engines
 

@@ -4,6 +4,7 @@ import (
 	"math"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -404,19 +405,25 @@ func TestParseQuery(t *testing.T) {
 		{"count not equal", "Hits[1m].count() != 0", true, "Hits", "SampleCount", "NotEqualToThreshold", 0, time.Minute},
 		{"dimension predicate", `Cpu[1m]{resourceId = "vm-1"}.mean() > 80`, true,
 			"Cpu", "Average", "GreaterThanThreshold", 80, time.Minute},
+		{"inequality predicate", `Cpu[1m]{resourceId != "vm-1"}.mean() > 80`, true,
+			"Cpu", "Average", "GreaterThanThreshold", 80, time.Minute},
 		{"no comparison", "CpuUtilization[1m].mean()", false, "", "", "", 0, 0},
 		{"no interval", "CpuUtilization.mean() > 1", false, "", "", "", 0, 0},
 		{"unknown aggregation", "CpuUtilization[1m].p99() > 1", false, "", "", "", 0, 0},
 		{"unclosed predicate", `Cpu[1m]{resourceId = "vm-1".mean() > 1`, false, "", "", "", 0, 0},
+		{"operatorless predicate", `Cpu[1m]{resourceId}.mean() > 1`, false, "", "", "", 0, 0},
+		{"regex predicate", `Cpu[1m]{resourceId =~ "vm-.*"}.mean() > 1`, false, "", "", "", 0, 0},
+		{"negated regex predicate", `Cpu[1m]{resourceId !~ "vm-.*"}.mean() > 1`, false, "", "", "", 0, 0},
 		{"garbage", "hello", false, "", "", "", 0, 0},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cond, ok := parseQuery(tc.query)
-			require.Equal(t, tc.ok, ok)
+			cond, err := parseQuery(tc.query)
+			require.Equal(t, tc.ok, err == nil)
 
 			if !tc.ok {
+				assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 				return
 			}
 
@@ -443,11 +450,14 @@ func TestFormatQueryRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `CpuUtilization[5m]{az = "ad-1", resourceId = "vm-1"}.max() <= 12.5`, query)
 
-	cond, ok := parseQuery(query)
-	require.True(t, ok)
+	cond, err := parseQuery(query)
+	require.NoError(t, err)
 	assert.Equal(t, cfg.ComparisonOperator, cond.operator)
 	assert.InDelta(t, cfg.Threshold, cond.threshold, 0.001)
-	assert.Equal(t, cfg.Dimensions, cond.dimensions)
+	assert.Equal(t, []dimensionPredicate{
+		{key: "az", op: opEqual, value: "ad-1"},
+		{key: "resourceId", op: opEqual, value: "vm-1"},
+	}, cond.dimensions)
 }
 
 func TestFormatQueryRejectsUnusableAlarms(t *testing.T) {
@@ -476,10 +486,11 @@ func TestFormatQueryRejectsUnusableAlarms(t *testing.T) {
 	}
 }
 
-// TestSummarizeSubSecondResolution covers a resolution that truncated to a zero
-// step and spun aggregate's bucket loop forever. It runs in its own goroutine so
-// a regression fails the test instead of hanging the suite.
-func TestSummarizeSubSecondResolution(t *testing.T) {
+// TestSummarizeResolutionFloor covers the resolutions real OCI rejects,
+// including the sub-second one that truncated to a zero step and spun
+// aggregate's bucket loop forever. It runs in its own goroutine so a regression
+// fails the test instead of hanging the suite.
+func TestSummarizeResolutionFloor(t *testing.T) {
 	m, now := newMock(t)
 	post(t, m, compartmentA, "CpuUtilization", now.Add(-30*time.Second), 10, 20)
 
@@ -491,6 +502,9 @@ func TestSummarizeSubSecondResolution(t *testing.T) {
 	}{
 		{"sub-second selector interval", "CpuUtilization[500ms].mean()", "", cerrors.InvalidArgument},
 		{"sub-second resolution override", "CpuUtilization[1m].mean()", "500ms", cerrors.InvalidArgument},
+		{"sub-minute selector interval", "CpuUtilization[30s].mean()", "", cerrors.InvalidArgument},
+		{"sub-minute resolution override", "CpuUtilization[1m].mean()", "30s", cerrors.InvalidArgument},
+		{"the minimum itself is accepted", "CpuUtilization[1m].mean()", "1m", cerrors.OK},
 		{"non-positive resolution falls back", "CpuUtilization[1m].mean()", "0s", cerrors.OK},
 	}
 
@@ -665,4 +679,307 @@ func TestDestinationsFoldsEveryActionList(t *testing.T) {
 
 	assert.Equal(t, []string{"topic-a", "topic-b", "topic-c", "topic-d"}, destinations(&cfg))
 	assert.Equal(t, []string{}, destinations(&driver.AlarmConfig{}))
+}
+
+// TestConcurrentCreateHasOneWinner races two creates of the same display name.
+// Unless the uniqueness scan and the insert share one lock, both see the name
+// absent and both insert, leaving two alarms a lookup by name resolves at random.
+func TestConcurrentCreateHasOneWinner(t *testing.T) {
+	const (
+		rounds   = 200
+		creators = 8
+	)
+
+	for i := range rounds {
+		m, _ := newMock(t)
+		name := "racy-" + strconv.Itoa(i)
+
+		var (
+			wg      sync.WaitGroup
+			mu      sync.Mutex
+			winners int
+		)
+
+		// Both creates wait on the same gate, so they reach the uniqueness
+		// scan together rather than one finishing before the other starts.
+		gate := make(chan struct{})
+
+		wg.Add(creators)
+
+		for range creators {
+			go func() {
+				defer wg.Done()
+
+				<-gate
+
+				_, err := m.CreateOCIAlarm(t.Context(), alarmSpec(compartmentA, name, "CpuUtilization[1m].mean() > 80"))
+				if err == nil {
+					mu.Lock()
+					winners++
+					mu.Unlock()
+				}
+			}()
+		}
+
+		close(gate)
+		wg.Wait()
+
+		require.Equal(t, 1, winners, "exactly one create must win")
+
+		alarms, err := m.ListOCIAlarms(t.Context(), compartmentA)
+		require.NoError(t, err)
+		require.Len(t, alarms, 1)
+	}
+}
+
+// pendingMock builds a mock whose clock the caller can advance.
+func pendingMock(t *testing.T) (*Mock, *config.FakeClock, time.Time) {
+	t.Helper()
+
+	now := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
+	clock := config.NewFakeClock(now)
+
+	return New(config.NewOptions(
+		config.WithRegion("us-ashburn-1"),
+		config.WithCompartmentID(compartmentA),
+		config.WithClock(clock),
+	)), clock, now
+}
+
+// TestAlarmWaitsForPendingDuration covers pendingDuration: the breach must
+// persist it before the alarm fires, rather than firing on the first breaching
+// datapoint.
+func TestAlarmWaitsForPendingDuration(t *testing.T) {
+	m, clock, now := pendingMock(t)
+	ctx := t.Context()
+
+	spec := alarmSpec(compartmentA, "slow-burn", "CpuUtilization[1m].mean() > 80")
+	spec.PendingDuration = "PT5M"
+
+	created, err := m.CreateOCIAlarm(ctx, spec)
+	require.NoError(t, err)
+
+	post(t, m, compartmentA, "CpuUtilization", now.Add(-10*time.Second), 95)
+
+	waiting, err := m.GetOCIAlarm(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusOK, waiting.Status, "one breaching datapoint must not fire a PT5M alarm")
+
+	clock.Advance(6 * time.Minute)
+	post(t, m, compartmentA, "CpuUtilization", clock.Now().UTC().Add(-10*time.Second), 95)
+
+	fired, err := m.GetOCIAlarm(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusFiring, fired.Status, "a breach older than the pending duration must fire")
+}
+
+// TestRecoveryRestartsPendingWindow covers the other half: a breach that
+// recovers before the pending duration elapses starts the window over.
+func TestRecoveryRestartsPendingWindow(t *testing.T) {
+	m, clock, now := pendingMock(t)
+	ctx := t.Context()
+
+	spec := alarmSpec(compartmentA, "flapping", "CpuUtilization[1m].mean() > 80")
+	spec.PendingDuration = "PT5M"
+
+	created, err := m.CreateOCIAlarm(ctx, spec)
+	require.NoError(t, err)
+
+	post(t, m, compartmentA, "CpuUtilization", now.Add(-10*time.Second), 95)
+
+	clock.Advance(4 * time.Minute)
+	post(t, m, compartmentA, "CpuUtilization", clock.Now().UTC().Add(-10*time.Second), 5)
+
+	clock.Advance(2 * time.Minute)
+	post(t, m, compartmentA, "CpuUtilization", clock.Now().UTC().Add(-10*time.Second), 95)
+
+	got, err := m.GetOCIAlarm(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusOK, got.Status, "the recovery restarted the pending window")
+}
+
+// TestEvaluationPeriodsBecomePendingDuration covers the portable alarm field
+// that OCI expresses as pendingDuration.
+func TestEvaluationPeriodsBecomePendingDuration(t *testing.T) {
+	m, clock, _ := pendingMock(t)
+	ctx := t.Context()
+
+	require.NoError(t, m.CreateAlarm(ctx, driver.AlarmConfig{
+		Name:               "slow",
+		Namespace:          namespace,
+		MetricName:         "Latency",
+		ComparisonOperator: "GreaterThanThreshold",
+		Threshold:          100,
+		Period:             60,
+		EvaluationPeriods:  3,
+		Stat:               "Average",
+	}))
+
+	alarms, err := m.ListOCIAlarms(ctx, compartmentA)
+	require.NoError(t, err)
+	require.Len(t, alarms, 1)
+	assert.Equal(t, "PT120S", alarms[0].Spec.PendingDuration)
+
+	hot := []driver.MetricDatum{{Namespace: namespace, MetricName: "Latency", Value: 150}}
+
+	require.NoError(t, m.PutMetricData(ctx, hot))
+
+	waiting, err := m.DescribeAlarms(ctx, []string{"slow"})
+	require.NoError(t, err)
+	require.Len(t, waiting, 1)
+	assert.Equal(t, "OK", waiting[0].State)
+
+	clock.Advance(3 * time.Minute)
+	require.NoError(t, m.PutMetricData(ctx, hot))
+
+	fired, err := m.DescribeAlarms(ctx, []string{"slow"})
+	require.NoError(t, err)
+	require.Len(t, fired, 1)
+	assert.Equal(t, "ALARM", fired[0].State)
+}
+
+func TestPendingOf(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want time.Duration
+	}{
+		{"minutes", "PT5M", 5 * time.Minute},
+		{"hours and minutes", "PT1H30M", 90 * time.Minute},
+		{"seconds", "PT45S", 45 * time.Second},
+		{"a day", "P1D", 24 * time.Hour},
+		{"lower case", "pt2m", 2 * time.Minute},
+		{"empty", "", 0},
+		{"not a duration", "5m", 0},
+		{"unit without a number", "PTM", 0},
+		{"trailing digits", "PT5", 0},
+		{"unknown unit", "PT5X", 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, pendingOf(tc.raw))
+		})
+	}
+}
+
+// TestDimensionPredicateOperators covers MQL's non-equality dimension
+// predicates. "!=" selects the complementary series; the pattern operators are
+// refused outright rather than misparsed into a silent empty result.
+func TestDimensionPredicateOperators(t *testing.T) {
+	m, now := newMock(t)
+	ctx := t.Context()
+
+	require.NoError(t, m.PostMetricData(ctx, compartmentA, "", []driver.MetricDatum{
+		{
+			Namespace: namespace, MetricName: "Cpu", Value: 10,
+			Dimensions: map[string]string{"resourceId": "vm-1"}, Timestamp: now.Add(-30 * time.Second),
+		},
+		{
+			Namespace: namespace, MetricName: "Cpu", Value: 90,
+			Dimensions: map[string]string{"resourceId": "vm-2"}, Timestamp: now.Add(-30 * time.Second),
+		},
+	}))
+
+	tests := []struct {
+		name       string
+		query      string
+		wantCode   cerrors.Code
+		wantValues []float64
+	}{
+		{"equality", `Cpu[1m]{resourceId = "vm-1"}.mean()`, cerrors.OK, []float64{10}},
+		{"inequality", `Cpu[1m]{resourceId != "vm-1"}.mean()`, cerrors.OK, []float64{90}},
+		{"pattern match", `Cpu[1m]{resourceId =~ "vm-.*"}.mean()`, cerrors.InvalidArgument, nil},
+		{"negated pattern match", `Cpu[1m]{resourceId !~ "vm-.*"}.mean()`, cerrors.InvalidArgument, nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := m.SummarizeOCIMetrics(ctx, compartmentA, driver.OCIMetricQuery{
+				Namespace: namespace,
+				Query:     tc.query,
+				StartTime: now.Add(-time.Minute),
+				EndTime:   now,
+			})
+
+			require.Equal(t, tc.wantCode, cerrors.GetCode(err))
+
+			if tc.wantValues == nil {
+				assert.Empty(t, out)
+				return
+			}
+
+			require.Len(t, out, 1)
+			assert.Equal(t, tc.wantValues, out[0].Values)
+		})
+	}
+}
+
+// TestAlarmRejectsUnsupportedPredicate keeps an alarm from being stored with a
+// predicate this parser refuses, which would leave it silently unable to fire.
+func TestAlarmRejectsUnsupportedPredicate(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := t.Context()
+
+	_, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "pattern",
+		`Cpu[1m]{resourceId =~ "vm-.*"}.mean() > 80`))
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+	created, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "exact",
+		`Cpu[1m]{resourceId != "vm-1"}.mean() > 80`))
+	require.NoError(t, err)
+
+	_, err = m.UpdateOCIAlarm(ctx, created.ID, alarmSpec(compartmentA, "exact",
+		`Cpu[1m]{resourceId !~ "vm-.*"}.mean() > 80`))
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+}
+
+// TestPostMetricDataShapeLimits covers the namespace, name and dimension
+// formats real OCI enforces on ingestion.
+func TestPostMetricDataShapeLimits(t *testing.T) {
+	m, _ := newMock(t)
+
+	tests := []struct {
+		name     string
+		datum    driver.MetricDatum
+		wantCode cerrors.Code
+	}{
+		{"accepted", driver.MetricDatum{
+			Namespace: namespace, MetricName: "Cpu", Dimensions: map[string]string{"resourceId": "vm-1"},
+		}, cerrors.OK},
+		{"missing namespace", driver.MetricDatum{MetricName: "Cpu"}, cerrors.InvalidArgument},
+		{"namespace with a slash", driver.MetricDatum{
+			Namespace: "app/metrics", MetricName: "Cpu",
+		}, cerrors.InvalidArgument},
+		{"namespace starting with a digit", driver.MetricDatum{
+			Namespace: "1app", MetricName: "Cpu",
+		}, cerrors.InvalidArgument},
+		{"reserved namespace", driver.MetricDatum{
+			Namespace: "oci_computeagent", MetricName: "Cpu",
+		}, cerrors.InvalidArgument},
+		{"namespace too long", driver.MetricDatum{
+			Namespace: strings.Repeat("a", 256), MetricName: "Cpu",
+		}, cerrors.InvalidArgument},
+		{"missing metric name", driver.MetricDatum{Namespace: namespace}, cerrors.InvalidArgument},
+		{"metric name too long", driver.MetricDatum{
+			Namespace: namespace, MetricName: strings.Repeat("a", 256),
+		}, cerrors.InvalidArgument},
+		{"empty dimension value", driver.MetricDatum{
+			Namespace: namespace, MetricName: "Cpu", Dimensions: map[string]string{"resourceId": ""},
+		}, cerrors.InvalidArgument},
+		{"dimension key with a period", driver.MetricDatum{
+			Namespace: namespace, MetricName: "Cpu", Dimensions: map[string]string{"resource.id": "vm-1"},
+		}, cerrors.InvalidArgument},
+		{"dimension value too long", driver.MetricDatum{
+			Namespace: namespace, MetricName: "Cpu",
+			Dimensions: map[string]string{"resourceId": strings.Repeat("v", 257)},
+		}, cerrors.InvalidArgument},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := m.PostMetricData(t.Context(), compartmentA, "", []driver.MetricDatum{tc.datum})
+			assert.Equal(t, tc.wantCode, cerrors.GetCode(err))
+		})
+	}
 }

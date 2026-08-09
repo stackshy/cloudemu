@@ -14,6 +14,10 @@ func (h *Handler) createAlarm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !acceptable(w, r, &body) {
+		return
+	}
+
 	created, err := h.mon.CreateOCIAlarm(r.Context(), body.toSpec())
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
@@ -83,6 +87,10 @@ func (h *Handler) updateAlarm(w http.ResponseWriter, r *http.Request, id string)
 	var body alarmDetails
 
 	if !ocirest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	if !acceptable(w, r, &body) {
 		return
 	}
 
@@ -158,6 +166,27 @@ func (h *Handler) compartmentAlarms(w http.ResponseWriter, r *http.Request) ([]*
 	}
 
 	return alarms, true
+}
+
+// acceptable refuses an alarm field this emulator does not act on, writing the
+// 400 itself. Storing and echoing them would leave a caller's maintenance
+// window looking configured while the alarm still fired through it.
+func acceptable(w http.ResponseWriter, r *http.Request, body *alarmDetails) bool {
+	unsupported := ""
+
+	switch {
+	case body.Suppression != nil:
+		unsupported = "suppression"
+	case body.Overrides != nil:
+		unsupported = "overrides"
+	default:
+		return true
+	}
+
+	ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+		"alarm "+unsupported+" is not supported by this emulator")
+
+	return false
 }
 
 // byDisplayName narrows a listing to the alarms with a display name.

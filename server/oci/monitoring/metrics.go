@@ -1,12 +1,17 @@
 package monitoring
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
+
+// maxMetricDataEntries is the number of metricData objects real OCI accepts in
+// one PostMetricData call.
+const maxMetricDataEntries = 50
 
 // postMetricData ingests a batch of metric data, each entry naming its own
 // compartment.
@@ -19,6 +24,14 @@ func (h *Handler) postMetricData(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.MetricData) == 0 {
 		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter, "metricData is required")
+		return
+	}
+
+	if len(req.MetricData) > maxMetricDataEntries {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+			fmt.Sprintf("metricData holds %d entries, more than the %d one request accepts",
+				len(req.MetricData), maxMetricDataEntries))
+
 		return
 	}
 

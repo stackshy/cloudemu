@@ -3,6 +3,7 @@ package monitoring
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -50,7 +51,10 @@ type alarmRecord struct {
 	timeCreated    time.Time
 	timeUpdated    time.Time
 	timeTriggered  time.Time
-	history        []driver.AlarmHistoryEntry
+	// breachSince is when the query first matched, zero while it does not. The
+	// alarm fires once a breach has lasted the spec's pending duration.
+	breachSince time.Time
+	history     []driver.AlarmHistoryEntry
 }
 
 // Mock is an in-memory mock implementation of the OCI Monitoring service.
@@ -132,16 +136,32 @@ func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
 	}
 
 	_, err = m.CreateOCIAlarm(ctx, driver.OCIAlarmSpec{
-		DisplayName:   cfg.Name,
-		CompartmentID: m.opts.CompartmentID,
-		Namespace:     cfg.Namespace,
-		Query:         query,
-		Resolution:    defaultResolution,
-		Destinations:  destinations(&cfg),
-		IsEnabled:     true,
+		DisplayName:     cfg.Name,
+		CompartmentID:   m.opts.CompartmentID,
+		Namespace:       cfg.Namespace,
+		Query:           query,
+		Resolution:      defaultResolution,
+		PendingDuration: pendingFor(cfg.Period, cfg.EvaluationPeriods),
+		Destinations:    destinations(&cfg),
+		IsEnabled:       true,
 	})
 
 	return err
+}
+
+// pendingFor renders the portable evaluation window as OCI's pendingDuration.
+// N breaching periods means the breach lasted N-1 periods before firing, so a
+// single period keeps firing on the first breaching datapoint.
+func pendingFor(period, evaluationPeriods int) string {
+	if evaluationPeriods <= 1 {
+		return ""
+	}
+
+	if period <= 0 {
+		period = defaultPeriod
+	}
+
+	return fmt.Sprintf("PT%dS", period*(evaluationPeriods-1))
 }
 
 // destinations folds the portable per-state action lists into OCI's single
@@ -327,20 +347,6 @@ func ociStatus(state string) string {
 func copyTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for k, v := range in {
-		out[k] = v
-	}
-
-	return out
-}
-
-// mergeTags combines two dimension sets, the second winning on a shared key.
-func mergeTags(base, overlay map[string]string) map[string]string {
-	if len(base) == 0 {
-		return overlay
-	}
-
-	out := copyTags(base)
-	for k, v := range overlay {
 		out[k] = v
 	}
 
