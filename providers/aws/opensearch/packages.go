@@ -38,7 +38,14 @@ func (m *Mock) CreatePackage(_ context.Context, in driver.CreatePackageInput) (*
 		S3Key:              in.S3Key,
 	}
 
+	// Claim the (unique) package name atomically before publishing the record.
+	if !m.pkgNames.SetIfAbsent(in.PackageName, pkg.PackageID) {
+		return nil, alreadyExists("Package already exists: %s", in.PackageName)
+	}
+
 	if !m.packages.SetIfAbsent(pkg.PackageID, pkg) {
+		m.pkgNames.Delete(in.PackageName)
+
 		return nil, alreadyExists("Package already exists: %s", pkg.PackageID)
 	}
 
@@ -58,26 +65,14 @@ func (m *Mock) DeletePackage(_ context.Context, packageID string) (*driver.Packa
 	out.PackageStatus = driver.PackageStatusDeleted
 
 	m.packages.Delete(packageID)
+	m.pkgNames.Delete(pkg.PackageName)
 
 	return &out, nil
 }
 
 // DescribePackages returns the paginated list of packages, sorted by ID.
 func (m *Mock) DescribePackages(_ context.Context, page driver.Page) ([]driver.Package, string, error) {
-	ids := m.packages.Keys()
-	sort.Strings(ids)
-
-	out := make([]driver.Package, 0, len(ids))
-
-	for _, id := range ids {
-		if pkg, ok := m.packages.Get(id); ok {
-			out = append(out, copyPackage(pkg))
-		}
-	}
-
-	start, end, next := paginate(len(out), page)
-
-	return out[start:end], next, nil
+	return listStore(m.packages, copyPackage, page)
 }
 
 // UpdatePackage updates a package's description and source location.
@@ -175,8 +170,20 @@ func (m *Mock) AssociatePackage(_ context.Context, packageID, domainName string)
 	return m.associate(packageID, domainName)
 }
 
-// AssociatePackages associates multiple packages with a domain.
+// AssociatePackages associates multiple packages with a domain. All items are
+// validated before any is written, so a mid-batch failure leaves no partial
+// associations behind.
 func (m *Mock) AssociatePackages(_ context.Context, packageIDs []string, domainName string) ([]driver.DomainPackageAssociation, error) {
+	if _, err := m.getDomain(domainName); err != nil {
+		return nil, err
+	}
+
+	for _, id := range packageIDs {
+		if _, ok := m.packages.Get(id); !ok {
+			return nil, notFound("Package not found: %s", id)
+		}
+	}
+
 	out := make([]driver.DomainPackageAssociation, 0, len(packageIDs))
 
 	for _, id := range packageIDs {
@@ -211,8 +218,16 @@ func (m *Mock) DissociatePackage(_ context.Context, packageID, domainName string
 	return m.dissociate(packageID, domainName)
 }
 
-// DissociatePackages removes multiple package/domain associations.
+// DissociatePackages removes multiple package/domain associations. All items are
+// validated before any is removed, so a mid-batch failure leaves the existing
+// associations intact.
 func (m *Mock) DissociatePackages(_ context.Context, packageIDs []string, domainName string) ([]driver.DomainPackageAssociation, error) {
+	for _, id := range packageIDs {
+		if _, ok := m.pkgAssoc.Get(assocKey(id, domainName)); !ok {
+			return nil, notFound("Association not found for package %s and domain %s", id, domainName)
+		}
+	}
+
 	out := make([]driver.DomainPackageAssociation, 0, len(packageIDs))
 
 	for _, id := range packageIDs {
@@ -235,9 +250,11 @@ func (m *Mock) ListPackagesForDomain(_ context.Context, domainName string,
 		return nil, "", err
 	}
 
-	return m.filterAssociations(func(a *driver.DomainPackageAssociation) bool {
+	out, err := m.filterAssociations(func(a *driver.DomainPackageAssociation) bool {
 		return a.DomainName == domainName
-	}, page), "", nil
+	}, page)
+
+	return out, "", err
 }
 
 // ListDomainsForPackage lists the domains a package is associated with.
@@ -248,14 +265,18 @@ func (m *Mock) ListDomainsForPackage(_ context.Context, packageID string,
 		return nil, "", notFound("Package not found: %s", packageID)
 	}
 
-	return m.filterAssociations(func(a *driver.DomainPackageAssociation) bool {
+	out, err := m.filterAssociations(func(a *driver.DomainPackageAssociation) bool {
 		return a.PackageID == packageID
-	}, page), "", nil
+	}, page)
+
+	return out, "", err
 }
 
 // filterAssociations returns matching associations sorted by key. Pagination is
-// applied but the token is discarded by callers that return a single page.
-func (m *Mock) filterAssociations(match func(*driver.DomainPackageAssociation) bool, page driver.Page) []driver.DomainPackageAssociation {
+// applied; a corrupt token surfaces as an InvalidPaginationTokenException.
+func (m *Mock) filterAssociations(
+	match func(*driver.DomainPackageAssociation) bool, page driver.Page,
+) ([]driver.DomainPackageAssociation, error) {
 	keys := m.pkgAssoc.Keys()
 	sort.Strings(keys)
 
@@ -267,7 +288,10 @@ func (m *Mock) filterAssociations(match func(*driver.DomainPackageAssociation) b
 		}
 	}
 
-	start, end, _ := paginate(len(out), page)
+	start, end, _, err := paginate(len(out), page)
+	if err != nil {
+		return nil, err
+	}
 
-	return out[start:end]
+	return out[start:end], nil
 }

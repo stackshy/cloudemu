@@ -8,16 +8,18 @@ func encodeToken(offset int) string {
 }
 
 // decodeToken decodes an opaque pagination token to a numeric offset. An empty
-// or unparseable token decodes to 0 (start from the beginning).
-func decodeToken(token string) int {
+// token decodes to 0 (start from the beginning). A non-empty token that is not a
+// non-negative integer is reported as invalid so the caller can raise
+// InvalidPaginationTokenException rather than silently restart at page one.
+func decodeToken(token string) (offset int, err error) {
 	if token == "" {
-		return 0
+		return 0, nil
 	}
 
-	n, err := strconv.Atoi(token)
-	if err != nil {
-		return 0
+	n, convErr := strconv.Atoi(token)
+	if convErr != nil || n < 0 {
+		return 0, invalidToken("Invalid pagination token: %q", token)
 	}
 
-	return n
+	return n, nil
 }

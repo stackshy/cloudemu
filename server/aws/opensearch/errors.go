@@ -35,14 +35,12 @@ func statusForException(exception string) int {
 	switch exception {
 	case driver.ExResourceNotFound:
 		return http.StatusNotFound
-	case driver.ExResourceAlreadyExists, driver.ExConflict:
+	case driver.ExResourceAlreadyExists:
 		return http.StatusConflict
 	case driver.ExValidation, driver.ExInvalidPaginationToken:
 		return http.StatusBadRequest
 	case driver.ExLimitExceeded:
 		return http.StatusTooManyRequests
-	case driver.ExDisabledOperation:
-		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}
@@ -58,8 +56,6 @@ func exceptionForCode(err error) (status int, errType string) {
 		return http.StatusConflict, driver.ExResourceAlreadyExists
 	case cerrors.IsInvalidArgument(err):
 		return http.StatusBadRequest, driver.ExValidation
-	case cerrors.IsFailedPrecondition(err):
-		return http.StatusConflict, driver.ExDisabledOperation
 	default:
 		return http.StatusInternalServerError, driver.ExInternal
 	}

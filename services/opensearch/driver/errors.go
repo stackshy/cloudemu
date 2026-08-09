@@ -8,10 +8,7 @@ const (
 	ExResourceAlreadyExists  = "ResourceAlreadyExistsException"
 	ExValidation             = "ValidationException"
 	ExLimitExceeded          = "LimitExceededException"
-	ExDisabledOperation      = "DisabledOperationException"
-	ExBase                   = "BaseException"
 	ExInternal               = "InternalException"
-	ExConflict               = "ConflictException"
 	ExInvalidPaginationToken = "InvalidPaginationTokenException"
 )
 

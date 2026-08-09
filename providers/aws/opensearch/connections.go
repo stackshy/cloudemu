@@ -2,7 +2,6 @@ package opensearch
 
 import (
 	"context"
-	"sort"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/opensearch/driver"
@@ -79,20 +78,7 @@ func (m *Mock) DeleteOutboundConnection(_ context.Context, id string) (*driver.O
 
 // DescribeOutboundConnections lists outbound connections, sorted by ID.
 func (m *Mock) DescribeOutboundConnections(_ context.Context, page driver.Page) ([]driver.OutboundConnection, string, error) {
-	ids := m.outbound.Keys()
-	sort.Strings(ids)
-
-	out := make([]driver.OutboundConnection, 0, len(ids))
-
-	for _, id := range ids {
-		if c, ok := m.outbound.Get(id); ok {
-			out = append(out, copyOutbound(c))
-		}
-	}
-
-	start, end, next := paginate(len(out), page)
-
-	return out[start:end], next, nil
+	return listStore(m.outbound, copyOutbound, page)
 }
 
 // setInboundStatus transitions an inbound connection and mirrors the outbound.
@@ -145,18 +131,5 @@ func (m *Mock) DeleteInboundConnection(_ context.Context, id string) (*driver.In
 
 // DescribeInboundConnections lists inbound connections, sorted by ID.
 func (m *Mock) DescribeInboundConnections(_ context.Context, page driver.Page) ([]driver.InboundConnection, string, error) {
-	ids := m.inbound.Keys()
-	sort.Strings(ids)
-
-	out := make([]driver.InboundConnection, 0, len(ids))
-
-	for _, id := range ids {
-		if c, ok := m.inbound.Get(id); ok {
-			out = append(out, copyInbound(c))
-		}
-	}
-
-	start, end, next := paginate(len(out), page)
-
-	return out[start:end], next, nil
+	return listStore(m.inbound, copyInbound, page)
 }

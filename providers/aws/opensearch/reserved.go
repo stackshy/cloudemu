@@ -90,7 +90,10 @@ func (m *Mock) DescribeReservedInstances(_ context.Context, reservedInstanceID s
 		}
 	}
 
-	start, end, next := paginate(len(out), page)
+	start, end, next, err := paginate(len(out), page)
+	if err != nil {
+		return nil, "", err
+	}
 
 	return out[start:end], next, nil
 }
@@ -107,7 +110,10 @@ func (*Mock) DescribeReservedInstanceOfferings(
 		all = []map[string]json.RawMessage{}
 	}
 
-	start, end, next := paginate(len(all), page)
+	start, end, next, err := paginate(len(all), page)
+	if err != nil {
+		return nil, "", err
+	}
 
 	return all[start:end], next, nil
 }

@@ -1,6 +1,6 @@
 // Package opensearch provides an in-memory mock implementation of Amazon
-// OpenSearch Service: domains with a Processing->Active lifecycle and
-// endpoints, domain configuration, tags, packages and their domain
+// OpenSearch Service: domains that are provisioned immediately Active with an
+// endpoint, domain configuration, tags, packages and their domain
 // associations, VPC endpoints, cross-cluster inbound/outbound connections,
 // per-domain and direct-query data sources, applications, reserved instances,
 // upgrades, and read-only version/instance-type catalogs.
@@ -9,7 +9,10 @@
 // DescribeInstanceTypeLimits, DescribeDomainHealth, DescribeDomainNodes,
 // DescribeReservedInstanceOfferings, and the auto-tune/insight/maintenance
 // listings) return plausible synthesized results, since real AWS derives them
-// from data a local emulator has no source for.
+// from data a local emulator has no source for. A few write-path capability
+// helpers (AuthorizeVpcEndpointAccess, RegisterCapability, AttachDataSource)
+// validate their inputs and echo a synthesized result without persisting any
+// state, as the emulator models no VPC-access or capability inventory.
 package opensearch
 
 import (
@@ -61,6 +64,10 @@ type Mock struct {
 	reserved   *memstore.Store[*driver.ReservedInstance]
 	// pkgAssoc maps "packageID|domainName" to the association record.
 	pkgAssoc *memstore.Store[*driver.DomainPackageAssociation]
+	// pkgNames and appNames claim the (unique) package/application name to its
+	// ID, so a duplicate name is rejected the way real OpenSearch does.
+	pkgNames *memstore.Store[string]
+	appNames *memstore.Store[string]
 
 	defaultAppMu  sync.RWMutex
 	defaultAppSet map[string]json.RawMessage
@@ -80,6 +87,8 @@ func New(opts *config.Options) *Mock {
 		dqDataSrcs:    memstore.New[*driver.DirectQueryDataSource](),
 		reserved:      memstore.New[*driver.ReservedInstance](),
 		pkgAssoc:      memstore.New[*driver.DomainPackageAssociation](),
+		pkgNames:      memstore.New[string](),
+		appNames:      memstore.New[string](),
 		defaultAppSet: map[string]json.RawMessage{},
 		opts:          opts,
 	}
@@ -176,11 +185,17 @@ func copyRawSlice(in []map[string]json.RawMessage) []map[string]json.RawMessage 
 }
 
 // paginate returns the offset window and the next token for a slice of length
-// n, honoring an opaque numeric offset token. An invalid token yields offset 0.
-func paginate(n int, page driver.Page) (start, end int, next string) {
-	start = decodeToken(page.NextToken)
-	if start < 0 || start > n {
-		start = 0
+// n, honoring an opaque numeric offset token. A corrupt or out-of-range token
+// is rejected with InvalidPaginationTokenException rather than silently reset to
+// the first page, so a client that passes a bad token learns of the error.
+func paginate(n int, page driver.Page) (start, end int, next string, err error) {
+	start, err = decodeToken(page.NextToken)
+	if err != nil {
+		return 0, 0, "", err
+	}
+
+	if start > n {
+		return 0, 0, "", invalidToken("Invalid pagination token: %q", page.NextToken)
 	}
 
 	limit := int(page.MaxResults)
@@ -190,8 +205,29 @@ func paginate(n int, page driver.Page) (start, end int, next string) {
 
 	end = start + limit
 	if end >= n {
-		return start, n, ""
+		return start, n, "", nil
 	}
 
-	return start, end, encodeToken(end)
+	return start, end, encodeToken(end), nil
+}
+
+// listStore returns a deterministic, deep-copied, paginated page of a store's
+// values. cp must return an alias-free copy of each stored element so callers
+// cannot mutate server state through the result.
+func listStore[V any](
+	s *memstore.Store[*V], cp func(*V) V, page driver.Page,
+) (items []V, nextToken string, err error) {
+	vals := s.SortedValues()
+
+	out := make([]V, 0, len(vals))
+	for _, v := range vals {
+		out = append(out, cp(v))
+	}
+
+	start, end, next, err := paginate(len(out), page)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return out[start:end], next, nil
 }

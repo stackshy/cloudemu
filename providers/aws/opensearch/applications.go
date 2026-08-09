@@ -3,7 +3,6 @@ package opensearch
 import (
 	"context"
 	"encoding/json"
-	"sort"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/opensearch/driver"
@@ -44,7 +43,14 @@ func (m *Mock) CreateApplication(_ context.Context, in driver.CreateApplicationI
 		TagList:                  copyTags(in.TagList),
 	}
 
+	// Claim the (unique) application name atomically before publishing.
+	if !m.appNames.SetIfAbsent(in.Name, id) {
+		return nil, alreadyExists("Application already exists: %s", in.Name)
+	}
+
 	if !m.apps.SetIfAbsent(id, app) {
+		m.appNames.Delete(in.Name)
+
 		return nil, alreadyExists("Application already exists: %s", id)
 	}
 
@@ -91,29 +97,20 @@ func (m *Mock) UpdateApplication(_ context.Context, id string,
 	return &result, nil
 }
 
-// DeleteApplication removes an application.
+// DeleteApplication removes an application and releases its name claim.
 func (m *Mock) DeleteApplication(_ context.Context, id string) error {
-	if !m.apps.Delete(id) {
+	app, ok := m.apps.Get(id)
+	if !ok {
 		return notFound("Application not found: %s", id)
 	}
+
+	m.apps.Delete(id)
+	m.appNames.Delete(app.Name)
 
 	return nil
 }
 
 // ListApplications lists all applications, sorted by ID.
 func (m *Mock) ListApplications(_ context.Context, page driver.Page) ([]driver.Application, string, error) {
-	ids := m.apps.Keys()
-	sort.Strings(ids)
-
-	out := make([]driver.Application, 0, len(ids))
-
-	for _, id := range ids {
-		if app, ok := m.apps.Get(id); ok {
-			out = append(out, copyApplication(app))
-		}
-	}
-
-	start, end, next := paginate(len(out), page)
-
-	return out[start:end], next, nil
+	return listStore(m.apps, copyApplication, page)
 }

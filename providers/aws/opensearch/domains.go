@@ -3,7 +3,6 @@ package opensearch
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -52,7 +51,7 @@ func (m *Mock) CreateDomain(_ context.Context, in driver.CreateDomainInput) (*dr
 	}
 
 	if len(in.Tags) > maxTags {
-		return nil, validation("A domain may have at most %d tags", maxTags)
+		return nil, limitExceeded("A domain may have at most %d tags", maxTags)
 	}
 
 	engine := in.EngineVersion
@@ -237,6 +236,7 @@ func (m *Mock) DeleteDomain(_ context.Context, name string) (*driver.DomainStatu
 
 	m.domains.Delete(name)
 	m.releaseDomainAssociations(name)
+	m.cascadeDeleteDomainRefs(name)
 
 	return &final, nil
 }
@@ -248,6 +248,38 @@ func (m *Mock) releaseDomainAssociations(domainName string) {
 			m.pkgAssoc.Delete(key)
 		}
 	}
+}
+
+// cascadeDeleteDomainRefs removes the resources orphaned by a deleted domain so
+// they stop listing: its VPC endpoints (by domain ARN) and any cross-cluster
+// inbound/outbound connections in which the domain is either the local or the
+// remote endpoint (a connection references a domain on both sides).
+func (m *Mock) cascadeDeleteDomainRefs(domainName string) {
+	arn := m.domainARN(domainName)
+
+	for _, id := range m.vpcEnds.Keys() {
+		if ep, ok := m.vpcEnds.Get(id); ok && ep.DomainARN == arn {
+			m.vpcEnds.Delete(id)
+		}
+	}
+
+	for _, id := range m.outbound.Keys() {
+		if c, ok := m.outbound.Get(id); ok && referencesDomain(c.LocalDomainName, c.RemoteDomainName, domainName) {
+			m.outbound.Delete(id)
+		}
+	}
+
+	for _, id := range m.inbound.Keys() {
+		if c, ok := m.inbound.Get(id); ok && referencesDomain(c.LocalDomainName, c.RemoteDomainName, domainName) {
+			m.inbound.Delete(id)
+		}
+	}
+}
+
+// referencesDomain reports whether a connection's local or remote endpoint is
+// the named domain.
+func referencesDomain(local, remote, domainName string) bool {
+	return local == domainName || remote == domainName
 }
 
 // ListDomainNames lists all domain names, optionally filtered by engine type
@@ -380,9 +412,16 @@ func (m *Mock) DescribeDryRunProgress(_ context.Context, name string) (map[strin
 	}
 
 	ts := m.now().Format("2006-01-02T15:04:05Z")
-	status := fmt.Sprintf(
-		`{"DryRunId":%q,"DryRunStatus":"succeeded","CreationDate":%q,"UpdateDate":%q}`,
-		idgen.GenerateID("dryrun-"), ts, ts)
+
+	status, err := json.Marshal(map[string]any{
+		"DryRunId":     idgen.GenerateID("dryrun-"),
+		"DryRunStatus": "succeeded",
+		"CreationDate": ts,
+		"UpdateDate":   ts,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return map[string]json.RawMessage{
 		"DryRunProgressStatus": json.RawMessage(status),

@@ -133,26 +133,33 @@ func (m *Mock) DescribeVpcEndpoints(_ context.Context, ids []string) ([]driver.V
 func (m *Mock) ListVpcEndpoints(
 	_ context.Context, page driver.Page,
 ) (endpoints []map[string]json.RawMessage, nextToken string, err error) {
-	return m.listVpcEndpoints(func(*driver.VpcEndpoint) bool { return true }, page), "", nil
+	out, err := m.listVpcEndpoints(func(*driver.VpcEndpoint) bool { return true }, page)
+
+	return out, "", err
 }
 
 // ListVpcEndpointsForDomain lists VPC endpoints attached to a domain.
 func (m *Mock) ListVpcEndpointsForDomain(
 	_ context.Context, domainName string, page driver.Page,
 ) (endpoints []map[string]json.RawMessage, nextToken string, err error) {
-	if _, err := m.getDomain(domainName); err != nil {
+	if _, err = m.getDomain(domainName); err != nil {
 		return nil, "", err
 	}
 
 	arn := m.domainARN(domainName)
 
-	return m.listVpcEndpoints(func(v *driver.VpcEndpoint) bool {
+	out, err := m.listVpcEndpoints(func(v *driver.VpcEndpoint) bool {
 		return v.DomainARN == arn
-	}, page), "", nil
+	}, page)
+
+	return out, "", err
 }
 
-// listVpcEndpoints returns matching endpoint summaries sorted by ID.
-func (m *Mock) listVpcEndpoints(match func(*driver.VpcEndpoint) bool, page driver.Page) []map[string]json.RawMessage {
+// listVpcEndpoints returns matching endpoint summaries sorted by ID. A corrupt
+// pagination token surfaces as an InvalidPaginationTokenException.
+func (m *Mock) listVpcEndpoints(
+	match func(*driver.VpcEndpoint) bool, page driver.Page,
+) ([]map[string]json.RawMessage, error) {
 	ids := m.vpcEnds.Keys()
 	sort.Strings(ids)
 
@@ -164,9 +171,12 @@ func (m *Mock) listVpcEndpoints(match func(*driver.VpcEndpoint) bool, page drive
 		}
 	}
 
-	start, end, _ := paginate(len(out), page)
+	start, end, _, err := paginate(len(out), page)
+	if err != nil {
+		return nil, err
+	}
 
-	return out[start:end]
+	return out[start:end], nil
 }
 
 // AuthorizeVpcEndpointAccess authorizes an account (or service) to create a

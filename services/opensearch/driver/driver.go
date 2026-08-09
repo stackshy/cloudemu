@@ -17,15 +17,12 @@ import (
 	"time"
 )
 
-// Domain processing statuses reported via DomainProcessingStatus.
+// Domain processing statuses reported via DomainProcessingStatus. The emulator
+// provisions and deletes deterministically, so only the terminal Active state
+// and the Deleting state a delete returns are modeled.
 const (
-	ProcessingCreating   = "Creating"
-	ProcessingActive     = "Active"
-	ProcessingModifying  = "Modifying"
-	ProcessingDeleting   = "Deleting"
-	ProcessingUpgrading  = "UpgradingEngineVersion"
-	ProcessingIsolated   = "Isolated"
-	ProcessingNotApplied = "NotAvailable"
+	ProcessingActive   = "Active"
+	ProcessingDeleting = "Deleting"
 )
 
 // Connection statuses for cross-cluster search.

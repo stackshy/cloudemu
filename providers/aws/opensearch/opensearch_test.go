@@ -3,6 +3,7 @@ package opensearch_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -320,6 +321,162 @@ func TestPackagesLifecycle(t *testing.T) {
 	forPkg, _, _ := m.ListDomainsForPackage(ctx, pkg.PackageID, driver.Page{})
 	if len(forPkg) != 0 {
 		t.Fatalf("association not released on domain delete: %+v", forPkg)
+	}
+}
+
+// TestInvalidPaginationToken asserts a corrupt NextToken is reported as an
+// InvalidPaginationTokenException rather than silently restarting at page one.
+func TestInvalidPaginationToken(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	_, _, err := m.ListVersions(ctx, driver.Page{NextToken: "not-a-number"})
+
+	var apiErr *driver.APIError
+	if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExInvalidPaginationToken {
+		t.Fatalf("want InvalidPaginationTokenException, got %v", err)
+	}
+
+	// An out-of-range (too large) offset is equally invalid.
+	if _, _, err := m.ListVersions(ctx, driver.Page{NextToken: "99999"}); err == nil {
+		t.Fatal("want error for out-of-range token, got nil")
+	} else if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExInvalidPaginationToken {
+		t.Fatalf("want InvalidPaginationTokenException, got %v", err)
+	}
+
+	// A valid empty token still succeeds.
+	if _, _, err := m.ListVersions(ctx, driver.Page{}); err != nil {
+		t.Fatalf("empty token should succeed: %v", err)
+	}
+}
+
+// TestAddTagsOverCap asserts an over-limit AddTags batch is rejected with
+// LimitExceededException and does NOT persist any of the batch's tags.
+func TestAddTagsOverCap(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	out, err := m.CreateDomain(ctx, driver.CreateDomainInput{DomainName: "cap-domain"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Seed one tag we can later confirm survived the rejected batch.
+	if err := m.AddTags(ctx, out.ARN, map[string]string{"keep": "yes"}); err != nil {
+		t.Fatalf("seed AddTags: %v", err)
+	}
+
+	// A batch that would push the total past the 50-tag cap must be rejected.
+	over := make(map[string]string, 50)
+	for i := 0; i < 50; i++ {
+		over["k"+strconv.Itoa(i)] = "v"
+	}
+
+	err = m.AddTags(ctx, out.ARN, over)
+
+	var apiErr *driver.APIError
+	if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExLimitExceeded {
+		t.Fatalf("want LimitExceededException, got %v", err)
+	}
+
+	// None of the rejected batch must have persisted; only the seed remains.
+	tags, _ := m.ListTags(ctx, out.ARN)
+	if len(tags) != 1 || tags["keep"] != "yes" {
+		t.Fatalf("rejected batch leaked tags: %+v", tags)
+	}
+}
+
+// TestDeleteDomainCascades asserts DeleteDomain also removes the domain's VPC
+// endpoints and cross-cluster connections, so they stop listing.
+func TestDeleteDomainCascades(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	out, err := m.CreateDomain(ctx, driver.CreateDomainInput{DomainName: "cascade-domain"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, err := m.CreateVpcEndpoint(ctx, out.ARN, driver.VpcOptions{SubnetIDs: []string{"subnet-1"}}, ""); err != nil {
+		t.Fatalf("CreateVpcEndpoint: %v", err)
+	}
+
+	if _, err := m.CreateOutboundConnection(ctx, driver.CreateOutboundConnectionInput{
+		ConnectionAlias: "x",
+		LocalDomain:     driver.ConnectionEndpoint{DomainName: "cascade-domain"},
+		RemoteDomain:    driver.ConnectionEndpoint{DomainName: "remote-domain"},
+	}); err != nil {
+		t.Fatalf("CreateOutboundConnection: %v", err)
+	}
+
+	eps, _, _ := m.ListVpcEndpoints(ctx, driver.Page{})
+	conns, _, _ := m.DescribeOutboundConnections(ctx, driver.Page{})
+	if len(eps) != 1 || len(conns) != 1 {
+		t.Fatalf("precondition: eps=%d conns=%d", len(eps), len(conns))
+	}
+
+	if _, err := m.DeleteDomain(ctx, "cascade-domain"); err != nil {
+		t.Fatalf("DeleteDomain: %v", err)
+	}
+
+	eps, _, _ = m.ListVpcEndpoints(ctx, driver.Page{})
+	if len(eps) != 0 {
+		t.Fatalf("VPC endpoint survived domain delete: %+v", eps)
+	}
+
+	conns, _, _ = m.DescribeOutboundConnections(ctx, driver.Page{})
+	if len(conns) != 0 {
+		t.Fatalf("outbound connection survived domain delete: %+v", conns)
+	}
+
+	inbound, _, _ := m.DescribeInboundConnections(ctx, driver.Page{})
+	if len(inbound) != 0 {
+		t.Fatalf("inbound connection survived domain delete: %+v", inbound)
+	}
+}
+
+// TestDuplicatePackageName asserts package names are unique.
+func TestDuplicatePackageName(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	if _, err := m.CreatePackage(ctx, driver.CreatePackageInput{PackageName: "dict", PackageType: "TXT-DICTIONARY"}); err != nil {
+		t.Fatalf("first CreatePackage: %v", err)
+	}
+
+	_, err := m.CreatePackage(ctx, driver.CreatePackageInput{PackageName: "dict", PackageType: "TXT-DICTIONARY"})
+
+	var apiErr *driver.APIError
+	if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExResourceAlreadyExists {
+		t.Fatalf("want ResourceAlreadyExistsException for duplicate package name, got %v", err)
+	}
+}
+
+// TestDuplicateApplicationName asserts application names are unique, and that a
+// name is freed for reuse after the application is deleted.
+func TestDuplicateApplicationName(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	app, err := m.CreateApplication(ctx, driver.CreateApplicationInput{Name: "search-app"})
+	if err != nil {
+		t.Fatalf("first CreateApplication: %v", err)
+	}
+
+	_, err = m.CreateApplication(ctx, driver.CreateApplicationInput{Name: "search-app"})
+
+	var apiErr *driver.APIError
+	if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExResourceAlreadyExists {
+		t.Fatalf("want ResourceAlreadyExistsException for duplicate application name, got %v", err)
+	}
+
+	// Deleting frees the name for reuse.
+	if err := m.DeleteApplication(ctx, app.ID); err != nil {
+		t.Fatalf("DeleteApplication: %v", err)
+	}
+
+	if _, err := m.CreateApplication(ctx, driver.CreateApplicationInput{Name: "search-app"}); err != nil {
+		t.Fatalf("name should be reusable after delete: %v", err)
 	}
 }
 

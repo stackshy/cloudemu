@@ -27,16 +27,26 @@ func (m *Mock) AddTags(_ context.Context, arn string, tags map[string]string) er
 	dd.mu.Lock()
 	defer dd.mu.Unlock()
 
+	// Compute the resulting tag count before mutating so an over-limit batch is
+	// rejected atomically, leaving the stored tags untouched.
+	merged := len(dd.tags)
+
+	for k := range tags {
+		if _, exists := dd.tags[k]; !exists {
+			merged++
+		}
+	}
+
+	if merged > maxTags {
+		return limitExceeded("A domain may have at most %d tags", maxTags)
+	}
+
 	if dd.tags == nil {
 		dd.tags = map[string]string{}
 	}
 
 	for k, v := range tags {
 		dd.tags[k] = v
-	}
-
-	if len(dd.tags) > maxTags {
-		return validation("A domain may have at most %d tags", maxTags)
 	}
 
 	return nil

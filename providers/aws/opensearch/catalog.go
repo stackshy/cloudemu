@@ -26,7 +26,11 @@ func supportedVersions() []string {
 // ListVersions returns the paginated catalog of supported engine versions.
 func (*Mock) ListVersions(_ context.Context, page driver.Page) (versions []string, next string, err error) {
 	all := supportedVersions()
-	start, end, next := paginate(len(all), page)
+
+	start, end, next, err := paginate(len(all), page)
+	if err != nil {
+		return nil, "", err
+	}
 
 	return append([]string(nil), all[start:end]...), next, nil
 }
@@ -107,7 +111,11 @@ func (*Mock) ListInstanceTypeDetails(_ context.Context, engineVersion string,
 	}
 
 	all := instanceTypeCatalog()
-	start, end, next := paginate(len(all), page)
+
+	start, end, next, err := paginate(len(all), page)
+	if err != nil {
+		return nil, "", err
+	}
 
 	return append([]map[string]json.RawMessage(nil), all[start:end]...), next, nil
 }
