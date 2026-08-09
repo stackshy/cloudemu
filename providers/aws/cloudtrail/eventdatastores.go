@@ -160,11 +160,16 @@ func (m *Mock) DeleteEventDataStore(_ context.Context, arn string) error {
 
 	ed.eds.Status = driver.EDSStatusPendingDeletion
 	ed.eds.UpdatedAt = m.now()
+	// Free the name so a same-name store can be recreated during the deletion
+	// window; RestoreEventDataStore re-claims it.
+	m.edsNameIdx.Delete(ed.eds.Name)
 
 	return nil
 }
 
-// RestoreEventDataStore returns a PENDING_DELETION store to ENABLED.
+// RestoreEventDataStore returns a PENDING_DELETION store to ENABLED. Real
+// CloudTrail only restores a store that is pending deletion; any other status is
+// an InactiveEventDataStoreException.
 func (m *Mock) RestoreEventDataStore(_ context.Context, arn string) (*driver.EventDataStore, error) {
 	ed, err := m.resolveEDS(arn)
 	if err != nil {
@@ -173,6 +178,16 @@ func (m *Mock) RestoreEventDataStore(_ context.Context, arn string) (*driver.Eve
 
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
+
+	if ed.eds.Status != driver.EDSStatusPendingDeletion {
+		return nil, errEDSInactive(arn)
+	}
+
+	// Re-claim the name freed on delete; if a new store took it meanwhile, the
+	// restore conflicts.
+	if !m.edsNameIdx.SetIfAbsent(ed.eds.Name, ed.eds.ARN) {
+		return nil, errEDSExists(ed.eds.Name)
+	}
 
 	ed.eds.Status = driver.EDSStatusEnabled
 	ed.eds.UpdatedAt = m.now()

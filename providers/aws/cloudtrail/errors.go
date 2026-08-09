@@ -36,6 +36,11 @@ func errEDSARNInvalid(arn string) error {
 		"%q is not a valid event data store ARN", arn)
 }
 
+func errEDSInactive(arn string) error {
+	return apiErr(driver.ExInactiveEventDataStore, errors.FailedPrecondition,
+		"event data store %q is not PENDING_DELETION and cannot be restored", arn)
+}
+
 func errInvalidParameter(format string, args ...any) error {
 	return apiErr(driver.ExInvalidParameter, errors.InvalidArgument, format, args...)
 }

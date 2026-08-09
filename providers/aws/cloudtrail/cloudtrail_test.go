@@ -390,3 +390,72 @@ func TestQueryLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, res.ResultRows)
 }
+
+func TestConcurrentStopImportAndRead(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	imp, err := m.StartImport(ctx, driver.Import{Destinations: []string{"eds-1"}, S3LocationURI: "s3://b/x"})
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+
+		go func() { defer wg.Done(); _, _ = m.StopImport(ctx, imp.ID) }()
+		go func() { defer wg.Done(); _, _ = m.GetImport(ctx, imp.ID) }()
+	}
+
+	wg.Wait()
+
+	got, err := m.GetImport(ctx, imp.ID)
+	require.NoError(t, err)
+	assert.Equal(t, driver.ImportStatusStopped, got.Status)
+}
+
+func TestConcurrentCancelQueryAndRead(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	id, err := m.StartQuery(ctx, "eds-1", "SELECT 1", "", "")
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+
+		go func() { defer wg.Done(); _, _ = m.CancelQuery(ctx, "", id) }()
+		go func() { defer wg.Done(); _, _ = m.DescribeQuery(ctx, "", id, "") }()
+	}
+
+	wg.Wait()
+
+	got, err := m.DescribeQuery(ctx, "", id, "")
+	require.NoError(t, err)
+	assert.Equal(t, driver.QueryStatusCancelled, got.Status)
+}
+
+func TestRestoreRequiresPendingDeletion(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	noProtect := false
+	eds, err := m.CreateEventDataStore(ctx, driver.CreateEventDataStoreInput{
+		Name:                         "eds-restore",
+		TerminationProtectionEnabled: &noProtect,
+	})
+	require.NoError(t, err)
+
+	// Restoring an ENABLED (never-deleted) store is rejected.
+	_, err = m.RestoreEventDataStore(ctx, eds.ARN)
+	require.Error(t, err)
+
+	// After a soft delete it can be restored, and the freed name can be reused.
+	require.NoError(t, m.DeleteEventDataStore(ctx, eds.ARN))
+
+	restored, err := m.RestoreEventDataStore(ctx, eds.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, driver.EDSStatusEnabled, restored.Status)
+}

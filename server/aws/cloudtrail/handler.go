@@ -163,7 +163,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceAlreadyExistsException", err.Error())
 	case cerrors.IsInvalidArgument(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
 	case cerrors.IsFailedPrecondition(err):

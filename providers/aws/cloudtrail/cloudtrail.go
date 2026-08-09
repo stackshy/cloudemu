@@ -81,8 +81,8 @@ type Mock struct {
 	chanNameIdx *memstore.Store[string]   // channel name -> ARN, for atomic name claim
 	channels    *memstore.Store[*channelData]
 	dashboards  *memstore.Store[*dashboardData] // keyed by name
-	imports     *memstore.Store[*driver.Import] // keyed by ID
-	queries     *memstore.Store[*driver.Query]  // keyed by ID
+	imports     *memstore.Store[*importData]    // keyed by ID
+	queries     *memstore.Store[*queryData]     // keyed by ID
 
 	policyMu sync.RWMutex
 	policies map[string]string // resourceARN -> policy JSON
@@ -106,8 +106,8 @@ func New(opts *config.Options) *Mock {
 		chanNameIdx: memstore.New[string](),
 		channels:    memstore.New[*channelData](),
 		dashboards:  memstore.New[*dashboardData](),
-		imports:     memstore.New[*driver.Import](),
-		queries:     memstore.New[*driver.Query](),
+		imports:     memstore.New[*importData](),
+		queries:     memstore.New[*queryData](),
 		policies:    map[string]string{},
 		tags:        map[string]map[string]string{},
 		delegated:   map[string]struct{}{},

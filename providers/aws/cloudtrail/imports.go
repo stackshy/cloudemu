@@ -3,10 +3,19 @@ package cloudtrail
 import (
 	"context"
 	"sort"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 )
+
+// importData wraps an import job with a per-item lock, matching the other
+// resource types, so a concurrent StopImport can't race a GetImport/ListImports
+// field read.
+type importData struct {
+	imp driver.Import
+	mu  sync.RWMutex
+}
 
 // StartImport records an import job. There is no real S3 source to read, so the
 // job is created COMPLETED (documented) — the local-dev analog of an
@@ -18,12 +27,15 @@ func (m *Mock) StartImport(_ context.Context, in driver.Import) (*driver.Import,
 
 	// Resuming an existing import: return it unchanged.
 	if in.ID != "" {
-		imp, ok := m.imports.Get(in.ID)
+		id, ok := m.imports.Get(in.ID)
 		if !ok {
 			return nil, errImportNotFound(in.ID)
 		}
 
-		return cloneImport(imp), nil
+		id.mu.RLock()
+		defer id.mu.RUnlock()
+
+		return cloneImport(&id.imp), nil
 	}
 
 	in.ID = idgen.GenerateID("import-")
@@ -31,7 +43,7 @@ func (m *Mock) StartImport(_ context.Context, in driver.Import) (*driver.Import,
 	in.CreatedAt = now
 	in.UpdatedAt = now
 
-	m.imports.Set(in.ID, &in)
+	m.imports.Set(in.ID, &importData{imp: in})
 
 	out := in
 
@@ -40,25 +52,31 @@ func (m *Mock) StartImport(_ context.Context, in driver.Import) (*driver.Import,
 
 // GetImport returns an import job by ID.
 func (m *Mock) GetImport(_ context.Context, id string) (*driver.Import, error) {
-	imp, ok := m.imports.Get(id)
+	d, ok := m.imports.Get(id)
 	if !ok {
 		return nil, errImportNotFound(id)
 	}
 
-	return cloneImport(imp), nil
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	return cloneImport(&d.imp), nil
 }
 
 // StopImport marks an import STOPPED.
 func (m *Mock) StopImport(_ context.Context, id string) (*driver.Import, error) {
-	imp, ok := m.imports.Get(id)
+	d, ok := m.imports.Get(id)
 	if !ok {
 		return nil, errImportNotFound(id)
 	}
 
-	imp.Status = driver.ImportStatusStopped
-	imp.UpdatedAt = m.now()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	return cloneImport(imp), nil
+	d.imp.Status = driver.ImportStatusStopped
+	d.imp.UpdatedAt = m.now()
+
+	return cloneImport(&d.imp), nil
 }
 
 // ListImports returns imports ordered by ID, optionally filtered by status,
@@ -92,7 +110,12 @@ func (m *Mock) ListImports(
 			continue
 		}
 
-		imp := all[id]
+		d := all[id]
+
+		d.mu.RLock()
+		imp := d.imp
+		d.mu.RUnlock()
+
 		if importStatus != "" && imp.Status != importStatus {
 			continue
 		}
@@ -101,7 +124,7 @@ func (m *Mock) ListImports(
 			return out, out[len(out)-1].ID, nil
 		}
 
-		out = append(out, *imp)
+		out = append(out, imp)
 	}
 
 	return out, "", nil
