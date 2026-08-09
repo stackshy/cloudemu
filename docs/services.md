@@ -38,7 +38,8 @@ This document lists every service and operation available in CloudEmu across all
 | 25 | DNS Resolver | `route53resolver` | — | — |
 | 26 | Application Networking | `vpclattice` | — | — |
 | 27 | Key Management | `kms` | — | — |
-| 28 | Certificate Manager | `acm` | — | — |
+| 28 | File System | `efs` | — | — |
+| 29 | Certificate Manager | `acm` | — | — |
 
 ---
 
@@ -2413,7 +2414,44 @@ return wire-complete metadata but there is no second regional endpoint to query.
 
 ---
 
-## 28. Certificate Manager (ACM)
+## 28. File System (EFS)
+
+**Driver interface:** `services/efs/driver/`
+**AWS:** EFS (REST-JSON, `awsRestjson1`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/efs` clients (and the `aws efs` CLI) work
+against the SDK-compat server (`awsserver.Drivers{EFS: cloud.EFS}`). Full parity
+across file systems, mount targets, access points, lifecycle/backup/replication
+configuration, and account preferences.
+
+Unlike the AWS JSON 1.1 services, EFS uses **REST-JSON** with path + method
+routing under a fixed API-version prefix (`/2015-02-01/...`). The handler gates
+on that prefix, so it never shadows the S3 catch-all (no real bucket path begins
+with `/2015-02-01/`). Timestamps are emitted as epoch-seconds numbers, matching
+the wire.
+
+| Family | Operations |
+|--------|-----------|
+| File systems | CreateFileSystem, DeleteFileSystem, DescribeFileSystems, UpdateFileSystem |
+| File system policy | PutFileSystemPolicy, DescribeFileSystemPolicy, DeleteFileSystemPolicy |
+| Mount targets | CreateMountTarget, DeleteMountTarget, DescribeMountTargets, Describe/ModifyMountTargetSecurityGroups |
+| Access points | CreateAccessPoint, DeleteAccessPoint, DescribeAccessPoints |
+| Lifecycle | PutLifecycleConfiguration, DescribeLifecycleConfiguration |
+| Backup | PutBackupPolicy, DescribeBackupPolicy |
+| Replication | CreateReplicationConfiguration, DeleteReplicationConfiguration, DescribeReplicationConfigurations |
+| Account preferences | PutAccountPreferences, DescribeAccountPreferences |
+| Tags | TagResource, UntagResource, ListTagsForResource + legacy CreateTags/DeleteTags/DescribeTags |
+
+Creating a file system is idempotent on the creation token; a file system with
+mount targets can't be deleted until they're removed (NumberOfMountTargets
+tracks this). Access points and file systems share one tag store, with the
+`Name` tag mirrored onto the resource name. Replication assigns a destination
+file-system id per destination; cross-region replicas aren't separately
+queryable in a single-process emulator.
+
+**Total: 30 operations.**
+
+## 29. Certificate Manager (ACM)
 
 **Driver interface:** `services/acm/driver/`
 **AWS:** ACM (AWS JSON 1.1, `X-Amz-Target: CertificateManager.<Op>`) | **Azure:** — | **GCP:** —
@@ -2565,8 +2603,9 @@ still sees success.
 | DNS Resolver — AWS Route 53 Resolver | 72 |
 | Application Networking — AWS VPC Lattice | 73 |
 | Key Management — AWS KMS | 45 |
+| File System — AWS EFS | 30 |
 | Certificate Manager — AWS ACM | 17 |
-| **Grand Total** | **1769** (+138 optional) |
+| **Grand Total** | **1799** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
