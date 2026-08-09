@@ -35,13 +35,15 @@ type eventWriter struct {
 // known so errors can still be reported via writeErr.
 func newEventWriter(w http.ResponseWriter) *eventWriter {
 	w.Header().Set("Content-Type", contentTypeEventStream)
-	// Close the connection after the stream instead of returning it to the
-	// keep-alive pool: a streamed (chunked) response left for reuse can be torn
-	// down abruptly as the handler returns, racing the client's in-flight read
-	// of the last events — which surfaces intermittently (under CI load) as
-	// "use of closed network connection". An explicit close makes net/http end
-	// the connection with a clean FIN after the final flush.
-	w.Header().Set("Connection", "close")
+	// Deliberately do NOT force "Connection: close" here. Closing the connection
+	// as the handler returns races the client's in-flight read of the final
+	// frame: the socket can be torn down (RST) before the last event
+	// (metadata, emitted last) is read, intermittently dropping it under CI load.
+	// Relying on normal keep-alive chunked termination writes the terminating
+	// chunk — delivering every frame — before the connection is ever closed. Any
+	// later teardown of the pooled connection surfaces as a benign
+	// "use of closed network connection" that the stream tests already tolerate
+	// via benignStreamTeardown, and never as lost data.
 	w.WriteHeader(http.StatusOK)
 
 	flusher, _ := w.(http.Flusher)
