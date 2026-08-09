@@ -40,12 +40,14 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
 	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
+	sesv2srv "github.com/stackshy/cloudemu/v2/server/aws/sesv2"
 	sfnsrv "github.com/stackshy/cloudemu/v2/server/aws/sfn"
 	"github.com/stackshy/cloudemu/v2/server/aws/sns"
 	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
+	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -77,9 +79,11 @@ import (
 	sagemakerdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	sesv2driver "github.com/stackshy/cloudemu/v2/services/sesv2/driver"
 	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	vpclatticedriver "github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
+	wafv2driver "github.com/stackshy/cloudemu/v2/services/wafv2/driver"
 )
 
 // Drivers bundles the driver interfaces the AWS server can expose. Leave a
@@ -110,9 +114,17 @@ type Drivers struct {
 	// routing) against the vpclattice driver.
 	VPCLattice vpclatticedriver.VPCLattice
 
+	// WAFv2 serves the AWS WAFv2 JSON 1.1 protocol (X-Amz-Target prefix
+	// "AWSWAF_20190729.") against the wafv2 driver.
+	WAFv2 wafv2driver.WAFV2
+
 	// EFS serves the AWS EFS REST-JSON API (path + method routing under the
 	// /2015-02-01/ version prefix) against the efs driver.
 	EFS efsdriver.EFS
+
+	// SESV2 serves the AWS SES v2 REST-JSON API (path + method routing under the
+	// /v2/email/ version prefix) against the sesv2 driver.
+	SESV2 sesv2driver.SESV2
 
 	// Route53Resolver serves the AWS Route 53 Resolver JSON 1.1 protocol
 	// (X-Amz-Target prefix "Route53Resolver.") against the route53resolver driver.
@@ -199,7 +211,9 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SageMaker:           p.SageMaker,
 		ECS:                 p.ECS,
 		VPCLattice:          p.VPCLattice,
+		WAFv2:               p.WAFv2,
 		EFS:                 p.EFS,
+		SESV2:               p.SESV2,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
 		KMS:                 p.KMS,
@@ -321,6 +335,12 @@ func New(d Drivers) *server.Server {
 		srv.Register(sfnsrv.New(d.SFN))
 	}
 
+	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729." — disjoint from
+	// the other JSON 1.1 services, so registration order is unconstrained.
+	if d.WAFv2 != nil {
+		srv.Register(wafv2srv.New(d.WAFv2))
+	}
+
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
 	// — disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, SSM,
 	// EventBridge, and the tagging API, so registration order is unconstrained.
@@ -340,6 +360,13 @@ func New(d Drivers) *server.Server {
 	// catch-all (no real bucket path begins with /2015-02-01/).
 	if d.EFS != nil {
 		srv.Register(efssrv.New(d.EFS))
+	}
+
+	// SES v2 uses REST-JSON path routing under the /v2/email/ version prefix; its
+	// Matches predicate gates on that prefix, so it must run before the S3
+	// catch-all (no real bucket path begins with /v2/email/).
+	if d.SESV2 != nil {
+		srv.Register(sesv2srv.New(d.SESV2))
 	}
 
 	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver." —

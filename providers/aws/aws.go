@@ -36,12 +36,14 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/s3"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
 	"github.com/stackshy/cloudemu/v2/providers/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sesv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sfn"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpclattice"
+	"github.com/stackshy/cloudemu/v2/providers/aws/wafv2"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
@@ -153,7 +155,9 @@ type Provider struct {
 	SSM                 *ssm.Mock
 	ECS                 *ecs.Mock
 	EFS                 *efs.Mock
+	SESV2               *sesv2.Mock
 	VPCLattice          *vpclattice.Mock
+	WAFv2               *wafv2.Mock
 	Route53Resolver     *route53resolver.Mock
 	SFN                 *sfn.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
@@ -196,7 +200,9 @@ func New(opts ...config.Option) *Provider {
 		SSM:                 ssm.New(o),
 		ECS:                 ecs.New(o),
 		EFS:                 efs.New(o),
+		SESV2:               sesv2.New(o),
 		VPCLattice:          vpclattice.New(o),
+		WAFv2:               wafv2.New(o),
 		Route53Resolver:     route53resolver.New(o),
 		SFN:                 sfn.New(o),
 		AccountID:           o.AccountID,
