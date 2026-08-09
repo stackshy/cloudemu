@@ -91,6 +91,9 @@ type UpdateFileSystemInput struct {
 // configuration surface (lifecycle/backup/replication/preferences) are added
 // by embedded sub-interfaces in later files of this package.
 type EFS interface {
+	MountTargets
+	AccessPoints
+
 	// File systems.
 	CreateFileSystem(ctx context.Context, in CreateFileSystemInput) (*FileSystem, error)
 	DeleteFileSystem(ctx context.Context, fileSystemID string) error

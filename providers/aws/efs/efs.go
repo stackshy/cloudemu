@@ -28,8 +28,9 @@ type fsData struct {
 // Mock is an in-memory implementation of AWS EFS.
 type Mock struct {
 	fileSystems *memstore.Store[*fsData]
-	// apIndex maps an access-point id to its owning file-system id, so
-	// id-scoped tag operations resolve without scanning.
+	// mtIndex maps a mount-target id, and apIndex an access-point id, to the
+	// owning file-system id so id-scoped operations resolve without scanning.
+	mtIndex *memstore.Store[string]
 	apIndex *memstore.Store[string]
 
 	opts *config.Options
@@ -39,6 +40,7 @@ type Mock struct {
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		fileSystems: memstore.New[*fsData](),
+		mtIndex:     memstore.New[string](),
 		apIndex:     memstore.New[string](),
 		opts:        opts,
 	}
@@ -46,6 +48,10 @@ func New(opts *config.Options) *Mock {
 
 func (m *Mock) fsARN(id string) string {
 	return idgen.AWSARN("elasticfilesystem", m.opts.Region, m.opts.AccountID, "file-system/"+id)
+}
+
+func (m *Mock) accessPointARN(id string) string {
+	return idgen.AWSARN("elasticfilesystem", m.opts.Region, m.opts.AccountID, "access-point/"+id)
 }
 
 // getFS resolves a file system by id under a read lock check.

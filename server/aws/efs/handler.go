@@ -21,11 +21,13 @@ const apiPrefix = "/2015-02-01/"
 
 // Path roots below the version prefix.
 const (
-	rootFileSystems = "file-systems"
-	rootResourceTag = "resource-tags"
-	rootCreateTags  = "create-tags"
-	rootDeleteTags  = "delete-tags"
-	rootTags        = "tags"
+	rootFileSystems  = "file-systems"
+	rootMountTargets = "mount-targets"
+	rootAccessPoints = "access-points"
+	rootResourceTag  = "resource-tags"
+	rootCreateTags   = "create-tags"
+	rootDeleteTags   = "delete-tags"
+	rootTags         = "tags"
 )
 
 // Handler serves EFS requests against a driver.
@@ -52,7 +54,8 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch segs[0] {
-	case rootFileSystems, rootResourceTag, rootCreateTags, rootDeleteTags, rootTags:
+	case rootFileSystems, rootMountTargets, rootAccessPoints,
+		rootResourceTag, rootCreateTags, rootDeleteTags, rootTags:
 		return true
 	default:
 		return false
@@ -71,6 +74,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch segs[0] {
 	case rootFileSystems:
 		h.serveFileSystems(w, r, segs[1:])
+	case rootMountTargets:
+		h.serveMountTargets(w, r, segs[1:])
+	case rootAccessPoints:
+		h.serveAccessPoints(w, r, segs[1:])
 	case rootResourceTag:
 		h.serveResourceTags(w, r, segs[1:])
 	case rootCreateTags, rootDeleteTags, rootTags:
