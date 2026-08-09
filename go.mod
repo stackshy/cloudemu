@@ -48,6 +48,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/bedrockagent v1.58.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime v1.55.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.53.5
+	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.58.4
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0
 	github.com/aws/aws-sdk-go-v2/service/docdb v1.48.15

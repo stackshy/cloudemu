@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
+	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
@@ -54,6 +55,7 @@ import (
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
@@ -141,6 +143,9 @@ type Drivers struct {
 
 	// Kinesis serves the Kinesis Data Streams JSON 1.1 protocol against the kinesis driver.
 	Kinesis kinesisdriver.Kinesis
+	// CloudTrail serves the CloudTrail JSON 1.1 protocol (X-Amz-Target prefix
+	// "CloudTrail_20131101.") against the cloudtrail driver.
+	CloudTrail cloudtraildriver.CloudTrail
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -224,6 +229,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		KMS:                 p.KMS,
 		ACM:                 p.ACM,
 		Kinesis:             p.Kinesis,
+		CloudTrail:          p.CloudTrail,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -345,6 +351,12 @@ func New(d Drivers) *server.Server {
 	// from the other JSON 1.1 services, so registration order is unconstrained.
 	if d.Kinesis != nil {
 		srv.Register(kinesissrv.New(d.Kinesis))
+	}
+
+	// CloudTrail matches the X-Amz-Target prefix "CloudTrail_20131101." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.CloudTrail != nil {
+		srv.Register(cloudtrailsrv.New(d.CloudTrail))
 	}
 
 	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729." — disjoint from

@@ -44,6 +44,7 @@ This document lists every service and operation available in CloudEmu across all
 | 31 | Web Application Firewall | `wafv2` | — | — |
 | 32 | Data Streams | `kinesis` | — | — |
 | 33 | Workflow Orchestration | `sfn` | — | — |
+| 34 | Audit Logging | `cloudtrail` | — | — |
 
 ---
 
@@ -2767,6 +2768,52 @@ send-and-poll orchestration — that it waits for a terminal status and reads th
 response code — but not the script. A caller whose bootstrap script is wrong
 still sees success.
 
+## 34. Audit Logging (CloudTrail)
+
+**Driver interface:** `services/cloudtrail/driver/`
+**AWS:** CloudTrail (AWS JSON 1.1, `X-Amz-Target: CloudTrail_20131101.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/cloudtrail` clients (and the
+`aws cloudtrail` CLI) work against the SDK-compat server
+(`awsserver.Drivers{CloudTrail: cloud.CloudTrail}`). Full parity across trails,
+event data stores, channels, dashboards, imports, event/insight selectors,
+ad-hoc CloudTrail Lake queries, resource policies, and tags.
+
+| Family | Operations |
+|--------|-----------|
+| Trails | CreateTrail, GetTrail, UpdateTrail, DeleteTrail, DescribeTrails, ListTrails, GetTrailStatus, StartLogging, StopLogging |
+| Selectors | PutEventSelectors, GetEventSelectors, PutInsightSelectors, GetInsightSelectors |
+| Event data stores | CreateEventDataStore, GetEventDataStore, UpdateEventDataStore, DeleteEventDataStore, RestoreEventDataStore, ListEventDataStores, StartEventDataStoreIngestion, StopEventDataStoreIngestion, EnableFederation, DisableFederation |
+| Channels | CreateChannel, GetChannel, UpdateChannel, DeleteChannel, ListChannels |
+| Dashboards | CreateDashboard, GetDashboard, UpdateDashboard, DeleteDashboard, ListDashboards, StartDashboardRefresh |
+| Imports | StartImport, GetImport, StopImport, ListImports, ListImportFailures |
+| Queries | StartQuery, DescribeQuery, GetQueryResults, CancelQuery, ListQueries, GenerateQuery |
+| Resource policy / config | PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy, PutEventConfiguration, GetEventConfiguration |
+| Organization | RegisterOrganizationDelegatedAdmin, DeregisterOrganizationDelegatedAdmin |
+| Tags | AddTags, RemoveTags, ListTags |
+| Read-only (synthesized) | LookupEvents, ListPublicKeys, ListInsightsData, ListInsightsMetricData, SearchSampleQueries |
+
+`CreateTrail` validates the trail name (3–128 chars, allowed charset, no
+adjacent separators, not an IP) → `InvalidTrailNameException`, claims the name
+atomically (a duplicate is `TrailAlreadyExistsException`), stores the config and
+returns the trail ARN. `StartLogging`/`StopLogging` flip `IsLogging` (with real
+recorded start/stop times) reported by `GetTrailStatus`. Event data stores are
+created `ENABLED` with an ARN; a malformed EDS ARN is
+`EventDataStoreARNInvalidException`, a well-formed-but-absent one is
+`EventDataStoreNotFoundException`; `DeleteEventDataStore` is a soft delete
+(→ `PENDING_DELETION`) unless termination protection is on.
+
+**No real event stream — a deliberate simplification.** The emulator records no
+audit events, so the read-only analytics surfaces return synthesized/empty
+results: `LookupEvents`, `ListInsightsData`, `ListInsightsMetricData` and
+`ListPublicKeys` return empty pages; ad-hoc `StartQuery` is accepted, stored and
+immediately marked `FINISHED` with an empty result set; `SearchSampleQueries`
+returns a small fixed catalog of CloudTrail Lake sample queries. Emulated
+imports complete instantly with no failures. This preserves the SDK wire shapes
+for build-and-orchestrate testing without a dependency on real event data.
+
+**Total: 60 operations.**
+
 ## Summary
 
 | Service | Operations |
@@ -2817,7 +2864,8 @@ still sees success.
 | Web Application Firewall — AWS WAFv2 | 59 |
 | Data Streams — AWS Kinesis | 39 |
 | Step Functions — AWS SFN | 36 |
-| **Grand Total** | **2046** (+138 optional) |
+| Audit Logging — AWS CloudTrail | 60 |
+| **Grand Total** | **2106** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
