@@ -27,6 +27,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
+	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
 	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
@@ -62,6 +63,7 @@ import (
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
+	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
@@ -136,6 +138,9 @@ type Drivers struct {
 	KMS kmsdriver.KMS
 	// ACM serves the Certificate Manager JSON 1.1 protocol against the acm driver.
 	ACM acmdriver.ACM
+
+	// Kinesis serves the Kinesis Data Streams JSON 1.1 protocol against the kinesis driver.
+	Kinesis kinesisdriver.Kinesis
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -218,6 +223,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SecretsManager:      p.SecretsManager,
 		KMS:                 p.KMS,
 		ACM:                 p.ACM,
+		Kinesis:             p.Kinesis,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -333,6 +339,12 @@ func New(d Drivers) *server.Server {
 	// disjoint from every other JSON-RPC service, so registration order is free.
 	if d.SFN != nil {
 		srv.Register(sfnsrv.New(d.SFN))
+	}
+
+	// Kinesis matches the X-Amz-Target prefix "Kinesis_20131202." — disjoint
+	// from the other JSON 1.1 services, so registration order is unconstrained.
+	if d.Kinesis != nil {
+		srv.Register(kinesissrv.New(d.Kinesis))
 	}
 
 	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729." — disjoint from
