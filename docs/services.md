@@ -43,6 +43,7 @@ This document lists every service and operation available in CloudEmu across all
 | 30 | Email Service | `sesv2` | — | — |
 | 31 | Web Application Firewall | `wafv2` | — | — |
 | 32 | Data Streams | `kinesis` | — | — |
+| 33 | Workflow Orchestration | `sfn` | — | — |
 
 ---
 
@@ -2533,6 +2534,50 @@ sequence number, and `MillisBehindLatest`. Polling via
 
 ---
 
+## 33. Step Functions (SFN)
+
+**Driver interface:** `services/sfn/driver/`
+**AWS:** Step Functions (AWS JSON 1.0, `X-Amz-Target: AWSStepFunctions.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/sfn` clients (and the `aws stepfunctions`
+CLI) work against the SDK-compat server (`awsserver.Drivers{SFN: cloud.SFN}`).
+Full parity across state machines, executions, execution history, activities,
+versions/aliases, and tags. State machine ARNs are keyed by name (a duplicate
+name is `StateMachineAlreadyExists`); the ASL definition is stored verbatim and
+returned unchanged by `DescribeStateMachine`.
+
+| Family | Operations |
+|--------|-----------|
+| State machines | CreateStateMachine, DescribeStateMachine, UpdateStateMachine, DeleteStateMachine, ListStateMachines |
+| Executions | StartExecution, StartSyncExecution, DescribeExecution, StopExecution, ListExecutions, GetExecutionHistory, DescribeStateMachineForExecution, RedriveExecution |
+| Map Runs | DescribeMapRun, ListMapRuns, UpdateMapRun |
+| Versions / aliases | PublishStateMachineVersion, ListStateMachineVersions, DeleteStateMachineVersion, CreateStateMachineAlias, DescribeStateMachineAlias, UpdateStateMachineAlias, DeleteStateMachineAlias, ListStateMachineAliases |
+| Activities | CreateActivity, DescribeActivity, DeleteActivity, ListActivities, GetActivityTask, SendTaskSuccess, SendTaskFailure, SendTaskHeartbeat |
+| Definition tooling | TestState, ValidateStateMachineDefinition |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+**No ASL interpreter — a deliberate simplification.** The emulator does not
+execute the Amazon States Language. `StartExecution` (and `StartSyncExecution`)
+complete the execution immediately: it transitions `RUNNING → SUCCEEDED` with
+output echoing the input, and `GetExecutionHistory` synthesises a minimal but
+valid event list (`ExecutionStarted → PassStateEntered → PassStateExited →
+ExecutionSucceeded`). Because nothing schedules real work, `GetActivityTask`
+returns an empty task token (the same long-poll-empty result real clients see),
+and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`. This
+keeps behaviour deterministic and dependency-free while preserving the SDK wire
+shapes for build-and-orchestrate testing.
+
+Consistent with the no-interpreter model: `RedriveExecution` records a fresh
+redrive date on an existing execution rather than re-running it; `TestState`
+succeeds for any non-empty definition and echoes the input as output;
+`ValidateStateMachineDefinition` returns `OK` for a non-empty, valid-JSON
+definition and `FAIL` with a diagnostic otherwise (no semantic ASL validation).
+Distributed-map Map Runs are never produced by execution, so `ListMapRuns`
+returns empty for ordinary executions; `DescribeMapRun`/`UpdateMapRun` operate on
+Map Run records seeded through the provider's `SeedMapRun` helper.
+
+**Total: 36 operations.**
+
 ## 31. Web Application Firewall (WAFv2)
 
 **Driver interface:** `services/wafv2/driver/`
@@ -2771,7 +2816,8 @@ still sees success.
 | Email Service — AWS SES v2 | 113 |
 | Web Application Firewall — AWS WAFv2 | 59 |
 | Data Streams — AWS Kinesis | 39 |
-| **Grand Total** | **2010** (+138 optional) |
+| Step Functions — AWS SFN | 36 |
+| **Grand Total** | **2046** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
