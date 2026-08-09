@@ -41,22 +41,18 @@ func (h *Handler) listAlarms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	displayName := r.URL.Query().Get("displayName")
-	limit := ocirest.Limit(r)
-	out := make([]alarm, 0, len(alarms))
+	if displayName := r.URL.Query().Get("displayName"); displayName != "" {
+		alarms = byDisplayName(alarms, displayName)
+	}
 
-	for _, a := range alarms {
-		if len(out) == limit {
-			break
-		}
+	start, end, next := pageOf(r, len(alarms))
+	out := make([]alarm, 0, end-start)
 
-		if displayName != "" && a.Spec.DisplayName != displayName {
-			continue
-		}
-
+	for _, a := range alarms[start:end] {
 		out = append(out, toWireAlarm(a))
 	}
 
+	ocirest.SetNextPage(w, next)
 	ocirest.WriteJSON(w, r, http.StatusOK, out)
 }
 
@@ -66,14 +62,10 @@ func (h *Handler) listAlarmsStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := ocirest.Limit(r)
-	out := make([]alarmStatusSummary, 0, len(alarms))
+	start, end, next := pageOf(r, len(alarms))
+	out := make([]alarmStatusSummary, 0, end-start)
 
-	for _, a := range alarms {
-		if len(out) == limit {
-			break
-		}
-
+	for _, a := range alarms[start:end] {
 		out = append(out, alarmStatusSummary{
 			ID:                 a.ID,
 			DisplayName:        a.Spec.DisplayName,
@@ -83,6 +75,7 @@ func (h *Handler) listAlarmsStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	ocirest.SetNextPage(w, next)
 	ocirest.WriteJSON(w, r, http.StatusOK, out)
 }
 
@@ -165,6 +158,19 @@ func (h *Handler) compartmentAlarms(w http.ResponseWriter, r *http.Request) ([]*
 	}
 
 	return alarms, true
+}
+
+// byDisplayName narrows a listing to the alarms with a display name.
+func byDisplayName(alarms []*mondriver.OCIAlarm, name string) []*mondriver.OCIAlarm {
+	out := make([]*mondriver.OCIAlarm, 0, len(alarms))
+
+	for _, a := range alarms {
+		if a.Spec.DisplayName == name {
+			out = append(out, a)
+		}
+	}
+
+	return out
 }
 
 func (d *alarmDetails) toSpec() mondriver.OCIAlarmSpec {

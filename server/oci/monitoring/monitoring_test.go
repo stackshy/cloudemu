@@ -1,6 +1,7 @@
 package monitoring_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -385,6 +386,63 @@ func TestListAlarmsIsCompartmentScoped(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		assert.Equal(t, "InvalidParameter", decode[ocirest.ErrorBody](t, raw).Code)
 	})
+}
+
+func TestListAlarmsPaginates(t *testing.T) {
+	ts := newServer(t)
+	for _, name := range []string{"alarm-1", "alarm-2", "alarm-3"} {
+		createAlarm(t, ts, compartmentA, name, "CpuUtilization[1m].mean() > 80")
+	}
+
+	seen := make([]string, 0, 3)
+	page := ""
+
+	for range 3 {
+		url := alarmsPath + "?compartmentId=" + compartmentA + "&limit=2&page=" + page
+
+		resp, raw := do(t, ts, http.MethodGet, url, "")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		for _, a := range decode[[]map[string]any](t, raw) {
+			name, _ := a["displayName"].(string)
+			seen = append(seen, name)
+		}
+
+		page = resp.Header.Get(ocirest.HeaderNextPage)
+		if page == "" {
+			break
+		}
+	}
+
+	assert.Empty(t, page, "the last page must carry no cursor")
+	assert.ElementsMatch(t, []string{"alarm-1", "alarm-2", "alarm-3"}, seen)
+}
+
+// TestSummarizeRejectsSubSecondResolution covers the wire path that fed a
+// resolution straight into a bucket loop that could not advance. The server is
+// left unclosed on purpose: a regression leaves its handler spinning, and Close
+// would block on it instead of letting the test fail.
+func TestSummarizeRejectsSubSecondResolution(t *testing.T) {
+	ts := httptest.NewServer(monitoring.New(ocimon.New(config.NewOptions(
+		config.WithRegion("us-ashburn-1"),
+		config.WithCompartmentID(compartmentA),
+	))))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	body := `{"namespace":"` + namespace + `","query":"CpuUtilization[500ms].mean()"}`
+	url := ts.URL + metricsPath + "/actions/summarizeMetricsData?compartmentId=" + compartmentA
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	require.NoError(t, err)
+
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err, "sub-second resolution hung the serving goroutine")
+
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestListAlarmsStatus(t *testing.T) {

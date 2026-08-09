@@ -18,6 +18,8 @@ func (m *Mock) CreateOCIAlarm(_ context.Context, spec driver.OCIAlarmSpec) (*dri
 		return nil, err
 	}
 
+	// Real OCI allows duplicate display names; the portable driver addresses
+	// alarms by name, so this mock requires them unique per compartment.
 	if a := m.lookupByName(spec.CompartmentID, spec.DisplayName); a != nil {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "alarm %q already exists in compartment %s",
 			spec.DisplayName, spec.CompartmentID)
@@ -80,7 +82,7 @@ func (m *Mock) UpdateOCIAlarm(_ context.Context, id string, spec driver.OCIAlarm
 		return nil, cerrors.Newf(cerrors.NotFound, "alarm %q not found", id)
 	}
 
-	spec.CompartmentID = rec.spec.CompartmentID
+	spec.CompartmentID = m.specOf(rec).CompartmentID
 	if err := validateSpec(&spec); err != nil {
 		return nil, err
 	}
@@ -125,32 +127,45 @@ func (m *Mock) OCIAlarmHistory(_ context.Context, id string, limit int) ([]drive
 // evaluateAlarms re-evaluates every alarm watching metrics in a compartment.
 func (m *Mock) evaluateAlarms(compartmentID string) {
 	for _, rec := range m.alarms.SortedValues() {
-		if rec.spec.MetricCompartmentID == compartmentID {
-			m.evaluateAlarm(rec)
+		spec := m.specOf(rec)
+		if spec.MetricCompartmentID == compartmentID {
+			m.evaluate(rec, &spec)
 		}
 	}
 }
 
-// evaluateAlarm compares an alarm's query against the samples in its window and
-// records any status change.
+// evaluateAlarm re-evaluates one alarm against its current definition.
 func (m *Mock) evaluateAlarm(rec *alarmRecord) {
-	cond, ok := parseQuery(rec.spec.Query)
+	spec := m.specOf(rec)
+	m.evaluate(rec, &spec)
+}
+
+// evaluate compares a spec's query against the samples in its window and records
+// any status change. The spec is passed in rather than read off rec because
+// PostMetricData evaluates outside m.mu, where a concurrent update races it.
+func (m *Mock) evaluate(rec *alarmRecord, spec *driver.OCIAlarmSpec) {
+	cond, ok := parseQuery(spec.Query)
 	if !ok {
 		return
 	}
 
-	if !rec.spec.IsEnabled {
+	if !spec.IsEnabled {
 		m.transition(rec, StatusSuspended, "Alarm is disabled")
 		return
 	}
 
 	end := m.opts.Clock.Now().UTC()
-	filter := driver.OCIMetricFilter{Namespace: rec.spec.Namespace, ResourceGroup: rec.spec.ResourceGroup, Name: cond.metricName}
+	filter := driver.OCIMetricFilter{
+		Namespace:     spec.Namespace,
+		ResourceGroup: spec.ResourceGroup,
+		Name:          cond.metricName,
+		Dimensions:    cond.dimensions,
+	}
 
 	var values []float64
 
-	for _, s := range m.selectSeries(rec.spec.MetricCompartmentID, filter) {
-		values = append(values, valuesIn(m.pointsOf(s), end.Add(-cond.interval), end)...)
+	for _, s := range m.selectSeries(spec.MetricCompartmentID, filter) {
+		values = append(values, valuesIn(m.pointsOf(s), end.Add(-cond.interval), end, true)...)
 	}
 
 	if len(values) == 0 {
@@ -194,12 +209,20 @@ func (m *Mock) transition(rec *alarmRecord, status, reason string) {
 // lookupByName returns the alarm with a display name in a compartment.
 func (m *Mock) lookupByName(compartmentID, name string) *alarmRecord {
 	for _, rec := range m.alarms.SortedValues() {
-		if rec.place.Compartment == compartmentID && rec.spec.DisplayName == name {
+		if rec.place.Compartment == compartmentID && m.specOf(rec).DisplayName == name {
 			return rec
 		}
 	}
 
 	return nil
+}
+
+// specOf copies an alarm's definition out from under the mutation lock.
+func (m *Mock) specOf(rec *alarmRecord) driver.OCIAlarmSpec {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return rec.spec
 }
 
 // snapshot copies an alarm out from under the mutation lock.

@@ -636,8 +636,14 @@ which the portable model carries.
 | `DeleteAlarm` | `DELETE /20180401/alarms/{alarmId}` |
 | `GetAlarmHistory` | `GET /20180401/alarms/{alarmId}/history` |
 
-Every list route requires `compartmentId`. Alarm mutations are synchronous in
-real OCI Monitoring, so none of them returns a work request.
+Every list route requires `compartmentId` and paginates with `limit` / `page`,
+returning the cursor as `opc-next-page`. Alarm mutations are synchronous in real
+OCI Monitoring, so none of them returns a work request.
+
+Queries are read in MQL's single-metric threshold form plus the optional
+dimension predicate that scopes an alarm to one series —
+`CpuUtilization[1m]{resourceId = "ocid1.instance…"}.mean() > 80`. A resolution
+finer than `1s` is rejected; richer MQL is stored verbatim and never fires.
 
 ---
 

@@ -1,7 +1,10 @@
 package monitoring
 
 import (
+	"math"
 	"regexp"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -399,8 +402,12 @@ func TestParseQuery(t *testing.T) {
 		{"sum at least", "Errors[5m].sum() >= 3", true, "Errors", "Sum", "GreaterThanOrEqualToThreshold", 3, 5 * time.Minute},
 		{"min below", "Free[1h].min() < 2.5", true, "Free", "Minimum", "LessThanThreshold", 2.5, time.Hour},
 		{"count not equal", "Hits[1m].count() != 0", true, "Hits", "SampleCount", "NotEqualToThreshold", 0, time.Minute},
+		{"dimension predicate", `Cpu[1m]{resourceId = "vm-1"}.mean() > 80`, true,
+			"Cpu", "Average", "GreaterThanThreshold", 80, time.Minute},
 		{"no comparison", "CpuUtilization[1m].mean()", false, "", "", "", 0, 0},
 		{"no interval", "CpuUtilization.mean() > 1", false, "", "", "", 0, 0},
+		{"unknown aggregation", "CpuUtilization[1m].p99() > 1", false, "", "", "", 0, 0},
+		{"unclosed predicate", `Cpu[1m]{resourceId = "vm-1".mean() > 1`, false, "", "", "", 0, 0},
 		{"garbage", "hello", false, "", "", "", 0, 0},
 	}
 
@@ -425,17 +432,237 @@ func TestParseQuery(t *testing.T) {
 func TestFormatQueryRoundTrips(t *testing.T) {
 	cfg := driver.AlarmConfig{
 		MetricName:         "CpuUtilization",
+		Dimensions:         map[string]string{"resourceId": "vm-1", "az": "ad-1"},
 		ComparisonOperator: "LessThanOrEqualToThreshold",
 		Threshold:          12.5,
 		Period:             300,
 		Stat:               "Maximum",
 	}
 
-	query := formatQuery(&cfg)
-	assert.Equal(t, "CpuUtilization[5m].max() <= 12.5", query)
+	query, err := formatQuery(&cfg)
+	require.NoError(t, err)
+	assert.Equal(t, `CpuUtilization[5m]{az = "ad-1", resourceId = "vm-1"}.max() <= 12.5`, query)
 
 	cond, ok := parseQuery(query)
 	require.True(t, ok)
 	assert.Equal(t, cfg.ComparisonOperator, cond.operator)
 	assert.InDelta(t, cfg.Threshold, cond.threshold, 0.001)
+	assert.Equal(t, cfg.Dimensions, cond.dimensions)
+}
+
+func TestFormatQueryRejectsUnusableAlarms(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  driver.AlarmConfig
+	}{
+		{"unknown operator", driver.AlarmConfig{MetricName: "Cpu", ComparisonOperator: "SortOfAbove", Threshold: 1}},
+		{"no operator", driver.AlarmConfig{MetricName: "Cpu", Threshold: 1}},
+		{"NaN threshold", driver.AlarmConfig{
+			MetricName: "Cpu", ComparisonOperator: "GreaterThanThreshold", Threshold: math.NaN(),
+		}},
+		{"infinite threshold", driver.AlarmConfig{
+			MetricName: "Cpu", ComparisonOperator: "GreaterThanThreshold", Threshold: math.Inf(1),
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := formatQuery(&tc.cfg)
+			assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+			m, _ := newMock(t)
+			assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(m.CreateAlarm(t.Context(), tc.cfg)))
+		})
+	}
+}
+
+// TestSummarizeSubSecondResolution covers a resolution that truncated to a zero
+// step and spun aggregate's bucket loop forever. It runs in its own goroutine so
+// a regression fails the test instead of hanging the suite.
+func TestSummarizeSubSecondResolution(t *testing.T) {
+	m, now := newMock(t)
+	post(t, m, compartmentA, "CpuUtilization", now.Add(-30*time.Second), 10, 20)
+
+	tests := []struct {
+		name       string
+		query      string
+		resolution string
+		wantCode   cerrors.Code
+	}{
+		{"sub-second selector interval", "CpuUtilization[500ms].mean()", "", cerrors.InvalidArgument},
+		{"sub-second resolution override", "CpuUtilization[1m].mean()", "500ms", cerrors.InvalidArgument},
+		{"non-positive resolution falls back", "CpuUtilization[1m].mean()", "0s", cerrors.OK},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			done := make(chan error, 1)
+
+			go func() {
+				_, err := m.SummarizeOCIMetrics(t.Context(), compartmentA, driver.OCIMetricQuery{
+					Namespace:  namespace,
+					Query:      tc.query,
+					Resolution: tc.resolution,
+					StartTime:  now.Add(-time.Minute),
+					EndTime:    now,
+				})
+				done <- err
+			}()
+
+			select {
+			case err := <-done:
+				assert.Equal(t, tc.wantCode, cerrors.GetCode(err))
+			case <-time.After(5 * time.Second):
+				t.Fatal("SummarizeOCIMetrics did not return: sub-second resolution spun the bucket loop")
+			}
+		})
+	}
+}
+
+// TestAggregateNeverSpinsOnZeroStep guards the loop itself, independent of the
+// validation in front of it.
+func TestAggregateNeverSpinsOnZeroStep(t *testing.T) {
+	_, now := newMock(t)
+	points := []metricPoint{{timestamp: now.Add(-30 * time.Second), value: 7}}
+
+	done := make(chan int, 1)
+
+	go func() {
+		stamps, _ := aggregate(points, now.Add(-time.Minute), now, 0, statAverage)
+		done <- len(stamps)
+	}()
+
+	select {
+	case n := <-done:
+		assert.Equal(t, 1, n)
+	case <-time.After(5 * time.Second):
+		t.Fatal("aggregate did not return with a zero step")
+	}
+}
+
+// TestConcurrentUpdateAndPost races UpdateOCIAlarm's write of rec.spec against
+// the evaluation PostMetricData drives. It fails under -race unless evaluation
+// reads a copy of the spec taken under the lock.
+func TestConcurrentUpdateAndPost(t *testing.T) {
+	m, now := newMock(t)
+	ctx := t.Context()
+
+	created, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "racy", "CpuUtilization[1m].mean() > 80"))
+	require.NoError(t, err)
+
+	const rounds = 200
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+
+		for i := range rounds {
+			spec := alarmSpec(compartmentA, "racy", "CpuUtilization[1m].mean() > "+strconv.Itoa(i))
+			spec.ResourceGroup = "rg-" + strconv.Itoa(i)
+
+			_, e := m.UpdateOCIAlarm(ctx, created.ID, spec)
+			assert.NoError(t, e)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		for i := range rounds {
+			data := []driver.MetricDatum{{
+				Namespace:  namespace,
+				MetricName: "CpuUtilization",
+				Value:      float64(i),
+				Timestamp:  now.Add(-time.Duration(i) * time.Second),
+			}}
+			assert.NoError(t, m.PostMetricData(ctx, compartmentA, "", data))
+		}
+	}()
+
+	wg.Wait()
+
+	_, err = m.GetOCIAlarm(ctx, created.ID)
+	require.NoError(t, err)
+}
+
+func TestAlarmScopedByDimensions(t *testing.T) {
+	m, now := newMock(t)
+	ctx := t.Context()
+
+	spec := alarmSpec(compartmentA, "vm-1-cpu", `CpuUtilization[1m]{resourceId = "vm-1"}.mean() > 80`)
+
+	created, err := m.CreateOCIAlarm(ctx, spec)
+	require.NoError(t, err)
+
+	// A hot sample on a different resource must not move an alarm scoped to vm-1.
+	require.NoError(t, m.PostMetricData(ctx, compartmentA, "", []driver.MetricDatum{{
+		Namespace:  namespace,
+		MetricName: "CpuUtilization",
+		Value:      99,
+		Dimensions: map[string]string{"resourceId": "vm-2"},
+		Timestamp:  now.Add(-10 * time.Second),
+	}}))
+
+	quiet, err := m.GetOCIAlarm(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusOK, quiet.Status)
+
+	post(t, m, compartmentA, "CpuUtilization", now.Add(-5*time.Second), 95)
+
+	fired, err := m.GetOCIAlarm(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusFiring, fired.Status)
+}
+
+// TestAlarmSeesSampleAtNow covers the evaluation window's upper bound: a sample
+// posted at the clock's now must count toward its own evaluation.
+func TestAlarmSeesSampleAtNow(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := t.Context()
+
+	created, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "now-cpu", "CpuUtilization[1m].mean() > 80"))
+	require.NoError(t, err)
+
+	// No timestamp, so the datum lands at exactly now.
+	require.NoError(t, m.PutMetricData(ctx, []driver.MetricDatum{
+		{Namespace: namespace, MetricName: "CpuUtilization", Value: 95},
+	}))
+
+	fired, err := m.GetOCIAlarm(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusFiring, fired.Status)
+}
+
+func TestDescribeAlarmsIsCompartmentScoped(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := t.Context()
+
+	_, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "in-default", "CpuUtilization[1m].mean() > 80"))
+	require.NoError(t, err)
+
+	_, err = m.CreateOCIAlarm(ctx, alarmSpec(compartmentB, "elsewhere", "CpuUtilization[1m].mean() > 80"))
+	require.NoError(t, err)
+
+	all, err := m.DescribeAlarms(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, "in-default", all[0].Name)
+
+	named, err := m.DescribeAlarms(ctx, []string{"elsewhere"})
+	require.NoError(t, err)
+	assert.Empty(t, named)
+}
+
+func TestDestinationsFoldsEveryActionList(t *testing.T) {
+	cfg := driver.AlarmConfig{
+		AlarmActions:            []string{"topic-a", "topic-b"},
+		OKActions:               []string{"topic-a", "topic-c"},
+		InsufficientDataActions: []string{"topic-d"},
+	}
+
+	assert.Equal(t, []string{"topic-a", "topic-b", "topic-c", "topic-d"}, destinations(&cfg))
+	assert.Equal(t, []string{}, destinations(&driver.AlarmConfig{}))
 }

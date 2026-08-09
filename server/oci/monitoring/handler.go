@@ -19,6 +19,7 @@ package monitoring
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,6 +189,23 @@ func parsePath(urlPath string) (resource string, rest []string, ok bool) {
 	}
 
 	return parts[1], parts[subPathParts:], true
+}
+
+// pageOf slices a list at the caller's cursor and returns the token that
+// resumes after it, empty on the last page. OCI's cursor is opaque, so a
+// decimal offset serves.
+func pageOf(r *http.Request, total int) (start, end int, next string) {
+	start, err := strconv.Atoi(ocirest.Page(r))
+	if err != nil || start < 0 || start > total {
+		start = 0
+	}
+
+	end = min(start+ocirest.Limit(r), total)
+	if end < total {
+		next = strconv.Itoa(end)
+	}
+
+	return start, end, next
 }
 
 func writeNotFound(w http.ResponseWriter, r *http.Request) {

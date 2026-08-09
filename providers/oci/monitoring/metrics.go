@@ -2,7 +2,6 @@ package monitoring
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -12,11 +11,12 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// Aggregation defaults, in seconds.
 const (
-	defaultPeriod   = 60
-	secondsPerHour  = 3600
-	secondsPerMin   = 60
+	// defaultPeriod is the aggregation interval, in seconds, applied when a
+	// query names none.
+	defaultPeriod = 60
+	// minResolution is the finest interval that still forms a non-empty bucket.
+	minResolution   = time.Second
 	defaultLookback = 3 * time.Hour
 )
 
@@ -96,16 +96,16 @@ func (m *Mock) SummarizeOCIMetrics(
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "malformed query %q", query.Query)
 	}
 
+	step, err := resolutionOf(sel.interval, query.Resolution)
+	if err != nil {
+		return nil, err
+	}
+
 	filter := driver.OCIMetricFilter{
 		Namespace:     query.Namespace,
 		ResourceGroup: query.ResourceGroup,
 		Name:          sel.metricName,
-		Dimensions:    query.Dimensions,
-	}
-
-	period := int(sel.interval.Seconds())
-	if query.Resolution != "" {
-		period = int(alarmDuration(query.Resolution).Seconds())
+		Dimensions:    mergeTags(query.Dimensions, sel.dimensions),
 	}
 
 	start, end := m.window(query.StartTime, query.EndTime)
@@ -113,7 +113,7 @@ func (m *Mock) SummarizeOCIMetrics(
 	out := make([]driver.OCIMetric, 0, len(selected))
 
 	for _, s := range selected {
-		stamps, values := aggregate(m.pointsOf(s), start, end, period, sel.stat)
+		stamps, values := aggregate(m.pointsOf(s), start, end, step, sel.stat)
 		if len(stamps) == 0 {
 			continue
 		}
@@ -124,7 +124,7 @@ func (m *Mock) SummarizeOCIMetrics(
 			ResourceGroup: s.resourceGroup,
 			Name:          s.name,
 			Dimensions:    copyTags(s.dimensions),
-			Resolution:    resolutionLabel(period),
+			Resolution:    resolutionLabel(step),
 			Timestamps:    stamps,
 			Values:        values,
 		})
@@ -241,16 +241,37 @@ func seriesKey(compartmentID, resourceGroup string, d *driver.MetricDatum) strin
 	return strings.Join([]string{compartmentID, d.Namespace, resourceGroup, d.MetricName, strings.Join(parts, ",")}, "|")
 }
 
-// aggregate buckets samples into fixed periods and reduces each with stat.
-func aggregate(points []metricPoint, start, end time.Time, period int, stat string) (stamps []time.Time, values []float64) {
+// resolutionOf returns the interval a summarize query aggregates by, preferring
+// an explicit resolution over the selector's own. Anything finer than
+// minResolution would collapse to a zero-width bucket, so it is refused.
+func resolutionOf(interval time.Duration, resolution string) (time.Duration, error) {
+	step := interval
+	if resolution != "" {
+		step = alarmDuration(resolution)
+	}
+
+	if step < minResolution {
+		return 0, cerrors.Newf(cerrors.InvalidArgument,
+			"resolution %s is finer than the %s minimum", step, minResolution)
+	}
+
+	return step, nil
+}
+
+// aggregate buckets samples into fixed periods and reduces each with stat. A
+// step of zero or less would never advance the bucket, so it never gets one.
+func aggregate(points []metricPoint, start, end time.Time, step time.Duration, stat string) (stamps []time.Time, values []float64) {
+	if step <= 0 {
+		step = defaultPeriod * time.Second
+	}
+
 	sort.Slice(points, func(i, j int) bool { return points[i].timestamp.Before(points[j].timestamp) })
 
-	step := time.Duration(period) * time.Second
 	stamps = make([]time.Time, 0)
 	values = make([]float64, 0)
 
 	for bucket := start; bucket.Before(end); bucket = bucket.Add(step) {
-		in := valuesIn(points, bucket, bucket.Add(step))
+		in := valuesIn(points, bucket, bucket.Add(step), false)
 		if len(in) == 0 {
 			continue
 		}
@@ -262,13 +283,22 @@ func aggregate(points []metricPoint, start, end time.Time, period int, stat stri
 	return stamps, values
 }
 
-func valuesIn(points []metricPoint, from, to time.Time) []float64 {
+// valuesIn returns the samples between from and to. Buckets abut, so they
+// exclude their end; an alarm window ends at now and must include it, or a
+// sample posted at now is missing from its own evaluation.
+func valuesIn(points []metricPoint, from, to time.Time, inclusiveEnd bool) []float64 {
 	var out []float64
 
 	for _, p := range points {
-		if !p.timestamp.Before(from) && p.timestamp.Before(to) {
-			out = append(out, p.value)
+		if p.timestamp.Before(from) || p.timestamp.After(to) {
+			continue
 		}
+
+		if !inclusiveEnd && p.timestamp.Equal(to) {
+			continue
+		}
+
+		out = append(out, p.value)
 	}
 
 	return out
@@ -326,16 +356,4 @@ func reduce(values []float64, better func(cur, candidate float64) bool) float64 
 	}
 
 	return out
-}
-
-// resolutionLabel renders a period in seconds as OCI's interval notation.
-func resolutionLabel(period int) string {
-	switch {
-	case period%secondsPerHour == 0:
-		return fmt.Sprintf("%dh", period/secondsPerHour)
-	case period%secondsPerMin == 0:
-		return fmt.Sprintf("%dm", period/secondsPerMin)
-	default:
-		return fmt.Sprintf("%ds", period)
-	}
 }

@@ -65,14 +65,10 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := ocirest.Limit(r)
-	out := make([]metric, 0, len(metrics))
+	start, end, next := pageOf(r, len(metrics))
+	out := make([]metric, 0, end-start)
 
-	for i := range metrics {
-		if len(out) == limit {
-			break
-		}
-
+	for i := start; i < end; i++ {
 		out = append(out, metric{
 			Name:          metrics[i].Name,
 			Namespace:     metrics[i].Namespace,
@@ -82,6 +78,7 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	ocirest.SetNextPage(w, next)
 	ocirest.WriteJSON(w, r, http.StatusOK, out)
 }
 

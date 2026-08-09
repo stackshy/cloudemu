@@ -78,13 +78,14 @@ func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) err
 }
 
 // GetMetricData aggregates the matching series in the default compartment into
-// a single result.
+// a single result. Dimensions travel in the query struct rather than the
+// selector, so a value no MQL predicate can quote still filters exactly.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) GetMetricData(ctx context.Context, input driver.GetMetricInput) (*driver.MetricDataResult, error) {
 	metrics, err := m.SummarizeOCIMetrics(ctx, m.opts.CompartmentID, driver.OCIMetricQuery{
 		Namespace:  input.Namespace,
-		Query:      formatSelector(input.MetricName, input.Stat, input.Period),
+		Query:      formatSelector(input.MetricName, input.Stat, input.Period, nil),
 		Dimensions: input.Dimensions,
 		StartTime:  input.StartTime,
 		EndTime:    input.EndTime,
@@ -125,18 +126,43 @@ func (m *Mock) ListMetrics(ctx context.Context, namespace string) ([]string, err
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
-	_, err := m.CreateOCIAlarm(ctx, driver.OCIAlarmSpec{
+	query, err := formatQuery(&cfg)
+	if err != nil {
+		return err
+	}
+
+	_, err = m.CreateOCIAlarm(ctx, driver.OCIAlarmSpec{
 		DisplayName:   cfg.Name,
 		CompartmentID: m.opts.CompartmentID,
 		Namespace:     cfg.Namespace,
-		Query:         formatQuery(&cfg),
+		Query:         query,
 		Resolution:    defaultResolution,
-		Severity:      "WARNING",
-		Destinations:  append([]string{}, cfg.AlarmActions...),
+		Destinations:  destinations(&cfg),
 		IsEnabled:     true,
 	})
 
 	return err
+}
+
+// destinations folds the portable per-state action lists into OCI's single
+// destination list, which every transition of an alarm notifies.
+func destinations(cfg *driver.AlarmConfig) []string {
+	out := make([]string, 0, len(cfg.AlarmActions))
+	seen := make(map[string]bool, len(cfg.AlarmActions))
+
+	for _, list := range [][]string{cfg.AlarmActions, cfg.OKActions, cfg.InsufficientDataActions} {
+		for _, d := range list {
+			if seen[d] {
+				continue
+			}
+
+			seen[d] = true
+
+			out = append(out, d)
+		}
+	}
+
+	return out
 }
 
 // DeleteAlarm deletes the alarm with the given display name.
@@ -159,8 +185,13 @@ func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.Alarm
 
 	out := make([]driver.AlarmInfo, 0, len(names))
 
-	for _, a := range m.alarms.SortedValues() {
-		if len(wanted) > 0 && !wanted[a.spec.DisplayName] {
+	for _, rec := range m.alarms.SortedValues() {
+		if rec.place.Compartment != m.opts.CompartmentID {
+			continue
+		}
+
+		a := m.snapshot(rec)
+		if len(wanted) > 0 && !wanted[a.Spec.DisplayName] {
 			continue
 		}
 
@@ -248,23 +279,22 @@ func (m *Mock) GetAlarmHistory(ctx context.Context, alarmName string, limit int)
 // findByDisplayName resolves an alarm by the display name the portable API
 // addresses it with, within the default compartment.
 func (m *Mock) findByDisplayName(name string) (*alarmRecord, error) {
-	for _, a := range m.alarms.SortedValues() {
-		if a.spec.DisplayName == name && a.place.Compartment == m.opts.CompartmentID {
-			return a, nil
-		}
+	rec := m.lookupByName(m.opts.CompartmentID, name)
+	if rec == nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "alarm %q not found", name)
 	}
 
-	return nil, cerrors.Newf(cerrors.NotFound, "alarm %q not found", name)
+	return rec, nil
 }
 
-func toAlarmInfo(a *alarmRecord) driver.AlarmInfo {
-	cond, _ := parseQuery(a.spec.Query)
+func toAlarmInfo(a *driver.OCIAlarm) driver.AlarmInfo {
+	cond, _ := parseQuery(a.Spec.Query)
 
 	return driver.AlarmInfo{
-		Name:               a.spec.DisplayName,
-		Namespace:          a.spec.Namespace,
+		Name:               a.Spec.DisplayName,
+		Namespace:          a.Spec.Namespace,
 		MetricName:         cond.metricName,
-		State:              portableState(a.status),
+		State:              portableState(a.Status),
 		ComparisonOperator: cond.operator,
 		Threshold:          cond.threshold,
 	}
@@ -297,6 +327,20 @@ func ociStatus(state string) string {
 func copyTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for k, v := range in {
+		out[k] = v
+	}
+
+	return out
+}
+
+// mergeTags combines two dimension sets, the second winning on a shared key.
+func mergeTags(base, overlay map[string]string) map[string]string {
+	if len(base) == 0 {
+		return overlay
+	}
+
+	out := copyTags(base)
+	for k, v := range overlay {
 		out[k] = v
 	}
 
