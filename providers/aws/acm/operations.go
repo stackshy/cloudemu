@@ -2,10 +2,10 @@ package acm
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"time"
 
-	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/acm/driver"
 )
 
@@ -14,7 +14,7 @@ import (
 // IMPORTED certificate. The certificate PEM is validated as parseable X.509.
 func (m *Mock) ImportCertificate(_ context.Context, in driver.ImportCertificateInput) (string, error) {
 	if in.CertificatePEM == "" || in.PrivateKeyPEM == "" {
-		return "", errors.New(errors.InvalidArgument, "Certificate and PrivateKey are required")
+		return "", invalidParameter("Certificate and PrivateKey are required")
 	}
 
 	leaf, err := parseCertificatePEM(in.CertificatePEM)
@@ -22,10 +22,23 @@ func (m *Mock) ImportCertificate(_ context.Context, in driver.ImportCertificateI
 		return "", err
 	}
 
+	// Validate the private key parses and matches the certificate — the most
+	// common real-ACM import error. tls.X509KeyPair does both checks at once.
+	if _, err := tls.X509KeyPair(pemBytes(in.CertificatePEM), pemBytes(in.PrivateKeyPEM)); err != nil {
+		return "", invalidParameter("private key could not be parsed or does not match the certificate: %v", err)
+	}
+
 	now := m.now()
 
 	if in.ARN != "" {
 		err := m.mutate(in.ARN, func(cd *certData) error {
+			// Re-import replaces an existing IMPORTED certificate's material; it
+			// can't convert a managed (AMAZON_ISSUED) cert into an imported one.
+			if cd.cert.Type != driver.TypeImported {
+				return invalidParameter(
+					"certificate %q is %s and cannot be replaced by import", in.ARN, cd.cert.Type)
+			}
+
 			applyImported(&cd.cert, in, leaf, now)
 
 			return nil
@@ -56,8 +69,10 @@ func applyImported(c *driver.Certificate, in driver.ImportCertificateInput, leaf
 	c.NotBefore = leaf.NotBefore
 	c.NotAfter = leaf.NotAfter
 	c.Status = driver.StatusIssued
-	c.KeyAlgorithm = driver.KeyAlgRSA2048
-	c.SignatureAlgorithm = "SHA256WITHRSA"
+	// Report the algorithms actually present in the imported certificate rather
+	// than assuming RSA-2048/SHA256WITHRSA.
+	c.KeyAlgorithm = keyAlgorithmOf(leaf)
+	c.SignatureAlgorithm = signatureAlgorithmOf(leaf)
 	c.Type = driver.TypeImported
 	c.RenewalEligibility = driver.RenewalIneligible
 	c.CertificatePEM = in.CertificatePEM
@@ -79,7 +94,7 @@ func (m *Mock) ExportCertificate(
 	_ context.Context, arn string, passphrase []byte,
 ) (certPEM, chainPEM, keyPEM string, err error) {
 	if len(passphrase) == 0 {
-		return "", "", "", errors.New(errors.InvalidArgument, "Passphrase is required")
+		return "", "", "", invalidParameter("Passphrase is required")
 	}
 
 	cd, err := m.getCert(arn)
@@ -90,8 +105,17 @@ func (m *Mock) ExportCertificate(
 	cd.mu.RLock()
 	defer cd.mu.RUnlock()
 
+	// Real ACM refuses to export the private key of a public AMAZON_ISSUED
+	// certificate — only imported and private-CA certs are exportable. The key
+	// exists server-side (we need it to serve GetCertificate), so the gate is on
+	// Type, matching GetCertificate's own key-withholding.
+	if cd.cert.Type == driver.TypeAmazonIssued {
+		return "", "", "", invalidState(
+			"certificate %q is a public AMAZON_ISSUED certificate and cannot be exported", arn)
+	}
+
 	if cd.cert.PrivateKeyPEM == "" {
-		return "", "", "", errors.Newf(errors.FailedPrecondition, "certificate %q has no exportable key", arn)
+		return "", "", "", invalidState("certificate %q has no exportable key", arn)
 	}
 
 	return cd.cert.CertificatePEM, cd.cert.ChainPEM, cd.cert.PrivateKeyPEM, nil
@@ -102,7 +126,7 @@ func (m *Mock) ExportCertificate(
 func (m *Mock) RenewCertificate(_ context.Context, arn string) error {
 	return m.mutate(arn, func(cd *certData) error {
 		if cd.cert.Type != driver.TypeAmazonIssued {
-			return errors.New(errors.InvalidArgument, "only Amazon-issued certificates can be renewed")
+			return invalidState("only Amazon-issued certificates can be renewed")
 		}
 
 		now := m.now()
@@ -119,6 +143,9 @@ func (m *Mock) RenewCertificate(_ context.Context, arn string) error {
 		cd.cert.CertificatePEM = mat.certPEM
 		cd.cert.ChainPEM = mat.chainPEM
 		cd.cert.PrivateKeyPEM = mat.keyPEM
+		// Re-issuing produces valid material; a previously revoked cert becomes
+		// usable again, so the status must return to ISSUED.
+		cd.cert.Status = driver.StatusIssued
 
 		return nil
 	})
@@ -141,7 +168,7 @@ func (m *Mock) ResendValidationEmail(_ context.Context, arn string) error {
 // UpdateCertificateOptions changes the certificate-transparency logging pref.
 func (m *Mock) UpdateCertificateOptions(_ context.Context, arn, ctLoggingPreference string) error {
 	if ctLoggingPreference != driver.CTLoggingEnabled && ctLoggingPreference != driver.CTLoggingDisabled {
-		return errors.New(errors.InvalidArgument, "CertificateTransparencyLoggingPreference must be ENABLED or DISABLED")
+		return invalidParameter("CertificateTransparencyLoggingPreference must be ENABLED or DISABLED")
 	}
 
 	return m.mutate(arn, func(cd *certData) error {
@@ -151,9 +178,15 @@ func (m *Mock) UpdateCertificateOptions(_ context.Context, arn, ctLoggingPrefere
 	})
 }
 
-// RevokeCertificate revokes a certificate, returning its ARN.
+// RevokeCertificate revokes an issued certificate, returning its ARN. Only an
+// ISSUED certificate can be revoked; revoking a pending/failed/already-revoked
+// certificate is an InvalidStateException in real ACM.
 func (m *Mock) RevokeCertificate(_ context.Context, arn, _ string) (string, error) {
 	err := m.mutate(arn, func(cd *certData) error {
+		if cd.cert.Status != driver.StatusIssued {
+			return invalidState("certificate %q is in state %s and cannot be revoked", arn, cd.cert.Status)
+		}
+
 		cd.cert.Status = driver.StatusRevoked
 
 		return nil

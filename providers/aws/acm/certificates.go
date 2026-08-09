@@ -16,7 +16,12 @@ import (
 //nolint:gocritic // in is the public RequestCertificate input, taken by value to match the driver API
 func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificateInput) (string, error) {
 	if in.DomainName == "" {
-		return "", errors.New(errors.InvalidArgument, "DomainName is required")
+		return "", invalidParameter("DomainName is required")
+	}
+
+	sans := dedupeDomains(in.DomainName, in.SubjectAlternativeNames)
+	if len(sans) > maxDomains {
+		return "", invalidParameter("a certificate may cover at most %d domains, got %d", maxDomains, len(sans))
 	}
 
 	method := in.ValidationMethod
@@ -24,9 +29,17 @@ func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificat
 		method = driver.ValidationDNS
 	}
 
+	// The emulator issues RSA-2048 material, so it can only honestly report
+	// RSA_2048. Reject a request for a different algorithm rather than echoing an
+	// algorithm the generated PEM won't match.
 	keyAlg := in.KeyAlgorithm
 	if keyAlg == "" {
 		keyAlg = driver.KeyAlgRSA2048
+	}
+
+	if keyAlg != driver.KeyAlgRSA2048 {
+		return "", invalidParameter(
+			"KeyAlgorithm %q is not supported; the emulator issues RSA_2048 certificates", keyAlg)
 	}
 
 	ct := in.CTLoggingPreference
@@ -42,7 +55,6 @@ func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificat
 	}
 
 	arn := m.certARN()
-	sans := dedupeDomains(in.DomainName, in.SubjectAlternativeNames)
 
 	cert := driver.Certificate{
 		ARN:                     arn,
@@ -109,7 +121,7 @@ func (m *Mock) DescribeCertificate(_ context.Context, arn string) (*driver.Certi
 	cd.mu.RLock()
 	defer cd.mu.RUnlock()
 
-	out := cd.cert
+	out := copyCert(&cd.cert)
 
 	return &out, nil
 }
@@ -122,7 +134,7 @@ func (m *Mock) ListCertificates(_ context.Context, filter driver.ListFilter) ([]
 	for _, cd := range all {
 		cd.mu.RLock()
 		if statusMatches(cd.cert.Status, filter.Statuses) {
-			out = append(out, cd.cert)
+			out = append(out, copyCert(&cd.cert))
 		}
 		cd.mu.RUnlock()
 	}
@@ -144,20 +156,10 @@ func statusMatches(status string, want []string) bool {
 	return false
 }
 
-// DeleteCertificate removes a certificate. A certificate in use can't be
-// deleted.
+// DeleteCertificate removes a certificate.
 func (m *Mock) DeleteCertificate(_ context.Context, arn string) error {
-	cd, err := m.getCert(arn)
-	if err != nil {
+	if _, err := m.getCert(arn); err != nil {
 		return err
-	}
-
-	cd.mu.RLock()
-	inUse := len(cd.cert.InUseBy) > 0
-	cd.mu.RUnlock()
-
-	if inUse {
-		return errors.Newf(errors.FailedPrecondition, "certificate %q is in use and cannot be deleted", arn)
 	}
 
 	m.certs.Delete(arn)
@@ -182,9 +184,22 @@ func (m *Mock) GetCertificate(_ context.Context, arn string) (certPEM, chainPEM 
 	return cd.cert.CertificatePEM, cd.cert.ChainPEM, nil
 }
 
-// AddTagsToCertificate adds or overwrites tags.
+// AddTagsToCertificate adds or overwrites tags, enforcing ACM's per-certificate
+// tag cap.
 func (m *Mock) AddTagsToCertificate(_ context.Context, arn string, tags map[string]string) error {
 	return m.mutate(arn, func(cd *certData) error {
+		merged := len(cd.cert.Tags)
+
+		for k := range tags {
+			if _, exists := cd.cert.Tags[k]; !exists {
+				merged++
+			}
+		}
+
+		if merged > maxTags {
+			return tooManyTags("a certificate may have at most %d tags", maxTags)
+		}
+
 		if cd.cert.Tags == nil {
 			cd.cert.Tags = map[string]string{}
 		}

@@ -9,6 +9,7 @@ package acm
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -92,8 +93,18 @@ func dispatch[Req any](
 	wire.WriteJSON(w, out)
 }
 
-// writeErr maps a driver error to the closest ACM JSON error type.
+// writeErr maps a driver error to the closest ACM JSON error type. Errors
+// tagged with a specific ACM exception (via driver.APIError) take precedence so
+// distinct exceptions like InvalidArnException / InvalidParameterException /
+// InvalidStateException surface as themselves rather than a generic code map.
 func writeErr(w http.ResponseWriter, err error) {
+	var apiErr *acmdriver.APIError
+	if errors.As(err, &apiErr) {
+		wire.WriteJSONError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+
+		return
+	}
+
 	switch {
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())

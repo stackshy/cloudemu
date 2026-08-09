@@ -4,6 +4,7 @@
 package acm
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +17,13 @@ import (
 // Compile-time check that Mock implements driver.ACM.
 var _ driver.ACM = (*Mock)(nil)
 
-const defaultDaysBeforeExpiry = 45
+const (
+	defaultDaysBeforeExpiry = 45
+	// maxDomains is ACM's cap on domains (CN + SANs) per certificate.
+	maxDomains = 100
+	// maxTags is ACM's cap on tags per certificate.
+	maxTags = 50
+)
 
 // Mock is an in-memory implementation of AWS ACM.
 type Mock struct {
@@ -52,6 +59,10 @@ func (m *Mock) now() time.Time {
 }
 
 func (m *Mock) getCert(arn string) (*certData, error) {
+	if !validCertARN(arn) {
+		return nil, invalidArn("%q is not a valid ACM certificate ARN", arn)
+	}
+
 	cd, ok := m.certs.Get(arn)
 	if !ok {
 		return nil, errNotFound(arn)
@@ -60,11 +71,43 @@ func (m *Mock) getCert(arn string) (*certData, error) {
 	return cd, nil
 }
 
+// validCertARN reports whether arn has the ACM certificate ARN shape
+// (arn:aws:acm:<region>:<account>:certificate/<id>). A malformed ARN is an
+// InvalidArnException in real ACM, distinct from a well-formed-but-absent ARN.
+func validCertARN(arn string) bool {
+	const parts = 6
+
+	seg := strings.SplitN(arn, ":", parts)
+	if len(seg) != parts {
+		return false
+	}
+
+	return seg[0] == "arn" && seg[2] == "acm" && strings.HasPrefix(seg[5], "certificate/") &&
+		strings.TrimPrefix(seg[5], "certificate/") != ""
+}
+
 func copyTags(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+
 	out := make(map[string]string, len(in))
 	for k, v := range in {
 		out[k] = v
 	}
+
+	return out
+}
+
+// copyCert returns a deep copy of a certificate so callers can read reference
+// fields (Tags map, SANs / DomainValidationOptions / InUseBy slices) without
+// racing concurrent mutations of the stored value under its lock.
+func copyCert(c *driver.Certificate) driver.Certificate {
+	out := *c
+	out.Tags = copyTags(c.Tags)
+	out.SubjectAlternativeNames = append([]string(nil), c.SubjectAlternativeNames...)
+	out.InUseBy = append([]string(nil), c.InUseBy...)
+	out.DomainValidationOptions = append([]driver.DomainValidation(nil), c.DomainValidationOptions...)
 
 	return out
 }
