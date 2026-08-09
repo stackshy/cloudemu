@@ -44,6 +44,7 @@ This document lists every service and operation available in CloudEmu across all
 | 31 | Web Application Firewall | `wafv2` | — | — |
 | 32 | Data Streams | `kinesis` | — | — |
 | 33 | Workflow Orchestration | `sfn` | — | — |
+| 34 | Search & Analytics | `opensearch` | — | — |
 
 ---
 
@@ -2578,6 +2579,42 @@ Map Run records seeded through the provider's `SeedMapRun` helper.
 
 **Total: 36 operations.**
 
+## 34. Search & Analytics (OpenSearch)
+
+**Driver interface:** `services/opensearch/driver/`
+**AWS:** OpenSearch Service (REST-JSON `awsRestjson1`, version-path prefix `/2021-01-01/opensearch/…`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/opensearch` clients (and the `aws opensearch`
+CLI) work against the SDK-compat server (`awsserver.Drivers{OpenSearch: cloud.OpenSearch}`).
+The handler gates on the `/2021-01-01/opensearch/` version prefix, so it never
+shadows the S3 catch-all. Full `aws-sdk-go-v2/service/opensearch` parity: every
+client method (except `Options`) is implemented.
+
+**Domains behave realistically.** `CreateDomain` claims the domain name
+atomically (`ResourceAlreadyExistsException` on a duplicate) and returns a domain
+that reports `Processing` then `Active` with a synthesized endpoint;
+`DescribeDomain`/`DescribeDomainConfig` reflect stored config; `UpdateDomainConfig`
+mutates it; reads deep-copy so concurrent tag/config mutations don't race.
+
+| Family | Operations |
+|--------|-----------|
+| Domains | CreateDomain, DescribeDomain, DescribeDomains, DescribeDomainConfig, DescribeDomainHealth/Nodes, UpdateDomainConfig, DeleteDomain, ListDomainNames, GetCompatibleVersions, ListVersions |
+| Config history / changes | GetUpgradeStatus/History, StartServiceSoftwareUpdate, StopServiceSoftwareUpdate, UpgradeDomain, DescribeDomainChangeProgress, GetUpgradeStatus |
+| Packages | CreatePackage, DeletePackage, DescribePackages, AssociatePackage(s), DissociatePackage(s), GetPackageVersionHistory, ListPackagesForDomain, ListDomainsForPackage, UpdatePackage, UpdatePackageScope |
+| VPC endpoints | CreateVpcEndpoint, DeleteVpcEndpoint, UpdateVpcEndpoint, DescribeVpcEndpoints, ListVpcEndpoints, ListVpcEndpointsForDomain, AuthorizeVpcEndpointAccess, RevokeVpcEndpointAccess, ListVpcEndpointAccess |
+| Data sources | AddDataSource, GetDataSource, UpdateDataSource, DeleteDataSource, ListDataSources, AddDirectQueryDataSource, …, ListDirectQueryDataSources |
+| Applications | CreateApplication, GetApplication, UpdateApplication, DeleteApplication, ListApplications |
+| Reserved instances | PurchaseReservedInstanceOffering, DescribeReservedInstances, DescribeReservedInstanceOfferings |
+| Cross-cluster | Create/Delete/Accept/Reject/DescribeInbound & Outbound Connections |
+| Instance/limits | DescribeInstanceTypeLimits, ListInstanceTypeDetails, DescribeDomainAutoTunes, GetDomainMaintenanceStatus, ListDomainMaintenances, StartDomainMaintenance |
+| Scheduled actions / config | ListScheduledActions, UpdateScheduledAction, ListInstanceTypeDetails |
+| Tags | AddTags, RemoveTags, ListTags |
+
+Read-only catalog/limit/insight ops return plausible synthesized results (the
+emulator models no real cluster hardware or search traffic), documented in code.
+
+**Total: 96 operations.**
+
 ## 31. Web Application Firewall (WAFv2)
 
 **Driver interface:** `services/wafv2/driver/`
@@ -2817,7 +2854,8 @@ still sees success.
 | Web Application Firewall — AWS WAFv2 | 59 |
 | Data Streams — AWS Kinesis | 39 |
 | Step Functions — AWS SFN | 36 |
-| **Grand Total** | **2046** (+138 optional) |
+| Search & Analytics — AWS OpenSearch | 96 |
+| **Grand Total** | **2142** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
