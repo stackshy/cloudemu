@@ -9,8 +9,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1" //nolint:gosec // SHA-1 is required by the RSAES_OAEP_SHA_1 algorithm KMS defines
 	"crypto/sha256"
 	"encoding/binary"
+	"hash"
 	"sort"
 	"strings"
 
@@ -23,13 +25,15 @@ import (
 //
 //	magic(1) | keyIDLen(uint16 BE) | keyID | body
 //
-// magic 0x01 = AES-256-GCM (body = nonce(12) | ciphertext); the encryption
-// context is bound as AES-GCM additional data. magic 0x02 = RSA-OAEP-SHA-256
-// (body = RSA ciphertext).
+// magic 0x01 = AES-256-GCM (body = keyVersion(uint32 BE) | nonce(12) |
+// ciphertext); the key version selects the exact backing-key bytes so rotation
+// doesn't break old ciphertext, and the encryption context is bound as AES-GCM
+// additional data. magic 0x02 = RSA-OAEP-SHA-256 (body = RSA ciphertext).
 const (
 	blobMagicGCM     = 0x01
 	blobMagicRSAOAEP = 0x02
 	gcmNonceSize     = 12
+	keyVersionSize   = 4
 	rsa2048Bits      = 2048
 	rsa3072Bits      = 3072
 	rsa4096Bits      = 4096
@@ -61,8 +65,11 @@ func generateAsymmetric(spec string) (crypto.PrivateKey, error) {
 	}
 }
 
-// canonicalContext renders the encryption context as sorted key=value pairs so
-// it can be bound as deterministic AEAD additional data.
+// canonicalContext renders the encryption context as deterministic AEAD
+// additional data. Each key and value is length-prefixed (not delimited by a
+// separator) so distinct contexts can never collide into the same AAD — e.g.
+// {"a=b":"c"} and {"a":"b=c"} produce different bytes, unlike a naive "k=v;"
+// join.
 func canonicalContext(ctx map[string]string) []byte {
 	if len(ctx) == 0 {
 		return nil
@@ -75,15 +82,18 @@ func canonicalContext(ctx map[string]string) []byte {
 
 	sort.Strings(keys)
 
-	var b strings.Builder
+	var b []byte
+
 	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(ctx[k])
-		b.WriteByte(';')
+		//nolint:gosec // encryption-context keys/values are small; length fits uint32
+		b = binary.BigEndian.AppendUint32(b, uint32(len(k)))
+		b = append(b, k...)
+		//nolint:gosec // encryption-context keys/values are small; length fits uint32
+		b = binary.BigEndian.AppendUint32(b, uint32(len(ctx[k])))
+		b = append(b, ctx[k]...)
 	}
 
-	return []byte(b.String())
+	return b
 }
 
 func encodeBlob(magic byte, keyID string, body []byte) []byte {
@@ -116,13 +126,13 @@ func decodeBlob(blob []byte) (magic byte, keyID string, body []byte, err error) 
 	return magic, keyID, body, nil
 }
 
-// symmetricGCM builds an AES-GCM AEAD from a key's material.
-func symmetricGCM(kd *keyData) (cipher.AEAD, error) {
-	if len(kd.material) == 0 {
+// symmetricGCM builds an AES-GCM AEAD from raw key material.
+func symmetricGCM(material []byte) (cipher.AEAD, error) {
+	if len(material) == 0 {
 		return nil, errors.New(errors.FailedPrecondition, "key has no symmetric material")
 	}
 
-	block, err := aes.NewCipher(kd.material)
+	block, err := aes.NewCipher(material)
 	if err != nil {
 		return nil, errors.Newf(errors.Internal, "aes cipher: %v", err)
 	}
@@ -130,12 +140,18 @@ func symmetricGCM(kd *keyData) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
+// requireUsable reports whether a key may be used for a cryptographic
+// operation, returning the sentinel that maps to the precise KMS exception:
+// Disabled → DisabledException, any other non-Enabled state → KMSInvalidState.
 func requireUsable(kd *keyData) error {
-	if kd.meta.KeyState != driver.StateEnabled {
-		return errors.Newf(errors.FailedPrecondition, "key %q is not enabled (state %s)", kd.meta.KeyID, kd.meta.KeyState)
+	switch kd.meta.KeyState {
+	case driver.StateEnabled:
+		return nil
+	case driver.StateDisabled:
+		return driver.ErrKeyDisabled
+	default:
+		return driver.ErrKeyInvalidState
 	}
-
-	return nil
 }
 
 // Encrypt encrypts plaintext under a key. Symmetric keys use AES-GCM; RSA keys
@@ -154,11 +170,13 @@ func (m *Mock) Encrypt(_ context.Context, in driver.EncryptInput) (*driver.Encry
 	}
 
 	if kd.meta.KeyUsage != driver.UsageEncryptDecrypt {
-		return nil, errors.Newf(errors.InvalidArgument, "key %q does not support ENCRYPT_DECRYPT", kd.meta.KeyID)
+		return nil, driver.ErrInvalidKeyUsage
 	}
 
 	if priv, ok := kd.privKey.(*rsa.PrivateKey); ok {
-		ct, encErr := rsa.EncryptOAEP(sha256.New(), rand.Reader, &priv.PublicKey, in.Plaintext, nil)
+		hashFn := oaepHash(in.EncryptionAlgorithm)
+
+		ct, encErr := rsa.EncryptOAEP(hashFn(), rand.Reader, &priv.PublicKey, in.Plaintext, nil)
 		if encErr != nil {
 			return nil, errors.Newf(errors.InvalidArgument, "rsa encrypt: %v", encErr)
 		}
@@ -166,11 +184,13 @@ func (m *Mock) Encrypt(_ context.Context, in driver.EncryptInput) (*driver.Encry
 		return &driver.EncryptOutput{
 			KeyID:               kd.meta.KeyID,
 			CiphertextBlob:      encodeBlob(blobMagicRSAOAEP, kd.meta.KeyID, ct),
-			EncryptionAlgorithm: driver.EncRSAOAEPSHA256,
+			EncryptionAlgorithm: rsaAlgOrDefault(in.EncryptionAlgorithm),
 		}, nil
 	}
 
-	aead, err := symmetricGCM(kd)
+	version := len(kd.materials) - 1
+
+	aead, err := symmetricGCM(kd.currentMaterial())
 	if err != nil {
 		return nil, err
 	}
@@ -181,13 +201,36 @@ func (m *Mock) Encrypt(_ context.Context, in driver.EncryptInput) (*driver.Encry
 	}
 
 	ct := aead.Seal(nil, nonce, in.Plaintext, canonicalContext(in.EncryptionContext))
-	body := append(nonce, ct...) //nolint:gocritic // nonce is a fresh slice; intentional new blob body
+
+	body := make([]byte, 0, keyVersionSize+len(nonce)+len(ct))
+	//nolint:gosec // version is a small monotonic counter, never near uint32 max
+	body = binary.BigEndian.AppendUint32(body, uint32(version))
+	body = append(body, nonce...)
+	body = append(body, ct...)
 
 	return &driver.EncryptOutput{
 		KeyID:               kd.meta.KeyID,
 		CiphertextBlob:      encodeBlob(blobMagicGCM, kd.meta.KeyID, body),
 		EncryptionAlgorithm: driver.EncSymmetricDefault,
 	}, nil
+}
+
+// oaepHash picks the OAEP hash for an RSA encryption algorithm (default
+// SHA-256; SHA-1 when explicitly requested).
+func oaepHash(alg string) func() hash.Hash {
+	if alg == driver.EncRSAOAEPSHA1 {
+		return sha1.New
+	}
+
+	return sha256.New
+}
+
+func rsaAlgOrDefault(alg string) string {
+	if alg == driver.EncRSAOAEPSHA1 {
+		return driver.EncRSAOAEPSHA1
+	}
+
+	return driver.EncRSAOAEPSHA256
 }
 
 // Decrypt decrypts a ciphertext blob. The blob is self-describing, so KeyID is
@@ -205,7 +248,7 @@ func (m *Mock) Decrypt(_ context.Context, in driver.DecryptInput) (*driver.Decry
 		}
 
 		if resolved != keyID {
-			return nil, errors.New(errors.InvalidArgument, "ciphertext was not encrypted under the supplied key")
+			return nil, driver.ErrIncorrectKey
 		}
 	}
 
@@ -234,38 +277,54 @@ func decryptBody(
 ) (plaintext []byte, algorithm string, err error) {
 	switch magic {
 	case blobMagicRSAOAEP:
-		priv, ok := kd.privKey.(*rsa.PrivateKey)
-		if !ok {
-			return nil, "", errors.New(errors.InvalidArgument, "key cannot decrypt RSA ciphertext")
-		}
-
-		pt, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, body, nil)
-		if err != nil {
-			return nil, "", errors.Newf(errors.InvalidArgument, "rsa decrypt: %v", err)
-		}
-
-		return pt, driver.EncRSAOAEPSHA256, nil
+		return decryptRSA(kd, body)
 	case blobMagicGCM:
-		aead, err := symmetricGCM(kd)
-		if err != nil {
-			return nil, "", err
-		}
-
-		if len(body) < gcmNonceSize {
-			return nil, "", errors.New(errors.InvalidArgument, "malformed ciphertext blob")
-		}
-
-		nonce, ct := body[:gcmNonceSize], body[gcmNonceSize:]
-
-		pt, err := aead.Open(nil, nonce, ct, canonicalContext(encCtx))
-		if err != nil {
-			return nil, "", errors.New(errors.InvalidArgument, "decryption failed (wrong key or encryption context)")
-		}
-
-		return pt, driver.EncSymmetricDefault, nil
+		return decryptGCM(kd, body, encCtx)
 	default:
-		return nil, "", errors.New(errors.InvalidArgument, "unknown ciphertext format")
+		return nil, "", driver.ErrInvalidCiphertext
 	}
+}
+
+func decryptRSA(kd *keyData, body []byte) (plaintext []byte, algorithm string, err error) {
+	priv, ok := kd.privKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, "", driver.ErrIncorrectKey
+	}
+
+	// Try both OAEP hashes so a SHA-1-wrapped ciphertext still opens.
+	for _, h := range []func() hash.Hash{sha256.New, sha1.New} {
+		if pt, derr := rsa.DecryptOAEP(h(), rand.Reader, priv, body, nil); derr == nil {
+			return pt, driver.EncRSAOAEPSHA256, nil
+		}
+	}
+
+	return nil, "", driver.ErrInvalidCiphertext
+}
+
+func decryptGCM(kd *keyData, body []byte, encCtx map[string]string) (plaintext []byte, algorithm string, err error) {
+	if len(body) < keyVersionSize+gcmNonceSize {
+		return nil, "", driver.ErrInvalidCiphertext
+	}
+
+	version := int(binary.BigEndian.Uint32(body[:keyVersionSize]))
+	if version < 0 || version >= len(kd.materials) {
+		return nil, "", driver.ErrInvalidCiphertext
+	}
+
+	aead, err := symmetricGCM(kd.materials[version])
+	if err != nil {
+		return nil, "", err
+	}
+
+	rest := body[keyVersionSize:]
+	nonce, ct := rest[:gcmNonceSize], rest[gcmNonceSize:]
+
+	pt, err := aead.Open(nil, nonce, ct, canonicalContext(encCtx))
+	if err != nil {
+		return nil, "", driver.ErrInvalidCiphertext
+	}
+
+	return pt, driver.EncSymmetricDefault, nil
 }
 
 // ReEncrypt decrypts under the source key and re-encrypts under the destination.
@@ -315,6 +374,18 @@ func dataKeyBytes(spec string, numberOfBytes int32) (int, error) {
 // GenerateDataKey returns a random data key both in plaintext and encrypted
 // under the KMS key.
 func (m *Mock) GenerateDataKey(ctx context.Context, in driver.GenerateDataKeyInput) (*driver.GenerateDataKeyOutput, error) {
+	// GenerateDataKey is only valid on symmetric keys; real KMS rejects it on
+	// asymmetric keys with InvalidKeyUsageException.
+	if kd, kerr := m.getKey(in.KeyID); kerr == nil {
+		kd.mu.RLock()
+		asym := kd.privKey != nil
+		kd.mu.RUnlock()
+
+		if asym {
+			return nil, driver.ErrInvalidKeyUsage
+		}
+	}
+
 	size, err := dataKeyBytes(in.KeySpec, in.NumberOfBytes)
 	if err != nil {
 		return nil, err

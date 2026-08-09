@@ -81,7 +81,7 @@ func (m *Mock) CreateKey(_ context.Context, in driver.CreateKeyInput) (*driver.K
 			return nil, err
 		}
 
-		kd.material = mat
+		kd.materials = [][]byte{mat}
 	}
 
 	m.keys.Set(id, kd)
@@ -167,11 +167,16 @@ func (m *Mock) ListKeys(_ context.Context) ([]driver.KeyMetadata, error) {
 	return out, nil
 }
 
-// EnableKey marks a key enabled.
+// EnableKey marks a key enabled. A PendingDeletion or PendingImport key can't
+// be enabled — the latter has no material, so enabling it would only make
+// subsequent crypto fail with a confusing error.
 func (m *Mock) EnableKey(_ context.Context, keyID string) error {
 	return m.mutateKey(keyID, func(kd *keyData) error {
-		if kd.meta.KeyState == driver.StatePendingDeletion {
+		switch kd.meta.KeyState {
+		case driver.StatePendingDeletion:
 			return errors.Newf(errors.FailedPrecondition, "key %q is pending deletion", keyID)
+		case driver.StatePendingImport:
+			return errors.Newf(errors.FailedPrecondition, "key %q has no imported material yet", keyID)
 		}
 
 		kd.meta.Enabled = true
@@ -181,11 +186,15 @@ func (m *Mock) EnableKey(_ context.Context, keyID string) error {
 	})
 }
 
-// DisableKey marks a key disabled.
+// DisableKey marks a key disabled. PendingDeletion/PendingImport keys can't be
+// transitioned to Disabled.
 func (m *Mock) DisableKey(_ context.Context, keyID string) error {
 	return m.mutateKey(keyID, func(kd *keyData) error {
-		if kd.meta.KeyState == driver.StatePendingDeletion {
+		switch kd.meta.KeyState {
+		case driver.StatePendingDeletion:
 			return errors.Newf(errors.FailedPrecondition, "key %q is pending deletion", keyID)
+		case driver.StatePendingImport:
+			return errors.Newf(errors.FailedPrecondition, "key %q has no imported material yet", keyID)
 		}
 
 		kd.meta.Enabled = false
@@ -221,6 +230,10 @@ func (m *Mock) ScheduleKeyDeletion(
 	var out driver.KeyMetadata
 
 	err := m.mutateKey(keyID, func(kd *keyData) error {
+		if kd.meta.KeyState == driver.StatePendingDeletion {
+			return errors.Newf(errors.FailedPrecondition, "key %q is already pending deletion", keyID)
+		}
+
 		kd.meta.Enabled = false
 		kd.meta.KeyState = driver.StatePendingDeletion
 		kd.meta.DeletionDate = m.now().Add(time.Duration(days) * hoursPerDay * time.Hour)

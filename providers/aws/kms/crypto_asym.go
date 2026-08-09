@@ -122,6 +122,21 @@ func digestFor(messageType string, message []byte, h func() hash.Hash) []byte {
 	return hh.Sum(nil)
 }
 
+// signingAlgForSpec reports whether a signing algorithm is valid for a key
+// spec: RSA keys sign with RSASSA_* algorithms, ECC keys with ECDSA_*. This
+// rejects e.g. signing an ECC key with RSASSA_PSS (which would otherwise return
+// an ECDSA signature mislabeled as RSA).
+func signingAlgForSpec(spec, alg string) bool {
+	switch {
+	case strings.HasPrefix(spec, "RSA_"):
+		return strings.HasPrefix(alg, "RSASSA_")
+	case strings.HasPrefix(spec, "ECC_"):
+		return strings.HasPrefix(alg, "ECDSA_")
+	default:
+		return false
+	}
+}
+
 // Sign signs a message (or pre-computed digest) with an asymmetric key.
 func (m *Mock) Sign(_ context.Context, in driver.SignInput) (*driver.SignOutput, error) {
 	kd, err := m.getKey(in.KeyID)
@@ -132,8 +147,16 @@ func (m *Mock) Sign(_ context.Context, in driver.SignInput) (*driver.SignOutput,
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
+	if uerr := requireUsable(kd); uerr != nil {
+		return nil, uerr
+	}
+
 	if kd.meta.KeyUsage != driver.UsageSignVerify {
-		return nil, errors.Newf(errors.InvalidArgument, "key %q does not support SIGN_VERIFY", kd.meta.KeyID)
+		return nil, driver.ErrInvalidKeyUsage
+	}
+
+	if !signingAlgForSpec(kd.meta.KeySpec, in.SigningAlgorithm) {
+		return nil, driver.ErrInvalidKeyUsage
 	}
 
 	hashAlg, hCtor, err := hashForAlg(in.SigningAlgorithm)
@@ -178,8 +201,16 @@ func (m *Mock) Verify(_ context.Context, in driver.VerifyInput) (*driver.VerifyO
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
+	if uerr := requireUsable(kd); uerr != nil {
+		return nil, uerr
+	}
+
 	if kd.meta.KeyUsage != driver.UsageSignVerify {
-		return nil, errors.Newf(errors.InvalidArgument, "key %q does not support SIGN_VERIFY", kd.meta.KeyID)
+		return nil, driver.ErrInvalidKeyUsage
+	}
+
+	if !signingAlgForSpec(kd.meta.KeySpec, in.SigningAlgorithm) {
+		return nil, driver.ErrInvalidKeyUsage
 	}
 
 	hashAlg, hCtor, err := hashForAlg(in.SigningAlgorithm)
@@ -223,11 +254,15 @@ func (m *Mock) GenerateMac(_ context.Context, in driver.GenerateMacInput) (*driv
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if kd.meta.KeyUsage != driver.UsageGenerateVerifyMac {
-		return nil, errors.Newf(errors.InvalidArgument, "key %q does not support GENERATE_VERIFY_MAC", kd.meta.KeyID)
+	if uerr := requireUsable(kd); uerr != nil {
+		return nil, uerr
 	}
 
-	mac, err := computeMac(kd.material, in.MacAlgorithm, in.Message)
+	if kd.meta.KeyUsage != driver.UsageGenerateVerifyMac {
+		return nil, driver.ErrInvalidKeyUsage
+	}
+
+	mac, err := computeMac(kd.currentMaterial(), in.MacAlgorithm, in.Message)
 	if err != nil {
 		return nil, err
 	}
@@ -247,11 +282,15 @@ func (m *Mock) VerifyMac(_ context.Context, in driver.VerifyMacInput) (*driver.V
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if kd.meta.KeyUsage != driver.UsageGenerateVerifyMac {
-		return nil, errors.Newf(errors.InvalidArgument, "key %q does not support GENERATE_VERIFY_MAC", kd.meta.KeyID)
+	if uerr := requireUsable(kd); uerr != nil {
+		return nil, uerr
 	}
 
-	want, err := computeMac(kd.material, in.MacAlgorithm, in.Message)
+	if kd.meta.KeyUsage != driver.UsageGenerateVerifyMac {
+		return nil, driver.ErrInvalidKeyUsage
+	}
+
+	want, err := computeMac(kd.currentMaterial(), in.MacAlgorithm, in.Message)
 	if err != nil {
 		return nil, err
 	}

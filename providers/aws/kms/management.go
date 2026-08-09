@@ -234,16 +234,20 @@ func (m *Mock) RotateKeyOnDemand(_ context.Context, keyID string) error {
 			return errors.New(errors.InvalidArgument, "only symmetric keys support on-demand rotation")
 		}
 
+		if kd.meta.Origin == driver.OriginExternal {
+			return errors.New(errors.InvalidArgument, "keys with imported material cannot be rotated")
+		}
+
 		mat, err := generateMaterial(kd.meta.KeySpec)
 		if err != nil {
 			return err
 		}
 
-		// New material re-keys future Encrypt calls; existing ciphertext blobs
-		// remain decryptable because they embed their own key version's bytes
-		// only implicitly — the emulator keeps a single active material, which
-		// is sufficient for the local-dev rotation semantics we surface.
-		kd.material = mat
+		// Append a new key version rather than overwriting: Encrypt uses the
+		// newest version and stamps it into each blob, while Decrypt selects the
+		// exact version a blob names, so ciphertext created before this rotation
+		// still decrypts.
+		kd.materials = append(kd.materials, mat)
 		kd.onDemandCount++
 		kd.rotations = append(kd.rotations, driver.RotationEvent{
 			KeyID: kd.meta.KeyID, RotationDate: m.now(), RotationType: driver.RotationOnDemand,

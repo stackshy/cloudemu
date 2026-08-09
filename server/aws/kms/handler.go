@@ -9,6 +9,7 @@ package kms
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -124,8 +125,40 @@ func dispatch[Req any](
 	wire.WriteJSON(w, out)
 }
 
-// writeErr maps a driver error to the closest KMS JSON error type.
+// sentinelException maps a driver sentinel error to the exact KMS exception the
+// aws-sdk-go-v2 client models, so callers can errors.As the typed exception.
+// Returns "" when err is not a recognized sentinel.
+func sentinelException(err error) string {
+	switch {
+	case errors.Is(err, kmsdriver.ErrSignatureInvalid):
+		return "KMSInvalidSignatureException"
+	case errors.Is(err, kmsdriver.ErrMacInvalid):
+		return "KMSInvalidMacException"
+	case errors.Is(err, kmsdriver.ErrInvalidCiphertext):
+		return "InvalidCiphertextException"
+	case errors.Is(err, kmsdriver.ErrIncorrectKey):
+		return "IncorrectKeyException"
+	case errors.Is(err, kmsdriver.ErrKeyDisabled):
+		return "DisabledException"
+	case errors.Is(err, kmsdriver.ErrKeyInvalidState):
+		return "KMSInvalidStateException"
+	case errors.Is(err, kmsdriver.ErrInvalidKeyUsage):
+		return "InvalidKeyUsageException"
+	default:
+		return ""
+	}
+}
+
+// writeErr maps a driver error to the closest KMS JSON error type. Sentinel
+// errors take precedence so distinct crypto/state failures reach the client as
+// their real typed exceptions rather than a generic ValidationException.
 func writeErr(w http.ResponseWriter, err error) {
+	if exc := sentinelException(err); exc != "" {
+		wire.WriteJSONError(w, http.StatusBadRequest, exc, err.Error())
+
+		return
+	}
+
 	switch {
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "NotFoundException", err.Error())

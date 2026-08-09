@@ -2,10 +2,8 @@ package kms
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
-	"github.com/stackshy/cloudemu/v2/server/wire"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 )
 
@@ -181,53 +179,34 @@ func (h *Handler) generateMac(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verify and verifyMac don't use dispatch: a failed verification maps to a
-// distinct KMS exception rather than the generic error path.
+// verify/verifyMac go through dispatch like the rest: writeErr maps the
+// ErrSignatureInvalid / ErrMacInvalid sentinels to their typed exceptions.
 func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
-	var req verifyRequest
-	if !wire.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	out, err := h.kms.Verify(r.Context(), kmsdriver.VerifyInput{
-		KeyID: req.KeyID, Message: req.Message, MessageType: req.MessageType,
-		Signature: req.Signature, SigningAlgorithm: req.SigningAlgorithm,
-	})
-	if err != nil {
-		if errors.Is(err, kmsdriver.ErrSignatureInvalid) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "KMSInvalidSignatureException", err.Error())
-			return
+	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *verifyRequest) (any, error) {
+		out, err := h.kms.Verify(ctx, kmsdriver.VerifyInput{
+			KeyID: req.KeyID, Message: req.Message, MessageType: req.MessageType,
+			Signature: req.Signature, SigningAlgorithm: req.SigningAlgorithm,
+		})
+		if err != nil {
+			return nil, err
 		}
 
-		writeErr(w, err)
-
-		return
-	}
-
-	wire.WriteJSON(w, verifyResponse{
-		KeyID: out.KeyID, SignatureValid: out.SignatureValid, SigningAlgorithm: out.SigningAlgorithm,
+		return verifyResponse{
+			KeyID: out.KeyID, SignatureValid: out.SignatureValid, SigningAlgorithm: out.SigningAlgorithm,
+		}, nil
 	})
 }
 
+//nolint:dupl // templated KMS wire handler; the decode/call/respond shape is intrinsic
 func (h *Handler) verifyMac(w http.ResponseWriter, r *http.Request) {
-	var req verifyMacRequest
-	if !wire.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	out, err := h.kms.VerifyMac(r.Context(), kmsdriver.VerifyMacInput{
-		KeyID: req.KeyID, Message: req.Message, Mac: req.Mac, MacAlgorithm: req.MacAlgorithm,
-	})
-	if err != nil {
-		if errors.Is(err, kmsdriver.ErrMacInvalid) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "KMSInvalidMacException", err.Error())
-			return
+	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *verifyMacRequest) (any, error) {
+		out, err := h.kms.VerifyMac(ctx, kmsdriver.VerifyMacInput{
+			KeyID: req.KeyID, Message: req.Message, Mac: req.Mac, MacAlgorithm: req.MacAlgorithm,
+		})
+		if err != nil {
+			return nil, err
 		}
 
-		writeErr(w, err)
-
-		return
-	}
-
-	wire.WriteJSON(w, verifyMacResponse{KeyID: out.KeyID, MacValid: out.MacValid, MacAlgorithm: out.MacAlgorithm})
+		return verifyMacResponse{KeyID: out.KeyID, MacValid: out.MacValid, MacAlgorithm: out.MacAlgorithm}, nil
+	})
 }

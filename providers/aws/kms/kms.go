@@ -32,10 +32,13 @@ type keyData struct {
 	meta driver.KeyMetadata
 	tags map[string]string
 
-	// material holds the raw key bytes for symmetric/HMAC keys; asymmetric
-	// keys keep their parsed private key in privKey.
-	material []byte
-	privKey  crypto.PrivateKey
+	// materials holds the raw symmetric/HMAC key bytes, one entry per rotation
+	// version (index == version). Encrypt always uses the newest version and
+	// embeds it in the ciphertext blob; Decrypt selects the exact version the
+	// blob names, so ciphertext created before a rotation still decrypts.
+	// Asymmetric keys keep their parsed private key in privKey instead.
+	materials [][]byte
+	privKey   crypto.PrivateKey
 
 	// policies maps a policy name (only "default") to its policy document.
 	policies map[string]string
@@ -52,6 +55,16 @@ type keyData struct {
 	importToken       []byte
 
 	mu sync.RWMutex
+}
+
+// currentMaterial returns the newest symmetric/HMAC key version, or nil when
+// the key has no material (e.g. an unimported EXTERNAL key).
+func (kd *keyData) currentMaterial() []byte {
+	if len(kd.materials) == 0 {
+		return nil
+	}
+
+	return kd.materials[len(kd.materials)-1]
 }
 
 // aliasData is the stored form of an alias.

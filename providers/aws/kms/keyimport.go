@@ -117,7 +117,7 @@ func (m *Mock) ImportKeyMaterial(_ context.Context, in driver.ImportKeyMaterialI
 		return err
 	}
 
-	kd.material = material
+	kd.materials = [][]byte{material}
 	kd.meta.Enabled = true
 	kd.meta.KeyState = driver.StateEnabled
 	kd.importWrappingKey = nil
@@ -158,7 +158,7 @@ func (m *Mock) DeleteImportedKeyMaterial(_ context.Context, keyID string) error 
 			return errors.New(errors.InvalidArgument, "key material can only be deleted for EXTERNAL-origin keys")
 		}
 
-		kd.material = nil
+		kd.materials = nil
 		kd.meta.Enabled = false
 		kd.meta.KeyState = driver.StatePendingImport
 		kd.meta.ValidTo = time.Time{}

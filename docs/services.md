@@ -2396,13 +2396,19 @@ installs it as the AES key.
 Key references (ID, key ARN, `alias/<name>`, or alias ARN) resolve uniformly on
 every operation.
 
+*Grants are record-only:* CreateGrant/ListGrants/Revoke/Retire manage grant
+records, but the emulator carries no caller principal on the wire, so a grant's
+operation list and encryption-context constraints are **not** enforced against
+crypto calls (there is no principal to evaluate them for). Grant management
+round-trips faithfully; request-time authorization is out of scope.
+
 *Out of scope:* Custom Key Stores / CloudHSM / external (XKS) key stores — these
 are backed by real HSM hardware or third-party stores that can't be emulated
 meaningfully. Multi-region replicas are modeled within a single process, so
 cross-region replica lookup isn't observable; `ReplicateKey`/`UpdatePrimaryRegion`
 return wire-complete metadata but there is no second regional endpoint to query.
 
-**Total: 42 operations.**
+**Total: 45 operations.**
 
 ---
 
@@ -2520,8 +2526,8 @@ still sees success.
 | Container Orchestration — AWS ECS | 37 |
 | DNS Resolver — AWS Route 53 Resolver | 72 |
 | Application Networking — AWS VPC Lattice | 73 |
-| Key Management — AWS KMS | 42 |
-| **Grand Total** | **1749** (+138 optional) |
+| Key Management — AWS KMS | 45 |
+| **Grand Total** | **1752** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

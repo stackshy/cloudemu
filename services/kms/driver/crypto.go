@@ -6,12 +6,27 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 )
 
-// Sentinel errors so the wire layer can map a failed cryptographic
-// verification to the precise KMS exception (KMSInvalidSignatureException /
-// KMSInvalidMacException) rather than a generic validation error.
+// Sentinel errors so the wire layer can map a cryptographic/state failure to
+// the precise KMS exception the aws-sdk-go-v2 client models, rather than a
+// generic ValidationException the SDK can't type-assert. The handler matches
+// these with errors.Is.
 var (
 	ErrSignatureInvalid = errors.New(errors.InvalidArgument, "signature verification failed")
 	ErrMacInvalid       = errors.New(errors.InvalidArgument, "MAC verification failed")
+	// ErrInvalidCiphertext — ciphertext is malformed, tampered, or fails the
+	// encryption-context binding (→ InvalidCiphertextException).
+	ErrInvalidCiphertext = errors.New(errors.InvalidArgument, "invalid ciphertext")
+	// ErrIncorrectKey — the supplied key did not encrypt this ciphertext
+	// (→ IncorrectKeyException).
+	ErrIncorrectKey = errors.New(errors.InvalidArgument, "ciphertext was not encrypted under the supplied key")
+	// ErrKeyDisabled — the key exists but is Disabled (→ DisabledException).
+	ErrKeyDisabled = errors.New(errors.FailedPrecondition, "key is disabled")
+	// ErrKeyInvalidState — the key is in a state that forbids the operation,
+	// e.g. PendingDeletion / PendingImport (→ KMSInvalidStateException).
+	ErrKeyInvalidState = errors.New(errors.FailedPrecondition, "key is in an invalid state for this operation")
+	// ErrInvalidKeyUsage — the key's usage/spec doesn't support the requested
+	// operation or algorithm (→ InvalidKeyUsageException).
+	ErrInvalidKeyUsage = errors.New(errors.InvalidArgument, "key usage does not permit this operation")
 )
 
 // Encryption algorithms.
