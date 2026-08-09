@@ -2513,17 +2513,21 @@ records already written stay readable.
 | Configuration | IncreaseStreamRetentionPeriod, DecreaseStreamRetentionPeriod, UpdateStreamMode, StartStreamEncryption, StopStreamEncryption, UpdateMaxRecordSize, UpdateStreamWarmThroughput |
 | Resharding | UpdateShardCount, MergeShards, SplitShard, ListShards |
 | Records | PutRecord, PutRecords, GetShardIterator, GetRecords |
-| Consumers (enhanced fan-out) | RegisterStreamConsumer, DeregisterStreamConsumer, DescribeStreamConsumer, ListStreamConsumers |
+| Consumers (enhanced fan-out) | RegisterStreamConsumer, DeregisterStreamConsumer, DescribeStreamConsumer, ListStreamConsumers, SubscribeToShard |
 | Monitoring | EnableEnhancedMonitoring, DisableEnhancedMonitoring |
 | Tags | AddTagsToStream, RemoveTagsFromStream, ListTagsForStream, TagResource, UntagResource, ListTagsForResource |
 | Resource policy | PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy |
 | Account & limits | DescribeLimits, DescribeAccountSettings, UpdateAccountSettings |
 
-Streams are addressed by name or ARN. `SubscribeToShard` (enhanced fan-out
-HTTP/2 event stream) is not yet implemented; polling via
+Streams are addressed by name or ARN. `SubscribeToShard` (enhanced fan-out)
+streams records to a registered consumer as an
+`application/vnd.amazon.eventstream` response: it resolves the consumer's shard
+from the requested `StartingPosition`, emits the `initial-response` frame the SDK
+awaits, then a `SubscribeToShardEvent` frame carrying the records, continuation
+sequence number, and `MillisBehindLatest`. Polling via
 `GetShardIterator`/`GetRecords` covers the same read path.
 
-**Total: 38 operations.**
+**Total: 39 operations.**
 
 ---
 
@@ -2644,8 +2648,8 @@ still sees success.
 | Key Management — AWS KMS | 45 |
 | File System — AWS EFS | 30 |
 | Certificate Manager — AWS ACM | 17 |
-| Data Streams — AWS Kinesis | 38 |
-| **Grand Total** | **1837** (+138 optional) |
+| Data Streams — AWS Kinesis | 39 |
+| **Grand Total** | **1838** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

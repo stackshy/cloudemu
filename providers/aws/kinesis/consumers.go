@@ -99,6 +99,68 @@ func (m *Mock) ListStreamConsumers(
 	return out, "", nil
 }
 
+// SubscribeToShard resolves the consumer's stream and shard, reads the shard's
+// records from the requested starting position, and returns them with a
+// continuation sequence number for resuming the subscription. It reuses the same
+// position resolution as GetShardIterator so all StartingPosition types behave
+// consistently with the polling path.
+//
+//nolint:gocritic // in is the public SubscribeToShard input, taken by value to match the driver API
+func (m *Mock) SubscribeToShard(
+	_ context.Context, in driver.SubscribeToShardInput,
+) (*driver.SubscribeToShardResult, error) {
+	if in.ConsumerARN == "" {
+		return nil, invalidArg("ConsumerARN is required")
+	}
+
+	if in.ShardID == "" {
+		return nil, invalidArg("ShardId is required")
+	}
+
+	sd, _, err := m.findConsumerStream("", "", in.ConsumerARN)
+	if err != nil {
+		return nil, err
+	}
+
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	shard := findShardByID(sd.shards, in.ShardID)
+	if shard == nil {
+		return nil, errNotFound("shard %q not found", in.ShardID)
+	}
+
+	start, err := positionFor(shard, &driver.GetShardIteratorInput{
+		ShardIteratorType:      in.StartingPositionType,
+		StartingSequenceNumber: in.StartingSequenceNumber,
+		Timestamp:              in.StartingTimestamp,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	start = min(start, len(shard.records))
+	recs := make([]driver.Record, len(shard.records)-start)
+	copy(recs, shard.records[start:])
+
+	return &driver.SubscribeToShardResult{
+		Records:                    recs,
+		ContinuationSequenceNumber: continuationSeq(shard, recs),
+		MillisBehindLatest:         0,
+	}, nil
+}
+
+// continuationSeq is the cursor a client uses to resume a subscription: the last
+// delivered record's sequence number, or the shard's starting sequence number
+// when no records were delivered.
+func continuationSeq(shard *shardState, recs []driver.Record) string {
+	if n := len(recs); n > 0 {
+		return recs[n-1].SequenceNumber
+	}
+
+	return shard.shard.SequenceNumberRange.StartingSequenceNumber
+}
+
 // findConsumerStream resolves the stream + consumer name from any combination of
 // stream ARN, consumer name, and consumer ARN.
 func (m *Mock) findConsumerStream(streamARN, consumerName, consumerARN string) (*streamData, string, error) {

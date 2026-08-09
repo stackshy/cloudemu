@@ -180,6 +180,25 @@ type ChildShard struct {
 	HashKeyRange HashKeyRange
 }
 
+// SubscribeToShardInput describes an enhanced fan-out subscription. StartingPosition
+// mirrors the shard-iterator types (TRIM_HORIZON, LATEST, AT_SEQUENCE_NUMBER,
+// AFTER_SEQUENCE_NUMBER, AT_TIMESTAMP).
+type SubscribeToShardInput struct {
+	ConsumerARN            string
+	ShardID                string
+	StartingPositionType   string
+	StartingSequenceNumber string
+	StartingTimestamp      time.Time
+}
+
+// SubscribeToShardResult carries one enhanced fan-out event's worth of records
+// plus the continuation cursor used to resume the subscription.
+type SubscribeToShardResult struct {
+	Records                    []Record
+	ContinuationSequenceNumber string
+	MillisBehindLatest         int64
+}
+
 // ListShardsInput narrows ListShards.
 type ListShardsInput struct {
 	StreamName            string
@@ -252,6 +271,7 @@ type Kinesis interface {
 	DeregisterStreamConsumer(ctx context.Context, streamARN, consumerName, consumerARN string) error
 	DescribeStreamConsumer(ctx context.Context, streamARN, consumerName, consumerARN string) (*Consumer, error)
 	ListStreamConsumers(ctx context.Context, streamARN, nextToken string, maxResults int32) ([]Consumer, string, error)
+	SubscribeToShard(ctx context.Context, in SubscribeToShardInput) (*SubscribeToShardResult, error)
 
 	// Enhanced monitoring.
 	EnableEnhancedMonitoring(ctx context.Context, name, arn string, metrics []string) (current, desired []string, err error)

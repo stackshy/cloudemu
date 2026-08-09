@@ -54,6 +54,7 @@ func New(d kinesisdriver.Kinesis) *Handler {
 		"DeregisterStreamConsumer":      h.deregisterConsumer,
 		"DescribeStreamConsumer":        h.describeConsumer,
 		"ListStreamConsumers":           h.listConsumers,
+		"SubscribeToShard":              h.subscribeToShard,
 		"EnableEnhancedMonitoring":      h.enableMonitoring,
 		"DisableEnhancedMonitoring":     h.disableMonitoring,
 		"AddTagsToStream":               h.addTags,
