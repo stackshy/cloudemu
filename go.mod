@@ -78,6 +78,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sagemakerfeaturestoreruntime v1.35.7
 	github.com/aws/aws-sdk-go-v2/service/sagemakerruntime v1.41.0
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.5
+	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.66.4
 	github.com/aws/aws-sdk-go-v2/service/sns v1.41.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.27
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.71.0
@@ -117,7 +118,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.35 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.35 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.6 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.31 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.14 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.11.21 // indirect

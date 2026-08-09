@@ -40,7 +40,8 @@ This document lists every service and operation available in CloudEmu across all
 | 27 | Key Management | `kms` | — | — |
 | 28 | File System | `efs` | — | — |
 | 29 | Certificate Manager | `acm` | — | — |
-| 30 | Web Application Firewall | `wafv2` | — | — |
+| 30 | Email Service | `sesv2` | — | — |
+| 31 | Web Application Firewall | `wafv2` | — | — |
 
 ---
 
@@ -2489,7 +2490,7 @@ validated public certificate.
 
 ---
 
-## 30. Web Application Firewall (WAFv2)
+## 31. Web Application Firewall (WAFv2)
 
 **Driver interface:** `services/wafv2/driver/`
 **AWS:** WAFv2 (AWS JSON 1.1, `X-Amz-Target: AWSWAF_20190729.<Op>`) | **Azure:** — | **GCP:** —
@@ -2544,7 +2545,67 @@ Get/Put/Update report `WAFNonexistentItemException` since no managed rule sets a
 hosted, and `DeleteFirewallManagerRuleGroups` echoes back the presented lock token.
 
 **Total: 59 operations.**
+## 30. Email Service (SES v2)
 
+**Driver interface:** `services/sesv2/driver/`
+**AWS:** SES v2 (REST-JSON `awsRestjson1`, path prefix `/v2/email/…`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/sesv2` clients (and the `aws sesv2` CLI)
+work against the SDK-compat server (`awsserver.Drivers{SESV2: cloud.SESV2}`).
+SES v2 uses REST-JSON path + method routing under the `/v2/email/` version
+prefix, so its handler gates on that prefix ahead of the S3 catch-all.
+
+**Identities auto-verify.** `CreateEmailIdentity` marks an address or domain
+verified for sending immediately (status `SUCCESS`) — the emulator can't perform
+a real DNS/email round-trip — and domains receive three Easy-DKIM CNAME tokens.
+`SendEmail` validates the from-identity (the address itself or its domain must be
+a verified identity) and any referenced configuration set / template, then
+returns a generated `MessageId`; accepted messages are retained so tests can
+assert on what was sent. `TestRenderEmailTemplate` substitutes `{{key}}`
+placeholders from the JSON template data.
+
+Full `aws-sdk-go-v2/service/sesv2` parity: every client method (except
+`Options`) is implemented. Beyond the verified/sending core, the emulator also
+covers contact lists and contacts, custom verification email templates,
+configuration-set event destinations and put-options, dedicated IP pools/IPs,
+the deliverability dashboard, email-identity policies and DKIM/feedback/config
+-set attributes, import/export jobs, insights/metrics/recommendations, tenants
+and tenant-resource associations, reputation entities, multi-region endpoints,
+and templated bulk send.
+
+**Synthesized read-only data.** Deliverability, reputation, insights, and metric
+figures cannot be observed by an emulator with no real mail flow, so those
+operations manage opt-in/association state and return plausible, self-consistent
+but non-real reports (e.g. empty blacklist entries, zeroed metric series,
+HEALTHY reputation until changed). Import/export jobs complete instantly.
+
+| Family | Operations |
+|--------|-----------|
+| Email identities | CreateEmailIdentity, GetEmailIdentity, DeleteEmailIdentity, ListEmailIdentities, PutEmailIdentityDkimAttributes, PutEmailIdentityMailFromAttributes |
+| Email identity policies / attributes | CreateEmailIdentityPolicy, GetEmailIdentityPolicies, UpdateEmailIdentityPolicy, DeleteEmailIdentityPolicy, PutEmailIdentityConfigurationSetAttributes, PutEmailIdentityDkimSigningAttributes, PutEmailIdentityFeedbackAttributes |
+| Configuration sets | CreateConfigurationSet, GetConfigurationSet, DeleteConfigurationSet, ListConfigurationSets |
+| Config-set event destinations | Create/Update/Delete ConfigurationSetEventDestination, GetConfigurationSetEventDestinations |
+| Config-set put-options | PutConfigurationSet{ArchivingOptions, DeliveryOptions, ReputationOptions, SendingOptions, SuppressionOptions, TrackingOptions, VdmOptions} |
+| Email templates | CreateEmailTemplate, GetEmailTemplate, UpdateEmailTemplate, DeleteEmailTemplate, ListEmailTemplates, TestRenderEmailTemplate |
+| Custom verification templates | Create/Get/Update/Delete/List CustomVerificationEmailTemplate, SendCustomVerificationEmail |
+| Contact lists / contacts | Create/Get/Update/Delete/List ContactList; Create/Get/Update/Delete/List Contact |
+| Sending | SendEmail, SendBulkEmail |
+| Suppression list | PutSuppressedDestination, GetSuppressedDestination, DeleteSuppressedDestination, ListSuppressedDestinations |
+| Dedicated IPs / pools | Create/Delete/Get/List DedicatedIpPool; GetDedicatedIp, GetDedicatedIps, PutDedicatedIpInPool, PutDedicatedIpPoolScalingAttributes, PutDedicatedIpWarmupAttributes, PutAccountDedicatedIpWarmupAttributes |
+| Deliverability dashboard | Put/GetDeliverabilityDashboardOption(s), Create/Get/List DeliverabilityTestReport, Get/ListDomainDeliverabilityCampaign(s), GetDomainStatisticsReport, GetBlacklistReports |
+| Import / export jobs | Create/Get/List ImportJob; Create/Get/List/Cancel ExportJob |
+| Insights / metrics | BatchGetMetricData, GetMessageInsights, GetEmailAddressInsights, ListRecommendations |
+| Account | GetAccount, PutAccountSendingAttributes, PutAccountSuppressionAttributes, PutAccountDetails, PutAccountVdmAttributes, PutAccountPricingAttributes |
+| Tenants | Create/Get/Delete/List Tenant; Create/Delete TenantResourceAssociation, ListTenantResources, ListResourceTenants, PutTenantSuppressionAttributes |
+| Reputation entities | GetReputationEntity, ListReputationEntities, UpdateReputationEntityCustomerManagedStatus, UpdateReputationEntityPolicy |
+| Multi-region endpoints | Create/Get/Delete/List MultiRegionEndpoint |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+Resource identifiers are ARNs (`arn:aws:ses:<region>:<account>:identity/…`,
+`…:configuration-set/…`, `…:template/…`); the tag operations resolve the ARN to
+the referenced identity, configuration set, or template.
+
+**Total: 113 operations.**
 ---
 
 ## Provider-specific resources
@@ -2664,8 +2725,9 @@ still sees success.
 | Key Management — AWS KMS | 45 |
 | File System — AWS EFS | 30 |
 | Certificate Manager — AWS ACM | 17 |
+| Email Service — AWS SES v2 | 113 |
 | Web Application Firewall — AWS WAFv2 | 59 |
-| **Grand Total** | **1858** (+138 optional) |
+| **Grand Total** | **1971** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
