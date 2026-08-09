@@ -41,6 +41,13 @@ func (m *Mock) CreateIPSet(_ context.Context, in driver.CreateIPSetInput) (*driv
 		return nil, invalidParameter("IPAddressVersion is required")
 	}
 
+	if err := validateScope(in.Scope); err != nil {
+		return nil, err
+	}
+
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
 	if m.ipSetByName(in.Scope, in.Name) {
 		return nil, duplicate("IP set %q already exists in scope %s", in.Name, in.Scope)
 	}
@@ -120,12 +127,11 @@ func (m *Mock) DeleteIPSet(_ context.Context, ref driver.Ref, lockToken string) 
 	}
 
 	sd.mu.Lock()
-	if sd.set.LockToken != lockToken {
-		sd.mu.Unlock()
+	defer sd.mu.Unlock()
 
+	if sd.set.LockToken != lockToken {
 		return staleLock("stale lock token for IP set %q", ref.ID)
 	}
-	sd.mu.Unlock()
 
 	m.ipSets.Delete(key(ref.Scope, ref.ID))
 

@@ -39,6 +39,13 @@ func (m *Mock) CreateRegexPatternSet(
 		return nil, invalidParameter("Name and Scope are required")
 	}
 
+	if err := validateScope(in.Scope); err != nil {
+		return nil, err
+	}
+
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
 	if m.regexSetByName(in.Scope, in.Name) {
 		return nil, duplicate("regex pattern set %q already exists in scope %s", in.Name, in.Scope)
 	}
@@ -117,12 +124,11 @@ func (m *Mock) DeleteRegexPatternSet(_ context.Context, ref driver.Ref, lockToke
 	}
 
 	sd.mu.Lock()
-	if sd.set.LockToken != lockToken {
-		sd.mu.Unlock()
+	defer sd.mu.Unlock()
 
+	if sd.set.LockToken != lockToken {
 		return staleLock("stale lock token for regex pattern set %q", ref.ID)
 	}
-	sd.mu.Unlock()
 
 	m.regexes.Delete(key(ref.Scope, ref.ID))
 

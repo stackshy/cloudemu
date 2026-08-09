@@ -39,6 +39,13 @@ func (m *Mock) CreateRuleGroup(_ context.Context, in driver.CreateRuleGroupInput
 		return nil, invalidParameter("Name and Scope are required")
 	}
 
+	if err := validateScope(in.Scope); err != nil {
+		return nil, err
+	}
+
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
 	if m.ruleGroupByName(in.Scope, in.Name) {
 		return nil, duplicate("rule group %q already exists in scope %s", in.Name, in.Scope)
 	}
@@ -123,12 +130,11 @@ func (m *Mock) DeleteRuleGroup(_ context.Context, ref driver.Ref, lockToken stri
 	}
 
 	gd.mu.Lock()
-	if gd.grp.LockToken != lockToken {
-		gd.mu.Unlock()
+	defer gd.mu.Unlock()
 
+	if gd.grp.LockToken != lockToken {
 		return staleLock("stale lock token for rule group %q", ref.ID)
 	}
-	gd.mu.Unlock()
 
 	m.ruleGrps.Delete(key(ref.Scope, ref.ID))
 

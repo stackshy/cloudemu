@@ -39,7 +39,24 @@ type Mock struct {
 	// apiKeys maps a composite (scope,apiKey) key to its stored summary.
 	apiKeys map[string]driver.APIKeySummary
 
+	// createMu serializes the name-uniqueness check and store insert across all
+	// resource types so two concurrent same-(scope,name) creates can't both
+	// succeed (the by-name scan and the Set below are otherwise not atomic).
+	createMu sync.Mutex
+
 	opts *config.Options
+}
+
+// validateScope allow-lists the WAFv2 Scope, rejecting any other value with
+// WAFInvalidParameterException instead of silently storing it in an unreachable
+// namespace.
+func validateScope(scope string) error {
+	switch scope {
+	case driver.ScopeRegional, driver.ScopeCloudFront:
+		return nil
+	default:
+		return invalidParameter("Scope must be REGIONAL or CLOUDFRONT, got %q", scope)
+	}
 }
 
 type webACLData struct {

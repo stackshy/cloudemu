@@ -47,6 +47,13 @@ func (m *Mock) CreateWebACL(_ context.Context, in driver.CreateWebACLInput) (*dr
 		return nil, invalidParameter("Name and Scope are required")
 	}
 
+	if err := validateScope(in.Scope); err != nil {
+		return nil, err
+	}
+
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
 	if _, exists := m.webACLByName(in.Scope, in.Name); exists {
 		return nil, duplicate("web ACL %q already exists in scope %s", in.Name, in.Scope)
 	}
@@ -140,12 +147,11 @@ func (m *Mock) DeleteWebACL(_ context.Context, ref driver.Ref, lockToken string)
 	}
 
 	wd.mu.Lock()
-	if wd.acl.LockToken != lockToken {
-		wd.mu.Unlock()
+	defer wd.mu.Unlock()
 
+	if wd.acl.LockToken != lockToken {
 		return staleLock("stale lock token for web ACL %q", ref.ID)
 	}
-	wd.mu.Unlock()
 
 	m.webACLs.Delete(key(ref.Scope, ref.ID))
 
