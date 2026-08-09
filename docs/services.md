@@ -40,6 +40,7 @@ This document lists every service and operation available in CloudEmu across all
 | 27 | Key Management | `kms` | — | — |
 | 28 | File System | `efs` | — | — |
 | 29 | Certificate Manager | `acm` | — | — |
+| 30 | Web Application Firewall | `wafv2` | — | — |
 
 ---
 
@@ -2488,6 +2489,43 @@ validated public certificate.
 
 ---
 
+## 30. Web Application Firewall (WAFv2)
+
+**Driver interface:** `services/wafv2/driver/`
+**AWS:** WAFv2 (AWS JSON 1.1, `X-Amz-Target: AWSWAF_20190729.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/wafv2` clients (and the `aws wafv2` CLI)
+work against the SDK-compat server (`awsserver.Drivers{WAFv2: cloud.WAFv2}`).
+Full parity across WebACLs, IPSets, RuleGroups and RegexPatternSets, web-ACL /
+resource associations, and tags.
+
+**Scope-partitioned namespace with optimistic locking.** Every resource is keyed
+by the tuple `(Scope, Id)`, so `REGIONAL` and `CLOUDFRONT` resources never
+collide. Each resource carries a `LockToken` that rotates on every mutation;
+`Update*` and `Delete*` must present the current token or the backend returns a
+`WAFOptimisticLockException`, exactly as real WAF. Rule, statement,
+default-action and visibility-config blocks are stored verbatim (as raw JSON), so
+`Get*` returns exactly what `Create*`/`Update*` wrote.
+
+| Family | Operations |
+|--------|-----------|
+| Web ACLs | CreateWebACL, GetWebACL, UpdateWebACL, DeleteWebACL, ListWebACLs |
+| IP sets | CreateIPSet, GetIPSet, UpdateIPSet, DeleteIPSet, ListIPSets |
+| Rule groups | CreateRuleGroup, GetRuleGroup, UpdateRuleGroup, DeleteRuleGroup, ListRuleGroups |
+| Regex pattern sets | CreateRegexPatternSet, GetRegexPatternSet, UpdateRegexPatternSet, DeleteRegexPatternSet, ListRegexPatternSets |
+| Associations | AssociateWebACL, DisassociateWebACL, GetWebACLForResource, ListResourcesForWebACL |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+Distinct exceptions (`WAFNonexistentItemException`, `WAFDuplicateItemException`,
+`WAFOptimisticLockException`, `WAFInvalidParameterException`) surface as their
+real typed errors so SDK `errors.As` checks work. Managed rule groups, logging
+configuration, API keys, mobile-SDK, and revenue/statistics operations are out of
+scope (no local analog).
+
+**Total: 22 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -2605,7 +2643,8 @@ still sees success.
 | Key Management — AWS KMS | 45 |
 | File System — AWS EFS | 30 |
 | Certificate Manager — AWS ACM | 17 |
-| **Grand Total** | **1799** (+138 optional) |
+| Web Application Firewall — AWS WAFv2 | 22 |
+| **Grand Total** | **1821** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
