@@ -4047,10 +4047,46 @@
         "name": "SetAlarmState"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "OCIMonitoring",
+        "doc": "OCIMonitoring is an OPTIONAL capability, discovered by type assertion. OCI",
+        "operations": [
+          {
+            "name": "CreateOCIAlarm"
+          },
+          {
+            "name": "DeleteOCIAlarm"
+          },
+          {
+            "name": "GetOCIAlarm"
+          },
+          {
+            "name": "ListOCIAlarms"
+          },
+          {
+            "name": "ListOCIMetrics"
+          },
+          {
+            "name": "OCIAlarmHistory"
+          },
+          {
+            "name": "PostMetricData"
+          },
+          {
+            "name": "SummarizeOCIMetrics"
+          },
+          {
+            "name": "UpdateOCIAlarm"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "CloudWatch",
       "azure": "Monitor",
-      "gcp": "CloudMonitoring"
+      "gcp": "CloudMonitoring",
+      "oci": "Monitoring"
     }
   },
   {
