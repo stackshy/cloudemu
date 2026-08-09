@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
@@ -152,6 +153,7 @@ type Provider struct {
 	SSM                 *ssm.Mock
 	ECS                 *ecs.Mock
 	EFS                 *efs.Mock
+	Kinesis             *kinesis.Mock
 	VPCLattice          *vpclattice.Mock
 	Route53Resolver     *route53resolver.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
@@ -194,6 +196,7 @@ func New(opts ...config.Option) *Provider {
 		SSM:                 ssm.New(o),
 		ECS:                 ecs.New(o),
 		EFS:                 efs.New(o),
+		Kinesis:             kinesis.New(o),
 		VPCLattice:          vpclattice.New(o),
 		Route53Resolver:     route53resolver.New(o),
 		AccountID:           o.AccountID,
