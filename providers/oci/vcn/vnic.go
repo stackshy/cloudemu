@@ -3,7 +3,9 @@ package vcn
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"net"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -12,7 +14,8 @@ import (
 const typeVNICAttachment = "vnicattachment"
 
 // firstHostOffset is the first address a VNIC can take in a subnet: OCI
-// reserves the network address and the virtual router below it.
+// reserves the network address and the virtual router below it. The broadcast
+// address at the top is reserved too, so allocation runs between the two.
 const firstHostOffset = 2
 
 type vnicData struct {
@@ -77,6 +80,11 @@ func (m *Mock) CreateNetworkInterface(
 	}
 
 	id := m.newOCID(typeVNIC)
+
+	if _, err := m.addPrivateIP(s, id, "", "", "", true); err != nil {
+		return nil, err
+	}
+
 	v := &vnicData{
 		ID:           id,
 		VCNID:        s.VCNID,
@@ -91,7 +99,6 @@ func (m *Mock) CreateNetworkInterface(
 
 	m.vnics.Set(id, v)
 	m.record(id)
-	m.addPrivateIP(s, id, "", "", "", true)
 
 	info := toVNICInterface(v)
 
@@ -106,20 +113,22 @@ func (m *Mock) DescribeNetworkInterfaces(_ context.Context, ids []string) ([]dri
 
 // DetachNetworkInterface detaches a VNIC from the instance holding it.
 func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, force bool) error {
-	for _, v := range m.vnics.All() {
-		if v.AttachmentID != attachmentID {
+	for _, held := range m.vnics.All() {
+		if held.AttachmentID != attachmentID {
 			continue
 		}
 
-		if v.IsPrimary && !force {
-			return cerrors.Newf(cerrors.FailedPrecondition,
-				"VNIC attachment %q is primary; detach requires force", attachmentID)
-		}
+		return mutate(m.vnics, held.ID, vnicNotFound(held.ID), func(v *vnicData) error {
+			if v.IsPrimary && !force {
+				return cerrors.Newf(cerrors.FailedPrecondition,
+					"VNIC attachment %q is primary; detach requires force", attachmentID)
+			}
 
-		v.AttachmentID = ""
-		v.Status = StateDetached
+			v.AttachmentID = ""
+			v.Status = StateDetached
 
-		return nil
+			return nil
+		})
 	}
 
 	return cerrors.Newf(cerrors.NotFound, "VNIC attachment %q not found", attachmentID)
@@ -128,7 +137,7 @@ func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, fo
 // DeleteNetworkInterface deletes a VNIC and the private IPs on it.
 func (m *Mock) DeleteNetworkInterface(_ context.Context, id string) error {
 	if !m.vnics.Has(id) {
-		return cerrors.Newf(cerrors.NotFound, "VNIC %q not found", id)
+		return vnicNotFound(id)
 	}
 
 	for _, p := range m.privateIPs.All() {
@@ -153,30 +162,36 @@ func (m *Mock) DescribeVNICs(_ context.Context, ids []string) ([]VNIC, error) {
 // UpdateVNIC changes a VNIC's display name, hostname and NSG membership. A nil
 // pointer leaves that field alone.
 func (m *Mock) UpdateVNIC(_ context.Context, id string, name, hostname *string, nsgIDs []string) (*VNIC, error) {
-	v, ok := m.vnics.Get(id)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "VNIC %q not found", id)
-	}
+	var out VNIC
 
-	if name != nil {
-		v.Name = *name
-	}
-
-	if hostname != nil {
-		v.Hostname = *hostname
-	}
-
-	if nsgIDs != nil {
+	err := mutate(m.vnics, id, vnicNotFound(id), func(v *vnicData) error {
+		// Membership is checked before anything is written, so a bad NSG
+		// leaves the VNIC as it was rather than half-updated.
 		for _, nsgID := range nsgIDs {
 			if !m.nsgs.Has(nsgID) {
-				return nil, cerrors.Newf(cerrors.NotFound, "network security group %q not found", nsgID)
+				return nsgNotFound(nsgID)
 			}
 		}
 
-		v.NSGIDs = copyStringSlice(nsgIDs)
-	}
+		if name != nil {
+			v.Name = *name
+		}
 
-	out := m.toVNIC(v)
+		if hostname != nil {
+			v.Hostname = *hostname
+		}
+
+		if nsgIDs != nil {
+			v.NSGIDs = copyStringSlice(nsgIDs)
+		}
+
+		out = m.toVNIC(v)
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &out, nil
 }
@@ -184,7 +199,7 @@ func (m *Mock) UpdateVNIC(_ context.Context, id string, name, hostname *string, 
 // VNICsInNSG returns the VNICs that are members of a network security group.
 func (m *Mock) VNICsInNSG(_ context.Context, nsgID string) ([]VNIC, error) {
 	if !m.nsgs.Has(nsgID) {
-		return nil, cerrors.Newf(cerrors.NotFound, "network security group %q not found", nsgID)
+		return nil, nsgNotFound(nsgID)
 	}
 
 	out := make([]VNIC, 0)
@@ -205,7 +220,7 @@ func (m *Mock) VNICsInNSG(_ context.Context, nsgID string) ([]VNIC, error) {
 func (m *Mock) CreatePrivateIP(_ context.Context, vnicID, address, name, hostname string) (*PrivateIP, error) {
 	v, ok := m.vnics.Get(vnicID)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "VNIC %q not found", vnicID)
+		return nil, vnicNotFound(vnicID)
 	}
 
 	s, ok := m.subnets.Get(v.SubnetID)
@@ -221,14 +236,21 @@ func (m *Mock) CreatePrivateIP(_ context.Context, vnicID, address, name, hostnam
 		}
 	}
 
-	return m.addPrivateIP(s, vnicID, address, name, hostname, false), nil
+	return m.addPrivateIP(s, vnicID, address, name, hostname, false)
 }
 
-// addPrivateIP stores a private IP, allocating the next free address in the
+// addPrivateIP stores a private IP, allocating the lowest free address in the
 // subnet when the caller names none.
-func (m *Mock) addPrivateIP(s *subnetData, vnicID, address, name, hostname string, isPrimary bool) *PrivateIP {
+func (m *Mock) addPrivateIP(
+	s *subnetData, vnicID, address, name, hostname string, isPrimary bool,
+) (*PrivateIP, error) {
 	if address == "" {
-		address = hostIP(s.CIDRBlock, firstHostOffset+m.countPrivateIPs(s.ID))
+		free, err := m.freeAddress(s)
+		if err != nil {
+			return nil, err
+		}
+
+		address = free
 	}
 
 	id := m.newOCID(typePrivateIP)
@@ -247,20 +269,49 @@ func (m *Mock) addPrivateIP(s *subnetData, vnicID, address, name, hostname strin
 
 	info := toPrivateIPInfo(p)
 
-	return &info
+	return &info, nil
 }
 
-// countPrivateIPs reports how many addresses a subnet has handed out.
-func (m *Mock) countPrivateIPs(subnetID string) uint32 {
-	var n uint32
+// freeAddress returns the lowest address in the subnet no private IP holds.
+// Counting the live ones would re-mint an address already handed out once an
+// earlier one below it is deleted.
+func (m *Mock) freeAddress(s *subnetData) (string, error) {
+	used := make(map[string]struct{})
 
 	for _, p := range m.privateIPs.All() {
-		if p.SubnetID == subnetID {
-			n++
+		if p.SubnetID == s.ID {
+			used[p.Address] = struct{}{}
 		}
 	}
 
-	return n
+	last := lastHostOffset(s.CIDRBlock)
+
+	for offset := uint32(firstHostOffset); offset <= last; offset++ {
+		address := hostIP(s.CIDRBlock, offset)
+		if _, taken := used[address]; !taken {
+			return address, nil
+		}
+	}
+
+	return "", cerrors.Newf(cerrors.ResourceExhausted, "subnet %q has no free addresses", s.ID)
+}
+
+// lastHostOffset is the highest offset a subnet can hand out. It is zero for a
+// block that is not IPv4 or is too small to host an address.
+func lastHostOffset(cidr string) uint32 {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil || len(ipnet.Mask) != net.IPv4len {
+		return 0
+	}
+
+	// The complement of the mask is the offset of the broadcast address, and
+	// the last address a VNIC can take sits just below it.
+	broadcast := ^binary.BigEndian.Uint32(ipnet.Mask)
+	if broadcast == 0 {
+		return 0
+	}
+
+	return broadcast - 1
 }
 
 // DeletePrivateIP deletes a secondary private IP. A VNIC's primary address
@@ -268,7 +319,7 @@ func (m *Mock) countPrivateIPs(subnetID string) uint32 {
 func (m *Mock) DeletePrivateIP(_ context.Context, id string) error {
 	p, ok := m.privateIPs.Get(id)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "private IP %q not found", id)
+		return privateIPNotFound(id)
 	}
 
 	if p.IsPrimary {
@@ -289,22 +340,34 @@ func (m *Mock) DescribePrivateIPs(_ context.Context, ids []string) ([]PrivateIP,
 
 // UpdatePrivateIP changes a private IP's display name and hostname.
 func (m *Mock) UpdatePrivateIP(_ context.Context, id string, name, hostname *string) (*PrivateIP, error) {
-	p, ok := m.privateIPs.Get(id)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "private IP %q not found", id)
-	}
+	var out PrivateIP
 
-	if name != nil {
-		p.Name = *name
-	}
+	err := mutate(m.privateIPs, id, privateIPNotFound(id), func(p *privateIPData) error {
+		if name != nil {
+			p.Name = *name
+		}
 
-	if hostname != nil {
-		p.Hostname = *hostname
-	}
+		if hostname != nil {
+			p.Hostname = *hostname
+		}
 
-	out := toPrivateIPInfo(p)
+		out = toPrivateIPInfo(p)
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &out, nil
+}
+
+func vnicNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "VNIC %q not found", id)
+}
+
+func privateIPNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "private IP %q not found", id)
 }
 
 func (m *Mock) toVNIC(v *vnicData) VNIC {

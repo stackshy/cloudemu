@@ -77,19 +77,18 @@ func (m *Mock) RejectPeeringConnection(_ context.Context, peeringID string) erro
 
 // setPeeringStatus moves a pending peering to a terminal status.
 func (m *Mock) setPeeringStatus(peeringID, status string) error {
-	p, ok := m.peerings.Get(peeringID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "peering %q not found", peeringID)
-	}
+	notFound := cerrors.Newf(cerrors.NotFound, "peering %q not found", peeringID)
 
-	if p.Status != PeeringStatusPending {
-		return cerrors.Newf(cerrors.FailedPrecondition,
-			"peering %q is in state %q, expected %q", peeringID, p.Status, PeeringStatusPending)
-	}
+	return mutate(m.peerings, peeringID, notFound, func(p *peeringData) error {
+		if p.Status != PeeringStatusPending {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"peering %q is in state %q, expected %q", peeringID, p.Status, PeeringStatusPending)
+		}
 
-	p.Status = status
+		p.Status = status
 
-	return nil
+		return nil
+	})
 }
 
 // DeletePeeringConnection deletes a peering.

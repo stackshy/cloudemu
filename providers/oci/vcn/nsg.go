@@ -51,7 +51,7 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 // are still members of it.
 func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 	if !m.nsgs.Has(id) {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+		return nsgNotFound(id)
 	}
 
 	for _, v := range m.vnics.All() {
@@ -76,60 +76,58 @@ func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver
 
 // AddIngressRule adds an ingress security rule to an NSG.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	nsg, ok := m.nsgs.Get(groupID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", groupID)
-	}
+	return mutate(m.nsgs, groupID, nsgNotFound(groupID), func(nsg *nsgData) error {
+		next, err := addRule(nsg.IngressRules, rule, "ingress", groupID)
+		if err != nil {
+			return err
+		}
 
-	nsg.IngressRules = append(nsg.IngressRules, rule)
+		nsg.IngressRules = next
 
-	return nil
+		return nil
+	})
 }
 
 // AddEgressRule adds an egress security rule to an NSG.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	nsg, ok := m.nsgs.Get(groupID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", groupID)
-	}
+	return mutate(m.nsgs, groupID, nsgNotFound(groupID), func(nsg *nsgData) error {
+		next, err := addRule(nsg.EgressRules, rule, "egress", groupID)
+		if err != nil {
+			return err
+		}
 
-	nsg.EgressRules = append(nsg.EgressRules, rule)
+		nsg.EgressRules = next
 
-	return nil
+		return nil
+	})
 }
 
 // RemoveIngressRule removes a matching ingress rule from an NSG.
 func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	nsg, ok := m.nsgs.Get(groupID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", groupID)
-	}
+	return mutate(m.nsgs, groupID, nsgNotFound(groupID), func(nsg *nsgData) error {
+		remaining, found := dropRule(nsg.IngressRules, rule)
+		if !found {
+			return cerrors.Newf(cerrors.NotFound, "ingress rule not found in network security group %q", groupID)
+		}
 
-	remaining, found := dropRule(nsg.IngressRules, rule)
-	if !found {
-		return cerrors.Newf(cerrors.NotFound, "ingress rule not found in network security group %q", groupID)
-	}
+		nsg.IngressRules = remaining
 
-	nsg.IngressRules = remaining
-
-	return nil
+		return nil
+	})
 }
 
 // RemoveEgressRule removes a matching egress rule from an NSG.
 func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	nsg, ok := m.nsgs.Get(groupID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", groupID)
-	}
+	return mutate(m.nsgs, groupID, nsgNotFound(groupID), func(nsg *nsgData) error {
+		remaining, found := dropRule(nsg.EgressRules, rule)
+		if !found {
+			return cerrors.Newf(cerrors.NotFound, "egress rule not found in network security group %q", groupID)
+		}
 
-	remaining, found := dropRule(nsg.EgressRules, rule)
-	if !found {
-		return cerrors.Newf(cerrors.NotFound, "egress rule not found in network security group %q", groupID)
-	}
+		nsg.EgressRules = remaining
 
-	nsg.EgressRules = remaining
-
-	return nil
+		return nil
+	})
 }
 
 // UpdateSecurityGroupTags merges freeform tags into the NSG's tag map.
@@ -138,7 +136,7 @@ func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[st
 		nsg.Tags = mergeTagMap(nsg.Tags, tags)
 		return nsg
 	}) {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+		return nsgNotFound(id)
 	}
 
 	return nil
@@ -150,17 +148,37 @@ func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []stri
 		nsg.Tags = removeTagMapKeys(nsg.Tags, keys)
 		return nsg
 	}) {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+		return nsgNotFound(id)
 	}
 
 	return nil
+}
+
+func nsgNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
+}
+
+// addRule appends a rule, refusing an exact duplicate. A portable rule carries
+// no identity of its own, so the wire layer addresses one by its contents and
+// two identical rules would share a handle.
+func addRule(
+	rules []driver.SecurityRule, rule driver.SecurityRule, direction, groupID string,
+) ([]driver.SecurityRule, error) {
+	for _, r := range rules {
+		if r == rule {
+			return nil, cerrors.Newf(cerrors.AlreadyExists,
+				"%s rule already exists in network security group %q", direction, groupID)
+		}
+	}
+
+	return appendItem(rules, rule), nil
 }
 
 // dropRule removes the first rule equal to want, reporting whether it was there.
 func dropRule(rules []driver.SecurityRule, want driver.SecurityRule) ([]driver.SecurityRule, bool) {
 	for i, r := range rules {
 		if r == want {
-			return append(rules[:i], rules[i+1:]...), true
+			return removeAt(rules, i), true
 		}
 	}
 

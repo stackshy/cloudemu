@@ -83,7 +83,7 @@ func (m *Mock) addRouteTable(v *vcnData, tags map[string]string, isDefault bool)
 func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 	rt, ok := m.routeTables.Get(id)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "route table %q not found", id)
+		return routeTableNotFound(id)
 	}
 
 	if rt.IsDefault {
@@ -110,47 +110,46 @@ func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.Ro
 
 // CreateRoute adds a route rule to a route table.
 func (m *Mock) CreateRoute(_ context.Context, routeTableID, destinationCIDR, targetID, targetType string) error {
-	rt, ok := m.routeTables.Get(routeTableID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "route table %q not found", routeTableID)
-	}
-
-	for _, r := range rt.Routes {
-		if r.DestinationCIDR == destinationCIDR {
-			return cerrors.Newf(cerrors.AlreadyExists,
-				"route for %q already exists in route table %q", destinationCIDR, routeTableID)
-		}
-	}
-
 	if targetType == "" {
 		targetType = TargetTypeOf(targetID)
 	}
 
-	rt.Routes = append(rt.Routes, driver.Route{
-		DestinationCIDR: destinationCIDR,
-		TargetID:        targetID,
-		TargetType:      targetType,
-		State:           routeStateActive,
-	})
+	return mutate(m.routeTables, routeTableID, routeTableNotFound(routeTableID), func(rt *routeTableData) error {
+		for _, r := range rt.Routes {
+			if r.DestinationCIDR == destinationCIDR {
+				return cerrors.Newf(cerrors.AlreadyExists,
+					"route for %q already exists in route table %q", destinationCIDR, routeTableID)
+			}
+		}
 
-	return nil
+		rt.Routes = appendItem(rt.Routes, driver.Route{
+			DestinationCIDR: destinationCIDR,
+			TargetID:        targetID,
+			TargetType:      targetType,
+			State:           routeStateActive,
+		})
+
+		return nil
+	})
 }
 
 // DeleteRoute removes a route rule from a route table.
 func (m *Mock) DeleteRoute(_ context.Context, routeTableID, destinationCIDR string) error {
-	rt, ok := m.routeTables.Get(routeTableID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "route table %q not found", routeTableID)
-	}
+	return mutate(m.routeTables, routeTableID, routeTableNotFound(routeTableID), func(rt *routeTableData) error {
+		for i, r := range rt.Routes {
+			if r.DestinationCIDR == destinationCIDR {
+				rt.Routes = removeAt(rt.Routes, i)
 
-	for i, r := range rt.Routes {
-		if r.DestinationCIDR == destinationCIDR {
-			rt.Routes = append(rt.Routes[:i], rt.Routes[i+1:]...)
-			return nil
+				return nil
+			}
 		}
-	}
 
-	return cerrors.Newf(cerrors.NotFound, "route %q not found in route table %q", destinationCIDR, routeTableID)
+		return cerrors.Newf(cerrors.NotFound, "route %q not found in route table %q", destinationCIDR, routeTableID)
+	})
+}
+
+func routeTableNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "route table %q not found", id)
 }
 
 // ReplaceRoutes swaps a route table's whole rule set, which is how OCI's
@@ -160,7 +159,7 @@ func (m *Mock) ReplaceRoutes(_ context.Context, routeTableID string, routes []dr
 		rt.Routes = append([]driver.Route(nil), routes...)
 		return rt
 	}) {
-		return cerrors.Newf(cerrors.NotFound, "route table %q not found", routeTableID)
+		return routeTableNotFound(routeTableID)
 	}
 
 	return nil
@@ -170,7 +169,7 @@ func (m *Mock) ReplaceRoutes(_ context.Context, routeTableID string, routes []dr
 // exactly one route table in OCI, so an existing attachment is replaced.
 func (m *Mock) AssociateRouteTable(_ context.Context, routeTableID, subnetID string) (*driver.RouteTableAssociation, error) {
 	if !m.routeTables.Has(routeTableID) {
-		return nil, cerrors.Newf(cerrors.NotFound, "route table %q not found", routeTableID)
+		return nil, routeTableNotFound(routeTableID)
 	}
 
 	if !m.subnets.Has(subnetID) {
@@ -232,6 +231,18 @@ func (m *Mock) toRouteTableInfo(rt *routeTableData) driver.RouteTable {
 	copy(routes, rt.Routes)
 
 	var assocs []driver.RouteTableAssociation
+
+	// A subnet naming no route table is governed by the VCN's default one, and
+	// the portable model spells that implicit attachment as the main
+	// association. Without it a reader falls back to whichever table it saw
+	// first once a VCN has more than one.
+	if rt.IsDefault {
+		assocs = append(assocs, driver.RouteTableAssociation{
+			ID:           assocHandle(rt.ID, ""),
+			RouteTableID: rt.ID,
+			Main:         true,
+		})
+	}
 
 	for _, a := range m.rtAssocs.SortedValues() {
 		if a.RouteTableID == rt.ID {

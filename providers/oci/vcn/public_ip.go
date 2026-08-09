@@ -54,7 +54,7 @@ func (m *Mock) AllocateAddress(_ context.Context, cfg driver.ElasticIPConfig) (*
 func (m *Mock) ReleaseAddress(_ context.Context, allocationID string) error {
 	ip, ok := m.publicIPs.Get(allocationID)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "public IP %q not found", allocationID)
+		return publicIPNotFound(allocationID)
 	}
 
 	if ip.AssignedTo != "" {
@@ -73,22 +73,37 @@ func (m *Mock) DescribeAddresses(_ context.Context, ids []string) ([]driver.Elas
 }
 
 // AssociateAddress assigns a public IP to a private IP. The returned handle is
-// the private IP's OCID, which is what OCI clears the assignment by.
+// the private IP's OCID, which is what OCI clears the assignment by. A private
+// IP holds at most one public IP, and DisassociateAddress takes that handle,
+// so a second address on the same private IP would be unaddressable.
 func (m *Mock) AssociateAddress(_ context.Context, allocationID, instanceID string) (string, error) {
-	ip, ok := m.publicIPs.Get(allocationID)
-	if !ok {
-		return "", cerrors.Newf(cerrors.NotFound, "public IP %q not found", allocationID)
-	}
-
-	if ip.AssignedTo != "" {
-		return "", cerrors.Newf(cerrors.FailedPrecondition, "public IP %q is already assigned", allocationID)
-	}
-
 	if instanceID == "" {
 		return "", cerrors.New(cerrors.InvalidArgument, "private IP OCID is required")
 	}
 
-	ip.AssignedTo = instanceID
+	if !m.privateIPs.Has(instanceID) {
+		return "", privateIPNotFound(instanceID)
+	}
+
+	// Read before the write: publicIPFor reads the same store, which cannot be
+	// done from inside its own Update.
+	if held := m.publicIPFor(instanceID); held != "" {
+		return "", cerrors.Newf(cerrors.FailedPrecondition,
+			"private IP %q already has public IP %s", instanceID, held)
+	}
+
+	err := mutate(m.publicIPs, allocationID, publicIPNotFound(allocationID), func(ip *publicIPData) error {
+		if ip.AssignedTo != "" {
+			return cerrors.Newf(cerrors.FailedPrecondition, "public IP %q is already assigned", allocationID)
+		}
+
+		ip.AssignedTo = instanceID
+
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
 
 	return instanceID, nil
 }
@@ -96,15 +111,24 @@ func (m *Mock) AssociateAddress(_ context.Context, allocationID, instanceID stri
 // DisassociateAddress clears the assignment of the public IP pointing at the
 // given private IP.
 func (m *Mock) DisassociateAddress(_ context.Context, associationID string) error {
-	for _, ip := range m.publicIPs.All() {
-		if ip.AssignedTo == associationID {
-			ip.AssignedTo = ""
-
-			return nil
+	for _, held := range m.publicIPs.All() {
+		if held.AssignedTo != associationID {
+			continue
 		}
+
+		return mutate(m.publicIPs, held.AllocationID, publicIPNotFound(held.AllocationID),
+			func(ip *publicIPData) error {
+				ip.AssignedTo = ""
+
+				return nil
+			})
 	}
 
 	return cerrors.Newf(cerrors.NotFound, "no public IP assigned to %q", associationID)
+}
+
+func publicIPNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "public IP %q not found", id)
 }
 
 func toPublicIPInfo(ip *publicIPData) driver.ElasticIP {

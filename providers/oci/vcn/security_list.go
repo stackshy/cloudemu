@@ -94,7 +94,7 @@ func defaultSecurityRules() []driver.NetworkACLRule {
 func (m *Mock) DeleteNetworkACL(_ context.Context, id string) error {
 	sl, ok := m.securityLists.Get(id)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "security list %q not found", id)
+		return securityListNotFound(id)
 	}
 
 	if sl.IsDefault {
@@ -114,13 +114,9 @@ func (m *Mock) DescribeNetworkACLs(_ context.Context, ids []string) ([]driver.Ne
 }
 
 // AddNetworkACLRule adds a rule to a security list, keeping rules ordered by
-// rule number.
+// rule number. A rule number is unique within its direction: it is the only
+// handle RemoveNetworkACLRule addresses a rule by.
 func (m *Mock) AddNetworkACLRule(_ context.Context, aclID string, rule *driver.NetworkACLRule) error {
-	sl, ok := m.securityLists.Get(aclID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "security list %q not found", aclID)
-	}
-
 	if rule.Action != "" && rule.Action != actionAllow {
 		return cerrors.New(cerrors.InvalidArgument, "security list rules are allow-only")
 	}
@@ -128,29 +124,42 @@ func (m *Mock) AddNetworkACLRule(_ context.Context, aclID string, rule *driver.N
 	added := *rule
 	added.Action = actionAllow
 
-	sl.Rules = append(sl.Rules, added)
-	sort.SliceStable(sl.Rules, func(i, j int) bool {
-		return sl.Rules[i].RuleNumber < sl.Rules[j].RuleNumber
-	})
+	return mutate(m.securityLists, aclID, securityListNotFound(aclID), func(sl *securityListData) error {
+		for _, r := range sl.Rules {
+			if r.RuleNumber == added.RuleNumber && r.Egress == added.Egress {
+				return cerrors.Newf(cerrors.AlreadyExists,
+					"rule %d already exists in security list %q", added.RuleNumber, aclID)
+			}
+		}
 
-	return nil
+		rules := appendItem(sl.Rules, added)
+		sort.SliceStable(rules, func(i, j int) bool {
+			return rules[i].RuleNumber < rules[j].RuleNumber
+		})
+
+		sl.Rules = rules
+
+		return nil
+	})
 }
 
 // RemoveNetworkACLRule removes a rule by rule number and direction.
 func (m *Mock) RemoveNetworkACLRule(_ context.Context, aclID string, ruleNumber int, egress bool) error {
-	sl, ok := m.securityLists.Get(aclID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "security list %q not found", aclID)
-	}
+	return mutate(m.securityLists, aclID, securityListNotFound(aclID), func(sl *securityListData) error {
+		for i, r := range sl.Rules {
+			if r.RuleNumber == ruleNumber && r.Egress == egress {
+				sl.Rules = removeAt(sl.Rules, i)
 
-	for i, r := range sl.Rules {
-		if r.RuleNumber == ruleNumber && r.Egress == egress {
-			sl.Rules = append(sl.Rules[:i], sl.Rules[i+1:]...)
-			return nil
+				return nil
+			}
 		}
-	}
 
-	return cerrors.Newf(cerrors.NotFound, "rule %d not found in security list %q", ruleNumber, aclID)
+		return cerrors.Newf(cerrors.NotFound, "rule %d not found in security list %q", ruleNumber, aclID)
+	})
+}
+
+func securityListNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "security list %q not found", id)
 }
 
 // ReplaceNetworkACLRules swaps a security list's whole rule set, which is how
@@ -160,7 +169,7 @@ func (m *Mock) ReplaceNetworkACLRules(_ context.Context, aclID string, rules []d
 		sl.Rules = append([]driver.NetworkACLRule(nil), rules...)
 		return sl
 	}) {
-		return cerrors.Newf(cerrors.NotFound, "security list %q not found", aclID)
+		return securityListNotFound(aclID)
 	}
 
 	return nil

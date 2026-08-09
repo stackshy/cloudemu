@@ -68,41 +68,39 @@ func (m *Mock) DescribeInternetGateways(_ context.Context, ids []string) ([]driv
 
 // AttachInternetGateway attaches an internet gateway to a VCN.
 func (m *Mock) AttachInternetGateway(_ context.Context, igwID, vpcID string) error {
-	igw, ok := m.igws.Get(igwID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "internet gateway %q not found", igwID)
-	}
+	return mutate(m.igws, igwID, igwNotFound(igwID), func(igw *igwData) error {
+		if igw.State == StateAttached {
+			return cerrors.Newf(cerrors.FailedPrecondition, "internet gateway %q is already attached", igwID)
+		}
 
-	if igw.State == StateAttached {
-		return cerrors.Newf(cerrors.FailedPrecondition, "internet gateway %q is already attached", igwID)
-	}
+		if !m.vcns.Has(vpcID) {
+			return cerrors.Newf(cerrors.NotFound, "VCN %q not found", vpcID)
+		}
 
-	if !m.vcns.Has(vpcID) {
-		return cerrors.Newf(cerrors.NotFound, "VCN %q not found", vpcID)
-	}
+		igw.VCNID = vpcID
+		igw.State = StateAttached
 
-	igw.VCNID = vpcID
-	igw.State = StateAttached
-
-	return nil
+		return nil
+	})
 }
 
 // DetachInternetGateway detaches an internet gateway from its VCN.
 func (m *Mock) DetachInternetGateway(_ context.Context, igwID, vpcID string) error {
-	igw, ok := m.igws.Get(igwID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "internet gateway %q not found", igwID)
-	}
+	return mutate(m.igws, igwID, igwNotFound(igwID), func(igw *igwData) error {
+		if igw.State != StateAttached || igw.VCNID != vpcID {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"internet gateway %q is not attached to VCN %q", igwID, vpcID)
+		}
 
-	if igw.State != StateAttached || igw.VCNID != vpcID {
-		return cerrors.Newf(cerrors.FailedPrecondition,
-			"internet gateway %q is not attached to VCN %q", igwID, vpcID)
-	}
+		igw.VCNID = ""
+		igw.State = StateDetached
 
-	igw.VCNID = ""
-	igw.State = StateDetached
+		return nil
+	})
+}
 
-	return nil
+func igwNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "internet gateway %q not found", id)
 }
 
 // CreateNATGateway creates a NAT gateway. OCI hangs a NAT gateway off the VCN

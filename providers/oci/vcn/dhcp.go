@@ -93,7 +93,7 @@ func (m *Mock) addDHCPOptions(
 func (m *Mock) DeleteDHCPOptions(_ context.Context, id string) error {
 	d, ok := m.dhcpOptions.Get(id)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "DHCP options %q not found", id)
+		return dhcpOptionsNotFound(id)
 	}
 
 	if d.IsDefault {
@@ -117,30 +117,38 @@ func (m *Mock) DescribeDHCPOptions(_ context.Context, ids []string) ([]DHCPOptio
 func (m *Mock) UpdateDHCPOptions(
 	_ context.Context, id string, name *string, serverType string, customDNS, searchDomains []string,
 ) (*DHCPOptions, error) {
-	d, ok := m.dhcpOptions.Get(id)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "DHCP options %q not found", id)
-	}
+	var out DHCPOptions
 
-	if name != nil {
-		d.Name = *name
-	}
+	err := mutate(m.dhcpOptions, id, dhcpOptionsNotFound(id), func(d *dhcpOptionsData) error {
+		if name != nil {
+			d.Name = *name
+		}
 
-	if serverType != "" {
-		d.ServerType = serverType
-	}
+		if serverType != "" {
+			d.ServerType = serverType
+		}
 
-	if customDNS != nil {
-		d.CustomDNSServer = copyStringSlice(customDNS)
-	}
+		if customDNS != nil {
+			d.CustomDNSServer = copyStringSlice(customDNS)
+		}
 
-	if searchDomains != nil {
-		d.SearchDomains = copyStringSlice(searchDomains)
-	}
+		if searchDomains != nil {
+			d.SearchDomains = copyStringSlice(searchDomains)
+		}
 
-	out := toDHCPOptionsInfo(d)
+		out = toDHCPOptionsInfo(d)
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &out, nil
+}
+
+func dhcpOptionsNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "DHCP options %q not found", id)
 }
 
 func toDHCPOptionsInfo(d *dhcpOptionsData) DHCPOptions {

@@ -221,23 +221,38 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 	return nil
 }
 
-// vcnIsEmpty reports whether anything still references the VCN.
+// vcnIsEmpty reports whether anything still references the VCN. Real OCI
+// refuses the delete until every attached resource is gone; only the three
+// default resources OCI created with the VCN go down with it, so a non-default
+// route table, security list or DHCP options set blocks the same way a subnet
+// does.
 func (m *Mock) vcnIsEmpty(id string) error {
-	for _, s := range m.subnets.All() {
-		if s.VCNID == id {
-			return cerrors.Newf(cerrors.FailedPrecondition, "VCN %q still has subnets", id)
-		}
+	attached := []struct {
+		what string
+		held bool
+	}{
+		{"subnets", anyIn(m.subnets, func(s *subnetData) bool { return s.VCNID == id })},
+		{"internet gateways", anyIn(m.igws, func(g *igwData) bool { return g.VCNID == id })},
+		{"NAT gateways", anyIn(m.natGateways, func(g *natGatewayData) bool { return g.VCNID == id })},
+		{"service gateways", anyIn(m.serviceGWs, func(g *serviceGatewayData) bool { return g.VCNID == id })},
+		{"network security groups", anyIn(m.nsgs, func(n *nsgData) bool { return n.VCNID == id })},
+		{"route tables", anyIn(m.routeTables, func(rt *routeTableData) bool {
+			return rt.VCNID == id && !rt.IsDefault
+		})},
+		{"security lists", anyIn(m.securityLists, func(sl *securityListData) bool {
+			return sl.VCNID == id && !sl.IsDefault
+		})},
+		{"DHCP options", anyIn(m.dhcpOptions, func(d *dhcpOptionsData) bool {
+			return d.VCNID == id && !d.IsDefault
+		})},
+		{"peerings", anyIn(m.peerings, func(p *peeringData) bool {
+			return p.RequesterVCN == id || p.AccepterVCN == id
+		})},
 	}
 
-	for _, g := range m.igws.All() {
-		if g.VCNID == id {
-			return cerrors.Newf(cerrors.FailedPrecondition, "VCN %q still has an internet gateway", id)
-		}
-	}
-
-	for _, g := range m.natGateways.All() {
-		if g.VCNID == id {
-			return cerrors.Newf(cerrors.FailedPrecondition, "VCN %q still has a NAT gateway", id)
+	for _, a := range attached {
+		if a.held {
+			return cerrors.Newf(cerrors.FailedPrecondition, "VCN %q still has %s", id, a.what)
 		}
 	}
 
@@ -354,6 +369,21 @@ func describeResources[T any, R any](store *memstore.Store[T], ids []string, toI
 	}
 
 	return result
+}
+
+// mutate applies fn to a stored resource under the store's write lock, so a
+// read-modify-write never races another writer. It reports notFound when the
+// OCID is unknown, and otherwise whatever fn returns.
+func mutate[T any](store *memstore.Store[T], id string, notFound error, fn func(T) error) error {
+	err := notFound
+
+	store.Update(id, func(v T) T {
+		err = fn(v)
+
+		return v
+	})
+
+	return err
 }
 
 // validateCIDR rejects an empty or unparseable CIDR block.
@@ -482,4 +512,33 @@ func copyStringSlice(src []string) []string {
 	copy(out, src)
 
 	return out
+}
+
+// anyIn reports whether any value in a store satisfies match.
+func anyIn[T any](store *memstore.Store[T], match func(T) bool) bool {
+	for _, v := range store.All() {
+		if match(v) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// appendItem returns a fresh slice with v appended. Mutation under a store's
+// lock swaps whole slices rather than growing one in place, so a reader
+// holding the old slice keeps a consistent view of it.
+func appendItem[T any](src []T, v T) []T {
+	out := make([]T, len(src), len(src)+1)
+	copy(out, src)
+
+	return append(out, v)
+}
+
+// removeAt returns a fresh slice with index i removed.
+func removeAt[T any](src []T, i int) []T {
+	out := make([]T, 0, len(src)-1)
+	out = append(out, src[:i]...)
+
+	return append(out, src[i+1:]...)
 }

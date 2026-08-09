@@ -49,7 +49,9 @@ func (m *Mock) CreateVPCEndpoint(_ context.Context, cfg driver.VPCEndpointConfig
 	m.serviceGWs.Set(id, sg)
 	m.record(id)
 
-	return toServiceGatewayInfoPtr(sg), nil
+	info := toServiceGatewayInfo(sg)
+
+	return &info, nil
 }
 
 type serviceGatewayData struct {
@@ -66,7 +68,7 @@ type serviceGatewayData struct {
 // DeleteVPCEndpoint deletes a service gateway.
 func (m *Mock) DeleteVPCEndpoint(_ context.Context, id string) error {
 	if !m.serviceGWs.Delete(id) {
-		return cerrors.Newf(cerrors.NotFound, "service gateway %q not found", id)
+		return serviceGatewayNotFound(id)
 	}
 
 	m.forget(id)
@@ -84,24 +86,34 @@ func (m *Mock) DescribeVPCEndpoints(_ context.Context, ids []string) ([]driver.V
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) ModifyVPCEndpoint(_ context.Context, id string, cfg driver.VPCEndpointConfig) (*driver.VPCEndpoint, error) {
-	sg, ok := m.serviceGWs.Get(id)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "service gateway %q not found", id)
+	var out driver.VPCEndpoint
+
+	err := mutate(m.serviceGWs, id, serviceGatewayNotFound(id), func(sg *serviceGatewayData) error {
+		if cfg.ServiceName != "" {
+			sg.ServiceName = cfg.ServiceName
+		}
+
+		if len(cfg.RouteTableIDs) > 0 {
+			sg.RouteTableIDs = copyStringSlice(cfg.RouteTableIDs)
+		}
+
+		if len(cfg.Tags) > 0 {
+			sg.Tags = copyTags(cfg.Tags)
+		}
+
+		out = toServiceGatewayInfo(sg)
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	if cfg.ServiceName != "" {
-		sg.ServiceName = cfg.ServiceName
-	}
+	return &out, nil
+}
 
-	if len(cfg.RouteTableIDs) > 0 {
-		sg.RouteTableIDs = copyStringSlice(cfg.RouteTableIDs)
-	}
-
-	if len(cfg.Tags) > 0 {
-		sg.Tags = copyTags(cfg.Tags)
-	}
-
-	return toServiceGatewayInfoPtr(sg), nil
+func serviceGatewayNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "service gateway %q not found", id)
 }
 
 func toServiceGatewayInfo(sg *serviceGatewayData) driver.VPCEndpoint {
@@ -115,10 +127,4 @@ func toServiceGatewayInfo(sg *serviceGatewayData) driver.VPCEndpoint {
 		Tags:          copyTags(sg.Tags),
 		CreatedAt:     sg.CreatedAt,
 	}
-}
-
-func toServiceGatewayInfoPtr(sg *serviceGatewayData) *driver.VPCEndpoint {
-	info := toServiceGatewayInfo(sg)
-
-	return &info
 }

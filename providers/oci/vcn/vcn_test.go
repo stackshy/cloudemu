@@ -141,6 +141,58 @@ func TestDeleteVPCRefusesWhileOccupied(t *testing.T) {
 				require.NoError(t, err)
 			},
 		},
+		{
+			name: "service gateway remains",
+			occupy: func(t *testing.T, m *vcn.Mock, vcnID string) {
+				t.Helper()
+				_, err := m.CreateVPCEndpoint(context.Background(),
+					driver.VPCEndpointConfig{VPCID: vcnID, ServiceName: "ocid1.service.oc1..oss"})
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "network security group remains",
+			occupy: func(t *testing.T, m *vcn.Mock, vcnID string) {
+				t.Helper()
+				_, err := m.CreateSecurityGroup(context.Background(),
+					driver.SecurityGroupConfig{Name: "web", VPCID: vcnID})
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "non-default route table remains",
+			occupy: func(t *testing.T, m *vcn.Mock, vcnID string) {
+				t.Helper()
+				_, err := m.CreateRouteTable(context.Background(), driver.RouteTableConfig{VPCID: vcnID})
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "non-default security list remains",
+			occupy: func(t *testing.T, m *vcn.Mock, vcnID string) {
+				t.Helper()
+				_, err := m.CreateNetworkACL(context.Background(), vcnID, nil)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "non-default DHCP options remain",
+			occupy: func(t *testing.T, m *vcn.Mock, vcnID string) {
+				t.Helper()
+				_, err := m.CreateDHCPOptions(context.Background(), vcnID, "custom", "", nil, nil)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "peering remains",
+			occupy: func(t *testing.T, m *vcn.Mock, vcnID string) {
+				t.Helper()
+				peer := newVCN(t, m, "172.16.0.0/16")
+				_, err := m.CreatePeeringConnection(context.Background(),
+					driver.PeeringConfig{RequesterVPC: vcnID, AccepterVPC: peer.ID})
+				require.NoError(t, err)
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -154,6 +206,27 @@ func TestDeleteVPCRefusesWhileOccupied(t *testing.T) {
 			assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 		})
 	}
+}
+
+func TestDeleteVPCTakesItsDefaultsWithIt(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	parent := newVCN(t, m, vcnCIDR)
+	defaults := m.Defaults(parent.ID)
+
+	require.NoError(t, m.DeleteVPC(ctx, parent.ID))
+
+	tables, err := m.DescribeRouteTables(ctx, []string{defaults.RouteTableID})
+	require.NoError(t, err)
+	assert.Empty(t, tables)
+
+	lists, err := m.DescribeNetworkACLs(ctx, []string{defaults.SecurityListID})
+	require.NoError(t, err)
+	assert.Empty(t, lists)
+
+	options, err := m.DescribeDHCPOptions(ctx, []string{defaults.DHCPOptionsID})
+	require.NoError(t, err)
+	assert.Empty(t, options)
 }
 
 func TestCreateSubnetValidatesCIDR(t *testing.T) {
@@ -308,6 +381,10 @@ func TestSecurityGroupRules(t *testing.T) {
 	require.NoError(t, m.AddIngressRule(ctx, nsg.ID, rule))
 	require.NoError(t, m.AddEgressRule(ctx, nsg.ID, rule))
 
+	err = m.AddIngressRule(ctx, nsg.ID, rule)
+	require.Error(t, err)
+	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err), "a rule is addressed by its contents")
+
 	got, err := m.DescribeSecurityGroups(ctx, []string{nsg.ID})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -368,6 +445,11 @@ func TestSecurityListRules(t *testing.T) {
 	err = m.AddNetworkACLRule(ctx, list.ID, &driver.NetworkACLRule{RuleNumber: 3, Action: "deny", CIDR: "0.0.0.0/0"})
 	require.Error(t, err)
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err), "security lists have no deny rules")
+
+	err = m.AddNetworkACLRule(ctx, list.ID,
+		&driver.NetworkACLRule{RuleNumber: 2, Protocol: "udp", CIDR: "10.0.0.0/16", FromPort: 53, ToPort: 53})
+	require.Error(t, err)
+	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err), "a rule number addresses one rule")
 
 	require.NoError(t, m.RemoveNetworkACLRule(ctx, list.ID, 2, false))
 	require.NoError(t, m.DeleteNetworkACL(ctx, list.ID))
@@ -443,6 +525,24 @@ func TestSubnetTakesOneRouteTable(t *testing.T) {
 	require.Len(t, tables, 2)
 	assert.Empty(t, tables[0].Associations, "the first attachment is replaced")
 	assert.Len(t, tables[1].Associations, 1)
+}
+
+func TestDefaultRouteTableIsTheMainAssociation(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	parent := newVCN(t, m, vcnCIDR)
+
+	other, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: parent.ID})
+	require.NoError(t, err)
+
+	tables, err := m.DescribeRouteTables(ctx, []string{m.Defaults(parent.ID).RouteTableID, other.ID})
+	require.NoError(t, err)
+	require.Len(t, tables, 2)
+
+	require.Len(t, tables[0].Associations, 1, "a subnet naming no table follows the default one")
+	assert.True(t, tables[0].Associations[0].Main)
+	assert.Empty(t, tables[0].Associations[0].SubnetID, "the main association carries no subnet")
+	assert.Empty(t, tables[1].Associations, "a caller-created table governs only what it is attached to")
 }
 
 func TestNATGatewayAcceptsVCNOrSubnet(t *testing.T) {
@@ -583,6 +683,109 @@ func TestPrivateIPs(t *testing.T) {
 
 	require.NoError(t, m.DeleteNetworkInterface(ctx, vnic.ID))
 	require.NoError(t, m.DeleteSubnet(ctx, subnet.ID))
+}
+
+// TestAutoPrivateIPNeverRepeatsAnAddress covers the allocator: deriving the
+// next address from how many a subnet currently holds re-mints a live one as
+// soon as a lower address is deleted.
+func TestAutoPrivateIPNeverRepeatsAnAddress(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	parent := newVCN(t, m, vcnCIDR)
+
+	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: subnetCIDR})
+	require.NoError(t, err)
+
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	require.NoError(t, err)
+
+	third, err := m.CreatePrivateIP(ctx, vnic.ID, "", "third", "")
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.1.3", third.Address)
+
+	fourth, err := m.CreatePrivateIP(ctx, vnic.ID, "", "fourth", "")
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.1.4", fourth.Address)
+
+	require.NoError(t, m.DeletePrivateIP(ctx, third.ID))
+
+	next, err := m.CreatePrivateIP(ctx, vnic.ID, "", "next", "")
+	require.NoError(t, err)
+	assert.Equal(t, third.Address, next.Address, "the freed address is handed out again, not a live one")
+
+	ips, err := m.DescribePrivateIPs(ctx, nil)
+	require.NoError(t, err)
+
+	seen := make(map[string]struct{}, len(ips))
+
+	for _, ip := range ips {
+		_, duplicate := seen[ip.Address]
+		assert.False(t, duplicate, "address %s was handed out twice", ip.Address)
+		seen[ip.Address] = struct{}{}
+	}
+}
+
+func TestPrivateIPAllocationStopsAtTheSubnetEdge(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	parent := newVCN(t, m, vcnCIDR)
+
+	// A /30 holds one usable address once the network, router and broadcast
+	// addresses are reserved.
+	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: "10.0.1.0/30"})
+	require.NoError(t, err)
+
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	require.NoError(t, err)
+
+	_, err = m.CreatePrivateIP(ctx, vnic.ID, "", "second", "")
+	require.Error(t, err)
+	assert.Equal(t, cerrors.ResourceExhausted, cerrors.GetCode(err))
+}
+
+// TestPublicIPAssignsOneToOne covers the assignment target: without it two
+// public IPs can name the same private IP, and the disassociate handle then
+// clears whichever one the map iteration reached first.
+func TestPublicIPAssignsOneToOne(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	parent := newVCN(t, m, vcnCIDR)
+
+	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: subnetCIDR})
+	require.NoError(t, err)
+
+	_, err = m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	require.NoError(t, err)
+
+	privateIPs, err := m.DescribePrivateIPs(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, privateIPs, 1)
+
+	first, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+	require.NoError(t, err)
+
+	second, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+	require.NoError(t, err)
+
+	_, err = m.AssociateAddress(ctx, first.AllocationID, "ocid1.privateip.oc1.iad.missing")
+	require.Error(t, err)
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err), "the assignment target has to exist")
+
+	_, err = m.AssociateAddress(ctx, first.AllocationID, privateIPs[0].ID)
+	require.NoError(t, err)
+
+	_, err = m.AssociateAddress(ctx, second.AllocationID, privateIPs[0].ID)
+	require.Error(t, err)
+	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+
+	// The refused address stayed free, so it can still be released.
+	require.NoError(t, m.ReleaseAddress(ctx, second.AllocationID))
+
+	require.NoError(t, m.DisassociateAddress(ctx, privateIPs[0].ID))
+
+	err = m.DisassociateAddress(ctx, privateIPs[0].ID)
+	require.Error(t, err)
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err), "one address was assigned, so one is cleared")
 }
 
 func TestDHCPOptions(t *testing.T) {

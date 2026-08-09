@@ -1,6 +1,7 @@
 package oci_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,6 +60,24 @@ func TestVCNIsWired(t *testing.T) {
 	p := oci.New()
 
 	require.NotNil(t, p.VCN, "the VCN slot is filled by the vcn mock")
+}
+
+// TestServiceSlotsAreNilOrLive keeps what the retired per-service-name test
+// asserted, without naming a service: a slot reads as nil until a branch fills
+// it. A typed nil in an interface field passes a != nil check and then panics,
+// which is the failure the old test was really guarding against.
+func TestServiceSlotsAreNilOrLive(t *testing.T) {
+	p := reflect.ValueOf(*oci.New())
+
+	for i := range p.NumField() {
+		slot := p.Field(i)
+		if slot.Kind() != reflect.Interface || slot.IsNil() {
+			continue
+		}
+
+		assert.False(t, slot.Elem().Kind() == reflect.Ptr && slot.Elem().IsNil(),
+			"%s holds a typed nil: it reads as wired and panics on use", p.Type().Field(i).Name)
+	}
 }
 
 func TestNewOCIFactory(t *testing.T) {

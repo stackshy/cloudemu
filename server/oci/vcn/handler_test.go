@@ -520,6 +520,12 @@ func TestGatewayOperations(t *testing.T) {
 			"vcnId":         "ocid1.vcn.oc1.iad.missing",
 		})
 		assert.Equal(t, http.StatusNotFound, w.Code)
+
+		// Create and attach are one call in OCI, so the half that succeeded
+		// must not leave a detached gateway behind.
+		listed := f.do(http.MethodGet, "/20160918/internetGateways?compartmentId="+compartment, nil)
+		require.Equal(t, http.StatusOK, listed.Code)
+		assert.Empty(t, decodeList(t, listed), "a failed attach leaves no gateway")
 	})
 
 	t.Run("nat gateway", func(t *testing.T) {
