@@ -23,9 +23,12 @@ func copyVpcEndpoint(v *driver.VpcEndpoint) driver.VpcEndpoint {
 //
 //nolint:gocritic // hugeParam: called per-endpoint on a copy; a pointer would alias stored state.
 func vpcEndpointJSON(v driver.VpcEndpoint) map[string]json.RawMessage {
-	subnets, _ := json.Marshal(v.SubnetIDs)
-	groups, _ := json.Marshal(v.SecurityGroupIDs)
-	azs, _ := json.Marshal(v.AvailabilityZones)
+	vpcOpts, _ := json.Marshal(map[string]any{
+		"VPCId":             v.VPCID,
+		"SubnetIds":         v.SubnetIDs,
+		"SecurityGroupIds":  v.SecurityGroupIDs,
+		"AvailabilityZones": v.AvailabilityZones,
+	})
 
 	return map[string]json.RawMessage{
 		"VpcEndpointId":    rawString(v.VpcEndpointID),
@@ -33,10 +36,7 @@ func vpcEndpointJSON(v driver.VpcEndpoint) map[string]json.RawMessage {
 		"DomainArn":        rawString(v.DomainARN),
 		"Status":           rawString(v.Status),
 		"Endpoint":         rawString(v.Endpoint),
-		"VpcOptions": json.RawMessage(`{"VPCId":` + string(rawString(v.VPCID)) +
-			`,"SubnetIds":` + string(subnets) +
-			`,"SecurityGroupIds":` + string(groups) +
-			`,"AvailabilityZones":` + string(azs) + `}`),
+		"VpcOptions":       json.RawMessage(vpcOpts),
 	}
 }
 
@@ -184,9 +184,13 @@ func (m *Mock) AuthorizeVpcEndpointAccess(_ context.Context, domainName, account
 		principal = service
 	}
 
+	principalJSON, _ := json.Marshal(map[string]any{
+		"PrincipalType": principalType,
+		"Principal":     principal,
+	})
+
 	return map[string]json.RawMessage{
-		"AuthorizedPrincipal": json.RawMessage(`{"PrincipalType":` + string(rawString(principalType)) +
-			`,"Principal":` + string(rawString(principal)) + `}`),
+		"AuthorizedPrincipal": json.RawMessage(principalJSON),
 	}, nil
 }
 
