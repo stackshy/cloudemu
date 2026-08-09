@@ -40,6 +40,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
 	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
+	sfnsrv "github.com/stackshy/cloudemu/v2/server/aws/sfn"
 	"github.com/stackshy/cloudemu/v2/server/aws/sns"
 	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
@@ -76,6 +77,7 @@ import (
 	sagemakerdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	vpclatticedriver "github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
 )
@@ -150,6 +152,9 @@ type Drivers struct {
 	NetworkFirewall nfdriver.NetworkFirewall
 	// SNS serves the SNS query protocol against the notification driver.
 	SNS notifdriver.Notification
+	// SFN serves the Step Functions JSON 1.0 protocol (X-Amz-Target prefix
+	// "AWSStepFunctions.") against the sfn driver.
+	SFN sfndriver.SFN
 	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
 	// GetSessionToken). It has no backing driver — identity is derived from
 	// AccountID and Region — so it is gated on this bool. Enable it so SDK code
@@ -209,6 +214,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		MemoryDB:            p.MemoryDB,
 		NetworkFirewall:     p.NetworkFirewall,
 		SNS:                 p.SNS,
+		SFN:                 p.SFN,
 		STS:                 true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
 		ResourceDiscovery:   p.ResourceDiscovery,
@@ -307,6 +313,12 @@ func New(d Drivers) *server.Server {
 	// from the other JSON 1.1 services.
 	if d.ACM != nil {
 		srv.Register(acmsrv.New(d.ACM))
+	}
+
+	// Step Functions matches the X-Amz-Target prefix "AWSStepFunctions." —
+	// disjoint from every other JSON-RPC service, so registration order is free.
+	if d.SFN != nil {
+		srv.Register(sfnsrv.New(d.SFN))
 	}
 
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."

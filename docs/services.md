@@ -2488,6 +2488,41 @@ validated public certificate.
 
 ---
 
+## 30. Step Functions (SFN)
+
+**Driver interface:** `services/sfn/driver/`
+**AWS:** Step Functions (AWS JSON 1.0, `X-Amz-Target: AWSStepFunctions.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/sfn` clients (and the `aws stepfunctions`
+CLI) work against the SDK-compat server (`awsserver.Drivers{SFN: cloud.SFN}`).
+Full parity across state machines, executions, execution history, activities,
+versions/aliases, and tags. State machine ARNs are keyed by name (a duplicate
+name is `StateMachineAlreadyExists`); the ASL definition is stored verbatim and
+returned unchanged by `DescribeStateMachine`.
+
+| Family | Operations |
+|--------|-----------|
+| State machines | CreateStateMachine, DescribeStateMachine, UpdateStateMachine, DeleteStateMachine, ListStateMachines |
+| Executions | StartExecution, StartSyncExecution, DescribeExecution, StopExecution, ListExecutions, GetExecutionHistory, DescribeStateMachineForExecution |
+| Versions / aliases | PublishStateMachineVersion, ListStateMachineVersions, DeleteStateMachineVersion, CreateStateMachineAlias, DescribeStateMachineAlias, UpdateStateMachineAlias, DeleteStateMachineAlias, ListStateMachineAliases |
+| Activities | CreateActivity, DescribeActivity, DeleteActivity, ListActivities, GetActivityTask, SendTaskSuccess, SendTaskFailure, SendTaskHeartbeat |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+**No ASL interpreter — a deliberate simplification.** The emulator does not
+execute the Amazon States Language. `StartExecution` (and `StartSyncExecution`)
+complete the execution immediately: it transitions `RUNNING → SUCCEEDED` with
+output echoing the input, and `GetExecutionHistory` synthesises a minimal but
+valid event list (`ExecutionStarted → PassStateEntered → PassStateExited →
+ExecutionSucceeded`). Because nothing schedules real work, `GetActivityTask`
+returns an empty task token (the same long-poll-empty result real clients see),
+and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`. This
+keeps behaviour deterministic and dependency-free while preserving the SDK wire
+shapes for build-and-orchestrate testing.
+
+**Total: 31 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -2605,7 +2640,8 @@ still sees success.
 | Key Management — AWS KMS | 45 |
 | File System — AWS EFS | 30 |
 | Certificate Manager — AWS ACM | 17 |
-| **Grand Total** | **1799** (+138 optional) |
+| Step Functions — AWS SFN | 31 |
+| **Grand Total** | **1830** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
