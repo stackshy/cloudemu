@@ -11,6 +11,7 @@
 package cloudtrail
 
 import (
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -212,6 +213,48 @@ func validChannelARN(arn string) bool {
 
 	return seg[0] == arnPrefix && seg[2] == serviceName &&
 		strings.HasPrefix(seg[5], "channel/") && strings.TrimPrefix(seg[5], "channel/") != ""
+}
+
+// paginate returns a sorted-by-key page of a store's values plus the next token.
+// keyOf yields the pagination key of a copied item (used as the next token), and
+// cp copies a stored item under its own read lock via copyLocked. An empty
+// nextToken starts at the beginning; a returned empty token means the last page.
+func paginate[S any, T any](
+	all map[string]S, nextToken string, maxResults int32,
+	cp func(S) T, keyOf func(T) string,
+) (page []T, next string) {
+	keys := make([]string, 0, len(all))
+	for k := range all {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	limit := int(maxResults)
+	if limit <= 0 {
+		limit = defaultMaxResults
+	}
+
+	out := make([]T, 0, len(keys))
+	started := nextToken == ""
+
+	for _, k := range keys {
+		if !started {
+			if k == nextToken {
+				started = true
+			}
+
+			continue
+		}
+
+		if len(out) == limit {
+			return out, keyOf(out[len(out)-1])
+		}
+
+		out = append(out, cp(all[k]))
+	}
+
+	return out, ""
 }
 
 func copyTags(in map[string]string) map[string]string {

@@ -36,9 +36,8 @@ func errEDSARNInvalid(arn string) error {
 		"%q is not a valid event data store ARN", arn)
 }
 
-func errEDSInactive(arn string) error {
-	return apiErr(driver.ExInactiveEventDataStore, errors.FailedPrecondition,
-		"event data store %q is not PENDING_DELETION and cannot be restored", arn)
+func errEDSInvalidStatus(format string, args ...any) error {
+	return apiErr(driver.ExInvalidEDSStatus, errors.FailedPrecondition, format, args...)
 }
 
 func errInvalidParameter(format string, args ...any) error {
@@ -59,6 +58,11 @@ func errChannelARNInvalid(arn string) error {
 
 func errResourceNotFound(id string) error {
 	return apiErr(driver.ExResourceNotFound, errors.NotFound, "resource %q not found", id)
+}
+
+func errCloudTrailARNInvalid(arn string) error {
+	return apiErr(driver.ExCloudTrailARNInvalid, errors.InvalidArgument,
+		"%q is not a valid CloudTrail resource ARN", arn)
 }
 
 func errImportNotFound(id string) error {

@@ -2,14 +2,14 @@ package cloudtrail
 
 import (
 	"context"
-	"sort"
 
 	"github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 )
 
 // CreateEventDataStore stores an event data store and returns it in ENABLED
-// state (or STARTING_INGESTION-then-ENABLED semantics collapsed to ENABLED).
-// The name is claimed atomically against existing stores' names.
+// state (STARTING_INGESTION-then-ENABLED semantics collapsed to ENABLED), or in
+// STOPPED_INGESTION when the caller passes StartIngestion=false. The name is
+// claimed atomically against existing stores' names.
 //
 //nolint:gocritic // in is the public input, taken by value to match the driver API.
 func (m *Mock) CreateEventDataStore(
@@ -33,11 +33,18 @@ func (m *Mock) CreateEventDataStore(
 		billing = driver.BillingExtendableRetention
 	}
 
+	// A store starts ingesting (ENABLED) unless the caller explicitly opts out
+	// with StartIngestion=false, which lands it in STOPPED_INGESTION.
+	status := driver.EDSStatusEnabled
+	if in.StartIngestion != nil && !*in.StartIngestion {
+		status = driver.EDSStatusStoppedIngestion
+	}
+
 	now := m.now()
 	eds := driver.EventDataStore{
 		Name:                         in.Name,
 		ARN:                          m.edsARN(),
-		Status:                       driver.EDSStatusEnabled,
+		Status:                       status,
 		BillingMode:                  billing,
 		RetentionPeriod:              retention,
 		MultiRegionEnabled:           derefBool(in.MultiRegionEnabled, true),
@@ -96,12 +103,18 @@ func (m *Mock) UpdateEventDataStore(
 	defer ed.mu.Unlock()
 
 	e := &ed.eds
+	if e.Status != driver.EDSStatusEnabled {
+		return nil, errEDSInvalidStatus("event data store %q is %s and cannot be updated", e.ARN, e.Status)
+	}
+
 	if in.Name != nil && *in.Name != e.Name {
 		if !m.edsNameIdx.SetIfAbsent(*in.Name, e.ARN) {
 			return nil, errEDSExists(*in.Name)
 		}
 
-		m.edsNameIdx.Delete(e.Name)
+		// Free the old name only if this store still owns that claim, so a
+		// concurrent recreate under the old name isn't clobbered.
+		m.freeEDSName(e.Name, e.ARN)
 		e.Name = *in.Name
 	}
 
@@ -154,6 +167,12 @@ func (m *Mock) DeleteEventDataStore(_ context.Context, arn string) error {
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
 
+	// Already pending deletion: no-op. Re-running delete must not touch the name
+	// index, or it could free a claim now owned by a recreated same-name store.
+	if ed.eds.Status == driver.EDSStatusPendingDeletion {
+		return nil
+	}
+
 	if ed.eds.TerminationProtectionEnabled {
 		return errEDSTerminationProtected(arn)
 	}
@@ -161,15 +180,25 @@ func (m *Mock) DeleteEventDataStore(_ context.Context, arn string) error {
 	ed.eds.Status = driver.EDSStatusPendingDeletion
 	ed.eds.UpdatedAt = m.now()
 	// Free the name so a same-name store can be recreated during the deletion
-	// window; RestoreEventDataStore re-claims it.
-	m.edsNameIdx.Delete(ed.eds.Name)
+	// window; RestoreEventDataStore re-claims it. Free only if this store still
+	// owns the claim (guards against a concurrent recreate under the same name).
+	m.freeEDSName(ed.eds.Name, ed.eds.ARN)
 
 	return nil
 }
 
+// freeEDSName removes name -> arn from the name index only when the index still
+// maps name to arn (this store owns the claim). This prevents a stale/duplicate
+// delete from clobbering a claim now held by a different, live store.
+func (m *Mock) freeEDSName(name, arn string) {
+	if cur, ok := m.edsNameIdx.Get(name); ok && cur == arn {
+		m.edsNameIdx.Delete(name)
+	}
+}
+
 // RestoreEventDataStore returns a PENDING_DELETION store to ENABLED. Real
 // CloudTrail only restores a store that is pending deletion; any other status is
-// an InactiveEventDataStoreException.
+// an InvalidEventDataStoreStatusException.
 func (m *Mock) RestoreEventDataStore(_ context.Context, arn string) (*driver.EventDataStore, error) {
 	ed, err := m.resolveEDS(arn)
 	if err != nil {
@@ -180,7 +209,8 @@ func (m *Mock) RestoreEventDataStore(_ context.Context, arn string) (*driver.Eve
 	defer ed.mu.Unlock()
 
 	if ed.eds.Status != driver.EDSStatusPendingDeletion {
-		return nil, errEDSInactive(arn)
+		return nil, errEDSInvalidStatus(
+			"event data store %q is %s and cannot be restored", arn, ed.eds.Status)
 	}
 
 	// Re-claim the name freed on delete; if a new store took it meanwhile, the
@@ -200,43 +230,17 @@ func (m *Mock) RestoreEventDataStore(_ context.Context, arn string) (*driver.Eve
 func (m *Mock) ListEventDataStores(
 	_ context.Context, nextToken string, maxResults int32,
 ) ([]driver.EventDataStore, string, error) {
-	all := m.eds.All()
+	out, next := paginate(m.eds.All(), nextToken, maxResults,
+		func(ed *edsData) driver.EventDataStore {
+			ed.mu.RLock()
+			defer ed.mu.RUnlock()
 
-	arns := make([]string, 0, len(all))
-	for arn := range all {
-		arns = append(arns, arn)
-	}
+			return copyEDS(&ed.eds)
+		},
+		func(e driver.EventDataStore) string { return e.ARN },
+	)
 
-	sort.Strings(arns)
-
-	limit := int(maxResults)
-	if limit <= 0 {
-		limit = defaultMaxResults
-	}
-
-	out := make([]driver.EventDataStore, 0, len(arns))
-	started := nextToken == ""
-
-	for _, arn := range arns {
-		if !started {
-			if arn == nextToken {
-				started = true
-			}
-
-			continue
-		}
-
-		if len(out) == limit {
-			return out, out[len(out)-1].ARN, nil
-		}
-
-		ed := all[arn]
-		ed.mu.RLock()
-		out = append(out, copyEDS(&ed.eds))
-		ed.mu.RUnlock()
-	}
-
-	return out, "", nil
+	return out, next, nil
 }
 
 // StartEventDataStoreIngestion sets a store's status to ENABLED (ingesting).
@@ -258,6 +262,13 @@ func (m *Mock) setEDSStatus(arn, status string) error {
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
 
+	// A store pending deletion is inactive: ingestion cannot be started/stopped
+	// against it until it is restored.
+	if ed.eds.Status == driver.EDSStatusPendingDeletion {
+		return errEDSInvalidStatus(
+			"event data store %q is %s and does not support ingestion changes", arn, ed.eds.Status)
+	}
+
 	ed.eds.Status = status
 	ed.eds.UpdatedAt = m.now()
 
@@ -276,6 +287,11 @@ func (m *Mock) EnableFederation(
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
 
+	if ed.eds.Status != driver.EDSStatusEnabled {
+		return "", "", "", errEDSInvalidStatus(
+			"event data store %q is %s and does not support federation changes", edsARN, ed.eds.Status)
+	}
+
 	ed.federationRoleARN = roleARN
 	ed.federationStatus = "ENABLED"
 
@@ -293,6 +309,11 @@ func (m *Mock) DisableFederation(
 
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
+
+	if ed.eds.Status != driver.EDSStatusEnabled {
+		return "", "", errEDSInvalidStatus(
+			"event data store %q is %s and does not support federation changes", edsARN, ed.eds.Status)
+	}
 
 	ed.federationStatus = "DISABLED"
 	ed.federationRoleARN = ""

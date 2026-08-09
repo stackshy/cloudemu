@@ -2775,9 +2775,12 @@ still sees success.
 
 AWS-only. Real `aws-sdk-go-v2/service/cloudtrail` clients (and the
 `aws cloudtrail` CLI) work against the SDK-compat server
-(`awsserver.Drivers{CloudTrail: cloud.CloudTrail}`). Full parity across trails,
-event data stores, channels, dashboards, imports, event/insight selectors,
-ad-hoc CloudTrail Lake queries, resource policies, and tags.
+(`awsserver.Drivers{CloudTrail: cloud.CloudTrail}`). Broad operation coverage
+across trails, event data stores, channels, dashboards, imports, event/insight
+selectors, ad-hoc CloudTrail Lake queries, resource policies, and tags. The
+control-plane CRUD/state paths are faithfully emulated; the analytics and
+event-stream surfaces are synthesized/limited (see below), since there is no real
+audit event stream behind the emulator.
 
 | Family | Operations |
 |--------|-----------|

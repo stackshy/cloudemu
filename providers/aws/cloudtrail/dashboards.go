@@ -2,7 +2,6 @@ package cloudtrail
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -37,9 +36,18 @@ func (m *Mock) CreateDashboard(_ context.Context, in driver.Dashboard) (*driver.
 
 	m.storeResourceTags(in.ARN, in.Tags)
 
-	out := dd.dashboard
+	out := copyDashboard(&dd.dashboard)
 
 	return &out, nil
+}
+
+// copyDashboard returns a value copy of a dashboard with its Tags map deep-copied
+// so callers never alias stored state.
+func copyDashboard(d *driver.Dashboard) driver.Dashboard {
+	out := *d
+	out.Tags = copyTags(d.Tags)
+
+	return out
 }
 
 // resolveDashboard finds a dashboard by name or ARN.
@@ -70,7 +78,7 @@ func (m *Mock) GetDashboard(_ context.Context, nameOrARN string) (*driver.Dashbo
 	dd.mu.RLock()
 	defer dd.mu.RUnlock()
 
-	out := dd.dashboard
+	out := copyDashboard(&dd.dashboard)
 
 	return &out, nil
 }
@@ -97,7 +105,7 @@ func (m *Mock) UpdateDashboard(_ context.Context, in driver.Dashboard) (*driver.
 	}
 
 	d.UpdatedAt = m.now()
-	out := *d
+	out := copyDashboard(d)
 
 	return &out, nil
 }
@@ -110,9 +118,14 @@ func (m *Mock) DeleteDashboard(_ context.Context, nameOrARN string) error {
 	}
 
 	dd.mu.RLock()
+	protected := dd.dashboard.TerminationProtectionEnabled
 	name := dd.dashboard.Name
 	arn := dd.dashboard.ARN
 	dd.mu.RUnlock()
+
+	if protected {
+		return errInvalidParameter("dashboard %q has termination protection enabled", name)
+	}
 
 	m.dashboards.Delete(name)
 	m.deleteResourceTags(arn)
@@ -124,43 +137,17 @@ func (m *Mock) DeleteDashboard(_ context.Context, nameOrARN string) error {
 func (m *Mock) ListDashboards(
 	_ context.Context, nextToken string, maxResults int32,
 ) ([]driver.Dashboard, string, error) {
-	all := m.dashboards.All()
+	out, next := paginate(m.dashboards.All(), nextToken, maxResults,
+		func(dd *dashboardData) driver.Dashboard {
+			dd.mu.RLock()
+			defer dd.mu.RUnlock()
 
-	names := make([]string, 0, len(all))
-	for n := range all {
-		names = append(names, n)
-	}
+			return copyDashboard(&dd.dashboard)
+		},
+		func(d driver.Dashboard) string { return d.Name },
+	)
 
-	sort.Strings(names)
-
-	limit := int(maxResults)
-	if limit <= 0 {
-		limit = defaultMaxResults
-	}
-
-	out := make([]driver.Dashboard, 0, len(names))
-	started := nextToken == ""
-
-	for _, n := range names {
-		if !started {
-			if n == nextToken {
-				started = true
-			}
-
-			continue
-		}
-
-		if len(out) == limit {
-			return out, out[len(out)-1].Name, nil
-		}
-
-		dd := all[n]
-		dd.mu.RLock()
-		out = append(out, dd.dashboard)
-		dd.mu.RUnlock()
-	}
-
-	return out, "", nil
+	return out, next, nil
 }
 
 // StartDashboardRefresh triggers a refresh and returns a synthesized refresh ID.

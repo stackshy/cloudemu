@@ -1,6 +1,49 @@
 package cloudtrail
 
-import "context"
+import (
+	"context"
+	"strings"
+)
+
+// resourceARNExists reports whether resourceID is a well-formed CloudTrail
+// resource ARN that names an existing trail, event data store, channel, or
+// dashboard. A malformed ARN yields a CloudTrailARNInvalidException; a
+// well-formed-but-absent ARN yields a ResourceNotFoundException.
+func (m *Mock) resourceARNExists(resourceID string) error {
+	seg := strings.SplitN(resourceID, ":", arnParts)
+	if !strings.HasPrefix(resourceID, arnPrefix+":") || len(seg) != arnParts || seg[2] != serviceName {
+		return errCloudTrailARNInvalid(resourceID)
+	}
+
+	exists, known := m.resourceExistsByType(resourceID, seg[5])
+	if !known {
+		return errCloudTrailARNInvalid(resourceID)
+	}
+
+	if !exists {
+		return errResourceNotFound(resourceID)
+	}
+
+	return nil
+}
+
+// resourceExistsByType reports whether the ARN whose resource segment is res
+// names an existing resource. known is false when res has no recognized
+// CloudTrail resource-type prefix (a malformed ARN).
+func (m *Mock) resourceExistsByType(arn, res string) (exists, known bool) {
+	switch {
+	case strings.HasPrefix(res, "eventdatastore/"):
+		return m.eds.Has(arn), true
+	case strings.HasPrefix(res, "channel/"):
+		return m.channels.Has(arn), true
+	case strings.HasPrefix(res, "trail/"):
+		return m.trailARNIdx.Has(arn), true
+	case strings.HasPrefix(res, "dashboard/"):
+		return m.dashboards.Has(strings.TrimPrefix(res, "dashboard/")), true
+	default:
+		return false, false
+	}
+}
 
 // storeResourceTags overwrites the tag set for a resource ARN. A nil/empty map
 // clears the entry.
@@ -30,6 +73,10 @@ func (m *Mock) AddTags(_ context.Context, resourceID string, tags map[string]str
 		return errInvalidParameter("ResourceId is required")
 	}
 
+	if err := m.resourceARNExists(resourceID); err != nil {
+		return err
+	}
+
 	m.tagsMu.Lock()
 	defer m.tagsMu.Unlock()
 
@@ -48,6 +95,10 @@ func (m *Mock) AddTags(_ context.Context, resourceID string, tags map[string]str
 func (m *Mock) RemoveTags(_ context.Context, resourceID string, tagKeys []string) error {
 	if resourceID == "" {
 		return errInvalidParameter("ResourceId is required")
+	}
+
+	if err := m.resourceARNExists(resourceID); err != nil {
+		return err
 	}
 
 	m.tagsMu.Lock()

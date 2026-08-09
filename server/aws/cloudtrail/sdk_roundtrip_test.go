@@ -244,6 +244,40 @@ func TestSDKEventDataStoreCRUD(t *testing.T) {
 	}
 }
 
+// TestSDKRestoreInvalidStatus verifies restoring an ENABLED (non-pending) store
+// surfaces the typed InvalidEventDataStoreStatusException over the wire.
+func TestSDKRestoreInvalidStatus(t *testing.T) {
+	ctx := context.Background()
+	c := newCTClient(t)
+
+	create, err := c.CreateEventDataStore(ctx, &awsct.CreateEventDataStoreInput{
+		Name:                         aws.String("restore-eds"),
+		TerminationProtectionEnabled: aws.Bool(false),
+	})
+	if err != nil {
+		t.Fatalf("CreateEventDataStore: %v", err)
+	}
+
+	arn := aws.ToString(create.EventDataStoreArn)
+
+	_, err = c.RestoreEventDataStore(ctx, &awsct.RestoreEventDataStoreInput{
+		EventDataStore: aws.String(arn),
+	})
+	if err == nil {
+		t.Fatal("expected InvalidEventDataStoreStatusException")
+	}
+
+	var inv *cttypes.InvalidEventDataStoreStatusException
+	if !errors.As(err, &inv) {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			t.Fatalf("want InvalidEventDataStoreStatusException, got %q", apiErr.ErrorCode())
+		}
+
+		t.Fatalf("want InvalidEventDataStoreStatusException, got %v", err)
+	}
+}
+
 func TestSDKEventDataStoreNotFound(t *testing.T) {
 	ctx := context.Background()
 	c := newCTClient(t)

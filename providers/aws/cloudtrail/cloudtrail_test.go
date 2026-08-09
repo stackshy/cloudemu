@@ -448,9 +448,14 @@ func TestRestoreRequiresPendingDeletion(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Restoring an ENABLED (never-deleted) store is rejected.
+	// Restoring an ENABLED (never-deleted) store is rejected with the typed
+	// InvalidEventDataStoreStatusException.
 	_, err = m.RestoreEventDataStore(ctx, eds.ARN)
 	require.Error(t, err)
+
+	var apiErr *driver.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, driver.ExInvalidEDSStatus, apiErr.Exception)
 
 	// After a soft delete it can be restored, and the freed name can be reused.
 	require.NoError(t, m.DeleteEventDataStore(ctx, eds.ARN))
@@ -458,4 +463,140 @@ func TestRestoreRequiresPendingDeletion(t *testing.T) {
 	restored, err := m.RestoreEventDataStore(ctx, eds.ARN)
 	require.NoError(t, err)
 	assert.Equal(t, driver.EDSStatusEnabled, restored.Status)
+}
+
+// TestDeleteRecreateReDeleteNameIndex covers the delete -> recreate -> re-delete
+// attack: a stale re-delete of the original store must not free the name claim
+// now owned by the live recreated store. Exactly one live store owns the name.
+func TestDeleteRecreateReDeleteNameIndex(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	noProt := false
+	mk := func(name string) *driver.EventDataStore {
+		eds, err := m.CreateEventDataStore(ctx, driver.CreateEventDataStoreInput{
+			Name: name, TerminationProtectionEnabled: &noProt,
+		})
+		require.NoError(t, err)
+
+		return eds
+	}
+
+	a := mk("foo")                                         // create foo -> A
+	require.NoError(t, m.DeleteEventDataStore(ctx, a.ARN)) // delete A (frees "foo")
+	b := mk("foo")                                         // create foo -> B (live)
+
+	// Re-delete A (already PENDING_DELETION): must be a no-op and must NOT free
+	// B's "foo" claim.
+	require.NoError(t, m.DeleteEventDataStore(ctx, a.ARN))
+
+	// Creating "foo" again must fail: B still owns the name.
+	_, err := m.CreateEventDataStore(ctx, driver.CreateEventDataStoreInput{
+		Name: "foo", TerminationProtectionEnabled: &noProt,
+	})
+	require.Error(t, err)
+
+	var apiErr *driver.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, driver.ExEventDataStoreAlreadyEx, apiErr.Exception)
+
+	// Exactly one live (non-PENDING_DELETION) store is named "foo": B.
+	all, _, err := m.ListEventDataStores(ctx, "", 0)
+	require.NoError(t, err)
+
+	live := 0
+
+	for i := range all {
+		if all[i].Name == "foo" && all[i].Status != driver.EDSStatusPendingDeletion {
+			live++
+		}
+	}
+
+	assert.Equal(t, 1, live)
+
+	got, err := m.GetEventDataStore(ctx, b.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, driver.EDSStatusEnabled, got.Status)
+}
+
+// TestInactiveEDSGuards verifies update/ingestion/federation reject an inactive
+// (PENDING_DELETION) store with InvalidEventDataStoreStatusException.
+func TestInactiveEDSGuards(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	noProt := false
+	eds, err := m.CreateEventDataStore(ctx, driver.CreateEventDataStoreInput{
+		Name: "guarded", TerminationProtectionEnabled: &noProt,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, m.DeleteEventDataStore(ctx, eds.ARN)) // -> PENDING_DELETION
+
+	assertInvalidStatus := func(err error) {
+		t.Helper()
+		require.Error(t, err)
+
+		var apiErr *driver.APIError
+		require.ErrorAs(t, err, &apiErr)
+		assert.Equal(t, driver.ExInvalidEDSStatus, apiErr.Exception)
+	}
+
+	newName := "guarded-renamed"
+	_, err = m.UpdateEventDataStore(ctx, driver.UpdateEventDataStoreInput{ARN: eds.ARN, Name: &newName})
+	assertInvalidStatus(err)
+
+	assertInvalidStatus(m.StartEventDataStoreIngestion(ctx, eds.ARN))
+	assertInvalidStatus(m.StopEventDataStoreIngestion(ctx, eds.ARN))
+
+	_, _, _, err = m.EnableFederation(ctx, eds.ARN, "arn:aws:iam::000000000000:role/r")
+	assertInvalidStatus(err)
+
+	_, _, err = m.DisableFederation(ctx, eds.ARN)
+	assertInvalidStatus(err)
+}
+
+// TestCreateEDSStartIngestionFalse verifies StartIngestion=false lands the store
+// in STOPPED_INGESTION rather than ENABLED.
+func TestCreateEDSStartIngestionFalse(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	start := false
+	eds, err := m.CreateEventDataStore(ctx, driver.CreateEventDataStoreInput{
+		Name: "stopped-eds", StartIngestion: &start,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, driver.EDSStatusStoppedIngestion, eds.Status)
+}
+
+// TestTagNonexistentResource verifies tagging an absent resource is
+// ResourceNotFoundException, and a malformed ARN is CloudTrailARNInvalidException.
+func TestTagNonexistentResource(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	absent := "arn:aws:cloudtrail:us-east-1:000000000000:eventdatastore/missing"
+
+	err := m.AddTags(ctx, absent, map[string]string{"k": "v"})
+	require.Error(t, err)
+
+	var apiErr *driver.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, driver.ExResourceNotFound, apiErr.Exception)
+
+	// A phantom tag must not have been created.
+	tags, err := m.ListTags(ctx, []string{absent})
+	require.NoError(t, err)
+	assert.Empty(t, tags[absent])
+
+	err = m.RemoveTags(ctx, absent, []string{"k"})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, driver.ExResourceNotFound, apiErr.Exception)
+
+	err = m.AddTags(ctx, "not-an-arn", map[string]string{"k": "v"})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, driver.ExCloudTrailARNInvalid, apiErr.Exception)
 }
