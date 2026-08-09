@@ -24,6 +24,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
@@ -134,6 +135,7 @@ type Provider struct {
 	MemoryDB            *memorydb.Mock
 	NetworkFirewall     *networkfirewall.Mock
 	SecretsManager      *secretsmanager.Mock
+	KMS                 *kms.Mock
 	CloudWatchLogs      *cloudwatchlogs.Mock
 	SNS                 *sns.Mock
 	ECR                 *ecr.Mock
@@ -174,6 +176,7 @@ func New(opts ...config.Option) *Provider {
 		MemoryDB:            memorydb.New(o),
 		NetworkFirewall:     networkfirewall.New(o),
 		SecretsManager:      secretsmanager.New(o),
+		KMS:                 kms.New(o),
 		CloudWatchLogs:      cloudwatchlogs.New(o),
 		SNS:                 sns.New(o),
 		ECR:                 ecr.New(o),
