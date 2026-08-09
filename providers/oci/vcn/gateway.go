@@ -28,6 +28,9 @@ type natGatewayData struct {
 // in the same call; the portable driver splits creation from attachment, so a
 // gateway starts detached.
 func (m *Mock) CreateInternetGateway(_ context.Context, cfg driver.InternetGatewayConfig) (*driver.InternetGateway, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	id := m.newOCID(typeInternetGW)
 	igw := &igwData{
 		ID:    id,
@@ -45,6 +48,9 @@ func (m *Mock) CreateInternetGateway(_ context.Context, cfg driver.InternetGatew
 
 // DeleteInternetGateway deletes an internet gateway once it is detached.
 func (m *Mock) DeleteInternetGateway(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	igw, ok := m.igws.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "internet gateway %q not found", id)
@@ -63,11 +69,17 @@ func (m *Mock) DeleteInternetGateway(_ context.Context, id string) error {
 // DescribeInternetGateways returns internet gateways matching the given
 // OCIDs, or all if empty.
 func (m *Mock) DescribeInternetGateways(_ context.Context, ids []string) ([]driver.InternetGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.igws, ids, toIGWInfo), nil
 }
 
 // AttachInternetGateway attaches an internet gateway to a VCN.
 func (m *Mock) AttachInternetGateway(_ context.Context, igwID, vpcID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return mutate(m.igws, igwID, igwNotFound(igwID), func(igw *igwData) error {
 		if igw.State == StateAttached {
 			return cerrors.Newf(cerrors.FailedPrecondition, "internet gateway %q is already attached", igwID)
@@ -86,6 +98,9 @@ func (m *Mock) AttachInternetGateway(_ context.Context, igwID, vpcID string) err
 
 // DetachInternetGateway detaches an internet gateway from its VCN.
 func (m *Mock) DetachInternetGateway(_ context.Context, igwID, vpcID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return mutate(m.igws, igwID, igwNotFound(igwID), func(igw *igwData) error {
 		if igw.State != StateAttached || igw.VCNID != vpcID {
 			return cerrors.Newf(cerrors.FailedPrecondition,
@@ -107,6 +122,9 @@ func igwNotFound(id string) error {
 // rather than a subnet, so cfg.SubnetID may name either and the VCN is
 // resolved from whichever it is.
 func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) (*driver.NATGateway, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.SubnetID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VCN or subnet OCID is required")
 	}
@@ -151,6 +169,9 @@ func (m *Mock) resolveVCN(id string) (vcnID, subnetID string, err error) {
 
 // DeleteNATGateway deletes a NAT gateway.
 func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.natGateways.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "NAT gateway %q not found", id)
 	}
@@ -163,6 +184,9 @@ func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
 // DescribeNATGateways returns NAT gateways matching the given OCIDs, or all
 // if empty.
 func (m *Mock) DescribeNATGateways(_ context.Context, ids []string) ([]driver.NATGateway, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.natGateways, ids, toNATGatewayInfo), nil
 }
 

@@ -19,6 +19,9 @@ type subnetData struct {
 // CreateSubnet creates a subnet inside a VCN. Real OCI requires the block to
 // sit inside the VCN's and not overlap a sibling subnet.
 func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver.SubnetInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VCN OCID is required")
 	}
@@ -73,6 +76,9 @@ func (m *Mock) validateSubnetCIDR(v *vcnData, cidr string) error {
 
 // DeleteSubnet deletes a subnet, refusing while VNICs remain attached to it.
 func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.subnets.Has(id) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
 	}
@@ -97,11 +103,17 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 
 // DescribeSubnets returns subnets matching the given OCIDs, or all if empty.
 func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.SubnetInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.subnets, ids, toSubnetInfo), nil
 }
 
 // UpdateSubnetTags merges freeform tags into the subnet's tag map.
 func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
 		s.Tags = mergeTagMap(s.Tags, tags)
 		return s
@@ -114,6 +126,9 @@ func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]st
 
 // RemoveSubnetTags removes the given freeform tag keys from a subnet.
 func (m *Mock) RemoveSubnetTags(_ context.Context, id string, keys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
 		s.Tags = removeTagMapKeys(s.Tags, keys)
 		return s

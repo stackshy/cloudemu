@@ -29,6 +29,9 @@ type peeringData struct {
 // CreatePeeringConnection connects two VCNs. Real OCI refuses overlapping
 // CIDR blocks, since the peer's addresses would be unroutable.
 func (m *Mock) CreatePeeringConnection(_ context.Context, cfg driver.PeeringConfig) (*driver.PeeringConnection, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.RequesterVPC == "" || cfg.AccepterVPC == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "both requester and accepter VCN OCIDs are required")
 	}
@@ -67,11 +70,17 @@ func (m *Mock) CreatePeeringConnection(_ context.Context, cfg driver.PeeringConf
 
 // AcceptPeeringConnection accepts a pending peering.
 func (m *Mock) AcceptPeeringConnection(_ context.Context, peeringID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.setPeeringStatus(peeringID, PeeringStatusActive)
 }
 
 // RejectPeeringConnection rejects a pending peering.
 func (m *Mock) RejectPeeringConnection(_ context.Context, peeringID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.setPeeringStatus(peeringID, PeeringStatusRejected)
 }
 
@@ -93,6 +102,9 @@ func (m *Mock) setPeeringStatus(peeringID, status string) error {
 
 // DeletePeeringConnection deletes a peering.
 func (m *Mock) DeletePeeringConnection(_ context.Context, peeringID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.peerings.Delete(peeringID) {
 		return cerrors.Newf(cerrors.NotFound, "peering %q not found", peeringID)
 	}
@@ -105,6 +117,9 @@ func (m *Mock) DeletePeeringConnection(_ context.Context, peeringID string) erro
 // DescribePeeringConnections returns peerings matching the given OCIDs, or
 // all if empty.
 func (m *Mock) DescribePeeringConnections(_ context.Context, ids []string) ([]driver.PeeringConnection, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.peerings, ids, toPeeringInfo), nil
 }
 

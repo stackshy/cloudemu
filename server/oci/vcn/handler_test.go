@@ -799,6 +799,65 @@ func TestPublicIPRollsBackOnFailedAssign(t *testing.T) {
 	})
 }
 
+// TestProhibitPublicIPOnVnicIsEnforced covers the subnet flag being honoured
+// rather than only round-tripped: OCI refuses a public IP on a VNIC in a
+// private subnet, on create and on reassign alike.
+func TestProhibitPublicIPOnVnicIsEnforced(t *testing.T) {
+	f := newFixture(t)
+	vcnID := f.newVCN()
+
+	private := f.do(http.MethodPost, "/20160918/subnets", map[string]any{
+		"compartmentId":          compartment,
+		"vcnId":                  vcnID,
+		"cidrBlock":              "10.0.2.0/24",
+		"displayName":            "private",
+		"prohibitPublicIpOnVnic": true,
+	})
+	require.Equal(t, http.StatusOK, private.Code, private.Body.String())
+
+	privateSubnetID, _ := decode(t, private)["id"].(string)
+	publicSubnetID := f.newSubnet(vcnID)
+
+	privateVNIC, err := f.mock.CreateNetworkInterface(t.Context(), privateSubnetID, "private", nil)
+	require.NoError(t, err)
+
+	publicVNIC, err := f.mock.CreateNetworkInterface(t.Context(), publicSubnetID, "public", nil)
+	require.NoError(t, err)
+
+	blockedTarget := f.primaryPrivateIP(privateVNIC.ID)
+	allowedTarget := f.primaryPrivateIP(publicVNIC.ID)
+
+	t.Run("create refuses the assignment", func(t *testing.T) {
+		w := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+			"compartmentId": compartment,
+			"lifetime":      "RESERVED",
+			"privateIpId":   blockedTarget,
+		})
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+		listed := decodeList(t, f.do(http.MethodGet, "/20160918/publicIps?compartmentId="+compartment, nil))
+		assert.Empty(t, listed, "the refused create must not leave an orphan address")
+	})
+
+	t.Run("reassign refuses and keeps the original binding", func(t *testing.T) {
+		created := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+			"compartmentId": compartment,
+			"lifetime":      "RESERVED",
+			"privateIpId":   allowedTarget,
+		})
+		require.Equal(t, http.StatusOK, created.Code, created.Body.String())
+
+		id, _ := decode(t, created)["id"].(string)
+
+		moved := f.do(http.MethodPut, "/20160918/publicIps/"+id, map[string]any{"privateIpId": blockedTarget})
+		require.Equal(t, http.StatusBadRequest, moved.Code, moved.Body.String())
+
+		got := f.do(http.MethodGet, "/20160918/publicIps/"+id, nil)
+		require.Equal(t, http.StatusOK, got.Code)
+		assert.Equal(t, allowedTarget, decode(t, got)["privateIpId"])
+	})
+}
+
 func TestChangeCompartment(t *testing.T) {
 	f := newFixture(t)
 	id := f.newVCN()

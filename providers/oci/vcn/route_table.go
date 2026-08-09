@@ -35,6 +35,9 @@ type rtAssocData struct {
 
 // CreateRouteTable creates a route table in a VCN.
 func (m *Mock) CreateRouteTable(_ context.Context, cfg driver.RouteTableConfig) (*driver.RouteTable, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VCN OCID is required")
 	}
@@ -81,6 +84,9 @@ func (m *Mock) addRouteTable(v *vcnData, tags map[string]string, isDefault bool)
 // DeleteRouteTable deletes a route table. The VCN's default table can only be
 // removed with the VCN itself, and an attached table has to be detached first.
 func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rt, ok := m.routeTables.Get(id)
 	if !ok {
 		return routeTableNotFound(id)
@@ -105,16 +111,26 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 // DescribeRouteTables returns route tables matching the given OCIDs, or all
 // if empty.
 func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.RouteTable, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.routeTables, ids, m.toRouteTableInfo), nil
 }
 
 // CreateRoute adds a route rule to a route table.
 func (m *Mock) CreateRoute(_ context.Context, routeTableID, destinationCIDR, targetID, targetType string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if targetType == "" {
 		targetType = TargetTypeOf(targetID)
 	}
 
 	return mutate(m.routeTables, routeTableID, routeTableNotFound(routeTableID), func(rt *routeTableData) error {
+		if err := m.validateRoute(rt.VCNID, destinationCIDR, targetID); err != nil {
+			return err
+		}
+
 		for _, r := range rt.Routes {
 			if r.DestinationCIDR == destinationCIDR {
 				return cerrors.Newf(cerrors.AlreadyExists,
@@ -135,6 +151,9 @@ func (m *Mock) CreateRoute(_ context.Context, routeTableID, destinationCIDR, tar
 
 // DeleteRoute removes a route rule from a route table.
 func (m *Mock) DeleteRoute(_ context.Context, routeTableID, destinationCIDR string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return mutate(m.routeTables, routeTableID, routeTableNotFound(routeTableID), func(rt *routeTableData) error {
 		for i, r := range rt.Routes {
 			if r.DestinationCIDR == destinationCIDR {
@@ -153,21 +172,85 @@ func routeTableNotFound(id string) error {
 }
 
 // ReplaceRoutes swaps a route table's whole rule set, which is how OCI's
-// UpdateRouteTable behaves.
+// UpdateRouteTable behaves. Every rule is checked before any is stored, so a
+// rejected set leaves the table as it was.
 func (m *Mock) ReplaceRoutes(_ context.Context, routeTableID string, routes []driver.Route) error {
-	if !m.routeTables.Update(routeTableID, func(rt *routeTableData) *routeTableData {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return mutate(m.routeTables, routeTableID, routeTableNotFound(routeTableID), func(rt *routeTableData) error {
+		for i := range routes {
+			if err := m.validateRoute(rt.VCNID, routes[i].DestinationCIDR, routes[i].TargetID); err != nil {
+				return err
+			}
+		}
+
 		rt.Routes = append([]driver.Route(nil), routes...)
-		return rt
-	}) {
-		return routeTableNotFound(routeTableID)
+
+		return nil
+	})
+}
+
+// validateRoute rejects a rule real OCI would not accept: an unparseable
+// destination, or a target that is missing, detached, or attached to another
+// VCN. TraceRoute would otherwise walk a dead gateway as a reachable hop.
+func (m *Mock) validateRoute(vcnID, destinationCIDR, targetID string) error {
+	if err := validateCIDR(destinationCIDR, "route destination"); err != nil {
+		return err
 	}
 
-	return nil
+	if targetID == "" || targetID == targetLocal {
+		return nil
+	}
+
+	served, known := m.routeTargetVCNs(targetID)
+	if !known {
+		return cerrors.Newf(cerrors.NotFound, "route target %q not found", targetID)
+	}
+
+	for _, id := range served {
+		if id == vcnID {
+			return nil
+		}
+	}
+
+	return cerrors.Newf(cerrors.InvalidArgument,
+		"route target %q is not attached to VCN %q", targetID, vcnID)
+}
+
+// routeTargetVCNs returns the VCNs a network entity carries traffic for, and
+// whether the OCID names an entity at all. A detached internet gateway is
+// known but serves none, so no route table can point at it.
+func (m *Mock) routeTargetVCNs(targetID string) (vcnIDs []string, known bool) {
+	if igw, ok := m.igws.Get(targetID); ok {
+		if igw.State != StateAttached {
+			return nil, true
+		}
+
+		return []string{igw.VCNID}, true
+	}
+
+	if nat, ok := m.natGateways.Get(targetID); ok {
+		return []string{nat.VCNID}, true
+	}
+
+	if sg, ok := m.serviceGWs.Get(targetID); ok {
+		return []string{sg.VCNID}, true
+	}
+
+	if p, ok := m.peerings.Get(targetID); ok {
+		return []string{p.RequesterVCN, p.AccepterVCN}, true
+	}
+
+	return nil, false
 }
 
 // AssociateRouteTable attaches a route table to a subnet. A subnet has
 // exactly one route table in OCI, so an existing attachment is replaced.
 func (m *Mock) AssociateRouteTable(_ context.Context, routeTableID, subnetID string) (*driver.RouteTableAssociation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.routeTables.Has(routeTableID) {
 		return nil, routeTableNotFound(routeTableID)
 	}
@@ -194,6 +277,9 @@ func (m *Mock) AssociateRouteTable(_ context.Context, routeTableID, subnetID str
 
 // DisassociateRouteTable detaches a route table from its subnet.
 func (m *Mock) DisassociateRouteTable(_ context.Context, associationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.rtAssocs.Delete(associationID) {
 		return cerrors.Newf(cerrors.NotFound, "route table association %q not found", associationID)
 	}

@@ -20,6 +20,9 @@ type nsgData struct {
 // CreateSecurityGroup creates a network security group in a VCN. An NSG is
 // empty on creation; OCI's default-allow rules live on the security list.
 func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VCN OCID is required")
 	}
@@ -50,6 +53,9 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 // DeleteSecurityGroup deletes a network security group, refusing while VNICs
 // are still members of it.
 func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.nsgs.Has(id) {
 		return nsgNotFound(id)
 	}
@@ -71,11 +77,17 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 
 // DescribeSecurityGroups returns NSGs matching the given OCIDs, or all if empty.
 func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver.SecurityGroupInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.nsgs, ids, toNSGInfo), nil
 }
 
 // AddIngressRule adds an ingress security rule to an NSG.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return mutate(m.nsgs, groupID, nsgNotFound(groupID), func(nsg *nsgData) error {
 		next, err := addRule(nsg.IngressRules, rule, "ingress", groupID)
 		if err != nil {
@@ -90,6 +102,9 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 
 // AddEgressRule adds an egress security rule to an NSG.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return mutate(m.nsgs, groupID, nsgNotFound(groupID), func(nsg *nsgData) error {
 		next, err := addRule(nsg.EgressRules, rule, "egress", groupID)
 		if err != nil {
@@ -104,6 +119,9 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 
 // RemoveIngressRule removes a matching ingress rule from an NSG.
 func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return mutate(m.nsgs, groupID, nsgNotFound(groupID), func(nsg *nsgData) error {
 		remaining, found := dropRule(nsg.IngressRules, rule)
 		if !found {
@@ -118,6 +136,9 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 
 // RemoveEgressRule removes a matching egress rule from an NSG.
 func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return mutate(m.nsgs, groupID, nsgNotFound(groupID), func(nsg *nsgData) error {
 		remaining, found := dropRule(nsg.EgressRules, rule)
 		if !found {
@@ -132,6 +153,9 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 
 // UpdateSecurityGroupTags merges freeform tags into the NSG's tag map.
 func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.nsgs.Update(id, func(nsg *nsgData) *nsgData {
 		nsg.Tags = mergeTagMap(nsg.Tags, tags)
 		return nsg
@@ -144,6 +168,9 @@ func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[st
 
 // RemoveSecurityGroupTags removes the given freeform tag keys from an NSG.
 func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.nsgs.Update(id, func(nsg *nsgData) *nsgData {
 		nsg.Tags = removeTagMapKeys(nsg.Tags, keys)
 		return nsg

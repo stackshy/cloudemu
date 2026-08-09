@@ -30,6 +30,9 @@ type securityListData struct {
 
 // CreateNetworkACL creates a security list in a VCN.
 func (m *Mock) CreateNetworkACL(_ context.Context, vpcID string, tags map[string]string) (*driver.NetworkACL, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if vpcID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VCN OCID is required")
 	}
@@ -68,7 +71,9 @@ func (m *Mock) addSecurityList(vcnID string, tags map[string]string, isDefault b
 }
 
 // defaultSecurityRules is OCI's out-of-the-box pair: inbound SSH and
-// unrestricted egress.
+// unrestricted egress. OCI's two default ICMP rules are left out because
+// NetworkACLRule carries no ICMP type or code: widened to all of ICMP they
+// would allow traffic real OCI drops, which is worse than omitting them.
 func defaultSecurityRules() []driver.NetworkACLRule {
 	return []driver.NetworkACLRule{
 		{
@@ -92,6 +97,9 @@ func defaultSecurityRules() []driver.NetworkACLRule {
 // DeleteNetworkACL deletes a security list. The VCN's default list can only
 // be removed with the VCN itself.
 func (m *Mock) DeleteNetworkACL(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	sl, ok := m.securityLists.Get(id)
 	if !ok {
 		return securityListNotFound(id)
@@ -110,6 +118,9 @@ func (m *Mock) DeleteNetworkACL(_ context.Context, id string) error {
 // DescribeNetworkACLs returns security lists matching the given OCIDs, or all
 // if empty.
 func (m *Mock) DescribeNetworkACLs(_ context.Context, ids []string) ([]driver.NetworkACL, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.securityLists, ids, toSecurityListInfo), nil
 }
 
@@ -117,6 +128,9 @@ func (m *Mock) DescribeNetworkACLs(_ context.Context, ids []string) ([]driver.Ne
 // rule number. A rule number is unique within its direction: it is the only
 // handle RemoveNetworkACLRule addresses a rule by.
 func (m *Mock) AddNetworkACLRule(_ context.Context, aclID string, rule *driver.NetworkACLRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if rule.Action != "" && rule.Action != actionAllow {
 		return cerrors.New(cerrors.InvalidArgument, "security list rules are allow-only")
 	}
@@ -145,6 +159,9 @@ func (m *Mock) AddNetworkACLRule(_ context.Context, aclID string, rule *driver.N
 
 // RemoveNetworkACLRule removes a rule by rule number and direction.
 func (m *Mock) RemoveNetworkACLRule(_ context.Context, aclID string, ruleNumber int, egress bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return mutate(m.securityLists, aclID, securityListNotFound(aclID), func(sl *securityListData) error {
 		for i, r := range sl.Rules {
 			if r.RuleNumber == ruleNumber && r.Egress == egress {
@@ -165,6 +182,9 @@ func securityListNotFound(id string) error {
 // ReplaceNetworkACLRules swaps a security list's whole rule set, which is how
 // OCI's UpdateSecurityList behaves.
 func (m *Mock) ReplaceNetworkACLRules(_ context.Context, aclID string, rules []driver.NetworkACLRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.securityLists.Update(aclID, func(sl *securityListData) *securityListData {
 		sl.Rules = append([]driver.NetworkACLRule(nil), rules...)
 		return sl

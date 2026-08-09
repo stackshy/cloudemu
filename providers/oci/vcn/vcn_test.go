@@ -472,6 +472,7 @@ func TestRouteTablesAndAssociations(t *testing.T) {
 
 	igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
 	require.NoError(t, err)
+	require.NoError(t, m.AttachInternetGateway(ctx, igw.ID, parent.ID))
 
 	require.NoError(t, m.CreateRoute(ctx, table.ID, "0.0.0.0/0", igw.ID, ""))
 
@@ -498,6 +499,94 @@ func TestRouteTablesAndAssociations(t *testing.T) {
 	err = m.DeleteRouteTable(ctx, m.Defaults(parent.ID).RouteTableID)
 	require.Error(t, err)
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+}
+
+// TestCreateRouteValidatesDestinationAndTarget covers what makes a hop
+// reachable: a route to a detached gateway, to another VCN's gateway or to an
+// unparseable destination would otherwise read as one to TraceRoute.
+func TestCreateRouteValidatesDestinationAndTarget(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	parent := newVCN(t, m, vcnCIDR)
+	other := newVCN(t, m, "192.168.0.0/16")
+
+	table, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: parent.ID})
+	require.NoError(t, err)
+
+	detached, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+	require.NoError(t, err)
+
+	elsewhere, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+	require.NoError(t, err)
+	require.NoError(t, m.AttachInternetGateway(ctx, elsewhere.ID, other.ID))
+
+	nat, err := m.CreateNATGateway(ctx, driver.NATGatewayConfig{SubnetID: parent.ID})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		dest     string
+		targetID string
+		code     cerrors.Code
+	}{
+		{name: "attached NAT gateway", dest: "0.0.0.0/0", targetID: nat.ID, code: cerrors.OK},
+		{name: "local route", dest: "10.1.0.0/16", targetID: "local", code: cerrors.OK},
+		{name: "detached gateway", dest: "0.0.0.0/0", targetID: detached.ID, code: cerrors.InvalidArgument},
+		{name: "gateway in another VCN", dest: "0.0.0.0/0", targetID: elsewhere.ID, code: cerrors.InvalidArgument},
+		{
+			name: "unknown target", dest: "0.0.0.0/0",
+			targetID: "ocid1.internetgateway.oc1.iad.missing", code: cerrors.NotFound,
+		},
+		{name: "unparseable destination", dest: "0.0.0.0", targetID: nat.ID, code: cerrors.InvalidArgument},
+		{name: "empty destination", dest: "", targetID: nat.ID, code: cerrors.InvalidArgument},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := m.CreateRoute(ctx, table.ID, tc.dest, tc.targetID, "")
+			if tc.code == cerrors.OK {
+				require.NoError(t, err)
+				return
+			}
+
+			require.Error(t, err)
+			assert.Equal(t, tc.code, cerrors.GetCode(err))
+		})
+	}
+}
+
+// TestReplaceRoutesRejectsTheWholeSetOnOneBadRule checks the replace path
+// validates too, and leaves the table alone when it refuses.
+func TestReplaceRoutesRejectsTheWholeSetOnOneBadRule(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	parent := newVCN(t, m, vcnCIDR)
+
+	table, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: parent.ID})
+	require.NoError(t, err)
+
+	igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+	require.NoError(t, err)
+	require.NoError(t, m.AttachInternetGateway(ctx, igw.ID, parent.ID))
+
+	detached, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{})
+	require.NoError(t, err)
+
+	err = m.ReplaceRoutes(ctx, table.ID, []driver.Route{
+		{DestinationCIDR: "0.0.0.0/0", TargetID: igw.ID},
+		{DestinationCIDR: "172.16.0.0/12", TargetID: detached.ID},
+	})
+	require.Error(t, err)
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+	tables, err := m.DescribeRouteTables(ctx, []string{table.ID})
+	require.NoError(t, err)
+	require.Len(t, tables, 1)
+	assert.Len(t, tables[0].Routes, 1, "the refused set left the local route in place")
+
+	require.NoError(t, m.ReplaceRoutes(ctx, table.ID, []driver.Route{
+		{DestinationCIDR: "0.0.0.0/0", TargetID: igw.ID},
+	}))
 }
 
 func TestSubnetTakesOneRouteTable(t *testing.T) {

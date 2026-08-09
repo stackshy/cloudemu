@@ -41,6 +41,9 @@ type dhcpOptionsData struct {
 func (m *Mock) CreateDHCPOptions(
 	_ context.Context, vcnID, name, serverType string, customDNS, searchDomains []string,
 ) (*DHCPOptions, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if vcnID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VCN OCID is required")
 	}
@@ -91,6 +94,9 @@ func (m *Mock) addDHCPOptions(
 // DeleteDHCPOptions deletes a DHCP options set. The VCN's default set only
 // goes away with the VCN.
 func (m *Mock) DeleteDHCPOptions(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	d, ok := m.dhcpOptions.Get(id)
 	if !ok {
 		return dhcpOptionsNotFound(id)
@@ -109,6 +115,9 @@ func (m *Mock) DeleteDHCPOptions(_ context.Context, id string) error {
 // DescribeDHCPOptions returns DHCP options sets matching the given OCIDs, or
 // all if empty.
 func (m *Mock) DescribeDHCPOptions(_ context.Context, ids []string) ([]DHCPOptions, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.dhcpOptions, ids, toDHCPOptionsInfo), nil
 }
 
@@ -117,6 +126,9 @@ func (m *Mock) DescribeDHCPOptions(_ context.Context, ids []string) ([]DHCPOptio
 func (m *Mock) UpdateDHCPOptions(
 	_ context.Context, id string, name *string, serverType string, customDNS, searchDomains []string,
 ) (*DHCPOptions, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var out DHCPOptions
 
 	err := mutate(m.dhcpOptions, id, dhcpOptionsNotFound(id), func(d *dhcpOptionsData) error {

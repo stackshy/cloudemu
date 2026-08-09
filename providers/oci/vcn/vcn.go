@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -70,6 +71,13 @@ type vcnData struct {
 
 // Mock is an in-memory mock implementation of the OCI VCN service.
 type Mock struct {
+	// mu guards the fields of stored values and spans the reads and writes a
+	// single operation makes across stores. Each store locks its own map, but
+	// the pointers it hands back are mutated in place while Describe calls
+	// walk them, and checks such as AssociateAddress's 1:1 guard read one
+	// store before writing another.
+	mu sync.RWMutex
+
 	vcns          *memstore.Store[*vcnData]
 	subnets       *memstore.Store[*subnetData]
 	nsgs          *memstore.Store[*nsgData]
@@ -120,6 +128,9 @@ func New(opts *config.Options) *Mock {
 // capability, discovered by type assertion: the portable Networking driver
 // has no compartment parameter, so OCI scoping is exposed alongside it.
 func (m *Mock) Scope(id string) scope.Scope {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	s, _ := m.scopes.Get(id)
 
 	return s
@@ -128,6 +139,9 @@ func (m *Mock) Scope(id string) scope.Scope {
 // SetScope records the compartment a resource belongs to, replacing the
 // default recorded at create time. Deleting the resource forgets it.
 func (m *Mock) SetScope(id string, s scope.Scope) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if s.IsZero() {
 		m.scopes.Delete(id)
 		return
@@ -139,6 +153,9 @@ func (m *Mock) SetScope(id string, s scope.Scope) {
 // Created returns the OCI timestamp a resource was created at, or the empty
 // string for an unknown OCID. Part of the same optional capability as Scope.
 func (m *Mock) Created(id string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	t, _ := m.created.Get(id)
 
 	return t
@@ -172,6 +189,9 @@ func (m *Mock) forget(id string) {
 // CreateVPC creates a VCN along with the default route table, security list
 // and DHCP options real OCI creates with it.
 func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if err := validateCIDR(cfg.CIDRBlock, "VCN"); err != nil {
 		return nil, err
 	}
@@ -200,6 +220,9 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 // DeleteVPC deletes a VCN. Real OCI refuses while the VCN still holds
 // subnets or gateways, and takes its default resources down with it.
 func (m *Mock) DeleteVPC(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	v, ok := m.vcns.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "VCN %q not found", id)
@@ -261,12 +284,18 @@ func (m *Mock) vcnIsEmpty(id string) error {
 
 // DescribeVPCs returns VCNs matching the given OCIDs, or all if ids is empty.
 func (m *Mock) DescribeVPCs(_ context.Context, ids []string) ([]driver.VPCInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.vcns, ids, toVPCInfo), nil
 }
 
 // ModifyVPCAttribute toggles the VCN's internal DNS resolver, which OCI
 // drives off the VCN's DNS label rather than a pair of standalone flags.
 func (m *Mock) ModifyVPCAttribute(_ context.Context, id string, update driver.VPCAttributeUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.vcns.Update(id, func(v *vcnData) *vcnData {
 		if update.EnableDNSSupport != nil {
 			v.DNSSupport = *update.EnableDNSSupport
@@ -288,6 +317,9 @@ func (m *Mock) ModifyVPCAttribute(_ context.Context, id string, update driver.VP
 // runs under memstore.Update's lock; a fresh map is swapped in so concurrent
 // readers iterating the old map are unaffected.
 func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.vcns.Update(id, func(v *vcnData) *vcnData {
 		v.Tags = mergeTagMap(v.Tags, tags)
 		return v
@@ -300,6 +332,9 @@ func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]strin
 
 // RemoveVPCTags removes the given freeform tag keys from a VCN.
 func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.vcns.Update(id, func(v *vcnData) *vcnData {
 		v.Tags = removeTagMapKeys(v.Tags, keys)
 		return v
@@ -320,6 +355,9 @@ type DefaultResources struct {
 
 // Defaults returns the default resources created with a VCN.
 func (m *Mock) Defaults(vcnID string) DefaultResources {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	v, ok := m.vcns.Get(vcnID)
 	if !ok {
 		return DefaultResources{}

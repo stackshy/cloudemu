@@ -55,7 +55,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request) {
 	// associate, so an associate that fails has to release the address the
 	// first half already allocated.
 	if req.PrivateIPID != "" {
-		if _, err := h.net.AssociateAddress(r.Context(), info.AllocationID, req.PrivateIPID); err != nil {
+		if err := h.assign(r.Context(), info.AllocationID, req.PrivateIPID); err != nil {
 			_ = h.net.ReleaseAddress(r.Context(), info.AllocationID)
 
 			ocirest.WriteDriverError(w, r, err)
@@ -165,7 +165,7 @@ func (h *Handler) reassign(ctx context.Context, info *netdriver.ElasticIP, priva
 		return nil
 	}
 
-	if _, err := h.net.AssociateAddress(ctx, info.AllocationID, privateIPID); err != nil {
+	if err := h.assign(ctx, info.AllocationID, privateIPID); err != nil {
 		if previous != "" {
 			// The original target was free a moment ago, so this restores the
 			// binding; nothing better is available if it does not.
@@ -173,6 +173,40 @@ func (h *Handler) reassign(ctx context.Context, info *netdriver.ElasticIP, priva
 		}
 
 		return err
+	}
+
+	return nil
+}
+
+// assign binds a public IP to a private IP, refusing one that sits in a subnet
+// created with prohibitPublicIpOnVnic.
+func (h *Handler) assign(ctx context.Context, allocationID, privateIPID string) error {
+	if err := h.publicIPAllowed(ctx, privateIPID); err != nil {
+		return err
+	}
+
+	_, err := h.net.AssociateAddress(ctx, allocationID, privateIPID)
+
+	return err
+}
+
+// publicIPAllowed reports OCI's refusal to put a public IP on a VNIC in a
+// subnet that prohibits them. An unknown private IP passes; AssociateAddress
+// is the one that reports it as not found.
+func (h *Handler) publicIPAllowed(ctx context.Context, privateIPID string) error {
+	ips, err := h.extras.DescribePrivateIPs(ctx, []string{privateIPID})
+	if err != nil || len(ips) == 0 {
+		return err
+	}
+
+	subnets, err := h.net.DescribeSubnets(ctx, []string{ips[0].SubnetID})
+	if err != nil || len(subnets) == 0 {
+		return err
+	}
+
+	if boolTag(subnets[0].Tags, tagProhibitPublicIP) {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"subnet %s prohibits public IPs on its VNICs", subnets[0].ID)
 	}
 
 	return nil

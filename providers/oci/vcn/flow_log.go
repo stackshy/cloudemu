@@ -46,6 +46,9 @@ type flowLogData struct {
 
 // CreateFlowLog enables flow logs on a VCN or subnet.
 func (m *Mock) CreateFlowLog(_ context.Context, cfg driver.FlowLogConfig) (*driver.FlowLog, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.ResourceID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "resource OCID is required")
 	}
@@ -98,6 +101,9 @@ func (m *Mock) validateFlowLogResource(resourceID, resourceType string) error {
 
 // DeleteFlowLog disables a flow log.
 func (m *Mock) DeleteFlowLog(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.flowLogs.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "flow log %q not found", id)
 	}
@@ -109,11 +115,17 @@ func (m *Mock) DeleteFlowLog(_ context.Context, id string) error {
 
 // DescribeFlowLogs returns flow logs matching the given OCIDs, or all if empty.
 func (m *Mock) DescribeFlowLogs(_ context.Context, ids []string) ([]driver.FlowLog, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.flowLogs, ids, toFlowLogInfo), nil
 }
 
 // GetFlowLogRecords returns synthetic records for a flow log.
 func (m *Mock) GetFlowLogRecords(_ context.Context, flowLogID string, limit int) ([]driver.FlowLogRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	fl, ok := m.flowLogs.Get(flowLogID)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "flow log %q not found", flowLogID)

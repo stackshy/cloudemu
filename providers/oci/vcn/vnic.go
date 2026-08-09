@@ -74,6 +74,9 @@ type PrivateIP struct {
 func (m *Mock) CreateNetworkInterface(
 	_ context.Context, subnetID, description string, tags map[string]string,
 ) (*driver.NetworkInterface, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	s, ok := m.subnets.Get(subnetID)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "subnet %q not found", subnetID)
@@ -108,11 +111,17 @@ func (m *Mock) CreateNetworkInterface(
 // DescribeNetworkInterfaces returns VNICs matching the given OCIDs, or all if
 // empty.
 func (m *Mock) DescribeNetworkInterfaces(_ context.Context, ids []string) ([]driver.NetworkInterface, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.vnics, ids, toVNICInterface), nil
 }
 
 // DetachNetworkInterface detaches a VNIC from the instance holding it.
 func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, force bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, held := range m.vnics.All() {
 		if held.AttachmentID != attachmentID {
 			continue
@@ -136,6 +145,9 @@ func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, fo
 
 // DeleteNetworkInterface deletes a VNIC and the private IPs on it.
 func (m *Mock) DeleteNetworkInterface(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.vnics.Has(id) {
 		return vnicNotFound(id)
 	}
@@ -156,12 +168,18 @@ func (m *Mock) DeleteNetworkInterface(_ context.Context, id string) error {
 // DescribeVNICs returns the OCI view of VNICs matching the given OCIDs, or
 // all if empty.
 func (m *Mock) DescribeVNICs(_ context.Context, ids []string) ([]VNIC, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.vnics, ids, m.toVNIC), nil
 }
 
 // UpdateVNIC changes a VNIC's display name, hostname and NSG membership. A nil
 // pointer leaves that field alone.
 func (m *Mock) UpdateVNIC(_ context.Context, id string, name, hostname *string, nsgIDs []string) (*VNIC, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var out VNIC
 
 	err := mutate(m.vnics, id, vnicNotFound(id), func(v *vnicData) error {
@@ -198,6 +216,9 @@ func (m *Mock) UpdateVNIC(_ context.Context, id string, name, hostname *string, 
 
 // VNICsInNSG returns the VNICs that are members of a network security group.
 func (m *Mock) VNICsInNSG(_ context.Context, nsgID string) ([]VNIC, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if !m.nsgs.Has(nsgID) {
 		return nil, nsgNotFound(nsgID)
 	}
@@ -218,6 +239,9 @@ func (m *Mock) VNICsInNSG(_ context.Context, nsgID string) ([]VNIC, error) {
 
 // CreatePrivateIP adds a secondary private IP to a VNIC.
 func (m *Mock) CreatePrivateIP(_ context.Context, vnicID, address, name, hostname string) (*PrivateIP, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	v, ok := m.vnics.Get(vnicID)
 	if !ok {
 		return nil, vnicNotFound(vnicID)
@@ -317,6 +341,9 @@ func lastHostOffset(cidr string) uint32 {
 // DeletePrivateIP deletes a secondary private IP. A VNIC's primary address
 // only goes away with the VNIC.
 func (m *Mock) DeletePrivateIP(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	p, ok := m.privateIPs.Get(id)
 	if !ok {
 		return privateIPNotFound(id)
@@ -335,11 +362,17 @@ func (m *Mock) DeletePrivateIP(_ context.Context, id string) error {
 // DescribePrivateIPs returns private IPs matching the given OCIDs, or all if
 // empty.
 func (m *Mock) DescribePrivateIPs(_ context.Context, ids []string) ([]PrivateIP, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.privateIPs, ids, toPrivateIPInfo), nil
 }
 
 // UpdatePrivateIP changes a private IP's display name and hostname.
 func (m *Mock) UpdatePrivateIP(_ context.Context, id string, name, hostname *string) (*PrivateIP, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var out PrivateIP
 
 	err := mutate(m.privateIPs, id, privateIPNotFound(id), func(p *privateIPData) error {

@@ -29,6 +29,9 @@ type publicIPData struct {
 // AllocateAddress reserves a public IP. cfg.AllocationMethod carries OCI's
 // lifetime, defaulting to RESERVED.
 func (m *Mock) AllocateAddress(_ context.Context, cfg driver.ElasticIPConfig) (*driver.ElasticIP, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	lifetime := cfg.AllocationMethod
 	if lifetime == "" {
 		lifetime = LifetimeReserved
@@ -52,6 +55,9 @@ func (m *Mock) AllocateAddress(_ context.Context, cfg driver.ElasticIPConfig) (*
 
 // ReleaseAddress releases a public IP that is not assigned to anything.
 func (m *Mock) ReleaseAddress(_ context.Context, allocationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	ip, ok := m.publicIPs.Get(allocationID)
 	if !ok {
 		return publicIPNotFound(allocationID)
@@ -69,6 +75,9 @@ func (m *Mock) ReleaseAddress(_ context.Context, allocationID string) error {
 
 // DescribeAddresses returns public IPs matching the given OCIDs, or all if empty.
 func (m *Mock) DescribeAddresses(_ context.Context, ids []string) ([]driver.ElasticIP, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.publicIPs, ids, toPublicIPInfo), nil
 }
 
@@ -77,6 +86,9 @@ func (m *Mock) DescribeAddresses(_ context.Context, ids []string) ([]driver.Elas
 // IP holds at most one public IP, and DisassociateAddress takes that handle,
 // so a second address on the same private IP would be unaddressable.
 func (m *Mock) AssociateAddress(_ context.Context, allocationID, instanceID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if instanceID == "" {
 		return "", cerrors.New(cerrors.InvalidArgument, "private IP OCID is required")
 	}
@@ -85,8 +97,10 @@ func (m *Mock) AssociateAddress(_ context.Context, allocationID, instanceID stri
 		return "", privateIPNotFound(instanceID)
 	}
 
-	// Read before the write: publicIPFor reads the same store, which cannot be
-	// done from inside its own Update.
+	// publicIPFor scans the store the write below mutates, so it has to run
+	// before it rather than inside its Update. m.mu is what makes the pair
+	// atomic: without it two associates onto the same private IP both clear
+	// this guard and each write a different record.
 	if held := m.publicIPFor(instanceID); held != "" {
 		return "", cerrors.Newf(cerrors.FailedPrecondition,
 			"private IP %q already has public IP %s", instanceID, held)
@@ -111,6 +125,9 @@ func (m *Mock) AssociateAddress(_ context.Context, allocationID, instanceID stri
 // DisassociateAddress clears the assignment of the public IP pointing at the
 // given private IP.
 func (m *Mock) DisassociateAddress(_ context.Context, associationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, held := range m.publicIPs.All() {
 		if held.AssignedTo != associationID {
 			continue

@@ -15,6 +15,9 @@ const ocidPrefixParts = 2
 // is. The portable driver only exposes tag mutation for VCNs, subnets and
 // NSGs, but OCI's Update calls carry tags on every resource.
 func (m *Mock) SetTags(id string, tags map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	next := copyTags(tags)
 
 	if m.setCoreTags(id, next) || m.setGatewayTags(id, next) {

@@ -16,6 +16,9 @@ const EndpointTypeGateway = "Gateway"
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateVPCEndpoint(_ context.Context, cfg driver.VPCEndpointConfig) (*driver.VPCEndpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VCN OCID is required")
 	}
@@ -67,6 +70,9 @@ type serviceGatewayData struct {
 
 // DeleteVPCEndpoint deletes a service gateway.
 func (m *Mock) DeleteVPCEndpoint(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.serviceGWs.Delete(id) {
 		return serviceGatewayNotFound(id)
 	}
@@ -79,6 +85,9 @@ func (m *Mock) DeleteVPCEndpoint(_ context.Context, id string) error {
 // DescribeVPCEndpoints returns service gateways matching the given OCIDs, or
 // all if empty.
 func (m *Mock) DescribeVPCEndpoints(_ context.Context, ids []string) ([]driver.VPCEndpoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	return describeResources(m.serviceGWs, ids, toServiceGatewayInfo), nil
 }
 
@@ -86,6 +95,9 @@ func (m *Mock) DescribeVPCEndpoints(_ context.Context, ids []string) ([]driver.V
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) ModifyVPCEndpoint(_ context.Context, id string, cfg driver.VPCEndpointConfig) (*driver.VPCEndpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var out driver.VPCEndpoint
 
 	err := mutate(m.serviceGWs, id, serviceGatewayNotFound(id), func(sg *serviceGatewayData) error {
