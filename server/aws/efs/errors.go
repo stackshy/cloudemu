@@ -2,9 +2,11 @@ package efs
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/efs/driver"
 )
 
 const (
@@ -30,20 +32,56 @@ func writeError(w http.ResponseWriter, status int, errType, msg string) {
 	_ = json.NewEncoder(w).Encode(errorBody{Type: errType, ErrorCode: errType, Message: msg})
 }
 
-// writeErr maps a canonical cloudemu error to the closest EFS exception.
-func writeErr(w http.ResponseWriter, err error) {
+// exceptionFor returns the EFS X-Amzn-Errortype for a resource kind + canonical
+// code. EFS has per-resource typed exceptions, so a NotFound on a mount target
+// must surface as MountTargetNotFound, not FileSystemNotFound. Errors carry the
+// kind via driver.ResourceError; untagged errors fall back to the file-system
+// exception.
+func exceptionFor(kind string, err error) (status int, errType string) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "FileSystemNotFound", err.Error())
+		byKind := map[string]string{
+			driver.KindMountTarget: "MountTargetNotFound",
+			driver.KindAccessPoint: "AccessPointNotFound",
+			driver.KindPolicy:      "PolicyNotFound",
+			driver.KindReplication: "ReplicationNotFound",
+		}
+		if t, ok := byKind[kind]; ok {
+			return http.StatusNotFound, t
+		}
+
+		return http.StatusNotFound, "FileSystemNotFound"
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "FileSystemAlreadyExists", err.Error())
+		byKind := map[string]string{
+			driver.KindMountTarget: "MountTargetConflict",
+			driver.KindReplication: "ReplicationAlreadyExists",
+		}
+		if t, ok := byKind[kind]; ok {
+			return http.StatusConflict, t
+		}
+
+		return http.StatusConflict, "FileSystemAlreadyExists"
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "BadRequest", err.Error())
+		return http.StatusBadRequest, "BadRequest"
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusConflict, "FileSystemInUse", err.Error())
+		return http.StatusConflict, "FileSystemInUse"
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		return http.StatusInternalServerError, "InternalServerError"
 	}
+}
+
+// writeErr maps a canonical cloudemu error to the precise EFS exception, using
+// the resource kind carried by driver.ResourceError when present.
+func writeErr(w http.ResponseWriter, err error) {
+	kind := ""
+
+	var re *driver.ResourceError
+	if errors.As(err, &re) {
+		kind = re.Kind
+	}
+
+	status, errType := exceptionFor(kind, err)
+	writeError(w, status, errType, err.Error())
 }
 
 func notFound(w http.ResponseWriter, path string) {

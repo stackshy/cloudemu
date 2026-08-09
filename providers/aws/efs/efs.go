@@ -34,6 +34,10 @@ type Mock struct {
 	// owning file-system id so id-scoped operations resolve without scanning.
 	mtIndex *memstore.Store[string]
 	apIndex *memstore.Store[string]
+	// tokenIndex maps a creation token to its file-system id, claimed atomically
+	// via SetIfAbsent so concurrent same-token CreateFileSystem calls can't both
+	// create (EFS idempotency).
+	tokenIndex *memstore.Store[string]
 
 	// accountPref is the account-level resource-id preference ("LONG_ID" |
 	// "SHORT_ID"); empty until PutAccountPreferences is called.
@@ -49,6 +53,7 @@ func New(opts *config.Options) *Mock {
 		fileSystems: memstore.New[*fsData](),
 		mtIndex:     memstore.New[string](),
 		apIndex:     memstore.New[string](),
+		tokenIndex:  memstore.New[string](),
 		opts:        opts,
 	}
 }

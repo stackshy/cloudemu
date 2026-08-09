@@ -172,9 +172,7 @@ func TestSDKTagging(t *testing.T) {
 	}
 }
 
-func TestSDKDeleteWithMountTargetsGuarded(t *testing.T) {
-	// A basic create then describe-all sanity check that the collection GET
-	// path works without a filter.
+func TestSDKDescribeAllFileSystems(t *testing.T) {
 	ctx := context.Background()
 	c := newEFSClient(t)
 
@@ -191,5 +189,163 @@ func TestSDKDeleteWithMountTargetsGuarded(t *testing.T) {
 
 	if len(all.FileSystems) != 3 {
 		t.Fatalf("want 3 file systems, got %d", len(all.FileSystems))
+	}
+}
+
+// TestSDKDeleteWithMountTargetsGuarded verifies DeleteFileSystem is rejected
+// while a mount target still exists, and succeeds once it is removed.
+func TestSDKDeleteWithMountTargetsGuarded(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("guarded")})
+	if err != nil {
+		t.Fatalf("CreateFileSystem: %v", err)
+	}
+
+	fsID := aws.ToString(fs.FileSystemId)
+
+	mt, err := c.CreateMountTarget(ctx, &awsefs.CreateMountTargetInput{
+		FileSystemId: aws.String(fsID),
+		SubnetId:     aws.String("subnet-0abcd1234ef567890"),
+	})
+	if err != nil {
+		t.Fatalf("CreateMountTarget: %v", err)
+	}
+
+	if _, err := c.DeleteFileSystem(ctx, &awsefs.DeleteFileSystemInput{FileSystemId: aws.String(fsID)}); err == nil {
+		t.Fatal("DeleteFileSystem with mount target: want error, got nil")
+	}
+
+	if _, err := c.DeleteMountTarget(ctx, &awsefs.DeleteMountTargetInput{
+		MountTargetId: mt.MountTargetId,
+	}); err != nil {
+		t.Fatalf("DeleteMountTarget: %v", err)
+	}
+
+	if _, err := c.DeleteFileSystem(ctx, &awsefs.DeleteFileSystemInput{FileSystemId: aws.String(fsID)}); err != nil {
+		t.Fatalf("DeleteFileSystem after MT removed: %v", err)
+	}
+}
+
+// TestSDKMountTargetPerSubnetConflict verifies a second mount target in the
+// same subnet is rejected with a MountTargetConflict-typed error.
+func TestSDKMountTargetPerSubnetConflict(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("subnet-conflict")})
+	if err != nil {
+		t.Fatalf("CreateFileSystem: %v", err)
+	}
+
+	in := &awsefs.CreateMountTargetInput{
+		FileSystemId: fs.FileSystemId,
+		SubnetId:     aws.String("subnet-0abcd1234ef567890"),
+	}
+
+	if _, err := c.CreateMountTarget(ctx, in); err != nil {
+		t.Fatalf("CreateMountTarget: %v", err)
+	}
+
+	_, err = c.CreateMountTarget(ctx, in)
+	if err == nil {
+		t.Fatal("second mount target in same subnet: want error, got nil")
+	}
+
+	var conflict *efstypes.MountTargetConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want MountTargetConflict, got %T: %v", err, err)
+	}
+}
+
+// TestSDKTypedNotFoundErrors verifies each resource surfaces its own typed
+// not-found exception rather than collapsing to FileSystemNotFound.
+func TestSDKTypedNotFoundErrors(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	if _, err := c.DescribeMountTargetSecurityGroups(ctx, &awsefs.DescribeMountTargetSecurityGroupsInput{
+		MountTargetId: aws.String("fsmt-does-not-exist"),
+	}); err == nil {
+		t.Fatal("want MountTargetNotFound, got nil")
+	} else {
+		var nf *efstypes.MountTargetNotFound
+		if !errors.As(err, &nf) {
+			t.Fatalf("want MountTargetNotFound, got %T: %v", err, err)
+		}
+	}
+
+	if _, err := c.DescribeAccessPoints(ctx, &awsefs.DescribeAccessPointsInput{
+		AccessPointId: aws.String("fsap-does-not-exist"),
+	}); err == nil {
+		t.Fatal("want AccessPointNotFound, got nil")
+	} else {
+		var nf *efstypes.AccessPointNotFound
+		if !errors.As(err, &nf) {
+			t.Fatalf("want AccessPointNotFound, got %T: %v", err, err)
+		}
+	}
+
+	if _, err := c.DescribeFileSystems(ctx, &awsefs.DescribeFileSystemsInput{
+		FileSystemId: aws.String("fs-does-not-exist"),
+	}); err == nil {
+		t.Fatal("want FileSystemNotFound, got nil")
+	} else {
+		var nf *efstypes.FileSystemNotFound
+		if !errors.As(err, &nf) {
+			t.Fatalf("want FileSystemNotFound, got %T: %v", err, err)
+		}
+	}
+}
+
+// TestSDKDescribeMountTargetsByID exercises describing mount targets by
+// mount-target id and by access-point id.
+func TestSDKDescribeMountTargetsByID(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("describe-mt")})
+	if err != nil {
+		t.Fatalf("CreateFileSystem: %v", err)
+	}
+
+	fsID := aws.ToString(fs.FileSystemId)
+
+	mt, err := c.CreateMountTarget(ctx, &awsefs.CreateMountTargetInput{
+		FileSystemId: aws.String(fsID),
+		SubnetId:     aws.String("subnet-0abcd1234ef567890"),
+	})
+	if err != nil {
+		t.Fatalf("CreateMountTarget: %v", err)
+	}
+
+	ap, err := c.CreateAccessPoint(ctx, &awsefs.CreateAccessPointInput{
+		FileSystemId: aws.String(fsID),
+	})
+	if err != nil {
+		t.Fatalf("CreateAccessPoint: %v", err)
+	}
+
+	byMT, err := c.DescribeMountTargets(ctx, &awsefs.DescribeMountTargetsInput{
+		MountTargetId: mt.MountTargetId,
+	})
+	if err != nil {
+		t.Fatalf("DescribeMountTargets(byMT): %v", err)
+	}
+
+	if len(byMT.MountTargets) != 1 || aws.ToString(byMT.MountTargets[0].MountTargetId) != aws.ToString(mt.MountTargetId) {
+		t.Fatalf("describe by MT id: unexpected result %+v", byMT.MountTargets)
+	}
+
+	byAP, err := c.DescribeMountTargets(ctx, &awsefs.DescribeMountTargetsInput{
+		AccessPointId: ap.AccessPointId,
+	})
+	if err != nil {
+		t.Fatalf("DescribeMountTargets(byAP): %v", err)
+	}
+
+	if len(byAP.MountTargets) != 1 {
+		t.Fatalf("describe by AP id: want 1 mount target, got %d", len(byAP.MountTargets))
 	}
 }

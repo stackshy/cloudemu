@@ -2,6 +2,7 @@ package efs
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -16,7 +17,7 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 
 	fd, ok := m.getFS(in.FileSystemID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "file system %q not found", in.FileSystemID)
+		return nil, notFound(driver.KindFileSystem, "file system %q not found", in.FileSystemID)
 	}
 
 	fd.mu.Lock()
@@ -26,14 +27,13 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 	// subnet as its own AZ, so reject a second mount target in the same subnet.
 	for _, mt := range fd.mountTgts {
 		if mt.SubnetID == in.SubnetID {
-			return nil, errors.Newf(errors.AlreadyExists,
+			return nil, conflict(driver.KindMountTarget,
 				"mount target already exists in subnet %q", in.SubnetID)
 		}
 	}
 
 	id := "fsmt-" + idgen.GenerateID("")
 	eni := "eni-" + idgen.GenerateID("")
-	az := "us-east-1a"
 
 	mt := &driver.MountTarget{
 		OwnerID:              m.opts.AccountID,
@@ -43,8 +43,8 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 		LifeCycleState:       driver.StateAvailable,
 		IPAddress:            ipAddressOrDefault(in.IPAddress),
 		NetworkInterfaceID:   eni,
-		AvailabilityZoneID:   "use1-az1",
-		AvailabilityZoneName: az,
+		AvailabilityZoneID:   azID(m.opts.Region),
+		AvailabilityZoneName: m.opts.Region + "a",
 		VPCID:                "vpc-" + idgen.GenerateID(""),
 		SecurityGroups:       append([]string(nil), in.SecurityGroups...),
 	}
@@ -59,6 +59,30 @@ func (m *Mock) CreateMountTarget(_ context.Context, in driver.CreateMountTargetI
 	return &out, nil
 }
 
+// azID builds an AWS-style AZ id (e.g. "use1-az1") from a region. AWS's real
+// AZ-id short codes are hand-maintained abbreviations; this approximates them by
+// keeping the first region token whole and abbreviating the rest to their first
+// letter (us-east-1 → use1, eu-west-1 → euw1), which is exact for the common
+// single-word regions.
+func azID(region string) string {
+	short := ""
+
+	for i, part := range strings.Split(region, "-") {
+		switch {
+		case part == "":
+			continue
+		case part[0] >= '0' && part[0] <= '9':
+			short += part
+		case i == 0:
+			short += part
+		default:
+			short += part[:1]
+		}
+	}
+
+	return short + "-az1"
+}
+
 func ipAddressOrDefault(ip string) string {
 	if ip != "" {
 		return ip
@@ -71,14 +95,14 @@ func ipAddressOrDefault(ip string) string {
 func (m *Mock) DeleteMountTarget(_ context.Context, mountTargetID string) error {
 	fsID, ok := m.mtIndex.Get(mountTargetID)
 	if !ok {
-		return errors.Newf(errors.NotFound, "mount target %q not found", mountTargetID)
+		return notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
 	fd, ok := m.getFS(fsID)
 	if !ok {
 		m.mtIndex.Delete(mountTargetID)
 
-		return errors.Newf(errors.NotFound, "mount target %q not found", mountTargetID)
+		return notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
 	fd.mu.Lock()
@@ -104,7 +128,7 @@ func (m *Mock) DescribeMountTargets(
 	case accessPointID != "":
 		fsID, ok := m.apIndex.Get(accessPointID)
 		if !ok {
-			return nil, errors.Newf(errors.NotFound, "access point %q not found", accessPointID)
+			return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
 		}
 
 		return m.mountTargetsOfFS(fsID)
@@ -119,12 +143,12 @@ func (m *Mock) DescribeMountTargets(
 func (m *Mock) mountTargetByID(mountTargetID string) ([]driver.MountTarget, error) {
 	fsID, ok := m.mtIndex.Get(mountTargetID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "mount target %q not found", mountTargetID)
+		return nil, notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
 	fd, ok := m.getFS(fsID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "mount target %q not found", mountTargetID)
+		return nil, notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
 	fd.mu.RLock()
@@ -132,7 +156,7 @@ func (m *Mock) mountTargetByID(mountTargetID string) ([]driver.MountTarget, erro
 
 	mt, ok := fd.mountTgts[mountTargetID]
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "mount target %q not found", mountTargetID)
+		return nil, notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
 	return []driver.MountTarget{*mt}, nil
@@ -141,7 +165,7 @@ func (m *Mock) mountTargetByID(mountTargetID string) ([]driver.MountTarget, erro
 func (m *Mock) mountTargetsOfFS(fileSystemID string) ([]driver.MountTarget, error) {
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return nil, notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.RLock()
@@ -171,12 +195,12 @@ func (m *Mock) ModifyMountTargetSecurityGroups(
 ) error {
 	fsID, ok := m.mtIndex.Get(mountTargetID)
 	if !ok {
-		return errors.Newf(errors.NotFound, "mount target %q not found", mountTargetID)
+		return notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
 	fd, ok := m.getFS(fsID)
 	if !ok {
-		return errors.Newf(errors.NotFound, "mount target %q not found", mountTargetID)
+		return notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
 	fd.mu.Lock()
@@ -184,7 +208,7 @@ func (m *Mock) ModifyMountTargetSecurityGroups(
 
 	mt, ok := fd.mountTgts[mountTargetID]
 	if !ok {
-		return errors.Newf(errors.NotFound, "mount target %q not found", mountTargetID)
+		return notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
 	mt.SecurityGroups = append([]string(nil), securityGroups...)
@@ -207,7 +231,7 @@ func (m *Mock) lookupMountTarget(mountTargetID string) (*driver.MountTarget, err
 func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointInput) (*driver.AccessPoint, error) {
 	fd, ok := m.getFS(in.FileSystemID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "file system %q not found", in.FileSystemID)
+		return nil, notFound(driver.KindFileSystem, "file system %q not found", in.FileSystemID)
 	}
 
 	fd.mu.Lock()
@@ -227,7 +251,7 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 		FileSystemID:   fd.fs.FileSystemID,
 		OwnerID:        m.opts.AccountID,
 		LifeCycleState: driver.StateAvailable,
-		PosixUser:      in.PosixUser,
+		PosixUser:      copyPosixUser(in.PosixUser),
 		RootDirectory:  rootDirOrDefault(in.RootDirectory),
 		Tags:           copyTags(in.Tags),
 	}
@@ -240,30 +264,51 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 	return &out, nil
 }
 
+// rootDirOrDefault deep-copies the caller's RootDirectory so later mutation of
+// the input can't reach into stored state, defaulting an empty path to "/".
 func rootDirOrDefault(rd *driver.RootDirectory) *driver.RootDirectory {
 	if rd == nil {
 		return &driver.RootDirectory{Path: "/"}
 	}
 
-	if rd.Path == "" {
-		rd.Path = "/"
+	out := driver.RootDirectory{Path: rd.Path}
+	if out.Path == "" {
+		out.Path = "/"
 	}
 
-	return rd
+	if rd.CreationInfo != nil {
+		ci := *rd.CreationInfo
+		out.CreationInfo = &ci
+	}
+
+	return &out
+}
+
+// copyPosixUser deep-copies the caller's PosixUser (including SecondaryGIDs) to
+// prevent aliasing between the request input and stored state.
+func copyPosixUser(pu *driver.PosixUser) *driver.PosixUser {
+	if pu == nil {
+		return nil
+	}
+
+	out := *pu
+	out.SecondaryGIDs = append([]int64(nil), pu.SecondaryGIDs...)
+
+	return &out
 }
 
 // DeleteAccessPoint removes an access point.
 func (m *Mock) DeleteAccessPoint(_ context.Context, accessPointID string) error {
 	fsID, ok := m.apIndex.Get(accessPointID)
 	if !ok {
-		return errors.Newf(errors.NotFound, "access point %q not found", accessPointID)
+		return notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
 	}
 
 	fd, ok := m.getFS(fsID)
 	if !ok {
 		m.apIndex.Delete(accessPointID)
 
-		return errors.Newf(errors.NotFound, "access point %q not found", accessPointID)
+		return notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
 	}
 
 	fd.mu.Lock()
@@ -282,12 +327,12 @@ func (m *Mock) DescribeAccessPoints(
 	if accessPointID != "" {
 		fsID, ok := m.apIndex.Get(accessPointID)
 		if !ok {
-			return nil, errors.Newf(errors.NotFound, "access point %q not found", accessPointID)
+			return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
 		}
 
 		fd, ok := m.getFS(fsID)
 		if !ok {
-			return nil, errors.Newf(errors.NotFound, "access point %q not found", accessPointID)
+			return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
 		}
 
 		fd.mu.RLock()
@@ -295,7 +340,7 @@ func (m *Mock) DescribeAccessPoints(
 
 		ap, ok := fd.accessPts[accessPointID]
 		if !ok {
-			return nil, errors.Newf(errors.NotFound, "access point %q not found", accessPointID)
+			return nil, notFound(driver.KindAccessPoint, "access point %q not found", accessPointID)
 		}
 
 		return []driver.AccessPoint{*ap}, nil
@@ -307,7 +352,7 @@ func (m *Mock) DescribeAccessPoints(
 
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return nil, notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.RLock()

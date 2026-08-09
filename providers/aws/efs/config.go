@@ -15,7 +15,7 @@ func (m *Mock) PutLifecycleConfiguration(
 ) ([]driver.LifecyclePolicy, error) {
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return nil, notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.Lock()
@@ -32,7 +32,7 @@ func (m *Mock) DescribeLifecycleConfiguration(
 ) ([]driver.LifecyclePolicy, error) {
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return nil, notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.RLock()
@@ -49,7 +49,7 @@ func (m *Mock) PutBackupPolicy(_ context.Context, fileSystemID, status string) (
 
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return "", errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return "", notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.Lock()
@@ -64,7 +64,7 @@ func (m *Mock) PutBackupPolicy(_ context.Context, fileSystemID, status string) (
 func (m *Mock) DescribeBackupPolicy(_ context.Context, fileSystemID string) (string, error) {
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return "", errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return "", notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.RLock()
@@ -88,14 +88,14 @@ func (m *Mock) CreateReplicationConfiguration(
 
 	fd, ok := m.getFS(sourceFileSystemID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "file system %q not found", sourceFileSystemID)
+		return nil, notFound(driver.KindFileSystem, "file system %q not found", sourceFileSystemID)
 	}
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
 	if fd.replication != nil {
-		return nil, errors.Newf(errors.AlreadyExists,
+		return nil, conflict(driver.KindReplication,
 			"file system %q already has a replication configuration", sourceFileSystemID)
 	}
 
@@ -144,14 +144,14 @@ func (m *Mock) CreateReplicationConfiguration(
 func (m *Mock) DeleteReplicationConfiguration(_ context.Context, sourceFileSystemID string) error {
 	fd, ok := m.getFS(sourceFileSystemID)
 	if !ok {
-		return errors.Newf(errors.NotFound, "file system %q not found", sourceFileSystemID)
+		return notFound(driver.KindFileSystem, "file system %q not found", sourceFileSystemID)
 	}
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
 	if fd.replication == nil {
-		return errors.Newf(errors.NotFound, "no replication configuration for file system %q", sourceFileSystemID)
+		return notFound(driver.KindReplication, "no replication configuration for file system %q", sourceFileSystemID)
 	}
 
 	fd.replication = nil
@@ -167,14 +167,15 @@ func (m *Mock) DescribeReplicationConfigurations(
 	if fileSystemID != "" {
 		fd, ok := m.getFS(fileSystemID)
 		if !ok {
-			return nil, errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+			return nil, notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 		}
 
 		fd.mu.RLock()
 		defer fd.mu.RUnlock()
 
 		if fd.replication == nil {
-			return nil, nil
+			return nil, notFound(driver.KindReplication,
+				"no replication configuration for file system %q", fileSystemID)
 		}
 
 		return []driver.ReplicationConfiguration{*fd.replication}, nil

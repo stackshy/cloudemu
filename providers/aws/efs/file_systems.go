@@ -11,26 +11,16 @@ import (
 // nameTag is the tag key EFS mirrors onto FileSystem.Name.
 const nameTag = "Name"
 
-// CreateFileSystem creates a new file system. A repeated creation token returns
-// the existing file system (idempotent create), matching EFS.
+// CreateFileSystem creates a new file system. A repeated creation token is
+// rejected with AlreadyExists (matching real EFS, which returns the existing
+// file system's ARN via a FileSystemAlreadyExists error). The token is claimed
+// atomically via a token→id index so concurrent same-token calls can't both
+// create.
 //
 //nolint:gocritic // in is the public CreateFileSystem input, taken by value to match the driver API
 func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInput) (*driver.FileSystem, error) {
 	if in.CreationToken == "" {
 		return nil, errors.New(errors.InvalidArgument, "CreationToken is required")
-	}
-
-	// Idempotency: an existing file system with the same creation token is
-	// returned rather than duplicated.
-	for _, fd := range m.fileSystems.All() {
-		fd.mu.RLock()
-		match := fd.fs.CreationToken == in.CreationToken
-		fd.mu.RUnlock()
-
-		if match {
-			return nil, errors.Newf(errors.AlreadyExists,
-				"file system with creation token %q already exists", in.CreationToken)
-		}
 	}
 
 	perf := in.PerformanceMode
@@ -49,8 +39,15 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 	}
 
 	id := "fs-" + idgen.GenerateID("")
-	now := m.opts.Clock.Now().UTC()
 
+	// Atomically claim the creation token. If another call already owns it, this
+	// is a duplicate — reject without creating.
+	if !m.tokenIndex.SetIfAbsent(in.CreationToken, id) {
+		return nil, conflict(driver.KindFileSystem,
+			"file system with creation token %q already exists", in.CreationToken)
+	}
+
+	now := m.opts.Clock.Now().UTC()
 	name := in.Tags[nameTag]
 
 	fs := driver.FileSystem{
@@ -85,23 +82,31 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 	return &out, nil
 }
 
-// DeleteFileSystem deletes a file system. It must have no mount targets.
+// DeleteFileSystem deletes a file system. It must have no mount targets or
+// access points. The check and delete run under the file system's write lock so
+// a concurrent CreateMountTarget can't attach to a file system mid-delete, and
+// all index entries (token, access points) are released.
 func (m *Mock) DeleteFileSystem(_ context.Context, fileSystemID string) error {
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
-	fd.mu.RLock()
-	n := len(fd.mountTgts)
-	fd.mu.RUnlock()
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
 
-	if n > 0 {
-		return errors.Newf(errors.FailedPrecondition,
+	if n := len(fd.mountTgts); n > 0 {
+		return inUse(driver.KindFileSystem,
 			"file system %q has %d mount target(s); delete them first", fileSystemID, n)
 	}
 
+	if n := len(fd.accessPts); n > 0 {
+		return inUse(driver.KindFileSystem,
+			"file system %q has %d access point(s); delete them first", fileSystemID, n)
+	}
+
 	m.fileSystems.Delete(fileSystemID)
+	m.tokenIndex.Delete(fd.fs.CreationToken)
 
 	return nil
 }
@@ -114,7 +119,7 @@ func (m *Mock) DescribeFileSystems(
 	if fileSystemID != "" {
 		fd, ok := m.getFS(fileSystemID)
 		if !ok {
-			return nil, errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+			return nil, notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 		}
 
 		fd.mu.RLock()
@@ -141,7 +146,7 @@ func (m *Mock) DescribeFileSystems(
 func (m *Mock) UpdateFileSystem(_ context.Context, in driver.UpdateFileSystemInput) (*driver.FileSystem, error) {
 	fd, ok := m.getFS(in.FileSystemID)
 	if !ok {
-		return nil, errors.Newf(errors.NotFound, "file system %q not found", in.FileSystemID)
+		return nil, notFound(driver.KindFileSystem, "file system %q not found", in.FileSystemID)
 	}
 
 	fd.mu.Lock()
@@ -176,7 +181,7 @@ func (m *Mock) PutFileSystemPolicy(
 
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return "", errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return "", notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.Lock()
@@ -191,14 +196,14 @@ func (m *Mock) PutFileSystemPolicy(
 func (m *Mock) DescribeFileSystemPolicy(_ context.Context, fileSystemID string) (string, error) {
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return "", errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return "", notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.RLock()
 	defer fd.mu.RUnlock()
 
 	if fd.policy == "" {
-		return "", errors.Newf(errors.NotFound, "no policy set for file system %q", fileSystemID)
+		return "", notFound(driver.KindPolicy, "no policy set for file system %q", fileSystemID)
 	}
 
 	return fd.policy, nil
@@ -208,7 +213,7 @@ func (m *Mock) DescribeFileSystemPolicy(_ context.Context, fileSystemID string) 
 func (m *Mock) DeleteFileSystemPolicy(_ context.Context, fileSystemID string) error {
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
-		return errors.Newf(errors.NotFound, "file system %q not found", fileSystemID)
+		return notFound(driver.KindFileSystem, "file system %q not found", fileSystemID)
 	}
 
 	fd.mu.Lock()
@@ -238,7 +243,7 @@ func (m *Mock) resolveTagTarget(resourceID string) (*fsData, func() map[string]s
 		}
 	}
 
-	return nil, nil, errors.Newf(errors.NotFound, "resource %q not found", resourceID)
+	return nil, nil, notFound(driver.KindFileSystem, "resource %q not found", resourceID)
 }
 
 // TagResource adds or overwrites tags on a file system or access point.
