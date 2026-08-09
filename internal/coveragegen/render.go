@@ -33,54 +33,7 @@ func render(root string, services []*Service) error {
 		}
 	}
 
-	if err := writeJSON(filepath.Join(outDir, "coverage.json"), services); err != nil {
-		return err
-	}
-
-	return writeFile(filepath.Join(root, "llms-full.txt"), renderLLMSFull(services))
-}
-
-// renderLLMSFull emits a single self-contained plain-text capability dump for
-// agents to ingest in one fetch (the llms-full.txt convention): every service,
-// the native name per provider, and every operation.
-func renderLLMSFull(services []*Service) string {
-	var b strings.Builder
-
-	fmt.Fprintln(&b, "# cloudemu capability manifest")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Generated from the driver interfaces by `go generate ./...`; do not edit by hand.")
-	fmt.Fprintln(&b, "Every operation below is a method the code declares. Structured form: docs/coverage/coverage.json.")
-	fmt.Fprintln(&b)
-
-	for _, svc := range services {
-		fmt.Fprintf(&b, "## %s (driver.%s)\n", svc.Name, svc.Interface)
-		fmt.Fprintf(&b, "providers: %s\n", providerLine(svc))
-
-		ops := make([]string, len(svc.Operations))
-		for i, op := range svc.Operations {
-			ops[i] = op.Name
-		}
-
-		fmt.Fprintf(&b, "operations (%d): %s\n\n", len(ops), strings.Join(ops, ", "))
-	}
-
-	return b.String()
-}
-
-func providerLine(svc *Service) string {
-	parts := make([]string, 0, len(providerOrder))
-
-	for i, prov := range providerOrder {
-		if native := svc.Providers[prov]; native != "" {
-			parts = append(parts, providerTitles()[i]+"="+native)
-		}
-	}
-
-	if len(parts) == 0 {
-		return "(none implemented)"
-	}
-
-	return strings.Join(parts, ", ")
+	return writeJSON(filepath.Join(outDir, "coverage.json"), services)
 }
 
 func renderIndex(services []*Service) string {

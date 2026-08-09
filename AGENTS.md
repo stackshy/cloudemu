@@ -11,8 +11,7 @@ Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs** for Go test
 Do not scrape prose to answer "what can cloudemu do." Use the generated, can't-drift sources:
 
 - [docs/coverage/README.md](docs/coverage/README.md) — human index: every service, every operation, native name per provider.
-- [docs/coverage/coverage.json](docs/coverage/coverage.json) — the same data, machine-readable.
-- [llms-full.txt](llms-full.txt) — single-file plain-text dump for one-fetch ingest.
+- [docs/coverage/coverage.json](docs/coverage/coverage.json) — the full capability set, machine-readable (parse this instead of scraping the docs).
 
 These are produced from the driver interfaces in `services/*/driver` by `go generate`, so they never promise a capability the code lacks.
 

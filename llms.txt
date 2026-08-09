@@ -5,8 +5,7 @@
 ## Capabilities (start here)
 
 - [Capability coverage index](docs/coverage/README.md): every service and the native name each provider exposes it under, generated from the driver interfaces so it cannot drift.
-- [coverage.json](docs/coverage/coverage.json): the same data, machine-readable (service → operations → providers).
-- [llms-full.txt](llms-full.txt): single-file plain-text dump of every service and operation, for one-fetch ingest.
+- [coverage.json](docs/coverage/coverage.json): the full capability set, machine-readable (service → operations → providers) — parse this instead of scraping the docs.
 
 ## Docs
 
