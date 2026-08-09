@@ -17,12 +17,14 @@ var _ driver.EFS = (*Mock)(nil)
 // access-point maps are populated by later phases; the tag path already reads
 // accessPts, and DeleteFileSystem guards on mountTgts.
 type fsData struct {
-	fs        driver.FileSystem
-	policy    string
-	backup    string // ENABLED | DISABLED
-	mountTgts map[string]*driver.MountTarget
-	accessPts map[string]*driver.AccessPoint
-	mu        sync.RWMutex
+	fs          driver.FileSystem
+	policy      string
+	backup      string // ENABLED | DISABLED
+	mountTgts   map[string]*driver.MountTarget
+	accessPts   map[string]*driver.AccessPoint
+	lifecycle   []driver.LifecyclePolicy
+	replication *driver.ReplicationConfiguration
+	mu          sync.RWMutex
 }
 
 // Mock is an in-memory implementation of AWS EFS.
@@ -32,6 +34,11 @@ type Mock struct {
 	// owning file-system id so id-scoped operations resolve without scanning.
 	mtIndex *memstore.Store[string]
 	apIndex *memstore.Store[string]
+
+	// accountPref is the account-level resource-id preference ("LONG_ID" |
+	// "SHORT_ID"); empty until PutAccountPreferences is called.
+	accountPref string
+	prefMu      sync.RWMutex
 
 	opts *config.Options
 }

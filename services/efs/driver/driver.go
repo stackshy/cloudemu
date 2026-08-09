@@ -93,6 +93,7 @@ type UpdateFileSystemInput struct {
 type EFS interface {
 	MountTargets
 	AccessPoints
+	Config
 
 	// File systems.
 	CreateFileSystem(ctx context.Context, in CreateFileSystemInput) (*FileSystem, error)

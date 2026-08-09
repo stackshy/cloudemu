@@ -112,6 +112,18 @@ func zeroOrEpoch(t time.Time) float64 {
 	return epochSeconds(t)
 }
 
+// epochOrNil renders a time as epoch seconds, or nil when zero so the field is
+// omitted from the response.
+func epochOrNil(t time.Time) *float64 {
+	if t.IsZero() {
+		return nil
+	}
+
+	secs := epochSeconds(t)
+
+	return &secs
+}
+
 // --- request shapes ---
 
 type createFileSystemRequest struct {

@@ -20,8 +20,12 @@ func (h *Handler) serveFileSystems(w http.ResponseWriter, r *http.Request, rest 
 			methodNotAllowed(w)
 		}
 	case 1:
+		// /file-systems/replication-configurations : GET describe-all replication.
+		if rest[0] == "replication-configurations" && r.Method == http.MethodGet {
+			h.describeReplicationConfigurations(w, r, "")
+			return
+		}
 		// /file-systems/{id} : PUT update, DELETE delete.
-		// /file-systems/replication-configurations : GET describe-all (P3).
 		h.serveFileSystemByID(w, r, rest[0])
 	default:
 		// /file-systems/{id}/<sub> : policy (P1); lifecycle/backup/replication (P3).
@@ -40,25 +44,67 @@ func (h *Handler) serveFileSystemByID(w http.ResponseWriter, r *http.Request, id
 	}
 }
 
-// serveFileSystemSub routes /file-systems/{id}/{sub}. P1 handles "policy";
-// later phases add lifecycle-configuration, backup-policy, replication.
+// serveFileSystemSub routes /file-systems/{id}/{sub}: policy, lifecycle-
+// configuration, backup-policy, and replication-configuration.
 func (h *Handler) serveFileSystemSub(w http.ResponseWriter, r *http.Request, id, sub string) {
-	if sub == "policy" {
-		switch r.Method {
-		case http.MethodGet:
-			h.describeFileSystemPolicy(w, r, id)
-		case http.MethodPut:
-			h.putFileSystemPolicy(w, r, id)
-		case http.MethodDelete:
-			h.deleteFileSystemPolicy(w, r, id)
-		default:
-			methodNotAllowed(w)
-		}
-
-		return
+	switch sub {
+	case "policy":
+		h.serveFSPolicy(w, r, id)
+	case "lifecycle-configuration":
+		h.serveLifecycleConfig(w, r, id)
+	case "backup-policy":
+		h.serveBackupPolicy(w, r, id)
+	case "replication-configuration":
+		h.serveReplicationConfig(w, r, id)
+	default:
+		notFound(w, r.URL.Path)
 	}
+}
 
-	notFound(w, r.URL.Path)
+func (h *Handler) serveFSPolicy(w http.ResponseWriter, r *http.Request, id string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.describeFileSystemPolicy(w, r, id)
+	case http.MethodPut:
+		h.putFileSystemPolicy(w, r, id)
+	case http.MethodDelete:
+		h.deleteFileSystemPolicy(w, r, id)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) serveLifecycleConfig(w http.ResponseWriter, r *http.Request, id string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.describeLifecycleConfiguration(w, r, id)
+	case http.MethodPut:
+		h.putLifecycleConfiguration(w, r, id)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) serveBackupPolicy(w http.ResponseWriter, r *http.Request, id string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.describeBackupPolicy(w, r, id)
+	case http.MethodPut:
+		h.putBackupPolicy(w, r, id)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) serveReplicationConfig(w http.ResponseWriter, r *http.Request, id string) {
+	switch r.Method {
+	case http.MethodPost:
+		h.createReplicationConfiguration(w, r, id)
+	case http.MethodDelete:
+		h.deleteReplicationConfiguration(w, r, id)
+	default:
+		methodNotAllowed(w)
+	}
 }
 
 func (h *Handler) createFileSystem(w http.ResponseWriter, r *http.Request) {

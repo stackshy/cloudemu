@@ -1,6 +1,9 @@
 package driver
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Transition-to-IA / transition-to-primary values for lifecycle policies.
 const (
@@ -34,7 +37,7 @@ type Destination struct {
 	AvailabilityZoneName string
 	KMSKeyID             string
 	RoleARN              string
-	LastReplicatedTime   string
+	LastReplicatedTime   time.Time
 	OwnerID              string
 }
 
@@ -53,7 +56,7 @@ type ReplicationConfiguration struct {
 	SourceFileSystemARN         string
 	SourceFileSystemRegion      string
 	OriginalSourceFileSystemARN string
-	CreationTime                string
+	CreationTime                time.Time
 	Destinations                []Destination
 	SourceFileSystemOwnerID     string
 }

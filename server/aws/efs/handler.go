@@ -24,6 +24,7 @@ const (
 	rootFileSystems  = "file-systems"
 	rootMountTargets = "mount-targets"
 	rootAccessPoints = "access-points"
+	rootAccountPrefs = "account-preferences"
 	rootResourceTag  = "resource-tags"
 	rootCreateTags   = "create-tags"
 	rootDeleteTags   = "delete-tags"
@@ -54,7 +55,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch segs[0] {
-	case rootFileSystems, rootMountTargets, rootAccessPoints,
+	case rootFileSystems, rootMountTargets, rootAccessPoints, rootAccountPrefs,
 		rootResourceTag, rootCreateTags, rootDeleteTags, rootTags:
 		return true
 	default:
@@ -78,6 +79,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveMountTargets(w, r, segs[1:])
 	case rootAccessPoints:
 		h.serveAccessPoints(w, r, segs[1:])
+	case rootAccountPrefs:
+		h.serveAccountPreferences(w, r)
 	case rootResourceTag:
 		h.serveResourceTags(w, r, segs[1:])
 	case rootCreateTags, rootDeleteTags, rootTags:
