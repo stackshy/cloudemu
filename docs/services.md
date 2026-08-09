@@ -712,6 +712,11 @@ instance profiles, which have no OCI equivalent.
 | `OCIIdentity` | Create/Get/List/Update/Delete OCIUser and OCIGroup; Create/Get/List/Delete OCIGroupMembership |
 | `StatementPolicies` | Create/Get/List/Update/DeleteStatementPolicy; `Evaluate` resolves a statement against the compartment tree |
 
+Statements round-trip verbatim, but two things `Evaluate` cannot decide report
+themselves as `Unimplemented` rather than granting the whole verb: a `where`
+condition, and a resource family outside the modeled set. `MoveCompartment` and
+the Quotas API (`/20181025/quotas`) answer `501` for the same reason.
+
 ---
 
 ## 8. DNS

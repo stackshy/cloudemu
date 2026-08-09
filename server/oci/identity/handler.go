@@ -23,9 +23,16 @@
 //	GET    /20160918/compartments?compartmentId=…         — ListCompartments
 //	GET/PUT/DELETE /20160918/compartments/{id}            — Get/Update/DeleteCompartment
 //
+// Two operations are claimed only to disclose themselves, answering 501 rather
+// than the misleading 404 an unclaimed path would get:
+//
+//	POST /20160918/compartments/{id}/actions/moveCompartment — MoveCompartment
+//	ANY  /20181025/quotas…                                   — the Quotas API
+//
 // The Identity API shares the 20160918 version prefix with OCI Core, so
 // Matches claims only the five identity collections and leaves the rest of
-// that prefix to the compute and networking handlers.
+// that prefix to the compute and networking handlers. Nothing else claims
+// 20181025, which OCI reserves for Limits and Quotas.
 package identity
 
 import (
@@ -33,12 +40,23 @@ import (
 	"strconv"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 const pathPrefix = "/20160918/"
+
+// quotasPath is the OCI Quotas surface, which CloudEmu discloses rather than
+// serves: the emulator enforces no quotas or limits.
+const quotasPath = "/20181025/quotas"
+
+// The action shape /{collection}/{id}/actions/{action}.
+const (
+	segActions            = "actions"
+	actionMoveCompartment = "moveCompartment"
+)
 
 // The identity collections this handler owns.
 const (
@@ -82,9 +100,14 @@ func New(drv iamdriver.IAM, work *workrequest.Store) *Handler {
 	return h
 }
 
-// Matches claims the five identity collections under /20160918/.
+// Matches claims the five identity collections under /20160918/, plus the two
+// surfaces it serves only to disclose.
 func (*Handler) Matches(r *http.Request) bool {
-	collection, _, ok := parseRoute(r.URL.Path)
+	if isQuotasPath(r.URL.Path) {
+		return true
+	}
+
+	collection, _, _, ok := parseRoute(r.URL.Path)
 	if !ok {
 		return false
 	}
@@ -99,9 +122,21 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP routes by collection, then by URL shape and HTTP verb.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	collection, id, ok := parseRoute(r.URL.Path)
+	if isQuotasPath(r.URL.Path) {
+		ocirest.WriteDriverError(w, r, notEmulated("the Quotas API",
+			"CloudEmu emulates control surfaces and enforces no quotas or limits"))
+
+		return
+	}
+
+	collection, id, action, ok := parseRoute(r.URL.Path)
 	if !ok {
 		ocirest.WriteError(w, r, http.StatusBadRequest, "InvalidParameter", "malformed identity path")
+		return
+	}
+
+	if action != "" {
+		routeAction(w, r, collection, action)
 		return
 	}
 
@@ -121,22 +156,48 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parseRoute splits /20160918/{collection}[/{id}].
-func parseRoute(urlPath string) (collection, id string, ok bool) {
+// parseRoute splits /20160918/{collection}[/{id}[/actions/{action}]].
+func parseRoute(urlPath string) (collection, id, action string, ok bool) {
 	if !strings.HasPrefix(urlPath, pathPrefix) {
-		return "", "", false
+		return "", "", "", false
 	}
 
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(urlPath, pathPrefix), "/"), "/")
 
 	switch len(parts) {
 	case 1:
-		return parts[0], "", parts[0] != ""
+		return parts[0], "", "", parts[0] != ""
 	case 2: //nolint:mnd // a collection plus one resource id
-		return parts[0], parts[1], parts[1] != ""
+		return parts[0], parts[1], "", parts[1] != ""
+	case 4: //nolint:mnd // a collection, a resource id and an action
+		return parts[0], parts[1], parts[3], parts[2] == segActions && parts[1] != "" && parts[3] != ""
 	default:
-		return "", "", false
+		return "", "", "", false
 	}
+}
+
+// isQuotasPath reports whether the request is for the OCI Quotas API.
+func isQuotasPath(urlPath string) bool {
+	return urlPath == quotasPath || strings.HasPrefix(urlPath, quotasPath+"/")
+}
+
+// routeAction answers the /{id}/actions/{action} shapes. CloudEmu serves none
+// of them; moveCompartment discloses itself rather than reading as a 404.
+func routeAction(w http.ResponseWriter, r *http.Request, collection, action string) {
+	if collection == segCompartments && action == actionMoveCompartment {
+		ocirest.WriteDriverError(w, r, notEmulated("MoveCompartment",
+			"CloudEmu never reparents a compartment; create it under the parent it belongs to"))
+
+		return
+	}
+
+	ocirest.WriteError(w, r, http.StatusNotFound, "NotFound", "unknown identity action: "+action)
+}
+
+// notEmulated reports an OCI operation this emulator deliberately does not
+// serve, the way the driver's unsupported operations report themselves.
+func notEmulated(operation, instead string) error {
+	return cerrors.Newf(cerrors.Unimplemented, "%s is not emulated: %s", operation, instead)
 }
 
 // codeInvalidParameter is OCI's error code for a bad request body or query.

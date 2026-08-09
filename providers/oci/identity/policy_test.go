@@ -317,6 +317,113 @@ func TestPolicyNeverReachesOutsideItsOwnCompartment(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// TestEvaluateDisclosesAWhereCondition pins the disclose-or-reject rule: a
+// statement whose grant is qualified by "where" must not grant the whole verb.
+func TestEvaluateDisclosesAWhereCondition(t *testing.T) {
+	m := newMock(t)
+	ctx := t.Context()
+	dev := newCompartment(t, m, tenancy, devName)
+
+	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+		CompartmentID: tenancy,
+		Name:          "conditional",
+		Statements: []string{
+			"Allow group Admins to manage buckets in compartment dev where request.permission = 'BUCKET_INSPECT'",
+		},
+	})
+	require.NoError(t, err)
+
+	ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+		Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets", CompartmentID: dev,
+	})
+	require.Error(t, err)
+	assert.False(t, ok, "a where-qualified statement must not grant the whole verb")
+	assert.Equal(t, cerrors.Unimplemented, cerrors.GetCode(err))
+	assert.Contains(t, err.Error(), keywordWhere)
+}
+
+func TestEvaluateIgnoresAWhereConditionItDoesNotReach(t *testing.T) {
+	m := newMock(t)
+	ctx := t.Context()
+	dev := newCompartment(t, m, tenancy, devName)
+
+	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+		CompartmentID: tenancy,
+		Name:          "mixed",
+		Statements: []string{
+			"Allow group Auditors to manage buckets in compartment dev where request.region = 'iad'",
+			"Allow group Admins to manage buckets in compartment dev",
+		},
+	})
+	require.NoError(t, err)
+
+	ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+		Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets", CompartmentID: dev,
+	})
+	require.NoError(t, err, "a condition on a statement that does not reach the request is not disclosed")
+	assert.True(t, ok)
+}
+
+// TestEvaluateDisclosesAnUnmodeledFamily pins the other half of the rule: a
+// family this emulator does not model is reported, not quietly denied.
+func TestEvaluateDisclosesAnUnmodeledFamily(t *testing.T) {
+	m := newMock(t)
+	ctx := t.Context()
+	dev := newCompartment(t, m, tenancy, devName)
+
+	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+		CompartmentID: tenancy,
+		Name:          "science",
+		Statements:    []string{"Allow group Admins to manage data-science-family in compartment dev"},
+	})
+	require.NoError(t, err)
+
+	ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+		Groups: []string{adminName}, Verb: verbManage, ResourceType: "data-science-models", CompartmentID: dev,
+	})
+	require.Error(t, err)
+	assert.False(t, ok, "an unmodeled family must not grant")
+	assert.Equal(t, cerrors.Unimplemented, cerrors.GetCode(err))
+	assert.Contains(t, err.Error(), "data-science-family")
+}
+
+func TestEvaluateGrantsTheBroadenedFamilies(t *testing.T) {
+	m := newMock(t)
+	ctx := t.Context()
+	dev := newCompartment(t, m, tenancy, devName)
+
+	tests := []struct {
+		family   string
+		resource string
+	}{
+		{family: "functions-family", resource: "fn-function"},
+		{family: "stream-family", resource: "streams"},
+		{family: "email-family", resource: "email-domains"},
+		{family: "compute-management-family", resource: "instance-pools"},
+		{family: "volume-family", resource: "boot-volumes"},
+		{family: "virtual-network-family", resource: "vlans"},
+	}
+
+	for i, tc := range tests {
+		t.Run(tc.family, func(t *testing.T) {
+			p, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+				CompartmentID: tenancy,
+				Name:          "fam-" + string(rune('a'+i)),
+				Statements:    []string{"Allow group Admins to manage " + tc.family + " in compartment dev"},
+			})
+			require.NoError(t, err)
+
+			defer func() { require.NoError(t, m.DeleteStatementPolicy(ctx, p.ID)) }()
+
+			ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+				Groups: []string{adminName}, Verb: verbManage, ResourceType: tc.resource, CompartmentID: dev,
+			})
+			require.NoError(t, err)
+			assert.True(t, ok)
+		})
+	}
+}
+
 func TestEvaluateRejectsUnknownVerb(t *testing.T) {
 	m, dev, _, _ := evalFixture(t)
 

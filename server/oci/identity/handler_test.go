@@ -23,9 +23,11 @@ import (
 )
 
 const (
-	tenancy   = config.DefaultTenancyOCID
-	usersPath = "/20160918/users"
-	adminName = "Admins"
+	tenancy          = config.DefaultTenancyOCID
+	usersPath        = "/20160918/users"
+	compartmentsPath = "/20160918/compartments"
+	quotasPath       = "/20181025/quotas"
+	adminName        = "Admins"
 )
 
 func newHandler(drv iamdriver.IAM) *identity.Handler {
@@ -114,6 +116,17 @@ func TestMatches(t *testing.T) {
 		{name: "root", path: "/"},
 		{name: "too many segments", path: usersPath + "/ocid1.user.oc1..aaa/groups"},
 		{name: "empty collection segment", path: "/20160918/"},
+
+		// Claimed only so they can disclose themselves rather than 404.
+		{
+			name: "move compartment action",
+			path: compartmentsPath + "/ocid1.compartment.oc1..aaa/actions/moveCompartment",
+			want: true,
+		},
+		{name: "quotas collection", path: quotasPath, want: true},
+		{name: "one quota", path: quotasPath + "/ocid1.quota.oc1..aaa", want: true},
+		{name: "not the quotas collection", path: "/20181025/limits"},
+		{name: "an action on a collection with none", path: usersPath + "/ocid1.user.oc1..aaa/actions/reset", want: true},
 	}
 
 	for _, tc := range tests {
@@ -428,6 +441,48 @@ func TestRegisteredInTheOCIServer(t *testing.T) {
 	status, _, raw = call(t, ts, http.MethodGet, "/20160918/workRequests/"+workID, "")
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, "CREATE_COMPARTMENT", decode[map[string]any](t, raw)["operationType"])
+}
+
+// TestUnservedOperationsDiscloseThemselves pins the disclose-or-reject rule on
+// the wire: an OCI operation CloudEmu does not emulate answers 501, not 404.
+func TestUnservedOperationsDiscloseThemselves(t *testing.T) {
+	ts := newServer(t)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		want   string
+	}{
+		{
+			name:   "move compartment",
+			method: http.MethodPost,
+			path:   compartmentsPath + "/ocid1.compartment.oc1..aaa/actions/moveCompartment",
+			want:   "MoveCompartment",
+		},
+		{name: "list quotas", method: http.MethodGet, path: quotasPath, want: "Quotas"},
+		{name: "create a quota", method: http.MethodPost, path: quotasPath, want: "Quotas"},
+		{name: "get a quota", method: http.MethodGet, path: quotasPath + "/ocid1.quota.oc1..aaa", want: "Quotas"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _, raw := call(t, ts, tc.method, tc.path, "")
+			require.Equal(t, http.StatusNotImplemented, status, string(raw))
+
+			body := decode[ocirest.ErrorBody](t, raw)
+			assert.Equal(t, "NotImplemented", body.Code)
+			assert.Contains(t, body.Message, tc.want)
+		})
+	}
+}
+
+func TestUnknownActionIsNotFound(t *testing.T) {
+	ts := newServer(t)
+
+	status, _, raw := call(t, ts, http.MethodPost, usersPath+"/ocid1.user.oc1..aaa/actions/reset", "")
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, "NotFound", decode[ocirest.ErrorBody](t, raw).Code)
 }
 
 func TestMalformedPathIsRejected(t *testing.T) {

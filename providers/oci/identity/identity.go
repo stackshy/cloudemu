@@ -28,6 +28,8 @@ const (
 	timeFormat      = time.RFC3339
 	lifecycleActive = "ACTIVE"
 	defaultPath     = "/"
+	// maxNameLength is the limit OCI puts on an identity resource name.
+	maxNameLength = 100
 )
 
 // OCI resource type segments, as they appear inside an OCID.
@@ -126,13 +128,38 @@ func (m *Mock) compartmentOr(id string) string {
 	return id
 }
 
+// validateName enforces OCI's identity naming rule: up to maxNameLength
+// characters of letters, digits, hyphens, underscores and periods.
+func validateName(kind, name string) error {
+	if name == "" {
+		return cerrors.Newf(cerrors.InvalidArgument, "%s name is required", kind)
+	}
+
+	if len(name) > maxNameLength {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"%s name %q is longer than %d characters", kind, name, maxNameLength)
+	}
+
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"%s name %q may contain only letters, digits, hyphens, underscores and periods", kind, name)
+		}
+	}
+
+	return nil
+}
+
 // createPrincipal records a user or group. Names are unique per store, as they
 // are per tenancy in real OCI.
 func (m *Mock) createPrincipal(
 	store *memstore.Store[*principal], kind string, spec driver.PrincipalSpec,
 ) (*driver.PrincipalInfo, error) {
-	if spec.Name == "" {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "%s name is required", kind)
+	if err := validateName(kind, spec.Name); err != nil {
+		return nil, err
 	}
 
 	if _, found := findByName(store, spec.Name); found {

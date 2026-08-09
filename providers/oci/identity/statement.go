@@ -221,22 +221,41 @@ func (s *statement) grantsSubject(req *driver.AccessRequest) bool {
 	}
 }
 
-// grantsAccess reports whether the statement's verb and resource type cover the
+// grantsAccess reports how the statement's verb and resource type cover the
 // request. The location is resolved separately, against the compartment tree.
-func (s *statement) grantsAccess(req *driver.AccessRequest) bool {
+func (s *statement) grantsAccess(req *driver.AccessRequest) coverage {
 	if s.Effect != effectAllow {
-		return false
+		return coverDenied
 	}
 
 	if !s.grantsSubject(req) {
-		return false
+		return coverDenied
 	}
 
 	if verbRank(s.Verb) < verbRank(strings.ToLower(req.Verb)) {
-		return false
+		return coverDenied
 	}
 
 	return coversResourceType(s.ResourceType, strings.ToLower(req.ResourceType))
+}
+
+// unresolved reports why a statement that otherwise applies is not applied: an
+// unmodeled resource family, or a "where" condition this emulator does not
+// evaluate. Disclosing beats granting more than the author wrote.
+func (s *statement) unresolved(cover coverage) error {
+	if cover == coverUnknownFamily {
+		return cerrors.Newf(cerrors.Unimplemented,
+			"policy statement %q names resource family %q, which this emulator does not model",
+			s.Text, s.ResourceType)
+	}
+
+	if s.Condition != "" {
+		return cerrors.Newf(cerrors.Unimplemented,
+			"policy statement %q carries a %q condition, which this emulator does not evaluate",
+			s.Text, keywordWhere)
+	}
+
+	return nil
 }
 
 // verbRank orders the policy verbs; an unknown verb ranks lowest.
@@ -255,32 +274,75 @@ func verbRank(verb string) int {
 	}
 }
 
-// resourceFamilies maps an OCI resource family onto the types it covers.
+// resourceFamilies maps an OCI resource family onto the types it covers. OCI
+// keeps adding families, so this is the modeled set, not the whole of it; a
+// family absent here is disclosed by unresolved rather than denied.
 func resourceFamilies() map[string][]string {
 	return map[string][]string{
-		"object-family":          {"buckets", "objects", "object-versions"},
-		"instance-family":        {"instances", "instance-images", "console-histories"},
-		"virtual-network-family": {"vcns", "subnets", "route-tables", "security-lists", "internet-gateways", "nat-gateways"},
-		"database-family":        {"db-systems", "db-homes", "databases", "autonomous-databases"},
-		"file-family":            {"file-systems", "mount-targets", "export-sets"},
-		"cluster-family":         {"clusters", "cluster-node-pools"},
-		"volume-family":          {"volumes", "volume-attachments", "volume-backups"},
+		"object-family": {"buckets", "objects", "object-versions"},
+		"instance-family": {
+			"instances", "instance-images", "console-histories", "instance-console-connections",
+			"vnic-attachments", "volume-attachments", "dedicated-vm-hosts",
+			"compute-capacity-reservations", "app-catalog-listings",
+		},
+		"compute-management-family": {"instance-configurations", "instance-pools", "cluster-networks"},
+		"virtual-network-family": {
+			"vcns", "subnets", "route-tables", "security-lists", "network-security-groups", "dhcp-options",
+			"internet-gateways", "nat-gateways", "service-gateways", "local-peering-gateways",
+			"remote-peering-connections", "private-ips", "public-ips", "drgs", "drg-attachments",
+			"cpes", "ipsec-connections", "vnics", "vlans",
+		},
+		"database-family": {
+			"db-systems", "db-nodes", "db-homes", "databases", "backups", "autonomous-databases",
+			"autonomous-container-databases", "autonomous-backups", "autonomous-database-backups",
+		},
+		"file-family":    {"file-systems", "mount-targets", "export-sets"},
+		"cluster-family": {"clusters", "cluster-node-pools", "cluster-work-requests"},
+		"volume-family": {
+			"volumes", "volume-attachments", "volume-backups", "volume-groups", "volume-group-backups",
+			"volume-backup-policies", "boot-volumes", "boot-volume-backups",
+		},
+		"functions-family": {"fn-app", "fn-function", "fn-invocation"},
+		"stream-family":    {"streams", "stream-pull", "stream-push"},
+		"email-family":     {"approved-senders", "suppressions", "email-domains", "dkims"},
 	}
 }
 
+// coverage is how a statement's resource type relates to the requested one.
+type coverage int
+
+const (
+	coverDenied coverage = iota
+	coverGranted
+	coverUnknownFamily
+)
+
+// familySuffix ends every OCI aggregate resource type.
+const familySuffix = "-family"
+
 // coversResourceType reports whether a statement's resource type covers want.
-func coversResourceType(stmtType, want string) bool {
+// An unmodeled family is undecidable, not a deny.
+func coversResourceType(stmtType, want string) coverage {
 	if stmtType == allResources || stmtType == want {
-		return true
+		return coverGranted
 	}
 
-	for _, member := range resourceFamilies()[stmtType] {
+	members, known := resourceFamilies()[stmtType]
+	if !known {
+		if strings.HasSuffix(stmtType, familySuffix) {
+			return coverUnknownFamily
+		}
+
+		return coverDenied
+	}
+
+	for _, member := range members {
 		if member == want {
-			return true
+			return coverGranted
 		}
 	}
 
-	return false
+	return coverDenied
 }
 
 // indexFold returns the index of the first token equal to keyword, ignoring case.

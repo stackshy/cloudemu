@@ -155,6 +155,8 @@ type StatementPolicies interface {
 	UpdateStatementPolicy(ctx context.Context, id string, upd PolicyUpdate) (*StatementPolicyInfo, error)
 	DeleteStatementPolicy(ctx context.Context, id string) error
 	// Evaluate reports whether any statement grants the request. OCI policies
-	// are allow-only, so there is nothing for a deny to override.
+	// are allow-only, so there is nothing for a deny to override. A statement
+	// the implementation cannot resolve returns Unimplemented rather than a
+	// grant, so a restriction is never silently dropped.
 	Evaluate(ctx context.Context, req *AccessRequest) (bool, error)
 }

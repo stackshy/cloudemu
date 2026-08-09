@@ -49,8 +49,8 @@ func (m *Mock) CreateStatementPolicy(_ context.Context, spec *driver.PolicySpec)
 
 // createPolicy creates a policy from its statements. Callers hold m.mu.
 func (m *Mock) createPolicy(spec *driver.PolicySpec) (*driver.StatementPolicyInfo, error) {
-	if spec.Name == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "policy name is required")
+	if err := validateName(kindPolicy, spec.Name); err != nil {
+		return nil, err
 	}
 
 	parsed, err := parseStatements(spec.Statements)
@@ -176,7 +176,8 @@ func (m *Mock) deletePolicy(id string) error {
 }
 
 // Evaluate reports whether any statement grants the request. OCI policies only
-// ever allow, so the first match settles it.
+// ever allow, so the first match settles it. A statement this emulator cannot
+// resolve is reported as Unimplemented rather than granted.
 func (m *Mock) Evaluate(_ context.Context, req *driver.AccessRequest) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -193,20 +194,42 @@ func (m *Mock) evaluate(req *driver.AccessRequest) (bool, error) {
 
 	target := m.compartmentOr(req.CompartmentID)
 
+	var undisclosed error
+
 	for _, p := range m.policies.SortedValues() {
 		for i := range p.parsed {
-			if !p.parsed[i].grantsAccess(req) {
-				continue
+			granted, err := m.applies(p, &p.parsed[i], req, target)
+			if granted {
+				return true, nil
 			}
 
-			granted, ok := m.resolveLocation(p, &p.parsed[i])
-			if ok && m.covers(granted, target) {
-				return true, nil
+			if err != nil && undisclosed == nil {
+				undisclosed = err
 			}
 		}
 	}
 
-	return false, nil
+	return false, undisclosed
+}
+
+// applies reports whether one statement grants the request in target, or the
+// error disclosing why it reaches the request but cannot be resolved.
+func (m *Mock) applies(p *policy, st *statement, req *driver.AccessRequest, target string) (bool, error) {
+	cover := st.grantsAccess(req)
+	if cover == coverDenied {
+		return false, nil
+	}
+
+	granted, ok := m.resolveLocation(p, st)
+	if !ok || !m.covers(granted, target) {
+		return false, nil
+	}
+
+	if err := st.unresolved(cover); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // resolveLocation turns a statement's location into the compartment whose

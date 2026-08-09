@@ -34,8 +34,8 @@ func (m *Mock) CreateCompartment(_ context.Context, spec driver.CompartmentSpec)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if spec.Name == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "compartment name is required")
+	if err := validateName(kindCompartment, spec.Name); err != nil {
+		return nil, err
 	}
 
 	parentID := m.compartmentOr(spec.ParentID)
@@ -116,6 +116,10 @@ func (m *Mock) UpdateCompartment(
 	}
 
 	if upd.Name != "" && upd.Name != c.Name {
+		if err := validateName(kindCompartment, upd.Name); err != nil {
+			return nil, err
+		}
+
 		if _, found := m.childNamed(c.Scope.Compartment, upd.Name); found {
 			return nil, cerrors.Newf(cerrors.AlreadyExists,
 				"compartment %q already exists in %q", upd.Name, c.Scope.Compartment)
@@ -177,7 +181,8 @@ func (m *Mock) occupantOf(id string) string {
 	return m.principalOccupant(filter)
 }
 
-// principalOccupant names the first user or group still in the compartment.
+// principalOccupant names the first user, group or dynamic group still in the
+// compartment.
 func (m *Mock) principalOccupant(filter scope.Scope) string {
 	for _, p := range m.users.SortedValues() {
 		if p.Scope.Matches(filter) {
@@ -188,6 +193,12 @@ func (m *Mock) principalOccupant(filter scope.Scope) string {
 	for _, p := range m.groups.SortedValues() {
 		if p.Scope.Matches(filter) {
 			return "group " + p.Name
+		}
+	}
+
+	for _, dg := range m.dynamicGroups.SortedValues() {
+		if dg.Scope.Matches(filter) {
+			return "dynamic group " + dg.Name
 		}
 	}
 

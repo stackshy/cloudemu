@@ -204,8 +204,8 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if cfg.Name == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "dynamic group name is required")
+	if err := validateName("dynamic group", cfg.Name); err != nil {
+		return nil, err
 	}
 
 	if _, found := m.dynamicGroupNamed(cfg.Name); found {

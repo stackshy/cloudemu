@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +9,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/iam/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func TestCompartmentCRUD(t *testing.T) {
@@ -114,6 +116,81 @@ func TestCompartmentErrors(t *testing.T) {
 			assert.Equal(t, tc.code, cerrors.GetCode(tc.call()))
 		})
 	}
+}
+
+// TestIdentityNamesFollowOCIConstraints pins the naming rule real OCI applies
+// to compartments, users and groups.
+func TestIdentityNamesFollowOCIConstraints(t *testing.T) {
+	ctx := t.Context()
+	tooLong := strings.Repeat("a", maxNameLength+1)
+
+	tests := []struct {
+		name string
+		call func(m *Mock, name string) error
+	}{
+		{
+			name: "compartment",
+			call: func(m *Mock, name string) error {
+				_, err := m.CreateCompartment(ctx, driver.CompartmentSpec{ParentID: tenancy, Name: name})
+				return err
+			},
+		},
+		{
+			name: "compartment rename",
+			call: func(m *Mock, name string) error {
+				id := newCompartment(t, m, tenancy, "keep")
+				_, err := m.UpdateCompartment(ctx, id, driver.IdentityUpdate{Name: name})
+
+				return err
+			},
+		},
+		{
+			name: "user",
+			call: func(m *Mock, name string) error {
+				_, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: name})
+				return err
+			},
+		},
+		{
+			name: "group",
+			call: func(m *Mock, name string) error {
+				_, err := m.CreateOCIGroup(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: name})
+				return err
+			},
+		},
+		{
+			name: "dynamic group",
+			call: func(m *Mock, name string) error {
+				_, err := m.CreateRole(ctx, driver.RoleConfig{Name: name})
+				return err
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, bad := range []string{"has a space", tooLong, "slash/name"} {
+				assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(tc.call(newMock(t), bad)), bad)
+			}
+
+			require.NoError(t, tc.call(newMock(t), "dev.team_1-a"))
+		})
+	}
+}
+
+func TestDeleteCompartmentSeesADynamicGroup(t *testing.T) {
+	m := newMock(t)
+	dev := newCompartment(t, m, tenancy, devName)
+
+	// CreateRole always lands in the configured compartment, so place one in
+	// dev directly; the emptiness check must still see it.
+	m.dynamicGroups.Set("dg", &dynamicGroup{
+		ID: "dg", Name: "fleet", Scope: scope.Scope{Compartment: dev},
+	})
+
+	err := m.DeleteCompartment(t.Context(), dev)
+	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+	assert.Contains(t, err.Error(), "dynamic group fleet")
 }
 
 func TestSameNameAllowedInDifferentParents(t *testing.T) {

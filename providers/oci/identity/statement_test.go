@@ -124,19 +124,19 @@ func TestStatementGrantsAccess(t *testing.T) {
 		name string
 		text string
 		req  driver.AccessRequest
-		want bool
+		want coverage
 	}{
 		{
 			name: "exact match",
 			text: "Allow group Admins to manage buckets in tenancy",
 			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
-			want: true,
+			want: coverGranted,
 		},
 		{
 			name: "stronger verb covers weaker",
 			text: "Allow group Admins to manage buckets in tenancy",
 			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbRead, ResourceType: "buckets"},
-			want: true,
+			want: coverGranted,
 		},
 		{
 			name: "weaker verb does not cover stronger",
@@ -147,13 +147,13 @@ func TestStatementGrantsAccess(t *testing.T) {
 			name: "all-resources covers any type",
 			text: "Allow group Admins to manage all-resources in tenancy",
 			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbUse, ResourceType: "vcns"},
-			want: true,
+			want: coverGranted,
 		},
 		{
 			name: "family covers its members",
 			text: "Allow group Admins to manage object-family in tenancy",
 			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
-			want: true,
+			want: coverGranted,
 		},
 		{
 			name: "family does not cover another family's members",
@@ -161,10 +161,32 @@ func TestStatementGrantsAccess(t *testing.T) {
 			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "instances"},
 		},
 		{
+			name: "a family beyond the original seven covers its members",
+			text: "Allow group Admins to manage functions-family in tenancy",
+			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "fn-function"},
+			want: coverGranted,
+		},
+		{
+			name: "an unmodeled family is undecided, not denied",
+			text: "Allow group Admins to manage data-science-family in tenancy",
+			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "data-science-models"},
+			want: coverUnknownFamily,
+		},
+		{
+			name: "an unmodeled family still denies another subject",
+			text: "Allow group Admins to manage data-science-family in tenancy",
+			req:  driver.AccessRequest{Groups: []string{"Auditors"}, Verb: verbManage, ResourceType: "buckets"},
+		},
+		{
+			name: "a resource type that is not a family denies",
+			text: "Allow group Admins to manage widgets in tenancy",
+			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
+		},
+		{
 			name: "group name matching is case-insensitive",
 			text: "Allow group admins to manage buckets in tenancy",
 			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
-			want: true,
+			want: coverGranted,
 		},
 		{
 			name: "another group does not match",
@@ -175,7 +197,7 @@ func TestStatementGrantsAccess(t *testing.T) {
 			name: "any-user grants an authenticated user",
 			text: "Allow any-user to inspect buckets in tenancy",
 			req:  driver.AccessRequest{AnyUser: true, Verb: verbInspect, ResourceType: "buckets"},
-			want: true,
+			want: coverGranted,
 		},
 		{
 			name: "dynamic group subject needs a dynamic group",
@@ -188,7 +210,7 @@ func TestStatementGrantsAccess(t *testing.T) {
 			req: driver.AccessRequest{
 				DynamicGroups: []string{"fleet"}, Verb: verbManage, ResourceType: "instances",
 			},
-			want: true,
+			want: coverGranted,
 		},
 		{
 			name: "service subject never matches a user",
