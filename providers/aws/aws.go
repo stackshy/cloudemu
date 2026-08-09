@@ -30,6 +30,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
+	"github.com/stackshy/cloudemu/v2/providers/aws/opensearch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
 	"github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/providers/aws/route53"
@@ -158,6 +159,7 @@ type Provider struct {
 	EFS                 *efs.Mock
 	Kinesis             *kinesis.Mock
 	SESV2               *sesv2.Mock
+	OpenSearch          *opensearch.Mock
 	VPCLattice          *vpclattice.Mock
 	WAFv2               *wafv2.Mock
 	Route53Resolver     *route53resolver.Mock
@@ -204,6 +206,7 @@ func New(opts ...config.Option) *Provider {
 		EFS:                 efs.New(o),
 		Kinesis:             kinesis.New(o),
 		SESV2:               sesv2.New(o),
+		OpenSearch:          opensearch.New(o),
 		VPCLattice:          vpclattice.New(o),
 		WAFv2:               wafv2.New(o),
 		Route53Resolver:     route53resolver.New(o),

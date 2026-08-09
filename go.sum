@@ -196,6 +196,8 @@ github.com/aws/aws-sdk-go-v2/service/neptune v1.44.5 h1:v+XVk5OQnhm6EasbClY036A1
 github.com/aws/aws-sdk-go-v2/service/neptune v1.44.5/go.mod h1:Y/yH7q6R/qaO4g6YTBbAMSu5T4NjVo+7+P1UNZ2NlzA=
 github.com/aws/aws-sdk-go-v2/service/networkfirewall v1.66.0 h1:VrfvjFVgN2ZJZUvMBsW0YGW7hN3zsqdVYy/wpko9hkQ=
 github.com/aws/aws-sdk-go-v2/service/networkfirewall v1.66.0/go.mod h1:tR82E7iVkRt7zwjxj39m/TNt161xEH/pWuJFXtRhI0I=
+github.com/aws/aws-sdk-go-v2/service/opensearch v1.75.4 h1:GOgYS22J8EuN+fz6o0k8PXMvCgKLRQxH+wguJiZ5IjE=
+github.com/aws/aws-sdk-go-v2/service/opensearch v1.75.4/go.mod h1:oN8pHlTXmNJvkRz3Pyc8TTkKMUnkdHRWOGJhoI09ro4=
 github.com/aws/aws-sdk-go-v2/service/rds v1.118.2 h1:pkEeQneYFpTAnGhyqSbyp/DlCPPJTGt0GkWahlLYzMA=
 github.com/aws/aws-sdk-go-v2/service/rds v1.118.2/go.mod h1:7gS+cGrKF0mH253QHFlStmx79ws+DlNk+04ZRfmw3U0=
 github.com/aws/aws-sdk-go-v2/service/redshift v1.62.7 h1:6NCQBp9IIEs51YI9/jT5/ckSd6Ka9956gAGlw0a0yFI=
