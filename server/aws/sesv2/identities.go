@@ -21,7 +21,7 @@ func (h *Handler) serveIdentities(w http.ResponseWriter, r *http.Request, rest [
 	case 1:
 		h.serveIdentityByName(w, r, rest[0])
 	default:
-		h.serveIdentitySub(w, r, rest[0], rest[1])
+		h.serveIdentitySub(w, r, rest[0], rest[1:])
 	}
 }
 
@@ -36,21 +36,145 @@ func (h *Handler) serveIdentityByName(w http.ResponseWriter, r *http.Request, na
 	}
 }
 
-func (h *Handler) serveIdentitySub(w http.ResponseWriter, r *http.Request, name, sub string) {
-	if r.Method != http.MethodPut {
-		methodNotAllowed(w)
+func (h *Handler) serveIdentitySub(w http.ResponseWriter, r *http.Request, name string, sub []string) {
+	if sub[0] == "policies" {
+		h.serveIdentityPolicies(w, r, name, sub[1:])
 
 		return
 	}
 
-	switch sub {
-	case "dkim":
+	if sub[0] == segDkim && len(sub) == twoSegments && sub[1] == "signing" {
+		if r.Method != http.MethodPut {
+			methodNotAllowed(w)
+
+			return
+		}
+
+		h.putIdentityDkimSigning(w, r, name)
+
+		return
+	}
+
+	if len(sub) != 1 || r.Method != http.MethodPut {
+		notFound(w, r.URL.Path)
+
+		return
+	}
+
+	h.putIdentityAttribute(w, r, name, sub[0])
+}
+
+func (h *Handler) putIdentityAttribute(w http.ResponseWriter, r *http.Request, name, attr string) {
+	switch attr {
+	case segDkim:
 		h.putIdentityDkim(w, r, name)
 	case "mail-from":
 		h.putIdentityMailFrom(w, r, name)
+	case "configuration-set":
+		h.putIdentityConfigSet(w, r, name)
+	case "feedback":
+		h.putIdentityFeedback(w, r, name)
 	default:
 		notFound(w, r.URL.Path)
 	}
+}
+
+func (h *Handler) serveIdentityPolicies(w http.ResponseWriter, r *http.Request, name string, rest []string) {
+	switch len(rest) {
+	case 0:
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+
+			return
+		}
+
+		h.getIdentityPolicies(w, r, name)
+	case 1:
+		switch r.Method {
+		case http.MethodPost:
+			h.createIdentityPolicy(w, r, name, rest[0])
+		case http.MethodPut:
+			h.updateIdentityPolicy(w, r, name, rest[0])
+		case http.MethodDelete:
+			h.deleteIdentityPolicy(w, r, name, rest[0])
+		default:
+			methodNotAllowed(w)
+		}
+	default:
+		notFound(w, r.URL.Path)
+	}
+}
+
+func (h *Handler) createIdentityPolicy(w http.ResponseWriter, r *http.Request, name, policyName string) {
+	var req identityPolicyRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	writeOK(w, h.ses.CreateEmailIdentityPolicy(r.Context(), name, policyName, req.Policy))
+}
+
+func (h *Handler) updateIdentityPolicy(w http.ResponseWriter, r *http.Request, name, policyName string) {
+	var req identityPolicyRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	writeOK(w, h.ses.UpdateEmailIdentityPolicy(r.Context(), name, policyName, req.Policy))
+}
+
+func (h *Handler) deleteIdentityPolicy(w http.ResponseWriter, r *http.Request, name, policyName string) {
+	writeOK(w, h.ses.DeleteEmailIdentityPolicy(r.Context(), name, policyName))
+}
+
+func (h *Handler) getIdentityPolicies(w http.ResponseWriter, r *http.Request, name string) {
+	policies, err := h.ses.GetEmailIdentityPolicies(r.Context(), name)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	writeJSON(w, getIdentityPoliciesResponse{Policies: policies})
+}
+
+func (h *Handler) putIdentityDkimSigning(w http.ResponseWriter, r *http.Request, name string) {
+	var req putDkimSigningRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	origin := ""
+	if req.SigningAttributesOrigin != "" {
+		origin = req.SigningAttributesOrigin
+	}
+
+	tokens, err := h.ses.PutEmailIdentityDkimSigningAttributes(r.Context(), name, origin)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	writeJSON(w, putDkimSigningResponse{DkimStatus: "SUCCESS", DkimTokens: tokens})
+}
+
+func (h *Handler) putIdentityConfigSet(w http.ResponseWriter, r *http.Request, name string) {
+	var req putIdentityConfigSetRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	writeOK(w, h.ses.PutEmailIdentityConfigurationSetAttributes(r.Context(), name, req.ConfigurationSetName))
+}
+
+func (h *Handler) putIdentityFeedback(w http.ResponseWriter, r *http.Request, name string) {
+	var req putIdentityFeedbackRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	writeOK(w, h.ses.PutEmailIdentityFeedbackAttributes(r.Context(), name, req.EmailForwardingEnabled))
 }
 
 func (h *Handler) createIdentity(w http.ResponseWriter, r *http.Request) {

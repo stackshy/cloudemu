@@ -28,8 +28,31 @@ func (h *Handler) serveConfigSets(w http.ResponseWriter, r *http.Request, rest [
 			methodNotAllowed(w)
 		}
 	default:
-		notFound(w, r.URL.Path)
+		h.serveConfigSetSub(w, r, rest[0], rest[1:])
 	}
+}
+
+// serveConfigSetSub routes /configuration-sets/{name}/{sub...}.
+func (h *Handler) serveConfigSetSub(w http.ResponseWriter, r *http.Request, name string, sub []string) {
+	if sub[0] == "event-destinations" {
+		h.serveEventDestinations(w, r, name, sub[1:])
+
+		return
+	}
+
+	if len(sub) != 1 {
+		notFound(w, r.URL.Path)
+
+		return
+	}
+
+	if r.Method != http.MethodPut {
+		methodNotAllowed(w)
+
+		return
+	}
+
+	h.putConfigSetOption(w, r, name, sub[0])
 }
 
 func (h *Handler) createConfigSet(w http.ResponseWriter, r *http.Request) {

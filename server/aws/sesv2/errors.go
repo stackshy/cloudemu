@@ -78,6 +78,17 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+// writeOK writes an empty success body, or the mapped error if err is non-nil.
+func writeOK(w http.ResponseWriter, err error) {
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	writeJSON(w, struct{}{})
+}
+
 // writeJSON writes a 200 restJson1 success body.
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", contentTypeJSON)
