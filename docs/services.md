@@ -37,6 +37,7 @@ This document lists every service and operation available in CloudEmu across all
 | 24 | Container Orchestration | `ecs` | — | — |
 | 25 | DNS Resolver | `route53resolver` | — | — |
 | 26 | Application Networking | `vpclattice` | — | — |
+| 27 | Key Management | `kms` | — | — |
 
 ---
 
@@ -2362,6 +2363,55 @@ stored but not used to route real traffic.
 
 ---
 
+## 27. Key Management (KMS)
+
+**Driver interface:** `services/kms/driver/`
+**AWS:** KMS (AWS JSON 1.1, `X-Amz-Target: TrentService.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/kms` clients (and the `aws kms` CLI) work
+against the SDK-compat server (`awsserver.Drivers{KMS: cloud.KMS}`). Full parity
+across the key lifecycle, aliases, tags, key policies, grants, rotation,
+cryptography, imported key material, and multi-region keys.
+
+**Cryptography is real, not stubbed.** Symmetric keys use AES-256-GCM with a
+self-describing ciphertext blob (so `Decrypt` needs no key id) and bind the
+encryption context as AEAD additional data; RSA keys use RSA-OAEP-SHA-256.
+Sign/Verify use RSA (PSS/PKCS1) and ECDSA over the real key material; MAC uses
+HMAC. GenerateDataKey/DataKeyPair return usable key material encrypted under the
+KMS key, and ImportKeyMaterial unwraps RSAES-OAEP/PKCS1-wrapped material and
+installs it as the AES key.
+
+| Family | Operations |
+|--------|-----------|
+| Key lifecycle | CreateKey, DescribeKey, ListKeys, EnableKey, DisableKey, UpdateKeyDescription, ScheduleKeyDeletion, CancelKeyDeletion |
+| Aliases | CreateAlias, UpdateAlias, DeleteAlias, ListAliases |
+| Tags | TagResource, UntagResource, ListResourceTags |
+| Key policies | GetKeyPolicy, PutKeyPolicy, ListKeyPolicies |
+| Grants | CreateGrant, ListGrants, RevokeGrant, RetireGrant, ListRetirableGrants |
+| Rotation | EnableKeyRotation, DisableKeyRotation, GetKeyRotationStatus, ListKeyRotations, RotateKeyOnDemand |
+| Cryptography | Encrypt, Decrypt, ReEncrypt, GenerateDataKey(+WithoutPlaintext), GenerateDataKeyPair(+WithoutPlaintext), GenerateRandom, Sign, Verify, GenerateMac, VerifyMac |
+| Imported material | GetParametersForImport, ImportKeyMaterial, DeleteImportedKeyMaterial |
+| Multi-region | ReplicateKey, UpdatePrimaryRegion |
+
+Key references (ID, key ARN, `alias/<name>`, or alias ARN) resolve uniformly on
+every operation.
+
+*Grants are record-only:* CreateGrant/ListGrants/Revoke/Retire manage grant
+records, but the emulator carries no caller principal on the wire, so a grant's
+operation list and encryption-context constraints are **not** enforced against
+crypto calls (there is no principal to evaluate them for). Grant management
+round-trips faithfully; request-time authorization is out of scope.
+
+*Out of scope:* Custom Key Stores / CloudHSM / external (XKS) key stores — these
+are backed by real HSM hardware or third-party stores that can't be emulated
+meaningfully. Multi-region replicas are modeled within a single process, so
+cross-region replica lookup isn't observable; `ReplicateKey`/`UpdatePrimaryRegion`
+return wire-complete metadata but there is no second regional endpoint to query.
+
+**Total: 45 operations.**
+
+---
+
 ## Provider-specific resources
 
 Resources below are served for one provider only, because the concept exists in
@@ -2476,7 +2526,8 @@ still sees success.
 | Container Orchestration — AWS ECS | 37 |
 | DNS Resolver — AWS Route 53 Resolver | 72 |
 | Application Networking — AWS VPC Lattice | 73 |
-| **Grand Total** | **1707** (+138 optional) |
+| Key Management — AWS KMS | 45 |
+| **Grand Total** | **1752** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

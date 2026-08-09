@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
+	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
 	networkfirewallsrv "github.com/stackshy/cloudemu/v2/server/aws/networkfirewall"
@@ -54,6 +55,7 @@ import (
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
+	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
@@ -108,6 +110,8 @@ type Drivers struct {
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
+	// KMS serves the KMS JSON 1.1 protocol against the kms driver.
+	KMS kmsdriver.KMS
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -182,6 +186,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		VPCLattice:          p.VPCLattice,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
+		KMS:                 p.KMS,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -278,6 +283,12 @@ func New(d Drivers) *server.Server {
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, and the tagging API.
 	if d.SecretsManager != nil {
 		srv.Register(secretsmanagersrv.New(d.SecretsManager))
+	}
+
+	// KMS matches the X-Amz-Target prefix "TrentService." — disjoint from
+	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
+	if d.KMS != nil {
+		srv.Register(kmssrv.New(d.KMS))
 	}
 
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
