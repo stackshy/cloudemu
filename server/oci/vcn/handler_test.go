@@ -123,6 +123,21 @@ func (f *fixture) newSubnet(vcnID string) string {
 	return id
 }
 
+// primaryPrivateIP returns the OCID of the private IP a VNIC was created with.
+func (f *fixture) primaryPrivateIP(vnicID string) string {
+	f.t.Helper()
+
+	w := f.do(http.MethodGet, "/20160918/privateIps?vnicId="+vnicID, nil)
+	require.Equal(f.t, http.StatusOK, w.Code, w.Body.String())
+
+	ips := decodeList(f.t, w)
+	require.NotEmpty(f.t, ips)
+
+	id, _ := ips[0]["id"].(string)
+
+	return id
+}
+
 func TestMatches(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -718,6 +733,69 @@ func TestVNICAndIPOperations(t *testing.T) {
 
 		released := f.do(http.MethodDelete, "/20160918/publicIps/"+id, nil)
 		assert.Equal(t, http.StatusNoContent, released.Code)
+	})
+}
+
+// TestPublicIPRollsBackOnFailedAssign covers the two paths that mutate before
+// AssociateAddress can refuse: a reassign detaches first, a create allocates
+// first. Neither may leave the address stranded when the target is taken.
+func TestPublicIPRollsBackOnFailedAssign(t *testing.T) {
+	f := newFixture(t)
+	subnetID := f.newSubnet(f.newVCN())
+
+	// Two VNICs, so their primary private IPs give an occupied target and a
+	// separate address to move around.
+	firstVNIC, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "first", nil)
+	require.NoError(t, err)
+
+	secondVNIC, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "second", nil)
+	require.NoError(t, err)
+
+	first := f.primaryPrivateIP(firstVNIC.ID)
+	second := f.primaryPrivateIP(secondVNIC.ID)
+
+	occupier := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+		"compartmentId": compartment,
+		"displayName":   "occupier",
+		"lifetime":      "RESERVED",
+		"privateIpId":   second,
+	})
+	require.Equal(t, http.StatusOK, occupier.Code, occupier.Body.String())
+
+	t.Run("a rejected reassign keeps the original binding", func(t *testing.T) {
+		created := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+			"compartmentId": compartment,
+			"displayName":   "mover",
+			"lifetime":      "RESERVED",
+			"privateIpId":   first,
+		})
+		require.Equal(t, http.StatusOK, created.Code, created.Body.String())
+
+		id, _ := decode(t, created)["id"].(string)
+
+		moved := f.do(http.MethodPut, "/20160918/publicIps/"+id, map[string]any{"privateIpId": second})
+		require.Equal(t, http.StatusConflict, moved.Code, "the target already holds a public IP")
+
+		got := f.do(http.MethodGet, "/20160918/publicIps/"+id, nil)
+		require.Equal(t, http.StatusOK, got.Code)
+		assert.Equal(t, first, decode(t, got)["privateIpId"],
+			"a rejected move must not leave the address detached")
+	})
+
+	t.Run("a rejected create releases the allocated address", func(t *testing.T) {
+		listed := "/20160918/publicIps?compartmentId=" + compartment
+		before := decodeList(t, f.do(http.MethodGet, listed, nil))
+
+		created := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+			"compartmentId": compartment,
+			"displayName":   "doomed",
+			"lifetime":      "RESERVED",
+			"privateIpId":   second,
+		})
+		require.Equal(t, http.StatusConflict, created.Code, "the target already holds a public IP")
+
+		after := decodeList(t, f.do(http.MethodGet, listed, nil))
+		assert.Len(t, after, len(before), "a rejected create must not leave an orphan address")
 	})
 }
 

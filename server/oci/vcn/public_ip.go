@@ -51,9 +51,15 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request) {
 
 	h.place(info.AllocationID, req.CompartmentID)
 
+	// OCI assigns at create; the portable driver splits allocate from
+	// associate, so an associate that fails has to release the address the
+	// first half already allocated.
 	if req.PrivateIPID != "" {
 		if _, err := h.net.AssociateAddress(r.Context(), info.AllocationID, req.PrivateIPID); err != nil {
+			_ = h.net.ReleaseAddress(r.Context(), info.AllocationID)
+
 			ocirest.WriteDriverError(w, r, err)
+
 			return
 		}
 
@@ -138,13 +144,19 @@ func (h *Handler) updatePublicIP(w http.ResponseWriter, r *http.Request, id stri
 
 // reassign moves a public IP onto the named private IP, detaching first when
 // it is already assigned elsewhere.
+//
+// AssociateAddress refuses a private IP that already holds one, so the detach
+// has to be undone when the move fails — otherwise a rejected reassign leaves
+// the address bound to nothing.
 func (h *Handler) reassign(ctx context.Context, info *netdriver.ElasticIP, privateIPID string) error {
 	if info.AssociationID == privateIPID {
 		return nil
 	}
 
-	if info.AssociationID != "" {
-		if err := h.net.DisassociateAddress(ctx, info.AssociationID); err != nil {
+	previous := info.AssociationID
+
+	if previous != "" {
+		if err := h.net.DisassociateAddress(ctx, previous); err != nil {
 			return err
 		}
 	}
@@ -153,9 +165,17 @@ func (h *Handler) reassign(ctx context.Context, info *netdriver.ElasticIP, priva
 		return nil
 	}
 
-	_, err := h.net.AssociateAddress(ctx, info.AllocationID, privateIPID)
+	if _, err := h.net.AssociateAddress(ctx, info.AllocationID, privateIPID); err != nil {
+		if previous != "" {
+			// The original target was free a moment ago, so this restores the
+			// binding; nothing better is available if it does not.
+			_, _ = h.net.AssociateAddress(ctx, info.AllocationID, previous)
+		}
 
-	return err
+		return err
+	}
+
+	return nil
 }
 
 func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, id string) {
