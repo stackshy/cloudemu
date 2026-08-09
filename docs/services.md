@@ -42,6 +42,7 @@ This document lists every service and operation available in CloudEmu across all
 | 29 | Certificate Manager | `acm` | — | — |
 | 30 | Email Service | `sesv2` | — | — |
 | 31 | Web Application Firewall | `wafv2` | — | — |
+| 32 | Data Streams | `kinesis` | — | — |
 
 ---
 
@@ -2488,6 +2489,48 @@ validated public certificate.
 
 **Total: 17 operations.**
 
+## 32. Data Streams (Kinesis)
+
+**Driver interface:** `services/kinesis/driver/`
+**AWS:** Kinesis Data Streams (AWS JSON 1.1, `X-Amz-Target: Kinesis_20131202.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/kinesis` clients (and the `aws kinesis`
+CLI) work against the SDK-compat server (`awsserver.Drivers{Kinesis: cloud.Kinesis}`).
+Full parity across the stream lifecycle, records, resharding, enhanced fan-out
+consumers, encryption, tags, and resource policies.
+
+**Records behave like real Kinesis.** Each stream is partitioned into shards
+that own a 128-bit MD5 hash-key range; `PutRecord`/`PutRecords` route a record to
+the open shard covering `MD5(partitionKey)` (or an explicit hash key) and assign
+a per-stream monotonic sequence number. `GetShardIterator` returns an opaque
+iterator honoring `TRIM_HORIZON`, `LATEST`, `AT`/`AFTER_SEQUENCE_NUMBER`, and
+`AT_TIMESTAMP`; `GetRecords` advances it and, at the end of a closed shard,
+returns the child shards. `SplitShard`/`MergeShards`/`UpdateShardCount` close
+parents and create children with correct hash-key ranges and parent links, so
+records already written stay readable.
+
+| Family | Operations |
+|--------|-----------|
+| Stream lifecycle | CreateStream, DeleteStream, DescribeStream, DescribeStreamSummary, ListStreams |
+| Configuration | IncreaseStreamRetentionPeriod, DecreaseStreamRetentionPeriod, UpdateStreamMode, StartStreamEncryption, StopStreamEncryption, UpdateMaxRecordSize, UpdateStreamWarmThroughput |
+| Resharding | UpdateShardCount, MergeShards, SplitShard, ListShards |
+| Records | PutRecord, PutRecords, GetShardIterator, GetRecords |
+| Consumers (enhanced fan-out) | RegisterStreamConsumer, DeregisterStreamConsumer, DescribeStreamConsumer, ListStreamConsumers, SubscribeToShard |
+| Monitoring | EnableEnhancedMonitoring, DisableEnhancedMonitoring |
+| Tags | AddTagsToStream, RemoveTagsFromStream, ListTagsForStream, TagResource, UntagResource, ListTagsForResource |
+| Resource policy | PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy |
+| Account & limits | DescribeLimits, DescribeAccountSettings, UpdateAccountSettings |
+
+Streams are addressed by name or ARN. `SubscribeToShard` (enhanced fan-out)
+streams records to a registered consumer as an
+`application/vnd.amazon.eventstream` response: it resolves the consumer's shard
+from the requested `StartingPosition`, emits the `initial-response` frame the SDK
+awaits, then a `SubscribeToShardEvent` frame carrying the records, continuation
+sequence number, and `MillisBehindLatest`. Polling via
+`GetShardIterator`/`GetRecords` covers the same read path.
+
+**Total: 39 operations.**
+
 ---
 
 ## 31. Web Application Firewall (WAFv2)
@@ -2727,7 +2770,8 @@ still sees success.
 | Certificate Manager — AWS ACM | 17 |
 | Email Service — AWS SES v2 | 113 |
 | Web Application Firewall — AWS WAFv2 | 59 |
-| **Grand Total** | **1971** (+138 optional) |
+| Data Streams — AWS Kinesis | 39 |
+| **Grand Total** | **2010** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

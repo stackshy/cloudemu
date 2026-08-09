@@ -39,7 +39,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.4
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue v1.0.1
 	github.com/aws/aws-sdk-go-v2 v1.43.4
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
 	github.com/aws/aws-sdk-go-v2/service/acm v1.38.3
@@ -62,6 +62,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10
 	github.com/aws/aws-sdk-go-v2/service/keyspaces v1.28.2
+	github.com/aws/aws-sdk-go-v2/service/kinesis v1.46.4
 	github.com/aws/aws-sdk-go-v2/service/kms v1.50.3
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.1
 	github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2
