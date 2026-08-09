@@ -71,8 +71,7 @@ func (m *Mock) checkFromIdentity(from string) error {
 		}
 	}
 
-	return cerrors.Newf(cerrors.NotFound,
-		"email address %q is not verified. The following identities failed the check: %s", from, from)
+	return messageRejected("Email address is not verified. The following identities failed the check: %s", from)
 }
 
 func verifiedForSending(d *identityData) error {
@@ -80,10 +79,19 @@ func verifiedForSending(d *identityData) error {
 	defer d.mu.RUnlock()
 
 	if !d.id.VerifiedForSendingStatus {
-		return cerrors.Newf(cerrors.FailedPrecondition, "identity %q is not verified for sending", d.id.Name)
+		return messageRejected("Email address is not verified: %s", d.id.Name)
 	}
 
 	return nil
+}
+
+// messageRejected builds a MessageRejected-tagged error — real SES v2's
+// rejection path when the sending identity isn't a verified identity.
+func messageRejected(format string, args ...any) error {
+	return &driver.APIError{
+		Exception: driver.ExMessageRejected,
+		Err:       cerrors.Newf(cerrors.InvalidArgument, format, args...),
+	}
 }
 
 // SendBulkEmail sends one templated message per entry, validating the shared

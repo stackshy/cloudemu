@@ -2,9 +2,11 @@ package sesv2
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	sesdriver "github.com/stackshy/cloudemu/v2/services/sesv2/driver"
 )
 
 const (
@@ -46,8 +48,16 @@ func exceptionFor(err error) (status int, errType string) {
 	}
 }
 
-// writeErr maps a canonical cloudemu error to the precise SES v2 exception.
+// writeErr maps a canonical cloudemu error to the precise SES v2 exception,
+// honoring a tagged driver.APIError exception (e.g. MessageRejected) when present.
 func writeErr(w http.ResponseWriter, err error) {
+	var apiErr *sesdriver.APIError
+	if errors.As(err, &apiErr) {
+		writeError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+
+		return
+	}
+
 	status, errType := exceptionFor(err)
 	writeError(w, status, errType, err.Error())
 }

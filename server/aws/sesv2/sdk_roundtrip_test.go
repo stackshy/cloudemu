@@ -159,9 +159,11 @@ func TestSDKSendEmailUnverified(t *testing.T) {
 		t.Fatal("expected error sending from unverified identity")
 	}
 
-	var nf *sestypes.NotFoundException
-	if !errors.As(err, &nf) {
-		t.Fatalf("want NotFoundException, got %T: %v", err, err)
+	// Real SES v2 rejects sending from an unverified identity with
+	// MessageRejected, not NotFoundException.
+	var rejected *sestypes.MessageRejected
+	if !errors.As(err, &rejected) {
+		t.Fatalf("want MessageRejected, got %T: %v", err, err)
 	}
 }
 

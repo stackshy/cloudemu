@@ -108,8 +108,11 @@ func TestSendEmailRequiresVerifiedIdentity(t *testing.T) {
 		ToAddresses: []string{"dest@example.com"},
 		Subject:     "hi",
 	})
-	if !errors.IsNotFound(err) {
-		t.Fatalf("send from unverified should be NotFound, got %v", err)
+
+	// Real SES v2 rejects an unverified sender with MessageRejected, not NotFound.
+	apiErr, ok := err.(*driver.APIError)
+	if !ok || apiErr.Exception != driver.ExMessageRejected {
+		t.Fatalf("send from unverified should be MessageRejected, got %v", err)
 	}
 }
 
