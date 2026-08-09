@@ -217,4 +217,30 @@ type WAFV2 interface {
 	TagResource(ctx context.Context, arn string, tags map[string]string) error
 	UntagResource(ctx context.Context, arn string, tagKeys []string) error
 	ListTagsForResource(ctx context.Context, arn string) (resourceARN string, tags map[string]string, err error)
+
+	CheckCapacity(ctx context.Context, scope string, rules json.RawMessage) (int64, error)
+
+	PutLoggingConfiguration(ctx context.Context, cfg json.RawMessage) (json.RawMessage, error)
+	GetLoggingConfiguration(ctx context.Context, resourceARN string) (json.RawMessage, error)
+	DeleteLoggingConfiguration(ctx context.Context, resourceARN string) error
+	ListLoggingConfigurations(ctx context.Context, scope string) ([]json.RawMessage, error)
+
+	PutPermissionPolicy(ctx context.Context, resourceARN, policy string) error
+	GetPermissionPolicy(ctx context.Context, resourceARN string) (string, error)
+	DeletePermissionPolicy(ctx context.Context, resourceARN string) error
+
+	CreateAPIKey(ctx context.Context, scope string, tokenDomains []string) (apiKey string, err error)
+	DeleteAPIKey(ctx context.Context, scope, apiKey string) error
+	ListAPIKeys(ctx context.Context, scope string) ([]APIKeySummary, error)
+	GetDecryptedAPIKey(ctx context.Context, scope, apiKey string) (*APIKeySummary, error)
+}
+
+// APIKeySummary is the stored form of a WAFv2 API key. The emulator stores keys
+// per scope; the "encrypted" APIKey is an opaque base64-ish token and the
+// TokenDomains/Version/CreationTimestamp round-trip what CreateAPIKey recorded.
+type APIKeySummary struct {
+	APIKey       string
+	TokenDomains []string
+	Version      int32
+	Created      int64
 }

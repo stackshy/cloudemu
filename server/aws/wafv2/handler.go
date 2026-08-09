@@ -62,6 +62,48 @@ func New(d wafdriver.WAFV2) *Handler {
 		"TagResource":         h.tagResource,
 		"UntagResource":       h.untagResource,
 		"ListTagsForResource": h.listTagsForResource,
+
+		"CheckCapacity": h.checkCapacity,
+
+		"PutLoggingConfiguration":    h.putLoggingConfiguration,
+		"GetLoggingConfiguration":    h.getLoggingConfiguration,
+		"DeleteLoggingConfiguration": h.deleteLoggingConfiguration,
+		"ListLoggingConfigurations":  h.listLoggingConfigurations,
+
+		"PutPermissionPolicy":    h.putPermissionPolicy,
+		"GetPermissionPolicy":    h.getPermissionPolicy,
+		"DeletePermissionPolicy": h.deletePermissionPolicy,
+
+		"CreateAPIKey":       h.createAPIKey,
+		"DeleteAPIKey":       h.deleteAPIKey,
+		"ListAPIKeys":        h.listAPIKeys,
+		"GetDecryptedAPIKey": h.getDecryptedAPIKey,
+
+		"DescribeAllManagedProducts":      h.describeAllManagedProducts,
+		"DescribeManagedProductsByVendor": h.describeManagedProductsByVendor,
+		"DescribeManagedRuleGroup":        h.describeManagedRuleGroup,
+
+		"GenerateMobileSdkReleaseUrl": h.generateMobileSdkReleaseURL,
+		"GetMobileSdkRelease":         h.getMobileSdkRelease,
+		"ListMobileSdkReleases":       h.listMobileSdkReleases,
+
+		"ListAvailableManagedRuleGroups":        h.listAvailableManagedRuleGroups,
+		"ListAvailableManagedRuleGroupVersions": h.listAvailableManagedRuleGroupVersions,
+		"ListManagedRuleSets":                   h.listManagedRuleSets,
+		"GetManagedRuleSet":                     h.getManagedRuleSet,
+		"PutManagedRuleSetVersions":             h.putManagedRuleSetVersions,
+		"UpdateManagedRuleSetVersionExpiryDate": h.updateManagedRuleSetVersionExpiryDate,
+
+		"GetRateBasedStatementManagedKeys": h.getRateBasedStatementManagedKeys,
+		"GetSampledRequests":               h.getSampledRequests,
+		"GetTopPathStatisticsByTraffic":    h.getTopPathStatisticsByTraffic,
+
+		"GetRevenueStatistics":           h.getRevenueStatistics,
+		"GetRevenueStatisticsSummary":    h.getRevenueStatisticsSummary,
+		"GetRevenueStatisticsTimeSeries": h.getRevenueStatisticsTimeSeries,
+		"ListSettlementRecords":          h.listSettlementRecords,
+
+		"DeleteFirewallManagerRuleGroups": h.deleteFirewallManagerRuleGroups,
 	}
 
 	return h

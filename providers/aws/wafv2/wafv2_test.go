@@ -231,6 +231,145 @@ func TestErrorPaths(t *testing.T) {
 	}
 }
 
+func TestCheckCapacity(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	// Empty rule set reports zero.
+	zero, err := m.CheckCapacity(ctx, driver.ScopeRegional, nil)
+	if err != nil || zero != 0 {
+		t.Fatalf("empty CheckCapacity: cap=%d err=%v", zero, err)
+	}
+
+	// Two rules, one with a rate-based statement and one with a managed group.
+	rules := json.RawMessage(`[
+		{"Statement":{"RateBasedStatement":{}}},
+		{"Statement":{"ManagedRuleGroupStatement":{}}}
+	]`)
+
+	capacity, err := m.CheckCapacity(ctx, driver.ScopeRegional, rules)
+	if err != nil {
+		t.Fatalf("CheckCapacity: %v", err)
+	}
+
+	// 1+2 (rate) + 1+10 (managed) = 14.
+	if capacity != 14 {
+		t.Fatalf("want capacity 14, got %d", capacity)
+	}
+
+	if _, err := m.CheckCapacity(ctx, "", rules); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("missing scope: want invalid arg, got %v", err)
+	}
+}
+
+func TestLoggingConfigurationLifecycle(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	acl, _ := m.CreateWebACL(ctx, driver.CreateWebACLInput{Name: "logacl", Scope: driver.ScopeRegional})
+
+	cfg := json.RawMessage(`{"ResourceArn":"` + acl.ARN + `","LogDestinationConfigs":["arn:aws:firehose:x"]}`)
+
+	echoed, err := m.PutLoggingConfiguration(ctx, cfg)
+	if err != nil || string(echoed) != string(cfg) {
+		t.Fatalf("PutLoggingConfiguration: echoed=%s err=%v", echoed, err)
+	}
+
+	got, err := m.GetLoggingConfiguration(ctx, acl.ARN)
+	if err != nil || string(got) != string(cfg) {
+		t.Fatalf("GetLoggingConfiguration: got=%s err=%v", got, err)
+	}
+
+	list, _ := m.ListLoggingConfigurations(ctx, driver.ScopeRegional)
+	if len(list) != 1 {
+		t.Fatalf("want 1 logging config, got %d", len(list))
+	}
+
+	if len(mustList(m, ctx, driver.ScopeCloudFront)) != 0 {
+		t.Fatal("cloudfront scope should have no logging configs")
+	}
+
+	if err := m.DeleteLoggingConfiguration(ctx, acl.ARN); err != nil {
+		t.Fatalf("DeleteLoggingConfiguration: %v", err)
+	}
+
+	if _, err := m.GetLoggingConfiguration(ctx, acl.ARN); !cerrors.IsNotFound(err) {
+		t.Fatalf("want not found after delete, got %v", err)
+	}
+}
+
+func mustList(m *Mock, ctx context.Context, scope string) []json.RawMessage {
+	out, _ := m.ListLoggingConfigurations(ctx, scope)
+
+	return out
+}
+
+func TestPermissionPolicyLifecycle(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	grp, _ := m.CreateRuleGroup(ctx, driver.CreateRuleGroupInput{Name: "polrg", Scope: driver.ScopeRegional, Capacity: 5})
+
+	// Policy on a non-rule-group ARN fails.
+	if err := m.PutPermissionPolicy(ctx, "arn:aws:wafv2:x:0:regional/rulegroup/none/z", `{"a":1}`); !cerrors.IsNotFound(err) {
+		t.Fatalf("policy on missing rule group: want not found, got %v", err)
+	}
+
+	if err := m.PutPermissionPolicy(ctx, grp.ARN, `{"Version":"2012-10-17"}`); err != nil {
+		t.Fatalf("PutPermissionPolicy: %v", err)
+	}
+
+	policy, err := m.GetPermissionPolicy(ctx, grp.ARN)
+	if err != nil || policy != `{"Version":"2012-10-17"}` {
+		t.Fatalf("GetPermissionPolicy: policy=%q err=%v", policy, err)
+	}
+
+	if err := m.DeletePermissionPolicy(ctx, grp.ARN); err != nil {
+		t.Fatalf("DeletePermissionPolicy: %v", err)
+	}
+
+	if _, err := m.GetPermissionPolicy(ctx, grp.ARN); !cerrors.IsNotFound(err) {
+		t.Fatalf("want not found after delete, got %v", err)
+	}
+}
+
+func TestAPIKeyLifecycle(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateAPIKey(ctx, driver.ScopeRegional, nil); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("no token domains: want invalid arg, got %v", err)
+	}
+
+	apiKey, err := m.CreateAPIKey(ctx, driver.ScopeRegional, []string{"abc.com"})
+	if err != nil || apiKey == "" {
+		t.Fatalf("CreateAPIKey: key=%q err=%v", apiKey, err)
+	}
+
+	keys, _ := m.ListAPIKeys(ctx, driver.ScopeRegional)
+	if len(keys) != 1 || keys[0].APIKey != apiKey || keys[0].TokenDomains[0] != "abc.com" {
+		t.Fatalf("ListAPIKeys: %+v", keys)
+	}
+
+	// Scope partitioning: the key is not visible in CLOUDFRONT.
+	if cf, _ := m.ListAPIKeys(ctx, driver.ScopeCloudFront); len(cf) != 0 {
+		t.Fatalf("cloudfront scope should have no keys, got %d", len(cf))
+	}
+
+	dec, err := m.GetDecryptedAPIKey(ctx, driver.ScopeRegional, apiKey)
+	if err != nil || dec.TokenDomains[0] != "abc.com" {
+		t.Fatalf("GetDecryptedAPIKey: %+v err=%v", dec, err)
+	}
+
+	if err := m.DeleteAPIKey(ctx, driver.ScopeRegional, apiKey); err != nil {
+		t.Fatalf("DeleteAPIKey: %v", err)
+	}
+
+	if _, err := m.GetDecryptedAPIKey(ctx, driver.ScopeRegional, apiKey); !cerrors.IsNotFound(err) {
+		t.Fatalf("want not found after delete, got %v", err)
+	}
+}
+
 func isOptimisticLock(err error) bool {
 	var apiErr *driver.APIError
 

@@ -25,10 +25,19 @@ type Mock struct {
 	ipSets   *memstore.Store[*ipSetData]
 	ruleGrps *memstore.Store[*ruleGroupData]
 	regexes  *memstore.Store[*regexSetData]
+	logCfgs  *memstore.Store[*loggingConfigData]
 
 	assocMu sync.RWMutex
 	// assoc maps a protected resource ARN to the web ACL ARN protecting it.
 	assoc map[string]string
+
+	policyMu sync.RWMutex
+	// policies maps a rule-group ARN to its permission policy JSON.
+	policies map[string]string
+
+	apiKeyMu sync.RWMutex
+	// apiKeys maps a composite (scope,apiKey) key to its stored summary.
+	apiKeys map[string]driver.APIKeySummary
 
 	opts *config.Options
 }
@@ -60,7 +69,10 @@ func New(opts *config.Options) *Mock {
 		ipSets:   memstore.New[*ipSetData](),
 		ruleGrps: memstore.New[*ruleGroupData](),
 		regexes:  memstore.New[*regexSetData](),
+		logCfgs:  memstore.New[*loggingConfigData](),
 		assoc:    map[string]string{},
+		policies: map[string]string{},
+		apiKeys:  map[string]driver.APIKeySummary{},
 		opts:     opts,
 	}
 }
