@@ -39,6 +39,7 @@ This document lists every service and operation available in CloudEmu across all
 | 26 | Application Networking | `vpclattice` | — | — |
 | 27 | Key Management | `kms` | — | — |
 | 28 | File System | `efs` | — | — |
+| 29 | Certificate Manager | `acm` | — | — |
 
 ---
 
@@ -2450,6 +2451,41 @@ queryable in a single-process emulator.
 
 **Total: 30 operations.**
 
+## 29. Certificate Manager (ACM)
+
+**Driver interface:** `services/acm/driver/`
+**AWS:** ACM (AWS JSON 1.1, `X-Amz-Target: CertificateManager.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/acm` clients (and the `aws acm` CLI) work
+against the SDK-compat server (`awsserver.Drivers{ACM: cloud.ACM}`). Full parity
+across the certificate lifecycle, import/export, renewal, revocation, tags, and
+account configuration.
+
+**Certificates are real, not stubbed.** `RequestCertificate` generates a genuine
+self-signed X.509 certificate (RSA-2048, SHA-256) for the requested domain +
+SANs and — since the emulator can't perform real domain validation — auto-issues
+it (status `ISSUED`) so it's immediately usable; `GetCertificate` returns
+parseable PEM. `ImportCertificate` validates and stores externally-supplied PEM;
+`ExportCertificate` returns the cert, chain, and private key; `RenewCertificate`
+re-issues fresh material.
+
+| Family | Operations |
+|--------|-----------|
+| Lifecycle | RequestCertificate, DescribeCertificate, ListCertificates, DeleteCertificate, GetCertificate |
+| Import / export | ImportCertificate, ExportCertificate |
+| Renewal / revocation | RenewCertificate, RevokeCertificate, ResendValidationEmail |
+| Options | UpdateCertificateOptions (certificate-transparency logging) |
+| Search | SearchCertificates |
+| Tags | AddTagsToCertificate, RemoveTagsFromCertificate, ListTagsForCertificate |
+| Account | GetAccountConfiguration, PutAccountConfiguration |
+
+Certificate identifiers are ARNs. DNS-validation requests expose the CNAME
+validation record real clients read. Domain validation is auto-completed in the
+emulator (no real DNS/email round-trip), which is the local-dev analog of a
+validated public certificate.
+
+**Total: 17 operations.**
+
 ---
 
 ## Provider-specific resources
@@ -2568,7 +2604,8 @@ still sees success.
 | Application Networking — AWS VPC Lattice | 73 |
 | Key Management — AWS KMS | 45 |
 | File System — AWS EFS | 30 |
-| **Grand Total** | **1782** (+138 optional) |
+| Certificate Manager — AWS ACM | 17 |
+| **Grand Total** | **1799** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

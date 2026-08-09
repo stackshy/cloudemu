@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
@@ -135,6 +136,7 @@ type Provider struct {
 	MemoryDB            *memorydb.Mock
 	NetworkFirewall     *networkfirewall.Mock
 	SecretsManager      *secretsmanager.Mock
+	ACM                 *acm.Mock
 	KMS                 *kms.Mock
 	CloudWatchLogs      *cloudwatchlogs.Mock
 	SNS                 *sns.Mock
@@ -176,6 +178,7 @@ func New(opts ...config.Option) *Provider {
 		MemoryDB:            memorydb.New(o),
 		NetworkFirewall:     networkfirewall.New(o),
 		SecretsManager:      secretsmanager.New(o),
+		ACM:                 acm.New(o),
 		KMS:                 kms.New(o),
 		CloudWatchLogs:      cloudwatchlogs.New(o),
 		SNS:                 sns.New(o),

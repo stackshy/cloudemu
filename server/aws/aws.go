@@ -10,6 +10,7 @@ import (
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
+	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
@@ -44,6 +45,7 @@ import (
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
+	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
@@ -118,6 +120,8 @@ type Drivers struct {
 	SecretsManager secretsdriver.Secrets
 	// KMS serves the KMS JSON 1.1 protocol against the kms driver.
 	KMS kmsdriver.KMS
+	// ACM serves the Certificate Manager JSON 1.1 protocol against the acm driver.
+	ACM acmdriver.ACM
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -194,6 +198,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
 		KMS:                 p.KMS,
+		ACM:                 p.ACM,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -296,6 +301,12 @@ func New(d Drivers) *server.Server {
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.KMS != nil {
 		srv.Register(kmssrv.New(d.KMS))
+	}
+
+	// ACM matches the X-Amz-Target prefix "CertificateManager." — disjoint
+	// from the other JSON 1.1 services.
+	if d.ACM != nil {
+		srv.Register(acmsrv.New(d.ACM))
 	}
 
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
