@@ -38,7 +38,7 @@ type jobAPI interface {
 	StartJobRun(ctx context.Context, jobName string, args map[string]string) (string, error)
 	GetJobRun(ctx context.Context, jobName, runID string) (*JobRun, error)
 	GetJobRuns(ctx context.Context, jobName string, page TablePagination) ([]JobRun, string, error)
-	BatchStopJobRun(ctx context.Context, jobName string, runIDs []string) (successful, errors []string)
+	BatchStopJobRun(ctx context.Context, jobName string, runIDs []string) (successful []string, errors []BatchError)
 }
 
 // triggerAPI covers workflow triggers with real state.
@@ -124,7 +124,7 @@ type miscAPI interface {
 	UntagResource(ctx context.Context, resourceARN string, keys []string) error
 	GetTags(ctx context.Context, resourceARN string) (map[string]string, error)
 
-	PutResourcePolicy(ctx context.Context, arn, policy string) (string, error)
+	PutResourcePolicy(ctx context.Context, arn, policy string, cond PolicyCondition) (string, error)
 	GetResourcePolicy(ctx context.Context, arn string) (string, error)
 	DeleteResourcePolicy(ctx context.Context, arn string) error
 

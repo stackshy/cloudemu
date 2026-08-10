@@ -186,6 +186,7 @@ func (m *Mock) StartJobRun(_ context.Context, jobName string, args map[string]st
 		StartedOn:       now,
 		CompletedOn:     now,
 		JobRunState:     driver.JobRunSucceeded,
+		ExecutionTime:   1, // synthesized: runs settle immediately, report a minimal 1s
 		Arguments:       copyTags(args),
 		Timeout:         timeout,
 		WorkerType:      workerType,
@@ -244,18 +245,53 @@ func (m *Mock) GetJobRuns(
 	return paginate(all, page)
 }
 
-// BatchStopJobRun attempts to stop runs. Runs complete synchronously, so a run
-// is already SUCCEEDED and cannot be stopped; every requested ID that exists is
-// reported as an error, unknown IDs likewise, matching the runs-are-terminal
-// model. Returns the successful and errored run IDs.
-func (m *Mock) BatchStopJobRun(_ context.Context, jobName string, runIDs []string) (successful, errored []string) {
+// isTerminalJobRun reports whether a run has reached a terminal state and so
+// cannot be stopped.
+func isTerminalJobRun(state string) bool {
+	switch state {
+	case driver.JobRunSucceeded, driver.JobRunFailed, driver.JobRunStopped:
+		return true
+	default:
+		return false
+	}
+}
+
+// BatchStopJobRun attempts to stop runs. Runs complete synchronously, so an
+// existing run is already terminal and cannot be stopped: it belongs under
+// Errors (not stoppable), not SuccessfulSubmissions. Unknown IDs likewise error.
+// Returns the successful run IDs and the per-run errors.
+func (m *Mock) BatchStopJobRun(
+	_ context.Context, jobName string, runIDs []string,
+) (successful []string, errored []driver.BatchError) {
 	for _, id := range runIDs {
-		if _, ok := m.jobRuns.Get(nameKey(jobName, id)); ok {
-			// The run is already terminal (SUCCEEDED); stopping is a no-op success.
-			successful = append(successful, id)
-		} else {
-			errored = append(errored, id)
+		rd, ok := m.jobRuns.Get(nameKey(jobName, id))
+		if !ok {
+			errored = append(errored, driver.BatchError{
+				Name: id, ErrorCode: driver.ExEntityNotFound, ErrorMessage: "JobRun not found",
+			})
+
+			continue
 		}
+
+		rd.mu.RLock()
+		terminal := isTerminalJobRun(rd.run.JobRunState)
+		rd.mu.RUnlock()
+
+		if terminal {
+			errored = append(errored, driver.BatchError{
+				Name:         id,
+				ErrorCode:    driver.ExInvalidInput,
+				ErrorMessage: "JobRun is not in a stoppable state",
+			})
+
+			continue
+		}
+
+		rd.mu.Lock()
+		rd.run.JobRunState = driver.JobRunStopped
+		rd.mu.Unlock()
+
+		successful = append(successful, id)
 	}
 
 	return successful, errored

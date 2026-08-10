@@ -2867,11 +2867,16 @@ AWS-only. Real `aws-sdk-go-v2/service/glue` clients (and the `aws glue` CLI) wor
 against the SDK-compat server (`awsserver.Drivers{Glue: cloud.Glue}`). Full
 operation coverage of the entire Glue Client (299 operations). The Data Catalog,
 crawler, ETL job/run, trigger, workflow, blueprint, schema-registry,
-dev-endpoint, and tag control-plane paths are faithfully emulated with real
-in-memory state; the analytics, ML-transform, data-quality, integration,
+dev-endpoint, and tag control-plane paths model real CRUD and lifecycle state in
+memory, including enum/required-field validation (connection type, classifier
+kind, trigger type/schedule), schema-registry compatibility + dedup, and the
+`PutResourcePolicy` conditional-put — where noted below. The read/analytics
+surfaces (analytics, ML-transform, data-quality, integration,
 glossary/asset/form, column-statistics, session/statement, usage-profile,
-materialized-view, identity-center, and unfiltered-metadata surfaces are
-synthesized (there is no real Spark/compute or data plane behind the emulator).
+materialized-view, identity-center, and unfiltered-metadata) remain synthesized:
+there is no real Spark/compute or data plane behind the emulator, so they return
+empty, well-formed responses rather than fabricated results. This is control-
+plane emulation, not a full data-plane implementation.
 
 | Family | Operations |
 |--------|-----------|

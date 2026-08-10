@@ -67,6 +67,13 @@ type Mock struct {
 	encMu       sync.RWMutex
 	encSettings map[string]map[string]any // catalogID -> encryption settings
 
+	// scopeLocks serialize composite creates (table/partition/UDF) against the
+	// parent's delete cascade, so a child can't be inserted after its parent's
+	// existence has been checked but before the cascade sweeps it. Keyed by the
+	// parent's composite name (database key, or table key for partitions).
+	scopeMu    sync.Mutex
+	scopeLocks map[string]*sync.Mutex
+
 	opts *config.Options
 }
 
@@ -95,8 +102,26 @@ func New(opts *config.Options) *Mock {
 		tags:          map[string]map[string]string{},
 		policies:      map[string]string{},
 		encSettings:   map[string]map[string]any{},
+		scopeLocks:    map[string]*sync.Mutex{},
 		opts:          opts,
 	}
+}
+
+// scopeLock returns the lock guarding a parent scope (a database or a table),
+// creating it on first use. Both a composite create (parent-check + child
+// insert) and the parent's delete cascade take this lock, so the
+// parent-existence guarantee holds against a concurrent cascade.
+func (m *Mock) scopeLock(key string) *sync.Mutex {
+	m.scopeMu.Lock()
+	defer m.scopeMu.Unlock()
+
+	mu, ok := m.scopeLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		m.scopeLocks[key] = mu
+	}
+
+	return mu
 }
 
 func (m *Mock) now() time.Time { return m.opts.Clock.Now().UTC() }

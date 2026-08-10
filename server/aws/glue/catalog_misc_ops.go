@@ -38,7 +38,7 @@ func udfFromInput(dbName string, in udfInputJSON) driver.UserDefinedFunction {
 type udfJSON struct {
 	FunctionName string            `json:"FunctionName"`
 	DatabaseName string            `json:"DatabaseName,omitempty"`
-	CatalogID    string            `json:"CatalogID,omitempty"`
+	CatalogID    string            `json:"CatalogId,omitempty"`
 	ClassName    string            `json:"ClassName,omitempty"`
 	OwnerName    string            `json:"OwnerName,omitempty"`
 	OwnerType    string            `json:"OwnerType,omitempty"`
@@ -335,7 +335,7 @@ type catalogInputJSON struct {
 }
 
 type catalogJSON struct {
-	CatalogID   string   `json:"CatalogID,omitempty"`
+	CatalogID   string   `json:"CatalogId,omitempty"`
 	Name        string   `json:"Name,omitempty"`
 	Description string   `json:"Description,omitempty"`
 	CreateTime  *float64 `json:"CreateTime,omitempty"`

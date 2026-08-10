@@ -123,8 +123,28 @@ func (*Mock) CreateMLTransform(ctx context.Context, req map[string]any) (map[str
 	return synthEmpty(ctx, req)
 }
 
-// CreatePartitionIndex returns a synthesized empty result. See the file header.
-func (*Mock) CreatePartitionIndex(ctx context.Context, req map[string]any) (map[string]any, error) {
+// synthRequireTable validates that the parent table named in a synth request
+// exists, so a partition-index mutation on a nonexistent table errors with
+// EntityNotFoundException rather than returning an empty 200.
+func (m *Mock) synthRequireTable(req map[string]any) error {
+	cat, _ := req["CatalogId"].(string)
+	db, _ := req["DatabaseName"].(string)
+	tbl, _ := req["TableName"].(string)
+
+	if db == "" || tbl == "" {
+		return invalidInput("DatabaseName and TableName are required")
+	}
+
+	return m.requireTable(m.catalogOrDefault(cat), db, tbl)
+}
+
+// CreatePartitionIndex validates the parent table then returns a synthesized
+// empty result. See the file header.
+func (m *Mock) CreatePartitionIndex(ctx context.Context, req map[string]any) (map[string]any, error) {
+	if err := m.synthRequireTable(req); err != nil {
+		return nil, err
+	}
+
 	return synthEmpty(ctx, req)
 }
 
@@ -233,8 +253,13 @@ func (*Mock) DeleteMLTransform(ctx context.Context, req map[string]any) (map[str
 	return synthEmpty(ctx, req)
 }
 
-// DeletePartitionIndex returns a synthesized empty result. See the file header.
-func (*Mock) DeletePartitionIndex(ctx context.Context, req map[string]any) (map[string]any, error) {
+// DeletePartitionIndex validates the parent table then returns a synthesized
+// empty result. See the file header.
+func (m *Mock) DeletePartitionIndex(ctx context.Context, req map[string]any) (map[string]any, error) {
+	if err := m.synthRequireTable(req); err != nil {
+		return nil, err
+	}
+
 	return synthEmpty(ctx, req)
 }
 
@@ -445,8 +470,13 @@ func (*Mock) GetMLTransforms(ctx context.Context, req map[string]any) (map[strin
 	return synthEmpty(ctx, req)
 }
 
-// GetPartitionIndexes returns a synthesized empty result. See the file header.
-func (*Mock) GetPartitionIndexes(ctx context.Context, req map[string]any) (map[string]any, error) {
+// GetPartitionIndexes validates the parent table then returns a synthesized
+// empty result. See the file header.
+func (m *Mock) GetPartitionIndexes(ctx context.Context, req map[string]any) (map[string]any, error) {
+	if err := m.synthRequireTable(req); err != nil {
+		return nil, err
+	}
+
 	return synthEmpty(ctx, req)
 }
 

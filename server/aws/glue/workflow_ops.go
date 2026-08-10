@@ -152,7 +152,7 @@ func (h *Handler) startWorkflowRun(w http.ResponseWriter, r *http.Request) {
 
 type workflowRunJSON struct {
 	Name                  string            `json:"Name,omitempty"`
-	WorkflowRunID         string            `json:"WorkflowRunID,omitempty"`
+	WorkflowRunID         string            `json:"WorkflowRunId,omitempty"`
 	Status                string            `json:"Status,omitempty"`
 	StartedOn             *float64          `json:"StartedOn,omitempty"`
 	CompletedOn           *float64          `json:"CompletedOn,omitempty"`

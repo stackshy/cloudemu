@@ -159,9 +159,9 @@ func (m *Mock) StartCrawler(_ context.Context, name string) error {
 	return nil
 }
 
-// StopCrawler stops a crawler. Since runs settle synchronously, a crawler is
-// never actually running, so stopping one that isn't running is an error, as in
-// real Glue (CrawlerNotRunningException surfaced as EntityNotFound here).
+// StopCrawler stops a running crawler. Since runs settle synchronously, a
+// crawler is never actually running, so stopping one that isn't running raises
+// CrawlerNotRunningException, matching real Glue.
 func (m *Mock) StopCrawler(_ context.Context, name string) error {
 	cd, err := m.getCrawlerData(name)
 	if err != nil {
@@ -170,6 +170,10 @@ func (m *Mock) StopCrawler(_ context.Context, name string) error {
 
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
+
+	if cd.crawler.State != driver.CrawlerRunning {
+		return crawlerNotRunning("Crawler %s is not running", name)
+	}
 
 	cd.crawler.State = driver.CrawlerReady
 

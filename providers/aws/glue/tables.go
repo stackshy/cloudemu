@@ -37,6 +37,12 @@ func (m *Mock) CreateTable(_ context.Context, catalogID, dbName string, tbl driv
 		return invalidInput("table or database name is invalid")
 	}
 
+	// Hold the database scope lock across the parent check and the insert so a
+	// concurrent DeleteDatabase cascade can't orphan this table.
+	lock := m.scopeLock(nameKey(cat, dbName))
+	lock.Lock()
+	defer lock.Unlock()
+
 	if err := m.requireDatabase(cat, dbName); err != nil {
 		return err
 	}
@@ -71,6 +77,12 @@ func (m *Mock) getTableData(catalogID, dbName, name string) (*tableData, string,
 
 	td, ok := m.tables.Get(nameKey(cat, dbName, name))
 	if !ok {
+		// Distinguish a missing parent database from a missing table, so a read
+		// against an absent database names the database (as real Glue does).
+		if err := m.requireDatabase(cat, dbName); err != nil {
+			return nil, cat, err
+		}
+
 		return nil, cat, entityNotFound("Table not found: %s", name)
 	}
 
@@ -128,6 +140,12 @@ func (m *Mock) DeleteTable(_ context.Context, catalogID, dbName, name string) er
 	if err != nil {
 		return err
 	}
+
+	// Hold the table scope lock across the cascade so a concurrent
+	// CreatePartition can't orphan a partition under a deleted table.
+	lock := m.scopeLock(nameKey(cat, dbName, name))
+	lock.Lock()
+	defer lock.Unlock()
 
 	td.mu.Lock()
 	defer td.mu.Unlock()

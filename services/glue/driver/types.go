@@ -28,6 +28,20 @@ const (
 	RegistryAvailable      = "AVAILABLE"
 )
 
+// PolicyCondition carries PutResourcePolicy's conditional-put preconditions.
+// PolicyHashCondition, when set, must equal the current policy's hash.
+// PolicyExistsCondition is "MUST_EXIST" or "NOT_EXIST" (empty means no check).
+type PolicyCondition struct {
+	PolicyHashCondition   string
+	PolicyExistsCondition string
+}
+
+// Policy-existence condition values for PutResourcePolicy.
+const (
+	PolicyMustExist = "MUST_EXIST"
+	PolicyNotExist  = "NOT_EXIST"
+)
+
 // Column is a Data Catalog column definition.
 type Column struct {
 	Name       string

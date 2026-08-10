@@ -26,6 +26,12 @@ func (m *Mock) CreateUserDefinedFunction(
 		return invalidInput("function name %q is invalid", fn.Name)
 	}
 
+	// Hold the database scope lock across the parent check and the insert so a
+	// concurrent DeleteDatabase cascade can't orphan this function.
+	lock := m.scopeLock(nameKey(cat, dbName))
+	lock.Lock()
+	defer lock.Unlock()
+
 	if err := m.requireDatabase(cat, dbName); err != nil {
 		return err
 	}

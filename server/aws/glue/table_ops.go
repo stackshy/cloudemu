@@ -152,7 +152,7 @@ func (h *Handler) batchDeleteTable(w http.ResponseWriter, r *http.Request) {
 
 type tableVersionJSON struct {
 	Table     tableJSON `json:"Table"`
-	VersionID string    `json:"VersionID,omitempty"`
+	VersionID string    `json:"VersionId,omitempty"`
 }
 
 type getTableVersionRequest struct {
@@ -240,7 +240,7 @@ type batchDeleteTableVersionResponse struct {
 
 type tableVersionErrorJSON struct {
 	TableName   string           `json:"TableName,omitempty"`
-	VersionID   string           `json:"VersionID,omitempty"`
+	VersionID   string           `json:"VersionId,omitempty"`
 	ErrorDetail *errorDetailJSON `json:"ErrorDetail,omitempty"`
 }
 

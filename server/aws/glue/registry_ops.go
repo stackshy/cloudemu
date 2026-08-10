@@ -243,7 +243,7 @@ func (h *Handler) listSchemas(w http.ResponseWriter, r *http.Request) {
 // --- schema versions ---
 
 type schemaVersionJSON struct {
-	SchemaVersionID  string `json:"SchemaVersionID,omitempty"`
+	SchemaVersionID  string `json:"SchemaVersionId,omitempty"`
 	SchemaArn        string `json:"SchemaArn,omitempty"`
 	SchemaName       string `json:"SchemaName,omitempty"`
 	RegistryName     string `json:"RegistryName,omitempty"`
@@ -265,7 +265,7 @@ type registerSchemaVersionRequest struct {
 }
 
 type registerSchemaVersionResponse struct {
-	SchemaVersionID string `json:"SchemaVersionID,omitempty"`
+	SchemaVersionID string `json:"SchemaVersionId,omitempty"`
 	VersionNumber   int64  `json:"VersionNumber,omitempty"`
 	Status          string `json:"Status,omitempty"`
 }

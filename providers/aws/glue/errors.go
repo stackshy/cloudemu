@@ -10,6 +10,15 @@ func entityNotFound(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExEntityNotFound, Err: errors.Newf(errors.NotFound, format, args...)}
 }
 
+// schemaVersionNotFound builds a SchemaVersionNotFoundException-tagged error,
+// used when a schema exists but the requested version does not.
+func schemaVersionNotFound(format string, args ...any) error {
+	return &driver.APIError{
+		Exception: driver.ExSchemaVersionParseNotFound,
+		Err:       errors.Newf(errors.NotFound, format, args...),
+	}
+}
+
 // alreadyExists builds an AlreadyExistsException-tagged error.
 func alreadyExists(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExAlreadyExists, Err: errors.Newf(errors.AlreadyExists, format, args...)}
@@ -33,5 +42,31 @@ func resourceNumberLimit(format string, args ...any) error {
 	return &driver.APIError{
 		Exception: driver.ExResourceNumberLimit,
 		Err:       errors.Newf(errors.ResourceExhausted, format, args...),
+	}
+}
+
+// crawlerNotRunning builds a CrawlerNotRunningException-tagged error.
+func crawlerNotRunning(format string, args ...any) error {
+	return &driver.APIError{
+		Exception: driver.ExCrawlerNotRunning,
+		Err:       errors.Newf(errors.FailedPrecondition, format, args...),
+	}
+}
+
+// conditionCheckFailure builds a ConditionCheckFailureException-tagged error,
+// used when a conditional PutResourcePolicy precondition is not met.
+func conditionCheckFailure(format string, args ...any) error {
+	return &driver.APIError{
+		Exception: driver.ExConditionCheckFailure,
+		Err:       errors.Newf(errors.FailedPrecondition, format, args...),
+	}
+}
+
+// versionMismatch builds a VersionMismatchException-tagged error, used when a
+// PutResourcePolicy PolicyHashCondition does not match the stored policy hash.
+func versionMismatch(format string, args ...any) error {
+	return &driver.APIError{
+		Exception: driver.ExVersionMismatch,
+		Err:       errors.Newf(errors.FailedPrecondition, format, args...),
 	}
 }

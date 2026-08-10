@@ -1,6 +1,19 @@
 package glue
 
-import "context"
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+
+	"github.com/stackshy/cloudemu/v2/services/glue/driver"
+)
+
+// policyHash returns a stable content hash for a resource policy document.
+func policyHash(policy string) string {
+	sum := sha256.Sum256([]byte(policy))
+
+	return hex.EncodeToString(sum[:])
+}
 
 // TagResource adds or overwrites tags on a resource, enforcing Glue's per-
 // resource tag cap. The cap is checked against the merged set before any
@@ -67,8 +80,9 @@ func (m *Mock) GetTags(_ context.Context, resourceARN string) (map[string]string
 }
 
 // PutResourcePolicy stores a resource policy for an ARN (or the account-level
-// catalog when the ARN is empty), returning a synthesized policy hash.
-func (m *Mock) PutResourcePolicy(_ context.Context, arn, policy string) (string, error) {
+// catalog when the ARN is empty), honoring the conditional-put preconditions and
+// returning the new policy's content hash (sha256).
+func (m *Mock) PutResourcePolicy(_ context.Context, arn, policy string, cond driver.PolicyCondition) (string, error) {
 	if policy == "" {
 		return "", invalidInput("policy document must not be empty")
 	}
@@ -79,10 +93,32 @@ func (m *Mock) PutResourcePolicy(_ context.Context, arn, policy string) (string,
 	}
 
 	m.policyMu.Lock()
-	m.policies[key] = policy
-	m.policyMu.Unlock()
+	defer m.policyMu.Unlock()
 
-	return "policy-hash-" + key, nil
+	current, exists := m.policies[key]
+
+	switch cond.PolicyExistsCondition {
+	case driver.PolicyMustExist:
+		if !exists {
+			return "", conditionCheckFailure("no existing policy for %s", key)
+		}
+	case driver.PolicyNotExist:
+		if exists {
+			return "", conditionCheckFailure("a policy already exists for %s", key)
+		}
+	}
+
+	// A hash condition must match the current policy's hash (VersionMismatch on
+	// mismatch, matching Glue).
+	if cond.PolicyHashCondition != "" {
+		if !exists || cond.PolicyHashCondition != policyHash(current) {
+			return "", versionMismatch("policy hash condition does not match for %s", key)
+		}
+	}
+
+	m.policies[key] = policy
+
+	return policyHash(policy), nil
 }
 
 // GetResourcePolicy returns the stored policy for an ARN.

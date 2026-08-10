@@ -151,7 +151,7 @@ func (h *Handler) startBlueprintRun(w http.ResponseWriter, r *http.Request) {
 }
 
 type blueprintRunJSON struct {
-	RunID         string   `json:"RunID,omitempty"`
+	RunID         string   `json:"RunId,omitempty"`
 	BlueprintName string   `json:"BlueprintName,omitempty"`
 	WorkflowName  string   `json:"WorkflowName,omitempty"`
 	State         string   `json:"State,omitempty"`

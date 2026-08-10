@@ -21,6 +21,13 @@ func (m *Mock) CreateClassifier(_ context.Context, c driver.Classifier) error {
 		return invalidInput("classifier name %q is invalid", c.Name)
 	}
 
+	// Exactly one classifier kind (Grok/XML/Json/Csv) must be given.
+	switch c.Kind {
+	case "Grok", "XML", "Json", "Csv":
+	default:
+		return invalidInput("exactly one of Grok/XML/Json/Csv classifier must be specified")
+	}
+
 	now := m.now()
 	c.CreationTime = now
 	c.LastUpdated = now

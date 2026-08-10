@@ -113,19 +113,35 @@ func (m *Mock) DeleteDatabase(_ context.Context, catalogID, name string) error {
 		return err
 	}
 
+	// Hold the database scope lock across the whole cascade so a concurrent
+	// CreateTable/CreateUserDefinedFunction can't orphan a child after we've
+	// swept, and so a reader can't observe a torn snapshot.
+	lock := m.scopeLock(nameKey(cat, name))
+	lock.Lock()
+	defer lock.Unlock()
+
 	m.databases.Delete(nameKey(cat, name))
 
 	tablePrefix := nameKey(cat, name) + keySep
-	for _, key := range m.tables.Keys() {
-		if strings.HasPrefix(key, tablePrefix) {
-			m.tables.Delete(key)
-		}
-	}
 
-	for _, key := range m.partitions.Keys() {
-		if strings.HasPrefix(key, tablePrefix) {
-			m.partitions.Delete(key)
+	// Take each table's scope lock while sweeping its partitions so a concurrent
+	// CreatePartition (which holds that lock) can't insert an orphan.
+	for _, key := range m.tables.Keys() {
+		if !strings.HasPrefix(key, tablePrefix) {
+			continue
 		}
+
+		tblLock := m.scopeLock(key)
+		tblLock.Lock()
+		m.tables.Delete(key)
+
+		partPrefix := key + keySep
+		for _, pkey := range m.partitions.Keys() {
+			if strings.HasPrefix(pkey, partPrefix) {
+				m.partitions.Delete(pkey)
+			}
+		}
+		tblLock.Unlock()
 	}
 
 	for _, key := range m.udfs.Keys() {

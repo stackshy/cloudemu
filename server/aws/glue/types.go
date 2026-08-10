@@ -146,7 +146,7 @@ type databaseInputJSON struct {
 }
 
 type databaseJSON struct {
-	CatalogID   string            `json:"CatalogID,omitempty"`
+	CatalogID   string            `json:"CatalogId,omitempty"`
 	Name        string            `json:"Name"`
 	Description string            `json:"Description,omitempty"`
 	LocationURI string            `json:"LocationURI,omitempty"`
@@ -203,7 +203,7 @@ func tableFromInput(catalogID, dbName string, in tableInputJSON) driver.Table {
 }
 
 type tableJSON struct {
-	CatalogID         string                 `json:"CatalogID,omitempty"`
+	CatalogID         string                 `json:"CatalogId,omitempty"`
 	DatabaseName      string                 `json:"DatabaseName,omitempty"`
 	Name              string                 `json:"Name"`
 	Description       string                 `json:"Description,omitempty"`
@@ -217,7 +217,7 @@ type tableJSON struct {
 	CreateTime        *float64               `json:"CreateTime,omitempty"`
 	UpdateTime        *float64               `json:"UpdateTime,omitempty"`
 	Retention         int32                  `json:"Retention,omitempty"`
-	VersionID         string                 `json:"VersionID,omitempty"`
+	VersionID         string                 `json:"VersionId,omitempty"`
 }
 
 func tableToWire(t *driver.Table) tableJSON {
@@ -256,7 +256,7 @@ func partFromInput(catalogID, dbName, tblName string, in partitionInputJSON) dri
 }
 
 type partitionJSON struct {
-	CatalogID         string                 `json:"CatalogID,omitempty"`
+	CatalogID         string                 `json:"CatalogId,omitempty"`
 	DatabaseName      string                 `json:"DatabaseName,omitempty"`
 	TableName         string                 `json:"TableName,omitempty"`
 	Values            []string               `json:"Values"`

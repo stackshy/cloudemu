@@ -21,6 +21,16 @@ func (m *Mock) CreateTrigger(_ context.Context, t driver.Trigger) (string, error
 		return "", invalidInput("trigger name %q is invalid", t.Name)
 	}
 
+	switch t.Type {
+	case "SCHEDULED":
+		if t.Schedule == "" {
+			return "", invalidInput("a SCHEDULED trigger requires a Schedule")
+		}
+	case "CONDITIONAL", "ON_DEMAND", "EVENT":
+	default:
+		return "", invalidInput("trigger type %q is invalid", t.Type)
+	}
+
 	t.State = driver.TriggerCreated
 	t.CreationTime = m.now()
 	stored := copyTrigger(t)

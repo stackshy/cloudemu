@@ -305,12 +305,12 @@ type batchStopJobRunRequest struct {
 
 type batchStopJobRunSuccessJSON struct {
 	JobName  string `json:"JobName,omitempty"`
-	JobRunID string `json:"JobRunID,omitempty"`
+	JobRunID string `json:"JobRunId,omitempty"`
 }
 
 type batchStopJobRunErrorJSON struct {
 	JobName     string           `json:"JobName,omitempty"`
-	JobRunID    string           `json:"JobRunID,omitempty"`
+	JobRunID    string           `json:"JobRunId,omitempty"`
 	ErrorDetail *errorDetailJSON `json:"ErrorDetail,omitempty"`
 }
 
@@ -329,10 +329,12 @@ func (h *Handler) batchStopJobRun(w http.ResponseWriter, r *http.Request) {
 		}
 
 		errs := make([]batchStopJobRunErrorJSON, 0, len(failed))
-		for _, id := range failed {
+		for i := range failed {
 			errs = append(errs, batchStopJobRunErrorJSON{
-				JobName: req.JobName, JobRunID: id,
-				ErrorDetail: &errorDetailJSON{ErrorCode: driver.ExEntityNotFound, ErrorMessage: "JobRun not found"},
+				JobName: req.JobName, JobRunID: failed[i].Name,
+				ErrorDetail: &errorDetailJSON{
+					ErrorCode: failed[i].ErrorCode, ErrorMessage: failed[i].ErrorMessage,
+				},
 			})
 		}
 

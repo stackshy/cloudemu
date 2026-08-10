@@ -20,6 +20,10 @@ func (m *Mock) GetTableVersion(
 
 	// An empty versionID means "the latest", matching real Glue.
 	if versionID == "" {
+		if len(td.versions) == 0 {
+			return nil, entityNotFound("No version found for table %s", tblName)
+		}
+
 		last := td.versions[len(td.versions)-1]
 
 		return &driver.TableVersion{Table: copyTable(last.Table), VersionID: last.VersionID}, nil
@@ -70,6 +74,13 @@ func (m *Mock) DeleteTableVersion(_ context.Context, catalogID, dbName, tblName,
 
 	for i := range td.versions {
 		if td.versions[i].VersionID == versionID {
+			// Never leave a table with zero versions: a later "latest"
+			// GetTableVersion would then have nothing to return. Real Glue
+			// rejects deleting the only remaining version.
+			if len(td.versions) == 1 {
+				return entityNotFound("Cannot delete the only version %s for table %s", versionID, tblName)
+			}
+
 			td.versions = append(td.versions[:i], td.versions[i+1:]...)
 
 			return nil

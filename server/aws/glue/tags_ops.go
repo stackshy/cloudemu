@@ -3,6 +3,8 @@ package glue
 import (
 	"context"
 	"net/http"
+
+	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
 
 type tagResourceRequest struct {
@@ -55,8 +57,10 @@ func (h *Handler) getTags(w http.ResponseWriter, r *http.Request) {
 }
 
 type putResourcePolicyRequest struct {
-	PolicyInJSON string `json:"PolicyInJson"`
-	ResourceArn  string `json:"ResourceArn"`
+	PolicyInJSON          string `json:"PolicyInJson"`
+	ResourceArn           string `json:"ResourceArn"`
+	PolicyHashCondition   string `json:"PolicyHashCondition"`
+	PolicyExistsCondition string `json:"PolicyExistsCondition"`
 }
 
 type putResourcePolicyResponse struct {
@@ -65,7 +69,10 @@ type putResourcePolicyResponse struct {
 
 func (h *Handler) putResourcePolicy(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *putResourcePolicyRequest) (any, error) {
-		hash, err := h.glue.PutResourcePolicy(ctx, req.ResourceArn, req.PolicyInJSON)
+		hash, err := h.glue.PutResourcePolicy(ctx, req.ResourceArn, req.PolicyInJSON, driver.PolicyCondition{
+			PolicyHashCondition:   req.PolicyHashCondition,
+			PolicyExistsCondition: req.PolicyExistsCondition,
+		})
 		if err != nil {
 			return nil, err
 		}

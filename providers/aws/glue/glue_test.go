@@ -260,6 +260,42 @@ func TestGetDoesNotAliasStore(t *testing.T) {
 	}
 }
 
+func TestGetTableDoesNotAliasNested(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if err := m.CreateDatabase(ctx, "", driver.Database{Name: "db"}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if err := m.CreateTable(ctx, "", "db", driver.Table{
+		Name: "t",
+		StorageDescriptor: &driver.StorageDescriptor{
+			Columns: []driver.Column{{Name: "id", Type: "string"}},
+		},
+	}); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	got, err := m.GetTable(ctx, "", "db", "t")
+	if err != nil {
+		t.Fatalf("GetTable: %v", err)
+	}
+
+	// Mutate the returned nested slice; the store must not observe it.
+	got.StorageDescriptor.Columns[0].Name = "mutated"
+	got.StorageDescriptor.Columns = append(got.StorageDescriptor.Columns, driver.Column{Name: "extra"})
+
+	again, err := m.GetTable(ctx, "", "db", "t")
+	if err != nil {
+		t.Fatalf("GetTable: %v", err)
+	}
+
+	if len(again.StorageDescriptor.Columns) != 1 || again.StorageDescriptor.Columns[0].Name != "id" {
+		t.Fatalf("nested StorageDescriptor.Columns aliased by returned copy: %+v", again.StorageDescriptor.Columns)
+	}
+}
+
 func isException(err error, want string) bool {
 	var apiErr *driver.APIError
 	if err == nil {

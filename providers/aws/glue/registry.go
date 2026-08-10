@@ -13,7 +13,9 @@ import (
 // defaultRegistryName is the registry Glue uses when a schema call omits one.
 const defaultRegistryName = "default-registry"
 
-// parseVersionNumbers parses a comma-separated list of positive version numbers.
+// parseVersionNumbers parses a comma-separated list of positive version numbers,
+// each token being either a single number ("2") or an inclusive range ("1-3"),
+// matching Glue's DeleteSchemaVersions "Versions" grammar.
 func parseVersionNumbers(spec string) ([]int64, error) {
 	if strings.TrimSpace(spec) == "" {
 		return nil, nil
@@ -23,15 +25,42 @@ func parseVersionNumbers(spec string) ([]int64, error) {
 	out := make([]int64, 0, len(parts))
 
 	for _, part := range parts {
-		n, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
-		if err != nil || n <= 0 {
-			return nil, invalidInput("invalid schema version number %q", part)
+		nums, err := parseVersionToken(strings.TrimSpace(part))
+		if err != nil {
+			return nil, err
 		}
 
-		out = append(out, n)
+		out = append(out, nums...)
 	}
 
 	return out, nil
+}
+
+// parseVersionToken parses a single "N" or inclusive "LO-HI" range token.
+func parseVersionToken(token string) ([]int64, error) {
+	lo, hi, isRange := strings.Cut(token, "-")
+	if !isRange {
+		n, err := strconv.ParseInt(token, 10, 64)
+		if err != nil || n <= 0 {
+			return nil, invalidInput("invalid schema version number %q", token)
+		}
+
+		return []int64{n}, nil
+	}
+
+	start, err1 := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
+	end, err2 := strconv.ParseInt(strings.TrimSpace(hi), 10, 64)
+
+	if err1 != nil || err2 != nil || start <= 0 || end < start {
+		return nil, invalidInput("invalid schema version range %q", token)
+	}
+
+	nums := make([]int64, 0, end-start+1)
+	for n := start; n <= end; n++ {
+		nums = append(nums, n)
+	}
+
+	return nums, nil
 }
 
 // registryData is a schema registry plus its own lock.
@@ -325,6 +354,26 @@ func (m *Mock) RegisterSchemaVersion(
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
+	// Dedup: an identical definition returns the existing version rather than
+	// creating a duplicate, matching real Glue's RegisterSchemaVersion.
+	for i := range sd.versions {
+		if sd.versions[i].Definition == definition {
+			out := sd.versions[i]
+
+			return &out, nil
+		}
+	}
+
+	// Compatibility gate. The emulator applies a pragmatic check rather than
+	// parsing schema grammars: DISABLED rejects any new (non-identical) version;
+	// NONE (or unset) always accepts. Other modes accept, since a structural
+	// diff is out of scope (documented in docs/services.md).
+	if strings.EqualFold(sd.schema.Compatibility, "DISABLED") {
+		return nil, invalidInput(
+			"schema %s has compatibility DISABLED; new versions are not allowed", schemaName,
+		)
+	}
+
 	next := sd.schema.NextVersion
 	if next == 0 {
 		next = 1
@@ -357,7 +406,7 @@ func (m *Mock) GetSchemaVersion(
 	defer sd.mu.RUnlock()
 
 	if len(sd.versions) == 0 {
-		return nil, entityNotFound("no schema versions for %s", schemaName)
+		return nil, schemaVersionNotFound("no schema versions for %s", schemaName)
 	}
 
 	for i := range sd.versions {
@@ -375,7 +424,7 @@ func (m *Mock) GetSchemaVersion(
 		return &out, nil
 	}
 
-	return nil, entityNotFound("schema version not found for %s", schemaName)
+	return nil, schemaVersionNotFound("schema version not found for %s", schemaName)
 }
 
 // GetSchemaByDefinition returns the version whose definition matches exactly.
@@ -436,14 +485,31 @@ func (m *Mock) DeleteSchemaVersions(
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	kept := sd.versions[:0]
+	present := map[int64]bool{}
+	for i := range sd.versions {
+		present[sd.versions[i].VersionNumber] = true
+	}
+
 	del := map[int64]bool{}
 
+	var errs []driver.BatchError
+
+	// Report any requested version number that the schema doesn't have.
 	for _, n := range wanted {
+		if !present[n] {
+			errs = append(errs, driver.BatchError{
+				Values:       []string{strconv.FormatInt(n, 10)},
+				ErrorCode:    driver.ExEntityNotFound,
+				ErrorMessage: entityNotFound("schema version %d not found for %s", n, schemaName).Error(),
+			})
+
+			continue
+		}
+
 		del[n] = true
 	}
 
-	var errs []driver.BatchError
+	kept := sd.versions[:0]
 
 	for i := range sd.versions {
 		if del[sd.versions[i].VersionNumber] {

@@ -18,7 +18,34 @@ type partitionData struct {
 // partition can't attach to a non-existent table.
 func (m *Mock) requireTable(cat, db, table string) error {
 	if !m.tables.Has(nameKey(cat, db, table)) {
+		// Name the database when it is the missing parent, as real Glue does.
+		if err := m.requireDatabase(cat, db); err != nil {
+			return err
+		}
+
 		return entityNotFound("Table not found: %s", table)
+	}
+
+	return nil
+}
+
+// checkPartitionValueCount validates that a partition's value count matches the
+// number of partition keys declared on its table, matching real Glue which
+// rejects a mismatch with InvalidInputException.
+func (m *Mock) checkPartitionValueCount(cat, db, table string, values []string) error {
+	td, ok := m.tables.Get(nameKey(cat, db, table))
+	if !ok {
+		return nil // parent check already ran; nothing to validate against
+	}
+
+	td.mu.RLock()
+	want := len(td.table.PartitionKeys)
+	td.mu.RUnlock()
+
+	if want != len(values) {
+		return invalidInput(
+			"partition value count %d does not match table partition key count %d", len(values), want,
+		)
 	}
 
 	return nil
@@ -30,12 +57,22 @@ func (m *Mock) requireTable(cat, db, table string) error {
 func (m *Mock) CreatePartition(_ context.Context, catalogID, dbName, tblName string, p driver.Partition) error {
 	cat := m.catalogOrDefault(catalogID)
 
+	if len(p.Values) == 0 {
+		return invalidInput("partition values must not be empty")
+	}
+
+	// Hold the table scope lock across the parent check and the insert so a
+	// concurrent DeleteTable/DeleteDatabase cascade can't orphan this partition.
+	lock := m.scopeLock(nameKey(cat, dbName, tblName))
+	lock.Lock()
+	defer lock.Unlock()
+
 	if err := m.requireTable(cat, dbName, tblName); err != nil {
 		return err
 	}
 
-	if len(p.Values) == 0 {
-		return invalidInput("partition values must not be empty")
+	if err := m.checkPartitionValueCount(cat, dbName, tblName, p.Values); err != nil {
+		return err
 	}
 
 	p.CatalogID = cat
@@ -59,6 +96,11 @@ func (m *Mock) GetPartition(
 
 	pd, ok := m.partitions.Get(partitionKey(cat, dbName, tblName, values))
 	if !ok {
+		// Name the missing parent database/table on a read miss, as real Glue does.
+		if err := m.requireTable(cat, dbName, tblName); err != nil {
+			return nil, err
+		}
+
 		return nil, entityNotFound("Partition not found: %v", values)
 	}
 

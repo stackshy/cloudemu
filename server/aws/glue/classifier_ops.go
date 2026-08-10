@@ -27,6 +27,19 @@ type classifierUnionJSON struct {
 }
 
 func classifierFromUnion(u classifierUnionJSON) (driver.Classifier, bool) {
+	// Exactly one of the four sub-objects must be present.
+	present := 0
+
+	for _, c := range []map[string]any{u.GrokClassifier, u.XMLClassifier, u.JSONClassifier, u.CsvClassifier} {
+		if c != nil {
+			present++
+		}
+	}
+
+	if present != 1 {
+		return driver.Classifier{}, false
+	}
+
 	switch {
 	case u.GrokClassifier != nil:
 		return driver.Classifier{Name: strAny(u.GrokClassifier["Name"]), Kind: "Grok", Definition: u.GrokClassifier}, true

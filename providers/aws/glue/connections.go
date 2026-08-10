@@ -14,6 +14,19 @@ type connectionData struct {
 	mu   sync.RWMutex
 }
 
+// validConnectionType reports whether s is one of Glue's modeled ConnectionType
+// enum values (a required field on CreateConnection).
+func validConnectionType(s string) bool {
+	switch s {
+	case "JDBC", "SFTP", "MONGODB", "KAFKA", "NETWORK", "MARKETPLACE", "CUSTOM",
+		"SALESFORCE", "VIEW_VALIDATION_REDSHIFT", "VIEW_VALIDATION_ATHENA", "GOOGLEADS",
+		"FACEBOOKADS", "HUBSPOT", "SERVICENOW", "SNOWFLAKE", "ZENDESK":
+		return true
+	default:
+		return false
+	}
+}
+
 // CreateConnection creates a Data Catalog connection, atomically.
 //
 //nolint:gocritic // hugeParam: taken by value to match the driver interface / copy semantics
@@ -22,6 +35,10 @@ func (m *Mock) CreateConnection(_ context.Context, catalogID string, c driver.Co
 
 	if !validName(c.Name) {
 		return invalidInput("connection name %q is invalid", c.Name)
+	}
+
+	if !validConnectionType(c.ConnectionType) {
+		return invalidInput("connection type %q is invalid", c.ConnectionType)
 	}
 
 	c.CreationTime = m.now()
