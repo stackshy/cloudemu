@@ -14,7 +14,9 @@
 //	GET    /alarms/{alarmId}/history              — GetAlarmHistory
 //
 // Alarm mutations are synchronous in real OCI Monitoring, so none of them
-// returns a work request.
+// returns a work request. RetrieveDimensionStates answers 501: an alarm is
+// evaluated here over the series its query selects rather than per dimension,
+// so there is no per-dimension state to report.
 package monitoring
 
 import (
@@ -38,12 +40,17 @@ const (
 	segmentStatus   = "status"
 	segmentHistory  = "history"
 
-	actionList      = "listMetrics"
-	actionSummarize = "summarizeMetricsData"
+	actionList            = "listMetrics"
+	actionSummarize       = "summarizeMetricsData"
+	actionDimensionStates = "retrieveDimensionStates"
 )
 
-// subPathParts is the segment count of /{resource}/{a}/{b}.
-const subPathParts = 2
+// Segment counts this handler routes on: /{resource}/{a}/{b} and the
+// /{resource}/{id}/actions/{action} that only alarms have.
+const (
+	subPathParts     = 2
+	alarmActionParts = 3
+)
 
 // OCI error codes this handler raises itself.
 const (
@@ -135,9 +142,29 @@ func (h *Handler) serveAlarms(w http.ResponseWriter, r *http.Request, rest []str
 		}
 
 		h.getAlarmHistory(w, r, rest[0])
+	case alarmActionParts:
+		h.serveAlarmAction(w, r, rest)
 	default:
 		writeNotFound(w, r)
 	}
+}
+
+// serveAlarmAction routes /alarms/{alarmId}/actions/{action}. The one action
+// OCI defines there is disclosed as unimplemented rather than left to read as
+// a path this emulator does not have.
+func (*Handler) serveAlarmAction(w http.ResponseWriter, r *http.Request, rest []string) {
+	if rest[1] != segmentActions || rest[2] != actionDimensionStates {
+		writeNotFound(w, r)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, r)
+		return
+	}
+
+	ocirest.WriteError(w, r, http.StatusNotImplemented, codeNotImplemented,
+		"alarm "+actionDimensionStates+" is not supported by this emulator")
 }
 
 func (h *Handler) serveAlarmCollection(w http.ResponseWriter, r *http.Request) {

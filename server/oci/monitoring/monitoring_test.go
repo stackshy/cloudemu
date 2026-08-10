@@ -351,6 +351,27 @@ func TestCreateAlarmErrors(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "InvalidParameter",
 		},
+		{
+			name: "unparseable query",
+			body: `{"displayName":"inert","compartmentId":"` + compartmentA +
+				`","namespace":"` + namespace + `","query":"CpuUtilization.mean() > 80"}`,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "InvalidParameter",
+		},
+		{
+			name: "unknown severity",
+			body: `{"displayName":"urgent","compartmentId":"` + compartmentA + `","namespace":"` + namespace +
+				`","query":"CpuUtilization[1m].mean() > 80","severity":"URGENT"}`,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "InvalidParameter",
+		},
+		{
+			name: "pendingDuration that is not ISO-8601",
+			body: `{"displayName":"pending","compartmentId":"` + compartmentA + `","namespace":"` + namespace +
+				`","query":"CpuUtilization[1m].mean() > 80","pendingDuration":"5m"}`,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "InvalidParameter",
+		},
 	}
 
 	for _, tc := range tests {
@@ -360,6 +381,13 @@ func TestCreateAlarmErrors(t *testing.T) {
 			assert.Equal(t, tc.wantCode, decode[ocirest.ErrorBody](t, raw).Code)
 		})
 	}
+
+	resp, raw := do(t, ts, http.MethodGet, alarmsPath+"?compartmentId="+compartmentA, "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	listed := decode[[]map[string]any](t, raw)
+	require.Len(t, listed, 1, "a refused alarm must not be stored")
+	assert.Equal(t, "dupe", listed[0]["displayName"])
 }
 
 func TestListAlarmsIsCompartmentScoped(t *testing.T) {
@@ -496,6 +524,10 @@ func TestRoutingRejections(t *testing.T) {
 		{"alarm status is get only", http.MethodDelete, alarmsPath + "/status", http.StatusMethodNotAllowed},
 		{"unknown alarm sub-resource", http.MethodGet, alarmsPath + "/id/nope", http.StatusNotFound},
 		{"too many segments", http.MethodGet, alarmsPath + "/id/history/extra", http.StatusNotFound},
+		{"unknown alarm action", http.MethodPost, alarmsPath + "/id/actions/nope", http.StatusNotFound},
+		{"deepest path", http.MethodPost, alarmsPath + "/id/actions/retrieveDimensionStates/extra", http.StatusNotFound},
+		{"dimension states is post only", http.MethodGet,
+			alarmsPath + "/id/actions/retrieveDimensionStates", http.StatusMethodNotAllowed},
 	}
 
 	for _, tc := range tests {
@@ -592,4 +624,22 @@ func TestPostMetricDataLimits(t *testing.T) {
 		resp, raw := do(t, ts, http.MethodPost, metricsPath, body)
 		require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
 	})
+}
+
+// TestRetrieveDimensionStatesIsDisclosed covers the alarm action this emulator
+// does not implement: it names itself rather than reading as a path OCI has and
+// this handler lacks.
+func TestRetrieveDimensionStatesIsDisclosed(t *testing.T) {
+	ts := newServer(t)
+	created := createAlarm(t, ts, compartmentA, "high-cpu", "CpuUtilization[1m].mean() > 80")
+
+	id, ok := created["id"].(string)
+	require.True(t, ok)
+
+	resp, raw := do(t, ts, http.MethodPost, alarmsPath+"/"+id+"/actions/retrieveDimensionStates", "")
+	require.Equal(t, http.StatusNotImplemented, resp.StatusCode, string(raw))
+
+	body := decode[ocirest.ErrorBody](t, raw)
+	assert.Equal(t, "NotImplemented", body.Code)
+	assert.Contains(t, body.Message, "retrieveDimensionStates")
 }

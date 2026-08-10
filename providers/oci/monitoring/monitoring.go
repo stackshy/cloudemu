@@ -41,6 +41,14 @@ const (
 // defaultResolution is the aggregation interval OCI applies when a caller names none.
 const defaultResolution = "1m"
 
+// Alarm severities OCI accepts.
+const (
+	severityCritical = "CRITICAL"
+	severityError    = "ERROR"
+	severityWarning  = "WARNING"
+	severityInfo     = "INFO"
+)
+
 // alarmRecord is a stored alarm plus its state-change history.
 type alarmRecord struct {
 	id             string

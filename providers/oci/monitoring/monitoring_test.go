@@ -983,3 +983,122 @@ func TestPostMetricDataShapeLimits(t *testing.T) {
 		})
 	}
 }
+
+// TestAlarmRejectsUnparseableQuery is the create-time guard on the query: an
+// alarm evaluate could never read is refused rather than stored ACTIVE and
+// silently inert.
+func TestAlarmRejectsUnparseableQuery(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := t.Context()
+
+	queries := []string{
+		"CpuUtilization.mean() > 80",       // no interval
+		"CpuUtilization[1m].p99() > 80",    // an aggregation with no statistic
+		"CpuUtilization[1m].mean()",        // no threshold comparison
+		"CpuUtilization[1m].mean() > lots", // a threshold that is not a number
+		"hello",
+	}
+
+	for _, query := range queries {
+		t.Run(query, func(t *testing.T) {
+			_, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "inert", query))
+			assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+		})
+	}
+
+	stored, err := m.ListOCIAlarms(ctx, compartmentA)
+	require.NoError(t, err)
+	assert.Empty(t, stored, "a refused alarm must not be stored")
+
+	t.Run("update is guarded too", func(t *testing.T) {
+		created, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "cpu", "CpuUtilization[1m].mean() > 80"))
+		require.NoError(t, err)
+
+		_, err = m.UpdateOCIAlarm(ctx, created.ID, alarmSpec(compartmentA, "cpu", "CpuUtilization.mean() > 90"))
+		assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+		got, err := m.GetOCIAlarm(ctx, created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "CpuUtilization[1m].mean() > 80", got.Spec.Query, "a refused update leaves the query alone")
+	})
+}
+
+// TestAlarmFieldValidation covers the alarm values OCI constrains to an enum or
+// a duration format, which are checked at create rather than ignored later.
+func TestAlarmFieldValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*driver.OCIAlarmSpec)
+		want   cerrors.Code
+	}{
+		{"unknown severity", func(s *driver.OCIAlarmSpec) { s.Severity = "URGENT" }, cerrors.InvalidArgument},
+		{"lower-case severity", func(s *driver.OCIAlarmSpec) { s.Severity = "critical" }, cerrors.InvalidArgument},
+		{"every severity OCI names", func(s *driver.OCIAlarmSpec) { s.Severity = severityInfo }, cerrors.OK},
+		{"pendingDuration that is not ISO-8601", func(s *driver.OCIAlarmSpec) {
+			s.PendingDuration = "5m"
+		}, cerrors.InvalidArgument},
+		{"pendingDuration with a unit but no number", func(s *driver.OCIAlarmSpec) {
+			s.PendingDuration = "PTM"
+		}, cerrors.InvalidArgument},
+		{"ISO-8601 pendingDuration", func(s *driver.OCIAlarmSpec) { s.PendingDuration = "PT5M" }, cerrors.OK},
+		{"resolution that is not an interval", func(s *driver.OCIAlarmSpec) {
+			s.Resolution = "hourly"
+		}, cerrors.InvalidArgument},
+		{"sub-minute resolution", func(s *driver.OCIAlarmSpec) { s.Resolution = "30s" }, cerrors.InvalidArgument},
+		{"minute resolution", func(s *driver.OCIAlarmSpec) { s.Resolution = "5m" }, cerrors.OK},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newMock(t)
+			spec := alarmSpec(compartmentA, "alarm", "CpuUtilization[1m].mean() > 80")
+			tc.mutate(&spec)
+
+			_, err := m.CreateOCIAlarm(t.Context(), spec)
+			assert.Equal(t, tc.want, cerrors.GetCode(err))
+		})
+	}
+
+	m, _ := newMock(t)
+	spec := alarmSpec(compartmentA, "defaulted", "CpuUtilization[1m].mean() > 80")
+	spec.Severity = ""
+
+	created, err := m.CreateOCIAlarm(t.Context(), spec)
+	require.NoError(t, err)
+	assert.Equal(t, severityWarning, created.Spec.Severity, "an omitted severity defaults")
+	assert.Equal(t, defaultResolution, created.Spec.Resolution, "an omitted resolution defaults")
+}
+
+// TestUpdateRejectsDuplicateDisplayName holds an update to the uniqueness rule
+// create enforces, so a rename cannot make the duplicate create refuses.
+func TestUpdateRejectsDuplicateDisplayName(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := t.Context()
+
+	first, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "taken", "CpuUtilization[1m].mean() > 80"))
+	require.NoError(t, err)
+
+	second, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentA, "free", "CpuUtilization[1m].mean() > 80"))
+	require.NoError(t, err)
+
+	_, err = m.UpdateOCIAlarm(ctx, second.ID, alarmSpec(compartmentA, "taken", "CpuUtilization[1m].mean() > 90"))
+	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
+
+	got, err := m.GetOCIAlarm(ctx, second.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "free", got.Spec.DisplayName, "a refused update leaves the alarm alone")
+	assert.Equal(t, "CpuUtilization[1m].mean() > 80", got.Spec.Query)
+
+	t.Run("an alarm keeps its own name", func(t *testing.T) {
+		_, err := m.UpdateOCIAlarm(ctx, first.ID, alarmSpec(compartmentA, "taken", "CpuUtilization[1m].mean() > 95"))
+		require.NoError(t, err)
+	})
+
+	t.Run("another compartment may hold the name", func(t *testing.T) {
+		other, err := m.CreateOCIAlarm(ctx, alarmSpec(compartmentB, "free", "CpuUtilization[1m].mean() > 80"))
+		require.NoError(t, err)
+
+		_, err = m.UpdateOCIAlarm(ctx, other.ID, alarmSpec(compartmentB, "taken", "CpuUtilization[1m].mean() > 90"))
+		require.NoError(t, err)
+	})
+}

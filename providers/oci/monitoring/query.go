@@ -192,26 +192,8 @@ func unquote(value string) string {
 	return strings.Trim(strings.TrimSpace(value), `"`)
 }
 
-// checkDimensions reports a dimension predicate this parser refuses, so an
-// alarm carrying one is rejected rather than stored to never fire.
-func checkDimensions(query string) error {
-	open := strings.Index(query, "{")
-	if open < 0 {
-		return nil
-	}
-
-	end := strings.Index(query[open:], "}")
-	if end < 0 {
-		return nil
-	}
-
-	_, err := parsePredicates(query[open+1 : open+end])
-
-	return err
-}
-
 // parseQuery reads the single-metric threshold form of OCI's query language.
-// Anything richer is stored verbatim and simply never fires.
+// Anything richer is refused at create time rather than stored to never fire.
 func parseQuery(query string) (condition, error) {
 	sel, rest, err := splitSelector(query)
 	if err != nil {
