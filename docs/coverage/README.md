@@ -36,7 +36,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `managedcassandra` | — | [ManagedCassandra](./azure/managedcassandra.md) | — | — | 15 |
 | `memorydb` | [MemoryDB](./aws/memorydb.md) | — | — | — | 33 |
 | `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | — | 14 |
-| `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | — | 12 |
+| `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | [Monitoring](./oci/monitoring.md) | 12 |
 | `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 20 |
 | `networking` | [VPC](./aws/vpc.md) | — | — | — | 3 |
 | `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | — | 9 |

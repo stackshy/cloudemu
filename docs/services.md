@@ -616,6 +616,48 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 
 **Total: 12 operations**
 
+### OCI Monitoring
+
+**Optional capability:** `services/monitoring/driver.OCIMonitoring` — OCI scopes
+metrics and alarms to a compartment and identifies alarms by OCID, neither of
+which the portable model carries.
+**Provider:** `providers/oci/monitoring` | **Wire:** `server/oci/monitoring`
+
+| Operation | Route |
+|-----------|-------|
+| `PostMetricData` | `POST /20180401/metrics` |
+| `ListMetrics` | `POST /20180401/metrics/actions/listMetrics` |
+| `SummarizeMetricsData` | `POST /20180401/metrics/actions/summarizeMetricsData` |
+| `CreateAlarm` | `POST /20180401/alarms` |
+| `ListAlarms` | `GET /20180401/alarms` |
+| `ListAlarmsStatus` | `GET /20180401/alarms/status` |
+| `GetAlarm` | `GET /20180401/alarms/{alarmId}` |
+| `UpdateAlarm` | `PUT /20180401/alarms/{alarmId}` |
+| `DeleteAlarm` | `DELETE /20180401/alarms/{alarmId}` |
+| `GetAlarmHistory` | `GET /20180401/alarms/{alarmId}/history` |
+
+Every list route requires `compartmentId` and paginates with `limit` / `page`,
+returning the cursor as `opc-next-page`. Alarm mutations are synchronous in real
+OCI Monitoring, so none of them returns a work request.
+
+Queries are read in MQL's single-metric threshold form plus the optional
+dimension predicate that scopes an alarm to one series —
+`CpuUtilization[1m]{resourceId = "ocid1.instance…"}.mean() > 80`. The predicate
+supports `=` and `!=`; the pattern operators `=~` and `!~` are rejected rather
+than answered with a false "no data". A resolution finer than OCI's `1m`
+minimum is rejected; richer MQL is stored verbatim and never fires.
+
+An alarm fires only once its condition has held for `pendingDuration`, read as
+an ISO-8601 duration such as `PT5M`; the portable `EvaluationPeriods` maps onto
+it. Unset, it fires on the first breaching datapoint — evaluation runs on
+`PostMetricData` rather than on a timer, so OCI's `PT1M` default would never
+elapse on its own. Alarm `suppression` and `overrides` are rejected rather than
+accepted and dropped.
+
+`PostMetricData` enforces OCI's batch limit of 50 `metricData` entries and its
+namespace, metric name and dimension formats. The per-request datapoint cap,
+`metadata` limits and the ingestion time window are not enforced.
+
 ---
 
 ## 7. IAM
