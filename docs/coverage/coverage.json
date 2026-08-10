@@ -5406,16 +5406,188 @@
   },
   {
     "service": "networking",
-    "interface": "NetworkInterfaces",
+    "interface": "Networking",
     "operations": [
       {
-        "name": "DeleteNetworkInterface"
+        "name": "AcceptPeeringConnection"
       },
       {
-        "name": "DescribeNetworkInterfaces"
+        "name": "AddEgressRule"
       },
       {
-        "name": "DetachNetworkInterface"
+        "name": "AddIngressRule"
+      },
+      {
+        "name": "AddNetworkACLRule"
+      },
+      {
+        "name": "AllocateAddress",
+        "doc": "Elastic IPs"
+      },
+      {
+        "name": "AssociateAddress"
+      },
+      {
+        "name": "AssociateRouteTable",
+        "doc": "Route Table Associations"
+      },
+      {
+        "name": "AttachInternetGateway"
+      },
+      {
+        "name": "CreateFlowLog",
+        "doc": "Flow Logs"
+      },
+      {
+        "name": "CreateInternetGateway",
+        "doc": "Internet Gateways"
+      },
+      {
+        "name": "CreateNATGateway",
+        "doc": "NAT Gateways"
+      },
+      {
+        "name": "CreateNetworkACL",
+        "doc": "Network ACLs"
+      },
+      {
+        "name": "CreatePeeringConnection",
+        "doc": "VPC Peering"
+      },
+      {
+        "name": "CreateRoute"
+      },
+      {
+        "name": "CreateRouteTable",
+        "doc": "Route Tables"
+      },
+      {
+        "name": "CreateSecurityGroup"
+      },
+      {
+        "name": "CreateSubnet"
+      },
+      {
+        "name": "CreateVPC"
+      },
+      {
+        "name": "CreateVPCEndpoint",
+        "doc": "VPC Endpoints"
+      },
+      {
+        "name": "DeleteFlowLog"
+      },
+      {
+        "name": "DeleteInternetGateway"
+      },
+      {
+        "name": "DeleteNATGateway"
+      },
+      {
+        "name": "DeleteNetworkACL"
+      },
+      {
+        "name": "DeletePeeringConnection"
+      },
+      {
+        "name": "DeleteRoute"
+      },
+      {
+        "name": "DeleteRouteTable"
+      },
+      {
+        "name": "DeleteSecurityGroup"
+      },
+      {
+        "name": "DeleteSubnet"
+      },
+      {
+        "name": "DeleteVPC"
+      },
+      {
+        "name": "DeleteVPCEndpoint"
+      },
+      {
+        "name": "DescribeAddresses"
+      },
+      {
+        "name": "DescribeFlowLogs"
+      },
+      {
+        "name": "DescribeInternetGateways"
+      },
+      {
+        "name": "DescribeNATGateways"
+      },
+      {
+        "name": "DescribeNetworkACLs"
+      },
+      {
+        "name": "DescribePeeringConnections"
+      },
+      {
+        "name": "DescribeRouteTables"
+      },
+      {
+        "name": "DescribeSecurityGroups"
+      },
+      {
+        "name": "DescribeSubnets"
+      },
+      {
+        "name": "DescribeVPCEndpoints"
+      },
+      {
+        "name": "DescribeVPCs"
+      },
+      {
+        "name": "DetachInternetGateway"
+      },
+      {
+        "name": "DisassociateAddress"
+      },
+      {
+        "name": "DisassociateRouteTable"
+      },
+      {
+        "name": "GetFlowLogRecords"
+      },
+      {
+        "name": "ModifyVPCEndpoint"
+      },
+      {
+        "name": "RejectPeeringConnection"
+      },
+      {
+        "name": "ReleaseAddress"
+      },
+      {
+        "name": "RemoveEgressRule"
+      },
+      {
+        "name": "RemoveIngressRule"
+      },
+      {
+        "name": "RemoveNetworkACLRule"
+      },
+      {
+        "name": "RemoveSecurityGroupTags"
+      },
+      {
+        "name": "RemoveSubnetTags"
+      },
+      {
+        "name": "RemoveVPCTags"
+      },
+      {
+        "name": "UpdateSecurityGroupTags"
+      },
+      {
+        "name": "UpdateSubnetTags"
+      },
+      {
+        "name": "UpdateVPCTags",
+        "doc": "Tag mutation. Update* merges keys into the resource's existing Tags"
       }
     ],
     "optionalCapabilities": [
@@ -5813,189 +5985,17 @@
         ]
       },
       {
-        "name": "Networking",
-        "doc": "Networking is the interface that networking provider",
+        "name": "NetworkInterfaces",
+        "doc": "NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
           {
-            "name": "AcceptPeeringConnection"
+            "name": "DeleteNetworkInterface"
           },
           {
-            "name": "AddEgressRule"
+            "name": "DescribeNetworkInterfaces"
           },
           {
-            "name": "AddIngressRule"
-          },
-          {
-            "name": "AddNetworkACLRule"
-          },
-          {
-            "name": "AllocateAddress",
-            "doc": "Elastic IPs"
-          },
-          {
-            "name": "AssociateAddress"
-          },
-          {
-            "name": "AssociateRouteTable",
-            "doc": "Route Table Associations"
-          },
-          {
-            "name": "AttachInternetGateway"
-          },
-          {
-            "name": "CreateFlowLog",
-            "doc": "Flow Logs"
-          },
-          {
-            "name": "CreateInternetGateway",
-            "doc": "Internet Gateways"
-          },
-          {
-            "name": "CreateNATGateway",
-            "doc": "NAT Gateways"
-          },
-          {
-            "name": "CreateNetworkACL",
-            "doc": "Network ACLs"
-          },
-          {
-            "name": "CreatePeeringConnection",
-            "doc": "VPC Peering"
-          },
-          {
-            "name": "CreateRoute"
-          },
-          {
-            "name": "CreateRouteTable",
-            "doc": "Route Tables"
-          },
-          {
-            "name": "CreateSecurityGroup"
-          },
-          {
-            "name": "CreateSubnet"
-          },
-          {
-            "name": "CreateVPC"
-          },
-          {
-            "name": "CreateVPCEndpoint",
-            "doc": "VPC Endpoints"
-          },
-          {
-            "name": "DeleteFlowLog"
-          },
-          {
-            "name": "DeleteInternetGateway"
-          },
-          {
-            "name": "DeleteNATGateway"
-          },
-          {
-            "name": "DeleteNetworkACL"
-          },
-          {
-            "name": "DeletePeeringConnection"
-          },
-          {
-            "name": "DeleteRoute"
-          },
-          {
-            "name": "DeleteRouteTable"
-          },
-          {
-            "name": "DeleteSecurityGroup"
-          },
-          {
-            "name": "DeleteSubnet"
-          },
-          {
-            "name": "DeleteVPC"
-          },
-          {
-            "name": "DeleteVPCEndpoint"
-          },
-          {
-            "name": "DescribeAddresses"
-          },
-          {
-            "name": "DescribeFlowLogs"
-          },
-          {
-            "name": "DescribeInternetGateways"
-          },
-          {
-            "name": "DescribeNATGateways"
-          },
-          {
-            "name": "DescribeNetworkACLs"
-          },
-          {
-            "name": "DescribePeeringConnections"
-          },
-          {
-            "name": "DescribeRouteTables"
-          },
-          {
-            "name": "DescribeSecurityGroups"
-          },
-          {
-            "name": "DescribeSubnets"
-          },
-          {
-            "name": "DescribeVPCEndpoints"
-          },
-          {
-            "name": "DescribeVPCs"
-          },
-          {
-            "name": "DetachInternetGateway"
-          },
-          {
-            "name": "DisassociateAddress"
-          },
-          {
-            "name": "DisassociateRouteTable"
-          },
-          {
-            "name": "GetFlowLogRecords"
-          },
-          {
-            "name": "ModifyVPCEndpoint"
-          },
-          {
-            "name": "RejectPeeringConnection"
-          },
-          {
-            "name": "ReleaseAddress"
-          },
-          {
-            "name": "RemoveEgressRule"
-          },
-          {
-            "name": "RemoveIngressRule"
-          },
-          {
-            "name": "RemoveNetworkACLRule"
-          },
-          {
-            "name": "RemoveSecurityGroupTags"
-          },
-          {
-            "name": "RemoveSubnetTags"
-          },
-          {
-            "name": "RemoveVPCTags"
-          },
-          {
-            "name": "UpdateSecurityGroupTags"
-          },
-          {
-            "name": "UpdateSubnetTags"
-          },
-          {
-            "name": "UpdateVPCTags",
-            "doc": "Tag mutation. Update* merges keys into the resource's existing Tags"
+            "name": "DetachNetworkInterface"
           }
         ]
       },
@@ -6227,6 +6227,8 @@
     ],
     "providers": {
       "aws": "VPC",
+      "azure": "VNet",
+      "gcp": "VPC",
       "oci": "VCN"
     }
   },
