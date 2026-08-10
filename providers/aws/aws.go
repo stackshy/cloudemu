@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
@@ -164,6 +165,7 @@ type Provider struct {
 	WAFv2               *wafv2.Mock
 	Route53Resolver     *route53resolver.Mock
 	SFN                 *sfn.Mock
+	CloudTrail          *cloudtrail.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -211,6 +213,7 @@ func New(opts ...config.Option) *Provider {
 		WAFv2:               wafv2.New(o),
 		Route53Resolver:     route53resolver.New(o),
 		SFN:                 sfn.New(o),
+		CloudTrail:          cloudtrail.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}

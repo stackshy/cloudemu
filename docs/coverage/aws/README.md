@@ -9,6 +9,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 29 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
+| [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
 | [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 14 |
 | [DynamoDB](./dynamodb.md) | `database` | 24 |
@@ -26,6 +27,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [Lambda](./lambda.md) | `serverless` | 27 |
 | [MemoryDB](./memorydb.md) | `memorydb` | 33 |
 | [NetworkFirewall](./networkfirewall.md) | `networkfirewall` | 20 |
+| [OpenSearch](./opensearch.md) | `opensearch` | 96 |
 | [Redshift](./redshift.md) | `relationaldb` | 21 |
 | [Route53](./route53.md) | `dns` | 16 |
 | [Route53Resolver](./route53resolver.md) | `route53resolver` | 72 |

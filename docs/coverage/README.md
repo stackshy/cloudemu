@@ -17,6 +17,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `bedrockagentruntime` | [BedrockAgentRuntime](./aws/bedrockagentruntime.md) | — | — | — | 3 |
 | `bigtable` | — | — | [Bigtable](./gcp/bigtable.md) | — | 38 |
 | `cache` | [ElastiCache](./aws/elasticache.md) | [Cache](./azure/cache.md) | [Memorystore](./gcp/memorystore.md) | — | 17 |
+| `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 14 |
 | `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
@@ -39,6 +40,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 20 |
 | `networking` | [VPC](./aws/vpc.md) | — | — | — | 3 |
 | `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | — | 9 |
+| `opensearch` | [OpenSearch](./aws/opensearch.md) | — | — | — | 96 |
 | `parameterstore` | [SSM](./aws/ssm.md) | — | — | — | 9 |
 | `relationaldb` | [Redshift](./aws/redshift.md) | [MySQLFlex](./azure/mysqlflex.md) | [AlloyDB](./gcp/alloydb.md) | — | 21 |
 | `route53resolver` | [Route53Resolver](./aws/route53resolver.md) | — | — | — | 72 |

@@ -1575,6 +1575,208 @@
     }
   },
   {
+    "service": "cloudtrail",
+    "interface": "CloudTrail",
+    "operations": [
+      {
+        "name": "AddTags",
+        "doc": "Tags."
+      },
+      {
+        "name": "CancelQuery"
+      },
+      {
+        "name": "CreateChannel",
+        "doc": "Channels."
+      },
+      {
+        "name": "CreateDashboard",
+        "doc": "Dashboards."
+      },
+      {
+        "name": "CreateEventDataStore",
+        "doc": "Event data stores."
+      },
+      {
+        "name": "CreateTrail",
+        "doc": "Trails."
+      },
+      {
+        "name": "DeleteChannel"
+      },
+      {
+        "name": "DeleteDashboard"
+      },
+      {
+        "name": "DeleteEventDataStore"
+      },
+      {
+        "name": "DeleteResourcePolicy"
+      },
+      {
+        "name": "DeleteTrail"
+      },
+      {
+        "name": "DeregisterOrganizationDelegatedAdmin"
+      },
+      {
+        "name": "DescribeQuery"
+      },
+      {
+        "name": "DescribeTrails"
+      },
+      {
+        "name": "DisableFederation"
+      },
+      {
+        "name": "EnableFederation",
+        "doc": "Federation (EDS Lake Formation federation)."
+      },
+      {
+        "name": "GenerateQuery"
+      },
+      {
+        "name": "GetChannel"
+      },
+      {
+        "name": "GetDashboard"
+      },
+      {
+        "name": "GetEventConfiguration"
+      },
+      {
+        "name": "GetEventDataStore"
+      },
+      {
+        "name": "GetEventSelectors"
+      },
+      {
+        "name": "GetImport"
+      },
+      {
+        "name": "GetInsightSelectors"
+      },
+      {
+        "name": "GetQueryResults"
+      },
+      {
+        "name": "GetResourcePolicy"
+      },
+      {
+        "name": "GetTrail"
+      },
+      {
+        "name": "GetTrailStatus"
+      },
+      {
+        "name": "ListChannels"
+      },
+      {
+        "name": "ListDashboards"
+      },
+      {
+        "name": "ListEventDataStores"
+      },
+      {
+        "name": "ListImportFailures"
+      },
+      {
+        "name": "ListImports"
+      },
+      {
+        "name": "ListInsightsData"
+      },
+      {
+        "name": "ListInsightsMetricData"
+      },
+      {
+        "name": "ListPublicKeys"
+      },
+      {
+        "name": "ListQueries"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "ListTrails"
+      },
+      {
+        "name": "LookupEvents",
+        "doc": "Read-only lookup/insight/keys/samples (synthesized; documented)."
+      },
+      {
+        "name": "PutEventConfiguration",
+        "doc": "Event configuration (per EDS/channel)."
+      },
+      {
+        "name": "PutEventSelectors",
+        "doc": "Event/insight selectors."
+      },
+      {
+        "name": "PutInsightSelectors"
+      },
+      {
+        "name": "PutResourcePolicy",
+        "doc": "Resource policy."
+      },
+      {
+        "name": "RegisterOrganizationDelegatedAdmin",
+        "doc": "Organization delegated admin."
+      },
+      {
+        "name": "RemoveTags"
+      },
+      {
+        "name": "RestoreEventDataStore"
+      },
+      {
+        "name": "SearchSampleQueries"
+      },
+      {
+        "name": "StartDashboardRefresh"
+      },
+      {
+        "name": "StartEventDataStoreIngestion"
+      },
+      {
+        "name": "StartImport",
+        "doc": "Imports."
+      },
+      {
+        "name": "StartLogging"
+      },
+      {
+        "name": "StartQuery",
+        "doc": "Queries (ad-hoc analysis over event data stores)."
+      },
+      {
+        "name": "StopEventDataStoreIngestion"
+      },
+      {
+        "name": "StopImport"
+      },
+      {
+        "name": "StopLogging"
+      },
+      {
+        "name": "UpdateChannel"
+      },
+      {
+        "name": "UpdateDashboard"
+      },
+      {
+        "name": "UpdateEventDataStore"
+      },
+      {
+        "name": "UpdateTrail"
+      }
+    ],
+    "providers": {
+      "aws": "CloudTrail"
+    }
+  },
+  {
     "service": "compute",
     "interface": "Compute",
     "operations": [
@@ -4683,6 +4885,322 @@
       "aws": "SNS",
       "azure": "NotificationHubs",
       "gcp": "FCM"
+    }
+  },
+  {
+    "service": "opensearch",
+    "interface": "OpenSearch",
+    "operations": [
+      {
+        "name": "AcceptInboundConnection"
+      },
+      {
+        "name": "AddDataSource",
+        "doc": "Data sources (per-domain)."
+      },
+      {
+        "name": "AddDirectQueryDataSource",
+        "doc": "Direct-query data sources."
+      },
+      {
+        "name": "AddTags",
+        "doc": "Tags."
+      },
+      {
+        "name": "AssociatePackage"
+      },
+      {
+        "name": "AssociatePackages"
+      },
+      {
+        "name": "AttachDataSource",
+        "doc": "Data-source attachments (per-application)."
+      },
+      {
+        "name": "AuthorizeVpcEndpointAccess"
+      },
+      {
+        "name": "CancelDomainConfigChange"
+      },
+      {
+        "name": "CancelServiceSoftwareUpdate"
+      },
+      {
+        "name": "CreateApplication",
+        "doc": "Applications."
+      },
+      {
+        "name": "CreateDomain",
+        "doc": "Domains."
+      },
+      {
+        "name": "CreateIndex",
+        "doc": "Indexes (data-plane convenience)."
+      },
+      {
+        "name": "CreateOutboundConnection",
+        "doc": "Cross-cluster connections."
+      },
+      {
+        "name": "CreatePackage",
+        "doc": "Packages."
+      },
+      {
+        "name": "CreateVpcEndpoint",
+        "doc": "VPC endpoints."
+      },
+      {
+        "name": "DeleteApplication"
+      },
+      {
+        "name": "DeleteDataSource"
+      },
+      {
+        "name": "DeleteDirectQueryDataSource"
+      },
+      {
+        "name": "DeleteDomain"
+      },
+      {
+        "name": "DeleteInboundConnection"
+      },
+      {
+        "name": "DeleteIndex"
+      },
+      {
+        "name": "DeleteOutboundConnection"
+      },
+      {
+        "name": "DeletePackage"
+      },
+      {
+        "name": "DeleteVpcEndpoint"
+      },
+      {
+        "name": "DeregisterCapability"
+      },
+      {
+        "name": "DescribeDataSourceAttachment"
+      },
+      {
+        "name": "DescribeDomain"
+      },
+      {
+        "name": "DescribeDomainAutoTunes"
+      },
+      {
+        "name": "DescribeDomainChangeProgress"
+      },
+      {
+        "name": "DescribeDomainConfig"
+      },
+      {
+        "name": "DescribeDomainHealth"
+      },
+      {
+        "name": "DescribeDomainNodes"
+      },
+      {
+        "name": "DescribeDomains"
+      },
+      {
+        "name": "DescribeDryRunProgress"
+      },
+      {
+        "name": "DescribeInboundConnections"
+      },
+      {
+        "name": "DescribeInsightDetails"
+      },
+      {
+        "name": "DescribeInstanceTypeLimits"
+      },
+      {
+        "name": "DescribeOutboundConnections"
+      },
+      {
+        "name": "DescribePackages"
+      },
+      {
+        "name": "DescribeReservedInstanceOfferings"
+      },
+      {
+        "name": "DescribeReservedInstances"
+      },
+      {
+        "name": "DescribeVpcEndpoints"
+      },
+      {
+        "name": "DetachDataSource"
+      },
+      {
+        "name": "DissociatePackage"
+      },
+      {
+        "name": "DissociatePackages"
+      },
+      {
+        "name": "GetApplication"
+      },
+      {
+        "name": "GetCapability"
+      },
+      {
+        "name": "GetCompatibleVersions"
+      },
+      {
+        "name": "GetDataSource"
+      },
+      {
+        "name": "GetDefaultApplicationSetting"
+      },
+      {
+        "name": "GetDirectQueryDataSource"
+      },
+      {
+        "name": "GetDomainMaintenanceStatus"
+      },
+      {
+        "name": "GetIndex"
+      },
+      {
+        "name": "GetMigration"
+      },
+      {
+        "name": "GetPackageVersionHistory"
+      },
+      {
+        "name": "GetUpgradeHistory"
+      },
+      {
+        "name": "GetUpgradeStatus"
+      },
+      {
+        "name": "InsightFeedback"
+      },
+      {
+        "name": "ListApplications"
+      },
+      {
+        "name": "ListDataSourceAttachments"
+      },
+      {
+        "name": "ListDataSources"
+      },
+      {
+        "name": "ListDirectQueryDataSources"
+      },
+      {
+        "name": "ListDomainMaintenances"
+      },
+      {
+        "name": "ListDomainNames"
+      },
+      {
+        "name": "ListDomainsForPackage"
+      },
+      {
+        "name": "ListInsights",
+        "doc": "Insights."
+      },
+      {
+        "name": "ListInstanceTypeDetails"
+      },
+      {
+        "name": "ListMigrations"
+      },
+      {
+        "name": "ListPackagesForDomain"
+      },
+      {
+        "name": "ListScheduledActions",
+        "doc": "Scheduled actions."
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "ListVersions",
+        "doc": "Versions \u0026 catalogs (read-only, synthesized)."
+      },
+      {
+        "name": "ListVpcEndpointAccess"
+      },
+      {
+        "name": "ListVpcEndpoints"
+      },
+      {
+        "name": "ListVpcEndpointsForDomain"
+      },
+      {
+        "name": "PurchaseReservedInstanceOffering",
+        "doc": "Reserved instances."
+      },
+      {
+        "name": "PutDefaultApplicationSetting"
+      },
+      {
+        "name": "RegisterCapability",
+        "doc": "Capabilities \u0026 default application setting."
+      },
+      {
+        "name": "RejectInboundConnection"
+      },
+      {
+        "name": "RemoveTags"
+      },
+      {
+        "name": "RevokeVpcEndpointAccess"
+      },
+      {
+        "name": "RollbackServiceSoftwareUpdate"
+      },
+      {
+        "name": "StartDomainMaintenance",
+        "doc": "Domain maintenance."
+      },
+      {
+        "name": "StartMigration",
+        "doc": "Migrations (serverless)."
+      },
+      {
+        "name": "StartServiceSoftwareUpdate",
+        "doc": "Service software update."
+      },
+      {
+        "name": "UpdateApplication"
+      },
+      {
+        "name": "UpdateDataSource"
+      },
+      {
+        "name": "UpdateDirectQueryDataSource"
+      },
+      {
+        "name": "UpdateDomainConfig"
+      },
+      {
+        "name": "UpdateIndex"
+      },
+      {
+        "name": "UpdatePackage"
+      },
+      {
+        "name": "UpdatePackageScope"
+      },
+      {
+        "name": "UpdateScheduledAction"
+      },
+      {
+        "name": "UpdateVpcEndpoint"
+      },
+      {
+        "name": "UpgradeDomain",
+        "doc": "Upgrades."
+      }
+    ],
+    "providers": {
+      "aws": "OpenSearch"
     }
   },
   {
