@@ -5311,7 +5311,8 @@
       }
     ],
     "providers": {
-      "aws": "VPC"
+      "aws": "VPC",
+      "oci": "VCN"
     }
   },
   {

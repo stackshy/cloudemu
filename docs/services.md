@@ -401,7 +401,7 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 ## 5. Networking
 
 **Driver interface:** `services/networking/driver/driver.go`
-**AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC
+**AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC | **OCI:** VCN (security lists map to network ACLs; service gateways to VPC endpoints; public IPs to elastic IPs; a connected pair of local peering gateways to a peering connection — DRGs, DRG attachments and remote peering connections are not emulated)
 
 ### VPC Operations
 
