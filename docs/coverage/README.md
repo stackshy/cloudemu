@@ -28,6 +28,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `ecs` | [ECS](./aws/ecs.md) | — | — | — | 37 |
 | `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |
 | `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
+| `glue` | [Glue](./aws/glue.md) | — | — | — | 299 |
 | `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | [Identity](./oci/identity.md) | 40 |
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
@@ -39,7 +40,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | — | 14 |
 | `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | [Monitoring](./oci/monitoring.md) | 12 |
 | `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 20 |
-| `networking` | [VPC](./aws/vpc.md) | — | — | — | 3 |
+| `networking` | [VPC](./aws/vpc.md) | [VNet](./azure/vnet.md) | [VPC](./gcp/vpc.md) | [VCN](./oci/vcn.md) | 57 |
 | `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | — | 9 |
 | `opensearch` | [OpenSearch](./aws/opensearch.md) | — | — | — | 96 |
 | `parameterstore` | [SSM](./aws/ssm.md) | — | — | — | 9 |

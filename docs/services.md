@@ -47,6 +47,7 @@ This document lists every service and operation available in CloudEmu across all
 | 34 | Search & Analytics | `opensearch` | — | — |
 | 35 | Audit Logging | `cloudtrail` | — | — |
 | 36 | Configuration Management | `configservice` | — | — |
+| 37 | Data Integration (ETL / Data Catalog) | `glue` | — | — |
 
 ---
 
@@ -401,7 +402,7 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 ## 5. Networking
 
 **Driver interface:** `services/networking/driver/driver.go`
-**AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC
+**AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC | **OCI:** VCN (security lists map to network ACLs; service gateways to VPC endpoints; public IPs to elastic IPs; a connected pair of local peering gateways to a peering connection — DRGs, DRG attachments and remote peering connections are not emulated)
 
 ### VPC Operations
 
@@ -2989,6 +2990,70 @@ states are never observable). This preserves the SDK wire shapes for
 build-and-orchestrate testing without a dependency on real Config data.
 
 **Total: 102 operations.**
+## 37. Data Integration (Glue)
+
+**Driver interface:** `services/glue/driver/`
+**AWS:** Glue (AWS JSON 1.1, `X-Amz-Target: AWSGlue.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/glue` clients (and the `aws glue` CLI) work
+against the SDK-compat server (`awsserver.Drivers{Glue: cloud.Glue}`). Full
+operation coverage of the entire Glue Client (299 operations). The Data Catalog,
+crawler, ETL job/run, trigger, workflow, blueprint, schema-registry,
+dev-endpoint, and tag control-plane paths model real CRUD and lifecycle state in
+memory, including enum/required-field validation (connection type, classifier
+kind, trigger type/schedule), schema-registry compatibility + dedup, and the
+`PutResourcePolicy` conditional-put — where noted below. The read/analytics
+surfaces (analytics, ML-transform, data-quality, integration,
+glossary/asset/form, column-statistics, session/statement, usage-profile,
+materialized-view, identity-center, and unfiltered-metadata) remain synthesized:
+there is no real Spark/compute or data plane behind the emulator, so they return
+empty, well-formed responses rather than fabricated results. This is control-
+plane emulation, not a full data-plane implementation.
+
+| Family | Operations |
+|--------|-----------|
+| Databases | CreateDatabase, GetDatabase, UpdateDatabase, DeleteDatabase, GetDatabases |
+| Tables | CreateTable, GetTable, UpdateTable, DeleteTable, GetTables, SearchTables, BatchDeleteTable |
+| Table versions | GetTableVersion, GetTableVersions, DeleteTableVersion, BatchDeleteTableVersion |
+| Partitions | CreatePartition, GetPartition, UpdatePartition, DeletePartition, GetPartitions, BatchCreatePartition, BatchDeletePartition, BatchUpdatePartition, BatchGetPartition |
+| User-defined functions | CreateUserDefinedFunction, GetUserDefinedFunction, UpdateUserDefinedFunction, DeleteUserDefinedFunction, GetUserDefinedFunctions |
+| Connections | CreateConnection, GetConnection, UpdateConnection, DeleteConnection, GetConnections, BatchDeleteConnection, TestConnection |
+| Catalogs | CreateCatalog, GetCatalog, UpdateCatalog, DeleteCatalog, GetCatalogs |
+| Crawlers | CreateCrawler, GetCrawler, UpdateCrawler, DeleteCrawler, GetCrawlers, ListCrawlers, StartCrawler, StopCrawler, BatchGetCrawlers |
+| Classifiers | CreateClassifier, GetClassifier, UpdateClassifier, DeleteClassifier, GetClassifiers |
+| Jobs & runs | CreateJob, GetJob, UpdateJob, DeleteJob, GetJobs, ListJobs, BatchGetJobs, StartJobRun, GetJobRun, GetJobRuns, BatchStopJobRun |
+| Triggers | CreateTrigger, GetTrigger, UpdateTrigger, DeleteTrigger, GetTriggers, ListTriggers, StartTrigger, StopTrigger, BatchGetTriggers |
+| Workflows & runs | CreateWorkflow, GetWorkflow, UpdateWorkflow, DeleteWorkflow, ListWorkflows, BatchGetWorkflows, StartWorkflowRun, GetWorkflowRun, GetWorkflowRuns, StopWorkflowRun, ResumeWorkflowRun, GetWorkflowRunProperties, PutWorkflowRunProperties |
+| Blueprints & runs | CreateBlueprint, GetBlueprint, UpdateBlueprint, DeleteBlueprint, ListBlueprints, BatchGetBlueprints, StartBlueprintRun, GetBlueprintRun, GetBlueprintRuns |
+| Schema registry | CreateRegistry, GetRegistry, UpdateRegistry, DeleteRegistry, ListRegistries, CreateSchema, GetSchema, UpdateSchema, DeleteSchema, ListSchemas, RegisterSchemaVersion, GetSchemaVersion, GetSchemaByDefinition, ListSchemaVersions, DeleteSchemaVersions, CheckSchemaVersionValidity, GetSchemaVersionsDiff |
+| Security configurations | CreateSecurityConfiguration, GetSecurityConfiguration, DeleteSecurityConfiguration, GetSecurityConfigurations |
+| Dev endpoints | CreateDevEndpoint, GetDevEndpoint, UpdateDevEndpoint, DeleteDevEndpoint, GetDevEndpoints, ListDevEndpoints, BatchGetDevEndpoints |
+| Tags / policy / encryption | TagResource, UntagResource, GetTags, PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy, PutDataCatalogEncryptionSettings, GetDataCatalogEncryptionSettings |
+| Read-only / analytics / ML / data-quality / integrations (synthesized) | 165 remaining operations (ML transforms, data quality, integrations, glossary/assets/forms, column statistics, sessions/statements, usage profiles, materialized views, identity center, dashboards, unfiltered metadata, catalog import, job bookmarks, partition indexes, table optimizers, schema-version metadata) |
+
+`CreateDatabase`/`CreateTable`/`CreatePartition`/`CreateCrawler` (etc.) claim
+their name atomically (`memstore.SetIfAbsent`) so a duplicate is
+`AlreadyExistsException`; a bad name is validated before any lookup
+(`InvalidInputException`); an absent resource is `EntityNotFoundException`. Reads
+(`Get*`/`Batch*`/list) return deep copies so callers never alias stored maps,
+column lists, partition value lists, or parameters. `UpdateTable` appends a table
+version. `DeleteDatabase` cascades to its tables, table partitions, and UDFs;
+`DeleteTable` releases its partitions — no dependents are orphaned, and the write
+lock is held across the check+delete. `CatalogId` defaults to the account ID.
+Tag caps and `BatchGet*` size caps are enforced *before* any mutation, so a
+breach leaves committed state unchanged. Pagination honors `NextToken`/
+`MaxResults`; a malformed token is an `InvalidInputException`, never a silent
+page-one restart. Real ARNs are minted for registries/schemas.
+
+**No real compute or data plane — a deliberate simplification.** A `StartJobRun`
+completes `SUCCEEDED` synchronously and returns its run ID; crawler, workflow,
+and blueprint runs settle immediately as well. This preserves the SDK wire
+shapes for build-and-orchestrate testing without a real Spark cluster. The
+synthesized read-only surfaces (ML transforms, data quality, glossary, column
+statistics, integrations, etc.) accept the request and return an empty,
+well-formed response body rather than fabricating fake job results or scores.
+
+**Total: 299 operations.**
 
 ## Summary
 
@@ -3043,7 +3108,8 @@ build-and-orchestrate testing without a dependency on real Config data.
 | Search & Analytics — AWS OpenSearch | 96 |
 | Audit Logging — AWS CloudTrail | 60 |
 | Configuration Management — AWS Config | 102 |
-| **Grand Total** | **2304** (+138 optional) |
+| Data Integration — AWS Glue | 299 |
+| **Grand Total** | **2603** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

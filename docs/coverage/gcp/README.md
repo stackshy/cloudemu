@@ -22,4 +22,5 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [Memorystore](./memorystore.md) | `cache` | 17 |
 | [PubSub](./pubsub.md) | `messagequeue` | 14 |
 | [SecretManager](./secretmanager.md) | `secrets` | 7 |
+| [VPC](./vpc.md) | `networking` | 57 |
 | [VertexAI](./vertexai.md) | `vertexai` | 125 |
