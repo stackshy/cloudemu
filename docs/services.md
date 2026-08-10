@@ -46,6 +46,7 @@ This document lists every service and operation available in CloudEmu across all
 | 33 | Workflow Orchestration | `sfn` | — | — |
 | 34 | Search & Analytics | `opensearch` | — | — |
 | 35 | Audit Logging | `cloudtrail` | — | — |
+| 36 | Configuration Management | `configservice` | — | — |
 
 ---
 
@@ -2918,6 +2919,77 @@ for build-and-orchestrate testing without a dependency on real event data.
 
 **Total: 60 operations.**
 
+## 36. Configuration Management (AWS Config)
+
+**Driver interface:** `services/configservice/driver/`
+**AWS:** AWS Config (AWS JSON 1.1, `X-Amz-Target: StarlingDoveService.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/configservice` clients (and the
+`aws configservice` CLI) work against the SDK-compat server
+(`awsserver.Drivers{Config: cloud.Config}`). All 102 SDK operations are wired.
+The control-plane CRUD/state paths — configuration recorders, delivery channels,
+config rules, conformance packs, organization rules/packs, aggregators and
+authorizations, remediation, stored queries, and retention — are faithfully
+emulated. The compliance, evaluation, discovered-resource, and aggregate-query
+read/analytics surfaces are **synthesized approximations** (see below), not full
+parity: the emulator runs no real Config recording pipeline, so they answer from
+the emulator's own recorded state rather than from continuously discovered
+configuration data.
+
+| Family | Operations |
+|--------|-----------|
+| Configuration recorders | PutConfigurationRecorder, DescribeConfigurationRecorders, DescribeConfigurationRecorderStatus, DeleteConfigurationRecorder, StartConfigurationRecorder, StopConfigurationRecorder, ListConfigurationRecorders, PutServiceLinkedConfigurationRecorder, PutThirdPartyServiceLinkedConfigurationRecorder, DeleteServiceLinkedConfigurationRecorder, AssociateResourceTypes, DisassociateResourceTypes |
+| Delivery channels | PutDeliveryChannel, DescribeDeliveryChannels, DescribeDeliveryChannelStatus, DeleteDeliveryChannel, DeliverConfigSnapshot |
+| Config rules | PutConfigRule, DescribeConfigRules, DeleteConfigRule, DescribeConfigRuleEvaluationStatus, StartConfigRulesEvaluation, PutEvaluations, PutExternalEvaluation, DeleteEvaluationResults, GetCustomRulePolicy |
+| Compliance (synthesized) | DescribeComplianceByConfigRule, DescribeComplianceByResource, GetComplianceDetailsByConfigRule, GetComplianceDetailsByResource, GetComplianceSummaryByConfigRule, GetComplianceSummaryByResourceType |
+| Conformance packs | PutConformancePack, DescribeConformancePacks, DescribeConformancePackStatus, DeleteConformancePack, GetConformancePackComplianceDetails, GetConformancePackComplianceSummary, DescribeConformancePackCompliance, ListConformancePackComplianceScores |
+| Organization rules/packs | PutOrganizationConfigRule, DescribeOrganizationConfigRules, DescribeOrganizationConfigRuleStatuses, DeleteOrganizationConfigRule, GetOrganizationConfigRuleDetailedStatus, GetOrganizationCustomRulePolicy, PutOrganizationConformancePack, DescribeOrganizationConformancePacks, DescribeOrganizationConformancePackStatuses, DeleteOrganizationConformancePack, GetOrganizationConformancePackDetailedStatus |
+| Aggregators / authorizations | PutConfigurationAggregator, DescribeConfigurationAggregators, DeleteConfigurationAggregator, DescribeConfigurationAggregatorSourcesStatus, PutAggregationAuthorization, DescribeAggregationAuthorizations, DeleteAggregationAuthorization, DescribePendingAggregationRequests, DeletePendingAggregationRequest |
+| Aggregate queries (synthesized) | DescribeAggregateComplianceByConfigRules, DescribeAggregateComplianceByConformancePacks, GetAggregateComplianceDetailsByConfigRule, GetAggregateConfigRuleComplianceSummary, GetAggregateConformancePackComplianceSummary, GetAggregateDiscoveredResourceCounts, GetAggregateResourceConfig, BatchGetAggregateResourceConfig, ListAggregateDiscoveredResources, SelectAggregateResourceConfig |
+| Remediation | PutRemediationConfigurations, DescribeRemediationConfigurations, DeleteRemediationConfiguration, PutRemediationExceptions, DescribeRemediationExceptions, DeleteRemediationExceptions, DescribeRemediationExecutionStatus, StartRemediationExecution |
+| Resource config (synthesized) | PutResourceConfig, GetResourceConfigHistory, DeleteResourceConfig, BatchGetResourceConfig, ListDiscoveredResources, GetDiscoveredResourceCounts, SelectResourceConfig, StartResourceEvaluation, GetResourceEvaluationSummary, ListResourceEvaluations |
+| Stored queries / retention / connectors | PutStoredQuery, GetStoredQuery, ListStoredQueries, DeleteStoredQuery, PutRetentionConfiguration, DescribeRetentionConfigurations, DeleteRetentionConfiguration, PutConnector, GetConnector, ListConnectors, DeleteConnector |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+`PutConfigurationRecorder` and `PutDeliveryChannel` enforce AWS's one-per-account
+invariant: a Put naming the existing resource is an idempotent upsert, but a Put
+naming a *different* one while one exists is
+`MaxNumberOfConfigurationRecordersExceededException` /
+`MaxNumberOfDeliveryChannelsExceededException`. `StartConfigurationRecorder`
+requires a delivery channel (`NoAvailableDeliveryChannelException` otherwise) and
+flips recording state with real start/stop/status-change times reported by
+`DescribeConfigurationRecorderStatus`. Missing rules/recorders/channels return
+their specific `NoSuch*` exceptions; bad input is `InvalidParameterValueException`
+/ `ValidationException`; a malformed pagination token is
+`InvalidNextTokenException`. `PutEvaluations`/`PutExternalEvaluation` record
+evaluations and roll a rule's aggregate compliance up from them (any
+NON_COMPLIANT wins). Batch mutations (`PutRemediationConfigurations`) validate
+every entry before applying any, so a bad entry never partially mutates.
+
+**Synthesized surfaces — a deliberate simplification.** The emulator runs no real
+recording pipeline, so the discovered-resource and query surfaces are backed by
+what callers supply via `PutResourceConfig`: `GetResourceConfigHistory`,
+`BatchGetResourceConfig`, `ListDiscoveredResources`, `GetDiscoveredResourceCounts`
+and `SelectResourceConfig` answer from that in-memory store (a resource never
+recorded is `ResourceNotDiscoveredException`). `SelectResourceConfig` /
+`SelectAggregateResourceConfig` parse a supported subset of the Config SQL SELECT
+grammar (a projection plus an optional `WHERE resourceType = '...'` equality);
+unsupported syntax is a typed `InvalidExpressionException`. Aggregate-query
+operations validate the aggregator exists and gate results on authorization: the
+local account/region contributes data only when the aggregator selects it AND a
+matching `AggregationAuthorization` exists — an unauthorized source contributes
+nothing. Compliance summaries are derived from reported evaluations.
+`PutEvaluations` validates an opaque result token (issued per rule at create time
+and refreshed by `StartConfigRulesEvaluation`); an unknown/malformed token is
+`InvalidResultTokenException`. `StartResourceEvaluation`/`GetResourceEvaluationSummary`,
+pending aggregation requests, and organization per-account detailed statuses
+return plausible synthesized results. Conformance-pack and organization-pack
+creation completes instantly (always `CREATE_COMPLETE`; the transient in-progress
+states are never observable). This preserves the SDK wire shapes for
+build-and-orchestrate testing without a dependency on real Config data.
+
+**Total: 102 operations.**
+
 ## Summary
 
 | Service | Operations |
@@ -2970,7 +3042,8 @@ for build-and-orchestrate testing without a dependency on real event data.
 | Step Functions — AWS SFN | 36 |
 | Search & Analytics — AWS OpenSearch | 96 |
 | Audit Logging — AWS CloudTrail | 60 |
-| **Grand Total** | **2202** (+138 optional) |
+| Configuration Management — AWS Config | 102 |
+| **Grand Total** | **2304** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

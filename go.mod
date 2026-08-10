@@ -51,6 +51,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.58.4
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0
+	github.com/aws/aws-sdk-go-v2/service/configservice v1.68.4
 	github.com/aws/aws-sdk-go-v2/service/docdb v1.48.15
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.317.1
@@ -85,7 +86,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sfn v1.45.4
 	github.com/aws/aws-sdk-go-v2/service/sns v1.41.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.27
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.71.0
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.4
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10
 	github.com/aws/aws-sdk-go-v2/service/vpclattice v1.25.5
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.77.3

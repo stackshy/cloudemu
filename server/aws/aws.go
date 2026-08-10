@@ -17,6 +17,7 @@ import (
 	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
+	configservicesrv "github.com/stackshy/cloudemu/v2/server/aws/configservice"
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/server/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/server/aws/ecr"
@@ -58,6 +59,7 @@ import (
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
@@ -153,6 +155,9 @@ type Drivers struct {
 	// CloudTrail serves the CloudTrail JSON 1.1 protocol (X-Amz-Target prefix
 	// "CloudTrail_20131101.") against the cloudtrail driver.
 	CloudTrail cloudtraildriver.CloudTrail
+	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
+	// "StarlingDoveService.") against the configservice driver.
+	Config configservicedriver.Config
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -238,6 +243,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		ACM:                 p.ACM,
 		Kinesis:             p.Kinesis,
 		CloudTrail:          p.CloudTrail,
+		Config:              p.Config,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -365,6 +371,12 @@ func New(d Drivers) *server.Server {
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.CloudTrail != nil {
 		srv.Register(cloudtrailsrv.New(d.CloudTrail))
+	}
+
+	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.Config != nil {
+		srv.Register(configservicesrv.New(d.Config, d.AccountID, d.Region))
 	}
 
 	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729." — disjoint from
