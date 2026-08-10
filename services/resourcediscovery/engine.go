@@ -3,10 +3,20 @@ package resourcediscovery
 import (
 	"context"
 
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
+	loggingdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	monitoringdriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	serverlessdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -26,6 +36,40 @@ type Drivers struct {
 	RelationalDB    RelationalDatabases
 	ScaleSets       ScaleSets
 	AppServicePlans AppServicePlans
+	Secrets         secretsdriver.Secrets
+	ContainerReg    crdriver.ContainerRegistry
+	MessageQueue    mqdriver.MessageQueue
+	Notification    notifdriver.Notification
+	DNS             dnsdriver.DNS
+	Logging         loggingdriver.Logging
+	Cache           cachedriver.Cache
+	LoadBalancer    lbdriver.LoadBalancer
+	Monitoring      monitoringdriver.Monitoring
+	IAM             iamdriver.IAM
+
+	// Extra holds provider-projected capabilities for services that don't fit
+	// the shared driver interfaces (e.g. ML/GenAI). Each is walked generically.
+	Extra []GenericResources
+}
+
+// GenericResources lets a provider project arbitrary services/resources into
+// the inventory when there is no shared services/*/driver interface to walk —
+// the provider adapter does the projection and returns fully-formed rows.
+type GenericResources interface {
+	DiscoverResources(ctx context.Context) ([]DiscoveredResource, error)
+}
+
+// DiscoveredResource is a provider-neutral, fully-projected inventory row. The
+// walker copies it onto an emitted Resource verbatim (filling Region from the
+// engine default when empty), so the adapter owns service/type/id/arn/tags.
+type DiscoveredResource struct {
+	Service string
+	Type    string
+	ID      string
+	ARN     string
+	Region  string
+	Tags    map[string]string
+	Attrs   Attributes
 }
 
 // AppServicePlans is the discovery capability for App Service plans (Azure
@@ -86,6 +130,11 @@ type DiscoveredDatabase struct {
 	Region string
 	Type   string
 	Tags   map[string]string
+
+	// Service overrides the emitted Resource.Service. Empty means the default
+	// relationaldb bucket; adapters set it for engines that a real cloud
+	// exposes under a distinct service (e.g. AWS Redshift → "redshift").
+	Service string
 
 	// Attrs carries the same generic slots as Resource (SKU/Properties/…) so a
 	// provider adapter can project a DB's compute SKU, storage, and HA mode
@@ -274,8 +323,60 @@ func (e *Engine) walkers() []func(context.Context) ([]Resource, error) {
 		ws = append(ws, e.walkVMSS)
 	}
 
+	if e.drivers.Secrets != nil {
+		ws = append(ws, e.walkSecrets)
+	}
+
+	if e.drivers.ContainerReg != nil {
+		ws = append(ws, e.walkContainerRegistry)
+	}
+
+	if e.drivers.MessageQueue != nil {
+		ws = append(ws, e.walkMessageQueue)
+	}
+
+	if e.drivers.Notification != nil {
+		ws = append(ws, e.walkNotification)
+	}
+
+	if e.drivers.DNS != nil {
+		ws = append(ws, e.walkDNS)
+	}
+
+	if e.drivers.Logging != nil {
+		ws = append(ws, e.walkLogging)
+	}
+
+	if e.drivers.Cache != nil {
+		ws = append(ws, e.walkCache)
+	}
+
+	if e.drivers.LoadBalancer != nil {
+		ws = append(ws, e.walkLoadBalancer)
+	}
+
+	if e.drivers.Monitoring != nil {
+		ws = append(ws, e.walkMonitoring)
+	}
+
+	if e.drivers.IAM != nil {
+		ws = append(ws, e.walkIAM)
+	}
+
 	if e.drivers.AppServicePlans != nil {
 		ws = append(ws, e.walkAppServicePlans)
+	}
+
+	for i := range e.drivers.Extra {
+		gr := e.drivers.Extra[i]
+		if gr == nil {
+			continue
+		}
+
+		walk := func(ctx context.Context) ([]Resource, error) {
+			return e.walkGeneric(ctx, gr)
+		}
+		ws = append(ws, walk)
 	}
 
 	return ws

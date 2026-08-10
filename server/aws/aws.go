@@ -10,48 +10,68 @@ import (
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
+	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
+	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
+	configservicesrv "github.com/stackshy/cloudemu/v2/server/aws/configservice"
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/server/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/server/aws/ecr"
 	ecssrv "github.com/stackshy/cloudemu/v2/server/aws/ecs"
+	efssrv "github.com/stackshy/cloudemu/v2/server/aws/efs"
 	"github.com/stackshy/cloudemu/v2/server/aws/eks"
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
+	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
+	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
+	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
 	networkfirewallsrv "github.com/stackshy/cloudemu/v2/server/aws/networkfirewall"
+	opensearchsrv "github.com/stackshy/cloudemu/v2/server/aws/opensearch"
 	"github.com/stackshy/cloudemu/v2/server/aws/rds"
 	"github.com/stackshy/cloudemu/v2/server/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/server/aws/resourceexplorer2"
 	"github.com/stackshy/cloudemu/v2/server/aws/resourcegroupstaggingapi"
 	"github.com/stackshy/cloudemu/v2/server/aws/route53"
+	route53resolversrv "github.com/stackshy/cloudemu/v2/server/aws/route53resolver"
 	"github.com/stackshy/cloudemu/v2/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
 	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
+	sesv2srv "github.com/stackshy/cloudemu/v2/server/aws/sesv2"
+	sfnsrv "github.com/stackshy/cloudemu/v2/server/aws/sfn"
 	"github.com/stackshy/cloudemu/v2/server/aws/sns"
 	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
+	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
+	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
+	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
+	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
+	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
+	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
@@ -61,13 +81,19 @@ import (
 	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	opensearchdriver "github.com/stackshy/cloudemu/v2/services/opensearch/driver"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
+	route53resolverdriver "github.com/stackshy/cloudemu/v2/services/route53resolver/driver"
 	sagemakerdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	sesv2driver "github.com/stackshy/cloudemu/v2/services/sesv2/driver"
+	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
+	vpclatticedriver "github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
+	wafv2driver "github.com/stackshy/cloudemu/v2/services/wafv2/driver"
 )
 
 // Drivers bundles the driver interfaces the AWS server can expose. Leave a
@@ -93,9 +119,50 @@ type Drivers struct {
 	// ECS serves the Amazon ECS JSON 1.1 protocol (X-Amz-Target prefix
 	// AmazonEC2ContainerServiceV20141113.) against the ecs driver.
 	ECS ecsdriver.ECS
+
+	// VPCLattice serves the AWS VPC Lattice REST-JSON API (path + method
+	// routing) against the vpclattice driver.
+	VPCLattice vpclatticedriver.VPCLattice
+
+	// WAFv2 serves the AWS WAFv2 JSON 1.1 protocol (X-Amz-Target prefix
+	// "AWSWAF_20190729.") against the wafv2 driver.
+	WAFv2 wafv2driver.WAFV2
+
+	// EFS serves the AWS EFS REST-JSON API (path + method routing under the
+	// /2015-02-01/ version prefix) against the efs driver.
+	EFS efsdriver.EFS
+
+	// SESV2 serves the AWS SES v2 REST-JSON API (path + method routing under the
+	// /v2/email/ version prefix) against the sesv2 driver.
+	SESV2 sesv2driver.SESV2
+
+	// OpenSearch serves the Amazon OpenSearch Service REST-JSON API (path +
+	// method routing under the /2021-01-01/ version prefix) against the
+	// opensearch driver.
+	OpenSearch opensearchdriver.OpenSearch
+
+	// Route53Resolver serves the AWS Route 53 Resolver JSON 1.1 protocol
+	// (X-Amz-Target prefix "Route53Resolver.") against the route53resolver driver.
+	Route53Resolver route53resolverdriver.Route53Resolver
 	// SecretsManager serves the Secrets Manager JSON 1.1 protocol against
 	// the secrets driver.
 	SecretsManager secretsdriver.Secrets
+	// KMS serves the KMS JSON 1.1 protocol against the kms driver.
+	KMS kmsdriver.KMS
+	// ACM serves the Certificate Manager JSON 1.1 protocol against the acm driver.
+	ACM acmdriver.ACM
+
+	// Kinesis serves the Kinesis Data Streams JSON 1.1 protocol against the kinesis driver.
+	Kinesis kinesisdriver.Kinesis
+	// CloudTrail serves the CloudTrail JSON 1.1 protocol (X-Amz-Target prefix
+	// "CloudTrail_20131101.") against the cloudtrail driver.
+	CloudTrail cloudtraildriver.CloudTrail
+	// Glue serves the AWS Glue JSON 1.1 protocol (X-Amz-Target prefix
+	// "AWSGlue.") against the glue driver.
+	Glue gluedriver.Glue
+	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
+	// "StarlingDoveService.") against the configservice driver.
+	Config configservicedriver.Config
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -124,6 +191,9 @@ type Drivers struct {
 	NetworkFirewall nfdriver.NetworkFirewall
 	// SNS serves the SNS query protocol against the notification driver.
 	SNS notifdriver.Notification
+	// SFN serves the Step Functions JSON 1.0 protocol (X-Amz-Target prefix
+	// "AWSStepFunctions.") against the sfn driver.
+	SFN sfndriver.SFN
 	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
 	// GetSessionToken). It has no backing driver — identity is derived from
 	// AccountID and Region — so it is gated on this bool. Enable it so SDK code
@@ -167,7 +237,19 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		BedrockAgentRuntime: p.BedrockAgentRuntime,
 		SageMaker:           p.SageMaker,
 		ECS:                 p.ECS,
+		VPCLattice:          p.VPCLattice,
+		WAFv2:               p.WAFv2,
+		EFS:                 p.EFS,
+		SESV2:               p.SESV2,
+		OpenSearch:          p.OpenSearch,
+		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
+		KMS:                 p.KMS,
+		ACM:                 p.ACM,
+		Kinesis:             p.Kinesis,
+		CloudTrail:          p.CloudTrail,
+		Glue:                p.Glue,
+		Config:              p.Config,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -178,6 +260,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		MemoryDB:            p.MemoryDB,
 		NetworkFirewall:     p.NetworkFirewall,
 		SNS:                 p.SNS,
+		SFN:                 p.SFN,
 		STS:                 true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
 		ResourceDiscovery:   p.ResourceDiscovery,
@@ -266,11 +349,93 @@ func New(d Drivers) *server.Server {
 		srv.Register(secretsmanagersrv.New(d.SecretsManager))
 	}
 
+	// KMS matches the X-Amz-Target prefix "TrentService." — disjoint from
+	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
+	if d.KMS != nil {
+		srv.Register(kmssrv.New(d.KMS))
+	}
+
+	// ACM matches the X-Amz-Target prefix "CertificateManager." — disjoint
+	// from the other JSON 1.1 services.
+	if d.ACM != nil {
+		srv.Register(acmsrv.New(d.ACM))
+	}
+
+	// Step Functions matches the X-Amz-Target prefix "AWSStepFunctions." —
+	// disjoint from every other JSON-RPC service, so registration order is free.
+	if d.SFN != nil {
+		srv.Register(sfnsrv.New(d.SFN))
+	}
+
+	// Kinesis matches the X-Amz-Target prefix "Kinesis_20131202." — disjoint
+	// from the other JSON 1.1 services, so registration order is unconstrained.
+	if d.Kinesis != nil {
+		srv.Register(kinesissrv.New(d.Kinesis))
+	}
+
+	// CloudTrail matches the X-Amz-Target prefix "CloudTrail_20131101." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.CloudTrail != nil {
+		srv.Register(cloudtrailsrv.New(d.CloudTrail))
+	}
+
+	// Glue matches the X-Amz-Target prefix "AWSGlue." — disjoint from the other
+	// JSON 1.1 services, so registration order is unconstrained.
+	if d.Glue != nil {
+		srv.Register(gluesrv.New(d.Glue))
+	}
+
+	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.Config != nil {
+		srv.Register(configservicesrv.New(d.Config, d.AccountID, d.Region))
+	}
+
+	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729." — disjoint from
+	// the other JSON 1.1 services, so registration order is unconstrained.
+	if d.WAFv2 != nil {
+		srv.Register(wafv2srv.New(d.WAFv2))
+	}
+
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
 	// — disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, SSM,
 	// EventBridge, and the tagging API, so registration order is unconstrained.
 	if d.ECS != nil {
 		srv.Register(ecssrv.New(d.ECS))
+	}
+
+	// VPC Lattice is a REST/JSON service rooted at path prefixes like
+	// /servicenetworks, /services, /targetgroups; its Matches predicate gates on
+	// method+shape and must run before the S3 catch-all.
+	if d.VPCLattice != nil {
+		srv.Register(vpclatticesrv.New(d.VPCLattice))
+	}
+
+	// EFS uses REST-JSON path routing under the /2015-02-01/ version prefix; its
+	// Matches predicate gates on that prefix, so it must run before the S3
+	// catch-all (no real bucket path begins with /2015-02-01/).
+	if d.EFS != nil {
+		srv.Register(efssrv.New(d.EFS))
+	}
+
+	// SES v2 uses REST-JSON path routing under the /v2/email/ version prefix; its
+	// Matches predicate gates on that prefix, so it must run before the S3
+	// catch-all (no real bucket path begins with /v2/email/).
+	if d.SESV2 != nil {
+		srv.Register(sesv2srv.New(d.SESV2))
+	}
+
+	// OpenSearch uses REST-JSON path routing under the /2021-01-01/ version
+	// prefix; its Matches predicate gates on that prefix, so it must run before
+	// the S3 catch-all (no real bucket path begins with /2021-01-01/).
+	if d.OpenSearch != nil {
+		srv.Register(opensearchsrv.New(d.OpenSearch))
+	}
+
+	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.Route53Resolver != nil {
+		srv.Register(route53resolversrv.New(d.Route53Resolver))
 	}
 
 	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —

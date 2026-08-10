@@ -8,6 +8,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -16,6 +17,7 @@ const (
 	ProviderAWS   = "aws"
 	ProviderAzure = "azure"
 	ProviderGCP   = "gcp"
+	ProviderOCI   = "oci"
 )
 
 // Service name constants embedded in Resource.Service. These are the
@@ -34,28 +36,67 @@ const (
 	// not serverless — they carry a provisioned SKU/tier — so they get their own
 	// discriminator rather than sharing ServiceServerless with Functions.
 	ServiceAppService = "appservice"
+	ServiceSecrets    = "secrets"
+	ServiceContainer  = "containerregistry"
+	ServiceQueue      = "messagequeue"
+	ServiceNotif      = "notification"
+	ServiceDNS        = "dns"
+	ServiceLogging    = "logging"
+	ServiceCache      = "cache"
+	ServiceLB         = "loadbalancer"
+	ServiceMonitoring = "monitoring"
+	ServiceIAM        = "iam"
+	ServiceRedshift   = "redshift"
+	ServiceSageMaker  = "sagemaker"
+	ServiceVertexAI   = "aiplatform"
+	ServiceAzureML    = "machinelearningservices"
+	ServiceCognitive  = "cognitiveservices"
 )
 
 // Resource type constants emitted by the walkers.
 const (
-	TypeInstance       = "Instance"
-	TypeVolume         = "Volume"
-	TypeVPC            = "VPC"
-	TypeSubnet         = "Subnet"
-	TypeSecurityGroup  = "SecurityGroup"
-	TypeNetworkIface   = "NetworkInterface"
-	TypeElasticIP      = "ElasticIP"
-	TypeBucket         = "Bucket"
-	TypeTable          = "Table"
-	TypeFunction       = "Function"
-	TypeWorkspace      = "Workspace"
-	TypeCluster        = "Cluster"
-	TypeNodeGroup      = "NodeGroup"
-	TypeDBInstance     = "DBInstance"
-	TypeDBCluster      = "DBCluster"
-	TypeDBSnapshot     = "DBSnapshot"
-	TypeScaleSet       = "ScaleSet"
-	TypeAppServicePlan = "AppServicePlan"
+	TypeInstance          = "Instance"
+	TypeVolume            = "Volume"
+	TypeSnapshot          = "Snapshot"
+	TypeVPC               = "VPC"
+	TypeSubnet            = "Subnet"
+	TypeSecurityGroup     = "SecurityGroup"
+	TypeNetworkIface      = "NetworkInterface"
+	TypeElasticIP         = "ElasticIP"
+	TypeBucket            = "Bucket"
+	TypeTable             = "Table"
+	TypeFunction          = "Function"
+	TypeWorkspace         = "Workspace"
+	TypeCluster           = "Cluster"
+	TypeNodeGroup         = "NodeGroup"
+	TypeDBInstance        = "DBInstance"
+	TypeDBCluster         = "DBCluster"
+	TypeDBSnapshot        = "DBSnapshot"
+	TypeDBProxy           = "DBProxy"
+	TypeScaleSet          = "ScaleSet"
+	TypeAppServicePlan    = "AppServicePlan"
+	TypeSecret            = "Secret"
+	TypeRepository        = "Repository"
+	TypeQueue             = "Queue"
+	TypeTopic             = "Topic"
+	TypeZone              = "Zone"
+	TypeLogGroup          = "LogGroup"
+	TypeCacheCluster      = "CacheCluster"
+	TypeLoadBalancer      = "LoadBalancer"
+	TypeAlarm             = "Alarm"
+	TypeUser              = "User"
+	TypeRole              = "Role"
+	TypePolicy            = "Policy"
+	TypeGroup             = "Group"
+	TypeNATGateway        = "NatGateway"
+	TypeInternetGateway   = "InternetGateway"
+	TypePeeringConnection = "PeeringConnection"
+	TypeRouteTable        = "RouteTable"
+	TypeModel             = "Model"
+	TypeEndpoint          = "Endpoint"
+	TypeNotebookInstance  = "NotebookInstance"
+	TypeDataset           = "Dataset"
+	TypeAccount           = "Account"
 )
 
 // Azure/GCP managed-SQL server types. These portable types map to per-cloud
@@ -115,7 +156,28 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		return nil, err
 	}
 
-	return append(out, vols...), nil
+	out = append(out, vols...)
+
+	snaps, err := e.walkSnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(out, snaps...), nil
+}
+
+// walkSnapshots surfaces block-storage snapshots (EBS / GCE / Azure disk
+// snapshots) so they appear in the inventory/search APIs.
+func (e *Engine) walkSnapshots(ctx context.Context) ([]Resource, error) {
+	snaps, err := e.drivers.Compute.DescribeSnapshots(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkCompute snapshots: %w", err)
+	}
+
+	return e.emitSimple(ServiceCompute, TypeSnapshot, len(snaps),
+		func(i int) (string, string, map[string]string) {
+			return shortName(snaps[i].ID), e.computeSnapshotARN(snaps[i].ID), snaps[i].Tags
+		}), nil
 }
 
 // walkVolumes surfaces block volumes (EBS / Azure managed disks / GCE PDs) as
@@ -237,6 +299,62 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 			Region: e.region, Tags: copyTags(eip.Tags),
 			SKU:        eip.SKU,
 			Properties: props,
+		})
+	}
+
+	natgws, err := e.drivers.Networking.DescribeNATGateways(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking nat gateways: %w", err)
+	}
+
+	for _, ng := range natgws {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeNATGateway,
+			ID:     ng.ID,
+			ARN:    e.networkARN(netKindNATGateway, ng.ID),
+			Region: e.region, Tags: copyTags(ng.Tags),
+		})
+	}
+
+	igws, err := e.drivers.Networking.DescribeInternetGateways(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking internet gateways: %w", err)
+	}
+
+	for _, igw := range igws {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeInternetGateway,
+			ID:     igw.ID,
+			ARN:    e.networkARN(netKindInternetGW, igw.ID),
+			Region: e.region, Tags: copyTags(igw.Tags),
+		})
+	}
+
+	peerings, err := e.drivers.Networking.DescribePeeringConnections(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking peering connections: %w", err)
+	}
+
+	for _, pc := range peerings {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypePeeringConnection,
+			ID:     pc.ID,
+			ARN:    e.networkARN(netKindPeering, pc.ID),
+			Region: e.region, Tags: copyTags(pc.Tags),
+		})
+	}
+
+	rts, err := e.drivers.Networking.DescribeRouteTables(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkNetworking route tables: %w", err)
+	}
+
+	for _, rt := range rts {
+		out = append(out, Resource{
+			Provider: e.provider, Service: ServiceNetworking, Type: TypeRouteTable,
+			ID:     rt.ID,
+			ARN:    e.networkARN(netKindRouteTable, rt.ID),
+			Region: e.region, Tags: copyTags(rt.Tags),
 		})
 	}
 
@@ -549,8 +667,13 @@ func (e *Engine) walkRelationalDB(ctx context.Context) ([]Resource, error) {
 			typ = TypeDBInstance
 		}
 
+		svc := d.Service
+		if svc == "" {
+			svc = ServiceRelationalDB
+		}
+
 		r := Resource{
-			Provider: e.provider, Service: ServiceRelationalDB, Type: typ,
+			Provider: e.provider, Service: svc, Type: typ,
 			ID:     d.Name,
 			ARN:    d.ARN,
 			Region: region, Tags: copyTags(d.Tags),
@@ -712,4 +835,243 @@ func shortName(id string) string {
 	}
 
 	return id
+}
+
+// emitSimple builds one Resource per item for the flat, region-agnostic
+// resource kinds (secrets, repositories, queues, topics, …) whose walkers
+// differ only by which driver they list and how they project an item onto an
+// (id, arn, tags) triple. Empty arn falls back to id. Keeping the boilerplate
+// here lets each walker be a one-line list + projection.
+func (e *Engine) emitSimple(
+	service, typ string, n int, at func(i int) (id, arn string, tags map[string]string),
+) []Resource {
+	out := make([]Resource, 0, n)
+
+	for i := range n {
+		id, arn, tags := at(i)
+		if arn == "" {
+			arn = id
+		}
+
+		out = append(out, Resource{
+			Provider: e.provider, Service: service, Type: typ,
+			ID:     id,
+			ARN:    arn,
+			Region: e.region,
+			Tags:   tags,
+		})
+	}
+
+	return out
+}
+
+// walkSecrets surfaces managed secrets (Secrets Manager / Secret Manager / Key
+// Vault) so they appear in the inventory/search APIs.
+func (e *Engine) walkSecrets(ctx context.Context) ([]Resource, error) {
+	secrets, err := e.drivers.Secrets.ListSecrets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkSecrets: %w", err)
+	}
+
+	return e.emitSimple(ServiceSecrets, TypeSecret, len(secrets),
+		func(i int) (string, string, map[string]string) {
+			return secrets[i].Name, secrets[i].ResourceID, secrets[i].Tags
+		}), nil
+}
+
+// walkContainerRegistry surfaces container repositories (ECR / Artifact Registry
+// / ACR) so they appear in the inventory/search APIs.
+func (e *Engine) walkContainerRegistry(ctx context.Context) ([]Resource, error) {
+	repos, err := e.drivers.ContainerReg.ListRepositories(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkContainerRegistry: %w", err)
+	}
+
+	return e.emitSimple(ServiceContainer, TypeRepository, len(repos),
+		func(i int) (string, string, map[string]string) {
+			return repos[i].Name, repos[i].URI, repos[i].Tags
+		}), nil
+}
+
+// walkMessageQueue surfaces message queues (SQS / Service Bus / Pub-Sub) so they
+// appear in the inventory/search APIs.
+func (e *Engine) walkMessageQueue(ctx context.Context) ([]Resource, error) {
+	queues, err := e.drivers.MessageQueue.ListQueues(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("walkMessageQueue: %w", err)
+	}
+
+	return e.emitSimple(ServiceQueue, TypeQueue, len(queues),
+		func(i int) (string, string, map[string]string) {
+			arn := queues[i].ARN
+			if arn == "" {
+				arn = queues[i].URL
+			}
+
+			return queues[i].Name, arn, queues[i].Tags
+		}), nil
+}
+
+// walkNotification surfaces notification topics (SNS / FCM / Notification Hubs)
+// so they appear in the inventory/search APIs.
+func (e *Engine) walkNotification(ctx context.Context) ([]Resource, error) {
+	topics, err := e.drivers.Notification.ListTopics(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkNotification: %w", err)
+	}
+
+	return e.emitSimple(ServiceNotif, TypeTopic, len(topics),
+		func(i int) (string, string, map[string]string) {
+			arn := topics[i].ResourceID
+			if arn == "" {
+				arn = topics[i].ID
+			}
+
+			return topics[i].Name, arn, topics[i].Tags
+		}), nil
+}
+
+// walkDNS surfaces DNS hosted zones (Route 53 / Azure DNS / Cloud DNS) so they
+// appear in the inventory/search APIs.
+func (e *Engine) walkDNS(ctx context.Context) ([]Resource, error) {
+	zones, err := e.drivers.DNS.ListZones(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkDNS: %w", err)
+	}
+
+	return e.emitSimple(ServiceDNS, TypeZone, len(zones),
+		func(i int) (string, string, map[string]string) {
+			return zones[i].Name, zones[i].ID, zones[i].Tags
+		}), nil
+}
+
+// walkLogging surfaces log groups (CloudWatch Logs / Cloud Logging / Log
+// Analytics) so they appear in the inventory/search APIs.
+func (e *Engine) walkLogging(ctx context.Context) ([]Resource, error) {
+	groups, err := e.drivers.Logging.ListLogGroups(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkLogging: %w", err)
+	}
+
+	return e.emitSimple(ServiceLogging, TypeLogGroup, len(groups),
+		func(i int) (string, string, map[string]string) {
+			return groups[i].Name, groups[i].ResourceID, groups[i].Tags
+		}), nil
+}
+
+// walkCache surfaces in-memory cache clusters (ElastiCache / Memorystore /
+// Azure Cache for Redis) so they appear in the inventory/search APIs.
+func (e *Engine) walkCache(ctx context.Context) ([]Resource, error) {
+	caches, err := e.drivers.Cache.ListCaches(ctx, scope.Scope{})
+	if err != nil {
+		return nil, fmt.Errorf("walkCache: %w", err)
+	}
+
+	return e.emitSimple(ServiceCache, TypeCacheCluster, len(caches),
+		func(i int) (string, string, map[string]string) {
+			return caches[i].Name, caches[i].Endpoint, caches[i].Tags
+		}), nil
+}
+
+// walkLoadBalancer surfaces load balancers (ELB/ALB/NLB / Azure Load Balancer /
+// GCP forwarding rules) so they appear in the inventory/search APIs.
+func (e *Engine) walkLoadBalancer(ctx context.Context) ([]Resource, error) {
+	lbs, err := e.drivers.LoadBalancer.DescribeLoadBalancers(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkLoadBalancer: %w", err)
+	}
+
+	return e.emitSimple(ServiceLB, TypeLoadBalancer, len(lbs),
+		func(i int) (string, string, map[string]string) {
+			return lbs[i].Name, lbs[i].ARN, lbs[i].Tags
+		}), nil
+}
+
+// walkMonitoring surfaces metric alarms (CloudWatch alarms / Azure metric
+// alerts / GCP alert policies) so they appear in the inventory/search APIs.
+func (e *Engine) walkMonitoring(ctx context.Context) ([]Resource, error) {
+	alarms, err := e.drivers.Monitoring.DescribeAlarms(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("walkMonitoring: %w", err)
+	}
+
+	return e.emitSimple(ServiceMonitoring, TypeAlarm, len(alarms),
+		func(i int) (string, string, map[string]string) {
+			return alarms[i].Name, e.monitoringAlarmARN(alarms[i].Name), nil
+		}), nil
+}
+
+// walkIAM surfaces identity resources — users, roles, policies, and groups
+// (IAM / Azure managed identities & role definitions / GCP service accounts &
+// roles) — so they appear in the inventory/search APIs.
+func (e *Engine) walkIAM(ctx context.Context) ([]Resource, error) {
+	users, err := e.drivers.IAM.ListUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkIAM users: %w", err)
+	}
+
+	roles, err := e.drivers.IAM.ListRoles(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkIAM roles: %w", err)
+	}
+
+	policies, err := e.drivers.IAM.ListPolicies(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkIAM policies: %w", err)
+	}
+
+	groups, err := e.drivers.IAM.ListGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkIAM groups: %w", err)
+	}
+
+	out := e.emitSimple(ServiceIAM, TypeUser, len(users),
+		func(i int) (string, string, map[string]string) {
+			return users[i].Name, users[i].ARN, users[i].Tags
+		})
+	out = append(out, e.emitSimple(ServiceIAM, TypeRole, len(roles),
+		func(i int) (string, string, map[string]string) {
+			return roles[i].Name, roles[i].ARN, roles[i].Tags
+		})...)
+	out = append(out, e.emitSimple(ServiceIAM, TypePolicy, len(policies),
+		func(i int) (string, string, map[string]string) {
+			return policies[i].Name, policies[i].ARN, nil
+		})...)
+	out = append(out, e.emitSimple(ServiceIAM, TypeGroup, len(groups),
+		func(i int) (string, string, map[string]string) {
+			return groups[i].Name, groups[i].ARN, nil
+		})...)
+
+	return out, nil
+}
+
+// walkGeneric surfaces resources from a provider-projected GenericResources
+// capability (e.g. ML/GenAI services that have no shared driver interface).
+func (e *Engine) walkGeneric(ctx context.Context, gr GenericResources) ([]Resource, error) {
+	items, err := gr.DiscoverResources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("walkGeneric: %w", err)
+	}
+
+	out := make([]Resource, 0, len(items))
+
+	for i := range items {
+		d := items[i]
+
+		region := d.Region
+		if region == "" {
+			region = e.region
+		}
+
+		r := Resource{
+			Provider: e.provider, Service: d.Service, Type: d.Type,
+			ID:     d.ID,
+			ARN:    d.ARN,
+			Region: region, Tags: copyTags(d.Tags),
+		}
+		applyAttrs(&r, &d.Attrs)
+		out = append(out, r)
+	}
+
+	return out, nil
 }

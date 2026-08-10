@@ -118,6 +118,10 @@ type Mock struct {
 	snapCounter  atomic.Int64
 	amiCounter   atomic.Int64
 	monitoring   mondriver.Monitoring
+	// subnetResolver derives an instance's VPC from its subnet at launch, so
+	// instances created with a --subnet-id carry the VPCID that connectivity
+	// analysis and VPC teardown depend on. nil until wired by the provider.
+	subnetResolver SubnetResolver
 	// mu guards managedResourceVisibility, which is scalar shared state that
 	// (unlike the memstores) has no internal locking of its own.
 	mu sync.RWMutex
@@ -270,6 +274,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		inst := &instanceData{
 			ID: id, ImageID: cfg.ImageID, InstanceType: cfg.InstanceType,
 			State: compute.StatePending, PrivateIP: m.nextIP(), SubnetID: cfg.SubnetID,
+			VPCID:          m.resolveSubnetVPC(ctx, cfg.SubnetID),
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		}

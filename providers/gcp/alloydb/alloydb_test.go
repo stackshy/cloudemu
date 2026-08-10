@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudmonitoring"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -252,7 +252,7 @@ func TestInstanceMetricsEmitted(t *testing.T) {
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-central1"), config.WithProjectID("p"))
 
 	m := New(opts)
-	mon := cloudmonitoring.New(opts)
+	mon := monitoring.New(opts)
 	m.SetMonitoring(mon)
 
 	ctx := context.Background()

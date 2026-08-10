@@ -11,21 +11,21 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudlogging"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudmonitoring"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudsql"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/eventarc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/fcm"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/firestore"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/gce"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/gcpiam"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/gcplb"
-	"github.com/stackshy/cloudemu/v2/providers/gcp/gcpvpc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/vpc"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
@@ -58,14 +58,14 @@ func (a gkeDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 // Provider holds all GCP mock services.
 type Provider struct {
 	GCS              *gcs.Mock
-	GCE              *gce.Mock
+	GCE              *compute.Mock
 	Firestore        *firestore.Mock
 	CloudFunctions   *cloudfunctions.Mock
-	VPC              *gcpvpc.Mock
-	CloudMonitoring  *cloudmonitoring.Mock
-	IAM              *gcpiam.Mock
+	VPC              *vpc.Mock
+	CloudMonitoring  *monitoring.Mock
+	IAM              *iam.Mock
 	CloudDNS         *clouddns.Mock
-	LB               *gcplb.Mock
+	LB               *loadbalancer.Mock
 	PubSub           *pubsub.Mock
 	Memorystore      *memorystore.Mock
 	SecretManager    *secretmanager.Mock
@@ -93,14 +93,14 @@ func New(opts ...config.Option) *Provider {
 	o := config.NewOptions(opts...)
 	p := &Provider{
 		GCS:              gcs.New(o),
-		GCE:              gce.New(o),
+		GCE:              compute.New(o),
 		Firestore:        firestore.New(o),
 		CloudFunctions:   cloudfunctions.New(o),
-		VPC:              gcpvpc.New(o),
-		CloudMonitoring:  cloudmonitoring.New(o),
-		IAM:              gcpiam.New(o),
+		VPC:              vpc.New(o),
+		CloudMonitoring:  monitoring.New(o),
+		IAM:              iam.New(o),
 		CloudDNS:         clouddns.New(o),
-		LB:               gcplb.New(o),
+		LB:               loadbalancer.New(o),
 		PubSub:           pubsub.New(o),
 		Memorystore:      memorystore.New(o),
 		SecretManager:    secretmanager.New(o),
@@ -141,6 +141,19 @@ func New(opts ...config.Option) *Provider {
 			Serverless:   p.CloudFunctions,
 			Kubernetes:   gkeDiscovery{p.GKE},
 			RelationalDB: gcpRelationalDiscovery{sql: p.CloudSQL, alloy: p.AlloyDB},
+			Secrets:      p.SecretManager,
+			ContainerReg: p.ArtifactRegistry,
+			MessageQueue: p.PubSub,
+			Notification: p.FCM,
+			DNS:          p.CloudDNS,
+			Logging:      p.CloudLogging,
+			Cache:        p.Memorystore,
+			LoadBalancer: p.LB,
+			Monitoring:   p.CloudMonitoring,
+			IAM:          p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				vertexDiscovery{p.VertexAI},
+			},
 		},
 	)
 

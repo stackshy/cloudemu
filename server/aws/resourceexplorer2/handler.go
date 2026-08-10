@@ -36,6 +36,17 @@ const (
 	awsServiceDynamoDB = "dynamodb"
 	awsServiceLambda   = "lambda"
 	awsServiceRDS      = "rds"
+	awsServiceSecrets  = "secretsmanager"
+	awsServiceECR      = "ecr"
+	awsServiceSQS      = "sqs"
+	awsServiceSNS      = "sns"
+	awsServiceRoute53  = "route53"
+	awsServiceLogs     = "logs"
+	awsServiceCache    = "elasticache"
+	awsServiceELB      = "elasticloadbalancing"
+	awsServiceCW       = "cloudwatch"
+	awsServiceIAM      = "iam"
+	awsServiceRedshift = "redshift"
 )
 
 // Portable-API service identifiers as emitted by resourcediscovery walkers.
@@ -46,6 +57,17 @@ const (
 	portableServiceDatabase     = "database"
 	portableServiceServerless   = "serverless"
 	portableServiceRelationalDB = "relationaldb"
+	portableServiceSecrets      = "secrets"
+	portableServiceContainer    = "containerregistry"
+	portableServiceQueue        = "messagequeue"
+	portableServiceNotif        = "notification"
+	portableServiceDNS          = "dns"
+	portableServiceLogging      = "logging"
+	portableServiceCache        = "cache"
+	portableServiceLB           = "loadbalancer"
+	portableServiceMonitoring   = "monitoring"
+	portableServiceIAM          = "iam"
+	portableServiceRedshift     = "redshift"
 )
 
 // Handler serves Resource Explorer 2 REST-JSON requests.
@@ -461,6 +483,28 @@ func portableToAWSService(s string) string {
 		return awsServiceLambda
 	case portableServiceRelationalDB:
 		return awsServiceRDS
+	case portableServiceSecrets:
+		return awsServiceSecrets
+	case portableServiceContainer:
+		return awsServiceECR
+	case portableServiceQueue:
+		return awsServiceSQS
+	case portableServiceNotif:
+		return awsServiceSNS
+	case portableServiceDNS:
+		return awsServiceRoute53
+	case portableServiceLogging:
+		return awsServiceLogs
+	case portableServiceCache:
+		return awsServiceCache
+	case portableServiceLB:
+		return awsServiceELB
+	case portableServiceMonitoring:
+		return awsServiceCW
+	case portableServiceIAM:
+		return awsServiceIAM
+	case portableServiceRedshift:
+		return awsServiceRedshift
 	default:
 		return s
 	}

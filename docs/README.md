@@ -5,12 +5,14 @@ CloudEmu is a zero-cost, in-memory cloud emulation library for Go. It provides m
 ## Table of Contents
 
 - [Architecture](architecture.md) -- Three-layer design, package structure, cross-service wiring
+- [Structure & Naming](STRUCTURE.md) -- Canonical service names, file-naming rule, per-directory layout, and where new code goes
 - [Services](services.md) -- Complete provider resource reference with all operations across every supported service
 - [Features](features.md) -- Cross-cutting features: auto-metrics, alarm evaluation, IAM policy checking, FIFO dedup, cost tracking, and more
 - [SDK Server](sdk-server.md) -- SDK-compatible HTTP server (use the real aws-sdk-go-v2 against CloudEmu)
 - [Integration](integration.md) -- Wire CloudEmu into your real app and tests (not a throwaway demo)
 - [Topology](topology.md) -- Network topology simulation engine
 - [Getting Started](getting-started.md) -- Installation, provider creation, basic examples, configuration
+- [OCI Conventions](oci-conventions.md) -- The contract every OCI service implementation follows
 
 ## Quick Links
 

@@ -13,7 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/inject"
 	"github.com/stackshy/cloudemu/v2/features/metrics"
 	"github.com/stackshy/cloudemu/v2/features/recorder"
-	provazureai "github.com/stackshy/cloudemu/v2/providers/azure/azureai"
+	provazureai "github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/services/azureai"
 	"github.com/stackshy/cloudemu/v2/services/azureai/driver"
 )

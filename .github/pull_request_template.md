@@ -11,12 +11,13 @@
 - [ ] AWS
 - [ ] Azure
 - [ ] GCP
+- [ ] OCI
 
 ## Checklist
 
 - [ ] All tests pass (`go test ./...`)
 - [ ] Linter passes (`golangci-lint run --timeout=9m ./...`)
-- [ ] All 3 providers implement the same behavior
+- [ ] Every provider the change applies to implements the same behavior
 - [ ] Integration tests added to `cloudemu_test.go`
 - [ ] Unit tests added to provider test files
 

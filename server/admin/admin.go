@@ -28,6 +28,10 @@ const Prefix = "/_cloudemu/"
 // maxFixtureBytes caps a seed request body.
 const maxFixtureBytes = 32 << 20 // 32 MiB
 
+// maxSnapshotBytes caps a restore request body. Snapshots can carry object
+// bodies, so this is larger than a seed fixture.
+const maxSnapshotBytes = 512 << 20 // 512 MiB
+
 // Backend is a hot-swappable http.Handler. Requests read the current handler
 // under a read lock; Swap replaces it under a write lock. A zero Backend is not
 // usable — construct with NewBackend.
@@ -63,15 +67,29 @@ func (b *Backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // seed applies a fixture body to this provider's drivers and returns how many
 // top-level resources it created; a nil seed disables the seed endpoint (501).
 type Control struct {
-	backend *Backend
-	reset   func()
-	seed    func(fixture []byte) (int, error)
+	backend  *Backend
+	reset    func()
+	seed     func(fixture []byte) (int, error)
+	snapshot func() ([]byte, error)
+	restore  func(snapshot []byte) error
+	extra    http.Handler
 }
 
 // NewControl wraps backend with the control plane. reset must rebuild every
-// backend (including this one) to a clean state. seed may be nil.
-func NewControl(backend *Backend, reset func(), seed func(fixture []byte) (int, error)) *Control {
-	return &Control{backend: backend, reset: reset, seed: seed}
+// backend (including this one) to a clean state. seed, snapshot, and restore
+// may each be nil, which disables the corresponding endpoint. snapshot returns
+// the whole-emulator state as JSON; restore replaces it from that JSON. extra,
+// if non-nil, handles any /_cloudemu/* path the built-in endpoints don't (e.g.
+// the network-topology endpoints); a nil extra leaves those paths a 404.
+func NewControl(
+	backend *Backend,
+	reset func(),
+	seed func(fixture []byte) (int, error),
+	snapshot func() ([]byte, error),
+	restore func(snapshot []byte) error,
+	extra http.Handler,
+) *Control {
+	return &Control{backend: backend, reset: reset, seed: seed, snapshot: snapshot, restore: restore, extra: extra}
 }
 
 // ServeHTTP routes control-plane paths to the control handler and everything
@@ -121,8 +139,59 @@ func (c *Control) serveControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "seeded", "applied": applied})
+	case "snapshot":
+		c.serveSnapshot(w, r)
 	default:
+		if c.extra != nil {
+			c.extra.ServeHTTP(w, r)
+			return
+		}
+
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown control endpoint"})
+	}
+}
+
+// serveSnapshot handles GET /_cloudemu/snapshot (export the whole-emulator state
+// as JSON) and POST /_cloudemu/snapshot (replace it from the posted JSON). Both
+// act on every provider, like reset, so a call to any provider port covers the
+// whole emulator.
+func (c *Control) serveSnapshot(w http.ResponseWriter, r *http.Request) {
+	if c.snapshot == nil || c.restore == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "snapshots are not available on this server"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		data, err := c.snapshot()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	case http.MethodPost:
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxSnapshotBytes+1))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "read snapshot: " + err.Error()})
+			return
+		}
+
+		if len(body) > maxSnapshotBytes {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "snapshot exceeds 512 MiB"})
+			return
+		}
+
+		if err := c.restore(body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"status": "restored"})
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "snapshot requires GET or POST"})
 	}
 }
 

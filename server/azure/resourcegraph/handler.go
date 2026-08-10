@@ -322,6 +322,7 @@ func extractSubscription(arn string) string {
 var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // static lookup table
 	"compute/Instance":                    "microsoft.compute/virtualmachines",
 	"compute/Volume":                      "microsoft.compute/disks",
+	"compute/Snapshot":                    "microsoft.compute/snapshots",
 	"compute/ScaleSet":                    "microsoft.compute/virtualmachinescalesets",
 	"networking/VPC":                      "microsoft.network/virtualnetworks",
 	"networking/Subnet":                   "microsoft.network/subnets",
@@ -340,6 +341,23 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"relationaldb/SqlDatabase":            "microsoft.sql/servers/databases",
 	"relationaldb/MySqlFlexibleServer":    "microsoft.dbformysql/flexibleservers",
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
+	"secrets/Secret":                      "microsoft.keyvault/vaults/secrets",
+	"containerregistry/Repository":        "microsoft.containerregistry/registries",
+	"messagequeue/Queue":                  "microsoft.servicebus/namespaces/queues",
+	"notification/Topic":                  "microsoft.notificationhubs/namespaces/notificationhubs",
+	"dns/Zone":                            "microsoft.network/dnszones",
+	"logging/LogGroup":                    "microsoft.operationalinsights/workspaces",
+	"cache/CacheCluster":                  "microsoft.cache/redis",
+	"loadbalancer/LoadBalancer":           "microsoft.network/loadbalancers",
+	"monitoring/Alarm":                    "microsoft.insights/metricalerts",
+	"iam/User":                            "microsoft.managedidentity/userassignedidentities",
+	"iam/Role":                            "microsoft.authorization/roledefinitions",
+	"networking/NatGateway":               "microsoft.network/natgateways",
+	"networking/RouteTable":               "microsoft.network/routetables",
+	"networking/PeeringConnection":        "microsoft.network/virtualnetworks/virtualnetworkpeerings",
+	"machinelearningservices/Workspace":   "microsoft.machinelearningservices/workspaces",
+	"machinelearningservices/Endpoint":    "microsoft.machinelearningservices/workspaces/onlineendpoints",
+	"cognitiveservices/Account":           "microsoft.cognitiveservices/accounts",
 }
 
 func portableToAzureType(service, typ string) string {

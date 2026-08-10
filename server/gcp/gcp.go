@@ -28,11 +28,11 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	memorystoresrv "github.com/stackshy/cloudemu/v2/server/gcp/memorystore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
-	"github.com/stackshy/cloudemu/v2/server/gcp/networks"
 	"github.com/stackshy/cloudemu/v2/server/gcp/pubsub"
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
+	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -146,7 +146,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Networking != nil {
-		srv.Register(networks.New(d.Networking))
+		srv.Register(vpc.New(d.Networking))
 	}
 
 	// Service Networking has no driver: a private-services connection is a

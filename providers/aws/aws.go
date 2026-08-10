@@ -7,35 +7,48 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/providers/aws/awsiam"
+	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
+	"github.com/stackshy/cloudemu/v2/providers/aws/configservice"
 	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ecr"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ecs"
+	"github.com/stackshy/cloudemu/v2/providers/aws/efs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
-	"github.com/stackshy/cloudemu/v2/providers/aws/elb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
+	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
+	"github.com/stackshy/cloudemu/v2/providers/aws/opensearch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
 	"github.com/stackshy/cloudemu/v2/providers/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/providers/aws/route53"
+	"github.com/stackshy/cloudemu/v2/providers/aws/route53resolver"
 	"github.com/stackshy/cloudemu/v2/providers/aws/s3"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
 	"github.com/stackshy/cloudemu/v2/providers/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sesv2"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sfn"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
+	"github.com/stackshy/cloudemu/v2/providers/aws/vpclattice"
+	"github.com/stackshy/cloudemu/v2/providers/aws/wafv2"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
@@ -122,15 +135,17 @@ type Provider struct {
 	Lambda              *lambda.Mock
 	VPC                 *vpc.Mock
 	CloudWatch          *cloudwatch.Mock
-	IAM                 *awsiam.Mock
+	IAM                 *iam.Mock
 	Route53             *route53.Mock
-	ELB                 *elb.Mock
+	ELB                 *elbv2.Mock
 	SQS                 *sqs.Mock
 	ElastiCache         *elasticache.Mock
 	Keyspaces           *keyspaces.Mock
 	MemoryDB            *memorydb.Mock
 	NetworkFirewall     *networkfirewall.Mock
 	SecretsManager      *secretsmanager.Mock
+	ACM                 *acm.Mock
+	KMS                 *kms.Mock
 	CloudWatchLogs      *cloudwatchlogs.Mock
 	SNS                 *sns.Mock
 	ECR                 *ecr.Mock
@@ -144,6 +159,17 @@ type Provider struct {
 	SageMaker           *sagemaker.Mock
 	SSM                 *ssm.Mock
 	ECS                 *ecs.Mock
+	EFS                 *efs.Mock
+	Kinesis             *kinesis.Mock
+	SESV2               *sesv2.Mock
+	OpenSearch          *opensearch.Mock
+	VPCLattice          *vpclattice.Mock
+	WAFv2               *wafv2.Mock
+	Route53Resolver     *route53resolver.Mock
+	SFN                 *sfn.Mock
+	CloudTrail          *cloudtrail.Mock
+	Glue                *glue.Mock
+	Config              *configservice.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -159,15 +185,17 @@ func New(opts ...config.Option) *Provider {
 		Lambda:              lambda.New(o),
 		VPC:                 vpc.New(o),
 		CloudWatch:          cloudwatch.New(o),
-		IAM:                 awsiam.New(o),
+		IAM:                 iam.New(o),
 		Route53:             route53.New(o),
-		ELB:                 elb.New(o),
+		ELB:                 elbv2.New(o),
 		SQS:                 sqs.New(o),
 		ElastiCache:         elasticache.New(o),
 		Keyspaces:           keyspaces.New(o),
 		MemoryDB:            memorydb.New(o),
 		NetworkFirewall:     networkfirewall.New(o),
 		SecretsManager:      secretsmanager.New(o),
+		ACM:                 acm.New(o),
+		KMS:                 kms.New(o),
 		CloudWatchLogs:      cloudwatchlogs.New(o),
 		SNS:                 sns.New(o),
 		ECR:                 ecr.New(o),
@@ -181,6 +209,17 @@ func New(opts ...config.Option) *Provider {
 		SageMaker:           sagemaker.New(o),
 		SSM:                 ssm.New(o),
 		ECS:                 ecs.New(o),
+		EFS:                 efs.New(o),
+		Kinesis:             kinesis.New(o),
+		SESV2:               sesv2.New(o),
+		OpenSearch:          opensearch.New(o),
+		VPCLattice:          vpclattice.New(o),
+		WAFv2:               wafv2.New(o),
+		Route53Resolver:     route53resolver.New(o),
+		SFN:                 sfn.New(o),
+		CloudTrail:          cloudtrail.New(o),
+		Glue:                glue.New(o),
+		Config:              configservice.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}
@@ -198,6 +237,7 @@ func New(opts ...config.Option) *Provider {
 	p.RDS.SetMonitoring(p.CloudWatch)
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
+	p.EC2.SetSubnetResolver(p.VPC)
 	p.SSM.SetInstanceResolver(p.EC2)
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
@@ -221,7 +261,20 @@ func New(opts ...config.Option) *Provider {
 			Database:     p.DynamoDB,
 			Serverless:   p.Lambda,
 			Kubernetes:   eksDiscovery{p.EKS},
-			RelationalDB: rdsDiscovery{p.RDS},
+			RelationalDB: rdsDiscovery{m: p.RDS, redshift: p.Redshift},
+			Secrets:      p.SecretsManager,
+			ContainerReg: p.ECR,
+			MessageQueue: p.SQS,
+			Notification: p.SNS,
+			DNS:          p.Route53,
+			Logging:      p.CloudWatchLogs,
+			Cache:        p.ElastiCache,
+			LoadBalancer: p.ELB,
+			Monitoring:   p.CloudWatch,
+			IAM:          p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				sagemakerDiscovery{p.SageMaker},
+			},
 		},
 	)
 

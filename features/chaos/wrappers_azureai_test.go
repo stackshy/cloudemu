@@ -17,7 +17,7 @@ func newChaosAzureAI(t *testing.T) (driver.AzureAI, *chaos.Engine) {
 	e := chaos.New(config.RealClock{})
 	t.Cleanup(e.Stop)
 
-	return chaos.WrapAzureAI(cloudemu.NewAzure().AzureAI, e), e
+	return chaos.WrapAzureAI(cloudemu.NewAzure().AI, e), e
 }
 
 func TestWrapAzureAICreateAccountChaos(t *testing.T) {

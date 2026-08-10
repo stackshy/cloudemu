@@ -21,6 +21,10 @@ const (
 	netKindSecurityGroup = "security-group"
 	netKindNetworkIface  = "network-interface"
 	netKindElasticIP     = "elastic-ip"
+	netKindNATGateway    = "natgateway"
+	netKindInternetGW    = "internet-gateway"
+	netKindPeering       = "vpc-peering-connection"
+	netKindRouteTable    = "route-table"
 )
 
 func (e *Engine) computeInstanceARN(id string) string {
@@ -52,6 +56,25 @@ func (e *Engine) computeVolumeARN(id string) string {
 		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Compute", "disks", id)
 	case ProviderGCP:
 		return idgen.GCPID(e.accountID, "zones/"+e.region+"/disks", id)
+	default:
+		return id
+	}
+}
+
+// computeSnapshotARN canonicalizes a block-storage snapshot id, using an
+// already-qualified id verbatim and otherwise building a per-provider one.
+func (e *Engine) computeSnapshotARN(id string) string {
+	if isQualifiedID(id) {
+		return id
+	}
+
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("ec2", e.region, e.accountID, "snapshot/"+id)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Compute", "snapshots", id)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "global/snapshots", id)
 	default:
 		return id
 	}
@@ -98,6 +121,14 @@ func azureNetworkType(kind string) string {
 		return "networkInterfaces"
 	case netKindElasticIP:
 		return "publicIPAddresses"
+	case netKindNATGateway:
+		return "natGateways"
+	case netKindInternetGW:
+		return "internetGateways"
+	case netKindPeering:
+		return "virtualNetworkPeerings"
+	case netKindRouteTable:
+		return "routeTables"
 	default:
 		return kind
 	}
@@ -115,6 +146,14 @@ func gcpNetworkCollection(kind string) string {
 		return "networkInterfaces"
 	case netKindElasticIP:
 		return "addresses"
+	case netKindNATGateway:
+		return "routers"
+	case netKindInternetGW:
+		return "gateways"
+	case netKindPeering:
+		return "networkPeerings"
+	case netKindRouteTable:
+		return "routes"
 	default:
 		return kind
 	}
@@ -195,6 +234,22 @@ func (e *Engine) serverlessFunctionARN(name string) string {
 		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Web", "sites", name)
 	case ProviderGCP:
 		return idgen.GCPID(e.accountID, "locations/"+e.region+"/functions", name)
+	default:
+		return name
+	}
+}
+
+// monitoringAlarmARN builds the canonical identifier for a metric alarm/alert,
+// so the emitted resource carries a stable ARN rather than falling back to the
+// bare alarm name.
+func (e *Engine) monitoringAlarmARN(name string) string {
+	switch e.provider {
+	case ProviderAWS:
+		return idgen.AWSARN("cloudwatch", e.region, e.accountID, "alarm:"+name)
+	case ProviderAzure:
+		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Insights", "metricAlerts", name)
+	case ProviderGCP:
+		return idgen.GCPID(e.accountID, "alertPolicies", name)
 	default:
 		return name
 	}

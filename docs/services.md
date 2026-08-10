@@ -7,23 +7,23 @@ This document lists every service and operation available in CloudEmu across all
 | # | Service Category | AWS | Azure | GCP |
 |---|-----------------|-----|-------|-----|
 | 1 | Storage | `s3` | `blobstorage` | `gcs` |
-| 2 | Compute | `ec2` | `virtualmachines` | `gce` |
+| 2 | Compute | `ec2` | `virtualmachines` | `compute` |
 | 3 | Database | `dynamodb` | `cosmosdb` | `firestore` |
 | 4 | Serverless | `lambda` | `functions` | `cloudfunctions` |
-| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` | `gcpvpc` |
+| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` | `vpc` |
 | 5a | Network Firewall | `network-firewall` | — | — |
-| 6 | Monitoring | `cloudwatch` | `azuremonitor` | `cloudmonitoring` |
-| 7 | IAM | `awsiam` | `azureiam` | `gcpiam` |
-| 8 | DNS | `route53` | `azuredns` | `clouddns` |
-| 9 | Load Balancer | `elb` | `azurelb` | `gcplb` |
+| 6 | Monitoring | `cloudwatch` | `monitor` | `monitoring` |
+| 7 | IAM | `iam` | `iam` | `iam` |
+| 8 | DNS | `route53` | `dns` | `clouddns` |
+| 9 | Load Balancer | `elb` | `loadbalancer` | `loadbalancer` |
 | 10 | Message Queue | `sqs` | `servicebus` | `pubsub` |
-| 11 | Cache | `elasticache` | `azurecache` | `memorystore` |
+| 11 | Cache | `elasticache` | `cache` | `memorystore` |
 | 12 | Secrets | `secretsmanager` | `keyvault` | `secretmanager` |
 | 13 | Logging | `cloudwatchlogs` | `loganalytics` | `cloudlogging` |
 | 14 | Notification | `sns` | `notificationhubs` | `fcm` |
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
-| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `azuresql`, `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
+| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `sql`, `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
 | 17a | In-memory Database (Redis/Valkey) | `memorydb` | — | — |
 | 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | — |
 | 17c | Wide-column (Bigtable) | — | — | `bigtable` |
@@ -32,9 +32,22 @@ This document lists every service and operation available in CloudEmu across all
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
-| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `azureai` (CognitiveServices + MachineLearningServices) | `vertexai` |
-| 23 | AI Search | — | `azuresearch` (Microsoft.Search) | — |
+| 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `ai` (CognitiveServices + MachineLearningServices) | `vertexai` |
+| 23 | AI Search | — | `search` (Microsoft.Search) | — |
 | 24 | Container Orchestration | `ecs` | — | — |
+| 25 | DNS Resolver | `route53resolver` | — | — |
+| 26 | Application Networking | `vpclattice` | — | — |
+| 27 | Key Management | `kms` | — | — |
+| 28 | File System | `efs` | — | — |
+| 29 | Certificate Manager | `acm` | — | — |
+| 30 | Email Service | `sesv2` | — | — |
+| 31 | Web Application Firewall | `wafv2` | — | — |
+| 32 | Data Streams | `kinesis` | — | — |
+| 33 | Workflow Orchestration | `sfn` | — | — |
+| 34 | Search & Analytics | `opensearch` | — | — |
+| 35 | Audit Logging | `cloudtrail` | — | — |
+| 36 | Configuration Management | `configservice` | — | — |
+| 37 | Data Integration (ETL / Data Catalog) | `glue` | — | — |
 
 ---
 
@@ -389,7 +402,7 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 ## 5. Networking
 
 **Driver interface:** `services/networking/driver/driver.go`
-**AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC
+**AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC | **OCI:** VCN (security lists map to network ACLs; service gateways to VPC endpoints; public IPs to elastic IPs; a connected pair of local peering gateways to a peering connection — DRGs, DRG attachments and remote peering connections are not emulated)
 
 ### VPC Operations
 
@@ -605,12 +618,54 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 
 **Total: 12 operations**
 
+### OCI Monitoring
+
+**Optional capability:** `services/monitoring/driver.OCIMonitoring` — OCI scopes
+metrics and alarms to a compartment and identifies alarms by OCID, neither of
+which the portable model carries.
+**Provider:** `providers/oci/monitoring` | **Wire:** `server/oci/monitoring`
+
+| Operation | Route |
+|-----------|-------|
+| `PostMetricData` | `POST /20180401/metrics` |
+| `ListMetrics` | `POST /20180401/metrics/actions/listMetrics` |
+| `SummarizeMetricsData` | `POST /20180401/metrics/actions/summarizeMetricsData` |
+| `CreateAlarm` | `POST /20180401/alarms` |
+| `ListAlarms` | `GET /20180401/alarms` |
+| `ListAlarmsStatus` | `GET /20180401/alarms/status` |
+| `GetAlarm` | `GET /20180401/alarms/{alarmId}` |
+| `UpdateAlarm` | `PUT /20180401/alarms/{alarmId}` |
+| `DeleteAlarm` | `DELETE /20180401/alarms/{alarmId}` |
+| `GetAlarmHistory` | `GET /20180401/alarms/{alarmId}/history` |
+
+Every list route requires `compartmentId` and paginates with `limit` / `page`,
+returning the cursor as `opc-next-page`. Alarm mutations are synchronous in real
+OCI Monitoring, so none of them returns a work request.
+
+Queries are read in MQL's single-metric threshold form plus the optional
+dimension predicate that scopes an alarm to one series —
+`CpuUtilization[1m]{resourceId = "ocid1.instance…"}.mean() > 80`. The predicate
+supports `=` and `!=`; the pattern operators `=~` and `!~` are rejected rather
+than answered with a false "no data". A resolution finer than OCI's `1m`
+minimum is rejected; richer MQL is stored verbatim and never fires.
+
+An alarm fires only once its condition has held for `pendingDuration`, read as
+an ISO-8601 duration such as `PT5M`; the portable `EvaluationPeriods` maps onto
+it. Unset, it fires on the first breaching datapoint — evaluation runs on
+`PostMetricData` rather than on a timer, so OCI's `PT1M` default would never
+elapse on its own. Alarm `suppression` and `overrides` are rejected rather than
+accepted and dropped.
+
+`PostMetricData` enforces OCI's batch limit of 50 `metricData` entries and its
+namespace, metric name and dimension formats. The per-request datapoint cap,
+`metadata` limits and the ingestion time window are not enforced.
+
 ---
 
 ## 7. IAM
 
 **Driver interface:** `services/iam/driver/driver.go`
-**AWS:** IAM | **Azure:** Azure IAM | **GCP:** GCP IAM
+**AWS:** IAM | **Azure:** Azure IAM | **GCP:** GCP IAM | **OCI:** Identity
 
 ### Users
 
@@ -688,6 +743,25 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 | `RemoveRoleFromInstanceProfile` | `(ctx, profileName, roleName) error` |
 
 **Total: 35 operations**
+
+### OCI capabilities (optional, `services/iam/driver/oci.go`)
+
+Discovered by type assertion. OCI addresses identity resources by OCID, scopes
+them to a compartment, and writes policies as English-like statements, none of
+which the portable interface expresses. Only `providers/oci/identity` implements
+them; the OCI provider answers `Unimplemented` for policy attachment and
+instance profiles, which have no OCI equivalent.
+
+| Capability | Operations |
+|-----------|-----------|
+| `Compartments` | Create/Get/List/Update/DeleteCompartment; `ListCompartments` descends the tree when `inSubtree` is set |
+| `OCIIdentity` | Create/Get/List/Update/Delete OCIUser and OCIGroup; Create/Get/List/Delete OCIGroupMembership |
+| `StatementPolicies` | Create/Get/List/Update/DeleteStatementPolicy; `Evaluate` resolves a statement against the compartment tree |
+
+Statements round-trip verbatim, but two things `Evaluate` cannot decide report
+themselves as `Unimplemented` rather than granting the whole verb: a `where`
+condition, and a resource family outside the modeled set. `MoveCompartment` and
+the Quotas API (`/20181025/quotas`) answer `501` for the same reason.
 
 ---
 
@@ -1500,7 +1574,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 ## 17. Relational Database
 
 **Driver interface:** `services/relationaldb/driver/driver.go`
-**AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `azuresql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`, `alloydb`
+**AWS:** `rds` (covers Aurora, Neptune, and DocumentDB engines), `redshift` | **Azure:** `sql`, `postgresflex`, `mysqlflex` | **GCP:** `cloudsql`, `alloydb`
 
 A single portable interface backs every RDBMS handler. Engine selection (MySQL / PostgreSQL / Aurora / Neptune / DocumentDB / Redshift / Cloud SQL / Azure SQL / AlloyDB / …) is a field on the input config, not a separate driver.
 
@@ -1662,18 +1736,18 @@ cascade-delete children when their parent server/instance is deleted.
 | Capability | Operations | Implemented by |
 |-----------|-----------|----------------|
 | `Databases` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `cloudsql`, `alloydb` |
-| `FirewallRules` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `azuresql` |
+| `FirewallRules` | Create / Get / List / Delete | `mysqlflex`, `postgresflex`, `sql` |
 | `Configurations` | Set / Get / List (server parameters) | `mysqlflex`, `postgresflex` |
 | `Failover` | `FailoverInstance` | `mysqlflex`, `cloudsql` |
-| `VNetRules` | Create / Get / List / Delete | `azuresql` |
-| `ElasticPools` | Create / Get / List / Delete | `azuresql` |
-| `FailoverGroups` | Create / Get / List / Delete / Failover | `azuresql` |
-| `AADAdmins` | Set / Get / List / Delete | `azuresql` |
+| `VNetRules` | Create / Get / List / Delete | `sql` |
+| `ElasticPools` | Create / Get / List / Delete | `sql` |
+| `FailoverGroups` | Create / Get / List / Delete / Failover | `sql` |
+| `AADAdmins` | Set / Get / List / Delete | `sql` |
 | `Users` | Create / Get / List / Update / Delete | `cloudsql`, `alloydb` |
 | `SslCerts` | Create / Get / List / Delete | `cloudsql` |
 | `Clonable` | `CloneInstance` | `cloudsql` |
 | `ReplicaPromotion` | `PromoteReplica` | `cloudsql` |
-| `ManagedInstances` | managed-instance CRUD + Start/Stop/Failover, managed-database CRUD/List | `azuresql` |
+| `ManagedInstances` | managed-instance CRUD + Start/Stop/Failover, managed-database CRUD/List | `sql` |
 | `AlloyDB` | AlloyDB cluster/instance create, CreateSecondary/Promote, instance Failover/Restart, `*Info` accessors | `alloydb` |
 
 Cloud SQL also serves the `startReplica`/`stopReplica` instance actions (mapped
@@ -2147,7 +2221,7 @@ rates integrate Vertex with the cross-cutting layers like every other service.
 
 ### Azure — Azure AI
 
-**Driver interface:** `services/azureai/driver/` — spans both ARM providers plus the data planes.
+**Driver interface:** `services/ai/driver/` — spans both ARM providers plus the data planes.
 **Azure:** Azure AI Foundry / AI Studio / Azure OpenAI (`Microsoft.CognitiveServices`) and
 Azure Machine Learning (`Microsoft.MachineLearningServices`).
 
@@ -2176,7 +2250,7 @@ Azure Monitor via `SetMonitoring`.
 | AML scoring | online-endpoint `/score` data plane |
 
 Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
-Layer-1 wrapper (`azureai/azureai.go`), chaos injection (`chaos.WrapAzureAI`), and cost rates
+Layer-1 wrapper (`ai/ai.go`), chaos injection (`chaos.WrapAzureAI`), and cost rates
 integrate Azure AI with the cross-cutting layers like every other service.
 **Total: 92 operations** (Go API/driver) — 31 CognitiveServices + 46 MachineLearningServices
 + 15 data plane — all exposed over the SDK-compat HTTP server.
@@ -2185,7 +2259,7 @@ integrate Azure AI with the cross-cutting layers like every other service.
 
 ## 23. AI Search
 
-**Driver interface:** `services/azuresearch/driver/` — `Microsoft.Search/searchServices` (ARM control
+**Driver interface:** `services/search/driver/` — `Microsoft.Search/searchServices` (ARM control
 plane) plus the `{service}.search.windows.net` data plane.
 **Azure:** Azure AI Search (the RAG / retrieval backbone). **AWS / GCP:** _not applicable_.
 
@@ -2207,7 +2281,7 @@ push to Azure Monitor via `SetMonitoring`.
 | Service statistics | counts + storage usage |
 
 Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
-Layer-1 wrapper (`azuresearch/azuresearch.go`), chaos injection (`chaos.WrapAzureSearch`), and
+Layer-1 wrapper (`search/search.go`), chaos injection (`chaos.WrapAzureSearch`), and
 cost rates integrate Azure AI Search with the cross-cutting layers like every other service.
 **Total: 53 operations** (Go API/driver) — 19 control plane + 34 data plane.
 
@@ -2266,6 +2340,464 @@ real EC2 instance subject to managed-resource visibility.
 
 **Total: 37 operations.**
 
+---
+
+## 25. DNS Resolver
+
+**Driver interface:** `services/route53resolver/driver/driver.go`
+**AWS:** Route 53 Resolver (`Route53Resolver.*`, AWS JSON 1.1) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/route53resolver` clients work against the
+SDK-compat server (`awsserver.Drivers{Route53Resolver: cloud.Route53Resolver}`).
+Full parity: **all 72 SDK operations**, no stubs. Each resource group is stored
+in an in-memory `memstore.Store` guarded by a single mutex; reads are
+copy-on-write clones. Every group is covered by a real-SDK round-trip test.
+
+Per-VPC configs (Resolver autodefined-reverse, DNSSEC validation, firewall
+fail-open) are **lazily materialized** on first Get with their AWS defaults
+(reverse ENABLED, DNSSEC DISABLED, fail-open DISABLED) and only appear in the
+corresponding List once touched. Firewall rules are identified within a group by
+`(FirewallDomainListId, Qtype)`; deleting a rule group cascades to its rules.
+
+| Family | Operations |
+|--------|-----------|
+| Resolver endpoints | Create/Get/Update/Delete/ListResolverEndpoint(s), Associate/DisassociateResolverEndpointIpAddress, ListResolverEndpointIpAddresses |
+| Resolver rules | Create/Get/Update/Delete/ListResolverRule(s), Associate/DisassociateResolverRule, Get/ListResolverRuleAssociation(s), Put/GetResolverRulePolicy |
+| Query-log configs | Create/Get/Delete/ListResolverQueryLogConfig(s), Associate/DisassociateResolverQueryLogConfig, Get/ListResolverQueryLogConfigAssociation(s), Put/GetResolverQueryLogConfigPolicy |
+| Resolver & DNSSEC configs | Get/Update/ListResolverConfig(s), Get/Update/ListResolverDnssecConfig(s) |
+| DNS Firewall — domain lists | Create/Get/Delete/ListFirewallDomainList(s), Update/Import/ListFirewallDomains |
+| DNS Firewall — rules | Create/Update/Delete/ListFirewallRule(s), BatchCreate/BatchUpdate/BatchDeleteFirewallRule |
+| DNS Firewall — rule groups | Create/Get/Delete/ListFirewallRuleGroup(s), Put/GetFirewallRuleGroupPolicy |
+| DNS Firewall — associations | Associate/Disassociate/Get/Update/ListFirewallRuleGroupAssociation(s) |
+| DNS Firewall — configs | Get/Update/ListFirewallConfig(s), ListFirewallRuleTypes |
+| Outpost resolvers | Create/Get/Update/Delete/ListOutpostResolver(s) |
+| Tagging | TagResource, UntagResource, ListTagsForResource |
+
+*Accepted but not simulated* (stored/echoed so SDK calls succeed, no behavioral
+effect): endpoint/rule/config status stays terminal (no async CREATING→OPERATIONAL
+transitions); `ImportFirewallDomains` records the request without fetching the S3
+file; `ListFirewallRuleTypes` returns an empty descriptor list; resource-share
+policies are stored verbatim without RAM enforcement.
+
+**Total: 72 operations.**
+
+---
+
+## 26. Application Networking
+
+**Driver interface:** `services/vpclattice/driver/driver.go`
+**AWS:** VPC Lattice (REST-JSON, `awsRestjson1`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/vpclattice` clients work against the
+SDK-compat server (`awsserver.Drivers{VPCLattice: cloud.VPCLattice}`). Full
+parity: **all 73 SDK operations**, no stubs.
+
+Unlike the AWS JSON 1.1 services, VPC Lattice uses **REST-JSON**: the operation
+is selected by HTTP method + URL path (e.g. `POST /services`, `GET
+/services/{id}/listeners/{id}`, `PATCH /servicenetworks/{id}`) rather than an
+`X-Amz-Target` header. The handler gates on path root + method + **identifier
+shape**, so a path-style S3 object op on a bucket named like a Lattice root
+(e.g. `GET /services/mykey`) falls through to the S3 catch-all — only a
+Lattice-shaped id (a known prefix or a `vpc-lattice` ARN) is claimed. The single
+unavoidable residual is a bare `GET /<root>` (list) vs. an S3 list-bucket on an
+identically-named bucket. Identifiers accept either a bare ID or a full ARN. Union-typed fields
+(a listener's `defaultAction`, a rule's `match`/`action`, a target group's
+`config`, a resource configuration's `resourceConfigurationDefinition`) are
+stored as raw JSON and echoed back verbatim. Create-time tags are persisted;
+deletes block on live service-network associations and cascade contained
+children (service→listeners→rules); association counts are recomputed on read
+and skip targets that no longer exist.
+
+| Family | Operations |
+|--------|-----------|
+| Service networks | Create/Get/Update/Delete/ListServiceNetwork(s) |
+| Services | Create/Get/Update/Delete/ListService(s) |
+| Listeners | Create/Get/Update/Delete/ListListener(s) |
+| Rules | Create/Get/Update/Delete/ListRule(s), BatchUpdateRule |
+| Target groups & targets | Create/Get/Update/Delete/ListTargetGroup(s), Register/Deregister/ListTargets |
+| Service-network associations | Create/Get/Update/Delete/List ServiceNetworkVpcAssociation(s) + ListServiceNetworkVpcEndpointAssociations; Create/Get/Delete/List ServiceNetworkService & ServiceNetworkResource Association(s) |
+| Resource configurations | Create/Get/Update/Delete/ListResourceConfiguration(s) |
+| Resource gateways | Create/Get/Update/Delete/ListResourceGateway(s) |
+| Resource endpoint associations | List/DeleteResourceEndpointAssociation(s) |
+| Access-log subscriptions | Create/Get/Update/Delete/ListAccessLogSubscription(s) |
+| Auth & resource policies | Put/Get/DeleteAuthPolicy, Put/Get/DeleteResourcePolicy |
+| Domain verifications | Start/Get/Delete/ListDomainVerification(s) |
+| Tagging | TagResource, UntagResource, ListTagsForResource |
+
+*Accepted but not simulated* (stored/echoed so SDK calls succeed, no behavioral
+effect): resources are created directly in a terminal `ACTIVE`/`PENDING` status
+(no async state machine); VPC-endpoint and resource-endpoint associations are a
+managed surface returned as empty lists; `Forward`/health-check targeting is
+stored but not used to route real traffic.
+
+**Total: 73 operations.**
+
+---
+
+## 27. Key Management (KMS)
+
+**Driver interface:** `services/kms/driver/`
+**AWS:** KMS (AWS JSON 1.1, `X-Amz-Target: TrentService.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/kms` clients (and the `aws kms` CLI) work
+against the SDK-compat server (`awsserver.Drivers{KMS: cloud.KMS}`). Full parity
+across the key lifecycle, aliases, tags, key policies, grants, rotation,
+cryptography, imported key material, and multi-region keys.
+
+**Cryptography is real, not stubbed.** Symmetric keys use AES-256-GCM with a
+self-describing ciphertext blob (so `Decrypt` needs no key id) and bind the
+encryption context as AEAD additional data; RSA keys use RSA-OAEP-SHA-256.
+Sign/Verify use RSA (PSS/PKCS1) and ECDSA over the real key material; MAC uses
+HMAC. GenerateDataKey/DataKeyPair return usable key material encrypted under the
+KMS key, and ImportKeyMaterial unwraps RSAES-OAEP/PKCS1-wrapped material and
+installs it as the AES key.
+
+| Family | Operations |
+|--------|-----------|
+| Key lifecycle | CreateKey, DescribeKey, ListKeys, EnableKey, DisableKey, UpdateKeyDescription, ScheduleKeyDeletion, CancelKeyDeletion |
+| Aliases | CreateAlias, UpdateAlias, DeleteAlias, ListAliases |
+| Tags | TagResource, UntagResource, ListResourceTags |
+| Key policies | GetKeyPolicy, PutKeyPolicy, ListKeyPolicies |
+| Grants | CreateGrant, ListGrants, RevokeGrant, RetireGrant, ListRetirableGrants |
+| Rotation | EnableKeyRotation, DisableKeyRotation, GetKeyRotationStatus, ListKeyRotations, RotateKeyOnDemand |
+| Cryptography | Encrypt, Decrypt, ReEncrypt, GenerateDataKey(+WithoutPlaintext), GenerateDataKeyPair(+WithoutPlaintext), GenerateRandom, Sign, Verify, GenerateMac, VerifyMac |
+| Imported material | GetParametersForImport, ImportKeyMaterial, DeleteImportedKeyMaterial |
+| Multi-region | ReplicateKey, UpdatePrimaryRegion |
+
+Key references (ID, key ARN, `alias/<name>`, or alias ARN) resolve uniformly on
+every operation.
+
+*Grants are record-only:* CreateGrant/ListGrants/Revoke/Retire manage grant
+records, but the emulator carries no caller principal on the wire, so a grant's
+operation list and encryption-context constraints are **not** enforced against
+crypto calls (there is no principal to evaluate them for). Grant management
+round-trips faithfully; request-time authorization is out of scope.
+
+*Out of scope:* Custom Key Stores / CloudHSM / external (XKS) key stores — these
+are backed by real HSM hardware or third-party stores that can't be emulated
+meaningfully. Multi-region replicas are modeled within a single process, so
+cross-region replica lookup isn't observable; `ReplicateKey`/`UpdatePrimaryRegion`
+return wire-complete metadata but there is no second regional endpoint to query.
+
+**Total: 45 operations.**
+
+---
+
+## 28. File System (EFS)
+
+**Driver interface:** `services/efs/driver/`
+**AWS:** EFS (REST-JSON, `awsRestjson1`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/efs` clients (and the `aws efs` CLI) work
+against the SDK-compat server (`awsserver.Drivers{EFS: cloud.EFS}`). Full parity
+across file systems, mount targets, access points, lifecycle/backup/replication
+configuration, and account preferences.
+
+Unlike the AWS JSON 1.1 services, EFS uses **REST-JSON** with path + method
+routing under a fixed API-version prefix (`/2015-02-01/...`). The handler gates
+on that prefix, so it never shadows the S3 catch-all (no real bucket path begins
+with `/2015-02-01/`). Timestamps are emitted as epoch-seconds numbers, matching
+the wire.
+
+| Family | Operations |
+|--------|-----------|
+| File systems | CreateFileSystem, DeleteFileSystem, DescribeFileSystems, UpdateFileSystem |
+| File system policy | PutFileSystemPolicy, DescribeFileSystemPolicy, DeleteFileSystemPolicy |
+| Mount targets | CreateMountTarget, DeleteMountTarget, DescribeMountTargets, Describe/ModifyMountTargetSecurityGroups |
+| Access points | CreateAccessPoint, DeleteAccessPoint, DescribeAccessPoints |
+| Lifecycle | PutLifecycleConfiguration, DescribeLifecycleConfiguration |
+| Backup | PutBackupPolicy, DescribeBackupPolicy |
+| Replication | CreateReplicationConfiguration, DeleteReplicationConfiguration, DescribeReplicationConfigurations |
+| Account preferences | PutAccountPreferences, DescribeAccountPreferences |
+| Tags | TagResource, UntagResource, ListTagsForResource + legacy CreateTags/DeleteTags/DescribeTags |
+
+Creating a file system is idempotent on the creation token; a file system with
+mount targets can't be deleted until they're removed (NumberOfMountTargets
+tracks this). Access points and file systems share one tag store, with the
+`Name` tag mirrored onto the resource name. Replication assigns a destination
+file-system id per destination; cross-region replicas aren't separately
+queryable in a single-process emulator.
+
+**Total: 30 operations.**
+
+## 29. Certificate Manager (ACM)
+
+**Driver interface:** `services/acm/driver/`
+**AWS:** ACM (AWS JSON 1.1, `X-Amz-Target: CertificateManager.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/acm` clients (and the `aws acm` CLI) work
+against the SDK-compat server (`awsserver.Drivers{ACM: cloud.ACM}`). Full parity
+across the certificate lifecycle, import/export, renewal, revocation, tags, and
+account configuration.
+
+**Certificates are real, not stubbed.** `RequestCertificate` generates a genuine
+self-signed X.509 certificate (RSA-2048, SHA-256) for the requested domain +
+SANs and — since the emulator can't perform real domain validation — auto-issues
+it (status `ISSUED`) so it's immediately usable; `GetCertificate` returns
+parseable PEM. `ImportCertificate` validates and stores externally-supplied PEM;
+`ExportCertificate` returns the cert, chain, and private key; `RenewCertificate`
+re-issues fresh material.
+
+| Family | Operations |
+|--------|-----------|
+| Lifecycle | RequestCertificate, DescribeCertificate, ListCertificates, DeleteCertificate, GetCertificate |
+| Import / export | ImportCertificate, ExportCertificate |
+| Renewal / revocation | RenewCertificate, RevokeCertificate, ResendValidationEmail |
+| Options | UpdateCertificateOptions (certificate-transparency logging) |
+| Search | SearchCertificates |
+| Tags | AddTagsToCertificate, RemoveTagsFromCertificate, ListTagsForCertificate |
+| Account | GetAccountConfiguration, PutAccountConfiguration |
+
+Certificate identifiers are ARNs. DNS-validation requests expose the CNAME
+validation record real clients read. Domain validation is auto-completed in the
+emulator (no real DNS/email round-trip), which is the local-dev analog of a
+validated public certificate.
+
+**Total: 17 operations.**
+
+## 32. Data Streams (Kinesis)
+
+**Driver interface:** `services/kinesis/driver/`
+**AWS:** Kinesis Data Streams (AWS JSON 1.1, `X-Amz-Target: Kinesis_20131202.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/kinesis` clients (and the `aws kinesis`
+CLI) work against the SDK-compat server (`awsserver.Drivers{Kinesis: cloud.Kinesis}`).
+Full parity across the stream lifecycle, records, resharding, enhanced fan-out
+consumers, encryption, tags, and resource policies.
+
+**Records behave like real Kinesis.** Each stream is partitioned into shards
+that own a 128-bit MD5 hash-key range; `PutRecord`/`PutRecords` route a record to
+the open shard covering `MD5(partitionKey)` (or an explicit hash key) and assign
+a per-stream monotonic sequence number. `GetShardIterator` returns an opaque
+iterator honoring `TRIM_HORIZON`, `LATEST`, `AT`/`AFTER_SEQUENCE_NUMBER`, and
+`AT_TIMESTAMP`; `GetRecords` advances it and, at the end of a closed shard,
+returns the child shards. `SplitShard`/`MergeShards`/`UpdateShardCount` close
+parents and create children with correct hash-key ranges and parent links, so
+records already written stay readable.
+
+| Family | Operations |
+|--------|-----------|
+| Stream lifecycle | CreateStream, DeleteStream, DescribeStream, DescribeStreamSummary, ListStreams |
+| Configuration | IncreaseStreamRetentionPeriod, DecreaseStreamRetentionPeriod, UpdateStreamMode, StartStreamEncryption, StopStreamEncryption, UpdateMaxRecordSize, UpdateStreamWarmThroughput |
+| Resharding | UpdateShardCount, MergeShards, SplitShard, ListShards |
+| Records | PutRecord, PutRecords, GetShardIterator, GetRecords |
+| Consumers (enhanced fan-out) | RegisterStreamConsumer, DeregisterStreamConsumer, DescribeStreamConsumer, ListStreamConsumers, SubscribeToShard |
+| Monitoring | EnableEnhancedMonitoring, DisableEnhancedMonitoring |
+| Tags | AddTagsToStream, RemoveTagsFromStream, ListTagsForStream, TagResource, UntagResource, ListTagsForResource |
+| Resource policy | PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy |
+| Account & limits | DescribeLimits, DescribeAccountSettings, UpdateAccountSettings |
+
+Streams are addressed by name or ARN. `SubscribeToShard` (enhanced fan-out)
+streams records to a registered consumer as an
+`application/vnd.amazon.eventstream` response: it resolves the consumer's shard
+from the requested `StartingPosition`, emits the `initial-response` frame the SDK
+awaits, then a `SubscribeToShardEvent` frame carrying the records, continuation
+sequence number, and `MillisBehindLatest`. Polling via
+`GetShardIterator`/`GetRecords` covers the same read path.
+
+**Total: 39 operations.**
+
+---
+
+## 33. Step Functions (SFN)
+
+**Driver interface:** `services/sfn/driver/`
+**AWS:** Step Functions (AWS JSON 1.0, `X-Amz-Target: AWSStepFunctions.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/sfn` clients (and the `aws stepfunctions`
+CLI) work against the SDK-compat server (`awsserver.Drivers{SFN: cloud.SFN}`).
+Full parity across state machines, executions, execution history, activities,
+versions/aliases, and tags. State machine ARNs are keyed by name (a duplicate
+name is `StateMachineAlreadyExists`); the ASL definition is stored verbatim and
+returned unchanged by `DescribeStateMachine`.
+
+| Family | Operations |
+|--------|-----------|
+| State machines | CreateStateMachine, DescribeStateMachine, UpdateStateMachine, DeleteStateMachine, ListStateMachines |
+| Executions | StartExecution, StartSyncExecution, DescribeExecution, StopExecution, ListExecutions, GetExecutionHistory, DescribeStateMachineForExecution, RedriveExecution |
+| Map Runs | DescribeMapRun, ListMapRuns, UpdateMapRun |
+| Versions / aliases | PublishStateMachineVersion, ListStateMachineVersions, DeleteStateMachineVersion, CreateStateMachineAlias, DescribeStateMachineAlias, UpdateStateMachineAlias, DeleteStateMachineAlias, ListStateMachineAliases |
+| Activities | CreateActivity, DescribeActivity, DeleteActivity, ListActivities, GetActivityTask, SendTaskSuccess, SendTaskFailure, SendTaskHeartbeat |
+| Definition tooling | TestState, ValidateStateMachineDefinition |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+**No ASL interpreter — a deliberate simplification.** The emulator does not
+execute the Amazon States Language. `StartExecution` (and `StartSyncExecution`)
+complete the execution immediately: it transitions `RUNNING → SUCCEEDED` with
+output echoing the input, and `GetExecutionHistory` synthesises a minimal but
+valid event list (`ExecutionStarted → PassStateEntered → PassStateExited →
+ExecutionSucceeded`). Because nothing schedules real work, `GetActivityTask`
+returns an empty task token (the same long-poll-empty result real clients see),
+and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`. This
+keeps behaviour deterministic and dependency-free while preserving the SDK wire
+shapes for build-and-orchestrate testing.
+
+Consistent with the no-interpreter model: `RedriveExecution` records a fresh
+redrive date on an existing execution rather than re-running it; `TestState`
+succeeds for any non-empty definition and echoes the input as output;
+`ValidateStateMachineDefinition` returns `OK` for a non-empty, valid-JSON
+definition and `FAIL` with a diagnostic otherwise (no semantic ASL validation).
+Distributed-map Map Runs are never produced by execution, so `ListMapRuns`
+returns empty for ordinary executions; `DescribeMapRun`/`UpdateMapRun` operate on
+Map Run records seeded through the provider's `SeedMapRun` helper.
+
+**Total: 36 operations.**
+
+## 31. Web Application Firewall (WAFv2)
+
+**Driver interface:** `services/wafv2/driver/`
+**AWS:** WAFv2 (AWS JSON 1.1, `X-Amz-Target: AWSWAF_20190729.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/wafv2` clients (and the `aws wafv2` CLI)
+work against the SDK-compat server (`awsserver.Drivers{WAFv2: cloud.WAFv2}`).
+Full parity across WebACLs, IPSets, RuleGroups and RegexPatternSets, web-ACL /
+resource associations, and tags.
+
+**Scope-partitioned namespace with optimistic locking.** Every resource is keyed
+by the tuple `(Scope, Id)`, so `REGIONAL` and `CLOUDFRONT` resources never
+collide. Each resource carries a `LockToken` that rotates on every mutation;
+`Update*` and `Delete*` must present the current token or the backend returns a
+`WAFOptimisticLockException`, exactly as real WAF. Rule, statement,
+default-action and visibility-config blocks are stored verbatim (as raw JSON), so
+`Get*` returns exactly what `Create*`/`Update*` wrote.
+
+| Family | Operations |
+|--------|-----------|
+| Web ACLs | CreateWebACL, GetWebACL, UpdateWebACL, DeleteWebACL, ListWebACLs |
+| IP sets | CreateIPSet, GetIPSet, UpdateIPSet, DeleteIPSet, ListIPSets |
+| Rule groups | CreateRuleGroup, GetRuleGroup, UpdateRuleGroup, DeleteRuleGroup, ListRuleGroups |
+| Regex pattern sets | CreateRegexPatternSet, GetRegexPatternSet, UpdateRegexPatternSet, DeleteRegexPatternSet, ListRegexPatternSets |
+| Associations | AssociateWebACL, DisassociateWebACL, GetWebACLForResource, ListResourcesForWebACL |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+| Capacity | CheckCapacity |
+| Logging config | PutLoggingConfiguration, GetLoggingConfiguration, DeleteLoggingConfiguration, ListLoggingConfigurations |
+| Permission policy | PutPermissionPolicy, GetPermissionPolicy, DeletePermissionPolicy |
+| API keys | CreateAPIKey, DeleteAPIKey, ListAPIKeys, GetDecryptedAPIKey |
+| Managed products / rule groups / sets | DescribeAllManagedProducts, DescribeManagedProductsByVendor, DescribeManagedRuleGroup, ListAvailableManagedRuleGroups, ListAvailableManagedRuleGroupVersions, ListManagedRuleSets, GetManagedRuleSet, PutManagedRuleSetVersions, UpdateManagedRuleSetVersionExpiryDate |
+| Mobile SDK | GenerateMobileSdkReleaseUrl, GetMobileSdkRelease, ListMobileSdkReleases |
+| Traffic / statistics | GetRateBasedStatementManagedKeys, GetSampledRequests, GetTopPathStatisticsByTraffic, GetRevenueStatistics, GetRevenueStatisticsSummary, GetRevenueStatisticsTimeSeries, ListSettlementRecords |
+| Firewall Manager | DeleteFirewallManagerRuleGroups |
+
+Distinct exceptions (`WAFNonexistentItemException`, `WAFDuplicateItemException`,
+`WAFOptimisticLockException`, `WAFInvalidParameterException`) surface as their
+real typed errors so SDK `errors.As` checks work.
+
+**Stateful additions.** `CheckCapacity` computes a deterministic, self-consistent
+WCU estimate from the submitted rules (documented, non-authoritative — the full
+WCU cost table is not modeled). Logging configurations are stored and echoed
+verbatim keyed by `ResourceArn`; permission policies are stored per rule-group
+ARN; API keys are issued as opaque base64 tokens stored per scope with their
+token domains.
+
+**Synthesized read-only ops.** Managed-product/rule-group/rule-set catalogs,
+mobile-SDK releases, sampled requests, top-path traffic and revenue/settlement
+statistics depend on AWS-managed vendor catalogs and live traffic the emulator
+does not model. These return plausible empty (or, for `GenerateMobileSdkReleaseUrl`,
+synthesized) results so SDK/CLI calls succeed and round-trip; managed rule set
+Get/Put/Update report `WAFNonexistentItemException` since no managed rule sets are
+hosted, and `DeleteFirewallManagerRuleGroups` echoes back the presented lock token.
+
+**Total: 59 operations.**
+## 30. Email Service (SES v2)
+
+**Driver interface:** `services/sesv2/driver/`
+**AWS:** SES v2 (REST-JSON `awsRestjson1`, path prefix `/v2/email/…`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/sesv2` clients (and the `aws sesv2` CLI)
+work against the SDK-compat server (`awsserver.Drivers{SESV2: cloud.SESV2}`).
+SES v2 uses REST-JSON path + method routing under the `/v2/email/` version
+prefix, so its handler gates on that prefix ahead of the S3 catch-all.
+
+**Identities auto-verify.** `CreateEmailIdentity` marks an address or domain
+verified for sending immediately (status `SUCCESS`) — the emulator can't perform
+a real DNS/email round-trip — and domains receive three Easy-DKIM CNAME tokens.
+`SendEmail` validates the from-identity (the address itself or its domain must be
+a verified identity) and any referenced configuration set / template, then
+returns a generated `MessageId`; accepted messages are retained so tests can
+assert on what was sent. `TestRenderEmailTemplate` substitutes `{{key}}`
+placeholders from the JSON template data.
+
+Full `aws-sdk-go-v2/service/sesv2` parity: every client method (except
+`Options`) is implemented. Beyond the verified/sending core, the emulator also
+covers contact lists and contacts, custom verification email templates,
+configuration-set event destinations and put-options, dedicated IP pools/IPs,
+the deliverability dashboard, email-identity policies and DKIM/feedback/config
+-set attributes, import/export jobs, insights/metrics/recommendations, tenants
+and tenant-resource associations, reputation entities, multi-region endpoints,
+and templated bulk send.
+
+**Synthesized read-only data.** Deliverability, reputation, insights, and metric
+figures cannot be observed by an emulator with no real mail flow, so those
+operations manage opt-in/association state and return plausible, self-consistent
+but non-real reports (e.g. empty blacklist entries, zeroed metric series,
+HEALTHY reputation until changed). Import/export jobs complete instantly.
+
+| Family | Operations |
+|--------|-----------|
+| Email identities | CreateEmailIdentity, GetEmailIdentity, DeleteEmailIdentity, ListEmailIdentities, PutEmailIdentityDkimAttributes, PutEmailIdentityMailFromAttributes |
+| Email identity policies / attributes | CreateEmailIdentityPolicy, GetEmailIdentityPolicies, UpdateEmailIdentityPolicy, DeleteEmailIdentityPolicy, PutEmailIdentityConfigurationSetAttributes, PutEmailIdentityDkimSigningAttributes, PutEmailIdentityFeedbackAttributes |
+| Configuration sets | CreateConfigurationSet, GetConfigurationSet, DeleteConfigurationSet, ListConfigurationSets |
+| Config-set event destinations | Create/Update/Delete ConfigurationSetEventDestination, GetConfigurationSetEventDestinations |
+| Config-set put-options | PutConfigurationSet{ArchivingOptions, DeliveryOptions, ReputationOptions, SendingOptions, SuppressionOptions, TrackingOptions, VdmOptions} |
+| Email templates | CreateEmailTemplate, GetEmailTemplate, UpdateEmailTemplate, DeleteEmailTemplate, ListEmailTemplates, TestRenderEmailTemplate |
+| Custom verification templates | Create/Get/Update/Delete/List CustomVerificationEmailTemplate, SendCustomVerificationEmail |
+| Contact lists / contacts | Create/Get/Update/Delete/List ContactList; Create/Get/Update/Delete/List Contact |
+| Sending | SendEmail, SendBulkEmail |
+| Suppression list | PutSuppressedDestination, GetSuppressedDestination, DeleteSuppressedDestination, ListSuppressedDestinations |
+| Dedicated IPs / pools | Create/Delete/Get/List DedicatedIpPool; GetDedicatedIp, GetDedicatedIps, PutDedicatedIpInPool, PutDedicatedIpPoolScalingAttributes, PutDedicatedIpWarmupAttributes, PutAccountDedicatedIpWarmupAttributes |
+| Deliverability dashboard | Put/GetDeliverabilityDashboardOption(s), Create/Get/List DeliverabilityTestReport, Get/ListDomainDeliverabilityCampaign(s), GetDomainStatisticsReport, GetBlacklistReports |
+| Import / export jobs | Create/Get/List ImportJob; Create/Get/List/Cancel ExportJob |
+| Insights / metrics | BatchGetMetricData, GetMessageInsights, GetEmailAddressInsights, ListRecommendations |
+| Account | GetAccount, PutAccountSendingAttributes, PutAccountSuppressionAttributes, PutAccountDetails, PutAccountVdmAttributes, PutAccountPricingAttributes |
+| Tenants | Create/Get/Delete/List Tenant; Create/Delete TenantResourceAssociation, ListTenantResources, ListResourceTenants, PutTenantSuppressionAttributes |
+| Reputation entities | GetReputationEntity, ListReputationEntities, UpdateReputationEntityCustomerManagedStatus, UpdateReputationEntityPolicy |
+| Multi-region endpoints | Create/Get/Delete/List MultiRegionEndpoint |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+Resource identifiers are ARNs (`arn:aws:ses:<region>:<account>:identity/…`,
+`…:configuration-set/…`, `…:template/…`); the tag operations resolve the ARN to
+the referenced identity, configuration set, or template.
+
+**Total: 113 operations.**
+
+## 34. Search & Analytics (OpenSearch)
+
+**Driver interface:** `services/opensearch/driver/`
+**AWS:** OpenSearch Service (REST-JSON `awsRestjson1`, version-path prefix `/2021-01-01/opensearch/…`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/opensearch` clients (and the `aws opensearch`
+CLI) work against the SDK-compat server (`awsserver.Drivers{OpenSearch: cloud.OpenSearch}`).
+The handler gates on the `/2021-01-01/opensearch/` version prefix, so it never
+shadows the S3 catch-all. Full `aws-sdk-go-v2/service/opensearch` parity: every
+client method (except `Options`) is implemented. A few write-path capability
+helpers (`AuthorizeVpcEndpointAccess`, `RegisterCapability`, `AttachDataSource`)
+validate their inputs and echo a synthesized result without persisting state.
+
+**Domains behave realistically.** `CreateDomain` claims the domain name
+atomically (`ResourceAlreadyExistsException` on a duplicate) and returns a domain
+that is immediately `Active` with a synthesized endpoint (the emulator
+provisions deterministically, so there is no wall-clock `Processing` phase);
+`DescribeDomain`/`DescribeDomainConfig` reflect stored config; `UpdateDomainConfig`
+mutates it; reads deep-copy so concurrent tag/config mutations don't race.
+
+| Family | Operations |
+|--------|-----------|
+| Domains | CreateDomain, DescribeDomain, DescribeDomains, DescribeDomainConfig, DescribeDomainHealth/Nodes, UpdateDomainConfig, DeleteDomain, ListDomainNames, GetCompatibleVersions, ListVersions |
+| Config history / changes | GetUpgradeStatus/History, StartServiceSoftwareUpdate, CancelServiceSoftwareUpdate, RollbackServiceSoftwareUpdate, UpgradeDomain, DescribeDomainChangeProgress |
+| Packages | CreatePackage, DeletePackage, DescribePackages, AssociatePackage(s), DissociatePackage(s), GetPackageVersionHistory, ListPackagesForDomain, ListDomainsForPackage, UpdatePackage, UpdatePackageScope |
+| VPC endpoints | CreateVpcEndpoint, DeleteVpcEndpoint, UpdateVpcEndpoint, DescribeVpcEndpoints, ListVpcEndpoints, ListVpcEndpointsForDomain, AuthorizeVpcEndpointAccess, RevokeVpcEndpointAccess, ListVpcEndpointAccess |
+| Data sources | AddDataSource, GetDataSource, UpdateDataSource, DeleteDataSource, ListDataSources, AddDirectQueryDataSource, …, ListDirectQueryDataSources |
+| Applications | CreateApplication, GetApplication, UpdateApplication, DeleteApplication, ListApplications |
+| Reserved instances | PurchaseReservedInstanceOffering, DescribeReservedInstances, DescribeReservedInstanceOfferings |
+| Cross-cluster | Create/Delete/Accept/Reject/DescribeInbound & Outbound Connections |
+| Instance/limits | DescribeInstanceTypeLimits, ListInstanceTypeDetails, DescribeDomainAutoTunes, GetDomainMaintenanceStatus, ListDomainMaintenances, StartDomainMaintenance |
+| Scheduled actions / config | ListScheduledActions, UpdateScheduledAction, ListInstanceTypeDetails |
+| Tags | AddTags, RemoveTags, ListTags |
+
+Read-only catalog/limit/insight ops return plausible synthesized results (the
+emulator models no real cluster hardware or search traffic), documented in code.
+
+**Total: 96 operations.**
 ---
 
 ## Provider-specific resources
@@ -2339,6 +2871,190 @@ send-and-poll orchestration — that it waits for a terminal status and reads th
 response code — but not the script. A caller whose bootstrap script is wrong
 still sees success.
 
+## 35. Audit Logging (CloudTrail)
+
+**Driver interface:** `services/cloudtrail/driver/`
+**AWS:** CloudTrail (AWS JSON 1.1, `X-Amz-Target: CloudTrail_20131101.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/cloudtrail` clients (and the
+`aws cloudtrail` CLI) work against the SDK-compat server
+(`awsserver.Drivers{CloudTrail: cloud.CloudTrail}`). Broad operation coverage
+across trails, event data stores, channels, dashboards, imports, event/insight
+selectors, ad-hoc CloudTrail Lake queries, resource policies, and tags. The
+control-plane CRUD/state paths are faithfully emulated; the analytics and
+event-stream surfaces are synthesized/limited (see below), since there is no real
+audit event stream behind the emulator.
+
+| Family | Operations |
+|--------|-----------|
+| Trails | CreateTrail, GetTrail, UpdateTrail, DeleteTrail, DescribeTrails, ListTrails, GetTrailStatus, StartLogging, StopLogging |
+| Selectors | PutEventSelectors, GetEventSelectors, PutInsightSelectors, GetInsightSelectors |
+| Event data stores | CreateEventDataStore, GetEventDataStore, UpdateEventDataStore, DeleteEventDataStore, RestoreEventDataStore, ListEventDataStores, StartEventDataStoreIngestion, StopEventDataStoreIngestion, EnableFederation, DisableFederation |
+| Channels | CreateChannel, GetChannel, UpdateChannel, DeleteChannel, ListChannels |
+| Dashboards | CreateDashboard, GetDashboard, UpdateDashboard, DeleteDashboard, ListDashboards, StartDashboardRefresh |
+| Imports | StartImport, GetImport, StopImport, ListImports, ListImportFailures |
+| Queries | StartQuery, DescribeQuery, GetQueryResults, CancelQuery, ListQueries, GenerateQuery |
+| Resource policy / config | PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy, PutEventConfiguration, GetEventConfiguration |
+| Organization | RegisterOrganizationDelegatedAdmin, DeregisterOrganizationDelegatedAdmin |
+| Tags | AddTags, RemoveTags, ListTags |
+| Read-only (synthesized) | LookupEvents, ListPublicKeys, ListInsightsData, ListInsightsMetricData, SearchSampleQueries |
+
+`CreateTrail` validates the trail name (3–128 chars, allowed charset, no
+adjacent separators, not an IP) → `InvalidTrailNameException`, claims the name
+atomically (a duplicate is `TrailAlreadyExistsException`), stores the config and
+returns the trail ARN. `StartLogging`/`StopLogging` flip `IsLogging` (with real
+recorded start/stop times) reported by `GetTrailStatus`. Event data stores are
+created `ENABLED` with an ARN; a malformed EDS ARN is
+`EventDataStoreARNInvalidException`, a well-formed-but-absent one is
+`EventDataStoreNotFoundException`; `DeleteEventDataStore` is a soft delete
+(→ `PENDING_DELETION`) unless termination protection is on.
+
+**No real event stream — a deliberate simplification.** The emulator records no
+audit events, so the read-only analytics surfaces return synthesized/empty
+results: `LookupEvents`, `ListInsightsData`, `ListInsightsMetricData` and
+`ListPublicKeys` return empty pages; ad-hoc `StartQuery` is accepted, stored and
+immediately marked `FINISHED` with an empty result set; `SearchSampleQueries`
+returns a small fixed catalog of CloudTrail Lake sample queries. Emulated
+imports complete instantly with no failures. This preserves the SDK wire shapes
+for build-and-orchestrate testing without a dependency on real event data.
+
+**Total: 60 operations.**
+
+## 36. Configuration Management (AWS Config)
+
+**Driver interface:** `services/configservice/driver/`
+**AWS:** AWS Config (AWS JSON 1.1, `X-Amz-Target: StarlingDoveService.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/configservice` clients (and the
+`aws configservice` CLI) work against the SDK-compat server
+(`awsserver.Drivers{Config: cloud.Config}`). All 102 SDK operations are wired.
+The control-plane CRUD/state paths — configuration recorders, delivery channels,
+config rules, conformance packs, organization rules/packs, aggregators and
+authorizations, remediation, stored queries, and retention — are faithfully
+emulated. The compliance, evaluation, discovered-resource, and aggregate-query
+read/analytics surfaces are **synthesized approximations** (see below), not full
+parity: the emulator runs no real Config recording pipeline, so they answer from
+the emulator's own recorded state rather than from continuously discovered
+configuration data.
+
+| Family | Operations |
+|--------|-----------|
+| Configuration recorders | PutConfigurationRecorder, DescribeConfigurationRecorders, DescribeConfigurationRecorderStatus, DeleteConfigurationRecorder, StartConfigurationRecorder, StopConfigurationRecorder, ListConfigurationRecorders, PutServiceLinkedConfigurationRecorder, PutThirdPartyServiceLinkedConfigurationRecorder, DeleteServiceLinkedConfigurationRecorder, AssociateResourceTypes, DisassociateResourceTypes |
+| Delivery channels | PutDeliveryChannel, DescribeDeliveryChannels, DescribeDeliveryChannelStatus, DeleteDeliveryChannel, DeliverConfigSnapshot |
+| Config rules | PutConfigRule, DescribeConfigRules, DeleteConfigRule, DescribeConfigRuleEvaluationStatus, StartConfigRulesEvaluation, PutEvaluations, PutExternalEvaluation, DeleteEvaluationResults, GetCustomRulePolicy |
+| Compliance (synthesized) | DescribeComplianceByConfigRule, DescribeComplianceByResource, GetComplianceDetailsByConfigRule, GetComplianceDetailsByResource, GetComplianceSummaryByConfigRule, GetComplianceSummaryByResourceType |
+| Conformance packs | PutConformancePack, DescribeConformancePacks, DescribeConformancePackStatus, DeleteConformancePack, GetConformancePackComplianceDetails, GetConformancePackComplianceSummary, DescribeConformancePackCompliance, ListConformancePackComplianceScores |
+| Organization rules/packs | PutOrganizationConfigRule, DescribeOrganizationConfigRules, DescribeOrganizationConfigRuleStatuses, DeleteOrganizationConfigRule, GetOrganizationConfigRuleDetailedStatus, GetOrganizationCustomRulePolicy, PutOrganizationConformancePack, DescribeOrganizationConformancePacks, DescribeOrganizationConformancePackStatuses, DeleteOrganizationConformancePack, GetOrganizationConformancePackDetailedStatus |
+| Aggregators / authorizations | PutConfigurationAggregator, DescribeConfigurationAggregators, DeleteConfigurationAggregator, DescribeConfigurationAggregatorSourcesStatus, PutAggregationAuthorization, DescribeAggregationAuthorizations, DeleteAggregationAuthorization, DescribePendingAggregationRequests, DeletePendingAggregationRequest |
+| Aggregate queries (synthesized) | DescribeAggregateComplianceByConfigRules, DescribeAggregateComplianceByConformancePacks, GetAggregateComplianceDetailsByConfigRule, GetAggregateConfigRuleComplianceSummary, GetAggregateConformancePackComplianceSummary, GetAggregateDiscoveredResourceCounts, GetAggregateResourceConfig, BatchGetAggregateResourceConfig, ListAggregateDiscoveredResources, SelectAggregateResourceConfig |
+| Remediation | PutRemediationConfigurations, DescribeRemediationConfigurations, DeleteRemediationConfiguration, PutRemediationExceptions, DescribeRemediationExceptions, DeleteRemediationExceptions, DescribeRemediationExecutionStatus, StartRemediationExecution |
+| Resource config (synthesized) | PutResourceConfig, GetResourceConfigHistory, DeleteResourceConfig, BatchGetResourceConfig, ListDiscoveredResources, GetDiscoveredResourceCounts, SelectResourceConfig, StartResourceEvaluation, GetResourceEvaluationSummary, ListResourceEvaluations |
+| Stored queries / retention / connectors | PutStoredQuery, GetStoredQuery, ListStoredQueries, DeleteStoredQuery, PutRetentionConfiguration, DescribeRetentionConfigurations, DeleteRetentionConfiguration, PutConnector, GetConnector, ListConnectors, DeleteConnector |
+| Tags | TagResource, UntagResource, ListTagsForResource |
+
+`PutConfigurationRecorder` and `PutDeliveryChannel` enforce AWS's one-per-account
+invariant: a Put naming the existing resource is an idempotent upsert, but a Put
+naming a *different* one while one exists is
+`MaxNumberOfConfigurationRecordersExceededException` /
+`MaxNumberOfDeliveryChannelsExceededException`. `StartConfigurationRecorder`
+requires a delivery channel (`NoAvailableDeliveryChannelException` otherwise) and
+flips recording state with real start/stop/status-change times reported by
+`DescribeConfigurationRecorderStatus`. Missing rules/recorders/channels return
+their specific `NoSuch*` exceptions; bad input is `InvalidParameterValueException`
+/ `ValidationException`; a malformed pagination token is
+`InvalidNextTokenException`. `PutEvaluations`/`PutExternalEvaluation` record
+evaluations and roll a rule's aggregate compliance up from them (any
+NON_COMPLIANT wins). Batch mutations (`PutRemediationConfigurations`) validate
+every entry before applying any, so a bad entry never partially mutates.
+
+**Synthesized surfaces — a deliberate simplification.** The emulator runs no real
+recording pipeline, so the discovered-resource and query surfaces are backed by
+what callers supply via `PutResourceConfig`: `GetResourceConfigHistory`,
+`BatchGetResourceConfig`, `ListDiscoveredResources`, `GetDiscoveredResourceCounts`
+and `SelectResourceConfig` answer from that in-memory store (a resource never
+recorded is `ResourceNotDiscoveredException`). `SelectResourceConfig` /
+`SelectAggregateResourceConfig` parse a supported subset of the Config SQL SELECT
+grammar (a projection plus an optional `WHERE resourceType = '...'` equality);
+unsupported syntax is a typed `InvalidExpressionException`. Aggregate-query
+operations validate the aggregator exists and gate results on authorization: the
+local account/region contributes data only when the aggregator selects it AND a
+matching `AggregationAuthorization` exists — an unauthorized source contributes
+nothing. Compliance summaries are derived from reported evaluations.
+`PutEvaluations` validates an opaque result token (issued per rule at create time
+and refreshed by `StartConfigRulesEvaluation`); an unknown/malformed token is
+`InvalidResultTokenException`. `StartResourceEvaluation`/`GetResourceEvaluationSummary`,
+pending aggregation requests, and organization per-account detailed statuses
+return plausible synthesized results. Conformance-pack and organization-pack
+creation completes instantly (always `CREATE_COMPLETE`; the transient in-progress
+states are never observable). This preserves the SDK wire shapes for
+build-and-orchestrate testing without a dependency on real Config data.
+
+**Total: 102 operations.**
+## 37. Data Integration (Glue)
+
+**Driver interface:** `services/glue/driver/`
+**AWS:** Glue (AWS JSON 1.1, `X-Amz-Target: AWSGlue.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/glue` clients (and the `aws glue` CLI) work
+against the SDK-compat server (`awsserver.Drivers{Glue: cloud.Glue}`). Full
+operation coverage of the entire Glue Client (299 operations). The Data Catalog,
+crawler, ETL job/run, trigger, workflow, blueprint, schema-registry,
+dev-endpoint, and tag control-plane paths model real CRUD and lifecycle state in
+memory, including enum/required-field validation (connection type, classifier
+kind, trigger type/schedule), schema-registry compatibility + dedup, and the
+`PutResourcePolicy` conditional-put — where noted below. The read/analytics
+surfaces (analytics, ML-transform, data-quality, integration,
+glossary/asset/form, column-statistics, session/statement, usage-profile,
+materialized-view, identity-center, and unfiltered-metadata) remain synthesized:
+there is no real Spark/compute or data plane behind the emulator, so they return
+empty, well-formed responses rather than fabricated results. This is control-
+plane emulation, not a full data-plane implementation.
+
+| Family | Operations |
+|--------|-----------|
+| Databases | CreateDatabase, GetDatabase, UpdateDatabase, DeleteDatabase, GetDatabases |
+| Tables | CreateTable, GetTable, UpdateTable, DeleteTable, GetTables, SearchTables, BatchDeleteTable |
+| Table versions | GetTableVersion, GetTableVersions, DeleteTableVersion, BatchDeleteTableVersion |
+| Partitions | CreatePartition, GetPartition, UpdatePartition, DeletePartition, GetPartitions, BatchCreatePartition, BatchDeletePartition, BatchUpdatePartition, BatchGetPartition |
+| User-defined functions | CreateUserDefinedFunction, GetUserDefinedFunction, UpdateUserDefinedFunction, DeleteUserDefinedFunction, GetUserDefinedFunctions |
+| Connections | CreateConnection, GetConnection, UpdateConnection, DeleteConnection, GetConnections, BatchDeleteConnection, TestConnection |
+| Catalogs | CreateCatalog, GetCatalog, UpdateCatalog, DeleteCatalog, GetCatalogs |
+| Crawlers | CreateCrawler, GetCrawler, UpdateCrawler, DeleteCrawler, GetCrawlers, ListCrawlers, StartCrawler, StopCrawler, BatchGetCrawlers |
+| Classifiers | CreateClassifier, GetClassifier, UpdateClassifier, DeleteClassifier, GetClassifiers |
+| Jobs & runs | CreateJob, GetJob, UpdateJob, DeleteJob, GetJobs, ListJobs, BatchGetJobs, StartJobRun, GetJobRun, GetJobRuns, BatchStopJobRun |
+| Triggers | CreateTrigger, GetTrigger, UpdateTrigger, DeleteTrigger, GetTriggers, ListTriggers, StartTrigger, StopTrigger, BatchGetTriggers |
+| Workflows & runs | CreateWorkflow, GetWorkflow, UpdateWorkflow, DeleteWorkflow, ListWorkflows, BatchGetWorkflows, StartWorkflowRun, GetWorkflowRun, GetWorkflowRuns, StopWorkflowRun, ResumeWorkflowRun, GetWorkflowRunProperties, PutWorkflowRunProperties |
+| Blueprints & runs | CreateBlueprint, GetBlueprint, UpdateBlueprint, DeleteBlueprint, ListBlueprints, BatchGetBlueprints, StartBlueprintRun, GetBlueprintRun, GetBlueprintRuns |
+| Schema registry | CreateRegistry, GetRegistry, UpdateRegistry, DeleteRegistry, ListRegistries, CreateSchema, GetSchema, UpdateSchema, DeleteSchema, ListSchemas, RegisterSchemaVersion, GetSchemaVersion, GetSchemaByDefinition, ListSchemaVersions, DeleteSchemaVersions, CheckSchemaVersionValidity, GetSchemaVersionsDiff |
+| Security configurations | CreateSecurityConfiguration, GetSecurityConfiguration, DeleteSecurityConfiguration, GetSecurityConfigurations |
+| Dev endpoints | CreateDevEndpoint, GetDevEndpoint, UpdateDevEndpoint, DeleteDevEndpoint, GetDevEndpoints, ListDevEndpoints, BatchGetDevEndpoints |
+| Tags / policy / encryption | TagResource, UntagResource, GetTags, PutResourcePolicy, GetResourcePolicy, DeleteResourcePolicy, PutDataCatalogEncryptionSettings, GetDataCatalogEncryptionSettings |
+| Read-only / analytics / ML / data-quality / integrations (synthesized) | 165 remaining operations (ML transforms, data quality, integrations, glossary/assets/forms, column statistics, sessions/statements, usage profiles, materialized views, identity center, dashboards, unfiltered metadata, catalog import, job bookmarks, partition indexes, table optimizers, schema-version metadata) |
+
+`CreateDatabase`/`CreateTable`/`CreatePartition`/`CreateCrawler` (etc.) claim
+their name atomically (`memstore.SetIfAbsent`) so a duplicate is
+`AlreadyExistsException`; a bad name is validated before any lookup
+(`InvalidInputException`); an absent resource is `EntityNotFoundException`. Reads
+(`Get*`/`Batch*`/list) return deep copies so callers never alias stored maps,
+column lists, partition value lists, or parameters. `UpdateTable` appends a table
+version. `DeleteDatabase` cascades to its tables, table partitions, and UDFs;
+`DeleteTable` releases its partitions — no dependents are orphaned, and the write
+lock is held across the check+delete. `CatalogId` defaults to the account ID.
+Tag caps and `BatchGet*` size caps are enforced *before* any mutation, so a
+breach leaves committed state unchanged. Pagination honors `NextToken`/
+`MaxResults`; a malformed token is an `InvalidInputException`, never a silent
+page-one restart. Real ARNs are minted for registries/schemas.
+
+**No real compute or data plane — a deliberate simplification.** A `StartJobRun`
+completes `SUCCEEDED` synchronously and returns its run ID; crawler, workflow,
+and blueprint runs settle immediately as well. This preserves the SDK wire
+shapes for build-and-orchestrate testing without a real Spark cluster. The
+synthesized read-only surfaces (ML transforms, data quality, glossary, column
+statistics, integrations, etc.) accept the request and return an empty,
+well-formed response body rather than fabricating fake job results or scores.
+
+**Total: 299 operations.**
+
 ## Summary
 
 | Service | Operations |
@@ -2380,7 +3096,20 @@ still sees success.
 | Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
 | AI Search — Azure AI Search (control + data plane) | 53 |
 | Container Orchestration — AWS ECS | 37 |
-| **Grand Total** | **1562** (+138 optional) |
+| DNS Resolver — AWS Route 53 Resolver | 72 |
+| Application Networking — AWS VPC Lattice | 73 |
+| Key Management — AWS KMS | 45 |
+| File System — AWS EFS | 30 |
+| Certificate Manager — AWS ACM | 17 |
+| Email Service — AWS SES v2 | 113 |
+| Web Application Firewall — AWS WAFv2 | 59 |
+| Data Streams — AWS Kinesis | 39 |
+| Step Functions — AWS SFN | 36 |
+| Search & Analytics — AWS OpenSearch | 96 |
+| Audit Logging — AWS CloudTrail | 60 |
+| Configuration Management — AWS Config | 102 |
+| Data Integration — AWS Glue | 299 |
+| **Grand Total** | **2603** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
