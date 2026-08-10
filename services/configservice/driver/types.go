@@ -6,14 +6,13 @@ import "time"
 const (
 	RecorderStatusPending = "Pending"
 	RecorderStatusSuccess = "Success"
-	RecorderStatusFailure = "Failure"
 )
 
-// Config-rule lifecycle states.
+// Config-rule lifecycle states. The emulator only ever reports ACTIVE: rule
+// creates complete instantly and deletes remove the rule outright, so the
+// transient DELETING/EVALUATING states never surface.
 const (
-	RuleStateActive     = "ACTIVE"
-	RuleStateDeleting   = "DELETING"
-	RuleStateEvaluating = "EVALUATING"
+	RuleStateActive = "ACTIVE"
 )
 
 // Compliance types shared across rules and resources.
@@ -24,11 +23,11 @@ const (
 	ComplianceInsufficientData = "INSUFFICIENT_DATA"
 )
 
-// Conformance-pack states.
+// Conformance-pack state. The emulator completes pack creation instantly, so a
+// pack is always CREATE_COMPLETE; the transient CREATE_IN_PROGRESS /
+// DELETE_IN_PROGRESS states are never observable and are intentionally omitted.
 const (
 	PackStateCreateComplete = "CREATE_COMPLETE"
-	PackStateCreateInProg   = "CREATE_IN_PROGRESS"
-	PackStateDeleteInProg   = "DELETE_IN_PROGRESS"
 )
 
 // RecordingGroup selects which resource types a recorder captures.
@@ -65,12 +64,14 @@ type ConfigSnapshotDeliveryProperties struct {
 
 // DeliveryChannel routes configuration snapshots/history to S3 (+ optional SNS).
 type DeliveryChannel struct {
+	Arn                   string
 	Name                  string
 	S3BucketName          string
 	S3KeyPrefix           string
 	S3KmsKeyArn           string
 	SnsTopicARN           string
 	SnapshotDeliveryProps *ConfigSnapshotDeliveryProperties
+	Tags                  map[string]string
 
 	// Runtime status, synthesized.
 	LastStatus           string
@@ -137,6 +138,7 @@ type ConformancePack struct {
 	CreatedBy               string
 	LastUpdateRequestedTime time.Time
 	State                   string
+	Tags                    map[string]string
 }
 
 // OrganizationConfigRule is an org-wide managed/custom rule.
@@ -149,6 +151,7 @@ type OrganizationConfigRule struct {
 	ExcludedAccounts      []string
 	MaximumExecutionFreq  string
 	LastUpdateTime        time.Time
+	Tags                  map[string]string
 }
 
 // OrganizationConformancePack is an org-wide conformance pack.
@@ -162,6 +165,7 @@ type OrganizationConformancePack struct {
 	ExcludedAccounts    []string
 	InputParameters     map[string]string
 	LastUpdateTime      time.Time
+	Tags                map[string]string
 }
 
 // AccountAggregationSource selects source accounts + regions for an aggregator.
@@ -236,6 +240,7 @@ type StoredQuery struct {
 	QueryName   string
 	Description string
 	Expression  string
+	Tags        map[string]string
 }
 
 // RetentionConfiguration sets how long Config data is retained.

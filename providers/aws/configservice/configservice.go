@@ -28,6 +28,10 @@ const (
 	maxTags        = 50
 	defaultPageLim = 100
 	maxPageLim     = 100
+	// maxConfigRules is the default per-account config-rule limit.
+	maxConfigRules = 150
+	// maxConformancePacks is the default per-account conformance-pack limit.
+	maxConformancePacks = 50
 	// defaultName is the name Config assigns to a customer-managed recorder,
 	// delivery channel, or retention configuration when none is supplied.
 	defaultName = "default"
@@ -49,7 +53,13 @@ type channelData struct {
 type ruleData struct {
 	rule  driver.ConfigRule
 	evals []driver.Evaluation // synthesized/reported evaluations
-	mu    sync.RWMutex
+	// resultToken is the opaque token currently issued for this rule. In real
+	// Config a result token is a large opaque value delivered to a custom rule's
+	// Lambda and passed back to PutEvaluations; it is never the rule name. The
+	// emulator issues one at create time and refreshes it on
+	// StartConfigRulesEvaluation, validating incoming tokens against the registry.
+	resultToken string
+	mu          sync.RWMutex
 }
 
 // packData is a conformance pack plus its own lock.
@@ -85,6 +95,23 @@ type Mock struct {
 	authorizations []driver.AggregationAuthorization
 	remExceptions  map[string][]driver.RemediationException // rule name -> exceptions
 
+	// tagMu guards tag get/set on the stores whose values are plain pointers
+	// without a per-item lock (org rules/packs, stored queries).
+	tagMu sync.Mutex
+
+	// createMu serializes the one-per-account create paths (recorders and
+	// delivery channels) so the "at most one" cap holds under concurrent creates
+	// with DIFFERENT names. A per-store scan+insert is otherwise not atomic:
+	// SetIfAbsent only dedups the SAME key, so two distinct names would each pass
+	// the scan and both insert. Held across scan+insert only, never across a read.
+	createMu sync.Mutex
+
+	// evalTokens maps opaque PutEvaluations result tokens to the config rule they
+	// were issued for (by StartConfigRulesEvaluation). Guarded by createMu is
+	// wrong scope, so it has its own lock.
+	tokenMu    sync.RWMutex
+	evalTokens map[string]string // resultToken -> config rule name
+
 	opts *config.Options
 }
 
@@ -110,6 +137,7 @@ func New(opts *config.Options) *Mock {
 		resources:     memstore.New[*driver.ConfigurationItem](),
 		connectors:    memstore.New[*connectorData](),
 		remExceptions: map[string][]driver.RemediationException{},
+		evalTokens:    map[string]string{},
 		opts:          opts,
 	}
 }

@@ -12,7 +12,7 @@ import (
 // PutStoredQuery creates or updates a saved query (upsert on QueryName).
 //
 //nolint:gocritic // query taken by value to match the driver API.
-func (m *Mock) PutStoredQuery(_ context.Context, query driver.StoredQuery, _ map[string]string) (string, error) {
+func (m *Mock) PutStoredQuery(_ context.Context, query driver.StoredQuery, tags map[string]string) (string, error) {
 	if query.QueryName == "" {
 		return "", invalidParameter("QueryName is required")
 	}
@@ -21,9 +21,15 @@ func (m *Mock) PutStoredQuery(_ context.Context, query driver.StoredQuery, _ map
 		return "", invalidParameter("Expression is required")
 	}
 
+	// Validate the expression up front so a stored query is always runnable.
+	if _, err := parseSelect(query.Expression); err != nil {
+		return "", err
+	}
+
 	if existing, ok := m.storedQuery.Get(query.QueryName); ok {
 		query.QueryArn = existing.QueryArn
 		query.QueryID = existing.QueryID
+		query.Tags = copyTags(existing.Tags)
 		m.storedQuery.Set(query.QueryName, &query)
 
 		return query.QueryArn, nil
@@ -31,6 +37,7 @@ func (m *Mock) PutStoredQuery(_ context.Context, query driver.StoredQuery, _ map
 
 	query.QueryID = idgen.GenerateID("stored-query-")
 	query.QueryArn = m.arn("stored-query/" + query.QueryName + "/" + query.QueryID)
+	query.Tags = copyTags(tags)
 	m.storedQuery.Set(query.QueryName, &query)
 
 	return query.QueryArn, nil
@@ -44,6 +51,7 @@ func (m *Mock) GetStoredQuery(_ context.Context, name string) (*driver.StoredQue
 	}
 
 	out := *q
+	out.Tags = copyTags(q.Tags)
 
 	return &out, nil
 }
@@ -56,7 +64,9 @@ func (m *Mock) ListStoredQueries(_ context.Context, page driver.Page) ([]driver.
 	for _, k := range keys {
 		q, ok := m.storedQuery.Get(k)
 		if ok {
-			out = append(out, *q)
+			cp := *q
+			cp.Tags = copyTags(q.Tags)
+			out = append(out, cp)
 		}
 	}
 

@@ -21,13 +21,24 @@ func (m *Mock) PutDeliveryChannel(_ context.Context, ch driver.DeliveryChannel) 
 		return tagged(driver.ExNoSuchBucket, invalidArgCode, "S3BucketName is required")
 	}
 
+	// Real Config requires a configuration recorder to exist before a delivery
+	// channel can be created.
+	if m.recorders.Len() == 0 {
+		return noAvailableConfigurationRecorder()
+	}
+
+	now := m.now()
+
+	// Hold createMu across scan+insert so the single-channel cap holds under
+	// concurrent creates with DIFFERENT names. See Mock.createMu.
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
 	for _, k := range m.channels.Keys() {
 		if k != ch.Name {
 			return maxDeliveryChannelsExceeded()
 		}
 	}
-
-	now := m.now()
 
 	if existing, ok := m.channels.Get(ch.Name); ok {
 		existing.mu.Lock()
@@ -42,18 +53,17 @@ func (m *Mock) PutDeliveryChannel(_ context.Context, ch driver.DeliveryChannel) 
 		return nil
 	}
 
+	ch.Arn = m.arn("delivery-channel/" + ch.Name)
 	ch.LastStatus = "SUCCESS"
 	ch.LastStatusChangeTime = now
-
-	if !m.channels.SetIfAbsent(ch.Name, &channelData{ch: ch}) {
-		return maxDeliveryChannelsExceeded()
-	}
+	m.channels.Set(ch.Name, &channelData{ch: ch})
 
 	return nil
 }
 
 func copyChannel(c *driver.DeliveryChannel) driver.DeliveryChannel {
 	out := *c
+	out.Tags = copyTags(c.Tags)
 
 	if c.SnapshotDeliveryProps != nil {
 		p := *c.SnapshotDeliveryProps

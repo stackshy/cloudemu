@@ -1,13 +1,45 @@
 package configservice
 
 import (
+	"encoding/base64"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/configservice/driver"
 )
+
+// nextTokenPrefix namespaces the opaque pagination token so a token minted for
+// one op isn't mistaken for a raw offset.
+const nextTokenPrefix = "cfg:"
+
+// encodeNextToken renders a page offset as an opaque base64 token.
+func encodeNextToken(offset int) string {
+	return base64.StdEncoding.EncodeToString([]byte(nextTokenPrefix + strconv.Itoa(offset)))
+}
+
+// decodeNextToken parses an opaque base64 token back to its page offset. A
+// malformed token returns ok=false.
+func decodeNextToken(token string) (offset int, ok bool) {
+	raw, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return 0, false
+	}
+
+	s := string(raw)
+	if !strings.HasPrefix(s, nextTokenPrefix) {
+		return 0, false
+	}
+
+	n, err := strconv.Atoi(strings.TrimPrefix(s, nextTokenPrefix))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+
+	return n, true
+}
 
 func (m *Mock) now() time.Time {
 	return m.opts.Clock.Now().UTC()
@@ -66,8 +98,8 @@ func paginate[T any](items []T, page driver.Page) (pageItems []T, nextToken stri
 	offset := 0
 
 	if page.NextToken != "" {
-		n, err := strconv.Atoi(page.NextToken)
-		if err != nil || n < 0 || n > len(items) {
+		n, ok := decodeNextToken(page.NextToken)
+		if !ok || n > len(items) {
 			return nil, "", invalidNextToken(page.NextToken)
 		}
 
@@ -86,7 +118,7 @@ func paginate[T any](items []T, page driver.Page) (pageItems []T, nextToken stri
 
 	next := ""
 	if end < len(items) {
-		next = strconv.Itoa(end)
+		next = encodeNextToken(end)
 	}
 
 	return items[offset:end], next, nil

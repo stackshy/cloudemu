@@ -16,12 +16,24 @@ import (
 	"github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
+	cfgprovider "github.com/stackshy/cloudemu/v2/providers/aws/configservice"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
 func nowUTC() time.Time { return time.Now().UTC() }
 
 func newConfigClient(t *testing.T) *cfgsdk.Client {
+	t.Helper()
+
+	c, _ := newConfigClientWithDriver(t)
+
+	return c
+}
+
+// newConfigClientWithDriver returns the SDK client plus the backing Config mock,
+// so tests that need the opaque PutEvaluations result token (never surfaced over
+// the wire) can obtain it directly.
+func newConfigClientWithDriver(t *testing.T) (*cfgsdk.Client, *cfgprovider.Mock) {
 	t.Helper()
 
 	cloud := cloudemu.NewAWS()
@@ -38,9 +50,11 @@ func newConfigClient(t *testing.T) *cfgsdk.Client {
 		t.Fatalf("aws config: %v", err)
 	}
 
-	return cfgsdk.NewFromConfig(cfg, func(o *cfgsdk.Options) {
+	client := cfgsdk.NewFromConfig(cfg, func(o *cfgsdk.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)
 	})
+
+	return client, cloud.Config
 }
 
 func TestSDKRecorderAndChannelLifecycle(t *testing.T) {
@@ -113,7 +127,7 @@ func TestSDKRecorderAndChannelLifecycle(t *testing.T) {
 
 func TestSDKConfigRuleLifecycleAndTags(t *testing.T) {
 	ctx := context.Background()
-	c := newConfigClient(t)
+	c, drv := newConfigClientWithDriver(t)
 
 	_, err := c.PutConfigRule(ctx, &cfgsdk.PutConfigRuleInput{
 		ConfigRule: &cfgtypes.ConfigRule{
@@ -158,9 +172,16 @@ func TestSDKConfigRuleLifecycleAndTags(t *testing.T) {
 		t.Fatalf("unexpected tags: %+v", tags.Tags)
 	}
 
-	// PutEvaluations rolls compliance up to NON_COMPLIANT.
+	// PutEvaluations rolls compliance up to NON_COMPLIANT. The result token is an
+	// opaque value the emulator issued for the rule; the SDK never surfaces it, so
+	// fetch it from the driver directly.
+	token, ok := drv.ResultTokenForRule("s3-sse")
+	if !ok {
+		t.Fatal("no result token issued for rule s3-sse")
+	}
+
 	if _, err = c.PutEvaluations(ctx, &cfgsdk.PutEvaluationsInput{
-		ResultToken: aws.String("s3-sse"),
+		ResultToken: aws.String(token),
 		Evaluations: []cfgtypes.Evaluation{{
 			ComplianceResourceType: aws.String("AWS::S3::Bucket"),
 			ComplianceResourceId:   aws.String("b1"),
@@ -269,5 +290,269 @@ func TestSDKAggregatorAndStoredQuery(t *testing.T) {
 
 	if aws.ToString(got.StoredQuery.Expression) != "SELECT resourceId" {
 		t.Fatalf("unexpected stored query: %+v", got.StoredQuery)
+	}
+}
+
+// TestSDKRecorderExclusionRoundTrip guards the exclusion-list round-trip: a
+// recorder created with EXCLUSION_BY_RESOURCE_TYPES must re-emit its exclusion
+// list on describe (otherwise Terraform sees phantom drift).
+func TestSDKRecorderExclusionRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	_, err := c.PutConfigurationRecorder(ctx, &cfgsdk.PutConfigurationRecorderInput{
+		ConfigurationRecorder: &cfgtypes.ConfigurationRecorder{
+			Name:    aws.String("default"),
+			RoleARN: aws.String("arn:aws:iam::123456789012:role/config"),
+			RecordingGroup: &cfgtypes.RecordingGroup{
+				RecordingStrategy: &cfgtypes.RecordingStrategy{
+					UseOnly: cfgtypes.RecordingStrategyTypeExclusionByResourceTypes,
+				},
+				ExclusionByResourceTypes: &cfgtypes.ExclusionByResourceTypes{
+					ResourceTypes: []cfgtypes.ResourceType{cfgtypes.ResourceTypeInstance},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PutConfigurationRecorder: %v", err)
+	}
+
+	recs, err := c.DescribeConfigurationRecorders(ctx, &cfgsdk.DescribeConfigurationRecordersInput{})
+	if err != nil {
+		t.Fatalf("DescribeConfigurationRecorders: %v", err)
+	}
+
+	if len(recs.ConfigurationRecorders) != 1 {
+		t.Fatalf("want 1 recorder, got %d", len(recs.ConfigurationRecorders))
+	}
+
+	rg := recs.ConfigurationRecorders[0].RecordingGroup
+	if rg == nil || rg.ExclusionByResourceTypes == nil || len(rg.ExclusionByResourceTypes.ResourceTypes) != 1 {
+		t.Fatalf("exclusion list dropped on read-back: %+v", rg)
+	}
+
+	if rg.ExclusionByResourceTypes.ResourceTypes[0] != cfgtypes.ResourceTypeInstance {
+		t.Fatalf("unexpected exclusion type: %v", rg.ExclusionByResourceTypes.ResourceTypes)
+	}
+}
+
+func TestSDKConformancePackRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	_, err := c.PutConformancePack(ctx, &cfgsdk.PutConformancePackInput{
+		ConformancePackName: aws.String("cp"),
+		TemplateBody:        aws.String(`{"Resources":{}}`),
+	})
+	if err != nil {
+		t.Fatalf("PutConformancePack: %v", err)
+	}
+
+	packs, err := c.DescribeConformancePacks(ctx, &cfgsdk.DescribeConformancePacksInput{})
+	if err != nil {
+		t.Fatalf("DescribeConformancePacks: %v", err)
+	}
+
+	if len(packs.ConformancePackDetails) != 1 ||
+		aws.ToString(packs.ConformancePackDetails[0].ConformancePackName) != "cp" {
+		t.Fatalf("unexpected packs: %+v", packs.ConformancePackDetails)
+	}
+
+	status, err := c.DescribeConformancePackStatus(ctx, &cfgsdk.DescribeConformancePackStatusInput{})
+	if err != nil {
+		t.Fatalf("DescribeConformancePackStatus: %v", err)
+	}
+
+	if len(status.ConformancePackStatusDetails) != 1 ||
+		status.ConformancePackStatusDetails[0].ConformancePackState != cfgtypes.ConformancePackStateCreateComplete {
+		t.Fatalf("unexpected pack status: %+v", status.ConformancePackStatusDetails)
+	}
+
+	if _, err = c.DeleteConformancePack(ctx, &cfgsdk.DeleteConformancePackInput{
+		ConformancePackName: aws.String("cp"),
+	}); err != nil {
+		t.Fatalf("DeleteConformancePack: %v", err)
+	}
+}
+
+func TestSDKOrgRuleAndPackRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	_, err := c.PutOrganizationConfigRule(ctx, &cfgsdk.PutOrganizationConfigRuleInput{
+		OrganizationConfigRuleName: aws.String("org-rule"),
+		OrganizationManagedRuleMetadata: &cfgtypes.OrganizationManagedRuleMetadata{
+			RuleIdentifier: aws.String("S3_BUCKET_SSE_ENABLED"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("PutOrganizationConfigRule: %v", err)
+	}
+
+	rules, err := c.DescribeOrganizationConfigRules(ctx, &cfgsdk.DescribeOrganizationConfigRulesInput{})
+	if err != nil {
+		t.Fatalf("DescribeOrganizationConfigRules: %v", err)
+	}
+
+	if len(rules.OrganizationConfigRules) != 1 {
+		t.Fatalf("want 1 org rule, got %d", len(rules.OrganizationConfigRules))
+	}
+
+	_, err = c.PutOrganizationConformancePack(ctx, &cfgsdk.PutOrganizationConformancePackInput{
+		OrganizationConformancePackName: aws.String("org-pack"),
+		TemplateBody:                    aws.String(`{"Resources":{}}`),
+	})
+	if err != nil {
+		t.Fatalf("PutOrganizationConformancePack: %v", err)
+	}
+
+	packs, err := c.DescribeOrganizationConformancePacks(ctx, &cfgsdk.DescribeOrganizationConformancePacksInput{})
+	if err != nil {
+		t.Fatalf("DescribeOrganizationConformancePacks: %v", err)
+	}
+
+	if len(packs.OrganizationConformancePacks) != 1 {
+		t.Fatalf("want 1 org pack, got %d", len(packs.OrganizationConformancePacks))
+	}
+}
+
+func TestSDKRemediationRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	if _, err := c.PutConfigRule(ctx, &cfgsdk.PutConfigRuleInput{
+		ConfigRule: &cfgtypes.ConfigRule{
+			ConfigRuleName: aws.String("r"),
+			Source:         &cfgtypes.Source{Owner: cfgtypes.OwnerAws, SourceIdentifier: aws.String("X")},
+		},
+	}); err != nil {
+		t.Fatalf("PutConfigRule: %v", err)
+	}
+
+	_, err := c.PutRemediationConfigurations(ctx, &cfgsdk.PutRemediationConfigurationsInput{
+		RemediationConfigurations: []cfgtypes.RemediationConfiguration{{
+			ConfigRuleName: aws.String("r"),
+			TargetType:     cfgtypes.RemediationTargetTypeSsmDocument,
+			TargetId:       aws.String("AWS-PublishSNSNotification"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("PutRemediationConfigurations: %v", err)
+	}
+
+	got, err := c.DescribeRemediationConfigurations(ctx, &cfgsdk.DescribeRemediationConfigurationsInput{
+		ConfigRuleNames: []string{"r"},
+	})
+	if err != nil {
+		t.Fatalf("DescribeRemediationConfigurations: %v", err)
+	}
+
+	if len(got.RemediationConfigurations) != 1 ||
+		aws.ToString(got.RemediationConfigurations[0].TargetId) != "AWS-PublishSNSNotification" {
+		t.Fatalf("unexpected remediation: %+v", got.RemediationConfigurations)
+	}
+}
+
+func TestSDKResourceConfigAndHistoryRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	_, err := c.PutResourceConfig(ctx, &cfgsdk.PutResourceConfigInput{
+		ResourceType:    aws.String("AWS::EC2::Instance"),
+		ResourceId:      aws.String("i-123"),
+		Configuration:   aws.String(`{"state":"running"}`),
+		SchemaVersionId: aws.String("1.0"),
+	})
+	if err != nil {
+		t.Fatalf("PutResourceConfig: %v", err)
+	}
+
+	hist, err := c.GetResourceConfigHistory(ctx, &cfgsdk.GetResourceConfigHistoryInput{
+		ResourceType: cfgtypes.ResourceTypeInstance,
+		ResourceId:   aws.String("i-123"),
+	})
+	if err != nil {
+		t.Fatalf("GetResourceConfigHistory: %v", err)
+	}
+
+	if len(hist.ConfigurationItems) != 1 ||
+		aws.ToString(hist.ConfigurationItems[0].ResourceId) != "i-123" {
+		t.Fatalf("unexpected history: %+v", hist.ConfigurationItems)
+	}
+}
+
+func TestSDKAggregateQueryAuthorizedVsUnauthorized(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	_, err := c.PutConfigurationAggregator(ctx, &cfgsdk.PutConfigurationAggregatorInput{
+		ConfigurationAggregatorName: aws.String("agg"),
+		AccountAggregationSources: []cfgtypes.AccountAggregationSource{{
+			AccountIds: []string{"123456789012"}, AllAwsRegions: true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("PutConfigurationAggregator: %v", err)
+	}
+
+	if _, err = c.PutConfigRule(ctx, &cfgsdk.PutConfigRuleInput{
+		ConfigRule: &cfgtypes.ConfigRule{
+			ConfigRuleName: aws.String("r"),
+			Source:         &cfgtypes.Source{Owner: cfgtypes.OwnerAws, SourceIdentifier: aws.String("X")},
+		},
+	}); err != nil {
+		t.Fatalf("PutConfigRule: %v", err)
+	}
+
+	// Unauthorized: the aggregate read returns nothing.
+	unauth, err := c.DescribeAggregateComplianceByConfigRules(ctx,
+		&cfgsdk.DescribeAggregateComplianceByConfigRulesInput{ConfigurationAggregatorName: aws.String("agg")})
+	if err != nil {
+		t.Fatalf("DescribeAggregate (unauthorized): %v", err)
+	}
+
+	if len(unauth.AggregateComplianceByConfigRules) != 0 {
+		t.Fatalf("unauthorized aggregate must be empty, got %d", len(unauth.AggregateComplianceByConfigRules))
+	}
+
+	// Authorize the source, then the aggregate read includes the rule.
+	if _, err = c.PutAggregationAuthorization(ctx, &cfgsdk.PutAggregationAuthorizationInput{
+		AuthorizedAccountId: aws.String("123456789012"),
+		AuthorizedAwsRegion: aws.String("us-east-1"),
+	}); err != nil {
+		t.Fatalf("PutAggregationAuthorization: %v", err)
+	}
+
+	auth, err := c.DescribeAggregateComplianceByConfigRules(ctx,
+		&cfgsdk.DescribeAggregateComplianceByConfigRulesInput{ConfigurationAggregatorName: aws.String("agg")})
+	if err != nil {
+		t.Fatalf("DescribeAggregate (authorized): %v", err)
+	}
+
+	if len(auth.AggregateComplianceByConfigRules) != 1 {
+		t.Fatalf("authorized aggregate must include the rule, got %d", len(auth.AggregateComplianceByConfigRules))
+	}
+}
+
+func TestSDKRetentionRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newConfigClient(t)
+
+	_, err := c.PutRetentionConfiguration(ctx, &cfgsdk.PutRetentionConfigurationInput{
+		RetentionPeriodInDays: aws.Int32(90),
+	})
+	if err != nil {
+		t.Fatalf("PutRetentionConfiguration: %v", err)
+	}
+
+	got, err := c.DescribeRetentionConfigurations(ctx, &cfgsdk.DescribeRetentionConfigurationsInput{})
+	if err != nil {
+		t.Fatalf("DescribeRetentionConfigurations: %v", err)
+	}
+
+	if len(got.RetentionConfigurations) != 1 ||
+		aws.ToInt32(got.RetentionConfigurations[0].RetentionPeriodInDays) != 90 {
+		t.Fatalf("unexpected retention: %+v", got.RetentionConfigurations)
 	}
 }

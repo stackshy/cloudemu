@@ -2,6 +2,7 @@ package configservice
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/configservice/driver"
@@ -20,6 +21,10 @@ func (m *Mock) PutConformancePack(_ context.Context, pack driver.ConformancePack
 		return "", invalidParameter("exactly one of TemplateBody or TemplateS3Uri must be specified")
 	}
 
+	if err := validateTemplate(pack.TemplateBody, pack.TemplateS3URI); err != nil {
+		return "", err
+	}
+
 	now := m.now()
 
 	if existing, ok := m.packs.Get(pack.ConformancePackName); ok {
@@ -29,10 +34,35 @@ func (m *Mock) PutConformancePack(_ context.Context, pack driver.ConformancePack
 		pack.State = driver.PackStateCreateComplete
 		pack.LastUpdateRequestedTime = now
 		pack.InputParameters = copyTags(pack.InputParameters)
+		pack.Tags = copyTags(existing.pack.Tags)
 		existing.pack = pack
 		existing.mu.Unlock()
 
 		return pack.ConformancePackArn, nil
+	}
+
+	// Cap creates atomically under createMu (upsert of the same name above is
+	// handled before the lock; a same-name race re-checks below).
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
+	if existing, ok := m.packs.Get(pack.ConformancePackName); ok {
+		existing.mu.Lock()
+		pack.ConformancePackArn = existing.pack.ConformancePackArn
+		pack.ConformancePackID = existing.pack.ConformancePackID
+		pack.State = driver.PackStateCreateComplete
+		pack.LastUpdateRequestedTime = now
+		pack.InputParameters = copyTags(pack.InputParameters)
+		pack.Tags = copyTags(existing.pack.Tags)
+		existing.pack = pack
+		existing.mu.Unlock()
+
+		return pack.ConformancePackArn, nil
+	}
+
+	if m.packs.Len() >= maxConformancePacks {
+		return "", tagged(driver.ExMaxNumberOfConformancePacksExceeded, failedPreconditionCode,
+			"an account supports at most %d conformance packs", maxConformancePacks)
 	}
 
 	pack.ConformancePackID = idgen.GenerateID("conformance-pack-")
@@ -40,17 +70,41 @@ func (m *Mock) PutConformancePack(_ context.Context, pack driver.ConformancePack
 	pack.State = driver.PackStateCreateComplete
 	pack.LastUpdateRequestedTime = now
 	pack.InputParameters = copyTags(pack.InputParameters)
-
-	if !m.packs.SetIfAbsent(pack.ConformancePackName, &packData{pack: pack}) {
-		return "", resourceInUse("conformance pack %q already exists", pack.ConformancePackName)
-	}
+	m.packs.Set(pack.ConformancePackName, &packData{pack: pack})
 
 	return pack.ConformancePackArn, nil
+}
+
+// validateTemplate performs a minimal validity check on a conformance-pack /
+// org-pack template: an inline TemplateBody must be non-blank and look like JSON
+// or YAML; an S3 URI must use the s3:// scheme.
+func validateTemplate(templateBody, templateS3URI string) error {
+	if templateS3URI != "" {
+		if !strings.HasPrefix(templateS3URI, "s3://") {
+			return invalidParameter("TemplateS3Uri must be an s3:// URI")
+		}
+
+		return nil
+	}
+
+	body := strings.TrimSpace(templateBody)
+	if body == "" {
+		return invalidParameter("TemplateBody must not be blank")
+	}
+
+	// A CloudFormation/Guard template is JSON- or YAML-shaped. Reject values that
+	// are clearly neither (no structural markers at all).
+	if !strings.ContainsAny(body, "{:") {
+		return invalidParameter("TemplateBody is not a valid JSON or YAML template")
+	}
+
+	return nil
 }
 
 func copyPack(p *driver.ConformancePack) driver.ConformancePack {
 	out := *p
 	out.InputParameters = copyTags(p.InputParameters)
+	out.Tags = copyTags(p.Tags)
 
 	return out
 }

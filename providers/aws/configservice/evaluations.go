@@ -7,27 +7,73 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/configservice/driver"
 )
 
+// issueResultToken generates a fresh opaque result token for a rule and records
+// the token -> rule-name mapping in the registry, dropping the rule's previous
+// token. The caller must NOT hold the rule's lock.
+func (m *Mock) issueResultToken(ruleName string) string {
+	token := idgen.GenerateID("config-result-token-")
+
+	m.tokenMu.Lock()
+	defer m.tokenMu.Unlock()
+
+	m.evalTokens[token] = ruleName
+
+	return token
+}
+
+// ResultTokenForRule returns the opaque result token currently issued for a
+// rule. It is exported for provider tests (real Config delivers the token to a
+// custom rule's Lambda; the SDK never surfaces it) so PutEvaluations can be
+// exercised with a valid token.
+func (m *Mock) ResultTokenForRule(ruleName string) (string, bool) {
+	rd, ok := m.rules.Get(ruleName)
+	if !ok {
+		return "", false
+	}
+
+	rd.mu.RLock()
+	defer rd.mu.RUnlock()
+
+	if rd.resultToken == "" {
+		return "", false
+	}
+
+	return rd.resultToken, true
+}
+
 // PutEvaluations records evaluations reported by a custom rule and rolls the
-// rule's aggregate compliance up from them. The resultToken identifies the
-// rule (the emulator treats it as the rule name for local reporting). Returns
-// any evaluations that failed (always empty here). In testMode nothing is
-// persisted (real Config behavior).
+// rule's aggregate compliance up from them. The resultToken is a large opaque
+// token the emulator issued for a rule (at create time or via
+// StartConfigRulesEvaluation) — never the rule name. An unknown or malformed
+// token is an InvalidResultTokenException. Returns any evaluations that failed
+// (always empty here). In testMode nothing is persisted (real Config behavior).
 func (m *Mock) PutEvaluations(
 	_ context.Context, resultToken string, evals []driver.Evaluation, testMode bool,
 ) ([]driver.Evaluation, error) {
 	if resultToken == "" {
-		return nil, invalidParameter("ResultToken is required")
+		return nil, invalidResultToken(resultToken)
+	}
+
+	m.tokenMu.RLock()
+	ruleName, known := m.evalTokens[resultToken]
+	m.tokenMu.RUnlock()
+
+	if !known {
+		return nil, invalidResultToken(resultToken)
+	}
+
+	if err := validateEvaluations(evals); err != nil {
+		return nil, err
 	}
 
 	if testMode {
 		return nil, nil
 	}
 
-	rd, ok := m.rules.Get(resultToken)
+	rd, ok := m.rules.Get(ruleName)
 	if !ok {
-		// The resultToken maps to a rule name in the emulator; an unknown token
-		// is a NoSuchConfigRule so callers see a precise error.
-		return nil, noSuchConfigRule(resultToken)
+		// The rule was deleted after the token was issued.
+		return nil, invalidResultToken(resultToken)
 	}
 
 	rd.mu.Lock()
@@ -37,6 +83,28 @@ func (m *Mock) PutEvaluations(
 	rd.mu.Unlock()
 
 	return nil, nil
+}
+
+// validateEvaluations validates each reported evaluation's ComplianceType.
+func validateEvaluations(evals []driver.Evaluation) error {
+	for i := range evals {
+		if err := validateComplianceType(evals[i].ComplianceType); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateComplianceType rejects a compliance value outside the allowed set.
+func validateComplianceType(ct string) error {
+	switch ct {
+	case driver.ComplianceCompliant, driver.ComplianceNonCompliant,
+		driver.ComplianceNotApplicable, driver.ComplianceInsufficientData:
+		return nil
+	default:
+		return invalidParameter("ComplianceType %q is invalid", ct)
+	}
 }
 
 // rollUpCompliance derives a rule's aggregate compliance from its evaluations:
@@ -68,6 +136,10 @@ func rollUpCompliance(evals []driver.Evaluation) string {
 //
 //nolint:gocritic // eval is passed by value to match the driver.Config interface signature.
 func (m *Mock) PutExternalEvaluation(_ context.Context, ruleName string, eval driver.Evaluation) error {
+	if err := validateComplianceType(eval.ComplianceType); err != nil {
+		return err
+	}
+
 	rd, ok := m.rules.Get(ruleName)
 	if !ok {
 		return noSuchConfigRule(ruleName)
@@ -175,9 +247,15 @@ func (m *Mock) GetComplianceSummaryByConfigRule(_ context.Context) (compliant, n
 // resources (synthesized from recorded PutResourceConfig items — all counted as
 // compliant unless an evaluation marks them otherwise).
 func (m *Mock) GetComplianceSummaryByResourceType(
-	_ context.Context, _ []string,
+	_ context.Context, resourceTypes []string,
 ) (compliant, nonCompliant int32, err error) {
-	// Synthesized: the emulator reports the compliance from recorded evaluations.
+	want := map[string]bool{}
+	for _, t := range resourceTypes {
+		want[t] = true
+	}
+
+	// Synthesized: the emulator reports the compliance from recorded evaluations,
+	// filtered to the requested resource types when any are supplied.
 	for _, k := range sortedKeys(m.rules.Keys()) {
 		rd, ok := m.rules.Get(k)
 		if !ok {
@@ -186,6 +264,10 @@ func (m *Mock) GetComplianceSummaryByResourceType(
 
 		rd.mu.RLock()
 		for _, e := range rd.evals {
+			if len(want) > 0 && !want[e.ComplianceResourceType] {
+				continue
+			}
+
 			if e.ComplianceType == driver.ComplianceNonCompliant {
 				nonCompliant++
 			} else if e.ComplianceType == driver.ComplianceCompliant {

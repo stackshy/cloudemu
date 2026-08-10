@@ -98,3 +98,12 @@ func noAvailableDeliveryChannel() error {
 	return tagged(driver.ExNoAvailableDeliveryChannel, errors.FailedPrecondition,
 		"recording cannot start without a delivery channel")
 }
+
+func noAvailableConfigurationRecorder() error {
+	return tagged(driver.ExNoAvailableConfigurationRecorder, errors.FailedPrecondition,
+		"a delivery channel cannot be created without a configuration recorder")
+}
+
+func invalidResultToken(token string) error {
+	return tagged(driver.ExInvalidResultToken, errors.InvalidArgument, "the result token %q is invalid", token)
+}

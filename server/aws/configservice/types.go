@@ -104,6 +104,14 @@ func recordingGroupToWire(g *cfgdriver.RecordingGroup) *recordingGroupJSON {
 		}{UseOnly: g.RecordingStrategy}
 	}
 
+	// Re-emit the exclusion list when the group uses the exclusion strategy;
+	// otherwise describe would silently drop it (Terraform phantom drift).
+	if g.RecordingStrategy == "EXCLUSION_BY_RESOURCE_TYPES" && len(g.ExclusionByResources) > 0 {
+		out.ExclusionByResourceTypes = &struct {
+			ResourceTypes []string `json:"resourceTypes,omitempty"`
+		}{ResourceTypes: g.ExclusionByResources}
+	}
+
 	return out
 }
 

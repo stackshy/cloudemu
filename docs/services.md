@@ -2865,13 +2865,15 @@ for build-and-orchestrate testing without a dependency on real event data.
 
 AWS-only. Real `aws-sdk-go-v2/service/configservice` clients (and the
 `aws configservice` CLI) work against the SDK-compat server
-(`awsserver.Drivers{Config: cloud.Config}`). Full parity with the SDK's client
-surface (all 102 operations). The control-plane CRUD/state paths — configuration
-recorders, delivery channels, config rules, conformance packs, organization
-rules/packs, aggregators and authorizations, remediation, stored queries, and
-retention — are faithfully emulated. Compliance, evaluation, discovered-resource,
-and aggregate-query surfaces are synthesized (see below), since the emulator runs
-no real Config recording pipeline.
+(`awsserver.Drivers{Config: cloud.Config}`). All 102 SDK operations are wired.
+The control-plane CRUD/state paths — configuration recorders, delivery channels,
+config rules, conformance packs, organization rules/packs, aggregators and
+authorizations, remediation, stored queries, and retention — are faithfully
+emulated. The compliance, evaluation, discovered-resource, and aggregate-query
+read/analytics surfaces are **synthesized approximations** (see below), not full
+parity: the emulator runs no real Config recording pipeline, so they answer from
+the emulator's own recorded state rather than from continuously discovered
+configuration data.
 
 | Family | Operations |
 |--------|-----------|
@@ -2908,12 +2910,21 @@ recording pipeline, so the discovered-resource and query surfaces are backed by
 what callers supply via `PutResourceConfig`: `GetResourceConfigHistory`,
 `BatchGetResourceConfig`, `ListDiscoveredResources`, `GetDiscoveredResourceCounts`
 and `SelectResourceConfig` answer from that in-memory store (a resource never
-recorded is `ResourceNotDiscoveredException`). Aggregate-query operations validate
-the aggregator exists, then return the local account's own recorded rules and
-resources stamped with the account/region. Compliance summaries are derived from
-reported evaluations. `StartResourceEvaluation`/`GetResourceEvaluationSummary`,
+recorded is `ResourceNotDiscoveredException`). `SelectResourceConfig` /
+`SelectAggregateResourceConfig` parse a supported subset of the Config SQL SELECT
+grammar (a projection plus an optional `WHERE resourceType = '...'` equality);
+unsupported syntax is a typed `InvalidExpressionException`. Aggregate-query
+operations validate the aggregator exists and gate results on authorization: the
+local account/region contributes data only when the aggregator selects it AND a
+matching `AggregationAuthorization` exists — an unauthorized source contributes
+nothing. Compliance summaries are derived from reported evaluations.
+`PutEvaluations` validates an opaque result token (issued per rule at create time
+and refreshed by `StartConfigRulesEvaluation`); an unknown/malformed token is
+`InvalidResultTokenException`. `StartResourceEvaluation`/`GetResourceEvaluationSummary`,
 pending aggregation requests, and organization per-account detailed statuses
-return plausible synthesized results. This preserves the SDK wire shapes for
+return plausible synthesized results. Conformance-pack and organization-pack
+creation completes instantly (always `CREATE_COMPLETE`; the transient in-progress
+states are never observable). This preserves the SDK wire shapes for
 build-and-orchestrate testing without a dependency on real Config data.
 
 **Total: 102 operations.**

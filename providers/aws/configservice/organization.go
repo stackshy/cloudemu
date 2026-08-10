@@ -14,6 +14,10 @@ func (m *Mock) PutOrganizationConfigRule(_ context.Context, rule driver.Organiza
 		return "", invalidParameter("OrganizationConfigRuleName is required")
 	}
 
+	if err := validateMaxExecutionFrequency(rule.MaximumExecutionFreq); err != nil {
+		return "", err
+	}
+
 	now := m.now()
 	rule.LastUpdateTime = now
 	rule.ExcludedAccounts = copyStrings(rule.ExcludedAccounts)
@@ -43,6 +47,7 @@ func (m *Mock) allOrgRules() []driver.OrganizationConfigRule {
 
 		cp := *r
 		cp.ExcludedAccounts = copyStrings(r.ExcludedAccounts)
+		cp.Tags = copyTags(r.Tags)
 		out = append(out, cp)
 	}
 
@@ -124,6 +129,10 @@ func (m *Mock) PutOrganizationConformancePack(
 		return "", invalidParameter("exactly one of TemplateBody or TemplateS3Uri must be specified")
 	}
 
+	if err := validateTemplate(pack.TemplateBody, pack.TemplateS3URI); err != nil {
+		return "", err
+	}
+
 	now := m.now()
 	pack.LastUpdateTime = now
 	pack.ExcludedAccounts = copyStrings(pack.ExcludedAccounts)
@@ -155,6 +164,7 @@ func (m *Mock) allOrgPacks() []driver.OrganizationConformancePack {
 		cp := *p
 		cp.ExcludedAccounts = copyStrings(p.ExcludedAccounts)
 		cp.InputParameters = copyTags(p.InputParameters)
+		cp.Tags = copyTags(p.Tags)
 		out = append(out, cp)
 	}
 

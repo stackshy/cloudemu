@@ -226,18 +226,32 @@ func (m *Mock) GetDiscoveredResourceCounts(
 	return m.discoveredCounts(resourceTypes, page)
 }
 
-func (m *Mock) selectResults(page driver.Page) (rows []string, nextToken string, err error) {
+// selectResultsFiltered applies a parsed SELECT query (WHERE resourceType filter
+// + projection) to the recorded items and returns the projected rows.
+func (m *Mock) selectResultsFiltered(q selectQuery, page driver.Page) (rows []string, nextToken string, err error) {
 	items := m.allItems()
 
 	out := make([]string, 0, len(items))
+
 	for i := range items {
-		out = append(out, items[i].Configuration)
+		if q.hasResFilter && items[i].ResourceType != q.resourceType {
+			continue
+		}
+
+		row, perr := q.projectItem(&items[i])
+		if perr != nil {
+			return nil, "", perr
+		}
+
+		out = append(out, row)
 	}
 
 	return paginate(out, page)
 }
 
-// SelectResourceConfig runs a SQL-like query, returning each item's config JSON.
+// SelectResourceConfig runs the supported subset of the Config SQL SELECT
+// grammar (projection + WHERE resourceType=...) against the recorded items.
+// Unsupported syntax is a typed InvalidExpressionException.
 func (m *Mock) SelectResourceConfig(
 	_ context.Context, expression string, page driver.Page,
 ) (rows []string, nextToken string, err error) {
@@ -245,5 +259,10 @@ func (m *Mock) SelectResourceConfig(
 		return nil, "", invalidParameter("Expression is required")
 	}
 
-	return m.selectResults(page)
+	q, perr := parseSelect(expression)
+	if perr != nil {
+		return nil, "", perr
+	}
+
+	return m.selectResultsFiltered(q, page)
 }

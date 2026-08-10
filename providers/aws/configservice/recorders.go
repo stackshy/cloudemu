@@ -25,6 +25,12 @@ func (m *Mock) PutConfigurationRecorder(_ context.Context, rec driver.Configurat
 
 	now := m.now()
 
+	// Hold createMu across the scan+insert: the single-recorder cap is not atomic
+	// with a per-key SetIfAbsent alone (two DIFFERENT names would each pass the
+	// scan and both insert). See Mock.createMu.
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
 	// Guard the single-recorder invariant: if a different recorder exists, reject.
 	for _, k := range m.recorders.Keys() {
 		if k != rec.Name {
@@ -48,10 +54,7 @@ func (m *Mock) PutConfigurationRecorder(_ context.Context, rec driver.Configurat
 	rec.LastStatusChangeTime = now
 	rec.Recording = false
 
-	// SetIfAbsent guards against a concurrent create racing the same name.
-	if !m.recorders.SetIfAbsent(rec.Name, &recorderData{rec: rec}) {
-		return maxRecordersExceeded()
-	}
+	m.recorders.Set(rec.Name, &recorderData{rec: rec})
 
 	return nil
 }
@@ -292,8 +295,21 @@ func (m *Mock) PutServiceLinkedConfigurationRecorder(
 
 	name = "AWSConfigurationRecorderFor" + serviceShortName(principal)
 
+	// Shares the recorders store with PutConfigurationRecorder, so it must hold
+	// the same createMu across scan+insert to preserve the single-recorder cap.
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
 	if m.recorders.Len() > 0 && !m.recorders.Has(name) {
 		return "", "", maxRecordersExceeded()
+	}
+
+	if existing, ok := m.recorders.Get(name); ok {
+		existing.mu.RLock()
+		arn = existing.rec.Arn
+		existing.mu.RUnlock()
+
+		return arn, name, nil
 	}
 
 	now := m.now()
@@ -304,10 +320,7 @@ func (m *Mock) PutServiceLinkedConfigurationRecorder(
 		LastStatus:           driver.RecorderStatusPending,
 		LastStatusChangeTime: now,
 	}
-
-	if !m.recorders.SetIfAbsent(name, &recorderData{rec: rec}) {
-		return rec.Arn, name, nil
-	}
+	m.recorders.Set(name, &recorderData{rec: rec})
 
 	return rec.Arn, name, nil
 }

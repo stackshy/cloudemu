@@ -17,8 +17,12 @@ func (m *Mock) PutConfigRule(_ context.Context, rule driver.ConfigRule) error {
 		return invalidParameter("ConfigRuleName is required")
 	}
 
-	if rule.Source == nil || rule.Source.Owner == "" {
-		return invalidParameter("Source.Owner is required")
+	if err := validateRuleSource(rule.Source); err != nil {
+		return err
+	}
+
+	if err := validateMaxExecutionFrequency(rule.MaximumExecutionFrequency); err != nil {
+		return err
 	}
 
 	if existing, ok := m.rules.Get(rule.ConfigRuleName); ok {
@@ -36,17 +40,82 @@ func (m *Mock) PutConfigRule(_ context.Context, rule driver.ConfigRule) error {
 		return nil
 	}
 
+	// Cap creates under createMu so the limit check + insert is atomic and the
+	// per-account rule cap can't be raced past.
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
+	// Re-check under the lock: a concurrent create of the SAME name must be an
+	// idempotent upsert, never a ResourceInUseException (real Config semantics).
+	if existing, ok := m.rules.Get(rule.ConfigRuleName); ok {
+		existing.mu.Lock()
+		rule.ConfigRuleArn = existing.rule.ConfigRuleArn
+		rule.ConfigRuleID = existing.rule.ConfigRuleID
+		rule.CreatedBy = existing.rule.CreatedBy
+		rule.ConfigRuleState = driver.RuleStateActive
+		rule.Compliance = existing.rule.Compliance
+		rule.Tags = copyTags(rule.Tags)
+		existing.rule = rule
+		existing.mu.Unlock()
+
+		return nil
+	}
+
+	if m.rules.Len() >= maxConfigRules {
+		return tagged(driver.ExMaxNumberOfConfigRulesExceeded, failedPreconditionCode,
+			"an account supports at most %d config rules", maxConfigRules)
+	}
+
 	rule.ConfigRuleID = idgen.GenerateID("config-rule-")
 	rule.ConfigRuleArn = m.arn("config-rule/" + rule.ConfigRuleID)
 	rule.ConfigRuleState = driver.RuleStateActive
 	rule.Compliance = driver.ComplianceInsufficientData
 	rule.Tags = copyTags(rule.Tags)
 
-	if !m.rules.SetIfAbsent(rule.ConfigRuleName, &ruleData{rule: rule}) {
-		return resourceInUse("config rule %q already exists", rule.ConfigRuleName)
+	rd := &ruleData{rule: rule, resultToken: m.issueResultToken(rule.ConfigRuleName)}
+	m.rules.Set(rule.ConfigRuleName, rd)
+
+	return nil
+}
+
+// validateRuleSource validates a rule's Source: Owner must be one of the known
+// values, and a managed rule requires a SourceIdentifier.
+func validateRuleSource(src *driver.RuleSource) error {
+	if src == nil || src.Owner == "" {
+		return invalidParameter("Source.Owner is required")
+	}
+
+	switch src.Owner {
+	case "AWS":
+		if src.SourceIdentifier == "" {
+			return invalidParameter("Source.SourceIdentifier is required for AWS-managed rules")
+		}
+	case "CUSTOM_LAMBDA":
+		if src.SourceIdentifier == "" {
+			return invalidParameter("Source.SourceIdentifier is required for CUSTOM_LAMBDA rules")
+		}
+	case "CUSTOM_POLICY":
+		// Custom-policy rules carry PolicyText rather than a SourceIdentifier.
+	default:
+		return invalidParameter("Source.Owner %q is invalid (want AWS, CUSTOM_LAMBDA or CUSTOM_POLICY)", src.Owner)
 	}
 
 	return nil
+}
+
+// validateMaxExecutionFrequency validates a MaximumExecutionFrequency value if
+// present; an empty value is allowed (event-triggered rules).
+func validateMaxExecutionFrequency(freq string) error {
+	if freq == "" {
+		return nil
+	}
+
+	switch freq {
+	case "One_Hour", "Three_Hours", "Six_Hours", "Twelve_Hours", "TwentyFour_Hours":
+		return nil
+	default:
+		return invalidParameter("MaximumExecutionFrequency %q is invalid", freq)
+	}
 }
 
 func copyRule(r *driver.ConfigRule) driver.ConfigRule {
@@ -114,6 +183,16 @@ func (m *Mock) DeleteConfigRule(_ context.Context, name string) error {
 	delete(m.remExceptions, name)
 	m.authMu.Unlock()
 
+	// Drop any result tokens issued for the deleted rule so stale tokens can't be
+	// replayed against a recreated same-named rule.
+	m.tokenMu.Lock()
+	for token, rn := range m.evalTokens {
+		if rn == name {
+			delete(m.evalTokens, token)
+		}
+	}
+	m.tokenMu.Unlock()
+
 	return nil
 }
 
@@ -133,13 +212,28 @@ func (m *Mock) DescribeConfigRuleEvaluationStatus(
 	return paginate(filtered, page)
 }
 
-// StartConfigRulesEvaluation triggers evaluation of the named rules. In the
-// emulator this is a validated no-op (evaluations arrive via PutEvaluations).
+// StartConfigRulesEvaluation triggers evaluation of the named rules. Real Config
+// dispatches a fresh opaque result token to each rule's evaluator; the emulator
+// issues a new token per named rule (validated before any mutation). Evaluations
+// then arrive via PutEvaluations carrying that token.
 func (m *Mock) StartConfigRulesEvaluation(_ context.Context, names []string) error {
 	for _, n := range names {
 		if !m.rules.Has(n) {
 			return noSuchConfigRule(n)
 		}
+	}
+
+	for _, n := range names {
+		rd, ok := m.rules.Get(n)
+		if !ok {
+			continue
+		}
+
+		token := m.issueResultToken(n)
+
+		rd.mu.Lock()
+		rd.resultToken = token
+		rd.mu.Unlock()
 	}
 
 	return nil
