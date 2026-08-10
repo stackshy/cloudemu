@@ -2,7 +2,7 @@
 
 ## Overview
 
-CloudEmu follows a three-layer architecture that separates portable API concerns, driver interfaces, and provider-specific implementations. This design allows each cloud provider (AWS, Azure, GCP) to implement the same driver interface while the portable API layer adds cross-cutting concerns such as recording, metrics collection, rate limiting, error injection, and latency simulation.
+CloudEmu follows a three-layer architecture that separates portable API concerns, driver interfaces, and provider-specific implementations. This design allows each cloud provider to implement the same driver interface while the portable API layer adds cross-cutting concerns such as recording, metrics collection, rate limiting, error injection, and latency simulation. AWS, Azure, and GCP are fully implemented; OCI is an in-progress fourth provider whose foundation is in place but whose services are not yet built (see [Fourth provider: OCI](#fourth-provider-oci-foundation-only)).
 
 ## Three-Layer Architecture
 
@@ -43,12 +43,23 @@ Each service defines a minimal Go interface in `<service>/driver/driver.go`. The
 
 The bottom layer contains the actual mock implementations for each cloud provider. These live in `providers/aws/`, `providers/azure/`, and `providers/gcp/`. Each implementation uses `internal/memstore.Store[V]` as its backing data structure -- a generic, thread-safe in-memory store. All state lives in process memory with no external dependencies.
 
+### Fourth provider: OCI (foundation only)
+
+A fourth provider, OCI, exists in `providers/oci/` but is **not yet a Layer 3 implementation**. Its foundation is deliberately staged on `development` (identity options, OCID generation in `internal/idgen/ocid.go`, the shared `services/scope` compartment scoping, the `server/wire/ocirest` wire format, and the `server/oci/workrequest` async envelope), and services are meant to land one PR at a time — see [oci-conventions.md](oci-conventions.md).
+
+Because no services are built yet, OCI diverges from the pattern above in two documented ways:
+
+- **No per-service backends.** `providers/oci/` has no `<service>/` subpackages and no `memstore`-backed mocks. `providers/oci.Provider` declares each service as a bare driver interface rather than a concrete mock, so an unimplemented service reads as `nil`; `oci.New()` populates only identity, never a service. A fresh `NewOCI()` therefore emulates nothing. The generated [capability coverage](coverage/README.md) reflects this — every OCI cell is `—`.
+- **Resource discovery has no OCI branch.** The per-resource ARN/ID formatters in `services/resourcediscovery` switch on AWS/Azure/GCP and fall through to a default for OCI, so OCI resources would not get native OCIDs from discovery. This is harmless until OCI services exist, but must be filled in alongside them.
+
+When a service does land it follows the same three-layer shape as the others — `providers/oci/<service>/` with a `memstore`-backed mock implementing the shared `services/<service>/driver` interface.
+
 ## Cross-Service Engines
 
 Sitting above Layer 2 (driver interfaces) are **cross-service engines** that consume driver interfaces directly without going through the portable API. They're peers of each other, not layers in the three-layer stack. Two exist today:
 
 - `features/topology/` -- reads from compute, networking, and DNS drivers to simulate real network connectivity (`CanConnect`, `TraceRoute`, `Resolve`, security-group and NACL evaluation). See [topology.md](topology.md).
-- `server/` -- exposes driver interfaces over HTTP in each cloud's native SDK wire format, so real `aws-sdk-go-v2`, `azure-sdk-for-go`, and `cloud.google.com/go` clients work against CloudEmu by only changing the endpoint. Covers storage, compute, relational and NoSQL databases (incl. Redis/MemoryDB and Cassandra — Keyspaces and Azure Managed Cassandra), networking, monitoring/logging, serverless, containers (registry + ECS + Kubernetes), messaging, streaming (Kinesis Data Streams), secrets, key management (KMS), certificate management (ACM), web application firewall (WAFv2), workflow orchestration (Step Functions), audit logging (CloudTrail), file systems (EFS), email (SES v2), IAM, resource discovery, and AI/ML (Bedrock, SageMaker, Azure AI, Vertex AI) across all 3 providers. Uses a pluggable `Handler` registry so new services drop in as self-contained packages without touching the core. See [sdk-server.md](sdk-server.md) and the full catalog in [services.md](services.md).
+- `server/` -- exposes driver interfaces over HTTP in each cloud's native SDK wire format, so real `aws-sdk-go-v2`, `azure-sdk-for-go`, and `cloud.google.com/go` clients work against CloudEmu by only changing the endpoint. Covers storage, compute, relational and NoSQL databases (incl. Redis/MemoryDB and Cassandra — Keyspaces and Azure Managed Cassandra), networking, monitoring/logging, serverless, containers (registry + ECS + Kubernetes), messaging, streaming (Kinesis Data Streams), secrets, key management (KMS), certificate management (ACM), web application firewall (WAFv2), workflow orchestration (Step Functions), search/analytics (OpenSearch), audit logging (CloudTrail), file systems (EFS), email (SES v2), IAM, resource discovery, and AI/ML (Bedrock, SageMaker, Azure AI, Vertex AI) across all 3 providers. Uses a pluggable `Handler` registry so new services drop in as self-contained packages without touching the core. See [sdk-server.md](sdk-server.md) and the full catalog in [services.md](services.md).
 
 Both engines depend only on Layer 2 interfaces -- never on concrete provider types -- so they work uniformly across AWS, Azure, and GCP backends.
 

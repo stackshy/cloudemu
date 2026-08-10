@@ -69,6 +69,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2
 	github.com/aws/aws-sdk-go-v2/service/neptune v1.44.5
 	github.com/aws/aws-sdk-go-v2/service/networkfirewall v1.66.0
+	github.com/aws/aws-sdk-go-v2/service/opensearch v1.75.4
 	github.com/aws/aws-sdk-go-v2/service/rds v1.118.2
 	github.com/aws/aws-sdk-go-v2/service/redshift v1.62.7
 	github.com/aws/aws-sdk-go-v2/service/resourceexplorer2 v1.23.6

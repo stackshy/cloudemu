@@ -44,7 +44,8 @@ This document lists every service and operation available in CloudEmu across all
 | 31 | Web Application Firewall | `wafv2` | — | — |
 | 32 | Data Streams | `kinesis` | — | — |
 | 33 | Workflow Orchestration | `sfn` | — | — |
-| 34 | Audit Logging | `cloudtrail` | — | — |
+| 34 | Search & Analytics | `opensearch` | — | — |
+| 35 | Audit Logging | `cloudtrail` | — | — |
 
 ---
 
@@ -2695,6 +2696,45 @@ Resource identifiers are ARNs (`arn:aws:ses:<region>:<account>:identity/…`,
 the referenced identity, configuration set, or template.
 
 **Total: 113 operations.**
+
+## 34. Search & Analytics (OpenSearch)
+
+**Driver interface:** `services/opensearch/driver/`
+**AWS:** OpenSearch Service (REST-JSON `awsRestjson1`, version-path prefix `/2021-01-01/opensearch/…`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/opensearch` clients (and the `aws opensearch`
+CLI) work against the SDK-compat server (`awsserver.Drivers{OpenSearch: cloud.OpenSearch}`).
+The handler gates on the `/2021-01-01/opensearch/` version prefix, so it never
+shadows the S3 catch-all. Full `aws-sdk-go-v2/service/opensearch` parity: every
+client method (except `Options`) is implemented. A few write-path capability
+helpers (`AuthorizeVpcEndpointAccess`, `RegisterCapability`, `AttachDataSource`)
+validate their inputs and echo a synthesized result without persisting state.
+
+**Domains behave realistically.** `CreateDomain` claims the domain name
+atomically (`ResourceAlreadyExistsException` on a duplicate) and returns a domain
+that is immediately `Active` with a synthesized endpoint (the emulator
+provisions deterministically, so there is no wall-clock `Processing` phase);
+`DescribeDomain`/`DescribeDomainConfig` reflect stored config; `UpdateDomainConfig`
+mutates it; reads deep-copy so concurrent tag/config mutations don't race.
+
+| Family | Operations |
+|--------|-----------|
+| Domains | CreateDomain, DescribeDomain, DescribeDomains, DescribeDomainConfig, DescribeDomainHealth/Nodes, UpdateDomainConfig, DeleteDomain, ListDomainNames, GetCompatibleVersions, ListVersions |
+| Config history / changes | GetUpgradeStatus/History, StartServiceSoftwareUpdate, CancelServiceSoftwareUpdate, RollbackServiceSoftwareUpdate, UpgradeDomain, DescribeDomainChangeProgress |
+| Packages | CreatePackage, DeletePackage, DescribePackages, AssociatePackage(s), DissociatePackage(s), GetPackageVersionHistory, ListPackagesForDomain, ListDomainsForPackage, UpdatePackage, UpdatePackageScope |
+| VPC endpoints | CreateVpcEndpoint, DeleteVpcEndpoint, UpdateVpcEndpoint, DescribeVpcEndpoints, ListVpcEndpoints, ListVpcEndpointsForDomain, AuthorizeVpcEndpointAccess, RevokeVpcEndpointAccess, ListVpcEndpointAccess |
+| Data sources | AddDataSource, GetDataSource, UpdateDataSource, DeleteDataSource, ListDataSources, AddDirectQueryDataSource, …, ListDirectQueryDataSources |
+| Applications | CreateApplication, GetApplication, UpdateApplication, DeleteApplication, ListApplications |
+| Reserved instances | PurchaseReservedInstanceOffering, DescribeReservedInstances, DescribeReservedInstanceOfferings |
+| Cross-cluster | Create/Delete/Accept/Reject/DescribeInbound & Outbound Connections |
+| Instance/limits | DescribeInstanceTypeLimits, ListInstanceTypeDetails, DescribeDomainAutoTunes, GetDomainMaintenanceStatus, ListDomainMaintenances, StartDomainMaintenance |
+| Scheduled actions / config | ListScheduledActions, UpdateScheduledAction, ListInstanceTypeDetails |
+| Tags | AddTags, RemoveTags, ListTags |
+
+Read-only catalog/limit/insight ops return plausible synthesized results (the
+emulator models no real cluster hardware or search traffic), documented in code.
+
+**Total: 96 operations.**
 ---
 
 ## Provider-specific resources
@@ -2768,7 +2808,7 @@ send-and-poll orchestration — that it waits for a terminal status and reads th
 response code — but not the script. A caller whose bootstrap script is wrong
 still sees success.
 
-## 34. Audit Logging (CloudTrail)
+## 35. Audit Logging (CloudTrail)
 
 **Driver interface:** `services/cloudtrail/driver/`
 **AWS:** CloudTrail (AWS JSON 1.1, `X-Amz-Target: CloudTrail_20131101.<Op>`) | **Azure:** — | **GCP:** —
@@ -2867,8 +2907,9 @@ for build-and-orchestrate testing without a dependency on real event data.
 | Web Application Firewall — AWS WAFv2 | 59 |
 | Data Streams — AWS Kinesis | 39 |
 | Step Functions — AWS SFN | 36 |
+| Search & Analytics — AWS OpenSearch | 96 |
 | Audit Logging — AWS CloudTrail | 60 |
-| **Grand Total** | **2106** (+138 optional) |
+| **Grand Total** | **2202** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately
