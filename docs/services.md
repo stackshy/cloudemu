@@ -621,7 +621,7 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 ## 7. IAM
 
 **Driver interface:** `services/iam/driver/driver.go`
-**AWS:** IAM | **Azure:** Azure IAM | **GCP:** GCP IAM
+**AWS:** IAM | **Azure:** Azure IAM | **GCP:** GCP IAM | **OCI:** Identity
 
 ### Users
 
@@ -699,6 +699,25 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 | `RemoveRoleFromInstanceProfile` | `(ctx, profileName, roleName) error` |
 
 **Total: 35 operations**
+
+### OCI capabilities (optional, `services/iam/driver/oci.go`)
+
+Discovered by type assertion. OCI addresses identity resources by OCID, scopes
+them to a compartment, and writes policies as English-like statements, none of
+which the portable interface expresses. Only `providers/oci/identity` implements
+them; the OCI provider answers `Unimplemented` for policy attachment and
+instance profiles, which have no OCI equivalent.
+
+| Capability | Operations |
+|-----------|-----------|
+| `Compartments` | Create/Get/List/Update/DeleteCompartment; `ListCompartments` descends the tree when `inSubtree` is set |
+| `OCIIdentity` | Create/Get/List/Update/Delete OCIUser and OCIGroup; Create/Get/List/Delete OCIGroupMembership |
+| `StatementPolicies` | Create/Get/List/Update/DeleteStatementPolicy; `Evaluate` resolves a statement against the compartment tree |
+
+Statements round-trip verbatim, but two things `Evaluate` cannot decide report
+themselves as `Unimplemented` rather than granting the whole verb: a `where`
+condition, and a resource family outside the modeled set. `MoveCompartment` and
+the Quotas API (`/20181025/quotas`) answer `501` for the same reason.
 
 ---
 

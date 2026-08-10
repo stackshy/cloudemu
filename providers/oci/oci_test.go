@@ -57,7 +57,12 @@ func TestUnimplementedServicesAreNil(t *testing.T) {
 	assert.Nil(t, p.ObjectStorage)
 	assert.Nil(t, p.Compute)
 	assert.Nil(t, p.VCN)
-	assert.Nil(t, p.Identity)
+}
+
+func TestIdentityIsWired(t *testing.T) {
+	p := oci.New()
+
+	require.NotNil(t, p.Identity, "the Identity slot is filled by the identity mock")
 }
 
 func TestNewOCIFactory(t *testing.T) {
