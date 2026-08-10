@@ -21,6 +21,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [ELB](./elb.md) | `loadbalancer` | 19 |
 | [ElastiCache](./elasticache.md) | `cache` | 17 |
 | [EventBridge](./eventbridge.md) | `eventbus` | 16 |
+| [Glue](./glue.md) | `glue` | 299 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [KMS](./kms.md) | `kms` | 45 |
 | [Keyspaces](./keyspaces.md) | `keyspaces` | 18 |

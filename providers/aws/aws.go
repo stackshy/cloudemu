@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
@@ -167,6 +168,7 @@ type Provider struct {
 	Route53Resolver     *route53resolver.Mock
 	SFN                 *sfn.Mock
 	CloudTrail          *cloudtrail.Mock
+	Glue                *glue.Mock
 	Config              *configservice.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
@@ -216,6 +218,7 @@ func New(opts ...config.Option) *Provider {
 		Route53Resolver:     route53resolver.New(o),
 		SFN:                 sfn.New(o),
 		CloudTrail:          cloudtrail.New(o),
+		Glue:                glue.New(o),
 		Config:              configservice.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,

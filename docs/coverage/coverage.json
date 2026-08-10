@@ -3220,6 +3220,921 @@
     }
   },
   {
+    "service": "glue",
+    "interface": "Glue",
+    "operations": [
+      {
+        "name": "AssociateGlossaryTerms"
+      },
+      {
+        "name": "BatchCreatePartition"
+      },
+      {
+        "name": "BatchDeleteConnection"
+      },
+      {
+        "name": "BatchDeletePartition"
+      },
+      {
+        "name": "BatchDeleteTable"
+      },
+      {
+        "name": "BatchDeleteTableVersion"
+      },
+      {
+        "name": "BatchGetBlueprints"
+      },
+      {
+        "name": "BatchGetCrawlers"
+      },
+      {
+        "name": "BatchGetCustomEntityTypes"
+      },
+      {
+        "name": "BatchGetDataQualityResult"
+      },
+      {
+        "name": "BatchGetDataQualityRulesetEvaluationRun"
+      },
+      {
+        "name": "BatchGetDevEndpoints"
+      },
+      {
+        "name": "BatchGetIterableForms"
+      },
+      {
+        "name": "BatchGetJobs"
+      },
+      {
+        "name": "BatchGetPartition"
+      },
+      {
+        "name": "BatchGetTableOptimizer"
+      },
+      {
+        "name": "BatchGetTriggers"
+      },
+      {
+        "name": "BatchGetWorkflows"
+      },
+      {
+        "name": "BatchPutDataQualityStatisticAnnotation"
+      },
+      {
+        "name": "BatchStopJobRun"
+      },
+      {
+        "name": "BatchUpdatePartition"
+      },
+      {
+        "name": "CancelDataQualityRuleRecommendationRun"
+      },
+      {
+        "name": "CancelDataQualityRulesetEvaluationRun"
+      },
+      {
+        "name": "CancelMLTaskRun"
+      },
+      {
+        "name": "CancelStatement"
+      },
+      {
+        "name": "CheckSchemaVersionValidity"
+      },
+      {
+        "name": "CreateBlueprint"
+      },
+      {
+        "name": "CreateCatalog",
+        "doc": "Catalogs."
+      },
+      {
+        "name": "CreateClassifier",
+        "doc": "Classifiers."
+      },
+      {
+        "name": "CreateColumnStatisticsTaskSettings"
+      },
+      {
+        "name": "CreateConnection",
+        "doc": "Connections."
+      },
+      {
+        "name": "CreateCrawler",
+        "doc": "Crawlers."
+      },
+      {
+        "name": "CreateCustomEntityType"
+      },
+      {
+        "name": "CreateDataQualityRuleset"
+      },
+      {
+        "name": "CreateDatabase",
+        "doc": "Databases."
+      },
+      {
+        "name": "CreateDevEndpoint"
+      },
+      {
+        "name": "CreateGlossary"
+      },
+      {
+        "name": "CreateGlossaryTerm"
+      },
+      {
+        "name": "CreateGlueIdentityCenterConfiguration"
+      },
+      {
+        "name": "CreateIntegration"
+      },
+      {
+        "name": "CreateIntegrationResourceProperty"
+      },
+      {
+        "name": "CreateIntegrationTableProperties"
+      },
+      {
+        "name": "CreateJob"
+      },
+      {
+        "name": "CreateMLTransform"
+      },
+      {
+        "name": "CreatePartition",
+        "doc": "Partitions."
+      },
+      {
+        "name": "CreatePartitionIndex"
+      },
+      {
+        "name": "CreateRegistry"
+      },
+      {
+        "name": "CreateSchema"
+      },
+      {
+        "name": "CreateScript"
+      },
+      {
+        "name": "CreateSecurityConfiguration"
+      },
+      {
+        "name": "CreateSession"
+      },
+      {
+        "name": "CreateTable",
+        "doc": "Tables."
+      },
+      {
+        "name": "CreateTableOptimizer"
+      },
+      {
+        "name": "CreateTrigger"
+      },
+      {
+        "name": "CreateUsageProfile"
+      },
+      {
+        "name": "CreateUserDefinedFunction",
+        "doc": "User-defined functions."
+      },
+      {
+        "name": "CreateWorkflow"
+      },
+      {
+        "name": "DeleteAsset"
+      },
+      {
+        "name": "DeleteAssetType"
+      },
+      {
+        "name": "DeleteAttachment"
+      },
+      {
+        "name": "DeleteBlueprint"
+      },
+      {
+        "name": "DeleteCatalog"
+      },
+      {
+        "name": "DeleteClassifier"
+      },
+      {
+        "name": "DeleteColumnStatisticsForPartition"
+      },
+      {
+        "name": "DeleteColumnStatisticsForTable"
+      },
+      {
+        "name": "DeleteColumnStatisticsTaskSettings"
+      },
+      {
+        "name": "DeleteConnection"
+      },
+      {
+        "name": "DeleteConnectionType"
+      },
+      {
+        "name": "DeleteCrawler"
+      },
+      {
+        "name": "DeleteCustomEntityType"
+      },
+      {
+        "name": "DeleteDataQualityRuleset"
+      },
+      {
+        "name": "DeleteDatabase"
+      },
+      {
+        "name": "DeleteDevEndpoint"
+      },
+      {
+        "name": "DeleteFormType"
+      },
+      {
+        "name": "DeleteGlossary"
+      },
+      {
+        "name": "DeleteGlossaryTerm"
+      },
+      {
+        "name": "DeleteGlueIdentityCenterConfiguration"
+      },
+      {
+        "name": "DeleteIntegration"
+      },
+      {
+        "name": "DeleteIntegrationResourceProperty"
+      },
+      {
+        "name": "DeleteIntegrationTableProperties"
+      },
+      {
+        "name": "DeleteJob"
+      },
+      {
+        "name": "DeleteMLTransform"
+      },
+      {
+        "name": "DeletePartition"
+      },
+      {
+        "name": "DeletePartitionIndex"
+      },
+      {
+        "name": "DeleteRegistry"
+      },
+      {
+        "name": "DeleteResourcePolicy"
+      },
+      {
+        "name": "DeleteSchema"
+      },
+      {
+        "name": "DeleteSchemaVersions"
+      },
+      {
+        "name": "DeleteSecurityConfiguration"
+      },
+      {
+        "name": "DeleteSession"
+      },
+      {
+        "name": "DeleteTable"
+      },
+      {
+        "name": "DeleteTableOptimizer"
+      },
+      {
+        "name": "DeleteTableVersion"
+      },
+      {
+        "name": "DeleteTrigger"
+      },
+      {
+        "name": "DeleteUsageProfile"
+      },
+      {
+        "name": "DeleteUserDefinedFunction"
+      },
+      {
+        "name": "DeleteWorkflow"
+      },
+      {
+        "name": "DescribeConnectionType"
+      },
+      {
+        "name": "DescribeEntity"
+      },
+      {
+        "name": "DescribeInboundIntegrations"
+      },
+      {
+        "name": "DescribeIntegrations"
+      },
+      {
+        "name": "DisassociateGlossaryTerms"
+      },
+      {
+        "name": "GetAsset"
+      },
+      {
+        "name": "GetAssetType"
+      },
+      {
+        "name": "GetBlueprint"
+      },
+      {
+        "name": "GetBlueprintRun"
+      },
+      {
+        "name": "GetBlueprintRuns"
+      },
+      {
+        "name": "GetCatalog"
+      },
+      {
+        "name": "GetCatalogImportStatus"
+      },
+      {
+        "name": "GetCatalogs"
+      },
+      {
+        "name": "GetClassifier"
+      },
+      {
+        "name": "GetClassifiers"
+      },
+      {
+        "name": "GetColumnStatisticsForPartition"
+      },
+      {
+        "name": "GetColumnStatisticsForTable"
+      },
+      {
+        "name": "GetColumnStatisticsTaskRun"
+      },
+      {
+        "name": "GetColumnStatisticsTaskRuns"
+      },
+      {
+        "name": "GetColumnStatisticsTaskSettings"
+      },
+      {
+        "name": "GetConnection"
+      },
+      {
+        "name": "GetConnections"
+      },
+      {
+        "name": "GetCrawler"
+      },
+      {
+        "name": "GetCrawlerMetrics"
+      },
+      {
+        "name": "GetCrawlers"
+      },
+      {
+        "name": "GetCustomEntityType"
+      },
+      {
+        "name": "GetDashboardUrl"
+      },
+      {
+        "name": "GetDataCatalogEncryptionSettings"
+      },
+      {
+        "name": "GetDataCatalogExportConfiguration"
+      },
+      {
+        "name": "GetDataQualityModel"
+      },
+      {
+        "name": "GetDataQualityModelResult"
+      },
+      {
+        "name": "GetDataQualityResult"
+      },
+      {
+        "name": "GetDataQualityRuleRecommendationRun"
+      },
+      {
+        "name": "GetDataQualityRuleset"
+      },
+      {
+        "name": "GetDataQualityRulesetEvaluationRun"
+      },
+      {
+        "name": "GetDatabase"
+      },
+      {
+        "name": "GetDatabases"
+      },
+      {
+        "name": "GetDataflowGraph"
+      },
+      {
+        "name": "GetDevEndpoint"
+      },
+      {
+        "name": "GetDevEndpoints"
+      },
+      {
+        "name": "GetEntityRecords"
+      },
+      {
+        "name": "GetFormType"
+      },
+      {
+        "name": "GetGlossary"
+      },
+      {
+        "name": "GetGlossaryTerm"
+      },
+      {
+        "name": "GetGlueIdentityCenterConfiguration"
+      },
+      {
+        "name": "GetIntegrationResourceProperty"
+      },
+      {
+        "name": "GetIntegrationTableProperties"
+      },
+      {
+        "name": "GetJob"
+      },
+      {
+        "name": "GetJobBookmark"
+      },
+      {
+        "name": "GetJobRun"
+      },
+      {
+        "name": "GetJobRuns"
+      },
+      {
+        "name": "GetJobs"
+      },
+      {
+        "name": "GetMLTaskRun"
+      },
+      {
+        "name": "GetMLTaskRuns"
+      },
+      {
+        "name": "GetMLTransform"
+      },
+      {
+        "name": "GetMLTransforms"
+      },
+      {
+        "name": "GetMapping"
+      },
+      {
+        "name": "GetMaterializedViewRefreshTaskRun"
+      },
+      {
+        "name": "GetPartition"
+      },
+      {
+        "name": "GetPartitionIndexes"
+      },
+      {
+        "name": "GetPartitions"
+      },
+      {
+        "name": "GetPlan"
+      },
+      {
+        "name": "GetRegistry"
+      },
+      {
+        "name": "GetResourcePolicies"
+      },
+      {
+        "name": "GetResourcePolicy"
+      },
+      {
+        "name": "GetSchema"
+      },
+      {
+        "name": "GetSchemaByDefinition"
+      },
+      {
+        "name": "GetSchemaVersion"
+      },
+      {
+        "name": "GetSchemaVersionsDiff"
+      },
+      {
+        "name": "GetSecurityConfiguration"
+      },
+      {
+        "name": "GetSecurityConfigurations"
+      },
+      {
+        "name": "GetSession"
+      },
+      {
+        "name": "GetSessionEndpoint"
+      },
+      {
+        "name": "GetStatement"
+      },
+      {
+        "name": "GetTable"
+      },
+      {
+        "name": "GetTableOptimizer"
+      },
+      {
+        "name": "GetTableVersion",
+        "doc": "Table versions."
+      },
+      {
+        "name": "GetTableVersions"
+      },
+      {
+        "name": "GetTables"
+      },
+      {
+        "name": "GetTags"
+      },
+      {
+        "name": "GetTrigger"
+      },
+      {
+        "name": "GetTriggers"
+      },
+      {
+        "name": "GetUnfilteredPartitionMetadata"
+      },
+      {
+        "name": "GetUnfilteredPartitionsMetadata"
+      },
+      {
+        "name": "GetUnfilteredTableMetadata"
+      },
+      {
+        "name": "GetUsageProfile"
+      },
+      {
+        "name": "GetUserDefinedFunction"
+      },
+      {
+        "name": "GetUserDefinedFunctions"
+      },
+      {
+        "name": "GetWorkflow"
+      },
+      {
+        "name": "GetWorkflowRun"
+      },
+      {
+        "name": "GetWorkflowRunProperties"
+      },
+      {
+        "name": "GetWorkflowRuns"
+      },
+      {
+        "name": "ImportCatalogToGlue"
+      },
+      {
+        "name": "ListAssetTypes"
+      },
+      {
+        "name": "ListBlueprints"
+      },
+      {
+        "name": "ListColumnStatisticsTaskRuns"
+      },
+      {
+        "name": "ListConnectionTypes"
+      },
+      {
+        "name": "ListCrawlers"
+      },
+      {
+        "name": "ListCrawls"
+      },
+      {
+        "name": "ListCustomEntityTypes"
+      },
+      {
+        "name": "ListDataQualityResults"
+      },
+      {
+        "name": "ListDataQualityRuleRecommendationRuns"
+      },
+      {
+        "name": "ListDataQualityRulesetEvaluationRuns"
+      },
+      {
+        "name": "ListDataQualityRulesets"
+      },
+      {
+        "name": "ListDataQualityStatisticAnnotations"
+      },
+      {
+        "name": "ListDataQualityStatistics"
+      },
+      {
+        "name": "ListDevEndpoints"
+      },
+      {
+        "name": "ListEntities"
+      },
+      {
+        "name": "ListFormTypes"
+      },
+      {
+        "name": "ListGlossaries"
+      },
+      {
+        "name": "ListGlossaryTerms"
+      },
+      {
+        "name": "ListIntegrationResourceProperties"
+      },
+      {
+        "name": "ListIterableForms"
+      },
+      {
+        "name": "ListJobs"
+      },
+      {
+        "name": "ListMLTransforms"
+      },
+      {
+        "name": "ListMaterializedViewRefreshTaskRuns"
+      },
+      {
+        "name": "ListRegistries"
+      },
+      {
+        "name": "ListSchemaVersions"
+      },
+      {
+        "name": "ListSchemas"
+      },
+      {
+        "name": "ListSessions"
+      },
+      {
+        "name": "ListStatements"
+      },
+      {
+        "name": "ListTableOptimizerRuns"
+      },
+      {
+        "name": "ListTriggers"
+      },
+      {
+        "name": "ListUsageProfiles"
+      },
+      {
+        "name": "ListWorkflows"
+      },
+      {
+        "name": "ModifyIntegration"
+      },
+      {
+        "name": "PutAsset"
+      },
+      {
+        "name": "PutAssetType"
+      },
+      {
+        "name": "PutAttachment"
+      },
+      {
+        "name": "PutDataCatalogEncryptionSettings"
+      },
+      {
+        "name": "PutDataCatalogExportConfiguration"
+      },
+      {
+        "name": "PutDataQualityProfileAnnotation"
+      },
+      {
+        "name": "PutFormType"
+      },
+      {
+        "name": "PutResourcePolicy"
+      },
+      {
+        "name": "PutSchemaVersionMetadata"
+      },
+      {
+        "name": "PutWorkflowRunProperties"
+      },
+      {
+        "name": "QuerySchemaVersionMetadata"
+      },
+      {
+        "name": "RegisterConnectionType"
+      },
+      {
+        "name": "RegisterSchemaVersion"
+      },
+      {
+        "name": "RemoveSchemaVersionMetadata"
+      },
+      {
+        "name": "ResetJobBookmark"
+      },
+      {
+        "name": "ResumeWorkflowRun"
+      },
+      {
+        "name": "RunStatement"
+      },
+      {
+        "name": "SearchAssets"
+      },
+      {
+        "name": "SearchTables"
+      },
+      {
+        "name": "StartBlueprintRun"
+      },
+      {
+        "name": "StartColumnStatisticsTaskRun"
+      },
+      {
+        "name": "StartColumnStatisticsTaskRunSchedule"
+      },
+      {
+        "name": "StartCrawler"
+      },
+      {
+        "name": "StartCrawlerSchedule"
+      },
+      {
+        "name": "StartDataQualityRuleRecommendationRun"
+      },
+      {
+        "name": "StartDataQualityRulesetEvaluationRun"
+      },
+      {
+        "name": "StartExportLabelsTaskRun"
+      },
+      {
+        "name": "StartImportLabelsTaskRun"
+      },
+      {
+        "name": "StartJobRun"
+      },
+      {
+        "name": "StartMLEvaluationTaskRun"
+      },
+      {
+        "name": "StartMLLabelingSetGenerationTaskRun"
+      },
+      {
+        "name": "StartMaterializedViewRefreshTaskRun"
+      },
+      {
+        "name": "StartTrigger"
+      },
+      {
+        "name": "StartWorkflowRun"
+      },
+      {
+        "name": "StopColumnStatisticsTaskRun"
+      },
+      {
+        "name": "StopColumnStatisticsTaskRunSchedule"
+      },
+      {
+        "name": "StopCrawler"
+      },
+      {
+        "name": "StopCrawlerSchedule"
+      },
+      {
+        "name": "StopMaterializedViewRefreshTaskRun"
+      },
+      {
+        "name": "StopSession"
+      },
+      {
+        "name": "StopTrigger"
+      },
+      {
+        "name": "StopWorkflowRun"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "TestConnection"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAsset"
+      },
+      {
+        "name": "UpdateBlueprint"
+      },
+      {
+        "name": "UpdateCatalog"
+      },
+      {
+        "name": "UpdateClassifier"
+      },
+      {
+        "name": "UpdateColumnStatisticsForPartition"
+      },
+      {
+        "name": "UpdateColumnStatisticsForTable"
+      },
+      {
+        "name": "UpdateColumnStatisticsTaskSettings"
+      },
+      {
+        "name": "UpdateConnection"
+      },
+      {
+        "name": "UpdateCrawler"
+      },
+      {
+        "name": "UpdateCrawlerSchedule"
+      },
+      {
+        "name": "UpdateDataQualityRuleset"
+      },
+      {
+        "name": "UpdateDatabase"
+      },
+      {
+        "name": "UpdateDevEndpoint"
+      },
+      {
+        "name": "UpdateGlossary"
+      },
+      {
+        "name": "UpdateGlossaryTerm"
+      },
+      {
+        "name": "UpdateGlueIdentityCenterConfiguration"
+      },
+      {
+        "name": "UpdateIntegrationResourceProperty"
+      },
+      {
+        "name": "UpdateIntegrationTableProperties"
+      },
+      {
+        "name": "UpdateJob"
+      },
+      {
+        "name": "UpdateJobFromSourceControl"
+      },
+      {
+        "name": "UpdateMLTransform"
+      },
+      {
+        "name": "UpdatePartition"
+      },
+      {
+        "name": "UpdateRegistry"
+      },
+      {
+        "name": "UpdateSchema"
+      },
+      {
+        "name": "UpdateSourceControlFromJob"
+      },
+      {
+        "name": "UpdateTable"
+      },
+      {
+        "name": "UpdateTableOptimizer"
+      },
+      {
+        "name": "UpdateTrigger"
+      },
+      {
+        "name": "UpdateUsageProfile"
+      },
+      {
+        "name": "UpdateUserDefinedFunction"
+      },
+      {
+        "name": "UpdateWorkflow"
+      }
+    ],
+    "providers": {
+      "aws": "Glue"
+    }
+  },
+  {
     "service": "iam",
     "interface": "IAM",
     "operations": [
