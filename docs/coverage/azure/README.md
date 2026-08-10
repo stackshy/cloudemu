@@ -26,4 +26,5 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [QueueStorage](./queuestorage.md) | `messagequeue` | 14 |
 | [Search](./search.md) | `azuresearch` | 53 |
 | [TableStorage](./tablestorage.md) | `tablestorage` | 8 |
+| [VNet](./vnet.md) | `networking` | 57 |
 | [VirtualMachines](./virtualmachines.md) | `compute` | 37 |

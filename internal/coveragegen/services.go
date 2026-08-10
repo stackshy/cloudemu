@@ -223,8 +223,11 @@ func lenMethods(ifaces []ifaceDecl, name string) int {
 	return 0
 }
 
-// referencedInterface scans the portable package for `<alias>.<Name>` selectors
-// whose Name is one of the driver interfaces, returning the most-referenced one.
+// referencedInterface returns the driver interface the portable package holds as
+// its backend — the one used as a struct-field or parameter type (e.g.
+// `driver driver.Networking`), the most-referenced such type. Only type
+// positions count, so an optional capability a wrapper probes for via a type
+// assertion (`x.(driver.NetworkInterfaces)`) is never mistaken for the primary.
 func referencedInterface(portableDir string, ifaces []ifaceDecl) string {
 	fset := token.NewFileSet()
 
@@ -241,7 +244,7 @@ func referencedInterface(portableDir string, ifaces []ifaceDecl) string {
 
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Files {
-			countSelectors(file, known)
+			countFieldTypes(file, known)
 		}
 	}
 
@@ -255,19 +258,40 @@ func referencedInterface(portableDir string, ifaces []ifaceDecl) string {
 	return best
 }
 
-func countSelectors(file *ast.File, known map[string]int) {
+// countFieldTypes counts, per known interface, how often it is the type of a
+// struct field, function parameter, or result (every ast.Field carries a type),
+// i.e. where the package stores or consumes the interface — never a type
+// assertion, which is an expression, not a field.
+func countFieldTypes(file *ast.File, known map[string]int) {
 	ast.Inspect(file, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
+		field, ok := n.(*ast.Field)
 		if !ok {
 			return true
 		}
 
-		if _, tracked := known[sel.Sel.Name]; tracked {
-			known[sel.Sel.Name]++
+		if name := selectorType(field.Type); name != "" {
+			if _, tracked := known[name]; tracked {
+				known[name]++
+			}
 		}
 
 		return true
 	})
+}
+
+// selectorType returns the selector name for a `pkg.Name` type expression,
+// unwrapping a leading pointer, else "".
+func selectorType(expr ast.Expr) string {
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return ""
+	}
+
+	return sel.Sel.Name
 }
 
 func notTest(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }

@@ -41,6 +41,9 @@ func TestProviderNativeNamesResolve(t *testing.T) {
 		// monitoring must resolve to the real metrics service, not a consumer
 		// like EKS that merely imports monitoring/driver.
 		"monitoring": {"aws": "CloudWatch"},
+		// networking resolves to driver.Networking (implemented by all three),
+		// not the AWS-only NetworkInterfaces optional capability (#383).
+		"networking": {"aws": "VPC", "azure": "VNet", "gcp": "VPC"},
 	}
 
 	for svcName, want := range cases {
@@ -54,6 +57,31 @@ func TestProviderNativeNamesResolve(t *testing.T) {
 				t.Errorf("%s[%s] = %q, want %q", svcName, prov, got, native)
 			}
 		}
+	}
+}
+
+// TestPrimaryInterfaceNotOptionalCapability guards against #383: a service whose
+// primary driver interface coexists with a smaller optional capability must
+// report the primary. networking is the canonical case — driver.Networking
+// (~50+ ops) alongside the 3-method driver.NetworkInterfaces capability.
+func TestPrimaryInterfaceNotOptionalCapability(t *testing.T) {
+	services := loadServices(t)
+
+	svc, ok := services["networking"]
+	if !ok {
+		t.Fatal("service \"networking\" not found")
+	}
+
+	if svc.Interface != "Networking" {
+		t.Errorf("networking primary interface = %q, want %q", svc.Interface, "Networking")
+	}
+
+	// The optional NetworkInterfaces capability has 3 methods; the primary
+	// carries the full surface, so a correct resolution has many more.
+	const minPrimaryOps = 10
+	if len(svc.Operations) < minPrimaryOps {
+		t.Errorf("networking has %d operations, want >= %d — likely resolved to an optional capability",
+			len(svc.Operations), minPrimaryOps)
 	}
 }
 
