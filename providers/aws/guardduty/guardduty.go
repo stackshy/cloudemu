@@ -14,6 +14,7 @@ package guardduty
 
 import (
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 
@@ -106,7 +107,7 @@ func (m *Mock) serviceRoleARN() string {
 
 // newDetectorID mints a 32-hex-character detector ID, the shape real GuardDuty
 // uses.
-func (m *Mock) newDetectorID() string {
+func (*Mock) newDetectorID() string {
 	return idgen.GenerateID("") + idgen.GenerateID("")
 }
 
@@ -172,24 +173,23 @@ func copyRawSlice(in []json.RawMessage) []json.RawMessage {
 // opaque numeric offset token. A corrupt or out-of-range token yields a
 // BadRequestException so a client learns its token was bad.
 func paginateIDs(ids []string, page driver.Page) (out []string, next string, err error) {
-	start, err := decodeToken(page.NextToken)
-	if err != nil {
-		return nil, "", err
-	}
+	return paginateSlice(ids, page)
+}
 
-	if start > len(ids) {
-		return nil, "", badRequest("invalid pagination token: %q", page.NextToken)
-	}
+// listChildIDs returns a sorted, paginated page of the keys of a per-detector
+// child-resource map, collected under the detector's read lock. It is the shared
+// body of the List operations for the detector's child resources (IP sets,
+// threat-intel/entity sets, trusted-entity sets, filters).
+func listChildIDs[V any](dd *detectorData, m map[string]V, page driver.Page) (ids []string, next string, err error) {
+	dd.mu.RLock()
 
-	limit := int(page.MaxResults)
-	if limit <= 0 {
-		limit = defaultMaxResults
+	all := make([]string, 0, len(m))
+	for id := range m {
+		all = append(all, id)
 	}
+	dd.mu.RUnlock()
 
-	end := start + limit
-	if end >= len(ids) {
-		return ids[start:], "", nil
-	}
+	sort.Strings(all)
 
-	return ids[start:end], encodeToken(end), nil
+	return paginateIDs(all, page)
 }

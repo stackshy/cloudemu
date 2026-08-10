@@ -24,19 +24,19 @@ func (h *Handler) serveMember(w http.ResponseWriter, r *http.Request, id string,
 	}
 
 	switch rest[0] {
-	case "delete":
+	case segDelete:
 		body, err := h.gd.DeleteMembers(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
-	case "get":
+	case segGet:
 		body, err := h.gd.GetMembers(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
 	case "invite":
 		body, err := h.gd.InviteMembers(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
-	case "disassociate":
+	case segDisassociate:
 		body, err := h.gd.DisassociateMembers(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
-	case "start":
+	case segStart:
 		body, err := h.gd.StartMonitoringMembers(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
 	case "stop":
@@ -60,7 +60,7 @@ func (h *Handler) serveMemberDetector(w http.ResponseWriter, r *http.Request, id
 	ctx := r.Context()
 
 	switch rest[0] {
-	case "get":
+	case segGet:
 		body, err := h.gd.GetMemberDetectors(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
 	case "update":

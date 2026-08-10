@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 )
 
@@ -172,6 +171,7 @@ func (m *Mock) ListInvitations(_ context.Context, page driver.Page) (json.RawMes
 	}
 
 	invs := make([]map[string]any, 0, len(pageIDs))
+
 	for _, id := range pageIDs {
 		inv := byInviter[id]
 		entry := map[string]any{
@@ -179,6 +179,7 @@ func (m *Mock) ListInvitations(_ context.Context, page driver.Page) (json.RawMes
 			"invitationId":       inv.invitationID,
 			"relationshipStatus": inv.status,
 		}
+
 		if !inv.invitedAt.IsZero() {
 			entry["invitedAt"] = memberTimestamp(inv.invitedAt)
 		}
@@ -268,29 +269,4 @@ func (m *Mock) collectInvitations() map[string]invitationData {
 	}
 
 	return out
-}
-
-// addPendingInvitation records a pending invitation on a detector from the given
-// inviter (administrator) account. Real GuardDuty creates these cross-account
-// via the inviter's InviteMembers; the emulator is single-account, so this
-// seam lets a caller (and tests) stage the invitee side an AcceptInvitation can
-// then consume. It returns the minted invitation ID. It is unexported and used
-// only by the test-only AddPendingInvitationForTest wrapper in export_test.go.
-func (m *Mock) addPendingInvitation(detectorID, inviter string) (string, error) {
-	dd, err := m.getDetector(detectorID)
-	if err != nil {
-		return "", err
-	}
-
-	invitationID := idgen.GenerateID("")
-	now := m.now()
-
-	dd.mu.Lock()
-	dd.invites[inviter] = invitationData{
-		inviterAccountID: inviter, invitationID: invitationID,
-		invitedAt: now, status: relInvited,
-	}
-	dd.mu.Unlock()
-
-	return invitationID, nil
 }

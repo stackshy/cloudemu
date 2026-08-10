@@ -7,6 +7,8 @@ import (
 )
 
 // serveThreatIntelSet routes /detector/{id}/threatintelset[/{setId}].
+//
+//nolint:dupl // near-identical routing/create to the sibling list-set handlers by API shape.
 func (h *Handler) serveThreatIntelSet(w http.ResponseWriter, r *http.Request, detectorID string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {
@@ -71,6 +73,7 @@ func (h *Handler) getThreatIntelSet(w http.ResponseWriter, r *http.Request, dete
 	writeJSON(w, setToWire(s.Name, s.Format, s.Location, s.Status, s.ExpectedBucketOwner, s.Tags))
 }
 
+//nolint:dupl // near-identical update handler to the sibling list-set resources by API shape.
 func (h *Handler) updateThreatIntelSet(w http.ResponseWriter, r *http.Request, detectorID, setID string) {
 	var req updateSetRequest
 	if !decodeInto(w, r, &req) {

@@ -97,7 +97,7 @@ func (h *Handler) serveInvitation(w http.ResponseWriter, r *http.Request, rest [
 	case rest[0] == "decline" && r.Method == http.MethodPost:
 		body, err := h.gd.DeclineInvitations(ctx, rawBody(r))
 		h.writeResult(w, body, err)
-	case rest[0] == "delete" && r.Method == http.MethodPost:
+	case rest[0] == segDelete && r.Method == http.MethodPost:
 		body, err := h.gd.DeleteInvitations(ctx, rawBody(r))
 		h.writeResult(w, body, err)
 	default:
@@ -107,7 +107,7 @@ func (h *Handler) serveInvitation(w http.ResponseWriter, r *http.Request, rest [
 
 // serveOrganization routes /organization/statistics=GetOrganizationStatistics.
 func (h *Handler) serveOrganization(w http.ResponseWriter, r *http.Request, rest []string) {
-	if len(rest) == 1 && rest[0] == "statistics" && r.Method == http.MethodGet {
+	if len(rest) == 1 && rest[0] == segStatistics && r.Method == http.MethodGet {
 		body, err := h.gd.GetOrganizationStatistics(r.Context())
 		h.writeResult(w, body, err)
 
@@ -135,7 +135,7 @@ func (h *Handler) serveMalwareScan(w http.ResponseWriter, r *http.Request, rest 
 		return
 	}
 
-	if len(rest) == 1 && rest[0] == "start" && r.Method == http.MethodPost {
+	if len(rest) == 1 && rest[0] == segStart && r.Method == http.MethodPost {
 		body, err := h.gd.StartMalwareScan(ctx, rawBody(r))
 		h.writeResult(w, body, err)
 

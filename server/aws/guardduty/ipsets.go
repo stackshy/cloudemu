@@ -8,6 +8,8 @@ import (
 )
 
 // serveIPSet routes /detector/{id}/ipset and /detector/{id}/ipset/{ipSetId}.
+//
+//nolint:dupl // near-identical routing/create to the sibling list-set handlers by API shape.
 func (h *Handler) serveIPSet(w http.ResponseWriter, r *http.Request, detectorID string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {
@@ -72,6 +74,7 @@ func (h *Handler) getIPSet(w http.ResponseWriter, r *http.Request, detectorID, i
 	writeJSON(w, setToWire(s.Name, s.Format, s.Location, s.Status, s.ExpectedBucketOwner, s.Tags))
 }
 
+//nolint:dupl // near-identical update handler to the sibling list-set resources by API shape.
 func (h *Handler) updateIPSet(w http.ResponseWriter, r *http.Request, detectorID, ipSetID string) {
 	var req updateSetRequest
 	if !decodeInto(w, r, &req) {

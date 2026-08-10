@@ -1,10 +1,9 @@
-package guardduty
+package guardduty //nolint:dupl // near-identical to the sibling list-set files by API shape; per-type descriptors beat reflection.
 
 import (
 	"context"
-	"sort"
+	"time"
 
-	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 )
 
@@ -19,117 +18,58 @@ func copyThreatEntitySet(s driver.ThreatEntitySet) driver.ThreatEntitySet {
 	return out
 }
 
+// threatEntitySetStore describes how the generic list-set CRUD helpers store,
+// build, patch, and copy a ThreatEntitySet.
+//
+//nolint:dupl // near-identical descriptor to the sibling list-set resources by API shape.
+func threatEntitySetStore() setStore[driver.ThreatEntitySet] {
+	return setStore[driver.ThreatEntitySet]{
+		notFoundMsg: "The request is rejected because the input threatEntitySetId is not found: %s",
+		storeOf:     func(dd *detectorData) map[string]driver.ThreatEntitySet { return dd.threatES },
+		build: func(id string, in setInput, now time.Time) driver.ThreatEntitySet {
+			return driver.ThreatEntitySet{
+				ID: id, Name: in.name, Format: in.format, Location: in.location,
+				Status: setStatus(in.activate), ExpectedBucketOwner: in.expectedBucketOwner,
+				Tags: copyTags(in.tags), CreatedAt: now, UpdatedAt: now,
+			}
+		},
+		apply: func(cur driver.ThreatEntitySet, patch setPatch, now time.Time) driver.ThreatEntitySet {
+			applySetPatch(&cur.Name, &cur.Location, &cur.Status, &cur.ExpectedBucketOwner, patch)
+			cur.UpdatedAt = now
+
+			return cur
+		},
+		copy: copyThreatEntitySet,
+	}
+}
+
 // CreateThreatEntitySet creates a threat-entity set under a detector, holding
 // the detector's lock across the parent check and the child insert.
 //
 //nolint:gocritic // hugeParam: signature is fixed by the driver.GuardDuty interface (by-value input).
 func (m *Mock) CreateThreatEntitySet(_ context.Context, in driver.CreateThreatEntitySetInput) (id string, err error) {
-	if verr := validateSetInput(in.Name, in.Format, in.Location); verr != nil {
-		return "", verr
-	}
-
-	dd, err := m.getDetector(in.DetectorID)
-	if err != nil {
-		return "", err
-	}
-
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	now := m.now()
-	setID := idgen.GenerateID("")
-
-	dd.threatES[setID] = driver.ThreatEntitySet{
-		ID:                  setID,
-		Name:                in.Name,
-		Format:              in.Format,
-		Location:            in.Location,
-		Status:              setStatus(in.Activate),
-		ExpectedBucketOwner: in.ExpectedBucketOwner,
-		Tags:                copyTags(in.Tags),
-		CreatedAt:           now,
-		UpdatedAt:           now,
-	}
-
-	return setID, nil
+	return createSet(m, threatEntitySetStore(), setInput{
+		detectorID: in.DetectorID, name: in.Name, format: in.Format, location: in.Location,
+		activate: in.Activate, expectedBucketOwner: in.ExpectedBucketOwner, tags: in.Tags,
+	})
 }
 
 // GetThreatEntitySet returns a deep copy of a stored threat-entity set.
 func (m *Mock) GetThreatEntitySet(_ context.Context, detectorID, setID string) (*driver.ThreatEntitySet, error) {
-	dd, err := m.getDetector(detectorID)
-	if err != nil {
-		return nil, err
-	}
-
-	dd.mu.RLock()
-	defer dd.mu.RUnlock()
-
-	s, ok := dd.threatES[setID]
-	if !ok {
-		return nil, notFound("The request is rejected because the input threatEntitySetId is not found: %s", setID)
-	}
-
-	out := copyThreatEntitySet(s)
-
-	return &out, nil
+	return getSet(m, threatEntitySetStore(), detectorID, setID)
 }
 
 // UpdateThreatEntitySet patches a threat-entity set's mutable fields.
-//
-//nolint:gocritic // hugeParam: signature is fixed by the driver.GuardDuty interface (by-value input).
 func (m *Mock) UpdateThreatEntitySet(_ context.Context, in driver.UpdateThreatEntitySetInput) error {
-	dd, err := m.getDetector(in.DetectorID)
-	if err != nil {
-		return err
-	}
-
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	s, ok := dd.threatES[in.ThreatEntitySetID]
-	if !ok {
-		return notFound("The request is rejected because the input threatEntitySetId is not found: %s", in.ThreatEntitySetID)
-	}
-
-	if in.Name != nil {
-		s.Name = *in.Name
-	}
-
-	if in.Location != nil {
-		s.Location = *in.Location
-	}
-
-	if in.Activate != nil {
-		s.Status = setStatus(*in.Activate)
-	}
-
-	if in.ExpectedBucketOwner != nil {
-		s.ExpectedBucketOwner = *in.ExpectedBucketOwner
-	}
-
-	s.UpdatedAt = m.now()
-	dd.threatES[in.ThreatEntitySetID] = s
-
-	return nil
+	return updateSet(m, threatEntitySetStore(), in.DetectorID, in.ThreatEntitySetID, setPatch{
+		name: in.Name, location: in.Location, activate: in.Activate,
+		expectedBucketOwner: in.ExpectedBucketOwner,
+	})
 }
 
 // DeleteThreatEntitySet removes a threat-entity set from its detector.
 func (m *Mock) DeleteThreatEntitySet(_ context.Context, detectorID, setID string) error {
-	dd, err := m.getDetector(detectorID)
-	if err != nil {
-		return err
-	}
-
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	if _, ok := dd.threatES[setID]; !ok {
-		return notFound("The request is rejected because the input threatEntitySetId is not found: %s", setID)
-	}
-
-	delete(dd.threatES, setID)
-
-	return nil
+	return deleteSet(m, threatEntitySetStore(), detectorID, setID)
 }
 
 // ListThreatEntitySets lists a detector's threat-entity-set IDs, sorted.
@@ -141,14 +81,5 @@ func (m *Mock) ListThreatEntitySets(
 		return nil, "", err
 	}
 
-	dd.mu.RLock()
-	all := make([]string, 0, len(dd.threatES))
-	for id := range dd.threatES {
-		all = append(all, id)
-	}
-	dd.mu.RUnlock()
-
-	sort.Strings(all)
-
-	return paginateIDs(all, page)
+	return listChildIDs(dd, dd.threatES, page)
 }

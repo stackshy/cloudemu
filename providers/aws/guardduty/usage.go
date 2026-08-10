@@ -14,22 +14,26 @@ const freeTrialDaysRemaining int32 = 30
 
 // syntheticFeatures is the ordered set of feature names the emulator models for
 // usage-by-feature and free-trial reporting. Order is fixed for determinism.
-var syntheticFeatures = []string{
-	"FLOW_LOGS",
-	"CLOUD_TRAIL",
-	"DNS_LOGS",
-	"S3_DATA_EVENTS",
-	"EKS_AUDIT_LOGS",
-	"EBS_MALWARE_PROTECTION",
+func syntheticFeatures() []string {
+	return []string{
+		"FLOW_LOGS",
+		"CLOUD_TRAIL",
+		"DNS_LOGS",
+		"S3_DATA_EVENTS",
+		"EKS_AUDIT_LOGS",
+		"EBS_MALWARE_PROTECTION",
+	}
 }
 
 // syntheticDataSources is the ordered set of (deprecated) data-source names used
 // for usage-by-data-source reporting.
-var syntheticDataSources = []string{
-	"FLOW_LOGS",
-	"CLOUD_TRAIL",
-	"DNS_LOGS",
-	"S3_LOGS",
+func syntheticDataSources() []string {
+	return []string{
+		"FLOW_LOGS",
+		"CLOUD_TRAIL",
+		"DNS_LOGS",
+		"S3_LOGS",
+	}
 }
 
 // usageCriteriaRequest is the UsageCriteria request block.
@@ -106,7 +110,7 @@ func (m *Mock) usageByAccount(crit *usageCriteriaRequest) []map[string]any {
 // usageByDataSource returns per-data-source usage totals for the requested data
 // sources, defaulting to the synthetic set when none are requested.
 func usageByDataSource(crit *usageCriteriaRequest) []map[string]any {
-	sources := syntheticDataSources
+	sources := syntheticDataSources()
 	if crit != nil && len(crit.DataSources) > 0 {
 		sources = crit.DataSources
 	}
@@ -122,7 +126,7 @@ func usageByDataSource(crit *usageCriteriaRequest) []map[string]any {
 // usageByFeature returns per-feature usage totals for the requested features,
 // defaulting to the synthetic set when none are requested.
 func usageByFeature(crit *usageCriteriaRequest) []map[string]any {
-	features := syntheticFeatures
+	features := syntheticFeatures()
 	if crit != nil && len(crit.Features) > 0 {
 		features = crit.Features
 	}
@@ -188,8 +192,10 @@ func (m *Mock) GetRemainingFreeTrialDays(_ context.Context, detectorID string, b
 // freeTrialFeatures returns the FreeTrialFeatureConfigurationResult list, one
 // entry per modeled feature with the fixed remaining-days value.
 func freeTrialFeatures() []map[string]any {
-	out := make([]map[string]any, 0, len(syntheticFeatures))
-	for _, f := range syntheticFeatures {
+	features := syntheticFeatures()
+	out := make([]map[string]any, 0, len(features))
+
+	for _, f := range features {
 		out = append(out, map[string]any{
 			"name":                   f,
 			"freeTrialDaysRemaining": freeTrialDaysRemaining,

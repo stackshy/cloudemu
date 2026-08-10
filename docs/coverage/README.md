@@ -29,6 +29,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |
 | `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
 | `glue` | [Glue](./aws/glue.md) | — | — | — | 299 |
+| `guardduty` | [GuardDuty](./aws/guardduty.md) | — | — | — | 87 |
 | `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | [Identity](./oci/identity.md) | 40 |
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |

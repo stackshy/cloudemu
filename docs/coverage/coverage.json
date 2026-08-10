@@ -4135,6 +4135,290 @@
     }
   },
   {
+    "service": "guardduty",
+    "interface": "GuardDuty",
+    "operations": [
+      {
+        "name": "AcceptAdministratorInvitation"
+      },
+      {
+        "name": "AcceptInvitation"
+      },
+      {
+        "name": "ArchiveFindings",
+        "doc": "Findings (phase 3)."
+      },
+      {
+        "name": "CreateDetector",
+        "doc": "Detectors."
+      },
+      {
+        "name": "CreateFilter",
+        "doc": "Filters (per-detector)."
+      },
+      {
+        "name": "CreateIPSet",
+        "doc": "IP sets (per-detector)."
+      },
+      {
+        "name": "CreateMalwareProtectionPlan",
+        "doc": "Malware protection \u0026 scans (phase 6)."
+      },
+      {
+        "name": "CreateMembers",
+        "doc": "Members \u0026 administrator/master (phase 2). Bodies are carried as raw JSON"
+      },
+      {
+        "name": "CreatePublishingDestination",
+        "doc": "Publishing destinations (phase 5)."
+      },
+      {
+        "name": "CreateSampleFindings"
+      },
+      {
+        "name": "CreateThreatEntitySet",
+        "doc": "Threat-entity sets (per-detector)."
+      },
+      {
+        "name": "CreateThreatIntelSet",
+        "doc": "Threat-intel sets (per-detector)."
+      },
+      {
+        "name": "CreateTrustedEntitySet",
+        "doc": "Trusted-entity sets (per-detector)."
+      },
+      {
+        "name": "DeclineInvitations",
+        "doc": "Invitations (phase 2)."
+      },
+      {
+        "name": "DeleteDetector"
+      },
+      {
+        "name": "DeleteFilter"
+      },
+      {
+        "name": "DeleteIPSet"
+      },
+      {
+        "name": "DeleteInvitations"
+      },
+      {
+        "name": "DeleteMalwareProtectionPlan"
+      },
+      {
+        "name": "DeleteMembers"
+      },
+      {
+        "name": "DeletePublishingDestination"
+      },
+      {
+        "name": "DeleteThreatEntitySet"
+      },
+      {
+        "name": "DeleteThreatIntelSet"
+      },
+      {
+        "name": "DeleteTrustedEntitySet"
+      },
+      {
+        "name": "DescribeMalwareScans"
+      },
+      {
+        "name": "DescribeOrganizationConfiguration"
+      },
+      {
+        "name": "DescribePublishingDestination"
+      },
+      {
+        "name": "DisableOrganizationAdminAccount"
+      },
+      {
+        "name": "DisassociateFromAdministratorAccount"
+      },
+      {
+        "name": "DisassociateFromMasterAccount"
+      },
+      {
+        "name": "DisassociateMembers"
+      },
+      {
+        "name": "EnableOrganizationAdminAccount",
+        "doc": "Organization (phase 4)."
+      },
+      {
+        "name": "GetAdministratorAccount"
+      },
+      {
+        "name": "GetCoverageStatistics"
+      },
+      {
+        "name": "GetDetector"
+      },
+      {
+        "name": "GetFilter"
+      },
+      {
+        "name": "GetFindings"
+      },
+      {
+        "name": "GetFindingsStatistics"
+      },
+      {
+        "name": "GetIPSet"
+      },
+      {
+        "name": "GetInvitationsCount"
+      },
+      {
+        "name": "GetMalwareProtectionPlan"
+      },
+      {
+        "name": "GetMalwareScan"
+      },
+      {
+        "name": "GetMalwareScanSettings"
+      },
+      {
+        "name": "GetMasterAccount"
+      },
+      {
+        "name": "GetMemberDetectors"
+      },
+      {
+        "name": "GetMembers"
+      },
+      {
+        "name": "GetOrganizationStatistics"
+      },
+      {
+        "name": "GetRemainingFreeTrialDays"
+      },
+      {
+        "name": "GetThreatEntitySet"
+      },
+      {
+        "name": "GetThreatIntelSet"
+      },
+      {
+        "name": "GetTrustedEntitySet"
+      },
+      {
+        "name": "GetUsageStatistics"
+      },
+      {
+        "name": "InviteMembers"
+      },
+      {
+        "name": "ListCoverage",
+        "doc": "Coverage, usage, and free-trial (phase 7)."
+      },
+      {
+        "name": "ListDetectors"
+      },
+      {
+        "name": "ListFilters"
+      },
+      {
+        "name": "ListFindings"
+      },
+      {
+        "name": "ListIPSets"
+      },
+      {
+        "name": "ListInvitations"
+      },
+      {
+        "name": "ListMalwareProtectionPlans"
+      },
+      {
+        "name": "ListMalwareScans"
+      },
+      {
+        "name": "ListMembers"
+      },
+      {
+        "name": "ListOrganizationAdminAccounts"
+      },
+      {
+        "name": "ListPublishingDestinations"
+      },
+      {
+        "name": "ListTagsForResource",
+        "doc": "Resource tags (phase 8)."
+      },
+      {
+        "name": "ListThreatEntitySets"
+      },
+      {
+        "name": "ListThreatIntelSets"
+      },
+      {
+        "name": "ListTrustedEntitySets"
+      },
+      {
+        "name": "SendObjectMalwareScan"
+      },
+      {
+        "name": "StartMalwareScan"
+      },
+      {
+        "name": "StartMonitoringMembers"
+      },
+      {
+        "name": "StopMonitoringMembers"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UnarchiveFindings"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDetector"
+      },
+      {
+        "name": "UpdateFilter"
+      },
+      {
+        "name": "UpdateFindingsFeedback"
+      },
+      {
+        "name": "UpdateIPSet"
+      },
+      {
+        "name": "UpdateMalwareProtectionPlan"
+      },
+      {
+        "name": "UpdateMalwareScanSettings"
+      },
+      {
+        "name": "UpdateMemberDetectors"
+      },
+      {
+        "name": "UpdateOrganizationConfiguration"
+      },
+      {
+        "name": "UpdatePublishingDestination"
+      },
+      {
+        "name": "UpdateThreatEntitySet"
+      },
+      {
+        "name": "UpdateThreatIntelSet"
+      },
+      {
+        "name": "UpdateTrustedEntitySet"
+      }
+    ],
+    "providers": {
+      "aws": "GuardDuty"
+    }
+  },
+  {
     "service": "iam",
     "interface": "IAM",
     "operations": [

@@ -39,6 +39,64 @@ func newGDClient(t *testing.T) *awsgd.Client {
 	})
 }
 
+// newGDClientFullStack registers every AWS handler (not just GuardDuty), so the
+// GuardDuty handler competes with the others for shared REST paths — notably
+// /tags/{ResourceArn}, which EKS also claims. This is the realistic wiring and
+// guards against a handler shadowing GuardDuty's tag operations.
+func newGDClientFullStack(t *testing.T) *awsgd.Client {
+	t.Helper()
+
+	cloud := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.DriversFrom(cloud))
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")),
+	)
+	if err != nil {
+		t.Fatalf("aws config: %v", err)
+	}
+
+	return awsgd.NewFromConfig(cfg, func(o *awsgd.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+}
+
+// TestSDKTagsRouteToGuardDutyUnderFullStack reproduces the cross-handler routing
+// bug where EKS (which also serves /tags/{ResourceArn}) shadowed GuardDuty's tag
+// operations. With the full handler stack registered, tagging a GuardDuty
+// detector must reach the GuardDuty handler, not EKS.
+func TestSDKTagsRouteToGuardDutyUnderFullStack(t *testing.T) {
+	ctx := context.Background()
+	c := newGDClientFullStack(t)
+
+	det, err := c.CreateDetector(ctx, &awsgd.CreateDetectorInput{Enable: aws.Bool(true)})
+	if err != nil {
+		t.Fatalf("CreateDetector: %v", err)
+	}
+
+	arn := "arn:aws:guardduty:us-east-1:000000000000:detector/" + aws.ToString(det.DetectorId)
+
+	if _, err := c.TagResource(ctx, &awsgd.TagResourceInput{
+		ResourceArn: aws.String(arn),
+		Tags:        map[string]string{"env": "test"},
+	}); err != nil {
+		t.Fatalf("TagResource routed to the wrong handler or failed: %v", err)
+	}
+
+	out, err := c.ListTagsForResource(ctx, &awsgd.ListTagsForResourceInput{ResourceArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("ListTagsForResource: %v", err)
+	}
+
+	if out.Tags["env"] != "test" {
+		t.Fatalf("tags = %v, want env=test", out.Tags)
+	}
+}
+
 func TestSDKDetectorLifecycle(t *testing.T) {
 	ctx := context.Background()
 	c := newGDClient(t)

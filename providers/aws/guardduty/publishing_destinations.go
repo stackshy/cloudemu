@@ -30,6 +30,8 @@ type destData struct {
 }
 
 // copyDest deep-copies a destination so a reader cannot alias its tags map.
+//
+//nolint:gocritic // hugeParam: taken by value to snapshot a copy of stored state.
 func copyDest(d destData) destData {
 	out := d
 	out.tags = copyTags(d.tags)
@@ -104,6 +106,7 @@ func (m *Mock) DescribePublishingDestination(_ context.Context, detectorID, dest
 	}
 
 	dd.mu.Lock()
+
 	stored, ok := dd.publishDests[destinationID]
 	if !ok {
 		dd.mu.Unlock()
@@ -137,7 +140,9 @@ func (m *Mock) DescribePublishingDestination(_ context.Context, detectorID, dest
 }
 
 // UpdatePublishingDestination patches a destination's properties.
-func (m *Mock) UpdatePublishingDestination(_ context.Context, detectorID, destinationID string, body json.RawMessage) (json.RawMessage, error) {
+func (m *Mock) UpdatePublishingDestination(
+	_ context.Context, detectorID, destinationID string, body json.RawMessage,
+) (json.RawMessage, error) {
 	dd, err := m.getDetector(detectorID)
 	if err != nil {
 		return nil, err
@@ -199,6 +204,7 @@ func (m *Mock) ListPublishingDestinations(_ context.Context, detectorID string, 
 	}
 
 	dd.mu.RLock()
+
 	ids := make([]string, 0, len(dd.publishDests))
 	for id := range dd.publishDests {
 		ids = append(ids, id)
@@ -214,6 +220,7 @@ func (m *Mock) ListPublishingDestinations(_ context.Context, detectorID string, 
 	}
 
 	dests := make([]map[string]any, 0, len(pageIDs))
+
 	for _, id := range pageIDs {
 		d := dd.publishDests[id]
 		dests = append(dests, map[string]any{

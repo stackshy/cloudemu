@@ -18,6 +18,10 @@ const (
 	relDisabled = "DISABLED"
 )
 
+// msgNoMemberAccount is the unprocessed-account reason reported when a requested
+// member account is not registered under the detector.
+const msgNoMemberAccount = "member account does not exist"
+
 // memberData is the server-side state of one member account this detector
 // administers.
 type memberData struct {
@@ -43,6 +47,8 @@ func memberTimestamp(t time.Time) string {
 const isoTimestamp = "2006-01-02T15:04:05.000Z"
 
 // memberToWire renders a member for a Get/List response.
+//
+//nolint:gocritic // hugeParam: taken by value to match the copy semantics of stored state.
 func memberToWire(detectorID, adminAccountID string, md memberData) map[string]any {
 	out := map[string]any{
 		"accountId":          md.accountID,
@@ -150,7 +156,7 @@ func (m *Mock) GetMembers(_ context.Context, detectorID string, body json.RawMes
 	for _, id := range req.AccountIDs {
 		md, ok := dd.members[id]
 		if !ok {
-			unproc = append(unproc, unprocessed(id, "member account does not exist"))
+			unproc = append(unproc, unprocessed(id, msgNoMemberAccount))
 
 			continue
 		}
@@ -172,6 +178,7 @@ func (m *Mock) ListMembers(_ context.Context, detectorID string, page driver.Pag
 	admin := m.opts.AccountID
 
 	dd.mu.RLock()
+
 	ids := make([]string, 0, len(dd.members))
 	for id := range dd.members {
 		ids = append(ids, id)
@@ -198,9 +205,9 @@ func (m *Mock) ListMembers(_ context.Context, detectorID string, page driver.Pag
 // DeleteMembers removes member accounts. Missing accounts are reported as
 // unprocessed rather than failing the whole call.
 func (m *Mock) DeleteMembers(_ context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error) {
-	return m.mutateMembers(detectorID, body, func(dd *detectorData, id string, now time.Time) (bool, string) {
+	return m.mutateMembers(detectorID, body, func(dd *detectorData, id string, _ time.Time) (bool, string) {
 		if _, ok := dd.members[id]; !ok {
-			return false, "member account does not exist"
+			return false, msgNoMemberAccount
 		}
 
 		delete(dd.members, id)
@@ -230,7 +237,7 @@ func (m *Mock) InviteMembers(_ context.Context, detectorID string, body json.Raw
 	for _, id := range req.AccountIDs {
 		md, ok := dd.members[id]
 		if !ok {
-			unproc = append(unproc, unprocessed(id, "member account does not exist"))
+			unproc = append(unproc, unprocessed(id, msgNoMemberAccount))
 
 			continue
 		}
@@ -279,7 +286,7 @@ func (m *Mock) GetMemberDetectors(_ context.Context, detectorID string, body jso
 
 	for _, id := range req.AccountIDs {
 		if _, ok := dd.members[id]; !ok {
-			unproc = append(unproc, unprocessed(id, "member account does not exist"))
+			unproc = append(unproc, unprocessed(id, msgNoMemberAccount))
 
 			continue
 		}
@@ -300,7 +307,7 @@ func (m *Mock) UpdateMemberDetectors(_ context.Context, detectorID string, body 
 	return m.mutateMembers(detectorID, body, func(dd *detectorData, id string, now time.Time) (bool, string) {
 		md, ok := dd.members[id]
 		if !ok {
-			return false, "member account does not exist"
+			return false, msgNoMemberAccount
 		}
 
 		md.updatedAt = now
@@ -316,7 +323,7 @@ func (m *Mock) transitionMembers(detectorID string, body json.RawMessage, status
 	return m.mutateMembers(detectorID, body, func(dd *detectorData, id string, now time.Time) (bool, string) {
 		md, ok := dd.members[id]
 		if !ok {
-			return false, "member account does not exist"
+			return false, msgNoMemberAccount
 		}
 
 		md.relationshipStatus = status

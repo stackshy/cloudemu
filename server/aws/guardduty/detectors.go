@@ -157,8 +157,6 @@ func (h *Handler) listDetectors(w http.ResponseWriter, r *http.Request) {
 // serveDetectorSub routes /detector/{id}/{sub}/... to the owning resource
 // handler. Direct child resources (ipset, threatintelset, filter, …) dispatch
 // here; the remaining sub-resources route via serveDetectorSubresource.
-//
-//nolint:gocyclo // one dispatch arm per detector sub-resource; the surface is large by API design.
 func (h *Handler) serveDetectorSub(w http.ResponseWriter, r *http.Request, detectorID string, rest []string) {
 	switch rest[0] {
 	case "ipset":

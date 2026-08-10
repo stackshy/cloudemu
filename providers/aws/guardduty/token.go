@@ -6,18 +6,17 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 )
 
-// paginateOrdered returns a page of an already-ordered slice, honoring an opaque
-// numeric offset token, without re-sorting. Callers that establish a non-lexical
-// order (e.g. sort by timestamp) use this instead of paginateIDs so the page
-// respects their ordering. A corrupt or out-of-range token yields a
-// BadRequestException.
-func paginateOrdered(ids []string, page driver.Page) (out []string, next string, err error) {
+// paginateSlice returns a page of an already-ordered slice, honoring an opaque
+// numeric offset token, without re-sorting. A corrupt or out-of-range token
+// yields a BadRequestException so a client learns its token was bad rather than
+// silently restarting at page one.
+func paginateSlice[T any](items []T, page driver.Page) (out []T, next string, err error) {
 	start, err := decodeToken(page.NextToken)
 	if err != nil {
 		return nil, "", err
 	}
 
-	if start > len(ids) {
+	if start > len(items) {
 		return nil, "", badRequest("invalid pagination token: %q", page.NextToken)
 	}
 
@@ -27,11 +26,19 @@ func paginateOrdered(ids []string, page driver.Page) (out []string, next string,
 	}
 
 	end := start + limit
-	if end >= len(ids) {
-		return ids[start:], "", nil
+	if end >= len(items) {
+		return items[start:], "", nil
 	}
 
-	return ids[start:end], encodeToken(end), nil
+	return items[start:end], encodeToken(end), nil
+}
+
+// paginateOrdered returns a page of an already-ordered slice, honoring an opaque
+// numeric offset token, without re-sorting. Callers that establish a non-lexical
+// order (e.g. sort by timestamp) use this instead of paginateIDs so the page
+// respects their ordering.
+func paginateOrdered(ids []string, page driver.Page) (out []string, next string, err error) {
+	return paginateSlice(ids, page)
 }
 
 // encodeToken encodes a numeric list offset as an opaque pagination token.

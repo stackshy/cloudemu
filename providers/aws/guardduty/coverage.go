@@ -9,6 +9,13 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 )
 
+// Coverage filter/sort criterion keys accepted by ListCoverage and
+// GetCoverageStatistics.
+const (
+	coverageKeyResourceType = "RESOURCE_TYPE"
+	coverageKeyStatus       = "COVERAGE_STATUS"
+)
+
 // coverageResource is a synthetic per-detector coverage entry. GuardDuty reports
 // coverage per protected resource (EKS/ECS/EC2); the emulator synthesizes one of
 // each so ListCoverage and GetCoverageStatistics return well-formed data.
@@ -20,7 +27,7 @@ type coverageResource struct {
 
 // syntheticCoverage returns the fixed coverage-resource set the emulator reports
 // for a detector, ordered deterministically by resourceId.
-func (m *Mock) syntheticCoverage(detectorID string) []coverageResource {
+func (*Mock) syntheticCoverage(detectorID string) []coverageResource {
 	return []coverageResource{
 		{resourceID: "eks-" + detectorID, resourceType: "EKS", status: "HEALTHY"},
 		{resourceID: "ecs-" + detectorID, resourceType: "ECS", status: "HEALTHY"},
@@ -183,9 +190,9 @@ func coverageMatches(cr coverageResource, crit []coverageCriterionRequest) bool 
 // is one the emulator can evaluate.
 func coverageField(cr coverageResource, key string) (string, bool) {
 	switch key {
-	case "RESOURCE_TYPE":
+	case coverageKeyResourceType:
 		return cr.resourceType, true
-	case "COVERAGE_STATUS":
+	case coverageKeyStatus:
 		return cr.status, true
 	default:
 		return "", false
@@ -232,9 +239,9 @@ func sortCoverage(rs []coverageResource, sc *coverageSortRequest) {
 // coverageSortKey returns the sort key string for a coverage resource by attribute.
 func coverageSortKey(cr coverageResource, attr string) string {
 	switch attr {
-	case "COVERAGE_STATUS":
+	case coverageKeyStatus:
 		return cr.status
-	case "RESOURCE_TYPE":
+	case coverageKeyResourceType:
 		return cr.resourceType
 	default:
 		return cr.resourceID
@@ -244,24 +251,5 @@ func coverageSortKey(cr coverageResource, attr string) string {
 // paginateCoverage returns a deterministic page of coverage resources honoring the
 // numeric offset token, mirroring paginateIDs' semantics.
 func paginateCoverage(rs []coverageResource, page driver.Page) (out []coverageResource, next string, err error) {
-	start, err := decodeToken(page.NextToken)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if start > len(rs) {
-		return nil, "", badRequest("invalid pagination token: %q", page.NextToken)
-	}
-
-	limit := int(page.MaxResults)
-	if limit <= 0 {
-		limit = defaultMaxResults
-	}
-
-	end := start + limit
-	if end >= len(rs) {
-		return rs[start:], "", nil
-	}
-
-	return rs[start:end], encodeToken(end), nil
+	return paginateSlice(rs, page)
 }

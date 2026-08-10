@@ -2,9 +2,8 @@ package guardduty
 
 import (
 	"context"
-	"sort"
+	"time"
 
-	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 )
 
@@ -37,119 +36,60 @@ func validateSetInput(name, format, location string) error {
 	return nil
 }
 
+// ipSetStore describes how the generic list-set CRUD helpers store, build, patch,
+// and copy an IPSet.
+//
+//nolint:dupl // near-identical descriptor to the other GuardDuty list-set resources by API shape.
+func ipSetStore() setStore[driver.IPSet] {
+	return setStore[driver.IPSet]{
+		notFoundMsg: "The request is rejected because the input ipSetId is not found: %s",
+		storeOf:     func(dd *detectorData) map[string]driver.IPSet { return dd.ipSets },
+		build: func(id string, in setInput, now time.Time) driver.IPSet {
+			return driver.IPSet{
+				ID: id, Name: in.name, Format: in.format, Location: in.location,
+				Status: setStatus(in.activate), ExpectedBucketOwner: in.expectedBucketOwner,
+				Tags: copyTags(in.tags), CreatedAt: now, UpdatedAt: now,
+			}
+		},
+		apply: func(cur driver.IPSet, patch setPatch, now time.Time) driver.IPSet {
+			applySetPatch(&cur.Name, &cur.Location, &cur.Status, &cur.ExpectedBucketOwner, patch)
+			cur.UpdatedAt = now
+
+			return cur
+		},
+		copy: copyIPSet,
+	}
+}
+
 // CreateIPSet creates an IP set under a detector. The detector's lock is held
 // across the parent-existence check and the child insert so a concurrent
 // DeleteDetector cannot orphan it.
 //
 //nolint:gocritic // hugeParam: signature is fixed by the driver.GuardDuty interface (by-value input).
 func (m *Mock) CreateIPSet(_ context.Context, in driver.CreateIPSetInput) (id string, err error) {
-	if verr := validateSetInput(in.Name, in.Format, in.Location); verr != nil {
-		return "", verr
-	}
-
-	dd, err := m.getDetector(in.DetectorID)
-	if err != nil {
-		return "", err
-	}
-
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	now := m.now()
-	setID := idgen.GenerateID("")
-
-	dd.ipSets[setID] = driver.IPSet{
-		ID:                  setID,
-		Name:                in.Name,
-		Format:              in.Format,
-		Location:            in.Location,
-		Status:              setStatus(in.Activate),
-		ExpectedBucketOwner: in.ExpectedBucketOwner,
-		Tags:                copyTags(in.Tags),
-		CreatedAt:           now,
-		UpdatedAt:           now,
-	}
-
-	return setID, nil
+	return createSet(m, ipSetStore(), setInput{
+		detectorID: in.DetectorID, name: in.Name, format: in.Format, location: in.Location,
+		activate: in.Activate, expectedBucketOwner: in.ExpectedBucketOwner, tags: in.Tags,
+	})
 }
 
 // GetIPSet returns a deep copy of a stored IP set.
 func (m *Mock) GetIPSet(_ context.Context, detectorID, ipSetID string) (*driver.IPSet, error) {
-	dd, err := m.getDetector(detectorID)
-	if err != nil {
-		return nil, err
-	}
-
-	dd.mu.RLock()
-	defer dd.mu.RUnlock()
-
-	s, ok := dd.ipSets[ipSetID]
-	if !ok {
-		return nil, notFound("The request is rejected because the input ipSetId is not found: %s", ipSetID)
-	}
-
-	out := copyIPSet(s)
-
-	return &out, nil
+	return getSet(m, ipSetStore(), detectorID, ipSetID)
 }
 
 // UpdateIPSet patches an IP set's mutable fields. Nil pointers are left
 // unchanged.
-//
-//nolint:gocritic // hugeParam: signature is fixed by the driver.GuardDuty interface (by-value input).
 func (m *Mock) UpdateIPSet(_ context.Context, in driver.UpdateIPSetInput) error {
-	dd, err := m.getDetector(in.DetectorID)
-	if err != nil {
-		return err
-	}
-
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	s, ok := dd.ipSets[in.IPSetID]
-	if !ok {
-		return notFound("The request is rejected because the input ipSetId is not found: %s", in.IPSetID)
-	}
-
-	if in.Name != nil {
-		s.Name = *in.Name
-	}
-
-	if in.Location != nil {
-		s.Location = *in.Location
-	}
-
-	if in.Activate != nil {
-		s.Status = setStatus(*in.Activate)
-	}
-
-	if in.ExpectedBucketOwner != nil {
-		s.ExpectedBucketOwner = *in.ExpectedBucketOwner
-	}
-
-	s.UpdatedAt = m.now()
-	dd.ipSets[in.IPSetID] = s
-
-	return nil
+	return updateSet(m, ipSetStore(), in.DetectorID, in.IPSetID, setPatch{
+		name: in.Name, location: in.Location, activate: in.Activate,
+		expectedBucketOwner: in.ExpectedBucketOwner,
+	})
 }
 
 // DeleteIPSet removes an IP set from its detector.
 func (m *Mock) DeleteIPSet(_ context.Context, detectorID, ipSetID string) error {
-	dd, err := m.getDetector(detectorID)
-	if err != nil {
-		return err
-	}
-
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	if _, ok := dd.ipSets[ipSetID]; !ok {
-		return notFound("The request is rejected because the input ipSetId is not found: %s", ipSetID)
-	}
-
-	delete(dd.ipSets, ipSetID)
-
-	return nil
+	return deleteSet(m, ipSetStore(), detectorID, ipSetID)
 }
 
 // ListIPSets lists a detector's IP-set IDs, sorted for deterministic output.
@@ -159,14 +99,5 @@ func (m *Mock) ListIPSets(_ context.Context, detectorID string, page driver.Page
 		return nil, "", err
 	}
 
-	dd.mu.RLock()
-	all := make([]string, 0, len(dd.ipSets))
-	for id := range dd.ipSets {
-		all = append(all, id)
-	}
-	dd.mu.RUnlock()
-
-	sort.Strings(all)
-
-	return paginateIDs(all, page)
+	return listChildIDs(dd, dd.ipSets, page)
 }

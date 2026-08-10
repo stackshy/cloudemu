@@ -4,10 +4,12 @@ import "net/http"
 
 // serveAdministrator routes /detector/{id}/administrator: POST=AcceptAdministrator
 // Invitation, GET=GetAdministratorAccount, /disassociate=Disassociate.
+//
+//nolint:dupl // near-identical to serveMaster by API shape (administrator vs legacy master naming).
 func (h *Handler) serveAdministrator(w http.ResponseWriter, r *http.Request, id string, rest []string) {
 	ctx := r.Context()
 
-	if len(rest) == 1 && rest[0] == "disassociate" {
+	if len(rest) == 1 && rest[0] == segDisassociate {
 		body, err := h.gd.DisassociateFromAdministratorAccount(ctx, id)
 		h.writeResult(w, body, err)
 
@@ -28,10 +30,12 @@ func (h *Handler) serveAdministrator(w http.ResponseWriter, r *http.Request, id 
 
 // serveMaster routes /detector/{id}/master: the legacy master-naming twin of
 // serveAdministrator, reading and writing the same administrator link.
+//
+//nolint:dupl // near-identical to serveAdministrator by API shape (legacy master vs administrator naming).
 func (h *Handler) serveMaster(w http.ResponseWriter, r *http.Request, id string, rest []string) {
 	ctx := r.Context()
 
-	if len(rest) == 1 && rest[0] == "disassociate" {
+	if len(rest) == 1 && rest[0] == segDisassociate {
 		body, err := h.gd.DisassociateFromMasterAccount(ctx, id)
 		h.writeResult(w, body, err)
 

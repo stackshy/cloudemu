@@ -11,7 +11,7 @@ import (
 
 // writeResult writes a driver call's outcome: the mapped error on failure, an
 // empty JSON object when the body is nil, or the raw JSON body verbatim.
-func (h *Handler) writeResult(w http.ResponseWriter, body json.RawMessage, err error) {
+func (*Handler) writeResult(w http.ResponseWriter, body json.RawMessage, err error) {
 	if err != nil {
 		writeErr(w, err)
 
@@ -80,7 +80,6 @@ func (h *Handler) serveDetectorSubresource(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-//nolint:gocyclo // one arm per findings sub-path; large by API design.
 func (h *Handler) serveDetectorFindings(w http.ResponseWriter, r *http.Request, id string, rest []string) {
 	ctx := r.Context()
 
@@ -101,10 +100,10 @@ func (h *Handler) serveDetectorFindings(w http.ResponseWriter, r *http.Request, 
 	case "create":
 		body, err := h.gd.CreateSampleFindings(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
-	case "get":
+	case segGet:
 		body, err := h.gd.GetFindings(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
-	case "statistics":
+	case segStatistics:
 		body, err := h.gd.GetFindingsStatistics(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
 	case "feedback":
@@ -118,7 +117,7 @@ func (h *Handler) serveDetectorFindings(w http.ResponseWriter, r *http.Request, 
 func (h *Handler) serveDetectorCoverage(w http.ResponseWriter, r *http.Request, id string, rest []string) {
 	ctx := r.Context()
 
-	if len(rest) == 1 && rest[0] == "statistics" {
+	if len(rest) == 1 && rest[0] == segStatistics {
 		body, err := h.gd.GetCoverageStatistics(ctx, id, rawBody(r))
 		h.writeResult(w, body, err)
 

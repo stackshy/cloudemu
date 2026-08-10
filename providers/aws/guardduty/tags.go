@@ -6,6 +6,22 @@ import (
 	"strings"
 )
 
+// arnPartCount is the number of colon-separated fields in a GuardDuty resource
+// ARN (arn:aws:guardduty:<region>:<account>:<resource-path>).
+const arnPartCount = 6
+
+// GuardDuty ARN resource-path prefixes and per-detector child resource kinds.
+const (
+	segDetector = "detector"
+	segPlan     = "malware-protection-plan"
+
+	kindIPSet            = "ipset"
+	kindThreatIntelSet   = "threatintelset"
+	kindThreatEntitySet  = "threatentityset"
+	kindTrustedEntitySet = "trustedentityset"
+	kindFilter           = "filter"
+)
+
 // A GuardDuty resource ARN has the form
 //
 //	arn:aws:guardduty:<region>:<account>:<resource-path>
@@ -23,8 +39,8 @@ import (
 // parseGuardDutyARN splits an ARN into its resource path segments. It returns a
 // BadRequestException for anything that is not a GuardDuty ARN.
 func parseGuardDutyARN(arn string) (segments []string, err error) {
-	parts := strings.SplitN(arn, ":", 6)
-	if len(parts) != 6 || parts[0] != "arn" || parts[2] != "guardduty" {
+	parts := strings.SplitN(arn, ":", arnPartCount)
+	if len(parts) != arnPartCount || parts[0] != "arn" || parts[2] != "guardduty" {
 		return nil, badRequest("invalid GuardDuty resource ARN: %q", arn)
 	}
 
@@ -50,8 +66,6 @@ type tagAccessor struct {
 
 // resolveTagTarget maps an ARN to a tagAccessor for the owning resource, or a
 // BadRequestException if the ARN does not name a known, taggable resource.
-//
-//nolint:gocyclo // one arm per taggable GuardDuty resource type; large by API design.
 func (m *Mock) resolveTagTarget(arn string) (tagAccessor, error) {
 	seg, err := parseGuardDutyARN(arn)
 	if err != nil {
@@ -59,11 +73,11 @@ func (m *Mock) resolveTagTarget(arn string) (tagAccessor, error) {
 	}
 
 	switch {
-	case seg[0] == "malware-protection-plan" && len(seg) == 2:
+	case seg[0] == segPlan && len(seg) == 2:
 		return m.planTagAccessor(seg[1]), nil
-	case seg[0] == "detector" && len(seg) == 2:
+	case seg[0] == segDetector && len(seg) == 2:
 		return m.detectorTagAccessor(seg[1]), nil
-	case seg[0] == "detector" && len(seg) == 4:
+	case seg[0] == segDetector && len(seg) == 4:
 		return m.detectorChildTagAccessor(seg[1], seg[2], seg[3])
 	default:
 		return tagAccessor{}, badRequest("ARN does not identify a taggable GuardDuty resource: %q", arn)
@@ -126,7 +140,7 @@ func (m *Mock) detectorTagAccessor(detectorID string) tagAccessor {
 // resource (ipset/threatintelset/threatentityset/trustedentityset/filter).
 func (m *Mock) detectorChildTagAccessor(detectorID, kind, id string) (tagAccessor, error) {
 	switch kind {
-	case "ipset", "threatintelset", "threatentityset", "trustedentityset", "filter":
+	case kindIPSet, kindThreatIntelSet, kindThreatEntitySet, kindTrustedEntitySet, kindFilter:
 		return tagAccessor{
 			read:  func() (map[string]string, bool) { return m.readChildTags(detectorID, kind, id) },
 			write: func(tags map[string]string) bool { return m.writeChildTags(detectorID, kind, id, tags) },
@@ -138,6 +152,8 @@ func (m *Mock) detectorChildTagAccessor(detectorID, kind, id string) (tagAccesso
 
 // readChildTags reads a deep copy of a child resource's tags under the detector
 // lock.
+//
+//nolint:gocyclo // one arm per taggable per-detector child resource type; large by API design.
 func (m *Mock) readChildTags(detectorID, kind, id string) (map[string]string, bool) {
 	dd, ok := m.detectors.Get(detectorID)
 	if !ok {
@@ -148,23 +164,23 @@ func (m *Mock) readChildTags(detectorID, kind, id string) (map[string]string, bo
 	defer dd.mu.RUnlock()
 
 	switch kind {
-	case "ipset":
+	case kindIPSet:
 		if r, found := dd.ipSets[id]; found {
 			return copyTags(r.Tags), true
 		}
-	case "threatintelset":
+	case kindThreatIntelSet:
 		if r, found := dd.threatIS[id]; found {
 			return copyTags(r.Tags), true
 		}
-	case "threatentityset":
+	case kindThreatEntitySet:
 		if r, found := dd.threatES[id]; found {
 			return copyTags(r.Tags), true
 		}
-	case "trustedentityset":
+	case kindTrustedEntitySet:
 		if r, found := dd.trustES[id]; found {
 			return copyTags(r.Tags), true
 		}
-	case "filter":
+	case kindFilter:
 		if r, found := dd.filters[id]; found {
 			return copyTags(r.Tags), true
 		}
@@ -174,6 +190,8 @@ func (m *Mock) readChildTags(detectorID, kind, id string) (map[string]string, bo
 }
 
 // writeChildTags replaces a child resource's tags under the detector lock.
+//
+//nolint:gocyclo // one arm per taggable per-detector child resource type; large by API design.
 func (m *Mock) writeChildTags(detectorID, kind, id string, tags map[string]string) bool {
 	dd, ok := m.detectors.Get(detectorID)
 	if !ok {
@@ -184,35 +202,35 @@ func (m *Mock) writeChildTags(detectorID, kind, id string, tags map[string]strin
 	defer dd.mu.Unlock()
 
 	switch kind {
-	case "ipset":
+	case kindIPSet:
 		if r, found := dd.ipSets[id]; found {
 			r.Tags = copyTags(tags)
 			dd.ipSets[id] = r
 
 			return true
 		}
-	case "threatintelset":
+	case kindThreatIntelSet:
 		if r, found := dd.threatIS[id]; found {
 			r.Tags = copyTags(tags)
 			dd.threatIS[id] = r
 
 			return true
 		}
-	case "threatentityset":
+	case kindThreatEntitySet:
 		if r, found := dd.threatES[id]; found {
 			r.Tags = copyTags(tags)
 			dd.threatES[id] = r
 
 			return true
 		}
-	case "trustedentityset":
+	case kindTrustedEntitySet:
 		if r, found := dd.trustES[id]; found {
 			r.Tags = copyTags(tags)
 			dd.trustES[id] = r
 
 			return true
 		}
-	case "filter":
+	case kindFilter:
 		if r, found := dd.filters[id]; found {
 			r.Tags = copyTags(tags)
 			dd.filters[id] = r

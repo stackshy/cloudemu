@@ -33,6 +33,15 @@ const (
 	rootOrganization          = "organization"
 )
 
+// Sub-resource path segments shared across the GuardDuty route tables.
+const (
+	segGet          = "get"
+	segDelete       = "delete"
+	segStart        = "start"
+	segStatistics   = "statistics"
+	segDisassociate = "disassociate"
+)
+
 // Handler serves GuardDuty requests against a driver.
 type Handler struct {
 	gd driver.GuardDuty
@@ -43,16 +52,25 @@ func New(d driver.GuardDuty) *Handler {
 	return &Handler{gd: d}
 }
 
+// guarddutyARNPrefix is the service-qualified prefix of every GuardDuty ARN. It
+// disambiguates the shared REST tag endpoint (/tags/{ResourceArn}) from other
+// services (e.g. EKS) that use the same path with their own ARNs.
+const guarddutyARNPrefix = "arn:aws:guardduty:"
+
 // Matches claims requests whose first path segment is a known GuardDuty root.
 //
 // GuardDuty has no API-version path prefix, so this predicate is what gates
 // GuardDuty ahead of the S3 REST catch-all: it MUST be registered before S3.
 // Consequently an S3 bucket literally named one of the GuardDuty roots
-// ("detector", "admin", "invitation", "tags", "malware-scan", "malware-scans",
+// ("detector", "admin", "invitation", "malware-scan", "malware-scans",
 // "malware-protection-plan", "object-malware-scan", "organization") would be
 // shadowed by this handler. That collision is accepted and documented — these
 // are unusual bucket names and full GuardDuty parity requires owning these
 // paths.
+//
+// The /tags/{ResourceArn} endpoint is shared with other services (EKS uses the
+// same shape), so for the "tags" root this only claims requests whose ARN is a
+// GuardDuty ARN; other services' tag requests fall through to their handlers.
 func (*Handler) Matches(r *http.Request) bool {
 	segs := splitPath(escapedPath(r))
 	if len(segs) == 0 {
@@ -60,7 +78,9 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch segs[0] {
-	case rootDetector, rootAdmin, rootInvitation, rootTags, rootMalwareScan,
+	case rootTags:
+		return len(segs) == 2 && strings.HasPrefix(segs[1], guarddutyARNPrefix)
+	case rootDetector, rootAdmin, rootInvitation, rootMalwareScan,
 		rootMalwareScans, rootMalwareProtectionPlan, rootObjectMalwareScan, rootOrganization:
 		return true
 	default:
@@ -69,6 +89,8 @@ func (*Handler) Matches(r *http.Request) bool {
 }
 
 // ServeHTTP dispatches a GuardDuty request on its path shape.
+//
+//nolint:gocyclo // one dispatch arm per GuardDuty path root; the surface is large by API design.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	segs := splitPath(escapedPath(r))
 	if len(segs) == 0 {

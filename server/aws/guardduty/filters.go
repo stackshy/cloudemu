@@ -7,6 +7,8 @@ import (
 )
 
 // serveFilter routes /detector/{id}/filter and /detector/{id}/filter/{name}.
+//
+//nolint:dupl // near-identical routing/create to the sibling list-set handlers by API shape.
 func (h *Handler) serveFilter(w http.ResponseWriter, r *http.Request, detectorID string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {

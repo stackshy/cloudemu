@@ -533,6 +533,19 @@ func New(d Drivers) *server.Server {
 	}
 
 	// EKS is a REST/JSON service rooted at /clusters. It must register
+	// GuardDuty uses REST-JSON path + method routing with NO version prefix, so
+	// its Matches predicate gates on the first path segment being a known
+	// GuardDuty root (detector, admin, invitation, tags, malware-scan,
+	// malware-scans, malware-protection-plan, object-malware-scan, organization).
+	// It MUST register before S3's permissive REST catch-all. It also registers
+	// before EKS because both use the shared /tags/{ResourceArn} REST path and
+	// EKS's Matches claims every /tags request; the GuardDuty handler only claims
+	// that path for GuardDuty ARNs, so EKS (and other services') tag requests
+	// fall through to their own handlers.
+	if d.GuardDuty != nil {
+		srv.Register(guarddutysrv.New(d.GuardDuty))
+	}
+
 	// before S3 because S3 is the permissive REST fallback that would
 	// otherwise claim the same path. EKS's Matches predicate is rooted
 	// at /clusters specifically so it doesn't shadow other REST URLs.
@@ -590,17 +603,6 @@ func New(d Drivers) *server.Server {
 	// claim those paths.
 	if d.Route53 != nil {
 		srv.Register(route53.New(d.Route53))
-	}
-
-	// GuardDuty uses REST-JSON path + method routing with NO version prefix, so
-	// its Matches predicate gates on the first path segment being a known
-	// GuardDuty root (detector, admin, invitation, tags, malware-scan,
-	// malware-scans, malware-protection-plan, object-malware-scan, organization).
-	// It MUST register before S3's permissive REST catch-all, which would
-	// otherwise claim those paths. A bucket literally named one of these roots is
-	// shadowed — an accepted, documented limitation.
-	if d.GuardDuty != nil {
-		srv.Register(guarddutysrv.New(d.GuardDuty))
 	}
 
 	if d.S3 != nil {

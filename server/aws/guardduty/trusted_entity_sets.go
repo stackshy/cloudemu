@@ -1,4 +1,4 @@
-package guardduty
+package guardduty //nolint:dupl // near-identical to the sibling list-set handler files by API shape.
 
 import (
 	"net/http"
@@ -7,6 +7,8 @@ import (
 )
 
 // serveTrustedEntitySet routes /detector/{id}/trustedentityset[/{setId}].
+//
+//nolint:dupl // near-identical routing/create to the sibling list-set handlers by API shape.
 func (h *Handler) serveTrustedEntitySet(w http.ResponseWriter, r *http.Request, detectorID string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {
@@ -72,6 +74,7 @@ func (h *Handler) getTrustedEntitySet(w http.ResponseWriter, r *http.Request, de
 	writeJSON(w, entitySetTimestamps(base, s.CreatedAt, s.UpdatedAt, s.ErrorDetails))
 }
 
+//nolint:dupl // near-identical update handler to the sibling list-set resources by API shape.
 func (h *Handler) updateTrustedEntitySet(w http.ResponseWriter, r *http.Request, detectorID, setID string) {
 	var req updateSetRequest
 	if !decodeInto(w, r, &req) {

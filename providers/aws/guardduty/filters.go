@@ -2,7 +2,6 @@ package guardduty
 
 import (
 	"context"
-	"sort"
 
 	"github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 )
@@ -157,14 +156,5 @@ func (m *Mock) ListFilters(
 		return nil, "", err
 	}
 
-	dd.mu.RLock()
-	all := make([]string, 0, len(dd.filters))
-	for name := range dd.filters {
-		all = append(all, name)
-	}
-	dd.mu.RUnlock()
-
-	sort.Strings(all)
-
-	return paginateIDs(all, page)
+	return listChildIDs(dd, dd.filters, page)
 }
