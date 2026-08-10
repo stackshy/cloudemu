@@ -40,6 +40,10 @@ func (m *Mock) CreateFilter(_ context.Context, in driver.CreateFilterInput) (nam
 		return "", badRequest("name is required")
 	}
 
+	if len(in.FindingCriteria) == 0 {
+		return "", badRequest("findingCriteria is required")
+	}
+
 	dd, err := m.getDetector(in.DetectorID)
 	if err != nil {
 		return "", err

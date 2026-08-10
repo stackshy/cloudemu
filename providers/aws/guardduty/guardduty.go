@@ -80,7 +80,11 @@ type Mock struct {
 	// server-minted scan ID. StartMalwareScan is not scoped to a detector, so its
 	// results live at the Mock level too.
 	malwareScans *memstore.Store[malwareScanData]
-	opts         *config.Options
+	// createMu serializes CreateDetector so the "one detector per account" cap is
+	// enforced atomically: SetIfAbsent alone can't guard a count invariant
+	// because each detector gets a distinct server-minted ID.
+	createMu sync.Mutex
+	opts     *config.Options
 }
 
 // New creates a new GuardDuty mock with the given configuration options.

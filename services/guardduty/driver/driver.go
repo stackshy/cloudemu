@@ -5,11 +5,11 @@
 // publishing operations required for full aws-sdk-go-v2 wire parity.
 //
 // GuardDuty uses the REST-JSON (awsRestjson1) protocol with path + HTTP-method
-// routing and no version-path prefix. Operations the emulator does not yet
-// model in depth (members, findings, org config, malware protection, publishing
-// destinations, coverage, usage, and resource tags) take and return
-// json.RawMessage request/response bodies so the wire layer can route every
-// operation while the backend fills in behavior incrementally.
+// routing and no version-path prefix. Operations with large or open-ended
+// request/response shapes (members, findings, org config, malware protection,
+// publishing destinations, coverage, usage, and resource tags) carry their
+// bodies as json.RawMessage built to the SDK wire shape, rather than modeling
+// every nested field as a Go type.
 package driver
 
 import (
@@ -67,7 +67,7 @@ type GuardDuty interface {
 	DeleteFilter(ctx context.Context, detectorID, filterName string) error
 	ListFilters(ctx context.Context, detectorID string, page Page) (names []string, next string, err error)
 
-	// Members & administrator/master (phase 2). Bodies are carried as raw JSON
+	// Members & administrator/master. Bodies are carried as raw JSON
 	// so the wire layer can route them before the backend models them.
 	CreateMembers(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	GetMembers(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
@@ -86,13 +86,13 @@ type GuardDuty interface {
 	GetMasterAccount(ctx context.Context, detectorID string) (json.RawMessage, error)
 	DisassociateFromMasterAccount(ctx context.Context, detectorID string) (json.RawMessage, error)
 
-	// Invitations (phase 2).
+	// Invitations.
 	DeclineInvitations(ctx context.Context, body json.RawMessage) (json.RawMessage, error)
 	DeleteInvitations(ctx context.Context, body json.RawMessage) (json.RawMessage, error)
 	ListInvitations(ctx context.Context, page Page) (json.RawMessage, error)
 	GetInvitationsCount(ctx context.Context) (json.RawMessage, error)
 
-	// Findings (phase 3).
+	// Findings.
 	ArchiveFindings(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	UnarchiveFindings(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	CreateSampleFindings(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
@@ -101,7 +101,7 @@ type GuardDuty interface {
 	ListFindings(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	UpdateFindingsFeedback(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 
-	// Organization (phase 4).
+	// Organization.
 	EnableOrganizationAdminAccount(ctx context.Context, body json.RawMessage) (json.RawMessage, error)
 	DisableOrganizationAdminAccount(ctx context.Context, body json.RawMessage) (json.RawMessage, error)
 	ListOrganizationAdminAccounts(ctx context.Context, page Page) (json.RawMessage, error)
@@ -109,14 +109,14 @@ type GuardDuty interface {
 	UpdateOrganizationConfiguration(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	GetOrganizationStatistics(ctx context.Context) (json.RawMessage, error)
 
-	// Publishing destinations (phase 5).
+	// Publishing destinations.
 	CreatePublishingDestination(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	DescribePublishingDestination(ctx context.Context, detectorID, destinationID string) (json.RawMessage, error)
 	UpdatePublishingDestination(ctx context.Context, detectorID, destinationID string, body json.RawMessage) (json.RawMessage, error)
 	DeletePublishingDestination(ctx context.Context, detectorID, destinationID string) (json.RawMessage, error)
 	ListPublishingDestinations(ctx context.Context, detectorID string, page Page) (json.RawMessage, error)
 
-	// Malware protection & scans (phase 6).
+	// Malware protection & scans.
 	CreateMalwareProtectionPlan(ctx context.Context, body json.RawMessage) (json.RawMessage, error)
 	GetMalwareProtectionPlan(ctx context.Context, planID string) (json.RawMessage, error)
 	UpdateMalwareProtectionPlan(ctx context.Context, planID string, body json.RawMessage) (json.RawMessage, error)
@@ -130,13 +130,13 @@ type GuardDuty interface {
 	GetMalwareScanSettings(ctx context.Context, detectorID string) (json.RawMessage, error)
 	UpdateMalwareScanSettings(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 
-	// Coverage, usage, and free-trial (phase 7).
+	// Coverage, usage, and free-trial.
 	ListCoverage(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	GetCoverageStatistics(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	GetUsageStatistics(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 	GetRemainingFreeTrialDays(ctx context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error)
 
-	// Resource tags (phase 8).
+	// Resource tags.
 	ListTagsForResource(ctx context.Context, resourceARN string) (json.RawMessage, error)
 	TagResource(ctx context.Context, resourceARN string, body json.RawMessage) (json.RawMessage, error)
 	UntagResource(ctx context.Context, resourceARN string, tagKeys []string) (json.RawMessage, error)

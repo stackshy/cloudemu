@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 )
@@ -69,7 +70,8 @@ type listCoverageRequest struct {
 // ListCoverage returns the synthetic coverage resources honoring FilterCriteria,
 // SortCriteria, and pagination.
 func (m *Mock) ListCoverage(_ context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error) {
-	if _, err := m.getDetector(detectorID); err != nil {
+	updatedAt, err := m.detectorCreatedAt(detectorID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -90,20 +92,35 @@ func (m *Mock) ListCoverage(_ context.Context, detectorID string, body json.RawM
 
 	wire := make([]map[string]any, 0, len(pageRes))
 	for i := range pageRes {
-		wire = append(wire, m.coverageToWire(detectorID, pageRes[i]))
+		wire = append(wire, m.coverageToWire(detectorID, pageRes[i], updatedAt))
 	}
 
 	return json.Marshal(withNextToken(map[string]any{"resources": wire}, next))
 }
 
-// coverageToWire renders a coverage resource as its REST-JSON object.
-func (m *Mock) coverageToWire(detectorID string, cr coverageResource) map[string]any {
+// detectorCreatedAt returns the detector's stored creation time (used as the
+// deterministic coverage updatedAt), or an error if the detector is absent.
+func (m *Mock) detectorCreatedAt(detectorID string) (time.Time, error) {
+	dd, err := m.getDetector(detectorID)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	dd.mu.RLock()
+	defer dd.mu.RUnlock()
+
+	return dd.detector.CreatedAt, nil
+}
+
+// coverageToWire renders a coverage resource as its REST-JSON object. updatedAt
+// is the detector's stored creation time so repeated reads are deterministic.
+func (m *Mock) coverageToWire(detectorID string, cr coverageResource, updatedAt time.Time) map[string]any {
 	return map[string]any{
 		"accountId":       m.opts.AccountID,
 		"detectorId":      detectorID,
 		"resourceId":      cr.resourceID,
 		"coverageStatus":  cr.status,
-		"updatedAt":       m.now().UTC().Unix(),
+		"updatedAt":       updatedAt.UTC().Unix(),
 		"resourceDetails": map[string]any{"resourceType": cr.resourceType},
 	}
 }

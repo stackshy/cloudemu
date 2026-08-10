@@ -20,8 +20,21 @@ func copyDetector(d driver.Detector) driver.Detector {
 	return out
 }
 
-// CreateDetector provisions a detector that is immediately ENABLED (or DISABLED
-// when Enable is false).
+// validFindingFrequency reports whether f is one of GuardDuty's modeled
+// FindingPublishingFrequency enum values.
+func validFindingFrequency(f string) bool {
+	switch f {
+	case driver.FindingFrequencyFifteenMinutes, driver.FindingFrequencyOneHour,
+		driver.FindingFrequencySixHours:
+		return true
+	default:
+		return false
+	}
+}
+
+// CreateDetector provisions the account's single detector, immediately ENABLED
+// (or DISABLED when Enable is false). A second create is rejected because
+// GuardDuty allows only one detector per account per region.
 //
 //nolint:gocritic // hugeParam: signature is fixed by the driver.GuardDuty interface (by-value input).
 func (m *Mock) CreateDetector(_ context.Context, in driver.CreateDetectorInput) (*driver.Detector, error) {
@@ -35,6 +48,19 @@ func (m *Mock) CreateDetector(_ context.Context, in driver.CreateDetectorInput) 
 	freq := in.FindingPublishingFrequency
 	if freq == "" {
 		freq = driver.FindingFrequencySixHours
+	}
+
+	if !validFindingFrequency(freq) {
+		return nil, badRequest("findingPublishingFrequency %q is invalid", freq)
+	}
+
+	// One detector per account per region: serialize the count check with the
+	// insert so two concurrent creates can't both pass the cap.
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
+	if m.detectors.Len() > 0 {
+		return nil, badRequest("a detector already exists for the current account")
 	}
 
 	det := driver.Detector{
@@ -93,6 +119,10 @@ func (m *Mock) GetDetector(_ context.Context, detectorID string) (*driver.Detect
 //
 //nolint:gocritic // hugeParam: signature is fixed by the driver.GuardDuty interface (by-value input).
 func (m *Mock) UpdateDetector(_ context.Context, in driver.UpdateDetectorInput) error {
+	if in.FindingPublishingFrequency != nil && !validFindingFrequency(*in.FindingPublishingFrequency) {
+		return badRequest("findingPublishingFrequency %q is invalid", *in.FindingPublishingFrequency)
+	}
+
 	dd, err := m.getDetector(in.DetectorID)
 	if err != nil {
 		return err

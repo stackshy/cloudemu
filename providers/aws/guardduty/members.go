@@ -216,8 +216,15 @@ func (m *Mock) DeleteMembers(_ context.Context, detectorID string, body json.Raw
 	})
 }
 
-// InviteMembers moves CREATED members to INVITED. Missing accounts are
-// unprocessed.
+// InviteMembers moves CREATED members to INVITED on the administrator's detector.
+// Missing accounts are returned as unprocessed.
+//
+// Delivering the invitation to the invited account's own detector is inherently
+// cross-account; cloudemu emulates a single account, so the invited account's
+// detector does not exist here and no pending invitation is delivered. The
+// administrator-side status transition above is the observable effect. The
+// invitee side (AcceptInvitation consuming a pending invitation) is exercised in
+// tests via the AddPendingInvitationForTest seam.
 func (m *Mock) InviteMembers(_ context.Context, detectorID string, body json.RawMessage) (json.RawMessage, error) {
 	dd, err := m.getDetector(detectorID)
 	if err != nil {

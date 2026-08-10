@@ -301,6 +301,10 @@ func (m *Mock) UpdateFindingsFeedback(_ context.Context, detectorID string, body
 		return nil, uerr
 	}
 
+	if len(req.FindingIDs) == 0 {
+		return nil, badRequest("findingIds is required")
+	}
+
 	if req.Feedback != "USEFUL" && req.Feedback != "NOT_USEFUL" {
 		return nil, badRequest("feedback must be USEFUL or NOT_USEFUL")
 	}

@@ -85,6 +85,43 @@ func TestGetDetectorMissing(t *testing.T) {
 	}
 }
 
+func TestCreateDetectorOnePerAccount(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateDetector(ctx, driver.CreateDetectorInput{Enable: true}); err != nil {
+		t.Fatalf("first CreateDetector: %v", err)
+	}
+
+	// GuardDuty allows only one detector per account per region.
+	_, err := m.CreateDetector(ctx, driver.CreateDetectorInput{Enable: true})
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("second CreateDetector = %v, want BadRequestException", err)
+	}
+}
+
+func TestCreateDetectorInvalidFrequency(t *testing.T) {
+	m := newMock()
+
+	_, err := m.CreateDetector(context.Background(), driver.CreateDetectorInput{
+		Enable: true, FindingPublishingFrequency: "BOGUS",
+	})
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("invalid frequency = %v, want BadRequestException", err)
+	}
+}
+
+func TestCreateFilterRequiresCriteria(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	id := mustDetector(t, m)
+
+	_, err := m.CreateFilter(ctx, driver.CreateFilterInput{DetectorID: id, Name: "nocrit"})
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("filter without findingCriteria = %v, want BadRequestException", err)
+	}
+}
+
 func TestIPSetCRUD(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
@@ -152,15 +189,17 @@ func TestFilterCRUDAndDuplicate(t *testing.T) {
 	ctx := context.Background()
 	id := mustDetector(t, m)
 
+	crit := json.RawMessage(`{"Criterion":{"severity":{"Eq":["8"]}}}`)
+
 	name, err := m.CreateFilter(ctx, driver.CreateFilterInput{
-		DetectorID: id, Name: "f1", Action: "ARCHIVE", Rank: 1,
+		DetectorID: id, Name: "f1", Action: "ARCHIVE", Rank: 1, FindingCriteria: crit,
 	})
 	if err != nil || name != "f1" {
 		t.Fatalf("CreateFilter: %v name=%s", err, name)
 	}
 
 	// Duplicate name -> ConflictException.
-	_, err = m.CreateFilter(ctx, driver.CreateFilterInput{DetectorID: id, Name: "f1"})
+	_, err = m.CreateFilter(ctx, driver.CreateFilterInput{DetectorID: id, Name: "f1", FindingCriteria: crit})
 	if !isException(err, driver.ExConflict) {
 		t.Fatalf("want ConflictException on duplicate filter, got %v", err)
 	}
@@ -239,7 +278,9 @@ func TestDeleteDetectorCascade(t *testing.T) {
 	setID, _ := m.CreateIPSet(ctx, driver.CreateIPSetInput{
 		DetectorID: id, Name: "n", Format: "TXT", Location: "x",
 	})
-	_, _ = m.CreateFilter(ctx, driver.CreateFilterInput{DetectorID: id, Name: "f"})
+	_, _ = m.CreateFilter(ctx, driver.CreateFilterInput{
+		DetectorID: id, Name: "f", FindingCriteria: json.RawMessage(`{"Criterion":{}}`),
+	})
 
 	if err := m.DeleteDetector(ctx, id); err != nil {
 		t.Fatalf("DeleteDetector: %v", err)
