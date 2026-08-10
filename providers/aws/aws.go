@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
@@ -168,6 +169,7 @@ type Provider struct {
 	SFN                 *sfn.Mock
 	CloudTrail          *cloudtrail.Mock
 	Config              *configservice.Mock
+	GuardDuty           *guardduty.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -217,6 +219,7 @@ func New(opts ...config.Option) *Provider {
 		SFN:                 sfn.New(o),
 		CloudTrail:          cloudtrail.New(o),
 		Config:              configservice.New(o),
+		GuardDuty:           guardduty.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}

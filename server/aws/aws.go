@@ -27,6 +27,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
+	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
@@ -66,6 +67,7 @@ import (
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
@@ -158,6 +160,10 @@ type Drivers struct {
 	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
 	// "StarlingDoveService.") against the configservice driver.
 	Config configservicedriver.Config
+	// GuardDuty serves the Amazon GuardDuty REST-JSON API (path + method routing,
+	// no version prefix) against the guardduty driver. It must register before
+	// the S3 catch-all (see the GuardDuty handler's Matches doc).
+	GuardDuty guarddutydriver.GuardDuty
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -244,6 +250,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Kinesis:             p.Kinesis,
 		CloudTrail:          p.CloudTrail,
 		Config:              p.Config,
+		GuardDuty:           p.GuardDuty,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -571,6 +578,17 @@ func New(d Drivers) *server.Server {
 	// claim those paths.
 	if d.Route53 != nil {
 		srv.Register(route53.New(d.Route53))
+	}
+
+	// GuardDuty uses REST-JSON path + method routing with NO version prefix, so
+	// its Matches predicate gates on the first path segment being a known
+	// GuardDuty root (detector, admin, invitation, tags, malware-scan,
+	// malware-scans, malware-protection-plan, object-malware-scan, organization).
+	// It MUST register before S3's permissive REST catch-all, which would
+	// otherwise claim those paths. A bucket literally named one of these roots is
+	// shadowed — an accepted, documented limitation.
+	if d.GuardDuty != nil {
+		srv.Register(guarddutysrv.New(d.GuardDuty))
 	}
 
 	if d.S3 != nil {
