@@ -3,6 +3,8 @@ package oci
 
 import (
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/oci/identity"
+	"github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -70,6 +72,9 @@ func New(opts ...config.Option) *Provider {
 		Realm:         o.Realm,
 		Region:        o.OCIRegion(),
 	}
+	p.Identity = identity.New(o)
+
+	p.Monitoring = monitoring.New(o)
 
 	p.wireMonitoring()
 	p.wireDiscovery()

@@ -1907,6 +1907,337 @@
     }
   },
   {
+    "service": "configservice",
+    "interface": "Config",
+    "operations": [
+      {
+        "name": "AssociateResourceTypes",
+        "doc": "Recorder resource-type association."
+      },
+      {
+        "name": "BatchGetAggregateResourceConfig"
+      },
+      {
+        "name": "BatchGetResourceConfig"
+      },
+      {
+        "name": "DeleteAggregationAuthorization"
+      },
+      {
+        "name": "DeleteConfigRule"
+      },
+      {
+        "name": "DeleteConfigurationAggregator"
+      },
+      {
+        "name": "DeleteConfigurationRecorder"
+      },
+      {
+        "name": "DeleteConformancePack"
+      },
+      {
+        "name": "DeleteConnector"
+      },
+      {
+        "name": "DeleteDeliveryChannel"
+      },
+      {
+        "name": "DeleteEvaluationResults"
+      },
+      {
+        "name": "DeleteOrganizationConfigRule"
+      },
+      {
+        "name": "DeleteOrganizationConformancePack"
+      },
+      {
+        "name": "DeletePendingAggregationRequest"
+      },
+      {
+        "name": "DeleteRemediationConfiguration"
+      },
+      {
+        "name": "DeleteRemediationExceptions"
+      },
+      {
+        "name": "DeleteResourceConfig"
+      },
+      {
+        "name": "DeleteRetentionConfiguration"
+      },
+      {
+        "name": "DeleteServiceLinkedConfigurationRecorder"
+      },
+      {
+        "name": "DeleteStoredQuery"
+      },
+      {
+        "name": "DeliverConfigSnapshot"
+      },
+      {
+        "name": "DescribeAggregateComplianceByConfigRules",
+        "doc": "Aggregate compliance/resource queries (synthesized)."
+      },
+      {
+        "name": "DescribeAggregateComplianceByConformancePacks"
+      },
+      {
+        "name": "DescribeAggregationAuthorizations"
+      },
+      {
+        "name": "DescribeComplianceByConfigRule",
+        "doc": "Compliance (synthesized from recorded rules/evaluations)."
+      },
+      {
+        "name": "DescribeComplianceByResource"
+      },
+      {
+        "name": "DescribeConfigRuleEvaluationStatus"
+      },
+      {
+        "name": "DescribeConfigRules"
+      },
+      {
+        "name": "DescribeConfigurationAggregatorSourcesStatus"
+      },
+      {
+        "name": "DescribeConfigurationAggregators"
+      },
+      {
+        "name": "DescribeConfigurationRecorderStatus"
+      },
+      {
+        "name": "DescribeConfigurationRecorders"
+      },
+      {
+        "name": "DescribeConformancePackCompliance"
+      },
+      {
+        "name": "DescribeConformancePackStatus"
+      },
+      {
+        "name": "DescribeConformancePacks"
+      },
+      {
+        "name": "DescribeDeliveryChannelStatus"
+      },
+      {
+        "name": "DescribeDeliveryChannels"
+      },
+      {
+        "name": "DescribeOrganizationConfigRuleStatuses"
+      },
+      {
+        "name": "DescribeOrganizationConfigRules"
+      },
+      {
+        "name": "DescribeOrganizationConformancePackStatuses"
+      },
+      {
+        "name": "DescribeOrganizationConformancePacks"
+      },
+      {
+        "name": "DescribePendingAggregationRequests"
+      },
+      {
+        "name": "DescribeRemediationConfigurations"
+      },
+      {
+        "name": "DescribeRemediationExceptions"
+      },
+      {
+        "name": "DescribeRemediationExecutionStatus"
+      },
+      {
+        "name": "DescribeRetentionConfigurations"
+      },
+      {
+        "name": "DisassociateResourceTypes"
+      },
+      {
+        "name": "GetAggregateComplianceDetailsByConfigRule"
+      },
+      {
+        "name": "GetAggregateConfigRuleComplianceSummary"
+      },
+      {
+        "name": "GetAggregateConformancePackComplianceSummary"
+      },
+      {
+        "name": "GetAggregateDiscoveredResourceCounts"
+      },
+      {
+        "name": "GetAggregateResourceConfig"
+      },
+      {
+        "name": "GetComplianceDetailsByConfigRule"
+      },
+      {
+        "name": "GetComplianceDetailsByResource"
+      },
+      {
+        "name": "GetComplianceSummaryByConfigRule"
+      },
+      {
+        "name": "GetComplianceSummaryByResourceType"
+      },
+      {
+        "name": "GetConformancePackComplianceDetails"
+      },
+      {
+        "name": "GetConformancePackComplianceSummary"
+      },
+      {
+        "name": "GetConnector"
+      },
+      {
+        "name": "GetCustomRulePolicy"
+      },
+      {
+        "name": "GetDiscoveredResourceCounts"
+      },
+      {
+        "name": "GetOrganizationConfigRuleDetailedStatus"
+      },
+      {
+        "name": "GetOrganizationConformancePackDetailedStatus"
+      },
+      {
+        "name": "GetOrganizationCustomRulePolicy"
+      },
+      {
+        "name": "GetResourceConfigHistory"
+      },
+      {
+        "name": "GetResourceEvaluationSummary"
+      },
+      {
+        "name": "GetStoredQuery"
+      },
+      {
+        "name": "ListAggregateDiscoveredResources"
+      },
+      {
+        "name": "ListConfigurationRecorders"
+      },
+      {
+        "name": "ListConformancePackComplianceScores"
+      },
+      {
+        "name": "ListConnectors"
+      },
+      {
+        "name": "ListDiscoveredResources"
+      },
+      {
+        "name": "ListResourceEvaluations"
+      },
+      {
+        "name": "ListStoredQueries"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "PutAggregationAuthorization"
+      },
+      {
+        "name": "PutConfigRule",
+        "doc": "Config rules."
+      },
+      {
+        "name": "PutConfigurationAggregator",
+        "doc": "Aggregators and aggregation authorizations."
+      },
+      {
+        "name": "PutConfigurationRecorder",
+        "doc": "Configuration recorders."
+      },
+      {
+        "name": "PutConformancePack",
+        "doc": "Conformance packs."
+      },
+      {
+        "name": "PutConnector",
+        "doc": "Connectors (third-party service integrations; synthesized)."
+      },
+      {
+        "name": "PutDeliveryChannel",
+        "doc": "Delivery channels."
+      },
+      {
+        "name": "PutEvaluations"
+      },
+      {
+        "name": "PutExternalEvaluation"
+      },
+      {
+        "name": "PutOrganizationConfigRule",
+        "doc": "Organization config rules and conformance packs."
+      },
+      {
+        "name": "PutOrganizationConformancePack"
+      },
+      {
+        "name": "PutRemediationConfigurations",
+        "doc": "Remediation."
+      },
+      {
+        "name": "PutRemediationExceptions"
+      },
+      {
+        "name": "PutResourceConfig",
+        "doc": "Resource-configuration queries (synthesized from the emulator's own state)."
+      },
+      {
+        "name": "PutRetentionConfiguration",
+        "doc": "Retention configurations."
+      },
+      {
+        "name": "PutServiceLinkedConfigurationRecorder"
+      },
+      {
+        "name": "PutStoredQuery",
+        "doc": "Stored queries."
+      },
+      {
+        "name": "PutThirdPartyServiceLinkedConfigurationRecorder"
+      },
+      {
+        "name": "SelectAggregateResourceConfig"
+      },
+      {
+        "name": "SelectResourceConfig"
+      },
+      {
+        "name": "StartConfigRulesEvaluation"
+      },
+      {
+        "name": "StartConfigurationRecorder"
+      },
+      {
+        "name": "StartRemediationExecution"
+      },
+      {
+        "name": "StartResourceEvaluation",
+        "doc": "Resource evaluations (synthesized)."
+      },
+      {
+        "name": "StopConfigurationRecorder"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags."
+      },
+      {
+        "name": "UntagResource"
+      }
+    ],
+    "providers": {
+      "aws": "Config"
+    }
+  },
+  {
     "service": "containerregistry",
     "interface": "ContainerRegistry",
     "operations": [
@@ -3928,10 +4259,109 @@
         "name": "SetDefaultPolicyVersion"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "Compartments",
+        "doc": "Compartments is an OPTIONAL capability, discovered by type assertion (like",
+        "operations": [
+          {
+            "name": "CreateCompartment"
+          },
+          {
+            "name": "DeleteCompartment"
+          },
+          {
+            "name": "GetCompartment"
+          },
+          {
+            "name": "ListCompartments",
+            "doc": "ListCompartments returns the direct children of parentID, or every"
+          },
+          {
+            "name": "UpdateCompartment"
+          }
+        ]
+      },
+      {
+        "name": "OCIIdentity",
+        "doc": "OCIIdentity is an OPTIONAL capability, discovered by type assertion. The",
+        "operations": [
+          {
+            "name": "CreateOCIGroup"
+          },
+          {
+            "name": "CreateOCIGroupMembership"
+          },
+          {
+            "name": "CreateOCIUser"
+          },
+          {
+            "name": "DeleteOCIGroup"
+          },
+          {
+            "name": "DeleteOCIGroupMembership"
+          },
+          {
+            "name": "DeleteOCIUser"
+          },
+          {
+            "name": "GetOCIGroup"
+          },
+          {
+            "name": "GetOCIGroupMembership"
+          },
+          {
+            "name": "GetOCIUser"
+          },
+          {
+            "name": "ListOCIGroupMemberships",
+            "doc": "ListOCIGroupMemberships filters by compartment, and further by userID or"
+          },
+          {
+            "name": "ListOCIGroups"
+          },
+          {
+            "name": "ListOCIUsers"
+          },
+          {
+            "name": "UpdateOCIGroup"
+          },
+          {
+            "name": "UpdateOCIUser"
+          }
+        ]
+      },
+      {
+        "name": "StatementPolicies",
+        "doc": "StatementPolicies is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "CreateStatementPolicy"
+          },
+          {
+            "name": "DeleteStatementPolicy"
+          },
+          {
+            "name": "Evaluate",
+            "doc": "Evaluate reports whether any statement grants the request. OCI policies"
+          },
+          {
+            "name": "GetStatementPolicy"
+          },
+          {
+            "name": "ListStatementPolicies"
+          },
+          {
+            "name": "UpdateStatementPolicy"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "IAM",
       "azure": "IAM",
-      "gcp": "IAM"
+      "gcp": "IAM",
+      "oci": "Identity"
     }
   },
   {
@@ -4863,10 +5293,46 @@
         "name": "SetAlarmState"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "OCIMonitoring",
+        "doc": "OCIMonitoring is an OPTIONAL capability, discovered by type assertion. OCI",
+        "operations": [
+          {
+            "name": "CreateOCIAlarm"
+          },
+          {
+            "name": "DeleteOCIAlarm"
+          },
+          {
+            "name": "GetOCIAlarm"
+          },
+          {
+            "name": "ListOCIAlarms"
+          },
+          {
+            "name": "ListOCIMetrics"
+          },
+          {
+            "name": "OCIAlarmHistory"
+          },
+          {
+            "name": "PostMetricData"
+          },
+          {
+            "name": "SummarizeOCIMetrics"
+          },
+          {
+            "name": "UpdateOCIAlarm"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "CloudWatch",
       "azure": "Monitor",
-      "gcp": "CloudMonitoring"
+      "gcp": "CloudMonitoring",
+      "oci": "Monitoring"
     }
   },
   {

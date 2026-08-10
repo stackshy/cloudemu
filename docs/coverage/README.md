@@ -19,6 +19,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `cache` | [ElastiCache](./aws/elasticache.md) | [Cache](./azure/cache.md) | [Memorystore](./gcp/memorystore.md) | — | 17 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
+| `configservice` | [Config](./aws/config.md) | — | — | — | 102 |
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 14 |
 | `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
 | `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
@@ -28,7 +29,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |
 | `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
 | `glue` | [Glue](./aws/glue.md) | — | — | — | 299 |
-| `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | — | 40 |
+| `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | [Identity](./oci/identity.md) | 40 |
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
 | `kms` | [KMS](./aws/kms.md) | — | — | — | 45 |
@@ -37,7 +38,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `managedcassandra` | — | [ManagedCassandra](./azure/managedcassandra.md) | — | — | 15 |
 | `memorydb` | [MemoryDB](./aws/memorydb.md) | — | — | — | 33 |
 | `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | — | 14 |
-| `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | — | 12 |
+| `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | [Monitoring](./oci/monitoring.md) | 12 |
 | `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 20 |
 | `networking` | [VPC](./aws/vpc.md) | — | — | — | 3 |
 | `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | — | 9 |
@@ -55,5 +56,3 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 125 |
 | `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |
 | `wafv2` | [WAFv2](./aws/wafv2.md) | — | — | — | 39 |
-
-> **OCI**: foundation only — the provider scaffold exists (identity, IDs, wire layer) but no services are implemented yet, so every row above is `—`. See [oci/](./oci/).

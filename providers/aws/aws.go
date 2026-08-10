@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
+	"github.com/stackshy/cloudemu/v2/providers/aws/configservice"
 	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ecr"
@@ -168,6 +169,7 @@ type Provider struct {
 	SFN                 *sfn.Mock
 	CloudTrail          *cloudtrail.Mock
 	Glue                *glue.Mock
+	Config              *configservice.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -217,6 +219,7 @@ func New(opts ...config.Option) *Provider {
 		SFN:                 sfn.New(o),
 		CloudTrail:          cloudtrail.New(o),
 		Glue:                glue.New(o),
+		Config:              configservice.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}

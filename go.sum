@@ -152,6 +152,8 @@ github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2 h1:AEdVlfaKtqjQgnAZ71TAg
 github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2/go.mod h1:/s52Xxp5LWbfLCWtelG67FDNtpoOoxdnZEzcixGQwcM=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0 h1:5W/KOwsnZrdi7RD97G5Vto3XEuM70FAavWScfsli7gA=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0/go.mod h1:h1Iw2nkdpmAUJaa89RvX3cg/HGLgdSkCWpMNgKvBSHA=
+github.com/aws/aws-sdk-go-v2/service/configservice v1.68.4 h1:L37DoV4JOQFqucVUeYaJrrhIc1995EPra+8UtGRCsgo=
+github.com/aws/aws-sdk-go-v2/service/configservice v1.68.4/go.mod h1:CcqHkp94OiUOXcUgSc2moHZ97ISugWDoClGhmW17CFg=
 github.com/aws/aws-sdk-go-v2/service/docdb v1.48.15 h1:jvP746CYJno9fSBqvPMShLPVu+P9wetNsSb+xYk52ag=
 github.com/aws/aws-sdk-go-v2/service/docdb v1.48.15/go.mod h1:wMMgRe7xZVJu58h7CI06EV6n/QUOILSk53/3EYzkorg=
 github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1 h1:Vk+a1j2pXZHkkYqHmEdpwe8eX6NDtFSBGfzuauMEWYQ=
@@ -234,8 +236,8 @@ github.com/aws/aws-sdk-go-v2/service/sns v1.41.0 h1:GT6QdvVfByxl1/AJQe7PNbLtQDj0
 github.com/aws/aws-sdk-go-v2/service/sns v1.41.0/go.mod h1:5EnTxMpMVeiY0vcjjN/a958FFaHrS6XfXcyRBzDKDCE=
 github.com/aws/aws-sdk-go-v2/service/sqs v1.42.27 h1:QgaWXVmNDxv/U/3UIHfGb7ohvtFgerf/bYcYylj4i8E=
 github.com/aws/aws-sdk-go-v2/service/sqs v1.42.27/go.mod h1:8S6ExnLprS0oIeA8ZlHkJUJ0BMpKqnRPws/S0jegTqQ=
-github.com/aws/aws-sdk-go-v2/service/ssm v1.71.0 h1:Z5oWeBPXlKfYMctLgbnD0bXbhuqpxsV/KnZpsLLEMLQ=
-github.com/aws/aws-sdk-go-v2/service/ssm v1.71.0/go.mod h1:xabzRvdbMs3FG9kU5M6RUOuCW6wXDkpdIqoXXNzA1nQ=
+github.com/aws/aws-sdk-go-v2/service/ssm v1.73.4 h1:+QpoNtGPwN5o4VjM4UWs2a6sr1EpWB+9/y6oM4L0KTo=
+github.com/aws/aws-sdk-go-v2/service/ssm v1.73.4/go.mod h1:i4v4VFk+bLmZfg8WIZbuZluLsQj6SXHX6uZrCv3UcQY=
 github.com/aws/aws-sdk-go-v2/service/sso v1.30.15 h1:lFd1+ZSEYJZYvv9d6kXzhkZu07si3f+GQ1AaYwa2LUM=
 github.com/aws/aws-sdk-go-v2/service/sso v1.30.15/go.mod h1:WSvS1NLr7JaPunCXqpJnWk1Bjo7IxzZXrZi1QQCkuqM=
 github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.19 h1:dzztQ1YmfPrxdrOiuZRMF6fuOwWlWpD2StNLTceKpys=

@@ -17,7 +17,7 @@ These are produced from the driver interfaces in `services/*/driver` by `go gene
 
 ## Architecture (one paragraph)
 
-Three layers: a portable API (`services/<svc>/`) wraps a driver interface (`services/<svc>/driver/`), which each provider implements in `providers/{aws,azure,gcp}/<native>/` with `memstore`-backed mocks. AWS, Azure, and GCP are fully implemented. OCI (`providers/oci/`) is a foundation-only scaffold — its service fields are `nil` and it emulates nothing yet. Full detail: [docs/architecture.md](docs/architecture.md).
+Three layers: a portable API (`services/<svc>/`) wraps a driver interface (`services/<svc>/driver/`), which each provider implements in `providers/{aws,azure,gcp,oci}/<native>/` with `memstore`-backed mocks. AWS, Azure, and GCP are fully implemented. OCI (`providers/oci/`) is in progress — its foundation is in place and services land one at a time, so a service not yet built reads as `nil`; consult `docs/coverage/` for which ones exist rather than any prose. Full detail: [docs/architecture.md](docs/architecture.md).
 
 ## Build, test, lint
 

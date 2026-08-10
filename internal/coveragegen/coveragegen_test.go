@@ -2,7 +2,13 @@ package main
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/stackshy/cloudemu/v2/providers/aws"
+	"github.com/stackshy/cloudemu/v2/providers/azure"
+	"github.com/stackshy/cloudemu/v2/providers/gcp"
+	"github.com/stackshy/cloudemu/v2/providers/oci"
 )
 
 // loadServices runs the read-only half of the generator against the real repo.
@@ -69,17 +75,63 @@ func TestEmbeddedInterfacesFlatten(t *testing.T) {
 	}
 }
 
-// TestOCIReportsNoImplementedServices is the honesty guarantee: OCI declares
-// service fields but its factory constructs none, so the docs must not credit
-// it with any service.
-func TestOCIReportsNoImplementedServices(t *testing.T) {
+// TestCreditedServicesAreConstructed is the honesty guarantee: a provider is
+// credited with a service only when its factory actually builds one.
+//
+// The generator decides that by reading the factory's AST. This checks the same
+// claim against a real provider value, so a parsing bug cannot credit a slot
+// that is merely declared — which is what OCI's nil service fields would
+// otherwise do.
+func TestCreditedServicesAreConstructed(t *testing.T) {
 	services := loadServices(t)
 
+	built := map[string]map[string]bool{
+		"aws":   constructed(aws.New()),
+		"azure": constructed(azure.New()),
+		"gcp":   constructed(gcp.New()),
+		"oci":   constructed(oci.New()),
+	}
+
 	for name, svc := range services {
-		if native := svc.Providers["oci"]; native != "" {
-			t.Errorf("OCI credited with %q for service %q, but oci.New() constructs no services", native, name)
+		for prov, native := range svc.Providers {
+			if native == "" {
+				continue
+			}
+
+			if !built[prov][native] {
+				t.Errorf("%s credited with %q for service %q, but %s.New() leaves that field nil",
+					prov, native, name, prov)
+			}
 		}
 	}
+}
+
+// constructed returns the provider fields the factory actually populated. A
+// typed nil counts as unpopulated: it survives a != nil check and then panics.
+func constructed(provider any) map[string]bool {
+	v := reflect.ValueOf(provider).Elem()
+	out := map[string]bool{}
+
+	for i := range v.NumField() {
+		field := v.Field(i)
+
+		switch field.Kind() {
+		case reflect.Interface:
+			if field.IsNil() || (field.Elem().Kind() == reflect.Ptr && field.Elem().IsNil()) {
+				continue
+			}
+		case reflect.Ptr:
+			if field.IsNil() {
+				continue
+			}
+		default:
+			continue
+		}
+
+		out[v.Type().Field(i).Name] = true
+	}
+
+	return out
 }
 
 // TestFullyImplementedProvidersHaveServices makes sure the constructed-field

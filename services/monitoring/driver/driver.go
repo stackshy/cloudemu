@@ -113,3 +113,85 @@ type Monitoring interface {
 	// Alarm History
 	GetAlarmHistory(ctx context.Context, alarmName string, limit int) ([]AlarmHistoryEntry, error)
 }
+
+// OCIMetric identifies a compartment-scoped metric series. Timestamps and
+// Values are populated only by a summarize query.
+type OCIMetric struct {
+	CompartmentID string
+	Namespace     string
+	ResourceGroup string
+	Name          string
+	Dimensions    map[string]string
+	Resolution    string
+	Timestamps    []time.Time
+	Values        []float64
+}
+
+// OCIMetricFilter narrows a metric listing. Empty fields match anything.
+type OCIMetricFilter struct {
+	Namespace     string
+	ResourceGroup string
+	Name          string
+	Dimensions    map[string]string
+}
+
+// OCIMetricQuery selects the series to aggregate. Query is OCI's metric query
+// language, e.g. CpuUtilization[1m].mean().
+type OCIMetricQuery struct {
+	Namespace     string
+	ResourceGroup string
+	Query         string
+	Resolution    string
+	Dimensions    map[string]string
+	StartTime     time.Time
+	EndTime       time.Time
+}
+
+// OCIAlarmSpec describes an OCI alarm, whose condition is a single query string
+// rather than the portable metric/threshold pair.
+type OCIAlarmSpec struct {
+	DisplayName                string
+	CompartmentID              string
+	MetricCompartmentID        string
+	Namespace                  string
+	ResourceGroup              string
+	Query                      string
+	Resolution                 string
+	PendingDuration            string
+	Severity                   string
+	Body                       string
+	MessageFormat              string
+	RepeatNotificationDuration string
+	Destinations               []string
+	FreeformTags               map[string]string
+	DefinedTags                map[string]map[string]any
+	IsEnabled                  bool
+}
+
+// OCIAlarm is a stored alarm with its generated identity and current status.
+type OCIAlarm struct {
+	ID             string
+	Spec           OCIAlarmSpec
+	Status         string // "FIRING", "OK" or "SUSPENDED"
+	LifecycleState string
+	TimeCreated    time.Time
+	TimeUpdated    time.Time
+	TimeTriggered  time.Time
+}
+
+// OCIMonitoring is an OPTIONAL capability, discovered by type assertion. OCI
+// scopes every metric and alarm to a compartment and identifies alarms by OCID,
+// neither of which the portable model carries; drivers for other clouds do not
+// implement it.
+type OCIMonitoring interface {
+	PostMetricData(ctx context.Context, compartmentID, resourceGroup string, data []MetricDatum) error
+	ListOCIMetrics(ctx context.Context, compartmentID string, filter OCIMetricFilter) ([]OCIMetric, error)
+	SummarizeOCIMetrics(ctx context.Context, compartmentID string, query OCIMetricQuery) ([]OCIMetric, error)
+
+	CreateOCIAlarm(ctx context.Context, spec OCIAlarmSpec) (*OCIAlarm, error)
+	GetOCIAlarm(ctx context.Context, id string) (*OCIAlarm, error)
+	ListOCIAlarms(ctx context.Context, compartmentID string) ([]*OCIAlarm, error)
+	UpdateOCIAlarm(ctx context.Context, id string, spec OCIAlarmSpec) (*OCIAlarm, error)
+	DeleteOCIAlarm(ctx context.Context, id string) error
+	OCIAlarmHistory(ctx context.Context, id string, limit int) ([]AlarmHistoryEntry, error)
+}

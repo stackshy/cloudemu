@@ -12,6 +12,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
 | [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 14 |
+| [Config](./config.md) | `configservice` | 102 |
 | [DynamoDB](./dynamodb.md) | `database` | 24 |
 | [EC2](./ec2.md) | `compute` | 37 |
 | [ECR](./ecr.md) | `containerregistry` | 14 |

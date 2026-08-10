@@ -20,6 +20,26 @@ GCP's `monitoring` service · portable interface `driver.Monitoring` · [GCP ind
 | `PutMetricData` |  |
 | `SetAlarmState` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### OCIMonitoring
+
+OCIMonitoring is an OPTIONAL capability, discovered by type assertion. OCI
+
+| Operation | Description |
+| --- | --- |
+| `CreateOCIAlarm` |  |
+| `DeleteOCIAlarm` |  |
+| `GetOCIAlarm` |  |
+| `ListOCIAlarms` |  |
+| `ListOCIMetrics` |  |
+| `OCIAlarmHistory` |  |
+| `PostMetricData` |  |
+| `SummarizeOCIMetrics` |  |
+| `UpdateOCIAlarm` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
