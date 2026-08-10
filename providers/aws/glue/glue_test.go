@@ -296,6 +296,64 @@ func TestGetTableDoesNotAliasNested(t *testing.T) {
 	}
 }
 
+func TestCreateConnectionTypeValidation(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	// Types modeled by the SDK enum must be accepted.
+	for _, ct := range []string{"MYSQL", "POSTGRESQL", "ORACLE", "BIGQUERY", "JDBC"} {
+		err := m.CreateConnection(ctx, "", driver.Connection{Name: "c-" + ct, ConnectionType: ct})
+		if err != nil {
+			t.Fatalf("CreateConnection %s = %v, want success", ct, err)
+		}
+	}
+
+	// A type outside the SDK enum must be rejected.
+	err := m.CreateConnection(ctx, "", driver.Connection{Name: "bad", ConnectionType: "SNOWFLAKE"})
+	if !isException(err, driver.ExInvalidInput) {
+		t.Fatalf("CreateConnection SNOWFLAKE = %v, want InvalidInputException", err)
+	}
+}
+
+func TestCreateTriggerConditionalRequiresPredicate(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	// CONDITIONAL without a Predicate must be rejected.
+	_, err := m.CreateTrigger(ctx, driver.Trigger{Name: "t1", Type: "CONDITIONAL"})
+	if !isException(err, driver.ExInvalidInput) {
+		t.Fatalf("CONDITIONAL without Predicate = %v, want InvalidInputException", err)
+	}
+
+	// CONDITIONAL with a Predicate must succeed.
+	_, err = m.CreateTrigger(ctx, driver.Trigger{
+		Name: "t2", Type: "CONDITIONAL",
+		Predicate: map[string]any{"Logical": "ANY"},
+	})
+	if err != nil {
+		t.Fatalf("CONDITIONAL with Predicate = %v, want success", err)
+	}
+}
+
+func TestDeleteSchemaVersionsReportsFailingVersion(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateSchema(ctx, driver.Schema{Name: "s", DataFormat: "AVRO"}, "def-v1"); err != nil {
+		t.Fatalf("CreateSchema: %v", err)
+	}
+
+	// Version 5 does not exist; the error entry must carry that number in Values.
+	errs, err := m.DeleteSchemaVersions(ctx, "", "s", "5")
+	if err != nil {
+		t.Fatalf("DeleteSchemaVersions: %v", err)
+	}
+
+	if len(errs) != 1 || len(errs[0].Values) == 0 || errs[0].Values[0] != "5" {
+		t.Fatalf("DeleteSchemaVersions errors = %+v, want one entry with Values[0]==5", errs)
+	}
+}
+
 func isException(err error, want string) bool {
 	var apiErr *driver.APIError
 	if err == nil {

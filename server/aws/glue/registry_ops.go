@@ -3,6 +3,7 @@ package glue
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
@@ -368,10 +369,20 @@ func (h *Handler) deleteSchemaVersions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		out := make([]schemaVersionErrorJSON, 0, len(errs))
+
 		for i := range errs {
-			out = append(out, schemaVersionErrorJSON{
+			e := schemaVersionErrorJSON{
 				ErrorDetails: &errorDetailJSON{ErrorCode: errs[i].ErrorCode, ErrorMessage: errs[i].ErrorMessage},
-			})
+			}
+			// The driver carries the failing version number in Values[0]; surface
+			// it so callers can tell which version failed.
+			if len(errs[i].Values) > 0 {
+				if n, perr := strconv.ParseInt(errs[i].Values[0], 10, 64); perr == nil {
+					e.VersionNumber = n
+				}
+			}
+
+			out = append(out, e)
 		}
 
 		return deleteSchemaVersionsResponse{SchemaVersionErrors: out}, nil

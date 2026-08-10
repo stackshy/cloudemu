@@ -237,5 +237,33 @@ func TestSDKSynthesizedOpReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestSDKDeleteSchemaVersionsReportsFailingVersion(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	if _, err := c.CreateSchema(ctx, &awsglue.CreateSchemaInput{
+		SchemaName:       aws.String("s"),
+		DataFormat:       gluetypes.DataFormatAvro,
+		Compatibility:    gluetypes.CompatibilityNone,
+		SchemaDefinition: aws.String(`{"type":"record","name":"r","fields":[]}`),
+	}); err != nil {
+		t.Fatalf("CreateSchema: %v", err)
+	}
+
+	// Version 5 does not exist; the error item must name that version number,
+	// not the zero value.
+	out, err := c.DeleteSchemaVersions(ctx, &awsglue.DeleteSchemaVersionsInput{
+		SchemaId: &gluetypes.SchemaId{SchemaName: aws.String("s")},
+		Versions: aws.String("5"),
+	})
+	if err != nil {
+		t.Fatalf("DeleteSchemaVersions: %v", err)
+	}
+
+	if len(out.SchemaVersionErrors) != 1 || aws.ToInt64(out.SchemaVersionErrors[0].VersionNumber) != 5 {
+		t.Fatalf("SchemaVersionErrors = %+v, want one entry with VersionNumber==5", out.SchemaVersionErrors)
+	}
+}
+
 // smithyAPIError is asserted to ensure our error type is a modeled smithy error.
 var _ smithy.APIError = (*gluetypes.EntityNotFoundException)(nil)

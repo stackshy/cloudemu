@@ -26,7 +26,11 @@ func (m *Mock) CreateTrigger(_ context.Context, t driver.Trigger) (string, error
 		if t.Schedule == "" {
 			return "", invalidInput("a SCHEDULED trigger requires a Schedule")
 		}
-	case "CONDITIONAL", "ON_DEMAND", "EVENT":
+	case "CONDITIONAL":
+		if len(t.Predicate) == 0 {
+			return "", invalidInput("a CONDITIONAL trigger requires a Predicate")
+		}
+	case "ON_DEMAND", "EVENT":
 	default:
 		return "", invalidInput("trigger type %q is invalid", t.Type)
 	}
