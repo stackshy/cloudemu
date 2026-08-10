@@ -26,6 +26,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
+	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
@@ -64,6 +65,7 @@ import (
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
@@ -153,6 +155,9 @@ type Drivers struct {
 	// CloudTrail serves the CloudTrail JSON 1.1 protocol (X-Amz-Target prefix
 	// "CloudTrail_20131101.") against the cloudtrail driver.
 	CloudTrail cloudtraildriver.CloudTrail
+	// Glue serves the AWS Glue JSON 1.1 protocol (X-Amz-Target prefix
+	// "AWSGlue.") against the glue driver.
+	Glue gluedriver.Glue
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -238,6 +243,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		ACM:                 p.ACM,
 		Kinesis:             p.Kinesis,
 		CloudTrail:          p.CloudTrail,
+		Glue:                p.Glue,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -365,6 +371,12 @@ func New(d Drivers) *server.Server {
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.CloudTrail != nil {
 		srv.Register(cloudtrailsrv.New(d.CloudTrail))
+	}
+
+	// Glue matches the X-Amz-Target prefix "AWSGlue." — disjoint from the other
+	// JSON 1.1 services, so registration order is unconstrained.
+	if d.Glue != nil {
+		srv.Register(gluesrv.New(d.Glue))
 	}
 
 	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729." — disjoint from
