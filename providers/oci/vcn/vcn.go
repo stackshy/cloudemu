@@ -58,8 +58,10 @@ var (
 )
 
 type vcnData struct {
-	ID                    string
-	CIDRBlock             string
+	ID string
+	// CIDRBlocks holds every block the VCN carries; the first is the one the
+	// portable projection reports, since it has room for a single block.
+	CIDRBlocks            []string
 	State                 string
 	Tags                  map[string]string
 	DNSSupport            bool
@@ -92,6 +94,7 @@ type Mock struct {
 	privateIPs    *memstore.Store[*privateIPData]
 	dhcpOptions   *memstore.Store[*dhcpOptionsData]
 	peerings      *memstore.Store[*peeringData]
+	lpgs          *memstore.Store[*lpgData]
 	flowLogs      *memstore.Store[*flowLogData]
 	// scopes and created hold what the portable projections have no room for:
 	// the compartment a resource was created in and when, keyed by OCID.
@@ -117,6 +120,7 @@ func New(opts *config.Options) *Mock {
 		privateIPs:    memstore.New[*privateIPData](),
 		dhcpOptions:   memstore.New[*dhcpOptionsData](),
 		peerings:      memstore.New[*peeringData](),
+		lpgs:          memstore.New[*lpgData](),
 		flowLogs:      memstore.New[*flowLogData](),
 		scopes:        memstore.New[scope.Scope](),
 		created:       memstore.New[string](),
@@ -199,7 +203,7 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 	id := m.newOCID(typeVCN)
 	v := &vcnData{
 		ID:         id,
-		CIDRBlock:  cfg.CIDRBlock,
+		CIDRBlocks: []string{cfg.CIDRBlock},
 		State:      StateAvailable,
 		Tags:       copyTags(cfg.Tags),
 		DNSSupport: true,
@@ -225,7 +229,7 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 
 	v, ok := m.vcns.Get(id)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "VCN %q not found", id)
+		return vcnNotFound(id)
 	}
 
 	if err := m.vcnIsEmpty(id); err != nil {
@@ -271,6 +275,7 @@ func (m *Mock) vcnIsEmpty(id string) error {
 		{"peerings", anyIn(m.peerings, func(p *peeringData) bool {
 			return p.RequesterVCN == id || p.AccepterVCN == id
 		})},
+		{"local peering gateways", anyIn(m.lpgs, func(g *lpgData) bool { return g.VCNID == id })},
 	}
 
 	for _, a := range attached {
@@ -307,7 +312,7 @@ func (m *Mock) ModifyVPCAttribute(_ context.Context, id string, update driver.VP
 
 		return v
 	}) {
-		return cerrors.Newf(cerrors.NotFound, "VCN %q not found", id)
+		return vcnNotFound(id)
 	}
 
 	return nil
@@ -324,7 +329,7 @@ func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]strin
 		v.Tags = mergeTagMap(v.Tags, tags)
 		return v
 	}) {
-		return cerrors.Newf(cerrors.NotFound, "VCN %q not found", id)
+		return vcnNotFound(id)
 	}
 
 	return nil
@@ -339,7 +344,7 @@ func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error 
 		v.Tags = removeTagMapKeys(v.Tags, keys)
 		return v
 	}) {
-		return cerrors.Newf(cerrors.NotFound, "VCN %q not found", id)
+		return vcnNotFound(id)
 	}
 
 	return nil
@@ -351,6 +356,90 @@ type DefaultResources struct {
 	RouteTableID   string
 	SecurityListID string
 	DHCPOptionsID  string
+}
+
+// VCNCIDRs returns every CIDR block a VCN carries, primary first. It is part
+// of the same optional capability as Scope: the portable VPC projection holds
+// a single block, while OCI lets a VCN carry several.
+func (m *Mock) VCNCIDRs(vcnID string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	v, ok := m.vcns.Get(vcnID)
+	if !ok {
+		return nil
+	}
+
+	return copyStringSlice(v.CIDRBlocks)
+}
+
+// AddVCNCIDR adds a secondary CIDR block to a VCN, refusing one that overlaps
+// a block it already carries.
+func (m *Mock) AddVCNCIDR(_ context.Context, vcnID, cidr string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := validateCIDR(cidr, "VCN"); err != nil {
+		return err
+	}
+
+	// The read and the write below are separated so neither runs inside the
+	// other's store lock; m.mu is what makes the pair atomic.
+	v, ok := m.vcns.Get(vcnID)
+	if !ok {
+		return vcnNotFound(vcnID)
+	}
+
+	for _, held := range v.CIDRBlocks {
+		if cidrsOverlap(held, cidr) {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"CIDR block %q overlaps CIDR block %q of VCN %q", cidr, held, vcnID)
+		}
+	}
+
+	m.vcns.Update(vcnID, func(v *vcnData) *vcnData {
+		v.CIDRBlocks = appendItem(v.CIDRBlocks, cidr)
+
+		return v
+	})
+
+	return nil
+}
+
+// RemoveVCNCIDR drops a CIDR block from a VCN. Real OCI refuses while a subnet
+// still sits in the block, and a VCN always keeps at least one block.
+func (m *Mock) RemoveVCNCIDR(_ context.Context, vcnID, cidr string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	v, ok := m.vcns.Get(vcnID)
+	if !ok {
+		return vcnNotFound(vcnID)
+	}
+
+	at := indexOf(v.CIDRBlocks, cidr)
+	if at < 0 {
+		return cerrors.Newf(cerrors.NotFound, "VCN %q has no CIDR block %q", vcnID, cidr)
+	}
+
+	if len(v.CIDRBlocks) == 1 {
+		return cerrors.Newf(cerrors.FailedPrecondition, "VCN %q must keep at least one CIDR block", vcnID)
+	}
+
+	for _, s := range m.subnets.All() {
+		if s.VCNID == vcnID && cidrContains(cidr, s.CIDRBlock) {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"CIDR block %q still holds subnet %q", cidr, s.ID)
+		}
+	}
+
+	m.vcns.Update(vcnID, func(v *vcnData) *vcnData {
+		v.CIDRBlocks = removeAt(v.CIDRBlocks, at)
+
+		return v
+	})
+
+	return nil
 }
 
 // Defaults returns the default resources created with a VCN.
@@ -373,12 +462,26 @@ func (m *Mock) Defaults(vcnID string) DefaultResources {
 func toVPCInfo(v *vcnData) driver.VPCInfo {
 	return driver.VPCInfo{
 		ID:                 v.ID,
-		CIDRBlock:          v.CIDRBlock,
+		CIDRBlock:          primaryCIDR(v),
 		State:              v.State,
 		Tags:               copyTags(v.Tags),
 		EnableDNSSupport:   v.DNSSupport,
 		EnableDNSHostnames: v.DNSHostnames,
 	}
+}
+
+func vcnNotFound(id string) error {
+	return cerrors.Newf(cerrors.NotFound, "VCN %q not found", id)
+}
+
+// primaryCIDR is the block a VCN was created with, and the one the portable
+// projection reports.
+func primaryCIDR(v *vcnData) string {
+	if len(v.CIDRBlocks) == 0 {
+		return ""
+	}
+
+	return v.CIDRBlocks[0]
 }
 
 // describeResources lists a store, filtered to ids when any are given.
@@ -453,6 +556,41 @@ func cidrContains(outer, inner string) bool {
 	innerOnes, _ := innerNet.Mask.Size()
 
 	return outerNet.Contains(innerIP) && outerOnes <= innerOnes
+}
+
+// containedInAny reports whether any of the outer blocks fully contains inner.
+func containedInAny(outer []string, inner string) bool {
+	for _, o := range outer {
+		if cidrContains(o, inner) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// anyOverlap reports whether any block on one side overlaps any on the other.
+func anyOverlap(left, right []string) bool {
+	for _, l := range left {
+		for _, r := range right {
+			if cidrsOverlap(l, r) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// indexOf returns the position of want in src, or -1.
+func indexOf(src []string, want string) int {
+	for i, v := range src {
+		if v == want {
+			return i
+		}
+	}
+
+	return -1
 }
 
 // cidrsOverlap reports whether two CIDR blocks share any address.

@@ -23,6 +23,7 @@ const (
 	tagServiceName      = internalTagPrefix + "ociServiceName"
 	tagIsEnabled        = internalTagPrefix + "ociIsEnabled"
 	tagBlockTraffic     = internalTagPrefix + "ociBlockTraffic"
+	tagRouteTable       = internalTagPrefix + "ociRouteTableId"
 )
 
 // OCI protocol numbers, as they appear in security rules.
@@ -50,6 +51,8 @@ const (
 	directionIngress = "INGRESS"
 	directionEgress  = "EGRESS"
 	entityCIDRBlock  = "CIDR_BLOCK"
+	entityServiceGW  = "SERVICE_CIDR_BLOCK"
+	entityNSG        = "NETWORK_SECURITY_GROUP"
 	cidrAnywhere     = "0.0.0.0/0"
 	actionAllow      = "allow"
 	trueValue        = "true"
@@ -61,6 +64,9 @@ const (
 // ocidPrefixParts is the number of dot-separated segments before an OCID's
 // resource type.
 const ocidPrefixParts = 2
+
+// ocidTypeNSG is the OCID type segment the provider mints NSGs with.
+const ocidTypeNSG = "networksecuritygroup"
 
 // pairStride steps a variadic key/value list.
 const pairStride = 2
@@ -213,6 +219,27 @@ func toDriverRule(r *securityRule, egress bool) netdriver.SecurityRule {
 	return out
 }
 
+// entityTypeOf classifies what a rule's source or destination names. The
+// portable rule carries the value but not its kind, so the kind is read back
+// off the value: an OCI service label or NSG OCID is not a CIDR block.
+func entityTypeOf(value string) string {
+	switch {
+	case ocidType(value) == ocidTypeNSG:
+		return entityNSG
+	case isCIDR(value):
+		return entityCIDRBlock
+	default:
+		return entityServiceGW
+	}
+}
+
+// isCIDR reports whether a value parses as a CIDR block.
+func isCIDR(value string) bool {
+	_, _, err := net.ParseCIDR(value)
+
+	return err == nil
+}
+
 // portOptions returns whichever protocol option block the rule carries.
 func portOptions(r *securityRule) *protocolOptions {
 	if r.TCPOptions != nil {
@@ -231,11 +258,11 @@ func toWireRule(r *netdriver.SecurityRule, egress bool) securityRule {
 	if egress {
 		out.Direction = directionEgress
 		out.Destination = r.CIDR
-		out.DestinationType = entityCIDRBlock
+		out.DestinationType = entityTypeOf(r.CIDR)
 	} else {
 		out.Direction = directionIngress
 		out.Source = r.CIDR
-		out.SourceType = entityCIDRBlock
+		out.SourceType = entityTypeOf(r.CIDR)
 	}
 
 	if r.FromPort != 0 || r.ToPort != 0 {

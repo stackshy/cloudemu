@@ -27,9 +27,8 @@ func (m *Mock) SetTags(id string, tags map[string]string) error {
 	return cerrors.Newf(cerrors.NotFound, "resource %q not found", id)
 }
 
-// setCoreTags replaces the tags of a VCN-owned resource.
-//
-//nolint:dupl // one switch per resource family; a single switch busts the cyclomatic budget.
+// setCoreTags replaces the tags of a VCN-owned resource. One switch per
+// resource family; a single switch busts the cyclomatic budget.
 func (m *Mock) setCoreTags(id string, tags map[string]string) bool {
 	switch ocidType(id) {
 	case typeVCN:
@@ -48,8 +47,6 @@ func (m *Mock) setCoreTags(id string, tags map[string]string) bool {
 }
 
 // setGatewayTags replaces the tags of a gateway or address resource.
-//
-//nolint:dupl // see setCoreTags.
 func (m *Mock) setGatewayTags(id string, tags map[string]string) bool {
 	switch ocidType(id) {
 	case typeInternetGW:
@@ -62,6 +59,8 @@ func (m *Mock) setGatewayTags(id string, tags map[string]string) bool {
 		return replaceTags(m.publicIPs, id, tags, func(p *publicIPData, t map[string]string) { p.Tags = t })
 	case typeVNIC:
 		return replaceTags(m.vnics, id, tags, func(v *vnicData, t map[string]string) { v.Tags = t })
+	case typeLocalPeering:
+		return replaceTags(m.lpgs, id, tags, func(g *lpgData, t map[string]string) { g.Tags = t })
 	default:
 		return false
 	}

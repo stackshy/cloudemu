@@ -64,7 +64,7 @@ func (m *Mock) addRouteTable(v *vcnData, tags map[string]string, isDefault bool)
 		ID:    id,
 		VCNID: v.ID,
 		Routes: []driver.Route{{
-			DestinationCIDR: v.CIDRBlock,
+			DestinationCIDR: primaryCIDR(v),
 			TargetID:        targetLocal,
 			TargetType:      targetLocal,
 			State:           routeStateActive,
@@ -240,6 +240,12 @@ func (m *Mock) routeTargetVCNs(targetID string) (vcnIDs []string, known bool) {
 
 	if p, ok := m.peerings.Get(targetID); ok {
 		return []string{p.RequesterVCN, p.AccepterVCN}, true
+	}
+
+	// OCI route rules name the local peering gateway on this side, not the
+	// connection, so a rule may point at one whether or not it is peered yet.
+	if g, ok := m.lpgs.Get(targetID); ok {
+		return []string{g.VCNID}, true
 	}
 
 	return nil, false

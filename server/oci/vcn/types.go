@@ -27,6 +27,11 @@ type vcnRequest struct {
 	DNSLabel   string   `json:"dnsLabel,omitempty"`
 }
 
+// vcnCIDRRequest is the body of the addVcnCidr and removeVcnCidr actions.
+type vcnCIDRRequest struct {
+	CIDRBlock string `json:"cidrBlock"`
+}
+
 type vcnResponse struct {
 	ID                    string            `json:"id"`
 	CompartmentID         string            `json:"compartmentId"`
@@ -248,6 +253,32 @@ type serviceGatewayResponse struct {
 	DefinedTags    definedTags       `json:"definedTags"`
 }
 
+type lpgRequest struct {
+	resourceRequest
+
+	VCNID        string `json:"vcnId,omitempty"`
+	RouteTableID string `json:"routeTableId,omitempty"`
+	// PeerID is the far end named by the connect action.
+	PeerID string `json:"peerId,omitempty"`
+}
+
+type lpgResponse struct {
+	ID                        string            `json:"id"`
+	CompartmentID             string            `json:"compartmentId"`
+	VCNID                     string            `json:"vcnId"`
+	DisplayName               string            `json:"displayName,omitempty"`
+	PeerID                    string            `json:"peerId,omitempty"`
+	PeeringStatus             string            `json:"peeringStatus"`
+	PeerAdvertisedCIDR        string            `json:"peerAdvertisedCidr,omitempty"`
+	PeerAdvertisedCIDRDetails []string          `json:"peerAdvertisedCidrDetails,omitempty"`
+	RouteTableID              string            `json:"routeTableId,omitempty"`
+	IsCrossTenancyPeering     bool              `json:"isCrossTenancyPeering"`
+	LifecycleState            string            `json:"lifecycleState"`
+	TimeCreated               string            `json:"timeCreated,omitempty"`
+	FreeformTags              map[string]string `json:"freeformTags"`
+	DefinedTags               definedTags       `json:"definedTags"`
+}
+
 // dhcpOption is one entry in a DHCP options set. OCI discriminates on type.
 type dhcpOption struct {
 	Type              string   `json:"type"`
@@ -319,8 +350,10 @@ type privateIPResponse struct {
 type publicIPRequest struct {
 	resourceRequest
 
-	Lifetime    string `json:"lifetime,omitempty"`
-	PrivateIPID string `json:"privateIpId,omitempty"`
+	Lifetime string `json:"lifetime,omitempty"`
+	// PrivateIPID is a pointer because OCI reads an omitted field as "leave the
+	// assignment alone" and an empty string as "unassign".
+	PrivateIPID *string `json:"privateIpId,omitempty"`
 }
 
 type publicIPResponse struct {

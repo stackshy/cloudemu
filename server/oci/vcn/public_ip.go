@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	vcnprovider "github.com/stackshy/cloudemu/v2/providers/oci/vcn"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -13,8 +14,13 @@ import (
 // to in OCI.
 const assignedEntityPrivateIP = "PRIVATE_IP"
 
-// publicIPScopeRegion is the scope a reserved public IP lives at.
-const publicIPScopeRegion = "REGION"
+// Public IP scopes. A reserved address is drawn from a regional pool and
+// survives reassignment; an ephemeral one lives and dies with the private IP
+// it is attached to, so its scope is that IP's availability domain.
+const (
+	publicIPScopeRegion = "REGION"
+	publicIPScopeAD     = "AVAILABILITY_DOMAIN"
+)
 
 // Public IPs.
 
@@ -40,8 +46,27 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	lifetime := req.Lifetime
+	if lifetime == "" {
+		lifetime = vcnprovider.LifetimeReserved
+	}
+
+	privateIPID := ""
+	if req.PrivateIPID != nil {
+		privateIPID = *req.PrivateIPID
+	}
+
+	// An ephemeral address exists only as an attachment, so OCI refuses to
+	// create one that names no private IP.
+	if lifetime == vcnprovider.LifetimeEphemeral && privateIPID == "" {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+			"privateIpId is required for an ephemeral public IP")
+
+		return
+	}
+
 	info, err := h.net.AllocateAddress(r.Context(), netdriver.ElasticIPConfig{
-		AllocationMethod: req.Lifetime,
+		AllocationMethod: lifetime,
 		Tags:             withInternal(req.FreeformTags, tagDisplayName, req.DisplayName),
 	})
 	if err != nil {
@@ -54,8 +79,8 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request) {
 	// OCI assigns at create; the portable driver splits allocate from
 	// associate, so an associate that fails has to release the address the
 	// first half already allocated.
-	if req.PrivateIPID != "" {
-		if err := h.assign(r.Context(), info.AllocationID, req.PrivateIPID); err != nil {
+	if privateIPID != "" {
+		if err := h.assign(r.Context(), info.AllocationID, privateIPID); err != nil {
 			_ = h.net.ReleaseAddress(r.Context(), info.AllocationID)
 
 			ocirest.WriteDriverError(w, r, err)
@@ -63,7 +88,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		info.AssociationID = req.PrivateIPID
+		info.AssociationID = privateIPID
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusOK, h.toPublicIPResponse(info))
@@ -124,9 +149,13 @@ func (h *Handler) updatePublicIP(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 
-	if err := h.reassign(r.Context(), info, req.PrivateIPID); err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
+	// An omitted privateIpId leaves the assignment alone; an empty one asks
+	// for the address to be unassigned.
+	if req.PrivateIPID != nil {
+		if err := h.moveAssignment(r.Context(), info, *req.PrivateIPID); err != nil {
+			ocirest.WriteDriverError(w, r, err)
+			return
+		}
 	}
 
 	tags := updatedTags(info.Tags, req.FreeformTags, tagDisplayName, req.DisplayName)
@@ -137,9 +166,26 @@ func (h *Handler) updatePublicIP(w http.ResponseWriter, r *http.Request, id stri
 	}
 
 	info.Tags = tags
-	info.AssociationID = req.PrivateIPID
 
 	ocirest.WriteJSON(w, r, http.StatusOK, h.toPublicIPResponse(info))
+}
+
+// moveAssignment applies an update's privateIpId. An ephemeral address is
+// pinned to the private IP it was created on for its whole life, so OCI
+// refuses to move or unassign one and deleting it is the only way to let go.
+func (h *Handler) moveAssignment(ctx context.Context, info *netdriver.ElasticIP, privateIPID string) error {
+	if info.AllocationMethod == vcnprovider.LifetimeEphemeral && privateIPID != info.AssociationID {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"ephemeral public IP %s cannot be reassigned or unassigned; delete it instead", info.AllocationID)
+	}
+
+	if err := h.reassign(ctx, info, privateIPID); err != nil {
+		return err
+	}
+
+	info.AssociationID = privateIPID
+
+	return nil
 }
 
 // reassign moves a public IP onto the named private IP, detaching first when
@@ -213,12 +259,42 @@ func (h *Handler) publicIPAllowed(ctx context.Context, privateIPID string) error
 }
 
 func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, id string) {
-	if err := h.net.ReleaseAddress(r.Context(), id); err != nil {
+	info, err := h.findPublicIP(r.Context(), id)
+	if err != nil {
+		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
+	if err := h.release(r.Context(), info); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
+}
+
+// release unassigns an assigned address before deleting it, which is what
+// OCI's DeletePublicIp does and the only way an ephemeral can be let go. The
+// portable driver keeps EC2's refusal to release an assigned address, so the
+// unassign happens here and is undone when the release is refused.
+func (h *Handler) release(ctx context.Context, info *netdriver.ElasticIP) error {
+	if info.AssociationID == "" {
+		return h.net.ReleaseAddress(ctx, info.AllocationID)
+	}
+
+	if err := h.net.DisassociateAddress(ctx, info.AssociationID); err != nil {
+		return err
+	}
+
+	if err := h.net.ReleaseAddress(ctx, info.AllocationID); err != nil {
+		// The private IP was this address's a moment ago, so this restores the
+		// binding; nothing better is available if it does not.
+		_, _ = h.net.AssociateAddress(ctx, info.AllocationID, info.AssociationID)
+
+		return err
+	}
+
+	return nil
 }
 
 func (h *Handler) findPublicIP(ctx context.Context, id string) (*netdriver.ElasticIP, error) {
@@ -241,7 +317,7 @@ func (h *Handler) toPublicIPResponse(info *netdriver.ElasticIP) publicIPResponse
 		IPAddress:      info.PublicIP,
 		DisplayName:    tagOr(info.Tags, tagDisplayName, ""),
 		Lifetime:       info.AllocationMethod,
-		Scope:          publicIPScopeRegion,
+		Scope:          publicIPScope(info.AllocationMethod),
 		LifecycleState: lifecycleAvailable,
 		TimeCreated:    h.extras.Created(info.AllocationID),
 		FreeformTags:   freeformOf(info.Tags),
@@ -255,4 +331,13 @@ func (h *Handler) toPublicIPResponse(info *netdriver.ElasticIP) publicIPResponse
 	}
 
 	return out
+}
+
+// publicIPScope reports the scope an address of the given lifetime lives at.
+func publicIPScope(lifetime string) string {
+	if lifetime == vcnprovider.LifetimeEphemeral {
+		return publicIPScopeAD
+	}
+
+	return publicIPScopeRegion
 }

@@ -7,6 +7,7 @@
 //
 //	POST/GET             /20160918/vcns                    — create, list
 //	GET/PUT/DELETE       /20160918/vcns/{id}               — get, update, delete
+//	POST                 /20160918/vcns/{id}/actions/{addVcnCidr,removeVcnCidr}
 //	POST                 /20160918/{collection}/{id}/actions/changeCompartment
 //	POST/GET             /20160918/subnets                 — create, list (by vcnId)
 //	GET/PUT/DELETE       /20160918/subnets/{id}
@@ -24,6 +25,16 @@
 //	GET/PUT              /20160918/vnics/{id}
 //	POST/GET/PUT/DELETE  /20160918/privateIps[/{id}]
 //	POST/GET/PUT/DELETE  /20160918/publicIps[/{id}]
+//	POST/GET/PUT/DELETE  /20160918/localPeeringGateways[/{id}]
+//	POST                 /20160918/localPeeringGateways/{id}/actions/connect
+//
+// Not emulated: /drgs, /drgAttachments and /remotePeeringConnections, which
+// the networking driver has no shape for — the handler claims them anyway so a
+// caller gets a 501 naming the gap rather than a bare 404 — and
+// /vcns/{id}/actions/modifyVcnCidr, which addVcnCidr and removeVcnCidr cover
+// between them. Resources report AVAILABLE from the moment they are created:
+// every CloudEmu mutation is synchronous, so the PROVISIONING and TERMINATING
+// states an SDK waiter may poll for are never observable.
 package vcn
 
 import (
@@ -56,6 +67,15 @@ const (
 	segVNICs            = "vnics"
 	segPrivateIPs       = "privateIps"
 	segPublicIPs        = "publicIps"
+	segLPGs             = "localPeeringGateways"
+)
+
+// Collections this handler claims in order to report them as unemulated, so a
+// caller reaching for one is told why rather than left with a bare 404.
+const (
+	segDRGs           = "drgs"
+	segDRGAttachments = "drgAttachments"
+	segRemotePeerings = "remotePeeringConnections"
 )
 
 // Sub-collections and actions.
@@ -68,6 +88,9 @@ const (
 	actionAddRules          = "addSecurityRules"
 	actionRemoveRules       = "removeSecurityRules"
 	actionUpdateRules       = "updateSecurityRules"
+	actionAddVCNCIDR        = "addVcnCidr"
+	actionRemoveVCNCIDR     = "removeVcnCidr"
+	actionConnect           = "connect"
 )
 
 // Error codes the handler raises itself.
@@ -93,6 +116,10 @@ type Extras interface {
 	Defaults(vcnID string) vcnprovider.DefaultResources
 	SetTags(id string, tags map[string]string) error
 
+	VCNCIDRs(vcnID string) []string
+	AddVCNCIDR(ctx context.Context, vcnID, cidr string) error
+	RemoveVCNCIDR(ctx context.Context, vcnID, cidr string) error
+
 	ReplaceRoutes(ctx context.Context, routeTableID string, routes []netdriver.Route) error
 	ReplaceNetworkACLRules(ctx context.Context, aclID string, rules []netdriver.NetworkACLRule) error
 
@@ -104,6 +131,13 @@ type Extras interface {
 	UpdateDHCPOptions(
 		ctx context.Context, id string, name *string, serverType string, customDNS, searchDomains []string,
 	) (*vcnprovider.DHCPOptions, error)
+
+	CreateLocalPeeringGateway(
+		ctx context.Context, vcnID string, tags map[string]string,
+	) (*vcnprovider.LocalPeeringGateway, error)
+	DeleteLocalPeeringGateway(ctx context.Context, id string) error
+	DescribeLocalPeeringGateways(ctx context.Context, ids []string) ([]vcnprovider.LocalPeeringGateway, error)
+	ConnectLocalPeeringGateways(ctx context.Context, id, peerID string) error
 
 	DescribeVNICs(ctx context.Context, ids []string) ([]vcnprovider.VNIC, error)
 	UpdateVNIC(ctx context.Context, id string, name, hostname *string, nsgIDs []string) (*vcnprovider.VNIC, error)
@@ -149,7 +183,8 @@ func (*Handler) Matches(r *http.Request) bool {
 	switch rt.Collection {
 	case segVCNs, segSubnets, segNSGs, segSecurityLists, segRouteTables,
 		segInternetGateways, segNATGateways, segServiceGateways,
-		segDHCPOptions, segVNICs, segPrivateIPs, segPublicIPs:
+		segDHCPOptions, segVNICs, segPrivateIPs, segPublicIPs, segLPGs,
+		segDRGs, segDRGAttachments, segRemotePeerings:
 		return true
 	}
 
@@ -183,7 +218,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rt route) {
 	switch rt.Collection {
 	case segVCNs:
-		serveCRUD(w, r, rt, h.vcnOps())
+		h.serveVCN(w, r, rt)
 	case segSubnets:
 		serveCRUD(w, r, rt, h.subnetOps())
 	case segNSGs:
@@ -205,7 +240,8 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rt rou
 	}
 }
 
-// serveGatewayCollection dispatches the three gateway collections.
+// serveGatewayCollection dispatches the gateway collections, and reports the
+// ones CloudEmu does not emulate.
 func (h *Handler) serveGatewayCollection(w http.ResponseWriter, r *http.Request, rt route) {
 	switch rt.Collection {
 	case segInternetGateways:
@@ -214,9 +250,23 @@ func (h *Handler) serveGatewayCollection(w http.ResponseWriter, r *http.Request,
 		serveCRUD(w, r, rt, h.natGatewayOps())
 	case segServiceGateways:
 		serveCRUD(w, r, rt, h.serviceGatewayOps())
+	case segLPGs:
+		h.serveLPG(w, r, rt)
+	case segDRGs, segDRGAttachments, segRemotePeerings:
+		unemulated(w, r, rt.Collection)
 	default:
 		ocirest.WriteError(w, r, http.StatusNotFound, codeNotFound, "unknown collection "+rt.Collection)
 	}
+}
+
+// unemulated reports a collection the handler claims but cannot serve. The
+// networking driver models no dynamic routing gateway, so a DRG, its
+// attachments and the remote peering connections riding on it would be shapes
+// with nothing behind them; local peering gateways carry the VCN-to-VCN
+// traffic CloudEmu does model.
+func unemulated(w http.ResponseWriter, r *http.Request, collection string) {
+	ocirest.WriteError(w, r, http.StatusNotImplemented, codeNotImplemented,
+		collection+" is not emulated; use localPeeringGateways for VCN-to-VCN connectivity")
 }
 
 // crud is one collection's five operations.

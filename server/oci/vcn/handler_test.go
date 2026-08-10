@@ -162,6 +162,12 @@ func TestMatches(t *testing.T) {
 		{name: "vnics", method: http.MethodGet, path: "/20160918/vnics/ocid1.vnic.oc1.iad.a", want: true},
 		{name: "private ips", method: http.MethodGet, path: "/20160918/privateIps", want: true},
 		{name: "public ips", method: http.MethodGet, path: "/20160918/publicIps", want: true},
+		{name: "local peering gateways", method: http.MethodGet, path: "/20160918/localPeeringGateways", want: true},
+		{name: "local peering gateway connect", method: http.MethodPost,
+			path: "/20160918/localPeeringGateways/ocid1.localpeeringgateway.oc1.iad.a/actions/connect", want: true},
+		{name: "drgs, claimed to be refused", method: http.MethodGet, path: "/20160918/drgs", want: true},
+		{name: "remote peerings, claimed to be refused", method: http.MethodGet,
+			path: "/20160918/remotePeeringConnections", want: true},
 
 		{name: "compute instances", method: http.MethodGet, path: "/20160918/instances", want: false},
 		{name: "compute vnic attachments", method: http.MethodGet, path: "/20160918/vnicAttachments", want: false},
@@ -384,6 +390,56 @@ func TestNSGOperations(t *testing.T) {
 	t.Run("unknown action", func(t *testing.T) {
 		unknown := f.do(http.MethodPost, base+"/actions/explode", map[string]any{})
 		assert.Equal(t, http.StatusNotFound, unknown.Code)
+	})
+
+	t.Run("a rule keeps the kind of entity it names", func(t *testing.T) {
+		const service = "all-iad-services-in-oracle-services-network"
+
+		added := f.do(http.MethodPost, base+"/actions/addSecurityRules", map[string]any{
+			"securityRules": []map[string]any{
+				{
+					"direction":       "EGRESS",
+					"protocol":        "6",
+					"destination":     service,
+					"destinationType": "SERVICE_CIDR_BLOCK",
+				},
+				{
+					"direction":  "INGRESS",
+					"protocol":   "6",
+					"source":     nsgID,
+					"sourceType": "NETWORK_SECURITY_GROUP",
+				},
+				{
+					"direction":  "INGRESS",
+					"protocol":   "6",
+					"source":     "10.0.0.0/8",
+					"sourceType": "CIDR_BLOCK",
+				},
+			},
+		})
+		require.Equal(t, http.StatusOK, added.Code, added.Body.String())
+
+		listed := decodeList(t, f.do(http.MethodGet, base+"/securityRules", nil))
+		byValue := map[string]map[string]any{}
+
+		for _, rule := range listed {
+			if v, ok := rule["source"].(string); ok && v != "" {
+				byValue[v] = rule
+			}
+
+			if v, ok := rule["destination"].(string); ok && v != "" {
+				byValue[v] = rule
+			}
+		}
+
+		require.Contains(t, byValue, service)
+		assert.Equal(t, "SERVICE_CIDR_BLOCK", byValue[service]["destinationType"])
+
+		require.Contains(t, byValue, nsgID)
+		assert.Equal(t, "NETWORK_SECURITY_GROUP", byValue[nsgID]["sourceType"])
+
+		require.Contains(t, byValue, "10.0.0.0/8")
+		assert.Equal(t, "CIDR_BLOCK", byValue["10.0.0.0/8"]["sourceType"])
 	})
 
 	t.Run("vnics sub-collection", func(t *testing.T) {
@@ -725,14 +781,127 @@ func TestVNICAndIPOperations(t *testing.T) {
 
 		id, _ := body["id"].(string)
 
-		blocked := f.do(http.MethodDelete, "/20160918/publicIps/"+id, nil)
-		require.Equal(t, http.StatusConflict, blocked.Code, "an assigned address cannot be released")
+		renamed := f.do(http.MethodPut, "/20160918/publicIps/"+id, map[string]any{"displayName": "renamed"})
+		require.Equal(t, http.StatusOK, renamed.Code)
+		assert.Equal(t, privateIPID, decode(t, renamed)["privateIpId"],
+			"an update naming no privateIpId leaves the assignment alone")
 
 		unassigned := f.do(http.MethodPut, "/20160918/publicIps/"+id, map[string]any{"privateIpId": ""})
 		require.Equal(t, http.StatusOK, unassigned.Code)
+		assert.Empty(t, decode(t, unassigned)["privateIpId"])
 
 		released := f.do(http.MethodDelete, "/20160918/publicIps/"+id, nil)
 		assert.Equal(t, http.StatusNoContent, released.Code)
+	})
+}
+
+// TestEphemeralPublicIPLifetime covers the three ways OCI treats an ephemeral
+// address differently from a reserved one: it reports the availability domain
+// as its scope, it stays pinned to one private IP for its whole life, and
+// deleting it is what unassigns it.
+func TestEphemeralPublicIPLifetime(t *testing.T) {
+	f := newFixture(t)
+	subnetID := f.newSubnet(f.newVCN())
+
+	vnic, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "host", nil)
+	require.NoError(t, err)
+
+	other, err := f.mock.CreateNetworkInterface(t.Context(), subnetID, "other", nil)
+	require.NoError(t, err)
+
+	target := f.primaryPrivateIP(vnic.ID)
+	spare := f.primaryPrivateIP(other.ID)
+
+	newEphemeral := func(t *testing.T, privateIPID string) string {
+		t.Helper()
+
+		w := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+			"compartmentId": compartment,
+			"lifetime":      "EPHEMERAL",
+			"privateIpId":   privateIPID,
+		})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		id, _ := decode(t, w)["id"].(string)
+
+		return id
+	}
+
+	drop := func(t *testing.T, id string) {
+		t.Helper()
+
+		w := f.do(http.MethodDelete, "/20160918/publicIps/"+id, nil)
+		require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+	}
+
+	t.Run("scope follows the lifetime", func(t *testing.T) {
+		id := newEphemeral(t, target)
+
+		got := f.do(http.MethodGet, "/20160918/publicIps/"+id, nil)
+		require.Equal(t, http.StatusOK, got.Code)
+		assert.Equal(t, "AVAILABILITY_DOMAIN", decode(t, got)["scope"])
+
+		reserved := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+			"compartmentId": compartment,
+			"lifetime":      "RESERVED",
+		})
+		require.Equal(t, http.StatusOK, reserved.Code, reserved.Body.String())
+		assert.Equal(t, "REGION", decode(t, reserved)["scope"])
+
+		reservedID, _ := decode(t, reserved)["id"].(string)
+
+		drop(t, id)
+		drop(t, reservedID)
+	})
+
+	t.Run("an ephemeral cannot be created unassigned", func(t *testing.T) {
+		w := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+			"compartmentId": compartment,
+			"lifetime":      "EPHEMERAL",
+		})
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+		listed := decodeList(t, f.do(http.MethodGet, "/20160918/publicIps?compartmentId="+compartment, nil))
+		assert.Empty(t, listed, "the refused create must not leave an orphan address")
+	})
+
+	t.Run("an ephemeral cannot be unassigned or moved", func(t *testing.T) {
+		id := newEphemeral(t, target)
+
+		unassign := f.do(http.MethodPut, "/20160918/publicIps/"+id, map[string]any{"privateIpId": ""})
+		require.Equal(t, http.StatusBadRequest, unassign.Code, unassign.Body.String())
+
+		moved := f.do(http.MethodPut, "/20160918/publicIps/"+id, map[string]any{"privateIpId": spare})
+		require.Equal(t, http.StatusBadRequest, moved.Code, moved.Body.String())
+
+		got := f.do(http.MethodGet, "/20160918/publicIps/"+id, nil)
+		require.Equal(t, http.StatusOK, got.Code)
+		assert.Equal(t, target, decode(t, got)["privateIpId"], "a refused update must leave the binding intact")
+
+		drop(t, id)
+	})
+
+	t.Run("delete releases an assigned ephemeral", func(t *testing.T) {
+		id := newEphemeral(t, target)
+
+		drop(t, id)
+
+		assert.Equal(t, http.StatusNotFound, f.do(http.MethodGet, "/20160918/publicIps/"+id, nil).Code)
+
+		listed := decodeList(t, f.do(http.MethodGet, "/20160918/publicIps?compartmentId="+compartment, nil))
+		assert.Empty(t, listed, "the deleted address must not survive as a record")
+
+		// The private IP has to come back free, or the 1:1 guard refuses every
+		// later address on it.
+		again := f.do(http.MethodPost, "/20160918/publicIps", map[string]any{
+			"compartmentId": compartment,
+			"lifetime":      "EPHEMERAL",
+			"privateIpId":   target,
+		})
+		require.Equal(t, http.StatusOK, again.Code, again.Body.String())
+
+		reused, _ := decode(t, again)["id"].(string)
+		drop(t, reused)
 	})
 }
 
@@ -856,6 +1025,290 @@ func TestProhibitPublicIPOnVnicIsEnforced(t *testing.T) {
 		require.Equal(t, http.StatusOK, got.Code)
 		assert.Equal(t, allowedTarget, decode(t, got)["privateIpId"])
 	})
+}
+
+// TestVCNCIDRBlocks covers a VCN carrying more than one block: every block it
+// holds accepts subnets, and the blocks can be added and removed after create.
+func TestVCNCIDRBlocks(t *testing.T) {
+	f := newFixture(t)
+
+	const (
+		second = "192.168.0.0/16"
+		third  = "172.16.0.0/16"
+	)
+
+	created := f.do(http.MethodPost, "/20160918/vcns", map[string]any{
+		"compartmentId": compartment,
+		"cidrBlocks":    []string{vcnCIDR, second},
+		"displayName":   "multi-cidr",
+	})
+	require.Equal(t, http.StatusOK, created.Code, created.Body.String())
+
+	body := decode(t, created)
+	id, _ := body["id"].(string)
+
+	assert.Equal(t, vcnCIDR, body["cidrBlock"], "the first block is the primary one")
+	assert.Equal(t, []any{vcnCIDR, second}, body["cidrBlocks"])
+
+	addCIDR := "/20160918/vcns/" + id + "/actions/addVcnCidr"
+	removeCIDR := "/20160918/vcns/" + id + "/actions/removeVcnCidr"
+
+	newSubnet := func(t *testing.T, cidr string) *httptest.ResponseRecorder {
+		t.Helper()
+
+		return f.do(http.MethodPost, "/20160918/subnets", map[string]any{
+			"compartmentId": compartment,
+			"vcnId":         id,
+			"cidrBlock":     cidr,
+		})
+	}
+
+	t.Run("a subnet may sit in any block the VCN carries", func(t *testing.T) {
+		first := newSubnet(t, "10.0.1.0/24")
+		require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+
+		secondary := newSubnet(t, "192.168.1.0/24")
+		require.Equal(t, http.StatusOK, secondary.Code, secondary.Body.String())
+
+		outside := newSubnet(t, "172.31.0.0/24")
+		assert.Equal(t, http.StatusBadRequest, outside.Code, "a block the VCN does not carry is still refused")
+	})
+
+	t.Run("cidrBlock and cidrBlocks are mutually exclusive", func(t *testing.T) {
+		w := f.do(http.MethodPost, "/20160918/vcns", map[string]any{
+			"compartmentId": compartment,
+			"cidrBlock":     vcnCIDR,
+			"cidrBlocks":    []string{second},
+		})
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("a refused block leaves no half-built VCN", func(t *testing.T) {
+		before := decodeList(t, f.do(http.MethodGet, "/20160918/vcns?compartmentId="+compartment, nil))
+
+		w := f.do(http.MethodPost, "/20160918/vcns", map[string]any{
+			"compartmentId": compartment,
+			"cidrBlocks":    []string{"10.1.0.0/16", "10.1.1.0/24"},
+		})
+		require.Equal(t, http.StatusBadRequest, w.Code, "the second block overlaps the first")
+
+		after := decodeList(t, f.do(http.MethodGet, "/20160918/vcns?compartmentId="+compartment, nil))
+		assert.Len(t, after, len(before))
+	})
+
+	t.Run("addVcnCidr records a work request", func(t *testing.T) {
+		w := f.do(http.MethodPost, addCIDR, map[string]any{"cidrBlock": third})
+		require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+		wrID := w.Header().Get(ocirest.HeaderWorkRequestID)
+		require.NotEmpty(t, wrID)
+
+		wr, ok := f.work.Get(wrID)
+		require.True(t, ok)
+		assert.Equal(t, "ADD_VCN_CIDR", wr.OperationType)
+		require.Len(t, wr.Resources, 1)
+		assert.Equal(t, id, wr.Resources[0].Identifier)
+
+		got := decode(t, f.do(http.MethodGet, "/20160918/vcns/"+id, nil))
+		assert.Equal(t, []any{vcnCIDR, second, third}, got["cidrBlocks"])
+
+		added := newSubnet(t, "172.16.1.0/24")
+		assert.Equal(t, http.StatusOK, added.Code, added.Body.String())
+	})
+
+	t.Run("an overlapping block is refused", func(t *testing.T) {
+		w := f.do(http.MethodPost, addCIDR, map[string]any{"cidrBlock": "10.0.128.0/17"})
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("cidrBlock is required", func(t *testing.T) {
+		w := f.do(http.MethodPost, addCIDR, map[string]any{})
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("removeVcnCidr refuses a block still holding a subnet", func(t *testing.T) {
+		w := f.do(http.MethodPost, removeCIDR, map[string]any{"cidrBlock": second})
+		assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	})
+
+	t.Run("removeVcnCidr drops an empty block", func(t *testing.T) {
+		empty := f.do(http.MethodPost, addCIDR, map[string]any{"cidrBlock": "10.200.0.0/16"})
+		require.Equal(t, http.StatusAccepted, empty.Code)
+
+		w := f.do(http.MethodPost, removeCIDR, map[string]any{"cidrBlock": "10.200.0.0/16"})
+		require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+		got := decode(t, f.do(http.MethodGet, "/20160918/vcns/"+id, nil))
+		assert.Equal(t, []any{vcnCIDR, second, third}, got["cidrBlocks"])
+
+		gone := newSubnet(t, "10.200.1.0/24")
+		assert.Equal(t, http.StatusBadRequest, gone.Code, "the removed block no longer accepts subnets")
+	})
+
+	t.Run("an unknown action is not found", func(t *testing.T) {
+		w := f.do(http.MethodPost, "/20160918/vcns/"+id+"/actions/modifyVcnCidr",
+			map[string]any{"originalCidrBlock": second, "newCidrBlock": "192.168.0.0/17"})
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("only POST", func(t *testing.T) {
+		w := f.do(http.MethodGet, addCIDR, nil)
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+}
+
+// TestLocalPeeringGateways covers the VCN-to-VCN path an SDK client reaches
+// for: a gateway either side, connected by the action, and torn down from one
+// end.
+func TestLocalPeeringGateways(t *testing.T) {
+	f := newFixture(t)
+	local := f.newVCN()
+
+	remote := f.do(http.MethodPost, "/20160918/vcns", map[string]any{
+		"compartmentId": compartment,
+		"cidrBlock":     "192.168.0.0/16",
+		"displayName":   "remote-vcn",
+	})
+	require.Equal(t, http.StatusOK, remote.Code, remote.Body.String())
+
+	remoteID, _ := decode(t, remote)["id"].(string)
+
+	newLPG := func(t *testing.T, vcnID, name string) string {
+		t.Helper()
+
+		w := f.do(http.MethodPost, "/20160918/localPeeringGateways", map[string]any{
+			"compartmentId": compartment,
+			"vcnId":         vcnID,
+			"displayName":   name,
+		})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		body := decode(t, w)
+		assert.Equal(t, "NEW", body["peeringStatus"])
+		assert.Equal(t, vcnID, body["vcnId"])
+
+		id, _ := body["id"].(string)
+
+		return id
+	}
+
+	here := newLPG(t, local, "here")
+	there := newLPG(t, remoteID, "there")
+
+	t.Run("connect peers both ends", func(t *testing.T) {
+		w := f.do(http.MethodPost, "/20160918/localPeeringGateways/"+here+"/actions/connect",
+			map[string]any{"peerId": there})
+		require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+
+		got := decode(t, f.do(http.MethodGet, "/20160918/localPeeringGateways/"+here, nil))
+		assert.Equal(t, "PEERED", got["peeringStatus"])
+		assert.Equal(t, there, got["peerId"])
+		assert.Equal(t, "192.168.0.0/16", got["peerAdvertisedCidr"], "the far end's blocks are advertised")
+
+		far := decode(t, f.do(http.MethodGet, "/20160918/localPeeringGateways/"+there, nil))
+		assert.Equal(t, "PEERED", far["peeringStatus"])
+		assert.Equal(t, here, far["peerId"])
+		assert.Equal(t, vcnCIDR, far["peerAdvertisedCidr"])
+	})
+
+	t.Run("a route may point at the gateway", func(t *testing.T) {
+		table := f.do(http.MethodPost, "/20160918/routeTables", map[string]any{
+			"compartmentId": compartment,
+			"vcnId":         local,
+			"displayName":   "to-peer",
+			"routeRules": []map[string]any{
+				{"destination": "192.168.0.0/16", "networkEntityId": here},
+			},
+		})
+		require.Equal(t, http.StatusOK, table.Code, table.Body.String())
+
+		wrong := f.do(http.MethodPost, "/20160918/routeTables", map[string]any{
+			"compartmentId": compartment,
+			"vcnId":         local,
+			"routeRules": []map[string]any{
+				{"destination": "192.168.0.0/16", "networkEntityId": there},
+			},
+		})
+		assert.Equal(t, http.StatusBadRequest, wrong.Code, "the far end's gateway serves another VCN")
+	})
+
+	t.Run("connect refuses a gateway that is already peered", func(t *testing.T) {
+		w := f.do(http.MethodPost, "/20160918/localPeeringGateways/"+here+"/actions/connect",
+			map[string]any{"peerId": there})
+		assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	})
+
+	t.Run("peerId is required", func(t *testing.T) {
+		w := f.do(http.MethodPost, "/20160918/localPeeringGateways/"+here+"/actions/connect", map[string]any{})
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("list filters by compartment and VCN", func(t *testing.T) {
+		all := decodeList(t, f.do(http.MethodGet, "/20160918/localPeeringGateways?compartmentId="+compartment, nil))
+		assert.Len(t, all, 2)
+
+		byVCN := decodeList(t, f.do(http.MethodGet,
+			"/20160918/localPeeringGateways?compartmentId="+compartment+"&vcnId="+local, nil))
+		require.Len(t, byVCN, 1)
+		assert.Equal(t, here, byVCN[0]["id"])
+
+		elsewhere := decodeList(t, f.do(http.MethodGet,
+			"/20160918/localPeeringGateways?compartmentId="+otherCompartment, nil))
+		assert.Empty(t, elsewhere)
+	})
+
+	t.Run("the VCN cannot be deleted while a gateway is on it", func(t *testing.T) {
+		w := f.do(http.MethodDelete, "/20160918/vcns/"+remoteID, nil)
+		assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	})
+
+	t.Run("update renames and re-targets the route table", func(t *testing.T) {
+		w := f.do(http.MethodPut, "/20160918/localPeeringGateways/"+here, map[string]any{
+			"displayName": "renamed",
+			"freeformTags": map[string]string{
+				"env": "test",
+			},
+		})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		body := decode(t, w)
+		assert.Equal(t, "renamed", body["displayName"])
+		assert.Equal(t, "PEERED", body["peeringStatus"])
+	})
+
+	t.Run("deleting one end revokes the other", func(t *testing.T) {
+		w := f.do(http.MethodDelete, "/20160918/localPeeringGateways/"+there, nil)
+		require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+
+		got := decode(t, f.do(http.MethodGet, "/20160918/localPeeringGateways/"+here, nil))
+		assert.Equal(t, "REVOKED", got["peeringStatus"])
+		assert.Empty(t, got["peerId"])
+
+		assert.Equal(t, http.StatusNotFound,
+			f.do(http.MethodGet, "/20160918/localPeeringGateways/"+there, nil).Code)
+	})
+
+	t.Run("unknown action", func(t *testing.T) {
+		w := f.do(http.MethodPost, "/20160918/localPeeringGateways/"+here+"/actions/explode", map[string]any{})
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+// TestUnemulatedCollections covers the collections the handler claims in order
+// to say it does not serve them.
+func TestUnemulatedCollections(t *testing.T) {
+	f := newFixture(t)
+
+	for _, collection := range []string{"drgs", "drgAttachments", "remotePeeringConnections"} {
+		t.Run(collection, func(t *testing.T) {
+			w := f.do(http.MethodGet, "/20160918/"+collection+"?compartmentId="+compartment, nil)
+			require.Equal(t, http.StatusNotImplemented, w.Code)
+
+			body := decode(t, w)
+			assert.Equal(t, "NotImplemented", body["code"])
+			assert.Contains(t, body["message"], "localPeeringGateways")
+		})
+	}
 }
 
 func TestChangeCompartment(t *testing.T) {

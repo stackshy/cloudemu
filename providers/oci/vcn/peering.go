@@ -15,8 +15,8 @@ const (
 )
 
 // A peering connection is OCI's pair of connected local peering gateways.
-// The gateways themselves have no home in the portable driver, so the mock
-// models the connection only and the wire layer does not serve them.
+// The gateways have no home in the portable driver, so this is what a portable
+// caller sees; the wire layer serves the gateways either side of it.
 type peeringData struct {
 	ID           string
 	RequesterVCN string
@@ -32,6 +32,21 @@ func (m *Mock) CreatePeeringConnection(_ context.Context, cfg driver.PeeringConf
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	p, err := m.createPeering(cfg, PeeringStatusPending)
+	if err != nil {
+		return nil, err
+	}
+
+	info := toPeeringInfo(p)
+
+	return &info, nil
+}
+
+// createPeering is CreatePeeringConnection without the lock, so a caller
+// already holding m.mu — connecting a pair of local peering gateways — can
+// reach it without re-entering. The peering OCID carries OCI's local peering
+// gateway type segment, which is what a route rule points at.
+func (m *Mock) createPeering(cfg driver.PeeringConfig, status string) (*peeringData, error) {
 	if cfg.RequesterVPC == "" || cfg.AccepterVPC == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "both requester and accepter VCN OCIDs are required")
 	}
@@ -46,7 +61,7 @@ func (m *Mock) CreatePeeringConnection(_ context.Context, cfg driver.PeeringConf
 		return nil, cerrors.Newf(cerrors.NotFound, "accepter VCN %q not found", cfg.AccepterVPC)
 	}
 
-	if cidrsOverlap(requester.CIDRBlock, accepter.CIDRBlock) {
+	if anyOverlap(requester.CIDRBlocks, accepter.CIDRBlocks) {
 		return nil, cerrors.New(cerrors.InvalidArgument, "peered VCNs must not have overlapping CIDR blocks")
 	}
 
@@ -55,7 +70,7 @@ func (m *Mock) CreatePeeringConnection(_ context.Context, cfg driver.PeeringConf
 		ID:           id,
 		RequesterVCN: cfg.RequesterVPC,
 		AccepterVCN:  cfg.AccepterVPC,
-		Status:       PeeringStatusPending,
+		Status:       status,
 		CreatedAt:    m.now(),
 		Tags:         copyTags(cfg.Tags),
 	}
@@ -63,9 +78,7 @@ func (m *Mock) CreatePeeringConnection(_ context.Context, cfg driver.PeeringConf
 	m.peerings.Set(id, p)
 	m.record(id)
 
-	info := toPeeringInfo(p)
-
-	return &info, nil
+	return p, nil
 }
 
 // AcceptPeeringConnection accepts a pending peering.
@@ -100,13 +113,20 @@ func (m *Mock) setPeeringStatus(peeringID, status string) error {
 	})
 }
 
-// DeletePeeringConnection deletes a peering.
+// DeletePeeringConnection deletes a peering, revoking the gateways either side
+// of it so neither is left pointing at a connection that is gone.
 func (m *Mock) DeletePeeringConnection(_ context.Context, peeringID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.peerings.Delete(peeringID) {
 		return cerrors.Newf(cerrors.NotFound, "peering %q not found", peeringID)
+	}
+
+	for id, g := range m.lpgs.All() {
+		if g.PeeringID == peeringID {
+			m.revokeLPG(id)
+		}
 	}
 
 	m.forget(peeringID)

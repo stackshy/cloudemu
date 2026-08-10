@@ -193,6 +193,14 @@ func TestDeleteVPCRefusesWhileOccupied(t *testing.T) {
 				require.NoError(t, err)
 			},
 		},
+		{
+			name: "local peering gateway remains",
+			occupy: func(t *testing.T, m *vcn.Mock, vcnID string) {
+				t.Helper()
+				_, err := m.CreateLocalPeeringGateway(context.Background(), vcnID, nil)
+				require.NoError(t, err)
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -206,6 +214,170 @@ func TestDeleteVPCRefusesWhileOccupied(t *testing.T) {
 			assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 		})
 	}
+}
+
+func TestVCNCIDRBlocks(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	parent := newVCN(t, m, vcnCIDR)
+
+	t.Run("a new VCN carries the block it was created with", func(t *testing.T) {
+		assert.Equal(t, []string{vcnCIDR}, m.VCNCIDRs(parent.ID))
+		assert.Nil(t, m.VCNCIDRs("ocid1.vcn.oc1.iad.missing"))
+	})
+
+	t.Run("a subnet may sit in a block added later", func(t *testing.T) {
+		_, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: "192.168.1.0/24"})
+		require.Error(t, err, "the block is not on the VCN yet")
+
+		require.NoError(t, m.AddVCNCIDR(ctx, parent.ID, "192.168.0.0/16"))
+		assert.Equal(t, []string{vcnCIDR, "192.168.0.0/16"}, m.VCNCIDRs(parent.ID))
+
+		_, err = m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: "192.168.1.0/24"})
+		require.NoError(t, err)
+	})
+
+	t.Run("the primary block still reports through the portable projection", func(t *testing.T) {
+		vcns, err := m.DescribeVPCs(ctx, []string{parent.ID})
+		require.NoError(t, err)
+		require.Len(t, vcns, 1)
+		assert.Equal(t, vcnCIDR, vcns[0].CIDRBlock)
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		tests := []struct {
+			name string
+			run  func() error
+			code cerrors.Code
+		}{
+			{
+				name: "an overlapping block",
+				run:  func() error { return m.AddVCNCIDR(ctx, parent.ID, "10.0.128.0/17") },
+				code: cerrors.InvalidArgument,
+			},
+			{
+				name: "an unparseable block",
+				run:  func() error { return m.AddVCNCIDR(ctx, parent.ID, "not-a-cidr") },
+				code: cerrors.InvalidArgument,
+			},
+			{
+				name: "an unknown VCN",
+				run:  func() error { return m.AddVCNCIDR(ctx, "ocid1.vcn.oc1.iad.missing", "10.9.0.0/16") },
+				code: cerrors.NotFound,
+			},
+			{
+				name: "removing a block the VCN does not carry",
+				run:  func() error { return m.RemoveVCNCIDR(ctx, parent.ID, "172.16.0.0/16") },
+				code: cerrors.NotFound,
+			},
+			{
+				name: "removing a block still holding a subnet",
+				run:  func() error { return m.RemoveVCNCIDR(ctx, parent.ID, "192.168.0.0/16") },
+				code: cerrors.FailedPrecondition,
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				err := tc.run()
+				require.Error(t, err)
+				assert.Equal(t, tc.code, cerrors.GetCode(err))
+			})
+		}
+	})
+
+	t.Run("the last block cannot be removed", func(t *testing.T) {
+		other := newVCN(t, m, "10.50.0.0/16")
+
+		err := m.RemoveVCNCIDR(ctx, other.ID, "10.50.0.0/16")
+		require.Error(t, err)
+		assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+	})
+
+	t.Run("an empty block is removed", func(t *testing.T) {
+		require.NoError(t, m.AddVCNCIDR(ctx, parent.ID, "172.16.0.0/16"))
+		require.NoError(t, m.RemoveVCNCIDR(ctx, parent.ID, "172.16.0.0/16"))
+		assert.Equal(t, []string{vcnCIDR, "192.168.0.0/16"}, m.VCNCIDRs(parent.ID))
+	})
+}
+
+func TestLocalPeeringGateways(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	local := newVCN(t, m, vcnCIDR)
+	remote := newVCN(t, m, "192.168.0.0/16")
+
+	here, err := m.CreateLocalPeeringGateway(ctx, local.ID, map[string]string{"env": "test"})
+	require.NoError(t, err)
+	assert.Equal(t, vcn.PeeringNew, here.PeeringStatus)
+
+	there, err := m.CreateLocalPeeringGateway(ctx, remote.ID, nil)
+	require.NoError(t, err)
+
+	t.Run("an unknown VCN is refused", func(t *testing.T) {
+		_, err := m.CreateLocalPeeringGateway(ctx, "ocid1.vcn.oc1.iad.missing", nil)
+		require.Error(t, err)
+		assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+	})
+
+	t.Run("connecting peers both ends and stands up a connection", func(t *testing.T) {
+		require.NoError(t, m.ConnectLocalPeeringGateways(ctx, here.ID, there.ID))
+
+		gateways, err := m.DescribeLocalPeeringGateways(ctx, []string{here.ID, there.ID})
+		require.NoError(t, err)
+		require.Len(t, gateways, 2)
+
+		assert.Equal(t, vcn.PeeringPeered, gateways[0].PeeringStatus)
+		assert.Equal(t, there.ID, gateways[0].PeerID)
+		assert.Equal(t, []string{"192.168.0.0/16"}, gateways[0].PeerAdvertisedCIDRs)
+		assert.Equal(t, []string{vcnCIDR}, gateways[1].PeerAdvertisedCIDRs)
+
+		peerings, err := m.DescribePeeringConnections(ctx, nil)
+		require.NoError(t, err)
+		require.Len(t, peerings, 1)
+		assert.Equal(t, vcn.PeeringStatusActive, peerings[0].Status)
+	})
+
+	t.Run("connecting refuses a gateway that is not new", func(t *testing.T) {
+		err := m.ConnectLocalPeeringGateways(ctx, here.ID, there.ID)
+		require.Error(t, err)
+		assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+	})
+
+	t.Run("a VCN cannot peer with itself", func(t *testing.T) {
+		sibling, err := m.CreateLocalPeeringGateway(ctx, local.ID, nil)
+		require.NoError(t, err)
+
+		spare, err := m.CreateLocalPeeringGateway(ctx, local.ID, nil)
+		require.NoError(t, err)
+
+		err = m.ConnectLocalPeeringGateways(ctx, sibling.ID, spare.ID)
+		require.Error(t, err)
+		assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+		require.NoError(t, m.DeleteLocalPeeringGateway(ctx, sibling.ID))
+		require.NoError(t, m.DeleteLocalPeeringGateway(ctx, spare.ID))
+	})
+
+	t.Run("deleting one end revokes the other and drops the connection", func(t *testing.T) {
+		require.NoError(t, m.DeleteLocalPeeringGateway(ctx, there.ID))
+
+		gateways, err := m.DescribeLocalPeeringGateways(ctx, []string{here.ID})
+		require.NoError(t, err)
+		require.Len(t, gateways, 1)
+		assert.Equal(t, vcn.PeeringRevoked, gateways[0].PeeringStatus)
+		assert.Empty(t, gateways[0].PeerID)
+
+		peerings, err := m.DescribePeeringConnections(ctx, nil)
+		require.NoError(t, err)
+		assert.Empty(t, peerings)
+	})
+
+	t.Run("an unknown gateway is not found", func(t *testing.T) {
+		err := m.DeleteLocalPeeringGateway(ctx, "ocid1.localpeeringgateway.oc1.iad.missing")
+		require.Error(t, err)
+		assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+	})
 }
 
 func TestDeleteVPCTakesItsDefaultsWithIt(t *testing.T) {

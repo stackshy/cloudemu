@@ -57,11 +57,12 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 	return &info, nil
 }
 
-// validateSubnetCIDR checks containment in the VCN and overlap with siblings.
+// validateSubnetCIDR checks containment in any of the VCN's CIDR blocks and
+// overlap with siblings.
 func (m *Mock) validateSubnetCIDR(v *vcnData, cidr string) error {
-	if !cidrContains(v.CIDRBlock, cidr) {
+	if !containedInAny(v.CIDRBlocks, cidr) {
 		return cerrors.Newf(cerrors.InvalidArgument,
-			"subnet CIDR block %q is not within VCN CIDR block %q", cidr, v.CIDRBlock)
+			"subnet CIDR block %q is not within the CIDR blocks %v of VCN %q", cidr, v.CIDRBlocks, v.ID)
 	}
 
 	for _, s := range m.subnets.All() {
