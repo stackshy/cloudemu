@@ -32,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
 	networkfirewallsrv "github.com/stackshy/cloudemu/v2/server/aws/networkfirewall"
+	opensearchsrv "github.com/stackshy/cloudemu/v2/server/aws/opensearch"
 	"github.com/stackshy/cloudemu/v2/server/aws/rds"
 	"github.com/stackshy/cloudemu/v2/server/aws/redshift"
 	"github.com/stackshy/cloudemu/v2/server/aws/resourceexplorer2"
@@ -74,6 +75,7 @@ import (
 	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	opensearchdriver "github.com/stackshy/cloudemu/v2/services/opensearch/driver"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
@@ -127,6 +129,11 @@ type Drivers struct {
 	// SESV2 serves the AWS SES v2 REST-JSON API (path + method routing under the
 	// /v2/email/ version prefix) against the sesv2 driver.
 	SESV2 sesv2driver.SESV2
+
+	// OpenSearch serves the Amazon OpenSearch Service REST-JSON API (path +
+	// method routing under the /2021-01-01/ version prefix) against the
+	// opensearch driver.
+	OpenSearch opensearchdriver.OpenSearch
 
 	// Route53Resolver serves the AWS Route 53 Resolver JSON 1.1 protocol
 	// (X-Amz-Target prefix "Route53Resolver.") against the route53resolver driver.
@@ -219,6 +226,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		WAFv2:               p.WAFv2,
 		EFS:                 p.EFS,
 		SESV2:               p.SESV2,
+		OpenSearch:          p.OpenSearch,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
 		KMS:                 p.KMS,
@@ -379,6 +387,13 @@ func New(d Drivers) *server.Server {
 	// catch-all (no real bucket path begins with /v2/email/).
 	if d.SESV2 != nil {
 		srv.Register(sesv2srv.New(d.SESV2))
+	}
+
+	// OpenSearch uses REST-JSON path routing under the /2021-01-01/ version
+	// prefix; its Matches predicate gates on that prefix, so it must run before
+	// the S3 catch-all (no real bucket path begins with /2021-01-01/).
+	if d.OpenSearch != nil {
+		srv.Register(opensearchsrv.New(d.OpenSearch))
 	}
 
 	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver." —
