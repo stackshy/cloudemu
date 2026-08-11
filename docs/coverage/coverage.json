@@ -60,6 +60,135 @@
     }
   },
   {
+    "service": "apprunner",
+    "interface": "AppRunner",
+    "operations": [
+      {
+        "name": "AssociateCustomDomain",
+        "doc": "CustomDomain. The dnsTarget is the App Runner subdomain the"
+      },
+      {
+        "name": "CreateAutoScalingConfiguration",
+        "doc": "AutoScalingConfiguration."
+      },
+      {
+        "name": "CreateConnection",
+        "doc": "Connection."
+      },
+      {
+        "name": "CreateObservabilityConfiguration",
+        "doc": "ObservabilityConfiguration."
+      },
+      {
+        "name": "CreateService",
+        "doc": "Service."
+      },
+      {
+        "name": "CreateVpcConnector",
+        "doc": "VpcConnector."
+      },
+      {
+        "name": "CreateVpcIngressConnection",
+        "doc": "VpcIngressConnection."
+      },
+      {
+        "name": "DeleteAutoScalingConfiguration"
+      },
+      {
+        "name": "DeleteConnection"
+      },
+      {
+        "name": "DeleteObservabilityConfiguration"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeleteVpcConnector"
+      },
+      {
+        "name": "DeleteVpcIngressConnection"
+      },
+      {
+        "name": "DescribeAutoScalingConfiguration"
+      },
+      {
+        "name": "DescribeCustomDomains"
+      },
+      {
+        "name": "DescribeObservabilityConfiguration"
+      },
+      {
+        "name": "DescribeService"
+      },
+      {
+        "name": "DescribeVpcConnector"
+      },
+      {
+        "name": "DescribeVpcIngressConnection"
+      },
+      {
+        "name": "DisassociateCustomDomain"
+      },
+      {
+        "name": "ListAutoScalingConfigurations"
+      },
+      {
+        "name": "ListConnections"
+      },
+      {
+        "name": "ListObservabilityConfigurations"
+      },
+      {
+        "name": "ListOperations",
+        "doc": "Operations."
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListServicesForAutoScalingConfiguration"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListVpcConnectors"
+      },
+      {
+        "name": "ListVpcIngressConnections"
+      },
+      {
+        "name": "PauseService"
+      },
+      {
+        "name": "ResumeService"
+      },
+      {
+        "name": "StartDeployment"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDefaultAutoScalingConfiguration"
+      },
+      {
+        "name": "UpdateService"
+      },
+      {
+        "name": "UpdateVpcIngressConnection"
+      }
+    ],
+    "providers": {
+      "aws": "AppRunner"
+    }
+  },
+  {
     "service": "azureai",
     "interface": "AzureAI",
     "operations": [

@@ -6,6 +6,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | AWS service | Portable service | Operations |
 | --- | --- | --- |
 | [ACM](./acm.md) | `acm` | 17 |
+| [AppRunner](./apprunner.md) | `apprunner` | 37 |
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 29 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |

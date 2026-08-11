@@ -10,6 +10,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | Service | AWS | Azure | GCP | OCI | Operations |
 | --- | --- | --- | --- | --- | --- |
 | `acm` | [ACM](./aws/acm.md) | — | — | — | 17 |
+| `apprunner` | [AppRunner](./aws/apprunner.md) | — | — | — | 37 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | — | — | — | 65 |
