@@ -183,13 +183,22 @@ func (m *Mock) ListReplicators(
 }
 
 // DeleteReplicator removes a replicator and returns its terminal state.
-func (m *Mock) DeleteReplicator(_ context.Context, arn, _ string) (arnOut, state string, err error) {
+func (m *Mock) DeleteReplicator(_ context.Context, arn, currentVersion string) (arnOut, state string, err error) {
 	rd, err := m.getReplicator(arn)
 	if err != nil {
 		return "", "", err
 	}
 
 	rd.mu.Lock()
+
+	// Honor the optimistic-concurrency version: a stale currentVersion is a 400.
+	if currentVersion != "" && rd.version != currentVersion {
+		rd.mu.Unlock()
+
+		return "", "", badRequest("currentVersion %q does not match replicator version %q",
+			currentVersion, rd.version)
+	}
+
 	rd.replicator.State = replicatorStateDeleting
 	rd.mu.Unlock()
 

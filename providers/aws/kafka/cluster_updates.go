@@ -26,6 +26,28 @@ const (
 func (m *Mock) UpdateBrokerCount(
 	_ context.Context, arn, currentVersion string, target int32,
 ) (*driver.ClusterOperation, error) {
+	cd, err := m.getClusterBR(arn)
+	if err != nil {
+		return nil, err
+	}
+
+	cd.mu.RLock()
+	current := cd.cluster.NumberOfBrokerNodes
+	azs := numAZs(cd.cluster.BrokerNodeGroupInfo)
+	cd.mu.RUnlock()
+
+	// Real MSK: broker count can only increase, and the total must be a multiple
+	// of the number of Availability Zones (client subnets).
+	if target <= current {
+		return nil, badRequest(
+			"targetNumberOfBrokerNodes %d must be greater than the current count %d", target, current)
+	}
+
+	if azs > 0 && target%azs != 0 {
+		return nil, badRequest(
+			"targetNumberOfBrokerNodes %d must be a multiple of the %d Availability Zones", target, azs)
+	}
+
 	return m.mutateClusterBR(arn, currentVersion, opTypeUpdateBrokerCount, func(c *driver.Cluster) {
 		c.NumberOfBrokerNodes = target
 	})

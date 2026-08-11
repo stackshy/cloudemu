@@ -22,6 +22,7 @@ func copyRevision(r driver.ConfigurationRevision) driver.ConfigurationRevision {
 func snapshotConfig(c driver.Configuration) driver.Configuration {
 	out := c
 	out.KafkaVersions = copyStrings(c.KafkaVersions)
+	out.Tags = copyTags(c.Tags)
 	out.LatestRevision = copyRevision(c.LatestRevision)
 
 	if c.Revisions != nil {

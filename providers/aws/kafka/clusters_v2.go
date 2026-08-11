@@ -44,6 +44,10 @@ func (m *Mock) createClusterV2Provisioned(in driver.CreateClusterV2Input) (*driv
 		return nil, badRequest("provisioned.numberOfBrokerNodes must be greater than 0")
 	}
 
+	if err := validateBrokerNodeGroup(p.BrokerNodeGroupInfo); err != nil {
+		return nil, err
+	}
+
 	if err := validateStorageMode(p.StorageMode); err != nil {
 		return nil, err
 	}

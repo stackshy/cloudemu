@@ -51,6 +51,21 @@ func (m *Mock) CreateVpcConnection(_ context.Context, body json.RawMessage) (*dr
 		return nil, badRequest("targetClusterArn is required")
 	}
 
+	// The target cluster must exist and be a provisioned cluster (VPC connections
+	// are not supported for serverless clusters).
+	cd, err := m.getClusterBR(req.TargetClusterArn)
+	if err != nil {
+		return nil, err
+	}
+
+	cd.mu.RLock()
+	clusterType := cd.cluster.ClusterType
+	cd.mu.RUnlock()
+
+	if clusterType != driver.ClusterTypeProvisioned {
+		return nil, badRequest("target cluster %s is not a provisioned cluster", req.TargetClusterArn)
+	}
+
 	vpc := driver.VpcConnection{
 		VpcConnectionARN: m.vpcConnectionARN(),
 		TargetClusterARN: req.TargetClusterArn,

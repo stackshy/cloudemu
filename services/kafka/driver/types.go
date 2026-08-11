@@ -16,8 +16,16 @@ import (
 	"time"
 )
 
-// Cluster states reported via the ClusterInfo.State field. The emulator
-// provisions immediately Active and only transitions to Deleting on delete.
+// Cluster states reported via the ClusterInfo.State field.
+//
+// LIMITATION (synchronous lifecycle): the emulator provisions a cluster
+// immediately ACTIVE and applies every mutation synchronously, so a cluster is
+// only ever ACTIVE (or DELETING, briefly, on delete). It never passes through
+// the transient CREATING / UPDATING states, and delete removes the cluster
+// rather than leaving it DELETING. Consequently real MSK's rule "reject a
+// mutation while the cluster is CREATING / UPDATING / DELETING" is not
+// reproduced — back-to-back updates all succeed here. CREATING/UPDATING/FAILED
+// are retained to document the real MSK state enum.
 const (
 	ClusterStateActive   = "ACTIVE"
 	ClusterStateCreating = "CREATING"
@@ -116,6 +124,10 @@ type Configuration struct {
 	CreationTime   time.Time
 	LatestRevision ConfigurationRevision
 	Revisions      []ConfigurationRevision
+	// Tags are stored server-side for TagResource/ListTagsForResource. The MSK
+	// Configuration wire shape does not carry tags inline, so DescribeConfiguration
+	// does not render them.
+	Tags map[string]string
 }
 
 // CreateConfigurationInput describes a configuration to create (revision 1).

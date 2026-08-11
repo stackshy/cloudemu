@@ -2,6 +2,7 @@ package kafka_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -683,6 +684,131 @@ func TestCreateConfigurationRequiresServerProperties(t *testing.T) {
 	_, err := m.CreateConfiguration(context.Background(), driver.CreateConfigurationInput{Name: "cfg"})
 	if !isException(err, driver.ExBadRequest) {
 		t.Fatalf("config without serverProperties = %v, want BadRequestException", err)
+	}
+}
+
+// TestTagResourceAcrossResourceKinds verifies tag ops route by ARN to all four
+// taggable MSK resource kinds, not just clusters.
+func TestTagResourceAcrossResourceKinds(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	clusterARN := makeCluster(t, m, "tag-cluster")
+
+	cfg, err := m.CreateConfiguration(ctx, driver.CreateConfigurationInput{
+		Name: "tag-cfg", ServerProperties: []byte("auto.create.topics.enable=true"),
+	})
+	if err != nil {
+		t.Fatalf("CreateConfiguration: %v", err)
+	}
+
+	vpc, err := m.CreateVpcConnection(ctx,
+		[]byte(`{"targetClusterArn":"`+clusterARN+`","vpcId":"vpc-1"}`))
+	if err != nil {
+		t.Fatalf("CreateVpcConnection: %v", err)
+	}
+
+	rep, err := m.CreateReplicator(ctx, []byte(`{"replicatorName":"r","kafkaClusters":[],`+
+		`"replicationInfoList":[],"serviceExecutionRoleArn":"arn:aws:iam::0:role/r"}`))
+	if err != nil {
+		t.Fatalf("CreateReplicator: %v", err)
+	}
+
+	for _, arn := range []string{clusterARN, cfg.ARN, vpc.VpcConnectionARN, rep.ReplicatorARN} {
+		if err := m.TagResource(ctx, arn, map[string]string{"env": "test"}); err != nil {
+			t.Fatalf("TagResource(%s): %v", arn, err)
+		}
+
+		got, lerr := m.ListTagsForResource(ctx, arn)
+		if lerr != nil || got["env"] != "test" {
+			t.Fatalf("ListTagsForResource(%s) = %v %v, want env=test", arn, got, lerr)
+		}
+	}
+
+	// An ARN that names no known resource is a NotFoundException.
+	if _, err := m.ListTagsForResource(ctx, "arn:aws:kafka:us-east-1:0:cluster/ghost/x"); !isException(err, driver.ExNotFound) {
+		t.Fatalf("ListTags on ghost = %v, want NotFoundException", err)
+	}
+}
+
+func TestUpdateBrokerCountConstraints(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	c, err := m.CreateCluster(ctx, driver.CreateClusterInput{
+		ClusterName: "bc", NumberOfBrokerNodes: 3,
+		BrokerNodeGroupInfo: &driver.BrokerNodeGroupInfo{
+			InstanceType: "kafka.m5.large", ClientSubnets: []string{"s-1", "s-2", "s-3"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	// Decrease → BadRequest.
+	if _, err := m.UpdateBrokerCount(ctx, c.ClusterARN, c.CurrentVersion, 2); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("decrease broker count = %v, want BadRequestException", err)
+	}
+
+	// Not a multiple of the 3 AZs → BadRequest.
+	if _, err := m.UpdateBrokerCount(ctx, c.ClusterARN, c.CurrentVersion, 4); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("non-AZ-multiple broker count = %v, want BadRequestException", err)
+	}
+
+	// Valid increase to a multiple of 3.
+	if _, err := m.UpdateBrokerCount(ctx, c.ClusterARN, c.CurrentVersion, 6); err != nil {
+		t.Fatalf("valid broker count increase: %v", err)
+	}
+}
+
+func TestCreateClusterBrokerValidation(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	// Non-kafka.* instance type → BadRequest.
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{
+		ClusterName: "bad-it", NumberOfBrokerNodes: 3,
+		BrokerNodeGroupInfo: &driver.BrokerNodeGroupInfo{InstanceType: "t2.nano"},
+	})
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("bad instance type = %v, want BadRequestException", err)
+	}
+
+	// Out-of-range EBS volume size → BadRequest.
+	_, err = m.CreateCluster(ctx, driver.CreateClusterInput{
+		ClusterName: "bad-ebs", NumberOfBrokerNodes: 3,
+		BrokerNodeGroupInfo: &driver.BrokerNodeGroupInfo{
+			InstanceType: "kafka.m5.large",
+			RawFields:    map[string]json.RawMessage{"storageInfo": json.RawMessage(`{"ebsStorageInfo":{"volumeSize":99999}}`)},
+		},
+	})
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("out-of-range EBS size = %v, want BadRequestException", err)
+	}
+}
+
+func TestDeleteClusterHonorsCurrentVersion(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	arn := makeCluster(t, m, "del-ver")
+
+	// Stale version → BadRequest; cluster survives.
+	if _, _, err := m.DeleteCluster(ctx, arn, "STALE"); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("delete with stale version = %v, want BadRequestException", err)
+	}
+
+	if _, err := m.DescribeCluster(ctx, arn); err != nil {
+		t.Fatalf("cluster should survive a version-mismatch delete: %v", err)
+	}
+}
+
+func TestCreateVpcConnectionRequiresExistingCluster(t *testing.T) {
+	m := newMock(t)
+
+	_, err := m.CreateVpcConnection(context.Background(),
+		[]byte(`{"targetClusterArn":"arn:aws:kafka:us-east-1:0:cluster/ghost/x","vpcId":"vpc-1"}`))
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("vpc connection to ghost cluster = %v, want BadRequestException", err)
 	}
 }
 

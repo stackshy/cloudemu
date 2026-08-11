@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -69,6 +70,64 @@ func validateEnhancedMonitoring(level string) error {
 	}
 }
 
+// numAZs returns the number of Availability Zones a broker node group spans,
+// derived from its client-subnet count (one subnet per AZ).
+func numAZs(bng *driver.BrokerNodeGroupInfo) int32 {
+	if bng == nil {
+		return 0
+	}
+
+	//nolint:gosec // subnet count is tiny; no overflow.
+	return int32(len(bng.ClientSubnets))
+}
+
+// EBS volume-size bounds real MSK enforces for a provisioned broker.
+const (
+	minEBSVolumeGiB = 1
+	maxEBSVolumeGiB = 16384
+)
+
+// validateBrokerNodeGroup rejects an unmodeled instance type (real MSK requires
+// a kafka.* type) and an out-of-range EBS volume size.
+func validateBrokerNodeGroup(bng *driver.BrokerNodeGroupInfo) error {
+	if bng == nil {
+		return nil
+	}
+
+	if bng.InstanceType != "" && !strings.HasPrefix(bng.InstanceType, "kafka.") {
+		return badRequest("instanceType %q is invalid (must be a kafka.* type)", bng.InstanceType)
+	}
+
+	size, ok := ebsVolumeSize(bng)
+	if ok && (size < minEBSVolumeGiB || size > maxEBSVolumeGiB) {
+		return badRequest("ebs volume size %d must be between %d and %d GiB",
+			size, minEBSVolumeGiB, maxEBSVolumeGiB)
+	}
+
+	return nil
+}
+
+// ebsVolumeSize extracts the EBS volume size (GiB) from the broker group's
+// storageInfo raw block, reporting whether one was supplied.
+func ebsVolumeSize(bng *driver.BrokerNodeGroupInfo) (int64, bool) {
+	raw, ok := bng.RawFields["storageInfo"]
+	if !ok {
+		return 0, false
+	}
+
+	var si struct {
+		EBSStorageInfo struct {
+			VolumeSize *int64 `json:"volumeSize"`
+		} `json:"ebsStorageInfo"`
+	}
+
+	if err := json.Unmarshal(raw, &si); err != nil || si.EBSStorageInfo.VolumeSize == nil {
+		return 0, false
+	}
+
+	return *si.EBSStorageInfo.VolumeSize, true
+}
+
 // getCluster resolves a cluster by ARN, returning NotFoundException when absent.
 // Use it only for ops that model NotFoundException in the SDK.
 func (m *Mock) getCluster(arn string) (*clusterData, error) {
@@ -111,6 +170,10 @@ func (m *Mock) CreateCluster(_ context.Context, in driver.CreateClusterInput) (*
 
 	if in.NumberOfBrokerNodes <= 0 {
 		return nil, badRequest("numberOfBrokerNodes must be greater than 0")
+	}
+
+	if err := validateBrokerNodeGroup(in.BrokerNodeGroupInfo); err != nil {
+		return nil, err
 	}
 
 	if err := validateStorageMode(in.StorageMode); err != nil {
@@ -206,13 +269,22 @@ func (m *Mock) ListClusters(
 }
 
 // DeleteCluster removes a cluster and frees its name for reuse.
-func (m *Mock) DeleteCluster(_ context.Context, arn, _ string) (arnOut, state string, err error) {
+func (m *Mock) DeleteCluster(_ context.Context, arn, currentVersion string) (arnOut, state string, err error) {
 	cd, err := m.getCluster(arn)
 	if err != nil {
 		return "", "", err
 	}
 
 	cd.mu.Lock()
+
+	// Honor the optimistic-concurrency version: a stale currentVersion is a 400.
+	if currentVersion != "" && cd.cluster.CurrentVersion != currentVersion {
+		cd.mu.Unlock()
+
+		return "", "", badRequest("currentVersion %q does not match cluster version %q",
+			currentVersion, cd.cluster.CurrentVersion)
+	}
+
 	name := cd.cluster.ClusterName
 	cd.cluster.State = driver.ClusterStateDeleting
 	cd.mu.Unlock()

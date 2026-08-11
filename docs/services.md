@@ -3115,7 +3115,20 @@ and v2 shapes render the same underlying cluster, so a v1-created cluster is
 describable via `DescribeClusterV2`. Each mutating op (broker count/storage/type,
 storage, configuration, version, connectivity, monitoring, security, rebalancing,
 reboot) validates the optimistic-concurrency `CurrentVersion`, applies the change,
-records a `ClusterOperation`, and bumps the version; reads deep-copy.
+records a `ClusterOperation`, and bumps the version; reads deep-copy. Broker
+counts validate real MSK's constraints (increase-only, a multiple of the AZ
+count); `CreateCluster` validates the `kafka.*` instance type and the EBS volume
+size (1–16384 GiB); a VPC connection's target cluster must exist and be
+provisioned. Tags apply to all four taggable resources (clusters, configurations,
+VPC connections, replicators), routed by ARN.
+
+**Limitation (synchronous lifecycle).** Clusters provision immediately `ACTIVE`
+and every mutation applies synchronously, so a cluster never passes through the
+transient `CREATING`/`UPDATING` states and `DeleteCluster` removes it rather than
+leaving it `DELETING`. Consequently real MSK's rule "reject a mutation while the
+cluster is `CREATING`/`UPDATING`/`DELETING`" is not reproduced — back-to-back
+updates all succeed. Optimistic-concurrency `CurrentVersion` (including on
+delete) is still enforced.
 
 | Family | Operations |
 |--------|-----------|
@@ -3130,7 +3143,7 @@ records a `ClusterOperation`, and bumps the version; reads deep-copy.
 | SCRAM secrets | BatchAssociateScramSecret, BatchDisassociateScramSecret, ListScramSecrets |
 | Cluster policy | PutClusterPolicy, GetClusterPolicy, DeleteClusterPolicy |
 | Replicators | CreateReplicator, DescribeReplicator, ListReplicators, DeleteReplicator, UpdateReplicationInfo |
-| Tags | ListTagsForResource, TagResource, UntagResource |
+| Tags (clusters, configurations, VPC connections, replicators) | ListTagsForResource, TagResource, UntagResource |
 
 **Total: 59 operations.**
 
