@@ -36,6 +36,22 @@ func (m *Mock) CreateClusterV2(_ context.Context, in driver.CreateClusterV2Input
 func (m *Mock) createClusterV2Provisioned(in driver.CreateClusterV2Input) (*driver.Cluster, error) {
 	p := in.Provisioned
 
+	if p.BrokerNodeGroupInfo == nil {
+		return nil, badRequest("provisioned.brokerNodeGroupInfo is required")
+	}
+
+	if p.NumberOfBrokerNodes <= 0 {
+		return nil, badRequest("provisioned.numberOfBrokerNodes must be greater than 0")
+	}
+
+	if err := validateStorageMode(p.StorageMode); err != nil {
+		return nil, err
+	}
+
+	if err := validateEnhancedMonitoring(p.EnhancedMonitoring); err != nil {
+		return nil, err
+	}
+
 	kafkaVer := p.KafkaVersion
 	if kafkaVer == "" {
 		kafkaVer = defaultKafkaVer

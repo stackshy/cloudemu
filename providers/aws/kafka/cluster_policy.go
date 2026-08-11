@@ -18,7 +18,7 @@ type putClusterPolicyRequest struct {
 // concurrency) or the call is a BadRequestException. The version is bumped on
 // success and returned.
 func (m *Mock) PutClusterPolicy(_ context.Context, clusterARN string, body json.RawMessage) (string, error) {
-	cd, err := m.getCluster(clusterARN)
+	cd, err := m.getClusterBR(clusterARN)
 	if err != nil {
 		return "", err
 	}

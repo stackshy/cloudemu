@@ -70,11 +70,11 @@ func TestCreateClusterDuplicate(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	if _, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "dup"}); err != nil {
+	if _, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "dup", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()}); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 
-	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "dup"})
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "dup", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 
 	var apiErr *driver.APIError
 	if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExConflict {
@@ -100,7 +100,7 @@ func TestListAndDeleteCluster(t *testing.T) {
 	var arns []string
 
 	for _, n := range []string{"alpha", "bravo", "charlie"} {
-		out, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: n})
+		out, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: n, NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 		if err != nil {
 			t.Fatalf("create %s: %v", n, err)
 		}
@@ -133,7 +133,7 @@ func TestListAndDeleteCluster(t *testing.T) {
 	}
 
 	// Name freed for reuse after delete.
-	if _, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "alpha"}); err != nil {
+	if _, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "alpha", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()}); err != nil {
 		t.Fatalf("name should be reusable after delete: %v", err)
 	}
 }
@@ -142,7 +142,7 @@ func TestBootstrapBrokers(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	out, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "brokers"})
+	out, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "brokers", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestConcurrentCreate(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			_, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "race"})
+			_, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "race", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -211,6 +211,7 @@ func TestNoAliasOnRead(t *testing.T) {
 
 	out, err := m.CreateCluster(ctx, driver.CreateClusterInput{
 		ClusterName:         "alias",
+		NumberOfBrokerNodes: 3,
 		Tags:                map[string]string{"env": "prod"},
 		BrokerNodeGroupInfo: &driver.BrokerNodeGroupInfo{ClientSubnets: []string{"subnet-1"}},
 	})
@@ -336,6 +337,7 @@ func TestV1CreateV2Describe(t *testing.T) {
 	out, err := m.CreateCluster(ctx, driver.CreateClusterInput{
 		ClusterName:         "cross",
 		NumberOfBrokerNodes: 3,
+		BrokerNodeGroupInfo: bng(),
 	})
 	if err != nil {
 		t.Fatalf("CreateCluster: %v", err)
@@ -365,7 +367,7 @@ func TestCreateClusterV2Serverless(t *testing.T) {
 		t.Fatalf("CreateClusterV2 serverless: %v", err)
 	}
 
-	if _, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "prov-1", NumberOfBrokerNodes: 2}); err != nil {
+	if _, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "prov-1", NumberOfBrokerNodes: 2, BrokerNodeGroupInfo: bng()}); err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
 
@@ -400,7 +402,7 @@ func TestUpdateMutatesRecordsOperation(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	c, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "upd", NumberOfBrokerNodes: 3})
+	c, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "upd", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -444,7 +446,7 @@ func TestUpdateVersionMismatch(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	c, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "cver", NumberOfBrokerNodes: 3})
+	c, err := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "cver", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -463,7 +465,7 @@ func TestUpdateKafkaVersionReflected(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "kv", KafkaVersion: "3.5.1"})
+	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "kv", KafkaVersion: "3.5.1", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 
 	_, err := m.UpdateClusterKafkaVersion(ctx, c.ClusterARN, c.CurrentVersion, []byte(`{"targetKafkaVersion":"3.6.0"}`))
 	if err != nil {
@@ -481,7 +483,7 @@ func TestListNodesSizedToBrokerCount(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "nodes", NumberOfBrokerNodes: 4})
+	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "nodes", NumberOfBrokerNodes: 4, BrokerNodeGroupInfo: bng()})
 
 	nodes, _, err := m.ListNodes(ctx, c.ClusterARN, driver.Page{})
 	if err != nil || len(nodes) != 4 {
@@ -503,7 +505,7 @@ func TestKafkaVersions(t *testing.T) {
 		t.Fatalf("ListKafkaVersions: %v len=%d", err, len(vers))
 	}
 
-	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "cv", KafkaVersion: "3.5.1"})
+	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "cv", KafkaVersion: "3.5.1", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 
 	comp, err := m.GetCompatibleKafkaVersions(ctx, c.ClusterARN)
 	if err != nil || len(comp) != 1 {
@@ -520,7 +522,7 @@ func TestTagLifecycle(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "tagged"})
+	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "tagged", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 
 	if err := m.TagResource(ctx, c.ClusterARN, map[string]string{"a": "1", "b": "2"}); err != nil {
 		t.Fatalf("TagResource: %v", err)
@@ -560,7 +562,7 @@ func TestConcurrentTagNoLostUpdate(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "race-tags"})
+	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "race-tags", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 
 	const goroutines = 50
 
@@ -591,7 +593,7 @@ func TestOperationNoAlias(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "op-alias", NumberOfBrokerNodes: 3})
+	c, _ := m.CreateCluster(ctx, driver.CreateClusterInput{ClusterName: "op-alias", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 
 	op, err := m.UpdateBrokerStorage(ctx, c.ClusterARN, c.CurrentVersion, []byte(`{"targetBrokerEBSVolumeInfo":[]}`))
 	if err != nil {
@@ -610,11 +612,85 @@ func TestOperationNoAlias(t *testing.T) {
 	}
 }
 
+// bng returns a valid BrokerNodeGroupInfo for tests (CreateCluster requires one).
+func bng() *driver.BrokerNodeGroupInfo {
+	return &driver.BrokerNodeGroupInfo{InstanceType: "kafka.m5.large"}
+}
+
+// TestErrorTypeFidelity checks that ops which do NOT model NotFoundException in
+// the SDK return BadRequestException (not NotFound) for a missing cluster, while
+// ops that DO model it return NotFound.
+func TestErrorTypeFidelity(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	missing := "arn:aws:kafka:us-east-1:1:cluster/x/y"
+
+	// Ops that do NOT model NotFoundException → BadRequestException.
+	if _, err := m.GetBootstrapBrokers(ctx, missing); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("GetBootstrapBrokers = %v, want BadRequestException", err)
+	}
+
+	if _, _, err := m.ListClusterOperations(ctx, missing, driver.Page{}); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("ListClusterOperations(v1) = %v, want BadRequestException", err)
+	}
+
+	if _, err := m.UpdateBrokerCount(ctx, missing, "", 3); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("UpdateBrokerCount = %v, want BadRequestException", err)
+	}
+
+	if err := m.RejectClientVpcConnection(ctx, missing, nil); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("RejectClientVpcConnection = %v, want BadRequestException", err)
+	}
+
+	// Ops that DO model NotFoundException → NotFoundException.
+	if _, err := m.DescribeCluster(ctx, missing); !isException(err, driver.ExNotFound) {
+		t.Fatalf("DescribeCluster = %v, want NotFoundException", err)
+	}
+
+	if _, _, err := m.ListClusterOperationsV2(ctx, missing, driver.Page{}); !isException(err, driver.ExNotFound) {
+		t.Fatalf("ListClusterOperationsV2 = %v, want NotFoundException", err)
+	}
+}
+
+func TestCreateClusterRequiredFieldsAndEnums(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		in   driver.CreateClusterInput
+	}{
+		{"no broker info", driver.CreateClusterInput{ClusterName: "c", NumberOfBrokerNodes: 3}},
+		{"zero brokers", driver.CreateClusterInput{ClusterName: "c", BrokerNodeGroupInfo: bng()}},
+		{"bad storage mode", driver.CreateClusterInput{
+			ClusterName: "c", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng(), StorageMode: "FOO",
+		}},
+		{"bad monitoring", driver.CreateClusterInput{
+			ClusterName: "c", NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng(), EnhancedMonitoring: "FOO",
+		}},
+	}
+
+	for _, tc := range cases {
+		if _, err := m.CreateCluster(ctx, tc.in); !isException(err, driver.ExBadRequest) {
+			t.Fatalf("%s: got %v, want BadRequestException", tc.name, err)
+		}
+	}
+}
+
+func TestCreateConfigurationRequiresServerProperties(t *testing.T) {
+	m := newMock(t)
+
+	_, err := m.CreateConfiguration(context.Background(), driver.CreateConfigurationInput{Name: "cfg"})
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("config without serverProperties = %v, want BadRequestException", err)
+	}
+}
+
 // makeCluster is a test helper that creates a cluster and returns its ARN.
 func makeCluster(t *testing.T, m *kafka.Mock, name string) string {
 	t.Helper()
 
-	out, err := m.CreateCluster(context.Background(), driver.CreateClusterInput{ClusterName: name})
+	out, err := m.CreateCluster(context.Background(), driver.CreateClusterInput{ClusterName: name, NumberOfBrokerNodes: 3, BrokerNodeGroupInfo: bng()})
 	if err != nil {
 		t.Fatalf("CreateCluster(%s): %v", name, err)
 	}
@@ -629,6 +705,13 @@ func expectException(t *testing.T, err error, want string) {
 	if !errors.As(err, &apiErr) || apiErr.Exception != want {
 		t.Fatalf("want %s, got %v", want, err)
 	}
+}
+
+// isException reports whether err is a driver.APIError with the given exception.
+func isException(err error, want string) bool {
+	var apiErr *driver.APIError
+
+	return errors.As(err, &apiErr) && apiErr.Exception == want
 }
 
 func TestVpcConnectionLifecycle(t *testing.T) {
@@ -712,9 +795,9 @@ func TestTopicLifecycle(t *testing.T) {
 	_, err = m.CreateTopic(ctx, arn, body)
 	expectException(t, err, driver.ExConflict)
 
-	// Unknown cluster → NotFound.
+	// Unknown cluster → BadRequest (CreateTopic does not model NotFoundException).
 	_, err = m.CreateTopic(ctx, "arn:aws:kafka:us-east-1:1:cluster/x/y", body)
-	expectException(t, err, driver.ExNotFound)
+	expectException(t, err, driver.ExBadRequest)
 
 	desc, err := m.DescribeTopic(ctx, arn, "orders")
 	if err != nil || string(desc.RawOptions["configs"]) != `"retention.ms=1000"` {

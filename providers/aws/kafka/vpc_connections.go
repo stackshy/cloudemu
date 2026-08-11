@@ -65,7 +65,7 @@ func (m *Mock) CreateVpcConnection(_ context.Context, body json.RawMessage) (*dr
 	// The ARN embeds a fresh UUID; SetIfAbsent keeps the create atomic and guards
 	// the (impossible-but-cheap) collision.
 	if !m.vpcConns.SetIfAbsent(vpc.VpcConnectionARN, &vpcConnData{vpc: vpc}) {
-		return nil, conflict("vpc connection already exists: %s", vpc.VpcConnectionARN)
+		return nil, badRequest("vpc connection already exists: %s", vpc.VpcConnectionARN)
 	}
 
 	out := snapshotVpcConnection(vpc)
@@ -101,9 +101,16 @@ func vpcRawOptions(req createVpcConnectionRequest) map[string]json.RawMessage {
 
 // getVpcConnection resolves a VPC connection by ARN, NotFoundException if absent.
 func (m *Mock) getVpcConnection(arn string) (*vpcConnData, error) {
+	return m.getVpcConnectionErr(arn, notFound)
+}
+
+// getVpcConnectionErr resolves a VPC connection, building the missing-resource
+// error with mkErr. RejectClientVpcConnection does not model NotFoundException,
+// so it passes badRequest.
+func (m *Mock) getVpcConnectionErr(arn string, mkErr func(string, ...any) error) (*vpcConnData, error) {
 	vd, ok := m.vpcConns.Get(arn)
 	if !ok {
-		return nil, notFound("vpc connection not found: %s", arn)
+		return nil, mkErr("vpc connection not found: %s", arn)
 	}
 
 	return vd, nil
@@ -159,7 +166,7 @@ func (m *Mock) ListVpcConnections(
 func (m *Mock) ListClientVpcConnections(
 	_ context.Context, clusterARN string, page driver.Page,
 ) (conns []driver.VpcConnection, next string, err error) {
-	if _, err = m.getCluster(clusterARN); err != nil {
+	if _, err = m.getClusterBR(clusterARN); err != nil {
 		return nil, "", err
 	}
 
@@ -203,7 +210,7 @@ type rejectClientVpcConnectionRequest struct {
 // RejectClientVpcConnection marks a client VPC connection REJECTED for a
 // cluster. The connection must both exist and target the given cluster.
 func (m *Mock) RejectClientVpcConnection(_ context.Context, clusterARN string, body json.RawMessage) error {
-	if _, err := m.getCluster(clusterARN); err != nil {
+	if _, err := m.getClusterBR(clusterARN); err != nil {
 		return err
 	}
 
@@ -218,7 +225,7 @@ func (m *Mock) RejectClientVpcConnection(_ context.Context, clusterARN string, b
 		return badRequest("vpcConnectionArn is required")
 	}
 
-	vd, err := m.getVpcConnection(req.VpcConnectionArn)
+	vd, err := m.getVpcConnectionErr(req.VpcConnectionArn, badRequest)
 	if err != nil {
 		return err
 	}
@@ -227,7 +234,7 @@ func (m *Mock) RejectClientVpcConnection(_ context.Context, clusterARN string, b
 	defer vd.mu.Unlock()
 
 	if vd.vpc.TargetClusterARN != clusterARN {
-		return notFound("vpc connection %s does not target cluster %s", req.VpcConnectionArn, clusterARN)
+		return badRequest("vpc connection %s does not target cluster %s", req.VpcConnectionArn, clusterARN)
 	}
 
 	vd.vpc.State = vpcConnStateRejected

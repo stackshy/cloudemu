@@ -26,7 +26,7 @@ const (
 func (m *Mock) UpdateBrokerCount(
 	_ context.Context, arn, currentVersion string, target int32,
 ) (*driver.ClusterOperation, error) {
-	return m.mutateCluster(arn, currentVersion, opTypeUpdateBrokerCount, func(c *driver.Cluster) {
+	return m.mutateClusterBR(arn, currentVersion, opTypeUpdateBrokerCount, func(c *driver.Cluster) {
 		c.NumberOfBrokerNodes = target
 	})
 }
@@ -36,7 +36,7 @@ func (m *Mock) UpdateBrokerCount(
 func (m *Mock) UpdateBrokerStorage(
 	_ context.Context, arn, currentVersion string, body json.RawMessage,
 ) (*driver.ClusterOperation, error) {
-	return m.mutateCluster(arn, currentVersion, opTypeUpdateBrokerStorage, func(c *driver.Cluster) {
+	return m.mutateClusterBR(arn, currentVersion, opTypeUpdateBrokerStorage, func(c *driver.Cluster) {
 		setRawOption(c, "targetBrokerEBSVolumeInfo", body)
 	})
 }
@@ -59,6 +59,10 @@ func (m *Mock) UpdateBrokerType(
 func (m *Mock) UpdateStorage(
 	_ context.Context, arn, currentVersion string, body json.RawMessage,
 ) (*driver.ClusterOperation, error) {
+	if err := validateStorageMode(stringField(body, "storageMode")); err != nil {
+		return nil, err
+	}
+
 	return m.mutateCluster(arn, currentVersion, opTypeUpdateStorage, func(c *driver.Cluster) {
 		if mode := stringField(body, "storageMode"); mode != "" {
 			c.StorageMode = mode
@@ -102,7 +106,11 @@ func (m *Mock) UpdateConnectivity(
 func (m *Mock) UpdateMonitoring(
 	_ context.Context, arn, currentVersion string, body json.RawMessage,
 ) (*driver.ClusterOperation, error) {
-	return m.mutateCluster(arn, currentVersion, opTypeUpdateMonitoring, func(c *driver.Cluster) {
+	if err := validateEnhancedMonitoring(stringField(body, "enhancedMonitoring")); err != nil {
+		return nil, err
+	}
+
+	return m.mutateClusterBR(arn, currentVersion, opTypeUpdateMonitoring, func(c *driver.Cluster) {
 		if lvl := stringField(body, "enhancedMonitoring"); lvl != "" {
 			c.EnhancedMonitoring = lvl
 		}

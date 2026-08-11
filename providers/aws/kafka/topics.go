@@ -31,7 +31,7 @@ type createTopicRequest struct {
 // first (NotFoundException when absent) and claims the name atomically under the
 // cluster lock (ConflictException on a duplicate).
 func (m *Mock) CreateTopic(_ context.Context, clusterARN string, body json.RawMessage) (*driver.Topic, error) {
-	cd, err := m.getCluster(clusterARN)
+	cd, err := m.getClusterBR(clusterARN)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,7 @@ func (m *Mock) DescribeTopic(_ context.Context, clusterARN, topicName string) (*
 func (m *Mock) ListTopics(
 	_ context.Context, clusterARN string, page driver.Page,
 ) (topics []driver.Topic, next string, err error) {
-	cd, err := m.getCluster(clusterARN)
+	cd, err := m.getClusterBR(clusterARN)
 	if err != nil {
 		return nil, "", err
 	}

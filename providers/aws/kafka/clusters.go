@@ -47,11 +47,49 @@ func validateClusterName(name string) error {
 	return nil
 }
 
+// validateStorageMode rejects a StorageMode outside the modeled enum (empty is
+// allowed — the field is optional).
+func validateStorageMode(mode string) error {
+	switch mode {
+	case "", "LOCAL", "TIERED":
+		return nil
+	default:
+		return badRequest("storageMode %q is invalid", mode)
+	}
+}
+
+// validateEnhancedMonitoring rejects an EnhancedMonitoring value outside the
+// modeled enum (empty is allowed — the field is optional).
+func validateEnhancedMonitoring(level string) error {
+	switch level {
+	case "", "DEFAULT", "PER_BROKER", "PER_TOPIC_PER_BROKER", "PER_TOPIC_PER_PARTITION":
+		return nil
+	default:
+		return badRequest("enhancedMonitoring %q is invalid", level)
+	}
+}
+
 // getCluster resolves a cluster by ARN, returning NotFoundException when absent.
+// Use it only for ops that model NotFoundException in the SDK.
 func (m *Mock) getCluster(arn string) (*clusterData, error) {
+	return m.getClusterErr(arn, notFound)
+}
+
+// getClusterBR resolves a cluster by ARN, returning BadRequestException when
+// absent. Several ops (GetBootstrapBrokers, ListClusterOperations v1,
+// ListClientVpcConnections, RejectClientVpcConnection, PutClusterPolicy,
+// ListTopics, UpdateBrokerCount/Storage, UpdateMonitoring) reference a cluster
+// but do NOT model NotFoundException, so a missing cluster there is a 400.
+func (m *Mock) getClusterBR(arn string) (*clusterData, error) {
+	return m.getClusterErr(arn, badRequest)
+}
+
+// getClusterErr resolves a cluster by ARN, building the missing-resource error
+// with mkErr so each op returns the exception the SDK actually models for it.
+func (m *Mock) getClusterErr(arn string, mkErr func(string, ...any) error) (*clusterData, error) {
 	cd, ok := m.clusters.Get(arn)
 	if !ok {
-		return nil, notFound("cluster not found: %s", arn)
+		return nil, mkErr("cluster not found: %s", arn)
 	}
 
 	return cd, nil
@@ -64,6 +102,22 @@ func (m *Mock) getCluster(arn string) (*clusterData, error) {
 //nolint:gocritic // hugeParam: signature fixed by driver.Kafka (by-value input).
 func (m *Mock) CreateCluster(_ context.Context, in driver.CreateClusterInput) (*driver.Cluster, error) {
 	if err := validateClusterName(in.ClusterName); err != nil {
+		return nil, err
+	}
+
+	if in.BrokerNodeGroupInfo == nil {
+		return nil, badRequest("brokerNodeGroupInfo is required")
+	}
+
+	if in.NumberOfBrokerNodes <= 0 {
+		return nil, badRequest("numberOfBrokerNodes must be greater than 0")
+	}
+
+	if err := validateStorageMode(in.StorageMode); err != nil {
+		return nil, err
+	}
+
+	if err := validateEnhancedMonitoring(in.EnhancedMonitoring); err != nil {
 		return nil, err
 	}
 
@@ -173,7 +227,7 @@ func (m *Mock) DeleteCluster(_ context.Context, arn, _ string) (arnOut, state st
 // cluster. Real MSK derives these from the cluster's brokers; the emulator
 // synthesizes a plausible plaintext/TLS pair deterministically from the name.
 func (m *Mock) GetBootstrapBrokers(_ context.Context, arn string) (map[string]string, error) {
-	cd, err := m.getCluster(arn)
+	cd, err := m.getClusterBR(arn)
 	if err != nil {
 		return nil, err
 	}

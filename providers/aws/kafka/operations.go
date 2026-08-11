@@ -46,11 +46,28 @@ func (m *Mock) recordOperation(cd *clusterData, opType string) driver.ClusterOpe
 // mutateCluster resolves a cluster, verifies the optimistic-concurrency
 // currentVersion, applies fn under the cluster write-lock, records an operation
 // of opType, and returns a copy of that operation. An empty currentVersion
-// skips the version check (matching ops like RebootBroker that take none).
+// skips the version check (matching ops like RebootBroker that take none). A
+// missing cluster returns NotFoundException — use it for update ops that model
+// NotFoundException.
 func (m *Mock) mutateCluster(
 	arn, currentVersion, opType string, fn func(c *driver.Cluster),
 ) (*driver.ClusterOperation, error) {
-	cd, err := m.getCluster(arn)
+	return m.mutateClusterErr(arn, currentVersion, opType, notFound, fn)
+}
+
+// mutateClusterBR is mutateCluster for the update ops that do NOT model
+// NotFoundException (UpdateBrokerCount/Storage, UpdateMonitoring) — a missing
+// cluster is a BadRequestException there.
+func (m *Mock) mutateClusterBR(
+	arn, currentVersion, opType string, fn func(c *driver.Cluster),
+) (*driver.ClusterOperation, error) {
+	return m.mutateClusterErr(arn, currentVersion, opType, badRequest, fn)
+}
+
+func (m *Mock) mutateClusterErr(
+	arn, currentVersion, opType string, mkMissing func(string, ...any) error, fn func(c *driver.Cluster),
+) (*driver.ClusterOperation, error) {
+	cd, err := m.getClusterErr(arn, mkMissing)
 	if err != nil {
 		return nil, err
 	}
@@ -83,24 +100,26 @@ func bumpVersion() string {
 }
 
 // ListClusterOperations lists a cluster's operations, oldest first, paginated.
+// The v1 op does NOT model NotFoundException, so a missing cluster is a 400.
 func (m *Mock) ListClusterOperations(
 	_ context.Context, arn string, page driver.Page,
 ) (ops []driver.ClusterOperation, next string, err error) {
-	return m.listOperations(arn, page)
+	return m.listOperations(arn, badRequest, page)
 }
 
 // ListClusterOperationsV2 shares the operation store with ListClusterOperations;
-// the wire layer renders the V2 summary shape.
+// the wire layer renders the V2 summary shape. The v2 op models
+// NotFoundException, so a missing cluster is a 404.
 func (m *Mock) ListClusterOperationsV2(
 	_ context.Context, arn string, page driver.Page,
 ) (ops []driver.ClusterOperation, next string, err error) {
-	return m.listOperations(arn, page)
+	return m.listOperations(arn, notFound, page)
 }
 
 func (m *Mock) listOperations(
-	arn string, page driver.Page,
+	arn string, mkMissing func(string, ...any) error, page driver.Page,
 ) (ops []driver.ClusterOperation, next string, err error) {
-	cd, err := m.getCluster(arn)
+	cd, err := m.getClusterErr(arn, mkMissing)
 	if err != nil {
 		return nil, "", err
 	}

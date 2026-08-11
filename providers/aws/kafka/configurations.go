@@ -52,6 +52,10 @@ func (m *Mock) CreateConfiguration(_ context.Context, in driver.CreateConfigurat
 		return nil, badRequest("configuration name is required")
 	}
 
+	if len(in.ServerProperties) == 0 {
+		return nil, badRequest("serverProperties is required")
+	}
+
 	now := m.now()
 	rev := driver.ConfigurationRevision{
 		Revision:         1,
