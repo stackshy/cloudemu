@@ -64,6 +64,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/glue v1.152.0
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10
+	github.com/aws/aws-sdk-go-v2/service/kafka v1.49.2
 	github.com/aws/aws-sdk-go-v2/service/keyspaces v1.28.2
 	github.com/aws/aws-sdk-go-v2/service/kinesis v1.46.4
 	github.com/aws/aws-sdk-go-v2/service/kms v1.50.3

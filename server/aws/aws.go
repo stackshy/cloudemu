@@ -29,6 +29,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
+	kafkasrv "github.com/stackshy/cloudemu/v2/server/aws/kafka"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
 	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
@@ -69,6 +70,7 @@ import (
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
+	kafkadriver "github.com/stackshy/cloudemu/v2/services/kafka/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
@@ -140,6 +142,11 @@ type Drivers struct {
 	// method routing under the /2021-01-01/ version prefix) against the
 	// opensearch driver.
 	OpenSearch opensearchdriver.OpenSearch
+
+	// Kafka serves the Amazon MSK REST-JSON API (path + method routing under
+	// the /v1/, /api/v2/, and /replication/v1/ version prefixes) against the
+	// kafka driver.
+	Kafka kafkadriver.Kafka
 
 	// Route53Resolver serves the AWS Route 53 Resolver JSON 1.1 protocol
 	// (X-Amz-Target prefix "Route53Resolver.") against the route53resolver driver.
@@ -242,6 +249,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		EFS:                 p.EFS,
 		SESV2:               p.SESV2,
 		OpenSearch:          p.OpenSearch,
+		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
 		KMS:                 p.KMS,
@@ -430,6 +438,16 @@ func New(d Drivers) *server.Server {
 	// the S3 catch-all (no real bucket path begins with /2021-01-01/).
 	if d.OpenSearch != nil {
 		srv.Register(opensearchsrv.New(d.OpenSearch))
+	}
+
+	// MSK (Kafka) uses REST-JSON path routing under the /v1/, /api/v2/, and
+	// /replication/v1/ version prefixes; its Matches predicate gates on those
+	// prefixes plus a known MSK collection root, so it must run before the S3
+	// catch-all. A bucket literally named "v1"/"api"/"replication" whose first
+	// key segment collided with an MSK root would be shadowed (documented
+	// limitation); such bucket names are not used by real workloads.
+	if d.Kafka != nil {
+		srv.Register(kafkasrv.New(d.Kafka))
 	}
 
 	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver." —
