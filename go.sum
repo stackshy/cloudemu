@@ -190,6 +190,8 @@ github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.32 h1:dWFHhQpb
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.32/go.mod h1:oN4Iix8rAbyTx6tFMP9mS8RFLJnDeZSbSsHwXYSs3tE=
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 h1:ZlvrNcHSFFWURB8avufQq9gFsheUgjVD9536obIknfM=
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21/go.mod h1:cv3TNhVrssKR0O/xxLJVRfd2oazSnZnkUeTf6ctUwfQ=
+github.com/aws/aws-sdk-go-v2/service/kafka v1.49.2 h1:0qf9ULBXUrA2kaFTdVMMQoeK6OdilTPgTh5hPDY46dg=
+github.com/aws/aws-sdk-go-v2/service/kafka v1.49.2/go.mod h1:cIVcYCwP3fFVRbAM6Bx2FvSgd8Ku7y7HQQz69vlNEcw=
 github.com/aws/aws-sdk-go-v2/service/keyspaces v1.28.2 h1:8mC/rZ/5fgG+Uh1jm5TbinGAxys98+g1F94ROXiWkuI=
 github.com/aws/aws-sdk-go-v2/service/keyspaces v1.28.2/go.mod h1:oQzLKUVgisO2sgRlgbQ+mrWflb7wkYmVjZojITjQn1E=
 github.com/aws/aws-sdk-go-v2/service/kinesis v1.46.4 h1:8nS3cUsEtXnpZ7j3oiYHyWMR6OySNNlnaoTz4NshN68=

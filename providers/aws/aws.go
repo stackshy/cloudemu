@@ -28,6 +28,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
 	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kafka"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
@@ -164,6 +165,7 @@ type Provider struct {
 	Kinesis             *kinesis.Mock
 	SESV2               *sesv2.Mock
 	OpenSearch          *opensearch.Mock
+	Kafka               *kafka.Mock
 	VPCLattice          *vpclattice.Mock
 	WAFv2               *wafv2.Mock
 	Route53Resolver     *route53resolver.Mock
@@ -215,6 +217,7 @@ func New(opts ...config.Option) *Provider {
 		Kinesis:             kinesis.New(o),
 		SESV2:               sesv2.New(o),
 		OpenSearch:          opensearch.New(o),
+		Kafka:               kafka.New(o),
 		VPCLattice:          vpclattice.New(o),
 		WAFv2:               wafv2.New(o),
 		Route53Resolver:     route53resolver.New(o),
