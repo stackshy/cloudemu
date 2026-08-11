@@ -16,6 +16,37 @@ const (
 	defaultASCName = "DefaultConfiguration"
 )
 
+// ascInUse returns the ARN of a service that references the given auto-scaling
+// configuration, or "". When specificArn is set only that exact revision counts;
+// otherwise any revision sharing name counts (for a delete-all-revisions). The
+// caller must hold ascMu.
+func (m *Mock) ascInUse(name, specificArn string) string {
+	for _, sd := range m.services.SortedValues() {
+		sd.mu.RLock()
+		ref := sd.svc.AutoScalingConfigArn
+		svcArn := sd.svc.ServiceArn
+		sd.mu.RUnlock()
+
+		if ref == "" {
+			continue
+		}
+
+		if specificArn != "" {
+			if ref == specificArn {
+				return svcArn
+			}
+
+			continue
+		}
+
+		if c, ok := m.ascByArn[ref]; ok && c.Name == name {
+			return svcArn
+		}
+	}
+
+	return ""
+}
+
 // copyASC returns a deep copy of a stored auto-scaling configuration so a reader
 // cannot alias its Tags map.
 func copyASC(c *driver.AutoScalingConfiguration) *driver.AutoScalingConfiguration {
@@ -99,6 +130,17 @@ func (m *Mock) DeleteAutoScalingConfiguration(
 	cfg, ok := m.ascByArn[arn]
 	if !ok {
 		return nil, notFound("no auto scaling configuration found for ARN %q", arn)
+	}
+
+	// Reject deleting a configuration a service still uses. DeleteAutoScalingConfiguration
+	// does not model InvalidStateException, so an in-use config is an InvalidRequestException.
+	inUse := arn
+	if deleteAllRevisions {
+		inUse = "" // any revision of cfg.Name counts as in use.
+	}
+
+	if used := m.ascInUse(cfg.Name, inUse); used != "" {
+		return nil, invalidRequest("auto scaling configuration is in use by service %q", used)
 	}
 
 	now := m.now()

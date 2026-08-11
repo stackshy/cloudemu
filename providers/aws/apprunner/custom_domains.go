@@ -51,9 +51,11 @@ func (m *Mock) AssociateCustomDomain(
 func (m *Mock) DisassociateCustomDomain(
 	_ context.Context, serviceArn, domainName string,
 ) (*driver.CustomDomain, string, error) {
+	// DisassociateCustomDomain models ResourceNotFoundException, so a missing
+	// service returns that (unlike AssociateCustomDomain, which does not model RNF).
 	sd, ok := m.services.Get(serviceArn)
 	if !ok {
-		return nil, "", invalidRequest("no App Runner service found for ARN %q", serviceArn)
+		return nil, "", notFound("no App Runner service found for ARN %q", serviceArn)
 	}
 
 	sd.mu.Lock()

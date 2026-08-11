@@ -2,9 +2,38 @@ package apprunner
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/stackshy/cloudemu/v2/services/apprunner/driver"
 )
+
+// vpcConnectorInUse returns the ARN of a service whose egress NetworkConfiguration
+// references the given VPC connector, or "".
+func (m *Mock) vpcConnectorInUse(connectorArn string) string {
+	for _, sd := range m.services.SortedValues() {
+		sd.mu.RLock()
+		netCfg := sd.svc.NetworkConfiguration
+		svcArn := sd.svc.ServiceArn
+		sd.mu.RUnlock()
+
+		if len(netCfg) == 0 {
+			continue
+		}
+
+		var nc struct {
+			EgressConfiguration struct {
+				VpcConnectorArn string `json:"VpcConnectorArn"`
+			} `json:"EgressConfiguration"`
+		}
+
+		if err := json.Unmarshal(netCfg, &nc); err == nil &&
+			nc.EgressConfiguration.VpcConnectorArn == connectorArn {
+			return svcArn
+		}
+	}
+
+	return ""
+}
 
 // CreateVpcConnector registers a VPC connector. It comes up ACTIVE immediately
 // and is keyed by its server-minted ARN (SetIfAbsent enforces uniqueness). The
@@ -51,6 +80,13 @@ func (m *Mock) DeleteVpcConnector(_ context.Context, arn string) (*driver.VpcCon
 	vd, ok := m.vpcConnectors.Get(arn)
 	if !ok {
 		return nil, notFound("no VPC connector found for ARN %q", arn)
+	}
+
+	// Reject deleting a connector a service still references via its egress
+	// NetworkConfiguration. DeleteVpcConnector does not model InvalidStateException,
+	// so an in-use connector is an InvalidRequestException.
+	if used := m.vpcConnectorInUse(arn); used != "" {
+		return nil, invalidRequest("VPC connector is in use by service %q", used)
 	}
 
 	vd.mu.Lock()

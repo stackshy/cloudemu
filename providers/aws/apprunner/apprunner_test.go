@@ -622,6 +622,83 @@ func TestNoAliasOnRead(t *testing.T) {
 	}
 }
 
+// createServiceWith creates a service with the given extra input fields.
+func createServiceWith(t *testing.T, m *apprunner.Mock, in driver.CreateServiceInput) *driver.Service {
+	t.Helper()
+
+	in.SourceConfiguration = json.RawMessage(`{"ImageRepository":{"ImageIdentifier":"public.ecr.aws/x/y:latest"}}`)
+
+	res, err := m.CreateService(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+
+	return res.Service
+}
+
+func TestStartDeploymentIllegalStateIsInvalidRequest(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	svc := createService(t, m, "sd")
+
+	if _, err := m.PauseService(ctx, svc.ServiceArn); err != nil {
+		t.Fatalf("PauseService: %v", err)
+	}
+
+	// StartDeployment does not model InvalidStateException, so an illegal state
+	// is InvalidRequestException.
+	if _, err := m.StartDeployment(ctx, svc.ServiceArn); exceptionOf(t, err) != driver.ExInvalidRequest {
+		t.Fatalf("StartDeployment on PAUSED = %v, want InvalidRequestException", err)
+	}
+}
+
+func TestDeleteAutoScalingConfigurationInUse(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	asc, err := m.CreateAutoScalingConfiguration(ctx, "in-use", 100, 25, 1)
+	if err != nil {
+		t.Fatalf("CreateAutoScalingConfiguration: %v", err)
+	}
+
+	createServiceWith(t, m, driver.CreateServiceInput{
+		ServiceName: "consumer", AutoScalingConfigArn: asc.Arn,
+	})
+
+	if _, err := m.DeleteAutoScalingConfiguration(ctx, asc.Arn, false); exceptionOf(t, err) != driver.ExInvalidRequest {
+		t.Fatalf("delete in-use ASC = %v, want InvalidRequestException", err)
+	}
+}
+
+func TestDeleteVpcConnectorInUse(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	vc, err := m.CreateVpcConnector(ctx, "in-use-vc", []string{"subnet-1"}, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateVpcConnector: %v", err)
+	}
+
+	createServiceWith(t, m, driver.CreateServiceInput{
+		ServiceName: "vc-consumer",
+		NetworkConfiguration: json.RawMessage(
+			`{"EgressConfiguration":{"EgressType":"VPC","VpcConnectorArn":"` + vc.Arn + `"}}`),
+	})
+
+	if _, err := m.DeleteVpcConnector(ctx, vc.Arn); exceptionOf(t, err) != driver.ExInvalidRequest {
+		t.Fatalf("delete in-use VPC connector = %v, want InvalidRequestException", err)
+	}
+}
+
+func TestDisassociateCustomDomainMissingServiceIsNotFound(t *testing.T) {
+	m := newMock(t)
+
+	_, _, err := m.DisassociateCustomDomain(context.Background(), "arn:missing", "example.com")
+	if exceptionOf(t, err) != driver.ExResourceNotFound {
+		t.Fatalf("disassociate on missing service = %v, want ResourceNotFoundException", err)
+	}
+}
+
 // TestNoAliasTags asserts that the Tags map returned by auto-scaling-config and
 // connection reads is a copy, so a caller mutating it cannot corrupt the store.
 func TestNoAliasTags(t *testing.T) {

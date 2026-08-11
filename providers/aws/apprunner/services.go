@@ -228,8 +228,10 @@ func (m *Mock) StartDeployment(_ context.Context, arn string) (string, error) {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
+	// StartDeployment does not model InvalidStateException (only RNF /
+	// InvalidRequest / Internal), so an illegal state is an InvalidRequestException.
 	if sd.svc.Status != driver.ServiceStatusRunning {
-		return "", invalidState("service %q is %s; StartDeployment requires RUNNING", arn, sd.svc.Status)
+		return "", invalidRequest("service %q is %s; StartDeployment requires RUNNING", arn, sd.svc.Status)
 	}
 
 	op := m.newOperation(arn, driver.OperationTypeStartDeployment, m.now())

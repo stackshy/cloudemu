@@ -9,7 +9,6 @@ const (
 	ExInvalidRequest       = "InvalidRequestException"
 	ExInvalidState         = "InvalidStateException"
 	ExResourceNotFound     = "ResourceNotFoundException"
-	ExServiceQuotaExceeded = "ServiceQuotaExceededException"
 )
 
 // APIError tags a canonical cloudemu error with the App Runner exception name it
