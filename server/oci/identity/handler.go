@@ -36,11 +36,13 @@
 package identity
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	identityprovider "github.com/stackshy/cloudemu/v2/providers/oci/identity"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -76,6 +78,67 @@ const (
 	kindCompartment = "compartment"
 )
 
+// Compartments is the compartment tree, OCI's resource container. No other
+// cloud in this repo has an equivalent, so the portable IAM interface does not
+// model it. *providers/oci/identity.Mock satisfies it; a driver that does not
+// is served 501 on the compartment paths.
+type Compartments interface {
+	CreateCompartment(ctx context.Context, spec identityprovider.CompartmentSpec) (
+		*identityprovider.CompartmentInfo, error)
+	GetCompartment(ctx context.Context, id string) (*identityprovider.CompartmentInfo, error)
+	// ListCompartments returns the direct children of parentID, or every
+	// descendant when inSubtree is set.
+	ListCompartments(ctx context.Context, parentID string, inSubtree bool) ([]identityprovider.CompartmentInfo, error)
+	UpdateCompartment(ctx context.Context, id string, upd identityprovider.Update) (
+		*identityprovider.CompartmentInfo, error)
+	DeleteCompartment(ctx context.Context, id string) error
+}
+
+// OCIIdentity is the OCI-shaped user and group surface. The portable interface
+// keys users and groups by name and lists them unscoped; OCI addresses them by
+// OCID, scopes them to a compartment, and makes group membership a resource in
+// its own right.
+type OCIIdentity interface {
+	CreateOCIUser(ctx context.Context, spec identityprovider.PrincipalSpec) (*identityprovider.PrincipalInfo, error)
+	GetOCIUser(ctx context.Context, id string) (*identityprovider.PrincipalInfo, error)
+	ListOCIUsers(ctx context.Context, compartmentID string) ([]identityprovider.PrincipalInfo, error)
+	UpdateOCIUser(ctx context.Context, id string, upd identityprovider.Update) (*identityprovider.PrincipalInfo, error)
+	DeleteOCIUser(ctx context.Context, id string) error
+
+	CreateOCIGroup(ctx context.Context, spec identityprovider.PrincipalSpec) (*identityprovider.PrincipalInfo, error)
+	GetOCIGroup(ctx context.Context, id string) (*identityprovider.PrincipalInfo, error)
+	ListOCIGroups(ctx context.Context, compartmentID string) ([]identityprovider.PrincipalInfo, error)
+	UpdateOCIGroup(ctx context.Context, id string, upd identityprovider.Update) (*identityprovider.PrincipalInfo, error)
+	DeleteOCIGroup(ctx context.Context, id string) error
+
+	CreateOCIGroupMembership(ctx context.Context, userID, groupID string) (*identityprovider.MembershipInfo, error)
+	GetOCIGroupMembership(ctx context.Context, id string) (*identityprovider.MembershipInfo, error)
+	// ListOCIGroupMemberships filters by compartment, and further by userID or
+	// groupID when either is non-empty.
+	ListOCIGroupMemberships(ctx context.Context, compartmentID, userID, groupID string) (
+		[]identityprovider.MembershipInfo, error)
+	DeleteOCIGroupMembership(ctx context.Context, id string) error
+}
+
+// StatementPolicies is OCI's policy surface: English-like statement strings
+// evaluated against a compartment subtree, not the JSON documents the portable
+// policy operations assume, so neither the document model nor policy
+// attachment applies.
+type StatementPolicies interface {
+	CreateStatementPolicy(ctx context.Context, spec *identityprovider.PolicySpec) (
+		*identityprovider.StatementPolicyInfo, error)
+	GetStatementPolicy(ctx context.Context, id string) (*identityprovider.StatementPolicyInfo, error)
+	ListStatementPolicies(ctx context.Context, compartmentID string) ([]identityprovider.StatementPolicyInfo, error)
+	UpdateStatementPolicy(ctx context.Context, id string, upd identityprovider.PolicyUpdate) (
+		*identityprovider.StatementPolicyInfo, error)
+	DeleteStatementPolicy(ctx context.Context, id string) error
+	// Evaluate reports whether any statement grants the request. OCI policies
+	// are allow-only, so there is nothing for a deny to override. A statement
+	// the implementation cannot resolve returns Unimplemented rather than a
+	// grant, so a restriction is never silently dropped.
+	Evaluate(ctx context.Context, req *identityprovider.AccessRequest) (bool, error)
+}
+
 // Handler serves OCI Identity requests against the IAM driver.
 //
 // The portable IAM interface keys resources by name, lists them unscoped and
@@ -83,9 +146,9 @@ const (
 // the OCI capabilities the driver may implement; a driver that implements none
 // answers 501 rather than a wrong shape.
 type Handler struct {
-	identity     iamdriver.OCIIdentity
-	compartments iamdriver.Compartments
-	policies     iamdriver.StatementPolicies
+	identity     OCIIdentity
+	compartments Compartments
+	policies     StatementPolicies
 	work         *workrequest.Store
 }
 
@@ -93,9 +156,9 @@ type Handler struct {
 // capabilities by type assertion.
 func New(drv iamdriver.IAM, work *workrequest.Store) *Handler {
 	h := &Handler{work: work}
-	h.identity, _ = drv.(iamdriver.OCIIdentity)
-	h.compartments, _ = drv.(iamdriver.Compartments)
-	h.policies, _ = drv.(iamdriver.StatementPolicies)
+	h.identity, _ = drv.(OCIIdentity)
+	h.compartments, _ = drv.(Compartments)
+	h.policies, _ = drv.(StatementPolicies)
 
 	return h
 }

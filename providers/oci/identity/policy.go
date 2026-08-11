@@ -7,12 +7,58 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
-	"github.com/stackshy/cloudemu/v2/services/iam/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // maxPolicyVersions caps the revisions kept for one policy.
 const maxPolicyVersions = 5
+
+// PolicySpec describes a statement policy to create.
+type PolicySpec struct {
+	CompartmentID string
+	Name          string
+	Description   string
+	Statements    []string
+	FreeformTags  map[string]string
+}
+
+// PolicyUpdate carries the mutable fields of a statement policy. Nil Statements
+// leaves the stored statements alone.
+type PolicyUpdate struct {
+	Description  string
+	Statements   []string
+	FreeformTags map[string]string
+}
+
+// StatementPolicyInfo describes a statement policy.
+type StatementPolicyInfo struct {
+	ID             string
+	CompartmentID  string
+	Name           string
+	Description    string
+	Statements     []string
+	TimeCreated    string
+	VersionDate    string
+	LifecycleState string
+	FreeformTags   map[string]string
+}
+
+// AccessRequest is an access check evaluated against policy statements.
+type AccessRequest struct {
+	// Groups and DynamicGroups are the names or OCIDs the principal belongs to.
+	Groups        []string
+	DynamicGroups []string
+	// AnyUser reports whether the principal is an authenticated user, which is
+	// what an "any-user" subject grants to.
+	AnyUser bool
+	// Verb is one of inspect, read, use, manage.
+	Verb string
+	// ResourceType is an OCI resource type or family, e.g. buckets,
+	// object-family, all-resources.
+	ResourceType string
+	// CompartmentID is the compartment the target resource lives in.
+	CompartmentID string
+}
 
 // policy is an OCI policy: a named list of English-like statements attached to
 // a compartment.
@@ -40,7 +86,7 @@ type policyRevision struct {
 }
 
 // CreateStatementPolicy creates a policy from its statements.
-func (m *Mock) CreateStatementPolicy(_ context.Context, spec *driver.PolicySpec) (*driver.StatementPolicyInfo, error) {
+func (m *Mock) CreateStatementPolicy(_ context.Context, spec *PolicySpec) (*StatementPolicyInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -48,7 +94,7 @@ func (m *Mock) CreateStatementPolicy(_ context.Context, spec *driver.PolicySpec)
 }
 
 // createPolicy creates a policy from its statements. Callers hold m.mu.
-func (m *Mock) createPolicy(spec *driver.PolicySpec) (*driver.StatementPolicyInfo, error) {
+func (m *Mock) createPolicy(spec *PolicySpec) (*StatementPolicyInfo, error) {
 	if err := validateName(kindPolicy, spec.Name); err != nil {
 		return nil, err
 	}
@@ -83,7 +129,7 @@ func (m *Mock) createPolicy(spec *driver.PolicySpec) (*driver.StatementPolicyInf
 }
 
 // GetStatementPolicy returns the policy with the given OCID.
-func (m *Mock) GetStatementPolicy(_ context.Context, id string) (*driver.StatementPolicyInfo, error) {
+func (m *Mock) GetStatementPolicy(_ context.Context, id string) (*StatementPolicyInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -91,7 +137,7 @@ func (m *Mock) GetStatementPolicy(_ context.Context, id string) (*driver.Stateme
 }
 
 // statementPolicy returns the policy with the given OCID. Callers hold m.mu.
-func (m *Mock) statementPolicy(id string) (*driver.StatementPolicyInfo, error) {
+func (m *Mock) statementPolicy(id string) (*StatementPolicyInfo, error) {
 	p, ok := m.policies.Get(id)
 	if !ok {
 		return nil, policyNotFound(id)
@@ -101,13 +147,13 @@ func (m *Mock) statementPolicy(id string) (*driver.StatementPolicyInfo, error) {
 }
 
 // ListStatementPolicies returns the policies attached to one compartment.
-func (m *Mock) ListStatementPolicies(_ context.Context, compartmentID string) ([]driver.StatementPolicyInfo, error) {
+func (m *Mock) ListStatementPolicies(_ context.Context, compartmentID string) ([]StatementPolicyInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	filter := scope.Scope{Compartment: compartmentID}
 	all := m.policies.SortedValues()
-	out := make([]driver.StatementPolicyInfo, 0, len(all))
+	out := make([]StatementPolicyInfo, 0, len(all))
 
 	for _, p := range all {
 		if p.Scope.Matches(filter) {
@@ -121,8 +167,8 @@ func (m *Mock) ListStatementPolicies(_ context.Context, compartmentID string) ([
 // UpdateStatementPolicy applies the mutable fields of a policy, re-parsing the
 // statements when they are replaced.
 func (m *Mock) UpdateStatementPolicy(
-	_ context.Context, id string, upd driver.PolicyUpdate,
-) (*driver.StatementPolicyInfo, error) {
+	_ context.Context, id string, upd PolicyUpdate,
+) (*StatementPolicyInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -178,7 +224,7 @@ func (m *Mock) deletePolicy(id string) error {
 // Evaluate reports whether any statement grants the request. OCI policies only
 // ever allow, so the first match settles it. A statement this emulator cannot
 // resolve is reported as Unimplemented rather than granted.
-func (m *Mock) Evaluate(_ context.Context, req *driver.AccessRequest) (bool, error) {
+func (m *Mock) Evaluate(_ context.Context, req *AccessRequest) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -186,7 +232,7 @@ func (m *Mock) Evaluate(_ context.Context, req *driver.AccessRequest) (bool, err
 }
 
 // evaluate resolves an access request against every policy. Callers hold m.mu.
-func (m *Mock) evaluate(req *driver.AccessRequest) (bool, error) {
+func (m *Mock) evaluate(req *AccessRequest) (bool, error) {
 	if verbRank(strings.ToLower(req.Verb)) == rankUnknown {
 		return false, cerrors.Newf(cerrors.InvalidArgument,
 			"unknown verb %q, want inspect, read, use or manage", req.Verb)
@@ -214,7 +260,7 @@ func (m *Mock) evaluate(req *driver.AccessRequest) (bool, error) {
 
 // applies reports whether one statement grants the request in target, or the
 // error disclosing why it reaches the request but cannot be resolved.
-func (m *Mock) applies(p *policy, st *statement, req *driver.AccessRequest, target string) (bool, error) {
+func (m *Mock) applies(p *policy, st *statement, req *AccessRequest, target string) (bool, error) {
 	cover := st.grantsAccess(req)
 	if cover == coverDenied {
 		return false, nil
@@ -325,8 +371,8 @@ func policyNotFound(id string) error {
 	return cerrors.Newf(cerrors.NotFound, "policy %q not found", id)
 }
 
-func toStatementPolicyInfo(p *policy) *driver.StatementPolicyInfo {
-	return &driver.StatementPolicyInfo{
+func toStatementPolicyInfo(p *policy) *StatementPolicyInfo {
+	return &StatementPolicyInfo{
 		ID:             p.ID,
 		CompartmentID:  p.Scope.Compartment,
 		Name:           p.Name,

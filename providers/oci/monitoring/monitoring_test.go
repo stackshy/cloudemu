@@ -53,8 +53,8 @@ func post(t *testing.T, m *Mock, compartmentID, name string, at time.Time, value
 	require.NoError(t, m.PostMetricData(t.Context(), compartmentID, "", data))
 }
 
-func alarmSpec(compartmentID, name, query string) driver.OCIAlarmSpec {
-	return driver.OCIAlarmSpec{
+func alarmSpec(compartmentID, name, query string) OCIAlarmSpec {
+	return OCIAlarmSpec{
 		DisplayName:   name,
 		CompartmentID: compartmentID,
 		Namespace:     namespace,
@@ -105,7 +105,7 @@ func TestListOCIMetricsFiltersByCompartment(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			metrics, err := m.ListOCIMetrics(t.Context(), tc.compartmentID, driver.OCIMetricFilter{})
+			metrics, err := m.ListOCIMetrics(t.Context(), tc.compartmentID, OCIMetricFilter{})
 			require.NoError(t, err)
 
 			names := make([]string, 0, len(metrics))
@@ -121,7 +121,7 @@ func TestListOCIMetricsFiltersByCompartment(t *testing.T) {
 func TestListOCIMetricsRequiresCompartment(t *testing.T) {
 	m, _ := newMock(t)
 
-	_, err := m.ListOCIMetrics(t.Context(), "", driver.OCIMetricFilter{})
+	_, err := m.ListOCIMetrics(t.Context(), "", OCIMetricFilter{})
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 }
 
@@ -144,7 +144,7 @@ func TestSummarizeOCIMetrics(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := m.SummarizeOCIMetrics(t.Context(), compartmentA, driver.OCIMetricQuery{
+			out, err := m.SummarizeOCIMetrics(t.Context(), compartmentA, OCIMetricQuery{
 				Namespace: namespace,
 				Query:     tc.query,
 				StartTime: now.Add(-time.Minute),
@@ -178,7 +178,7 @@ func TestAlarmCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "high-cpu", got.Spec.DisplayName)
 
-	updated, err := m.UpdateOCIAlarm(ctx, created.ID, driver.OCIAlarmSpec{
+	updated, err := m.UpdateOCIAlarm(ctx, created.ID, OCIAlarmSpec{
 		DisplayName:   "high-cpu",
 		CompartmentID: compartmentB, // ignored: the compartment is fixed at create
 		Namespace:     namespace,
@@ -228,7 +228,7 @@ func TestAlarmErrorPaths(t *testing.T) {
 			return e
 		}, cerrors.NotFound},
 		{"update missing", func() error {
-			_, e := m.UpdateOCIAlarm(ctx, "ocid1.alarm.oc1.iad.missing", driver.OCIAlarmSpec{})
+			_, e := m.UpdateOCIAlarm(ctx, "ocid1.alarm.oc1.iad.missing", OCIAlarmSpec{})
 			return e
 		}, cerrors.NotFound},
 		{"delete missing", func() error {
@@ -513,7 +513,7 @@ func TestSummarizeResolutionFloor(t *testing.T) {
 			done := make(chan error, 1)
 
 			go func() {
-				_, err := m.SummarizeOCIMetrics(t.Context(), compartmentA, driver.OCIMetricQuery{
+				_, err := m.SummarizeOCIMetrics(t.Context(), compartmentA, OCIMetricQuery{
 					Namespace:  namespace,
 					Query:      tc.query,
 					Resolution: tc.resolution,
@@ -895,7 +895,7 @@ func TestDimensionPredicateOperators(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := m.SummarizeOCIMetrics(ctx, compartmentA, driver.OCIMetricQuery{
+			out, err := m.SummarizeOCIMetrics(ctx, compartmentA, OCIMetricQuery{
 				Namespace: namespace,
 				Query:     tc.query,
 				StartTime: now.Add(-time.Minute),
@@ -1028,24 +1028,24 @@ func TestAlarmRejectsUnparseableQuery(t *testing.T) {
 func TestAlarmFieldValidation(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(*driver.OCIAlarmSpec)
+		mutate func(*OCIAlarmSpec)
 		want   cerrors.Code
 	}{
-		{"unknown severity", func(s *driver.OCIAlarmSpec) { s.Severity = "URGENT" }, cerrors.InvalidArgument},
-		{"lower-case severity", func(s *driver.OCIAlarmSpec) { s.Severity = "critical" }, cerrors.InvalidArgument},
-		{"every severity OCI names", func(s *driver.OCIAlarmSpec) { s.Severity = severityInfo }, cerrors.OK},
-		{"pendingDuration that is not ISO-8601", func(s *driver.OCIAlarmSpec) {
+		{"unknown severity", func(s *OCIAlarmSpec) { s.Severity = "URGENT" }, cerrors.InvalidArgument},
+		{"lower-case severity", func(s *OCIAlarmSpec) { s.Severity = "critical" }, cerrors.InvalidArgument},
+		{"every severity OCI names", func(s *OCIAlarmSpec) { s.Severity = severityInfo }, cerrors.OK},
+		{"pendingDuration that is not ISO-8601", func(s *OCIAlarmSpec) {
 			s.PendingDuration = "5m"
 		}, cerrors.InvalidArgument},
-		{"pendingDuration with a unit but no number", func(s *driver.OCIAlarmSpec) {
+		{"pendingDuration with a unit but no number", func(s *OCIAlarmSpec) {
 			s.PendingDuration = "PTM"
 		}, cerrors.InvalidArgument},
-		{"ISO-8601 pendingDuration", func(s *driver.OCIAlarmSpec) { s.PendingDuration = "PT5M" }, cerrors.OK},
-		{"resolution that is not an interval", func(s *driver.OCIAlarmSpec) {
+		{"ISO-8601 pendingDuration", func(s *OCIAlarmSpec) { s.PendingDuration = "PT5M" }, cerrors.OK},
+		{"resolution that is not an interval", func(s *OCIAlarmSpec) {
 			s.Resolution = "hourly"
 		}, cerrors.InvalidArgument},
-		{"sub-minute resolution", func(s *driver.OCIAlarmSpec) { s.Resolution = "30s" }, cerrors.InvalidArgument},
-		{"minute resolution", func(s *driver.OCIAlarmSpec) { s.Resolution = "5m" }, cerrors.OK},
+		{"sub-minute resolution", func(s *OCIAlarmSpec) { s.Resolution = "30s" }, cerrors.InvalidArgument},
+		{"minute resolution", func(s *OCIAlarmSpec) { s.Resolution = "5m" }, cerrors.OK},
 	}
 
 	for _, tc := range tests {

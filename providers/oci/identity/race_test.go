@@ -25,7 +25,7 @@ func TestPolicyUpdateConcurrentWithEvaluate(t *testing.T) {
 	ctx := t.Context()
 	dev := newCompartment(t, m, tenancy, devName)
 
-	pol, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	pol, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy, Name: "admins", Statements: []string{manageAllInDev},
 	})
 	require.NoError(t, err)
@@ -43,7 +43,7 @@ func TestPolicyUpdateConcurrentWithEvaluate(t *testing.T) {
 				text = readBucketsInDev
 			}
 
-			if _, err := m.UpdateStatementPolicy(ctx, pol.ID, driver.PolicyUpdate{
+			if _, err := m.UpdateStatementPolicy(ctx, pol.ID, PolicyUpdate{
 				Statements: []string{text},
 			}); err != nil {
 				t.Errorf("UpdateStatementPolicy: %v", err)
@@ -53,7 +53,7 @@ func TestPolicyUpdateConcurrentWithEvaluate(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			if _, err := m.Evaluate(ctx, &driver.AccessRequest{
+			if _, err := m.Evaluate(ctx, &AccessRequest{
 				Groups:        []string{adminName},
 				Verb:          verbRead,
 				ResourceType:  "buckets",
@@ -81,7 +81,7 @@ func TestPolicyVersionWritesConcurrentWithReads(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	pol, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	pol, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy, Name: "admins", Statements: []string{manageAllInDev},
 	})
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestPrincipalAndCompartmentUpdatesConcurrentWithReads(t *testing.T) {
 	ctx := t.Context()
 	dev := newCompartment(t, m, tenancy, devName)
 
-	user, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: dev, Name: "alice"})
+	user, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: dev, Name: "alice"})
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -131,7 +131,7 @@ func TestPrincipalAndCompartmentUpdatesConcurrentWithReads(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			if _, err := m.UpdateOCIUser(ctx, user.ID, driver.IdentityUpdate{
+			if _, err := m.UpdateOCIUser(ctx, user.ID, Update{
 				Description:  "rev",
 				FreeformTags: map[string]string{"env": devName},
 			}); err != nil {
@@ -155,7 +155,7 @@ func TestPrincipalAndCompartmentUpdatesConcurrentWithReads(t *testing.T) {
 				name = "development"
 			}
 
-			if _, err := m.UpdateCompartment(ctx, dev, driver.IdentityUpdate{Name: name}); err != nil {
+			if _, err := m.UpdateCompartment(ctx, dev, Update{Name: name}); err != nil {
 				t.Errorf("UpdateCompartment: %v", err)
 			}
 		}()

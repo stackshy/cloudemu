@@ -29,6 +29,10 @@ const (
 	metricsPath  = "/20180401/metrics"
 )
 
+// Compile-time check that the OCI Monitoring mock carries the optional
+// capability the handler discovers by type assertion.
+var _ monitoring.Extras = (*ocimon.Mock)(nil)
+
 // stubMonitoring implements only the portable driver, so the handler must
 // report the OCI capability as missing.
 type stubMonitoring struct{ mondriver.Monitoring }

@@ -28,6 +28,39 @@ const (
 	maxDimensionLength = 256
 )
 
+// OCIMetric identifies a compartment-scoped metric series. Timestamps and
+// Values are populated only by a summarize query.
+type OCIMetric struct {
+	CompartmentID string
+	Namespace     string
+	ResourceGroup string
+	Name          string
+	Dimensions    map[string]string
+	Resolution    string
+	Timestamps    []time.Time
+	Values        []float64
+}
+
+// OCIMetricFilter narrows a metric listing. Empty fields match anything.
+type OCIMetricFilter struct {
+	Namespace     string
+	ResourceGroup string
+	Name          string
+	Dimensions    map[string]string
+}
+
+// OCIMetricQuery selects the series to aggregate. Query is OCI's metric query
+// language, e.g. CpuUtilization[1m].mean().
+type OCIMetricQuery struct {
+	Namespace     string
+	ResourceGroup string
+	Query         string
+	Resolution    string
+	Dimensions    map[string]string
+	StartTime     time.Time
+	EndTime       time.Time
+}
+
 // metricPoint is one recorded sample.
 type metricPoint struct {
 	timestamp time.Time
@@ -72,17 +105,17 @@ func (m *Mock) PostMetricData(_ context.Context, compartmentID, resourceGroup st
 
 // ListOCIMetrics returns the metric identities recorded in a compartment.
 func (m *Mock) ListOCIMetrics(
-	_ context.Context, compartmentID string, filter driver.OCIMetricFilter,
-) ([]driver.OCIMetric, error) {
+	_ context.Context, compartmentID string, filter OCIMetricFilter,
+) ([]OCIMetric, error) {
 	if compartmentID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
 	}
 
 	selected := m.selectSeries(compartmentID, filter, nil)
-	out := make([]driver.OCIMetric, 0, len(selected))
+	out := make([]OCIMetric, 0, len(selected))
 
 	for _, s := range selected {
-		out = append(out, driver.OCIMetric{
+		out = append(out, OCIMetric{
 			CompartmentID: compartmentID,
 			Namespace:     s.namespace,
 			ResourceGroup: s.resourceGroup,
@@ -99,8 +132,8 @@ func (m *Mock) ListOCIMetrics(
 //
 //nolint:gocritic // hugeParam: query is the request in full.
 func (m *Mock) SummarizeOCIMetrics(
-	_ context.Context, compartmentID string, query driver.OCIMetricQuery,
-) ([]driver.OCIMetric, error) {
+	_ context.Context, compartmentID string, query OCIMetricQuery,
+) ([]OCIMetric, error) {
 	if compartmentID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
 	}
@@ -115,7 +148,7 @@ func (m *Mock) SummarizeOCIMetrics(
 		return nil, err
 	}
 
-	filter := driver.OCIMetricFilter{
+	filter := OCIMetricFilter{
 		Namespace:     query.Namespace,
 		ResourceGroup: query.ResourceGroup,
 		Name:          sel.metricName,
@@ -124,7 +157,7 @@ func (m *Mock) SummarizeOCIMetrics(
 
 	start, end := m.window(query.StartTime, query.EndTime)
 	selected := m.selectSeries(compartmentID, filter, sel.dimensions)
-	out := make([]driver.OCIMetric, 0, len(selected))
+	out := make([]OCIMetric, 0, len(selected))
 
 	for _, s := range selected {
 		stamps, values := aggregate(m.pointsOf(s), start, end, step, sel.stat)
@@ -132,7 +165,7 @@ func (m *Mock) SummarizeOCIMetrics(
 			continue
 		}
 
-		out = append(out, driver.OCIMetric{
+		out = append(out, OCIMetric{
 			CompartmentID: compartmentID,
 			Namespace:     s.namespace,
 			ResourceGroup: s.resourceGroup,
@@ -177,7 +210,7 @@ func (m *Mock) appendPoint(compartmentID, resourceGroup string, d *driver.Metric
 // selectSeries returns the series in a compartment matching the filter and
 // every dimension predicate a query's selector carried.
 func (m *Mock) selectSeries(
-	compartmentID string, filter driver.OCIMetricFilter, preds []dimensionPredicate,
+	compartmentID string, filter OCIMetricFilter, preds []dimensionPredicate,
 ) []*metricSeries {
 	want := scope.Scope{Compartment: compartmentID}
 
@@ -218,7 +251,7 @@ func (m *Mock) window(start, end time.Time) (from, to time.Time) {
 	return start, end
 }
 
-func (s *metricSeries) matches(filter driver.OCIMetricFilter, preds []dimensionPredicate) bool {
+func (s *metricSeries) matches(filter OCIMetricFilter, preds []dimensionPredicate) bool {
 	switch {
 	case filter.Namespace != "" && s.namespace != filter.Namespace:
 		return false
@@ -393,7 +426,7 @@ func valuesIn(points []metricPoint, from, to time.Time, inclusiveEnd bool) []flo
 }
 
 // mergeSeries flattens summarized series into the portable single result.
-func mergeSeries(metrics []driver.OCIMetric) *driver.MetricDataResult {
+func mergeSeries(metrics []OCIMetric) *driver.MetricDataResult {
 	result := &driver.MetricDataResult{Timestamps: []time.Time{}, Values: []float64{}}
 
 	for i := range metrics {

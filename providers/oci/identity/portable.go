@@ -19,7 +19,7 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	info, err := m.createPrincipal(m.users, kindUser, driver.PrincipalSpec{
+	info, err := m.createPrincipal(m.users, kindUser, PrincipalSpec{
 		Name:         cfg.Name,
 		FreeformTags: cfg.Tags,
 	})
@@ -76,7 +76,7 @@ func (m *Mock) CreateGroup(_ context.Context, cfg driver.GroupConfig) (*driver.G
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	info, err := m.createPrincipal(m.groups, kindGroup, driver.PrincipalSpec{Name: cfg.Name})
+	info, err := m.createPrincipal(m.groups, kindGroup, PrincipalSpec{Name: cfg.Name})
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +285,7 @@ func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	info, err := m.createPolicy(&driver.PolicySpec{
+	info, err := m.createPolicy(&PolicySpec{
 		Name:        cfg.Name,
 		Description: cfg.Description,
 		Statements:  splitStatements(cfg.PolicyDocument),
@@ -396,7 +396,7 @@ func (m *Mock) CheckPermission(_ context.Context, principal, action, resource st
 		return false, nil
 	}
 
-	return m.evaluate(&driver.AccessRequest{
+	return m.evaluate(&AccessRequest{
 		Groups:        m.groupNamesFor(u.ID),
 		AnyUser:       true,
 		Verb:          action,
@@ -432,7 +432,7 @@ func namedNotFound(kind, name string) error {
 	return cerrors.Newf(cerrors.NotFound, "%s %q not found", kind, name)
 }
 
-func toUserInfo(p *driver.PrincipalInfo) *driver.UserInfo {
+func toUserInfo(p *PrincipalInfo) *driver.UserInfo {
 	return &driver.UserInfo{
 		Name:      p.Name,
 		ID:        p.ID,
@@ -443,7 +443,7 @@ func toUserInfo(p *driver.PrincipalInfo) *driver.UserInfo {
 	}
 }
 
-func toGroupInfo(p *driver.PrincipalInfo) *driver.GroupInfo {
+func toGroupInfo(p *PrincipalInfo) *driver.GroupInfo {
 	return &driver.GroupInfo{
 		Name:      p.Name,
 		Path:      defaultPath,
@@ -463,7 +463,7 @@ func toRoleInfo(dg *dynamicGroup) *driver.RoleInfo {
 	}
 }
 
-func toPolicyInfo(p *driver.StatementPolicyInfo) *driver.PolicyInfo {
+func toPolicyInfo(p *StatementPolicyInfo) *driver.PolicyInfo {
 	return &driver.PolicyInfo{
 		Name:           p.Name,
 		ID:             p.ID,

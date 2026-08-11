@@ -15,12 +15,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// Compile-time checks that Mock implements the portable driver and OCI's
-// compartment-scoped capability.
-var (
-	_ driver.Monitoring    = (*Mock)(nil)
-	_ driver.OCIMonitoring = (*Mock)(nil)
-)
+// Compile-time check that Mock implements the portable driver. The OCI-only
+// surface is server/oci/monitoring.Extras, checked there.
+var _ driver.Monitoring = (*Mock)(nil)
 
 // Alarm statuses OCI reports for an alarm.
 const (
@@ -53,7 +50,7 @@ const (
 type alarmRecord struct {
 	id             string
 	place          scope.Scope
-	spec           driver.OCIAlarmSpec
+	spec           OCIAlarmSpec
 	status         string
 	lifecycleState string
 	timeCreated    time.Time
@@ -95,7 +92,7 @@ func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) err
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) GetMetricData(ctx context.Context, input driver.GetMetricInput) (*driver.MetricDataResult, error) {
-	metrics, err := m.SummarizeOCIMetrics(ctx, m.opts.CompartmentID, driver.OCIMetricQuery{
+	metrics, err := m.SummarizeOCIMetrics(ctx, m.opts.CompartmentID, OCIMetricQuery{
 		Namespace:  input.Namespace,
 		Query:      formatSelector(input.MetricName, input.Stat, input.Period, nil),
 		Dimensions: input.Dimensions,
@@ -112,7 +109,7 @@ func (m *Mock) GetMetricData(ctx context.Context, input driver.GetMetricInput) (
 // ListMetrics returns the metric names recorded under namespace in the default
 // compartment.
 func (m *Mock) ListMetrics(ctx context.Context, namespace string) ([]string, error) {
-	metrics, err := m.ListOCIMetrics(ctx, m.opts.CompartmentID, driver.OCIMetricFilter{Namespace: namespace})
+	metrics, err := m.ListOCIMetrics(ctx, m.opts.CompartmentID, OCIMetricFilter{Namespace: namespace})
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +140,7 @@ func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
 		return err
 	}
 
-	_, err = m.CreateOCIAlarm(ctx, driver.OCIAlarmSpec{
+	_, err = m.CreateOCIAlarm(ctx, OCIAlarmSpec{
 		DisplayName:     cfg.Name,
 		CompartmentID:   m.opts.CompartmentID,
 		Namespace:       cfg.Namespace,
@@ -315,7 +312,7 @@ func (m *Mock) findByDisplayName(name string) (*alarmRecord, error) {
 	return rec, nil
 }
 
-func toAlarmInfo(a *driver.OCIAlarm) driver.AlarmInfo {
+func toAlarmInfo(a *OCIAlarm) driver.AlarmInfo {
 	cond, _ := parseQuery(a.Spec.Query)
 
 	return driver.AlarmInfo{

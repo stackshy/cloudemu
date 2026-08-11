@@ -3,8 +3,8 @@ package monitoring
 import (
 	"net/http"
 
+	monprovider "github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
-	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 func (h *Handler) createAlarm(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +153,7 @@ func (h *Handler) getAlarmHistory(w http.ResponseWriter, r *http.Request, id str
 
 // compartmentAlarms resolves the required compartmentId and lists it, writing
 // the error response itself when either step fails.
-func (h *Handler) compartmentAlarms(w http.ResponseWriter, r *http.Request) ([]*mondriver.OCIAlarm, bool) {
+func (h *Handler) compartmentAlarms(w http.ResponseWriter, r *http.Request) ([]*monprovider.OCIAlarm, bool) {
 	compartmentID, given := ocirest.RequireCompartmentID(w, r)
 	if !given {
 		return nil, false
@@ -190,8 +190,8 @@ func acceptable(w http.ResponseWriter, r *http.Request, body *alarmDetails) bool
 }
 
 // byDisplayName narrows a listing to the alarms with a display name.
-func byDisplayName(alarms []*mondriver.OCIAlarm, name string) []*mondriver.OCIAlarm {
-	out := make([]*mondriver.OCIAlarm, 0, len(alarms))
+func byDisplayName(alarms []*monprovider.OCIAlarm, name string) []*monprovider.OCIAlarm {
+	out := make([]*monprovider.OCIAlarm, 0, len(alarms))
 
 	for _, a := range alarms {
 		if a.Spec.DisplayName == name {
@@ -202,8 +202,8 @@ func byDisplayName(alarms []*mondriver.OCIAlarm, name string) []*mondriver.OCIAl
 	return out
 }
 
-func (d *alarmDetails) toSpec() mondriver.OCIAlarmSpec {
-	return mondriver.OCIAlarmSpec{
+func (d *alarmDetails) toSpec() monprovider.OCIAlarmSpec {
+	return monprovider.OCIAlarmSpec{
 		DisplayName:                d.DisplayName,
 		CompartmentID:              d.CompartmentID,
 		MetricCompartmentID:        d.MetricCompartmentID,
@@ -225,7 +225,7 @@ func (d *alarmDetails) toSpec() mondriver.OCIAlarmSpec {
 
 // applyPatch overlays the fields an UpdateAlarm body supplied onto the stored
 // spec, leaving the rest as they were.
-func applyPatch(spec *mondriver.OCIAlarmSpec, body *alarmDetails) {
+func applyPatch(spec *monprovider.OCIAlarmSpec, body *alarmDetails) {
 	for _, f := range []struct {
 		dst *string
 		src string
@@ -264,7 +264,7 @@ func applyPatch(spec *mondriver.OCIAlarmSpec, body *alarmDetails) {
 	}
 }
 
-func toWireAlarm(a *mondriver.OCIAlarm) alarm {
+func toWireAlarm(a *monprovider.OCIAlarm) alarm {
 	return alarm{
 		ID:                         a.ID,
 		DisplayName:                a.Spec.DisplayName,
