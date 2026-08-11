@@ -109,6 +109,15 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.createServiceLocked(w, r, namespace, &in)
+}
+
+// createServiceLocked persists a new Service (ClusterIP allocation + paired
+// Endpoints). The caller holds s.mu. Shared by POST create and apply-create.
+func (s *ClusterState) createServiceLocked(w http.ResponseWriter, r *http.Request, namespace string, in *corev1.Service) {
 	if in.Name == "" {
 		writeBadRequest(w, "k8s api: service: metadata.name is required")
 
@@ -118,9 +127,6 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 	in.Namespace = namespace
 
 	key := serviceKey(namespace, in.Name)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, ok := s.services[key]; ok {
 		writeAlreadyExists(w, "k8s api: service already exists: "+key)
@@ -148,12 +154,12 @@ func (s *ClusterState) createService(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	if isDryRun(r) {
-		writeJSON(w, http.StatusCreated, &in)
+		writeJSON(w, http.StatusCreated, in)
 
 		return
 	}
 
-	svc := in
+	svc := *in
 	s.services[key] = &svc
 
 	// Auto-create the Endpoints object, then let the endpoints controller fill
@@ -295,12 +301,25 @@ func (s *ClusterState) patchService(w http.ResponseWriter, r *http.Request, name
 
 	cur, ok := s.services[key]
 	if !ok {
+		// Server-side apply to a missing object creates it (upstream SSA).
+		if r.Header.Get("Content-Type") == contentTypeApplyPatch {
+			in, aok := serverSideApplyTyped(s, w, r, apiVersionV1, &corev1.Service{})
+			if !aok {
+				return
+			}
+
+			in.Name = name
+			s.createServiceLocked(w, r, namespace, in)
+
+			return
+		}
+
 		writeNotFound(w, "k8s api: service not found: "+key)
 
 		return
 	}
 
-	patched, ok := applyJSONPatch(w, r, cur)
+	patched, ok := applyOrPatchTyped(s, w, r, apiVersionV1, cur)
 	if !ok {
 		return
 	}
@@ -311,6 +330,16 @@ func (s *ClusterState) patchService(w http.ResponseWriter, r *http.Request, name
 	patched.Spec.ClusterIPs = cur.Spec.ClusterIPs
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
+	// A patch that drops the last finalizer from a Terminating object completes
+	// the delete (the patch was merged onto cur, so it inherits deletionTimestamp).
+	if finalizersDrained(&patched.ObjectMeta) {
+		delete(s.services, key)
+		s.wServices.publish(EventDeleted, namespace, *patched.DeepCopy())
 		writeJSON(w, http.StatusOK, patched)
 
 		return
@@ -335,6 +364,16 @@ func (s *ClusterState) deleteService(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, svc.DeepCopy())
+
+		return
+	}
+
+	// Finalizer-gated deletion: a Service with finalizers goes Terminating and is
+	// removed only when the last finalizer is dropped via update/patch.
+	if s.markForDeletion(&svc.ObjectMeta) {
+		svc.ResourceVersion = bumpResourceVersion(svc.ResourceVersion)
+		s.wServices.publish(EventModified, namespace, *svc.DeepCopy())
 		writeJSON(w, http.StatusOK, svc.DeepCopy())
 
 		return

@@ -99,7 +99,6 @@ func (s *ClusterState) serveServiceAccountItem(w http.ResponseWriter, r *http.Re
 	}
 }
 
-//nolint:dupl // namespaced-create CRUD pattern; copy-paste is clearer than a generic helper.
 func (s *ClusterState) createServiceAccount(w http.ResponseWriter, r *http.Request, namespace string) {
 	var in corev1.ServiceAccount
 	if !readJSON(w, r, &in) {
@@ -249,8 +248,6 @@ func (s *ClusterState) updateServiceAccount(w http.ResponseWriter, r *http.Reque
 
 // Patch flow is identical across namespaced resources; sharing would force a
 // runtime type-switch and obscure the resource-specific store access.
-//
-//nolint:dupl // see comment above.
 func (s *ClusterState) patchServiceAccount(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	key := serviceAccountKey(namespace, name)
 

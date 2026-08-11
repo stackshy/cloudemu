@@ -58,7 +58,7 @@ var ssaSkipMeta = map[string]bool{
 // (merged, true) on success; on conflict or wire error it has already written
 // the response and returns (nil, false).
 func (s *ClusterState) serverSideApply(
-	w http.ResponseWriter, r *http.Request, st *registryStore, cur *unstructured.Unstructured,
+	w http.ResponseWriter, r *http.Request, apiVersion string, cur *unstructured.Unstructured,
 ) (*unstructured.Unstructured, bool) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -95,7 +95,7 @@ func (s *ClusterState) serverSideApply(
 		return nil, false
 	}
 
-	setManagedFields(merged, updateManagedFields(cur, manager, appliedLeaves, st.def.apiVersion(), s.now()))
+	setManagedFields(merged, updateManagedFields(cur, manager, appliedLeaves, apiVersion, s.now()))
 	// Upstream apply removes fields this manager previously owned but now omits,
 	// unless another manager still owns them.
 	removeDroppedLeaves(merged, diffLeaves(prevLeaves, appliedLeaves))
@@ -449,6 +449,63 @@ func objectMap(v any) map[string]any {
 	}
 
 	return m
+}
+
+// applyOrPatchTyped dispatches a typed PATCH: an `application/apply-patch+yaml`
+// body runs through the server-side-apply engine (field ownership + conflicts),
+// every other content type is a plain merge/strategic/JSONPatch. apiVersion
+// labels the managedFields entry SSA records. This mirrors registryPatch's
+// content-type branch for the typed core kinds.
+func applyOrPatchTyped[T any](
+	s *ClusterState, w http.ResponseWriter, r *http.Request, apiVersion string, cur *T,
+) (*T, bool) {
+	if r.Header.Get("Content-Type") == contentTypeApplyPatch {
+		return serverSideApplyTyped(s, w, r, apiVersion, cur)
+	}
+
+	return applyJSONPatch(w, r, cur)
+}
+
+// serverSideApplyTyped runs server-side apply for a typed core kind by
+// round-tripping the current object through the unstructured SSA engine, which
+// carries all the field-ownership and conflict logic. It returns the merged
+// typed object (managedFields set), or (nil, false) after the engine has
+// already written a 409/400 response.
+func serverSideApplyTyped[T any](
+	s *ClusterState, w http.ResponseWriter, r *http.Request, apiVersion string, cur *T,
+) (*T, bool) {
+	curMap := objectMap(cur)
+	if curMap == nil {
+		writeBadRequest(w, "k8s api: encode current object for apply")
+
+		return nil, false
+	}
+
+	merged, ok := s.serverSideApply(w, r, apiVersion, &unstructured.Unstructured{Object: curMap})
+	if !ok {
+		return nil, false
+	}
+
+	return typedFromUnstructured[T](w, merged)
+}
+
+// typedFromUnstructured decodes an unstructured object back into a typed T.
+func typedFromUnstructured[T any](w http.ResponseWriter, u *unstructured.Unstructured) (*T, bool) {
+	b, err := json.Marshal(u.Object)
+	if err != nil {
+		writeBadRequest(w, "k8s api: marshal merged object: "+err.Error())
+
+		return nil, false
+	}
+
+	out := new(T)
+	if err := json.Unmarshal(b, out); err != nil {
+		writeBadRequest(w, "k8s api: decode merged typed object: "+err.Error())
+
+		return nil, false
+	}
+
+	return out, true
 }
 
 // typedEntryLeaves returns the leaf set recorded in a typed managedFields entry.
