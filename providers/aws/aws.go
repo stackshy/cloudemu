@@ -26,6 +26,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
+	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
@@ -170,6 +171,7 @@ type Provider struct {
 	CloudTrail          *cloudtrail.Mock
 	Glue                *glue.Mock
 	Config              *configservice.Mock
+	GuardDuty           *guardduty.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -220,6 +222,7 @@ func New(opts ...config.Option) *Provider {
 		CloudTrail:          cloudtrail.New(o),
 		Glue:                glue.New(o),
 		Config:              configservice.New(o),
+		GuardDuty:           guardduty.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 	}

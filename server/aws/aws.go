@@ -28,6 +28,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
+	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
@@ -68,6 +69,7 @@ import (
 	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
+	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
@@ -163,6 +165,10 @@ type Drivers struct {
 	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
 	// "StarlingDoveService.") against the configservice driver.
 	Config configservicedriver.Config
+	// GuardDuty serves the Amazon GuardDuty REST-JSON API (path + method routing,
+	// no version prefix) against the guardduty driver. It must register before
+	// the S3 catch-all (see the GuardDuty handler's Matches doc).
+	GuardDuty guarddutydriver.GuardDuty
 	// SSM serves the Systems Manager Parameter Store JSON 1.1 protocol against
 	// the parameterstore driver.
 	SSM ssmdriver.ParameterStore
@@ -250,6 +256,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		CloudTrail:          p.CloudTrail,
 		Glue:                p.Glue,
 		Config:              p.Config,
+		GuardDuty:           p.GuardDuty,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -526,6 +533,19 @@ func New(d Drivers) *server.Server {
 	}
 
 	// EKS is a REST/JSON service rooted at /clusters. It must register
+	// GuardDuty uses REST-JSON path + method routing with NO version prefix, so
+	// its Matches predicate gates on the first path segment being a known
+	// GuardDuty root (detector, admin, invitation, tags, malware-scan,
+	// malware-scans, malware-protection-plan, object-malware-scan, organization).
+	// It MUST register before S3's permissive REST catch-all. It also registers
+	// before EKS because both use the shared /tags/{ResourceArn} REST path and
+	// EKS's Matches claims every /tags request; the GuardDuty handler only claims
+	// that path for GuardDuty ARNs, so EKS (and other services') tag requests
+	// fall through to their own handlers.
+	if d.GuardDuty != nil {
+		srv.Register(guarddutysrv.New(d.GuardDuty))
+	}
+
 	// before S3 because S3 is the permissive REST fallback that would
 	// otherwise claim the same path. EKS's Matches predicate is rooted
 	// at /clusters specifically so it doesn't shadow other REST URLs.

@@ -12,7 +12,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [CosmosDB](./cosmosdb.md) | `database` | 24 |
 | [CosmosPostgreSQL](./cosmospostgresql.md) | `cosmospostgresql` | 34 |
 | [DNS](./dns.md) | `dns` | 16 |
-| [Databricks](./databricks.md) | `databricks` | 46 |
+| [Databricks](./databricks.md) | `databricks` | 24 |
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
 | [Functions](./functions.md) | `serverless` | 27 |
 | [IAM](./iam.md) | `iam` | 40 |
