@@ -2512,85 +2512,145 @@
   },
   {
     "service": "databricks",
-    "interface": "Databricks",
+    "interface": "DataPlane",
     "operations": [
       {
-        "name": "CreateOrUpdateAccessConnector",
-        "doc": "Access connectors (top-level Microsoft.Databricks/accessConnectors)."
+        "name": "AllClusterLibraryStatuses"
       },
       {
-        "name": "CreateOrUpdateVNetPeering",
-        "doc": "Virtual network peerings (workspaces/{w}/virtualNetworkPeerings)."
+        "name": "CancelAllRuns"
       },
       {
-        "name": "CreateWorkspace"
+        "name": "CancelRun"
       },
       {
-        "name": "DeleteAccessConnector"
+        "name": "ClusterLibraryStatuses"
       },
       {
-        "name": "DeletePrivateEndpointConnection"
+        "name": "CreateCluster"
       },
       {
-        "name": "DeleteVNetPeering"
+        "name": "CreateClusterPolicy"
       },
       {
-        "name": "DeleteWorkspace"
+        "name": "CreateInstancePool"
       },
       {
-        "name": "GetAccessConnector"
+        "name": "CreateJob"
       },
       {
-        "name": "GetPrivateEndpointConnection"
+        "name": "DeleteCluster"
       },
       {
-        "name": "GetPrivateLinkResource",
-        "doc": "Private link resources (workspaces/{w}/privateLinkResources)."
+        "name": "DeleteClusterPolicy"
       },
       {
-        "name": "GetVNetPeering"
+        "name": "DeleteInstancePool"
       },
       {
-        "name": "GetWorkspace"
+        "name": "DeleteJob"
       },
       {
-        "name": "ListAccessConnectors"
+        "name": "DeleteRun"
       },
       {
-        "name": "ListAccessConnectorsByResourceGroup"
+        "name": "EditCluster"
       },
       {
-        "name": "ListOperations",
-        "doc": "Provider operations (/providers/Microsoft.Databricks/operations)."
+        "name": "EditClusterPolicy"
       },
       {
-        "name": "ListOutboundNetworkDependencies",
-        "doc": "Outbound network dependencies (workspaces/{w}/outboundNetworkDependenciesEndpoints)."
+        "name": "EditInstancePool"
       },
       {
-        "name": "ListPrivateEndpointConnections"
+        "name": "GetCluster"
       },
       {
-        "name": "ListPrivateLinkResources"
+        "name": "GetClusterPolicy"
       },
       {
-        "name": "ListVNetPeerings"
+        "name": "GetInstancePool"
       },
       {
-        "name": "ListWorkspaces"
+        "name": "GetJob"
       },
       {
-        "name": "ListWorkspacesByResourceGroup"
+        "name": "GetPermissions"
       },
       {
-        "name": "PutPrivateEndpointConnection",
-        "doc": "Private endpoint connections (workspaces/{w}/privateEndpointConnections)."
+        "name": "GetRun"
       },
       {
-        "name": "UpdateAccessConnector"
+        "name": "GetRunOutput"
       },
       {
-        "name": "UpdateWorkspaceTags"
+        "name": "InstallLibraries"
+      },
+      {
+        "name": "ListClusterPolicies"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListInstancePools"
+      },
+      {
+        "name": "ListJobs"
+      },
+      {
+        "name": "ListNodeTypes"
+      },
+      {
+        "name": "ListRuns"
+      },
+      {
+        "name": "ListSparkVersions"
+      },
+      {
+        "name": "ListZones"
+      },
+      {
+        "name": "PermanentDeleteCluster"
+      },
+      {
+        "name": "PinCluster"
+      },
+      {
+        "name": "RepairRun"
+      },
+      {
+        "name": "ResetJob"
+      },
+      {
+        "name": "ResizeCluster"
+      },
+      {
+        "name": "RestartCluster"
+      },
+      {
+        "name": "RunJobNow"
+      },
+      {
+        "name": "SetPermissions"
+      },
+      {
+        "name": "StartCluster"
+      },
+      {
+        "name": "SubmitRun"
+      },
+      {
+        "name": "UninstallLibraries"
+      },
+      {
+        "name": "UnpinCluster"
+      },
+      {
+        "name": "UpdateJob"
+      },
+      {
+        "name": "UpdatePermissions"
       }
     ],
     "optionalCapabilities": [
@@ -2661,146 +2721,86 @@
         ]
       },
       {
-        "name": "DataPlane",
-        "doc": "DataPlane is the interface for the Databricks workspace data plane: compute",
+        "name": "Databricks",
+        "doc": "Databricks is the interface that workspace service implementations must",
         "operations": [
           {
-            "name": "AllClusterLibraryStatuses"
+            "name": "CreateOrUpdateAccessConnector",
+            "doc": "Access connectors (top-level Microsoft.Databricks/accessConnectors)."
           },
           {
-            "name": "CancelAllRuns"
+            "name": "CreateOrUpdateVNetPeering",
+            "doc": "Virtual network peerings (workspaces/{w}/virtualNetworkPeerings)."
           },
           {
-            "name": "CancelRun"
+            "name": "CreateWorkspace"
           },
           {
-            "name": "ClusterLibraryStatuses"
+            "name": "DeleteAccessConnector"
           },
           {
-            "name": "CreateCluster"
+            "name": "DeletePrivateEndpointConnection"
           },
           {
-            "name": "CreateClusterPolicy"
+            "name": "DeleteVNetPeering"
           },
           {
-            "name": "CreateInstancePool"
+            "name": "DeleteWorkspace"
           },
           {
-            "name": "CreateJob"
+            "name": "GetAccessConnector"
           },
           {
-            "name": "DeleteCluster"
+            "name": "GetPrivateEndpointConnection"
           },
           {
-            "name": "DeleteClusterPolicy"
+            "name": "GetPrivateLinkResource",
+            "doc": "Private link resources (workspaces/{w}/privateLinkResources)."
           },
           {
-            "name": "DeleteInstancePool"
+            "name": "GetVNetPeering"
           },
           {
-            "name": "DeleteJob"
+            "name": "GetWorkspace"
           },
           {
-            "name": "DeleteRun"
+            "name": "ListAccessConnectors"
           },
           {
-            "name": "EditCluster"
+            "name": "ListAccessConnectorsByResourceGroup"
           },
           {
-            "name": "EditClusterPolicy"
+            "name": "ListOperations",
+            "doc": "Provider operations (/providers/Microsoft.Databricks/operations)."
           },
           {
-            "name": "EditInstancePool"
+            "name": "ListOutboundNetworkDependencies",
+            "doc": "Outbound network dependencies (workspaces/{w}/outboundNetworkDependenciesEndpoints)."
           },
           {
-            "name": "GetCluster"
+            "name": "ListPrivateEndpointConnections"
           },
           {
-            "name": "GetClusterPolicy"
+            "name": "ListPrivateLinkResources"
           },
           {
-            "name": "GetInstancePool"
+            "name": "ListVNetPeerings"
           },
           {
-            "name": "GetJob"
+            "name": "ListWorkspaces"
           },
           {
-            "name": "GetPermissions"
+            "name": "ListWorkspacesByResourceGroup"
           },
           {
-            "name": "GetRun"
+            "name": "PutPrivateEndpointConnection",
+            "doc": "Private endpoint connections (workspaces/{w}/privateEndpointConnections)."
           },
           {
-            "name": "GetRunOutput"
+            "name": "UpdateAccessConnector"
           },
           {
-            "name": "InstallLibraries"
-          },
-          {
-            "name": "ListClusterPolicies"
-          },
-          {
-            "name": "ListClusters"
-          },
-          {
-            "name": "ListInstancePools"
-          },
-          {
-            "name": "ListJobs"
-          },
-          {
-            "name": "ListNodeTypes"
-          },
-          {
-            "name": "ListRuns"
-          },
-          {
-            "name": "ListSparkVersions"
-          },
-          {
-            "name": "ListZones"
-          },
-          {
-            "name": "PermanentDeleteCluster"
-          },
-          {
-            "name": "PinCluster"
-          },
-          {
-            "name": "RepairRun"
-          },
-          {
-            "name": "ResetJob"
-          },
-          {
-            "name": "ResizeCluster"
-          },
-          {
-            "name": "RestartCluster"
-          },
-          {
-            "name": "RunJobNow"
-          },
-          {
-            "name": "SetPermissions"
-          },
-          {
-            "name": "StartCluster"
-          },
-          {
-            "name": "SubmitRun"
-          },
-          {
-            "name": "UninstallLibraries"
-          },
-          {
-            "name": "UnpinCluster"
-          },
-          {
-            "name": "UpdateJob"
-          },
-          {
-            "name": "UpdatePermissions"
+            "name": "UpdateWorkspaceTags"
           }
         ]
       }
@@ -4646,6 +4646,204 @@
       "azure": "IAM",
       "gcp": "IAM",
       "oci": "Identity"
+    }
+  },
+  {
+    "service": "kafka",
+    "interface": "Kafka",
+    "operations": [
+      {
+        "name": "BatchAssociateScramSecret",
+        "doc": "SCRAM secrets."
+      },
+      {
+        "name": "BatchDisassociateScramSecret"
+      },
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (v1)."
+      },
+      {
+        "name": "CreateClusterV2",
+        "doc": "Clusters (v2)."
+      },
+      {
+        "name": "CreateConfiguration",
+        "doc": "Configurations."
+      },
+      {
+        "name": "CreateReplicator",
+        "doc": "Replicators."
+      },
+      {
+        "name": "CreateTopic",
+        "doc": "Topics."
+      },
+      {
+        "name": "CreateVpcConnection",
+        "doc": "VPC connections."
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterPolicy"
+      },
+      {
+        "name": "DeleteConfiguration"
+      },
+      {
+        "name": "DeleteReplicator"
+      },
+      {
+        "name": "DeleteTopic"
+      },
+      {
+        "name": "DeleteVpcConnection"
+      },
+      {
+        "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeClusterOperation"
+      },
+      {
+        "name": "DescribeClusterOperationV2"
+      },
+      {
+        "name": "DescribeClusterV2"
+      },
+      {
+        "name": "DescribeConfiguration"
+      },
+      {
+        "name": "DescribeConfigurationRevision"
+      },
+      {
+        "name": "DescribeReplicator"
+      },
+      {
+        "name": "DescribeTopic"
+      },
+      {
+        "name": "DescribeTopicPartitions"
+      },
+      {
+        "name": "DescribeVpcConnection"
+      },
+      {
+        "name": "GetBootstrapBrokers"
+      },
+      {
+        "name": "GetClusterPolicy"
+      },
+      {
+        "name": "GetCompatibleKafkaVersions"
+      },
+      {
+        "name": "ListClientVpcConnections"
+      },
+      {
+        "name": "ListClusterOperations"
+      },
+      {
+        "name": "ListClusterOperationsV2"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListClustersV2"
+      },
+      {
+        "name": "ListConfigurationRevisions"
+      },
+      {
+        "name": "ListConfigurations"
+      },
+      {
+        "name": "ListKafkaVersions",
+        "doc": "Versions (read-only)."
+      },
+      {
+        "name": "ListNodes",
+        "doc": "Cluster nodes \u0026 operations."
+      },
+      {
+        "name": "ListReplicators"
+      },
+      {
+        "name": "ListScramSecrets"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTopics"
+      },
+      {
+        "name": "ListVpcConnections"
+      },
+      {
+        "name": "PutClusterPolicy",
+        "doc": "Cluster policy."
+      },
+      {
+        "name": "RebootBroker"
+      },
+      {
+        "name": "RejectClientVpcConnection"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateBrokerCount",
+        "doc": "Cluster mutations."
+      },
+      {
+        "name": "UpdateBrokerStorage"
+      },
+      {
+        "name": "UpdateBrokerType"
+      },
+      {
+        "name": "UpdateClusterConfiguration"
+      },
+      {
+        "name": "UpdateClusterKafkaVersion"
+      },
+      {
+        "name": "UpdateConfiguration"
+      },
+      {
+        "name": "UpdateConnectivity"
+      },
+      {
+        "name": "UpdateMonitoring"
+      },
+      {
+        "name": "UpdateRebalancing"
+      },
+      {
+        "name": "UpdateReplicationInfo"
+      },
+      {
+        "name": "UpdateSecurity"
+      },
+      {
+        "name": "UpdateStorage"
+      },
+      {
+        "name": "UpdateTopic"
+      }
+    ],
+    "providers": {
+      "aws": "Kafka"
     }
   },
   {

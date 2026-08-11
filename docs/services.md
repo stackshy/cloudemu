@@ -49,6 +49,7 @@ This document lists every service and operation available in CloudEmu across all
 | 36 | Configuration Management | `configservice` | — | — |
 | 37 | Data Integration (ETL / Data Catalog) | `glue` | — | — |
 | 38 | Threat Detection | `guardduty` | — | — |
+| 39 | Streaming (Managed Kafka) | `kafka` | — | — |
 
 ---
 
@@ -3094,6 +3095,45 @@ so concurrent tag/config mutations don't race.
 
 **Total: 87 operations.**
 
+## 39. Streaming (Managed Kafka / MSK)
+
+**Driver interface:** `services/kafka/driver/`
+**AWS:** MSK (REST-JSON `awsRestjson1`, path + HTTP-method routing under the `/v1/`, `/api/v2/`, and `/replication/v1/` version prefixes) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/kafka` clients (and the `aws kafka` CLI)
+work against the SDK-compat server (`awsserver.Drivers{Kafka: cloud.Kafka}`). The
+handler gates on the three version prefixes plus a known root segment, so it
+registers before the S3 catch-all without shadowing it (a bucket literally named
+`v1`/`api`/`replication` would be shadowed — a documented limitation). Full
+`aws-sdk-go-v2/service/kafka` parity — every one of the 59 client operations is
+implemented.
+
+**Clusters behave realistically.** `CreateCluster`/`CreateClusterV2` claim the
+cluster name atomically (`ConflictException` on a duplicate) and return a cluster
+that is immediately `ACTIVE` (deterministic — no wall-clock provisioning). The v1
+and v2 shapes render the same underlying cluster, so a v1-created cluster is
+describable via `DescribeClusterV2`. Each mutating op (broker count/storage/type,
+storage, configuration, version, connectivity, monitoring, security, rebalancing,
+reboot) validates the optimistic-concurrency `CurrentVersion`, applies the change,
+records a `ClusterOperation`, and bumps the version; reads deep-copy.
+
+| Family | Operations |
+|--------|-----------|
+| Clusters (v1) | CreateCluster, DescribeCluster, ListClusters, DeleteCluster, GetBootstrapBrokers |
+| Clusters (v2) | CreateClusterV2, DescribeClusterV2, ListClustersV2 |
+| Cluster mutations | UpdateBrokerCount/Storage/Type, UpdateStorage, UpdateClusterConfiguration, UpdateClusterKafkaVersion, UpdateConnectivity, UpdateMonitoring, UpdateSecurity, UpdateRebalancing, RebootBroker |
+| Cluster operations | ListClusterOperations(V2), DescribeClusterOperation(V2) |
+| Configurations | Create/Describe/Update/Delete/ListConfigurations, ListConfigurationRevisions, DescribeConfigurationRevision |
+| Nodes / versions | ListNodes, ListKafkaVersions, GetCompatibleKafkaVersions |
+| VPC connections | Create/Describe/Delete/ListVpcConnections, ListClientVpcConnections, RejectClientVpcConnection |
+| Topics | CreateTopic, DescribeTopic, ListTopics, UpdateTopic, DeleteTopic, DescribeTopicPartitions |
+| SCRAM secrets | BatchAssociateScramSecret, BatchDisassociateScramSecret, ListScramSecrets |
+| Cluster policy | PutClusterPolicy, GetClusterPolicy, DeleteClusterPolicy |
+| Replicators | CreateReplicator, DescribeReplicator, ListReplicators, DeleteReplicator, UpdateReplicationInfo |
+| Tags | ListTagsForResource, TagResource, UntagResource |
+
+**Total: 59 operations.**
+
 ## Summary
 
 | Service | Operations |
@@ -3149,7 +3189,8 @@ so concurrent tag/config mutations don't race.
 | Configuration Management — AWS Config | 102 |
 | Data Integration — AWS Glue | 299 |
 | Threat Detection — Amazon GuardDuty | 87 |
-| **Grand Total** | **2690** (+138 optional) |
+| Streaming — Amazon MSK | 59 |
+| **Grand Total** | **2749** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

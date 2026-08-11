@@ -248,10 +248,20 @@ func referencedInterface(portableDir string, ifaces []ifaceDecl) string {
 		}
 	}
 
+	// Iterate in sorted name order so a tie in reference count resolves
+	// deterministically (map iteration order is random and would otherwise flip
+	// the chosen interface between runs when two are referenced equally often).
+	names := make([]string, 0, len(known))
+	for name := range known {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
 	best, bestN := "", 0
-	for name, n := range known {
-		if n > bestN {
-			best, bestN = name, n
+	for _, name := range names {
+		if known[name] > bestN {
+			best, bestN = name, known[name]
 		}
 	}
 
