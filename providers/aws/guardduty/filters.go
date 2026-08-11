@@ -29,10 +29,11 @@ func filterAction(action string) string {
 }
 
 // CreateFilter creates a saved-finding filter under a detector, keyed by its
-// (unique) name. A duplicate name is rejected with a ConflictException, matching
-// real GuardDuty. The detector's lock is held across the parent check, the
-// duplicate check, and the insert so a concurrent DeleteDetector cannot orphan
-// it and two racing creates cannot both win.
+// (unique) name. CreateFilter models only BadRequestException, so a duplicate
+// name is rejected with that (not ConflictException). The detector's lock is
+// held across the parent check, the duplicate check, and the insert so a
+// concurrent DeleteDetector cannot orphan it and two racing creates cannot both
+// win.
 //
 //nolint:gocritic // hugeParam: signature is fixed by the driver.GuardDuty interface (by-value input).
 func (m *Mock) CreateFilter(_ context.Context, in driver.CreateFilterInput) (name string, err error) {
@@ -53,7 +54,7 @@ func (m *Mock) CreateFilter(_ context.Context, in driver.CreateFilterInput) (nam
 	defer dd.mu.Unlock()
 
 	if _, exists := dd.filters[in.Name]; exists {
-		return "", conflict("A filter with the name %s already exists", in.Name)
+		return "", badRequest("A filter with the name %s already exists", in.Name)
 	}
 
 	now := m.now()
@@ -84,7 +85,7 @@ func (m *Mock) GetFilter(_ context.Context, detectorID, filterName string) (*dri
 
 	f, ok := dd.filters[filterName]
 	if !ok {
-		return nil, notFound("The request is rejected because the input filterName is not found: %s", filterName)
+		return nil, badRequest("The request is rejected because the input filterName is not found: %s", filterName)
 	}
 
 	out := copyFilter(f)
@@ -107,7 +108,7 @@ func (m *Mock) UpdateFilter(_ context.Context, in driver.UpdateFilterInput) (nam
 
 	f, ok := dd.filters[in.FilterName]
 	if !ok {
-		return "", notFound("The request is rejected because the input filterName is not found: %s", in.FilterName)
+		return "", badRequest("The request is rejected because the input filterName is not found: %s", in.FilterName)
 	}
 
 	if in.Action != nil {
@@ -143,7 +144,7 @@ func (m *Mock) DeleteFilter(_ context.Context, detectorID, filterName string) er
 	defer dd.mu.Unlock()
 
 	if _, ok := dd.filters[filterName]; !ok {
-		return notFound("The request is rejected because the input filterName is not found: %s", filterName)
+		return badRequest("The request is rejected because the input filterName is not found: %s", filterName)
 	}
 
 	delete(dd.filters, filterName)

@@ -9,18 +9,18 @@ AWS's `guardduty` service · portable interface `driver.GuardDuty` · [AWS index
 | --- | --- |
 | `AcceptAdministratorInvitation` |  |
 | `AcceptInvitation` |  |
-| `ArchiveFindings` | Findings (phase 3). |
+| `ArchiveFindings` | Findings. |
 | `CreateDetector` | Detectors. |
 | `CreateFilter` | Filters (per-detector). |
 | `CreateIPSet` | IP sets (per-detector). |
-| `CreateMalwareProtectionPlan` | Malware protection & scans (phase 6). |
-| `CreateMembers` | Members & administrator/master (phase 2). Bodies are carried as raw JSON |
-| `CreatePublishingDestination` | Publishing destinations (phase 5). |
+| `CreateMalwareProtectionPlan` | Malware protection & scans. |
+| `CreateMembers` | Members & administrator/master. Bodies are carried as raw JSON |
+| `CreatePublishingDestination` | Publishing destinations. |
 | `CreateSampleFindings` |  |
 | `CreateThreatEntitySet` | Threat-entity sets (per-detector). |
 | `CreateThreatIntelSet` | Threat-intel sets (per-detector). |
 | `CreateTrustedEntitySet` | Trusted-entity sets (per-detector). |
-| `DeclineInvitations` | Invitations (phase 2). |
+| `DeclineInvitations` | Invitations. |
 | `DeleteDetector` |  |
 | `DeleteFilter` |  |
 | `DeleteIPSet` |  |
@@ -38,7 +38,7 @@ AWS's `guardduty` service · portable interface `driver.GuardDuty` · [AWS index
 | `DisassociateFromAdministratorAccount` |  |
 | `DisassociateFromMasterAccount` |  |
 | `DisassociateMembers` |  |
-| `EnableOrganizationAdminAccount` | Organization (phase 4). |
+| `EnableOrganizationAdminAccount` | Organization. |
 | `GetAdministratorAccount` |  |
 | `GetCoverageStatistics` |  |
 | `GetDetector` |  |
@@ -60,7 +60,7 @@ AWS's `guardduty` service · portable interface `driver.GuardDuty` · [AWS index
 | `GetTrustedEntitySet` |  |
 | `GetUsageStatistics` |  |
 | `InviteMembers` |  |
-| `ListCoverage` | Coverage, usage, and free-trial (phase 7). |
+| `ListCoverage` | Coverage, usage, and free-trial. |
 | `ListDetectors` |  |
 | `ListFilters` |  |
 | `ListFindings` |  |
@@ -71,7 +71,7 @@ AWS's `guardduty` service · portable interface `driver.GuardDuty` · [AWS index
 | `ListMembers` |  |
 | `ListOrganizationAdminAccounts` |  |
 | `ListPublishingDestinations` |  |
-| `ListTagsForResource` | Resource tags (phase 8). |
+| `ListTagsForResource` | Resource tags. |
 | `ListThreatEntitySets` |  |
 | `ListThreatIntelSets` |  |
 | `ListTrustedEntitySets` |  |

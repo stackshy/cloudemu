@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -71,8 +73,8 @@ func TestDetectorCRUD(t *testing.T) {
 		t.Fatalf("DeleteDetector: %v", err)
 	}
 
-	if _, err := m.GetDetector(ctx, det.ID); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException after delete, got %v", err)
+	if _, err := m.GetDetector(ctx, det.ID); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException after delete, got %v", err)
 	}
 }
 
@@ -80,8 +82,8 @@ func TestGetDetectorMissing(t *testing.T) {
 	m := newMock()
 
 	_, err := m.GetDetector(context.Background(), "nope")
-	if !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException, got %v", err)
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException, got %v", err)
 	}
 }
 
@@ -158,8 +160,8 @@ func TestIPSetCRUD(t *testing.T) {
 		t.Fatalf("DeleteIPSet: %v", err)
 	}
 
-	if _, err := m.GetIPSet(ctx, id, setID); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException, got %v", err)
+	if _, err := m.GetIPSet(ctx, id, setID); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException, got %v", err)
 	}
 }
 
@@ -169,8 +171,8 @@ func TestIPSetOnMissingDetector(t *testing.T) {
 	_, err := m.CreateIPSet(context.Background(), driver.CreateIPSetInput{
 		DetectorID: "missing", Name: "n", Format: "TXT", Location: "s3://b/k",
 	})
-	if !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException, got %v", err)
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException, got %v", err)
 	}
 }
 
@@ -198,10 +200,10 @@ func TestFilterCRUDAndDuplicate(t *testing.T) {
 		t.Fatalf("CreateFilter: %v name=%s", err, name)
 	}
 
-	// Duplicate name -> ConflictException.
+	// Duplicate name -> BadRequestException (CreateFilter models only BadRequest).
 	_, err = m.CreateFilter(ctx, driver.CreateFilterInput{DetectorID: id, Name: "f1", FindingCriteria: crit})
-	if !isException(err, driver.ExConflict) {
-		t.Fatalf("want ConflictException on duplicate filter, got %v", err)
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException on duplicate filter, got %v", err)
 	}
 
 	got, err := m.GetFilter(ctx, id, "f1")
@@ -213,8 +215,8 @@ func TestFilterCRUDAndDuplicate(t *testing.T) {
 		t.Fatalf("DeleteFilter: %v", err)
 	}
 
-	if err := m.DeleteFilter(ctx, id, "f1"); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException on second delete, got %v", err)
+	if err := m.DeleteFilter(ctx, id, "f1"); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException on second delete, got %v", err)
 	}
 }
 
@@ -288,8 +290,8 @@ func TestDeleteDetectorCascade(t *testing.T) {
 
 	// The parent detector is gone, so child reads return NotFound (via the
 	// detector lookup), proving no orphan is reachable.
-	if _, err := m.GetIPSet(ctx, id, setID); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException for orphaned child, got %v", err)
+	if _, err := m.GetIPSet(ctx, id, setID); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException for orphaned child, got %v", err)
 	}
 }
 
@@ -408,8 +410,8 @@ func TestMembersOnMissingDetector(t *testing.T) {
 	m := newMock()
 
 	_, err := m.CreateMembers(context.Background(), "missing", []byte(`{"accountDetails":[]}`))
-	if !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException, got %v", err)
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException, got %v", err)
 	}
 }
 
@@ -539,7 +541,7 @@ func TestPublishingDestinationLifecycle(t *testing.T) {
 	id := mustDetector(t, m)
 
 	body, err := m.CreatePublishingDestination(ctx, id,
-		[]byte(`{"destinationType":"S3","destinationProperties":{"destinationArn":"arn:aws:s3:::b"}}`))
+		[]byte(`{"destinationType":"S3","destinationProperties":{"destinationArn":"arn:aws:s3:::b","kmsKeyArn":"arn:aws:kms:us-east-1:0:key/k"}}`))
 	if err != nil {
 		t.Fatalf("CreatePublishingDestination: %v", err)
 	}
@@ -569,8 +571,8 @@ func TestPublishingDestinationLifecycle(t *testing.T) {
 		t.Fatalf("DeletePublishingDestination: %v", err)
 	}
 
-	if _, err = m.DescribePublishingDestination(ctx, id, destID); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException after delete, got %v", err)
+	if _, err = m.DescribePublishingDestination(ctx, id, destID); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException after delete, got %v", err)
 	}
 }
 
@@ -763,8 +765,8 @@ func TestFindingsPagination(t *testing.T) {
 func TestFindingsOnMissingDetector(t *testing.T) {
 	m := newMock()
 
-	if _, err := m.CreateSampleFindings(context.Background(), "nope", nil); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFoundException, got %v", err)
+	if _, err := m.CreateSampleFindings(context.Background(), "nope", nil); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException, got %v", err)
 	}
 }
 
@@ -905,6 +907,120 @@ func containsStr(list []string, s string) bool {
 // when the caller requests no specific types (kept in sync with the provider's
 // defaultSampleFindingTypes).
 const defaultSampleFindingCount = 3
+
+func TestIPSetFormatEnumValidation(t *testing.T) {
+	m := newMock()
+	id := mustDetector(t, m)
+
+	_, err := m.CreateIPSet(context.Background(), driver.CreateIPSetInput{
+		DetectorID: id, Name: "s", Format: "BOGUS", Location: "s3://b/k",
+	})
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("invalid format = %v, want BadRequestException", err)
+	}
+}
+
+func TestPublishingDestinationRequiresKMS(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	id := mustDetector(t, m)
+
+	_, err := m.CreatePublishingDestination(ctx, id,
+		json.RawMessage(`{"destinationType":"S3","destinationProperties":{"destinationArn":"arn:aws:s3:::b"}}`))
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("S3 destination without kmsKeyArn = %v, want BadRequestException", err)
+	}
+}
+
+func TestListFindingsRejectsUnsupportedCriteria(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	id := mustDetector(t, m)
+
+	body := json.RawMessage(
+		`{"findingCriteria":{"criterion":{"resource.instanceDetails.instanceId":{"eq":["i-1"]}}}}`)
+
+	_, err := m.ListFindings(ctx, id, body)
+	if !isException(err, driver.ExBadRequest) {
+		t.Fatalf("unsupported criteria field = %v, want BadRequestException", err)
+	}
+}
+
+func TestMalwareScanResourceTypeFromARN(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	body := json.RawMessage(`{"resourceArn":"arn:aws:ec2:us-east-1:0:instance/i-abc"}`)
+
+	started, err := m.StartMalwareScan(ctx, body)
+	if err != nil {
+		t.Fatalf("StartMalwareScan: %v", err)
+	}
+
+	var sr struct {
+		ScanID string `json:"scanId"`
+	}
+	if uerr := json.Unmarshal(started, &sr); uerr != nil {
+		t.Fatalf("unmarshal start: %v", uerr)
+	}
+
+	got, err := m.GetMalwareScan(ctx, sr.ScanID)
+	if err != nil {
+		t.Fatalf("GetMalwareScan: %v", err)
+	}
+
+	var out struct {
+		ResourceType string `json:"resourceType"`
+	}
+	if uerr := json.Unmarshal(got, &out); uerr != nil {
+		t.Fatalf("unmarshal get: %v", uerr)
+	}
+
+	if out.ResourceType != "EC2_INSTANCE" {
+		t.Fatalf("resourceType = %q, want EC2_INSTANCE", out.ResourceType)
+	}
+}
+
+func TestTagResourceConcurrentNoLostUpdate(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	id := mustDetector(t, m)
+	arn := "arn:aws:guardduty:us-east-1:123456789012:detector/" + id
+
+	const n = 50
+
+	var wg sync.WaitGroup
+
+	for i := range n {
+		wg.Add(1)
+
+		go func(k int) {
+			defer wg.Done()
+
+			body := json.RawMessage(fmt.Sprintf(`{"tags":{"k%d":"v"}}`, k))
+			_, _ = m.TagResource(ctx, arn, body)
+		}(i)
+	}
+
+	wg.Wait()
+
+	tagsJSON, err := m.ListTagsForResource(ctx, arn)
+	if err != nil {
+		t.Fatalf("ListTagsForResource: %v", err)
+	}
+
+	var out struct {
+		Tags map[string]string `json:"tags"`
+	}
+	if uerr := json.Unmarshal(tagsJSON, &out); uerr != nil {
+		t.Fatalf("unmarshal tags: %v", uerr)
+	}
+
+	// Every concurrent TagResource must survive; a lost update would drop keys.
+	if len(out.Tags) != n {
+		t.Fatalf("got %d tags, want %d — concurrent writes were lost", len(out.Tags), n)
+	}
+}
 
 // isException reports whether err is a driver.APIError with the given exception.
 func isException(err error, exception string) bool {
@@ -1073,8 +1189,8 @@ func TestMalwareScanLifecycle(t *testing.T) {
 		t.Fatalf("want ResourceNotFound, got %v", err)
 	}
 
-	if _, err := m.DescribeMalwareScans(ctx, "nope", nil); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFound for unknown detector, got %v", err)
+	if _, err := m.DescribeMalwareScans(ctx, "nope", nil); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequest for unknown detector, got %v", err)
 	}
 
 	if _, err := m.StartMalwareScan(ctx, json.RawMessage(`{}`)); !isException(err, driver.ExBadRequest) {
@@ -1142,8 +1258,8 @@ func TestMalwareScanSettings(t *testing.T) {
 		t.Fatalf("scanResourceCriteria missing: %s", got)
 	}
 
-	if _, err := m.GetMalwareScanSettings(ctx, "nope"); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFound, got %v", err)
+	if _, err := m.GetMalwareScanSettings(ctx, "nope"); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequestException, got %v", err)
 	}
 }
 
@@ -1261,12 +1377,12 @@ func TestTagsErrors(t *testing.T) {
 
 	// Well-formed detector ARN but detector does not exist.
 	arn := "arn:aws:guardduty:us-east-1:123456789012:detector/deadbeef"
-	if _, err := m.ListTagsForResource(ctx, arn); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFound for missing detector, got %v", err)
+	if _, err := m.ListTagsForResource(ctx, arn); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequest for missing detector, got %v", err)
 	}
 
-	if _, err := m.TagResource(ctx, arn, json.RawMessage(`{"tags":{"a":"b"}}`)); !isException(err, driver.ExResourceNotFound) {
-		t.Fatalf("want ResourceNotFound tagging missing detector, got %v", err)
+	if _, err := m.TagResource(ctx, arn, json.RawMessage(`{"tags":{"a":"b"}}`)); !isException(err, driver.ExBadRequest) {
+		t.Fatalf("want BadRequest tagging missing detector, got %v", err)
 	}
 
 	// TagResource with empty tags.

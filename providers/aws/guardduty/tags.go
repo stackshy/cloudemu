@@ -52,16 +52,16 @@ func parseGuardDutyARN(arn string) (segments []string, err error) {
 	return seg, nil
 }
 
-// tagAccessor reads, replaces, and reports whether a resource identified by an
-// ARN exists. The read/apply pair runs under the owning resource's lock so a
-// concurrent update cannot observe a torn tag map.
+// tagAccessor reads and atomically updates the tags of a resource identified by
+// an ARN.
 type tagAccessor struct {
 	// read returns a deep copy of the resource's current tags, or false if the
 	// resource does not exist.
 	read func() (map[string]string, bool)
-	// write replaces the resource's tags with the supplied map, returning false
-	// if the resource no longer exists.
-	write func(map[string]string) bool
+	// update applies mutate to the resource's tags atomically under the owning
+	// resource's lock (read-modify-write in one hold, so concurrent tag updates
+	// can't lose each other's writes), returning false if the resource is gone.
+	update func(mutate func(map[string]string) map[string]string) bool
 }
 
 // resolveTagTarget maps an ARN to a tagAccessor for the owning resource, or a
@@ -84,7 +84,9 @@ func (m *Mock) resolveTagTarget(arn string) (tagAccessor, error) {
 	}
 }
 
-// planTagAccessor returns a tagAccessor for a malware protection plan.
+// planTagAccessor returns a tagAccessor for a malware protection plan. The
+// memstore Update runs the mutate under the store lock, so read-modify-write is
+// atomic.
 func (m *Mock) planTagAccessor(planID string) tagAccessor {
 	return tagAccessor{
 		read: func() (map[string]string, bool) {
@@ -95,9 +97,9 @@ func (m *Mock) planTagAccessor(planID string) tagAccessor {
 
 			return copyTags(p.tags), true
 		},
-		write: func(tags map[string]string) bool {
+		update: func(mutate func(map[string]string) map[string]string) bool {
 			return m.malwarePlans.Update(planID, func(p malwarePlanData) malwarePlanData {
-				p.tags = copyTags(tags)
+				p.tags = mutate(copyTags(p.tags))
 
 				return p
 			})
@@ -105,8 +107,8 @@ func (m *Mock) planTagAccessor(planID string) tagAccessor {
 	}
 }
 
-// detectorTagAccessor returns a tagAccessor for a detector, locking the detector
-// for the read and write.
+// detectorTagAccessor returns a tagAccessor for a detector, holding the detector
+// lock across the whole read-modify-write.
 func (m *Mock) detectorTagAccessor(detectorID string) tagAccessor {
 	return tagAccessor{
 		read: func() (map[string]string, bool) {
@@ -120,7 +122,7 @@ func (m *Mock) detectorTagAccessor(detectorID string) tagAccessor {
 
 			return copyTags(dd.detector.Tags), true
 		},
-		write: func(tags map[string]string) bool {
+		update: func(mutate func(map[string]string) map[string]string) bool {
 			dd, ok := m.detectors.Get(detectorID)
 			if !ok {
 				return false
@@ -129,7 +131,7 @@ func (m *Mock) detectorTagAccessor(detectorID string) tagAccessor {
 			dd.mu.Lock()
 			defer dd.mu.Unlock()
 
-			dd.detector.Tags = copyTags(tags)
+			dd.detector.Tags = mutate(copyTags(dd.detector.Tags))
 
 			return true
 		},
@@ -142,8 +144,10 @@ func (m *Mock) detectorChildTagAccessor(detectorID, kind, id string) (tagAccesso
 	switch kind {
 	case kindIPSet, kindThreatIntelSet, kindThreatEntitySet, kindTrustedEntitySet, kindFilter:
 		return tagAccessor{
-			read:  func() (map[string]string, bool) { return m.readChildTags(detectorID, kind, id) },
-			write: func(tags map[string]string) bool { return m.writeChildTags(detectorID, kind, id, tags) },
+			read: func() (map[string]string, bool) { return m.readChildTags(detectorID, kind, id) },
+			update: func(mutate func(map[string]string) map[string]string) bool {
+				return m.updateChildTags(detectorID, kind, id, mutate)
+			},
 		}, nil
 	default:
 		return tagAccessor{}, badRequest("ARN does not identify a taggable GuardDuty resource type: %q", kind)
@@ -189,10 +193,12 @@ func (m *Mock) readChildTags(detectorID, kind, id string) (map[string]string, bo
 	return nil, false
 }
 
-// writeChildTags replaces a child resource's tags under the detector lock.
+// updateChildTags applies mutate to a child resource's tags atomically under the
+// detector lock (read current, mutate, write back in one hold), so concurrent
+// tag updates cannot lose each other's writes.
 //
 //nolint:gocyclo // one arm per taggable per-detector child resource type; large by API design.
-func (m *Mock) writeChildTags(detectorID, kind, id string, tags map[string]string) bool {
+func (m *Mock) updateChildTags(detectorID, kind, id string, mutate func(map[string]string) map[string]string) bool {
 	dd, ok := m.detectors.Get(detectorID)
 	if !ok {
 		return false
@@ -204,35 +210,35 @@ func (m *Mock) writeChildTags(detectorID, kind, id string, tags map[string]strin
 	switch kind {
 	case kindIPSet:
 		if r, found := dd.ipSets[id]; found {
-			r.Tags = copyTags(tags)
+			r.Tags = mutate(copyTags(r.Tags))
 			dd.ipSets[id] = r
 
 			return true
 		}
 	case kindThreatIntelSet:
 		if r, found := dd.threatIS[id]; found {
-			r.Tags = copyTags(tags)
+			r.Tags = mutate(copyTags(r.Tags))
 			dd.threatIS[id] = r
 
 			return true
 		}
 	case kindThreatEntitySet:
 		if r, found := dd.threatES[id]; found {
-			r.Tags = copyTags(tags)
+			r.Tags = mutate(copyTags(r.Tags))
 			dd.threatES[id] = r
 
 			return true
 		}
 	case kindTrustedEntitySet:
 		if r, found := dd.trustES[id]; found {
-			r.Tags = copyTags(tags)
+			r.Tags = mutate(copyTags(r.Tags))
 			dd.trustES[id] = r
 
 			return true
 		}
 	case kindFilter:
 		if r, found := dd.filters[id]; found {
-			r.Tags = copyTags(tags)
+			r.Tags = mutate(copyTags(r.Tags))
 			dd.filters[id] = r
 
 			return true
@@ -252,7 +258,7 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceARN string) (json.
 
 	tags, ok := acc.read()
 	if !ok {
-		return nil, notFound("resource not found: %s", resourceARN)
+		return nil, badRequest("resource not found: %s", resourceARN)
 	}
 
 	if tags == nil {
@@ -283,21 +289,19 @@ func (m *Mock) TagResource(_ context.Context, resourceARN string, body json.RawM
 		return nil, err
 	}
 
-	current, ok := acc.read()
+	ok := acc.update(func(current map[string]string) map[string]string {
+		if current == nil {
+			current = map[string]string{}
+		}
+
+		for k, v := range req.Tags {
+			current[k] = v
+		}
+
+		return current
+	})
 	if !ok {
-		return nil, notFound("resource not found: %s", resourceARN)
-	}
-
-	if current == nil {
-		current = map[string]string{}
-	}
-
-	for k, v := range req.Tags {
-		current[k] = v
-	}
-
-	if !acc.write(current) {
-		return nil, notFound("resource not found: %s", resourceARN)
+		return nil, badRequest("resource not found: %s", resourceARN)
 	}
 
 	return json.Marshal(map[string]any{})
@@ -310,17 +314,15 @@ func (m *Mock) UntagResource(_ context.Context, resourceARN string, tagKeys []st
 		return nil, err
 	}
 
-	current, ok := acc.read()
+	ok := acc.update(func(current map[string]string) map[string]string {
+		for _, k := range tagKeys {
+			delete(current, k)
+		}
+
+		return current
+	})
 	if !ok {
-		return nil, notFound("resource not found: %s", resourceARN)
-	}
-
-	for _, k := range tagKeys {
-		delete(current, k)
-	}
-
-	if !acc.write(current) {
-		return nil, notFound("resource not found: %s", resourceARN)
+		return nil, badRequest("resource not found: %s", resourceARN)
 	}
 
 	return json.Marshal(map[string]any{})

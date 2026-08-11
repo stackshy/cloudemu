@@ -100,7 +100,7 @@ func getSet[T any](m *Mock, s setStore[T], detectorID, setID string) (*T, error)
 
 	cur, ok := s.storeOf(dd)[setID]
 	if !ok {
-		return nil, notFound(s.notFoundMsg, setID)
+		return nil, badRequest(s.notFoundMsg, setID)
 	}
 
 	out := s.copy(cur)
@@ -122,7 +122,7 @@ func updateSet[T any](m *Mock, s setStore[T], detectorID, setID string, patch se
 
 	cur, ok := store[setID]
 	if !ok {
-		return notFound(s.notFoundMsg, setID)
+		return badRequest(s.notFoundMsg, setID)
 	}
 
 	store[setID] = s.apply(cur, patch, m.now())
@@ -142,7 +142,7 @@ func deleteSet[T any](m *Mock, s setStore[T], detectorID, setID string) error {
 
 	store := s.storeOf(dd)
 	if _, ok := store[setID]; !ok {
-		return notFound(s.notFoundMsg, setID)
+		return badRequest(s.notFoundMsg, setID)
 	}
 
 	delete(store, setID)

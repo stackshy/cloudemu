@@ -23,7 +23,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 14 |
 | `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
 | `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
-| `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
+| `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 24 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | — | 16 |
 | `ecs` | [ECS](./aws/ecs.md) | — | — | — | 37 |
 | `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |

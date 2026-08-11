@@ -115,8 +115,10 @@ func (*Mock) newDetectorID() string {
 	return idgen.GenerateID("") + idgen.GenerateID("")
 }
 
-// getDetector resolves a detector by ID, returning BadRequestException for an
-// empty ID and ResourceNotFoundException when absent, matching real GuardDuty.
+// getDetector resolves a detector by ID. Every operation that takes a detectorId
+// models only BadRequestException, so both an empty and an unknown ID return
+// that (real GuardDuty rejects an unknown detectorId with BadRequestException,
+// not ResourceNotFoundException).
 func (m *Mock) getDetector(detectorID string) (*detectorData, error) {
 	if detectorID == "" {
 		return nil, badRequest("detectorId is required")
@@ -124,7 +126,7 @@ func (m *Mock) getDetector(detectorID string) (*detectorData, error) {
 
 	dd, ok := m.detectors.Get(detectorID)
 	if !ok {
-		return nil, notFound("The request is rejected because the input detectorId is not owned by the current account: %s", detectorID)
+		return nil, badRequest("The request is rejected because the input detectorId is not owned by the current account: %s", detectorID)
 	}
 
 	return dd, nil

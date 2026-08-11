@@ -80,6 +80,11 @@ func (m *Mock) CreatePublishingDestination(_ context.Context, detectorID string,
 		return nil, badRequest("destinationProperties.destinationArn is required")
 	}
 
+	// An S3 publishing destination requires a KMS key to encrypt exported findings.
+	if dtype == destinationTypeS3 && req.DestinationProperties.KmsKeyArn == "" {
+		return nil, badRequest("destinationProperties.kmsKeyArn is required for an S3 destination")
+	}
+
 	now := m.now()
 	destID := idgen.GenerateID("")
 
@@ -111,7 +116,7 @@ func (m *Mock) DescribePublishingDestination(_ context.Context, detectorID, dest
 	if !ok {
 		dd.mu.Unlock()
 
-		return nil, notFound("publishing destination not found: %s", destinationID)
+		return nil, badRequest("publishing destination not found: %s", destinationID)
 	}
 
 	if stored.status == pubStatusPendingVerification {
@@ -158,7 +163,7 @@ func (m *Mock) UpdatePublishingDestination(
 
 	stored, ok := dd.publishDests[destinationID]
 	if !ok {
-		return nil, notFound("publishing destination not found: %s", destinationID)
+		return nil, badRequest("publishing destination not found: %s", destinationID)
 	}
 
 	if req.DestinationProperties != nil {
@@ -188,7 +193,7 @@ func (m *Mock) DeletePublishingDestination(_ context.Context, detectorID, destin
 	defer dd.mu.Unlock()
 
 	if _, ok := dd.publishDests[destinationID]; !ok {
-		return nil, notFound("publishing destination not found: %s", destinationID)
+		return nil, badRequest("publishing destination not found: %s", destinationID)
 	}
 
 	delete(dd.publishDests, destinationID)

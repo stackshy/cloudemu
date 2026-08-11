@@ -18,8 +18,21 @@ func copyIPSet(s driver.IPSet) driver.IPSet {
 	return out
 }
 
+// validSetFormat reports whether f is a modeled set format. The IpSet,
+// ThreatIntelSet, ThreatEntitySet, and TrustedEntitySet format enums all share
+// the same values.
+func validSetFormat(f string) bool {
+	switch f {
+	case "TXT", "STIX", "OTX_CSV", "ALIEN_VAULT", "PROOF_POINT", "FIRE_EYE":
+		return true
+	default:
+		return false
+	}
+}
+
 // validateSetInput enforces the required Name/Format/Location fields real
-// GuardDuty rejects with a BadRequestException when absent.
+// GuardDuty rejects with a BadRequestException when absent, and validates Format
+// against the modeled enum.
 func validateSetInput(name, format, location string) error {
 	if name == "" {
 		return badRequest("name is required")
@@ -27,6 +40,10 @@ func validateSetInput(name, format, location string) error {
 
 	if format == "" {
 		return badRequest("format is required")
+	}
+
+	if !validSetFormat(format) {
+		return badRequest("format %q is invalid", format)
 	}
 
 	if location == "" {

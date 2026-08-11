@@ -68,9 +68,13 @@ const guarddutyARNPrefix = "arn:aws:guardduty:"
 // are unusual bucket names and full GuardDuty parity requires owning these
 // paths.
 //
-// The /tags/{ResourceArn} endpoint is shared with other services (EKS uses the
-// same shape), so for the "tags" root this only claims requests whose ARN is a
-// GuardDuty ARN; other services' tag requests fall through to their handlers.
+// The /tags/{ResourceArn} endpoint is shared with other services — VPCLattice
+// (registered before GuardDuty) and EKS (the greedy handler, registered last)
+// both serve bare /tags. For the "tags" root this handler only claims requests
+// whose ARN is a GuardDuty ARN, so VPCLattice/EKS/other tag requests fall
+// through to their own handlers. Ordering invariant: GuardDuty must register
+// before any handler that claims every /tags request (e.g. EKS); a greedy /tags
+// handler registered before GuardDuty would silently swallow GuardDuty tag ops.
 func (*Handler) Matches(r *http.Request) bool {
 	segs := splitPath(escapedPath(r))
 	if len(segs) == 0 {

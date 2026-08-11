@@ -91,7 +91,7 @@ func (m *Mock) CreateDetector(_ context.Context, in driver.CreateDetectorInput) 
 	// Detector IDs are server-minted and unique, so SetIfAbsent never loses here;
 	// it is used for consistency with the atomic-create convention.
 	if !m.detectors.SetIfAbsent(det.ID, dd) {
-		return nil, conflict("detector %s already exists", det.ID)
+		return nil, badRequest("detector %s already exists", det.ID)
 	}
 
 	out := copyDetector(det)

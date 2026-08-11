@@ -221,7 +221,7 @@ func TestSDKIPSetLifecycle(t *testing.T) {
 	}
 }
 
-func TestSDKGetDetectorMissingReturnsNotFound(t *testing.T) {
+func TestSDKGetDetectorMissingReturnsBadRequest(t *testing.T) {
 	ctx := context.Background()
 	c := newGDClient(t)
 
@@ -230,17 +230,17 @@ func TestSDKGetDetectorMissingReturnsNotFound(t *testing.T) {
 		t.Fatal("expected error for missing detector")
 	}
 
-	// The GuardDuty SDK models zero typed operation errors: every op-error
-	// deserializer falls to smithy.GenericAPIError keyed off the X-Amzn-ErrorType
-	// header. So the exception surfaces as a generic smithy.APIError whose
-	// ErrorCode is the header we emit, not a typed *ResourceNotFoundException.
+	// Every GuardDuty op models BadRequestException (ResourceNotFoundException is
+	// modeled by only 4 malware ops), so an unknown detectorId returns
+	// BadRequestException. The SDK models zero typed op-errors, so it surfaces as
+	// a generic smithy.APIError whose ErrorCode is the header we emit.
 	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ResourceNotFoundException" {
-		t.Fatalf("want ResourceNotFoundException, got %v", err)
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "BadRequestException" {
+		t.Fatalf("want BadRequestException, got %v", err)
 	}
 }
 
-func TestSDKDuplicateFilterReturnsConflict(t *testing.T) {
+func TestSDKDuplicateFilterReturnsBadRequest(t *testing.T) {
 	ctx := context.Background()
 	c := newGDClient(t)
 
@@ -266,13 +266,14 @@ func TestSDKDuplicateFilterReturnsConflict(t *testing.T) {
 
 	_, err = c.CreateFilter(ctx, in)
 	if err == nil {
-		t.Fatal("expected conflict on duplicate filter")
+		t.Fatal("expected error on duplicate filter")
 	}
 
-	// As above, ConflictException surfaces as a generic smithy.APIError.
+	// CreateFilter models only BadRequestException, so a duplicate name returns
+	// that (surfaced as a generic smithy.APIError with our header code).
 	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ConflictException" {
-		t.Fatalf("want ConflictException, got %v", err)
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "BadRequestException" {
+		t.Fatalf("want BadRequestException, got %v", err)
 	}
 }
 
@@ -399,6 +400,7 @@ func TestSDKPublishingDestinationLifecycle(t *testing.T) {
 		DestinationType: gdtypes.DestinationTypeS3,
 		DestinationProperties: &gdtypes.DestinationProperties{
 			DestinationArn: aws.String("arn:aws:s3:::mybucket"),
+			KmsKeyArn:      aws.String("arn:aws:kms:us-east-1:0:key/k"),
 		},
 	})
 	if err != nil {
@@ -445,8 +447,8 @@ func TestSDKPublishingDestinationLifecycle(t *testing.T) {
 	})
 
 	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ResourceNotFoundException" {
-		t.Fatalf("want ResourceNotFoundException after delete, got %v", err)
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "BadRequestException" {
+		t.Fatalf("want BadRequestException after delete, got %v", err)
 	}
 }
 
