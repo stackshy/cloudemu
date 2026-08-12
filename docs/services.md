@@ -50,6 +50,7 @@ This document lists every service and operation available in CloudEmu across all
 | 37 | Data Integration (ETL / Data Catalog) | `glue` | — | — |
 | 38 | Threat Detection | `guardduty` | — | — |
 | 39 | Streaming (Managed Kafka) | `kafka` | — | — |
+| 40 | Container App Hosting | `apprunner` | — | — |
 
 ---
 
@@ -3149,6 +3150,43 @@ delete) is still enforced.
 
 **Total: 59 operations.**
 
+## 40. Container App Hosting (App Runner)
+
+**Driver interface:** `services/apprunner/driver/`
+**AWS:** App Runner (AWS JSON 1.0, `X-Amz-Target: AppRunner.<Op>`) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/apprunner` clients (and the `aws apprunner`
+CLI) work against the SDK-compat server (`awsserver.Drivers{AppRunner: cloud.AppRunner}`).
+The handler matches on the `X-Amz-Target` prefix `AppRunner.`, so it is
+unambiguous with the S3 catch-all. Full `aws-sdk-go-v2/service/apprunner`
+parity — every one of the 37 client operations is implemented.
+
+**Services behave realistically.** `CreateService` mints a service ARN + ID and
+returns a service that is immediately `RUNNING` (deterministic — no wall-clock
+provisioning) with a synthesized `ServiceUrl`. `PauseService`/`ResumeService`
+enforce the state machine (`InvalidStateException` from an illegal state), and
+every mutation records an `OperationSummary` surfaced by `ListOperations`.
+Auto-scaling, observability, and VPC-connector configurations are revision-managed
+(shared name, incrementing revision, one `Latest`); reads deep-copy. Errors map
+per-op to the exception each operation actually models — a missing resource on an
+op that models `ResourceNotFoundException` returns that, while ops that don't
+(e.g. `AssociateCustomDomain`, `CreateVpcIngressConnection`) return
+`InvalidRequestException`.
+
+| Family | Operations |
+|--------|-----------|
+| Services | CreateService, DescribeService, UpdateService, DeleteService, ListServices, PauseService, ResumeService, StartDeployment |
+| Auto-scaling configs | CreateAutoScalingConfiguration, DescribeAutoScalingConfiguration, DeleteAutoScalingConfiguration, ListAutoScalingConfigurations, UpdateDefaultAutoScalingConfiguration, ListServicesForAutoScalingConfiguration |
+| Connections | CreateConnection, DeleteConnection, ListConnections |
+| Observability configs | Create/Describe/Delete/ListObservabilityConfigurations |
+| VPC connectors | Create/Describe/Delete/ListVpcConnectors |
+| VPC ingress connections | Create/Describe/Delete/List/UpdateVpcIngressConnection |
+| Custom domains | AssociateCustomDomain, DisassociateCustomDomain, DescribeCustomDomains |
+| Operations | ListOperations |
+| Tags | ListTagsForResource, TagResource, UntagResource |
+
+**Total: 37 operations.**
+
 ## Summary
 
 | Service | Operations |
@@ -3205,7 +3243,8 @@ delete) is still enforced.
 | Data Integration — AWS Glue | 299 |
 | Threat Detection — Amazon GuardDuty | 87 |
 | Streaming — Amazon MSK | 59 |
-| **Grand Total** | **2749** (+138 optional) |
+| Container App Hosting — AWS App Runner | 37 |
+| **Grand Total** | **2786** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

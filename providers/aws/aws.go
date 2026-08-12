@@ -8,6 +8,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
+	"github.com/stackshy/cloudemu/v2/providers/aws/apprunner"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
@@ -170,6 +171,7 @@ type Provider struct {
 	WAFv2               *wafv2.Mock
 	Route53Resolver     *route53resolver.Mock
 	SFN                 *sfn.Mock
+	AppRunner           *apprunner.Mock
 	CloudTrail          *cloudtrail.Mock
 	Glue                *glue.Mock
 	Config              *configservice.Mock
@@ -222,6 +224,7 @@ func New(opts ...config.Option) *Provider {
 		WAFv2:               wafv2.New(o),
 		Route53Resolver:     route53resolver.New(o),
 		SFN:                 sfn.New(o),
+		AppRunner:           apprunner.New(o),
 		CloudTrail:          cloudtrail.New(o),
 		Glue:                glue.New(o),
 		Config:              configservice.New(o),

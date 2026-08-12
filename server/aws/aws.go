@@ -11,6 +11,7 @@ import (
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
+	apprunnersrv "github.com/stackshy/cloudemu/v2/server/aws/apprunner"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
@@ -56,6 +57,7 @@ import (
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
+	apprunnerdriver "github.com/stackshy/cloudemu/v2/services/apprunner/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
@@ -207,6 +209,9 @@ type Drivers struct {
 	// SFN serves the Step Functions JSON 1.0 protocol (X-Amz-Target prefix
 	// "AWSStepFunctions.") against the sfn driver.
 	SFN sfndriver.SFN
+	// AppRunner serves the AWS App Runner JSON 1.0 protocol (X-Amz-Target prefix
+	// "AppRunner.") against the apprunner driver.
+	AppRunner apprunnerdriver.AppRunner
 	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
 	// GetSessionToken). It has no backing driver — identity is derived from
 	// AccountID and Region — so it is gated on this bool. Enable it so SDK code
@@ -276,6 +281,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		NetworkFirewall:     p.NetworkFirewall,
 		SNS:                 p.SNS,
 		SFN:                 p.SFN,
+		AppRunner:           p.AppRunner,
 		STS:                 true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
 		ResourceDiscovery:   p.ResourceDiscovery,
@@ -380,6 +386,13 @@ func New(d Drivers) *server.Server {
 	// disjoint from every other JSON-RPC service, so registration order is free.
 	if d.SFN != nil {
 		srv.Register(sfnsrv.New(d.SFN))
+	}
+
+	// App Runner matches the X-Amz-Target prefix "AppRunner." — disjoint from
+	// every other JSON-RPC service and from S3 (which rejects any X-Amz-Target),
+	// so registration order is unconstrained.
+	if d.AppRunner != nil {
+		srv.Register(apprunnersrv.New(d.AppRunner))
 	}
 
 	// Kinesis matches the X-Amz-Target prefix "Kinesis_20131202." — disjoint
