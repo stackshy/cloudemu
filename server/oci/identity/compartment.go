@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
+	identityprovider "github.com/stackshy/cloudemu/v2/providers/oci/identity"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
-	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // Compartment work request operation types.
@@ -44,7 +44,7 @@ func (h *Handler) createCompartment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := h.compartments.CreateCompartment(r.Context(), iamdriver.CompartmentSpec{
+	info, err := h.compartments.CreateCompartment(r.Context(), identityprovider.CompartmentSpec{
 		ParentID:     body.CompartmentID,
 		Name:         body.Name,
 		Description:  body.Description,

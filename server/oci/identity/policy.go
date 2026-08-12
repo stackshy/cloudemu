@@ -3,8 +3,8 @@ package identity
 import (
 	"net/http"
 
+	identityprovider "github.com/stackshy/cloudemu/v2/providers/oci/identity"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
-	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // routePolicy dispatches the /policies surface.
@@ -36,7 +36,7 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := h.policies.CreateStatementPolicy(r.Context(), &iamdriver.PolicySpec{
+	info, err := h.policies.CreateStatementPolicy(r.Context(), &identityprovider.PolicySpec{
 		CompartmentID: body.CompartmentID,
 		Name:          body.Name,
 		Description:   body.Description,

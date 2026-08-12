@@ -20,11 +20,13 @@
 package monitoring
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	monprovider "github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -60,15 +62,37 @@ const (
 	codeInvalidParameter = "InvalidParameter"
 )
 
+// Extras is the OCI-only surface the portable monitoring driver cannot
+// express: every metric and alarm is scoped to a compartment, and an alarm is
+// identified by OCID and conditioned on a query string.
+// *providers/oci/monitoring.Mock satisfies it; any driver that does not is
+// served 501 for every path this handler claims.
+type Extras interface {
+	PostMetricData(ctx context.Context, compartmentID, resourceGroup string, data []mondriver.MetricDatum) error
+	ListOCIMetrics(
+		ctx context.Context, compartmentID string, filter monprovider.OCIMetricFilter,
+	) ([]monprovider.OCIMetric, error)
+	SummarizeOCIMetrics(
+		ctx context.Context, compartmentID string, query monprovider.OCIMetricQuery,
+	) ([]monprovider.OCIMetric, error)
+
+	CreateOCIAlarm(ctx context.Context, spec monprovider.OCIAlarmSpec) (*monprovider.OCIAlarm, error)
+	GetOCIAlarm(ctx context.Context, id string) (*monprovider.OCIAlarm, error)
+	ListOCIAlarms(ctx context.Context, compartmentID string) ([]*monprovider.OCIAlarm, error)
+	UpdateOCIAlarm(ctx context.Context, id string, spec monprovider.OCIAlarmSpec) (*monprovider.OCIAlarm, error)
+	DeleteOCIAlarm(ctx context.Context, id string) error
+	OCIAlarmHistory(ctx context.Context, id string, limit int) ([]mondriver.AlarmHistoryEntry, error)
+}
+
 // Handler serves OCI Monitoring requests.
 type Handler struct {
-	mon mondriver.OCIMonitoring
+	mon Extras
 }
 
 // New returns a Monitoring handler. A driver without OCI's compartment-scoped
 // capability answers NotImplemented.
 func New(mon mondriver.Monitoring) *Handler {
-	ocimon, _ := mon.(mondriver.OCIMonitoring)
+	ocimon, _ := mon.(Extras)
 
 	return &Handler{mon: ocimon}
 }

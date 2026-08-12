@@ -16,7 +16,7 @@ func TestCompartmentCRUD(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	created, err := m.CreateCompartment(ctx, driver.CompartmentSpec{
+	created, err := m.CreateCompartment(ctx, CompartmentSpec{
 		ParentID:    tenancy,
 		Name:        devName,
 		Description: "engineering",
@@ -29,7 +29,7 @@ func TestCompartmentCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, devName, got.Name)
 
-	updated, err := m.UpdateCompartment(ctx, created.ID, driver.IdentityUpdate{
+	updated, err := m.UpdateCompartment(ctx, created.ID, Update{
 		Name:        "development",
 		Description: "renamed",
 	})
@@ -57,7 +57,7 @@ func TestCompartmentErrors(t *testing.T) {
 	ctx := t.Context()
 	dev := newCompartment(t, m, tenancy, devName)
 
-	_, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: dev, Name: "alice"})
+	_, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: dev, Name: "alice"})
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -68,7 +68,7 @@ func TestCompartmentErrors(t *testing.T) {
 		{
 			name: "missing name",
 			call: func() error {
-				_, err := m.CreateCompartment(ctx, driver.CompartmentSpec{ParentID: tenancy})
+				_, err := m.CreateCompartment(ctx, CompartmentSpec{ParentID: tenancy})
 				return err
 			},
 			code: cerrors.InvalidArgument,
@@ -76,7 +76,7 @@ func TestCompartmentErrors(t *testing.T) {
 		{
 			name: "duplicate sibling name",
 			call: func() error {
-				_, err := m.CreateCompartment(ctx, driver.CompartmentSpec{ParentID: tenancy, Name: devName})
+				_, err := m.CreateCompartment(ctx, CompartmentSpec{ParentID: tenancy, Name: devName})
 				return err
 			},
 			code: cerrors.AlreadyExists,
@@ -84,7 +84,7 @@ func TestCompartmentErrors(t *testing.T) {
 		{
 			name: "unknown parent",
 			call: func() error {
-				_, err := m.CreateCompartment(ctx, driver.CompartmentSpec{
+				_, err := m.CreateCompartment(ctx, CompartmentSpec{
 					ParentID: "ocid1.compartment.oc1..missing", Name: "x",
 				})
 				return err
@@ -131,7 +131,7 @@ func TestIdentityNamesFollowOCIConstraints(t *testing.T) {
 		{
 			name: "compartment",
 			call: func(m *Mock, name string) error {
-				_, err := m.CreateCompartment(ctx, driver.CompartmentSpec{ParentID: tenancy, Name: name})
+				_, err := m.CreateCompartment(ctx, CompartmentSpec{ParentID: tenancy, Name: name})
 				return err
 			},
 		},
@@ -139,7 +139,7 @@ func TestIdentityNamesFollowOCIConstraints(t *testing.T) {
 			name: "compartment rename",
 			call: func(m *Mock, name string) error {
 				id := newCompartment(t, m, tenancy, "keep")
-				_, err := m.UpdateCompartment(ctx, id, driver.IdentityUpdate{Name: name})
+				_, err := m.UpdateCompartment(ctx, id, Update{Name: name})
 
 				return err
 			},
@@ -147,14 +147,14 @@ func TestIdentityNamesFollowOCIConstraints(t *testing.T) {
 		{
 			name: "user",
 			call: func(m *Mock, name string) error {
-				_, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: name})
+				_, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: tenancy, Name: name})
 				return err
 			},
 		},
 		{
 			name: "group",
 			call: func(m *Mock, name string) error {
-				_, err := m.CreateOCIGroup(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: name})
+				_, err := m.CreateOCIGroup(ctx, PrincipalSpec{CompartmentID: tenancy, Name: name})
 				return err
 			},
 		},

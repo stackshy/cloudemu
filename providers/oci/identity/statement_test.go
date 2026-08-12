@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 func TestParseStatement(t *testing.T) {
@@ -123,91 +122,91 @@ func TestStatementGrantsAccess(t *testing.T) {
 	tests := []struct {
 		name string
 		text string
-		req  driver.AccessRequest
+		req  AccessRequest
 		want coverage
 	}{
 		{
 			name: "exact match",
 			text: "Allow group Admins to manage buckets in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
 			want: coverGranted,
 		},
 		{
 			name: "stronger verb covers weaker",
 			text: "Allow group Admins to manage buckets in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbRead, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbRead, ResourceType: "buckets"},
 			want: coverGranted,
 		},
 		{
 			name: "weaker verb does not cover stronger",
 			text: "Allow group Admins to read buckets in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
 		},
 		{
 			name: "all-resources covers any type",
 			text: "Allow group Admins to manage all-resources in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbUse, ResourceType: "vcns"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbUse, ResourceType: "vcns"},
 			want: coverGranted,
 		},
 		{
 			name: "family covers its members",
 			text: "Allow group Admins to manage object-family in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
 			want: coverGranted,
 		},
 		{
 			name: "family does not cover another family's members",
 			text: "Allow group Admins to manage object-family in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "instances"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "instances"},
 		},
 		{
 			name: "a family beyond the original seven covers its members",
 			text: "Allow group Admins to manage functions-family in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "fn-function"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "fn-function"},
 			want: coverGranted,
 		},
 		{
 			name: "an unmodeled family is undecided, not denied",
 			text: "Allow group Admins to manage data-science-family in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "data-science-models"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "data-science-models"},
 			want: coverUnknownFamily,
 		},
 		{
 			name: "an unmodeled family still denies another subject",
 			text: "Allow group Admins to manage data-science-family in tenancy",
-			req:  driver.AccessRequest{Groups: []string{"Auditors"}, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{"Auditors"}, Verb: verbManage, ResourceType: "buckets"},
 		},
 		{
 			name: "a resource type that is not a family denies",
 			text: "Allow group Admins to manage widgets in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
 		},
 		{
 			name: "group name matching is case-insensitive",
 			text: "Allow group admins to manage buckets in tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
 			want: coverGranted,
 		},
 		{
 			name: "another group does not match",
 			text: "Allow group Admins to manage buckets in tenancy",
-			req:  driver.AccessRequest{Groups: []string{"Auditors"}, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{"Auditors"}, Verb: verbManage, ResourceType: "buckets"},
 		},
 		{
 			name: "any-user grants an authenticated user",
 			text: "Allow any-user to inspect buckets in tenancy",
-			req:  driver.AccessRequest{AnyUser: true, Verb: verbInspect, ResourceType: "buckets"},
+			req:  AccessRequest{AnyUser: true, Verb: verbInspect, ResourceType: "buckets"},
 			want: coverGranted,
 		},
 		{
 			name: "dynamic group subject needs a dynamic group",
 			text: "Allow dynamic-group fleet to manage instances in tenancy",
-			req:  driver.AccessRequest{Groups: []string{"fleet"}, Verb: verbManage, ResourceType: "instances"},
+			req:  AccessRequest{Groups: []string{"fleet"}, Verb: verbManage, ResourceType: "instances"},
 		},
 		{
 			name: "dynamic group matches",
 			text: "Allow dynamic-group fleet to manage instances in tenancy",
-			req: driver.AccessRequest{
+			req: AccessRequest{
 				DynamicGroups: []string{"fleet"}, Verb: verbManage, ResourceType: "instances",
 			},
 			want: coverGranted,
@@ -215,12 +214,12 @@ func TestStatementGrantsAccess(t *testing.T) {
 		{
 			name: "service subject never matches a user",
 			text: "Allow service objectstorage to manage buckets in tenancy",
-			req:  driver.AccessRequest{AnyUser: true, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{AnyUser: true, Verb: verbManage, ResourceType: "buckets"},
 		},
 		{
 			name: "endorse never grants",
 			text: "Endorse group Admins to manage buckets in any-tenancy",
-			req:  driver.AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
+			req:  AccessRequest{Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets"},
 		},
 	}
 

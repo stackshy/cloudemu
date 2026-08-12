@@ -622,9 +622,9 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 
 ### OCI Monitoring
 
-**Optional capability:** `services/monitoring/driver.OCIMonitoring` — OCI scopes
-metrics and alarms to a compartment and identifies alarms by OCID, neither of
-which the portable model carries.
+**Optional capability:** `server/oci/monitoring.Extras` — OCI scopes metrics
+and alarms to a compartment and identifies alarms by OCID, neither of which the
+portable model carries. Its value types live in `providers/oci/monitoring`.
 **Provider:** `providers/oci/monitoring` | **Wire:** `server/oci/monitoring`
 
 | Operation | Route |
@@ -746,13 +746,15 @@ namespace, metric name and dimension formats. The per-request datapoint cap,
 
 **Total: 35 operations**
 
-### OCI capabilities (optional, `services/iam/driver/oci.go`)
+### OCI capabilities (optional, `server/oci/identity`)
 
-Discovered by type assertion. OCI addresses identity resources by OCID, scopes
-them to a compartment, and writes policies as English-like statements, none of
-which the portable interface expresses. Only `providers/oci/identity` implements
-them; the OCI provider answers `Unimplemented` for policy attachment and
-instance profiles, which have no OCI equivalent.
+Declared by the wire handler and discovered by type assertion, with their
+value types in `providers/oci/identity`. OCI addresses identity resources by
+OCID, scopes them to a compartment, and writes policies as English-like
+statements, none of which the portable interface expresses. Only
+`providers/oci/identity` implements them; the OCI provider answers
+`Unimplemented` for policy attachment and instance profiles, which have no OCI
+equivalent.
 
 | Capability | Operations |
 |-----------|-----------|

@@ -15,14 +15,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// Compile-time checks that Mock implements the portable driver and the three
-// OCI-shaped capabilities the wire handler discovers by type assertion.
-var (
-	_ driver.IAM               = (*Mock)(nil)
-	_ driver.Compartments      = (*Mock)(nil)
-	_ driver.OCIIdentity       = (*Mock)(nil)
-	_ driver.StatementPolicies = (*Mock)(nil)
-)
+// Compile-time check that Mock implements the portable driver. The three
+// OCI-shaped capabilities live in server/oci/identity and are checked there.
+var _ driver.IAM = (*Mock)(nil)
 
 const (
 	timeFormat      = time.RFC3339
@@ -42,6 +37,43 @@ const (
 	kindDynamicGroup = "dynamicgroup"
 	kindCredential   = "credential"
 )
+
+// Update carries the mutable fields of a compartment, user or group. An empty
+// field leaves the stored value alone.
+type Update struct {
+	Name         string
+	Description  string
+	FreeformTags map[string]string
+}
+
+// PrincipalSpec describes a compartment-scoped user or group to create.
+type PrincipalSpec struct {
+	CompartmentID string
+	Name          string
+	Description   string
+	FreeformTags  map[string]string
+}
+
+// PrincipalInfo describes a compartment-scoped user or group.
+type PrincipalInfo struct {
+	ID             string
+	CompartmentID  string
+	Name           string
+	Description    string
+	TimeCreated    string
+	LifecycleState string
+	FreeformTags   map[string]string
+}
+
+// MembershipInfo binds a user to a group as its own addressable resource.
+type MembershipInfo struct {
+	ID             string
+	CompartmentID  string
+	UserID         string
+	GroupID        string
+	TimeCreated    string
+	LifecycleState string
+}
 
 // principal is an OCI user or group; the two carry identical attributes.
 type principal struct {
@@ -156,8 +188,8 @@ func validateName(kind, name string) error {
 // createPrincipal records a user or group. Names are unique per store, as they
 // are per tenancy in real OCI.
 func (m *Mock) createPrincipal(
-	store *memstore.Store[*principal], kind string, spec driver.PrincipalSpec,
-) (*driver.PrincipalInfo, error) {
+	store *memstore.Store[*principal], kind string, spec PrincipalSpec,
+) (*PrincipalInfo, error) {
 	if err := validateName(kind, spec.Name); err != nil {
 		return nil, err
 	}
@@ -180,7 +212,7 @@ func (m *Mock) createPrincipal(
 }
 
 // getPrincipal looks a user or group up by OCID.
-func getPrincipal(store *memstore.Store[*principal], kind, id string) (*driver.PrincipalInfo, error) {
+func getPrincipal(store *memstore.Store[*principal], kind, id string) (*PrincipalInfo, error) {
 	p, ok := store.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "%s %q not found", kind, id)
@@ -190,10 +222,10 @@ func getPrincipal(store *memstore.Store[*principal], kind, id string) (*driver.P
 }
 
 // listPrincipals returns the users or groups in one compartment.
-func listPrincipals(store *memstore.Store[*principal], compartmentID string) []driver.PrincipalInfo {
+func listPrincipals(store *memstore.Store[*principal], compartmentID string) []PrincipalInfo {
 	filter := scope.Scope{Compartment: compartmentID}
 	all := store.SortedValues()
-	out := make([]driver.PrincipalInfo, 0, len(all))
+	out := make([]PrincipalInfo, 0, len(all))
 
 	for _, p := range all {
 		if p.Scope.Matches(filter) {
@@ -206,8 +238,8 @@ func listPrincipals(store *memstore.Store[*principal], compartmentID string) []d
 
 // updatePrincipal applies the mutable fields of a user or group.
 func updatePrincipal(
-	store *memstore.Store[*principal], kind, id string, upd driver.IdentityUpdate,
-) (*driver.PrincipalInfo, error) {
+	store *memstore.Store[*principal], kind, id string, upd Update,
+) (*PrincipalInfo, error) {
 	p, ok := store.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "%s %q not found", kind, id)
@@ -239,8 +271,8 @@ func findByName(store *memstore.Store[*principal], name string) (*principal, boo
 	return nil, false
 }
 
-func toPrincipalInfo(p *principal) *driver.PrincipalInfo {
-	return &driver.PrincipalInfo{
+func toPrincipalInfo(p *principal) *PrincipalInfo {
+	return &PrincipalInfo{
 		ID:             p.ID,
 		CompartmentID:  p.Scope.Compartment,
 		Name:           p.Name,
@@ -251,8 +283,8 @@ func toPrincipalInfo(p *principal) *driver.PrincipalInfo {
 	}
 }
 
-func toMembershipInfo(mem *membership) *driver.MembershipInfo {
-	return &driver.MembershipInfo{
+func toMembershipInfo(mem *membership) *MembershipInfo {
+	return &MembershipInfo{
 		ID:             mem.ID,
 		CompartmentID:  mem.Scope.Compartment,
 		UserID:         mem.UserID,
@@ -273,7 +305,7 @@ func copyTags(tags map[string]string) map[string]string {
 }
 
 // CreateOCIUser creates a compartment-scoped user.
-func (m *Mock) CreateOCIUser(_ context.Context, spec driver.PrincipalSpec) (*driver.PrincipalInfo, error) {
+func (m *Mock) CreateOCIUser(_ context.Context, spec PrincipalSpec) (*PrincipalInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -281,7 +313,7 @@ func (m *Mock) CreateOCIUser(_ context.Context, spec driver.PrincipalSpec) (*dri
 }
 
 // GetOCIUser returns the user with the given OCID.
-func (m *Mock) GetOCIUser(_ context.Context, id string) (*driver.PrincipalInfo, error) {
+func (m *Mock) GetOCIUser(_ context.Context, id string) (*PrincipalInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -289,7 +321,7 @@ func (m *Mock) GetOCIUser(_ context.Context, id string) (*driver.PrincipalInfo, 
 }
 
 // ListOCIUsers returns the users in one compartment.
-func (m *Mock) ListOCIUsers(_ context.Context, compartmentID string) ([]driver.PrincipalInfo, error) {
+func (m *Mock) ListOCIUsers(_ context.Context, compartmentID string) ([]PrincipalInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -298,8 +330,8 @@ func (m *Mock) ListOCIUsers(_ context.Context, compartmentID string) ([]driver.P
 
 // UpdateOCIUser applies the mutable fields of a user.
 func (m *Mock) UpdateOCIUser(
-	_ context.Context, id string, upd driver.IdentityUpdate,
-) (*driver.PrincipalInfo, error) {
+	_ context.Context, id string, upd Update,
+) (*PrincipalInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -326,7 +358,7 @@ func (m *Mock) deleteUser(id string) error {
 }
 
 // CreateOCIGroup creates a compartment-scoped group.
-func (m *Mock) CreateOCIGroup(_ context.Context, spec driver.PrincipalSpec) (*driver.PrincipalInfo, error) {
+func (m *Mock) CreateOCIGroup(_ context.Context, spec PrincipalSpec) (*PrincipalInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -334,7 +366,7 @@ func (m *Mock) CreateOCIGroup(_ context.Context, spec driver.PrincipalSpec) (*dr
 }
 
 // GetOCIGroup returns the group with the given OCID.
-func (m *Mock) GetOCIGroup(_ context.Context, id string) (*driver.PrincipalInfo, error) {
+func (m *Mock) GetOCIGroup(_ context.Context, id string) (*PrincipalInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -342,7 +374,7 @@ func (m *Mock) GetOCIGroup(_ context.Context, id string) (*driver.PrincipalInfo,
 }
 
 // ListOCIGroups returns the groups in one compartment.
-func (m *Mock) ListOCIGroups(_ context.Context, compartmentID string) ([]driver.PrincipalInfo, error) {
+func (m *Mock) ListOCIGroups(_ context.Context, compartmentID string) ([]PrincipalInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -351,8 +383,8 @@ func (m *Mock) ListOCIGroups(_ context.Context, compartmentID string) ([]driver.
 
 // UpdateOCIGroup applies the mutable fields of a group.
 func (m *Mock) UpdateOCIGroup(
-	_ context.Context, id string, upd driver.IdentityUpdate,
-) (*driver.PrincipalInfo, error) {
+	_ context.Context, id string, upd Update,
+) (*PrincipalInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -379,7 +411,7 @@ func (m *Mock) deleteGroup(id string) error {
 }
 
 // CreateOCIGroupMembership adds a user to a group.
-func (m *Mock) CreateOCIGroupMembership(_ context.Context, userID, groupID string) (*driver.MembershipInfo, error) {
+func (m *Mock) CreateOCIGroupMembership(_ context.Context, userID, groupID string) (*MembershipInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -387,7 +419,7 @@ func (m *Mock) CreateOCIGroupMembership(_ context.Context, userID, groupID strin
 }
 
 // createMembership binds a user to a group. Callers hold m.mu.
-func (m *Mock) createMembership(userID, groupID string) (*driver.MembershipInfo, error) {
+func (m *Mock) createMembership(userID, groupID string) (*MembershipInfo, error) {
 	if !m.users.Has(userID) {
 		return nil, cerrors.Newf(cerrors.NotFound, "user %q not found", userID)
 	}
@@ -415,7 +447,7 @@ func (m *Mock) createMembership(userID, groupID string) (*driver.MembershipInfo,
 }
 
 // GetOCIGroupMembership returns the membership with the given OCID.
-func (m *Mock) GetOCIGroupMembership(_ context.Context, id string) (*driver.MembershipInfo, error) {
+func (m *Mock) GetOCIGroupMembership(_ context.Context, id string) (*MembershipInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -431,13 +463,13 @@ func (m *Mock) GetOCIGroupMembership(_ context.Context, id string) (*driver.Memb
 // by user or group when either is given.
 func (m *Mock) ListOCIGroupMemberships(
 	_ context.Context, compartmentID, userID, groupID string,
-) ([]driver.MembershipInfo, error) {
+) ([]MembershipInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	filter := scope.Scope{Compartment: compartmentID}
 	all := m.memberships.SortedValues()
-	out := make([]driver.MembershipInfo, 0, len(all))
+	out := make([]MembershipInfo, 0, len(all))
 
 	for _, mem := range all {
 		switch {

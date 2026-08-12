@@ -13,10 +13,42 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
+// OCIAlarmSpec describes an OCI alarm, whose condition is a single query string
+// rather than the portable metric/threshold pair.
+type OCIAlarmSpec struct {
+	DisplayName                string
+	CompartmentID              string
+	MetricCompartmentID        string
+	Namespace                  string
+	ResourceGroup              string
+	Query                      string
+	Resolution                 string
+	PendingDuration            string
+	Severity                   string
+	Body                       string
+	MessageFormat              string
+	RepeatNotificationDuration string
+	Destinations               []string
+	FreeformTags               map[string]string
+	DefinedTags                map[string]map[string]any
+	IsEnabled                  bool
+}
+
+// OCIAlarm is a stored alarm with its generated identity and current status.
+type OCIAlarm struct {
+	ID             string
+	Spec           OCIAlarmSpec
+	Status         string // "FIRING", "OK" or "SUSPENDED"
+	LifecycleState string
+	TimeCreated    time.Time
+	TimeUpdated    time.Time
+	TimeTriggered  time.Time
+}
+
 // CreateOCIAlarm creates a compartment-scoped alarm and returns it.
 //
 //nolint:gocritic // hugeParam: spec is the alarm's full definition.
-func (m *Mock) CreateOCIAlarm(_ context.Context, spec driver.OCIAlarmSpec) (*driver.OCIAlarm, error) {
+func (m *Mock) CreateOCIAlarm(_ context.Context, spec OCIAlarmSpec) (*OCIAlarm, error) {
 	if err := validateSpec(&spec); err != nil {
 		return nil, err
 	}
@@ -76,7 +108,7 @@ func (m *Mock) checkNameFree(rec *alarmRecord, name string) error {
 }
 
 // GetOCIAlarm returns the alarm with the given OCID.
-func (m *Mock) GetOCIAlarm(_ context.Context, id string) (*driver.OCIAlarm, error) {
+func (m *Mock) GetOCIAlarm(_ context.Context, id string) (*OCIAlarm, error) {
 	rec, ok := m.alarms.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "alarm %q not found", id)
@@ -86,13 +118,13 @@ func (m *Mock) GetOCIAlarm(_ context.Context, id string) (*driver.OCIAlarm, erro
 }
 
 // ListOCIAlarms returns the alarms in a compartment, ordered by OCID.
-func (m *Mock) ListOCIAlarms(_ context.Context, compartmentID string) ([]*driver.OCIAlarm, error) {
+func (m *Mock) ListOCIAlarms(_ context.Context, compartmentID string) ([]*OCIAlarm, error) {
 	if compartmentID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
 	}
 
 	want := scope.Scope{Compartment: compartmentID}
-	out := make([]*driver.OCIAlarm, 0)
+	out := make([]*OCIAlarm, 0)
 
 	for _, rec := range m.alarms.SortedValues() {
 		if !rec.place.Matches(want) {
@@ -109,7 +141,7 @@ func (m *Mock) ListOCIAlarms(_ context.Context, compartmentID string) ([]*driver
 // create time, as it is in real OCI.
 //
 //nolint:gocritic // hugeParam: spec is the alarm's full definition.
-func (m *Mock) UpdateOCIAlarm(_ context.Context, id string, spec driver.OCIAlarmSpec) (*driver.OCIAlarm, error) {
+func (m *Mock) UpdateOCIAlarm(_ context.Context, id string, spec OCIAlarmSpec) (*OCIAlarm, error) {
 	rec, ok := m.alarms.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "alarm %q not found", id)
@@ -132,7 +164,7 @@ func (m *Mock) UpdateOCIAlarm(_ context.Context, id string, spec driver.OCIAlarm
 // applySpec replaces an alarm's definition under one lock, refusing a display
 // name another alarm in the compartment holds. That is the rule create
 // enforces, so an update cannot make the duplicate create refuses.
-func (m *Mock) applySpec(rec *alarmRecord, spec *driver.OCIAlarmSpec) error {
+func (m *Mock) applySpec(rec *alarmRecord, spec *OCIAlarmSpec) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -193,7 +225,7 @@ func (m *Mock) evaluateAlarm(rec *alarmRecord) {
 // evaluate compares a spec's query against the samples in its window and records
 // any status change. The spec is passed in rather than read off rec because
 // PostMetricData evaluates outside m.mu, where a concurrent update races it.
-func (m *Mock) evaluate(rec *alarmRecord, spec *driver.OCIAlarmSpec) {
+func (m *Mock) evaluate(rec *alarmRecord, spec *OCIAlarmSpec) {
 	cond, err := parseQuery(spec.Query)
 	if err != nil {
 		return
@@ -205,7 +237,7 @@ func (m *Mock) evaluate(rec *alarmRecord, spec *driver.OCIAlarmSpec) {
 	}
 
 	end := m.opts.Clock.Now().UTC()
-	filter := driver.OCIMetricFilter{
+	filter := OCIMetricFilter{
 		Namespace:     spec.Namespace,
 		ResourceGroup: spec.ResourceGroup,
 		Name:          cond.metricName,
@@ -293,7 +325,7 @@ func (m *Mock) lookupByName(compartmentID, name string) *alarmRecord {
 }
 
 // specOf copies an alarm's definition out from under the mutation lock.
-func (m *Mock) specOf(rec *alarmRecord) driver.OCIAlarmSpec {
+func (m *Mock) specOf(rec *alarmRecord) OCIAlarmSpec {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -301,11 +333,11 @@ func (m *Mock) specOf(rec *alarmRecord) driver.OCIAlarmSpec {
 }
 
 // snapshot copies an alarm out from under the mutation lock.
-func (m *Mock) snapshot(rec *alarmRecord) *driver.OCIAlarm {
+func (m *Mock) snapshot(rec *alarmRecord) *OCIAlarm {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return &driver.OCIAlarm{
+	return &OCIAlarm{
 		ID:             rec.id,
 		Spec:           rec.spec,
 		Status:         rec.status,
@@ -317,7 +349,7 @@ func (m *Mock) snapshot(rec *alarmRecord) *driver.OCIAlarm {
 }
 
 // validateSpec rejects an alarm OCI would reject and fills its defaults.
-func validateSpec(spec *driver.OCIAlarmSpec) error {
+func validateSpec(spec *OCIAlarmSpec) error {
 	switch {
 	case spec.DisplayName == "":
 		return cerrors.New(cerrors.InvalidArgument, "displayName is required")
@@ -339,7 +371,7 @@ func validateSpec(spec *driver.OCIAlarmSpec) error {
 }
 
 // applyDefaults fills the alarm fields OCI supplies when a caller omits them.
-func applyDefaults(spec *driver.OCIAlarmSpec) {
+func applyDefaults(spec *OCIAlarmSpec) {
 	if spec.MetricCompartmentID == "" {
 		spec.MetricCompartmentID = spec.CompartmentID
 	}
@@ -358,7 +390,7 @@ func applyDefaults(spec *driver.OCIAlarmSpec) {
 }
 
 // validateFields checks the alarm values OCI constrains to an enum or a format.
-func validateFields(spec *driver.OCIAlarmSpec) error {
+func validateFields(spec *OCIAlarmSpec) error {
 	if !slices.Contains(severities(), spec.Severity) {
 		return cerrors.Newf(cerrors.InvalidArgument, "severity %q must be one of %s",
 			spec.Severity, strings.Join(severities(), ", "))
