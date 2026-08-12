@@ -1,11 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo.svg" alt="cloudemu" width="96" height="96" />
+  <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo.png" alt="cloudemu — the cloud, in memory" width="440" />
 </p>
 
-<p align="center">
-  <h1 align="center">cloudemu</h1>
-  <p align="center"><b>Zero-Cost In-Memory Cloud Emulation for Go</b></p>
-</p>
+<p align="center"><b>Zero-Cost In-Memory Cloud Emulation for Go</b></p>
 
 <p align="center">
   <a href="https://pkg.go.dev/github.com/stackshy/cloudemu/v2"><img src="https://pkg.go.dev/badge/github.com/stackshy/cloudemu/v2.svg" alt="Go Reference"></a>
