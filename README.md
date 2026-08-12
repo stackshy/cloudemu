@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo.png" alt="cloudemu — the cloud, in memory" width="440" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo-dark.png" />
+    <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo-light.png" alt="cloudemu — the cloud, in memory" width="440" />
+  </picture>
 </p>
 
 <p align="center"><b>Zero-Cost In-Memory Cloud Emulation for Go</b></p>
