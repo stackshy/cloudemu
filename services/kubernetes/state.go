@@ -81,6 +81,16 @@ type ClusterState struct {
 	admissionEnabled bool
 	admissionClient  *http.Client
 
+	// flavor selects the served API surface. FlavorOpenShift additionally
+	// registers the *.openshift.io groups and seeds the OpenShift identity
+	// singletons; FlavorKubernetes (the default) serves only upstream groups.
+	flavor Flavor
+
+	// oauthTokens maps a minted OAuth access token to the username it was
+	// issued for, so `oc whoami` (GET users/~) can resolve the caller. Only
+	// written by the OpenShift OAuth server (openshift_oauth.go). Guarded by mu.
+	oauthTokens map[string]string
+
 	// Per-resource Watch broadcasters. Handlers publish on Create/Update/
 	// Patch/Delete; ?watch=true requests subscribe via streamWatch.
 	wNamespaces      *broadcaster
@@ -103,7 +113,9 @@ const firstClusterIPOffset uint32 = 1
 // namespaces (default, kube-system, kube-public) and a "default"
 // ServiceAccount in each, matching the bootstrap state of a fresh real
 // cluster.
-func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient *http.Client) *ClusterState {
+func newClusterState(
+	clock config.Clock, admissionEnabled bool, admissionClient *http.Client, flavor Flavor,
+) *ClusterState {
 	if clock == nil {
 		clock = config.RealClock{}
 	}
@@ -112,8 +124,16 @@ func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient 
 		admissionClient = &http.Client{Timeout: defaultAdmissionTimeout}
 	}
 
+	// OpenShift is a superset: it serves the upstream groups plus the
+	// *.openshift.io groups. Kubernetes clusters get only the upstream set.
+	defs := registeredResources()
+	if flavor == FlavorOpenShift {
+		defs = concat(defs, openshiftRegistryDefs())
+	}
+
 	s := &ClusterState{
 		clock:            clock,
+		flavor:           flavor,
 		namespaces:       make(map[string]*corev1.Namespace),
 		configMaps:       make(map[string]*corev1.ConfigMap),
 		pods:             make(map[string]*corev1.Pod),
@@ -125,9 +145,10 @@ func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient 
 		endpoints:        make(map[string]*corev1.Endpoints),
 		nextClusterIP:    firstClusterIPOffset,
 		nextPodIP:        1,
-		reg:              newRegistry(registeredResources()),
+		reg:              newRegistry(defs),
 		admissionEnabled: admissionEnabled,
 		admissionClient:  admissionClient,
+		oauthTokens:      make(map[string]string),
 		wNamespaces:      newBroadcaster(),
 		wConfigMaps:      newBroadcaster(),
 		wPods:            newBroadcaster(),
@@ -156,6 +177,12 @@ func newClusterState(clock config.Clock, admissionEnabled bool, admissionClient 
 		store.items[objKey("", node.GetName())] = node
 	}
 
+	// OpenShift-flavored clusters boot with the identity singletons a real
+	// cluster always has (ClusterVersion "version", Infrastructure "cluster").
+	if flavor == FlavorOpenShift {
+		s.seedOpenShiftSingletonsLocked()
+	}
+
 	return s
 }
 
@@ -171,6 +198,13 @@ func (s *ClusterState) now() metav1.Time {
 // prefix by APIServer.ServeHTTP, so r.URL.Path here starts with /api/v1/...
 // or /apis/<group>/<version>/...
 func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// OpenShift-only pseudo-endpoints (whoami, project requests, build
+	// instantiate, processed templates, authorization reviews) have no registry
+	// store or Route shape, so they are intercepted before discovery/routing.
+	if s.serveOpenShiftIntercept(w, r) {
+		return
+	}
+
 	// Discovery first: /api, /apis and the group-version lists are not
 	// resource paths and parseRoute cannot represent them.
 	if s.serveDiscovery(w, r) {

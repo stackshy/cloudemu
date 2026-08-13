@@ -70,14 +70,23 @@ func (s *APIServer) SetClock(c config.Clock) {
 	s.mu.Unlock()
 }
 
-// RegisterCluster allocates fresh state for a new cluster and returns its
-// generated UID. The UID is the path segment that goes into the kubeconfig's
-// server URL — kubeconfig "server" becomes "<base>/k8s/<uid>".
+// RegisterCluster allocates fresh state for a new Kubernetes-flavored cluster
+// and returns its generated UID. The UID is the path segment that goes into the
+// kubeconfig's server URL — kubeconfig "server" becomes "<base>/k8s/<uid>".
+// This is what the EKS/AKS/GKE control planes call.
 func (s *APIServer) RegisterCluster() (string, *ClusterState) {
+	return s.RegisterClusterWithFlavor(FlavorKubernetes)
+}
+
+// RegisterClusterWithFlavor allocates fresh state for a new cluster of the given
+// flavor. FlavorOpenShift additionally serves the *.openshift.io groups and
+// seeds the OpenShift identity singletons — the ROSA/ARO control planes call
+// this to back an OpenShift cluster with the same shared data plane.
+func (s *APIServer) RegisterClusterWithFlavor(flavor Flavor) (string, *ClusterState) {
 	uid := newUID()
 
 	s.mu.Lock()
-	state := newClusterState(s.clock, s.admissionEnabled, s.admissionClient)
+	state := newClusterState(s.clock, s.admissionEnabled, s.admissionClient, flavor)
 	s.clusters[uid] = state
 	s.mu.Unlock()
 
@@ -184,7 +193,29 @@ func (s *APIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Kubernetes paths (/api/v1/..., /apis/apps/v1/...) without the cluster
 	// prefix.
 	r.URL.Path = rest[slash:]
+
+	// The OpenShift OAuth server (oc login) needs the cluster's ABSOLUTE URL to
+	// advertise its endpoints, so it is dispatched here — where the host and UID
+	// are still known — rather than from ClusterState, which only sees the
+	// stripped path.
+	if state.flavor == FlavorOpenShift && isOpenShiftOAuthPath(r.URL.Path) {
+		state.serveOAuth(w, r, requestScheme(r)+"://"+r.Host+pathPrefix+uid)
+
+		return
+	}
+
 	state.ServeHTTP(w, r)
+}
+
+// requestScheme returns "https" when the request arrived over TLS, else "http".
+// The OAuth metadata endpoints must be absolute and scheme-correct so oc follows
+// them back to the same server.
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+
+	return "http"
 }
 
 // newUID returns a fresh 32-char lowercase hex string used as the cluster's

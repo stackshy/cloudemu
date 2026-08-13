@@ -24,12 +24,14 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/topology"
 	"github.com/stackshy/cloudemu/v2/persist"
 	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
+	"github.com/stackshy/cloudemu/v2/providers/openshift/ocm"
 	"github.com/stackshy/cloudemu/v2/seed"
 	"github.com/stackshy/cloudemu/v2/server/admin"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
+	ocmserver "github.com/stackshy/cloudemu/v2/server/openshift/ocm"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	"github.com/stackshy/cloudemu/v2/services/pricing"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
@@ -206,6 +208,12 @@ func runServe(args []string) error {
 				// reference and needs it separately, or EKS still advertises
 				// the sentinel.
 				cloud.EKS.SetK8sAPI(k8s)
+				// ROSA/OCM: a Red Hat cluster-manager REST surface hosted on
+				// the AWS endpoint (rosa is AWS-only). Shares the same data
+				// plane so `rosa`-created clusters yield a working oc kubeconfig.
+				ocmMock := ocm.New(config.NewOptions(opts...))
+				ocmMock.SetK8sAPI(k8s)
+				d.OCM = ocmserver.New(ocmMock)
 				fresh["aws"] = wrap(awsserver.New(d), "aws", c.logReqs)
 				freshTargets["aws"] = seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2}
 				freshEngine = topology.New(cloud.EC2, cloud.VPC, cloud.Route53)
@@ -223,6 +231,7 @@ func runServe(args []string) error {
 				d := azureserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
 				cloud.AKS.SetK8sAPI(k8s)
+				cloud.ARO.SetK8sAPI(k8s)
 				fresh["azure"] = wrap(azureserver.New(d), "azure", c.logReqs)
 				freshTargets["azure"] = seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines}
 				freshDiscovery["azure"] = cloud.ResourceDiscovery

@@ -292,6 +292,13 @@ var registryShortNames = map[string][]string{
 	"events":                    {"ev"},
 	"nodes":                     {"no"},
 	"customresourcedefinitions": {"crd", "crds"},
+	// OpenShift (*.openshift.io) short names — only surface on OpenShift-flavored
+	// clusters, where these plurals are registered. `oc get dc/is/bc/scc/...`.
+	"deploymentconfigs":          {"dc"},
+	"imagestreams":               {"is"},
+	"buildconfigs":               {"bc"},
+	"securitycontextconstraints": {"scc"},
+	"clusterresourcequotas":      {"clusterquota", "crq"},
 }
 
 func policyResources() []apiResource {

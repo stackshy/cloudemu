@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
+	aroserver "github.com/stackshy/cloudemu/v2/server/azure/aro"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
@@ -120,6 +121,7 @@ type Drivers struct {
 	PostgresFlex     rdbdriver.RelationalDB
 	MySQLFlex        rdbdriver.RelationalDB
 	AKS              aksserver.Backend
+	ARO              aroserver.Backend
 	IAM              iamdriver.IAM
 	ACR              crdriver.ContainerRegistry
 	// KeyVault serves the Key Vault secrets data-plane API (/secrets/…)
@@ -311,6 +313,12 @@ func New(d Drivers) *server.Server {
 	// is unconstrained.
 	if d.AKS != nil {
 		srv.Register(aksserver.New(d.AKS))
+	}
+
+	// ARO matches on Microsoft.RedHatOpenShift — a distinct ARM provider, so
+	// registration order relative to AKS/compute/etc. is unconstrained.
+	if d.ARO != nil {
+		srv.Register(aroserver.New(d.ARO))
 	}
 
 	// Databricks matches on Microsoft.Databricks/workspaces — a distinct ARM
