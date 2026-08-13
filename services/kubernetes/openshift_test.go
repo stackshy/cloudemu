@@ -3,6 +3,7 @@ package kubernetes_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -704,14 +705,47 @@ func TestOpenShift_OAuthMetadata(t *testing.T) {
 	}
 }
 
+// TestOpenShift_OAuthRejectsCrossHostRedirect asserts the authorize endpoint
+// refuses a cross-origin redirect_uri (open-redirect / token-exfiltration
+// guard) rather than 302-ing the token to an attacker-controlled host.
+func TestOpenShift_OAuthRejectsCrossHostRedirect(t *testing.T) {
+	base := openshiftBase(t)
+	authorize := base + "/oauth/authorize?client_id=openshift-challenging-client&response_type=token&redirect_uri=" +
+		url.QueryEscape("https://evil.example.com/steal")
+
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	req, _ := http.NewRequest(http.MethodGet, authorize, nil)
+	req.SetBasicAuth("developer", "x")
+
+	resp, err := noRedirect.Do(req)
+	if err != nil {
+		t.Fatalf("authorize request: %v", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("cross-host redirect_uri: status %d, want 400 (must not redirect)", resp.StatusCode)
+	}
+
+	if loc := resp.Header.Get("Location"); strings.Contains(loc, "evil.example.com") {
+		t.Errorf("server redirected to attacker host: %q", loc)
+	}
+}
+
 // TestOpenShift_OAuthChallengeThenToken asserts the challenging-client flow:
 // no credentials -> 401 Basic challenge; Basic credentials -> 302 with the
 // access token in the redirect fragment; and that token then resolves via
 // whoami to the authenticated user.
 func TestOpenShift_OAuthChallengeThenToken(t *testing.T) {
 	base := openshiftBase(t)
+	// redirect_uri must be same-host (the server rejects cross-origin to prevent
+	// an open redirect) — exactly what the real oc challenging-client sends.
 	authorize := base + "/oauth/authorize?client_id=openshift-challenging-client&response_type=token&redirect_uri=" +
-		"https%3A%2F%2Fexample%2Foauth%2Ftoken%2Fimplicit"
+		url.QueryEscape(base+"/oauth/token/implicit")
 
 	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse

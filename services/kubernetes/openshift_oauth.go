@@ -57,7 +57,7 @@ func (s *ClusterState) serveOAuth(w http.ResponseWriter, r *http.Request, absBas
 	case oauthWellKnownPath:
 		serveOAuthMetadata(w, absBase)
 	case oauthAuthorizePath:
-		s.serveOAuthAuthorize(w, r)
+		s.serveOAuthAuthorize(w, r, absBase)
 	case oauthTokenPath:
 		s.serveOAuthToken(w, r)
 	default:
@@ -85,7 +85,7 @@ func serveOAuthMetadata(w http.ResponseWriter, absBase string) {
 // no credentials it issues a Basic challenge; with credentials it mints a token
 // and 302-redirects with the token in the fragment (response_type=token) or a
 // code in the query (response_type=code).
-func (s *ClusterState) serveOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
+func (s *ClusterState) serveOAuthAuthorize(w http.ResponseWriter, r *http.Request, absBase string) {
 	user, ok := basicAuthUser(r)
 	if !ok {
 		// Challenge — oc retries the request with Authorization: Basic.
@@ -97,21 +97,28 @@ func (s *ClusterState) serveOAuthAuthorize(w http.ResponseWriter, r *http.Reques
 	}
 
 	q := r.URL.Query()
-	redirectURI := q.Get("redirect_uri")
+
+	// Resolve the redirect target from the server's OWN OAuth endpoint, not from
+	// the client-supplied string: an authorize endpoint that echoes an arbitrary
+	// redirect_uri is an open redirect that leaks the access token (carried in the
+	// fragment). The client's redirect_uri is only accepted when it matches the
+	// cluster's implicit endpoint; the value emitted is always server-constructed.
+	target, valid := allowedRedirectTarget(absBase, q.Get("redirect_uri"))
+	if !valid {
+		writeBadRequest(w, "openshift oauth: redirect_uri does not match the cluster OAuth endpoint")
+
+		return
+	}
 
 	token := s.mintOAuthToken(user)
 
 	if q.Get("response_type") == "code" {
-		redirectWithCode(w, r, redirectURI, q.Get("state"), token)
+		redirectWithCode(w, r, target, q.Get("state"), token)
 
 		return
 	}
 
 	// Default (response_type=token) — the implicit flow oc login uses.
-	if redirectURI == "" {
-		redirectURI = oauthImplicitPath
-	}
-
 	frag := url.Values{
 		"access_token": {token},
 		"expires_in":   {"86400"},
@@ -122,30 +129,40 @@ func (s *ClusterState) serveOAuthAuthorize(w http.ResponseWriter, r *http.Reques
 		frag.Set("state", st)
 	}
 
-	http.Redirect(w, r, redirectURI+"#"+frag.Encode(), http.StatusFound)
+	http.Redirect(w, r, target+"#"+frag.Encode(), http.StatusFound)
 }
 
-// redirectWithCode 302-redirects an authorization-code response. The emulator
+// redirectWithCode 302-redirects an authorization-code response to the
+// server-constructed target (already validated by the caller). The emulator
 // reuses the minted token as the code (a real server exchanges the code at the
 // token endpoint; here the token endpoint just re-mints, so either resolves).
-func redirectWithCode(w http.ResponseWriter, r *http.Request, redirectURI, state, code string) {
-	if redirectURI == "" {
-		writeBadRequest(w, "openshift oauth: redirect_uri required for code flow")
-
-		return
-	}
-
+func redirectWithCode(w http.ResponseWriter, r *http.Request, target, state, code string) {
 	q := url.Values{"code": {code}}
 	if state != "" {
 		q.Set("state", state)
 	}
 
 	sep := "?"
-	if strings.Contains(redirectURI, "?") {
+	if strings.Contains(target, "?") {
 		sep = "&"
 	}
 
-	http.Redirect(w, r, redirectURI+sep+q.Encode(), http.StatusFound)
+	http.Redirect(w, r, target+sep+q.Encode(), http.StatusFound)
+}
+
+// allowedRedirectTarget resolves the OAuth redirect target from the server's own
+// absolute base — the cluster's /oauth/token/implicit endpoint. An empty
+// redirect_uri defaults to it; a supplied redirect_uri is accepted only when it
+// exactly matches it (the challenging client always sends this). The returned
+// value is ALWAYS the server-constructed URL, never the client string, so it
+// cannot be an open redirect regardless of what the client sends.
+func allowedRedirectTarget(absBase, redirectURI string) (string, bool) {
+	expected := absBase + oauthImplicitPath
+	if redirectURI == "" || redirectURI == expected {
+		return expected, true
+	}
+
+	return "", false
 }
 
 // serveOAuthToken implements the token endpoint (authorization_code grant that
