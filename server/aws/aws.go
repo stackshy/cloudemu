@@ -304,6 +304,14 @@ func NewFromProvider(p *awsprovider.Provider) *server.Server {
 func New(d Drivers) *server.Server {
 	srv := server.New()
 
+	// ROSA/OCM (Red Hat OpenShift Cluster Manager) is registered FIRST so its
+	// specific path match (/api/clusters_mgmt/, /auth/realms/…/token) wins over
+	// the AWS Query handlers — several of which claim any form-encoded POST and
+	// would otherwise answer the OCM SSO token request with InvalidAction.
+	if d.OCM != nil {
+		srv.Register(d.OCM)
+	}
+
 	if d.CloudWatch != nil {
 		// The VPC driver optionally supplies derived AWS/IPAM metrics; surface
 		// them through CloudWatch when it implements the capability.
@@ -568,12 +576,6 @@ func New(d Drivers) *server.Server {
 	// before S3's permissive REST fallback.
 	if d.SageMaker != nil {
 		srv.Register(sagemakersrv.New(d.SageMaker))
-	}
-
-	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from
-	// every other AWS path. Registered before S3's REST fallback.
-	if d.OCM != nil {
-		srv.Register(d.OCM)
 	}
 
 	if d.K8sAPI != nil {

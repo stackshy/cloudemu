@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/internal/k8spki"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 )
 
@@ -40,8 +41,18 @@ func TestOpenShift_OcLoginE2E(t *testing.T) {
 	api := kubernetes.NewAPIServer()
 	uid, _ := api.RegisterClusterWithFlavor(kubernetes.FlavorOpenShift)
 	// oc's OAuth challenge path assumes an HTTPS endpoint (real clusters always
-	// are) and dereferences the TLS transport, so serve over TLS here.
-	ts := httptest.NewTLSServer(api)
+	// are) and dereferences the TLS transport, so serve over TLS. Use the REAL
+	// serving cert (k8spki.ServingTLSConfig) rather than httptest's own cert, so
+	// this E2E exercises the exact certificate path the `serve` binary presents —
+	// catching regressions like a leaf validity that strict TLS clients reject.
+	tlsCfg, err := k8spki.ServingTLSConfig([]string{"127.0.0.1", "localhost"})
+	if err != nil {
+		t.Fatalf("serving TLS config: %v", err)
+	}
+
+	ts := httptest.NewUnstartedServer(api)
+	ts.TLS = tlsCfg
+	ts.StartTLS()
 	t.Cleanup(ts.Close)
 
 	server := ts.URL + "/k8s/" + uid

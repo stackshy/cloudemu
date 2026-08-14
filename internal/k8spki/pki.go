@@ -29,6 +29,13 @@ const (
 	rsaKeyBits   = 2048
 	caValidYears = 10
 	serialBits   = 128
+	// leafValidDays caps the serving (leaf) certificate's validity. Go 1.23+
+	// crypto/x509 (and the clients built on it, e.g. `oc`) reject an end-entity
+	// certificate whose validity exceeds 825 days as non-standards-compliant —
+	// even under InsecureSkipVerify. 397 days stays under both that limit and
+	// the CA/Browser Forum's 398-day maximum, so the emulator's serving cert is
+	// accepted by strict TLS clients. (The CA itself may remain long-lived.)
+	leafValidDays = 397
 )
 
 // loadCA generates the CA once and reuses it. The private key is retained (not
@@ -121,7 +128,7 @@ func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "cloudemu-k8s"},
 		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().AddDate(caValidYears, 0, 0),
+		NotAfter:     time.Now().AddDate(0, 0, leafValidDays),
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		// Assert cA=FALSE explicitly so end-entity-strict verifiers accept the leaf.

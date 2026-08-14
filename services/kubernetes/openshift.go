@@ -143,6 +143,15 @@ func (s *ClusterState) serveOpenShiftIntercept(w http.ResponseWriter, r *http.Re
 
 			return true
 		}
+		// `oc new-project` GETs the projectrequests collection before POSTing
+		// (its "can I request projects?" probe). projectrequests is a virtual
+		// verb, not a stored kind, so answer the GET with an empty list — without
+		// it the GET falls through to the registry and 404s, aborting the command.
+		if r.URL.Path == projectRequestPath {
+			serveProjectRequestList(w)
+
+			return true
+		}
 	case http.MethodPost:
 		return s.serveOpenShiftPost(w, r)
 	}

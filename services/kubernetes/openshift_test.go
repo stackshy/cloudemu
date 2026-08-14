@@ -567,6 +567,31 @@ func TestOpenShift_NewProject(t *testing.T) {
 	}
 }
 
+// TestOpenShift_ProjectRequestsGET asserts the projectrequests collection
+// answers GET with an empty list — the probe `oc new-project` issues before it
+// POSTs. Without it the GET 404s and the CLI command aborts.
+func TestOpenShift_ProjectRequestsGET(t *testing.T) {
+	base := openshiftBase(t)
+
+	resp := mustDo(t, http.MethodGet, base+"/apis/project.openshift.io/v1/projectrequests", nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET projectrequests: status %d, want 200", resp.StatusCode)
+	}
+
+	var list struct {
+		Kind  string `json:"kind"`
+		Items []any  `json:"items"`
+	}
+
+	mustDecode(t, resp.Body, &list)
+
+	if list.Kind != "ProjectRequestList" {
+		t.Errorf("kind: got %q, want ProjectRequestList", list.Kind)
+	}
+}
+
 // TestOpenShift_ProcessTemplate asserts `oc process` (processedtemplates) fills
 // parameters (provided + generated) and substitutes ${PARAM} into the objects.
 func TestOpenShift_ProcessTemplate(t *testing.T) {

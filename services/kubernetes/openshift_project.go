@@ -11,6 +11,19 @@ import (
 // not a stored kind — posting one provisions a namespace and its paired Project.
 const projectRequestPath = "/apis/project.openshift.io/v1/projectrequests"
 
+// serveProjectRequestList answers GET on the projectrequests collection with an
+// empty ProjectRequestList. `oc new-project` issues this GET before its POST to
+// check whether the caller may request projects; on this unauthenticated backend
+// anyone may, so an empty list (HTTP 200) lets the command proceed to the POST.
+func serveProjectRequestList(w http.ResponseWriter) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"apiVersion": apiGroupOSProject + "/v1",
+		"kind":       "ProjectRequestList",
+		"metadata":   map[string]any{},
+		"items":      []any{},
+	})
+}
+
 // serveProjectRequest implements `oc new-project`: it creates the backing
 // Namespace (the real tenancy boundary) and the paired Project object, then
 // returns the Project. On a real cluster the project controller creates the
