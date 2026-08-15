@@ -27,8 +27,14 @@ go run ./cmd/cloudemu serve
 No Go toolchain needed — pull the published image (it runs `serve --host 0.0.0.0`):
 
 ```sh
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 ghcr.io/stackshy/cloudemu:latest
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 ghcr.io/stackshy/cloudemu:latest
 ```
+
+The container binds `0.0.0.0`, but the Kubernetes data plane advertises a
+routable endpoint (defaults to `127.0.0.1`, not the bind address), so an
+EKS/AKS/GKE kubeconfig from the container works with `kubectl` on the host. To
+reach it from another machine, pass `--advertise-host <name-or-ip>` (also added
+to the serving cert's SANs).
 
 Or bring up the whole emulated cloud with the example compose file:
 
@@ -312,7 +318,8 @@ cloudemu serve --tls-host myhost.local --tls-host 192.168.1.10
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--providers` | `aws,azure,gcp` | which providers to start |
-| `--host` | `127.0.0.1` | bind interface |
+| `--host` | `127.0.0.1` | bind interface (`0.0.0.0` to expose on the network) |
+| `--advertise-host` | (derived) | host/IP the Kubernetes endpoint is advertised at + its cert SAN; defaults to `--host`, or `127.0.0.1` when binding all interfaces |
 | `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` | `4566`/`4568`/`4569`/`4570` | listen ports (empty `--k8s-port` disables Kubernetes) |
 | `--account-id` | `000000000000` | AWS account ID / Azure subscription ID |
 | `--region` | `us-east-1` | default region |
