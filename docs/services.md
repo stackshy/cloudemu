@@ -48,6 +48,8 @@ This document lists every service and operation available in CloudEmu across all
 | 35 | Audit Logging | `cloudtrail` | — | — |
 | 36 | Configuration Management | `configservice` | — | — |
 | 37 | Data Integration (ETL / Data Catalog) | `glue` | — | — |
+| 38 | Threat Detection | `guardduty` | — | — |
+| 39 | Streaming (Managed Kafka) | `kafka` | — | — |
 
 ---
 
@@ -620,9 +622,9 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 
 ### OCI Monitoring
 
-**Optional capability:** `services/monitoring/driver.OCIMonitoring` — OCI scopes
-metrics and alarms to a compartment and identifies alarms by OCID, neither of
-which the portable model carries.
+**Optional capability:** `server/oci/monitoring.Extras` — OCI scopes metrics
+and alarms to a compartment and identifies alarms by OCID, neither of which the
+portable model carries. Its value types live in `providers/oci/monitoring`.
 **Provider:** `providers/oci/monitoring` | **Wire:** `server/oci/monitoring`
 
 | Operation | Route |
@@ -744,13 +746,15 @@ namespace, metric name and dimension formats. The per-request datapoint cap,
 
 **Total: 35 operations**
 
-### OCI capabilities (optional, `services/iam/driver/oci.go`)
+### OCI capabilities (optional, `server/oci/identity`)
 
-Discovered by type assertion. OCI addresses identity resources by OCID, scopes
-them to a compartment, and writes policies as English-like statements, none of
-which the portable interface expresses. Only `providers/oci/identity` implements
-them; the OCI provider answers `Unimplemented` for policy attachment and
-instance profiles, which have no OCI equivalent.
+Declared by the wire handler and discovered by type assertion, with their
+value types in `providers/oci/identity`. OCI addresses identity resources by
+OCID, scopes them to a compartment, and writes policies as English-like
+statements, none of which the portable interface expresses. Only
+`providers/oci/identity` implements them; the OCI provider answers
+`Unimplemented` for policy attachment and instance profiles, which have no OCI
+equivalent.
 
 | Capability | Operations |
 |-----------|-----------|
@@ -3055,6 +3059,96 @@ well-formed response body rather than fabricating fake job results or scores.
 
 **Total: 299 operations.**
 
+## 38. Threat Detection (GuardDuty)
+
+**Driver interface:** `services/guardduty/driver/`
+**AWS:** GuardDuty (REST-JSON `awsRestjson1`, path + HTTP-method routing, no version prefix) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/guardduty` clients (and the `aws guardduty`
+CLI) work against the SDK-compat server (`awsserver.Drivers{GuardDuty: cloud.GuardDuty}`).
+GuardDuty has no version-path prefix, so the handler gates on its known root
+segments (`detector`, `admin`, `invitation`, `tags`, `malware-scan`,
+`malware-protection-plan`, `object-malware-scan`, `organization`) and registers
+before the S3 catch-all; an S3 bucket named exactly one of those roots would be
+shadowed (a documented limitation). Full `aws-sdk-go-v2/service/guardduty`
+parity — every one of the 87 client operations is implemented.
+
+**Detectors and their children behave realistically.** `CreateDetector` mints a
+detector id atomically; child resources (IP sets, threat-intel/entity sets,
+trusted-entity sets, filters) are created under the detector scope lock so a
+concurrent `DeleteDetector` can't orphan them, and `DeleteDetector` cascades to
+remove them. Findings support sample generation, `FindingCriteria` filtering,
+sort + pagination, archive/unarchive, statistics, and feedback. Reads deep-copy
+so concurrent tag/config mutations don't race.
+
+| Family | Operations |
+|--------|-----------|
+| Detectors | CreateDetector, GetDetector, UpdateDetector, DeleteDetector, ListDetectors |
+| IP sets / threat sets | Create/Get/Update/Delete/List for IPSet, ThreatIntelSet, ThreatEntitySet, TrustedEntitySet |
+| Filters | CreateFilter, GetFilter, UpdateFilter, DeleteFilter, ListFilters |
+| Members | CreateMembers, GetMembers, ListMembers, DeleteMembers, InviteMembers, DisassociateMembers, Start/StopMonitoringMembers, Get/UpdateMemberDetectors |
+| Invitations / admin | Accept(Administrator)Invitation, Decline/DeleteInvitations, ListInvitations, GetInvitationsCount, Get(Administrator/Master)Account, DisassociateFrom(Administrator/Master)Account |
+| Organization | Enable/Disable/ListOrganizationAdminAccounts, Describe/UpdateOrganizationConfiguration, GetOrganizationStatistics |
+| Publishing destinations | Create/Describe/Update/Delete/ListPublishingDestinations |
+| Findings | CreateSampleFindings, ListFindings, GetFindings, GetFindingsStatistics, Archive/UnarchiveFindings, UpdateFindingsFeedback |
+| Coverage / usage | ListCoverage, GetCoverageStatistics, GetUsageStatistics, GetRemainingFreeTrialDays |
+| Malware protection | Create/Get/Update/Delete/ListMalwareProtectionPlans, StartMalwareScan, GetMalwareScan, List/DescribeMalwareScans, SendObjectMalwareScan, Get/UpdateMalwareScanSettings |
+| Tags | ListTagsForResource, TagResource, UntagResource |
+
+**Total: 87 operations.**
+
+## 39. Streaming (Managed Kafka / MSK)
+
+**Driver interface:** `services/kafka/driver/`
+**AWS:** MSK (REST-JSON `awsRestjson1`, path + HTTP-method routing under the `/v1/`, `/api/v2/`, and `/replication/v1/` version prefixes) | **Azure:** — | **GCP:** —
+
+AWS-only. Real `aws-sdk-go-v2/service/kafka` clients (and the `aws kafka` CLI)
+work against the SDK-compat server (`awsserver.Drivers{Kafka: cloud.Kafka}`). The
+handler gates on the three version prefixes plus a known root segment, so it
+registers before the S3 catch-all without shadowing it (a bucket literally named
+`v1`/`api`/`replication` would be shadowed — a documented limitation). Full
+`aws-sdk-go-v2/service/kafka` parity — every one of the 59 client operations is
+implemented.
+
+**Clusters behave realistically.** `CreateCluster`/`CreateClusterV2` claim the
+cluster name atomically (`ConflictException` on a duplicate) and return a cluster
+that is immediately `ACTIVE` (deterministic — no wall-clock provisioning). The v1
+and v2 shapes render the same underlying cluster, so a v1-created cluster is
+describable via `DescribeClusterV2`. Each mutating op (broker count/storage/type,
+storage, configuration, version, connectivity, monitoring, security, rebalancing,
+reboot) validates the optimistic-concurrency `CurrentVersion`, applies the change,
+records a `ClusterOperation`, and bumps the version; reads deep-copy. Broker
+counts validate real MSK's constraints (increase-only, a multiple of the AZ
+count); `CreateCluster` validates the `kafka.*` instance type and the EBS volume
+size (1–16384 GiB); a VPC connection's target cluster must exist and be
+provisioned. Tags apply to all four taggable resources (clusters, configurations,
+VPC connections, replicators), routed by ARN.
+
+**Limitation (synchronous lifecycle).** Clusters provision immediately `ACTIVE`
+and every mutation applies synchronously, so a cluster never passes through the
+transient `CREATING`/`UPDATING` states and `DeleteCluster` removes it rather than
+leaving it `DELETING`. Consequently real MSK's rule "reject a mutation while the
+cluster is `CREATING`/`UPDATING`/`DELETING`" is not reproduced — back-to-back
+updates all succeed. Optimistic-concurrency `CurrentVersion` (including on
+delete) is still enforced.
+
+| Family | Operations |
+|--------|-----------|
+| Clusters (v1) | CreateCluster, DescribeCluster, ListClusters, DeleteCluster, GetBootstrapBrokers |
+| Clusters (v2) | CreateClusterV2, DescribeClusterV2, ListClustersV2 |
+| Cluster mutations | UpdateBrokerCount/Storage/Type, UpdateStorage, UpdateClusterConfiguration, UpdateClusterKafkaVersion, UpdateConnectivity, UpdateMonitoring, UpdateSecurity, UpdateRebalancing, RebootBroker |
+| Cluster operations | ListClusterOperations(V2), DescribeClusterOperation(V2) |
+| Configurations | Create/Describe/Update/Delete/ListConfigurations, ListConfigurationRevisions, DescribeConfigurationRevision |
+| Nodes / versions | ListNodes, ListKafkaVersions, GetCompatibleKafkaVersions |
+| VPC connections | Create/Describe/Delete/ListVpcConnections, ListClientVpcConnections, RejectClientVpcConnection |
+| Topics | CreateTopic, DescribeTopic, ListTopics, UpdateTopic, DeleteTopic, DescribeTopicPartitions |
+| SCRAM secrets | BatchAssociateScramSecret, BatchDisassociateScramSecret, ListScramSecrets |
+| Cluster policy | PutClusterPolicy, GetClusterPolicy, DeleteClusterPolicy |
+| Replicators | CreateReplicator, DescribeReplicator, ListReplicators, DeleteReplicator, UpdateReplicationInfo |
+| Tags (clusters, configurations, VPC connections, replicators) | ListTagsForResource, TagResource, UntagResource |
+
+**Total: 59 operations.**
+
 ## Summary
 
 | Service | Operations |
@@ -3109,7 +3203,9 @@ well-formed response body rather than fabricating fake job results or scores.
 | Audit Logging — AWS CloudTrail | 60 |
 | Configuration Management — AWS Config | 102 |
 | Data Integration — AWS Glue | 299 |
-| **Grand Total** | **2603** (+138 optional) |
+| Threat Detection — Amazon GuardDuty | 87 |
+| Streaming — Amazon MSK | 59 |
+| **Grand Total** | **2749** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

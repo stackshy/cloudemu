@@ -30,6 +30,14 @@ const (
 	adminName        = "Admins"
 )
 
+// Compile-time checks that the OCI Identity mock carries the three optional
+// capabilities the handler discovers by type assertion.
+var (
+	_ identity.Compartments      = (*ociidentity.Mock)(nil)
+	_ identity.OCIIdentity       = (*ociidentity.Mock)(nil)
+	_ identity.StatementPolicies = (*ociidentity.Mock)(nil)
+)
+
 func newHandler(drv iamdriver.IAM) *identity.Handler {
 	opts := config.NewOptions()
 

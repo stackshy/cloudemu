@@ -471,7 +471,7 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 
 	cur, ok := st.items[objKey(namespace, name)]
 	if !ok {
-		writeNotFound(w, "k8s api: "+st.def.kind+" not found: "+objKey(namespace, name))
+		s.registryPatchOnMissingLocked(w, r, st, namespace, name)
 
 		return
 	}
@@ -488,7 +488,7 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 	var patched *unstructured.Unstructured
 
 	if r.Header.Get("Content-Type") == contentTypeApplyPatch {
-		patched, ok = s.serverSideApply(w, r, st, cur)
+		patched, ok = s.serverSideApply(w, r, st.def.apiVersion(), cur)
 	} else {
 		patched, ok = s.applyUnstructuredPatch(w, r, cur)
 	}
@@ -545,6 +545,85 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 
 	st.watch.publish(EventModified, patched.GetNamespace(), *patched.DeepCopy())
 	writeJSON(w, http.StatusOK, patched)
+}
+
+// registryPatchOnMissingLocked handles a patch whose target does not exist: a
+// server-side apply creates it (upstream SSA semantics), any other patch 404s.
+// The caller holds s.mu.
+func (s *ClusterState) registryPatchOnMissingLocked(
+	w http.ResponseWriter, r *http.Request, st *registryStore, namespace, name string,
+) {
+	if r.Header.Get("Content-Type") == contentTypeApplyPatch {
+		s.registryApplyCreateLocked(w, r, st, namespace, name)
+
+		return
+	}
+
+	writeNotFound(w, "k8s api: "+st.def.kind+" not found: "+objKey(namespace, name))
+}
+
+// registryApplyCreateLocked creates a registry object from a server-side apply
+// body whose target name doesn't exist yet (upstream SSA creates on apply). It
+// records an Apply managedFields entry and runs the same admission, quota,
+// reconcile, and watch path as a POST create. The caller holds s.mu.
+func (s *ClusterState) registryApplyCreateLocked(
+	w http.ResponseWriter, r *http.Request, st *registryStore, namespace, name string,
+) {
+	base := &unstructured.Unstructured{Object: map[string]any{}}
+	base.SetAPIVersion(st.def.apiVersion())
+	base.SetKind(st.def.kind)
+	base.SetName(name)
+
+	if st.def.namespaced {
+		base.SetNamespace(namespace)
+	}
+
+	obj, ok := s.serverSideApply(w, r, st.def.apiVersion(), base)
+	if !ok {
+		return
+	}
+
+	// URL identity and server-owned fields win over anything the apply body set.
+	obj.SetName(name)
+	obj.SetNamespace(base.GetNamespace())
+	obj.SetAPIVersion(st.def.apiVersion())
+	obj.SetKind(st.def.kind)
+	obj.SetUID(types.UID(newUID()))
+	obj.SetCreationTimestamp(s.now())
+	obj.SetGeneration(1)
+
+	if handled := s.admit(w, opCreate, st.def.gvr(), obj); handled {
+		return
+	}
+
+	if isDryRun(r) {
+		if status := s.checkQuotaLocked(namespace, st.def.kind, st.def.plural); status != nil {
+			writeJSON(w, int(status.Code), status)
+
+			return
+		}
+
+		obj.SetResourceVersion(strconv.Itoa(st.rv + 1))
+		writeJSON(w, http.StatusCreated, obj)
+
+		return
+	}
+
+	if status := s.checkAndReserveQuota(namespace, st.def.kind, st.def.plural); status != nil {
+		writeJSON(w, int(status.Code), status)
+
+		return
+	}
+
+	st.stampRVLocked(obj)
+	st.items[objKey(obj.GetNamespace(), name)] = obj
+
+	if st.def.reconcile != nil {
+		st.def.reconcile(s, obj)
+	}
+
+	st.watch.publish(EventAdded, obj.GetNamespace(), *obj.DeepCopy())
+	writeJSON(w, http.StatusCreated, obj)
 }
 
 func (s *ClusterState) registryDelete(w http.ResponseWriter, r *http.Request, st *registryStore, namespace, name string) {

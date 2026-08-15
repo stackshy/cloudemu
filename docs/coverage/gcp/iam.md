@@ -48,56 +48,6 @@ GCP's `iam` service · portable interface `driver.IAM` · [GCP index](./README.m
 | `RemoveUserFromGroup` |  |
 | `SetDefaultPolicyVersion` |  |
 
-## Optional capabilities
-
-Discovered by type assertion; only some providers implement these.
-
-### Compartments
-
-Compartments is an OPTIONAL capability, discovered by type assertion (like
-
-| Operation | Description |
-| --- | --- |
-| `CreateCompartment` |  |
-| `DeleteCompartment` |  |
-| `GetCompartment` |  |
-| `ListCompartments` | ListCompartments returns the direct children of parentID, or every |
-| `UpdateCompartment` |  |
-
-### OCIIdentity
-
-OCIIdentity is an OPTIONAL capability, discovered by type assertion. The
-
-| Operation | Description |
-| --- | --- |
-| `CreateOCIGroup` |  |
-| `CreateOCIGroupMembership` |  |
-| `CreateOCIUser` |  |
-| `DeleteOCIGroup` |  |
-| `DeleteOCIGroupMembership` |  |
-| `DeleteOCIUser` |  |
-| `GetOCIGroup` |  |
-| `GetOCIGroupMembership` |  |
-| `GetOCIUser` |  |
-| `ListOCIGroupMemberships` | ListOCIGroupMemberships filters by compartment, and further by userID or |
-| `ListOCIGroups` |  |
-| `ListOCIUsers` |  |
-| `UpdateOCIGroup` |  |
-| `UpdateOCIUser` |  |
-
-### StatementPolicies
-
-StatementPolicies is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `CreateStatementPolicy` |  |
-| `DeleteStatementPolicy` |  |
-| `Evaluate` | Evaluate reports whether any statement grants the request. OCI policies |
-| `GetStatementPolicy` |  |
-| `ListStatementPolicies` |  |
-| `UpdateStatementPolicy` |  |
-
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

@@ -4135,6 +4135,290 @@
     }
   },
   {
+    "service": "guardduty",
+    "interface": "GuardDuty",
+    "operations": [
+      {
+        "name": "AcceptAdministratorInvitation"
+      },
+      {
+        "name": "AcceptInvitation"
+      },
+      {
+        "name": "ArchiveFindings",
+        "doc": "Findings."
+      },
+      {
+        "name": "CreateDetector",
+        "doc": "Detectors."
+      },
+      {
+        "name": "CreateFilter",
+        "doc": "Filters (per-detector)."
+      },
+      {
+        "name": "CreateIPSet",
+        "doc": "IP sets (per-detector)."
+      },
+      {
+        "name": "CreateMalwareProtectionPlan",
+        "doc": "Malware protection \u0026 scans."
+      },
+      {
+        "name": "CreateMembers",
+        "doc": "Members \u0026 administrator/master. Bodies are carried as raw JSON"
+      },
+      {
+        "name": "CreatePublishingDestination",
+        "doc": "Publishing destinations."
+      },
+      {
+        "name": "CreateSampleFindings"
+      },
+      {
+        "name": "CreateThreatEntitySet",
+        "doc": "Threat-entity sets (per-detector)."
+      },
+      {
+        "name": "CreateThreatIntelSet",
+        "doc": "Threat-intel sets (per-detector)."
+      },
+      {
+        "name": "CreateTrustedEntitySet",
+        "doc": "Trusted-entity sets (per-detector)."
+      },
+      {
+        "name": "DeclineInvitations",
+        "doc": "Invitations."
+      },
+      {
+        "name": "DeleteDetector"
+      },
+      {
+        "name": "DeleteFilter"
+      },
+      {
+        "name": "DeleteIPSet"
+      },
+      {
+        "name": "DeleteInvitations"
+      },
+      {
+        "name": "DeleteMalwareProtectionPlan"
+      },
+      {
+        "name": "DeleteMembers"
+      },
+      {
+        "name": "DeletePublishingDestination"
+      },
+      {
+        "name": "DeleteThreatEntitySet"
+      },
+      {
+        "name": "DeleteThreatIntelSet"
+      },
+      {
+        "name": "DeleteTrustedEntitySet"
+      },
+      {
+        "name": "DescribeMalwareScans"
+      },
+      {
+        "name": "DescribeOrganizationConfiguration"
+      },
+      {
+        "name": "DescribePublishingDestination"
+      },
+      {
+        "name": "DisableOrganizationAdminAccount"
+      },
+      {
+        "name": "DisassociateFromAdministratorAccount"
+      },
+      {
+        "name": "DisassociateFromMasterAccount"
+      },
+      {
+        "name": "DisassociateMembers"
+      },
+      {
+        "name": "EnableOrganizationAdminAccount",
+        "doc": "Organization."
+      },
+      {
+        "name": "GetAdministratorAccount"
+      },
+      {
+        "name": "GetCoverageStatistics"
+      },
+      {
+        "name": "GetDetector"
+      },
+      {
+        "name": "GetFilter"
+      },
+      {
+        "name": "GetFindings"
+      },
+      {
+        "name": "GetFindingsStatistics"
+      },
+      {
+        "name": "GetIPSet"
+      },
+      {
+        "name": "GetInvitationsCount"
+      },
+      {
+        "name": "GetMalwareProtectionPlan"
+      },
+      {
+        "name": "GetMalwareScan"
+      },
+      {
+        "name": "GetMalwareScanSettings"
+      },
+      {
+        "name": "GetMasterAccount"
+      },
+      {
+        "name": "GetMemberDetectors"
+      },
+      {
+        "name": "GetMembers"
+      },
+      {
+        "name": "GetOrganizationStatistics"
+      },
+      {
+        "name": "GetRemainingFreeTrialDays"
+      },
+      {
+        "name": "GetThreatEntitySet"
+      },
+      {
+        "name": "GetThreatIntelSet"
+      },
+      {
+        "name": "GetTrustedEntitySet"
+      },
+      {
+        "name": "GetUsageStatistics"
+      },
+      {
+        "name": "InviteMembers"
+      },
+      {
+        "name": "ListCoverage",
+        "doc": "Coverage, usage, and free-trial."
+      },
+      {
+        "name": "ListDetectors"
+      },
+      {
+        "name": "ListFilters"
+      },
+      {
+        "name": "ListFindings"
+      },
+      {
+        "name": "ListIPSets"
+      },
+      {
+        "name": "ListInvitations"
+      },
+      {
+        "name": "ListMalwareProtectionPlans"
+      },
+      {
+        "name": "ListMalwareScans"
+      },
+      {
+        "name": "ListMembers"
+      },
+      {
+        "name": "ListOrganizationAdminAccounts"
+      },
+      {
+        "name": "ListPublishingDestinations"
+      },
+      {
+        "name": "ListTagsForResource",
+        "doc": "Resource tags."
+      },
+      {
+        "name": "ListThreatEntitySets"
+      },
+      {
+        "name": "ListThreatIntelSets"
+      },
+      {
+        "name": "ListTrustedEntitySets"
+      },
+      {
+        "name": "SendObjectMalwareScan"
+      },
+      {
+        "name": "StartMalwareScan"
+      },
+      {
+        "name": "StartMonitoringMembers"
+      },
+      {
+        "name": "StopMonitoringMembers"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UnarchiveFindings"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDetector"
+      },
+      {
+        "name": "UpdateFilter"
+      },
+      {
+        "name": "UpdateFindingsFeedback"
+      },
+      {
+        "name": "UpdateIPSet"
+      },
+      {
+        "name": "UpdateMalwareProtectionPlan"
+      },
+      {
+        "name": "UpdateMalwareScanSettings"
+      },
+      {
+        "name": "UpdateMemberDetectors"
+      },
+      {
+        "name": "UpdateOrganizationConfiguration"
+      },
+      {
+        "name": "UpdatePublishingDestination"
+      },
+      {
+        "name": "UpdateThreatEntitySet"
+      },
+      {
+        "name": "UpdateThreatIntelSet"
+      },
+      {
+        "name": "UpdateTrustedEntitySet"
+      }
+    ],
+    "providers": {
+      "aws": "GuardDuty"
+    }
+  },
+  {
     "service": "iam",
     "interface": "IAM",
     "operations": [
@@ -4259,109 +4543,209 @@
         "name": "SetDefaultPolicyVersion"
       }
     ],
-    "optionalCapabilities": [
-      {
-        "name": "Compartments",
-        "doc": "Compartments is an OPTIONAL capability, discovered by type assertion (like",
-        "operations": [
-          {
-            "name": "CreateCompartment"
-          },
-          {
-            "name": "DeleteCompartment"
-          },
-          {
-            "name": "GetCompartment"
-          },
-          {
-            "name": "ListCompartments",
-            "doc": "ListCompartments returns the direct children of parentID, or every"
-          },
-          {
-            "name": "UpdateCompartment"
-          }
-        ]
-      },
-      {
-        "name": "OCIIdentity",
-        "doc": "OCIIdentity is an OPTIONAL capability, discovered by type assertion. The",
-        "operations": [
-          {
-            "name": "CreateOCIGroup"
-          },
-          {
-            "name": "CreateOCIGroupMembership"
-          },
-          {
-            "name": "CreateOCIUser"
-          },
-          {
-            "name": "DeleteOCIGroup"
-          },
-          {
-            "name": "DeleteOCIGroupMembership"
-          },
-          {
-            "name": "DeleteOCIUser"
-          },
-          {
-            "name": "GetOCIGroup"
-          },
-          {
-            "name": "GetOCIGroupMembership"
-          },
-          {
-            "name": "GetOCIUser"
-          },
-          {
-            "name": "ListOCIGroupMemberships",
-            "doc": "ListOCIGroupMemberships filters by compartment, and further by userID or"
-          },
-          {
-            "name": "ListOCIGroups"
-          },
-          {
-            "name": "ListOCIUsers"
-          },
-          {
-            "name": "UpdateOCIGroup"
-          },
-          {
-            "name": "UpdateOCIUser"
-          }
-        ]
-      },
-      {
-        "name": "StatementPolicies",
-        "doc": "StatementPolicies is an OPTIONAL capability, discovered by type assertion.",
-        "operations": [
-          {
-            "name": "CreateStatementPolicy"
-          },
-          {
-            "name": "DeleteStatementPolicy"
-          },
-          {
-            "name": "Evaluate",
-            "doc": "Evaluate reports whether any statement grants the request. OCI policies"
-          },
-          {
-            "name": "GetStatementPolicy"
-          },
-          {
-            "name": "ListStatementPolicies"
-          },
-          {
-            "name": "UpdateStatementPolicy"
-          }
-        ]
-      }
-    ],
     "providers": {
       "aws": "IAM",
       "azure": "IAM",
       "gcp": "IAM",
       "oci": "Identity"
+    }
+  },
+  {
+    "service": "kafka",
+    "interface": "Kafka",
+    "operations": [
+      {
+        "name": "BatchAssociateScramSecret",
+        "doc": "SCRAM secrets."
+      },
+      {
+        "name": "BatchDisassociateScramSecret"
+      },
+      {
+        "name": "CreateCluster",
+        "doc": "Clusters (v1)."
+      },
+      {
+        "name": "CreateClusterV2",
+        "doc": "Clusters (v2)."
+      },
+      {
+        "name": "CreateConfiguration",
+        "doc": "Configurations."
+      },
+      {
+        "name": "CreateReplicator",
+        "doc": "Replicators."
+      },
+      {
+        "name": "CreateTopic",
+        "doc": "Topics."
+      },
+      {
+        "name": "CreateVpcConnection",
+        "doc": "VPC connections."
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteClusterPolicy"
+      },
+      {
+        "name": "DeleteConfiguration"
+      },
+      {
+        "name": "DeleteReplicator"
+      },
+      {
+        "name": "DeleteTopic"
+      },
+      {
+        "name": "DeleteVpcConnection"
+      },
+      {
+        "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeClusterOperation"
+      },
+      {
+        "name": "DescribeClusterOperationV2"
+      },
+      {
+        "name": "DescribeClusterV2"
+      },
+      {
+        "name": "DescribeConfiguration"
+      },
+      {
+        "name": "DescribeConfigurationRevision"
+      },
+      {
+        "name": "DescribeReplicator"
+      },
+      {
+        "name": "DescribeTopic"
+      },
+      {
+        "name": "DescribeTopicPartitions"
+      },
+      {
+        "name": "DescribeVpcConnection"
+      },
+      {
+        "name": "GetBootstrapBrokers"
+      },
+      {
+        "name": "GetClusterPolicy"
+      },
+      {
+        "name": "GetCompatibleKafkaVersions"
+      },
+      {
+        "name": "ListClientVpcConnections"
+      },
+      {
+        "name": "ListClusterOperations"
+      },
+      {
+        "name": "ListClusterOperationsV2"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListClustersV2"
+      },
+      {
+        "name": "ListConfigurationRevisions"
+      },
+      {
+        "name": "ListConfigurations"
+      },
+      {
+        "name": "ListKafkaVersions",
+        "doc": "Versions (read-only)."
+      },
+      {
+        "name": "ListNodes",
+        "doc": "Cluster nodes \u0026 operations."
+      },
+      {
+        "name": "ListReplicators"
+      },
+      {
+        "name": "ListScramSecrets"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTopics"
+      },
+      {
+        "name": "ListVpcConnections"
+      },
+      {
+        "name": "PutClusterPolicy",
+        "doc": "Cluster policy."
+      },
+      {
+        "name": "RebootBroker"
+      },
+      {
+        "name": "RejectClientVpcConnection"
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateBrokerCount",
+        "doc": "Cluster mutations."
+      },
+      {
+        "name": "UpdateBrokerStorage"
+      },
+      {
+        "name": "UpdateBrokerType"
+      },
+      {
+        "name": "UpdateClusterConfiguration"
+      },
+      {
+        "name": "UpdateClusterKafkaVersion"
+      },
+      {
+        "name": "UpdateConfiguration"
+      },
+      {
+        "name": "UpdateConnectivity"
+      },
+      {
+        "name": "UpdateMonitoring"
+      },
+      {
+        "name": "UpdateRebalancing"
+      },
+      {
+        "name": "UpdateReplicationInfo"
+      },
+      {
+        "name": "UpdateSecurity"
+      },
+      {
+        "name": "UpdateStorage"
+      },
+      {
+        "name": "UpdateTopic"
+      }
+    ],
+    "providers": {
+      "aws": "Kafka"
     }
   },
   {
@@ -5291,41 +5675,6 @@
       },
       {
         "name": "SetAlarmState"
-      }
-    ],
-    "optionalCapabilities": [
-      {
-        "name": "OCIMonitoring",
-        "doc": "OCIMonitoring is an OPTIONAL capability, discovered by type assertion. OCI",
-        "operations": [
-          {
-            "name": "CreateOCIAlarm"
-          },
-          {
-            "name": "DeleteOCIAlarm"
-          },
-          {
-            "name": "GetOCIAlarm"
-          },
-          {
-            "name": "ListOCIAlarms"
-          },
-          {
-            "name": "ListOCIMetrics"
-          },
-          {
-            "name": "OCIAlarmHistory"
-          },
-          {
-            "name": "PostMetricData"
-          },
-          {
-            "name": "SummarizeOCIMetrics"
-          },
-          {
-            "name": "UpdateOCIAlarm"
-          }
-        ]
       }
     ],
     "providers": {

@@ -23,21 +23,40 @@ the only shared files a service branch touches.
 ## The three layers
 
 A service implements the portable driver interface that already exists in
-`services/<name>/driver`. Do not define a new driver interface; if OCI needs an
-operation the interface lacks, add it as an optional capability discovered by
-type assertion, the way `storage/driver.BucketAttributes` and
-`cache/driver.SubnetGroups` do.
+`services/<name>/driver`. Do not define a new driver interface, and do not add
+an OCI-only one to that package: `coveragegen` renders every interface it finds
+under `services/<svc>/driver` against every provider implementing the service,
+so anything OCI-specific placed there is documented as an AWS, Azure and GCP
+capability too.
 
 | Layer | Path | Contains |
 |---|---|---|
-| Provider mock | `providers/oci/<service>/` | `Mock` over `memstore.Store[V]`, implements the driver |
-| Wire handler | `server/oci/<service>/` | `Matches`/`ServeHTTP`, speaks OCI REST |
+| Provider mock | `providers/oci/<service>/` | `Mock` over `memstore.Store[V]`, implements the driver; OCI-only value types |
+| Wire handler | `server/oci/<service>/` | `Matches`/`ServeHTTP`, speaks OCI REST; the `Extras` capability interface |
 
 Start the mock with a compile-time interface check, as every other provider does:
 
 ```go
 var _ driver.Bucket = (*Mock)(nil)
 ```
+
+### OCI-only capabilities
+
+What OCI needs and the portable interface cannot express goes consumer-side:
+declare an `Extras` interface in `server/oci/<service>`, put its value types in
+`providers/oci/<service>`, and have the handler discover it by type assertion,
+serving `501` when the wired driver does not satisfy it. `server/oci/vcn` is the
+reference; `server/oci/monitoring` and `server/oci/identity` follow it, the
+latter with one interface per resource family. The compile-time check that the
+mock satisfies the interface lives in the handler's test, where the import
+direction allows it:
+
+```go
+var _ ocivcn.Extras = (*vcnprovider.Mock)(nil)
+```
+
+Importing the provider package from the handler for those types is the
+established shape — `server/azure/aks` and `server/gcp/gke` do the same.
 
 ## Identity
 

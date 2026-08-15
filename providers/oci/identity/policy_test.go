@@ -16,7 +16,7 @@ func TestPolicyCRUD(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	created, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	created, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy,
 		Name:          "admins",
 		Description:   "admin access",
@@ -30,7 +30,7 @@ func TestPolicyCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "admins", got.Name)
 
-	updated, err := m.UpdateStatementPolicy(ctx, created.ID, driver.PolicyUpdate{
+	updated, err := m.UpdateStatementPolicy(ctx, created.ID, PolicyUpdate{
 		Description: "narrowed",
 		Statements:  []string{"Allow group Admins to read buckets in tenancy"},
 	})
@@ -52,7 +52,7 @@ func TestPolicyErrors(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy, Name: "admins", Statements: []string{manageAllInDev},
 	})
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestPolicyErrors(t *testing.T) {
 		{
 			name: "missing name",
 			call: func() error {
-				_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{CompartmentID: tenancy})
+				_, err := m.CreateStatementPolicy(ctx, &PolicySpec{CompartmentID: tenancy})
 				return err
 			},
 			code: cerrors.InvalidArgument,
@@ -73,7 +73,7 @@ func TestPolicyErrors(t *testing.T) {
 		{
 			name: "no statements",
 			call: func() error {
-				_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{CompartmentID: tenancy, Name: "empty"})
+				_, err := m.CreateStatementPolicy(ctx, &PolicySpec{CompartmentID: tenancy, Name: "empty"})
 				return err
 			},
 			code: cerrors.InvalidArgument,
@@ -81,7 +81,7 @@ func TestPolicyErrors(t *testing.T) {
 		{
 			name: "unparseable statement",
 			call: func() error {
-				_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+				_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 					CompartmentID: tenancy, Name: "bad", Statements: []string{"do whatever you like"},
 				})
 				return err
@@ -91,7 +91,7 @@ func TestPolicyErrors(t *testing.T) {
 		{
 			name: "duplicate name in the same compartment",
 			call: func() error {
-				_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+				_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 					CompartmentID: tenancy, Name: "admins", Statements: []string{manageAllInDev},
 				})
 				return err
@@ -125,7 +125,7 @@ func TestPoliciesFilterByCompartment(t *testing.T) {
 	ctx := t.Context()
 	dev := newCompartment(t, m, tenancy, devName)
 
-	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: dev, Name: "dev-policy", Statements: []string{"Allow group Admins to manage buckets in tenancy"},
 	})
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func evalFixture(t *testing.T) (m *Mock, dev, team, staging string) {
 	team = newCompartment(t, m, dev, "team")
 	staging = newCompartment(t, m, tenancy, "staging")
 
-	_, err := m.CreateStatementPolicy(t.Context(), &driver.PolicySpec{
+	_, err := m.CreateStatementPolicy(t.Context(), &PolicySpec{
 		CompartmentID: tenancy, Name: "admins", Statements: []string{manageAllInDev},
 	})
 	require.NoError(t, err)
@@ -173,7 +173,7 @@ func TestEvaluateResolvesCompartmentSubtree(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ok, err := m.Evaluate(t.Context(), &driver.AccessRequest{
+			ok, err := m.Evaluate(t.Context(), &AccessRequest{
 				Groups:        []string{adminName},
 				Verb:          verbManage,
 				ResourceType:  "buckets",
@@ -226,7 +226,7 @@ func TestEvaluateHonoursTheStatementLocationForms(t *testing.T) {
 
 	for i, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+			p, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 				CompartmentID: tenancy,
 				Name:          "case-" + string(rune('a'+i)),
 				Statements:    []string{tc.statement},
@@ -235,7 +235,7 @@ func TestEvaluateHonoursTheStatementLocationForms(t *testing.T) {
 
 			defer func() { require.NoError(t, m.DeleteStatementPolicy(ctx, p.ID)) }()
 
-			ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+			ok, err := m.Evaluate(ctx, &AccessRequest{
 				Groups:        []string{adminName},
 				Verb:          verbManage,
 				ResourceType:  "buckets",
@@ -256,7 +256,7 @@ func TestSpacedNestedPathIsRejectedRatherThanBroadened(t *testing.T) {
 	team := newCompartment(t, m, dev, "team")
 	other := newCompartment(t, m, dev, "other")
 
-	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy,
 		Name:          "spaced",
 		Statements:    []string{"Allow group Admins to manage buckets in compartment dev : team"},
@@ -264,7 +264,7 @@ func TestSpacedNestedPathIsRejectedRatherThanBroadened(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 
-	_, err = m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	_, err = m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy,
 		Name:          "canonical",
 		Statements:    []string{"Allow group Admins to manage buckets in compartment dev:team"},
@@ -283,7 +283,7 @@ func TestSpacedNestedPathIsRejectedRatherThanBroadened(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+			ok, err := m.Evaluate(ctx, &AccessRequest{
 				Groups:        []string{adminName},
 				Verb:          verbManage,
 				ResourceType:  "buckets",
@@ -303,14 +303,14 @@ func TestPolicyNeverReachesOutsideItsOwnCompartment(t *testing.T) {
 
 	// A policy attached to dev naming staging by OCID grants nothing: real OCI
 	// only lets a policy govern its own compartment's subtree.
-	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: dev,
 		Name:          "reach-out",
 		Statements:    []string{"Allow group Admins to manage buckets in compartment id " + staging},
 	})
 	require.NoError(t, err)
 
-	ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+	ok, err := m.Evaluate(ctx, &AccessRequest{
 		Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets", CompartmentID: staging,
 	})
 	require.NoError(t, err)
@@ -324,7 +324,7 @@ func TestEvaluateDisclosesAWhereCondition(t *testing.T) {
 	ctx := t.Context()
 	dev := newCompartment(t, m, tenancy, devName)
 
-	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy,
 		Name:          "conditional",
 		Statements: []string{
@@ -333,7 +333,7 @@ func TestEvaluateDisclosesAWhereCondition(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+	ok, err := m.Evaluate(ctx, &AccessRequest{
 		Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets", CompartmentID: dev,
 	})
 	require.Error(t, err)
@@ -347,7 +347,7 @@ func TestEvaluateIgnoresAWhereConditionItDoesNotReach(t *testing.T) {
 	ctx := t.Context()
 	dev := newCompartment(t, m, tenancy, devName)
 
-	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy,
 		Name:          "mixed",
 		Statements: []string{
@@ -357,7 +357,7 @@ func TestEvaluateIgnoresAWhereConditionItDoesNotReach(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+	ok, err := m.Evaluate(ctx, &AccessRequest{
 		Groups: []string{adminName}, Verb: verbManage, ResourceType: "buckets", CompartmentID: dev,
 	})
 	require.NoError(t, err, "a condition on a statement that does not reach the request is not disclosed")
@@ -371,14 +371,14 @@ func TestEvaluateDisclosesAnUnmodeledFamily(t *testing.T) {
 	ctx := t.Context()
 	dev := newCompartment(t, m, tenancy, devName)
 
-	_, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	_, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy,
 		Name:          "science",
 		Statements:    []string{"Allow group Admins to manage data-science-family in compartment dev"},
 	})
 	require.NoError(t, err)
 
-	ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+	ok, err := m.Evaluate(ctx, &AccessRequest{
 		Groups: []string{adminName}, Verb: verbManage, ResourceType: "data-science-models", CompartmentID: dev,
 	})
 	require.Error(t, err)
@@ -406,7 +406,7 @@ func TestEvaluateGrantsTheBroadenedFamilies(t *testing.T) {
 
 	for i, tc := range tests {
 		t.Run(tc.family, func(t *testing.T) {
-			p, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+			p, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 				CompartmentID: tenancy,
 				Name:          "fam-" + string(rune('a'+i)),
 				Statements:    []string{"Allow group Admins to manage " + tc.family + " in compartment dev"},
@@ -415,7 +415,7 @@ func TestEvaluateGrantsTheBroadenedFamilies(t *testing.T) {
 
 			defer func() { require.NoError(t, m.DeleteStatementPolicy(ctx, p.ID)) }()
 
-			ok, err := m.Evaluate(ctx, &driver.AccessRequest{
+			ok, err := m.Evaluate(ctx, &AccessRequest{
 				Groups: []string{adminName}, Verb: verbManage, ResourceType: tc.resource, CompartmentID: dev,
 			})
 			require.NoError(t, err)
@@ -427,7 +427,7 @@ func TestEvaluateGrantsTheBroadenedFamilies(t *testing.T) {
 func TestEvaluateRejectsUnknownVerb(t *testing.T) {
 	m, dev, _, _ := evalFixture(t)
 
-	_, err := m.Evaluate(t.Context(), &driver.AccessRequest{
+	_, err := m.Evaluate(t.Context(), &AccessRequest{
 		Groups: []string{adminName}, Verb: "destroy", ResourceType: "buckets", CompartmentID: dev,
 	})
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))

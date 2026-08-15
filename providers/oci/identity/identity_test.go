@@ -33,7 +33,7 @@ func newMock(t *testing.T) *Mock {
 func newCompartment(t *testing.T, m *Mock, parent, name string) string {
 	t.Helper()
 
-	c, err := m.CreateCompartment(t.Context(), driver.CompartmentSpec{ParentID: parent, Name: name})
+	c, err := m.CreateCompartment(t.Context(), CompartmentSpec{ParentID: parent, Name: name})
 	require.NoError(t, err)
 
 	return c.ID
@@ -43,23 +43,23 @@ func TestGlobalOCIDShape(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	user, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
+	user, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
 	require.NoError(t, err)
 
-	group, err := m.CreateOCIGroup(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: adminName})
+	group, err := m.CreateOCIGroup(ctx, PrincipalSpec{CompartmentID: tenancy, Name: adminName})
 	require.NoError(t, err)
 
 	mem, err := m.CreateOCIGroupMembership(ctx, user.ID, group.ID)
 	require.NoError(t, err)
 
-	pol, err := m.CreateStatementPolicy(ctx, &driver.PolicySpec{
+	pol, err := m.CreateStatementPolicy(ctx, &PolicySpec{
 		CompartmentID: tenancy,
 		Name:          "p1",
 		Statements:    []string{"Allow group Admins to manage all-resources in tenancy"},
 	})
 	require.NoError(t, err)
 
-	comp, err := m.CreateCompartment(ctx, driver.CompartmentSpec{ParentID: tenancy, Name: devName})
+	comp, err := m.CreateCompartment(ctx, CompartmentSpec{ParentID: tenancy, Name: devName})
 	require.NoError(t, err)
 
 	role, err := m.CreateRole(ctx, driver.RoleConfig{Name: "instances", AssumeRolePolicyDoc: "ALL {instance.id = 'x'}"})
@@ -97,7 +97,7 @@ func TestGlobalOCIDShape(t *testing.T) {
 func TestOCIDHonoursRealm(t *testing.T) {
 	m := New(config.NewOptions(config.WithRealm("oc2")))
 
-	u, err := m.CreateOCIUser(t.Context(), driver.PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
+	u, err := m.CreateOCIUser(t.Context(), PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
 	require.NoError(t, err)
 
 	assert.True(t, strings.HasPrefix(u.ID, "ocid1.user.oc2.."), "got %q", u.ID)
@@ -107,7 +107,7 @@ func TestUserCRUD(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	created, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{
+	created, err := m.CreateOCIUser(ctx, PrincipalSpec{
 		CompartmentID: tenancy,
 		Name:          "alice",
 		Description:   "first user",
@@ -123,7 +123,7 @@ func TestUserCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, got.ID)
 
-	updated, err := m.UpdateOCIUser(ctx, created.ID, driver.IdentityUpdate{Description: "renamed"})
+	updated, err := m.UpdateOCIUser(ctx, created.ID, Update{Description: "renamed"})
 	require.NoError(t, err)
 	assert.Equal(t, "renamed", updated.Description)
 
@@ -137,7 +137,7 @@ func TestUserErrors(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	_, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
+	_, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -148,7 +148,7 @@ func TestUserErrors(t *testing.T) {
 		{
 			name: "duplicate name",
 			call: func() error {
-				_, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
+				_, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
 				return err
 			},
 			code: cerrors.AlreadyExists,
@@ -156,7 +156,7 @@ func TestUserErrors(t *testing.T) {
 		{
 			name: "missing name",
 			call: func() error {
-				_, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy})
+				_, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: tenancy})
 				return err
 			},
 			code: cerrors.InvalidArgument,
@@ -172,7 +172,7 @@ func TestUserErrors(t *testing.T) {
 		{
 			name: "update unknown",
 			call: func() error {
-				_, err := m.UpdateOCIUser(ctx, "ocid1.user.oc1..missing", driver.IdentityUpdate{})
+				_, err := m.UpdateOCIUser(ctx, "ocid1.user.oc1..missing", Update{})
 				return err
 			},
 			code: cerrors.NotFound,
@@ -195,14 +195,14 @@ func TestGroupCRUD(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	created, err := m.CreateOCIGroup(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: adminName})
+	created, err := m.CreateOCIGroup(ctx, PrincipalSpec{CompartmentID: tenancy, Name: adminName})
 	require.NoError(t, err)
 
 	got, err := m.GetOCIGroup(ctx, created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, adminName, got.Name)
 
-	_, err = m.CreateOCIGroup(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: adminName})
+	_, err = m.CreateOCIGroup(ctx, PrincipalSpec{CompartmentID: tenancy, Name: adminName})
 	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
 
 	require.NoError(t, m.DeleteOCIGroup(ctx, created.ID))
@@ -214,13 +214,13 @@ func TestListsFilterByCompartment(t *testing.T) {
 	ctx := t.Context()
 	dev := newCompartment(t, m, tenancy, devName)
 
-	_, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: "root-user"})
+	_, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: tenancy, Name: "root-user"})
 	require.NoError(t, err)
 
-	_, err = m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: dev, Name: "dev-user"})
+	_, err = m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: dev, Name: "dev-user"})
 	require.NoError(t, err)
 
-	_, err = m.CreateOCIGroup(ctx, driver.PrincipalSpec{CompartmentID: dev, Name: "dev-group"})
+	_, err = m.CreateOCIGroup(ctx, PrincipalSpec{CompartmentID: dev, Name: "dev-group"})
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -265,10 +265,10 @@ func TestMembershipLifecycle(t *testing.T) {
 	m := newMock(t)
 	ctx := t.Context()
 
-	user, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
+	user, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
 	require.NoError(t, err)
 
-	group, err := m.CreateOCIGroup(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: adminName})
+	group, err := m.CreateOCIGroup(ctx, PrincipalSpec{CompartmentID: tenancy, Name: adminName})
 	require.NoError(t, err)
 
 	mem, err := m.CreateOCIGroupMembership(ctx, user.ID, group.ID)
@@ -462,6 +462,6 @@ func TestContextIsAccepted(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	_, err := m.CreateOCIUser(ctx, driver.PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
+	_, err := m.CreateOCIUser(ctx, PrincipalSpec{CompartmentID: tenancy, Name: "alice"})
 	require.NoError(t, err)
 }

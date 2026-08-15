@@ -254,4 +254,3 @@ func TestSetNextPageOmitsHeaderOnLastPage(t *testing.T) {
 	ocirest.SetNextPage(rec, "cursor-2")
 	assert.Equal(t, "cursor-2", rec.Header().Get(ocirest.HeaderNextPage))
 }
-

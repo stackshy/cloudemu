@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	monprovider "github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -67,7 +68,7 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics, err := h.mon.ListOCIMetrics(r.Context(), compartmentID, mondriver.OCIMetricFilter{
+	metrics, err := h.mon.ListOCIMetrics(r.Context(), compartmentID, monprovider.OCIMetricFilter{
 		Namespace:     req.Namespace,
 		ResourceGroup: req.ResourceGroup,
 		Name:          req.Name,
@@ -113,7 +114,7 @@ func (h *Handler) summarizeMetricsData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics, err := h.mon.SummarizeOCIMetrics(r.Context(), compartmentID, mondriver.OCIMetricQuery{
+	metrics, err := h.mon.SummarizeOCIMetrics(r.Context(), compartmentID, monprovider.OCIMetricQuery{
 		Namespace:     req.Namespace,
 		ResourceGroup: req.ResourceGroup,
 		Query:         req.Query,
@@ -152,7 +153,7 @@ func toData(entry *metricDataDetails) []mondriver.MetricDatum {
 	return out
 }
 
-func toMetricData(m *mondriver.OCIMetric) metricData {
+func toMetricData(m *monprovider.OCIMetric) metricData {
 	points := make([]aggregatedDatapoint, 0, len(m.Timestamps))
 
 	for i, ts := range m.Timestamps {

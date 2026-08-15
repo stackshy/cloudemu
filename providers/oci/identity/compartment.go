@@ -6,7 +6,6 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
-	"github.com/stackshy/cloudemu/v2/services/iam/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
@@ -17,6 +16,25 @@ const rootName = "root"
 // pathSeparator separates compartment names in a nested path, as OCI writes
 // them in a policy location ("compartment parent:child").
 const pathSeparator = ":"
+
+// CompartmentSpec describes a compartment to create.
+type CompartmentSpec struct {
+	ParentID     string
+	Name         string
+	Description  string
+	FreeformTags map[string]string
+}
+
+// CompartmentInfo describes a compartment and its place in the tree.
+type CompartmentInfo struct {
+	ID             string
+	ParentID       string
+	Name           string
+	Description    string
+	TimeCreated    string
+	LifecycleState string
+	FreeformTags   map[string]string
+}
 
 // compartment is a node of the compartment tree. Its scope names its parent,
 // which is the tenancy for a top-level compartment.
@@ -30,7 +48,7 @@ type compartment struct {
 }
 
 // CreateCompartment creates a compartment under an existing parent.
-func (m *Mock) CreateCompartment(_ context.Context, spec driver.CompartmentSpec) (*driver.CompartmentInfo, error) {
+func (m *Mock) CreateCompartment(_ context.Context, spec CompartmentSpec) (*CompartmentInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -63,7 +81,7 @@ func (m *Mock) CreateCompartment(_ context.Context, spec driver.CompartmentSpec)
 
 // GetCompartment returns a compartment by OCID. The tenancy is the root
 // compartment and is returned even though nothing created it.
-func (m *Mock) GetCompartment(_ context.Context, id string) (*driver.CompartmentInfo, error) {
+func (m *Mock) GetCompartment(_ context.Context, id string) (*CompartmentInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -81,7 +99,7 @@ func (m *Mock) GetCompartment(_ context.Context, id string) (*driver.Compartment
 
 // ListCompartments returns the direct children of parentID, or every
 // descendant when inSubtree is set.
-func (m *Mock) ListCompartments(_ context.Context, parentID string, inSubtree bool) ([]driver.CompartmentInfo, error) {
+func (m *Mock) ListCompartments(_ context.Context, parentID string, inSubtree bool) ([]CompartmentInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -90,7 +108,7 @@ func (m *Mock) ListCompartments(_ context.Context, parentID string, inSubtree bo
 	}
 
 	all := m.compartments.SortedValues()
-	out := make([]driver.CompartmentInfo, 0, len(all))
+	out := make([]CompartmentInfo, 0, len(all))
 
 	for _, c := range all {
 		// covers() is true for the parent itself, which a list never returns.
@@ -105,8 +123,8 @@ func (m *Mock) ListCompartments(_ context.Context, parentID string, inSubtree bo
 
 // UpdateCompartment applies the mutable fields of a compartment.
 func (m *Mock) UpdateCompartment(
-	_ context.Context, id string, upd driver.IdentityUpdate,
-) (*driver.CompartmentInfo, error) {
+	_ context.Context, id string, upd Update,
+) (*CompartmentInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -270,8 +288,8 @@ func (m *Mock) resolvePath(base, path string) (string, bool) {
 }
 
 // rootInfo describes the tenancy as OCI's root compartment.
-func (m *Mock) rootInfo() *driver.CompartmentInfo {
-	return &driver.CompartmentInfo{
+func (m *Mock) rootInfo() *CompartmentInfo {
+	return &CompartmentInfo{
 		ID:             m.opts.TenancyOCID,
 		Name:           rootName,
 		Description:    "root compartment",
@@ -280,8 +298,8 @@ func (m *Mock) rootInfo() *driver.CompartmentInfo {
 	}
 }
 
-func toCompartmentInfo(c *compartment) *driver.CompartmentInfo {
-	return &driver.CompartmentInfo{
+func toCompartmentInfo(c *compartment) *CompartmentInfo {
+	return &CompartmentInfo{
 		ID:             c.ID,
 		ParentID:       c.Scope.Compartment,
 		Name:           c.Name,

@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // Policy verbs, weakest to strongest. A stronger verb subsumes the weaker ones.
@@ -208,7 +207,7 @@ func (s *statement) parseLocation(tokens []string, text string) error {
 }
 
 // grantsSubject reports whether the statement's subject covers the requester.
-func (s *statement) grantsSubject(req *driver.AccessRequest) bool {
+func (s *statement) grantsSubject(req *AccessRequest) bool {
 	switch s.SubjectKind {
 	case subjectAnyUser:
 		return req.AnyUser
@@ -223,7 +222,7 @@ func (s *statement) grantsSubject(req *driver.AccessRequest) bool {
 
 // grantsAccess reports how the statement's verb and resource type cover the
 // request. The location is resolved separately, against the compartment tree.
-func (s *statement) grantsAccess(req *driver.AccessRequest) coverage {
+func (s *statement) grantsAccess(req *AccessRequest) coverage {
 	if s.Effect != effectAllow {
 		return coverDenied
 	}

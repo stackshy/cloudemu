@@ -1,6 +1,6 @@
 package identity
 
-import iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
+import identityprovider "github.com/stackshy/cloudemu/v2/providers/oci/identity"
 
 // definedTags is OCI's namespaced tag map. CloudEmu records only freeform
 // tags, so the field is always present and empty.
@@ -23,8 +23,8 @@ type updateBody struct {
 }
 
 // identityUpdate maps the request body onto the driver's update struct.
-func (b *updateBody) identityUpdate() iamdriver.IdentityUpdate {
-	return iamdriver.IdentityUpdate{
+func (b *updateBody) identityUpdate() identityprovider.Update {
+	return identityprovider.Update{
 		Name:         b.Name,
 		Description:  b.Description,
 		FreeformTags: b.FreeformTags,
@@ -76,8 +76,8 @@ type updatePolicyBody struct {
 }
 
 // policyUpdate maps the request body onto the driver's update struct.
-func (b *updatePolicyBody) policyUpdate() iamdriver.PolicyUpdate {
-	return iamdriver.PolicyUpdate{
+func (b *updatePolicyBody) policyUpdate() identityprovider.PolicyUpdate {
+	return identityprovider.PolicyUpdate{
 		Description:  b.Description,
 		Statements:   b.Statements,
 		FreeformTags: b.FreeformTags,
@@ -120,7 +120,7 @@ type compartmentResource struct {
 	DefinedTags    definedTags       `json:"definedTags"`
 }
 
-func toPrincipalResource(p *iamdriver.PrincipalInfo) principalResource {
+func toPrincipalResource(p *identityprovider.PrincipalInfo) principalResource {
 	return principalResource{
 		ID:             p.ID,
 		CompartmentID:  p.CompartmentID,
@@ -133,7 +133,7 @@ func toPrincipalResource(p *iamdriver.PrincipalInfo) principalResource {
 	}
 }
 
-func toMembershipResource(m *iamdriver.MembershipInfo) membershipResource {
+func toMembershipResource(m *identityprovider.MembershipInfo) membershipResource {
 	return membershipResource{
 		ID:             m.ID,
 		CompartmentID:  m.CompartmentID,
@@ -144,7 +144,7 @@ func toMembershipResource(m *iamdriver.MembershipInfo) membershipResource {
 	}
 }
 
-func toPolicyResource(p *iamdriver.StatementPolicyInfo) policyResource {
+func toPolicyResource(p *identityprovider.StatementPolicyInfo) policyResource {
 	return policyResource{
 		ID:             p.ID,
 		CompartmentID:  p.CompartmentID,
@@ -159,7 +159,7 @@ func toPolicyResource(p *iamdriver.StatementPolicyInfo) policyResource {
 	}
 }
 
-func toCompartmentResource(c *iamdriver.CompartmentInfo) compartmentResource {
+func toCompartmentResource(c *identityprovider.CompartmentInfo) compartmentResource {
 	return compartmentResource{
 		ID:             c.ID,
 		CompartmentID:  c.ParentID,

@@ -4,18 +4,18 @@ import (
 	"context"
 	"net/http"
 
+	identityprovider "github.com/stackshy/cloudemu/v2/providers/oci/identity"
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
-	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // principalOps binds one of the two identical collections — users and groups —
 // so both are routed and served by the same code.
 type principalOps struct {
 	kind   string
-	create func(context.Context, iamdriver.PrincipalSpec) (*iamdriver.PrincipalInfo, error)
-	get    func(context.Context, string) (*iamdriver.PrincipalInfo, error)
-	list   func(context.Context, string) ([]iamdriver.PrincipalInfo, error)
-	update func(context.Context, string, iamdriver.IdentityUpdate) (*iamdriver.PrincipalInfo, error)
+	create func(context.Context, identityprovider.PrincipalSpec) (*identityprovider.PrincipalInfo, error)
+	get    func(context.Context, string) (*identityprovider.PrincipalInfo, error)
+	list   func(context.Context, string) ([]identityprovider.PrincipalInfo, error)
+	update func(context.Context, string, identityprovider.Update) (*identityprovider.PrincipalInfo, error)
 	remove func(context.Context, string) error
 }
 
@@ -72,7 +72,7 @@ func (o *principalOps) serveCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := o.create(r.Context(), iamdriver.PrincipalSpec{
+	info, err := o.create(r.Context(), identityprovider.PrincipalSpec{
 		CompartmentID: body.CompartmentID,
 		Name:          body.Name,
 		Description:   body.Description,
