@@ -313,6 +313,27 @@ cloudemu serve --tls-cert cert.pem --tls-key key.pem
 cloudemu serve --tls-host myhost.local --tls-host 192.168.1.10
 ```
 
+### Trusting the Azure self-signed cert (any language)
+
+AWS (`:4566`) and GCP (`:4569`) are plain HTTP — no TLS step. Only **Azure**
+(`:4568`) is HTTPS with a self-signed cert, so a non-Go client must either skip
+verification or trust the cert (the same one-liner you'd use against any local
+HTTPS emulator). The cert already covers `localhost`, `127.0.0.1`, and `::1`, so
+dial it at `https://localhost:4568` / `https://127.0.0.1:4568`.
+
+| Client | How to accept the cert (local dev) |
+|--------|-------------------------------------|
+| `curl` | `curl -k https://localhost:4568/...` |
+| Node.js | `NODE_TLS_REJECT_UNAUTHORIZED=0` (env var) |
+| Python (`requests` / azure-sdk) | `verify=False` / `connection_verify=False` |
+| Go | `http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}` |
+| .NET | `HttpClientHandler.ServerCertificateCustomValidationCallback = (_,_,_,_) => true` |
+
+To verify **properly** instead of skipping, supply a cert your OS/language
+already trusts with `--tls-cert/--tls-key`, or add your hostname to the
+generated cert's SANs with `--tls-host <name>` and import/trust that cert in
+your client.
+
 ## Flags
 
 | Flag | Default | Purpose |
@@ -320,7 +341,7 @@ cloudemu serve --tls-host myhost.local --tls-host 192.168.1.10
 | `--providers` | `aws,azure,gcp` | which providers to start |
 | `--host` | `127.0.0.1` | bind interface (`0.0.0.0` to expose on the network) |
 | `--advertise-host` | (derived) | host/IP the Kubernetes endpoint is advertised at + its cert SAN; defaults to `--host`, or `127.0.0.1` when binding all interfaces |
-| `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` | `4566`/`4568`/`4569`/`4570` | listen ports (empty `--k8s-port` disables Kubernetes) |
+| `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` / `--oci-port` | `4566`/`4568`/`4569`/`4570`/`4571` | listen ports (empty `--k8s-port` disables Kubernetes; OCI only served when `oci` is in `--providers`) |
 | `--account-id` | `000000000000` | AWS account ID / Azure subscription ID |
 | `--region` | `us-east-1` | default region |
 | `--project-id` | `cloudemu-local` | GCP project ID |
