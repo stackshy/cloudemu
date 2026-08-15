@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,15 +25,26 @@ func TestParseSupportedARN(t *testing.T) {
 	}{
 		{name: "s3 bucket", arn: "arn:aws:s3:::my-bucket", wantSvc: "s3", wantID: "my-bucket"},
 		{name: "dynamodb table", arn: "arn:aws:dynamodb:us-east-1:111:table/MyTable", wantSvc: "dynamodb", wantType: "table", wantID: "MyTable"},
+		{name: "ec2 instance", arn: "arn:aws:ec2:us-east-1:111:instance/i-abc", wantSvc: "ec2", wantType: "instance", wantID: "i-abc"},
+		{name: "ec2 volume", arn: "arn:aws:ec2:us-east-1:111:volume/vol-abc", wantSvc: "ec2", wantType: "volume", wantID: "vol-abc"},
+		{name: "ec2 snapshot", arn: "arn:aws:ec2:us-east-1:111:snapshot/snap-abc", wantSvc: "ec2", wantType: "snapshot", wantID: "snap-abc"},
+		{name: "ec2 image", arn: "arn:aws:ec2:us-east-1:111:image/ami-abc", wantSvc: "ec2", wantType: "image", wantID: "ami-abc"},
 		{name: "vpc", arn: "arn:aws:ec2:us-east-1:111:vpc/vpc-abc", wantSvc: "ec2", wantType: "vpc", wantID: "vpc-abc"},
 		{name: "subnet", arn: "arn:aws:ec2:us-east-1:111:subnet/subnet-abc", wantSvc: "ec2", wantType: "subnet", wantID: "subnet-abc"},
 		{name: "security-group", arn: "arn:aws:ec2:us-east-1:111:security-group/sg-abc", wantSvc: "ec2", wantType: "security-group", wantID: "sg-abc"},
-		{name: "instance unsupported", arn: "arn:aws:ec2:us-east-1:111:instance/i-abc", wantErr: true, errSubstr: "not yet supported"},
-		{name: "lambda unsupported", arn: "arn:aws:lambda:us-east-1:111:function:fn", wantErr: true, errSubstr: "not yet supported"},
+		{name: "lambda function", arn: "arn:aws:lambda:us-east-1:111:function:fn", wantSvc: "lambda", wantType: "function", wantID: "fn"},
+		{name: "lambda function versioned", arn: "arn:aws:lambda:us-east-1:111:function:fn:2", wantSvc: "lambda", wantType: "function", wantID: "fn"},
+		{name: "secrets manager", arn: "arn:aws:secretsmanager:us-east-1:111:secret:db-pw", wantSvc: "secretsmanager", wantType: "secret", wantID: "db-pw"},
+		{name: "sns topic", arn: "arn:aws:sns:us-east-1:111:my-topic", wantSvc: "sns", wantID: "my-topic"},
+		{name: "sqs queue", arn: "arn:aws:sqs:us-east-1:111:my-queue", wantSvc: "sqs", wantID: "my-queue"},
+		{name: "ec2 unsupported type", arn: "arn:aws:ec2:us-east-1:111:natgateway/nat-abc", wantErr: true, errSubstr: "is not supported"},
+		{name: "sns subscription rejected (real colon shape)", arn: "arn:aws:sns:us-east-1:111:MyTopic:8a21-uuid", wantErr: true, errSubstr: "expected SNS topic"},
+		{name: "sns subscription rejected (mock slash shape)", arn: "arn:aws:sns:us-east-1:111:subscription/uuid", wantErr: true, errSubstr: "expected SNS topic"},
+		{name: "kms unsupported service", arn: "arn:aws:kms:us-east-1:111:key/abc", wantErr: true, errSubstr: "not yet supported"},
 		{name: "non-aws partition", arn: "arn:azure:s3:::x", wantErr: true, errSubstr: "only AWS ARNs"},
 		{name: "malformed", arn: "not-an-arn", wantErr: true, errSubstr: "only AWS ARNs"},
 		{name: "missing parts", arn: "arn:aws:s3", wantErr: true, errSubstr: "malformed ARN"},
-		{name: "s3 object rejected", arn: "arn:aws:s3:::bkt/obj.txt", wantErr: true, errSubstr: "object ARNs are not yet supported"},
+		{name: "s3 object rejected", arn: "arn:aws:s3:::bkt/obj.txt", wantErr: true, errSubstr: "object ARNs are not supported"},
 	}
 
 	for _, tt := range tests {
@@ -160,11 +173,244 @@ func TestTagResourceByARN_UnsupportedReturnsInvalidArgument(t *testing.T) {
 	ctx := context.Background()
 	f := newAWSFixture(t)
 
-	err := f.engine.TagResourceByARN(ctx, "arn:aws:lambda:us-east-1:111:function:fn",
+	// KMS has no tag store wired through the RGT dispatcher.
+	err := f.engine.TagResourceByARN(ctx, "arn:aws:kms:us-east-1:111:key/abc",
 		map[string]string{"k": "v"})
 	require.Error(t, err)
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 	assert.Contains(t, err.Error(), "not yet supported")
+}
+
+func TestTagResourceByARN_EC2Instance(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	insts, err := f.ec2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-1", InstanceType: "t3.micro",
+	}, 1)
+	require.NoError(t, err)
+	id := insts[0].ID
+
+	arn := "arn:aws:ec2:us-east-1:123456789012:instance/" + id
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"Environment": "prod", "team": "core"}))
+
+	got, err := f.ec2.DescribeInstances(ctx, []string{id}, nil, computedriver.DescribeInstancesOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "prod", got[0].Tags["Environment"])
+	assert.Equal(t, "core", got[0].Tags["team"])
+
+	// Merge is additive: a second tag call keeps the earlier keys.
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"Environment": "stage", "new": "x"}))
+	got, err = f.ec2.DescribeInstances(ctx, []string{id}, nil, computedriver.DescribeInstancesOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "stage", got[0].Tags["Environment"])
+	assert.Equal(t, "core", got[0].Tags["team"], "non-overlapping key should survive merge")
+	assert.Equal(t, "x", got[0].Tags["new"])
+
+	require.NoError(t, f.engine.UntagResourceByARN(ctx, arn, []string{"Environment", "missing"}))
+	got, err = f.ec2.DescribeInstances(ctx, []string{id}, nil, computedriver.DescribeInstancesOptions{})
+	require.NoError(t, err)
+	_, has := got[0].Tags["Environment"]
+	assert.False(t, has)
+	assert.Equal(t, "core", got[0].Tags["team"])
+}
+
+func TestTagResourceByARN_EC2Volume(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	vol, err := f.ec2.CreateVolume(ctx, computedriver.VolumeConfig{Size: 8, VolumeType: "gp3", AvailabilityZone: "us-east-1a"})
+	require.NoError(t, err)
+
+	arn := "arn:aws:ec2:us-east-1:123456789012:volume/" + vol.ID
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"backup": "daily"}))
+
+	got, err := f.ec2.DescribeVolumes(ctx, []string{vol.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "daily", got[0].Tags["backup"])
+
+	require.NoError(t, f.engine.UntagResourceByARN(ctx, arn, []string{"backup"}))
+	got, err = f.ec2.DescribeVolumes(ctx, []string{vol.ID})
+	require.NoError(t, err)
+	_, has := got[0].Tags["backup"]
+	assert.False(t, has)
+}
+
+func TestTagResourceByARN_EC2Snapshot(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	vol, err := f.ec2.CreateVolume(ctx, computedriver.VolumeConfig{Size: 8, VolumeType: "gp3", AvailabilityZone: "us-east-1a"})
+	require.NoError(t, err)
+	snap, err := f.ec2.CreateSnapshot(ctx, computedriver.SnapshotConfig{VolumeID: vol.ID})
+	require.NoError(t, err)
+
+	arn := "arn:aws:ec2:us-east-1:123456789012:snapshot/" + snap.ID
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"keep": "30d"}))
+
+	got, err := f.ec2.DescribeSnapshots(ctx, []string{snap.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "30d", got[0].Tags["keep"])
+}
+
+func TestTagResourceByARN_EC2Image(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	insts, err := f.ec2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-1", InstanceType: "t3.micro",
+	}, 1)
+	require.NoError(t, err)
+	img, err := f.ec2.CreateImage(ctx, computedriver.ImageConfig{InstanceID: insts[0].ID, Name: "golden"})
+	require.NoError(t, err)
+
+	arn := "arn:aws:ec2:us-east-1:123456789012:image/" + img.ID
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"release": "v1", "team": "core"}))
+
+	got, err := f.ec2.DescribeImages(ctx, []string{img.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "v1", got[0].Tags["release"])
+
+	// Additive merge, then key removal — same contract as instance/volume/snapshot.
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"release": "v2"}))
+	got, err = f.ec2.DescribeImages(ctx, []string{img.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "v2", got[0].Tags["release"])
+	assert.Equal(t, "core", got[0].Tags["team"], "non-overlapping key should survive merge")
+
+	require.NoError(t, f.engine.UntagResourceByARN(ctx, arn, []string{"release"}))
+	got, err = f.ec2.DescribeImages(ctx, []string{img.ID})
+	require.NoError(t, err)
+	_, has := got[0].Tags["release"]
+	assert.False(t, has)
+	assert.Equal(t, "core", got[0].Tags["team"])
+}
+
+func TestTagResourceByARN_Lambda(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	seedLambda(t, f, "handler", nil)
+
+	arn := "arn:aws:lambda:us-east-1:123456789012:function:handler"
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"env": "prod"}))
+
+	got, err := f.lambda.GetFunction(ctx, "handler")
+	require.NoError(t, err)
+	assert.Equal(t, "prod", got.Tags["env"])
+
+	// A version-qualified ARN resolves to the same function's tags.
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn+":3", map[string]string{"team": "data"}))
+	got, err = f.lambda.GetFunction(ctx, "handler")
+	require.NoError(t, err)
+	assert.Equal(t, "data", got.Tags["team"])
+
+	require.NoError(t, f.engine.UntagResourceByARN(ctx, arn, []string{"env"}))
+	got, err = f.lambda.GetFunction(ctx, "handler")
+	require.NoError(t, err)
+	_, has := got.Tags["env"]
+	assert.False(t, has)
+}
+
+func TestTagResourceByARN_Secret(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	seedSecret(t, f, "db-password", nil)
+
+	arn := "arn:aws:secretsmanager:us-east-1:123456789012:secret:db-password"
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"rotation": "30d"}))
+
+	got, err := f.secrets.GetSecret(ctx, "db-password")
+	require.NoError(t, err)
+	assert.Equal(t, "30d", got.Tags["rotation"])
+
+	require.NoError(t, f.engine.UntagResourceByARN(ctx, arn, []string{"rotation"}))
+	got, err = f.secrets.GetSecret(ctx, "db-password")
+	require.NoError(t, err)
+	_, has := got.Tags["rotation"]
+	assert.False(t, has)
+}
+
+func TestTagResourceByARN_SNSTopic(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	seedSNS(t, f, "alerts", nil)
+
+	arn := "arn:aws:sns:us-east-1:123456789012:alerts"
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"severity": "high"}))
+
+	assert.Equal(t, "high", snsTopicTags(t, f, "alerts")["severity"])
+
+	require.NoError(t, f.engine.UntagResourceByARN(ctx, arn, []string{"severity"}))
+	_, has := snsTopicTags(t, f, "alerts")["severity"]
+	assert.False(t, has)
+}
+
+func TestTagResourceByARN_SQSQueue(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	seedSQS(t, f, "jobs", nil)
+
+	arn := "arn:aws:sqs:us-east-1:123456789012:jobs"
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"pipeline": "etl"}))
+
+	assert.Equal(t, "etl", sqsQueueTags(t, f, "jobs")["pipeline"])
+
+	require.NoError(t, f.engine.UntagResourceByARN(ctx, arn, []string{"pipeline"}))
+	_, has := sqsQueueTags(t, f, "jobs")["pipeline"]
+	assert.False(t, has)
+}
+
+func TestTagResourceByARN_NotFound(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	cases := map[string]string{
+		"instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-missing",
+		"lambda":   "arn:aws:lambda:us-east-1:123456789012:function:ghost",
+		"secret":   "arn:aws:secretsmanager:us-east-1:123456789012:secret:ghost",
+		"sns":      "arn:aws:sns:us-east-1:123456789012:ghost",
+		"sqs":      "arn:aws:sqs:us-east-1:123456789012:ghost",
+	}
+
+	for name, arn := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := f.engine.TagResourceByARN(ctx, arn, map[string]string{"k": "v"})
+			require.Error(t, err)
+			assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err), "expected NotFound for %s", arn)
+		})
+	}
+}
+
+// snsTopicTags reads a topic's tags back through the SNS list surface.
+func snsTopicTags(t *testing.T, f *fixture, name string) map[string]string {
+	t.Helper()
+	topics, err := f.sns.ListTopics(context.Background(), scope.Scope{})
+	require.NoError(t, err)
+	for i := range topics {
+		if topics[i].Name == name {
+			return topics[i].Tags
+		}
+	}
+	t.Fatalf("topic %q not found", name)
+	return nil
+}
+
+// sqsQueueTags reads a queue's tags back through the SQS list surface.
+func sqsQueueTags(t *testing.T, f *fixture, name string) map[string]string {
+	t.Helper()
+	queues, err := f.sqs.ListQueues(context.Background(), "")
+	require.NoError(t, err)
+	for i := range queues {
+		if queues[i].Name == name {
+			return queues[i].Tags
+		}
+	}
+	t.Fatalf("queue %q not found", name)
+	return nil
 }
 
 func TestTagResourceByARN_MissingDriverReturnsFailedPrecondition(t *testing.T) {

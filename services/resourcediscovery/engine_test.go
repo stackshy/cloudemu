@@ -13,10 +13,16 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/s3"
+	"github.com/stackshy/cloudemu/v2/providers/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	serverlessdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	"github.com/stretchr/testify/assert"
@@ -24,12 +30,15 @@ import (
 )
 
 type fixture struct {
-	engine *Engine
-	ec2    *ec2.Mock
-	vpc    *vpc.Mock
-	s3     *s3.Mock
-	ddb    *dynamodb.Mock
-	lambda *lambda.Mock
+	engine  *Engine
+	ec2     *ec2.Mock
+	vpc     *vpc.Mock
+	s3      *s3.Mock
+	ddb     *dynamodb.Mock
+	lambda  *lambda.Mock
+	secrets *secretsmanager.Mock
+	sns     *sns.Mock
+	sqs     *sqs.Mock
 }
 
 func newAWSFixture(t *testing.T) *fixture {
@@ -43,22 +52,31 @@ func newAWSFixture(t *testing.T) *fixture {
 	s3Mock := s3.New(opts)
 	ddbMock := dynamodb.New(opts)
 	lambdaMock := lambda.New(opts)
+	secretsMock := secretsmanager.New(opts)
+	snsMock := sns.New(opts)
+	sqsMock := sqs.New(opts)
 
 	eng := New(ProviderAWS, "123456789012", "us-east-1", &Drivers{
-		Compute:    ec2Mock,
-		Networking: vpcMock,
-		Storage:    s3Mock,
-		Database:   ddbMock,
-		Serverless: lambdaMock,
+		Compute:      ec2Mock,
+		Networking:   vpcMock,
+		Storage:      s3Mock,
+		Database:     ddbMock,
+		Serverless:   lambdaMock,
+		Secrets:      secretsMock,
+		Notification: snsMock,
+		MessageQueue: sqsMock,
 	})
 
 	return &fixture{
-		engine: eng,
-		ec2:    ec2Mock,
-		vpc:    vpcMock,
-		s3:     s3Mock,
-		ddb:    ddbMock,
-		lambda: lambdaMock,
+		engine:  eng,
+		ec2:     ec2Mock,
+		vpc:     vpcMock,
+		s3:      s3Mock,
+		ddb:     ddbMock,
+		lambda:  lambdaMock,
+		secrets: secretsMock,
+		sns:     snsMock,
+		sqs:     sqsMock,
 	}
 }
 
@@ -311,6 +329,25 @@ func seedLambda(t *testing.T, f *fixture, name string, tags map[string]string) {
 	_, err := f.lambda.CreateFunction(context.Background(), serverlessdriver.FunctionConfig{
 		Name: name, Runtime: "go1.x", Handler: "main", Memory: 128, Timeout: 30, Tags: tags,
 	})
+	require.NoError(t, err)
+}
+
+func seedSecret(t *testing.T, f *fixture, name string, tags map[string]string) {
+	t.Helper()
+	_, err := f.secrets.CreateSecret(context.Background(),
+		secretsdriver.SecretConfig{Name: name, Tags: tags}, []byte("value"))
+	require.NoError(t, err)
+}
+
+func seedSNS(t *testing.T, f *fixture, name string, tags map[string]string) {
+	t.Helper()
+	_, err := f.sns.CreateTopic(context.Background(), notifdriver.TopicConfig{Name: name, Tags: tags})
+	require.NoError(t, err)
+}
+
+func seedSQS(t *testing.T, f *fixture, name string, tags map[string]string) {
+	t.Helper()
+	_, err := f.sqs.CreateQueue(context.Background(), mqdriver.QueueConfig{Name: name, Tags: tags})
 	require.NoError(t, err)
 }
 
