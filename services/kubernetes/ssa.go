@@ -11,6 +11,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // Server-side apply with field ownership. Each apply request carries a
@@ -74,6 +75,13 @@ func (s *ClusterState) serverSideApply(
 		return nil, false
 	}
 
+	// Snapshot server-owned identity BEFORE the merge — mergeRFC7396 mutates
+	// cur.Object in place, so reading these after the merge would see the
+	// applied body's values (e.g. the `creationTimestamp: null` kubectl sends).
+	prevUID := cur.GetUID()
+	prevCreation := cur.GetCreationTimestamp()
+	prevDeletion := cur.GetDeletionTimestamp()
+
 	manager := r.URL.Query().Get("fieldManager")
 	if manager == "" {
 		manager = defaultFieldManager
@@ -94,6 +102,16 @@ func (s *ClusterState) serverSideApply(
 	if !mok {
 		return nil, false
 	}
+
+	// Server-owned identity metadata is never settable by an apply. Re-assert the
+	// pre-merge snapshot here — the one place every apply path (typed and
+	// registry) flows through — so an applied body carrying `creationTimestamp:
+	// null` (kubectl always sends it) or omitting uid/deletionTimestamp cannot
+	// blank or re-identify the object via the RFC-7396 merge. ssaSkipMeta already
+	// keeps these out of ownership tracking; this protects the values.
+	merged.SetUID(prevUID)
+	merged.SetCreationTimestamp(prevCreation)
+	merged.SetDeletionTimestamp(prevDeletion)
 
 	setManagedFields(merged, updateManagedFields(cur, manager, appliedLeaves, apiVersion, s.now()))
 	// Upstream apply removes fields this manager previously owned but now omits,
@@ -436,15 +454,12 @@ func managedFieldsOf(obj *unstructured.Unstructured) []any {
 	return entries
 }
 
-// objectMap marshals a typed object to a generic JSON map for leaf computation.
+// objectMap converts a typed object to a generic map via the canonical
+// typed↔unstructured converter (not a json round-trip, which silently drops
+// unknown fields and doesn't surface shape mismatches).
 func objectMap(v any) map[string]any {
-	b, err := json.Marshal(v)
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(v)
 	if err != nil {
-		return nil
-	}
-
-	m := map[string]any{}
-	if json.Unmarshal(b, &m) != nil {
 		return nil
 	}
 
@@ -489,17 +504,12 @@ func serverSideApplyTyped[T any](
 	return typedFromUnstructured[T](w, merged)
 }
 
-// typedFromUnstructured decodes an unstructured object back into a typed T.
+// typedFromUnstructured decodes an unstructured object back into a typed T via
+// the canonical converter, which errors on a shape mismatch rather than
+// silently dropping fields a json round-trip would.
 func typedFromUnstructured[T any](w http.ResponseWriter, u *unstructured.Unstructured) (*T, bool) {
-	b, err := json.Marshal(u.Object)
-	if err != nil {
-		writeBadRequest(w, "k8s api: marshal merged object: "+err.Error())
-
-		return nil, false
-	}
-
 	out := new(T)
-	if err := json.Unmarshal(b, out); err != nil {
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, out); err != nil {
 		writeBadRequest(w, "k8s api: decode merged typed object: "+err.Error())
 
 		return nil, false

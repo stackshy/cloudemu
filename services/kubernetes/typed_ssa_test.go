@@ -184,6 +184,132 @@ func TestServerSideApplyCreate(t *testing.T) {
 	}
 }
 
+// identityOf pulls the server-owned uid + creationTimestamp out of an object.
+func identityOf(t *testing.T, obj map[string]any) (uid, creation string) {
+	t.Helper()
+
+	meta, _ := obj["metadata"].(map[string]any)
+	uid, _ = meta["uid"].(string)
+	creation, _ = meta["creationTimestamp"].(string)
+
+	return uid, creation
+}
+
+// TestTypedApply_PreservesServerMetadata: an apply body that carries
+// `creationTimestamp: null` (kubectl always sends it) or omits `uid` must NOT
+// blank the server-owned identity metadata. This re-GETs after the apply — the
+// exact check that catches the metadata-drop the apply path used to have. Run
+// across two typed kinds so it isn't ConfigMap-specific.
+func TestTypedApply_PreservesServerMetadata(t *testing.T) {
+	base, done := newFixture(t)
+	defer done()
+
+	for _, tc := range []struct {
+		name, kind, coll string
+	}{
+		{"configmap", "ConfigMap", "/api/v1/namespaces/default/configmaps"},
+		{"secret", "Secret", "/api/v1/namespaces/default/secrets"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			collURL := base + tc.coll
+			itemURL := collURL + "/meta"
+
+			// Create it and capture the server-assigned identity.
+			create := mustJSON(t, map[string]any{
+				"apiVersion": "v1", "kind": tc.kind,
+				"metadata": map[string]any{"name": "meta"},
+			})
+			c := do(t, http.MethodPost, collURL, create)
+			if c.StatusCode != http.StatusCreated {
+				b, _ := io.ReadAll(c.Body)
+				c.Body.Close()
+				t.Fatalf("create %s: got %d, want 201 (%s)", tc.kind, c.StatusCode, b)
+			}
+			uid, creation := identityOf(t, decodeMap(t, c.Body))
+			c.Body.Close()
+
+			if uid == "" || creation == "" {
+				t.Fatalf("created %s missing uid/creationTimestamp: uid=%q creation=%q", tc.kind, uid, creation)
+			}
+
+			// Apply with an explicit creationTimestamp:null (kubectl's behavior)
+			// plus a real change.
+			r := apply(t, itemURL, "kubectl", false, map[string]any{
+				"apiVersion": "v1", "kind": tc.kind,
+				"metadata": map[string]any{
+					"name":              "meta",
+					"creationTimestamp": nil,
+					"labels":            map[string]any{"applied": "yes"},
+				},
+			})
+			if r.StatusCode != http.StatusOK && r.StatusCode != http.StatusCreated {
+				b, _ := io.ReadAll(r.Body)
+				r.Body.Close()
+				t.Fatalf("apply %s: got %d, want 200/201 (%s)", tc.kind, r.StatusCode, b)
+			}
+			r.Body.Close()
+
+			// Re-GET: identity must be exactly what create assigned.
+			g := do(t, http.MethodGet, itemURL, nil)
+			got := decodeMap(t, g.Body)
+			g.Body.Close()
+
+			gUID, gCreation := identityOf(t, got)
+			if gUID != uid {
+				t.Fatalf("%s uid changed across apply: %q -> %q", tc.kind, uid, gUID)
+			}
+			if gCreation != creation {
+				t.Fatalf("%s creationTimestamp blanked/changed across apply: %q -> %q", tc.kind, creation, gCreation)
+			}
+		})
+	}
+}
+
+// TestTypedApply_TwoManagerRetention: the core SSA property — two managers each
+// owning a different field both survive. alice applies data.x, bob applies
+// data.y (disjoint, so no conflict); a re-GET must show both.
+func TestTypedApply_TwoManagerRetention(t *testing.T) {
+	base, done := newFixture(t)
+	defer done()
+
+	collURL := base + "/api/v1/namespaces/default/configmaps"
+	itemURL := collURL + "/shared"
+
+	seed := mustJSON(t, map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "shared"},
+	})
+	do(t, http.MethodPost, collURL, seed).Body.Close()
+
+	a := apply(t, itemURL, "alice", false, map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "shared"},
+		"data":     map[string]any{"x": "1"},
+	})
+	a.Body.Close()
+
+	b := apply(t, itemURL, "bob", false, map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "shared"},
+		"data":     map[string]any{"y": "2"},
+	})
+	if b.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(b.Body)
+		b.Body.Close()
+		t.Fatalf("bob apply (disjoint field): got %d, want 200 (%s)", b.StatusCode, body)
+	}
+	b.Body.Close()
+
+	g := do(t, http.MethodGet, itemURL, nil)
+	got := decodeMap(t, g.Body)
+	g.Body.Close()
+
+	data, _ := got["data"].(map[string]any)
+	if data["x"] != "1" || data["y"] != "2" {
+		t.Fatalf("two-manager retention failed: both fields should survive, got data=%v", data)
+	}
+}
+
 // TestTypedFinalizerGatedDelete: deleting a typed ConfigMap that carries a
 // finalizer must leave it Terminating (deletionTimestamp set), not hard-delete
 // it; removing the finalizer then completes the delete. Today it is hard-deleted.
