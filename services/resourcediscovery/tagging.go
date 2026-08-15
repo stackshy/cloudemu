@@ -193,11 +193,12 @@ func parseSecretsARN(arn, resource string) (parsedARN, error) {
 	return parsedARN{service: awsServiceSecrets, resourceType: secretsTypeSecret, id: id}, nil
 }
 
-// parseSNSARN accepts arn:aws:sns:region:account:topic-name. Subscription ARNs
-// (whose resource segment is "subscription/<id>", containing a '/') are
-// rejected — a subscription is not a taggable resource.
+// parseSNSARN accepts arn:aws:sns:region:account:topic-name. A topic name is
+// alphanumeric plus '-'/'_', so a resource segment carrying a ':' or '/' is a
+// subscription (real AWS uses "MyTopic:<uuid>"; the mock uses
+// "subscription/<uuid>") — rejected, since a subscription is not taggable.
 func parseSNSARN(arn, resource string) (parsedARN, error) {
-	if resource == "" || strings.ContainsRune(resource, '/') {
+	if resource == "" || strings.ContainsAny(resource, ":/") {
 		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "expected SNS topic ARN, got %q", arn)
 	}
 

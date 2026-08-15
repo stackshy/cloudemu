@@ -38,7 +38,8 @@ func TestParseSupportedARN(t *testing.T) {
 		{name: "sns topic", arn: "arn:aws:sns:us-east-1:111:my-topic", wantSvc: "sns", wantID: "my-topic"},
 		{name: "sqs queue", arn: "arn:aws:sqs:us-east-1:111:my-queue", wantSvc: "sqs", wantID: "my-queue"},
 		{name: "ec2 unsupported type", arn: "arn:aws:ec2:us-east-1:111:natgateway/nat-abc", wantErr: true, errSubstr: "is not supported"},
-		{name: "sns subscription rejected", arn: "arn:aws:sns:us-east-1:111:subscription/uuid", wantErr: true, errSubstr: "expected SNS topic"},
+		{name: "sns subscription rejected (real colon shape)", arn: "arn:aws:sns:us-east-1:111:MyTopic:8a21-uuid", wantErr: true, errSubstr: "expected SNS topic"},
+		{name: "sns subscription rejected (mock slash shape)", arn: "arn:aws:sns:us-east-1:111:subscription/uuid", wantErr: true, errSubstr: "expected SNS topic"},
 		{name: "kms unsupported service", arn: "arn:aws:kms:us-east-1:111:key/abc", wantErr: true, errSubstr: "not yet supported"},
 		{name: "non-aws partition", arn: "arn:azure:s3:::x", wantErr: true, errSubstr: "only AWS ARNs"},
 		{name: "malformed", arn: "not-an-arn", wantErr: true, errSubstr: "only AWS ARNs"},
@@ -250,6 +251,39 @@ func TestTagResourceByARN_EC2Snapshot(t *testing.T) {
 	got, err := f.ec2.DescribeSnapshots(ctx, []string{snap.ID})
 	require.NoError(t, err)
 	assert.Equal(t, "30d", got[0].Tags["keep"])
+}
+
+func TestTagResourceByARN_EC2Image(t *testing.T) {
+	ctx := context.Background()
+	f := newAWSFixture(t)
+
+	insts, err := f.ec2.RunInstances(ctx, computedriver.InstanceConfig{
+		ImageID: "ami-1", InstanceType: "t3.micro",
+	}, 1)
+	require.NoError(t, err)
+	img, err := f.ec2.CreateImage(ctx, computedriver.ImageConfig{InstanceID: insts[0].ID, Name: "golden"})
+	require.NoError(t, err)
+
+	arn := "arn:aws:ec2:us-east-1:123456789012:image/" + img.ID
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"release": "v1", "team": "core"}))
+
+	got, err := f.ec2.DescribeImages(ctx, []string{img.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "v1", got[0].Tags["release"])
+
+	// Additive merge, then key removal — same contract as instance/volume/snapshot.
+	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"release": "v2"}))
+	got, err = f.ec2.DescribeImages(ctx, []string{img.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "v2", got[0].Tags["release"])
+	assert.Equal(t, "core", got[0].Tags["team"], "non-overlapping key should survive merge")
+
+	require.NoError(t, f.engine.UntagResourceByARN(ctx, arn, []string{"release"}))
+	got, err = f.ec2.DescribeImages(ctx, []string{img.ID})
+	require.NoError(t, err)
+	_, has := got[0].Tags["release"]
+	assert.False(t, has)
+	assert.Equal(t, "core", got[0].Tags["team"])
 }
 
 func TestTagResourceByARN_Lambda(t *testing.T) {
