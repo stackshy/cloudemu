@@ -14,4 +14,5 @@ services:
       - "4568:4568" # Azure (HTTPS, self-signed)
       - "4569:4569" # GCP
       - "4570:4570" # Kubernetes data-plane
+      # - "4571:4571" # OCI — only served with: command: ["serve","--host","0.0.0.0","--providers","aws,azure,gcp,oci"]
     # command: ["serve", "--host", "0.0.0.0", "--admin=false"]  # disable the control plane

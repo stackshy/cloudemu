@@ -27,8 +27,14 @@ go run ./cmd/cloudemu serve
 No Go toolchain needed — pull the published image (it runs `serve --host 0.0.0.0`):
 
 ```sh
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 ghcr.io/stackshy/cloudemu:latest
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 ghcr.io/stackshy/cloudemu:latest
 ```
+
+The container binds `0.0.0.0`, but the Kubernetes data plane advertises a
+routable endpoint (defaults to `127.0.0.1`, not the bind address), so an
+EKS/AKS/GKE kubeconfig from the container works with `kubectl` on the host. To
+reach it from another machine, pass `--advertise-host <name-or-ip>` (also added
+to the serving cert's SANs).
 
 Or bring up the whole emulated cloud with the example compose file:
 
@@ -307,13 +313,35 @@ cloudemu serve --tls-cert cert.pem --tls-key key.pem
 cloudemu serve --tls-host myhost.local --tls-host 192.168.1.10
 ```
 
+### Trusting the Azure self-signed cert (any language)
+
+AWS (`:4566`) and GCP (`:4569`) are plain HTTP — no TLS step. Only **Azure**
+(`:4568`) is HTTPS with a self-signed cert, so a non-Go client must either skip
+verification or trust the cert (the same one-liner you'd use against any local
+HTTPS emulator). The cert already covers `localhost`, `127.0.0.1`, and `::1`, so
+dial it at `https://localhost:4568` / `https://127.0.0.1:4568`.
+
+| Client | How to accept the cert (local dev) |
+|--------|-------------------------------------|
+| `curl` | `curl -k https://localhost:4568/...` |
+| Node.js | `NODE_TLS_REJECT_UNAUTHORIZED=0` (env var) |
+| Python (`requests` / azure-sdk) | `verify=False` / `connection_verify=False` |
+| Go | `http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}` |
+| .NET | `HttpClientHandler.ServerCertificateCustomValidationCallback = (_,_,_,_) => true` |
+
+To verify **properly** instead of skipping, supply a cert your OS/language
+already trusts with `--tls-cert/--tls-key`, or add your hostname to the
+generated cert's SANs with `--tls-host <name>` and import/trust that cert in
+your client.
+
 ## Flags
 
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--providers` | `aws,azure,gcp` | which providers to start |
-| `--host` | `127.0.0.1` | bind interface |
-| `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` | `4566`/`4568`/`4569`/`4570` | listen ports (empty `--k8s-port` disables Kubernetes) |
+| `--host` | `127.0.0.1` | bind interface (`0.0.0.0` to expose on the network) |
+| `--advertise-host` | (derived) | host/IP the Kubernetes endpoint is advertised at + its cert SAN; defaults to `--host`, or `127.0.0.1` when binding all interfaces |
+| `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` / `--oci-port` | `4566`/`4568`/`4569`/`4570`/`4571` | listen ports (empty `--k8s-port` disables Kubernetes; OCI only served when `oci` is in `--providers`) |
 | `--account-id` | `000000000000` | AWS account ID / Azure subscription ID |
 | `--region` | `us-east-1` | default region |
 | `--project-id` | `cloudemu-local` | GCP project ID |

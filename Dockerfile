@@ -23,8 +23,10 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/cloudemu /usr/local/bin/cloudemu
 
-# AWS (LocalStack-compatible), Azure (HTTPS), GCP, Kubernetes data-plane.
-EXPOSE 4566 4568 4569 4570
+# AWS (LocalStack-compatible), Azure (HTTPS), GCP, Kubernetes data-plane, OCI.
+# OCI (4571) is opt-in (--providers …,oci) so it isn't published by default, but
+# the port is declared here for when it is enabled.
+EXPOSE 4566 4568 4569 4570 4571
 
 # Bind all interfaces so the container is reachable from the host / other
 # containers. The control plane (/_cloudemu/reset) is on by default — see the

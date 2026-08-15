@@ -46,6 +46,7 @@ var errUnsupportedSnapshot = errors.New("unsupported snapshot schema version")
 type serveConfig struct {
 	providers       string
 	host            string
+	advertiseHost   string
 	awsPort         string
 	azurePort       string
 	gcpPort         string
@@ -85,6 +86,9 @@ func runServe(args []string) error {
 	// so the default set never binds a port that serves nothing.
 	fs.StringVar(&c.providers, "providers", "aws,azure,gcp", "comma-separated providers to start: aws,azure,gcp,oci")
 	fs.StringVar(&c.host, "host", "127.0.0.1", "host/interface to bind (use 0.0.0.0 to expose on the network)")
+	fs.StringVar(&c.advertiseHost, "advertise-host", "",
+		"host/IP the Kubernetes data-plane endpoint is advertised at in kubeconfigs and its TLS cert "+
+			"(default: --host, or 127.0.0.1 when binding all interfaces such as 0.0.0.0 under Docker)")
 	fs.StringVar(&c.awsPort, "aws-port", "4566", "port for the AWS endpoint (HTTP)")
 	fs.StringVar(&c.azurePort, "azure-port", "4568", "port for the Azure endpoint (HTTPS)")
 	fs.StringVar(&c.gcpPort, "gcp-port", "4569", "port for the GCP endpoint (HTTP)")
@@ -120,6 +124,13 @@ func runServe(args []string) error {
 	if c.persist && c.stateFile == "" {
 		return errStateFileRequired
 	}
+
+	// Resolve the host the Kubernetes data plane advertises to clients. The bind
+	// host isn't always reachable: under Docker the container binds 0.0.0.0 (all
+	// interfaces), but 0.0.0.0 is not a connectable address — a kubeconfig
+	// advertising https://0.0.0.0:4570 with a 0.0.0.0-only cert SAN can't be
+	// dialed or TLS-verified from the host. Advertise a routable host instead.
+	advertiseHost := advertiseHostFor(c.advertiseHost, c.host)
 
 	sel, err := parseProviders(c.providers)
 	if err != nil {
@@ -187,7 +198,7 @@ func runServe(args []string) error {
 			// rest.Config from Endpoint plus CertificateAuthority can then
 			// validate what it dials; over plain HTTP that CA certifies
 			// nothing and the handshake fails.
-			k8s.SetBaseURL("https://" + net.JoinHostPort(c.host, c.k8sPort))
+			k8s.SetBaseURL("https://" + net.JoinHostPort(advertiseHost, c.k8sPort))
 		}
 		fresh := make(map[string]http.Handler, len(sel))
 		freshTargets := make(map[string]seed.Target, len(sel))
@@ -415,7 +426,9 @@ func runServe(args []string) error {
 	if k8sBackend != nil {
 		addr := net.JoinHostPort(c.host, c.k8sPort)
 
-		k8sTLS, err := eksprov.ServingTLSConfig([]string{c.host, "localhost", "127.0.0.1"})
+		// The cert must certify the advertised host (what clients dial), plus the
+		// loopback names, plus any extra --tls-host SANs.
+		k8sTLS, err := eksprov.ServingTLSConfig(k8sCertHosts(advertiseHost, c.tlsHosts))
 		if err != nil {
 			return fmt.Errorf("kubernetes data-plane TLS: %w", err)
 		}
@@ -425,7 +438,9 @@ func runServe(args []string) error {
 			srv:  &http.Server{Addr: addr, Handler: handlerFor(k8sBackend, nil), TLSConfig: k8sTLS},
 			tls:  true,
 		})
-		eps.Kubernetes = fmt.Sprintf("https://%s", addr)
+		// Show the reachable (advertised) endpoint, not the bind address — the
+		// listener binds `addr` (may be 0.0.0.0) but clients dial advertiseHost.
+		eps.Kubernetes = fmt.Sprintf("https://%s", net.JoinHostPort(advertiseHost, c.k8sPort))
 	}
 
 	// Bind every listener before serving so a port clash fails fast, before
@@ -742,6 +757,62 @@ type namedServer struct {
 }
 
 // isLoopbackHost reports whether binding to h keeps the server local-only.
+// loopbackIPv4 is advertised for the Kubernetes data plane when the server binds
+// all interfaces (a published -p 4570:4570 maps to it from the host).
+const loopbackIPv4 = "127.0.0.1"
+
+// advertiseHostFor resolves the host the Kubernetes data plane advertises to
+// clients: an explicit --advertise-host wins; otherwise the bind host, unless
+// that binds all interfaces (0.0.0.0 / :: / empty — e.g. Docker), in which case
+// loopback.
+func advertiseHostFor(advertiseHost, bindHost string) string {
+	if advertiseHost != "" {
+		return advertiseHost
+	}
+
+	if isAllInterfaces(bindHost) {
+		return loopbackIPv4
+	}
+
+	return bindHost
+}
+
+// isAllInterfaces reports whether h is a bind-all address (not connectable).
+func isAllInterfaces(h string) bool {
+	switch h {
+	case "", "0.0.0.0", "::", "[::]":
+		return true
+	}
+
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsUnspecified()
+	}
+
+	return false
+}
+
+// k8sCertHosts is the SAN set for the Kubernetes serving cert: the advertised
+// host (what clients dial and verify), the loopback names, and any extra
+// --tls-host entries, de-duplicated.
+func k8sCertHosts(advertiseHost string, extra stringList) []string {
+	base := []string{advertiseHost, "localhost", loopbackIPv4}
+
+	seen := map[string]bool{}
+	out := make([]string, 0, len(base)+len(extra))
+
+	for _, h := range append(base, extra...) {
+		if h == "" || seen[h] {
+			continue
+		}
+
+		seen[h] = true
+
+		out = append(out, h)
+	}
+
+	return out
+}
+
 func isLoopbackHost(h string) bool {
 	switch h {
 	case "127.0.0.1", "::1", "localhost":
