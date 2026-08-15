@@ -9,7 +9,7 @@
 
 ## Docs
 
-- [README](README.md): what cloudemu is / isn't, the three ways to run it (Docker/standalone, SDK-compat HTTP server, Go API), and quickstarts for each.
+- [README](README.md): what cloudemu is and its scope, the three ways to run it (Docker/standalone, SDK-compat HTTP server, Go API), and quickstarts for each.
 - [Standalone server](docs/standalone-server.md): run cloudemu as a local dev cloud via `cloudemu serve` or the Docker image — the "point any app in any language at it" mode.
 - [Getting started](docs/getting-started.md): set up a test in five minutes.
 - [Architecture](docs/architecture.md): the three-layer design (portable API → driver interfaces → provider backends) and provider status (AWS/Azure/GCP implemented; OCI foundation only).

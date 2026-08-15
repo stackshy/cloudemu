@@ -41,9 +41,10 @@ docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
 #   Kubernetes  https://127.0.0.1:4570
 ```
 
-Then point your existing SDK or CLI at it — nothing cloudemu-specific:
+Then point your existing SDK or CLI at it — nothing cloudemu-specific. cloudemu accepts any credentials, but the AWS CLI still needs some set in its chain:
 
 ```sh
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
 aws --endpoint-url http://127.0.0.1:4566 s3 mb s3://demo
 aws --endpoint-url http://127.0.0.1:4566 s3 ls
 ```
@@ -63,6 +64,7 @@ ts := httptest.NewServer(awsserver.New(awsserver.Drivers{
 }))
 defer ts.Close()
 
+ctx := context.Background()
 cfg, _ := config.LoadDefaultConfig(ctx) // credentials/region are ignored
 client := s3.NewFromConfig(cfg, func(o *s3.Options) {
     o.BaseEndpoint = aws.String(ts.URL)
@@ -126,6 +128,12 @@ Full per-service operation list: [docs/services.md](docs/services.md). Per-handl
 - [docs/features.md](docs/features.md) — auto-metrics, alarm evaluation, IAM policy evaluation, FIFO dedup, error injection, fake clock
 - [docs/chaos.md](docs/chaos.md) — deliberately fail or slow down services to test retry/timeout paths
 - [docs/topology.md](docs/topology.md) — network connectivity simulation across VPC, peering, SGs, ACLs
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, the branch-from-`development` flow, and the lint/coverage bar. Please also read the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Questions or bugs? Open a [GitHub issue](https://github.com/stackshy/cloudemu/issues). For security reports, follow [SECURITY.md](SECURITY.md).
 
 ## License
 
