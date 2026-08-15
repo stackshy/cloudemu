@@ -22,7 +22,7 @@
 
 cloudemu emulates the **cloud APIs** of AWS, Azure, and GCP entirely in memory. Point the real cloud SDKs — in any language — at a local endpoint and your unmodified app code runs against an in-memory backend. No accounts, no network, no bill.
 
-It emulates control surfaces, **not** a real cloud: it doesn't run workloads, serve traffic, authenticate requests, enforce quotas, or persist across restarts. That's the point — it's fast, deterministic, and resettable.
+It models the cloud **control surfaces** — the APIs your code actually calls — with real request/response behavior, so the same production code path runs against an in-memory backend. That's what makes it instant, deterministic, and resettable, at $0.
 
 ## Three ways to run it
 
@@ -54,27 +54,16 @@ Full flags, ports, per-SDK wiring, and the [Testcontainers module](https://githu
 
 ## In-process (Go)
 
-Prefer running the emulator inside your Go test process instead of over the network? cloudemu speaks the same wire protocols (AWS Query/JSON/Smithy, Azure ARM, GCP REST) over a local `httptest.NewServer` — change the SDK endpoint and your production code runs against an in-memory backend.
+For Go tests, run the emulator inside your process — no container. cloudemu speaks the same wire protocols over a local `httptest.NewServer`, so you just change the SDK endpoint:
 
 ```go
-import (
-    "net/http/httptest"
-
-    "github.com/aws/aws-sdk-go-v2/aws"
-    "github.com/aws/aws-sdk-go-v2/service/s3"
-    "github.com/stackshy/cloudemu/v2"
-    awsserver "github.com/stackshy/cloudemu/v2/server/aws"
-)
-
 cloud := cloudemu.NewAWS()
 ts := httptest.NewServer(awsserver.New(awsserver.Drivers{
-    S3:       cloud.S3,
-    DynamoDB: cloud.DynamoDB,
-    EC2:      cloud.EC2,
-    // …leave fields nil to omit a service
+    S3: cloud.S3, DynamoDB: cloud.DynamoDB, EC2: cloud.EC2, // nil fields omit a service
 }))
 defer ts.Close()
 
+cfg, _ := config.LoadDefaultConfig(ctx) // credentials/region are ignored
 client := s3.NewFromConfig(cfg, func(o *s3.Options) {
     o.BaseEndpoint = aws.String(ts.URL)
     o.UsePathStyle = true
@@ -82,35 +71,13 @@ client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory backend
 ```
 
-Or skip the SDK and drive the typed Go API directly:
+Or skip the SDK and call the typed Go API directly — `cloud.EC2.RunInstances(ctx, …)`, `cloud.S3.PutObject(ctx, …)`.
 
-```go
-aws := cloudemu.NewAWS()
+Install: `go get github.com/stackshy/cloudemu/v2` (Go 1.25+). Azure/GCP wiring: [docs/sdk-server.md](docs/sdk-server.md) · adopting it in a real test suite: [docs/integration.md](docs/integration.md).
 
-instances, _ := aws.EC2.RunInstances(ctx, driver.InstanceConfig{
-    ImageID: "ami-0abcdef1234567890", InstanceType: "t2.micro",
-}, 2)
-_ = aws.EC2.StopInstances(ctx, []string{instances[0].ID})
-```
+## Why it's fast
 
-Install: `go get github.com/stackshy/cloudemu/v2` (Go 1.25+). Equivalent Azure/GCP wiring is in [docs/sdk-server.md](docs/sdk-server.md); wiring cloudemu into a real app and test suite is in [docs/integration.md](docs/integration.md).
-
-## What it is / isn't
-
-cloudemu emulates cloud **control surfaces** — the APIs — so your code exercises real request/response behavior without a real account.
-
-**It does:**
-- ✅ Emulate cloud **APIs** for fast, deterministic testing — via Docker/standalone `serve`, the SDK-compat HTTP server, the typed Go API, and an in-memory Kubernetes API with built-in controllers.
-- ✅ Keep all state in process memory, with a fake clock and deterministic IDs for reproducible tests.
-
-**It does not:**
-- ❌ **Run real workloads or containers.** Kubernetes controllers converge synchronously (no scheduler/kubelet); there is no real `kubectl logs`/`exec`, no container runtime, no VM.
-- ❌ **Serve real traffic.** A created load balancer, DNS record, or queue models the API object — it does not route packets or deliver over the network.
-- ❌ **Authenticate or authorize requests.** Any credentials are accepted and signatures are not verified. The IAM service evaluates policies only when you explicitly call it; it does not gate other services' operations.
-- ❌ **Enforce quotas, limits, or billing.**
-- ❌ **Persist state across restarts.** Everything is in memory and gone when the process exits.
-
-Per-service "Not in scope" notes live alongside each service in the generated [capability coverage](docs/coverage/README.md).
+cloudemu keeps all state in process memory, with a fake clock and deterministic IDs, so tests are reproducible and reset in microseconds. It emulates the API layer — the control surface — rather than provisioning real infrastructure, which is exactly what removes accounts, network, cost, and flakiness from the loop. The precise per-service scope (and the handful of things that are intentionally out of scope, like running real containers or serving live traffic) is documented alongside each service in the generated [capability coverage](docs/coverage/README.md).
 
 ## What's supported
 
