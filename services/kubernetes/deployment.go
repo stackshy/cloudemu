@@ -15,6 +15,9 @@ import (
 // live under: /apis/apps/v1/...
 const apiGroupApps = "apps"
 
+// apiVersionAppsV1 is the group/version Deployments report in managedFields.
+const apiVersionAppsV1 = apiGroupApps + "/" + apiVersionV1
+
 // resourceDeployments is the plural resource segment for Deployments.
 const resourceDeployments = "deployments"
 
@@ -112,6 +115,15 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.createDeploymentLocked(w, r, namespace, &in)
+}
+
+// createDeploymentLocked persists a new Deployment and reconciles it. The caller
+// holds s.mu. Shared by the POST create path and server-side apply-create.
+func (s *ClusterState) createDeploymentLocked(w http.ResponseWriter, r *http.Request, namespace string, in *appsv1.Deployment) {
 	if in.Name == "" {
 		writeBadRequest(w, "k8s api: deployment: metadata.name is required")
 
@@ -121,9 +133,6 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 	in.Namespace = namespace
 
 	key := deploymentKey(namespace, in.Name)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, ok := s.deployments[key]; ok {
 		writeAlreadyExists(w, "k8s api: deployment already exists: "+key)
@@ -135,17 +144,17 @@ func (s *ClusterState) createDeployment(w http.ResponseWriter, r *http.Request, 
 	in.TypeMeta = metav1.TypeMeta{Kind: "Deployment", APIVersion: "apps/v1"}
 	in.Generation = 1
 
-	if handled := s.admit(w, opCreate, gvrDeployments(), &in); handled {
+	if handled := s.admit(w, opCreate, gvrDeployments(), in); handled {
 		return
 	}
 
 	if isDryRun(r) {
-		writeJSON(w, http.StatusCreated, &in)
+		writeJSON(w, http.StatusCreated, in)
 
 		return
 	}
 
-	dep := in
+	dep := *in
 	s.deployments[key] = &dep
 	// Reconcile: materialize Running Pods and populate status + Service
 	// endpoints so the deployment is actually "up", not just stored.
@@ -271,12 +280,25 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 
 	cur, ok := s.deployments[key]
 	if !ok {
+		// Server-side apply to a missing object creates it (upstream SSA).
+		if r.Header.Get("Content-Type") == contentTypeApplyPatch {
+			in, aok := serverSideApplyTyped(s, w, r, apiVersionAppsV1, &appsv1.Deployment{})
+			if !aok {
+				return
+			}
+
+			in.Name = name
+			s.createDeploymentLocked(w, r, namespace, in)
+
+			return
+		}
+
 		writeNotFound(w, "k8s api: deployment not found: "+key)
 
 		return
 	}
 
-	patched, ok := applyJSONPatch(w, r, cur)
+	patched, ok := applyOrPatchTyped(s, w, r, apiVersionAppsV1, cur)
 	if !ok {
 		return
 	}
@@ -285,6 +307,17 @@ func (s *ClusterState) patchDeployment(w http.ResponseWriter, r *http.Request, n
 	patched.Generation = generationFor(cur.Generation, &patched.Spec, &cur.Spec)
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
+	// A patch that drops the last finalizer from a Terminating object completes
+	// the delete (the patch was merged onto cur, so it inherits deletionTimestamp).
+	if finalizersDrained(&patched.ObjectMeta) {
+		delete(s.deployments, key)
+		s.garbageCollectLocked(patched.UID)
+		s.wDeployments.publish(EventDeleted, namespace, *patched.DeepCopy())
 		writeJSON(w, http.StatusOK, patched)
 
 		return
@@ -321,6 +354,16 @@ func (s *ClusterState) deleteDeployment(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, dep.DeepCopy())
+
+		return
+	}
+
+	// Finalizer-gated deletion: a Deployment with finalizers goes Terminating and
+	// is removed only when the last finalizer is dropped via update/patch.
+	if s.markForDeletion(&dep.ObjectMeta) {
+		dep.ResourceVersion = bumpResourceVersion(dep.ResourceVersion)
+		s.wDeployments.publish(EventModified, namespace, *dep.DeepCopy())
 		writeJSON(w, http.StatusOK, dep.DeepCopy())
 
 		return

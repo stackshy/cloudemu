@@ -103,6 +103,15 @@ func (s *ClusterState) createSecret(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.createSecretLocked(w, r, namespace, &in)
+}
+
+// createSecretLocked persists a new Secret. The caller holds s.mu. Shared by the
+// POST create path and server-side apply-create.
+func (s *ClusterState) createSecretLocked(w http.ResponseWriter, r *http.Request, namespace string, in *corev1.Secret) {
 	if in.Name == "" {
 		writeBadRequest(w, "k8s api: secret: metadata.name is required")
 
@@ -111,12 +120,9 @@ func (s *ClusterState) createSecret(w http.ResponseWriter, r *http.Request, name
 
 	in.Namespace = namespace
 
-	mergeStringData(&in)
+	mergeStringData(in)
 
 	key := secretKey(namespace, in.Name)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, ok := s.secrets[key]; ok {
 		writeAlreadyExists(w, "k8s api: secret already exists: "+key)
@@ -132,12 +138,12 @@ func (s *ClusterState) createSecret(w http.ResponseWriter, r *http.Request, name
 	}
 
 	if isDryRun(r) {
-		writeJSON(w, http.StatusCreated, &in)
+		writeJSON(w, http.StatusCreated, in)
 
 		return
 	}
 
-	sec := in
+	sec := *in
 	s.secrets[key] = &sec
 	s.wSecrets.publish(EventAdded, namespace, *sec.DeepCopy())
 	writeJSON(w, http.StatusCreated, &sec)
@@ -268,12 +274,25 @@ func (s *ClusterState) patchSecret(w http.ResponseWriter, r *http.Request, names
 
 	cur, ok := s.secrets[key]
 	if !ok {
+		// Server-side apply to a missing object creates it (upstream SSA).
+		if r.Header.Get("Content-Type") == contentTypeApplyPatch {
+			in, aok := serverSideApplyTyped(s, w, r, apiVersionV1, &corev1.Secret{})
+			if !aok {
+				return
+			}
+
+			in.Name = name
+			s.createSecretLocked(w, r, namespace, in)
+
+			return
+		}
+
 		writeNotFound(w, "k8s api: secret not found: "+key)
 
 		return
 	}
 
-	patched, ok := applyJSONPatch(w, r, cur)
+	patched, ok := applyOrPatchTyped(s, w, r, apiVersionV1, cur)
 	if !ok {
 		return
 	}
@@ -281,6 +300,16 @@ func (s *ClusterState) patchSecret(w http.ResponseWriter, r *http.Request, names
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
+	// A patch that drops the last finalizer from a Terminating object completes
+	// the delete (the patch was merged onto cur, so it inherits deletionTimestamp).
+	if finalizersDrained(&patched.ObjectMeta) {
+		delete(s.secrets, key)
+		s.wSecrets.publish(EventDeleted, namespace, *patched.DeepCopy())
 		writeJSON(w, http.StatusOK, patched)
 
 		return
@@ -305,6 +334,16 @@ func (s *ClusterState) deleteSecret(w http.ResponseWriter, r *http.Request, name
 	}
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, sec.DeepCopy())
+
+		return
+	}
+
+	// Finalizer-gated deletion: a Secret with finalizers goes Terminating and is
+	// removed only when the last finalizer is dropped via update/patch.
+	if s.markForDeletion(&sec.ObjectMeta) {
+		sec.ResourceVersion = bumpResourceVersion(sec.ResourceVersion)
+		s.wSecrets.publish(EventModified, namespace, *sec.DeepCopy())
 		writeJSON(w, http.StatusOK, sec.DeepCopy())
 
 		return
