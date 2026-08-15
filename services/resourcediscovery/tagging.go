@@ -194,8 +194,8 @@ func parseSecretsARN(arn, resource string) (parsedARN, error) {
 }
 
 // parseSNSARN accepts arn:aws:sns:region:account:topic-name. Subscription ARNs
-// (…:topic:subscription-id, which contain a '/') are rejected — they are not a
-// taggable resource.
+// (whose resource segment is "subscription/<id>", containing a '/') are
+// rejected — a subscription is not a taggable resource.
 func parseSNSARN(arn, resource string) (parsedARN, error) {
 	if resource == "" || strings.ContainsRune(resource, '/') {
 		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "expected SNS topic ARN, got %q", arn)
@@ -465,7 +465,8 @@ func (e *Engine) resolveQueueURL(ctx context.Context, name string) (string, erro
 func driverAs[T any](driver any, name string) (T, error) {
 	var zero T
 
-	// A nil interface value, or a typed-nil driver, both mean "not configured".
+	// An unconfigured driver is stored as a nil interface field (the engine
+	// never wraps a typed-nil pointer), so this catches the "not wired" case.
 	if driver == nil {
 		return zero, cerrors.Newf(cerrors.FailedPrecondition, "%s driver not configured on engine", name)
 	}
