@@ -3,7 +3,7 @@
 `cloudemu serve` runs the emulator as a long-lived, out-of-process HTTP server.
 Point real AWS, Azure, and GCP SDK clients — in any language — at the printed
 endpoints and they talk to cloudemu over the network exactly as they would to
-the real cloud. No accounts, no Docker, no code changes.
+the real cloud. No accounts, no network, no code changes.
 
 This is the "local dev cloud" mode. The in-process test-double API
 (`cloudemu.NewAWS()`, `awsserver.New(Drivers{…})`) is unchanged and still the

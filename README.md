@@ -5,127 +5,85 @@
   </picture>
 </p>
 
-<p align="center"><b>Zero-Cost In-Memory Cloud Emulation for Go</b></p>
+<p align="center"><b>In-memory AWS, Azure &amp; GCP — run it as a local cloud, or mock in-process.</b><br/>Any language. $0. Deterministic. Resettable.</p>
 
 <p align="center">
+  <a href="https://github.com/stackshy/cloudemu/pkgs/container/cloudemu"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fstackshy%2Fcloudemu-2496ED?logo=docker&logoColor=white" alt="Docker Image"></a>
   <a href="https://pkg.go.dev/github.com/stackshy/cloudemu/v2"><img src="https://pkg.go.dev/badge/github.com/stackshy/cloudemu/v2.svg" alt="Go Reference"></a>
   <a href="https://goreportcard.com/report/github.com/stackshy/cloudemu/v2"><img src="https://goreportcard.com/badge/github.com/stackshy/cloudemu/v2" alt="Go Report Card"></a>
   <a href="https://github.com/stackshy/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go Version">
   <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP-orange" alt="Providers">
   <img src="https://img.shields.io/badge/cost-$0-brightgreen" alt="Zero Cost">
 </p>
 
 ---
 
-## What it does
+## What it is
 
-cloudemu emulates AWS, Azure, and GCP cloud services entirely in memory, so you can test cloud-dependent code without real accounts, Docker, or network calls.
+cloudemu emulates the **cloud APIs** of AWS, Azure, and GCP entirely in memory. Point the real cloud SDKs — in any language — at a local endpoint and your unmodified app code runs against an in-memory backend. No accounts, no network, no bill.
 
-It ships two surfaces you can mix and match:
+It models the cloud **control surfaces** — the APIs your code actually calls — with real request/response behavior, so the same production code path runs against an in-memory backend. That's what makes it instant, deterministic, and resettable, at $0.
 
-- **SDK-compat HTTP server** — point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, `cloud.google.com/go`, or `databricks-sdk-go` clients at a local endpoint and they just work. No code changes in your app.
-- **Go API** — typed in-memory mocks (`aws.S3`, `azure.VirtualMachines`, `gcp.GCE`, …) for tests written against cloudemu directly.
+## Three ways to run it
 
-## What it is / isn't
+1. **Standalone server / Docker** — `docker run … ghcr.io/stackshy/cloudemu` (or `cloudemu serve`). A long-lived local cloud you point **any app, any language** at. LocalStack-style.
+2. **SDK-compat HTTP server** (in-process, Go) — a `httptest.NewServer` your Go tests point the real SDKs at.
+3. **Go API** — typed in-memory mocks (`aws.S3`, `azure.VirtualMachines`, `gcp.GCE`, …) driven directly.
 
-cloudemu emulates cloud **control surfaces** — the APIs — so your code exercises real request/response behavior without a real account. It is **not** a cloud.
+## Quickstart (Docker)
 
-**It does:**
-- ✅ Emulate cloud **APIs** for fast, deterministic, Docker-free testing — via the Go API, the SDK-compat HTTP server, the standalone `serve` process, and an in-memory Kubernetes API with built-in controllers.
-- ✅ Keep all state in process memory, with a fake clock and deterministic IDs for reproducible tests.
-
-**It does not:**
-- ❌ **Run real workloads or containers.** Kubernetes controllers converge synchronously (no scheduler/kubelet); there is no real `kubectl logs`/`exec`, no container runtime, no VM.
-- ❌ **Serve real traffic.** A created load balancer, DNS record, or queue models the API object — it does not route packets or deliver over the network.
-- ❌ **Authenticate or authorize requests.** Any credentials are accepted and signatures are not verified. The IAM service evaluates policies only when you explicitly call it; it does not gate other services' operations.
-- ❌ **Enforce quotas, limits, or billing.**
-- ❌ **Persist state across restarts.** Everything is in memory and gone when the process exits.
-
-Per-service "Not in scope" notes live alongside each service in the generated [capability coverage](docs/coverage/README.md).
-
-## Install
-
-```bash
-go get github.com/stackshy/cloudemu/v2
+```sh
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
+  ghcr.io/stackshy/cloudemu:latest
+#   AWS         http://127.0.0.1:4566
+#   Azure       https://127.0.0.1:4568   (self-signed TLS)
+#   GCP         http://127.0.0.1:4569
+#   Kubernetes  https://127.0.0.1:4570
 ```
 
-Requires Go 1.25+.
+Then point your existing SDK or CLI at it — nothing cloudemu-specific. cloudemu accepts any credentials, but the AWS CLI still needs some set in its chain:
 
-## How it works (SDK-compat)
+```sh
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
+aws --endpoint-url http://127.0.0.1:4566 s3 mb s3://demo
+aws --endpoint-url http://127.0.0.1:4566 s3 ls
+```
 
-Most apps already use the official cloud SDKs. cloudemu speaks the same wire protocols (AWS Query/JSON/Smithy, Azure ARM, GCP REST) over a local `httptest.NewServer`. Change the SDK endpoint, and the same production code runs against an in-memory backend.
+The Kubernetes control plane hands back a real kubeconfig, so `kubectl apply -f deployment.yaml` then `kubectl get pods` round-trips end-to-end against the in-memory cluster. Reset all state between tests with `curl -X POST http://127.0.0.1:4566/_cloudemu/reset`.
+
+Full flags, ports, per-SDK wiring, and the [Testcontainers module](https://github.com/stackshy/cloudemu/tree/development/contrib/testcontainers) (auto start/stop in Go tests): [docs/standalone-server.md](docs/standalone-server.md).
+
+## In-process (Go)
+
+For Go tests, run the emulator inside your process — no container. cloudemu speaks the same wire protocols over a local `httptest.NewServer`, so you just change the SDK endpoint:
 
 ```go
-import (
-    "net/http/httptest"
-
-    "github.com/aws/aws-sdk-go-v2/aws"
-    "github.com/aws/aws-sdk-go-v2/service/s3"
-    "github.com/stackshy/cloudemu/v2"
-    awsserver "github.com/stackshy/cloudemu/v2/server/aws"
-)
-
 cloud := cloudemu.NewAWS()
 ts := httptest.NewServer(awsserver.New(awsserver.Drivers{
-    S3:       cloud.S3,
-    DynamoDB: cloud.DynamoDB,
-    EC2:      cloud.EC2,
-    RDS:      cloud.RDS,
-    EKS:      cloud.EKS,
-    // …leave fields nil to omit a service
+    S3: cloud.S3, DynamoDB: cloud.DynamoDB, EC2: cloud.EC2, // nil fields omit a service
 }))
 defer ts.Close()
 
+ctx := context.Background()
+cfg, _ := config.LoadDefaultConfig(ctx) // credentials/region are ignored
 client := s3.NewFromConfig(cfg, func(o *s3.Options) {
     o.BaseEndpoint = aws.String(ts.URL)
     o.UsePathStyle = true
 })
-
 client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory backend
 ```
 
-Equivalent setups for Azure (`azureserver.New`) and GCP (`gcpserver.New`) are in [docs/sdk-server.md](docs/sdk-server.md).
+Or skip the SDK and call the typed Go API directly — `cloud.EC2.RunInstances(ctx, …)`, `cloud.S3.PutObject(ctx, …)`.
 
-### Standalone server
+Install: `go get github.com/stackshy/cloudemu/v2` (Go 1.25+). Azure/GCP wiring: [docs/sdk-server.md](docs/sdk-server.md) · adopting it in a real test suite: [docs/integration.md](docs/integration.md).
 
-Prefer a long-lived process you point out-of-process apps at? Run the emulator
-as a server and point any SDK — any language — at the printed endpoints:
+## Why it's fast
 
-```sh
-go run ./cmd/cloudemu serve
-#   AWS         http://127.0.0.1:4566
-#   Azure       https://127.0.0.1:4568   (self-signed TLS)
-#   GCP         http://127.0.0.1:4569
-```
-
-Full flags, port scheme, and per-SDK wiring: [docs/standalone-server.md](docs/standalone-server.md).
-
-The snippet above is a quick taste. To adopt cloudemu in a real app, don't write a demo — wire it into your existing client and tests so your real code runs against it. See [docs/integration.md](docs/integration.md).
-
-## Or use the Go API directly
-
-```go
-aws := cloudemu.NewAWS()
-
-instances, _ := aws.EC2.RunInstances(ctx, driver.InstanceConfig{
-    ImageID:      "ami-0abcdef1234567890",
-    InstanceType: "t2.micro",
-}, 2)
-
-_ = aws.EC2.StopInstances(ctx, []string{instances[0].ID})
-
-desc, _ := aws.EC2.DescribeInstances(ctx, []string{instances[0].ID}, nil)
-// desc[0].State == "stopped"
-```
-
-The same pattern works across all services and all three providers — swap `aws.EC2` for `azure.VirtualMachines` or `gcp.GCE`.
+cloudemu keeps all state in process memory, with a fake clock and deterministic IDs, so tests are reproducible and reset in microseconds. It emulates the API layer — the control surface — rather than provisioning real infrastructure, which is exactly what removes accounts, network, cost, and flakiness from the loop. The precise per-service scope (and the handful of things that are intentionally out of scope, like running real containers or serving live traffic) is documented alongside each service in the generated [capability coverage](docs/coverage/README.md).
 
 ## What's supported
 
 The authoritative, always-current list is the generated [capability coverage](docs/coverage/README.md) — one page listing every service and every operation, produced from the driver interfaces by `go generate` so it cannot drift. The table below is a curated overview.
-
-SDK-compat coverage across AWS, Azure, and GCP:
 
 | Domain | AWS | Azure | GCP |
 |---|---|---|---|
@@ -155,30 +113,27 @@ SDK-compat coverage across AWS, Azure, and GCP:
 | AI Search | — | Azure AI Search | — |
 | Databricks | — | Databricks (ARM workspace + workspace data plane) | — |
 
-The Kubernetes story is two layers, both shipped:
+**Kubernetes is two layers, both shipped:**
 
 - **Control plane** (EKS / AKS / GKE) — cluster, node-pool, addon / Fargate / maintenance-config lifecycle via the real cloud SDKs.
-- **Data plane** (in-memory Kubernetes API) — core, apps, batch, networking, rbac, storage, autoscaling, policy, discovery, **apiextensions** (CRDs) and **admissionregistration** kinds. Supports CRUD, all patch types + **server-side apply** (field ownership + conflicts), `?dryRun=All`, finalizers, `limit`/`continue` pagination, watch streaming with `resourceVersion` resume + BOOKMARK — so real `client-go` `Informer`/`Reflector` machinery works against a cloudemu-emulated cluster. Kubeconfigs returned by the control plane point at the in-memory data plane — `kubectl apply -f deployment.yaml` followed by `kubectl get pods` round-trips end-to-end.
+- **Data plane** (in-memory Kubernetes API) — core, apps, batch, networking, rbac, storage, autoscaling, policy, discovery, **apiextensions** (CRDs) and **admissionregistration** kinds. CRUD, all patch types + **server-side apply** (field ownership + conflicts), `?dryRun=All`, finalizers, `limit`/`continue` pagination, watch streaming with `resourceVersion` resume + BOOKMARK — so real `client-go` `Informer`/`Reflector` machinery works against a cloudemu cluster. There's no scheduler or kubelet, so controllers converge **synchronously** — a Deployment materializes Pods straight to Running, a Job to Succeeded, Services get Endpoints, on every write. It also serves **`metrics.k8s.io`** + **HPA** actuation, **ResourceQuota** / **LimitRange** / **PDB-gated eviction**, **RBAC** SubjectAccessReview + **NetworkPolicy** evaluation, and **opt-in admission webhooks**. See [docs/services.md](docs/services.md) §18.
 
-Emulation model: there is no scheduler or kubelet, so controllers converge **synchronously** — a Deployment interposes a ReplicaSet and materializes Pods straight to Running (a Job's straight to Succeeded), and Services get Endpoints, on every write. On top of the raw object store it also serves **CRDs** (dynamic servable kinds), **`metrics.k8s.io`** + **HPA** actuation, object-count **ResourceQuota** / **LimitRange** / **PDB-gated eviction** enforcement, **RBAC** SubjectAccessReview + **NetworkPolicy** evaluation, and **opt-in admission webhooks**. See [docs/services.md](docs/services.md) §18 for the authoritative capability list.
-
-Full per-service operation list: [docs/services.md](docs/services.md).
-Per-handler protocol details and limitations: [docs/sdk-server.md](docs/sdk-server.md).
+Full per-service operation list: [docs/services.md](docs/services.md). Per-handler protocol details: [docs/sdk-server.md](docs/sdk-server.md).
 
 ## More
 
 - [docs/getting-started.md](docs/getting-started.md) — set up a test in 5 minutes
+- [docs/standalone-server.md](docs/standalone-server.md) — run the local dev cloud (Docker, flags, ports)
 - [docs/architecture.md](docs/architecture.md) — three-layer design, factory wiring
 - [docs/features.md](docs/features.md) — auto-metrics, alarm evaluation, IAM policy evaluation, FIFO dedup, error injection, fake clock
 - [docs/chaos.md](docs/chaos.md) — deliberately fail or slow down services to test retry/timeout paths
 - [docs/topology.md](docs/topology.md) — network connectivity simulation across VPC, peering, SGs, ACLs
 
-## Tests
+## Contributing
 
-```bash
-go build ./...
-go test ./...
-```
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, the branch-from-`development` flow, and the lint/coverage bar. Please also read the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Questions or bugs? Open a [GitHub issue](https://github.com/stackshy/cloudemu/issues). For security reports, follow [SECURITY.md](SECURITY.md).
 
 ## License
 
