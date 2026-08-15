@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
@@ -140,4 +141,122 @@ func runKubectl(t *testing.T, kubectlPath, kubeconfig string, args ...string) {
 	if err != nil {
 		t.Fatalf("kubectl %v: %v\n%s", args, err, out)
 	}
+}
+
+// TestKubectlServerSideApply drives real kubectl through server-side apply
+// against a temporary in-memory cluster: apply-create on a fresh cluster, a
+// field-ownership conflict resolved with --force-conflicts, and a
+// finalizer-gated delete that completes when the finalizer is dropped.
+func TestKubectlServerSideApply(t *testing.T) {
+	kubectlPath, err := exec.LookPath("kubectl")
+	if err != nil {
+		t.Skip("kubectl not found on PATH; skipping kubectl e2e")
+	}
+
+	api := kubernetes.NewAPIServer()
+	ts := httptest.NewServer(api)
+	t.Cleanup(ts.Close)
+	api.SetBaseURL(ts.URL)
+
+	uid, _ := api.RegisterCluster()
+	kc := writeSmokeKubeconfig(t, ts.URL, uid)
+
+	// 1. Server-side apply-create: apply a ConfigMap that does not exist yet.
+	settingsBlue := writeManifest(t, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settings
+  namespace: default
+data:
+  color: blue
+`)
+	runKubectl(t, kubectlPath, kc, "apply", "--server-side", "--field-manager=alice", "-f", settingsBlue)
+
+	if got := kubectlOut(t, kubectlPath, kc, "get", "configmap", "settings",
+		"-o", "jsonpath={.data.color}"); got != "blue" {
+		t.Fatalf("apply-create: data.color=%q, want blue", got)
+	}
+
+	// 2. Field ownership + conflict: bob changing alice's owned field must fail,
+	//    and --force-conflicts must win.
+	settingsRed := writeManifest(t, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settings
+  namespace: default
+data:
+  color: red
+`)
+	if _, err := kubectlRaw(kubectlPath, kc, "apply", "--server-side",
+		"--field-manager=bob", "-f", settingsRed); err == nil {
+		t.Fatal("expected bob's conflicting server-side apply to fail, but it succeeded")
+	}
+
+	runKubectl(t, kubectlPath, kc, "apply", "--server-side",
+		"--field-manager=bob", "--force-conflicts", "-f", settingsRed)
+
+	if got := kubectlOut(t, kubectlPath, kc, "get", "configmap", "settings",
+		"-o", "jsonpath={.data.color}"); got != "red" {
+		t.Fatalf("forced apply: data.color=%q, want red", got)
+	}
+
+	// 3. Finalizers: a ConfigMap with a finalizer must go Terminating on delete
+	//    (not hard-deleted), and dropping the finalizer completes the delete.
+	guarded := writeManifest(t, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guarded
+  namespace: default
+  finalizers:
+  - cloudemu.dev/hold
+data:
+  k: v
+`)
+	runKubectl(t, kubectlPath, kc, "apply", "--server-side", "--field-manager=alice", "-f", guarded)
+	runKubectl(t, kubectlPath, kc, "delete", "configmap", "guarded", "--wait=false")
+
+	if got := kubectlOut(t, kubectlPath, kc, "get", "configmap", "guarded",
+		"-o", "jsonpath={.metadata.deletionTimestamp}"); got == "" {
+		t.Fatal("finalizer-gated delete: deletionTimestamp is empty; object was hard-deleted")
+	}
+
+	runKubectl(t, kubectlPath, kc, "patch", "configmap", "guarded",
+		"--type=merge", "-p", `{"metadata":{"finalizers":[]}}`)
+
+	if _, err := kubectlRaw(kubectlPath, kc, "get", "configmap", "guarded"); err == nil {
+		t.Fatal("expected NotFound after draining the finalizer, but the object still exists")
+	}
+}
+
+// writeManifest writes a manifest to a temp file and returns its path.
+func writeManifest(t *testing.T, body string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "manifest.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	return path
+}
+
+// kubectlOut runs kubectl and returns trimmed combined output, failing on error.
+func kubectlOut(t *testing.T, kubectlPath, kubeconfig string, args ...string) string {
+	t.Helper()
+
+	out, err := kubectlRaw(kubectlPath, kubeconfig, args...)
+	if err != nil {
+		t.Fatalf("kubectl %v: %v\n%s", args, err, out)
+	}
+
+	return strings.TrimSpace(out)
+}
+
+// kubectlRaw runs kubectl with the kubeconfig and returns combined output and
+// error without failing the test — for cases that expect a non-zero exit.
+func kubectlRaw(kubectlPath, kubeconfig string, args ...string) (string, error) {
+	cmdArgs := append([]string{"--kubeconfig=" + kubeconfig}, args...)
+	out, err := exec.Command(kubectlPath, cmdArgs...).CombinedOutput()
+
+	return string(out), err
 }

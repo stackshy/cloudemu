@@ -100,13 +100,23 @@ func (s *ClusterState) serveConfigMapItem(w http.ResponseWriter, r *http.Request
 	}
 }
 
-//nolint:dupl // namespaced-create CRUD pattern; copy-paste is clearer than a generic helper.
 func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, namespace string) {
 	var in corev1.ConfigMap
 	if !readJSON(w, r, &in) {
 		return
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.createConfigMapLocked(w, r, namespace, &in)
+}
+
+// createConfigMapLocked persists a new ConfigMap. The caller holds s.mu. It is
+// shared by the POST create path and server-side apply-create (an apply to a
+// name that doesn't exist yet), which passes an object already carrying its
+// Apply managedFields entry.
+func (s *ClusterState) createConfigMapLocked(w http.ResponseWriter, r *http.Request, namespace string, in *corev1.ConfigMap) {
 	if in.Name == "" {
 		writeBadRequest(w, "k8s api: configmap: metadata.name is required")
 
@@ -118,9 +128,6 @@ func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, n
 
 	key := configMapKey(namespace, in.Name)
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, ok := s.configMaps[key]; ok {
 		writeAlreadyExists(w, "k8s api: configmap already exists: "+key)
 
@@ -131,12 +138,12 @@ func (s *ClusterState) createConfigMap(w http.ResponseWriter, r *http.Request, n
 	in.TypeMeta = metav1.TypeMeta{Kind: "ConfigMap", APIVersion: "v1"}
 
 	if isDryRun(r) {
-		writeJSON(w, http.StatusCreated, &in)
+		writeJSON(w, http.StatusCreated, in)
 
 		return
 	}
 
-	cm := in
+	cm := *in
 	s.configMaps[key] = &cm
 	s.wConfigMaps.publish(EventAdded, namespace, *cm.DeepCopy())
 	writeJSON(w, http.StatusCreated, &cm)
@@ -266,12 +273,25 @@ func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, na
 
 	cur, ok := s.configMaps[key]
 	if !ok {
+		// Server-side apply to a missing object creates it (upstream SSA).
+		if r.Header.Get("Content-Type") == contentTypeApplyPatch {
+			in, aok := serverSideApplyTyped(s, w, r, apiVersionV1, &corev1.ConfigMap{})
+			if !aok {
+				return
+			}
+
+			in.Name = name
+			s.createConfigMapLocked(w, r, namespace, in)
+
+			return
+		}
+
 		writeNotFound(w, "k8s api: configmap not found: "+key)
 
 		return
 	}
 
-	patched, ok := applyJSONPatch(w, r, cur)
+	patched, ok := applyOrPatchTyped(s, w, r, apiVersionV1, cur)
 	if !ok {
 		return
 	}
@@ -279,6 +299,16 @@ func (s *ClusterState) patchConfigMap(w http.ResponseWriter, r *http.Request, na
 	patched.ResourceVersion = bumpResourceVersion(cur.ResourceVersion)
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, patched)
+
+		return
+	}
+
+	// A patch that drops the last finalizer from a Terminating object completes
+	// the delete (the patch was merged onto cur, so it inherits deletionTimestamp).
+	if finalizersDrained(&patched.ObjectMeta) {
+		delete(s.configMaps, key)
+		s.wConfigMaps.publish(EventDeleted, namespace, *patched.DeepCopy())
 		writeJSON(w, http.StatusOK, patched)
 
 		return
@@ -303,6 +333,16 @@ func (s *ClusterState) deleteConfigMap(w http.ResponseWriter, r *http.Request, n
 	}
 
 	if isDryRun(r) {
+		writeJSON(w, http.StatusOK, cm.DeepCopy())
+
+		return
+	}
+
+	// Finalizer-gated deletion: a ConfigMap with finalizers goes Terminating and
+	// is removed only when the last finalizer is dropped via update/patch.
+	if s.markForDeletion(&cm.ObjectMeta) {
+		cm.ResourceVersion = bumpResourceVersion(cm.ResourceVersion)
+		s.wConfigMaps.publish(EventModified, namespace, *cm.DeepCopy())
 		writeJSON(w, http.StatusOK, cm.DeepCopy())
 
 		return
