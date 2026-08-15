@@ -169,6 +169,18 @@ func TestServerSideApplyCreate(t *testing.T) {
 		gd.Body.Close()
 	}
 
+	// The headline of apply-create is that it preserves per-kind reconcile — the
+	// Deployment must materialize its Pods, not just store the object. Assert the
+	// child Pod count == spec.replicas so a future change to the apply-create
+	// path can't silently stop reconciling while this test stays green.
+	pl := do(t, http.MethodGet, base+"/api/v1/namespaces/default/pods?labelSelector=app%3Dweb", nil)
+	pods := decodeMap(t, pl.Body)
+	pl.Body.Close()
+
+	if items, _ := pods["items"].([]any); len(items) != 1 {
+		t.Fatalf("apply-create Deployment materialized %d Pods, want 1 (spec.replicas)", len(items))
+	}
+
 	// Registry: apply to a NetworkPolicy that does not exist yet.
 	npURL := base + "/apis/networking.k8s.io/v1/namespaces/default/networkpolicies/freshnp"
 	rr := apply(t, npURL, "kubectl", false, map[string]any{
