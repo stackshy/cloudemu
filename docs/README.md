@@ -1,6 +1,6 @@
 # CloudEmu Documentation
 
-CloudEmu is a zero-cost, in-memory cloud emulation library for Go. It provides mock implementations of cloud services across AWS, Azure, and GCP -- designed for testing and development without real cloud accounts, Docker, or network calls.
+CloudEmu is a zero-cost, in-memory emulation of the AWS, Azure, and GCP cloud APIs. Run it as a standalone server (`cloudemu serve` or the `ghcr.io/stackshy/cloudemu` Docker image) and point any app in any language at a local endpoint, or use it in-process from Go via the SDK-compat HTTP server or the typed mock API -- for testing and development without real cloud accounts, network, or bill.
 
 ## Table of Contents
 
@@ -9,6 +9,7 @@ CloudEmu is a zero-cost, in-memory cloud emulation library for Go. It provides m
 - [Services](services.md) -- Complete provider resource reference with all operations across every supported service
 - [Features](features.md) -- Cross-cutting features: auto-metrics, alarm evaluation, IAM policy checking, FIFO dedup, cost tracking, and more
 - [SDK Server](sdk-server.md) -- SDK-compatible HTTP server (use the real aws-sdk-go-v2 against CloudEmu)
+- [Standalone Server](standalone-server.md) -- Run CloudEmu as a local dev cloud (`cloudemu serve` / Docker), point any language at it
 - [Integration](integration.md) -- Wire CloudEmu into your real app and tests (not a throwaway demo)
 - [Topology](topology.md) -- Network topology simulation engine
 - [Getting Started](getting-started.md) -- Installation, provider creation, basic examples, configuration

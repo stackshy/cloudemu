@@ -1,6 +1,6 @@
 # cloudemu
 
-> Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs** for Go tests. Point the real cloud SDKs at a local endpoint, or use typed Go mocks directly — no accounts, Docker, or network calls. It emulates control surfaces, not a real cloud: it does not run workloads, serve traffic, authenticate requests, enforce quotas, or persist across restarts.
+> Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs**. Run it as a standalone server (binary or the `ghcr.io/stackshy/cloudemu` Docker image) and point any app in any language at a local endpoint, or use it in-process from Go (SDK-compat HTTP server, or typed mocks driven directly) — no accounts, no network, no bill. It emulates control surfaces, not a real cloud: it does not run workloads, serve traffic, authenticate requests, enforce quotas, or persist across restarts.
 
 ## Capabilities (start here)
 
@@ -9,7 +9,8 @@
 
 ## Docs
 
-- [README](README.md): what cloudemu is / isn't, install, quickstarts for the SDK-compat server and the Go API.
+- [README](README.md): what cloudemu is / isn't, the three ways to run it (Docker/standalone, SDK-compat HTTP server, Go API), and quickstarts for each.
+- [Standalone server](docs/standalone-server.md): run cloudemu as a local dev cloud via `cloudemu serve` or the Docker image — the "point any app in any language at it" mode.
 - [Getting started](docs/getting-started.md): set up a test in five minutes.
 - [Architecture](docs/architecture.md): the three-layer design (portable API → driver interfaces → provider backends) and provider status (AWS/Azure/GCP implemented; OCI foundation only).
 - [SDK-compat server](docs/sdk-server.md): per-handler wire-protocol details and limitations.
@@ -21,4 +22,3 @@
 - [Features](docs/features.md): auto-metrics, alarm evaluation, IAM policy evaluation, FIFO dedup, error injection, fake clock.
 - [Chaos](docs/chaos.md): deliberately fail or slow services to test retry/timeout paths.
 - [Topology](docs/topology.md): network connectivity simulation across VPC, peering, security groups, ACLs.
-- [Standalone server](docs/standalone-server.md): run the emulator as a long-lived process for out-of-process apps.
