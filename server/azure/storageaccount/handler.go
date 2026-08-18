@@ -85,8 +85,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An empty resource name is a collection path — a subscription- or
+	// resource-group-scoped list (…/storageAccounts). Route it to the list
+	// handler rather than rejecting it, so a management-plane inventory sees
+	// accounts created by PUT (matching real Azure and the disks/vnet handlers).
 	if rp.ResourceName == "" {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "storage account name required")
+		h.serveCollection(w, r, &rp)
 		return
 	}
 
@@ -100,6 +104,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
+}
+
+// serveCollection lists storage accounts at the subscription or resource-group
+// scope (GET …/storageAccounts). Real Azure returns every account in scope in a
+// {"value":[…]} envelope; the emulator is single-estate, so it lists every
+// stored account under the requested scope.
+func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if r.Method != http.MethodGet {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	buckets, err := h.bucket.ListBuckets(r.Context())
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	out := make([]armAccount, 0, len(buckets))
+
+	for i := range buckets {
+		scope := *rp
+		scope.ResourceName = buckets[i].Name
+		// A subscription-scoped list carries no resource group; the mock doesn't
+		// track which group a bucket was created under, so stamp the default
+		// group rather than emitting an id with an empty "resourceGroups//".
+		if scope.ResourceGroup == "" {
+			scope.ResourceGroup = "default"
+		}
+
+		out = append(out, h.toARMAccount(r.Context(), &scope, defaultLocation, nil))
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, armAccountList{Value: out})
 }
 
 func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
