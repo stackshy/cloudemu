@@ -16,6 +16,10 @@
   <img src="https://img.shields.io/badge/cost-$0-brightgreen" alt="Zero Cost">
 </p>
 
+<p align="center">
+  <a href="http://zop.dev/zopday/"><img src="https://zop.dev/deploytozopday-inkhard.svg" alt="Deploy to Zopday"></a>
+</p>
+
 ---
 
 ## What it is
