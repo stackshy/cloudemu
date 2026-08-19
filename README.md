@@ -14,6 +14,9 @@
   <a href="https://github.com/stackshy/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP-orange" alt="Providers">
   <img src="https://img.shields.io/badge/cost-$0-brightgreen" alt="Zero Cost">
+</p>
+
+<p align="center">
   <a href="http://zop.dev/zopday/"><img src="https://zop.dev/deploytozopday-inkhard.svg" alt="Deploy to Zopday"></a>
 </p>
 
