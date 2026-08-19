@@ -114,13 +114,24 @@ func TestSDKResourceGraph(t *testing.T) {
 		assert.Len(t, data, 1, "the one VNet we seeded")
 	})
 
-	t.Run("subscription scoping — wrong sub returns empty", func(t *testing.T) {
+	t.Run("single-tenant: any scoped subscription sees the estate, rendered under it", func(t *testing.T) {
+		// The emulator serves one estate and the management plane accepts any
+		// subscription on create (echoing it into the resource id). So a scoped
+		// Resource Graph query returns that estate rendered under whichever
+		// subscription the caller used — "create under sub X, discover under
+		// sub X" stays consistent for a real client that picked its own GUID.
 		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
 			Query:         to.Ptr("Resources"),
-			Subscriptions: []*string{to.Ptr("some-other-sub")},
+			Subscriptions: []*string{to.Ptr("00000000-0000-0000-0000-000000000000")},
 		}, nil)
 		require.NoError(t, err)
-		assert.EqualValues(t, 0, *out.TotalRecords)
+		require.NotZero(t, *out.TotalRecords, "the estate is visible under the requested subscription")
+
+		row := out.Data.([]any)[0].(map[string]any)
+		assert.Equal(t, "00000000-0000-0000-0000-000000000000", row["subscriptionId"],
+			"resources are stamped with the subscription the query scoped to")
+		assert.Contains(t, row["id"].(string), "/subscriptions/00000000-0000-0000-0000-000000000000/",
+			"the resource id is rewritten under the requested subscription")
 	})
 
 	t.Run("limit clause caps results", func(t *testing.T) {

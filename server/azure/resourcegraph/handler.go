@@ -84,10 +84,13 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.subscriptionAllowed(req.Subscriptions) {
-		azurearm.WriteJSON(w, http.StatusOK, emptyResponse())
-		return
-	}
+	// The emulator serves a single estate, and the management plane accepts any
+	// subscription a client uses (it echoes it straight back into the resource
+	// id). So Resource Graph is subscription-transparent: it never rejects a
+	// requested subscription — it reports the estate under whichever one the
+	// caller scoped to, so "create under sub X" then "discover under sub X"
+	// stays consistent for every service.
+	subscription := h.effectiveSubscription(req.Subscriptions)
 
 	parsed := parseKQL(req.Query)
 
@@ -108,7 +111,7 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 
 	data := make([]map[string]any, 0, len(results))
 	for i := range results {
-		data = append(data, h.resourceToWire(&results[i]))
+		data = append(data, resourceToWire(&results[i], subscription))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
@@ -155,23 +158,18 @@ func operationDescriptor(name, resource, op, desc string) map[string]any {
 	}
 }
 
-// subscriptionAllowed returns true if the request's subscription list is
-// empty (caller doesn't care about scoping) or includes this handler's
-// subscription ID. Mismatch returns an empty result rather than an error,
-// matching real Resource Graph behavior when the caller scopes to
-// subscriptions they can't see.
-func (h *Handler) subscriptionAllowed(reqSubs []string) bool {
-	if len(reqSubs) == 0 {
-		return true
+// effectiveSubscription reports the subscription id the estate is rendered
+// under for this query. The emulator is single-tenant, so it does not partition
+// resources by subscription: when the caller scopes to exactly one subscription
+// the estate is reported under that one (so the ids a client sees match the
+// subscription it created resources under, and its own scoped queries match);
+// otherwise it falls back to the handler's configured subscription.
+func (h *Handler) effectiveSubscription(reqSubs []string) string {
+	if len(reqSubs) == 1 && reqSubs[0] != "" {
+		return reqSubs[0]
 	}
 
-	for _, s := range reqSubs {
-		if s == h.subscriptionID {
-			return true
-		}
-	}
-
-	return false
+	return h.subscriptionID
 }
 
 func emptyResponse() map[string]any {
@@ -215,19 +213,19 @@ func applyLimit(results []resourcediscovery.Resource, kqlLimit, top, skip int) [
 // slots only when set — the same rendering for every resource type, with no
 // per-type branching. id is the ARM resource ID and resourceGroup is derived
 // from it (real Resource Graph consumers parse both).
-func (h *Handler) resourceToWire(r *resourcediscovery.Resource) map[string]any {
-	// The emulator is single-subscription: every resource belongs to the
-	// configured subscription the ARM clients use. Stamp that, rather than
-	// parsing it out of each mock's ARN — those embed inconsistent placeholders
-	// (empty, a region, a zero id), which would make a subscription-scoped ARG
-	// query return nothing. Fall back to the ARN only when unset.
-	subscription := h.subscriptionID
+func resourceToWire(r *resourcediscovery.Resource, subscription string) map[string]any {
+	// The emulator is single-tenant; each mock's ARN embeds an inconsistent
+	// subscription placeholder (empty, a region, a zero id). Render every
+	// resource under the subscription this query is scoped to, so both the id
+	// and subscriptionId match what the caller (and the management plane, which
+	// echoes the client's subscription on create) uses. Fall back to the ARN's
+	// own subscription only when the query carries none.
 	if subscription == "" {
 		subscription = extractSubscription(r.ARN)
 	}
 
 	out := map[string]any{
-		"id":             r.ARN,
+		"id":             rewriteSubscription(r.ARN, subscription),
 		"name":           r.ID,
 		"type":           portableToAzureType(r.Service, r.Type),
 		"location":       r.Region,
@@ -236,20 +234,7 @@ func (h *Handler) resourceToWire(r *resourcediscovery.Resource) map[string]any {
 		"tags":           tagsOrEmpty(r.Tags),
 	}
 
-	if r.SKU != "" || r.SKUTier != "" || r.SKUCapacity > 0 {
-		sku := map[string]any{}
-		if r.SKU != "" {
-			sku["name"] = r.SKU
-		}
-
-		if r.SKUTier != "" {
-			sku["tier"] = r.SKUTier
-		}
-
-		if r.SKUCapacity > 0 {
-			sku["capacity"] = r.SKUCapacity
-		}
-
+	if sku := skuMap(r); sku != nil {
 		out["sku"] = sku
 	}
 
@@ -270,6 +255,28 @@ func (h *Handler) resourceToWire(r *resourcediscovery.Resource) map[string]any {
 	}
 
 	return out
+}
+
+// skuMap renders a resource's SKU fields, or nil when none are set.
+func skuMap(r *resourcediscovery.Resource) map[string]any {
+	if r.SKU == "" && r.SKUTier == "" && r.SKUCapacity == 0 {
+		return nil
+	}
+
+	sku := map[string]any{}
+	if r.SKU != "" {
+		sku["name"] = r.SKU
+	}
+
+	if r.SKUTier != "" {
+		sku["tier"] = r.SKUTier
+	}
+
+	if r.SKUCapacity > 0 {
+		sku["capacity"] = r.SKUCapacity
+	}
+
+	return sku
 }
 
 // resourceGroupOrDefault pulls the resource group out of an Azure resource ID
@@ -313,6 +320,24 @@ func extractSubscription(arn string) string {
 	}
 
 	return rest
+}
+
+// rewriteSubscription replaces the subscription segment of an Azure resource id
+// with sub, so the id a Resource Graph client sees is scoped to the subscription
+// it queried. An id that isn't subscription-shaped, or an empty sub, is returned
+// unchanged.
+func rewriteSubscription(arn, sub string) string {
+	const prefix = "/subscriptions/"
+	if sub == "" || !strings.HasPrefix(arn, prefix) {
+		return arn
+	}
+
+	rest := arn[len(prefix):]
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return prefix + sub + rest[i:]
+	}
+
+	return prefix + sub
 }
 
 // portableToAzureTypeMap is the inverse of mapAzureType's mapping — the engine's

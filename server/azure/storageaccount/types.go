@@ -33,6 +33,11 @@ type armAccount struct {
 	Properties *armAccountProps  `json:"properties,omitempty"`
 }
 
+// armAccountList is the {"value":[…]} envelope a storage-account list returns.
+type armAccountList struct {
+	Value []armAccount `json:"value"`
+}
+
 type armAccountProps struct {
 	AccessTier        string `json:"accessTier,omitempty"`
 	ProvisioningState string `json:"provisioningState,omitempty"`
