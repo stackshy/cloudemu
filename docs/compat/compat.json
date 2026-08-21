@@ -1,5 +1,1174 @@
 [
   {
+    "service": "cache",
+    "operation": "CreateCache",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Cache",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Memorystore",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cache",
+    "operation": "Decr",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "DecrBy",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "Delete",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "DeleteCache",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Cache",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Memorystore",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cache",
+    "operation": "Expire",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "FlushAll",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "Get",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "GetCache",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Cache",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Memorystore",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cache",
+    "operation": "GetTTL",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "Incr",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "IncrBy",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "Keys",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "ListCaches",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Cache",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Memorystore",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cache",
+    "operation": "Persist",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "Set",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache"
+      },
+      "azure": {
+        "native": "Cache"
+      },
+      "gcp": {
+        "native": "Memorystore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "cache",
+    "operation": "UpdateCache",
+    "providers": {
+      "aws": {
+        "native": "ElastiCache",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Cache",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Memorystore",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "AttachVolume",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "CancelSpotRequests",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "CreateAutoScalingGroup",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "compute",
+    "operation": "CreateImage",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "CreateKeyPair",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "CreateLaunchTemplate",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "CreateSnapshot",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "CreateVolume",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DeleteAutoScalingGroup",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "compute",
+    "operation": "DeleteKeyPair",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DeleteLaunchTemplate",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DeleteScalingPolicy",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "compute",
+    "operation": "DeleteSnapshot",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DeleteVolume",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DeregisterImage",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DescribeImages",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DescribeInstances",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DescribeKeyPairs",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DescribeSnapshots",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DescribeSpotRequests",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DescribeVolumes",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "DetachVolume",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "ExecuteScalingPolicy",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "compute",
+    "operation": "GetAutoScalingGroup",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "compute",
+    "operation": "GetLaunchTemplate",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "ListAutoScalingGroups",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "compute",
+    "operation": "ListLaunchTemplates",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "ModifyInstance",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "PutScalingPolicy",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "compute",
+    "operation": "RebootInstances",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "RequestSpotInstances",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "RunInstances",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "SetDesiredCapacity",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "compute",
+    "operation": "StartInstances",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "StopInstances",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "TerminateInstances",
+    "providers": {
+      "aws": {
+        "native": "EC2",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VirtualMachines",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCE",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "compute",
+    "operation": "UpdateAutoScalingGroup",
+    "providers": {
+      "aws": {
+        "native": "EC2"
+      },
+      "azure": {
+        "native": "VirtualMachines"
+      },
+      "gcp": {
+        "native": "GCE"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "CreateRepository",
+    "providers": {
+      "aws": {
+        "native": "ECR",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "DeleteImage",
+    "providers": {
+      "aws": {
+        "native": "ECR",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "DeleteRepository",
+    "providers": {
+      "aws": {
+        "native": "ECR",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "ACR",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "EvaluateLifecyclePolicy",
+    "providers": {
+      "aws": {
+        "native": "ECR"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "GetImage",
+    "providers": {
+      "aws": {
+        "native": "ECR",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "GetImageScanResults",
+    "providers": {
+      "aws": {
+        "native": "ECR"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "GetLifecyclePolicy",
+    "providers": {
+      "aws": {
+        "native": "ECR"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "GetRepository",
+    "providers": {
+      "aws": {
+        "native": "ECR",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "ACR",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "ListImages",
+    "providers": {
+      "aws": {
+        "native": "ECR",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "ACR",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "ListRepositories",
+    "providers": {
+      "aws": {
+        "native": "ECR",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "ACR",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "PutImage",
+    "providers": {
+      "aws": {
+        "native": "ECR",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "PutLifecyclePolicy",
+    "providers": {
+      "aws": {
+        "native": "ECR"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "StartImageScan",
+    "providers": {
+      "aws": {
+        "native": "ECR"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "containerregistry",
+    "operation": "TagImage",
+    "providers": {
+      "aws": {
+        "native": "ECR"
+      },
+      "azure": {
+        "native": "ACR"
+      },
+      "gcp": {
+        "native": "ArtifactRegistry"
+      }
+    },
+    "status": "amber"
+  },
+  {
     "service": "database",
     "operation": "BatchGetItems",
     "providers": {
@@ -406,6 +1575,289 @@
       }
     },
     "status": "amber"
+  },
+  {
+    "service": "dns",
+    "operation": "CreateHealthCheck",
+    "providers": {
+      "aws": {
+        "native": "Route53"
+      },
+      "azure": {
+        "native": "DNS"
+      },
+      "gcp": {
+        "native": "CloudDNS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "dns",
+    "operation": "CreateRecord",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "CreateZone",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "DeleteHealthCheck",
+    "providers": {
+      "aws": {
+        "native": "Route53"
+      },
+      "azure": {
+        "native": "DNS"
+      },
+      "gcp": {
+        "native": "CloudDNS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "dns",
+    "operation": "DeleteRecord",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "DeleteZone",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "GetHealthCheck",
+    "providers": {
+      "aws": {
+        "native": "Route53"
+      },
+      "azure": {
+        "native": "DNS"
+      },
+      "gcp": {
+        "native": "CloudDNS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "dns",
+    "operation": "GetRecord",
+    "providers": {
+      "aws": {
+        "native": "Route53"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "GetZone",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "ListHealthChecks",
+    "providers": {
+      "aws": {
+        "native": "Route53"
+      },
+      "azure": {
+        "native": "DNS"
+      },
+      "gcp": {
+        "native": "CloudDNS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "dns",
+    "operation": "ListRecords",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "ListZones",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "SetHealthCheckStatus",
+    "providers": {
+      "aws": {
+        "native": "Route53"
+      },
+      "azure": {
+        "native": "DNS"
+      },
+      "gcp": {
+        "native": "CloudDNS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "dns",
+    "operation": "UpdateHealthCheck",
+    "providers": {
+      "aws": {
+        "native": "Route53"
+      },
+      "azure": {
+        "native": "DNS"
+      },
+      "gcp": {
+        "native": "CloudDNS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "dns",
+    "operation": "UpdateRecord",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "dns",
+    "operation": "UpdateZone",
+    "providers": {
+      "aws": {
+        "native": "Route53",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "DNS",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudDNS"
+      }
+    },
+    "status": "green"
   },
   {
     "service": "messagequeue",

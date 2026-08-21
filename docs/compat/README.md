@@ -6,6 +6,95 @@ Does a **real cloud SDK** call for each operation succeed against CloudEmu's wir
 
 Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `—` not offered by that provider.
 
+## cache
+
+| Operation | AWS (ElastiCache) | Azure (Cache) | GCP (Memorystore) |
+|---|---|---|---|
+| CreateCache | ✅ | ✅ | ✅ |
+| Decr | · | · | · |
+| DecrBy | · | · | · |
+| Delete | · | · | · |
+| DeleteCache | ✅ | ✅ | ✅ |
+| Expire | · | · | · |
+| FlushAll | · | · | · |
+| Get | · | · | · |
+| GetCache | ✅ | ✅ | ✅ |
+| GetTTL | · | · | · |
+| Incr | · | · | · |
+| IncrBy | · | · | · |
+| Keys | · | · | · |
+| ListCaches | ✅ | ✅ | ✅ |
+| Persist | · | · | · |
+| Set | · | · | · |
+| UpdateCache | ✅ | ✅ | ✅ |
+
+**cache verified via Go SDK:** AWS 5/17 · Azure 5/17 · GCP 5/17.
+
+## compute
+
+| Operation | AWS (EC2) | Azure (VirtualMachines) | GCP (GCE) |
+|---|---|---|---|
+| AttachVolume | ✅ | · | · |
+| CancelSpotRequests | ✅ | · | · |
+| CreateAutoScalingGroup | · | · | · |
+| CreateImage | ✅ | · | ✅ |
+| CreateKeyPair | ✅ | · | · |
+| CreateLaunchTemplate | ✅ | · | · |
+| CreateSnapshot | ✅ | · | ✅ |
+| CreateVolume | ✅ | · | ✅ |
+| DeleteAutoScalingGroup | · | · | · |
+| DeleteKeyPair | ✅ | · | · |
+| DeleteLaunchTemplate | ✅ | · | · |
+| DeleteScalingPolicy | · | · | · |
+| DeleteSnapshot | ✅ | · | ✅ |
+| DeleteVolume | ✅ | · | ✅ |
+| DeregisterImage | ✅ | · | ✅ |
+| DescribeImages | ✅ | · | ✅ |
+| DescribeInstances | ✅ | ✅ | ✅ |
+| DescribeKeyPairs | ✅ | · | · |
+| DescribeSnapshots | ✅ | · | ✅ |
+| DescribeSpotRequests | ✅ | · | · |
+| DescribeVolumes | ✅ | · | ✅ |
+| DetachVolume | ✅ | · | · |
+| ExecuteScalingPolicy | · | · | · |
+| GetAutoScalingGroup | · | · | · |
+| GetLaunchTemplate | ✅ | · | · |
+| ListAutoScalingGroups | · | · | · |
+| ListLaunchTemplates | ✅ | · | · |
+| ModifyInstance | ✅ | · | · |
+| PutScalingPolicy | · | · | · |
+| RebootInstances | ✅ | ✅ | ✅ |
+| RequestSpotInstances | ✅ | · | · |
+| RunInstances | ✅ | ✅ | ✅ |
+| SetDesiredCapacity | · | · | · |
+| StartInstances | ✅ | ✅ | ✅ |
+| StopInstances | ✅ | ✅ | ✅ |
+| TerminateInstances | ✅ | ✅ | ✅ |
+| UpdateAutoScalingGroup | · | · | · |
+
+**compute verified via Go SDK:** AWS 28/37 · Azure 6/37 · GCP 15/37.
+
+## containerregistry
+
+| Operation | AWS (ECR) | Azure (ACR) | GCP (ArtifactRegistry) |
+|---|---|---|---|
+| CreateRepository | ✅ | · | ✅ |
+| DeleteImage | ✅ | · | · |
+| DeleteRepository | ✅ | ✅ | ✅ |
+| EvaluateLifecyclePolicy | · | · | · |
+| GetImage | ✅ | · | · |
+| GetImageScanResults | · | · | · |
+| GetLifecyclePolicy | · | · | · |
+| GetRepository | ✅ | ✅ | ✅ |
+| ListImages | ✅ | ✅ | ✅ |
+| ListRepositories | ✅ | ✅ | ✅ |
+| PutImage | ✅ | · | · |
+| PutLifecyclePolicy | · | · | · |
+| StartImageScan | · | · | · |
+| TagImage | · | · | · |
+
+**containerregistry verified via Go SDK:** AWS 8/14 · Azure 4/14 · GCP 5/14.
+
 ## database
 
 | Operation | AWS (DynamoDB) | Azure (CosmosDB) | GCP (Firestore) |
@@ -36,6 +125,29 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | UpdateTTL | · | · | · |
 
 **database verified via Go SDK:** AWS 13/24 · Azure 7/24 · GCP 4/24.
+
+## dns
+
+| Operation | AWS (Route53) | Azure (DNS) | GCP (CloudDNS) |
+|---|---|---|---|
+| CreateHealthCheck | · | · | · |
+| CreateRecord | ✅ | ✅ | ✅ |
+| CreateZone | ✅ | ✅ | ✅ |
+| DeleteHealthCheck | · | · | · |
+| DeleteRecord | ✅ | ✅ | ✅ |
+| DeleteZone | ✅ | ✅ | ✅ |
+| GetHealthCheck | · | · | · |
+| GetRecord | · | ✅ | · |
+| GetZone | ✅ | ✅ | ✅ |
+| ListHealthChecks | · | · | · |
+| ListRecords | ✅ | ✅ | ✅ |
+| ListZones | ✅ | ✅ | ✅ |
+| SetHealthCheckStatus | · | · | · |
+| UpdateHealthCheck | · | · | · |
+| UpdateRecord | ✅ | ✅ | ✅ |
+| UpdateZone | ✅ | ✅ | · |
+
+**dns verified via Go SDK:** AWS 9/16 · Azure 10/16 · GCP 8/16.
 
 ## messagequeue
 
