@@ -20,6 +20,10 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
+	if rejectClusteringOnNonPremium(w, &body) {
+		return
+	}
+
 	cfg := cachedriver.CacheConfig{
 		Name:     rp.ResourceName,
 		Engine:   "redis",
@@ -46,6 +50,34 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 	}
 
 	azurearm.WriteJSON(w, http.StatusCreated, toRedisJSON(rp, info))
+}
+
+// skuNamePremium is the Redis SKU tier that supports clustering (shardCount /
+// replicasPerPrimary). Real Azure rejects those fields on Basic/Standard.
+const skuNamePremium = "Premium"
+
+// rejectClusteringOnNonPremium writes a 400 and returns true when the body sets
+// shardCount or replicasPerPrimary on a non-Premium SKU — clustering and
+// replicas are Premium-only features, and real Azure rejects them otherwise.
+func rejectClusteringOnNonPremium(w http.ResponseWriter, body *redisJSON) bool {
+	if body.Properties == nil {
+		return false
+	}
+
+	clustered := body.Properties.ShardCount > 0 ||
+		body.Properties.ReplicasPerPrimary > 0 || body.Properties.ReplicasPerMaster > 0
+	if !clustered {
+		return false
+	}
+
+	if body.Properties.SKU != nil && body.Properties.SKU.Name == skuNamePremium {
+		return false
+	}
+
+	azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameterValue",
+		"shardCount/replicasPerPrimary require a Premium SKU")
+
+	return true
 }
 
 // applySKUAndClustering copies the request's SKU family/capacity and the

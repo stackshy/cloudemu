@@ -177,21 +177,27 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 	if cfg.NodeType != "" {
 		cd.info.NodeType = cfg.NodeType
 	}
+
 	if cfg.SKUFamily != "" {
 		cd.info.SKUFamily = cfg.SKUFamily
 	}
+
 	if cfg.SKUCapacity > 0 {
 		cd.info.SKUCapacity = cfg.SKUCapacity
 	}
+
 	if cfg.ShardCount > 0 {
 		cd.info.ShardCount = cfg.ShardCount
 	}
+
 	if cfg.ReplicasPerPrimary > 0 {
 		cd.info.ReplicasPerPrimary = cfg.ReplicasPerPrimary
 	}
+
 	if cfg.Tags != nil {
 		cd.info.Tags = maps.Clone(cfg.Tags)
 	}
+
 	if !cfg.Scope.IsZero() {
 		cd.info.Scope = cfg.Scope
 	}
