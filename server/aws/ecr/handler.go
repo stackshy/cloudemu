@@ -45,6 +45,8 @@ func (*Handler) Matches(r *http.Request) bool {
 }
 
 // ServeHTTP dispatches ECR operations based on X-Amz-Target.
+//
+//nolint:gocyclo // flat dispatch: one branch per ECR operation
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix) {
 	case "CreateRepository":

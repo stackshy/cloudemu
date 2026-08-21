@@ -95,12 +95,11 @@ func TestCompatAzureCache(t *testing.T) {
 	})
 
 	sess.Op(cacheService, "UpdateCache", func() error {
-		// CreateOrUpdate (a second PUT) is the emulator's update path; the
-		// SDK's PATCH-based Update is not routed by the ARM handler.
-		poller, err := client.BeginCreate(ctx, cacheRG, cacheName, armredis.CreateParameters{
-			Location: to.Ptr("eastus"),
-			Tags:     map[string]*string{"env": to.Ptr("prod")},
-			Properties: &armredis.CreateProperties{
+		// The real armredis BeginUpdate issues a PATCH; the ARM handler routes it
+		// to the create-or-update path.
+		poller, err := client.BeginUpdate(ctx, cacheRG, cacheName, armredis.UpdateParameters{
+			Tags: map[string]*string{"env": to.Ptr("prod")},
+			Properties: &armredis.UpdateProperties{
 				SKU: &armredis.SKU{
 					Name:     to.Ptr(armredis.SKUNameStandard),
 					Family:   to.Ptr(armredis.SKUFamilyC),
