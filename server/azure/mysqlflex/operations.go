@@ -9,9 +9,32 @@ import (
 
 // ---- Server lifecycle ----
 
+// rejectInvalidHAMode writes a 400 and returns true when the body carries a
+// highAvailability.mode that is not a recognized enum value — real Azure
+// rejects a bogus mode rather than storing it.
+func rejectInvalidHAMode(w http.ResponseWriter, body *armServer) bool {
+	if body.Properties == nil || body.Properties.HighAvailability == nil {
+		return false
+	}
+
+	mode := body.Properties.HighAvailability.Mode
+	if rdsdriver.ValidHAMode(mode) {
+		return false
+	}
+
+	azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameterValue",
+		"invalid highAvailability.mode: "+mode)
+
+	return true
+}
+
 func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body armServer
 	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	if rejectInvalidHAMode(w, &body) {
 		return
 	}
 
@@ -60,6 +83,10 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body armServer
 	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	if rejectInvalidHAMode(w, &body) {
 		return
 	}
 

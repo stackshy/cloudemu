@@ -46,6 +46,19 @@ func HAEnabled(mode string) bool {
 	return mode == HAModeSameZone || mode == HAModeZoneRedundant
 }
 
+// ValidHAMode reports whether mode is an accepted highAvailability.mode value.
+// The empty string is valid — it means "not specified" (no HA change on an
+// update, HA disabled on a create). Any other non-enum value is rejected, so a
+// caller sending a bogus mode gets the same 400 real Azure returns.
+func ValidHAMode(mode string) bool {
+	switch mode {
+	case "", HAModeDisabled, HAModeSameZone, HAModeZoneRedundant:
+		return true
+	default:
+		return false
+	}
+}
+
 // InstanceConfig configures a managed database instance.
 type InstanceConfig struct {
 	ID                   string
