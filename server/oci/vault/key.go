@@ -29,14 +29,14 @@ func (h *Handler) serveKeys(w http.ResponseWriter, r *http.Request, rt route) {
 	switch {
 	case rt.count() == lenCollection:
 		h.serveKeyCollection(w, r)
-	case rt.count() == lenResource && rt.seg(1) != segActions:
-		h.serveKeyResource(w, r, rt.seg(1))
+	case rt.count() == lenResource && rt.seg(idxID) != segActions:
+		h.serveKeyResource(w, r, rt.seg(idxID))
 	case isAction(rt):
-		h.keyAction(w, r, rt.seg(1), rt.seg(3))
-	case rt.count() == lenSub && rt.seg(2) == segKeyVersions:
-		h.serveKeyVersionCollection(w, r, rt.seg(1))
-	case rt.count() == lenSubID && rt.seg(2) == segKeyVersions:
-		h.getKeyVersion(w, r, rt.seg(1), rt.seg(3))
+		h.keyAction(w, r, rt.seg(idxID), rt.seg(idxSubID))
+	case rt.count() == lenSub && rt.seg(idxSub) == segKeyVersions:
+		h.serveKeyVersionCollection(w, r, rt.seg(idxID))
+	case rt.count() == lenSubID && rt.seg(idxSub) == segKeyVersions:
+		h.getKeyVersion(w, r, rt.seg(idxID), rt.seg(idxSubID))
 	default:
 		notFound(w, r)
 	}
@@ -88,7 +88,7 @@ func (h *Handler) keyAction(w http.ResponseWriter, r *http.Request, id, action s
 	case actionCancelDeletion:
 		h.cancelKeyDeletion(w, r, id)
 	case actionChangeCompartment:
-		h.changeKeyCompartment(w, r, id)
+		h.changeCompartment(w, r, id, opChangeKeyCompartment, entityKey, h.extras.ChangeKeyCompartment)
 	default:
 		unknownAction(w, r, action)
 	}
@@ -101,7 +101,7 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.validKeyRequest(w, r, req) {
+	if !validKeyRequest(w, r, &req) {
 		return
 	}
 
@@ -115,7 +115,7 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := h.extras.CreateKey(vaultprovider.KeySpec{
+	info, err := h.extras.CreateKey(&vaultprovider.KeySpec{
 		CompartmentID:  req.CompartmentID,
 		VaultID:        vaultIDOf(r),
 		DisplayName:    deref(req.DisplayName),
@@ -123,17 +123,12 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		ProtectionMode: req.ProtectionMode,
 		FreeformTags:   req.FreeformTags,
 	})
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
 
-	h.accept(w, opCreateKey, info.CompartmentID, entityKey, workrequest.ActionCreated, info.ID)
-	ocirest.WriteJSON(w, r, http.StatusOK, toKeyResponse(info))
+	h.writeKey(w, r, info, err, opCreateKey, workrequest.ActionCreated)
 }
 
 // validKeyRequest refuses the key inputs CloudEmu does not model.
-func (h *Handler) validKeyRequest(w http.ResponseWriter, r *http.Request, req keyRequest) bool {
+func validKeyRequest(w http.ResponseWriter, r *http.Request, req *keyRequest) bool {
 	return rejectDefinedTags(w, r, req.DefinedTags) &&
 		rejectUnmodelled(w, r, "autoKeyRotationDetails", req.AutoKeyRotationDetails != nil) &&
 		rejectUnmodelled(w, r, "externalKeyReference", req.ExternalKeyReference != nil) &&
@@ -172,7 +167,7 @@ func (h *Handler) updateKey(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	if !h.validKeyRequest(w, r, req) {
+	if !validKeyRequest(w, r, &req) {
 		return
 	}
 
@@ -187,13 +182,8 @@ func (h *Handler) updateKey(w http.ResponseWriter, r *http.Request, id string) {
 		DisplayName:  req.DisplayName,
 		FreeformTags: req.FreeformTags,
 	})
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
 
-	h.accept(w, opUpdateKey, info.CompartmentID, entityKey, workrequest.ActionUpdated, info.ID)
-	ocirest.WriteJSON(w, r, http.StatusOK, toKeyResponse(info))
+	h.writeKey(w, r, info, err, opUpdateKey, workrequest.ActionUpdated)
 }
 
 func (h *Handler) scheduleKeyDeletion(w http.ResponseWriter, r *http.Request, id string) {
@@ -203,44 +193,28 @@ func (h *Handler) scheduleKeyDeletion(w http.ResponseWriter, r *http.Request, id
 	}
 
 	info, err := h.extras.ScheduleKeyDeletion(id, at)
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
 
-	h.accept(w, opScheduleKeyDeletion, info.CompartmentID, entityKey, workrequest.ActionUpdated, info.ID)
-	ocirest.WriteJSON(w, r, http.StatusOK, toKeyResponse(info))
+	h.writeKey(w, r, info, err, opScheduleKeyDeletion, workrequest.ActionUpdated)
 }
 
 func (h *Handler) cancelKeyDeletion(w http.ResponseWriter, r *http.Request, id string) {
 	info, err := h.extras.CancelKeyDeletion(id)
+
+	h.writeKey(w, r, info, err, opCancelKeyDeletion, workrequest.ActionUpdated)
+}
+
+// writeKey records the work request for a key mutation and writes the key it
+// produced.
+func (h *Handler) writeKey(
+	w http.ResponseWriter, r *http.Request, info *vaultprovider.KeyInfo, err error, operation, actionType string,
+) {
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	h.accept(w, opCancelKeyDeletion, info.CompartmentID, entityKey, workrequest.ActionUpdated, info.ID)
+	h.accept(w, operation, info.CompartmentID, entityKey, actionType, info.ID)
 	ocirest.WriteJSON(w, r, http.StatusOK, toKeyResponse(info))
-}
-
-func (h *Handler) changeKeyCompartment(w http.ResponseWriter, r *http.Request, id string) {
-	if h.work == nil {
-		ocirest.WriteError(w, r, http.StatusNotImplemented, codeNotImplemented, "work requests are not configured")
-		return
-	}
-
-	compartmentID, ok := decodeCompartmentMove(w, r)
-	if !ok {
-		return
-	}
-
-	if err := h.extras.ChangeKeyCompartment(id, compartmentID); err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
-
-	h.accept(w, opChangeKeyCompartment, compartmentID, entityKey, workrequest.ActionUpdated, id)
-	ocirest.WriteJSON(w, r, http.StatusAccepted, nil)
 }
 
 // createKeyVersion rotates a key. OCI has no separate rotate operation: a new

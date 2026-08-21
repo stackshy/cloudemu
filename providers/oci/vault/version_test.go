@@ -13,7 +13,7 @@ import (
 func addVersion(t *testing.T, m *Mock, secretID, value, name, stage string) {
 	t.Helper()
 
-	_, err := m.UpdateOCISecret(secretID, SecretUpdate{
+	_, err := m.UpdateOCISecret(secretID, &SecretUpdate{
 		Content:      []byte(value),
 		ContentName:  name,
 		Stage:        stage,
@@ -97,7 +97,7 @@ func TestPromotingAPendingVersionFinishesRotation(t *testing.T) {
 
 	two := int64(2)
 
-	got, err := m.UpdateOCISecret(s.ID, SecretUpdate{CurrentVersionNumber: &two})
+	got, err := m.UpdateOCISecret(s.ID, &SecretUpdate{CurrentVersionNumber: &two})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), got.CurrentVersionNumber)
 
@@ -111,11 +111,11 @@ func TestPromotingAPendingVersionFinishesRotation(t *testing.T) {
 	assert.Equal(t, []byte("staged"), bundle.Content)
 
 	// Promoting the version that is already current is a no-op.
-	_, err = m.UpdateOCISecret(s.ID, SecretUpdate{CurrentVersionNumber: &two})
+	_, err = m.UpdateOCISecret(s.ID, &SecretUpdate{CurrentVersionNumber: &two})
 	require.NoError(t, err)
 
 	missing := int64(99)
-	_, err = m.UpdateOCISecret(s.ID, SecretUpdate{CurrentVersionNumber: &missing})
+	_, err = m.UpdateOCISecret(s.ID, &SecretUpdate{CurrentVersionNumber: &missing})
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 }
 
@@ -124,7 +124,7 @@ func TestNewVersionStageIsRestricted(t *testing.T) {
 	s := newSecret(t, m, testCompartment, "restricted", "a")
 
 	for _, stage := range []string{StagePrevious, StageDeprecated, StageLatest, "NONSENSE"} {
-		_, err := m.UpdateOCISecret(s.ID, SecretUpdate{Content: []byte("b"), Stage: stage, ContentGiven: true})
+		_, err := m.UpdateOCISecret(s.ID, &SecretUpdate{Content: []byte("b"), Stage: stage, ContentGiven: true})
 		require.Error(t, err, stage)
 		assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err), stage)
 	}
@@ -136,7 +136,7 @@ func TestVersionNamesAreUniquePerSecret(t *testing.T) {
 
 	addVersion(t, m, s.ID, "b", "release-1", StageCurrent)
 
-	_, err := m.UpdateOCISecret(s.ID, SecretUpdate{
+	_, err := m.UpdateOCISecret(s.ID, &SecretUpdate{
 		Content:      []byte("c"),
 		ContentName:  "release-1",
 		ContentGiven: true,
@@ -242,7 +242,7 @@ func TestSecretVersionScheduledDeletionAndCancellation(t *testing.T) {
 
 	// A version pending deletion cannot be promoted back to CURRENT.
 	one := int64(1)
-	_, err = m.UpdateOCISecret(s.ID, SecretUpdate{CurrentVersionNumber: &one})
+	_, err = m.UpdateOCISecret(s.ID, &SecretUpdate{CurrentVersionNumber: &one})
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 
 	restored, err := m.CancelSecretVersionDeletion(s.ID, 1)

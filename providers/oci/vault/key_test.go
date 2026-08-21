@@ -66,10 +66,10 @@ func TestCreateKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newTestMock()
 
-			v, err := m.CreateVault(VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
+			v, err := m.CreateVault(&VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
 			require.NoError(t, err)
 
-			info, err := m.CreateKey(KeySpec{
+			info, err := m.CreateKey(&KeySpec{
 				CompartmentID:  testCompartment,
 				VaultID:        v.ID,
 				DisplayName:    "k",
@@ -96,7 +96,7 @@ func TestCreateKey(t *testing.T) {
 func TestCreateKeyRequiresAnActiveVault(t *testing.T) {
 	m := newTestMock()
 
-	v, err := m.CreateVault(VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
+	v, err := m.CreateVault(&VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
 	require.NoError(t, err)
 
 	_, err = m.ScheduleVaultDeletion(v.ID, "")
@@ -104,16 +104,16 @@ func TestCreateKeyRequiresAnActiveVault(t *testing.T) {
 
 	shape := KeyShape{Algorithm: AlgorithmAES, Length: 32}
 
-	_, err = m.CreateKey(KeySpec{CompartmentID: testCompartment, VaultID: v.ID, DisplayName: "k", Shape: shape})
+	_, err = m.CreateKey(&KeySpec{CompartmentID: testCompartment, VaultID: v.ID, DisplayName: "k", Shape: shape})
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 
-	_, err = m.CreateKey(KeySpec{CompartmentID: testCompartment, VaultID: "ocid1.vault.oc1.iad.x", DisplayName: "k", Shape: shape})
+	_, err = m.CreateKey(&KeySpec{CompartmentID: testCompartment, VaultID: "ocid1.vault.oc1.iad.x", DisplayName: "k", Shape: shape})
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 
-	_, err = m.CreateKey(KeySpec{CompartmentID: testCompartment, DisplayName: "k", Shape: shape})
+	_, err = m.CreateKey(&KeySpec{CompartmentID: testCompartment, DisplayName: "k", Shape: shape})
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 
-	_, err = m.CreateKey(KeySpec{CompartmentID: testCompartment, VaultID: v.ID, Shape: shape})
+	_, err = m.CreateKey(&KeySpec{CompartmentID: testCompartment, VaultID: v.ID, Shape: shape})
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 }
 

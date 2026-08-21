@@ -61,6 +61,8 @@ const (
 )
 
 // VaultSpec describes a vault to create.
+//
+//nolint:revive // Spec alone would not distinguish it from KeySpec and SecretSpec.
 type VaultSpec struct {
 	CompartmentID string
 	DisplayName   string
@@ -77,6 +79,8 @@ type Update struct {
 }
 
 // VaultInfo describes a vault.
+//
+//nolint:revive // Info alone would not distinguish it from KeyInfo and SecretInfo.
 type VaultInfo struct {
 	ID                 string
 	CompartmentID      string
@@ -147,7 +151,7 @@ func (m *Mock) now() string {
 
 // CreateVault creates a vault. Real OCI runs this asynchronously; CloudEmu
 // completes it before returning and the wire layer records the work request.
-func (m *Mock) CreateVault(spec VaultSpec) (*VaultInfo, error) {
+func (m *Mock) CreateVault(spec *VaultSpec) (*VaultInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -173,7 +177,7 @@ func (m *Mock) CreateVault(spec VaultSpec) (*VaultInfo, error) {
 }
 
 // newVaultLocked stores a vault built from spec.
-func (m *Mock) newVaultLocked(spec VaultSpec, vaultType string) *vaultData {
+func (m *Mock) newVaultLocked(spec *VaultSpec, vaultType string) *vaultData {
 	id := m.newOCID(typeVault)
 	v := &vaultData{
 		ID:             id,
@@ -250,7 +254,7 @@ func (m *Mock) UpdateVault(id string, upd Update) (*VaultInfo, error) {
 // ScheduleVaultDeletion marks a vault for deletion at the given time, which
 // must fall between 7 and 30 days out. An empty time takes the far end, as
 // real OCI does. Nothing reaps the vault: it stays PENDING_DELETION until the
-// deletion is cancelled.
+// deletion is canceled.
 func (m *Mock) ScheduleVaultDeletion(id, at string) (*VaultInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -343,18 +347,19 @@ func (m *Mock) vaultLocked(id string) (*vaultData, error) {
 	return v, nil
 }
 
-// activeVaultLocked reads a vault that can still take new keys and secrets.
-func (m *Mock) activeVaultLocked(id string) (*vaultData, error) {
+// requireActiveVaultLocked checks that a vault can still take new keys and
+// secrets.
+func (m *Mock) requireActiveVaultLocked(id string) error {
 	v, err := m.vaultLocked(id)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if v.LifecycleState != StateActive {
-		return nil, cerrors.Newf(cerrors.FailedPrecondition, "vault %s is %s", id, v.LifecycleState)
+		return cerrors.Newf(cerrors.FailedPrecondition, "vault %s is %s", id, v.LifecycleState)
 	}
 
-	return v, nil
+	return nil
 }
 
 // deletionTime validates a caller-supplied deletion time against OCI's window

@@ -10,10 +10,10 @@ import (
 
 // Work request operations the vault mutations record.
 const (
-	opCreateVault           = "CREATE_VAULT"
-	opUpdateVault           = "UPDATE_VAULT"
-	opScheduleVaultDeletion = "SCHEDULE_VAULT_DELETION"
-	opCancelVaultDeletion   = "CANCEL_VAULT_DELETION"
+	opCreateVault            = "CREATE_VAULT"
+	opUpdateVault            = "UPDATE_VAULT"
+	opScheduleVaultDeletion  = "SCHEDULE_VAULT_DELETION"
+	opCancelVaultDeletion    = "CANCEL_VAULT_DELETION"
 	opChangeVaultCompartment = "CHANGE_VAULT_COMPARTMENT"
 )
 
@@ -25,10 +25,10 @@ func (h *Handler) serveVaults(w http.ResponseWriter, r *http.Request, rt route) 
 	switch {
 	case rt.count() == lenCollection:
 		h.serveVaultCollection(w, r)
-	case rt.count() == lenResource && rt.seg(1) != segActions:
-		h.serveVaultResource(w, r, rt.seg(1))
+	case rt.count() == lenResource && rt.seg(idxID) != segActions:
+		h.serveVaultResource(w, r, rt.seg(idxID))
 	case isAction(rt):
-		h.vaultAction(w, r, rt.seg(1), rt.seg(3))
+		h.vaultAction(w, r, rt.seg(idxID), rt.seg(idxSubID))
 	default:
 		notFound(w, r)
 	}
@@ -70,7 +70,7 @@ func (h *Handler) vaultAction(w http.ResponseWriter, r *http.Request, id, action
 	case actionCancelDeletion:
 		h.cancelVaultDeletion(w, r, id)
 	case actionChangeCompartment:
-		h.changeVaultCompartment(w, r, id)
+		h.changeCompartment(w, r, id, opChangeVaultCompartment, entityVault, h.extras.ChangeVaultCompartment)
 	default:
 		unknownAction(w, r, action)
 	}
@@ -83,7 +83,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.validVaultRequest(w, r, req) {
+	if !validVaultRequest(w, r, &req) {
 		return
 	}
 
@@ -92,23 +92,18 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := h.extras.CreateVault(vaultprovider.VaultSpec{
+	info, err := h.extras.CreateVault(&vaultprovider.VaultSpec{
 		CompartmentID: req.CompartmentID,
 		DisplayName:   deref(req.DisplayName),
 		VaultType:     req.VaultType,
 		FreeformTags:  req.FreeformTags,
 	})
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
 
-	h.accept(w, opCreateVault, info.CompartmentID, entityVault, workrequest.ActionCreated, info.ID)
-	ocirest.WriteJSON(w, r, http.StatusOK, toVaultResponse(info))
+	h.writeVault(w, r, info, err, opCreateVault, workrequest.ActionCreated)
 }
 
 // validVaultRequest refuses the vault inputs CloudEmu does not model.
-func (h *Handler) validVaultRequest(w http.ResponseWriter, r *http.Request, req vaultRequest) bool {
+func validVaultRequest(w http.ResponseWriter, r *http.Request, req *vaultRequest) bool {
 	return rejectDefinedTags(w, r, req.DefinedTags) &&
 		rejectUnmodelled(w, r, "restoreFromFile", req.RestoreFromFile != nil) &&
 		rejectUnmodelled(w, r, "restoreFromObjectStore", req.RestoreFromObjectStore != nil) &&
@@ -147,7 +142,7 @@ func (h *Handler) updateVault(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	if !h.validVaultRequest(w, r, req) {
+	if !validVaultRequest(w, r, &req) {
 		return
 	}
 
@@ -155,13 +150,8 @@ func (h *Handler) updateVault(w http.ResponseWriter, r *http.Request, id string)
 		DisplayName:  req.DisplayName,
 		FreeformTags: req.FreeformTags,
 	})
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
 
-	h.accept(w, opUpdateVault, info.CompartmentID, entityVault, workrequest.ActionUpdated, info.ID)
-	ocirest.WriteJSON(w, r, http.StatusOK, toVaultResponse(info))
+	h.writeVault(w, r, info, err, opUpdateVault, workrequest.ActionUpdated)
 }
 
 func (h *Handler) scheduleVaultDeletion(w http.ResponseWriter, r *http.Request, id string) {
@@ -171,44 +161,28 @@ func (h *Handler) scheduleVaultDeletion(w http.ResponseWriter, r *http.Request, 
 	}
 
 	info, err := h.extras.ScheduleVaultDeletion(id, at)
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
 
-	h.accept(w, opScheduleVaultDeletion, info.CompartmentID, entityVault, workrequest.ActionUpdated, info.ID)
-	ocirest.WriteJSON(w, r, http.StatusOK, toVaultResponse(info))
+	h.writeVault(w, r, info, err, opScheduleVaultDeletion, workrequest.ActionUpdated)
 }
 
 func (h *Handler) cancelVaultDeletion(w http.ResponseWriter, r *http.Request, id string) {
 	info, err := h.extras.CancelVaultDeletion(id)
+
+	h.writeVault(w, r, info, err, opCancelVaultDeletion, workrequest.ActionUpdated)
+}
+
+// writeVault records the work request for a vault mutation and writes the
+// vault it produced.
+func (h *Handler) writeVault(
+	w http.ResponseWriter, r *http.Request, info *vaultprovider.VaultInfo, err error, operation, actionType string,
+) {
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	h.accept(w, opCancelVaultDeletion, info.CompartmentID, entityVault, workrequest.ActionUpdated, info.ID)
+	h.accept(w, operation, info.CompartmentID, entityVault, actionType, info.ID)
 	ocirest.WriteJSON(w, r, http.StatusOK, toVaultResponse(info))
-}
-
-func (h *Handler) changeVaultCompartment(w http.ResponseWriter, r *http.Request, id string) {
-	if h.work == nil {
-		ocirest.WriteError(w, r, http.StatusNotImplemented, codeNotImplemented, "work requests are not configured")
-		return
-	}
-
-	compartmentID, ok := decodeCompartmentMove(w, r)
-	if !ok {
-		return
-	}
-
-	if err := h.extras.ChangeVaultCompartment(id, compartmentID); err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
-
-	h.accept(w, opChangeVaultCompartment, compartmentID, entityVault, workrequest.ActionUpdated, id)
-	ocirest.WriteJSON(w, r, http.StatusAccepted, nil)
 }
 
 func toVaultResponse(info *vaultprovider.VaultInfo) vaultResponse {

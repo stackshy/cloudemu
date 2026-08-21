@@ -49,7 +49,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `relationaldb` | [Redshift](./aws/redshift.md) | [MySQLFlex](./azure/mysqlflex.md) | [AlloyDB](./gcp/alloydb.md) | — | 21 |
 | `route53resolver` | [Route53Resolver](./aws/route53resolver.md) | — | — | — | 72 |
 | `sagemaker` | [SageMaker](./aws/sagemaker.md) | — | — | — | 121 |
-| `secrets` | [SecretsManager](./aws/secretsmanager.md) | [KeyVault](./azure/keyvault.md) | [SecretManager](./gcp/secretmanager.md) | — | 7 |
+| `secrets` | [SecretsManager](./aws/secretsmanager.md) | [KeyVault](./azure/keyvault.md) | [SecretManager](./gcp/secretmanager.md) | [Vault](./oci/vault.md) | 7 |
 | `serverless` | [Lambda](./aws/lambda.md) | [Functions](./azure/functions.md) | [CloudFunctions](./gcp/cloudfunctions.md) | — | 27 |
 | `sesv2` | [SESV2](./aws/sesv2.md) | — | — | — | 113 |
 | `sfn` | [SFN](./aws/sfn.md) | — | — | — | 37 |

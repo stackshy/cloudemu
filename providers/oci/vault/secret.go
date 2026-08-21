@@ -71,7 +71,7 @@ type secretData struct {
 }
 
 // CreateOCISecret creates a secret and its first version in a vault.
-func (m *Mock) CreateOCISecret(spec SecretSpec) (*SecretInfo, error) {
+func (m *Mock) CreateOCISecret(spec *SecretSpec) (*SecretInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -88,7 +88,7 @@ func (m *Mock) CreateOCISecret(spec SecretSpec) (*SecretInfo, error) {
 
 // validateSecretSpecLocked checks a create against the vault, the key and the
 // names already taken.
-func (m *Mock) validateSecretSpecLocked(spec SecretSpec) error {
+func (m *Mock) validateSecretSpecLocked(spec *SecretSpec) error {
 	if spec.Name == "" {
 		return cerrors.New(cerrors.InvalidArgument, "secretName is required")
 	}
@@ -101,7 +101,7 @@ func (m *Mock) validateSecretSpecLocked(spec SecretSpec) error {
 		return cerrors.New(cerrors.InvalidArgument, "keyId is required")
 	}
 
-	if _, err := m.activeVaultLocked(spec.VaultID); err != nil {
+	if err := m.requireActiveVaultLocked(spec.VaultID); err != nil {
 		return err
 	}
 
@@ -123,7 +123,7 @@ func (m *Mock) validateSecretSpecLocked(spec SecretSpec) error {
 
 // newSecretLocked stores a secret built from spec, with its first version
 // staged CURRENT.
-func (m *Mock) newSecretLocked(spec SecretSpec) *secretData {
+func (m *Mock) newSecretLocked(spec *SecretSpec) *secretData {
 	id := m.newOCID(typeSecret)
 	s := &secretData{
 		ID:             id,
@@ -202,7 +202,7 @@ func (m *Mock) ListOCISecrets(compartmentID, vaultID, name string) ([]SecretInfo
 
 // UpdateOCISecret applies a secret update: a new description or tag set, a
 // re-key, a new version, or the promotion of an existing version to CURRENT.
-func (m *Mock) UpdateOCISecret(id string, upd SecretUpdate) (*SecretInfo, error) {
+func (m *Mock) UpdateOCISecret(id string, upd *SecretUpdate) (*SecretInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -240,7 +240,7 @@ func (m *Mock) UpdateOCISecret(id string, upd SecretUpdate) (*SecretInfo, error)
 
 // applySecretVersionUpdateLocked adds the version an update carries and
 // promotes the one it names.
-func (m *Mock) applySecretVersionUpdateLocked(s *secretData, upd SecretUpdate) error {
+func (m *Mock) applySecretVersionUpdateLocked(s *secretData, upd *SecretUpdate) error {
 	if upd.ContentGiven {
 		stage, err := newVersionStage(upd.Stage)
 		if err != nil {
@@ -256,7 +256,7 @@ func (m *Mock) applySecretVersionUpdateLocked(s *secretData, upd SecretUpdate) e
 	}
 
 	if upd.CurrentVersionNumber != nil {
-		return m.promoteVersionLocked(s, *upd.CurrentVersionNumber)
+		return promoteVersion(s, *upd.CurrentVersionNumber)
 	}
 
 	return nil
@@ -285,7 +285,7 @@ func (m *Mock) rekeyLocked(s *secretData, keyID string) error {
 // ScheduleOCISecretDeletion marks a secret for deletion at the given time,
 // which must fall between 1 and 30 days out. An empty time takes the far end,
 // as real OCI does. Nothing reaps the secret: it stays PENDING_DELETION, and
-// keeps its OCID and versions, until the deletion is cancelled.
+// keeps its OCID and versions, until the deletion is canceled.
 func (m *Mock) ScheduleOCISecretDeletion(id, at string) (*SecretInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -300,7 +300,7 @@ func (m *Mock) ScheduleOCISecretDeletion(id, at string) (*SecretInfo, error) {
 		return nil, err
 	}
 
-	if err := m.scheduleSecretLocked(s, when); err != nil {
+	if err := scheduleSecret(s, when); err != nil {
 		return nil, err
 	}
 
@@ -309,8 +309,8 @@ func (m *Mock) ScheduleOCISecretDeletion(id, at string) (*SecretInfo, error) {
 	return &info, nil
 }
 
-// scheduleSecretLocked moves a secret into PENDING_DELETION.
-func (m *Mock) scheduleSecretLocked(s *secretData, when string) error {
+// scheduleSecret moves a secret into PENDING_DELETION.
+func scheduleSecret(s *secretData, when string) error {
 	if s.LifecycleState == StatePendingDeletion {
 		return cerrors.Newf(cerrors.FailedPrecondition, "secret %s is already scheduled for deletion", s.ID)
 	}
@@ -394,7 +394,7 @@ func (m *Mock) secretLocked(id string) (*secretData, error) {
 
 // secretByNameLocked finds a live secret by name. A secret pending deletion
 // releases its name, so the portable driver can delete and recreate one; the
-// pending secret stays reachable by OCID until its deletion is cancelled.
+// pending secret stays reachable by OCID until its deletion is canceled.
 func (m *Mock) secretByNameLocked(name string) (*secretData, bool) {
 	for _, s := range m.secrets.SortedValues() {
 		if s.Name == name && s.LifecycleState == StateActive {

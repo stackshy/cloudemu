@@ -13,7 +13,7 @@ import (
 // values and nothing else. It takes no compartmentId anywhere: a bundle is
 // addressed by secret OCID, or by vault and secret name.
 func (h *Handler) serveBundles(w http.ResponseWriter, r *http.Request, rt route) {
-	if rt.seg(0) != segSecretBundles {
+	if rt.seg(idxCollection) != segSecretBundles {
 		notFound(w, r)
 		return
 	}
@@ -24,12 +24,12 @@ func (h *Handler) serveBundles(w http.ResponseWriter, r *http.Request, rt route)
 	}
 
 	switch {
-	case rt.count() == lenSub && rt.seg(1) == segActions:
-		h.getBundleByName(w, r, rt.seg(2))
+	case rt.count() == lenSub && rt.seg(idxID) == segActions:
+		h.getBundleByName(w, r, rt.seg(idxSub))
 	case rt.count() == lenResource:
-		h.getBundle(w, r, rt.seg(1))
-	case rt.count() == lenSub && rt.seg(2) == segVersions:
-		h.listBundleVersions(w, r, rt.seg(1))
+		h.getBundle(w, r, rt.seg(idxID))
+	case rt.count() == lenSub && rt.seg(idxSub) == segVersions:
+		h.listBundleVersions(w, r, rt.seg(idxID))
 	default:
 		notFound(w, r)
 	}

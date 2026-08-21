@@ -36,7 +36,7 @@
 //
 // Deletion is scheduled, never immediate: a vault, key, secret or secret
 // version moves to PENDING_DELETION and stays there, since nothing reaps it,
-// until the deletion is cancelled.
+// until the deletion is canceled.
 package vault
 
 import (
@@ -108,6 +108,16 @@ const (
 	lenSubAction  = 6
 )
 
+// Segment positions after the API version, for the shapes above.
+const (
+	idxCollection = 0
+	idxID         = 1
+	idxSub        = 2
+	idxSubID      = 3
+	idxSubActions = 4
+	idxSubAction  = 5
+)
+
 // Handler serves OCI Vault against a secrets driver.
 type Handler struct {
 	extras Extras
@@ -155,10 +165,10 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	if rt.Version == apiVersionBundles {
-		return rt.seg(0) == segSecretBundles
+		return rt.seg(idxCollection) == segSecretBundles
 	}
 
-	switch rt.seg(0) {
+	switch rt.seg(idxCollection) {
 	case segVaults, segKeys, segSecrets,
 		segEncrypt, segDecrypt, segGenerate, segSign, segVerify, segExportKey:
 		return true
@@ -187,7 +197,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch rt.seg(0) {
+	switch rt.seg(idxCollection) {
 	case segVaults:
 		h.serveVaults(w, r, rt)
 	case segKeys:
@@ -195,7 +205,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case segSecrets:
 		h.serveSecrets(w, r, rt)
 	default:
-		unemulatedCrypto(w, r, rt.seg(0))
+		unemulatedCrypto(w, r, rt.seg(idxCollection))
 	}
 }
 
@@ -229,7 +239,7 @@ func parsePath(urlPath string) (route, bool) {
 
 // isAction reports whether rt addresses /{collection}/{id}/actions/{action}.
 func isAction(rt route) bool {
-	return rt.count() == lenSubID && rt.seg(2) == segActions
+	return rt.count() == lenSubID && rt.seg(idxSub) == segActions
 }
 
 // methodNotAllowed is the response for a verb a collection does not serve.
@@ -278,6 +288,31 @@ func decodeDeletion(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return req.TimeOfDeletion, true
 }
 
+// changeCompartment moves a resource between compartments. OCI runs it
+// asynchronously and answers with nothing but the work request a waiter polls.
+func (h *Handler) changeCompartment(
+	w http.ResponseWriter, r *http.Request, id, operation, entity string,
+	move func(id, compartmentID string) error,
+) {
+	if h.work == nil {
+		ocirest.WriteError(w, r, http.StatusNotImplemented, codeNotImplemented, "work requests are not configured")
+		return
+	}
+
+	compartmentID, ok := decodeCompartmentMove(w, r)
+	if !ok {
+		return
+	}
+
+	if err := move(id, compartmentID); err != nil {
+		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
+	h.accept(w, operation, compartmentID, entity, workrequest.ActionUpdated, id)
+	ocirest.WriteJSON(w, r, http.StatusAccepted, nil)
+}
+
 // decodeCompartmentMove reads a changeCompartment body.
 func decodeCompartmentMove(w http.ResponseWriter, r *http.Request) (string, bool) {
 	var req changeCompartmentRequest
@@ -309,7 +344,7 @@ func rejectDefinedTags(w http.ResponseWriter, r *http.Request, tags definedTags)
 }
 
 // rejectUnmodelled refuses a request naming a field the emulator has no
-// behaviour for, naming the field rather than dropping it.
+// behavior for, naming the field rather than dropping it.
 func rejectUnmodelled(w http.ResponseWriter, r *http.Request, field string, given bool) bool {
 	if !given {
 		return true

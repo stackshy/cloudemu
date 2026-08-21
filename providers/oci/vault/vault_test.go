@@ -31,10 +31,10 @@ func newTestMock() *Mock {
 func newVaultAndKey(t *testing.T, m *Mock, compartmentID string) (vaultID, keyID string) {
 	t.Helper()
 
-	v, err := m.CreateVault(VaultSpec{CompartmentID: compartmentID, DisplayName: "v"})
+	v, err := m.CreateVault(&VaultSpec{CompartmentID: compartmentID, DisplayName: "v"})
 	require.NoError(t, err)
 
-	k, err := m.CreateKey(KeySpec{
+	k, err := m.CreateKey(&KeySpec{
 		CompartmentID: compartmentID,
 		VaultID:       v.ID,
 		DisplayName:   "k",
@@ -50,7 +50,7 @@ func newSecret(t *testing.T, m *Mock, compartmentID, name, value string) *Secret
 
 	vaultID, keyID := newVaultAndKey(t, m, compartmentID)
 
-	s, err := m.CreateOCISecret(SecretSpec{
+	s, err := m.CreateOCISecret(&SecretSpec{
 		CompartmentID: compartmentID,
 		VaultID:       vaultID,
 		KeyID:         keyID,
@@ -65,28 +65,28 @@ func newSecret(t *testing.T, m *Mock, compartmentID, name, value string) *Secret
 func TestCreateVault(t *testing.T) {
 	tests := []struct {
 		name       string
-		spec       VaultSpec
+		spec       *VaultSpec
 		expectErr  cerrors.Code
 		expectType string
 	}{
 		{
 			name:       "defaults to a DEFAULT vault",
-			spec:       VaultSpec{CompartmentID: testCompartment, DisplayName: "v1"},
+			spec:       &VaultSpec{CompartmentID: testCompartment, DisplayName: "v1"},
 			expectType: VaultTypeDefault,
 		},
 		{
 			name:       "virtual private",
-			spec:       VaultSpec{CompartmentID: testCompartment, DisplayName: "v2", VaultType: VaultTypeVirtualPrivate},
+			spec:       &VaultSpec{CompartmentID: testCompartment, DisplayName: "v2", VaultType: VaultTypeVirtualPrivate},
 			expectType: VaultTypeVirtualPrivate,
 		},
 		{
 			name:      "display name required",
-			spec:      VaultSpec{CompartmentID: testCompartment},
+			spec:      &VaultSpec{CompartmentID: testCompartment},
 			expectErr: cerrors.InvalidArgument,
 		},
 		{
 			name:      "unknown vault type",
-			spec:      VaultSpec{CompartmentID: testCompartment, DisplayName: "v3", VaultType: "SUPER_PRIVATE"},
+			spec:      &VaultSpec{CompartmentID: testCompartment, DisplayName: "v3", VaultType: "SUPER_PRIVATE"},
 			expectErr: cerrors.InvalidArgument,
 		},
 	}
@@ -124,10 +124,10 @@ func TestVaultNotFound(t *testing.T) {
 func TestListVaultsFiltersByCompartment(t *testing.T) {
 	m := newTestMock()
 
-	_, err := m.CreateVault(VaultSpec{CompartmentID: testCompartment, DisplayName: "mine"})
+	_, err := m.CreateVault(&VaultSpec{CompartmentID: testCompartment, DisplayName: "mine"})
 	require.NoError(t, err)
 
-	_, err = m.CreateVault(VaultSpec{CompartmentID: otherCompart, DisplayName: "theirs"})
+	_, err = m.CreateVault(&VaultSpec{CompartmentID: otherCompart, DisplayName: "theirs"})
 	require.NoError(t, err)
 
 	mine, err := m.ListVaults(testCompartment)
@@ -148,7 +148,7 @@ func TestListVaultsFiltersByCompartment(t *testing.T) {
 func TestUpdateVault(t *testing.T) {
 	m := newTestMock()
 
-	v, err := m.CreateVault(VaultSpec{CompartmentID: testCompartment, DisplayName: "before"})
+	v, err := m.CreateVault(&VaultSpec{CompartmentID: testCompartment, DisplayName: "before"})
 	require.NoError(t, err)
 
 	name := "after"
@@ -165,7 +165,7 @@ func TestUpdateVault(t *testing.T) {
 func TestVaultScheduledDeletionAndCancellation(t *testing.T) {
 	m := newTestMock()
 
-	v, err := m.CreateVault(VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
+	v, err := m.CreateVault(&VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
 	require.NoError(t, err)
 
 	scheduled, err := m.ScheduleVaultDeletion(v.ID, "")
@@ -206,7 +206,7 @@ func TestVaultDeletionWindow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newTestMock()
 
-			v, err := m.CreateVault(VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
+			v, err := m.CreateVault(&VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
 			require.NoError(t, err)
 
 			got, err := m.ScheduleVaultDeletion(v.ID, tc.at)
@@ -226,7 +226,7 @@ func TestVaultDeletionWindow(t *testing.T) {
 func TestChangeVaultCompartment(t *testing.T) {
 	m := newTestMock()
 
-	v, err := m.CreateVault(VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
+	v, err := m.CreateVault(&VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
 	require.NoError(t, err)
 
 	require.NoError(t, m.ChangeVaultCompartment(v.ID, otherCompart))

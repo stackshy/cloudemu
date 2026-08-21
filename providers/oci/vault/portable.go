@@ -34,7 +34,7 @@ func (m *Mock) CreateSecret(
 
 	vaultID, keyID := m.defaultVaultLocked()
 
-	spec := SecretSpec{
+	spec := &SecretSpec{
 		VaultID:      vaultID,
 		KeyID:        keyID,
 		Name:         cfg.Name,
@@ -63,7 +63,7 @@ func (m *Mock) DeleteSecret(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "secret %q not found", name)
 	}
 
-	return m.scheduleSecretLocked(s, m.earliestDeletion(minSecretDeletionDays))
+	return scheduleSecret(s, m.earliestDeletion(minSecretDeletionDays))
 }
 
 // GetSecret retrieves secret metadata by name.
@@ -163,8 +163,8 @@ func (m *Mock) defaultVaultLocked() (vaultID, keyID string) {
 		return m.defaultVaultID, m.defaultKeyID
 	}
 
-	v := m.newVaultLocked(VaultSpec{DisplayName: defaultVaultName}, VaultTypeDefault)
-	k := m.newKeyLocked(KeySpec{
+	v := m.newVaultLocked(&VaultSpec{DisplayName: defaultVaultName}, VaultTypeDefault)
+	k := m.newKeyLocked(&KeySpec{
 		VaultID:     v.ID,
 		DisplayName: defaultKeyName,
 		Shape:       KeyShape{Algorithm: AlgorithmAES, Length: 32},

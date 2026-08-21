@@ -14,7 +14,7 @@ func TestCreateOCISecret(t *testing.T) {
 	m := newTestMock()
 	vaultID, keyID := newVaultAndKey(t, m, testCompartment)
 
-	info, err := m.CreateOCISecret(SecretSpec{
+	info, err := m.CreateOCISecret(&SecretSpec{
 		CompartmentID: testCompartment,
 		VaultID:       vaultID,
 		KeyID:         keyID,
@@ -39,50 +39,50 @@ func TestCreateOCISecretRejections(t *testing.T) {
 	vaultID, keyID := newVaultAndKey(t, m, testCompartment)
 	otherVault, otherKey := newVaultAndKey(t, m, otherCompart)
 
-	base := SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, KeyID: keyID, Name: "s"}
+	base := &SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, KeyID: keyID, Name: "s"}
 
 	_, err := m.CreateOCISecret(base)
 	require.NoError(t, err)
 
 	tests := []struct {
 		name   string
-		spec   SecretSpec
+		spec   *SecretSpec
 		expect cerrors.Code
 	}{
 		{name: "duplicate name", spec: base, expect: cerrors.AlreadyExists},
 		{
 			name:   "no name",
-			spec:   SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, KeyID: keyID},
+			spec:   &SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, KeyID: keyID},
 			expect: cerrors.InvalidArgument,
 		},
 		{
 			name:   "no vault",
-			spec:   SecretSpec{CompartmentID: testCompartment, KeyID: keyID, Name: "x"},
+			spec:   &SecretSpec{CompartmentID: testCompartment, KeyID: keyID, Name: "x"},
 			expect: cerrors.InvalidArgument,
 		},
 		{
 			name:   "no key",
-			spec:   SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, Name: "x"},
+			spec:   &SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, Name: "x"},
 			expect: cerrors.InvalidArgument,
 		},
 		{
 			name:   "unknown vault",
-			spec:   SecretSpec{CompartmentID: testCompartment, VaultID: "ocid1.vault.oc1.iad.x", KeyID: keyID, Name: "x"},
+			spec:   &SecretSpec{CompartmentID: testCompartment, VaultID: "ocid1.vault.oc1.iad.x", KeyID: keyID, Name: "x"},
 			expect: cerrors.NotFound,
 		},
 		{
 			name:   "unknown key",
-			spec:   SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, KeyID: "ocid1.key.oc1.iad.x", Name: "x"},
+			spec:   &SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, KeyID: "ocid1.key.oc1.iad.x", Name: "x"},
 			expect: cerrors.NotFound,
 		},
 		{
 			name:   "key from another vault",
-			spec:   SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, KeyID: otherKey, Name: "x"},
+			spec:   &SecretSpec{CompartmentID: testCompartment, VaultID: vaultID, KeyID: otherKey, Name: "x"},
 			expect: cerrors.InvalidArgument,
 		},
 		{
 			name:   "vault from another compartment still resolves by OCID",
-			spec:   SecretSpec{CompartmentID: otherCompart, VaultID: otherVault, KeyID: otherKey, Name: "x"},
+			spec:   &SecretSpec{CompartmentID: otherCompart, VaultID: otherVault, KeyID: otherKey, Name: "x"},
 			expect: cerrors.OK,
 		},
 	}
@@ -164,7 +164,7 @@ func TestSecretScheduledDeletionAndCancellation(t *testing.T) {
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 
 	// A secret pending deletion cannot be updated.
-	_, err = m.UpdateOCISecret(s.ID, SecretUpdate{})
+	_, err = m.UpdateOCISecret(s.ID, &SecretUpdate{})
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 
 	restored, err := m.CancelOCISecretDeletion(s.ID)
@@ -185,7 +185,7 @@ func TestCancelDeletionRefusesAReusedName(t *testing.T) {
 	_, err := m.ScheduleOCISecretDeletion(first.ID, "")
 	require.NoError(t, err)
 
-	second, err := m.CreateOCISecret(SecretSpec{
+	second, err := m.CreateOCISecret(&SecretSpec{
 		CompartmentID: testCompartment,
 		VaultID:       first.VaultID,
 		KeyID:         first.KeyID,
@@ -205,7 +205,7 @@ func TestUpdateOCISecret(t *testing.T) {
 
 	desc := "now described"
 
-	got, err := m.UpdateOCISecret(s.ID, SecretUpdate{
+	got, err := m.UpdateOCISecret(s.ID, &SecretUpdate{
 		Description:  &desc,
 		FreeformTags: map[string]string{"k": "v"},
 	})
@@ -214,7 +214,7 @@ func TestUpdateOCISecret(t *testing.T) {
 	assert.Equal(t, "v", got.FreeformTags["k"])
 	assert.Equal(t, int64(1), got.CurrentVersionNumber)
 
-	_, err = m.UpdateOCISecret("ocid1.vaultsecret.oc1.iad.x", SecretUpdate{})
+	_, err = m.UpdateOCISecret("ocid1.vaultsecret.oc1.iad.x", &SecretUpdate{})
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 }
 
@@ -222,7 +222,7 @@ func TestUpdateOCISecretRekeys(t *testing.T) {
 	m := newTestMock()
 	s := newSecret(t, m, testCompartment, "rekey", "a")
 
-	second, err := m.CreateKey(KeySpec{
+	second, err := m.CreateKey(&KeySpec{
 		CompartmentID: testCompartment,
 		VaultID:       s.VaultID,
 		DisplayName:   "k2",
@@ -230,16 +230,16 @@ func TestUpdateOCISecretRekeys(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := m.UpdateOCISecret(s.ID, SecretUpdate{KeyID: second.ID})
+	got, err := m.UpdateOCISecret(s.ID, &SecretUpdate{KeyID: second.ID})
 	require.NoError(t, err)
 	assert.Equal(t, second.ID, got.KeyID)
 
 	_, foreignKey := newVaultAndKey(t, m, testCompartment)
 
-	_, err = m.UpdateOCISecret(s.ID, SecretUpdate{KeyID: foreignKey})
+	_, err = m.UpdateOCISecret(s.ID, &SecretUpdate{KeyID: foreignKey})
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 
-	_, err = m.UpdateOCISecret(s.ID, SecretUpdate{KeyID: "ocid1.key.oc1.iad.x"})
+	_, err = m.UpdateOCISecret(s.ID, &SecretUpdate{KeyID: "ocid1.key.oc1.iad.x"})
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 }
 

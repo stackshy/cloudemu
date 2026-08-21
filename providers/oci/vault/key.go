@@ -98,7 +98,7 @@ type keyVersionData struct {
 
 // CreateKey creates a master encryption key in a vault, along with its first
 // key version.
-func (m *Mock) CreateKey(spec KeySpec) (*KeyInfo, error) {
+func (m *Mock) CreateKey(spec *KeySpec) (*KeyInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -110,7 +110,7 @@ func (m *Mock) CreateKey(spec KeySpec) (*KeyInfo, error) {
 		return nil, cerrors.New(cerrors.InvalidArgument, "vaultId is required")
 	}
 
-	if _, err := m.activeVaultLocked(spec.VaultID); err != nil {
+	if err := m.requireActiveVaultLocked(spec.VaultID); err != nil {
 		return nil, err
 	}
 
@@ -131,7 +131,7 @@ func (m *Mock) CreateKey(spec KeySpec) (*KeyInfo, error) {
 }
 
 // newKeyLocked stores a key built from spec and mints its first version.
-func (m *Mock) newKeyLocked(spec KeySpec, mode string) *keyData {
+func (m *Mock) newKeyLocked(spec *KeySpec, mode string) *keyData {
 	id := m.newOCID(typeKey)
 	k := &keyData{
 		ID:             id,

@@ -26,23 +26,37 @@ const (
 	entitySecretVersion = "secretversion"
 )
 
-// serveSecrets routes the secret collection, its versions and their actions.
+// serveSecrets routes the secret collection and the paths addressing one
+// secret.
 func (h *Handler) serveSecrets(w http.ResponseWriter, r *http.Request, rt route) {
 	switch {
 	case rt.count() == lenCollection:
 		h.serveSecretCollection(w, r)
-	case rt.count() == lenResource && rt.seg(1) != segActions:
-		h.serveSecretResource(w, r, rt.seg(1))
-	case rt.count() == lenSub && rt.seg(1) == segActions:
-		h.secretCollectionAction(w, r, rt.seg(2))
+	case rt.count() == lenSub && rt.seg(idxID) == segActions:
+		h.secretCollectionAction(w, r, rt.seg(idxSub))
+	case rt.count() == lenResource && rt.seg(idxID) != segActions:
+		h.serveSecretResource(w, r, rt.seg(idxID))
 	case isAction(rt):
-		h.secretAction(w, r, rt.seg(1), rt.seg(3))
-	case rt.count() == lenSub && rt.seg(2) == segVersions:
-		h.listSecretVersions(w, r, rt.seg(1))
-	case rt.count() == lenSubID && rt.seg(2) == segVersions:
-		h.getSecretVersion(w, r, rt.seg(1), rt.seg(3))
-	case rt.count() == lenSubAction && rt.seg(2) == segVersions && rt.seg(4) == segActions:
-		h.secretVersionAction(w, r, rt.seg(1), rt.seg(3), rt.seg(5))
+		h.secretAction(w, r, rt.seg(idxID), rt.seg(idxSubID))
+	default:
+		h.serveSecretVersions(w, r, rt)
+	}
+}
+
+// serveSecretVersions routes the version sub-collection of one secret.
+func (h *Handler) serveSecretVersions(w http.ResponseWriter, r *http.Request, rt route) {
+	if rt.seg(idxSub) != segVersions {
+		notFound(w, r)
+		return
+	}
+
+	switch {
+	case rt.count() == lenSub:
+		h.listSecretVersions(w, r, rt.seg(idxID))
+	case rt.count() == lenSubID:
+		h.getSecretVersion(w, r, rt.seg(idxID), rt.seg(idxSubID))
+	case rt.count() == lenSubAction && rt.seg(idxSubActions) == segActions:
+		h.secretVersionAction(w, r, rt.seg(idxID), rt.seg(idxSubID), rt.seg(idxSubAction))
 	default:
 		notFound(w, r)
 	}
@@ -105,7 +119,7 @@ func (h *Handler) secretAction(w http.ResponseWriter, r *http.Request, id, actio
 	case actionCancelDeletion:
 		h.cancelSecretDeletion(w, r, id)
 	case actionChangeCompartment:
-		h.changeSecretCompartment(w, r, id)
+		h.changeCompartment(w, r, id, opChangeSecretCompartment, entitySecret, h.extras.ChangeSecretCompartment)
 	default:
 		unknownAction(w, r, action)
 	}
@@ -118,7 +132,7 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.validSecretRequest(w, r, req) {
+	if !validSecretRequest(w, r, &req) {
 		return
 	}
 
@@ -137,7 +151,7 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := h.extras.CreateOCISecret(vaultprovider.SecretSpec{
+	info, err := h.extras.CreateOCISecret(&vaultprovider.SecretSpec{
 		CompartmentID: req.CompartmentID,
 		VaultID:       req.VaultID,
 		KeyID:         req.KeyID,
@@ -156,8 +170,22 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 	ocirest.WriteJSON(w, r, http.StatusOK, toSecretResponse(info))
 }
 
+// writeSecretAction records the work request for a secret mutation OCI answers
+// with headers only.
+func (h *Handler) writeSecretAction(
+	w http.ResponseWriter, r *http.Request, info *vaultprovider.SecretInfo, err error, operation string,
+) {
+	if err != nil {
+		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
+	h.accept(w, operation, info.CompartmentID, entitySecret, workrequest.ActionUpdated, info.ID)
+	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
+}
+
 // validSecretRequest refuses the secret inputs CloudEmu does not model.
-func (h *Handler) validSecretRequest(w http.ResponseWriter, r *http.Request, req secretRequest) bool {
+func validSecretRequest(w http.ResponseWriter, r *http.Request, req *secretRequest) bool {
 	return rejectDefinedTags(w, r, req.DefinedTags) &&
 		rejectUnmodelled(w, r, "secretRules", len(req.SecretRules) > 0) &&
 		rejectUnmodelled(w, r, "rotationConfig", req.RotationConfig != nil) &&
@@ -196,11 +224,11 @@ func (h *Handler) updateSecret(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	if !h.validSecretRequest(w, r, req) {
+	if !validSecretRequest(w, r, &req) {
 		return
 	}
 
-	upd := vaultprovider.SecretUpdate{
+	upd := &vaultprovider.SecretUpdate{
 		Description:          req.Description,
 		KeyID:                req.KeyID,
 		CurrentVersionNumber: req.CurrentVersionNumber,
@@ -238,44 +266,14 @@ func (h *Handler) scheduleSecretDeletion(w http.ResponseWriter, r *http.Request,
 	}
 
 	info, err := h.extras.ScheduleOCISecretDeletion(id, at)
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
 
-	h.accept(w, opScheduleSecretDeletion, info.CompartmentID, entitySecret, workrequest.ActionUpdated, info.ID)
-	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
+	h.writeSecretAction(w, r, info, err, opScheduleSecretDeletion)
 }
 
 func (h *Handler) cancelSecretDeletion(w http.ResponseWriter, r *http.Request, id string) {
 	info, err := h.extras.CancelOCISecretDeletion(id)
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
 
-	h.accept(w, opCancelSecretDeletion, info.CompartmentID, entitySecret, workrequest.ActionUpdated, info.ID)
-	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
-}
-
-func (h *Handler) changeSecretCompartment(w http.ResponseWriter, r *http.Request, id string) {
-	if h.work == nil {
-		ocirest.WriteError(w, r, http.StatusNotImplemented, codeNotImplemented, "work requests are not configured")
-		return
-	}
-
-	compartmentID, ok := decodeCompartmentMove(w, r)
-	if !ok {
-		return
-	}
-
-	if err := h.extras.ChangeSecretCompartment(id, compartmentID); err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
-
-	h.accept(w, opChangeSecretCompartment, compartmentID, entitySecret, workrequest.ActionUpdated, id)
-	ocirest.WriteJSON(w, r, http.StatusAccepted, nil)
+	h.writeSecretAction(w, r, info, err, opCancelSecretDeletion)
 }
 
 // listSecretVersions lists a secret's versions. Real OCI takes no
