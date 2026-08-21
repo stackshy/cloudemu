@@ -217,6 +217,11 @@ type Drivers struct {
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
 	// the same backend. Leave nil to disable Kubernetes data-plane support.
 	K8sAPI *kubernetes.APIServer
+	// OCM is the Red Hat OpenShift Cluster Manager (ROSA) REST handler. Its
+	// paths (/api/clusters_mgmt/, /auth/realms/) are disjoint from every AWS SDK
+	// path, so it registers on the AWS server the same way K8sAPI does. Leave
+	// nil to disable ROSA/OCM support.
+	OCM server.Handler
 	// ResourceDiscovery is the cross-service inventory engine. Required to
 	// serve Resource Explorer 2 and Resource Groups Tagging API requests.
 	// Leave nil to omit both handlers. AccountID and Region are needed for
@@ -313,6 +318,14 @@ func NewFromProvider(p *awsprovider.Provider) *server.Server {
 //nolint:gocritic,gocyclo,funlen,gocognit // by-value Drivers for ergonomics; one if-per-driver dispatch grows with the bundle.
 func New(d Drivers) *server.Server {
 	srv := server.New()
+
+	// ROSA/OCM (Red Hat OpenShift Cluster Manager) is registered FIRST so its
+	// specific path match (/api/clusters_mgmt/, /auth/realms/…/token) wins over
+	// the AWS Query handlers — several of which claim any form-encoded POST and
+	// would otherwise answer the OCM SSO token request with InvalidAction.
+	if d.OCM != nil {
+		srv.Register(d.OCM)
+	}
 
 	if d.CloudWatch != nil {
 		// The VPC driver optionally supplies derived AWS/IPAM metrics; surface
@@ -603,8 +616,6 @@ func New(d Drivers) *server.Server {
 		srv.Register(sagemakersrv.New(d.SageMaker))
 	}
 
-	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from
-	// every other AWS path. Registered before S3's REST fallback.
 	if d.K8sAPI != nil {
 		srv.Register(d.K8sAPI)
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/aro"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
@@ -143,6 +144,7 @@ type Provider struct {
 	PostgresFlex     *postgresflex.Mock
 	MySQLFlex        *mysqlflex.Mock
 	AKS              *aks.Mock
+	ARO              *aro.Mock
 	Databricks       *databricks.Mock
 	AI               *ai.Mock
 	Search           *search.Mock
@@ -185,6 +187,7 @@ func New(opts ...config.Option) *Provider {
 		PostgresFlex:     postgresflex.New(o),
 		MySQLFlex:        mysqlflex.New(o),
 		AKS:              aks.New(o),
+		ARO:              aro.New(o),
 		Databricks:       databricks.New(o),
 		AI:               ai.New(o),
 		Search:           search.New(o),
