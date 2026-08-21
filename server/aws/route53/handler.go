@@ -49,6 +49,8 @@ func New(d dnsdriver.DNS) *Handler {
 func (*Handler) Matches(r *http.Request) bool {
 	return r.URL.Path == pathPrefix ||
 		strings.HasPrefix(r.URL.Path, pathPrefix+"/") ||
+		r.URL.Path == healthCheckPrefix ||
+		strings.HasPrefix(r.URL.Path, healthCheckPrefix+"/") ||
 		strings.HasPrefix(r.URL.Path, tagsPrefix)
 }
 
@@ -56,6 +58,11 @@ func (*Handler) Matches(r *http.Request) bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
 		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
+		return
+	}
+
+	if r.URL.Path == healthCheckPrefix || strings.HasPrefix(r.URL.Path, healthCheckPrefix+"/") {
+		h.serveHealthCheck(w, r)
 		return
 	}
 

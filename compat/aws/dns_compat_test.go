@@ -173,6 +173,68 @@ func TestAWSDNSCompat(t *testing.T) {
 		return err
 	})
 
+	var healthCheckID string
+
+	sess.Op(svc, "CreateHealthCheck", func() error {
+		out, err := client.CreateHealthCheck(ctx, &awsr53.CreateHealthCheckInput{
+			CallerReference: aws.String("compat-hc-1"),
+			HealthCheckConfig: &r53types.HealthCheckConfig{
+				IPAddress:        aws.String("192.0.2.1"),
+				Port:             aws.Int32(80),
+				Type:             r53types.HealthCheckTypeHttp,
+				ResourcePath:     aws.String("/health"),
+				RequestInterval:  aws.Int32(30),
+				FailureThreshold: aws.Int32(3),
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		if out.HealthCheck == nil || aws.ToString(out.HealthCheck.Id) == "" {
+			return fmt.Errorf("CreateHealthCheck returned no id")
+		}
+
+		healthCheckID = aws.ToString(out.HealthCheck.Id)
+
+		return nil
+	})
+
+	sess.Op(svc, "GetHealthCheck", func() error {
+		_, err := client.GetHealthCheck(ctx, &awsr53.GetHealthCheckInput{HealthCheckId: aws.String(healthCheckID)})
+		return err
+	})
+
+	sess.Op(svc, "ListHealthChecks", func() error {
+		out, err := client.ListHealthChecks(ctx, &awsr53.ListHealthChecksInput{})
+		if err != nil {
+			return err
+		}
+
+		for i := range out.HealthChecks {
+			if aws.ToString(out.HealthChecks[i].Id) == healthCheckID {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("health check %q not found in ListHealthChecks", healthCheckID)
+	})
+
+	sess.Op(svc, "UpdateHealthCheck", func() error {
+		_, err := client.UpdateHealthCheck(ctx, &awsr53.UpdateHealthCheckInput{
+			HealthCheckId:    aws.String(healthCheckID),
+			ResourcePath:     aws.String("/healthz"),
+			FailureThreshold: aws.Int32(5),
+		})
+
+		return err
+	})
+
+	sess.Op(svc, "DeleteHealthCheck", func() error {
+		_, err := client.DeleteHealthCheck(ctx, &awsr53.DeleteHealthCheckInput{HealthCheckId: aws.String(healthCheckID)})
+		return err
+	})
+
 	sess.Op(svc, "DeleteZone", func() error {
 		_, err := client.DeleteHostedZone(ctx, &awsr53.DeleteHostedZoneInput{Id: aws.String(zoneID)})
 		return err

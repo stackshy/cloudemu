@@ -130,24 +130,24 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 
 | Operation | AWS (Route53) | Azure (DNS) | GCP (CloudDNS) |
 |---|---|---|---|
-| CreateHealthCheck | · | · | · |
+| CreateHealthCheck | ✅ | · | · |
 | CreateRecord | ✅ | ✅ | ✅ |
 | CreateZone | ✅ | ✅ | ✅ |
-| DeleteHealthCheck | · | · | · |
+| DeleteHealthCheck | ✅ | · | · |
 | DeleteRecord | ✅ | ✅ | ✅ |
 | DeleteZone | ✅ | ✅ | ✅ |
-| GetHealthCheck | · | · | · |
+| GetHealthCheck | ✅ | · | · |
 | GetRecord | · | ✅ | · |
 | GetZone | ✅ | ✅ | ✅ |
-| ListHealthChecks | · | · | · |
+| ListHealthChecks | ✅ | · | · |
 | ListRecords | ✅ | ✅ | ✅ |
 | ListZones | ✅ | ✅ | ✅ |
 | SetHealthCheckStatus | · | · | · |
-| UpdateHealthCheck | · | · | · |
+| UpdateHealthCheck | ✅ | · | · |
 | UpdateRecord | ✅ | ✅ | ✅ |
 | UpdateZone | ✅ | ✅ | · |
 
-**dns verified via Go SDK:** AWS 9/16 · Azure 10/16 · GCP 8/16.
+**dns verified via Go SDK:** AWS 14/16 · Azure 10/16 · GCP 8/16.
 
 ## messagequeue
 
