@@ -154,6 +154,55 @@ func TestLambdaCompat(t *testing.T) {
 		return err
 	})
 
+	var esmUUID string
+
+	const eventSourceArn = "arn:aws:sqs:us-east-1:000000000000:compat-queue"
+
+	sess.Op(svc, "CreateEventSourceMapping", func() error {
+		out, err := client.CreateEventSourceMapping(ctx, &awslambda.CreateEventSourceMappingInput{
+			FunctionName:   aws.String(fnName),
+			EventSourceArn: aws.String(eventSourceArn),
+			BatchSize:      aws.Int32(10),
+		})
+		if err != nil {
+			return err
+		}
+
+		esmUUID = aws.ToString(out.UUID)
+		if esmUUID == "" {
+			return fmt.Errorf("CreateEventSourceMapping returned empty UUID")
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "GetEventSourceMapping", func() error {
+		_, err := client.GetEventSourceMapping(ctx, &awslambda.GetEventSourceMappingInput{UUID: aws.String(esmUUID)})
+		return err
+	})
+
+	sess.Op(svc, "ListEventSourceMappings", func() error {
+		_, err := client.ListEventSourceMappings(ctx, &awslambda.ListEventSourceMappingsInput{
+			FunctionName: aws.String(fnName),
+		})
+
+		return err
+	})
+
+	sess.Op(svc, "UpdateEventSourceMapping", func() error {
+		_, err := client.UpdateEventSourceMapping(ctx, &awslambda.UpdateEventSourceMappingInput{
+			UUID:      aws.String(esmUUID),
+			BatchSize: aws.Int32(25),
+		})
+
+		return err
+	})
+
+	sess.Op(svc, "DeleteEventSourceMapping", func() error {
+		_, err := client.DeleteEventSourceMapping(ctx, &awslambda.DeleteEventSourceMappingInput{UUID: aws.String(esmUUID)})
+		return err
+	})
+
 	sess.Op(svc, "DeleteFunction", func() error {
 		_, err := client.DeleteFunction(ctx, &awslambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
 		return err

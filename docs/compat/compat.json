@@ -5149,7 +5149,8 @@
     "operation": "CreateEventSourceMapping",
     "providers": {
       "aws": {
-        "native": "Lambda"
+        "native": "Lambda",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "Functions"
@@ -5158,7 +5159,7 @@
         "native": "CloudFunctions"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "serverless",
@@ -5201,7 +5202,8 @@
     "operation": "DeleteEventSourceMapping",
     "providers": {
       "aws": {
-        "native": "Lambda"
+        "native": "Lambda",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "Functions"
@@ -5210,7 +5212,7 @@
         "native": "CloudFunctions"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "serverless",
@@ -5285,7 +5287,8 @@
     "operation": "GetEventSourceMapping",
     "providers": {
       "aws": {
-        "native": "Lambda"
+        "native": "Lambda",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "Functions"
@@ -5294,7 +5297,7 @@
         "native": "CloudFunctions"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "serverless",
@@ -5387,7 +5390,8 @@
     "operation": "ListEventSourceMappings",
     "providers": {
       "aws": {
-        "native": "Lambda"
+        "native": "Lambda",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "Functions"
@@ -5396,7 +5400,7 @@
         "native": "CloudFunctions"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "serverless",
@@ -5553,7 +5557,8 @@
     "operation": "UpdateEventSourceMapping",
     "providers": {
       "aws": {
-        "native": "Lambda"
+        "native": "Lambda",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "Functions"
@@ -5562,7 +5567,7 @@
         "native": "CloudFunctions"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "serverless",

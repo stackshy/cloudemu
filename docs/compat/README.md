@@ -405,21 +405,21 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | Operation | AWS (Lambda) | Azure (Functions) | GCP (CloudFunctions) |
 |---|---|---|---|
 | CreateAlias | ✅ | · | · |
-| CreateEventSourceMapping | · | · | · |
+| CreateEventSourceMapping | ✅ | · | · |
 | CreateFunction | ✅ | ✅ | ✅ |
 | DeleteAlias | ✅ | · | · |
-| DeleteEventSourceMapping | · | · | · |
+| DeleteEventSourceMapping | ✅ | · | · |
 | DeleteFunction | ✅ | ✅ | ✅ |
 | DeleteFunctionConcurrency | · | · | · |
 | DeleteLayerVersion | · | · | · |
 | GetAlias | ✅ | · | · |
-| GetEventSourceMapping | · | · | · |
+| GetEventSourceMapping | ✅ | · | · |
 | GetFunction | ✅ | ✅ | ✅ |
 | GetFunctionConcurrency | · | · | · |
 | GetLayerVersion | · | · | · |
 | Invoke | ✅ | · | ✅ |
 | ListAliases | ✅ | · | · |
-| ListEventSourceMappings | · | · | · |
+| ListEventSourceMappings | ✅ | · | · |
 | ListFunctions | ✅ | ✅ | ✅ |
 | ListLayerVersions | · | · | · |
 | ListLayers | · | · | · |
@@ -429,10 +429,10 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | PutFunctionConcurrency | · | · | · |
 | RegisterHandler | · | · | · |
 | UpdateAlias | ✅ | · | · |
-| UpdateEventSourceMapping | · | · | · |
+| UpdateEventSourceMapping | ✅ | · | · |
 | UpdateFunction | ✅ | · | ✅ |
 
-**serverless verified via Go SDK:** AWS 13/27 · Azure 4/27 · GCP 6/27.
+**serverless verified via Go SDK:** AWS 18/27 · Azure 4/27 · GCP 6/27.
 
 ## storage
 
