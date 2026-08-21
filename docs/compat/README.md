@@ -41,10 +41,10 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 
 | Operation | AWS (SQS) | Azure (QueueStorage) | GCP (PubSub) |
 |---|---|---|---|
-| ChangeVisibility | · | · | · |
+| ChangeVisibility | ✅ | · | · |
 | CreateQueue | ✅ | ✅ | ✅ |
 | DeleteMessage | ✅ | ✅ | ✅ |
-| DeleteMessageBatch | · | · | · |
+| DeleteMessageBatch | ✅ | · | · |
 | DeleteQueue | ✅ | ✅ | ✅ |
 | GetQueueAttributes | ✅ | · | · |
 | GetQueueInfo | · | · | ✅ |
@@ -53,10 +53,10 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | ReceiveMessages | ✅ | ✅ | ✅ |
 | ReceiveMessagesWithOptions | · | · | · |
 | SendMessage | ✅ | ✅ | ✅ |
-| SendMessageBatch | · | · | · |
+| SendMessageBatch | ✅ | · | · |
 | SetQueueAttributes | ✅ | · | · |
 
-**messagequeue verified via Go SDK:** AWS 9/14 · Azure 7/14 · GCP 7/14.
+**messagequeue verified via Go SDK:** AWS 12/14 · Azure 7/14 · GCP 7/14.
 
 ## secrets
 

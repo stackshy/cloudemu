@@ -412,7 +412,8 @@
     "operation": "ChangeVisibility",
     "providers": {
       "aws": {
-        "native": "SQS"
+        "native": "SQS",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "QueueStorage"
@@ -421,7 +422,7 @@
         "native": "PubSub"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "messagequeue",
@@ -466,7 +467,8 @@
     "operation": "DeleteMessageBatch",
     "providers": {
       "aws": {
-        "native": "SQS"
+        "native": "SQS",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "QueueStorage"
@@ -475,7 +477,7 @@
         "native": "PubSub"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "messagequeue",
@@ -626,7 +628,8 @@
     "operation": "SendMessageBatch",
     "providers": {
       "aws": {
-        "native": "SQS"
+        "native": "SQS",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "QueueStorage"
@@ -635,7 +638,7 @@
         "native": "PubSub"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "messagequeue",

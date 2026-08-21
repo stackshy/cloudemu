@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -17,11 +18,9 @@ import (
 var errNoMessages = errors.New("expected at least one message, got none")
 
 // TestAWSMessageQueueCompat drives an SQS queue + message lifecycle through the
-// real aws-sdk-go-v2 client. It asserts only the operations the SQS wire
-// handler currently routes; batch and visibility-change operations are not yet
-// wired, so they stay amber in the matrix rather than being asserted here.
+// real aws-sdk-go-v2 client, including batch send/delete and visibility change.
 // Operation names match the portable "messagequeue" driver (ReceiveMessage →
-// "ReceiveMessages").
+// "ReceiveMessages", ChangeMessageVisibility → "ChangeVisibility").
 func TestAWSMessageQueueCompat(t *testing.T) {
 	provider := cloudemu.NewAWS()
 	sess := compat.BootAWS(t, awsserver.Drivers{SQS: provider.SQS})
@@ -95,10 +94,61 @@ func TestAWSMessageQueueCompat(t *testing.T) {
 		return nil
 	})
 
+	sess.Op(svc, "ChangeVisibility", func() error {
+		_, err := client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+			QueueUrl:          aws.String(queueURL),
+			ReceiptHandle:     aws.String(handle),
+			VisibilityTimeout: 10,
+		})
+
+		return err
+	})
+
 	sess.Op(svc, "DeleteMessage", func() error {
 		_, err := client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(queueURL),
 			ReceiptHandle: aws.String(handle),
+		})
+
+		return err
+	})
+
+	sess.Op(svc, "SendMessageBatch", func() error {
+		_, err := client.SendMessageBatch(ctx, &sqs.SendMessageBatchInput{
+			QueueUrl: aws.String(queueURL),
+			Entries: []sqstypes.SendMessageBatchRequestEntry{
+				{Id: aws.String("1"), MessageBody: aws.String("m1")},
+				{Id: aws.String("2"), MessageBody: aws.String("m2")},
+			},
+		})
+
+		return err
+	})
+
+	sess.Op(svc, "DeleteMessageBatch", func() error {
+		recv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl:            aws.String(queueURL),
+			MaxNumberOfMessages: 10,
+		})
+		if err != nil {
+			return err
+		}
+
+		if len(recv.Messages) == 0 {
+			return errNoMessages
+		}
+
+		entries := make([]sqstypes.DeleteMessageBatchRequestEntry, 0, len(recv.Messages))
+		for i := range recv.Messages {
+			entries = append(entries, sqstypes.DeleteMessageBatchRequestEntry{
+				Id:            aws.String(strconv.Itoa(i)),
+				ReceiptHandle: recv.Messages[i].ReceiptHandle,
+			})
+		}
+
+		_, err = client.DeleteMessageBatch(ctx, &sqs.DeleteMessageBatchInput{
+			QueueUrl: aws.String(queueURL),
+			Entries:  entries,
 		})
 
 		return err
