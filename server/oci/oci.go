@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
+	ocilogging "github.com/stackshy/cloudemu/v2/server/oci/logging"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
 	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
@@ -92,6 +93,10 @@ func New(d Drivers) *server.Server {
 
 	if d.Monitoring != nil {
 		srv.Register(monitoring.New(d.Monitoring))
+	}
+
+	if d.Logging != nil {
+		srv.Register(ocilogging.New(d.Logging, d.WorkRequests))
 	}
 
 	if d.VCN != nil {
