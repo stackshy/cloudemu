@@ -174,37 +174,43 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
 	}
 
+	// Mutate a copy, never the shared stored pointer: GetCache snapshots
+	// cd.info without a lock, so in-place writes here would be a torn read
+	// under concurrency. The items store pointer is preserved (data plane
+	// survives the update).
+	updated := *cd
+
 	if cfg.NodeType != "" {
-		cd.info.NodeType = cfg.NodeType
+		updated.info.NodeType = cfg.NodeType
 	}
 
 	if cfg.SKUFamily != "" {
-		cd.info.SKUFamily = cfg.SKUFamily
+		updated.info.SKUFamily = cfg.SKUFamily
 	}
 
 	if cfg.SKUCapacity > 0 {
-		cd.info.SKUCapacity = cfg.SKUCapacity
+		updated.info.SKUCapacity = cfg.SKUCapacity
 	}
 
 	if cfg.ShardCount > 0 {
-		cd.info.ShardCount = cfg.ShardCount
+		updated.info.ShardCount = cfg.ShardCount
 	}
 
 	if cfg.ReplicasPerPrimary > 0 {
-		cd.info.ReplicasPerPrimary = cfg.ReplicasPerPrimary
+		updated.info.ReplicasPerPrimary = cfg.ReplicasPerPrimary
 	}
 
 	if cfg.Tags != nil {
-		cd.info.Tags = maps.Clone(cfg.Tags)
+		updated.info.Tags = maps.Clone(cfg.Tags)
 	}
 
 	if !cfg.Scope.IsZero() {
-		cd.info.Scope = cfg.Scope
+		updated.info.Scope = cfg.Scope
 	}
 
-	m.caches.Set(cfg.Name, cd)
+	m.caches.Set(cfg.Name, &updated)
 
-	result := cd.info
+	result := updated.info
 
 	return &result, nil
 }

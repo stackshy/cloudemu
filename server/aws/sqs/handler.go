@@ -2,11 +2,10 @@
 // Modern aws-sdk-go-v2 SQS uses AwsJson1_0 with X-Amz-Target headers (since
 // SQS migrated off the legacy Query protocol in 2023).
 //
-// Coverage: queue lifecycle, the synchronous send/receive/delete loop,
-// queue attributes (GetQueueAttributes exposes the QueueArn that event-source
-// mappings, DLQ wiring, and S3->SQS notifications depend on), and PurgeQueue.
-// Batch ops and ChangeMessageVisibility remain deferred — the portable
-// messagequeue.MessageQueue driver supports them.
+// Coverage: queue lifecycle, the synchronous send/receive/delete loop, batch
+// send/delete, ChangeMessageVisibility, queue attributes (GetQueueAttributes
+// exposes the QueueArn that event-source mappings, DLQ wiring, and S3->SQS
+// notifications depend on), and PurgeQueue.
 package sqs
 
 import (
@@ -41,6 +40,8 @@ func (*Handler) Matches(r *http.Request) bool {
 }
 
 // ServeHTTP dispatches SQS operations based on X-Amz-Target.
+//
+//nolint:gocyclo // flat dispatch: one branch per SQS operation
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
@@ -59,6 +60,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.receiveMessage(w, r)
 	case "DeleteMessage":
 		h.deleteMessage(w, r)
+	case "SendMessageBatch":
+		h.sendMessageBatch(w, r)
+	case "DeleteMessageBatch":
+		h.deleteMessageBatch(w, r)
+	case "ChangeMessageVisibility":
+		h.changeMessageVisibility(w, r)
 	case "GetQueueAttributes":
 		h.getQueueAttributes(w, r)
 	case "SetQueueAttributes":
@@ -253,6 +260,119 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) changeMessageVisibility(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueURL          string `json:"QueueUrl"`
+		ReceiptHandle     string `json:"ReceiptHandle"`
+		VisibilityTimeout int    `json:"VisibilityTimeout"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := h.mq.ChangeVisibility(r.Context(), req.QueueURL, req.ReceiptHandle, req.VisibilityTimeout); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueURL string `json:"QueueUrl"`
+		Entries  []struct {
+			ID                     string `json:"Id"`
+			MessageBody            string `json:"MessageBody"`
+			DelaySeconds           int    `json:"DelaySeconds"`
+			MessageGroupID         string `json:"MessageGroupId"`
+			MessageDeduplicationID string `json:"MessageDeduplicationId"`
+		} `json:"Entries"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	entries := make([]mqdriver.BatchSendEntry, 0, len(req.Entries))
+	for i := range req.Entries {
+		entries = append(entries, mqdriver.BatchSendEntry{
+			ID:              req.Entries[i].ID,
+			Body:            req.Entries[i].MessageBody,
+			DelaySeconds:    req.Entries[i].DelaySeconds,
+			GroupID:         req.Entries[i].MessageGroupID,
+			DeduplicationID: req.Entries[i].MessageDeduplicationID,
+		})
+	}
+
+	res, err := h.mq.SendMessageBatch(r.Context(), req.QueueURL, entries)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	successful := make([]map[string]any, 0, len(res.Successful))
+	for i := range res.Successful {
+		successful = append(successful, map[string]any{
+			"Id":        res.Successful[i].ID,
+			"MessageId": res.Successful[i].MessageID,
+		})
+	}
+
+	wire.WriteJSON(w, map[string]any{"Successful": successful, "Failed": batchFailed(res.Failed)})
+}
+
+func (h *Handler) deleteMessageBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueURL string `json:"QueueUrl"`
+		Entries  []struct {
+			ID            string `json:"Id"`
+			ReceiptHandle string `json:"ReceiptHandle"`
+		} `json:"Entries"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	entries := make([]mqdriver.BatchDeleteEntry, 0, len(req.Entries))
+	for i := range req.Entries {
+		entries = append(entries, mqdriver.BatchDeleteEntry{
+			ID:            req.Entries[i].ID,
+			ReceiptHandle: req.Entries[i].ReceiptHandle,
+		})
+	}
+
+	res, err := h.mq.DeleteMessageBatch(r.Context(), req.QueueURL, entries)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	successful := make([]map[string]any, 0, len(res.Successful))
+	for i := range res.Successful {
+		successful = append(successful, map[string]any{"Id": res.Successful[i]})
+	}
+
+	wire.WriteJSON(w, map[string]any{"Successful": successful, "Failed": batchFailed(res.Failed)})
+}
+
+// batchFailed shapes driver batch failures into the SQS wire response form.
+func batchFailed(failed []mqdriver.BatchSendFailEntry) []map[string]any {
+	out := make([]map[string]any, 0, len(failed))
+	for i := range failed {
+		out = append(out, map[string]any{
+			"Id":          failed[i].ID,
+			"Code":        failed[i].Code,
+			"Message":     failed[i].Message,
+			"SenderFault": true,
+		})
+	}
+
+	return out
 }
 
 // queueTagger is the AWS-specific SQS tagging surface. It's not part of the
