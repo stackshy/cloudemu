@@ -53,7 +53,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `serverless` | [Lambda](./aws/lambda.md) | [Functions](./azure/functions.md) | [CloudFunctions](./gcp/cloudfunctions.md) | — | 27 |
 | `sesv2` | [SESV2](./aws/sesv2.md) | — | — | — | 113 |
 | `sfn` | [SFN](./aws/sfn.md) | — | — | — | 37 |
-| `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | — | 35 |
+| `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | [ObjectStorage](./oci/objectstorage.md) | 35 |
 | `tablestorage` | — | [TableStorage](./azure/tablestorage.md) | — | — | 8 |
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 125 |
 | `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |

@@ -9757,7 +9757,8 @@
     "providers": {
       "aws": "S3",
       "azure": "BlobStorage",
-      "gcp": "GCS"
+      "gcp": "GCS",
+      "oci": "ObjectStorage"
     }
   },
   {
