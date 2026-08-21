@@ -6617,7 +6617,8 @@
     "providers": {
       "aws": "SNS",
       "azure": "NotificationHubs",
-      "gcp": "FCM"
+      "gcp": "FCM",
+      "oci": "Notifications"
     }
   },
   {
