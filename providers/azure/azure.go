@@ -430,9 +430,20 @@ func appendFlexServers(
 	out []resourcediscovery.DiscoveredDatabase, insts []rdsdriver.Instance, typ string,
 ) []resourcediscovery.DiscoveredDatabase {
 	for i := range insts {
-		ha := "Disabled"
-		if insts[i].MultiAZ {
-			ha = "ZoneRedundant"
+		// Prefer the explicit HA mode the ARM API recorded (which can be
+		// SameZone, not just ZoneRedundant); fall back to MultiAZ for instances
+		// created through the portable API, which has no HA-mode input.
+		ha := insts[i].HighAvailabilityMode
+		if ha == "" {
+			ha = rdsdriver.HAModeDisabled
+			if insts[i].MultiAZ {
+				ha = rdsdriver.HAModeZoneRedundant
+			}
+		}
+
+		haProps := map[string]any{"mode": ha}
+		if insts[i].StandbyAvailabilityZone != "" {
+			haProps["standbyAvailabilityZone"] = insts[i].StandbyAvailabilityZone
 		}
 
 		out = append(out, resourcediscovery.DiscoveredDatabase{
@@ -443,7 +454,7 @@ func appendFlexServers(
 				SKUTier: flexTier(insts[i].InstanceClass),
 				Properties: nonEmptyProps(map[string]any{
 					"storage":          map[string]any{"storageSizeGB": insts[i].AllocatedStorage},
-					"highAvailability": map[string]any{"mode": ha},
+					"highAvailability": haProps,
 					"version":          insts[i].EngineVersion,
 				}),
 			},

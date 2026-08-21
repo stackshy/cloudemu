@@ -233,3 +233,47 @@ func TestSDKMySQLFlexStartStopRestart(t *testing.T) {
 		t.Fatalf("expected state Ready after restart, got %v", got.Server.Properties.State)
 	}
 }
+
+func TestSDKMySQLFlexHighAvailability(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	createPoller, err := servers.BeginCreate(ctx, "rg-1", "ha1", armmysqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		Properties: &armmysqlflexibleservers.ServerProperties{
+			HighAvailability: &armmysqlflexibleservers.HighAvailability{
+				Mode:                    to.Ptr(armmysqlflexibleservers.HighAvailabilityModeZoneRedundant),
+				StandbyAvailabilityZone: to.Ptr("2"),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Create PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "ha1", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	ha := got.Server.Properties.HighAvailability
+	if ha == nil || ha.Mode == nil {
+		t.Fatal("expected highAvailability to round-trip, got nil")
+	}
+
+	if *ha.Mode != armmysqlflexibleservers.HighAvailabilityModeZoneRedundant {
+		t.Fatalf("mode = %v, want ZoneRedundant", *ha.Mode)
+	}
+
+	if ha.StandbyAvailabilityZone == nil || *ha.StandbyAvailabilityZone != "2" {
+		t.Fatalf("standbyAvailabilityZone = %v, want 2", ha.StandbyAvailabilityZone)
+	}
+
+	if ha.State == nil || *ha.State != armmysqlflexibleservers.HighAvailabilityStateHealthy {
+		t.Fatalf("state = %v, want Healthy", ha.State)
+	}
+}

@@ -35,6 +35,11 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 			cfg.AllocatedStorage = body.Properties.Storage.StorageSizeGB
 			cfg.StorageType = body.Properties.Storage.StorageSKU
 		}
+
+		if ha := body.Properties.HighAvailability; ha != nil {
+			cfg.HighAvailabilityMode = ha.Mode
+			cfg.StandbyAvailabilityZone = ha.StandbyAvailabilityZone
+		}
 	}
 
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
@@ -71,6 +76,10 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 
 		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
 			input.AllocatedStorage = body.Properties.Storage.StorageSizeGB
+		}
+
+		if ha := body.Properties.HighAvailability; ha != nil {
+			input.HighAvailabilityMode = ha.Mode
 		}
 	}
 

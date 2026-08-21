@@ -28,6 +28,11 @@ func instanceFromBody(body *armServer) rdsdriver.InstanceConfig {
 		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
 			cfg.AllocatedStorage = body.Properties.Storage.StorageSizeGB
 		}
+
+		if ha := body.Properties.HighAvailability; ha != nil {
+			cfg.HighAvailabilityMode = ha.Mode
+			cfg.StandbyAvailabilityZone = ha.StandbyAvailabilityZone
+		}
 	}
 
 	return cfg

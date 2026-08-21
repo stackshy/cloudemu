@@ -238,3 +238,43 @@ func TestSDKPostgresFlexUpdateAndLifecycle(t *testing.T) {
 		t.Fatalf("expected state Ready after restart, got %v", got.Server.Properties.State)
 	}
 }
+
+func TestSDKPostgresFlexHighAvailability(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	createPoller, err := servers.BeginCreate(ctx, "rg-1", "ha1", armpostgresqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		Properties: &armpostgresqlflexibleservers.ServerProperties{
+			HighAvailability: &armpostgresqlflexibleservers.HighAvailability{
+				Mode:                    to.Ptr(armpostgresqlflexibleservers.HighAvailabilityModeZoneRedundant),
+				StandbyAvailabilityZone: to.Ptr("2"),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Create PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "ha1", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	ha := got.Server.Properties.HighAvailability
+	if ha == nil || ha.Mode == nil {
+		t.Fatal("expected highAvailability to round-trip, got nil")
+	}
+
+	if *ha.Mode != armpostgresqlflexibleservers.HighAvailabilityModeZoneRedundant {
+		t.Fatalf("mode = %v, want ZoneRedundant", *ha.Mode)
+	}
+
+	if ha.StandbyAvailabilityZone == nil || *ha.StandbyAvailabilityZone != "2" {
+		t.Fatalf("standbyAvailabilityZone = %v, want 2", ha.StandbyAvailabilityZone)
+	}
+}

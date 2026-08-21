@@ -174,25 +174,27 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 	}
 
 	inst := rdsdriver.Instance{
-		ID:                 cfg.ID,
-		ARN:                flexibleServerResourceID(region, cfg.ID),
-		Engine:             engine,
-		EngineVersion:      cfg.EngineVersion,
-		InstanceClass:      sku,
-		AllocatedStorage:   storage,
-		StorageType:        storageType,
-		MasterUsername:     cfg.MasterUsername,
-		DBName:             cfg.DBName,
-		Endpoint:           flexibleServerEndpoint(cfg.ID),
-		Port:               port,
-		State:              rdsdriver.StateAvailable,
-		MultiAZ:            cfg.MultiAZ,
-		PubliclyAccessible: cfg.PubliclyAccessible,
-		VPCSecurityGroups:  append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:    cfg.SubnetGroupName,
-		AvailabilityZone:   region,
-		CreatedAt:          m.opts.Clock.Now().UTC(),
-		Tags:               copyTags(cfg.Tags),
+		ID:                      cfg.ID,
+		ARN:                     flexibleServerResourceID(region, cfg.ID),
+		Engine:                  engine,
+		EngineVersion:           cfg.EngineVersion,
+		InstanceClass:           sku,
+		AllocatedStorage:        storage,
+		StorageType:             storageType,
+		MasterUsername:          cfg.MasterUsername,
+		DBName:                  cfg.DBName,
+		Endpoint:                flexibleServerEndpoint(cfg.ID),
+		Port:                    port,
+		State:                   rdsdriver.StateAvailable,
+		MultiAZ:                 cfg.MultiAZ || rdsdriver.HAEnabled(cfg.HighAvailabilityMode),
+		PubliclyAccessible:      cfg.PubliclyAccessible,
+		VPCSecurityGroups:       append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:         cfg.SubnetGroupName,
+		AvailabilityZone:        region,
+		HighAvailabilityMode:    cfg.HighAvailabilityMode,
+		StandbyAvailabilityZone: cfg.StandbyAvailabilityZone,
+		CreatedAt:               m.opts.Clock.Now().UTC(),
+		Tags:                    copyTags(cfg.Tags),
 	}
 
 	m.instances.Set(cfg.ID, inst)
@@ -263,6 +265,11 @@ func (m *Mock) ModifyInstance(
 
 	if input.MultiAZ != nil {
 		inst.MultiAZ = *input.MultiAZ
+	}
+
+	if input.HighAvailabilityMode != "" {
+		inst.HighAvailabilityMode = input.HighAvailabilityMode
+		inst.MultiAZ = rdsdriver.HAEnabled(input.HighAvailabilityMode)
 	}
 
 	if input.Tags != nil {
