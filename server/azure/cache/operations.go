@@ -20,6 +20,10 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
+	if rejectClusteringOnNonPremium(w, &body) {
+		return
+	}
+
 	cfg := cachedriver.CacheConfig{
 		Name:     rp.ResourceName,
 		Engine:   "redis",
@@ -27,6 +31,7 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 		Tags:     body.Tags,
 		Scope:    scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
 	}
+	applySKUAndClustering(&cfg, &body)
 
 	if _, err := h.cache.GetCache(r.Context(), rp.ResourceName); err == nil {
 		info, uerr := h.cache.UpdateCache(r.Context(), cfg)
@@ -45,6 +50,56 @@ func (h *Handler) createOrUpdateCache(w http.ResponseWriter, r *http.Request, rp
 	}
 
 	azurearm.WriteJSON(w, http.StatusCreated, toRedisJSON(rp, info))
+}
+
+// skuNamePremium is the Redis SKU tier that supports clustering (shardCount /
+// replicasPerPrimary). Real Azure rejects those fields on Basic/Standard.
+const skuNamePremium = "Premium"
+
+// rejectClusteringOnNonPremium writes a 400 and returns true when the body sets
+// shardCount or replicasPerPrimary on a non-Premium SKU — clustering and
+// replicas are Premium-only features, and real Azure rejects them otherwise.
+func rejectClusteringOnNonPremium(w http.ResponseWriter, body *redisJSON) bool {
+	if body.Properties == nil {
+		return false
+	}
+
+	clustered := body.Properties.ShardCount > 0 ||
+		body.Properties.ReplicasPerPrimary > 0 || body.Properties.ReplicasPerMaster > 0
+	if !clustered {
+		return false
+	}
+
+	if body.Properties.SKU != nil && body.Properties.SKU.Name == skuNamePremium {
+		return false
+	}
+
+	azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameterValue",
+		"shardCount/replicasPerPrimary require a Premium SKU")
+
+	return true
+}
+
+// applySKUAndClustering copies the request's SKU family/capacity and the
+// Premium clustering fields (shardCount, replicasPerPrimary — replicasPerMaster
+// is accepted as the legacy alias) onto the driver config, so a clustered
+// Premium cache round-trips instead of collapsing to a stub SKU.
+func applySKUAndClustering(cfg *cachedriver.CacheConfig, body *redisJSON) {
+	if body.Properties == nil {
+		return
+	}
+
+	if sku := body.Properties.SKU; sku != nil {
+		cfg.SKUFamily = sku.Family
+		cfg.SKUCapacity = sku.Capacity
+	}
+
+	cfg.ShardCount = body.Properties.ShardCount
+
+	cfg.ReplicasPerPrimary = body.Properties.ReplicasPerPrimary
+	if cfg.ReplicasPerPrimary == 0 {
+		cfg.ReplicasPerPrimary = body.Properties.ReplicasPerMaster
+	}
 }
 
 // nodeTypeFromBody derives the driver's node-type string from the request SKU.
