@@ -19,9 +19,9 @@ const (
 	defaultRedisVersion        = "6.0"
 )
 
-// skuJSON mirrors the armredis SKU. The cache driver only tracks a node-type
-// string, which maps onto SKU.Name (Basic/Standard/Premium); Family and
-// Capacity carry stub defaults so the SDK round-trips a well-formed SKU.
+// skuJSON mirrors the armredis SKU. Name is the tier (Basic/Standard/Premium),
+// Family is C (Basic/Standard) or P (Premium), and Capacity is the size unit —
+// all recorded on the driver so the SDK round-trips the exact SKU it sent.
 type skuJSON struct {
 	Name     string `json:"name,omitempty"`
 	Family   string `json:"family,omitempty"`
@@ -29,14 +29,21 @@ type skuJSON struct {
 }
 
 // redisProperties mirrors the subset of armredis Properties the cache driver
-// can populate.
+// can populate. ShardCount and ReplicasPerPrimary describe a Premium clustered
+// cache; both are omitted when unset (a non-clustered cache).
 type redisProperties struct {
-	ProvisioningState string   `json:"provisioningState,omitempty"`
-	RedisVersion      string   `json:"redisVersion,omitempty"`
-	SKU               *skuJSON `json:"sku,omitempty"`
-	HostName          string   `json:"hostName,omitempty"`
-	SSLPort           int      `json:"sslPort,omitempty"`
-	Port              int      `json:"port,omitempty"`
+	ProvisioningState  string   `json:"provisioningState,omitempty"`
+	RedisVersion       string   `json:"redisVersion,omitempty"`
+	SKU                *skuJSON `json:"sku,omitempty"`
+	HostName           string   `json:"hostName,omitempty"`
+	SSLPort            int      `json:"sslPort,omitempty"`
+	Port               int      `json:"port,omitempty"`
+	ShardCount         int      `json:"shardCount,omitempty"`
+	ReplicasPerPrimary int      `json:"replicasPerPrimary,omitempty"`
+	// ReplicasPerMaster is the legacy alias for ReplicasPerPrimary. It is
+	// accepted on input (older SDKs still send it) but not emitted — the
+	// response carries the current replicasPerPrimary field.
+	ReplicasPerMaster int `json:"replicasPerMaster,omitempty"`
 }
 
 // redisJSON mirrors the armredis ResourceInfo / CreateParameters resource.
@@ -111,11 +118,35 @@ func toRedisJSON(rp *azurearm.ResourcePath, info *cachedriver.CacheInfo) redisJS
 		Location: defaultLocation,
 		Tags:     info.Tags,
 		Properties: &redisProperties{
-			ProvisioningState: provisioningStateSucceeded,
-			RedisVersion:      defaultRedisVersion,
-			SKU:               &skuJSON{Name: skuNameFromNodeType(info.NodeType), Family: "C", Capacity: 1},
-			HostName:          host,
-			SSLPort:           sslPort,
+			ProvisioningState:  provisioningStateSucceeded,
+			RedisVersion:       defaultRedisVersion,
+			SKU:                skuFromInfo(info),
+			HostName:           host,
+			SSLPort:            sslPort,
+			ShardCount:         info.ShardCount,
+			ReplicasPerPrimary: info.ReplicasPerPrimary,
 		},
+	}
+}
+
+// skuFromInfo builds the ARM SKU from the recorded driver fields. Family
+// defaults to "C" (Basic/Standard) and capacity to 1 only when the driver has
+// no recorded value — e.g. a cache created through the portable API, which
+// carries a node type but no SKU family/capacity.
+func skuFromInfo(info *cachedriver.CacheInfo) *skuJSON {
+	family := info.SKUFamily
+	if family == "" {
+		family = "C"
+	}
+
+	capacity := info.SKUCapacity
+	if capacity == 0 {
+		capacity = 1
+	}
+
+	return &skuJSON{
+		Name:     skuNameFromNodeType(info.NodeType),
+		Family:   family,
+		Capacity: capacity,
 	}
 }

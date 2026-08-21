@@ -103,14 +103,18 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 	}
 
 	info := driver.CacheInfo{
-		Name:      cfg.Name,
-		Scope:     cfg.Scope,
-		NodeType:  nodeType,
-		Engine:    engine,
-		Status:    "Running",
-		Endpoint:  endpoint,
-		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:      tags,
+		Name:               cfg.Name,
+		Scope:              cfg.Scope,
+		NodeType:           nodeType,
+		Engine:             engine,
+		Status:             "Running",
+		Endpoint:           endpoint,
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:               tags,
+		SKUFamily:          cfg.SKUFamily,
+		SKUCapacity:        cfg.SKUCapacity,
+		ShardCount:         cfg.ShardCount,
+		ReplicasPerPrimary: cfg.ReplicasPerPrimary,
 	}
 
 	cd := &cacheData{
@@ -172,6 +176,18 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	if cfg.NodeType != "" {
 		cd.info.NodeType = cfg.NodeType
+	}
+	if cfg.SKUFamily != "" {
+		cd.info.SKUFamily = cfg.SKUFamily
+	}
+	if cfg.SKUCapacity > 0 {
+		cd.info.SKUCapacity = cfg.SKUCapacity
+	}
+	if cfg.ShardCount > 0 {
+		cd.info.ShardCount = cfg.ShardCount
+	}
+	if cfg.ReplicasPerPrimary > 0 {
+		cd.info.ReplicasPerPrimary = cfg.ReplicasPerPrimary
 	}
 	if cfg.Tags != nil {
 		cd.info.Tags = maps.Clone(cfg.Tags)

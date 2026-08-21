@@ -155,3 +155,62 @@ func TestSDKAzureCacheNotFound(t *testing.T) {
 		t.Fatalf("Get(missing): got %v, want 404", err)
 	}
 }
+
+// TestSDKAzureCachePremiumClustering verifies a Premium clustered cache
+// round-trips its real SKU (family P, capacity) plus shardCount and
+// replicasPerPrimary through the ARM API — the fields that drive node-count
+// cost and could not be represented when Family/Capacity were stubbed.
+func TestSDKAzureCachePremiumClustering(t *testing.T) {
+	client := newRedisClient(t)
+	ctx := context.Background()
+
+	poller, err := client.BeginCreate(ctx, testRG, "premium-cache", armredis.CreateParameters{
+		Location: to.Ptr("eastus"),
+		Properties: &armredis.CreateProperties{
+			SKU: &armredis.SKU{
+				Name:     to.Ptr(armredis.SKUNamePremium),
+				Family:   to.Ptr(armredis.SKUFamilyP),
+				Capacity: to.Ptr(int32(2)),
+			},
+			ShardCount:         to.Ptr(int32(3)),
+			ReplicasPerPrimary: to.Ptr(int32(2)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("PollUntilDone: %v", err)
+	}
+
+	got, err := client.Get(ctx, testRG, "premium-cache", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	props := got.Properties
+	if props == nil || props.SKU == nil {
+		t.Fatal("expected SKU on response")
+	}
+
+	if props.SKU.Name == nil || *props.SKU.Name != armredis.SKUNamePremium {
+		t.Errorf("sku.name = %v, want Premium", props.SKU.Name)
+	}
+
+	if props.SKU.Family == nil || *props.SKU.Family != armredis.SKUFamilyP {
+		t.Errorf("sku.family = %v, want P", props.SKU.Family)
+	}
+
+	if props.SKU.Capacity == nil || *props.SKU.Capacity != 2 {
+		t.Errorf("sku.capacity = %v, want 2", props.SKU.Capacity)
+	}
+
+	if props.ShardCount == nil || *props.ShardCount != 3 {
+		t.Errorf("shardCount = %v, want 3", props.ShardCount)
+	}
+
+	if props.ReplicasPerPrimary == nil || *props.ReplicasPerPrimary != 2 {
+		t.Errorf("replicasPerPrimary = %v, want 2", props.ReplicasPerPrimary)
+	}
+}
