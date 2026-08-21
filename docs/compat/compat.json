@@ -1869,6 +1869,250 @@
     "status": "green"
   },
   {
+    "service": "logging",
+    "operation": "CreateLogGroup",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "CreateLogStream",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "DeleteLogGroup",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudLogging",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "DeleteLogStream",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "DeleteMetricFilter",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "logging",
+    "operation": "DescribeMetricFilters",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "logging",
+    "operation": "FilterLogEvents",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "GetLogEvents",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "GetLogGroup",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "ListLogGroups",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudLogging",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "ListLogStreams",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "PutLogEvents",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "logging",
+    "operation": "PutMetricFilter",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs"
+      },
+      "azure": {
+        "native": "LogAnalytics"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "logging",
+    "operation": "UpdateLogGroup",
+    "providers": {
+      "aws": {
+        "native": "CloudWatchLogs",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LogAnalytics",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudLogging"
+      }
+    },
+    "status": "green"
+  },
+  {
     "service": "messagequeue",
     "operation": "ChangeVisibility",
     "providers": {
@@ -2119,6 +2363,366 @@
     "status": "green"
   },
   {
+    "service": "monitoring",
+    "operation": "CreateAlarm",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "monitoring",
+    "operation": "CreateNotificationChannel",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "monitoring",
+    "operation": "DeleteAlarm",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "monitoring",
+    "operation": "DeleteNotificationChannel",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "monitoring",
+    "operation": "DescribeAlarms",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "monitoring",
+    "operation": "GetAlarmHistory",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "monitoring",
+    "operation": "GetMetricData",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "monitoring",
+    "operation": "GetNotificationChannel",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "monitoring",
+    "operation": "ListMetrics",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "monitoring",
+    "operation": "ListNotificationChannels",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "monitoring",
+    "operation": "PutMetricData",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "monitoring",
+    "operation": "SetAlarmState",
+    "providers": {
+      "aws": {
+        "native": "CloudWatch"
+      },
+      "azure": {
+        "native": "Monitor"
+      },
+      "gcp": {
+        "native": "CloudMonitoring"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "notification",
+    "operation": "CreateTopic",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "FCM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "notification",
+    "operation": "DeleteTopic",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "FCM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "notification",
+    "operation": "GetTopic",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "FCM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "notification",
+    "operation": "ListSubscriptions",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs"
+      },
+      "gcp": {
+        "native": "FCM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "notification",
+    "operation": "ListTopics",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "FCM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "notification",
+    "operation": "Publish",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs"
+      },
+      "gcp": {
+        "native": "FCM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "notification",
+    "operation": "Subscribe",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs"
+      },
+      "gcp": {
+        "native": "FCM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "notification",
+    "operation": "Unsubscribe",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs"
+      },
+      "gcp": {
+        "native": "FCM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "notification",
+    "operation": "UpdateTopic",
+    "providers": {
+      "aws": {
+        "native": "SNS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "NotificationHubs",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "FCM"
+      }
+    },
+    "status": "green"
+  },
+  {
     "service": "secrets",
     "operation": "CreateSecret",
     "providers": {
@@ -2246,6 +2850,461 @@
       },
       "gcp": {
         "native": "SecretManager",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "CreateAlias",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "CreateEventSourceMapping",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "CreateFunction",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudFunctions",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "DeleteAlias",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "DeleteEventSourceMapping",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "DeleteFunction",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudFunctions",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "DeleteFunctionConcurrency",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "DeleteLayerVersion",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "GetAlias",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "GetEventSourceMapping",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "GetFunction",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudFunctions",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "GetFunctionConcurrency",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "GetLayerVersion",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "Invoke",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "ListAliases",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "ListEventSourceMappings",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "ListFunctions",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "CloudFunctions",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "ListLayerVersions",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "ListLayers",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "ListVersions",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "PublishLayerVersion",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "PublishVersion",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "PutFunctionConcurrency",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "RegisterHandler",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "UpdateAlias",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "serverless",
+    "operation": "UpdateEventSourceMapping",
+    "providers": {
+      "aws": {
+        "native": "Lambda"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "serverless",
+    "operation": "UpdateFunction",
+    "providers": {
+      "aws": {
+        "native": "Lambda",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "Functions"
+      },
+      "gcp": {
+        "native": "CloudFunctions",
         "sdkGo": "pass"
       }
     },

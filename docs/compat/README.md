@@ -149,6 +149,27 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 
 **dns verified via Go SDK:** AWS 14/16 · Azure 10/16 · GCP 8/16.
 
+## logging
+
+| Operation | AWS (CloudWatchLogs) | Azure (LogAnalytics) | GCP (CloudLogging) |
+|---|---|---|---|
+| CreateLogGroup | ✅ | ✅ | · |
+| CreateLogStream | ✅ | · | · |
+| DeleteLogGroup | ✅ | ✅ | ✅ |
+| DeleteLogStream | ✅ | · | · |
+| DeleteMetricFilter | · | · | · |
+| DescribeMetricFilters | · | · | · |
+| FilterLogEvents | ✅ | · | · |
+| GetLogEvents | ✅ | · | ✅ |
+| GetLogGroup | ✅ | ✅ | · |
+| ListLogGroups | ✅ | ✅ | ✅ |
+| ListLogStreams | ✅ | · | · |
+| PutLogEvents | ✅ | · | ✅ |
+| PutMetricFilter | · | · | · |
+| UpdateLogGroup | ✅ | ✅ | · |
+
+**logging verified via Go SDK:** AWS 11/14 · Azure 5/14 · GCP 4/14.
+
 ## messagequeue
 
 | Operation | AWS (SQS) | Azure (QueueStorage) | GCP (PubSub) |
@@ -170,6 +191,41 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 
 **messagequeue verified via Go SDK:** AWS 12/14 · Azure 7/14 · GCP 7/14.
 
+## monitoring
+
+| Operation | AWS (CloudWatch) | Azure (Monitor) | GCP (CloudMonitoring) |
+|---|---|---|---|
+| CreateAlarm | ✅ | · | ✅ |
+| CreateNotificationChannel | · | · | · |
+| DeleteAlarm | ✅ | · | ✅ |
+| DeleteNotificationChannel | · | · | · |
+| DescribeAlarms | ✅ | · | ✅ |
+| GetAlarmHistory | · | · | · |
+| GetMetricData | ✅ | · | · |
+| GetNotificationChannel | · | · | · |
+| ListMetrics | ✅ | · | · |
+| ListNotificationChannels | · | · | · |
+| PutMetricData | ✅ | · | · |
+| SetAlarmState | · | · | · |
+
+**monitoring verified via Go SDK:** AWS 6/12 · Azure 0/12 · GCP 3/12.
+
+## notification
+
+| Operation | AWS (SNS) | Azure (NotificationHubs) | GCP (FCM) |
+|---|---|---|---|
+| CreateTopic | ✅ | ✅ | · |
+| DeleteTopic | ✅ | ✅ | · |
+| GetTopic | ✅ | ✅ | · |
+| ListSubscriptions | ✅ | · | · |
+| ListTopics | ✅ | ✅ | · |
+| Publish | ✅ | · | ✅ |
+| Subscribe | ✅ | · | · |
+| Unsubscribe | ✅ | · | · |
+| UpdateTopic | ✅ | ✅ | · |
+
+**notification verified via Go SDK:** AWS 9/9 · Azure 5/9 · GCP 1/9.
+
 ## secrets
 
 | Operation | AWS (SecretsManager) | Azure (KeyVault) | GCP (SecretManager) |
@@ -183,6 +239,40 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | PutSecretValue | ✅ | ✅ | ✅ |
 
 **secrets verified via Go SDK:** AWS 7/7 · Azure 7/7 · GCP 7/7.
+
+## serverless
+
+| Operation | AWS (Lambda) | Azure (Functions) | GCP (CloudFunctions) |
+|---|---|---|---|
+| CreateAlias | ✅ | · | · |
+| CreateEventSourceMapping | · | · | · |
+| CreateFunction | ✅ | ✅ | ✅ |
+| DeleteAlias | ✅ | · | · |
+| DeleteEventSourceMapping | · | · | · |
+| DeleteFunction | ✅ | ✅ | ✅ |
+| DeleteFunctionConcurrency | · | · | · |
+| DeleteLayerVersion | · | · | · |
+| GetAlias | ✅ | · | · |
+| GetEventSourceMapping | · | · | · |
+| GetFunction | ✅ | ✅ | ✅ |
+| GetFunctionConcurrency | · | · | · |
+| GetLayerVersion | · | · | · |
+| Invoke | ✅ | · | ✅ |
+| ListAliases | ✅ | · | · |
+| ListEventSourceMappings | · | · | · |
+| ListFunctions | ✅ | ✅ | ✅ |
+| ListLayerVersions | · | · | · |
+| ListLayers | · | · | · |
+| ListVersions | ✅ | · | · |
+| PublishLayerVersion | · | · | · |
+| PublishVersion | ✅ | · | · |
+| PutFunctionConcurrency | · | · | · |
+| RegisterHandler | · | · | · |
+| UpdateAlias | ✅ | · | · |
+| UpdateEventSourceMapping | · | · | · |
+| UpdateFunction | ✅ | · | ✅ |
+
+**serverless verified via Go SDK:** AWS 13/27 · Azure 4/27 · GCP 6/27.
 
 ## storage
 
