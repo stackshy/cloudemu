@@ -137,13 +137,22 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 			props["storageProfile"] = map[string]any{"osDisk": map[string]any{"osType": inst.OSType}}
 		}
 
+		// Prefer the instance's own location/resource group (recorded by the ARM
+		// create path) so ARG reports where the resource actually lives; fall
+		// back to the engine default region for portable-API creations that
+		// carry neither.
+		region := inst.Region
+		if region == "" {
+			region = e.region
+		}
+
 		out = append(out, Resource{
 			Provider:   e.provider,
 			Service:    ServiceCompute,
 			Type:       TypeInstance,
 			ID:         inst.ID,
-			ARN:        e.computeInstanceARN(inst.ID),
-			Region:     e.region,
+			ARN:        e.computeInstanceARN(inst.ID, inst.ResourceGroup),
+			Region:     region,
 			Tags:       copyTags(inst.Tags),
 			SKU:        inst.InstanceType,
 			Zones:      cloneStrings(inst.Zones),
@@ -202,7 +211,7 @@ func (e *Engine) walkVolumes(ctx context.Context) ([]Resource, error) {
 
 		managedBy := ""
 		if v.AttachedTo != "" {
-			managedBy = e.computeInstanceARN(v.AttachedTo)
+			managedBy = e.computeInstanceARN(v.AttachedTo, "")
 		}
 
 		out = append(out, Resource{

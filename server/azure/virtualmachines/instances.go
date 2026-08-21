@@ -41,15 +41,17 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	}
 
 	cfg := computedriver.InstanceConfig{
-		ImageID:      imageRefToID(req.Properties.StorageProfile),
-		InstanceType: hardwareSize(req.Properties.HardwareProfile),
-		SubnetID:     firstNicID(req.Properties.NetworkProfile),
-		KeyName:      computerName(req.Properties.OSProfile),
-		Tags:         mergeTags(req.Tags, rp.ResourceName),
-		Priority:     req.Properties.Priority,
-		LicenseType:  req.Properties.LicenseType,
-		OSType:       osTypeFromStorage(req.Properties.StorageProfile),
-		Zones:        req.Zones,
+		ImageID:       imageRefToID(req.Properties.StorageProfile),
+		InstanceType:  hardwareSize(req.Properties.HardwareProfile),
+		SubnetID:      firstNicID(req.Properties.NetworkProfile),
+		KeyName:       computerName(req.Properties.OSProfile),
+		Tags:          mergeTags(req.Tags, rp.ResourceName),
+		Priority:      req.Properties.Priority,
+		LicenseType:   req.Properties.LicenseType,
+		OSType:        osTypeFromStorage(req.Properties.StorageProfile),
+		Zones:         req.Zones,
+		Region:        req.Location,
+		ResourceGroup: rp.ResourceGroup,
 	}
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, 1)

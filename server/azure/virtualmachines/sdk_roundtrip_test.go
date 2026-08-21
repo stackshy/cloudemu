@@ -199,3 +199,52 @@ func pollUntilDone(ctx context.Context,
 
 	return resp.VirtualMachine, nil
 }
+
+// TestSDKVMRecordsLocationAndResourceGroup verifies the ARM create path carries
+// the request's location and resource group onto the compute driver instance,
+// so cross-service discovery (Resource Graph) can report where the VM actually
+// lives instead of the emulator defaults (issue #409 item #1).
+func TestSDKVMRecordsLocationAndResourceGroup(t *testing.T) {
+	cloudP := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{VirtualMachines: cloudP.VirtualMachines})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	client := newSDKClient(t, ts)
+	ctx := context.Background()
+
+	poller, err := client.BeginCreateOrUpdate(ctx, "rg-prod", "vm-loc",
+		armcompute.VirtualMachine{
+			Location: to.Ptr("westeurope"),
+			Properties: &armcompute.VirtualMachineProperties{
+				HardwareProfile: &armcompute.HardwareProfile{
+					VMSize: to.Ptr(armcompute.VirtualMachineSizeTypesStandardD2SV3),
+				},
+			},
+		}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := pollUntilDone(ctx, poller); err != nil {
+		t.Fatalf("CreateOrUpdate poll: %v", err)
+	}
+
+	insts, err := cloudP.VirtualMachines.DescribeInstances(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("DescribeInstances: %v", err)
+	}
+
+	if len(insts) != 1 {
+		t.Fatalf("got %d instances, want 1", len(insts))
+	}
+
+	if insts[0].Region != "westeurope" {
+		t.Errorf("Region=%q, want westeurope", insts[0].Region)
+	}
+
+	if insts[0].ResourceGroup != "rg-prod" {
+		t.Errorf("ResourceGroup=%q, want rg-prod", insts[0].ResourceGroup)
+	}
+}
