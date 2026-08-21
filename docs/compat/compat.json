@@ -58,7 +58,8 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "CosmosDB"
+        "native": "CosmosDB",
+        "sdkGo": "pass"
       },
       "gcp": {
         "native": "Firestore"
@@ -91,10 +92,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "CosmosDB"
+        "native": "CosmosDB",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "Firestore"
+        "native": "Firestore",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -108,7 +111,8 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "CosmosDB"
+        "native": "CosmosDB",
+        "sdkGo": "pass"
       },
       "gcp": {
         "native": "Firestore"
@@ -157,7 +161,8 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "CosmosDB"
+        "native": "CosmosDB",
+        "sdkGo": "pass"
       },
       "gcp": {
         "native": "Firestore"
@@ -174,10 +179,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "CosmosDB"
+        "native": "CosmosDB",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "Firestore"
+        "native": "Firestore",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -256,10 +263,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "CosmosDB"
+        "native": "CosmosDB",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "Firestore"
+        "native": "Firestore",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -290,10 +299,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "CosmosDB"
+        "native": "CosmosDB",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "Firestore"
+        "native": "Firestore",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -421,10 +432,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "QueueStorage"
+        "native": "QueueStorage",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "PubSub"
+        "native": "PubSub",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -438,10 +451,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "QueueStorage"
+        "native": "QueueStorage",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "PubSub"
+        "native": "PubSub",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -471,10 +486,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "QueueStorage"
+        "native": "QueueStorage",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "PubSub"
+        "native": "PubSub",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -507,10 +524,11 @@
         "native": "QueueStorage"
       },
       "gcp": {
-        "native": "PubSub"
+        "native": "PubSub",
+        "sdkGo": "pass"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "messagequeue",
@@ -521,10 +539,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "QueueStorage"
+        "native": "QueueStorage",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "PubSub"
+        "native": "PubSub",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -538,7 +558,8 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "QueueStorage"
+        "native": "QueueStorage",
+        "sdkGo": "pass"
       },
       "gcp": {
         "native": "PubSub"
@@ -555,10 +576,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "QueueStorage"
+        "native": "QueueStorage",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "PubSub"
+        "native": "PubSub",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -588,10 +611,12 @@
         "sdkGo": "pass"
       },
       "azure": {
-        "native": "QueueStorage"
+        "native": "QueueStorage",
+        "sdkGo": "pass"
       },
       "gcp": {
-        "native": "PubSub"
+        "native": "PubSub",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -625,6 +650,139 @@
       },
       "gcp": {
         "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "secrets",
+    "operation": "CreateSecret",
+    "providers": {
+      "aws": {
+        "native": "SecretsManager",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "KeyVault",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "SecretManager",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "secrets",
+    "operation": "DeleteSecret",
+    "providers": {
+      "aws": {
+        "native": "SecretsManager",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "KeyVault",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "SecretManager",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "secrets",
+    "operation": "GetSecret",
+    "providers": {
+      "aws": {
+        "native": "SecretsManager",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "KeyVault",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "SecretManager",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "secrets",
+    "operation": "GetSecretValue",
+    "providers": {
+      "aws": {
+        "native": "SecretsManager",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "KeyVault",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "SecretManager",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "secrets",
+    "operation": "ListSecretVersions",
+    "providers": {
+      "aws": {
+        "native": "SecretsManager",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "KeyVault",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "SecretManager",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "secrets",
+    "operation": "ListSecrets",
+    "providers": {
+      "aws": {
+        "native": "SecretsManager",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "KeyVault",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "SecretManager",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "secrets",
+    "operation": "PutSecretValue",
+    "providers": {
+      "aws": {
+        "native": "SecretsManager",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "KeyVault",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "SecretManager",
+        "sdkGo": "pass"
       }
     },
     "status": "green"

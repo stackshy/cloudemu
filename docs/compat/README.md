@@ -13,21 +13,21 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | BatchGetItems | ✅ | · | · |
 | BatchPutItems | ✅ | · | · |
 | CreateIndex | · | · | · |
-| CreateTable | ✅ | · | · |
+| CreateTable | ✅ | ✅ | · |
 | DeleteIndex | · | · | · |
-| DeleteItem | ✅ | · | · |
-| DeleteTable | ✅ | · | · |
+| DeleteItem | ✅ | ✅ | ✅ |
+| DeleteTable | ✅ | ✅ | · |
 | DescribeIndex | · | · | · |
 | DescribeTTL | · | · | · |
-| DescribeTable | ✅ | · | · |
-| GetItem | ✅ | · | · |
+| DescribeTable | ✅ | ✅ | · |
+| GetItem | ✅ | ✅ | ✅ |
 | GetStreamRecords | · | · | · |
 | ListIndexes | · | · | · |
 | ListTables | ✅ | · | · |
 | ListTagsOfResource | · | · | · |
-| PutItem | ✅ | · | · |
+| PutItem | ✅ | ✅ | ✅ |
 | Query | ✅ | · | · |
-| Scan | ✅ | · | · |
+| Scan | ✅ | ✅ | ✅ |
 | TagResource | · | · | · |
 | TransactWriteItems | ✅ | · | · |
 | UntagResource | · | · | · |
@@ -35,28 +35,42 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | UpdateStreamConfig | · | · | · |
 | UpdateTTL | · | · | · |
 
-**database verified via Go SDK:** AWS 13/24 · Azure 0/24 · GCP 0/24.
+**database verified via Go SDK:** AWS 13/24 · Azure 7/24 · GCP 4/24.
 
 ## messagequeue
 
 | Operation | AWS (SQS) | Azure (QueueStorage) | GCP (PubSub) |
 |---|---|---|---|
 | ChangeVisibility | · | · | · |
-| CreateQueue | ✅ | · | · |
-| DeleteMessage | ✅ | · | · |
+| CreateQueue | ✅ | ✅ | ✅ |
+| DeleteMessage | ✅ | ✅ | ✅ |
 | DeleteMessageBatch | · | · | · |
-| DeleteQueue | ✅ | · | · |
+| DeleteQueue | ✅ | ✅ | ✅ |
 | GetQueueAttributes | ✅ | · | · |
-| GetQueueInfo | · | · | · |
-| ListQueues | ✅ | · | · |
-| PurgeQueue | ✅ | · | · |
-| ReceiveMessages | ✅ | · | · |
+| GetQueueInfo | · | · | ✅ |
+| ListQueues | ✅ | ✅ | ✅ |
+| PurgeQueue | ✅ | ✅ | · |
+| ReceiveMessages | ✅ | ✅ | ✅ |
 | ReceiveMessagesWithOptions | · | · | · |
-| SendMessage | ✅ | · | · |
+| SendMessage | ✅ | ✅ | ✅ |
 | SendMessageBatch | · | · | · |
 | SetQueueAttributes | ✅ | · | · |
 
-**messagequeue verified via Go SDK:** AWS 9/14 · Azure 0/14 · GCP 0/14.
+**messagequeue verified via Go SDK:** AWS 9/14 · Azure 7/14 · GCP 7/14.
+
+## secrets
+
+| Operation | AWS (SecretsManager) | Azure (KeyVault) | GCP (SecretManager) |
+|---|---|---|---|
+| CreateSecret | ✅ | ✅ | ✅ |
+| DeleteSecret | ✅ | ✅ | ✅ |
+| GetSecret | ✅ | ✅ | ✅ |
+| GetSecretValue | ✅ | ✅ | ✅ |
+| ListSecretVersions | ✅ | ✅ | ✅ |
+| ListSecrets | ✅ | ✅ | ✅ |
+| PutSecretValue | ✅ | ✅ | ✅ |
+
+**secrets verified via Go SDK:** AWS 7/7 · Azure 7/7 · GCP 7/7.
 
 ## storage
 
