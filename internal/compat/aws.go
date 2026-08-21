@@ -52,6 +52,11 @@ func BootAWS(tb TB, d awsserver.Drivers) *AWSSession {
 	return &AWSSession{Session: s, cfg: cfg}
 }
 
+// Config returns the aws-sdk-go-v2 config (dummy creds + region) for building
+// any service client pointed at the emulator. Set o.BaseEndpoint = Endpoint()
+// on the client options.
+func (a *AWSSession) Config() aws.Config { return a.cfg }
+
 // S3Client returns a real S3 client pointed at the emulator, with path-style
 // addressing (required against a single-host emulator).
 func (a *AWSSession) S3Client() *s3.Client {

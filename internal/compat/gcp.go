@@ -44,6 +44,11 @@ func BootGCP(tb TB, d gcpserver.Drivers) *GCPSession {
 	return &GCPSession{Session: s, transport: ts.Client()}
 }
 
+// Transport returns the test server's HTTP client, for building google-cloud
+// clients with option.WithHTTPClient + option.WithoutAuthentication against
+// Endpoint().
+func (g *GCPSession) Transport() *http.Client { return g.transport }
+
 // StorageClient returns a real GCS client pointed at the emulator (anonymous;
 // retries disabled). The /storage/v1/ suffix is required — the SDK appends
 // /b/... directly to the endpoint.
