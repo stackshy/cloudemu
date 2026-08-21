@@ -107,6 +107,7 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 
 		if ha := body.Properties.HighAvailability; ha != nil {
 			input.HighAvailabilityMode = ha.Mode
+			input.StandbyAvailabilityZone = ha.StandbyAvailabilityZone
 		}
 	}
 

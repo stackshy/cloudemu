@@ -320,9 +320,14 @@ func TestSDKPostgresFlexHighAvailabilityUpdate(t *testing.T) {
 		t.Fatalf("Get after enable: %v", err)
 	}
 
-	if ha := got.Server.Properties.HighAvailability; ha == nil || ha.Mode == nil ||
-		*ha.Mode != armpostgresqlflexibleservers.HighAvailabilityModeZoneRedundant {
+	haEnabled := got.Server.Properties.HighAvailability
+	if haEnabled == nil || haEnabled.Mode == nil ||
+		*haEnabled.Mode != armpostgresqlflexibleservers.HighAvailabilityModeZoneRedundant {
 		t.Fatalf("after PATCH enable: mode = %v, want ZoneRedundant", got.Server.Properties.HighAvailability)
+	}
+
+	if haEnabled.StandbyAvailabilityZone == nil || *haEnabled.StandbyAvailabilityZone != "3" {
+		t.Errorf("after PATCH enable: standbyAvailabilityZone = %v, want 3", haEnabled.StandbyAvailabilityZone)
 	}
 
 	disablePoller, err := servers.BeginUpdate(ctx, "rg-1", "haupd", armpostgresqlflexibleservers.ServerForUpdate{
