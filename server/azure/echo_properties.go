@@ -140,8 +140,20 @@ func (c *captureWriter) flush(w http.ResponseWriter) {
 		c.status = http.StatusOK
 	}
 
-	w.WriteHeader(c.status)
-	_, _ = w.Write(c.body.Bytes())
+	// Every wrapped ARM response is JSON; pin the content type at the sink so a
+	// reflected request value in the body can never be sniffed as HTML.
+	writeJSONResponse(w, c.status, c.body.Bytes())
+}
+
+// writeJSONResponse writes an application/json response body, forbidding MIME
+// sniffing. Pinning the content type and nosniff at the sink is what keeps a
+// reflected request value (echoed back into the body) from being interpreted as
+// HTML by a browser.
+func writeJSONResponse(w http.ResponseWriter, status int, body []byte) {
+	w.Header().Set("Content-Type", azurearm.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // rewrite merges the recorded and request-carried unmodeled properties into the
@@ -191,9 +203,7 @@ func (c *captureWriter) rewrite(
 		return false
 	}
 
-	w.Header().Set("Content-Type", azurearm.ContentType)
-	w.WriteHeader(c.status)
-	_, _ = w.Write(rewritten)
+	writeJSONResponse(w, c.status, rewritten)
 
 	return true
 }
@@ -241,7 +251,9 @@ func missingProperties(req, resp map[string]any) map[string]any {
 // overwriting any key resp already carries (the handler/driver is authoritative
 // for the properties it models). Nested objects are merged recursively.
 func mergeProperties(resp, unmodeled map[string]any) map[string]any {
-	out := make(map[string]any, len(resp)+len(unmodeled))
+	// Size the map to resp and let it grow for the unmodeled keys — summing the
+	// two lengths as a capacity hint is a pointless overflow risk for no gain.
+	out := make(map[string]any, len(resp))
 	for k, v := range resp {
 		out[k] = v
 	}
