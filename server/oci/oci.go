@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
 	ocilogging "github.com/stackshy/cloudemu/v2/server/oci/logging"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
+	"github.com/stackshy/cloudemu/v2/server/oci/notifications"
 	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -121,6 +122,10 @@ func New(d Drivers) *server.Server {
 		}
 
 		srv.Register(vcnHandler)
+	}
+
+	if d.Notifications != nil {
+		srv.Register(notifications.New(d.Notifications, d.WorkRequests))
 	}
 
 	return srv
