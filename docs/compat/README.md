@@ -65,13 +65,13 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | AbortMultipartUpload | · | · | · |
 | CompleteMultipartUpload | · | · | · |
 | CopyObject | ✅ | · | · |
-| CreateBucket | ✅ | ✅ | · |
+| CreateBucket | ✅ | ✅ | ✅ |
 | CreateMultipartUpload | · | · | · |
-| DeleteBucket | ✅ | ✅ | · |
+| DeleteBucket | ✅ | ✅ | ✅ |
 | DeleteBucketPolicy | · | · | · |
 | DeleteBucketTagging | · | · | · |
 | DeleteCORSConfig | · | · | · |
-| DeleteObject | ✅ | ✅ | · |
+| DeleteObject | ✅ | ✅ | ✅ |
 | DeleteObjectTagging | · | · | · |
 | EvaluateLifecycle | · | · | · |
 | GeneratePresignedURL | · | · | · |
@@ -81,22 +81,22 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | GetCORSConfig | · | · | · |
 | GetEncryptionConfig | · | · | · |
 | GetLifecycleConfig | · | · | · |
-| GetObject | ✅ | ✅ | · |
+| GetObject | ✅ | ✅ | ✅ |
 | GetObjectTagging | · | · | · |
-| HeadObject | ✅ | ✅ | · |
-| ListBuckets | ✅ | ✅ | · |
+| HeadObject | ✅ | ✅ | ✅ |
+| ListBuckets | ✅ | ✅ | ✅ |
 | ListMultipartUploads | · | · | · |
-| ListObjects | ✅ | ✅ | · |
+| ListObjects | ✅ | ✅ | ✅ |
 | ListParts | · | · | · |
 | PutBucketPolicy | · | · | · |
 | PutBucketTagging | · | · | · |
 | PutCORSConfig | · | · | · |
 | PutEncryptionConfig | · | · | · |
 | PutLifecycleConfig | · | · | · |
-| PutObject | ✅ | ✅ | · |
+| PutObject | ✅ | ✅ | ✅ |
 | PutObjectTagging | · | · | · |
 | SetBucketVersioning | · | · | · |
 | UploadPart | · | · | · |
 
-**storage verified via Go SDK:** AWS 9/35 · Azure 8/35 · GCP 0/35.
+**storage verified via Go SDK:** AWS 9/35 · Azure 8/35 · GCP 8/35.
 

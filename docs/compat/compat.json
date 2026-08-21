@@ -691,7 +691,8 @@
         "sdkGo": "pass"
       },
       "gcp": {
-        "native": "GCS"
+        "native": "GCS",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -725,7 +726,8 @@
         "sdkGo": "pass"
       },
       "gcp": {
-        "native": "GCS"
+        "native": "GCS",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -791,7 +793,8 @@
         "sdkGo": "pass"
       },
       "gcp": {
-        "native": "GCS"
+        "native": "GCS",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -953,7 +956,8 @@
         "sdkGo": "pass"
       },
       "gcp": {
-        "native": "GCS"
+        "native": "GCS",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -987,7 +991,8 @@
         "sdkGo": "pass"
       },
       "gcp": {
-        "native": "GCS"
+        "native": "GCS",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -1005,7 +1010,8 @@
         "sdkGo": "pass"
       },
       "gcp": {
-        "native": "GCS"
+        "native": "GCS",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -1039,7 +1045,8 @@
         "sdkGo": "pass"
       },
       "gcp": {
-        "native": "GCS"
+        "native": "GCS",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
@@ -1153,7 +1160,8 @@
         "sdkGo": "pass"
       },
       "gcp": {
-        "native": "GCS"
+        "native": "GCS",
+        "sdkGo": "pass"
       }
     },
     "status": "green"
