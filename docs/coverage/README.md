@@ -36,7 +36,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
 | `kms` | [KMS](./aws/kms.md) | — | — | — | 45 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | — | 19 |
-| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 14 |
+| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | [Logging](./oci/logging.md) | 14 |
 | `managedcassandra` | — | [ManagedCassandra](./azure/managedcassandra.md) | — | — | 15 |
 | `memorydb` | [MemoryDB](./aws/memorydb.md) | — | — | — | 33 |
 | `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | — | 14 |

@@ -5348,7 +5348,8 @@
     "providers": {
       "aws": "CloudWatchLogs",
       "azure": "LogAnalytics",
-      "gcp": "CloudLogging"
+      "gcp": "CloudLogging",
+      "oci": "Logging"
     }
   },
   {
