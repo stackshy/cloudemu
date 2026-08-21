@@ -233,3 +233,149 @@ func TestSDKMySQLFlexStartStopRestart(t *testing.T) {
 		t.Fatalf("expected state Ready after restart, got %v", got.Server.Properties.State)
 	}
 }
+
+func TestSDKMySQLFlexHighAvailability(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	createPoller, err := servers.BeginCreate(ctx, "rg-1", "ha1", armmysqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		Properties: &armmysqlflexibleservers.ServerProperties{
+			HighAvailability: &armmysqlflexibleservers.HighAvailability{
+				Mode:                    to.Ptr(armmysqlflexibleservers.HighAvailabilityModeZoneRedundant),
+				StandbyAvailabilityZone: to.Ptr("2"),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Create PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "ha1", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	ha := got.Server.Properties.HighAvailability
+	if ha == nil || ha.Mode == nil {
+		t.Fatal("expected highAvailability to round-trip, got nil")
+	}
+
+	if *ha.Mode != armmysqlflexibleservers.HighAvailabilityModeZoneRedundant {
+		t.Fatalf("mode = %v, want ZoneRedundant", *ha.Mode)
+	}
+
+	if ha.StandbyAvailabilityZone == nil || *ha.StandbyAvailabilityZone != "2" {
+		t.Fatalf("standbyAvailabilityZone = %v, want 2", ha.StandbyAvailabilityZone)
+	}
+
+	if ha.State == nil || *ha.State != armmysqlflexibleservers.HighAvailabilityStateHealthy {
+		t.Fatalf("state = %v, want Healthy", ha.State)
+	}
+}
+
+// TestSDKMySQLFlexHighAvailabilityUpdate covers the PATCH path: a server created
+// with HA disabled is switched to ZoneRedundant via BeginUpdate, and disabling
+// it again clears the standby zone.
+func TestSDKMySQLFlexHighAvailabilityUpdate(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	createPoller, err := servers.BeginCreate(ctx, "rg-1", "haupd", armmysqlflexibleservers.Server{
+		Location:   to.Ptr("eastus"),
+		Properties: &armmysqlflexibleservers.ServerProperties{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Create PollUntilDone: %v", err)
+	}
+
+	// PATCH: enable ZoneRedundant HA.
+	patchPoller, err := servers.BeginUpdate(ctx, "rg-1", "haupd", armmysqlflexibleservers.ServerForUpdate{
+		Properties: &armmysqlflexibleservers.ServerPropertiesForUpdate{
+			HighAvailability: &armmysqlflexibleservers.HighAvailability{
+				Mode:                    to.Ptr(armmysqlflexibleservers.HighAvailabilityModeZoneRedundant),
+				StandbyAvailabilityZone: to.Ptr("3"),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate(enable): %v", err)
+	}
+
+	if _, err := patchPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Update(enable) PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "haupd", nil)
+	if err != nil {
+		t.Fatalf("Get after enable: %v", err)
+	}
+
+	if ha := got.Server.Properties.HighAvailability; ha == nil || ha.Mode == nil ||
+		*ha.Mode != armmysqlflexibleservers.HighAvailabilityModeZoneRedundant {
+		t.Fatalf("after PATCH enable: mode = %v, want ZoneRedundant", got.Server.Properties.HighAvailability)
+	}
+
+	// PATCH: disable HA — the standby zone must be cleared.
+	disablePoller, err := servers.BeginUpdate(ctx, "rg-1", "haupd", armmysqlflexibleservers.ServerForUpdate{
+		Properties: &armmysqlflexibleservers.ServerPropertiesForUpdate{
+			HighAvailability: &armmysqlflexibleservers.HighAvailability{
+				Mode: to.Ptr(armmysqlflexibleservers.HighAvailabilityModeDisabled),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate(disable): %v", err)
+	}
+
+	if _, err := disablePoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Update(disable) PollUntilDone: %v", err)
+	}
+
+	got, err = servers.Get(ctx, "rg-1", "haupd", nil)
+	if err != nil {
+		t.Fatalf("Get after disable: %v", err)
+	}
+
+	ha := got.Server.Properties.HighAvailability
+	if ha == nil || ha.Mode == nil || *ha.Mode != armmysqlflexibleservers.HighAvailabilityModeDisabled {
+		t.Fatalf("after PATCH disable: mode = %v, want Disabled", ha)
+	}
+
+	if ha.StandbyAvailabilityZone != nil && *ha.StandbyAvailabilityZone != "" {
+		t.Errorf("disabling HA left a stale standbyAvailabilityZone: %v", *ha.StandbyAvailabilityZone)
+	}
+}
+
+// TestSDKMySQLFlexRejectsInvalidHAMode confirms a bogus highAvailability.mode is
+// rejected (real Azure returns 400) rather than stored and echoed.
+func TestSDKMySQLFlexRejectsInvalidHAMode(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	poller, err := servers.BeginCreate(ctx, "rg-1", "bogus", armmysqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		Properties: &armmysqlflexibleservers.ServerProperties{
+			HighAvailability: &armmysqlflexibleservers.HighAvailability{
+				Mode: to.Ptr(armmysqlflexibleservers.HighAvailabilityMode("Bogus")),
+			},
+		},
+	}, nil)
+
+	// The error may surface at BeginCreate or when the poller runs.
+	if err == nil {
+		_, err = poller.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("expected an error for invalid highAvailability.mode, got nil")
+	}
+}

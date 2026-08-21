@@ -31,6 +31,34 @@ const (
 	SnapshotAvailable = "available"
 )
 
+// Azure Flexible Server high-availability modes. These map directly onto the
+// Azure MySQL/PostgreSQL Flexible Server properties.highAvailability.mode enum.
+const (
+	HAModeDisabled      = "Disabled"
+	HAModeSameZone      = "SameZone"
+	HAModeZoneRedundant = "ZoneRedundant"
+)
+
+// HAEnabled reports whether an HA mode designates an active standby replica
+// (SameZone or ZoneRedundant). It is the single source of truth for deriving
+// MultiAZ and the HA (2x) cost signal from a mode string.
+func HAEnabled(mode string) bool {
+	return mode == HAModeSameZone || mode == HAModeZoneRedundant
+}
+
+// ValidHAMode reports whether mode is an accepted highAvailability.mode value.
+// The empty string is valid — it means "not specified" (no HA change on an
+// update, HA disabled on a create). Any other non-enum value is rejected, so a
+// caller sending a bogus mode gets the same 400 real Azure returns.
+func ValidHAMode(mode string) bool {
+	switch mode {
+	case "", HAModeDisabled, HAModeSameZone, HAModeZoneRedundant:
+		return true
+	default:
+		return false
+	}
+}
+
 // InstanceConfig configures a managed database instance.
 type InstanceConfig struct {
 	ID                   string
@@ -51,6 +79,12 @@ type InstanceConfig struct {
 	OptionGroupName      string
 	ClusterID            string // empty for standalone, set for Aurora cluster members
 	AvailabilityZone     string
+	// HighAvailabilityMode is the Azure Flexible Server HA mode
+	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty for engines with no such
+	// concept. StandbyAvailabilityZone is the zone the standby replica runs in
+	// when HA is enabled. Both drive the HA (2x) cost a discoverer prices on.
+	HighAvailabilityMode    string
+	StandbyAvailabilityZone string
 	// ElasticPoolID is the Azure SQL elastic pool a database belongs to (the
 	// pool's ARM resource ID); empty for standalone databases and non-Azure
 	// engines.
@@ -84,9 +118,13 @@ type Instance struct {
 	OptionGroupName      string
 	ClusterID            string
 	AvailabilityZone     string
-	ElasticPoolID        string
-	CreatedAt            time.Time
-	Tags                 map[string]string
+	// HighAvailabilityMode / StandbyAvailabilityZone echo the Azure Flexible
+	// Server HA configuration on read; empty for engines with no HA concept.
+	HighAvailabilityMode    string
+	StandbyAvailabilityZone string
+	ElasticPoolID           string
+	CreatedAt               time.Time
+	Tags                    map[string]string
 	// ReadReplicaSource is the identifier of the primary this instance
 	// replicates from; empty for a primary. ReadReplicaTargets lists the
 	// replica identifiers reading from this instance.
@@ -108,7 +146,10 @@ type ModifyInstanceInput struct {
 	OptionGroupName             string
 	DBClusterParameterGroupName string
 	ElasticPoolID               string
-	Tags                        map[string]string
+	// HighAvailabilityMode updates the Azure Flexible Server HA mode
+	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty means "no change".
+	HighAvailabilityMode string
+	Tags                 map[string]string
 }
 
 // ClusterConfig configures an Aurora-style cluster. Members are added by

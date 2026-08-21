@@ -280,6 +280,29 @@ func TestARGCostFields_MySQLFlex(t *testing.T) {
 	assert.Equal(t, "ZoneRedundant", rowObj(t, props, "highAvailability")["mode"])
 }
 
+// TestARGCostFields_MySQLFlex_ExplicitHAMode pins the HA fidelity that MultiAZ
+// alone cannot express: an explicit SameZone mode (distinct from ZoneRedundant)
+// and the standby zone must survive into the ARG projection verbatim.
+func TestARGCostFields_MySQLFlex_ExplicitHAMode(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	_, err := cloudP.MySQLFlex.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:                      "mysql-ha",
+		InstanceClass:           "Standard_D2ds_v4",
+		HighAvailabilityMode:    rdsdriver.HAModeSameZone,
+		StandbyAvailabilityZone: "3",
+	})
+	require.NoError(t, err)
+
+	client := argCostClient(t, cloudP)
+
+	row := queryOne(t, client, "microsoft.dbformysql/flexibleservers")
+	ha := rowObj(t, rowProps(t, row), "highAvailability")
+	assert.Equal(t, "SameZone", ha["mode"])
+	assert.Equal(t, "3", ha["standbyAvailabilityZone"])
+}
+
 // TestARGCostFields_PostgresFlex mirrors TestARGCostFields_MySQLFlex for the
 // PostgreSQL Flexible Server family: both flavors share the same
 // appendFlexServers discovery path, so the derived tier, engine version,
