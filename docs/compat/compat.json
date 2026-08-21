@@ -1,0 +1,1209 @@
+[
+  {
+    "service": "database",
+    "operation": "BatchGetItems",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "BatchPutItems",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "CreateIndex",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "CreateTable",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "DeleteIndex",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "DeleteItem",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "DeleteTable",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "DescribeIndex",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "DescribeTTL",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "DescribeTable",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "GetItem",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "GetStreamRecords",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "ListIndexes",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "ListTables",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "ListTagsOfResource",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "PutItem",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "Query",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "Scan",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "TagResource",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "TransactWriteItems",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "UntagResource",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "UpdateItem",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "database",
+    "operation": "UpdateStreamConfig",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "database",
+    "operation": "UpdateTTL",
+    "providers": {
+      "aws": {
+        "native": "DynamoDB"
+      },
+      "azure": {
+        "native": "CosmosDB"
+      },
+      "gcp": {
+        "native": "Firestore"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "ChangeVisibility",
+    "providers": {
+      "aws": {
+        "native": "SQS"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "CreateQueue",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "DeleteMessage",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "DeleteMessageBatch",
+    "providers": {
+      "aws": {
+        "native": "SQS"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "DeleteQueue",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "GetQueueAttributes",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "GetQueueInfo",
+    "providers": {
+      "aws": {
+        "native": "SQS"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "ListQueues",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "PurgeQueue",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "ReceiveMessages",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "ReceiveMessagesWithOptions",
+    "providers": {
+      "aws": {
+        "native": "SQS"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "SendMessage",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "SendMessageBatch",
+    "providers": {
+      "aws": {
+        "native": "SQS"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "messagequeue",
+    "operation": "SetQueueAttributes",
+    "providers": {
+      "aws": {
+        "native": "SQS",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "QueueStorage"
+      },
+      "gcp": {
+        "native": "PubSub"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "AbortMultipartUpload",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "CompleteMultipartUpload",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "CopyObject",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "CreateBucket",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "CreateMultipartUpload",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "DeleteBucket",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "DeleteBucketPolicy",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "DeleteBucketTagging",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "DeleteCORSConfig",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "DeleteObject",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "DeleteObjectTagging",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "EvaluateLifecycle",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "GeneratePresignedURL",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "GetBucketPolicy",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "GetBucketTagging",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "GetBucketVersioning",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "GetCORSConfig",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "GetEncryptionConfig",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "GetLifecycleConfig",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "GetObject",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "GetObjectTagging",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "HeadObject",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "ListBuckets",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "ListMultipartUploads",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "ListObjects",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "ListParts",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "PutBucketPolicy",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "PutBucketTagging",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "PutCORSConfig",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "PutEncryptionConfig",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "PutLifecycleConfig",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "PutObject",
+    "providers": {
+      "aws": {
+        "native": "S3",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "BlobStorage",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "storage",
+    "operation": "PutObjectTagging",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "SetBucketVersioning",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "storage",
+    "operation": "UploadPart",
+    "providers": {
+      "aws": {
+        "native": "S3"
+      },
+      "azure": {
+        "native": "BlobStorage"
+      },
+      "gcp": {
+        "native": "GCS"
+      }
+    },
+    "status": "amber"
+  }
+]

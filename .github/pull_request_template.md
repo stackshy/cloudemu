@@ -20,6 +20,7 @@
 - [ ] Every provider the change applies to implements the same behavior
 - [ ] Integration tests added to `cloudemu_test.go`
 - [ ] Unit tests added to provider test files
+- [ ] Regenerated docs (`go generate ./...` for coverage; `go run ./internal/compatgen` for the compat matrix) and committed the result
 
 ## Test Plan
 
