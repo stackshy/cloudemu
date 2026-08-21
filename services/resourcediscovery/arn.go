@@ -27,12 +27,17 @@ const (
 	netKindRouteTable    = "route-table"
 )
 
-func (e *Engine) computeInstanceARN(id string) string {
+// computeInstanceARN builds the canonical identifier for a compute instance.
+// resourceGroup is the Azure resource group the instance belongs to; empty
+// falls back to the default group (and it is ignored by the AWS/GCP branches,
+// which have no such concept).
+func (e *Engine) computeInstanceARN(id, resourceGroup string) string {
 	switch e.provider {
 	case ProviderAWS:
 		return idgen.AWSARN("ec2", e.region, e.accountID, "instance/"+id)
 	case ProviderAzure:
-		return idgen.AzureID(e.accountID, azureDefaultResourceGroup, "Microsoft.Compute", "virtualMachines", id)
+		return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup),
+			"Microsoft.Compute", "virtualMachines", id)
 	case ProviderGCP:
 		return id
 	default:

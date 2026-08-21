@@ -41,15 +41,17 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	}
 
 	cfg := computedriver.InstanceConfig{
-		ImageID:      imageRefToID(req.Properties.StorageProfile),
-		InstanceType: hardwareSize(req.Properties.HardwareProfile),
-		SubnetID:     firstNicID(req.Properties.NetworkProfile),
-		KeyName:      computerName(req.Properties.OSProfile),
-		Tags:         mergeTags(req.Tags, rp.ResourceName),
-		Priority:     req.Properties.Priority,
-		LicenseType:  req.Properties.LicenseType,
-		OSType:       osTypeFromStorage(req.Properties.StorageProfile),
-		Zones:        req.Zones,
+		ImageID:       imageRefToID(req.Properties.StorageProfile),
+		InstanceType:  hardwareSize(req.Properties.HardwareProfile),
+		SubnetID:      firstNicID(req.Properties.NetworkProfile),
+		KeyName:       computerName(req.Properties.OSProfile),
+		Tags:          mergeTags(req.Tags, rp.ResourceName),
+		Priority:      req.Properties.Priority,
+		LicenseType:   req.Properties.LicenseType,
+		OSType:        osTypeFromStorage(req.Properties.StorageProfile),
+		Zones:         req.Zones,
+		Region:        req.Location,
+		ResourceGroup: rp.ResourceGroup,
 	}
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, 1)
@@ -277,10 +279,13 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 	name := tagOr(inst.Tags, armNameTag, rp.ResourceName)
 
 	return vmResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
-		Name:     name,
-		Type:     providerName + "/" + resourceType,
-		Location: defaultIfEmpty(req.Location, "eastus"),
+		ID:   azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
+		Name: name,
+		Type: providerName + "/" + resourceType,
+		// Prefer the instance's recorded region so GET/LIST report where the VM
+		// was actually created; the request location (create path) and the
+		// "eastus" default are fallbacks for instances that carry no region.
+		Location: defaultIfEmpty(inst.Region, defaultIfEmpty(req.Location, "eastus")),
 		Tags:     stripInternalTags(inst.Tags),
 		Zones:    inst.Zones,
 		Properties: vmResponseProps{

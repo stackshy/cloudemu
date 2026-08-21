@@ -79,6 +79,8 @@ type instanceData struct {
 	Priority       string
 	LicenseType    string
 	Zones          []string
+	Region         string
+	ResourceGroup  string
 }
 
 type asgData struct {
@@ -203,7 +205,8 @@ func toInstance(d *instanceData) driver.Instance {
 		PrivateIP: d.PrivateIP, PublicIP: d.PublicIP, SubnetID: d.SubnetID, VPCID: d.VPCID,
 		SecurityGroups: sg, Tags: tags, LaunchTime: d.LaunchTime,
 		OSType: d.OSType, Priority: d.Priority, LicenseType: d.LicenseType,
-		Zones: append([]string(nil), d.Zones...),
+		Zones:  append([]string(nil), d.Zones...),
+		Region: d.Region, ResourceGroup: d.ResourceGroup,
 	}
 }
 
@@ -242,11 +245,13 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			ID: id, ImageID: cfg.ImageID, InstanceType: cfg.InstanceType,
 			State: compute.StatePending, PrivateIP: m.nextIP(), SubnetID: cfg.SubnetID,
 			SecurityGroups: sg, Tags: tags,
-			LaunchTime:  m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-			OSType:      cfg.OSType,
-			Priority:    cfg.Priority,
-			LicenseType: cfg.LicenseType,
-			Zones:       zones,
+			LaunchTime:    m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			OSType:        cfg.OSType,
+			Priority:      cfg.Priority,
+			LicenseType:   cfg.LicenseType,
+			Zones:         zones,
+			Region:        cfg.Region,
+			ResourceGroup: cfg.ResourceGroup,
 		}
 		m.instances.Set(id, inst)
 		m.sm.SetState(id, compute.StatePending)

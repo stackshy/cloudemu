@@ -425,6 +425,8 @@ type computeConfigCompat = struct {
 	Priority       string
 	LicenseType    string
 	Zones          []string
+	Region         string
+	ResourceGroup  string
 }
 
 // computeInstanceConfig reproduces the helper used elsewhere in the package

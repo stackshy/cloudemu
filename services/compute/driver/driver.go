@@ -24,6 +24,14 @@ type InstanceConfig struct {
 	Priority    string
 	LicenseType string
 	Zones       []string
+	// Region is the location the instance is launched in (Azure location, e.g.
+	// "eastus"); empty falls back to the emulator's default region. ResourceGroup
+	// is the Azure resource group the instance belongs to; empty for providers
+	// with no such concept. Both are carried through so cross-service discovery
+	// (Resource Graph) reports the instance's real location and resource group
+	// rather than the emulator defaults.
+	Region        string
+	ResourceGroup string
 }
 
 // Instance describes a running virtual machine.
@@ -49,6 +57,10 @@ type Instance struct {
 	LicenseType string
 	// Zones are the availability zones the instance occupies, when known.
 	Zones []string
+	// Region / ResourceGroup echo where the instance lives (Azure location and
+	// resource group), when known; empty falls back to the emulator defaults.
+	Region        string
+	ResourceGroup string
 	// Operator carries service-provider managed-resource metadata. It is nil
 	// for ordinary (unmanaged) instances.
 	Operator *OperatorInfo

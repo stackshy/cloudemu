@@ -253,6 +253,28 @@ func TestARGCostFields_ManagedInstance(t *testing.T) {
 // TestARGCostFields_MySQLFlex proves the MySQL Flexible Server projects its
 // compute SKU (with a derived Burstable tier), engine version, storage size and
 // HA mode through the same generic sku/properties slots.
+// TestARGVMLocationResourceGroup pins the fidelity fix for issue #409 item #1:
+// a VM created with an explicit region and resource group must surface both in
+// the ARG row (and in the resource id) rather than falling back to the engine
+// default region and a "default" resource group.
+func TestARGVMLocationResourceGroup(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewAzure()
+
+	_, err := cloudP.VirtualMachines.RunInstances(ctx, computedriver.InstanceConfig{
+		InstanceType:  "Standard_D2s_v5",
+		Region:        "westeurope",
+		ResourceGroup: "rg-prod",
+	}, 1)
+	require.NoError(t, err)
+
+	row := queryOne(t, argCostClient(t, cloudP), "microsoft.compute/virtualmachines")
+
+	assert.Equal(t, "westeurope", row["location"])
+	assert.Equal(t, "rg-prod", row["resourceGroup"])
+	assert.Contains(t, row["id"], "/resourceGroups/rg-prod/")
+}
+
 func TestARGCostFields_MySQLFlex(t *testing.T) {
 	ctx := context.Background()
 	cloudP := cloudemu.NewAzure()
