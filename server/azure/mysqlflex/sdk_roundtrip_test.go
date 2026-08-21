@@ -319,9 +319,14 @@ func TestSDKMySQLFlexHighAvailabilityUpdate(t *testing.T) {
 		t.Fatalf("Get after enable: %v", err)
 	}
 
-	if ha := got.Server.Properties.HighAvailability; ha == nil || ha.Mode == nil ||
-		*ha.Mode != armmysqlflexibleservers.HighAvailabilityModeZoneRedundant {
+	haEnabled := got.Server.Properties.HighAvailability
+	if haEnabled == nil || haEnabled.Mode == nil ||
+		*haEnabled.Mode != armmysqlflexibleservers.HighAvailabilityModeZoneRedundant {
 		t.Fatalf("after PATCH enable: mode = %v, want ZoneRedundant", got.Server.Properties.HighAvailability)
+	}
+
+	if haEnabled.StandbyAvailabilityZone == nil || *haEnabled.StandbyAvailabilityZone != "3" {
+		t.Errorf("after PATCH enable: standbyAvailabilityZone = %v, want 3", haEnabled.StandbyAvailabilityZone)
 	}
 
 	// PATCH: disable HA — the standby zone must be cleared.

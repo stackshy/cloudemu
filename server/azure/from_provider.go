@@ -1,8 +1,9 @@
 package azure
 
 import (
+	"net/http"
+
 	azureprovider "github.com/stackshy/cloudemu/v2/providers/azure"
-	"github.com/stackshy/cloudemu/v2/server"
 )
 
 // DriversFrom builds a Drivers bundle from a fully-constructed Azure provider,
@@ -76,6 +77,6 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 
 // NewFromProvider builds a ready-to-serve Azure server from a fully-constructed
 // provider, wiring every driver via DriversFrom.
-func NewFromProvider(p *azureprovider.Provider) *server.Server {
+func NewFromProvider(p *azureprovider.Provider) http.Handler {
 	return New(DriversFrom(p))
 }

@@ -270,8 +270,11 @@ func (m *Mock) ModifyInstance(
 	if input.HighAvailabilityMode != "" {
 		inst.HighAvailabilityMode = input.HighAvailabilityMode
 		inst.MultiAZ = rdsdriver.HAEnabled(input.HighAvailabilityMode)
-		// Disabling HA tears down the standby, so its zone no longer applies.
-		if !inst.MultiAZ {
+		// Disabling HA tears down the standby, so its zone no longer applies;
+		// enabling it records the requested standby zone.
+		if inst.MultiAZ {
+			inst.StandbyAvailabilityZone = input.StandbyAvailabilityZone
+		} else {
 			inst.StandbyAvailabilityZone = ""
 		}
 	}

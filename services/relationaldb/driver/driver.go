@@ -148,8 +148,11 @@ type ModifyInstanceInput struct {
 	ElasticPoolID               string
 	// HighAvailabilityMode updates the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty means "no change".
-	HighAvailabilityMode string
-	Tags                 map[string]string
+	// StandbyAvailabilityZone updates the standby replica's zone when HA is
+	// enabled; it is cleared automatically when HA is disabled.
+	HighAvailabilityMode    string
+	StandbyAvailabilityZone string
+	Tags                    map[string]string
 }
 
 // ClusterConfig configures an Aurora-style cluster. Members are added by
