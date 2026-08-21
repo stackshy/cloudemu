@@ -26,6 +26,16 @@ type CacheInfo struct {
 	CreatedAt string
 	Tags      map[string]string
 	Scope     scope.Scope
+
+	// SKUFamily / SKUCapacity are the Azure Redis SKU family ("C" for
+	// Basic/Standard, "P" for Premium) and capacity unit; empty/zero for
+	// providers with no such concept. ShardCount and ReplicasPerPrimary model
+	// a Premium clustered cache (both drive node-count cost); zero when
+	// clustering is not configured.
+	SKUFamily          string
+	SKUCapacity        int
+	ShardCount         int
+	ReplicasPerPrimary int
 }
 
 // CacheConfig describes a cache instance to create.
@@ -38,6 +48,14 @@ type CacheConfig struct {
 	// Scope records where the resource lives (Azure subscription/resource
 	// group, GCP project). Zero for AWS and unscoped portable callers.
 	Scope scope.Scope
+
+	// SKUFamily / SKUCapacity carry the Azure Redis SKU family ("C"/"P") and
+	// capacity unit. ShardCount / ReplicasPerPrimary configure a Premium
+	// clustered cache. All are optional and left zero by non-Azure callers.
+	SKUFamily          string
+	SKUCapacity        int
+	ShardCount         int
+	ReplicasPerPrimary int
 }
 
 // Cache is the interface that cache provider implementations must satisfy.

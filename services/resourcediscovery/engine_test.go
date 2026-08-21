@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
+	azurevm "github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
@@ -460,4 +461,45 @@ func TestWalkerErrorPropagation(t *testing.T) {
 		assert.ErrorIs(t, err, sentinel)
 		assert.Contains(t, err.Error(), `"bkt"`)
 	})
+}
+
+// TestVolumeManagedByUsesInstanceResourceGroup verifies an attached volume's
+// managedBy back-reference is built with the owning VM's real resource group,
+// so it matches the RG-aware id the VM itself carries (an ARM-created Azure VM
+// records its resource group; the disk must point at the same id, not a
+// "default" one that would not exist in the inventory).
+func TestVolumeManagedByUsesInstanceResourceGroup(t *testing.T) {
+	ctx := context.Background()
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	vm := azurevm.New(config.NewOptions(config.WithClock(fc), config.WithAccountID("sub-1")))
+
+	insts, err := vm.RunInstances(ctx, computedriver.InstanceConfig{
+		InstanceType: "Standard_D2s_v3", ResourceGroup: "rg-app", Region: "westeurope",
+	}, 1)
+	require.NoError(t, err)
+	require.Len(t, insts, 1)
+
+	vol, err := vm.CreateVolume(ctx, computedriver.VolumeConfig{Size: 32})
+	require.NoError(t, err)
+	require.NoError(t, vm.AttachVolume(ctx, vol.ID, insts[0].ID, "/dev/sdb"))
+
+	engine := New(ProviderAzure, "sub-1", "westeurope", &Drivers{Compute: vm})
+
+	out, err := engine.ListAll(ctx)
+	require.NoError(t, err)
+
+	var vmARN, volManagedBy string
+	for i := range out {
+		switch out[i].Type {
+		case TypeInstance:
+			vmARN = out[i].ARN
+		case TypeVolume:
+			volManagedBy = out[i].ManagedBy
+		}
+	}
+
+	require.NotEmpty(t, vmARN)
+	require.NotEmpty(t, volManagedBy)
+	assert.Contains(t, vmARN, "/resourceGroups/rg-app/")
+	assert.Equal(t, vmARN, volManagedBy, "volume managedBy must match the owning VM's id")
 }

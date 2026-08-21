@@ -35,15 +35,25 @@ type armSKU struct {
 }
 
 type armServerProps struct {
-	AdministratorLogin         string      `json:"administratorLogin,omitempty"`
-	AdministratorLoginPassword string      `json:"administratorLoginPassword,omitempty"`
-	Version                    string      `json:"version,omitempty"`
-	State                      string      `json:"state,omitempty"`
-	FullyQualifiedDomainName   string      `json:"fullyQualifiedDomainName,omitempty"`
-	Storage                    *armStorage `json:"storage,omitempty"`
-	AvailabilityZone           string      `json:"availabilityZone,omitempty"`
-	CreateMode                 string      `json:"createMode,omitempty"`
-	SourceServerResourceID     string      `json:"sourceServerResourceId,omitempty"`
+	AdministratorLogin         string               `json:"administratorLogin,omitempty"`
+	AdministratorLoginPassword string               `json:"administratorLoginPassword,omitempty"`
+	Version                    string               `json:"version,omitempty"`
+	State                      string               `json:"state,omitempty"`
+	FullyQualifiedDomainName   string               `json:"fullyQualifiedDomainName,omitempty"`
+	Storage                    *armStorage          `json:"storage,omitempty"`
+	AvailabilityZone           string               `json:"availabilityZone,omitempty"`
+	HighAvailability           *armHighAvailability `json:"highAvailability,omitempty"`
+	CreateMode                 string               `json:"createMode,omitempty"`
+	SourceServerResourceID     string               `json:"sourceServerResourceId,omitempty"`
+}
+
+// armHighAvailability mirrors properties.highAvailability on a PostgreSQL
+// Flexible Server. Mode is Disabled/SameZone/ZoneRedundant; State is computed
+// by the service (Healthy when a standby is running, NotEnabled otherwise).
+type armHighAvailability struct {
+	Mode                    string `json:"mode,omitempty"`
+	StandbyAvailabilityZone string `json:"standbyAvailabilityZone,omitempty"`
+	State                   string `json:"state,omitempty"`
 }
 
 type armStorage struct {
@@ -64,6 +74,7 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 		State:                    serverState(inst.State),
 		FullyQualifiedDomainName: inst.Endpoint,
 		AvailabilityZone:         inst.AvailabilityZone,
+		HighAvailability:         highAvailability(inst),
 	}
 
 	if inst.AllocatedStorage > 0 {
@@ -80,6 +91,28 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 			Name: inst.InstanceClass,
 		},
 		Properties: props,
+	}
+}
+
+// highAvailability renders the server's HA configuration for an ARM response.
+// The mode defaults to Disabled so GET always reports HA faithfully; State is
+// Healthy while a standby is active (the mock provisions synchronously) and
+// NotEnabled otherwise.
+func highAvailability(inst *rdsdriver.Instance) *armHighAvailability {
+	mode := inst.HighAvailabilityMode
+	if mode == "" {
+		mode = rdsdriver.HAModeDisabled
+	}
+
+	state := "NotEnabled"
+	if rdsdriver.HAEnabled(mode) {
+		state = "Healthy"
+	}
+
+	return &armHighAvailability{
+		Mode:                    mode,
+		StandbyAvailabilityZone: inst.StandbyAvailabilityZone,
+		State:                   state,
 	}
 }
 
