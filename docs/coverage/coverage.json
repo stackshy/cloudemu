@@ -1903,7 +1903,8 @@
     "providers": {
       "aws": "EC2",
       "azure": "VirtualMachines",
-      "gcp": "GCE"
+      "gcp": "GCE",
+      "oci": "Compute"
     }
   },
   {

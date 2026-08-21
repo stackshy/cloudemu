@@ -10,6 +10,8 @@ import (
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/oci"
+	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 func TestNewAppliesIdentityDefaults(t *testing.T) {
@@ -60,6 +62,30 @@ func TestVCNIsWired(t *testing.T) {
 	p := oci.New()
 
 	require.NotNil(t, p.VCN, "the VCN slot is filled by the vcn mock")
+}
+
+func TestComputeIsWiredToVCN(t *testing.T) {
+	p := oci.New()
+
+	require.NotNil(t, p.Compute, "the Compute slot is filled by the compute mock")
+
+	vcn, err := p.VCN.CreateVPC(t.Context(), netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+
+	subnet, err := p.VCN.CreateSubnet(t.Context(), netdriver.SubnetConfig{
+		VPCID: vcn.ID, CIDRBlock: "10.0.1.0/24",
+	})
+	require.NoError(t, err)
+
+	// A launch reaches the VCN mock for its VNIC, so the instance comes back
+	// with the subnet's VCN and an address from it.
+	launched, err := p.Compute.RunInstances(t.Context(), computedriver.InstanceConfig{
+		InstanceType: "VM.Standard.E4.Flex", SubnetID: subnet.ID,
+	}, 1)
+	require.NoError(t, err)
+	require.Len(t, launched, 1)
+	assert.Equal(t, vcn.ID, launched[0].VPCID)
+	assert.Equal(t, "10.0.1.2", launched[0].PrivateIP)
 }
 
 // TestServiceSlotsAreNilOrLive keeps what the retired per-service-name test
