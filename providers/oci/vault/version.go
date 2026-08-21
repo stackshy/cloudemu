@@ -315,9 +315,9 @@ func (m *Mock) addVersionLocked(s *secretData, content []byte, name, stage strin
 	return v
 }
 
-// promoteVersionLocked makes an existing version the CURRENT one, which is how
-// OCI finishes a rotation staged as PENDING.
-func (m *Mock) promoteVersionLocked(s *secretData, number int64) error {
+// promoteVersion makes an existing version the CURRENT one, which is how OCI
+// finishes a rotation staged as PENDING.
+func promoteVersion(s *secretData, number int64) error {
 	v, err := versionByNumber(s, number)
 	if err != nil {
 		return err

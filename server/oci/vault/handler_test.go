@@ -234,9 +234,9 @@ func TestVaultLifecycleOverTheWire(t *testing.T) {
 	assert.Equal(t, "PENDING_DELETION", decode(t, scheduled)["lifecycleState"])
 	assert.NotEmpty(t, scheduled.Header().Get(ocirest.HeaderWorkRequestID))
 
-	cancelled := f.do(http.MethodPost, "/20180608/vaults/"+id+"/actions/cancelDeletion", nil)
-	require.Equal(t, http.StatusOK, cancelled.Code)
-	assert.Equal(t, "ACTIVE", decode(t, cancelled)["lifecycleState"])
+	canceled := f.do(http.MethodPost, "/20180608/vaults/"+id+"/actions/cancelDeletion", nil)
+	require.Equal(t, http.StatusOK, canceled.Code)
+	assert.Equal(t, "ACTIVE", decode(t, canceled)["lifecycleState"])
 }
 
 func TestVaultErrors(t *testing.T) {
@@ -355,9 +355,9 @@ func TestKeyLifecycleAndRotationOverTheWire(t *testing.T) {
 	require.Equal(t, http.StatusOK, scheduled.Code, scheduled.Body.String())
 	assert.Equal(t, "PENDING_DELETION", decode(t, scheduled)["lifecycleState"])
 
-	cancelled := f.do(http.MethodPost, "/20180608/keys/"+keyID+"/actions/cancelDeletion", nil)
-	require.Equal(t, http.StatusOK, cancelled.Code)
-	assert.Equal(t, "ACTIVE", decode(t, cancelled)["lifecycleState"])
+	canceled := f.do(http.MethodPost, "/20180608/keys/"+keyID+"/actions/cancelDeletion", nil)
+	require.Equal(t, http.StatusOK, canceled.Code)
+	assert.Equal(t, "ACTIVE", decode(t, canceled)["lifecycleState"])
 }
 
 func TestKeyErrors(t *testing.T) {
@@ -494,8 +494,8 @@ func TestSecretScheduledDeletionOverTheWire(t *testing.T) {
 	again := f.do(http.MethodPost, "/20180608/secrets/"+secretID+"/actions/scheduleDeletion", nil)
 	assert.Equal(t, http.StatusConflict, again.Code)
 
-	cancelled := f.do(http.MethodPost, "/20180608/secrets/"+secretID+"/actions/cancelDeletion", nil)
-	require.Equal(t, http.StatusNoContent, cancelled.Code)
+	canceled := f.do(http.MethodPost, "/20180608/secrets/"+secretID+"/actions/cancelDeletion", nil)
+	require.Equal(t, http.StatusNoContent, canceled.Code)
 
 	back := f.do(http.MethodGet, "/20180608/secrets/"+secretID, nil)
 	assert.Equal(t, "ACTIVE", decode(t, back)["lifecycleState"])
@@ -523,8 +523,8 @@ func TestSecretVersionScheduledDeletionOverTheWire(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, scheduled.Code, scheduled.Body.String())
 	assert.NotEmpty(t, scheduled.Header().Get(ocirest.HeaderWorkRequestID))
 
-	cancelled := f.do(http.MethodPost, base+"1/actions/cancelDeletion", nil)
-	require.Equal(t, http.StatusNoContent, cancelled.Code)
+	canceled := f.do(http.MethodPost, base+"1/actions/cancelDeletion", nil)
+	require.Equal(t, http.StatusNoContent, canceled.Code)
 
 	bad := f.do(http.MethodPost, base+"abc/actions/scheduleDeletion", nil)
 	assert.Equal(t, http.StatusBadRequest, bad.Code)

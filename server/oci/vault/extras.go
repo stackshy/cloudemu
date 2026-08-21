@@ -4,10 +4,13 @@ import (
 	vaultprovider "github.com/stackshy/cloudemu/v2/providers/oci/vault"
 )
 
-// VaultManagement is the KMS vault surface. The portable secrets driver has no
+// VaultManagement is the KMS vault surface.
+//
 // container above a secret at all, so every vault operation lives here.
+//
+//nolint:revive // Management alone would not distinguish it from the key and secret surfaces. The portable secrets driver has no
 type VaultManagement interface {
-	CreateVault(spec vaultprovider.VaultSpec) (*vaultprovider.VaultInfo, error)
+	CreateVault(spec *vaultprovider.VaultSpec) (*vaultprovider.VaultInfo, error)
 	GetVault(id string) (*vaultprovider.VaultInfo, error)
 	ListVaults(compartmentID string) ([]vaultprovider.VaultInfo, error)
 	UpdateVault(id string, upd vaultprovider.Update) (*vaultprovider.VaultInfo, error)
@@ -22,7 +25,7 @@ type VaultManagement interface {
 // two behind one service, so the portable driver models neither keys nor the
 // rotation that minting a key version performs.
 type KeyManagement interface {
-	CreateKey(spec vaultprovider.KeySpec) (*vaultprovider.KeyInfo, error)
+	CreateKey(spec *vaultprovider.KeySpec) (*vaultprovider.KeyInfo, error)
 	GetKey(id string) (*vaultprovider.KeyInfo, error)
 	ListKeys(compartmentID, vaultID string) ([]vaultprovider.KeyInfo, error)
 	UpdateKey(id string, upd vaultprovider.Update) (*vaultprovider.KeyInfo, error)
@@ -42,11 +45,11 @@ type KeyManagement interface {
 // them to a compartment and a vault, only ever schedules a deletion, and
 // stages each version CURRENT, PENDING, PREVIOUS or DEPRECATED.
 type SecretManagement interface {
-	CreateOCISecret(spec vaultprovider.SecretSpec) (*vaultprovider.SecretInfo, error)
+	CreateOCISecret(spec *vaultprovider.SecretSpec) (*vaultprovider.SecretInfo, error)
 	GetOCISecret(id string) (*vaultprovider.SecretInfo, error)
 	GetOCISecretByName(vaultID, name string) (*vaultprovider.SecretInfo, error)
 	ListOCISecrets(compartmentID, vaultID, name string) ([]vaultprovider.SecretInfo, error)
-	UpdateOCISecret(id string, upd vaultprovider.SecretUpdate) (*vaultprovider.SecretInfo, error)
+	UpdateOCISecret(id string, upd *vaultprovider.SecretUpdate) (*vaultprovider.SecretInfo, error)
 	ScheduleOCISecretDeletion(id, at string) (*vaultprovider.SecretInfo, error)
 	CancelOCISecretDeletion(id string) (*vaultprovider.SecretInfo, error)
 	ChangeSecretCompartment(id, compartmentID string) error
