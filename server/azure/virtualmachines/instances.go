@@ -279,10 +279,13 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 	name := tagOr(inst.Tags, armNameTag, rp.ResourceName)
 
 	return vmResponse{
-		ID:       azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
-		Name:     name,
-		Type:     providerName + "/" + resourceType,
-		Location: defaultIfEmpty(req.Location, "eastus"),
+		ID:   azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, name),
+		Name: name,
+		Type: providerName + "/" + resourceType,
+		// Prefer the instance's recorded region so GET/LIST report where the VM
+		// was actually created; the request location (create path) and the
+		// "eastus" default are fallbacks for instances that carry no region.
+		Location: defaultIfEmpty(inst.Region, defaultIfEmpty(req.Location, "eastus")),
 		Tags:     stripInternalTags(inst.Tags),
 		Zones:    inst.Zones,
 		Properties: vmResponseProps{

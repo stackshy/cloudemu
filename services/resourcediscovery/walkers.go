@@ -124,6 +124,14 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 
 	out := make([]Resource, 0, len(instances))
 
+	// Map each instance to its resource group so an attached volume's managedBy
+	// back-reference resolves to the same id the VM carries (both RG-aware),
+	// instead of a "default" id that would not exist in the inventory.
+	rgByInstance := make(map[string]string, len(instances))
+	for i := range instances {
+		rgByInstance[instances[i].ID] = instances[i].ResourceGroup
+	}
+
 	for i := range instances {
 		inst := &instances[i]
 
@@ -160,7 +168,7 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		})
 	}
 
-	vols, err := e.walkVolumes(ctx)
+	vols, err := e.walkVolumes(ctx, rgByInstance)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +200,7 @@ func (e *Engine) walkSnapshots(ctx context.Context) ([]Resource, error) {
 // walkVolumes surfaces block volumes (EBS / Azure managed disks / GCE PDs) as
 // first-class resources, so a discoverer sees them the way the real cloud APIs
 // do. ManagedBy links the volume to its owning instance.
-func (e *Engine) walkVolumes(ctx context.Context) ([]Resource, error) {
+func (e *Engine) walkVolumes(ctx context.Context, rgByInstance map[string]string) ([]Resource, error) {
 	vols, err := e.drivers.Compute.DescribeVolumes(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("walkCompute volumes: %w", err)
@@ -211,7 +219,7 @@ func (e *Engine) walkVolumes(ctx context.Context) ([]Resource, error) {
 
 		managedBy := ""
 		if v.AttachedTo != "" {
-			managedBy = e.computeInstanceARN(v.AttachedTo, "")
+			managedBy = e.computeInstanceARN(v.AttachedTo, rgByInstance[v.AttachedTo])
 		}
 
 		out = append(out, Resource{
