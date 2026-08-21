@@ -52,6 +52,19 @@ func (o *propertyOverlay) lookup(id string) map[string]any {
 	return o.store[id]
 }
 
+// evict drops any entry for id — called when a resource is deleted so the
+// store does not grow without bound across create/delete cycles.
+func (o *propertyOverlay) evict(id string) {
+	if id == "" {
+		return
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	delete(o.store, id)
+}
+
 // echoUnmodeledProperties wraps next so that unmodeled properties on ARM
 // resource requests survive into the response. It only engages for ARM resource
 // paths (which begin with /subscriptions/) so the storage/table/queue
@@ -70,10 +83,27 @@ func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.H
 		rec := &captureWriter{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
 
+		if r.Method == http.MethodDelete && rec.status >= 200 && rec.status < 300 {
+			overlay.evict(resourceIDFromPath(r.URL.Path))
+		}
+
 		if !rec.rewrite(w, r, reqProps, overlay) {
 			rec.flush(w)
 		}
 	})
+}
+
+// resourceIDFromPath reconstructs the ARM resource id from a request path so a
+// DELETE can evict the matching overlay entry (DELETE responses carry no body
+// to read the id from). Returns "" for a path that is not a single named
+// resource, in which case nothing is evicted.
+func resourceIDFromPath(urlPath string) string {
+	rp, ok := azurearm.ParsePath(urlPath)
+	if !ok || rp.ResourceName == "" || rp.SubResource != "" {
+		return ""
+	}
+
+	return azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, rp.Provider, rp.ResourceType, rp.ResourceName)
 }
 
 // readRequestProperties returns the request body's top-level "properties"
@@ -183,14 +213,7 @@ func (c *captureWriter) rewrite(
 
 	respProps, _ := resource["properties"].(map[string]any)
 
-	// On a write that carried a body, the unmodeled set is exactly the request
-	// properties the response did not echo back; record it so later reads can
-	// replay it. Reads carry no request body, so they fall back to the store.
-	unmodeled := overlay.lookup(id)
-	if hasBody(r) {
-		unmodeled = missingProperties(reqProps, respProps)
-		overlay.capture(id, unmodeled)
-	}
+	unmodeled := captureUnmodeled(r, id, reqProps, respProps, overlay)
 
 	if len(unmodeled) == 0 {
 		return false
@@ -208,8 +231,30 @@ func (c *captureWriter) rewrite(
 	return true
 }
 
-func hasBody(r *http.Request) bool {
-	return r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodPost
+// captureUnmodeled resolves the unmodeled properties to merge into this
+// response and updates the overlay store. The overlay is only rewritten when
+// the request actually carried a properties object — a lifecycle action
+// (POST start/stop/restart) or any request without properties leaves the
+// stored set intact, so it is never wiped by a subsequent bodiless call. A PUT
+// replaces the set (full-replace semantics); a PATCH unions the freshly
+// unmodeled keys over the stored ones, so a partial update keeps earlier
+// preserved keys it did not resend.
+func captureUnmodeled(
+	r *http.Request, id string, reqProps, respProps map[string]any, overlay *propertyOverlay,
+) map[string]any {
+	stored := overlay.lookup(id)
+	if len(reqProps) == 0 {
+		return stored
+	}
+
+	fresh := missingProperties(reqProps, respProps)
+	if r.Method == http.MethodPatch {
+		fresh = mergeProperties(fresh, stored)
+	}
+
+	overlay.capture(id, fresh)
+
+	return fresh
 }
 
 // missingProperties returns the entries of req that resp does not already carry,
