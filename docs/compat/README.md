@@ -149,6 +149,102 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 
 **dns verified via Go SDK:** AWS 14/16 · Azure 10/16 · GCP 8/16.
 
+## eventbus
+
+| Operation | AWS (EventBridge) | Azure (EventGrid) | GCP (Eventarc) |
+|---|---|---|---|
+| CreateEventBus | ✅ | ✅ | · |
+| DeleteEventBus | ✅ | ✅ | · |
+| DeleteRule | ✅ | · | ✅ |
+| DisableRule | ✅ | · | · |
+| EnableRule | ✅ | · | · |
+| GetEventBus | ✅ | ✅ | · |
+| GetEventHistory | · | · | · |
+| GetRule | ✅ | · | ✅ |
+| ListEventBuses | ✅ | ✅ | · |
+| ListRules | ✅ | · | ✅ |
+| ListTargets | ✅ | · | · |
+| PutEvents | ✅ | · | · |
+| PutRule | ✅ | · | ✅ |
+| PutTargets | ✅ | · | · |
+| RemoveTargets | ✅ | · | · |
+| UpdateEventBus | · | · | · |
+
+**eventbus verified via Go SDK:** AWS 14/16 · Azure 4/16 · GCP 4/16.
+
+## iam
+
+| Operation | AWS (IAM) | Azure (IAM) | GCP (IAM) |
+|---|---|---|---|
+| AddRoleToInstanceProfile | ✅ | · | · |
+| AddUserToGroup | ✅ | · | · |
+| AttachRolePolicy | ✅ | · | · |
+| AttachUserPolicy | ✅ | · | · |
+| CheckPermission | · | · | · |
+| CreateAccessKey | ✅ | · | ✅ |
+| CreateGroup | ✅ | · | · |
+| CreateInstanceProfile | ✅ | · | · |
+| CreatePolicy | ✅ | · | · |
+| CreatePolicyVersion | ✅ | · | · |
+| CreateRole | ✅ | ✅ | ✅ |
+| CreateUser | ✅ | · | ✅ |
+| DeleteAccessKey | ✅ | · | ✅ |
+| DeleteGroup | ✅ | · | · |
+| DeleteInstanceProfile | ✅ | · | · |
+| DeletePolicy | ✅ | · | · |
+| DeletePolicyVersion | ✅ | · | · |
+| DeleteRole | ✅ | ✅ | ✅ |
+| DeleteUser | ✅ | · | ✅ |
+| DetachRolePolicy | ✅ | · | · |
+| DetachUserPolicy | ✅ | · | · |
+| GetGroup | ✅ | · | · |
+| GetInstanceProfile | ✅ | · | · |
+| GetPolicy | ✅ | · | · |
+| GetPolicyVersion | ✅ | · | · |
+| GetRole | ✅ | ✅ | ✅ |
+| GetUser | ✅ | · | ✅ |
+| ListAccessKeys | ✅ | · | ✅ |
+| ListAttachedRolePolicies | ✅ | · | · |
+| ListAttachedUserPolicies | ✅ | · | · |
+| ListGroups | ✅ | · | · |
+| ListGroupsForUser | ✅ | · | · |
+| ListInstanceProfiles | ✅ | · | · |
+| ListPolicies | ✅ | · | · |
+| ListPolicyVersions | ✅ | · | · |
+| ListRoles | ✅ | ✅ | ✅ |
+| ListUsers | ✅ | · | ✅ |
+| RemoveRoleFromInstanceProfile | ✅ | · | · |
+| RemoveUserFromGroup | ✅ | · | · |
+| SetDefaultPolicyVersion | ✅ | · | · |
+
+**iam verified via Go SDK:** AWS 39/40 · Azure 4/40 · GCP 11/40.
+
+## loadbalancer
+
+| Operation | AWS (ELB) | Azure (LB) | GCP (LB) |
+|---|---|---|---|
+| CreateListener | ✅ | · | · |
+| CreateLoadBalancer | ✅ | ✅ | ✅ |
+| CreateRule | ✅ | · | · |
+| CreateTargetGroup | ✅ | · | ✅ |
+| DeleteListener | ✅ | · | · |
+| DeleteLoadBalancer | ✅ | ✅ | ✅ |
+| DeleteRule | ✅ | · | · |
+| DeleteTargetGroup | ✅ | · | ✅ |
+| DeregisterTargets | ✅ | · | · |
+| DescribeListeners | ✅ | · | · |
+| DescribeLoadBalancers | ✅ | ✅ | ✅ |
+| DescribeRules | ✅ | · | · |
+| DescribeTargetGroups | ✅ | · | ✅ |
+| DescribeTargetHealth | ✅ | · | · |
+| GetLBAttributes | ✅ | · | · |
+| ModifyListener | · | · | · |
+| PutLBAttributes | ✅ | · | · |
+| RegisterTargets | ✅ | · | · |
+| SetTargetHealth | · | · | · |
+
+**loadbalancer verified via Go SDK:** AWS 17/19 · Azure 3/19 · GCP 6/19.
+
 ## logging
 
 | Operation | AWS (CloudWatchLogs) | Azure (LogAnalytics) | GCP (CloudLogging) |
@@ -209,6 +305,70 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | SetAlarmState | · | · | · |
 
 **monitoring verified via Go SDK:** AWS 6/12 · Azure 0/12 · GCP 3/12.
+
+## networking
+
+| Operation | AWS (VPC) | Azure (VNet) | GCP (VPC) |
+|---|---|---|---|
+| AcceptPeeringConnection | · | · | · |
+| AddEgressRule | ✅ | · | · |
+| AddIngressRule | ✅ | · | · |
+| AddNetworkACLRule | ✅ | · | · |
+| AllocateAddress | ✅ | ✅ | · |
+| AssociateAddress | · | · | · |
+| AssociateRouteTable | ✅ | · | · |
+| AttachInternetGateway | ✅ | · | · |
+| CreateFlowLog | · | · | · |
+| CreateInternetGateway | ✅ | · | · |
+| CreateNATGateway | ✅ | · | · |
+| CreateNetworkACL | ✅ | · | · |
+| CreatePeeringConnection | ✅ | · | · |
+| CreateRoute | ✅ | · | · |
+| CreateRouteTable | ✅ | · | · |
+| CreateSecurityGroup | ✅ | ✅ | ✅ |
+| CreateSubnet | ✅ | ✅ | ✅ |
+| CreateVPC | ✅ | ✅ | ✅ |
+| CreateVPCEndpoint | · | · | · |
+| DeleteFlowLog | · | · | · |
+| DeleteInternetGateway | ✅ | · | · |
+| DeleteNATGateway | ✅ | · | · |
+| DeleteNetworkACL | ✅ | · | · |
+| DeletePeeringConnection | · | · | · |
+| DeleteRoute | ✅ | · | · |
+| DeleteRouteTable | ✅ | · | · |
+| DeleteSecurityGroup | ✅ | ✅ | ✅ |
+| DeleteSubnet | ✅ | ✅ | ✅ |
+| DeleteVPC | ✅ | ✅ | ✅ |
+| DeleteVPCEndpoint | · | · | · |
+| DescribeAddresses | ✅ | ✅ | · |
+| DescribeFlowLogs | · | · | · |
+| DescribeInternetGateways | ✅ | · | · |
+| DescribeNATGateways | ✅ | · | · |
+| DescribeNetworkACLs | ✅ | · | · |
+| DescribePeeringConnections | ✅ | · | · |
+| DescribeRouteTables | ✅ | · | · |
+| DescribeSecurityGroups | ✅ | ✅ | ✅ |
+| DescribeSubnets | ✅ | ✅ | ✅ |
+| DescribeVPCEndpoints | · | · | · |
+| DescribeVPCs | ✅ | ✅ | ✅ |
+| DetachInternetGateway | ✅ | · | · |
+| DisassociateAddress | · | · | · |
+| DisassociateRouteTable | ✅ | · | · |
+| GetFlowLogRecords | · | · | · |
+| ModifyVPCEndpoint | · | · | · |
+| RejectPeeringConnection | · | · | · |
+| ReleaseAddress | ✅ | · | · |
+| RemoveEgressRule | ✅ | · | · |
+| RemoveIngressRule | ✅ | · | · |
+| RemoveNetworkACLRule | ✅ | · | · |
+| RemoveSecurityGroupTags | · | · | · |
+| RemoveSubnetTags | · | · | · |
+| RemoveVPCTags | · | · | · |
+| UpdateSecurityGroupTags | · | · | · |
+| UpdateSubnetTags | · | · | · |
+| UpdateVPCTags | · | · | · |
+
+**networking verified via Go SDK:** AWS 38/57 · Azure 11/57 · GCP 9/57.
 
 ## notification
 

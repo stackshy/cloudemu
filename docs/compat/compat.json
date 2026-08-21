@@ -1869,6 +1869,1308 @@
     "status": "green"
   },
   {
+    "service": "eventbus",
+    "operation": "CreateEventBus",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "DeleteEventBus",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "DeleteRule",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "DisableRule",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "EnableRule",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "GetEventBus",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "GetEventHistory",
+    "providers": {
+      "aws": {
+        "native": "EventBridge"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "eventbus",
+    "operation": "GetRule",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "ListEventBuses",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "ListRules",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "ListTargets",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "PutEvents",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "PutRule",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "PutTargets",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "RemoveTargets",
+    "providers": {
+      "aws": {
+        "native": "EventBridge",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "eventbus",
+    "operation": "UpdateEventBus",
+    "providers": {
+      "aws": {
+        "native": "EventBridge"
+      },
+      "azure": {
+        "native": "EventGrid"
+      },
+      "gcp": {
+        "native": "Eventarc"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "iam",
+    "operation": "AddRoleToInstanceProfile",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "AddUserToGroup",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "AttachRolePolicy",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "AttachUserPolicy",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "CheckPermission",
+    "providers": {
+      "aws": {
+        "native": "IAM"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "iam",
+    "operation": "CreateAccessKey",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "CreateGroup",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "CreateInstanceProfile",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "CreatePolicy",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "CreatePolicyVersion",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "CreateRole",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "CreateUser",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DeleteAccessKey",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DeleteGroup",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DeleteInstanceProfile",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DeletePolicy",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DeletePolicyVersion",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DeleteRole",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DeleteUser",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DetachRolePolicy",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "DetachUserPolicy",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "GetGroup",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "GetInstanceProfile",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "GetPolicy",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "GetPolicyVersion",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "GetRole",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "GetUser",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListAccessKeys",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListAttachedRolePolicies",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListAttachedUserPolicies",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListGroups",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListGroupsForUser",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListInstanceProfiles",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListPolicies",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListPolicyVersions",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListRoles",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "ListUsers",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "RemoveRoleFromInstanceProfile",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "RemoveUserFromGroup",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "iam",
+    "operation": "SetDefaultPolicyVersion",
+    "providers": {
+      "aws": {
+        "native": "IAM",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "IAM"
+      },
+      "gcp": {
+        "native": "IAM"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "CreateListener",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "CreateLoadBalancer",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "LB",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "CreateRule",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "CreateTargetGroup",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DeleteListener",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DeleteLoadBalancer",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "LB",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DeleteRule",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DeleteTargetGroup",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DeregisterTargets",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DescribeListeners",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DescribeLoadBalancers",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "LB",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DescribeRules",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DescribeTargetGroups",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "DescribeTargetHealth",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "GetLBAttributes",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "ModifyListener",
+    "providers": {
+      "aws": {
+        "native": "ELB"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "PutLBAttributes",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "RegisterTargets",
+    "providers": {
+      "aws": {
+        "native": "ELB",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "loadbalancer",
+    "operation": "SetTargetHealth",
+    "providers": {
+      "aws": {
+        "native": "ELB"
+      },
+      "azure": {
+        "native": "LB"
+      },
+      "gcp": {
+        "native": "LB"
+      }
+    },
+    "status": "amber"
+  },
+  {
     "service": "logging",
     "operation": "CreateLogGroup",
     "providers": {
@@ -2559,6 +3861,976 @@
       },
       "gcp": {
         "native": "CloudMonitoring"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "AcceptPeeringConnection",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "AddEgressRule",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "AddIngressRule",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "AddNetworkACLRule",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "AllocateAddress",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "AssociateAddress",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "AssociateRouteTable",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "AttachInternetGateway",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateFlowLog",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateInternetGateway",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateNATGateway",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateNetworkACL",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreatePeeringConnection",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateRoute",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateRouteTable",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateSecurityGroup",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateSubnet",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateVPC",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "CreateVPCEndpoint",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteFlowLog",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteInternetGateway",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteNATGateway",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteNetworkACL",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DeletePeeringConnection",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteRoute",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteRouteTable",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteSecurityGroup",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteSubnet",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteVPC",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DeleteVPCEndpoint",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeAddresses",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeFlowLogs",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeInternetGateways",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeNATGateways",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeNetworkACLs",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribePeeringConnections",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeRouteTables",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeSecurityGroups",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeSubnets",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeVPCEndpoints",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "DescribeVPCs",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet",
+        "sdkGo": "pass"
+      },
+      "gcp": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DetachInternetGateway",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "DisassociateAddress",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "DisassociateRouteTable",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "GetFlowLogRecords",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "ModifyVPCEndpoint",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "RejectPeeringConnection",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "ReleaseAddress",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "RemoveEgressRule",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "RemoveIngressRule",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "RemoveNetworkACLRule",
+    "providers": {
+      "aws": {
+        "native": "VPC",
+        "sdkGo": "pass"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "networking",
+    "operation": "RemoveSecurityGroupTags",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "RemoveSubnetTags",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "RemoveVPCTags",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "UpdateSecurityGroupTags",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "UpdateSubnetTags",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
+      }
+    },
+    "status": "amber"
+  },
+  {
+    "service": "networking",
+    "operation": "UpdateVPCTags",
+    "providers": {
+      "aws": {
+        "native": "VPC"
+      },
+      "azure": {
+        "native": "VNet"
+      },
+      "gcp": {
+        "native": "VPC"
       }
     },
     "status": "amber"
