@@ -113,7 +113,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `networkconnectivity` | — | — | [NetworkConnectivity](./gcp/networkconnectivity.md) | — | 11 |
 | `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 23 |
 | `networking` | [VPC](./aws/vpc.md) | [VNet](./azure/vnet.md) | [VPC](./gcp/vpc.md) | [VCN](./oci/vcn.md) | 57 |
-| `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | — | 9 |
+| `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | [Notifications](./oci/notifications.md) | 9 |
 | `opensearch` | [OpenSearch](./aws/opensearch.md) | — | — | — | 96 |
 | `parameterstore` | [SSM](./aws/ssm.md) | — | — | — | 9 |
 | `postgresflex` | — | [PostgresFlex](./azure/postgresflex.md) | — | — | 21 |
