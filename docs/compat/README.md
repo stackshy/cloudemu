@@ -83,17 +83,17 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | DeleteRepository | ✅ | ✅ | ✅ |
 | EvaluateLifecyclePolicy | · | · | · |
 | GetImage | ✅ | · | · |
-| GetImageScanResults | · | · | · |
-| GetLifecyclePolicy | · | · | · |
+| GetImageScanResults | ✅ | · | · |
+| GetLifecyclePolicy | ✅ | · | · |
 | GetRepository | ✅ | ✅ | ✅ |
 | ListImages | ✅ | ✅ | ✅ |
 | ListRepositories | ✅ | ✅ | ✅ |
 | PutImage | ✅ | · | · |
-| PutLifecyclePolicy | · | · | · |
-| StartImageScan | · | · | · |
+| PutLifecyclePolicy | ✅ | · | · |
+| StartImageScan | ✅ | · | · |
 | TagImage | · | · | · |
 
-**containerregistry verified via Go SDK:** AWS 8/14 · Azure 4/14 · GCP 5/14.
+**containerregistry verified via Go SDK:** AWS 12/14 · Azure 4/14 · GCP 5/14.
 
 ## database
 

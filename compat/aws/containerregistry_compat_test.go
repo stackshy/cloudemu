@@ -19,6 +19,10 @@ const (
 	crRepoName = "compat-repo"
 	crImageTag = "v1"
 	crManifest = `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json"}`
+
+	crLifecyclePolicy = `{"rules":[{"rulePriority":1,"description":"expire old",` +
+		`"selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},` +
+		`"action":{"type":"expire"}}]}`
 )
 
 // TestContainerRegistryAWSCompat drives a real aws-sdk-go-v2 ECR client against
@@ -122,6 +126,48 @@ func TestContainerRegistryAWSCompat(t *testing.T) {
 		}
 
 		return nil
+	})
+
+	sess.Op(crService, "PutLifecyclePolicy", func() error {
+		_, err := client.PutLifecyclePolicy(ctx, &awsecr.PutLifecyclePolicyInput{
+			RepositoryName:      aws.String(crRepoName),
+			LifecyclePolicyText: aws.String(crLifecyclePolicy),
+		})
+
+		return err
+	})
+
+	sess.Op(crService, "GetLifecyclePolicy", func() error {
+		out, err := client.GetLifecyclePolicy(ctx, &awsecr.GetLifecyclePolicyInput{
+			RepositoryName: aws.String(crRepoName),
+		})
+		if err != nil {
+			return err
+		}
+
+		if aws.ToString(out.LifecyclePolicyText) == "" {
+			return fmt.Errorf("GetLifecyclePolicy returned empty policy text")
+		}
+
+		return nil
+	})
+
+	sess.Op(crService, "StartImageScan", func() error {
+		_, err := client.StartImageScan(ctx, &awsecr.StartImageScanInput{
+			RepositoryName: aws.String(crRepoName),
+			ImageId:        &ecrtypes.ImageIdentifier{ImageTag: aws.String(crImageTag)},
+		})
+
+		return err
+	})
+
+	sess.Op(crService, "GetImageScanResults", func() error {
+		_, err := client.DescribeImageScanFindings(ctx, &awsecr.DescribeImageScanFindingsInput{
+			RepositoryName: aws.String(crRepoName),
+			ImageId:        &ecrtypes.ImageIdentifier{ImageTag: aws.String(crImageTag)},
+		})
+
+		return err
 	})
 
 	sess.Op(crService, "DeleteImage", func() error {

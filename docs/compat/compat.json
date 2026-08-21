@@ -1019,7 +1019,8 @@
     "operation": "GetImageScanResults",
     "providers": {
       "aws": {
-        "native": "ECR"
+        "native": "ECR",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "ACR"
@@ -1028,14 +1029,15 @@
         "native": "ArtifactRegistry"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "containerregistry",
     "operation": "GetLifecyclePolicy",
     "providers": {
       "aws": {
-        "native": "ECR"
+        "native": "ECR",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "ACR"
@@ -1044,7 +1046,7 @@
         "native": "ArtifactRegistry"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "containerregistry",
@@ -1125,7 +1127,8 @@
     "operation": "PutLifecyclePolicy",
     "providers": {
       "aws": {
-        "native": "ECR"
+        "native": "ECR",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "ACR"
@@ -1134,14 +1137,15 @@
         "native": "ArtifactRegistry"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "containerregistry",
     "operation": "StartImageScan",
     "providers": {
       "aws": {
-        "native": "ECR"
+        "native": "ECR",
+        "sdkGo": "pass"
       },
       "azure": {
         "native": "ACR"
@@ -1150,7 +1154,7 @@
         "native": "ArtifactRegistry"
       }
     },
-    "status": "amber"
+    "status": "green"
   },
   {
     "service": "containerregistry",
