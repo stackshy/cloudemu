@@ -7,6 +7,8 @@
 package azure
 
 import (
+	"net/http"
+
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
@@ -173,8 +175,13 @@ type Drivers struct {
 // so handlers can register independently — virtualMachines doesn't conflict
 // with future blob storage or networking handlers.
 //
+// New returns an http.Handler speaking the Azure ARM JSON wire protocol for
+// every non-nil driver in d. The assembled server is wrapped so unmodeled
+// request properties survive into responses (see echoUnmodeledProperties)
+// rather than being silently dropped.
+//
 //nolint:gocritic,gocyclo,gocognit,funlen // Drivers is all interface fields; one if-per-driver is the simplest expression
-func New(d Drivers) *server.Server {
+func New(d Drivers) http.Handler {
 	srv := server.New()
 
 	// The subscriptions collection has no driver behind it — see the package
@@ -420,7 +427,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(blobstorage.New(d.BlobStorage))
 	}
 
-	return srv
+	return echoUnmodeledProperties(srv, newPropertyOverlay())
 }
 
 // registerDatabricksDataPlane registers the Databricks workspace data-plane
