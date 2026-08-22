@@ -5,6 +5,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/oci/identity"
 	"github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
+	vaultprovider "github.com/stackshy/cloudemu/v2/providers/oci/vault"
 	vcnprovider "github.com/stackshy/cloudemu/v2/providers/oci/vcn"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -75,6 +76,7 @@ func New(opts ...config.Option) *Provider {
 	}
 	p.Identity = identity.New(o)
 	p.VCN = vcnprovider.New(o)
+	p.Vault = vaultprovider.New(o)
 
 	p.Monitoring = monitoring.New(o)
 
