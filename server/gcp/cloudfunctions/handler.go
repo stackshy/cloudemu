@@ -17,8 +17,12 @@
 package cloudfunctions
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -33,17 +37,31 @@ const (
 	locationsSeg    = "locations"
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 5 << 20
+	// maxUploadBytes bounds a source-zip PUT; real gen1 caps uploads at 100 MiB.
+	maxUploadBytes = 100 << 20
+	// uploadTokenBytes is the entropy of an upload token.
+	uploadTokenBytes = 16
+	// frameworkHTTP marks an engine deployment as using the functions-framework
+	// request/response contract (GCP Cloud Functions gen1).
+	frameworkHTTP = "http"
+	// actionUploadSource is the collection action a generated upload URL points
+	// back at; the source zip is PUT here.
+	actionUploadSource = "uploadSource"
 )
 
 // Handler serves GCP Cloud Functions v1 REST requests against a serverless
 // driver.
 type Handler struct {
 	fn sdrv.Serverless
+	// uploads stages source zips between generateUploadUrl (which mints a token)
+	// and create (which consumes the staged bytes into the function's Code). It
+	// is bounded and FIFO-evicting so an abandoned deploy can't grow memory.
+	uploads *uploadStaging
 }
 
 // New returns a Cloud Functions handler backed by fn.
 func New(fn sdrv.Serverless) *Handler {
-	return &Handler{fn: fn}
+	return &Handler{fn: fn, uploads: newUploadStaging()}
 }
 
 // Matches accepts paths that look like Cloud Functions v1: either an LRO poll
@@ -109,6 +127,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if parts.action == actionUploadSource {
+		h.uploadSource(w, r)
+		return
+	}
+
 	if parts.name != "" {
 		h.serveResource(w, r, parts)
 		return
@@ -143,18 +166,106 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, p func
 
 // generateUploadURL answers functions:generateUploadUrl — the first step of a
 // source-upload deploy. Real Cloud Functions returns a signed GCS URL the
-// client PUTs the source zip to; the emulator returns a usable stub URL so the
-// deploy flow proceeds.
-func (*Handler) generateUploadURL(w http.ResponseWriter, r *http.Request, p functionPath) {
+// client PUTs the source zip to; the emulator mints a token, stages a pending
+// slot, and returns a URL that points BACK at this same server's
+// functions:uploadSource action so the PUT lands here.
+func (h *Handler) generateUploadURL(w http.ResponseWriter, r *http.Request, p functionPath) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
 
-	url := "https://storage.googleapis.com/cloudemu-gcf-uploads/" + p.project + "/" + p.location +
-		"/source-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".zip"
+	token, err := newUploadToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "mint upload token: "+err.Error())
+		return
+	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"uploadUrl": url})
+	// Stage a pending (empty) slot so a token is only ever consumed once and an
+	// upload against an unknown token is rejected.
+	h.uploads.stage(token, nil)
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+
+	uploadURL := scheme + "://" + r.Host + pathPrefix + p.project + "/" + locationsSeg + "/" + p.location +
+		"/" + functionsSeg + ":" + actionUploadSource + "?token=" + token
+
+	writeJSON(w, http.StatusOK, map[string]string{"uploadUrl": uploadURL})
+}
+
+// uploadSource accepts the PUT of a source zip to a generated upload URL and
+// stores the raw bytes under the URL's token for create to consume. It mirrors
+// the signed-URL PUT clients make to GCS: no Authorization, content-type
+// application/zip.
+func (h *Handler) uploadSource(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+
+	token := r.URL.Query().Get("token")
+	if token == "" || !h.uploads.has(token) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown or expired upload token")
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxUploadBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "read upload body: "+err.Error())
+		return
+	}
+
+	h.uploads.stage(token, body)
+
+	// GCS answers a signed-URL PUT with 200 and an empty body.
+	w.WriteHeader(http.StatusOK)
+}
+
+// consumeUpload pulls the staged source zip named by uploadURL's token into
+// cfg.Code and marks the deployment as using the http framework, then removes
+// the one-time staging entry. It returns an error when the URL carries no token
+// this server minted, or the token resolves to no staged bytes (unknown, already
+// consumed, or PUT skipped) — so create can reject it rather than silently
+// producing a function that never runs the intended code.
+func (h *Handler) consumeUpload(uploadURL string, cfg *sdrv.FunctionConfig) error {
+	token := uploadToken(uploadURL)
+	if token == "" {
+		return errUnresolvedUpload
+	}
+
+	code, ok := h.uploads.take(token)
+	if !ok || len(code) == 0 {
+		return errUnresolvedUpload
+	}
+
+	cfg.Code = code
+	cfg.Framework = frameworkHTTP
+
+	return nil
+}
+
+// uploadToken extracts the ?token= value from a generated upload URL. It returns
+// "" when the URL is not one this server minted.
+func uploadToken(uploadURL string) string {
+	u, err := url.Parse(uploadURL)
+	if err != nil {
+		return ""
+	}
+
+	return u.Query().Get("token")
+}
+
+// newUploadToken returns a random, single-use upload token.
+func newUploadToken() (string, error) {
+	b := make([]byte, uploadTokenBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(b), nil
 }
 
 // serveOperation answers GET /v1/operations/{name}. We always return done=true
@@ -195,6 +306,23 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 		Tags:        body.Labels,
 		Environment: body.EnvVariables,
 		Timeout:     parseTimeoutSeconds(body.Timeout),
+	}
+
+	// A source-upload deploy carries the code out-of-band: pull the staged zip
+	// (from the earlier generateUploadUrl → PUT) into Code so the provider can
+	// deploy it to the configured FunctionEngine. gen1 functions run under the
+	// functions-framework request/response contract with a bare entrypoint, which
+	// real Cloud Functions requires — reject a code deploy that omits it.
+	if body.SourceUploadURL != "" {
+		if body.EntryPoint == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "entryPoint is required")
+			return
+		}
+
+		if err := h.consumeUpload(body.SourceUploadURL, &cfg); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unknown or already-consumed sourceUploadUrl")
+			return
+		}
 	}
 
 	info, err := h.fn.CreateFunction(r.Context(), cfg)
