@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -205,10 +206,13 @@ func (m *Mock) RebootInstance(ctx context.Context, id string) error {
 	return m.RebootCluster(ctx, id)
 }
 
-// CreateCluster creates a new Redshift cluster.
+// CreateCluster creates a new Redshift cluster. When a real DatabaseEngine is
+// wired in, Redshift (a Postgres-wire service) is backed by the shared Postgres
+// engine keyed by the cluster ID, and the synthetic endpoint is overridden with
+// the real host:port a client connects to.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateCluster(_ context.Context, cfg rdbdriver.ClusterConfig) (*rdbdriver.Cluster, error) {
+func (m *Mock) CreateCluster(ctx context.Context, cfg rdbdriver.ClusterConfig) (*rdbdriver.Cluster, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "ClusterIdentifier is required")
 	}
@@ -246,6 +250,10 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdbdriver.ClusterConfig) (*r
 		Tags:              copyTags(cfg.Tags),
 	}
 
+	if err := m.provisionEngine(ctx, &cluster, cfg); err != nil {
+		return nil, err
+	}
+
 	m.clusters.Set(cfg.ID, cluster)
 
 	m.emitClusterMetrics(cfg.ID, cpuUtilizationRunning, databaseConnectionsRun,
@@ -254,6 +262,43 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdbdriver.ClusterConfig) (*r
 	out := cluster
 
 	return &out, nil
+}
+
+// provisionEngine backs the cluster with the wired real database engine, keyed
+// and named by the cluster ID, and overrides the synthetic endpoint with the
+// real host:port. It is a no-op when no engine is wired in. Redshift routes to
+// the Postgres engine because it speaks the Postgres wire protocol.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func (m *Mock) provisionEngine(ctx context.Context, cluster *rdbdriver.Cluster, cfg rdbdriver.ClusterConfig) error {
+	if m.opts.DatabaseEngine == nil {
+		return nil
+	}
+
+	dbName := cfg.DatabaseName
+	if dbName == "" {
+		dbName = cfg.ID
+	}
+
+	shared := rdbdriver.Instance{ID: cfg.ID, Engine: cluster.Engine}
+	sharedCfg := rdbdriver.InstanceConfig{
+		ID:                 cfg.ID,
+		Engine:             cluster.Engine,
+		DBName:             dbName,
+		MasterUsername:     cfg.MasterUsername,
+		MasterUserPassword: cfg.MasterUserPassword,
+	}
+
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &shared, &sharedCfg); err != nil {
+		return err
+	}
+
+	if shared.Endpoint != "" {
+		cluster.Endpoint = shared.Endpoint
+		cluster.Port = shared.Port
+	}
+
+	return nil
 }
 
 // DescribeClusters returns all clusters if ids is empty, else only matching ones.
@@ -314,13 +359,20 @@ func (m *Mock) ModifyCluster(
 	return &out, nil
 }
 
-// DeleteCluster removes a cluster.
-func (m *Mock) DeleteCluster(_ context.Context, id string) error {
+// DeleteCluster removes a cluster and tears down the real database backing it,
+// if any.
+func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.clusters.Get(id); !ok {
+	cluster, ok := m.clusters.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
+	}
+
+	inst := rdbdriver.Instance{ID: id, Engine: cluster.Engine}
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
+		return err
 	}
 
 	m.clusters.Delete(id)

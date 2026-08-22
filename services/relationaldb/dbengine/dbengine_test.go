@@ -13,6 +13,7 @@ func TestIsPostgresFamily(t *testing.T) {
 	cases := map[string]bool{
 		"postgres": true, "POSTGRES": true, "Postgres": true,
 		"aurora-postgresql": true, "Aurora-PostgreSQL": true,
+		"redshift": true, "Redshift": true, "REDSHIFT": true,
 		"POSTGRES_15": true, "POSTGRES_14": true, "postgres_13": true, "postgresql": true,
 		"mysql": false, "aurora-mysql": false, "": false, "sqlserver": false,
 		"MYSQL_8_0": false, "SQLSERVER_2019_STANDARD": false,
@@ -30,7 +31,7 @@ func TestIsMySQLFamily(t *testing.T) {
 		"MYSQL_8_0": true, "mysql_5_7": true,
 		"aurora-mysql": true, "Aurora-MySQL": true,
 		"mariadb": false, "MARIADB_10_6": false,
-		"postgres": false, "aurora-postgresql": false, "sqlserver": false, "": false,
+		"postgres": false, "aurora-postgresql": false, "redshift": false, "sqlserver": false, "": false,
 	}
 	for engine, want := range cases {
 		if got := dbengine.IsMySQLFamily(engine); got != want {

@@ -42,7 +42,7 @@ func (m *Mock) nodesForCluster(c *cpgdriver.Cluster) []cpgdriver.Server {
 	return out
 }
 
-func (*Mock) node(c *cpgdriver.Cluster, role string, idx int) cpgdriver.Server {
+func (m *Mock) node(c *cpgdriver.Cluster, role string, idx int) cpgdriver.Server {
 	name := serverName(c.Name, role, idx)
 
 	vcores, edition := c.NodeVCores, c.NodeServerEdition
@@ -65,7 +65,7 @@ func (*Mock) node(c *cpgdriver.Cluster, role string, idx int) cpgdriver.Server {
 		Role:                     role,
 		State:                    orDefault(c.State, "Ready"),
 		HaState:                  haState,
-		FullyQualifiedDomainName: name + "." + orDefault(c.Location, "eastus") + ".postgres.cosmos.azure.com",
+		FullyQualifiedDomainName: m.nodeFQDN(c, name, role),
 		AdministratorLogin:       c.AdministratorLogin,
 		ServerEdition:            edition,
 		VCores:                   vcores,
@@ -77,6 +77,21 @@ func (*Mock) node(c *cpgdriver.Cluster, role string, idx int) cpgdriver.Server {
 		// Every node of a read replica is read-only (coordinator included).
 		IsReadOnly: c.SourceResourceID != "",
 	}
+}
+
+// nodeFQDN returns the host a client connects to for a node. When a real
+// DatabaseEngine backs the cluster, the coordinator resolves to the engine's
+// reachable host (so a real Postgres client connects using only the SDK
+// response); every other case keeps the synthetic Azure FQDN. Callers hold the
+// read lock guarding coordinatorHosts.
+func (m *Mock) nodeFQDN(c *cpgdriver.Cluster, name, role string) string {
+	if role == cpgdriver.RoleCoordinator {
+		if host := m.coordinatorHosts[clusterKey(c.ResourceGroup, c.Name)]; host != "" {
+			return host
+		}
+	}
+
+	return name + "." + orDefault(c.Location, "eastus") + ".postgres.cosmos.azure.com"
 }
 
 // GetServer returns a derived node by name.
