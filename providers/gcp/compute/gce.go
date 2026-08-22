@@ -3,6 +3,7 @@ package compute
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -13,12 +14,17 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/statemachine"
 	"github.com/stackshy/cloudemu/v2/services/compute"
+	"github.com/stackshy/cloudemu/v2/services/compute/computeengine"
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
-// Compile-time check that Mock implements driver.Compute.
-var _ driver.Compute = (*Mock)(nil)
+// Compile-time check that Mock implements driver.Compute and, when a real
+// compute engine is wired, serves console output via driver.ConsoleReader.
+var (
+	_ driver.Compute       = (*Mock)(nil)
+	_ driver.ConsoleReader = (*Mock)(nil)
+)
 
 const (
 	ipSegmentSize  = 256
@@ -75,6 +81,10 @@ type instanceData struct {
 	SecurityGroups []string
 	Tags           map[string]string
 	LaunchTime     string
+	// engineBacked is true when a real config.ComputeEngine backs this
+	// instance, so delete deprovisions it and console output is read from the
+	// engine rather than synthesized.
+	engineBacked bool
 }
 
 type asgData struct {
@@ -225,6 +235,12 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 
 	results := make([]driver.Instance, 0, count)
 
+	// created tracks the instances already fully provisioned in this batch, so a
+	// mid-batch engine failure can roll them back rather than orphaning live
+	// containers and half-tracked instances (real GCE launches the whole batch or
+	// none of it).
+	created := make([]*instanceData, 0, count)
+
 	for i := 0; i < count; i++ {
 		id := idgen.GCPID(m.opts.ProjectID, "instances", idgen.GenerateID("gce-"))
 
@@ -243,15 +259,51 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		}
+
+		// Back the instance with a real compute engine when one is configured.
+		// The engine runs the startup-script (carried in cfg.UserData) as the
+		// boot script and may surface a reachable IP that overrides the
+		// synthetic private IP.
+		if engine := m.opts.ComputeEngine; engine != nil {
+			di := driver.Instance{ID: inst.ID, ImageID: inst.ImageID, PrivateIP: inst.PrivateIP}
+			if err := computeengine.Provision(ctx, engine, &di, &cfg); err != nil {
+				m.rollbackInstances(ctx, created)
+
+				return nil, err
+			}
+
+			inst.PrivateIP = di.PrivateIP
+			inst.engineBacked = true
+		}
+
 		m.instances.Set(id, inst)
 		m.sm.SetState(id, compute.StatePending)
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
 		results = append(results, toInstance(inst))
+		created = append(created, inst)
 		m.emitInstanceMetrics(ctx, id, inst.LaunchTime)
 	}
 
 	return results, nil
+}
+
+// rollbackInstances best-effort tears down instances already provisioned earlier
+// in a RunInstances batch that then failed: each engine-backed instance is
+// deprovisioned (so no live container remains) and every instance is dropped from
+// the store and the state machine (so no half-tracked state remains).
+func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
+	engine := m.opts.ComputeEngine
+
+	for _, inst := range created {
+		if inst.engineBacked {
+			di := driver.Instance{ID: inst.ID}
+			_ = computeengine.Deprovision(ctx, engine, &di)
+		}
+
+		m.instances.Delete(inst.ID)
+		m.sm.Remove(inst.ID)
+	}
 }
 
 func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t lifecycleTransition) error {
@@ -288,15 +340,73 @@ func (m *Mock) RebootInstances(ctx context.Context, instanceIDs []string) error 
 }
 
 func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, terminateTransition)
+	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
+		return err
+	}
+
+	// Tear down the real backing for any engine-backed instances. Every id is now
+	// Terminated (transitionInstances verified they exist); this is best-effort so
+	// one instance's Deprovision failure doesn't strand the rest with a live
+	// backing and no API path to clean it up. The cleared flag is persisted back.
+	var errs []error
+
+	for _, id := range instanceIDs {
+		if err := m.deprovisionBacking(ctx, id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// deprovisionBacking tears down the real compute-engine backing for an
+// engine-backed instance and clears its engineBacked flag. It is a no-op for an
+// unknown or non-engine-backed instance, so callers can invoke it for every id.
+func (m *Mock) deprovisionBacking(ctx context.Context, id string) error {
+	inst, ok := m.instances.Get(id)
+	if !ok || !inst.engineBacked {
+		return nil
+	}
+
+	di := driver.Instance{ID: inst.ID}
+	if err := computeengine.Deprovision(ctx, m.opts.ComputeEngine, &di); err != nil {
+		return err
+	}
+
+	inst.engineBacked = false
+	m.instances.Set(id, inst)
+
+	return nil
+}
+
+// GetConsoleOutput returns the console output the configured compute engine
+// captured for the instance's boot script. It returns a nil slice when the
+// instance is not engine-backed (no real backing produced console output).
+func (m *Mock) GetConsoleOutput(ctx context.Context, instanceID string) ([]byte, error) {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	if !inst.engineBacked {
+		return nil, nil
+	}
+
+	return computeengine.ConsoleOutput(ctx, m.opts.ComputeEngine, instanceID)
 }
 
 // RemoveInstance hard-deletes an instance, mirroring GCP's instances.delete
 // (which removes the resource, unlike EC2 terminate which leaves a TERMINATED
 // tombstone). GCP-specific; reached via a type assertion from the GCE handler.
-func (m *Mock) RemoveInstance(_ context.Context, instanceID string) error {
+func (m *Mock) RemoveInstance(ctx context.Context, instanceID string) error {
 	if !m.instances.Has(instanceID) {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	// Tear down the real backing before dropping the instance, so a hard delete
+	// leaves no orphaned container behind.
+	if err := m.deprovisionBacking(ctx, instanceID); err != nil {
+		return err
 	}
 
 	m.instances.Delete(instanceID)
