@@ -547,7 +547,15 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Lambda != nil {
-		srv.Register(lambda.New(d.Lambda))
+		var lambdaOpts []lambda.Option
+		if d.S3 != nil {
+			// Let CreateFunction fetch an S3-sourced deployment package
+			// (Code.S3Bucket/S3Key) from the in-process S3 backend so real
+			// code runs instead of the echo stub.
+			lambdaOpts = append(lambdaOpts, lambda.WithObjectStore(d.S3))
+		}
+
+		srv.Register(lambda.New(d.Lambda, lambdaOpts...))
 	}
 
 	// EKS is a REST/JSON service rooted at /clusters. It must register

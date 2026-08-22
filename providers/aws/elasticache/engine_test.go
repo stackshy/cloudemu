@@ -54,6 +54,52 @@ func TestCreateCacheUsesEngineForRedis(t *testing.T) {
 	}
 }
 
+func TestCreateReplicationGroupUsesEngineForRedis(t *testing.T) {
+	eng := &recordingCacheEngine{host: "127.0.0.1", port: 6400}
+	m := New(config.NewOptions(config.WithCacheEngine(eng)))
+	ctx := context.Background()
+
+	rg, err := m.CreateReplicationGroup(ctx, driver.ReplicationGroupConfig{ID: "rg1", Engine: "redis"})
+	if err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	// The primary endpoint must resolve to the real engine host:port a redis
+	// client connects to, not the synthetic *.cache.amazonaws.com hostname.
+	if rg.PrimaryAddress != "127.0.0.1" || rg.PrimaryPort != 6400 {
+		t.Fatalf("primary endpoint not overridden by engine: got %s:%d", rg.PrimaryAddress, rg.PrimaryPort)
+	}
+
+	if len(eng.provisioned) != 1 || eng.provisioned[0].CacheID != "rg1" {
+		t.Fatalf("unexpected provision calls: %+v", eng.provisioned)
+	}
+
+	if err := m.DeleteReplicationGroup(ctx, "rg1"); err != nil {
+		t.Fatalf("DeleteReplicationGroup: %v", err)
+	}
+
+	if len(eng.deprovisioned) != 1 || eng.deprovisioned[0] != "rg1" {
+		t.Fatalf("expected one deprovision for rg1, got %v", eng.deprovisioned)
+	}
+}
+
+func TestCreateReplicationGroupNoEngineIsSynthetic(t *testing.T) {
+	m := New(config.NewOptions())
+
+	rg, err := m.CreateReplicationGroup(context.Background(), driver.ReplicationGroupConfig{ID: "rg2", Engine: "redis"})
+	if err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	if rg.PrimaryAddress == "" || rg.PrimaryAddress == "127.0.0.1" {
+		t.Fatalf("without an engine the primary should be synthetic, got %q", rg.PrimaryAddress)
+	}
+
+	if rg.PrimaryPort != defaultRedisPort {
+		t.Fatalf("synthetic primary port = %d, want %d", rg.PrimaryPort, defaultRedisPort)
+	}
+}
+
 func TestCreateCacheSkipsEngineForMemcached(t *testing.T) {
 	eng := &recordingCacheEngine{host: "127.0.0.1", port: 6400}
 	m := New(config.NewOptions(config.WithCacheEngine(eng)))

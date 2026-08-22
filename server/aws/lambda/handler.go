@@ -19,9 +19,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 // pathPrefix is the Lambda API version prefix every control-plane URL starts
@@ -79,15 +81,45 @@ type functionTagger interface {
 	ListFunctionTags(ctx context.Context, name string) (map[string]string, error)
 }
 
+// ObjectStore is the slice of the in-process S3 backend the handler needs to
+// fetch an S3-sourced deployment package (Code.S3Bucket/S3Key).
+type ObjectStore interface {
+	GetObject(ctx context.Context, bucket, key string) (*storagedriver.Object, error)
+}
+
 // Handler serves AWS Lambda REST requests against a serverless.Serverless
 // driver.
 type Handler struct {
 	fn sdrv.Serverless
+	// objects fetches an S3-sourced deployment package from the in-process S3
+	// backend. Nil when no S3 backend is wired; an S3-sourced deploy then fails
+	// loudly rather than silently falling back to the echo stub.
+	objects ObjectStore
+	// mu guards layerContent.
+	mu sync.Mutex
+	// layerContent stages each published layer version's zip bytes, keyed by
+	// "name:version", so a function importing the layer can have its files
+	// overlaid into the deployment package.
+	layerContent map[string][]byte
+}
+
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithObjectStore lets CreateFunction fetch an S3-sourced deployment package
+// (Code.S3Bucket/S3Key) from the in-process S3 backend so real code runs.
+func WithObjectStore(s ObjectStore) Option {
+	return func(h *Handler) { h.objects = s }
 }
 
 // New returns a Lambda handler backed by fn.
-func New(fn sdrv.Serverless) *Handler {
-	return &Handler{fn: fn}
+func New(fn sdrv.Serverless, opts ...Option) *Handler {
+	h := &Handler{fn: fn, layerContent: make(map[string][]byte)}
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	return h
 }
 
 // Matches returns true for any URL under /2015-03-31/functions — that's the
@@ -543,9 +575,19 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		cfg.Environment = req.Environment.Variables
 	}
 
-	if req.Code != nil {
-		cfg.Code = req.Code.ZipFile
+	code, err := h.resolveCode(r.Context(), req.Code)
+	if err != nil {
+		writeErr(w, err)
+		return
 	}
+
+	code, err = h.overlayLayers(code, req.Layers)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	cfg.Code = code
 
 	info, err := h.fn.CreateFunction(r.Context(), cfg)
 	if err != nil {
@@ -554,6 +596,42 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, toConfiguration(info))
+}
+
+// resolveCode returns the deployment-package bytes for a CreateFunction request.
+// An inline Code.ZipFile wins; otherwise an S3Bucket/S3Key pair is fetched from
+// the in-process S3 backend so a function deployed the way Terraform/SAM/CDK
+// deploy it (an uploaded artifact, not an inline zip) runs real code instead of
+// silently falling back to the echo stub. A code that references S3 with no S3
+// backend wired is a hard error rather than a silent stub.
+func (h *Handler) resolveCode(ctx context.Context, code *functionCode) ([]byte, error) {
+	if code == nil {
+		return nil, nil
+	}
+
+	if len(code.ZipFile) > 0 {
+		return code.ZipFile, nil
+	}
+
+	if code.S3Bucket == "" && code.S3Key == "" {
+		return nil, nil
+	}
+
+	if code.S3Bucket == "" || code.S3Key == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "Code.S3Bucket and Code.S3Key must both be set")
+	}
+
+	if h.objects == nil {
+		return nil, cerrors.New(cerrors.InvalidArgument,
+			"function code references S3 but no S3 backend is wired; deploy with an inline Code.ZipFile")
+	}
+
+	obj, err := h.objects.GetObject(ctx, code.S3Bucket, code.S3Key)
+	if err != nil {
+		return nil, err
+	}
+
+	return obj.Data, nil
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, name string) {

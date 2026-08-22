@@ -152,6 +152,12 @@ func (h *Handler) serveLayerVersions(w http.ResponseWriter, r *http.Request, nam
 			return
 		}
 
+		// Stage the zip bytes so a function importing this layer can have its
+		// files overlaid into the deployment package at CreateFunction.
+		if req.Content != nil {
+			h.putLayerContent(lv.Name, lv.Version, req.Content.ZipFile)
+		}
+
 		resp := toLayerVersionResponse(lv)
 		resp.LicenseInfo = req.LicenseInfo
 		writeJSON(w, http.StatusCreated, resp)

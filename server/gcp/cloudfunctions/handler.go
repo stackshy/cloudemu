@@ -17,6 +17,7 @@
 package cloudfunctions
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -30,6 +31,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 const (
@@ -57,6 +59,12 @@ const (
 	actionSetIamPolicy = "setIamPolicy"
 )
 
+// ObjectStore is the slice of the in-process GCS backend the handler needs to
+// fetch a sourceArchiveUrl (gs://bucket/object) deployment package.
+type ObjectStore interface {
+	GetObject(ctx context.Context, bucket, key string) (*storagedriver.Object, error)
+}
+
 // Handler serves GCP Cloud Functions v1 REST requests against a serverless
 // driver.
 type Handler struct {
@@ -65,6 +73,10 @@ type Handler struct {
 	// and create (which consumes the staged bytes into the function's Code). It
 	// is bounded and FIFO-evicting so an abandoned deploy can't grow memory.
 	uploads *uploadStaging
+	// objects fetches a sourceArchiveUrl (gs://...) deployment package from the
+	// in-process GCS backend. Nil when no GCS backend is wired; an archive deploy
+	// then fails loudly rather than silently falling back to the echo stub.
+	objects ObjectStore
 	// mu guards policies.
 	mu sync.RWMutex
 	// policies stores the IAM policy set via setIamPolicy, keyed by the function's
@@ -74,9 +86,23 @@ type Handler struct {
 	policies map[string]*iamPolicy
 }
 
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithObjectStore lets create() fetch a sourceArchiveUrl (gs://...) deployment
+// package from the in-process GCS backend so real code runs.
+func WithObjectStore(s ObjectStore) Option {
+	return func(h *Handler) { h.objects = s }
+}
+
 // New returns a Cloud Functions handler backed by fn.
-func New(fn sdrv.Serverless) *Handler {
-	return &Handler{fn: fn, uploads: newUploadStaging(), policies: make(map[string]*iamPolicy)}
+func New(fn sdrv.Serverless, opts ...Option) *Handler {
+	h := &Handler{fn: fn, uploads: newUploadStaging(), policies: make(map[string]*iamPolicy)}
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	return h
 }
 
 // Matches accepts paths that look like Cloud Functions v1: either an LRO poll
@@ -279,6 +305,78 @@ func (h *Handler) consumeUpload(uploadURL string, cfg *sdrv.FunctionConfig) erro
 	return nil
 }
 
+// loadSource pulls a source deploy's code into cfg from whichever source the
+// request names: the staged upload (generateUploadUrl → PUT) or a gs:// archive
+// fetched from the in-process GCS backend. It writes the error response and
+// returns false on failure so create can bail rather than register a function
+// that never runs the intended code.
+func (h *Handler) loadSource(w http.ResponseWriter, r *http.Request, body *cloudFunction, cfg *sdrv.FunctionConfig) bool {
+	if body.SourceUploadURL != "" {
+		if err := h.consumeUpload(body.SourceUploadURL, cfg); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unknown or already-consumed sourceUploadUrl")
+			return false
+		}
+
+		return true
+	}
+
+	if err := h.consumeArchive(r.Context(), body.SourceArchiveURL, cfg); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return true
+}
+
+// consumeArchive fetches the gs://bucket/object source zip named by archiveURL
+// from the in-process GCS backend into cfg.Code and marks the deployment as
+// using the http framework — the same contract a staged upload uses. A malformed
+// URL, an unwired GCS backend, or a missing/empty object is a hard error rather
+// than a silently stubbed function.
+func (h *Handler) consumeArchive(ctx context.Context, archiveURL string, cfg *sdrv.FunctionConfig) error {
+	bucket, object, ok := parseGCSURL(archiveURL)
+	if !ok {
+		return cerrors.Newf(cerrors.InvalidArgument, "sourceArchiveUrl must be gs://bucket/object, got %q", archiveURL)
+	}
+
+	if h.objects == nil {
+		return cerrors.New(cerrors.InvalidArgument,
+			"sourceArchiveUrl set but no GCS backend is wired; deploy via generateUploadUrl instead")
+	}
+
+	obj, err := h.objects.GetObject(ctx, bucket, object)
+	if err != nil {
+		return err
+	}
+
+	if len(obj.Data) == 0 {
+		return cerrors.Newf(cerrors.InvalidArgument, "sourceArchiveUrl %q resolves to an empty object", archiveURL)
+	}
+
+	cfg.Code = obj.Data
+	cfg.Framework = frameworkHTTP
+
+	return nil
+}
+
+// parseGCSURL splits a gs://bucket/object URL into its bucket and object name.
+func parseGCSURL(raw string) (bucket, object string, ok bool) {
+	const scheme = "gs://"
+
+	if !strings.HasPrefix(raw, scheme) {
+		return "", "", false
+	}
+
+	rest := strings.TrimPrefix(raw, scheme)
+
+	i := strings.Index(rest, "/")
+	if i <= 0 || i == len(rest)-1 {
+		return "", "", false
+	}
+
+	return rest[:i], rest[i+1:], true
+}
+
 // uploadToken extracts the ?token= value from a generated upload URL. It returns
 // "" when the URL is not one this server minted.
 func uploadToken(uploadURL string) string {
@@ -340,19 +438,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 		Timeout:     parseTimeoutSeconds(body.Timeout),
 	}
 
-	// A source-upload deploy carries the code out-of-band: pull the staged zip
-	// (from the earlier generateUploadUrl → PUT) into Code so the provider can
-	// deploy it to the configured FunctionEngine. gen1 functions run under the
+	// A source deploy carries the code out-of-band. gen1 functions run under the
 	// functions-framework request/response contract with a bare entrypoint, which
 	// real Cloud Functions requires — reject a code deploy that omits it.
-	if body.SourceUploadURL != "" {
+	if body.SourceUploadURL != "" || body.SourceArchiveURL != "" {
 		if body.EntryPoint == "" {
 			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "entryPoint is required")
 			return
 		}
 
-		if err := h.consumeUpload(body.SourceUploadURL, &cfg); err != nil {
-			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unknown or already-consumed sourceUploadUrl")
+		if !h.loadSource(w, r, &body, &cfg) {
 			return
 		}
 	}

@@ -109,10 +109,19 @@ type createFunctionRequest struct {
 	Tags         map[string]string `json:"Tags"`
 	PackageType  string            `json:"PackageType"`
 	Code         *functionCode     `json:"Code"`
+	// Layers is the list of layer version ARNs the function imports. Their code
+	// is overlaid into the deployment package so imports resolve at real invoke.
+	Layers []string `json:"Layers"`
 }
 
 // functionCode is the deployment package in a CreateFunction body. The AWS SDK
-// sends the zip as base64 in ZipFile, which Go unmarshals into []byte for us.
+// sends an inline zip as base64 in ZipFile, which Go unmarshals into []byte for
+// us. Terraform/SAM/CDK instead upload the artifact to S3 and reference it via
+// S3Bucket/S3Key; those are fetched from the in-process S3 backend so real code
+// runs instead of falling back to the echo stub.
 type functionCode struct {
-	ZipFile []byte `json:"ZipFile"`
+	ZipFile         []byte `json:"ZipFile"`
+	S3Bucket        string `json:"S3Bucket"`
+	S3Key           string `json:"S3Key"`
+	S3ObjectVersion string `json:"S3ObjectVersion"`
 }

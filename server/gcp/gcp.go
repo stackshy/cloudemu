@@ -175,7 +175,15 @@ func New(d Drivers) *server.Server {
 	// before Firestore so the locations+functions guard wins over Firestore's
 	// /v1/projects/ prefix match.
 	if d.CloudFunctions != nil {
-		srv.Register(cloudfunctions.New(d.CloudFunctions))
+		var cfOpts []cloudfunctions.Option
+		if d.Storage != nil {
+			// Let create() fetch a sourceArchiveUrl (gs://...) deployment package
+			// from the in-process GCS backend so real code runs instead of the
+			// echo stub.
+			cfOpts = append(cfOpts, cloudfunctions.WithObjectStore(d.Storage))
+		}
+
+		srv.Register(cloudfunctions.New(d.CloudFunctions, cfOpts...))
 	}
 
 	// Cloud Run matches /v2/projects/{p}/locations/{l}/{jobs|operations}[/…].
