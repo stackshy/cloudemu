@@ -169,6 +169,32 @@ func TestEssentialContainerExitStopsTask(t *testing.T) {
 	}
 }
 
+func TestEssentialExitReapsEngineWorkload(t *testing.T) {
+	eng := &fakeContainerEngine{
+		handle: "h-reap",
+		statuses: []config.ContainerStatus{
+			{Name: "main", State: "exited", ExitCode: 0},
+			{Name: "sidecar", State: "running"},
+		},
+	}
+	m := newEngineTestMock(eng)
+
+	task := registerAndRunMulti(t, m, true, false)
+
+	// The task is terminal: the essential main exited while the non-essential
+	// sidecar was still sleeping.
+	assert.Equal(t, statusStopped, task.LastStatus)
+	assert.Equal(t, "EssentialContainerExited", task.StopCode)
+
+	// The engine workload was torn down immediately — no container lingers.
+	assert.Equal(t, []string{"h-reap"}, eng.stopped)
+
+	// The handle is dropped, so a later StopTask does not re-stop the workload.
+	_, err := m.StopTask(context.Background(), "", task.ARN, "bye")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"h-reap"}, eng.stopped)
+}
+
 func TestNonEssentialContainerExitKeepsTaskRunning(t *testing.T) {
 	eng := &fakeContainerEngine{
 		handle: "h-non",
@@ -181,9 +207,11 @@ func TestNonEssentialContainerExitKeepsTaskRunning(t *testing.T) {
 
 	task := registerAndRunMulti(t, m, true, false)
 
-	// A non-essential container exiting does not stop the task.
+	// A non-essential container exiting does not stop the task, and a genuinely
+	// running task must keep its engine workload (no reap).
 	assert.Equal(t, statusRunning, task.LastStatus)
 	assert.NotEqual(t, "EssentialContainerExited", task.StopCode)
+	assert.Empty(t, eng.stopped)
 }
 
 func TestRunTaskEngineRunFailureStopsTask(t *testing.T) {

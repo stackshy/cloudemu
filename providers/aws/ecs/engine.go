@@ -51,8 +51,30 @@ func (m *Mock) backTaskWithEngine(ctx context.Context, task *driver.Task, spec *
 	}
 
 	m.engineHandles.Set(task.ARN, handle)
-	applyStatuses(task, spec.td, handle, statuses)
+	terminal := applyStatuses(task, spec.td, handle, statuses)
 	m.surfaceLogs(ctx, task, spec.td, handle)
+
+	// A standalone RunToCompletion task that reached its terminal state (an
+	// essential container exited) is torn down at once, just as real ECS kills
+	// the remaining containers the instant the essential one exits — so no
+	// sidecar or exited container lingers until the engine's Close(). Reaping
+	// after surfaceLogs keeps the captured output intact.
+	if terminal {
+		m.reapEngine(ctx, task.ARN)
+	}
+}
+
+// reapEngine stops the engine-backed workload behind a task and drops its
+// handle, leaving zero running or exited containers. Dropping the handle makes a
+// later StopTask a no-op, so a double stop is safe.
+func (m *Mock) reapEngine(ctx context.Context, taskARN string) {
+	handle, backed := m.engineHandles.Get(taskARN)
+	if !backed {
+		return
+	}
+
+	_ = containerengine.Stop(ctx, m.opts.ContainerEngine, handle)
+	m.engineHandles.Delete(taskARN)
 }
 
 // engineContainers maps a task definition's container definitions onto the
@@ -93,7 +115,9 @@ func keyValueEnv(env []driver.KeyValue) map[string]string {
 // Real ECS stops a task the moment an *essential* container exits (and kills the
 // rest), so the task is STOPPED as soon as any essential container has exited,
 // regardless of whether non-essential containers are still running.
-func applyStatuses(task *driver.Task, td *driver.TaskDefinition, handle string, statuses []config.ContainerStatus) {
+// It returns whether the task reached its terminal STOPPED state (an essential
+// container exited), so the caller can reap the engine workload.
+func applyStatuses(task *driver.Task, td *driver.TaskDefinition, handle string, statuses []config.ContainerStatus) bool {
 	byName := make(map[string]config.ContainerStatus, len(statuses))
 	for _, s := range statuses {
 		byName[s.Name] = s
@@ -120,6 +144,8 @@ func applyStatuses(task *driver.Task, td *driver.TaskDefinition, handle string, 
 	if essentialExited {
 		stopTaskOnEssentialExit(task)
 	}
+
+	return essentialExited
 }
 
 // stopTaskOnEssentialExit flips the task (and every container, since real ECS
