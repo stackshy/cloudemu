@@ -159,6 +159,93 @@ func TestRunJobWithEngineRunsContainersAndSucceeds(t *testing.T) {
 	}
 }
 
+func TestRunJobRunsEachTaskWithIndexEnv(t *testing.T) {
+	eng := &fakeEngine{
+		handle:   "h1",
+		statuses: []config.ContainerStatus{{Name: "worker", State: "exited", ExitCode: 0}},
+	}
+	m := newMock(t, eng)
+	ctx := context.Background()
+
+	cfg := jobCfg()
+	cfg.TaskCount = 3
+
+	if _, err := m.CreateJob(ctx, cfg); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	exec, err := m.RunJob(ctx, "batch")
+	if err != nil {
+		t.Fatalf("RunJob: %v", err)
+	}
+
+	// Each of the 3 tasks is a real, independent engine run.
+	if len(eng.ranSpecs) != 3 {
+		t.Fatalf("engine Run called %d times, want 3", len(eng.ranSpecs))
+	}
+
+	// Each run carried its own CLOUD_RUN_TASK_INDEX, a shared CLOUD_RUN_TASK_COUNT,
+	// and the job's own env preserved.
+	seen := map[string]bool{}
+
+	for _, spec := range eng.ranSpecs {
+		env := spec.Containers[0].Env
+		if env["CLOUD_RUN_TASK_COUNT"] != "3" {
+			t.Fatalf("CLOUD_RUN_TASK_COUNT = %q, want 3", env["CLOUD_RUN_TASK_COUNT"])
+		}
+
+		if env["K"] != "V" {
+			t.Fatalf("job env not preserved: %+v", env)
+		}
+
+		seen[env["CLOUD_RUN_TASK_INDEX"]] = true
+	}
+
+	for _, idx := range []string{"0", "1", "2"} {
+		if !seen[idx] {
+			t.Fatalf("missing CLOUD_RUN_TASK_INDEX %s among runs: %v", idx, seen)
+		}
+	}
+
+	if exec.SucceededCount != 3 || exec.FailedCount != 0 || len(exec.Tasks) != 3 {
+		t.Fatalf("counts: succeeded=%d failed=%d tasks=%d, want 3/0/3",
+			exec.SucceededCount, exec.FailedCount, len(exec.Tasks))
+	}
+}
+
+func TestRunJobAggregatesTaskFailuresAcrossCount(t *testing.T) {
+	eng := &fakeEngine{
+		handle:   "h1",
+		statuses: []config.ContainerStatus{{Name: "worker", State: "exited", ExitCode: 7}},
+	}
+	m := newMock(t, eng)
+	ctx := context.Background()
+
+	cfg := jobCfg()
+	cfg.TaskCount = 2
+
+	if _, err := m.CreateJob(ctx, cfg); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	exec, err := m.RunJob(ctx, "batch")
+	if err != nil {
+		t.Fatalf("RunJob: %v", err)
+	}
+
+	if len(eng.ranSpecs) != 2 {
+		t.Fatalf("engine Run called %d times, want 2", len(eng.ranSpecs))
+	}
+
+	if exec.FailedCount != 2 || exec.SucceededCount != 0 {
+		t.Fatalf("counts: succeeded=%d failed=%d, want 0/2", exec.SucceededCount, exec.FailedCount)
+	}
+
+	if exec.Conditions[0].State != stateFailed {
+		t.Fatalf("condition state = %q, want %q", exec.Conditions[0].State, stateFailed)
+	}
+}
+
 func TestRunJobReflectsContainerFailure(t *testing.T) {
 	eng := &fakeEngine{
 		handle:   "h1",

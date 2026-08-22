@@ -56,8 +56,11 @@ func (m *Mock) RunJob(ctx context.Context, name string) (*driver.Execution, erro
 	return cloneExecution(exec), nil
 }
 
-// runExecution drives exec's containers to a terminal state, via the configured
-// ContainerEngine when one is wired, or synthetically otherwise.
+// runExecution drives exec's tasks to a terminal state, via the configured
+// ContainerEngine when one is wired, or synthetically otherwise. Cloud Run runs
+// TaskCount tasks per execution; each task is a real, independent container run
+// (with the per-task CLOUD_RUN_TASK_* env the real service injects), and the
+// execution's counts aggregate the observed per-task outcomes.
 func (m *Mock) runExecution(ctx context.Context, exec *driver.Execution, containers []driver.Container) {
 	if m.opts.ContainerEngine == nil {
 		markSynthetic(exec)
@@ -65,54 +68,58 @@ func (m *Mock) runExecution(ctx context.Context, exec *driver.Execution, contain
 		return
 	}
 
+	tasks := make([]driver.Task, 0, exec.TaskCount)
+	succeeded := 0
+	failMsg := ""
+
+	for idx := 0; idx < exec.TaskCount; idx++ {
+		task, msg := m.runTask(ctx, exec, containers, idx)
+		tasks = append(tasks, task)
+
+		if task.State == taskSucceeded {
+			succeeded++
+		} else if failMsg == "" {
+			failMsg = msg
+		}
+	}
+
+	aggregateExecution(exec, tasks, succeeded, failMsg)
+}
+
+// runTask runs one task's containers to completion and returns its outcome and,
+// on failure, a message describing why. taskIndex/taskCount are injected into the
+// containers' environment as CLOUD_RUN_TASK_INDEX/CLOUD_RUN_TASK_COUNT.
+func (m *Mock) runTask(
+	ctx context.Context, exec *driver.Execution, containers []driver.Container, taskIndex int,
+) (task driver.Task, failMsg string) {
 	spec := config.ContainerRunSpec{
-		Name:            exec.Name,
-		Containers:      engineContainers(containers),
+		Name:            exec.Name + "-" + strconv.Itoa(taskIndex),
+		Containers:      engineContainers(containers, taskIndex, exec.TaskCount),
 		RunToCompletion: true,
 	}
 
 	handle, statuses, err := containerengine.Run(ctx, m.opts.ContainerEngine, spec)
 	if err != nil {
-		markFailed(exec, "container run failed: "+err.Error(), nil)
+		msg := "container run failed: " + err.Error()
 
-		return
+		return driver.Task{Index: taskIndex, State: taskFailed, ExitCode: 1}, msg
 	}
 
 	if handle == "" { // engine present but no-op (e.g. nothing to run)
-		markSynthetic(exec)
-
-		return
+		return driver.Task{Index: taskIndex, State: taskSucceeded}, ""
 	}
 
 	m.recordHandle(exec.JobName, handle)
-	m.reflectStatuses(ctx, exec, handle, statuses)
+
+	return m.taskOutcome(ctx, handle, statuses, taskIndex)
 }
 
-// engineContainers maps a job's containers onto the engine's neutral spec. The
-// engine models a single command list, so Cloud Run's command (entrypoint) and
-// args are concatenated, entrypoint first.
-func engineContainers(in []driver.Container) []config.ContainerSpec {
-	out := make([]config.ContainerSpec, 0, len(in))
-
-	for i := range in {
-		cmd := append(append([]string(nil), in[i].Command...), in[i].Args...)
-		out = append(out, config.ContainerSpec{
-			Name:    in[i].Name,
-			Image:   in[i].Image,
-			Command: cmd,
-			Env:     in[i].Env,
-		})
-	}
-
-	return out
-}
-
-// reflectStatuses turns the engine's observed per-container statuses into the
-// execution's task outcome and counts. A task succeeds only when every one of
-// its containers exited 0; the highest exit code observed is the task exit code.
-func (m *Mock) reflectStatuses(
-	ctx context.Context, exec *driver.Execution, handle string, statuses []config.ContainerStatus,
-) {
+// taskOutcome turns one task's observed container statuses into its outcome. The
+// task succeeds only when every container exited 0; the highest exit code
+// observed is the task exit code (at least 1 on failure).
+func (m *Mock) taskOutcome(
+	ctx context.Context, handle string, statuses []config.ContainerStatus, taskIndex int,
+) (task driver.Task, failMsg string) {
 	cstats := make([]driver.ContainerStatus, 0, len(statuses))
 	maxExit := 0
 	allExited := true
@@ -130,12 +137,70 @@ func (m *Mock) reflectStatuses(
 	}
 
 	if allExited && maxExit == 0 {
-		markSucceeded(exec, cstats)
+		return driver.Task{Index: taskIndex, State: taskSucceeded, Containers: cstats}, ""
+	}
+
+	exit := maxExit
+	if exit == 0 {
+		exit = 1
+	}
+
+	return driver.Task{Index: taskIndex, State: taskFailed, ExitCode: exit, Containers: cstats},
+		m.failureMessage(ctx, handle, statuses, maxExit)
+}
+
+// aggregateExecution rolls the per-task outcomes up onto the execution: its task
+// list, counts, terminal condition, and log URI. The execution succeeds only when
+// every task succeeded.
+func aggregateExecution(exec *driver.Execution, tasks []driver.Task, succeeded int, failMsg string) {
+	exec.Tasks = tasks
+	exec.SucceededCount = succeeded
+	exec.FailedCount = len(tasks) - succeeded
+	exec.LogURI = logURI(exec)
+
+	if exec.FailedCount == 0 {
+		exec.Conditions = []driver.Condition{{Type: condCompleted, State: stateSucceeded, Reason: "Completed"}}
 
 		return
 	}
 
-	markFailed(exec, m.failureMessage(ctx, handle, statuses, maxExit), cstats)
+	exec.Conditions = []driver.Condition{{Type: condCompleted, State: stateFailed, Reason: "Failed", Message: failMsg}}
+}
+
+// engineContainers maps a job's containers onto the engine's neutral spec. The
+// engine models a single command list, so Cloud Run's command (entrypoint) and
+// args are concatenated, entrypoint first. taskIndex/taskCount are overlaid onto
+// each container's env as the CLOUD_RUN_TASK_* variables.
+func engineContainers(in []driver.Container, taskIndex, taskCount int) []config.ContainerSpec {
+	out := make([]config.ContainerSpec, 0, len(in))
+
+	for i := range in {
+		cmd := append(append([]string(nil), in[i].Command...), in[i].Args...)
+		out = append(out, config.ContainerSpec{
+			Name:    in[i].Name,
+			Image:   in[i].Image,
+			Command: cmd,
+			Env:     taskEnv(in[i].Env, taskIndex, taskCount),
+		})
+	}
+
+	return out
+}
+
+// taskEnv copies a container's env and overlays the CLOUD_RUN_TASK_INDEX and
+// CLOUD_RUN_TASK_COUNT variables the real Cloud Run injects for each task.
+func taskEnv(base map[string]string, taskIndex, taskCount int) map[string]string {
+	const injectedVars = 2 // CLOUD_RUN_TASK_INDEX + CLOUD_RUN_TASK_COUNT
+
+	env := make(map[string]string, len(base)+injectedVars)
+	for k, v := range base {
+		env[k] = v
+	}
+
+	env["CLOUD_RUN_TASK_INDEX"] = strconv.Itoa(taskIndex)
+	env["CLOUD_RUN_TASK_COUNT"] = strconv.Itoa(taskCount)
+
+	return env
 }
 
 // failureMessage builds a task-failure condition message, enriching it with the
@@ -182,27 +247,8 @@ func markSynthetic(exec *driver.Execution) {
 	markSucceeded(exec, nil)
 }
 
-// markFailed records exec as failed across all its tasks with the given message.
-func markFailed(exec *driver.Execution, msg string, cstats []driver.ContainerStatus) {
-	exit := 1
-
-	for _, c := range cstats {
-		if c.ExitCode > exit {
-			exit = c.ExitCode
-		}
-	}
-
-	exec.Tasks = buildTasks(exec.TaskCount, taskFailed, exit, cstats)
-	exec.FailedCount = exec.TaskCount
-	exec.Conditions = []driver.Condition{{
-		Type: condCompleted, State: stateFailed, Reason: "Failed", Message: msg,
-	}}
-	exec.LogURI = logURI(exec)
-}
-
-// buildTasks materializes count identical tasks reflecting the execution's
-// observed outcome. CloudEmu runs the job's containers once per execution; the
-// observed result stands for each of the TaskCount tasks.
+// buildTasks materializes count identical succeeded tasks for the no-engine
+// synthetic path, where there are no observed container statuses to aggregate.
 func buildTasks(count int, state string, exitCode int, cstats []driver.ContainerStatus) []driver.Task {
 	tasks := make([]driver.Task, 0, count)
 	for i := 0; i < count; i++ {

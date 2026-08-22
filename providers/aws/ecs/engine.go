@@ -51,7 +51,7 @@ func (m *Mock) backTaskWithEngine(ctx context.Context, task *driver.Task, spec *
 	}
 
 	m.engineHandles.Set(task.ARN, handle)
-	applyStatuses(task, handle, statuses)
+	applyStatuses(task, spec.td, handle, statuses)
 	m.surfaceLogs(ctx, task, spec.td, handle)
 }
 
@@ -89,21 +89,22 @@ func keyValueEnv(env []driver.KeyValue) map[string]string {
 }
 
 // applyStatuses reflects the engine's observed per-container status onto the
-// task's containers (matched by name) and rolls the task-level LastStatus up: a
-// task whose containers have all exited is STOPPED, otherwise it stays RUNNING.
-func applyStatuses(task *driver.Task, handle string, statuses []config.ContainerStatus) {
+// task's containers (matched by name) and rolls the task-level LastStatus up.
+// Real ECS stops a task the moment an *essential* container exits (and kills the
+// rest), so the task is STOPPED as soon as any essential container has exited,
+// regardless of whether non-essential containers are still running.
+func applyStatuses(task *driver.Task, td *driver.TaskDefinition, handle string, statuses []config.ContainerStatus) {
 	byName := make(map[string]config.ContainerStatus, len(statuses))
 	for _, s := range statuses {
 		byName[s.Name] = s
 	}
 
-	allExited := true
+	essential := essentialContainers(td)
+	essentialExited := false
 
 	for i := range task.Containers {
 		s, ok := byName[task.Containers[i].Name]
 		if !ok {
-			allExited = false
-
 			continue
 		}
 
@@ -111,17 +112,52 @@ func applyStatuses(task *driver.Task, handle string, statuses []config.Container
 		task.Containers[i].ExitCode = s.ExitCode
 		task.Containers[i].RuntimeID = handle
 
-		if s.State != engineStateExited {
-			allExited = false
+		if s.State == engineStateExited && essential[task.Containers[i].Name] {
+			essentialExited = true
 		}
 	}
 
-	if allExited && len(task.Containers) > 0 {
-		task.LastStatus = statusStopped
-		task.DesiredStatus = statusStopped
-		task.StoppedReason = "Essential container in task exited"
-		task.StopCode = "EssentialContainerExited"
+	if essentialExited {
+		stopTaskOnEssentialExit(task)
 	}
+}
+
+// stopTaskOnEssentialExit flips the task (and every container, since real ECS
+// kills the remaining containers) to STOPPED with the essential-exit reason.
+func stopTaskOnEssentialExit(task *driver.Task) {
+	task.LastStatus = statusStopped
+	task.DesiredStatus = statusStopped
+	task.StoppedReason = "Essential container in task exited"
+	task.StopCode = "EssentialContainerExited"
+
+	for i := range task.Containers {
+		task.Containers[i].LastStatus = statusStopped
+	}
+}
+
+// essentialContainers returns the set of container names ECS treats as
+// essential. Containers explicitly flagged Essential form that set; when no
+// container is flagged, real ECS treats every container as essential, so the
+// full set is returned.
+func essentialContainers(td *driver.TaskDefinition) map[string]bool {
+	out := make(map[string]bool, len(td.ContainerDefinitions))
+
+	anyEssential := false
+
+	for i := range td.ContainerDefinitions {
+		if td.ContainerDefinitions[i].Essential {
+			out[td.ContainerDefinitions[i].Name] = true
+			anyEssential = true
+		}
+	}
+
+	if !anyEssential {
+		for i := range td.ContainerDefinitions {
+			out[td.ContainerDefinitions[i].Name] = true
+		}
+	}
+
+	return out
 }
 
 // ecsStatusFromEngine maps an engine container state onto the ECS lastStatus

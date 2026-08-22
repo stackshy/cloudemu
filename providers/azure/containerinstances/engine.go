@@ -91,6 +91,52 @@ func applyStatuses(group *driver.ContainerGroup, statuses []config.ContainerStat
 	}
 }
 
+// effectiveRestartPolicy resolves the ACI restart policy, defaulting an empty or
+// unrecognized value to Always (the ACI default).
+func effectiveRestartPolicy(p string) string {
+	switch p {
+	case restartPolicyNever, restartPolicyOnFailure, restartPolicyAlways:
+		return p
+	default:
+		return restartPolicyAlways
+	}
+}
+
+// adjustGroupState reconciles the group's rolled-up state with its restart
+// policy. Always hosts a container ACI keeps restarting, so the group is reported
+// Running regardless of a detached container's momentary exit; an OnFailure group
+// still carrying a non-zero exit after exhausting its restarts is Failed. Never
+// keeps the plain all-exited→Succeeded rollup applyStatuses produced.
+func adjustGroupState(group *driver.ContainerGroup, policy string, statuses []config.ContainerStatus) {
+	switch {
+	case policy == restartPolicyAlways:
+		forceRunning(group)
+	case policy == restartPolicyOnFailure && anyNonZeroExit(statuses):
+		group.State = groupStateFailed
+	}
+}
+
+// forceRunning reports the group and its containers as continuously Running — the
+// state ACI keeps an Always-restart group in, since its container is restarted
+// forever and never reaches a terminal state.
+func forceRunning(group *driver.ContainerGroup) {
+	group.State = groupStateRunning
+	for i := range group.Containers {
+		group.Containers[i].Current = driver.ContainerState{State: containerStateRunning}
+	}
+}
+
+// anyNonZeroExit reports whether any container has exited with a non-zero code.
+func anyNonZeroExit(statuses []config.ContainerStatus) bool {
+	for _, s := range statuses {
+		if s.State == engineStateExited && s.ExitCode != 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
 // engineState maps one engine container status onto ACI's currentState. A
 // running container has no exit code; an exited one carries its code and a
 // finish time.

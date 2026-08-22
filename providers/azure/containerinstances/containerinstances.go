@@ -22,15 +22,23 @@ import (
 var _ driver.ContainerInstances = (*Mock)(nil)
 
 const (
-	// restartPolicyNever is the ACI restart policy under which the group's
-	// containers run to completion instead of staying up.
-	restartPolicyNever = "Never"
+	// ACI restart policies. Never runs the containers to completion once;
+	// OnFailure re-runs them while a container exits non-zero; Always (the ACI
+	// default) hosts a long-running workload that is restarted regardless of exit.
+	restartPolicyNever     = "Never"
+	restartPolicyOnFailure = "OnFailure"
+	restartPolicyAlways    = "Always"
+
+	// maxOnFailureRestarts bounds the OnFailure restart loop so a container that
+	// always fails cannot loop forever in the emulator.
+	maxOnFailureRestarts = 5
 
 	provisioningStateSucceeded = "Succeeded"
 
 	// Group-level instanceView states.
 	groupStateRunning   = "Running"
 	groupStateSucceeded = "Succeeded"
+	groupStateFailed    = "Failed"
 
 	// Per-container instanceView.currentState states (ACI vocabulary).
 	containerStateRunning    = "Running"
@@ -108,10 +116,15 @@ func (m *Mock) CreateContainerGroup(ctx context.Context, cfg driver.ContainerGro
 // state back onto data. It is a no-op when no engine is configured, leaving the
 // synthetic Running state in place.
 func (m *Mock) backWithEngine(ctx context.Context, cfg *driver.ContainerGroupConfig, data *groupData) error {
+	policy := effectiveRestartPolicy(cfg.RestartPolicy)
+
 	spec := config.ContainerRunSpec{
-		Name:            cfg.Name,
-		Containers:      engineContainers(cfg.Containers),
-		RunToCompletion: cfg.RestartPolicy == restartPolicyNever,
+		Name:       cfg.Name,
+		Containers: engineContainers(cfg.Containers),
+		// Never and OnFailure run to completion so exit codes are observed (and,
+		// for OnFailure, drive restarts); Always hosts a long-running workload, so
+		// it stays detached and never blocks on an exit that may not come.
+		RunToCompletion: policy != restartPolicyAlways,
 	}
 
 	handle, statuses, err := containerengine.Run(ctx, m.opts.ContainerEngine, spec)
@@ -123,11 +136,39 @@ func (m *Mock) backWithEngine(ctx context.Context, cfg *driver.ContainerGroupCon
 		return nil
 	}
 
+	if policy == restartPolicyOnFailure {
+		handle, statuses, err = m.restartOnFailure(ctx, spec, handle, statuses)
+		if err != nil {
+			return cerrors.Newf(cerrors.Internal, "run container group %q: %v", cfg.Name, err)
+		}
+	}
+
 	data.handle = handle
 	data.engineBacked = true
 	applyStatuses(&data.group, statuses, m.opts.Clock.Now())
+	adjustGroupState(&data.group, policy, statuses)
 
 	return nil
+}
+
+// restartOnFailure re-runs the workload while any container exited non-zero, up
+// to maxOnFailureRestarts. Each retry tears down the previous run first so no
+// container leaks; the handle and statuses of the final run are returned.
+func (m *Mock) restartOnFailure(
+	ctx context.Context, spec config.ContainerRunSpec, handle string, statuses []config.ContainerStatus,
+) (string, []config.ContainerStatus, error) {
+	for attempt := 0; attempt < maxOnFailureRestarts && anyNonZeroExit(statuses); attempt++ {
+		_ = containerengine.Stop(ctx, m.opts.ContainerEngine, handle)
+
+		h, s, err := containerengine.Run(ctx, m.opts.ContainerEngine, spec)
+		if err != nil {
+			return handle, statuses, err
+		}
+
+		handle, statuses = h, s
+	}
+
+	return handle, statuses, nil
 }
 
 // GetContainerGroup returns the recorded group.

@@ -120,6 +120,72 @@ func TestRunTaskEngineBackedPopulatesStatus(t *testing.T) {
 	assert.Equal(t, "EssentialContainerExited", task.StopCode)
 }
 
+// registerAndRunMulti registers a two-container task definition (main essential,
+// sidecar non-essential) and runs one task, returning it.
+func registerAndRunMulti(t *testing.T, m *Mock, mainEssential, sidecarEssential bool) driver.Task {
+	t.Helper()
+
+	ctx := context.Background()
+
+	_, err := m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family: "web",
+		ContainerDefinitions: []driver.ContainerDefinition{
+			{Name: "main", Image: "app:latest", Essential: mainEssential},
+			{Name: "sidecar", Image: "log:latest", Essential: sidecarEssential},
+		},
+	})
+	require.NoError(t, err)
+
+	tasks, failures, err := m.RunTask(ctx, driver.RunTaskInput{
+		TaskDefinition: "web", LaunchType: "EXTERNAL", Count: 1,
+	})
+	require.NoError(t, err)
+	require.Empty(t, failures)
+	require.Len(t, tasks, 1)
+
+	return tasks[0]
+}
+
+func TestEssentialContainerExitStopsTask(t *testing.T) {
+	eng := &fakeContainerEngine{
+		handle: "h-ess",
+		statuses: []config.ContainerStatus{
+			{Name: "main", State: "exited", ExitCode: 0},
+			{Name: "sidecar", State: "running"},
+		},
+	}
+	m := newEngineTestMock(eng)
+
+	task := registerAndRunMulti(t, m, true, false)
+
+	// The essential container exited → the task is STOPPED even though the
+	// non-essential sidecar is still running, and every container is marked STOPPED.
+	assert.Equal(t, statusStopped, task.LastStatus)
+	assert.Equal(t, statusStopped, task.DesiredStatus)
+	assert.Equal(t, "EssentialContainerExited", task.StopCode)
+
+	for _, c := range task.Containers {
+		assert.Equal(t, statusStopped, c.LastStatus)
+	}
+}
+
+func TestNonEssentialContainerExitKeepsTaskRunning(t *testing.T) {
+	eng := &fakeContainerEngine{
+		handle: "h-non",
+		statuses: []config.ContainerStatus{
+			{Name: "main", State: "running"},
+			{Name: "sidecar", State: "exited", ExitCode: 0},
+		},
+	}
+	m := newEngineTestMock(eng)
+
+	task := registerAndRunMulti(t, m, true, false)
+
+	// A non-essential container exiting does not stop the task.
+	assert.Equal(t, statusRunning, task.LastStatus)
+	assert.NotEqual(t, "EssentialContainerExited", task.StopCode)
+}
+
 func TestRunTaskEngineRunFailureStopsTask(t *testing.T) {
 	eng := &fakeContainerEngine{runErr: errors.New("image pull failed")}
 	m := newEngineTestMock(eng)

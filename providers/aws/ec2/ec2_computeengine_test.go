@@ -19,6 +19,10 @@ type fakeComputeEngine struct {
 	ip            string
 	console       []byte
 	failOn        string // instanceID whose Deprovision returns an error
+	// failProvisionOn is the 1-based Provision call number that returns an error
+	// (0 disables it). A failed Provision records nothing.
+	failProvisionOn int
+	provisionCalls  int
 }
 
 func (f *fakeComputeEngine) Provision(
@@ -26,6 +30,12 @@ func (f *fakeComputeEngine) Provision(
 ) (config.ComputeProvisionResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.provisionCalls++
+
+	if f.failProvisionOn > 0 && f.provisionCalls == f.failProvisionOn {
+		return config.ComputeProvisionResult{}, errors.New("provision failed")
+	}
+
 	f.provisioned = append(f.provisioned, req)
 
 	return config.ComputeProvisionResult{IP: f.ip}, nil
@@ -128,6 +138,25 @@ func TestTerminateBestEffortOnDeprovisionFailure(t *testing.T) {
 	// The failed one keeps its backing so it can still be cleaned up later.
 	out1, _ := m.GetConsoleOutput(context.Background(), ids[1])
 	assertEqual(t, "log", string(out1))
+}
+
+func TestRunInstancesRollsBackOnPartialFailure(t *testing.T) {
+	eng := &fakeComputeEngine{ip: "10.1.1.1", failProvisionOn: 3}
+	m := newEngineMock(eng)
+
+	instances, err := m.RunInstances(context.Background(), defaultConfig(), 5)
+	assertTrue(t, err != nil, "a mid-batch provision failure must surface an error")
+	assertTrue(t, instances == nil, "no instances should be returned on a rolled-back batch")
+
+	// Instances 1 and 2 were provisioned before the 3rd call failed; both were
+	// deprovisioned during rollback so no live backing is orphaned.
+	assertEqual(t, 2, len(eng.provisioned))
+	assertEqual(t, 2, len(eng.deprovisioned))
+
+	// No half-tracked state remains: the store is empty and cleanly describable.
+	all, derr := m.DescribeInstances(context.Background(), nil, nil)
+	requireNoError(t, derr)
+	assertEqual(t, 0, len(all))
 }
 
 func TestRunInstancesNilEngineUnchanged(t *testing.T) {

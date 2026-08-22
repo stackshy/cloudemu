@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -43,15 +42,15 @@ var (
 // the real container and Stop can tear down exactly what was created.
 type containerRef struct {
 	name string // spec container name (config.ContainerSpec.Name)
-	ref  string // docker container ref (--name for RunToCompletion, id for detached)
+	ref  string // docker container id (every container is started detached)
 }
 
 // Containers is a config.ContainerEngine that runs each workload's containers as
-// real Docker containers. A RunToCompletion workload (a standalone ECS RunTask)
-// blocks until its containers exit, so Status returns the real exit code and Logs
-// returns the real captured output; a non-completion workload (a service) starts
-// its containers detached and returns immediately. Safe for concurrent use within
-// a process.
+// real Docker containers, all started detached. A RunToCompletion workload (a
+// standalone ECS RunTask) blocks until the first container exits, so Status
+// returns the real exit code and Logs returns the real captured output; a
+// non-completion workload (a service) returns as soon as its containers are
+// started. Safe for concurrent use within a process.
 type Containers struct {
 	mu        sync.Mutex
 	runner    dockerx.Runner
@@ -66,10 +65,14 @@ func New() *Containers {
 }
 
 // Run starts every container in the spec and returns an opaque handle the other
-// methods use. When spec.RunToCompletion is set each container is run in the
-// foreground and Run blocks until it exits (a non-zero container exit is not an
-// error — its real exit code and output are still observable); otherwise each
-// container is started detached and Run returns immediately.
+// methods use. All containers are started detached and concurrently, so a
+// multi-container workload never serializes on one container's lifetime. When
+// spec.RunToCompletion is set Run then blocks until the *first* container exits
+// (a non-zero exit is not an error — its real exit code and output remain
+// observable via Status/Logs) and returns, leaving any still-running siblings up
+// for Status to observe and Stop to tear down — mirroring a real task that stops
+// the moment its essential container exits. Without RunToCompletion Run returns
+// as soon as the containers are started.
 func (c *Containers) Run(ctx context.Context, spec config.ContainerRunSpec) (string, error) {
 	if len(spec.Containers) == 0 {
 		return "", errNoContainers
@@ -92,7 +95,7 @@ func (c *Containers) Run(ctx context.Context, spec config.ContainerRunSpec) (str
 
 		dockerName := taskNamePrefix + dockerx.SanitizeName(handle) + "-" + dockerx.SanitizeName(cs.Name)
 
-		ref, runErr := runContainer(ctx, dockerName, cs, spec.RunToCompletion)
+		ref, runErr := runDetached(ctx, dockerName, cs)
 		if runErr != nil {
 			c.teardown(refs)
 
@@ -102,11 +105,54 @@ func (c *Containers) Run(ctx context.Context, spec config.ContainerRunSpec) (str
 		refs = append(refs, containerRef{name: cs.Name, ref: ref})
 	}
 
+	if spec.RunToCompletion {
+		waitForFirstExit(ctx, refs)
+	}
+
 	c.mu.Lock()
 	c.workloads[handle] = refs
 	c.mu.Unlock()
 
 	return handle, nil
+}
+
+// waitForFirstExit blocks until the first container in refs exits (or ctx is
+// canceled). Each container is waited on in its own goroutine via `docker wait`;
+// once the first returns, the remaining waits are canceled and joined so no
+// goroutine outlives the call. The containers themselves are left running — they
+// are torn down later by Stop/Close — so Status can still observe a sibling that
+// had not exited when the first one did.
+func waitForFirstExit(ctx context.Context, refs []containerRef) {
+	waitCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	first := make(chan struct{}, 1)
+
+	var wg sync.WaitGroup
+
+	for i := range refs {
+		wg.Add(1)
+
+		go func(ref string) {
+			defer wg.Done()
+
+			//nolint:gosec // first-party argv, never a shell string
+			_ = exec.CommandContext(waitCtx, dockerx.Binary, "wait", ref).Run()
+
+			select {
+			case first <- struct{}{}:
+			default:
+			}
+		}(refs[i].ref)
+	}
+
+	select {
+	case <-first:
+	case <-ctx.Done():
+	}
+
+	cancel()
+	wg.Wait()
 }
 
 // Status reports each container's docker lifecycle state (e.g. "running",
@@ -193,47 +239,6 @@ func (c *Containers) Close() error {
 	return nil
 }
 
-// runContainer starts one container. For RunToCompletion it runs in the
-// foreground and blocks until exit (referencing it afterward by its --name); for
-// a service it runs detached and returns the container id parsed from stdout.
-func runContainer(ctx context.Context, dockerName string, cs *config.ContainerSpec, toCompletion bool) (string, error) {
-	if toCompletion {
-		return dockerName, runForeground(ctx, dockerName, cs)
-	}
-
-	return runDetached(ctx, dockerName, cs)
-}
-
-// runForeground runs `docker run --name <n> -e K=V <image> <cmd...>` and blocks
-// until the container exits. A non-zero container exit surfaces as an
-// *exec.ExitError and is NOT treated as a failure — the container ran to
-// completion and its real exit code and output remain observable via inspect and
-// logs (the same semantics as a real task whose command exits non-zero). Only
-// docker itself failing to run the container is surfaced as an error.
-func runForeground(ctx context.Context, dockerName string, cs *config.ContainerSpec) error {
-	var stderr bytes.Buffer
-
-	//nolint:gosec // first-party argv, never a shell string
-	cmd := exec.CommandContext(ctx, dockerx.Binary, containerRunArgs(false, dockerName, cs)...)
-	// The container's own stdout is replayed later via `docker logs`; discard it
-	// here and keep only stderr for a diagnostic on a real docker failure.
-	cmd.Stdout = io.Discard
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("%w: %s: %w", errContainerRun, strings.TrimSpace(stderr.String()), err)
-	}
-
-	return nil
-}
-
 // runDetached runs `docker run -d --name <n> -e K=V <image> <cmd...>` and returns
 // the container id. stdout (the id) and stderr (image-pull progress) are captured
 // SEPARATELY so first-run pull progress can never corrupt the parsed id.
@@ -241,7 +246,7 @@ func runDetached(ctx context.Context, dockerName string, cs *config.ContainerSpe
 	var stdout, stderr bytes.Buffer
 
 	//nolint:gosec // first-party argv, never a shell string
-	cmd := exec.CommandContext(ctx, dockerx.Binary, containerRunArgs(true, dockerName, cs)...)
+	cmd := exec.CommandContext(ctx, dockerx.Binary, containerRunArgs(dockerName, cs)...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -252,22 +257,18 @@ func runDetached(ctx context.Context, dockerName string, cs *config.ContainerSpe
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// containerRunArgs assembles the argv for `docker run [-d] --name <n> -e K=V
-// <image> <cmd...>`. env keys are sorted (via envArgs) for a deterministic argv;
-// every argument is first-party, never a shell string.
-func containerRunArgs(detached bool, dockerName string, cs *config.ContainerSpec) []string {
+// containerRunArgs assembles the argv for `docker run -d --name <n> -e K=V
+// <image> <cmd...>`. Every workload container is started detached; RunToCompletion
+// is realized by waiting on the container afterwards, not by a foreground run. env
+// keys are sorted (via EnvArgs) for a deterministic argv; every argument is
+// first-party, never a shell string.
+func containerRunArgs(dockerName string, cs *config.ContainerSpec) []string {
 	env := dockerx.EnvArgs(cs.Env)
 
-	const fixed = 4 // "run" + "--name" + name + image
+	const fixed = 5 // "run" + "-d" + "--name" + name + image
 
-	args := make([]string, 0, fixed+1+len(env)+len(cs.Command))
-	args = append(args, "run")
-
-	if detached {
-		args = append(args, "-d")
-	}
-
-	args = append(args, "--name", dockerName)
+	args := make([]string, 0, fixed+len(env)+len(cs.Command))
+	args = append(args, "run", "-d", "--name", dockerName)
 	args = append(args, env...)
 	args = append(args, cs.Image)
 	args = append(args, cs.Command...)

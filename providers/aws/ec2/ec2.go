@@ -265,6 +265,12 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	results := make([]driver.Instance, 0, count)
 	hidden := m.visibility() == visibilityHidden
 
+	// created tracks the instances already fully provisioned in this batch, so a
+	// mid-batch engine failure can roll them back rather than orphaning live
+	// containers and half-tracked instances (real EC2 launches the whole batch or
+	// none of it).
+	created := make([]*instanceData, 0, count)
+
 	for i := 0; i < count; i++ {
 		id := idgen.GenerateID("i-")
 
@@ -295,6 +301,8 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		if engine := m.opts.ComputeEngine; engine != nil {
 			di := driver.Instance{ID: inst.ID, ImageID: inst.ImageID, PrivateIP: inst.PrivateIP}
 			if err := computeengine.Provision(ctx, engine, &di, &cfg); err != nil {
+				m.rollbackInstances(ctx, created)
+
 				return nil, err
 			}
 
@@ -307,6 +315,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
 		results = append(results, toInstance(inst, hidden))
+		created = append(created, inst)
 
 		// Managed (service-owned) instances are hidden from Describe, so
 		// emitting instance-dimensioned CloudWatch metrics for them would leak
@@ -317,6 +326,24 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	}
 
 	return results, nil
+}
+
+// rollbackInstances best-effort tears down instances already provisioned earlier
+// in a RunInstances batch that then failed: each engine-backed instance is
+// deprovisioned (so no live container remains) and every instance is dropped from
+// the store and the state machine (so no half-tracked state remains).
+func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
+	engine := m.opts.ComputeEngine
+
+	for _, inst := range created {
+		if inst.engineBacked {
+			di := driver.Instance{ID: inst.ID}
+			_ = computeengine.Deprovision(ctx, engine, &di)
+		}
+
+		m.instances.Delete(inst.ID)
+		m.sm.Remove(inst.ID)
+	}
 }
 
 //nolint:gocritic // t is a small read-only config; copying once per call is fine.

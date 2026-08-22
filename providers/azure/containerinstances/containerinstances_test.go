@@ -20,10 +20,12 @@ type recordingEngine struct {
 	logs     string
 	stopped  []string
 	logCalls int
+	runCount int
 }
 
 func (e *recordingEngine) Run(_ context.Context, spec config.ContainerRunSpec) (string, error) {
 	e.ranSpec = spec
+	e.runCount++
 
 	return e.handle, nil
 }
@@ -100,6 +102,121 @@ func TestCreateRunsContainersOnEngine(t *testing.T) {
 	// All containers exited → the group rolls up to Succeeded.
 	if group.State != "Succeeded" {
 		t.Fatalf("group state = %q, want Succeeded", group.State)
+	}
+}
+
+func onFailureConfig() driver.ContainerGroupConfig {
+	cfg := sampleConfig()
+	cfg.RestartPolicy = restartPolicyOnFailure
+
+	return cfg
+}
+
+func TestOnFailurePolicyRestartsUntilExhausted(t *testing.T) {
+	eng := &recordingEngine{
+		handle:   "h1",
+		statuses: []config.ContainerStatus{{Name: "app", State: "exited", ExitCode: 7}},
+	}
+	m := New(config.NewOptions(config.WithContainerEngine(eng)))
+
+	group, err := m.CreateContainerGroup(context.Background(), onFailureConfig())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// OnFailure runs to completion and re-runs on every non-zero exit until the
+	// bound is hit: 1 initial run + maxOnFailureRestarts retries.
+	if !eng.ranSpec.RunToCompletion {
+		t.Fatalf("OnFailure should run to completion")
+	}
+
+	if eng.runCount != 1+maxOnFailureRestarts {
+		t.Fatalf("engine Run called %d times, want %d", eng.runCount, 1+maxOnFailureRestarts)
+	}
+
+	if len(eng.stopped) != maxOnFailureRestarts {
+		t.Fatalf("engine Stop called %d times, want %d", len(eng.stopped), maxOnFailureRestarts)
+	}
+
+	// Still failing after exhausting restarts → the group is Failed.
+	if group.State != groupStateFailed {
+		t.Fatalf("group state = %q, want %q", group.State, groupStateFailed)
+	}
+}
+
+func TestOnFailurePolicySucceedsWithoutRestart(t *testing.T) {
+	eng := &recordingEngine{
+		handle:   "h1",
+		statuses: []config.ContainerStatus{{Name: "app", State: "exited", ExitCode: 0}},
+	}
+	m := New(config.NewOptions(config.WithContainerEngine(eng)))
+
+	group, err := m.CreateContainerGroup(context.Background(), onFailureConfig())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// A clean first exit needs no restart.
+	if eng.runCount != 1 {
+		t.Fatalf("engine Run called %d times, want 1", eng.runCount)
+	}
+
+	if group.State != groupStateSucceeded {
+		t.Fatalf("group state = %q, want %q", group.State, groupStateSucceeded)
+	}
+}
+
+func TestAlwaysPolicyStaysRunning(t *testing.T) {
+	// Even though the container has already exited, an Always group is reported
+	// Running — ACI keeps restarting it, so it never reaches a terminal state.
+	eng := &recordingEngine{
+		handle:   "h1",
+		statuses: []config.ContainerStatus{{Name: "app", State: "exited", ExitCode: 0}},
+	}
+	m := New(config.NewOptions(config.WithContainerEngine(eng)))
+
+	cfg := sampleConfig()
+	cfg.RestartPolicy = restartPolicyAlways
+
+	group, err := m.CreateContainerGroup(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if eng.ranSpec.RunToCompletion {
+		t.Fatalf("Always should run detached, not to completion")
+	}
+
+	if group.State != groupStateRunning {
+		t.Fatalf("group state = %q, want %q", group.State, groupStateRunning)
+	}
+
+	if c := group.Containers[0].Current; c.State != containerStateRunning || c.HasExitCode {
+		t.Fatalf("Always container state = %+v, want Running with no exit code", c)
+	}
+}
+
+func TestEmptyPolicyDefaultsToAlways(t *testing.T) {
+	eng := &recordingEngine{
+		handle:   "h1",
+		statuses: []config.ContainerStatus{{Name: "app", State: "running"}},
+	}
+	m := New(config.NewOptions(config.WithContainerEngine(eng)))
+
+	cfg := sampleConfig()
+	cfg.RestartPolicy = "" // ACI default is Always
+
+	group, err := m.CreateContainerGroup(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if eng.ranSpec.RunToCompletion {
+		t.Fatalf("empty policy (Always default) should run detached")
+	}
+
+	if group.State != groupStateRunning {
+		t.Fatalf("group state = %q, want %q", group.State, groupStateRunning)
 	}
 }
 
