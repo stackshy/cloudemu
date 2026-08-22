@@ -1900,6 +1900,17 @@
         "name": "UpdateAutoScalingGroup"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "ConsoleReader",
+        "doc": "ConsoleReader is an optional capability a Compute implementation may provide",
+        "operations": [
+          {
+            "name": "GetConsoleOutput"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "EC2",
       "azure": "VirtualMachines",
