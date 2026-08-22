@@ -42,6 +42,12 @@ const (
 	cpuMetricRunning       = 0.25 // GCP reports CPU as a 0.0–1.0 fraction.
 	connRunning            = 5.0
 
+	// syntheticInstanceIP is the ipAddress reported when no real database engine
+	// backs the instance — preserving the historical behavior of always surfacing
+	// an IP. When an engine is wired in, provisionInstanceEngine overrides it with
+	// the real reachable host.
+	syntheticInstanceIP = "10.0.0.2"
+
 	// Instance types.
 	instanceTypePrimary   = "PRIMARY"
 	instanceTypeReadPool  = "READ_POOL"
@@ -102,6 +108,12 @@ type Mock struct {
 	instanceExtra map[string]instanceExtra
 	backupExtra   map[string]backupExtra
 
+	// initialPasswords remembers each cluster's initial-user password (guarded by
+	// mu) so its instances can provision a real database against a configured
+	// DatabaseEngine. The emulator enforces no auth, so this is local state, not a
+	// secret store; it is never logged.
+	initialPasswords map[string]string
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -109,15 +121,16 @@ type Mock struct {
 // New creates a new AlloyDB mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:      memstore.New[rdsdriver.Cluster](),
-		instances:     memstore.New[rdsdriver.Instance](),
-		backups:       memstore.New[rdsdriver.ClusterSnapshot](),
-		databases:     memstore.New[rdsdriver.Database](),
-		users:         memstore.New[rdsdriver.User](),
-		clusterExtra:  make(map[string]clusterExtra),
-		instanceExtra: make(map[string]instanceExtra),
-		backupExtra:   make(map[string]backupExtra),
-		opts:          opts,
+		clusters:         memstore.New[rdsdriver.Cluster](),
+		instances:        memstore.New[rdsdriver.Instance](),
+		backups:          memstore.New[rdsdriver.ClusterSnapshot](),
+		databases:        memstore.New[rdsdriver.Database](),
+		users:            memstore.New[rdsdriver.User](),
+		clusterExtra:     make(map[string]clusterExtra),
+		instanceExtra:    make(map[string]instanceExtra),
+		backupExtra:      make(map[string]backupExtra),
+		initialPasswords: make(map[string]string),
+		opts:             opts,
 	}
 }
 

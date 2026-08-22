@@ -53,6 +53,15 @@ const (
 
 var _ rdsdriver.RelationalDB = (*Mock)(nil)
 
+// clusterCred remembers an Aurora cluster's master credentials so a member
+// instance (which carries none of its own) can be backed by the cluster's
+// shared real database. The emulator enforces no auth, so this is local state,
+// not a secret store; it is never logged.
+type clusterCred struct {
+	user string
+	pass string
+}
+
 // Mock is the in-memory AWS RDS implementation.
 type Mock struct {
 	mu sync.RWMutex
@@ -69,6 +78,10 @@ type Mock struct {
 	eventSubs          *memstore.Store[rdsdriver.EventSubscription]
 	clusterEndpoints   *memstore.Store[rdsdriver.ClusterEndpoint]
 	globalClusters     *memstore.Store[rdsdriver.GlobalCluster]
+
+	// clusterCreds remembers each Aurora cluster's master credentials (guarded by
+	// mu) so its member instances can provision the cluster's shared database.
+	clusterCreds map[string]clusterCred
 
 	opts           *config.Options
 	subnetResolver SubnetResolver
@@ -90,6 +103,7 @@ func New(opts *config.Options) *Mock {
 		eventSubs:          memstore.New[rdsdriver.EventSubscription](),
 		clusterEndpoints:   memstore.New[rdsdriver.ClusterEndpoint](),
 		globalClusters:     memstore.New[rdsdriver.GlobalCluster](),
+		clusterCreds:       map[string]clusterCred{},
 		opts:               opts,
 	}
 }
@@ -295,8 +309,15 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 	}
 
 	// Opt-in: back the instance with a real database engine, replacing the
-	// synthetic endpoint with the real host:port a client connects to.
-	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
+	// synthetic endpoint with the real host:port a client connects to. An Aurora
+	// cluster member carries no master credentials of its own (they live on the
+	// cluster) and all members share ONE database, so it is provisioned through
+	// the cluster-scoped path; a standalone instance uses its own config.
+	if m.opts.DatabaseEngine != nil && cfg.ClusterID != "" {
+		if err := m.provisionClusterMember(ctx, &inst, cfg.ClusterID); err != nil {
+			return nil, err
+		}
+	} else if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
 		return nil, err
 	}
 
@@ -431,9 +452,14 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 		}
 	}
 
-	// Tear down the real database backing the instance, if any.
-	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
-		return err
+	// Tear down the real database backing the instance, if any. A cluster member
+	// shares the cluster-owned database (keyed by the cluster, not the member), so
+	// it is left for DeleteCluster to tear down once — deleting one member must
+	// not drop a database its siblings still use.
+	if inst.ClusterID == "" {
+		if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
+			return err
+		}
 	}
 
 	m.instances.Delete(id)
@@ -543,10 +569,47 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
+	m.clusterCreds[cfg.ID] = clusterCred{user: cfg.MasterUsername, pass: cfg.MasterUserPassword}
 
 	out := cluster
 
 	return &out, nil
+}
+
+// provisionClusterMember backs an Aurora cluster member with the cluster's
+// shared real database and points the cluster's reader/writer endpoints at the
+// reachable host. All members of one cluster share a SINGLE engine database,
+// keyed and named by the cluster ID (deterministic), provisioned with the
+// cluster's master credentials — an Aurora instance carries none of its own.
+// The shared database is created on the first member and torn down once, on
+// DeleteCluster; a per-member DeleteInstance deprovision is a harmless no-op
+// because the engine is keyed by the cluster, not the member. A non-Postgres
+// cluster keeps its synthetic endpoints. The caller holds m.mu.
+func (m *Mock) provisionClusterMember(ctx context.Context, inst *rdsdriver.Instance, clusterID string) error {
+	cluster, ok := m.clusters.Get(clusterID)
+	if !ok || !dbengine.IsPostgresFamily(cluster.Engine) {
+		return nil
+	}
+
+	creds := m.clusterCreds[clusterID]
+	memberCfg := rdsdriver.InstanceConfig{
+		ID:                 clusterID,
+		Engine:             cluster.Engine,
+		DBName:             clusterID,
+		MasterUsername:     creds.user,
+		MasterUserPassword: creds.pass,
+	}
+
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, inst, &memberCfg); err != nil {
+		return err
+	}
+
+	cluster.Endpoint = inst.Endpoint
+	cluster.ReaderEndpoint = inst.Endpoint
+	cluster.Port = inst.Port
+	m.clusters.Set(clusterID, cluster)
+
+	return nil
 }
 
 // DescribeClusters returns all clusters if ids is empty, else only matching ones.
@@ -616,7 +679,7 @@ func (m *Mock) ModifyCluster(
 }
 
 // DeleteCluster removes a cluster (only if it has no members).
-func (m *Mock) DeleteCluster(_ context.Context, id string) error {
+func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -630,7 +693,15 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 			"DB cluster %q still has %d member instance(s); delete them first", id, len(cluster.Members))
 	}
 
+	// Tear down the cluster's shared real database (provisioned by its members
+	// under the cluster's own engine key), if any.
+	shared := rdsdriver.Instance{ID: id, Engine: cluster.Engine}
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &shared); err != nil {
+		return err
+	}
+
 	m.clusters.Delete(id)
+	delete(m.clusterCreds, id)
 
 	return nil
 }

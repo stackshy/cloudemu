@@ -88,3 +88,100 @@ func TestCreateInstanceNoEngineIsSynthetic(t *testing.T) {
 		t.Fatalf("without an engine the endpoint should be synthetic, got %q", inst.Endpoint)
 	}
 }
+
+// TestAuroraClusterMemberUsesClusterCreds proves an Aurora Postgres cluster
+// member is backed by the cluster's shared engine database using the CLUSTER's
+// master credentials (a member carries none of its own), that the cluster's
+// endpoints are pointed at the reachable engine host, and that the shared
+// database is torn down once — on cluster delete, not per member.
+func TestAuroraClusterMemberUsesClusterCreds(t *testing.T) {
+	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
+	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{
+		ID: "cl", Engine: "aurora-postgresql", MasterUsername: "root", MasterUserPassword: "clpw",
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	// A cluster member create carries no master creds of its own.
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "m1", Engine: "aurora-postgresql", ClusterID: "cl",
+	}); err != nil {
+		t.Fatalf("CreateInstance member: %v", err)
+	}
+
+	// The member was provisioned with the CLUSTER's creds, keyed + named by the
+	// cluster so every member shares ONE database.
+	if len(eng.provisioned) != 1 {
+		t.Fatalf("expected 1 provision, got %+v", eng.provisioned)
+	}
+
+	got := eng.provisioned[0]
+	if got.InstanceID != "cl" || got.DBName != "cl" || got.Username != "root" || got.Password != "clpw" {
+		t.Fatalf("member not provisioned with cluster creds/shared db: %+v", got)
+	}
+
+	// The cluster's endpoints now point at the reachable engine host.
+	cls, err := m.DescribeClusters(ctx, []string{"cl"})
+	if err != nil || len(cls) != 1 {
+		t.Fatalf("DescribeClusters: %v (%d)", err, len(cls))
+	}
+
+	if cls[0].Endpoint != "127.0.0.1" || cls[0].ReaderEndpoint != "127.0.0.1" || cls[0].Port != 55432 {
+		t.Fatalf("cluster endpoints not pointed at the engine: %+v", cls[0])
+	}
+
+	// Deleting the member does NOT tear down the shared database (engine keyed by
+	// the cluster, not the member).
+	if err := m.DeleteInstance(ctx, "m1"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+
+	if len(eng.deprovisioned) != 0 {
+		t.Fatalf("member delete must not deprovision the shared db, got %v", eng.deprovisioned)
+	}
+
+	// Deleting the (now empty) cluster tears the shared database down once.
+	if err := m.DeleteCluster(ctx, "cl"); err != nil {
+		t.Fatalf("DeleteCluster: %v", err)
+	}
+
+	if len(eng.deprovisioned) != 1 || eng.deprovisioned[0] != "cl" {
+		t.Fatalf("expected one deprovision for the shared db 'cl', got %v", eng.deprovisioned)
+	}
+}
+
+// TestAuroraClusterMemberNonPostgresSkipsEngine proves an aurora-mysql cluster
+// member is not engine-backed and leaves the cluster's synthetic endpoint alone.
+func TestAuroraClusterMemberNonPostgresSkipsEngine(t *testing.T) {
+	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
+	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))
+	ctx := context.Background()
+
+	if _, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{
+		ID: "cl", Engine: "aurora-mysql", MasterUsername: "root", MasterUserPassword: "clpw",
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "m1", Engine: "aurora-mysql", ClusterID: "cl",
+	}); err != nil {
+		t.Fatalf("CreateInstance member: %v", err)
+	}
+
+	if len(eng.provisioned) != 0 {
+		t.Fatalf("aurora-mysql member must not be engine-backed, got %+v", eng.provisioned)
+	}
+
+	cls, err := m.DescribeClusters(ctx, []string{"cl"})
+	if err != nil || len(cls) != 1 {
+		t.Fatalf("DescribeClusters: %v (%d)", err, len(cls))
+	}
+
+	if cls[0].Endpoint == "127.0.0.1" {
+		t.Fatalf("non-postgres cluster endpoint should stay synthetic, got %q", cls[0].Endpoint)
+	}
+}
