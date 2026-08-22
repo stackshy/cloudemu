@@ -13,16 +13,20 @@ no-Docker default is unchanged; real engines are strictly opt-in.
 
 ## Use it
 
+Each engine lives in its own subpackage; its constructor is `New`:
+
 ```go
 import (
     cloudemu "github.com/stackshy/cloudemu/v2"
     "github.com/stackshy/cloudemu/v2/config"
-    "github.com/stackshy/cloudemu/v2/contrib/realengine"
+    "github.com/stackshy/cloudemu/v2/contrib/realengine/functions"
+    "github.com/stackshy/cloudemu/v2/contrib/realengine/postgres"
+    "github.com/stackshy/cloudemu/v2/contrib/realengine/redis"
 )
 
-db := realengine.NewPostgres(0)  // real Postgres for RDS/Aurora
-rd := realengine.NewRedis()      // real Redis for ElastiCache
-fn := realengine.NewSubprocess() // real Python/Node for Lambda
+db := postgres.New(0)   // real Postgres for RDS/Aurora
+rd := redis.New()       // real Redis for ElastiCache
+fn := functions.New()   // real Python/Node for Lambda
 defer db.Close()
 defer rd.Close()
 defer fn.Close()
@@ -64,11 +68,11 @@ opt in.
   package handlers (dotted Python module paths) aren't resolved — the handler
   file must sit at the archive root.
 - **Postgres port:** Azure and GCP never surface a port in their SDK responses —
-  clients always use 5432 — so `NewPostgres(0)` binds **5432** by default and a
+  clients always use 5432 — so `postgres.New(0)` binds **5432** by default and a
   real client connects using only the SDK endpoint. Only one Postgres server can
   bind 5432 per host; pass an explicit port to co-host more than one (AWS RDS
   surfaces the port explicitly and works on any port).
-- **Shared server, shared role:** one `NewPostgres` engine runs a single Postgres
+- **Shared server, shared role:** one `postgres.New` engine runs a single Postgres
   server; each instance becomes its own database, and each master username its
   own login role. Instances that pin the **same** username therefore share one
   role — most notably GCP Cloud SQL, whose root user is always `postgres`. The
