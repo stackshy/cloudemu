@@ -23,6 +23,7 @@ Usage:
   cloudemu snapshot ...      Save/load/list/delete named state snapshots
   cloudemu net ...           Check network reachability (can-connect, trace)
   cloudemu cost              Estimate the monthly cost of the current resources
+  cloudemu env               Print shell exports to point SDKs/CLIs at a running server
   cloudemu serve [flags]     Run the server in the foreground (see: cloudemu serve -h)
   cloudemu version           Print the version
   cloudemu help              Show this message
@@ -42,6 +43,7 @@ const (
 	cmdSnapshot = "snapshot"
 	cmdNet      = "net"
 	cmdCost     = "cost"
+	cmdEnv      = "env"
 )
 
 // version is overridable at build time with
@@ -77,6 +79,11 @@ func main() {
 		}
 	case cmdCost:
 		if err := runCost(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "cloudemu:", err)
+			os.Exit(1)
+		}
+	case cmdEnv:
+		if err := runEnv(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "cloudemu:", err)
 			os.Exit(1)
 		}
