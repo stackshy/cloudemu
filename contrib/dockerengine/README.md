@@ -53,11 +53,13 @@ check) lives in `internal/dockerx`:
   container can bind a given host port.
 - **Shared master username = last writer wins.** MySQL accounts are server-global,
   so two instances that pin the **same** master username share one account. Each
-  provision **recreates** that account scoped to its own database with its own
-  password — so the most-recently-created instance works fully, an earlier
-  instance sharing the username loses access (grants and password), and there is
-  **no cross-tenant leak** between their databases. Distinct usernames are fully
-  independent (the common case). Drive one live instance per shared username.
+  provision `DROP USER`s that account and `CREATE USER`s it fresh — scoped
+  (`GRANT ALL ON <db>.*`) to its own database, with its own password — rather than
+  accumulating grants. So the most-recently-created instance works fully, while an
+  earlier instance sharing the username is **fully revoked**: its old grants and
+  password are gone (last writer wins), and there is **no cross-tenant leak**
+  between their databases. Distinct usernames are fully independent (the common
+  case). Drive one live instance per shared username.
 - **`root` is reserved.** A master username of `root` is rejected at provision
   (real RDS/Azure reserve it too), rather than reporting success with credentials
   that could not authenticate.
@@ -77,6 +79,16 @@ check) lives in `internal/dockerx`:
   amd64-only; on Apple Silicon the engine runs them under emulation with
   `--platform linux/amd64` + `DOTNET_EnableWriteXorExecute=0` (a no-op on native
   amd64), overridable via `WithFunctionsPlatform`.
+- **Azure Functions handler entrypoint (`_CLOUDEMU_HANDLER`).** Azure's ARM site
+  resource carries no static handler coordinate, so CloudEmu records a function's
+  entrypoint through a **reserved app setting**, `_CLOUDEMU_HANDLER` (e.g.
+  `function_app.main`): CloudEmu's Azure Functions wire handler reads it into the
+  function's handler and strips it from the running app's env so it isn't exposed
+  as a literal variable. It is **CloudEmu-specific** — stock
+  `func azure functionapp publish` does not set it, so add it as an app setting on
+  the Function App if you want CloudEmu to know the entrypoint. The host engine
+  itself runs the real app by indexing `function_app.py` and invokes the
+  function's HTTP route, which must match the Function App name (`POST /api/<name>`).
 
 ## Tests
 

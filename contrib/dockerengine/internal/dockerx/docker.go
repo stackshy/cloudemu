@@ -54,6 +54,15 @@ type Runner struct{}
 // detached is set the container runs in the background and its ID is returned;
 // otherwise Run blocks until the container exits and returns its ID. env keys
 // are sorted so the emitted argv is deterministic.
+//
+// Run deliberately does NOT pass `--rm`. Engines built on the Runner read a
+// container's exit state and logs *after* it stops (Inspect + Logs) — the
+// run-to-completion container pattern — and `--rm` deletes the container the
+// instant it exits, which would race those reads away before Status/Logs could
+// see them. Teardown is therefore explicit: callers own the container and remove
+// it via Rm (or the engine's Close), which trades a small leak window on an
+// ungraceful exit for readable exit codes and logs. Callers that truly fire-and-
+// forget should Rm in a defer rather than reach for `--rm` here.
 func (Runner) Run(ctx context.Context, image string, cmd []string, env map[string]string, detached bool) (string, error) {
 	if strings.TrimSpace(image) == "" {
 		return "", errImage

@@ -64,6 +64,13 @@ const (
 	// dir the container bind-mounts.
 	extractDirPerm  = 0o750
 	extractFilePerm = 0o600
+
+	// maxUnzipBytes / maxUnzipTotal / maxZipEntries cap the deployment zip to
+	// guard against zip bombs — the same limits as the sibling realengine
+	// functions engine.
+	maxUnzipBytes = 64 << 20  // 64 MiB per entry
+	maxUnzipTotal = 256 << 20 // 256 MiB total across the archive
+	maxZipEntries = 4096
 )
 
 // Sentinel errors (err113): wrapped at the return site so callers can match and
@@ -76,6 +83,8 @@ var (
 	errFuncNoCode     = errors.New("dockerengine: function deployment carries no code")
 	errZipExtract     = errors.New("dockerengine: could not extract function zip")
 	errZipSlip        = errors.New("dockerengine: zip entry escapes the extraction root")
+	errZipEntryTooBig = errors.New("dockerengine: function zip entry exceeds size limit")
+	errZipTooBig      = errors.New("dockerengine: function zip exceeds size or entry-count limit")
 	errFuncInvokeHTTP = errors.New("dockerengine: invoking the function over HTTP failed")
 )
 
@@ -443,11 +452,17 @@ func hostEnv(userEnv map[string]string) map[string]string {
 }
 
 // extractZip writes the deployment zip to a fresh temp dir and returns its path.
-// It rejects any entry whose path escapes the extraction root (zip-slip).
+// It rejects any entry whose path escapes the extraction root (zip-slip) and
+// enforces per-entry, total-size, and entry-count caps to guard against zip
+// bombs.
 func extractZip(code []byte) (string, error) {
 	zr, err := zip.NewReader(bytes.NewReader(code), int64(len(code)))
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errZipExtract, err)
+	}
+
+	if len(zr.File) > maxZipEntries {
+		return "", fmt.Errorf("%w: %d entries", errZipTooBig, len(zr.File))
 	}
 
 	dir, err := os.MkdirTemp("", "cloudemu-func-")
@@ -455,52 +470,70 @@ func extractZip(code []byte) (string, error) {
 		return "", fmt.Errorf("%w: %w", errZipExtract, err)
 	}
 
+	var total int64
+
 	for _, f := range zr.File {
-		if err := extractOne(dir, f); err != nil {
+		n, err := extractOne(dir, f)
+		if err != nil {
 			_ = os.RemoveAll(dir)
 
 			return "", err
+		}
+
+		total += n
+		if total > maxUnzipTotal {
+			_ = os.RemoveAll(dir)
+
+			return "", errZipTooBig
 		}
 	}
 
 	return dir, nil
 }
 
-// extractOne writes a single zip entry under dir, rejecting path traversal.
-func extractOne(dir string, f *zip.File) error {
+// extractOne writes a single zip entry under dir and returns the bytes written,
+// rejecting path traversal and oversize entries.
+func extractOne(dir string, f *zip.File) (int64, error) {
 	cleanDir := filepath.Clean(dir)
 	target := filepath.Join(cleanDir, f.Name) //nolint:gosec // guarded against traversal just below
 
 	if !strings.HasPrefix(target, cleanDir+string(os.PathSeparator)) {
-		return fmt.Errorf("%q: %w", f.Name, errZipSlip)
+		return 0, fmt.Errorf("%q: %w", f.Name, errZipSlip)
 	}
 
 	if f.FileInfo().IsDir() {
-		return os.MkdirAll(target, extractDirPerm)
+		return 0, os.MkdirAll(target, extractDirPerm)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(target), extractDirPerm); err != nil {
-		return fmt.Errorf("%w: %w", errZipExtract, err)
+		return 0, fmt.Errorf("%w: %w", errZipExtract, err)
 	}
 
 	rc, err := f.Open()
 	if err != nil {
-		return fmt.Errorf("%w: %w", errZipExtract, err)
+		return 0, fmt.Errorf("%w: %w", errZipExtract, err)
 	}
 	defer rc.Close()
 
 	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, extractFilePerm)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errZipExtract, err)
+		return 0, fmt.Errorf("%w: %w", errZipExtract, err)
 	}
 	defer out.Close()
 
-	//nolint:gosec // deployment zips are first-party test/app fixtures, not hostile input
-	if _, err := io.Copy(out, rc); err != nil {
-		return fmt.Errorf("%w: %w", errZipExtract, err)
+	// Copy one byte past the per-entry cap so an oversize entry is detected, not
+	// silently truncated: io.CopyN returns a nil error at exactly N bytes even
+	// when the source has more remaining.
+	n, err := io.CopyN(out, rc, maxUnzipBytes+1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("%w: %w", errZipExtract, err)
 	}
 
-	return nil
+	if n > maxUnzipBytes {
+		return 0, fmt.Errorf("%q: %w", f.Name, errZipEntryTooBig)
+	}
+
+	return n, nil
 }
 
 // staticFunctionEngineCheck asserts AzureFunctions satisfies the

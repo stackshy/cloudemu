@@ -15,6 +15,33 @@ func (stubEngine) Provision(_ context.Context, req config.ProvisionRequest) (con
 
 func (stubEngine) Deprovision(_ context.Context, _ string) error { return nil }
 
+// closableEngine is a DatabaseEngine that also implements io.Closer, so
+// EngineClosers has something to pick up.
+type closableEngine struct{ stubEngine }
+
+func (*closableEngine) Close() error { return nil }
+
+func TestEngineClosersEmptyByDefault(t *testing.T) {
+	if got := config.NewOptions().EngineClosers(); len(got) != 0 {
+		t.Fatalf("EngineClosers with no engine wired = %d closers, want 0", len(got))
+	}
+}
+
+func TestEngineClosersSkipsNonCloserEngine(t *testing.T) {
+	// stubEngine does not implement io.Closer, so it is skipped.
+	o := config.NewOptions(config.WithDatabaseEngine(stubEngine{}))
+	if got := o.EngineClosers(); len(got) != 0 {
+		t.Fatalf("EngineClosers for a non-io.Closer engine = %d, want 0", len(got))
+	}
+}
+
+func TestEngineClosersCollectsCloserEngine(t *testing.T) {
+	o := config.NewOptions(config.WithDatabaseEngine(&closableEngine{}))
+	if got := o.EngineClosers(); len(got) != 1 {
+		t.Fatalf("EngineClosers = %d closers, want 1", len(got))
+	}
+}
+
 func TestDatabaseEngineDefaultsNil(t *testing.T) {
 	if config.NewOptions().DatabaseEngine != nil {
 		t.Fatal("DatabaseEngine should default to nil (in-memory)")

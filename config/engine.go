@@ -1,6 +1,29 @@
 package config
 
-import "context"
+import (
+	"context"
+	"io"
+)
+
+// EngineClosers returns the engines wired into these Options that implement
+// io.Closer, so a provider's Close can cascade teardown to them (stopping any
+// real Docker containers or subprocesses they own). Engines left at their nil
+// default, or that don't implement io.Closer, are skipped — so the result is
+// empty for the in-memory default. Engine Close implementations are idempotent,
+// so an engine wired into more than one slot closing twice is harmless.
+func (o *Options) EngineClosers() []io.Closer {
+	engines := []any{o.DatabaseEngine, o.CacheEngine, o.FunctionEngine, o.ComputeEngine, o.ContainerEngine}
+
+	var closers []io.Closer
+
+	for _, e := range engines {
+		if c, ok := e.(io.Closer); ok {
+			closers = append(closers, c)
+		}
+	}
+
+	return closers
+}
 
 // DatabaseEngine optionally backs relational-database instances with a real
 // engine (e.g. a real Postgres) so that clients can run actual SQL against the

@@ -3,6 +3,8 @@ package aws
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -177,6 +179,10 @@ type Provider struct {
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
+
+	// engineClosers holds any wired real engines that implement io.Closer, so
+	// Close can cascade teardown to them. Empty for the in-memory default.
+	engineClosers []io.Closer
 }
 
 // New creates a new AWS provider with all mock services.
@@ -228,6 +234,7 @@ func New(opts ...config.Option) *Provider {
 		GuardDuty:           guardduty.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
+		engineClosers:       o.EngineClosers(),
 	}
 	p.EC2.SetMonitoring(p.CloudWatch)
 	p.S3.SetMonitoring(p.CloudWatch)
@@ -261,30 +268,52 @@ func New(opts ...config.Option) *Provider {
 	p.S3.SetSQSDeliverer(p.SQS)
 
 	p.ResourceDiscovery = resourcediscovery.New(
-		resourcediscovery.ProviderAWS, o.AccountID, o.Region,
-		&resourcediscovery.Drivers{
-			Compute:      p.EC2,
-			Networking:   p.VPC,
-			Storage:      p.S3,
-			Database:     p.DynamoDB,
-			Serverless:   p.Lambda,
-			Kubernetes:   eksDiscovery{p.EKS},
-			RelationalDB: rdsDiscovery{m: p.RDS, redshift: p.Redshift},
-			Secrets:      p.SecretsManager,
-			ContainerReg: p.ECR,
-			MessageQueue: p.SQS,
-			Notification: p.SNS,
-			DNS:          p.Route53,
-			Logging:      p.CloudWatchLogs,
-			Cache:        p.ElastiCache,
-			LoadBalancer: p.ELB,
-			Monitoring:   p.CloudWatch,
-			IAM:          p.IAM,
-			Extra: []resourcediscovery.GenericResources{
-				sagemakerDiscovery{p.SageMaker},
-			},
-		},
+		resourcediscovery.ProviderAWS, o.AccountID, o.Region, awsDrivers(p),
 	)
 
 	return p
+}
+
+// awsDrivers assembles the resource-discovery driver set from the provider's
+// services. It is split out of New so the factory stays within the
+// function-length budget.
+func awsDrivers(p *Provider) *resourcediscovery.Drivers {
+	return &resourcediscovery.Drivers{
+		Compute:      p.EC2,
+		Networking:   p.VPC,
+		Storage:      p.S3,
+		Database:     p.DynamoDB,
+		Serverless:   p.Lambda,
+		Kubernetes:   eksDiscovery{p.EKS},
+		RelationalDB: rdsDiscovery{m: p.RDS, redshift: p.Redshift},
+		Secrets:      p.SecretsManager,
+		ContainerReg: p.ECR,
+		MessageQueue: p.SQS,
+		Notification: p.SNS,
+		DNS:          p.Route53,
+		Logging:      p.CloudWatchLogs,
+		Cache:        p.ElastiCache,
+		LoadBalancer: p.ELB,
+		Monitoring:   p.CloudWatch,
+		IAM:          p.IAM,
+		Extra: []resourcediscovery.GenericResources{
+			sagemakerDiscovery{p.SageMaker},
+		},
+	}
+}
+
+// Close tears down any real engines wired into the provider via
+// config.With<X>Engine, stopping the Docker containers or subprocesses they
+// own. It is a no-op when no engine is wired — the in-memory default — and is
+// safe to call more than once, since engine Close is idempotent.
+func (p *Provider) Close() error {
+	var errs []error
+
+	for _, c := range p.engineClosers {
+		if err := c.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
