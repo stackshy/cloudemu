@@ -318,3 +318,12 @@ type Compute interface {
 	DeleteKeyPair(ctx context.Context, name string) error
 	DescribeKeyPairs(ctx context.Context, names []string) ([]KeyPairInfo, error)
 }
+
+// ConsoleReader is an optional capability a Compute implementation may provide
+// to return an instance's console output. It is served by the real
+// config.ComputeEngine backing an instance; a provider with no engine wired
+// returns empty output. The server type-asserts for it so implementations that
+// do not support console output (Azure, GCP) are unaffected.
+type ConsoleReader interface {
+	GetConsoleOutput(ctx context.Context, instanceID string) ([]byte, error)
+}

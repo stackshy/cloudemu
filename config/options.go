@@ -35,6 +35,29 @@ type Options struct {
 	TenancyOCID   string
 	CompartmentID string
 	Realm         string
+
+	// DatabaseEngine optionally backs relational-database instances with a real
+	// engine (opt-in). Nil (the default) keeps instances in-memory with
+	// synthetic endpoints.
+	DatabaseEngine DatabaseEngine
+
+	// CacheEngine optionally backs cache instances with a real cache server
+	// (opt-in). Nil (the default) keeps caches in-memory with synthetic
+	// endpoints.
+	CacheEngine CacheEngine
+
+	// FunctionEngine optionally executes real function code on Invoke (opt-in).
+	// Nil (the default) returns a stub payload without running any code.
+	FunctionEngine FunctionEngine
+
+	// ComputeEngine optionally backs virtual-machine instances with a real
+	// backing (opt-in). Nil (the default) keeps instances in-memory with
+	// synthetic state.
+	ComputeEngine ComputeEngine
+
+	// ContainerEngine optionally backs container workloads with real containers
+	// (opt-in). Nil (the default) keeps workloads in-memory with synthetic state.
+	ContainerEngine ContainerEngine
 }
 
 // OCIRegion returns the region OCI services should use, substituting an OCI
@@ -71,6 +94,46 @@ func NewOptions(opts ...Option) *Options {
 	}
 
 	return o
+}
+
+// WithDatabaseEngine sets the real database engine backing relational-database
+// instances. Nil (the default) keeps the emulator in-memory.
+func WithDatabaseEngine(e DatabaseEngine) Option {
+	return func(o *Options) {
+		o.DatabaseEngine = e
+	}
+}
+
+// WithCacheEngine sets the real cache engine backing cache instances. Nil (the
+// default) keeps the emulator in-memory.
+func WithCacheEngine(e CacheEngine) Option {
+	return func(o *Options) {
+		o.CacheEngine = e
+	}
+}
+
+// WithFunctionEngine sets the real function engine that executes function code
+// on Invoke. Nil (the default) returns a stub payload without running code.
+func WithFunctionEngine(e FunctionEngine) Option {
+	return func(o *Options) {
+		o.FunctionEngine = e
+	}
+}
+
+// WithComputeEngine sets the real compute engine backing virtual-machine
+// instances. Nil (the default) keeps the emulator in-memory.
+func WithComputeEngine(e ComputeEngine) Option {
+	return func(o *Options) {
+		o.ComputeEngine = e
+	}
+}
+
+// WithContainerEngine sets the real container engine backing container
+// workloads. Nil (the default) keeps the emulator in-memory.
+func WithContainerEngine(e ContainerEngine) Option {
+	return func(o *Options) {
+		o.ContainerEngine = e
+	}
 }
 
 // WithClock sets the clock implementation.

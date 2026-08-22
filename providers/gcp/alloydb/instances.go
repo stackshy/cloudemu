@@ -14,7 +14,7 @@ import (
 // cfg.ID is the instance name; cfg.InstanceClass carries the machine size.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
+func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if err := validName("instance", cfg.ID); err != nil {
 		return nil, err
 	}
@@ -63,12 +63,26 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		Tags:             copyTags(cfg.Tags),
 	}
 
+	// Opt-in: back the instance with a real Postgres, replacing the synthetic IP
+	// with the real reachable host a client connects to.
+	ip := syntheticInstanceIP
+
+	host, err := m.provisionInstanceEngine(ctx, &cluster, cfg.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if host != "" {
+		ip = host
+		inst.Endpoint = host
+	}
+
 	m.instances.Set(key, inst)
 	m.instanceExtra[key] = instanceExtra{
 		InstanceType:     instanceTypePrimary,
 		CPUCount:         defaultCPUCount,
 		AvailabilityType: "REGIONAL",
-		IPAddress:        "10.0.0.2",
+		IPAddress:        ip,
 		GceZone:          zone,
 	}
 
@@ -182,8 +196,9 @@ func (m *Mock) ModifyInstance(
 	return &out, nil
 }
 
-// DeleteInstance removes an instance and detaches it from its cluster.
-func (m *Mock) DeleteInstance(_ context.Context, id string) error {
+// DeleteInstance removes an instance and detaches it from its cluster, tearing
+// down its real database if one backs it.
+func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -193,6 +208,11 @@ func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 	}
 
 	inst, _ := m.instances.Get(key)
+
+	if err := m.deprovisionInstanceEngine(ctx, key, inst.EngineVersion); err != nil {
+		return err
+	}
+
 	m.instances.Delete(key)
 	delete(m.instanceExtra, key)
 

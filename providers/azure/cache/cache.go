@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -76,7 +77,7 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateCache creates a new Azure Cache for Redis instance.
-func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
+func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "cache name is required")
 	}
@@ -117,6 +118,12 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		ReplicasPerPrimary: cfg.ReplicasPerPrimary,
 	}
 
+	// Opt-in: back the cache with a real Redis, replacing the synthetic endpoint
+	// with the real host:port a client connects to.
+	if err := cacheengine.Provision(ctx, m.opts.CacheEngine, &info); err != nil {
+		return nil, err
+	}
+
 	cd := &cacheData{
 		info:  info,
 		items: memstore.New[cacheItem](),
@@ -130,10 +137,18 @@ func (m *Mock) CreateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 }
 
 // DeleteCache deletes an Azure Cache for Redis instance by name.
-func (m *Mock) DeleteCache(_ context.Context, name string) error {
-	if !m.caches.Delete(name) {
+func (m *Mock) DeleteCache(ctx context.Context, name string) error {
+	cd, ok := m.caches.Get(name)
+	if !ok {
 		return errors.Newf(errors.NotFound, "cache %q not found", name)
 	}
+
+	// Tear down the real cache server backing the instance, if any.
+	if err := cacheengine.Deprovision(ctx, m.opts.CacheEngine, &cd.info); err != nil {
+		return err
+	}
+
+	m.caches.Delete(name)
 
 	return nil
 }

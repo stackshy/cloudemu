@@ -127,12 +127,15 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 		DatabaseVersion:    inst.Engine,
 		State:              sqlState(inst.State),
 		BackendType:        "SECOND_GEN",
-		ConnectionName:     inst.Endpoint,
+		ConnectionName:     inst.ConnectionName,
 		MasterInstanceName: inst.ReadReplicaSource,
 		ReplicaNames:       inst.ReadReplicaTargets,
 		SelfLink:           pathPrefix + project + "/instances/" + inst.ID,
+		// PRIMARY is the public IP a client is meant to connect to. Endpoint holds
+		// the reachable host: a synthetic IP normally, or the real engine host
+		// when a database engine backs the instance.
 		IPAddresses: []ipMapping{
-			{IPAddress: "10.0.0.1", Type: "PRIVATE"},
+			{IPAddress: inst.Endpoint, Type: "PRIMARY"},
 		},
 		Settings: &sqlSettings{
 			Tier:             inst.InstanceClass,

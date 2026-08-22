@@ -36,6 +36,19 @@ type updateFunctionConfigurationRequest struct {
 	Environment *envEnvelope `json:"Environment"`
 }
 
+// updateFunctionCodeRequest captures the deployment-package fields of
+// UpdateFunctionCode (PUT .../{name}/code). Like CreateFunction, an inline
+// ZipFile arrives base64-decoded into []byte, or an uploaded artifact is
+// referenced via S3Bucket/S3Key. Layers, when present, are overlaid into the
+// package the same way the create path does.
+type updateFunctionCodeRequest struct {
+	ZipFile         []byte   `json:"ZipFile"`
+	S3Bucket        string   `json:"S3Bucket"`
+	S3Key           string   `json:"S3Key"`
+	S3ObjectVersion string   `json:"S3ObjectVersion"`
+	Layers          []string `json:"Layers"`
+}
+
 // publishVersionRequest is the body of PublishVersion (POST .../{name}/versions).
 type publishVersionRequest struct {
 	Description string `json:"Description"`
@@ -94,8 +107,9 @@ type listFunctionsResponse struct {
 }
 
 // createFunctionRequest captures the fields we read from a CreateFunction body.
-// We deliberately ignore Code, Role (no IAM evaluation), VPCConfig, etc — the
-// portable driver doesn't model them.
+// We deliberately ignore Role (no IAM evaluation), VPCConfig, etc — the portable
+// driver doesn't model them. Code.ZipFile is read so a configured FunctionEngine
+// can run the real handler; with no engine it is stored only for the invoke stub.
 type createFunctionRequest struct {
 	FunctionName string            `json:"FunctionName"`
 	Runtime      string            `json:"Runtime"`
@@ -107,4 +121,20 @@ type createFunctionRequest struct {
 	Environment  *envEnvelope      `json:"Environment"`
 	Tags         map[string]string `json:"Tags"`
 	PackageType  string            `json:"PackageType"`
+	Code         *functionCode     `json:"Code"`
+	// Layers is the list of layer version ARNs the function imports. Their code
+	// is overlaid into the deployment package so imports resolve at real invoke.
+	Layers []string `json:"Layers"`
+}
+
+// functionCode is the deployment package in a CreateFunction body. The AWS SDK
+// sends an inline zip as base64 in ZipFile, which Go unmarshals into []byte for
+// us. Terraform/SAM/CDK instead upload the artifact to S3 and reference it via
+// S3Bucket/S3Key; those are fetched from the in-process S3 backend so real code
+// runs instead of falling back to the echo stub.
+type functionCode struct {
+	ZipFile         []byte `json:"ZipFile"`
+	S3Bucket        string `json:"S3Bucket"`
+	S3Key           string `json:"S3Key"`
+	S3ObjectVersion string `json:"S3ObjectVersion"`
 }

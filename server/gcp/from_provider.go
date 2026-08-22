@@ -17,6 +17,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Networking:       p.VPC,
 		Monitoring:       p.CloudMonitoring,
 		CloudFunctions:   p.CloudFunctions,
+		CloudRun:         p.CloudRun,
 		PubSub:           p.PubSub,
 		Bigtable:         p.Bigtable,
 		CloudSQL:         p.CloudSQL,

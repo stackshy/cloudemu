@@ -135,6 +135,8 @@ func (m *Mock) CreateAlloyDBCluster(
 		m.users.Set(key, rdsdriver.User{Instance: cfg.ID, Name: cfg.InitialUser, Host: "%"})
 	}
 
+	m.initialPasswords[cfg.ID] = cfg.InitialPassword
+
 	out := cloneCluster(cluster)
 
 	return &out, nil
@@ -217,7 +219,7 @@ func (m *Mock) PromoteCluster(_ context.Context, id string) (*rdsdriver.Cluster,
 //
 //nolint:gocritic // cfg matches the AlloyDB capability signature.
 func (m *Mock) CreateAlloyDBInstance(
-	_ context.Context, cfg rdsdriver.AlloyDBInstanceConfig,
+	ctx context.Context, cfg rdsdriver.AlloyDBInstanceConfig,
 ) (*rdsdriver.Instance, error) {
 	instType := cfg.InstanceType
 	if instType == "" {
@@ -260,6 +262,20 @@ func (m *Mock) CreateAlloyDBInstance(
 		Tags:             copyTags(cfg.Tags),
 	}
 
+	// Opt-in: back the instance with a real Postgres, replacing the synthetic IP
+	// with the real reachable host a client connects to.
+	ip := syntheticInstanceIP
+
+	host, err := m.provisionInstanceEngine(ctx, &cluster, cfg.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if host != "" {
+		ip = host
+		inst.Endpoint = host
+	}
+
 	key := instanceKey(cfg.ClusterID, cfg.ID)
 	m.instances.Set(key, inst)
 	m.instanceExtra[key] = instanceExtra{
@@ -267,7 +283,7 @@ func (m *Mock) CreateAlloyDBInstance(
 		CPUCount:         cpu,
 		NodeCount:        cfg.NodeCount,
 		AvailabilityType: availability,
-		IPAddress:        "10.0.0.2",
+		IPAddress:        ip,
 		GceZone:          m.opts.Region,
 	}
 

@@ -2,20 +2,39 @@ package cloudsql
 
 import (
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
+// rootUserFor returns the fixed default administrator user name Cloud SQL
+// assigns for a databaseVersion: "postgres" for PostgreSQL, "root" for MySQL,
+// and "sqlserver" for SQL Server. This is the login a client connects with,
+// paired with the rootPassword set on insert.
+func rootUserFor(databaseVersion string) string {
+	switch {
+	case strings.HasPrefix(strings.ToUpper(databaseVersion), "MYSQL"):
+		return "root"
+	case strings.HasPrefix(strings.ToUpper(databaseVersion), "SQLSERVER"):
+		return "sqlserver"
+	default:
+		return "postgres"
+	}
+}
+
 // instanceFromBody decodes a Cloud SQL instance request and converts it to
 // the portable driver shape. databaseVersion + region are top-level; tier and
-// activationPolicy live under settings.
+// activationPolicy live under settings. The root user is fixed by engine and
+// its password is the insert body's rootPassword, so a real engine can back the
+// instance with a usable login.
 func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 	cfg := rdsdriver.InstanceConfig{
 		ID:                 body.Name,
 		Engine:             body.DatabaseVersion,
 		AvailabilityZone:   body.Region,
-		MasterUsername:     body.RootPassword, // SDKs use rootPassword on insert.
+		MasterUsername:     rootUserFor(body.DatabaseVersion),
+		MasterUserPassword: body.RootPassword,
 		MasterInstanceName: body.MasterInstanceName,
 	}
 

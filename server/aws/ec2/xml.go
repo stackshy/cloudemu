@@ -157,3 +157,14 @@ type modifyInstanceAttributeResponse struct {
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
 }
+
+// getConsoleOutputResponse carries the base64-encoded console output for an
+// instance. Output mirrors real EC2's base64 <output> field.
+type getConsoleOutputResponse struct {
+	XMLName    xml.Name `xml:"GetConsoleOutputResponse"`
+	Xmlns      string   `xml:"xmlns,attr"`
+	RequestID  string   `xml:"requestId"`
+	InstanceID string   `xml:"instanceId"`
+	Timestamp  string   `xml:"timestamp"`
+	Output     string   `xml:"output"`
+}

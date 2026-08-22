@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -32,6 +33,11 @@ const (
 	cpuMetricRunning     = 0.25 // GCP reports CPU as 0.0–1.0 fraction.
 	cpuMetricStopped     = 0.0
 	connRunning          = 5.0
+	// syntheticPrivateIP is the ipAddresses[].ipAddress reported when no real
+	// database engine backs the instance — preserving the historical behavior of
+	// always surfacing an IP. When an engine is wired in, dbengine.Provision
+	// overrides Endpoint with the real reachable host.
+	syntheticPrivateIP = "10.0.0.1"
 )
 
 var _ rdsdriver.RelationalDB = (*Mock)(nil)
@@ -54,6 +60,12 @@ type Mock struct {
 	// collision-free suffix (guarded by mu).
 	backupSeq int64
 
+	// rootPasswords remembers each instance's master password (guarded by mu) so
+	// a clone can re-provision its own database against a configured
+	// DatabaseEngine. The emulator enforces no auth, so this is local state, not
+	// a secret store; it is never logged.
+	rootPasswords map[string]string
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -61,12 +73,13 @@ type Mock struct {
 // New creates a new Cloud SQL mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances: memstore.New[rdsdriver.Instance](),
-		snapshots: memstore.New[rdsdriver.Snapshot](),
-		databases: memstore.New[rdsdriver.Database](),
-		users:     memstore.New[rdsdriver.User](),
-		sslCerts:  memstore.New[rdsdriver.SslCert](),
-		opts:      opts,
+		instances:     memstore.New[rdsdriver.Instance](),
+		snapshots:     memstore.New[rdsdriver.Snapshot](),
+		databases:     memstore.New[rdsdriver.Database](),
+		users:         memstore.New[rdsdriver.User](),
+		sslCerts:      memstore.New[rdsdriver.SslCert](),
+		rootPasswords: map[string]string{},
+		opts:          opts,
 	}
 }
 
@@ -157,10 +170,13 @@ func cloneSnapshot(s rdsdriver.Snapshot) rdsdriver.Snapshot {
 	return s
 }
 
-// CreateInstance creates a new Cloud SQL instance.
+// CreateInstance creates a new Cloud SQL instance. The in-memory row is reserved
+// under the provider lock, then the (potentially slow, cold-start) engine
+// provisioning runs WITHOUT the lock so concurrent reads are never blocked, and
+// only the resulting reachable host:port is written back under the lock.
 //
-//nolint:gocritic,gocyclo // cfg matches the driver signature; linear field-defaulting plus optional replica linking.
-func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
+//nolint:gocritic // cfg matches the driver signature.
+func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "instance name is required")
 	}
@@ -169,13 +185,54 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		return nil, cerrors.New(cerrors.InvalidArgument, "databaseVersion is required")
 	}
 
+	inst, err := m.reserveInstance(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
+		m.rollbackReserved(&inst)
+		return nil, err
+	}
+
+	out := m.finalizeInstance(cfg.ID, inst)
+
+	m.emitInstanceMetrics(cfg.ID, cpuMetricRunning, connRunning)
+
+	return &out, nil
+}
+
+// reserveInstance builds the instance with its synthetic IP, links any replica
+// relationship, and stores it under the lock, returning a copy for provisioning.
+//
+//nolint:gocritic // cfg matches the driver signature.
+func (m *Mock) reserveInstance(cfg rdsdriver.InstanceConfig) (rdsdriver.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if _, ok := m.instances.Get(cfg.ID); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "Cloud SQL instance %q already exists", cfg.ID)
+		return rdsdriver.Instance{}, cerrors.Newf(cerrors.AlreadyExists, "Cloud SQL instance %q already exists", cfg.ID)
 	}
 
+	inst := m.newInstance(cfg)
+
+	if cfg.MasterInstanceName != "" {
+		if err := m.linkReplica(&inst, cfg.MasterInstanceName); err != nil {
+			return rdsdriver.Instance{}, err
+		}
+	}
+
+	m.instances.Set(cfg.ID, inst)
+	m.rootPasswords[cfg.ID] = cfg.MasterUserPassword
+
+	return inst, nil
+}
+
+// newInstance builds the instance record with defaulted fields and the synthetic
+// IP. The caller holds the lock.
+//
+//nolint:gocritic // cfg matches the driver signature.
+func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 	port := cfg.Port
 	if port == 0 {
 		port = defaultPortFor(cfg.Engine)
@@ -201,17 +258,22 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		region = m.opts.Region
 	}
 
-	inst := rdsdriver.Instance{
-		ID:                 cfg.ID,
-		ARN:                idgen.GCPID(m.opts.ProjectID, "instances", cfg.ID),
-		Engine:             cfg.Engine,
-		EngineVersion:      cfg.EngineVersion,
-		InstanceClass:      tier,
-		AllocatedStorage:   storage,
-		StorageType:        storageType,
-		MasterUsername:     cfg.MasterUsername,
-		DBName:             cfg.DBName,
-		Endpoint:           instanceConnectionName(m.opts.ProjectID, region, cfg.ID),
+	return rdsdriver.Instance{
+		ID:               cfg.ID,
+		ARN:              idgen.GCPID(m.opts.ProjectID, "instances", cfg.ID),
+		Engine:           cfg.Engine,
+		EngineVersion:    cfg.EngineVersion,
+		InstanceClass:    tier,
+		AllocatedStorage: storage,
+		StorageType:      storageType,
+		MasterUsername:   cfg.MasterUsername,
+		DBName:           cfg.DBName,
+		// ConnectionName carries the "project:region:id" identifier; Endpoint
+		// carries the reachable host reported as the PRIMARY ipAddress. Without a
+		// real engine this is a synthetic IP; dbengine.Provision overrides it with
+		// the real host:port when one is wired in.
+		ConnectionName:     instanceConnectionName(m.opts.ProjectID, region, cfg.ID),
+		Endpoint:           syntheticPrivateIP,
 		Port:               port,
 		State:              rdsdriver.StateAvailable,
 		MultiAZ:            cfg.MultiAZ,
@@ -222,20 +284,35 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		CreatedAt:          m.opts.Clock.Now().UTC(),
 		Tags:               copyTags(cfg.Tags),
 	}
+}
 
-	if cfg.MasterInstanceName != "" {
-		if err := m.linkReplica(&inst, cfg.MasterInstanceName); err != nil {
-			return nil, err
-		}
+// finalizeInstance writes the engine's reachable host:port back onto the reserved
+// row under the lock and returns the finalized instance copy.
+//
+//nolint:gocritic // inst is finalized and returned by value on purpose.
+func (m *Mock) finalizeInstance(id string, inst rdsdriver.Instance) rdsdriver.Instance {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if stored, ok := m.instances.Get(id); ok {
+		stored.Endpoint = inst.Endpoint
+		stored.Port = inst.Port
+		m.instances.Set(id, stored)
+		inst = stored
 	}
 
-	m.instances.Set(cfg.ID, inst)
+	return cloneInstance(inst)
+}
 
-	m.emitInstanceMetrics(cfg.ID, cpuMetricRunning, connRunning)
+// rollbackReserved undoes reserveInstance when provisioning fails: it removes the
+// reserved row, its remembered password, and any replica links it created.
+func (m *Mock) rollbackReserved(inst *rdsdriver.Instance) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	out := cloneInstance(inst)
-
-	return &out, nil
+	m.instances.Delete(inst.ID)
+	delete(m.rootPasswords, inst.ID)
+	m.unlinkReplicas(inst)
 }
 
 // linkReplica marks inst as a read replica of masterName and records it on the
@@ -288,7 +365,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 //
 //nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
-	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
+	ctx context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -296,6 +373,16 @@ func (m *Mock) ModifyInstance(
 	inst, ok := m.instances.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
+	}
+
+	// Rotate the master password on the backing engine so the new credential
+	// actually authenticates.
+	if input.MasterUserPassword != "" {
+		if err := dbengine.RotatePassword(ctx, m.opts.DatabaseEngine, &inst, input.MasterUserPassword); err != nil {
+			return nil, err
+		}
+
+		m.rootPasswords[id] = input.MasterUserPassword
 	}
 
 	if input.InstanceClass != "" {
@@ -327,7 +414,7 @@ func (m *Mock) ModifyInstance(
 
 // DeleteInstance removes an instance, unlinks it from any replica relationship,
 // and cascades to its children.
-func (m *Mock) DeleteInstance(_ context.Context, id string) error {
+func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -336,7 +423,13 @@ func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
 	}
 
+	// Tear down the real database backing the instance, if any.
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
+		return err
+	}
+
 	m.instances.Delete(id)
+	delete(m.rootPasswords, id)
 	m.unlinkReplicas(&inst)
 	m.deleteChildren(id)
 
@@ -571,9 +664,11 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 	return nil
 }
 
-// RestoreInstanceFromSnapshot creates a new instance from a backup run.
+// RestoreInstanceFromSnapshot creates a new instance from a backup run and backs
+// it with a real database (when an engine is wired in) so the restored instance's
+// reported IP is reachable, not a synthetic host that resolves to nothing.
 func (m *Mock) RestoreInstanceFromSnapshot(
-	_ context.Context, input rdsdriver.RestoreInstanceInput,
+	ctx context.Context, input rdsdriver.RestoreInstanceInput,
 ) (*rdsdriver.Instance, error) {
 	if input.NewInstanceID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "new instance id is required")
@@ -596,7 +691,15 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		tier = defaultTier
 	}
 
-	now := m.opts.Clock.Now().UTC()
+	// Inherit the source instance's master login so the restored database is
+	// reachable with the same credentials; fall back to engine defaults when the
+	// source is gone.
+	var username string
+	if src, ok := m.instances.Get(snap.InstanceID); ok {
+		username = src.MasterUsername
+	}
+
+	password := m.rootPasswords[snap.InstanceID]
 
 	inst := rdsdriver.Instance{
 		ID:               input.NewInstanceID,
@@ -606,15 +709,30 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		InstanceClass:    tier,
 		AllocatedStorage: snap.AllocatedStorage,
 		StorageType:      defaultStorageType,
-		Endpoint:         instanceConnectionName(m.opts.ProjectID, m.opts.Region, input.NewInstanceID),
+		MasterUsername:   username,
+		ConnectionName:   instanceConnectionName(m.opts.ProjectID, m.opts.Region, input.NewInstanceID),
+		Endpoint:         syntheticPrivateIP,
 		Port:             defaultPortFor(snap.Engine),
 		State:            rdsdriver.StateAvailable,
 		AvailabilityZone: m.opts.Region,
-		CreatedAt:        now,
+		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(input.Tags),
 	}
 
+	// Provision the restored instance's OWN database (keyed by the new id, so it
+	// never aliases the source) through the same engine path CreateInstance uses.
+	restoreCfg := rdsdriver.InstanceConfig{
+		ID:                 input.NewInstanceID,
+		Engine:             snap.Engine,
+		MasterUsername:     username,
+		MasterUserPassword: password,
+	}
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &restoreCfg); err != nil {
+		return nil, err
+	}
+
 	m.instances.Set(input.NewInstanceID, inst)
+	m.rootPasswords[input.NewInstanceID] = password
 
 	m.emitInstanceMetrics(input.NewInstanceID, cpuMetricRunning, connRunning)
 

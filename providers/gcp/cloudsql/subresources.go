@@ -8,6 +8,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -55,6 +56,8 @@ func (m *Mock) requireInstance(instance string) error {
 // ---- Databases ----
 
 // CreateDatabase adds a logical database to an instance.
+//
+//nolint:gocritic // cfg matches the driver signature and cannot be a pointer.
 func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (*rdsdriver.Database, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "database name is required")
@@ -407,7 +410,7 @@ func removeStr(items []string, s string) []string {
 }
 
 // CloneInstance copies sourceID to a new instance named destID.
-func (m *Mock) CloneInstance(_ context.Context, sourceID, destID string) (*rdsdriver.Instance, error) {
+func (m *Mock) CloneInstance(ctx context.Context, sourceID, destID string) (*rdsdriver.Instance, error) {
 	if destID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "destinationInstanceName is required")
 	}
@@ -427,7 +430,12 @@ func (m *Mock) CloneInstance(_ context.Context, sourceID, destID string) (*rdsdr
 	clone := src
 	clone.ID = destID
 	clone.ARN = idgen.GCPID(m.opts.ProjectID, "instances", destID)
-	clone.Endpoint = instanceConnectionName(m.opts.ProjectID, src.AvailabilityZone, destID)
+	// The clone gets its OWN connection name; Endpoint keeps carrying the
+	// reachable IP (inherited from the source's shared engine, then overridden
+	// below when engine-backed). Writing the connection name into Endpoint — as
+	// this did before ConnectionName existed — corrupts both SDK fields.
+	clone.ConnectionName = instanceConnectionName(m.opts.ProjectID, src.AvailabilityZone, destID)
+	clone.Endpoint = src.Endpoint
 	clone.State = rdsdriver.StateAvailable
 	clone.CreatedAt = m.opts.Clock.Now().UTC()
 	// A clone is a standalone primary, not part of the source's replica chain.
@@ -436,7 +444,33 @@ func (m *Mock) CloneInstance(_ context.Context, sourceID, destID string) (*rdsdr
 
 	clone.VPCSecurityGroups = append([]string(nil), src.VPCSecurityGroups...)
 	clone.Tags = copyTags(src.Tags)
+	// Advertise the clone's own database, not the source's, so a client connecting
+	// by the clone's DBName never lands on the source's physical database.
+	clone.DBName = destID
 
+	// Back the clone with its OWN real database when an engine is configured,
+	// reusing the source's credentials — otherwise the clone reports a reachable
+	// IP but has no database to connect to.
+	//
+	// The clone's physical database is named after the clone (destID), NOT the
+	// source's DBName: the shared engine resolves the request DBName to a single
+	// physical database, so reusing src.DBName would make the clone alias the
+	// source — writes would corrupt the source and dropping the clone would DROP
+	// the source's database. In the emulator a clone is therefore schema-isolated:
+	// an independent, empty-schema database, not a byte-for-byte data copy of the
+	// source (a real embedded-postgres data copy is out of scope).
+	cloneCfg := rdsdriver.InstanceConfig{
+		ID:                 destID,
+		Engine:             src.Engine,
+		MasterUsername:     src.MasterUsername,
+		MasterUserPassword: m.rootPasswords[sourceID],
+		DBName:             destID,
+	}
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &clone, &cloneCfg); err != nil {
+		return nil, err
+	}
+
+	m.rootPasswords[destID] = m.rootPasswords[sourceID]
 	m.instances.Set(destID, clone)
 
 	m.cloneDatabases(sourceID, destID)

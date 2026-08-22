@@ -1,8 +1,10 @@
 package ec2
 
 import (
+	"encoding/base64"
 	"net/http"
 	"strconv"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -24,7 +26,7 @@ func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 		SubnetID:       form.Get("SubnetId"),
 		SecurityGroups: awsquery.ListStrings(form, "SecurityGroupId"),
 		KeyName:        form.Get("KeyName"),
-		UserData:       form.Get("UserData"),
+		UserData:       decodeUserData(form.Get("UserData")),
 		Tags:           mergeTagSpecs(awsquery.TagSpecs(form), "instance"),
 	}
 
@@ -184,6 +186,48 @@ func (h *Handler) modifyInstanceAttribute(w http.ResponseWriter, r *http.Request
 		RequestID: awsquery.RequestID,
 		Return:    true,
 	})
+}
+
+// getConsoleOutput handles Action=GetConsoleOutput. The console output is read
+// from the real ComputeEngine backing the instance (empty for an instance with
+// no engine wired). Real EC2 returns the output base64-encoded in <output>.
+func (h *Handler) getConsoleOutput(w http.ResponseWriter, r *http.Request) {
+	id := r.Form.Get("InstanceId")
+
+	reader, ok := h.compute.(computedriver.ConsoleReader)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "console output is not supported"))
+		return
+	}
+
+	out, err := reader.GetConsoleOutput(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, getConsoleOutputResponse{
+		Xmlns:      awsquery.Namespace,
+		RequestID:  awsquery.RequestID,
+		InstanceID: id,
+		Timestamp:  formatTime(time.Now().UTC()),
+		Output:     base64.StdEncoding.EncodeToString(out),
+	})
+}
+
+// decodeUserData decodes the base64 UserData the wire carries. Real EC2 UserData
+// is always base64-encoded; a value that does not decode is passed through raw
+// so a client that sent plain text still gets its boot script.
+func decodeUserData(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return string(decoded)
+	}
+
+	return s
 }
 
 // instanceCount returns how many instances RunInstances should launch.

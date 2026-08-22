@@ -4,10 +4,19 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 var _ rdsdriver.ReadReplicas = (*Mock)(nil)
+
+// sourceEngineBacked reports whether an instance of the given engine family is
+// backed by the wired real engine, so its stored endpoint is a reachable
+// host:port rather than a synthetic one.
+func (m *Mock) sourceEngineBacked(engine string) bool {
+	return m.opts.DatabaseEngine != nil &&
+		(dbengine.IsPostgresFamily(engine) || dbengine.IsMySQLFamily(engine))
+}
 
 // CreateDBInstanceReadReplica creates a replica reading from an existing
 // primary instance, inheriting the source's engine, version and storage.
@@ -44,6 +53,17 @@ func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.Read
 		port = src.Port
 	}
 
+	// A real read replica serves the SOURCE's data. When the source is backed by
+	// a real engine, point the replica at the source's reachable host:port so a
+	// client reading from the replica reaches the real database — provisioning a
+	// separate empty database would leave the replica seeing none of the source's
+	// data. A synthetic source keeps the synthetic replica endpoint.
+	endpoint := endpointFor(cfg.ID, m.opts.Region, "abcd1234")
+	if m.sourceEngineBacked(src.Engine) {
+		endpoint = src.Endpoint
+		port = src.Port
+	}
+
 	replica := rdsdriver.Instance{
 		ID:                 cfg.ID,
 		ARN:                instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
@@ -53,7 +73,7 @@ func (m *Mock) CreateDBInstanceReadReplica(_ context.Context, cfg rdsdriver.Read
 		AllocatedStorage:   src.AllocatedStorage,
 		StorageType:        src.StorageType,
 		MasterUsername:     src.MasterUsername,
-		Endpoint:           endpointFor(cfg.ID, m.opts.Region, "abcd1234"),
+		Endpoint:           endpoint,
 		Port:               port,
 		State:              rdsdriver.StateAvailable,
 		PubliclyAccessible: cfg.PubliclyAccessible,

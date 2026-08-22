@@ -196,10 +196,18 @@ type wireTaskDef struct {
 	DeregisteredAt          float64                    `json:"deregisteredAt,omitempty"`
 }
 
+// containerStatusStopped is the ECS lastStatus of a finished container.
+const containerStatusStopped = "STOPPED"
+
 type wireContainer struct {
 	Name       string `json:"name,omitempty"`
 	Image      string `json:"image,omitempty"`
 	LastStatus string `json:"lastStatus,omitempty"`
+	// ExitCode is a pointer so a real exit 0 on a STOPPED container serializes
+	// (real ECS reports it), while a running container omits it entirely.
+	ExitCode  *int   `json:"exitCode,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	RuntimeID string `json:"runtimeId,omitempty"`
 }
 
 // wireAttachment mirrors the ECS Attachment shape (type/status/details), where
@@ -1088,8 +1096,21 @@ func taskDefToWire(t *driver.TaskDefinition) wireTaskDef {
 
 func taskToWire(t *driver.Task) wireTask {
 	containers := make([]wireContainer, 0, len(t.Containers))
-	for _, c := range t.Containers {
-		containers = append(containers, wireContainer{Name: c.Name, Image: c.Image, LastStatus: c.LastStatus})
+
+	for i := range t.Containers {
+		c := t.Containers[i]
+		wc := wireContainer{
+			Name: c.Name, Image: c.Image, LastStatus: c.LastStatus,
+			Reason: c.Reason, RuntimeID: c.RuntimeID,
+		}
+		// Surface the exit code only once the container has stopped, so a genuine
+		// exit 0 is reported while a running container has none.
+		if c.LastStatus == containerStatusStopped {
+			ec := c.ExitCode
+			wc.ExitCode = &ec
+		}
+
+		containers = append(containers, wc)
 	}
 
 	return wireTask{

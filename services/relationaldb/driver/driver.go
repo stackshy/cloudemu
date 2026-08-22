@@ -98,16 +98,20 @@ type InstanceConfig struct {
 
 // Instance describes a managed database instance.
 type Instance struct {
-	ID                   string
-	ARN                  string
-	Engine               string
-	EngineVersion        string
-	InstanceClass        string
-	AllocatedStorage     int
-	StorageType          string
-	MasterUsername       string
-	DBName               string
-	Endpoint             string
+	ID               string
+	ARN              string
+	Engine           string
+	EngineVersion    string
+	InstanceClass    string
+	AllocatedStorage int
+	StorageType      string
+	MasterUsername   string
+	DBName           string
+	Endpoint         string
+	// ConnectionName is the GCP Cloud SQL "project:region:id" identifier used in
+	// connection strings and by the Auth Proxy. It is empty for AWS/Azure, which
+	// have no such concept; those providers carry the reachable host in Endpoint.
+	ConnectionName       string
 	Port                 int
 	State                string
 	MultiAZ              bool

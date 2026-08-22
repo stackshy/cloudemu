@@ -15,6 +15,7 @@ import (
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
+	containerinstancessrv "github.com/stackshy/cloudemu/v2/server/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmospostgresql"
@@ -64,6 +65,7 @@ import (
 	azuresearchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	acidriver "github.com/stackshy/cloudemu/v2/services/containerinstances/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	cpgdriver "github.com/stackshy/cloudemu/v2/services/cosmospostgresql/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
@@ -124,6 +126,10 @@ type Drivers struct {
 	AKS              aksserver.Backend
 	IAM              iamdriver.IAM
 	ACR              crdriver.ContainerRegistry
+	// ContainerInstances serves the Azure Container Instances
+	// (Microsoft.ContainerInstance/containerGroups) ARM API against the
+	// containerinstances driver.
+	ContainerInstances acidriver.ContainerInstances
 	// KeyVault serves the Key Vault secrets data-plane API (/secrets/…)
 	// against the secrets driver.
 	KeyVault secretsdriver.Secrets
@@ -385,6 +391,13 @@ func New(d Drivers) http.Handler {
 	// must register before the permissive BlobStorage fallback below.
 	if d.ACR != nil {
 		srv.Register(acr.New(d.ACR))
+	}
+
+	// Azure Container Instances claims a unique ARM provider
+	// (Microsoft.ContainerInstance), so registration order is unconstrained;
+	// registered before the BlobStorage fallback.
+	if d.ContainerInstances != nil {
+		srv.Register(containerinstancessrv.New(d.ContainerInstances))
 	}
 
 	// Key Vault secrets data-plane API matches /secrets/… — disjoint from ARM

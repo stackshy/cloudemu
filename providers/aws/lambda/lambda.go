@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	"github.com/stackshy/cloudemu/v2/services/serverless/funcengine"
 )
 
 var _ driver.Serverless = (*Mock)(nil)
@@ -45,13 +46,14 @@ type layerData struct {
 }
 
 type funcData struct {
-	info        driver.FunctionInfo
-	handler     driver.HandlerFunc
-	versions    []*versionData
-	nextVersion int
-	aliases     *memstore.Store[*aliasData]
-	concurrency *driver.ConcurrencyConfig
-	policy      map[string]driver.PermissionStatement
+	info         driver.FunctionInfo
+	handler      driver.HandlerFunc
+	engineBacked bool // real code deployed to the configured FunctionEngine
+	versions     []*versionData
+	nextVersion  int
+	aliases      *memstore.Store[*aliasData]
+	concurrency  *driver.ConcurrencyConfig
+	policy       map[string]driver.PermissionStatement
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
@@ -95,7 +97,7 @@ func New(opts *config.Options) *Mock {
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateFunction(_ context.Context, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
+func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
 	if _, ok := m.funcs.Get(cfg.Name); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
 	}
@@ -112,8 +114,13 @@ func (m *Mock) CreateFunction(_ context.Context, cfg driver.FunctionConfig) (*dr
 	h := m.handlers[cfg.Name]
 	m.handlersMu.RUnlock()
 
+	engineBacked, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &cfg)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", cfg.Name, err)
+	}
+
 	m.funcs.Set(cfg.Name, funcData{
-		info: info, handler: h,
+		info: info, handler: h, engineBacked: engineBacked,
 		nextVersion: initialVersion,
 		aliases:     memstore.New[*aliasData](),
 	})
@@ -123,9 +130,16 @@ func (m *Mock) CreateFunction(_ context.Context, cfg driver.FunctionConfig) (*dr
 	return &result, nil
 }
 
-func (m *Mock) DeleteFunction(_ context.Context, name string) error {
-	if !m.funcs.Has(name) {
+func (m *Mock) DeleteFunction(ctx context.Context, name string) error {
+	fd, ok := m.funcs.Get(name)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+	}
+
+	if fd.engineBacked {
+		if err := funcengine.Remove(ctx, m.opts.FunctionEngine, name); err != nil {
+			return cerrors.Newf(cerrors.Internal, "remove function %s: %v", name, err)
+		}
 	}
 
 	m.funcs.Delete(name)
@@ -158,7 +172,7 @@ func (m *Mock) ListFunctions(_ context.Context) ([]driver.FunctionInfo, error) {
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) UpdateFunction(_ context.Context, name string, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
+func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
 	fd, ok := m.funcs.Get(name)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
@@ -168,6 +182,21 @@ func (m *Mock) UpdateFunction(_ context.Context, name string, cfg driver.Functio
 	applyConfigUpdates(&info, cfg)
 	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
 	fd.info = info
+
+	// A code update re-deploys to the engine using the post-merge runtime/handler
+	// so the function runs the new code, not the stale deployment.
+	if len(cfg.Code) > 0 {
+		backed, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &driver.FunctionConfig{
+			Name: name, Runtime: info.Runtime, Handler: info.Handler,
+			Code: cfg.Code, Environment: info.Environment, Timeout: info.Timeout,
+		})
+		if err != nil {
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", name, err)
+		}
+
+		fd.engineBacked = backed
+	}
+
 	m.funcs.Set(name, fd)
 
 	result := info
@@ -188,6 +217,10 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 		m.handlersMu.RLock()
 		h = m.handlers[input.FunctionName]
 		m.handlersMu.RUnlock()
+	}
+
+	if h == nil && fd.engineBacked {
+		return m.invokeEngine(ctx, input, dims)
 	}
 
 	if h == nil {
@@ -221,6 +254,30 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
 
 	return &driver.InvokeOutput{StatusCode: 200, Payload: payload}, nil
+}
+
+// invokeEngine runs a function whose code was deployed to the configured
+// FunctionEngine and records the same metrics as a real handler invocation. A
+// handler that raised is reported via out.Error (HTTP stays 200), matching real
+// Lambda's X-Amz-Function-Error semantics.
+func (m *Mock) invokeEngine(ctx context.Context, input driver.InvokeInput, dims map[string]string) (*driver.InvokeOutput, error) {
+	out, err := funcengine.Invoke(ctx, m.opts.FunctionEngine, input.FunctionName, input.Payload)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.Internal, "invoke function %s: %v", input.FunctionName, err)
+	}
+
+	m.emitMetric(ctx, "Invocations", 1, dims)
+
+	if out.Error != "" {
+		m.emitMetric(ctx, "Errors", 1, dims)
+
+		return out, nil
+	}
+
+	m.emitMetric(ctx, "Duration", 1.0, dims)
+	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
+
+	return out, nil
 }
 
 func (m *Mock) RegisterHandler(name string, handler driver.HandlerFunc) {
