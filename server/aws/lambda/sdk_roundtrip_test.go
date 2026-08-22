@@ -156,3 +156,132 @@ func TestSDKLambdaInvokeOnMissingFunction(t *testing.T) {
 		t.Fatal("Invoke on missing function returned nil error, want NotFound")
 	}
 }
+
+func TestSDKLambdaConcurrencyRoundtrip(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateFunction(ctx, &awslambda.CreateFunctionInput{
+		FunctionName: aws.String("busy"),
+		Runtime:      lambdatypes.RuntimeGo1x,
+		Role:         aws.String("arn:aws:iam::000000000000:role/test"),
+		Handler:      aws.String("main"),
+		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("z")},
+	}); err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	put, err := client.PutFunctionConcurrency(ctx, &awslambda.PutFunctionConcurrencyInput{
+		FunctionName:                 aws.String("busy"),
+		ReservedConcurrentExecutions: aws.Int32(5),
+	})
+	if err != nil {
+		t.Fatalf("PutFunctionConcurrency: %v", err)
+	}
+
+	if put.ReservedConcurrentExecutions == nil || *put.ReservedConcurrentExecutions != 5 {
+		t.Fatalf("Put ReservedConcurrentExecutions = %v, want 5", put.ReservedConcurrentExecutions)
+	}
+
+	got, err := client.GetFunctionConcurrency(ctx, &awslambda.GetFunctionConcurrencyInput{
+		FunctionName: aws.String("busy"),
+	})
+	if err != nil {
+		t.Fatalf("GetFunctionConcurrency: %v", err)
+	}
+
+	if got.ReservedConcurrentExecutions == nil || *got.ReservedConcurrentExecutions != 5 {
+		t.Fatalf("Get ReservedConcurrentExecutions = %v, want 5", got.ReservedConcurrentExecutions)
+	}
+
+	if _, err := client.DeleteFunctionConcurrency(ctx, &awslambda.DeleteFunctionConcurrencyInput{
+		FunctionName: aws.String("busy"),
+	}); err != nil {
+		t.Fatalf("DeleteFunctionConcurrency: %v", err)
+	}
+
+	if _, err := client.GetFunctionConcurrency(ctx, &awslambda.GetFunctionConcurrencyInput{
+		FunctionName: aws.String("busy"),
+	}); err == nil {
+		t.Fatal("GetFunctionConcurrency after delete returned nil error, want NotFound")
+	}
+}
+
+func TestSDKLambdaLayersRoundtrip(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	pub, err := client.PublishLayerVersion(ctx, &awslambda.PublishLayerVersionInput{
+		LayerName:          aws.String("deps"),
+		Description:        aws.String("shared deps"),
+		CompatibleRuntimes: []lambdatypes.Runtime{lambdatypes.RuntimePython39},
+		Content: &lambdatypes.LayerVersionContentInput{
+			ZipFile: []byte("layer-zip"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishLayerVersion: %v", err)
+	}
+
+	if pub.Version != 1 {
+		t.Fatalf("Version = %d, want 1", pub.Version)
+	}
+
+	if aws.ToString(pub.LayerVersionArn) == "" {
+		t.Fatal("LayerVersionArn empty")
+	}
+
+	if pub.Content == nil || pub.Content.CodeSize == 0 {
+		t.Fatalf("Content = %+v, want non-zero CodeSize", pub.Content)
+	}
+
+	got, err := client.GetLayerVersion(ctx, &awslambda.GetLayerVersionInput{
+		LayerName:     aws.String("deps"),
+		VersionNumber: aws.Int64(1),
+	})
+	if err != nil {
+		t.Fatalf("GetLayerVersion: %v", err)
+	}
+
+	if got.Version != 1 || aws.ToString(got.Description) != "shared deps" {
+		t.Fatalf("GetLayerVersion = %+v, want version 1 / shared deps", got)
+	}
+
+	lv, err := client.ListLayerVersions(ctx, &awslambda.ListLayerVersionsInput{
+		LayerName: aws.String("deps"),
+	})
+	if err != nil {
+		t.Fatalf("ListLayerVersions: %v", err)
+	}
+
+	if len(lv.LayerVersions) != 1 || lv.LayerVersions[0].Version != 1 {
+		t.Fatalf("LayerVersions = %+v, want one version 1", lv.LayerVersions)
+	}
+
+	ll, err := client.ListLayers(ctx, &awslambda.ListLayersInput{})
+	if err != nil {
+		t.Fatalf("ListLayers: %v", err)
+	}
+
+	if len(ll.Layers) != 1 || aws.ToString(ll.Layers[0].LayerName) != "deps" {
+		t.Fatalf("Layers = %+v, want one named deps", ll.Layers)
+	}
+
+	if ll.Layers[0].LatestMatchingVersion == nil || ll.Layers[0].LatestMatchingVersion.Version != 1 {
+		t.Fatalf("LatestMatchingVersion = %+v, want version 1", ll.Layers[0].LatestMatchingVersion)
+	}
+
+	if _, err := client.DeleteLayerVersion(ctx, &awslambda.DeleteLayerVersionInput{
+		LayerName:     aws.String("deps"),
+		VersionNumber: aws.Int64(1),
+	}); err != nil {
+		t.Fatalf("DeleteLayerVersion: %v", err)
+	}
+
+	if _, err := client.GetLayerVersion(ctx, &awslambda.GetLayerVersionInput{
+		LayerName:     aws.String("deps"),
+		VersionNumber: aws.Int64(1),
+	}); err == nil {
+		t.Fatal("GetLayerVersion after delete returned nil error, want NotFound")
+	}
+}

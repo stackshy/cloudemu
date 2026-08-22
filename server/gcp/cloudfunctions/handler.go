@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -47,6 +48,13 @@ const (
 	// actionUploadSource is the collection action a generated upload URL points
 	// back at; the source zip is PUT here.
 	actionUploadSource = "uploadSource"
+	// actionCall is the synchronous-invoke action.
+	actionCall = "call"
+	// actionGenerateUploadURL mints an upload URL for a source deploy.
+	actionGenerateUploadURL = "generateUploadUrl"
+	// actionGetIamPolicy / actionSetIamPolicy are the IAM invoker-policy verbs.
+	actionGetIamPolicy = "getIamPolicy"
+	actionSetIamPolicy = "setIamPolicy"
 )
 
 // Handler serves GCP Cloud Functions v1 REST requests against a serverless
@@ -57,11 +65,18 @@ type Handler struct {
 	// and create (which consumes the staged bytes into the function's Code). It
 	// is bounded and FIFO-evicting so an abandoned deploy can't grow memory.
 	uploads *uploadStaging
+	// mu guards policies.
+	mu sync.RWMutex
+	// policies stores the IAM policy set via setIamPolicy, keyed by the function's
+	// canonical resource name. CloudEmu does not enforce IAM; the policy is stored
+	// verbatim so Terraform's setIamPolicy → getIamPolicy round-trips (the standard
+	// way to grant roles/cloudfunctions.invoker to allUsers for a public function).
+	policies map[string]*iamPolicy
 }
 
 // New returns a Cloud Functions handler backed by fn.
 func New(fn sdrv.Serverless) *Handler {
-	return &Handler{fn: fn, uploads: newUploadStaging()}
+	return &Handler{fn: fn, uploads: newUploadStaging(), policies: make(map[string]*iamPolicy)}
 }
 
 // Matches accepts paths that look like Cloud Functions v1: either an LRO poll
@@ -117,18 +132,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if parts.action == "call" && parts.name != "" {
-		h.serveCall(w, r, parts)
-		return
-	}
-
-	if parts.action == "generateUploadUrl" {
-		h.generateUploadURL(w, r, parts)
-		return
-	}
-
-	if parts.action == actionUploadSource {
-		h.uploadSource(w, r)
+	if h.serveAction(w, r, parts) {
 		return
 	}
 
@@ -138,6 +142,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.serveCollection(w, r, parts)
+}
+
+// serveAction dispatches the ":action" verbs (call, generateUploadUrl,
+// uploadSource, get/setIamPolicy). It returns true when it handled the request;
+// false lets ServeHTTP fall through to the plain resource/collection routes.
+func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, p functionPath) bool {
+	switch p.action {
+	case actionCall:
+		if p.name == "" {
+			return false
+		}
+
+		h.serveCall(w, r, p)
+	case actionGetIamPolicy, actionSetIamPolicy:
+		if p.name == "" {
+			return false
+		}
+
+		h.serveIamPolicy(w, r, p)
+	case actionGenerateUploadURL:
+		h.generateUploadURL(w, r, p)
+	case actionUploadSource:
+		h.uploadSource(w, r)
+	default:
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, p functionPath) {

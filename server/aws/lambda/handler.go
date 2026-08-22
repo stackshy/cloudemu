@@ -8,9 +8,9 @@
 // ListVersionsByFunction, the alias lifecycle (create/get/list/update/
 // delete), and resource policies (AddPermission / GetPolicy /
 // RemovePermission), and tagging (TagResource / UntagResource / ListTags at
-// the /2017-03-31/tags prefix). Layers, concurrency configs, and event source
-// mappings remain deferred — the driver supports some of them but the wire
-// surface is not yet wired through.
+// the /2017-03-31/tags prefix). Reserved concurrency (Put/Get/Delete
+// FunctionConcurrency), layers (Publish/Get/List/Delete layer versions and
+// ListLayers), and event source mappings are also wired through.
 package lambda
 
 import (
@@ -38,6 +38,23 @@ const tagsPrefix = "/2017-03-31/tags"
 // esmPrefix is the Lambda event-source-mapping API prefix (SQS/DynamoDB-stream
 // -> Lambda triggers). Its own version prefix, so it needs a Matches clause.
 const esmPrefix = "/2015-03-31/event-source-mappings"
+
+// Reserved-concurrency prefixes. AWS versions Put/DeleteFunctionConcurrency
+// under 2017-10-31 and GetFunctionConcurrency under 2019-09-30, all on the
+// {name}/concurrency sub-resource — each needs its own Matches clause.
+const (
+	concurrencyWritePrefix = "/2017-10-31/functions" // Put + Delete
+	concurrencyReadPrefix  = "/2019-09-30/functions" // Get
+	concurrencySuffix      = "/concurrency"
+)
+
+// layersPrefix is the Lambda layers API prefix. Layers are a sibling of
+// functions (not a function sub-resource), so they route on their own prefix.
+const layersPrefix = "/2018-10-31/layers"
+
+// subVersions is the "versions" path segment shared by the function-versions
+// route (/functions/{name}/versions) and the layer-versions routes.
+const subVersions = "versions"
 
 const (
 	contentTypeJSON = "application/json"
@@ -78,7 +95,10 @@ func New(fn sdrv.Serverless) *Handler {
 func (*Handler) Matches(r *http.Request) bool {
 	return strings.HasPrefix(r.URL.Path, pathPrefix) ||
 		strings.HasPrefix(r.URL.Path, tagsPrefix) ||
-		strings.HasPrefix(r.URL.Path, esmPrefix)
+		strings.HasPrefix(r.URL.Path, esmPrefix) ||
+		strings.HasPrefix(r.URL.Path, concurrencyWritePrefix) ||
+		strings.HasPrefix(r.URL.Path, concurrencyReadPrefix) ||
+		strings.HasPrefix(r.URL.Path, layersPrefix)
 }
 
 // ServeHTTP dispatches Lambda operations based on path shape and method.
@@ -87,17 +107,7 @@ func (*Handler) Matches(r *http.Request) bool {
 //	/2015-03-31/functions/{name}                GET=get, DELETE=delete
 //	/2015-03-31/functions/{name}/invocations    POST=invoke
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
-		arn := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, tagsPrefix), "/")
-		h.serveTags(w, r, arn)
-
-		return
-	}
-
-	if strings.HasPrefix(r.URL.Path, esmPrefix) {
-		uuid := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, esmPrefix), "/")
-		h.serveEventSourceMappings(w, r, uuid)
-
+	if h.routePrefixed(w, r) {
 		return
 	}
 
@@ -137,6 +147,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// routePrefixed serves the Lambda sub-APIs that live on their own version
+// prefix (tags, event-source-mappings, layers, reserved concurrency). It
+// returns true when it has handled the request, false to fall through to the
+// /2015-03-31/functions control plane.
+func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
+	switch {
+	case strings.HasPrefix(r.URL.Path, tagsPrefix):
+		arn := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, tagsPrefix), "/")
+		h.serveTags(w, r, arn)
+	case strings.HasPrefix(r.URL.Path, esmPrefix):
+		uuid := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, esmPrefix), "/")
+		h.serveEventSourceMappings(w, r, uuid)
+	case strings.HasPrefix(r.URL.Path, layersPrefix):
+		h.serveLayers(w, r)
+	default:
+		name, ok := concurrencyFunctionName(r.URL.Path)
+		if !ok {
+			return false
+		}
+
+		h.serveConcurrency(w, r, name)
+	}
+
+	return true
+}
+
 // serveSubresource dispatches /functions/{name}/{sub} paths.
 func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name, sub string) {
 	switch sub {
@@ -144,7 +180,7 @@ func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name,
 		h.serveInvoke(w, r, name)
 	case "configuration":
 		h.serveConfiguration(w, r, name)
-	case "versions":
+	case subVersions:
 		h.serveVersions(w, r, name)
 	case "aliases":
 		h.serveAliases(w, r, name)
