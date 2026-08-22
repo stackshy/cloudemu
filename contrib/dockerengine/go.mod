@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.43.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.38
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.37
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.322.0
 	github.com/aws/aws-sdk-go-v2/service/rds v1.124.4
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/stackshy/cloudemu/v2 v2.0.0-00010101000000-000000000000
