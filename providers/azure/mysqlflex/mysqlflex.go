@@ -20,6 +20,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -119,8 +120,8 @@ func copyTags(src map[string]string) map[string]string {
 
 // CreateInstance creates a new MySQL Flexible Server.
 //
-//nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
+//nolint:gocritic,gocyclo // cfg matches the driver signature; linear field-defaulting plus the engine hook.
+func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "server name is required")
 	}
@@ -157,6 +158,8 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		engine = defaultEngine
 	}
 
+	cfg.Engine = engine
+
 	region := cfg.AvailabilityZone
 	if region == "" {
 		region = m.opts.Region
@@ -184,6 +187,13 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		StandbyAvailabilityZone: cfg.StandbyAvailabilityZone,
 		CreatedAt:               m.opts.Clock.Now().UTC(),
 		Tags:                    copyTags(cfg.Tags),
+	}
+
+	// Opt-in: back the server with a real MySQL, replacing the synthetic
+	// <name>.mysql.database.azure.com FQDN with the real host:port a client
+	// connects to. No-op when no engine is wired in.
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
+		return nil, err
 	}
 
 	m.instances.Set(cfg.ID, inst)
@@ -280,14 +290,21 @@ func (m *Mock) ModifyInstance(
 }
 
 // DeleteInstance removes a server.
-func (m *Mock) DeleteInstance(_ context.Context, id string) error {
+func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.instances.Delete(id) {
+	inst, ok := m.instances.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "MySQL Flexible Server %q not found", id)
 	}
 
+	// Tear down the real database backing the server, if any.
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
+		return err
+	}
+
+	m.instances.Delete(id)
 	m.deleteChildren(id)
 
 	return nil
