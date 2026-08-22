@@ -550,20 +550,49 @@ func setInt(dst, v *int) {
 // DeleteCluster removes a cluster and cascade-deletes its children, tearing down
 // the real Postgres database backing it when a DatabaseEngine is wired in.
 func (m *Mock) DeleteCluster(ctx context.Context, rg, name string) error {
+	key := clusterKey(rg, name)
+
+	m.mu.Lock()
+	if _, ok := m.clusters.Get(key); !ok {
+		m.mu.Unlock()
+
+		return cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", name)
+	}
+
+	// No engine wired: keep the original single-lock flow.
+	if m.opts.DatabaseEngine == nil {
+		defer m.mu.Unlock()
+		m.deleteClusterLocked(rg, name)
+
+		return nil
+	}
+	m.mu.Unlock()
+
+	// Engine wired: tear down the real coordinator database WITHOUT holding the
+	// provider lock (it is a real container/process teardown), then remove the
+	// row under a re-acquired lock — mirroring the create path and the RDS
+	// reserve→provision→finalize pattern so a delete never stalls concurrent reads.
+	inst := rdsdriver.Instance{ID: name, Engine: enginePostgres}
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.deleteClusterLocked(rg, name)
 
+	return nil
+}
+
+// deleteClusterLocked removes the cluster row + its children and fixes replica
+// links. The caller holds the write lock. A cluster already gone (a concurrent
+// delete won the race after the engine teardown) is a no-op.
+func (m *Mock) deleteClusterLocked(rg, name string) {
 	key := clusterKey(rg, name)
 
 	c, ok := m.clusters.Get(key)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", name)
-	}
-
-	// Tear down the real database backing the coordinator, if any.
-	inst := rdsdriver.Instance{ID: name, Engine: enginePostgres}
-	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
-		return err
+		return
 	}
 
 	delete(m.coordinatorHosts, key)
@@ -583,8 +612,6 @@ func (m *Mock) DeleteCluster(ctx context.Context, rg, name string) error {
 	deletePrefixed(m.privateEPs, prefix)
 	deletePrefixed(m.serverConfigs, prefix)
 	m.clusters.Delete(key)
-
-	return nil
 }
 
 // clearReplicaSourcesLocked clears SourceResourceID/SourceLocation on each
