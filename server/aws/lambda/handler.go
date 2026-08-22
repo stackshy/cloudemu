@@ -212,6 +212,8 @@ func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name,
 		h.serveInvoke(w, r, name)
 	case "configuration":
 		h.serveConfiguration(w, r, name)
+	case "code":
+		h.serveCode(w, r, name)
 	case subVersions:
 		h.serveVersions(w, r, name)
 	case "aliases":
@@ -379,6 +381,52 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	info, err := h.fn.UpdateFunction(r.Context(), name, cfg)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toConfiguration(info))
+}
+
+// serveCode handles PUT .../{name}/code (UpdateFunctionCode). It resolves the
+// new deployment package the same way create does — an inline ZipFile or an
+// S3-sourced artifact fetched from the in-process S3 backend, with any layer
+// content overlaid — then redeploys it to the engine via the provider so
+// update-function-code runs the new real code instead of leaving the stale
+// deployment in place. A request with no usable source is a hard error.
+func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+		return
+	}
+
+	var req updateFunctionCodeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	code, err := h.resolveCode(r.Context(), &functionCode{
+		ZipFile: req.ZipFile, S3Bucket: req.S3Bucket, S3Key: req.S3Key,
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	code, err = h.overlayLayers(code, req.Layers)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if len(code) == 0 {
+		writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
+			"UpdateFunctionCode requires a deployment package (ZipFile or S3Bucket/S3Key)")
+		return
+	}
+
+	info, err := h.fn.UpdateFunction(r.Context(), name, sdrv.FunctionConfig{Name: name, Code: code})
 	if err != nil {
 		writeErr(w, err)
 		return

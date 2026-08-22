@@ -37,8 +37,13 @@ func (e *recordingEngine) Deploy(_ context.Context, fn config.FunctionDeployment
 	return nil
 }
 
-func (e *recordingEngine) Invoke(_ context.Context, _ string, _ []byte) (config.FunctionResult, error) {
-	return config.FunctionResult{}, nil
+func (e *recordingEngine) Invoke(_ context.Context, name string, _ []byte) (config.FunctionResult, error) {
+	// Echo the currently-deployed package so a test can observe which code
+	// version is live after an update.
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return config.FunctionResult{Payload: e.deployed[name]}, nil
 }
 
 func (e *recordingEngine) Remove(_ context.Context, _ string) error { return nil }

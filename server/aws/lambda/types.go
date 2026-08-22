@@ -36,6 +36,19 @@ type updateFunctionConfigurationRequest struct {
 	Environment *envEnvelope `json:"Environment"`
 }
 
+// updateFunctionCodeRequest captures the deployment-package fields of
+// UpdateFunctionCode (PUT .../{name}/code). Like CreateFunction, an inline
+// ZipFile arrives base64-decoded into []byte, or an uploaded artifact is
+// referenced via S3Bucket/S3Key. Layers, when present, are overlaid into the
+// package the same way the create path does.
+type updateFunctionCodeRequest struct {
+	ZipFile         []byte   `json:"ZipFile"`
+	S3Bucket        string   `json:"S3Bucket"`
+	S3Key           string   `json:"S3Key"`
+	S3ObjectVersion string   `json:"S3ObjectVersion"`
+	Layers          []string `json:"Layers"`
+}
+
 // publishVersionRequest is the body of PublishVersion (POST .../{name}/versions).
 type publishVersionRequest struct {
 	Description string `json:"Description"`

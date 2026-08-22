@@ -508,6 +508,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, p functionPath)
 		Timeout:     parseTimeoutSeconds(body.Timeout),
 	}
 
+	// A PATCH that carries a new source must redeploy the real code to the engine;
+	// resolve it exactly as create does so the new bytes land in cfg.Code and the
+	// staged upload token is consumed. A metadata-only PATCH carries no source, so
+	// cfg.Code stays empty and the provider leaves the deployed code untouched.
+	if body.SourceUploadURL != "" || body.SourceArchiveURL != "" {
+		if !h.loadSource(w, r, &body, &cfg) {
+			return
+		}
+	}
+
 	info, err := h.fn.UpdateFunction(r.Context(), p.name, cfg)
 	if err != nil {
 		writeErr(w, err)

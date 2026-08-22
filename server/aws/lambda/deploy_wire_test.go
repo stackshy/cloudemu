@@ -40,8 +40,17 @@ func (e *recordEngine) Deploy(_ context.Context, fn config.FunctionDeployment) e
 	return nil
 }
 
-func (e *recordEngine) Invoke(_ context.Context, _ string, _ []byte) (config.FunctionResult, error) {
-	return e.result, nil
+func (e *recordEngine) Invoke(_ context.Context, name string, _ []byte) (config.FunctionResult, error) {
+	if len(e.result.Payload) > 0 {
+		return e.result, nil
+	}
+
+	// With no canned result, echo the currently-deployed package so a test can
+	// observe which code version is live after an update.
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return config.FunctionResult{Payload: e.deployed[name]}, nil
 }
 
 func (e *recordEngine) Remove(_ context.Context, _ string) error { return nil }
