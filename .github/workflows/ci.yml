@@ -70,6 +70,32 @@ jobs:
           go build ./...
           go vet ./...
 
+  contrib-realengine:
+    name: Contrib (realengine)
+    runs-on: ubuntu-latest
+    # Separate Go module (keeps embedded-postgres out of the core module). Build
+    # + vet only — the real-Postgres tests fetch a Postgres binary and run it,
+    # so they are executed on demand (go test ./...), not on every CI run.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-realengine-${{ hashFiles('contrib/realengine/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-realengine-
+      - name: build & vet
+        working-directory: contrib/realengine
+        run: |
+          go build ./...
+          go vet ./...
+
   test:
     name: Test
     runs-on: ubuntu-latest
