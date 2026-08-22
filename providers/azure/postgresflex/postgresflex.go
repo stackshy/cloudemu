@@ -129,21 +129,63 @@ func copyTags(src map[string]string) map[string]string {
 	return out
 }
 
-// CreateInstance creates a new Postgres Flex flexible server.
+// CreateInstance creates a new Postgres Flex flexible server. The in-memory row
+// is reserved under the provider lock, then the (potentially slow, cold-start)
+// engine provisioning runs WITHOUT the lock so concurrent reads are never
+// blocked, and only the resulting reachable host:port is written back afterward.
 //
-//nolint:gocritic,gocyclo // cfg matches the driver interface signature; one default-resolution branch per field, plus the engine hook.
+//nolint:gocritic // cfg matches the driver interface signature.
 func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "server name is required")
 	}
 
+	// Resolve the engine up front: Azure PostgreSQL Flex is always Postgres, and
+	// dbengine matches the family off cfg.Engine (which may arrive empty).
+	if cfg.Engine == "" {
+		cfg.Engine = defaultEngine
+	}
+
+	inst, err := m.reserveInstance(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
+		m.rollbackReserved(cfg.ID)
+		return nil, err
+	}
+
+	out := m.finalizeInstance(cfg.ID, inst)
+
+	m.emitServerMetrics(cfg.ID, cpuMetricRunning, connRunning)
+
+	return &out, nil
+}
+
+// reserveInstance builds the server with its synthetic FQDN and stores it under
+// the lock, returning a copy for provisioning.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func (m *Mock) reserveInstance(cfg rdsdriver.InstanceConfig) (rdsdriver.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if _, ok := m.instances.Get(cfg.ID); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "Postgres Flex server %q already exists", cfg.ID)
+		return rdsdriver.Instance{}, cerrors.Newf(cerrors.AlreadyExists, "Postgres Flex server %q already exists", cfg.ID)
 	}
 
+	inst := m.newInstance(cfg)
+	m.instances.Set(cfg.ID, inst)
+
+	return inst, nil
+}
+
+// newInstance builds the server record with defaulted fields and the synthetic
+// FQDN. The caller holds the lock.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 	port := cfg.Port
 	if port == 0 {
 		port = defaultPort
@@ -164,20 +206,15 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		sku = defaultSKU
 	}
 
-	engine := cfg.Engine
-	if engine == "" {
-		engine = defaultEngine
-	}
-
 	region := cfg.AvailabilityZone
 	if region == "" {
 		region = m.opts.Region
 	}
 
-	inst := rdsdriver.Instance{
+	return rdsdriver.Instance{
 		ID:                      cfg.ID,
 		ARN:                     flexibleServerResourceID(region, cfg.ID),
-		Engine:                  engine,
+		Engine:                  cfg.Engine,
 		EngineVersion:           cfg.EngineVersion,
 		InstanceClass:           sku,
 		AllocatedStorage:        storage,
@@ -197,22 +234,32 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		CreatedAt:               m.opts.Clock.Now().UTC(),
 		Tags:                    copyTags(cfg.Tags),
 	}
+}
 
-	// Opt-in: back the server with a real Postgres, replacing the synthetic
-	// FQDN with the real host:port a client connects to. Azure PostgreSQL Flex
-	// is always Postgres, so pass the resolved engine (cfg.Engine may be empty).
-	cfg.Engine = engine
-	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
-		return nil, err
+// finalizeInstance writes the engine's reachable host:port back onto the reserved
+// row under the lock and returns the finalized server copy.
+//
+//nolint:gocritic // inst is finalized and returned by value on purpose.
+func (m *Mock) finalizeInstance(id string, inst rdsdriver.Instance) rdsdriver.Instance {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if stored, ok := m.instances.Get(id); ok {
+		stored.Endpoint = inst.Endpoint
+		stored.Port = inst.Port
+		m.instances.Set(id, stored)
+		inst = stored
 	}
 
-	m.instances.Set(cfg.ID, inst)
+	return inst
+}
 
-	m.emitServerMetrics(cfg.ID, cpuMetricRunning, connRunning)
+// rollbackReserved removes the reserved row when provisioning fails.
+func (m *Mock) rollbackReserved(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	out := inst
-
-	return &out, nil
+	m.instances.Delete(id)
 }
 
 // DescribeInstances returns all servers if ids is empty, else only matching ones.
@@ -250,7 +297,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 //
 //nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
-	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
+	ctx context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -258,6 +305,12 @@ func (m *Mock) ModifyInstance(
 	inst, ok := m.instances.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "Postgres Flex server %q not found", id)
+	}
+
+	// Rotate the administrator password on the backing engine (a no-op when the
+	// request carries none) so the new credential actually authenticates.
+	if err := dbengine.RotatePassword(ctx, m.opts.DatabaseEngine, &inst, input.MasterUserPassword); err != nil {
+		return nil, err
 	}
 
 	if input.InstanceClass != "" {

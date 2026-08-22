@@ -83,6 +83,13 @@ type Mock struct {
 	// mu) so its member instances can provision the cluster's shared database.
 	clusterCreds map[string]clusterCred
 
+	// rootPasswords remembers each standalone instance's master password (guarded
+	// by mu) so a snapshot restore can re-provision a reachable database with the
+	// original credentials, and a password rotation can be replayed. The emulator
+	// enforces no auth, so this is local state, not a secret store; it is never
+	// logged.
+	rootPasswords map[string]string
+
 	opts           *config.Options
 	subnetResolver SubnetResolver
 	monitoring     mondriver.Monitoring
@@ -104,6 +111,7 @@ func New(opts *config.Options) *Mock {
 		clusterEndpoints:   memstore.New[rdsdriver.ClusterEndpoint](),
 		globalClusters:     memstore.New[rdsdriver.GlobalCluster](),
 		clusterCreds:       map[string]clusterCred{},
+		rootPasswords:      map[string]string{},
 		opts:               opts,
 	}
 }
@@ -238,9 +246,24 @@ func copyTags(src map[string]string) map[string]string {
 	return out
 }
 
-// CreateInstance creates a new database instance.
+// createPlan carries what the engine provision needs after the provider lock is
+// released. For a cluster member it holds the cluster's shared engine key and
+// credentials (a member carries none of its own); for a standalone instance it
+// is the zero value and the instance's own cfg is used.
+type createPlan struct {
+	clusterMember bool
+	engine        string
+	dbName        string
+	username      string
+	password      string
+}
+
+// CreateInstance creates a new database instance. The in-memory row is reserved
+// under the provider lock, then the (potentially slow, cold-start) engine
+// provisioning runs WITHOUT the lock so concurrent reads are never blocked, and
+// only the resulting reachable host:port is written back under the lock.
 //
-//nolint:gocritic,gocyclo // cfg matches the driver interface signature; complexity comes from sequential field defaulting.
+//nolint:gocritic // cfg matches the driver interface signature.
 func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBInstanceIdentifier is required")
@@ -250,19 +273,60 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		return nil, cerrors.New(cerrors.InvalidArgument, "Engine is required")
 	}
 
+	inst, plan, err := m.reserveInstance(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := m.runCreateProvision(ctx, &inst, &cfg, plan); err != nil {
+		m.rollbackReserved(cfg.ID, cfg.ClusterID)
+		return nil, err
+	}
+
+	out := m.finalizeInstance(cfg.ID, cfg.ClusterID, inst, plan)
+
+	m.emitInstanceMetrics(cfg.ID, cfg.Engine, cpuMetricRunning, connectionsRunning)
+
+	return &out, nil
+}
+
+// reserveInstance validates, builds the instance with its synthetic endpoint,
+// stores it (and, for a member, joins the cluster) under the lock, and returns
+// the provisioning plan snapshotted while the lock is held.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func (m *Mock) reserveInstance(cfg rdsdriver.InstanceConfig) (rdsdriver.Instance, createPlan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if _, ok := m.instances.Get(cfg.ID); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "DB instance %q already exists", cfg.ID)
+		return rdsdriver.Instance{}, createPlan{}, cerrors.Newf(cerrors.AlreadyExists, "DB instance %q already exists", cfg.ID)
 	}
 
 	if cfg.ClusterID != "" {
 		if _, ok := m.clusters.Get(cfg.ClusterID); !ok {
-			return nil, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", cfg.ClusterID)
+			return rdsdriver.Instance{}, createPlan{}, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", cfg.ClusterID)
 		}
 	}
 
+	inst := m.newInstance(cfg)
+	m.instances.Set(cfg.ID, inst)
+	m.rootPasswords[cfg.ID] = cfg.MasterUserPassword
+
+	if cfg.ClusterID != "" {
+		cluster, _ := m.clusters.Get(cfg.ClusterID)
+		cluster.Members = append(cluster.Members, cfg.ID)
+		m.clusters.Set(cfg.ClusterID, cluster)
+	}
+
+	return inst, m.planProvision(cfg), nil
+}
+
+// newInstance builds the instance record with defaulted fields and the synthetic
+// endpoint. The caller holds the lock.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 	port := cfg.Port
 	if port == 0 {
 		port = defaultPortFor(cfg.Engine)
@@ -283,7 +347,7 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		instanceClass = defaultInstanceClass
 	}
 
-	inst := rdsdriver.Instance{
+	return rdsdriver.Instance{
 		ID:                   cfg.ID,
 		ARN:                  instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
 		Engine:               cfg.Engine,
@@ -307,33 +371,100 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		CreatedAt:            m.opts.Clock.Now().UTC(),
 		Tags:                 copyTags(cfg.Tags),
 	}
+}
 
-	// Opt-in: back the instance with a real database engine, replacing the
-	// synthetic endpoint with the real host:port a client connects to. An Aurora
-	// cluster member carries no master credentials of its own (they live on the
-	// cluster) and all members share ONE database, so it is provisioned through
-	// the cluster-scoped path; a standalone instance uses its own config.
-	if m.opts.DatabaseEngine != nil && cfg.ClusterID != "" {
-		if err := m.provisionClusterMember(ctx, &inst, cfg.ClusterID); err != nil {
-			return nil, err
+// planProvision snapshots, under the caller's lock, what runCreateProvision needs
+// once the lock is released. An Aurora cluster member is backed by the cluster's
+// shared database (keyed and named by the cluster ID) using the cluster's own
+// credentials; a member whose cluster has no engine-backable family, or when no
+// engine is wired in, provisions nothing and keeps its synthetic endpoint.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func (m *Mock) planProvision(cfg rdsdriver.InstanceConfig) createPlan {
+	if cfg.ClusterID == "" {
+		return createPlan{}
+	}
+
+	cluster, ok := m.clusters.Get(cfg.ClusterID)
+	if !ok || m.opts.DatabaseEngine == nil ||
+		(!dbengine.IsPostgresFamily(cluster.Engine) && !dbengine.IsMySQLFamily(cluster.Engine)) {
+		return createPlan{}
+	}
+
+	creds := m.clusterCreds[cfg.ClusterID]
+
+	return createPlan{
+		clusterMember: true,
+		engine:        cluster.Engine,
+		dbName:        cfg.ClusterID,
+		username:      creds.user,
+		password:      creds.pass,
+	}
+}
+
+// runCreateProvision backs the instance with the real engine WITHOUT holding the
+// provider lock, mutating the caller's local copy's endpoint/port.
+func (m *Mock) runCreateProvision(
+	ctx context.Context, inst *rdsdriver.Instance, cfg *rdsdriver.InstanceConfig, plan createPlan,
+) error {
+	if plan.clusterMember {
+		memberCfg := rdsdriver.InstanceConfig{
+			ID:                 plan.dbName,
+			Engine:             plan.engine,
+			DBName:             plan.dbName,
+			MasterUsername:     plan.username,
+			MasterUserPassword: plan.password,
 		}
-	} else if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
-		return nil, err
+
+		return dbengine.Provision(ctx, m.opts.DatabaseEngine, inst, &memberCfg)
 	}
 
-	m.instances.Set(cfg.ID, inst)
+	return dbengine.Provision(ctx, m.opts.DatabaseEngine, inst, cfg)
+}
 
-	if cfg.ClusterID != "" {
-		cluster, _ := m.clusters.Get(cfg.ClusterID)
-		cluster.Members = append(cluster.Members, cfg.ID)
-		m.clusters.Set(cfg.ClusterID, cluster)
+// finalizeInstance writes the engine's reachable host:port back onto the reserved
+// row (and, for a provisioned member, points the cluster endpoints at it) under
+// the lock, returning the finalized instance.
+//
+//nolint:gocritic // inst is finalized and returned by value on purpose.
+func (m *Mock) finalizeInstance(id, clusterID string, inst rdsdriver.Instance, plan createPlan) rdsdriver.Instance {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if stored, ok := m.instances.Get(id); ok {
+		stored.Endpoint = inst.Endpoint
+		stored.Port = inst.Port
+		m.instances.Set(id, stored)
+		inst = stored
 	}
 
-	m.emitInstanceMetrics(cfg.ID, cfg.Engine, cpuMetricRunning, connectionsRunning)
+	if plan.clusterMember {
+		if cluster, ok := m.clusters.Get(clusterID); ok {
+			cluster.Endpoint = inst.Endpoint
+			cluster.ReaderEndpoint = inst.Endpoint
+			cluster.Port = inst.Port
+			m.clusters.Set(clusterID, cluster)
+		}
+	}
 
-	out := inst
+	return inst
+}
 
-	return &out, nil
+// rollbackReserved undoes reserveInstance when provisioning fails: it removes the
+// reserved row, its remembered password, and any cluster membership.
+func (m *Mock) rollbackReserved(id, clusterID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.instances.Delete(id)
+	delete(m.rootPasswords, id)
+
+	if clusterID != "" {
+		if cluster, ok := m.clusters.Get(clusterID); ok {
+			cluster.Members = removeString(cluster.Members, id)
+			m.clusters.Set(clusterID, cluster)
+		}
+	}
 }
 
 // DescribeInstances returns all instances if ids is empty, else only matching ones.
@@ -373,7 +504,7 @@ func (m *Mock) DescribeInstances(_ context.Context, ids []string) ([]rdsdriver.I
 //
 //nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyInstance(
-	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
+	ctx context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -381,6 +512,12 @@ func (m *Mock) ModifyInstance(
 	inst, ok := m.instances.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "DB instance %q not found", id)
+	}
+
+	// Rotate the master password on the backing engine so the new credential
+	// actually authenticates.
+	if err := m.rotateEnginePassword(ctx, &inst, input.MasterUserPassword); err != nil {
+		return nil, err
 	}
 
 	if input.InstanceClass != "" {
@@ -416,6 +553,24 @@ func (m *Mock) ModifyInstance(
 	out := inst
 
 	return &out, nil
+}
+
+// rotateEnginePassword re-runs the engine role upsert so a new master password
+// authenticates. A cluster member shares the cluster-owned database whose
+// password is managed at the cluster scope, so instance-level rotation applies
+// only to standalone instances; an empty password is a no-op.
+func (m *Mock) rotateEnginePassword(ctx context.Context, inst *rdsdriver.Instance, newPassword string) error {
+	if newPassword == "" || inst.ClusterID != "" {
+		return nil
+	}
+
+	if err := dbengine.RotatePassword(ctx, m.opts.DatabaseEngine, inst, newPassword); err != nil {
+		return err
+	}
+
+	m.rootPasswords[inst.ID] = newPassword
+
+	return nil
 }
 
 // DeleteInstance removes an instance.
@@ -463,6 +618,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	}
 
 	m.instances.Delete(id)
+	delete(m.rootPasswords, id)
 
 	return nil
 }
@@ -576,43 +732,6 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 	return &out, nil
 }
 
-// provisionClusterMember backs an Aurora cluster member with the cluster's
-// shared real database and points the cluster's reader/writer endpoints at the
-// reachable host. All members of one cluster share a SINGLE engine database,
-// keyed and named by the cluster ID (deterministic), provisioned with the
-// cluster's master credentials — an Aurora instance carries none of its own.
-// The shared database is created on the first member and torn down once, on
-// DeleteCluster; a per-member DeleteInstance deprovision is a harmless no-op
-// because the engine is keyed by the cluster, not the member. A cluster whose
-// engine family has no backing keeps its synthetic endpoints. The caller holds
-// m.mu.
-func (m *Mock) provisionClusterMember(ctx context.Context, inst *rdsdriver.Instance, clusterID string) error {
-	cluster, ok := m.clusters.Get(clusterID)
-	if !ok || (!dbengine.IsPostgresFamily(cluster.Engine) && !dbengine.IsMySQLFamily(cluster.Engine)) {
-		return nil
-	}
-
-	creds := m.clusterCreds[clusterID]
-	memberCfg := rdsdriver.InstanceConfig{
-		ID:                 clusterID,
-		Engine:             cluster.Engine,
-		DBName:             clusterID,
-		MasterUsername:     creds.user,
-		MasterUserPassword: creds.pass,
-	}
-
-	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, inst, &memberCfg); err != nil {
-		return err
-	}
-
-	cluster.Endpoint = inst.Endpoint
-	cluster.ReaderEndpoint = inst.Endpoint
-	cluster.Port = inst.Port
-	m.clusters.Set(clusterID, cluster)
-
-	return nil
-}
-
 // DescribeClusters returns all clusters if ids is empty, else only matching ones.
 //
 //nolint:dupl // structurally similar to DescribeInstances but operates on a different store/type.
@@ -650,7 +769,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 //
 //nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) ModifyCluster(
-	_ context.Context, id string, input rdsdriver.ModifyInstanceInput,
+	ctx context.Context, id string, input rdsdriver.ModifyInstanceInput,
 ) (*rdsdriver.Cluster, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -658,6 +777,13 @@ func (m *Mock) ModifyCluster(
 	cluster, ok := m.clusters.Get(id)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", id)
+	}
+
+	// An Aurora cluster owns the shared database, so its master password is
+	// rotated at the cluster scope (instance-level rotation skips members). Rotate
+	// the shared engine role so the new credential AWS reports authenticates.
+	if err := m.rotateClusterPassword(ctx, id, cluster.Engine, input.MasterUserPassword); err != nil {
+		return nil, err
 	}
 
 	if input.EngineVersion != "" {
@@ -677,6 +803,26 @@ func (m *Mock) ModifyCluster(
 	out := cluster
 
 	return &out, nil
+}
+
+// rotateClusterPassword re-runs the shared engine role upsert for an Aurora
+// cluster's cluster-scoped master password. An empty password is a no-op.
+func (m *Mock) rotateClusterPassword(ctx context.Context, id, engine, newPassword string) error {
+	if newPassword == "" {
+		return nil
+	}
+
+	creds := m.clusterCreds[id]
+	shared := rdsdriver.Instance{ID: id, Engine: engine, MasterUsername: creds.user}
+
+	if err := dbengine.RotatePassword(ctx, m.opts.DatabaseEngine, &shared, newPassword); err != nil {
+		return err
+	}
+
+	creds.pass = newPassword
+	m.clusterCreds[id] = creds
+
+	return nil
 }
 
 // DeleteCluster removes a cluster (only if it has no members).
@@ -823,9 +969,11 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 	return nil
 }
 
-// RestoreInstanceFromSnapshot creates a new instance from a snapshot.
+// RestoreInstanceFromSnapshot creates a new instance from a snapshot and backs
+// it with a real database (when an engine is wired in) so the restored endpoint
+// is reachable, not a synthetic host that resolves to nothing.
 func (m *Mock) RestoreInstanceFromSnapshot(
-	_ context.Context, input rdsdriver.RestoreInstanceInput,
+	ctx context.Context, input rdsdriver.RestoreInstanceInput,
 ) (*rdsdriver.Instance, error) {
 	if input.NewInstanceID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBInstanceIdentifier is required")
@@ -848,7 +996,15 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		instanceClass = defaultInstanceClass
 	}
 
-	now := m.opts.Clock.Now().UTC()
+	// Inherit the source instance's master login so the restored database is
+	// reachable with the same credentials; fall back to engine defaults when the
+	// source is gone. The password is remembered under the snapshot's source id.
+	var username string
+	if src, ok := m.instances.Get(snap.InstanceID); ok {
+		username = src.MasterUsername
+	}
+
+	password := m.rootPasswords[snap.InstanceID]
 
 	inst := rdsdriver.Instance{
 		ID:               input.NewInstanceID,
@@ -858,14 +1014,28 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		InstanceClass:    instanceClass,
 		AllocatedStorage: snap.AllocatedStorage,
 		StorageType:      defaultStorageType,
+		MasterUsername:   username,
 		Endpoint:         endpointFor(input.NewInstanceID, m.opts.Region, "abcd1234"),
 		Port:             defaultPortFor(snap.Engine),
 		State:            rdsdriver.StateAvailable,
-		CreatedAt:        now,
+		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(input.Tags),
 	}
 
+	// Provision the restored instance's OWN database (keyed by the new id, so it
+	// never aliases the source) through the same engine path CreateInstance uses.
+	restoreCfg := rdsdriver.InstanceConfig{
+		ID:                 input.NewInstanceID,
+		Engine:             snap.Engine,
+		MasterUsername:     username,
+		MasterUserPassword: password,
+	}
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &restoreCfg); err != nil {
+		return nil, err
+	}
+
 	m.instances.Set(input.NewInstanceID, inst)
+	m.rootPasswords[input.NewInstanceID] = password
 
 	m.emitInstanceMetrics(input.NewInstanceID, snap.Engine, cpuMetricRunning, connectionsRunning)
 
@@ -957,9 +1127,11 @@ func (m *Mock) DeleteClusterSnapshot(_ context.Context, id string) error {
 	return nil
 }
 
-// RestoreClusterFromSnapshot creates a new cluster from a cluster snapshot.
+// RestoreClusterFromSnapshot creates a new cluster from a cluster snapshot and
+// provisions its shared real database (when an engine is wired in) so the
+// reported endpoints — and any members added later — reach a real database.
 func (m *Mock) RestoreClusterFromSnapshot(
-	_ context.Context, input rdsdriver.RestoreClusterInput,
+	ctx context.Context, input rdsdriver.RestoreClusterInput,
 ) (*rdsdriver.Cluster, error) {
 	if input.NewClusterID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterIdentifier is required")
@@ -977,22 +1149,49 @@ func (m *Mock) RestoreClusterFromSnapshot(
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "DB cluster %q already exists", input.NewClusterID)
 	}
 
-	now := m.opts.Clock.Now().UTC()
+	// Inherit the source cluster's master credentials so the restored shared
+	// database is reachable and future members provision consistently.
+	creds := m.clusterCreds[snap.ClusterID]
 
 	cluster := rdsdriver.Cluster{
 		ID:             input.NewClusterID,
 		ARN:            clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
 		Engine:         snap.Engine,
 		EngineVersion:  snap.EngineVersion,
+		MasterUsername: creds.user,
 		Endpoint:       endpointFor(input.NewClusterID, m.opts.Region, "cluster"),
 		ReaderEndpoint: endpointFor(input.NewClusterID, m.opts.Region, "cluster-ro"),
 		Port:           defaultPortFor(snap.Engine),
 		State:          rdsdriver.StateAvailable,
-		CreatedAt:      now,
+		CreatedAt:      m.opts.Clock.Now().UTC(),
 		Tags:           copyTags(input.Tags),
 	}
 
+	// Provision the shared database keyed and named by the new cluster id (an
+	// Aurora cluster's members share ONE database), through the same engine path
+	// CreateInstance uses. A no-engine or non-backable family keeps the synthetic
+	// endpoints untouched.
+	shared := rdsdriver.Instance{ID: input.NewClusterID, Engine: snap.Engine}
+	sharedCfg := rdsdriver.InstanceConfig{
+		ID:                 input.NewClusterID,
+		Engine:             snap.Engine,
+		DBName:             input.NewClusterID,
+		MasterUsername:     creds.user,
+		MasterUserPassword: creds.pass,
+	}
+
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &shared, &sharedCfg); err != nil {
+		return nil, err
+	}
+
+	if shared.Endpoint != "" {
+		cluster.Endpoint = shared.Endpoint
+		cluster.ReaderEndpoint = shared.Endpoint
+		cluster.Port = shared.Port
+	}
+
 	m.clusters.Set(input.NewClusterID, cluster)
+	m.clusterCreds[input.NewClusterID] = clusterCred{user: creds.user, pass: creds.pass}
 
 	out := cluster
 

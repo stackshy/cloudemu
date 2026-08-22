@@ -444,16 +444,27 @@ func (m *Mock) CloneInstance(ctx context.Context, sourceID, destID string) (*rds
 
 	clone.VPCSecurityGroups = append([]string(nil), src.VPCSecurityGroups...)
 	clone.Tags = copyTags(src.Tags)
+	// Advertise the clone's own database, not the source's, so a client connecting
+	// by the clone's DBName never lands on the source's physical database.
+	clone.DBName = destID
 
-	// Back the clone with its own real database when an engine is configured,
+	// Back the clone with its OWN real database when an engine is configured,
 	// reusing the source's credentials — otherwise the clone reports a reachable
 	// IP but has no database to connect to.
+	//
+	// The clone's physical database is named after the clone (destID), NOT the
+	// source's DBName: the shared engine resolves the request DBName to a single
+	// physical database, so reusing src.DBName would make the clone alias the
+	// source — writes would corrupt the source and dropping the clone would DROP
+	// the source's database. In the emulator a clone is therefore schema-isolated:
+	// an independent, empty-schema database, not a byte-for-byte data copy of the
+	// source (a real embedded-postgres data copy is out of scope).
 	cloneCfg := rdsdriver.InstanceConfig{
 		ID:                 destID,
 		Engine:             src.Engine,
 		MasterUsername:     src.MasterUsername,
 		MasterUserPassword: m.rootPasswords[sourceID],
-		DBName:             src.DBName,
+		DBName:             destID,
 	}
 	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &clone, &cloneCfg); err != nil {
 		return nil, err

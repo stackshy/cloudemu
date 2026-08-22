@@ -4,6 +4,7 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -90,11 +91,13 @@ func (m *Mock) CopyDBClusterSnapshot(_ context.Context, source, target string, t
 // RestoreDBInstanceToPointInTime creates a new instance cloned from a source
 // instance's current spec. The emulator has no historical timeline, so the
 // restore reflects the source as it is now; RestoreTime is accepted but not
-// replayed.
+// replayed. When an engine is wired in, the restored instance is backed by its
+// OWN real database (keyed by the target id) so the reported endpoint is
+// reachable, not a synthetic host that resolves to nothing.
 //
 //nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) RestoreDBInstanceToPointInTime(
-	_ context.Context, input rdsdriver.RestoreInstanceToPointInTimeInput,
+	ctx context.Context, input rdsdriver.RestoreInstanceToPointInTimeInput,
 ) (*rdsdriver.Instance, error) {
 	if input.TargetInstanceID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "TargetDBInstanceIdentifier is required")
@@ -133,7 +136,22 @@ func (m *Mock) RestoreDBInstanceToPointInTime(
 
 	inst.VPCSecurityGroups = append([]string(nil), src.VPCSecurityGroups...)
 
+	// Provision the restored instance's OWN database (keyed by the target id, so
+	// it never aliases the source) through the same engine path CreateInstance
+	// uses, inheriting the source's master login so it authenticates. A no-engine
+	// or non-backable family keeps the synthetic endpoint untouched.
+	restoreCfg := rdsdriver.InstanceConfig{
+		ID:                 input.TargetInstanceID,
+		Engine:             inst.Engine,
+		MasterUsername:     src.MasterUsername,
+		MasterUserPassword: m.rootPasswords[input.SourceInstanceID],
+	}
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &restoreCfg); err != nil {
+		return nil, err
+	}
+
 	m.instances.Set(inst.ID, inst)
+	m.rootPasswords[inst.ID] = restoreCfg.MasterUserPassword
 
 	m.emitInstanceMetrics(inst.ID, inst.Engine, cpuMetricRunning, connectionsRunning)
 
@@ -143,9 +161,12 @@ func (m *Mock) RestoreDBInstanceToPointInTime(
 }
 
 // RestoreDBClusterToPointInTime creates a new cluster cloned from a source
-// cluster's current spec (no members; caller adds instances afterward).
+// cluster's current spec (no members; caller adds instances afterward). When an
+// engine is wired in, the restored cluster's shared database is provisioned
+// (keyed by the new cluster id) so the reported endpoints — and any members
+// added later — reach a real database.
 func (m *Mock) RestoreDBClusterToPointInTime(
-	_ context.Context, input rdsdriver.RestoreClusterToPointInTimeInput,
+	ctx context.Context, input rdsdriver.RestoreClusterToPointInTimeInput,
 ) (*rdsdriver.Cluster, error) {
 	if input.TargetClusterID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterIdentifier is required")
@@ -173,7 +194,32 @@ func (m *Mock) RestoreDBClusterToPointInTime(
 	cluster.CreatedAt = m.opts.Clock.Now().UTC()
 	cluster.Tags = copyTags(input.Tags)
 
+	// Provision the shared database keyed and named by the new cluster id (an
+	// Aurora cluster's members share ONE database), inheriting the source
+	// cluster's master credentials. A no-engine or non-backable family keeps the
+	// synthetic endpoints untouched.
+	creds := m.clusterCreds[input.SourceClusterID]
+	shared := rdsdriver.Instance{ID: input.TargetClusterID, Engine: cluster.Engine}
+	sharedCfg := rdsdriver.InstanceConfig{
+		ID:                 input.TargetClusterID,
+		Engine:             cluster.Engine,
+		DBName:             input.TargetClusterID,
+		MasterUsername:     creds.user,
+		MasterUserPassword: creds.pass,
+	}
+
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &shared, &sharedCfg); err != nil {
+		return nil, err
+	}
+
+	if shared.Endpoint != "" {
+		cluster.Endpoint = shared.Endpoint
+		cluster.ReaderEndpoint = shared.Endpoint
+		cluster.Port = shared.Port
+	}
+
 	m.clusters.Set(cluster.ID, cluster)
+	m.clusterCreds[cluster.ID] = clusterCred{user: creds.user, pass: creds.pass}
 
 	out := cluster
 

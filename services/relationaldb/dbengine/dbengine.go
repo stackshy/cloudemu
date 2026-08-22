@@ -73,6 +73,28 @@ func Provision(ctx context.Context, engine config.DatabaseEngine, inst *rdsdrive
 	return nil
 }
 
+// RotatePassword re-runs the engine role/user upsert with a new master password
+// so the rotated credential authenticates, reusing the instance's existing
+// engine key, username, engine family and database name. It is an idempotent
+// Provision against the already-provisioned instance (the Postgres engine ALTERs
+// the role, the MySQL engine recreates the user), so the returned host:port are
+// unchanged. No-op when no engine backs this family or newPassword is empty.
+func RotatePassword(ctx context.Context, engine config.DatabaseEngine, inst *rdsdriver.Instance, newPassword string) error {
+	if newPassword == "" {
+		return nil
+	}
+
+	cfg := rdsdriver.InstanceConfig{
+		ID:                 inst.ID,
+		Engine:             inst.Engine,
+		DBName:             inst.DBName,
+		MasterUsername:     inst.MasterUsername,
+		MasterUserPassword: newPassword,
+	}
+
+	return Provision(ctx, engine, inst, &cfg)
+}
+
 // Deprovision tears down the real database backing the instance, if any.
 func Deprovision(ctx context.Context, engine config.DatabaseEngine, inst *rdsdriver.Instance) error {
 	if engine == nil || (!IsPostgresFamily(inst.Engine) && !IsMySQLFamily(inst.Engine)) {
