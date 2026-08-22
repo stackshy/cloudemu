@@ -35,7 +35,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.38 // indirect
 	github.com/aws/aws-sdk-go-v2/service/keyspaces v1.28.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/memorydb v1.37.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.5.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.33.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.7 // indirect
