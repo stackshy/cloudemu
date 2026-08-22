@@ -507,6 +507,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		cfg.Environment = req.Environment.Variables
 	}
 
+	if req.Code != nil {
+		cfg.Code = req.Code.ZipFile
+	}
+
 	info, err := h.fn.CreateFunction(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)

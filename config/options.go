@@ -45,6 +45,10 @@ type Options struct {
 	// (opt-in). Nil (the default) keeps caches in-memory with synthetic
 	// endpoints.
 	CacheEngine CacheEngine
+
+	// FunctionEngine optionally executes real function code on Invoke (opt-in).
+	// Nil (the default) returns a stub payload without running any code.
+	FunctionEngine FunctionEngine
 }
 
 // OCIRegion returns the region OCI services should use, substituting an OCI
@@ -96,6 +100,14 @@ func WithDatabaseEngine(e DatabaseEngine) Option {
 func WithCacheEngine(e CacheEngine) Option {
 	return func(o *Options) {
 		o.CacheEngine = e
+	}
+}
+
+// WithFunctionEngine sets the real function engine that executes function code
+// on Invoke. Nil (the default) returns a stub payload without running code.
+func WithFunctionEngine(e FunctionEngine) Option {
+	return func(o *Options) {
+		o.FunctionEngine = e
 	}
 }
 

@@ -94,8 +94,9 @@ type listFunctionsResponse struct {
 }
 
 // createFunctionRequest captures the fields we read from a CreateFunction body.
-// We deliberately ignore Code, Role (no IAM evaluation), VPCConfig, etc — the
-// portable driver doesn't model them.
+// We deliberately ignore Role (no IAM evaluation), VPCConfig, etc — the portable
+// driver doesn't model them. Code.ZipFile is read so a configured FunctionEngine
+// can run the real handler; with no engine it is stored only for the invoke stub.
 type createFunctionRequest struct {
 	FunctionName string            `json:"FunctionName"`
 	Runtime      string            `json:"Runtime"`
@@ -107,4 +108,11 @@ type createFunctionRequest struct {
 	Environment  *envEnvelope      `json:"Environment"`
 	Tags         map[string]string `json:"Tags"`
 	PackageType  string            `json:"PackageType"`
+	Code         *functionCode     `json:"Code"`
+}
+
+// functionCode is the deployment package in a CreateFunction body. The AWS SDK
+// sends the zip as base64 in ZipFile, which Go unmarshals into []byte for us.
+type functionCode struct {
+	ZipFile []byte `json:"ZipFile"`
 }

@@ -55,3 +55,53 @@ type CacheProvisionRequest struct {
 	CacheID string
 	Engine  string // "redis", "memcached"
 }
+
+// FunctionEngine optionally executes real function code (e.g. a real Python or
+// Node runtime) so clients can Invoke a function and get the result of the
+// uploaded handler actually running — not a stubbed echo. When nil — the
+// default — functions return a successful stub payload and no code runs,
+// keeping the emulator in-memory and dependency-free.
+//
+// Unlike DatabaseEngine/CacheEngine (which hand back a host:port a client
+// dials), a function is invoked through CloudEmu itself, so the engine is an
+// invoke transport: Deploy the code once, Invoke it per request, Remove it on
+// delete. Implementations live outside the core module (contrib/).
+type FunctionEngine interface {
+	// Deploy makes a function's code runnable. It is called on create (and on
+	// code updates) and may be called again to replace an existing deployment.
+	Deploy(ctx context.Context, fn FunctionDeployment) error
+
+	// Invoke runs the named function with the event payload and returns its
+	// result. A handler that raises is reported via FunctionResult.FunctionError
+	// (not a Go error); a Go error is reserved for the engine failing to run it.
+	Invoke(ctx context.Context, name string, event []byte) (FunctionResult, error)
+
+	// Remove tears down the deployment backing the function. It is a no-op if
+	// the function was never deployed.
+	Remove(ctx context.Context, name string) error
+}
+
+// FunctionDeployment describes the code and runtime contract a FunctionEngine
+// must be able to execute.
+type FunctionDeployment struct {
+	Name    string            // function name (the Invoke/Remove key)
+	Runtime string            // e.g. "python3.12", "nodejs20.x"
+	Handler string            // e.g. "main.handler" (file.function)
+	Code    []byte            // deployment package (a .zip archive)
+	Env     map[string]string // environment variables exposed to the handler
+	Timeout int               // max seconds; 0 = engine default
+	// Framework selects the invocation contract the engine runs the handler
+	// under. "" (the default) is the event contract fn(event, context)→JSON
+	// used by AWS Lambda and Azure Functions; "http" is the
+	// functions-framework request/response contract fn(request)→body used by
+	// GCP Cloud Functions gen1, where the handler receives a Flask-Request-like
+	// object and returns a Flask-coercible value.
+	Framework string
+}
+
+// FunctionResult is the outcome of a real function invocation.
+type FunctionResult struct {
+	Payload       []byte // the JSON the handler returned
+	Logs          string // stdout/stderr the invocation produced
+	FunctionError string // non-empty if the handler raised; mirrors X-Amz-Function-Error
+}
