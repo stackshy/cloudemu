@@ -44,10 +44,9 @@ opt in.
 
 ## Scope & caveats
 
-- **Supported now:** Postgres for AWS RDS/Aurora, Azure PostgreSQL Flexible
-  Server, GCP Cloud SQL (all no-Docker via embedded-postgres); Redis for AWS
-  ElastiCache, Azure Cache for Redis, GCP Memorystore (all no-Docker via
-  miniredis).
+- **Supported now:** Postgres for AWS RDS/Aurora and Azure PostgreSQL Flexible
+  Server (no-Docker via embedded-postgres); Redis for AWS ElastiCache, Azure
+  Cache for Redis, and GCP Memorystore (no-Docker via miniredis).
 - **Postgres port:** Azure and GCP never surface a port in their SDK responses —
   clients always use 5432 — so `NewPostgres(0)` binds **5432** by default and a
   real client connects using only the SDK endpoint. Only one Postgres server can
@@ -57,8 +56,8 @@ opt in.
   (Azure Cache's `sslPort` field carries the plaintext port here.)
 - **Scope limit:** the single-node create path is wired; ElastiCache replication
   groups keep the synthetic endpoint for now.
-- **Planned:** MySQL (needs Docker for real fidelity), then Lambda code
-  execution and real containers/VMs.
+- **Planned:** GCP Cloud SQL Postgres, MySQL (needs Docker for real fidelity),
+  then Lambda code execution and real containers/VMs.
 
 ## Tests
 
