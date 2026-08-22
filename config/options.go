@@ -40,6 +40,11 @@ type Options struct {
 	// engine (opt-in). Nil (the default) keeps instances in-memory with
 	// synthetic endpoints.
 	DatabaseEngine DatabaseEngine
+
+	// CacheEngine optionally backs cache instances with a real cache server
+	// (opt-in). Nil (the default) keeps caches in-memory with synthetic
+	// endpoints.
+	CacheEngine CacheEngine
 }
 
 // OCIRegion returns the region OCI services should use, substituting an OCI
@@ -83,6 +88,14 @@ func NewOptions(opts ...Option) *Options {
 func WithDatabaseEngine(e DatabaseEngine) Option {
 	return func(o *Options) {
 		o.DatabaseEngine = e
+	}
+}
+
+// WithCacheEngine sets the real cache engine backing cache instances. Nil (the
+// default) keeps the emulator in-memory.
+func WithCacheEngine(e CacheEngine) Option {
+	return func(o *Options) {
+		o.CacheEngine = e
 	}
 }
 

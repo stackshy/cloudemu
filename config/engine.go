@@ -34,3 +34,24 @@ type ProvisionResult struct {
 	Host string
 	Port int
 }
+
+// CacheEngine optionally backs cache instances with a real cache server (e.g. a
+// real Redis) so clients can run real commands against the emulator. When nil —
+// the default — caches keep a synthetic endpoint and no real server runs.
+//
+// Like DatabaseEngine, implementations live outside the core module (contrib/).
+type CacheEngine interface {
+	// Provision starts a real cache server for the instance and returns the
+	// host and port a client connects to.
+	Provision(ctx context.Context, req CacheProvisionRequest) (ProvisionResult, error)
+
+	// Deprovision tears down the real cache server backing the instance. It is a
+	// no-op if the instance was never provisioned.
+	Deprovision(ctx context.Context, cacheID string) error
+}
+
+// CacheProvisionRequest describes the cache a CacheEngine should back.
+type CacheProvisionRequest struct {
+	CacheID string
+	Engine  string // "redis", "memcached"
+}
