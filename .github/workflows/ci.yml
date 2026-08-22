@@ -129,6 +129,39 @@ jobs:
         working-directory: contrib/dockerengine
         run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./... || echo '::warning::golangci-lint reported findings (advisory)'"
 
+  contrib-server:
+    name: Contrib (server)
+    runs-on: ubuntu-latest
+    # Separate Go module: the batteries-included wire server that composes the
+    # real engines onto the wire servers. Build + vet + lint here; the real-engine
+    # e2e (embedded Postgres + miniredis + real AWS SDK) fetches a Postgres binary
+    # and runs it, so — like realengine/dockerengine — it runs on demand
+    # (go test ./...), not on every CI run.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-server-${{ hashFiles('contrib/server/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-server-
+      - name: build & vet
+        working-directory: contrib/server
+        run: |
+          go build ./...
+          go vet ./...
+      - name: install golangci-lint v2
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+      - name: golangci-lint run (report-only)
+        working-directory: contrib/server
+        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./... || echo '::warning::golangci-lint reported findings (advisory)'"
+
   test:
     name: Test
     runs-on: ubuntu-latest
