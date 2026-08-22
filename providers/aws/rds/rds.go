@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -295,7 +296,7 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 
 	// Opt-in: back the instance with a real database engine, replacing the
 	// synthetic endpoint with the real host:port a client connects to.
-	if err := m.provisionEngine(ctx, &inst, &cfg); err != nil {
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
 		return nil, err
 	}
 
@@ -431,64 +432,11 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	}
 
 	// Tear down the real database backing the instance, if any.
-	if err := m.deprovisionEngine(ctx, &inst); err != nil {
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
 		return err
 	}
 
 	m.instances.Delete(id)
-
-	return nil
-}
-
-// enginePostgres and engineAuroraPostgres are the engine families a real
-// Postgres backend can serve.
-const (
-	enginePostgres       = "postgres"
-	engineAuroraPostgres = "aurora-postgresql"
-)
-
-// isRealEngineTarget reports whether a real database engine should back this
-// engine family. Slice 1 handles the Postgres families.
-func isRealEngineTarget(engine string) bool {
-	return engine == enginePostgres || engine == engineAuroraPostgres
-}
-
-// provisionEngine backs the instance with a real database when an engine is
-// configured and the engine family is supported, overriding the synthetic
-// endpoint with the real host:port. No-op otherwise.
-func (m *Mock) provisionEngine(ctx context.Context, inst *rdsdriver.Instance, cfg *rdsdriver.InstanceConfig) error {
-	if m.opts.DatabaseEngine == nil || !isRealEngineTarget(cfg.Engine) {
-		return nil
-	}
-
-	res, err := m.opts.DatabaseEngine.Provision(ctx, config.ProvisionRequest{
-		InstanceID: cfg.ID,
-		Engine:     cfg.Engine,
-		DBName:     cfg.DBName,
-		Username:   cfg.MasterUsername,
-		Password:   cfg.MasterUserPassword,
-	})
-	if err != nil {
-		return cerrors.Newf(cerrors.Internal, "provision database engine: %v", err)
-	}
-
-	inst.Endpoint = res.Host
-	inst.Port = res.Port
-
-	return nil
-}
-
-// deprovisionEngine tears down the real database backing the instance, if one
-// was provisioned. No-op when no engine is configured or the family is
-// unsupported.
-func (m *Mock) deprovisionEngine(ctx context.Context, inst *rdsdriver.Instance) error {
-	if m.opts.DatabaseEngine == nil || !isRealEngineTarget(inst.Engine) {
-		return nil
-	}
-
-	if err := m.opts.DatabaseEngine.Deprovision(ctx, inst.ID); err != nil {
-		return cerrors.Newf(cerrors.Internal, "deprovision database engine: %v", err)
-	}
 
 	return nil
 }
