@@ -35,6 +35,11 @@ type Options struct {
 	TenancyOCID   string
 	CompartmentID string
 	Realm         string
+
+	// DatabaseEngine optionally backs relational-database instances with a real
+	// engine (opt-in). Nil (the default) keeps instances in-memory with
+	// synthetic endpoints.
+	DatabaseEngine DatabaseEngine
 }
 
 // OCIRegion returns the region OCI services should use, substituting an OCI
@@ -71,6 +76,14 @@ func NewOptions(opts ...Option) *Options {
 	}
 
 	return o
+}
+
+// WithDatabaseEngine sets the real database engine backing relational-database
+// instances. Nil (the default) keeps the emulator in-memory.
+func WithDatabaseEngine(e DatabaseEngine) Option {
+	return func(o *Options) {
+		o.DatabaseEngine = e
+	}
 }
 
 // WithClock sets the clock implementation.
