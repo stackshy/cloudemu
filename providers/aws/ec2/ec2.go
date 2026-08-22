@@ -2,6 +2,7 @@ package ec2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/statemachine"
 	"github.com/stackshy/cloudemu/v2/services/compute"
+	"github.com/stackshy/cloudemu/v2/services/compute/computeengine"
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -88,6 +90,10 @@ type instanceData struct {
 	Tags           map[string]string
 	LaunchTime     string
 	Operator       *operatorData
+	// engineBacked is true when a real config.ComputeEngine backs this
+	// instance, so Terminate deprovisions it and console output is read from
+	// the engine rather than synthesized.
+	engineBacked bool
 }
 
 // operatorData records service-provider managed-resource ownership.
@@ -259,6 +265,12 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	results := make([]driver.Instance, 0, count)
 	hidden := m.visibility() == visibilityHidden
 
+	// created tracks the instances already fully provisioned in this batch, so a
+	// mid-batch engine failure can roll them back rather than orphaning live
+	// containers and half-tracked instances (real EC2 launches the whole batch or
+	// none of it).
+	created := make([]*instanceData, 0, count)
+
 	for i := 0; i < count; i++ {
 		id := idgen.GenerateID("i-")
 
@@ -283,11 +295,27 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			inst.Operator = &operatorData{Managed: true, Principal: cfg.Principal}
 		}
 
+		// Back the instance with a real compute engine when one is configured.
+		// The engine runs the decoded UserData as the boot script and may
+		// surface a reachable IP that overrides the synthetic private IP.
+		if engine := m.opts.ComputeEngine; engine != nil {
+			di := driver.Instance{ID: inst.ID, ImageID: inst.ImageID, PrivateIP: inst.PrivateIP}
+			if err := computeengine.Provision(ctx, engine, &di, &cfg); err != nil {
+				m.rollbackInstances(ctx, created)
+
+				return nil, err
+			}
+
+			inst.PrivateIP = di.PrivateIP
+			inst.engineBacked = true
+		}
+
 		m.instances.Set(id, inst)
 		m.sm.SetState(id, compute.StatePending)
 		_ = m.sm.Transition(id, compute.StateRunning)
 		inst.State = compute.StateRunning
 		results = append(results, toInstance(inst, hidden))
+		created = append(created, inst)
 
 		// Managed (service-owned) instances are hidden from Describe, so
 		// emitting instance-dimensioned CloudWatch metrics for them would leak
@@ -298,6 +326,24 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	}
 
 	return results, nil
+}
+
+// rollbackInstances best-effort tears down instances already provisioned earlier
+// in a RunInstances batch that then failed: each engine-backed instance is
+// deprovisioned (so no live container remains) and every instance is dropped from
+// the store and the state machine (so no half-tracked state remains).
+func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
+	engine := m.opts.ComputeEngine
+
+	for _, inst := range created {
+		if inst.engineBacked {
+			di := driver.Instance{ID: inst.ID}
+			_ = computeengine.Deprovision(ctx, engine, &di)
+		}
+
+		m.instances.Delete(inst.ID)
+		m.sm.Remove(inst.ID)
+	}
 }
 
 //nolint:gocritic // t is a small read-only config; copying once per call is fine.
@@ -356,7 +402,54 @@ func (m *Mock) RebootInstances(ctx context.Context, instanceIDs []string) error 
 }
 
 func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) error {
-	return m.transitionInstances(ctx, instanceIDs, terminateTransition)
+	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
+		return err
+	}
+
+	// Tear down the real backing for any engine-backed instances. Every id is now
+	// Terminated (transitionInstances verified they exist), and a Terminated
+	// instance can't be terminated again — so this must be best-effort: continue
+	// through the whole batch and aggregate errors, otherwise one instance's
+	// Deprovision failure would strand the rest with a live backing and no API
+	// path to clean it up. The cleared flag is persisted back into the store.
+	engine := m.opts.ComputeEngine
+
+	var errs []error
+
+	for _, id := range instanceIDs {
+		inst, ok := m.instances.Get(id)
+		if !ok || !inst.engineBacked {
+			continue
+		}
+
+		di := driver.Instance{ID: inst.ID}
+		if err := computeengine.Deprovision(ctx, engine, &di); err != nil {
+			errs = append(errs, err)
+
+			continue
+		}
+
+		inst.engineBacked = false
+		m.instances.Set(id, inst)
+	}
+
+	return errors.Join(errs...)
+}
+
+// GetConsoleOutput returns the console output the configured compute engine
+// captured for the instance's boot script. It returns a nil slice when the
+// instance is not engine-backed (no real backing produced console output).
+func (m *Mock) GetConsoleOutput(ctx context.Context, instanceID string) ([]byte, error) {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	if !inst.engineBacked {
+		return nil, nil
+	}
+
+	return computeengine.ConsoleOutput(ctx, m.opts.ComputeEngine, instanceID)
 }
 
 func (m *Mock) DescribeInstances(

@@ -15,6 +15,8 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	cpgdriver "github.com/stackshy/cloudemu/v2/services/cosmospostgresql/driver"
+	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
+	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
 const (
@@ -28,6 +30,13 @@ const (
 	defaultNodeVCores        = 4
 	defaultStorageQuotaInMb  = 131072
 	maxNodeCount             = 20
+
+	// citusRole is Cosmos DB for PostgreSQL's fixed coordinator superuser
+	// ("citus"), also used as the default database name a client connects to.
+	// enginePostgres is the family handed to the shared Postgres DatabaseEngine —
+	// Cosmos DB for PostgreSQL is Citus Postgres, so it reuses that backing.
+	citusRole      = "citus"
+	enginePostgres = "postgres"
 )
 
 var _ cpgdriver.CosmosPostgreSQL = (*Mock)(nil)
@@ -43,18 +52,25 @@ type Mock struct {
 	privateEPs    *memstore.Store[cpgdriver.PrivateEndpointConnection] // key = "rg/cluster/name"
 	serverConfigs *memstore.Store[cpgdriver.ServerConfiguration]       // key = "rg/cluster/role/name"
 
+	// coordinatorHosts maps clusterKey -> the reachable coordinator host when a
+	// real DatabaseEngine backs the cluster. node() surfaces it as the
+	// coordinator's FQDN so a real client connects using only the SDK response.
+	// Guarded by mu.
+	coordinatorHosts map[string]string
+
 	opts *config.Options
 }
 
 // New creates a new Cosmos DB for PostgreSQL mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:      memstore.New[cpgdriver.Cluster](),
-		firewallRules: memstore.New[cpgdriver.FirewallRule](),
-		roles:         memstore.New[cpgdriver.Role](),
-		privateEPs:    memstore.New[cpgdriver.PrivateEndpointConnection](),
-		serverConfigs: memstore.New[cpgdriver.ServerConfiguration](),
-		opts:          opts,
+		clusters:         memstore.New[cpgdriver.Cluster](),
+		firewallRules:    memstore.New[cpgdriver.FirewallRule](),
+		roles:            memstore.New[cpgdriver.Role](),
+		privateEPs:       memstore.New[cpgdriver.PrivateEndpointConnection](),
+		serverConfigs:    memstore.New[cpgdriver.ServerConfiguration](),
+		coordinatorHosts: map[string]string{},
+		opts:             opts,
 	}
 }
 
@@ -149,10 +165,13 @@ func (m *Mock) clusterResourceID(rg, name string) string {
 		"/providers/" + providerNamespace + "/" + clusterType + "/" + name
 }
 
-// CreateOrUpdateCluster creates or replaces a server-group cluster.
+// CreateOrUpdateCluster creates or replaces a server-group cluster. When a real
+// DatabaseEngine is wired in, a newly-created cluster is also backed by a real
+// Postgres database (the engine work runs without the store lock held) so the
+// coordinator endpoint a client reads is reachable.
 //
 //nolint:gocritic // cfg matches the driver signature.
-func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClusterConfig) (*cpgdriver.Cluster, bool, error) {
+func (m *Mock) CreateOrUpdateCluster(ctx context.Context, cfg cpgdriver.CreateClusterConfig) (*cpgdriver.Cluster, bool, error) {
 	if err := validName("cluster", cfg.Name); err != nil {
 		return nil, false, err
 	}
@@ -161,6 +180,23 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClus
 		return nil, false, err
 	}
 
+	c, created, err := m.storeCluster(&cfg)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if err := m.backClusterWithEngine(ctx, &cfg, created); err != nil {
+		return nil, false, err
+	}
+
+	out := cloneCluster(&c)
+
+	return &out, created, nil
+}
+
+// storeCluster validates and writes the cluster row under the lock, reporting
+// whether it was created (true) or updated (false).
+func (m *Mock) storeCluster(cfg *cpgdriver.CreateClusterConfig) (cpgdriver.Cluster, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -171,12 +207,12 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClus
 	// name and, for a replica, a valid primary source.
 	if !isUpdate {
 		if err := m.ensureNameAvailableLocked(cfg.Name); err != nil {
-			return nil, false, err
+			return cpgdriver.Cluster{}, false, err
 		}
 
 		if cfg.SourceResourceID != "" {
 			if err := m.validateReplicaSourceLocked(cfg.SourceResourceID); err != nil {
-				return nil, false, err
+				return cpgdriver.Cluster{}, false, err
 			}
 		}
 	}
@@ -188,7 +224,7 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClus
 		Tags:                            copyTags(cfg.Tags),
 		ProvisioningState:               cpgdriver.ProvisioningSucceeded,
 		State:                           "Ready",
-		AdministratorLogin:              "citus",
+		AdministratorLogin:              citusRole,
 		CitusVersion:                    orDefault(cfg.CitusVersion, defaultCitusVersion),
 		PostgresqlVersion:               orDefault(cfg.PostgresqlVersion, defaultPostgresqlVersion),
 		CoordinatorServerEdition:        orDefault(cfg.CoordinatorServerEdition, defaultServerEdition),
@@ -222,9 +258,51 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, cfg cpgdriver.CreateClus
 
 	m.clusters.Set(key, c)
 
-	out := cloneCluster(&c)
+	return c, !isUpdate, nil
+}
 
-	return &out, !isUpdate, nil
+// backClusterWithEngine provisions a real Postgres database for a newly-created
+// cluster when a DatabaseEngine is wired in, then records the reachable
+// coordinator host so node() surfaces it as the coordinator FQDN. The engine
+// work runs without the store lock held. It is a no-op without an engine, on an
+// update (the endpoint is already backed), or for a read replica — a replica is
+// not engine-backed in the emulator (no duplicate real database is provisioned),
+// so its coordinator FQDN stays synthetic. On failure the just-created cluster is
+// rolled back.
+func (m *Mock) backClusterWithEngine(ctx context.Context, cfg *cpgdriver.CreateClusterConfig, created bool) error {
+	if m.opts.DatabaseEngine == nil || !created || cfg.SourceResourceID != "" {
+		return nil
+	}
+
+	// Cosmos DB for PostgreSQL is Citus Postgres: the coordinator node serves the
+	// Postgres wire protocol as the fixed "citus" superuser. Reuse the shared
+	// Postgres engine through a throwaway relational instance.
+	inst := rdsdriver.Instance{ID: cfg.Name, Engine: enginePostgres}
+	provCfg := rdsdriver.InstanceConfig{
+		ID:                 cfg.Name,
+		Engine:             enginePostgres,
+		DBName:             citusRole,
+		MasterUsername:     citusRole,
+		MasterUserPassword: cfg.AdministratorLoginPassword,
+	}
+
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &provCfg); err != nil {
+		_ = m.DeleteCluster(ctx, cfg.ResourceGroup, cfg.Name)
+
+		return err
+	}
+
+	m.setCoordinatorHost(clusterKey(cfg.ResourceGroup, cfg.Name), inst.Endpoint)
+
+	return nil
+}
+
+// setCoordinatorHost records the reachable coordinator host for a cluster.
+func (m *Mock) setCoordinatorHost(key, host string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.coordinatorHosts[key] = host
 }
 
 // validateSizing bounds the node count and rejects negative vCore/storage
@@ -469,17 +547,55 @@ func setInt(dst, v *int) {
 	}
 }
 
-// DeleteCluster removes a cluster and cascade-deletes its children.
-func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
+// DeleteCluster removes a cluster and cascade-deletes its children, tearing down
+// the real Postgres database backing it when a DatabaseEngine is wired in.
+func (m *Mock) DeleteCluster(ctx context.Context, rg, name string) error {
+	key := clusterKey(rg, name)
+
+	m.mu.Lock()
+	if _, ok := m.clusters.Get(key); !ok {
+		m.mu.Unlock()
+
+		return cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", name)
+	}
+
+	// No engine wired: keep the original single-lock flow.
+	if m.opts.DatabaseEngine == nil {
+		defer m.mu.Unlock()
+		m.deleteClusterLocked(rg, name)
+
+		return nil
+	}
+	m.mu.Unlock()
+
+	// Engine wired: tear down the real coordinator database WITHOUT holding the
+	// provider lock (it is a real container/process teardown), then remove the
+	// row under a re-acquired lock — mirroring the create path and the RDS
+	// reserve→provision→finalize pattern so a delete never stalls concurrent reads.
+	inst := rdsdriver.Instance{ID: name, Engine: enginePostgres}
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.deleteClusterLocked(rg, name)
 
+	return nil
+}
+
+// deleteClusterLocked removes the cluster row + its children and fixes replica
+// links. The caller holds the write lock. A cluster already gone (a concurrent
+// delete won the race after the engine teardown) is a no-op.
+func (m *Mock) deleteClusterLocked(rg, name string) {
 	key := clusterKey(rg, name)
 
 	c, ok := m.clusters.Get(key)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "cosmos postgresql cluster %q not found", name)
+		return
 	}
+
+	delete(m.coordinatorHosts, key)
 
 	// Keep replica links consistent: if this is a replica, drop it from its
 	// source's list; if it's a source, orphan its replicas (clear their link).
@@ -496,8 +612,6 @@ func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
 	deletePrefixed(m.privateEPs, prefix)
 	deletePrefixed(m.serverConfigs, prefix)
 	m.clusters.Delete(key)
-
-	return nil
 }
 
 // clearReplicaSourcesLocked clears SourceResourceID/SourceLocation on each

@@ -244,6 +244,7 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
+//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateAutoScalingGroup":
@@ -271,6 +272,8 @@ func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, actio
 
 // routeInstances dispatches instance-lifecycle actions backed by the compute
 // driver. Returns true if the action was handled.
+//
+//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "RunInstances":
@@ -287,6 +290,8 @@ func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action 
 		h.terminateInstances(w, r)
 	case "ModifyInstanceAttribute":
 		h.modifyInstanceAttribute(w, r)
+	case "GetConsoleOutput":
+		h.getConsoleOutput(w, r)
 	default:
 		return false
 	}

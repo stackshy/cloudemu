@@ -103,29 +103,34 @@ func (m *Mock) UpdateEventSourceMapping(
 		return nil, cerrors.Newf(cerrors.NotFound, "event source mapping %s not found", uuid)
 	}
 
+	// Mutate a copy, never the shared stored pointer: sibling readers
+	// (GetEventSourceMapping/ListEventSourceMappings) snapshot from the same
+	// pointer, so in-place writes here would be a torn read under concurrency.
+	updated := *info
+
 	if cfg.FunctionName != "" {
-		info.FunctionName = cfg.FunctionName
+		updated.FunctionName = cfg.FunctionName
 	}
 
 	if cfg.EventSourceArn != "" {
-		info.EventSourceArn = cfg.EventSourceArn
+		updated.EventSourceArn = cfg.EventSourceArn
 	}
 
 	if cfg.BatchSize != 0 {
-		info.BatchSize = cfg.BatchSize
+		updated.BatchSize = cfg.BatchSize
 	}
 
-	info.Enabled = cfg.Enabled
+	updated.Enabled = cfg.Enabled
 
 	if cfg.Enabled {
-		info.State = stateEnabled
+		updated.State = stateEnabled
 	} else {
-		info.State = stateDisabled
+		updated.State = stateDisabled
 	}
 
-	m.mappings.Set(uuid, info)
+	m.mappings.Set(uuid, &updated)
 
-	result := *info
+	result := updated
 
 	return &result, nil
 }

@@ -16,6 +16,10 @@
   <img src="https://img.shields.io/badge/cost-$0-brightgreen" alt="Zero Cost">
 </p>
 
+<p align="center">
+  <a href="https://zop.dev/zopday/app/deploy?image=ghcr.io/stackshy/cloudemu:2.5&amp;port=8000"><img src="https://zop.dev/deploytozopday-inkhard.svg" alt="Deploy to Zopday"></a>
+</p>
+
 ---
 
 ## What it is
@@ -119,6 +123,22 @@ The authoritative, always-current list is the generated [capability coverage](do
 - **Data plane** (in-memory Kubernetes API) — core, apps, batch, networking, rbac, storage, autoscaling, policy, discovery, **apiextensions** (CRDs) and **admissionregistration** kinds. CRUD, all patch types + **server-side apply** (field ownership + conflicts), `?dryRun=All`, finalizers, `limit`/`continue` pagination, watch streaming with `resourceVersion` resume + BOOKMARK — so real `client-go` `Informer`/`Reflector` machinery works against a cloudemu cluster. There's no scheduler or kubelet, so controllers converge **synchronously** — a Deployment materializes Pods straight to Running, a Job to Succeeded, Services get Endpoints, on every write. It also serves **`metrics.k8s.io`** + **HPA** actuation, **ResourceQuota** / **LimitRange** / **PDB-gated eviction**, **RBAC** SubjectAccessReview + **NetworkPolicy** evaluation, and **opt-in admission webhooks**. See [docs/services.md](docs/services.md) §18.
 
 Full per-service operation list: [docs/services.md](docs/services.md). Per-handler protocol details: [docs/sdk-server.md](docs/sdk-server.md).
+
+## Real engines (opt-in)
+
+By default cloudemu emulates the API layer and keeps everything in memory — no real database, cache, or code ever runs. When you want a resource to do the real thing — run actual SQL, real Redis commands, or your uploaded function/container code — wire in an **opt-in real engine**. Engines live in two sibling Go modules so their heavier dependencies stay out of the core: `contrib/realengine` (no Docker — embedded Postgres, miniredis, and the host's `python3`/`node`) and `contrib/dockerengine` (real Docker containers — MySQL, VMs, ECS/ACI/Cloud Run, the Azure Functions host). Each is strictly opt-in via `config.With<X>Engine(...)`; the in-memory default is unchanged, and `Provider.Close()` cascades teardown to whatever you wired.
+
+| Capability | Engine (module) | Docker? | Backs |
+|---|---|---|---|
+| Relational SQL — Postgres | embedded-postgres (`contrib/realengine`) | no | RDS/Aurora, Azure PostgreSQL Flexible, Cloud SQL, AlloyDB |
+| Relational SQL — MySQL | `mysql:8.0` (`contrib/dockerengine`) | yes | RDS MySQL, Azure MySQL Flexible, Cloud SQL MySQL |
+| Cache — Redis | miniredis (`contrib/realengine`) | no | ElastiCache, Azure Cache for Redis, Memorystore |
+| Serverless code | `python3` / `node` subprocess (`contrib/realengine`) | no | Lambda, Cloud Functions gen1 |
+| Serverless code — Azure | official azure-functions host image (`contrib/dockerengine`) | yes | Azure Functions |
+| Compute — VM boot script | base container (`contrib/dockerengine`) | yes | EC2 `RunInstances` boot → console output |
+| Containers | real containers (`contrib/dockerengine`) | yes | ECS tasks, ACI container groups, Cloud Run jobs |
+
+Wire one in, create the resource with the normal SDK/CLI, and connect a real client (or invoke the function/container) to get the real result; delete tears the backing down. Exact scope, ports, and caveats live in [contrib/realengine/README.md](contrib/realengine/README.md) and [contrib/dockerengine/README.md](contrib/dockerengine/README.md).
 
 ## More
 

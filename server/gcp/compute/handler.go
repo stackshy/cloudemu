@@ -33,6 +33,7 @@ const (
 	resourceDisks      = "disks"
 	resourceSnapshots  = "snapshots"
 	resourceImages     = "images"
+	resourceMachineTyp = "machineTypes"
 )
 
 // Handler serves GCP Compute Engine REST requests for instances and zone
@@ -56,7 +57,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots, resourceImages:
+	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots, resourceImages, resourceMachineTyp:
 		return true
 	}
 
@@ -88,6 +89,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.ResourceType == resourceImages {
 		h.serveImagesRoute(w, r, rp)
+		return
+	}
+
+	if rp.ResourceType == resourceMachineTyp {
+		serveMachineTypesRoute(w, r, rp)
 		return
 	}
 
@@ -202,6 +208,19 @@ func (h *Handler) serveInstanceCollection(w http.ResponseWriter, r *http.Request
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serveInstanceAction(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	// getSerialPortOutput is the one instance action read with GET; the
+	// lifecycle actions (start/stop/reset) are POSTs.
+	if strings.EqualFold(rp.Action, "serialPort") {
+		if r.Method != http.MethodGet {
+			writeNotImplemented(w, r.Method+" "+r.URL.Path)
+			return
+		}
+
+		h.getSerialPortOutput(w, r, rp)
+
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		return

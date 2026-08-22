@@ -89,6 +89,12 @@ type FunctionConfig struct {
 	Timeout     int // seconds
 	Environment map[string]string
 	Tags        map[string]string
+	Code        []byte // deployment package (.zip); deployed to a FunctionEngine (if configured) on create/update to run real code
+	// Framework selects the FunctionEngine invocation contract. "" (default) is
+	// the event contract fn(event, context) used by AWS Lambda / Azure
+	// Functions; "http" is the functions-framework request/response contract
+	// used by GCP Cloud Functions gen1.
+	Framework string
 }
 
 // FunctionInfo describes a serverless function.

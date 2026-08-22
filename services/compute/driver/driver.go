@@ -24,6 +24,14 @@ type InstanceConfig struct {
 	Priority    string
 	LicenseType string
 	Zones       []string
+	// Region is the location the instance is launched in (Azure location, e.g.
+	// "eastus"); empty falls back to the emulator's default region. ResourceGroup
+	// is the Azure resource group the instance belongs to; empty for providers
+	// with no such concept. Both are carried through so cross-service discovery
+	// (Resource Graph) reports the instance's real location and resource group
+	// rather than the emulator defaults.
+	Region        string
+	ResourceGroup string
 }
 
 // Instance describes a running virtual machine.
@@ -49,6 +57,10 @@ type Instance struct {
 	LicenseType string
 	// Zones are the availability zones the instance occupies, when known.
 	Zones []string
+	// Region / ResourceGroup echo where the instance lives (Azure location and
+	// resource group), when known; empty falls back to the emulator defaults.
+	Region        string
+	ResourceGroup string
 	// Operator carries service-provider managed-resource metadata. It is nil
 	// for ordinary (unmanaged) instances.
 	Operator *OperatorInfo
@@ -305,4 +317,13 @@ type Compute interface {
 	CreateKeyPair(ctx context.Context, config KeyPairConfig) (*KeyPairInfo, error)
 	DeleteKeyPair(ctx context.Context, name string) error
 	DescribeKeyPairs(ctx context.Context, names []string) ([]KeyPairInfo, error)
+}
+
+// ConsoleReader is an optional capability a Compute implementation may provide
+// to return an instance's console output. It is served by the real
+// config.ComputeEngine backing an instance; a provider with no engine wired
+// returns empty output. The server type-asserts for it so implementations that
+// do not support console output (Azure, GCP) are unaffected.
+type ConsoleReader interface {
+	GetConsoleOutput(ctx context.Context, instanceID string) ([]byte, error)
 }

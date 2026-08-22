@@ -42,6 +42,19 @@ const (
 	invokePathPrefix = "/api/"
 	maxInvokeBytes   = 1 << 20 // 1 MiB
 	maxControlBytes  = 1 << 20
+
+	// extensionsSubResource + zipDeployName model the Kudu zipdeploy route
+	// PUT .../sites/{name}/extensions/zipdeploy, whose body is the raw zip.
+	extensionsSubResource = "extensions"
+	zipDeployName         = "zipdeploy"
+	maxDeployBytes        = 50 << 20 // 50 MiB deployment package
+
+	// handlerAppSettingKey is a reserved app setting that names the function's
+	// handler entrypoint (e.g. "function_app.main"). Azure has no static handler
+	// coordinate on the site resource, so it is carried here, read into
+	// FunctionConfig.Handler, and stripped so it isn't exposed as a literal env
+	// var to the running code.
+	handlerAppSettingKey = "_CLOUDEMU_HANDLER"
 )
 
 // appServicePlanStore is the App Service plan surface the handler needs on top
@@ -110,6 +123,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 //nolint:gocritic // rp is a request-scoped value; copying is cheap.
 func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	// A code deploy (Kudu zipdeploy) is modeled as a sub-resource PUT on the
+	// site: .../sites/{name}/extensions/zipdeploy carrying the raw zip bytes.
+	// Handle it before createOrUpdate so the sub-resource path doesn't get
+	// misrouted as a site create/update.
+	if strings.EqualFold(rp.SubResource, extensionsSubResource) &&
+		strings.EqualFold(rp.SubResourceName, zipDeployName) {
+		if r.Method == http.MethodPut {
+			h.zipDeploy(w, r, rp)
+		} else {
+			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "zipdeploy requires PUT")
+		}
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
@@ -147,11 +175,18 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	// Pull the handler entrypoint out of the reserved app setting and drop it
+	// from the settings the function sees, so it never leaks as a literal env
+	// var (and isn't echoed back in the response).
+	handler, settings := extractHandlerSetting(req.Properties.SiteConfig.AppSettings)
+	req.Properties.SiteConfig.AppSettings = settings
+
 	cfg := sdrv.FunctionConfig{
 		Name:        rp.ResourceName,
 		Runtime:     req.Properties.SiteConfig.LinuxFxVersion,
+		Handler:     handler,
 		Tags:        req.Tags,
-		Environment: appSettingsToMap(req.Properties.SiteConfig.AppSettings),
+		Environment: appSettingsToMap(settings),
 	}
 
 	info, err := upsertFunction(r, h.fn, cfg)
@@ -197,6 +232,40 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if err := h.fn.DeleteFunction(r.Context(), rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// zipDeploy handles PUT .../sites/{name}/extensions/zipdeploy, a deliberate
+// emulation of Kudu zipdeploy layered onto ARM: the raw request body is the
+// deployment zip, which is deployed to the function's code (and, when a
+// FunctionEngine is configured, made runnable). The site must already exist
+// (created by an ARM site PUT), matching real Azure where zipdeploy targets a
+// provisioned Function App.
+//
+//nolint:gocritic // rp travels the dispatch chain once per request.
+func (h *Handler) zipDeploy(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxDeployBytes)
+
+	code, err := io.ReadAll(r.Body)
+	if err != nil {
+		azurearm.WriteError(w, http.StatusRequestEntityTooLarge, "PayloadTooLarge", err.Error())
+		return
+	}
+
+	if len(code) == 0 {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", "empty deployment package")
+		return
+	}
+
+	_, uerr := h.fn.UpdateFunction(r.Context(), rp.ResourceName, sdrv.FunctionConfig{
+		Name: rp.ResourceName,
+		Code: code,
+	})
+	if uerr != nil {
+		azurearm.WriteCErr(w, uerr)
 		return
 	}
 
@@ -409,6 +478,28 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, req creat
 			LastModifiedTimeUtc: time.Now().UTC().Format(time.RFC3339),
 		},
 	}
+}
+
+// extractHandlerSetting pulls the reserved handler entrypoint out of the app
+// settings and returns it along with the remaining settings (the reserved key
+// removed). The handler is empty when the setting is absent.
+func extractHandlerSetting(settings []nameValue) (handler string, remaining []nameValue) {
+	remaining = make([]nameValue, 0, len(settings))
+
+	for _, kv := range settings {
+		if kv.Name == handlerAppSettingKey {
+			handler = kv.Value
+			continue
+		}
+
+		remaining = append(remaining, kv)
+	}
+
+	if len(remaining) == 0 {
+		remaining = nil
+	}
+
+	return handler, remaining
 }
 
 func appSettingsToMap(settings []nameValue) map[string]string {

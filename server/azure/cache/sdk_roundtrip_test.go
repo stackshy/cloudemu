@@ -155,3 +155,133 @@ func TestSDKAzureCacheNotFound(t *testing.T) {
 		t.Fatalf("Get(missing): got %v, want 404", err)
 	}
 }
+
+// TestSDKAzureCachePremiumClustering verifies a Premium clustered cache
+// round-trips its real SKU (family P, capacity) plus shardCount and
+// replicasPerPrimary through the ARM API — the fields that drive node-count
+// cost and could not be represented when Family/Capacity were stubbed.
+func TestSDKAzureCachePremiumClustering(t *testing.T) {
+	client := newRedisClient(t)
+	ctx := context.Background()
+
+	poller, err := client.BeginCreate(ctx, testRG, "premium-cache", armredis.CreateParameters{
+		Location: to.Ptr("eastus"),
+		Properties: &armredis.CreateProperties{
+			SKU: &armredis.SKU{
+				Name:     to.Ptr(armredis.SKUNamePremium),
+				Family:   to.Ptr(armredis.SKUFamilyP),
+				Capacity: to.Ptr(int32(2)),
+			},
+			ShardCount:         to.Ptr(int32(3)),
+			ReplicasPerPrimary: to.Ptr(int32(2)),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("PollUntilDone: %v", err)
+	}
+
+	got, err := client.Get(ctx, testRG, "premium-cache", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	props := got.Properties
+	if props == nil || props.SKU == nil {
+		t.Fatal("expected SKU on response")
+	}
+
+	if props.SKU.Name == nil || *props.SKU.Name != armredis.SKUNamePremium {
+		t.Errorf("sku.name = %v, want Premium", props.SKU.Name)
+	}
+
+	if props.SKU.Family == nil || *props.SKU.Family != armredis.SKUFamilyP {
+		t.Errorf("sku.family = %v, want P", props.SKU.Family)
+	}
+
+	if props.SKU.Capacity == nil || *props.SKU.Capacity != 2 {
+		t.Errorf("sku.capacity = %v, want 2", props.SKU.Capacity)
+	}
+
+	if props.ShardCount == nil || *props.ShardCount != 3 {
+		t.Errorf("shardCount = %v, want 3", props.ShardCount)
+	}
+
+	if props.ReplicasPerPrimary == nil || *props.ReplicasPerPrimary != 2 {
+		t.Errorf("replicasPerPrimary = %v, want 2", props.ReplicasPerPrimary)
+	}
+}
+
+// TestSDKAzureCacheClusteringUpdate covers the mutation path: a second PUT on an
+// existing Premium cache updates its clustering values (shardCount, capacity),
+// which the initial create-only tests did not exercise.
+func TestSDKAzureCacheClusteringUpdate(t *testing.T) {
+	client := newRedisClient(t)
+	ctx := context.Background()
+
+	create := func(shards, capacity int32) {
+		poller, err := client.BeginCreate(ctx, testRG, "clu", armredis.CreateParameters{
+			Location: to.Ptr("eastus"),
+			Properties: &armredis.CreateProperties{
+				SKU: &armredis.SKU{
+					Name:     to.Ptr(armredis.SKUNamePremium),
+					Family:   to.Ptr(armredis.SKUFamilyP),
+					Capacity: to.Ptr(capacity),
+				},
+				ShardCount: to.Ptr(shards),
+			},
+		}, nil)
+		if err != nil {
+			t.Fatalf("BeginCreate(shards=%d): %v", shards, err)
+		}
+
+		if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+			t.Fatalf("PollUntilDone(shards=%d): %v", shards, err)
+		}
+	}
+
+	create(3, 2)
+	create(5, 3) // second PUT on the existing cache
+
+	got, err := client.Get(ctx, testRG, "clu", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.Properties.ShardCount == nil || *got.Properties.ShardCount != 5 {
+		t.Errorf("shardCount = %v, want 5 after update", got.Properties.ShardCount)
+	}
+
+	if got.Properties.SKU == nil || got.Properties.SKU.Capacity == nil || *got.Properties.SKU.Capacity != 3 {
+		t.Errorf("capacity = %v, want 3 after update", got.Properties.SKU)
+	}
+}
+
+// TestSDKAzureCacheRejectsClusteringOnStandard confirms clustering is rejected
+// on a non-Premium SKU (real Azure returns 400).
+func TestSDKAzureCacheRejectsClusteringOnStandard(t *testing.T) {
+	client := newRedisClient(t)
+	ctx := context.Background()
+
+	poller, err := client.BeginCreate(ctx, testRG, "bad", armredis.CreateParameters{
+		Location: to.Ptr("eastus"),
+		Properties: &armredis.CreateProperties{
+			SKU: &armredis.SKU{
+				Name:     to.Ptr(armredis.SKUNameStandard),
+				Family:   to.Ptr(armredis.SKUFamilyC),
+				Capacity: to.Ptr(int32(1)),
+			},
+			ShardCount: to.Ptr(int32(2)),
+		},
+	}, nil)
+	if err == nil {
+		_, err = poller.PollUntilDone(ctx, nil)
+	}
+
+	if err == nil {
+		t.Fatal("expected an error for clustering on a Standard SKU, got nil")
+	}
+}

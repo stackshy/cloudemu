@@ -112,3 +112,64 @@ func TestSDKStorageAccountGetMissing(t *testing.T) {
 	_, err := client.GetProperties(ctx, "rg-1", "nope", nil)
 	require.Error(t, err)
 }
+
+// A management-API create must be visible to the list calls, at both the
+// subscription and resource-group scope — the gap reported in #404, where a
+// PUT-created account was returned by GET-by-id but not by list.
+func TestSDKStorageAccountList(t *testing.T) {
+	ctx := context.Background()
+	client := newAccountsClient(t)
+
+	for _, name := range []string{"acctA", "acctB"} {
+		poller, err := client.BeginCreate(ctx, "rg-1", name, armstorage.AccountCreateParameters{
+			Location: to.Ptr("eastus"),
+			Kind:     to.Ptr(armstorage.KindBlockBlobStorage),
+			SKU:      &armstorage.SKU{Name: to.Ptr(armstorage.SKUNamePremiumLRS)},
+		}, nil)
+		require.NoError(t, err)
+		_, err = poller.PollUntilDone(ctx, nil)
+		require.NoError(t, err)
+	}
+
+	collect := func(pager interface {
+		More() bool
+	}, next func() ([]string, error)) []string {
+		var names []string
+		for pager.More() {
+			page, err := next()
+			require.NoError(t, err)
+			names = append(names, page...)
+		}
+		return names
+	}
+
+	// Subscription-scoped list.
+	subPager := client.NewListPager(nil)
+	subNames := collect(subPager, func() ([]string, error) {
+		page, err := subPager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(page.Value))
+		for _, a := range page.Value {
+			out = append(out, *a.Name)
+		}
+		return out, nil
+	})
+	assert.ElementsMatch(t, []string{"acctA", "acctB"}, subNames, "subscription-scoped list must return both accounts")
+
+	// Resource-group-scoped list.
+	rgPager := client.NewListByResourceGroupPager("rg-1", nil)
+	rgNames := collect(rgPager, func() ([]string, error) {
+		page, err := rgPager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(page.Value))
+		for _, a := range page.Value {
+			out = append(out, *a.Name)
+		}
+		return out, nil
+	})
+	assert.ElementsMatch(t, []string{"acctA", "acctB"}, rgNames, "resource-group-scoped list must return both accounts")
+}

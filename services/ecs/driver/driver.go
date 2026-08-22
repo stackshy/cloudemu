@@ -263,11 +263,16 @@ type TaskDefinition struct {
 	Tags                    []Tag
 }
 
-// Container is a running container within a task.
+// Container is a running container within a task. ExitCode, Reason, and
+// RuntimeID are populated only when the task is backed by a real
+// config.ContainerEngine; they stay zero for the default synthetic tasks.
 type Container struct {
 	Name       string
 	Image      string
 	LastStatus string
+	ExitCode   int
+	Reason     string
+	RuntimeID  string
 }
 
 // Attachment is a resource attached to a task, such as the elastic network

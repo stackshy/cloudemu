@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
 // Compile-time check that Mock implements driver.ECS.
@@ -42,6 +43,13 @@ type Mock struct {
 	clusterMu  sync.Mutex // serializes CreateCluster name-reuse compare-and-set
 
 	launcher ManagedInstanceLauncher // optional: provisions backing managed EC2 instances
+
+	// engineHandles maps a task ARN to the config.ContainerEngine handle backing
+	// it. A present entry is the "engine-backed" marker consulted by StopTask and
+	// ExecuteCommand; absent means the task is a synthetic (engine-less) task.
+	engineHandles *memstore.Store[string]
+
+	logs logdriver.Logging // optional: awslogs surfacing target (CloudWatch Logs)
 }
 
 // ManagedInstanceLauncher provisions the managed EC2 instance that backs an ECS
@@ -64,16 +72,24 @@ func (m *Mock) SetManagedInstanceLauncher(l ManagedInstanceLauncher) {
 // New creates a new ECS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:   memstore.New[*driver.Cluster](),
-		taskDefs:   memstore.New[*driver.TaskDefinition](),
-		tasks:      memstore.New[*driver.Task](),
-		services:   memstore.New[*driver.Service](),
-		instances:  memstore.New[*driver.ContainerInstance](),
-		tags:       memstore.New[[]driver.Tag](),
-		settings:   memstore.New[*driver.AccountSetting](),
-		attributes: memstore.New[*driver.Attribute](),
-		opts:       opts,
+		clusters:      memstore.New[*driver.Cluster](),
+		taskDefs:      memstore.New[*driver.TaskDefinition](),
+		tasks:         memstore.New[*driver.Task](),
+		services:      memstore.New[*driver.Service](),
+		instances:     memstore.New[*driver.ContainerInstance](),
+		tags:          memstore.New[[]driver.Tag](),
+		settings:      memstore.New[*driver.AccountSetting](),
+		attributes:    memstore.New[*driver.Attribute](),
+		engineHandles: memstore.New[string](),
+		opts:          opts,
 	}
+}
+
+// SetLogSink wires the CloudWatch Logs target that engine-backed tasks push
+// their captured container logs into when a container's LogConfiguration uses
+// the awslogs driver. Safe to leave unset — log surfacing is then skipped.
+func (m *Mock) SetLogSink(l logdriver.Logging) {
+	m.logs = l
 }
 
 func (m *Mock) now() string {

@@ -3,6 +3,8 @@ package gcp
 
 import (
 	"context"
+	"errors"
+	"io"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/alloydb"
@@ -11,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudlogging"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/eventarc"
@@ -61,6 +64,7 @@ type Provider struct {
 	GCE              *compute.Mock
 	Firestore        *firestore.Mock
 	CloudFunctions   *cloudfunctions.Mock
+	CloudRun         *cloudrun.Mock
 	VPC              *vpc.Mock
 	CloudMonitoring  *monitoring.Mock
 	IAM              *iam.Mock
@@ -86,6 +90,10 @@ type Provider struct {
 	// the options.
 	ProjectID string
 	Region    string
+
+	// engineClosers holds any wired real engines that implement io.Closer, so
+	// Close can cascade teardown to them. Empty for the in-memory default.
+	engineClosers []io.Closer
 }
 
 // New creates a new GCP provider with all mock services.
@@ -96,6 +104,7 @@ func New(opts ...config.Option) *Provider {
 		GCE:              compute.New(o),
 		Firestore:        firestore.New(o),
 		CloudFunctions:   cloudfunctions.New(o),
+		CloudRun:         cloudrun.New(o),
 		VPC:              vpc.New(o),
 		CloudMonitoring:  monitoring.New(o),
 		IAM:              iam.New(o),
@@ -157,7 +166,25 @@ func New(opts ...config.Option) *Provider {
 		},
 	)
 
+	p.engineClosers = o.EngineClosers()
+
 	return p
+}
+
+// Close tears down any real engines wired into the provider via
+// config.With<X>Engine, stopping the Docker containers or subprocesses they
+// own. It is a no-op when no engine is wired — the in-memory default — and is
+// safe to call more than once, since engine Close is idempotent.
+func (p *Provider) Close() error {
+	var errs []error
+
+	for _, c := range p.engineClosers {
+		if err := c.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // gcpRelationalDiscovery fans GCP's relational mocks (Cloud SQL instances and

@@ -13,10 +13,17 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/s3"
+	"github.com/stackshy/cloudemu/v2/providers/aws/secretsmanager"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
+	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
+	azurevm "github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
+	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	serverlessdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	"github.com/stretchr/testify/assert"
@@ -24,12 +31,15 @@ import (
 )
 
 type fixture struct {
-	engine *Engine
-	ec2    *ec2.Mock
-	vpc    *vpc.Mock
-	s3     *s3.Mock
-	ddb    *dynamodb.Mock
-	lambda *lambda.Mock
+	engine  *Engine
+	ec2     *ec2.Mock
+	vpc     *vpc.Mock
+	s3      *s3.Mock
+	ddb     *dynamodb.Mock
+	lambda  *lambda.Mock
+	secrets *secretsmanager.Mock
+	sns     *sns.Mock
+	sqs     *sqs.Mock
 }
 
 func newAWSFixture(t *testing.T) *fixture {
@@ -43,22 +53,31 @@ func newAWSFixture(t *testing.T) *fixture {
 	s3Mock := s3.New(opts)
 	ddbMock := dynamodb.New(opts)
 	lambdaMock := lambda.New(opts)
+	secretsMock := secretsmanager.New(opts)
+	snsMock := sns.New(opts)
+	sqsMock := sqs.New(opts)
 
 	eng := New(ProviderAWS, "123456789012", "us-east-1", &Drivers{
-		Compute:    ec2Mock,
-		Networking: vpcMock,
-		Storage:    s3Mock,
-		Database:   ddbMock,
-		Serverless: lambdaMock,
+		Compute:      ec2Mock,
+		Networking:   vpcMock,
+		Storage:      s3Mock,
+		Database:     ddbMock,
+		Serverless:   lambdaMock,
+		Secrets:      secretsMock,
+		Notification: snsMock,
+		MessageQueue: sqsMock,
 	})
 
 	return &fixture{
-		engine: eng,
-		ec2:    ec2Mock,
-		vpc:    vpcMock,
-		s3:     s3Mock,
-		ddb:    ddbMock,
-		lambda: lambdaMock,
+		engine:  eng,
+		ec2:     ec2Mock,
+		vpc:     vpcMock,
+		s3:      s3Mock,
+		ddb:     ddbMock,
+		lambda:  lambdaMock,
+		secrets: secretsMock,
+		sns:     snsMock,
+		sqs:     sqsMock,
 	}
 }
 
@@ -314,6 +333,25 @@ func seedLambda(t *testing.T, f *fixture, name string, tags map[string]string) {
 	require.NoError(t, err)
 }
 
+func seedSecret(t *testing.T, f *fixture, name string, tags map[string]string) {
+	t.Helper()
+	_, err := f.secrets.CreateSecret(context.Background(),
+		secretsdriver.SecretConfig{Name: name, Tags: tags}, []byte("value"))
+	require.NoError(t, err)
+}
+
+func seedSNS(t *testing.T, f *fixture, name string, tags map[string]string) {
+	t.Helper()
+	_, err := f.sns.CreateTopic(context.Background(), notifdriver.TopicConfig{Name: name, Tags: tags})
+	require.NoError(t, err)
+}
+
+func seedSQS(t *testing.T, f *fixture, name string, tags map[string]string) {
+	t.Helper()
+	_, err := f.sqs.CreateQueue(context.Background(), mqdriver.QueueConfig{Name: name, Tags: tags})
+	require.NoError(t, err)
+}
+
 func groupByType(rs []Resource) map[string][]Resource {
 	out := make(map[string][]Resource)
 	for _, r := range rs {
@@ -423,4 +461,45 @@ func TestWalkerErrorPropagation(t *testing.T) {
 		assert.ErrorIs(t, err, sentinel)
 		assert.Contains(t, err.Error(), `"bkt"`)
 	})
+}
+
+// TestVolumeManagedByUsesInstanceResourceGroup verifies an attached volume's
+// managedBy back-reference is built with the owning VM's real resource group,
+// so it matches the RG-aware id the VM itself carries (an ARM-created Azure VM
+// records its resource group; the disk must point at the same id, not a
+// "default" one that would not exist in the inventory).
+func TestVolumeManagedByUsesInstanceResourceGroup(t *testing.T) {
+	ctx := context.Background()
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	vm := azurevm.New(config.NewOptions(config.WithClock(fc), config.WithAccountID("sub-1")))
+
+	insts, err := vm.RunInstances(ctx, computedriver.InstanceConfig{
+		InstanceType: "Standard_D2s_v3", ResourceGroup: "rg-app", Region: "westeurope",
+	}, 1)
+	require.NoError(t, err)
+	require.Len(t, insts, 1)
+
+	vol, err := vm.CreateVolume(ctx, computedriver.VolumeConfig{Size: 32})
+	require.NoError(t, err)
+	require.NoError(t, vm.AttachVolume(ctx, vol.ID, insts[0].ID, "/dev/sdb"))
+
+	engine := New(ProviderAzure, "sub-1", "westeurope", &Drivers{Compute: vm})
+
+	out, err := engine.ListAll(ctx)
+	require.NoError(t, err)
+
+	var vmARN, volManagedBy string
+	for i := range out {
+		switch out[i].Type {
+		case TypeInstance:
+			vmARN = out[i].ARN
+		case TypeVolume:
+			volManagedBy = out[i].ManagedBy
+		}
+	}
+
+	require.NotEmpty(t, vmARN)
+	require.NotEmpty(t, volManagedBy)
+	assert.Contains(t, vmARN, "/resourceGroups/rg-app/")
+	assert.Equal(t, vmARN, volManagedBy, "volume managedBy must match the owning VM's id")
 }

@@ -6,6 +6,7 @@ type cloudFunction struct {
 	Name             string            `json:"name"`
 	Description      string            `json:"description,omitempty"`
 	SourceArchiveURL string            `json:"sourceArchiveUrl,omitempty"`
+	SourceUploadURL  string            `json:"sourceUploadUrl,omitempty"`
 	HTTPSTrigger     *httpsTrigger     `json:"httpsTrigger,omitempty"`
 	Status           string            `json:"status"`
 	EntryPoint       string            `json:"entryPoint,omitempty"`

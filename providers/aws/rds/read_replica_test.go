@@ -4,9 +4,78 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
+
+// TestReadReplicaSharesEngineBackedSourceEndpoint proves a read replica of an
+// engine-backed source points at the SOURCE's reachable host:port (so a client
+// reading from the replica reaches the real database that holds the source's
+// data) without provisioning a separate empty database.
+func TestReadReplicaSharesEngineBackedSourceEndpoint(t *testing.T) {
+	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
+	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))
+	ctx := context.Background()
+
+	src, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID: "src", Engine: "postgres", MasterUsername: "admin", MasterUserPassword: "pw",
+	})
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	if src.Endpoint != "127.0.0.1" || src.Port != 55432 {
+		t.Fatalf("source not engine-backed: %s:%d", src.Endpoint, src.Port)
+	}
+
+	replica, err := m.CreateDBInstanceReadReplica(ctx, rdsdriver.ReadReplicaConfig{
+		ID: "rep", SourceInstanceID: "src",
+	})
+	if err != nil {
+		t.Fatalf("CreateDBInstanceReadReplica: %v", err)
+	}
+
+	if replica.Endpoint != src.Endpoint || replica.Port != src.Port {
+		t.Fatalf("replica endpoint not shared with engine-backed source: got %s:%d, want %s:%d",
+			replica.Endpoint, replica.Port, src.Endpoint, src.Port)
+	}
+
+	if replica.ReadReplicaSource != "src" {
+		t.Fatalf("replica source linkage not set: %q", replica.ReadReplicaSource)
+	}
+
+	// A replica shares the source's data — it must not provision its own database.
+	for _, p := range eng.provisioned {
+		if p.InstanceID == "rep" {
+			t.Fatalf("replica must not provision a separate database: %+v", p)
+		}
+	}
+}
+
+// TestReadReplicaSyntheticSourceKeepsSyntheticEndpoint proves that without a
+// real engine the replica keeps its own synthetic endpoint rather than aliasing
+// the source's.
+func TestReadReplicaSyntheticSourceKeepsSyntheticEndpoint(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	src, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "src", Engine: "postgres"})
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	replica, err := m.CreateDBInstanceReadReplica(ctx, rdsdriver.ReadReplicaConfig{
+		ID: "rep", SourceInstanceID: "src",
+	})
+	if err != nil {
+		t.Fatalf("CreateDBInstanceReadReplica: %v", err)
+	}
+
+	if replica.Endpoint == "" || replica.Endpoint == src.Endpoint {
+		t.Fatalf("synthetic replica endpoint should differ from the source, got %q", replica.Endpoint)
+	}
+}
 
 func TestReadReplicaLifecycle(t *testing.T) {
 	ctx := context.Background()

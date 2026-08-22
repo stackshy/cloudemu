@@ -15,6 +15,19 @@ type instanceRequest struct {
 	NetworkInterfaces []networkInterface `json:"networkInterfaces,omitempty"`
 	Tags              tagsBlock          `json:"tags,omitempty"`
 	Labels            map[string]string  `json:"labels,omitempty"`
+	Metadata          metadataBlock      `json:"metadata,omitempty"`
+}
+
+// metadataBlock is GCP's instance metadata. The boot script is carried as a
+// metadata item with key "startup-script"
+// (https://cloud.google.com/compute/docs/instances/startup-scripts/linux).
+type metadataBlock struct {
+	Items []metadataItem `json:"items,omitempty"`
+}
+
+type metadataItem struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 type attachedDisk struct {
@@ -59,4 +72,16 @@ type instanceListResponse struct {
 	ID       string             `json:"id"`
 	Items    []instanceResponse `json:"items"`
 	SelfLink string             `json:"selfLink"`
+}
+
+// serialPortOutput is the outbound shape for
+// GET .../instances/{name}/serialPort — the response of
+// instances.getSerialPortOutput
+// (https://cloud.google.com/compute/docs/reference/rest/v1/instances/getSerialPortOutput).
+type serialPortOutput struct {
+	Kind     string `json:"kind"`
+	Contents string `json:"contents"`
+	Start    string `json:"start"`
+	Next     string `json:"next"`
+	SelfLink string `json:"selfLink"`
 }

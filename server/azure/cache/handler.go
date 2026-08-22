@@ -13,6 +13,7 @@
 // Coverage:
 //
 //	PUT    .../providers/Microsoft.Cache/redis/{name}   — Redis.BeginCreate (LRO, completes inline)
+//	PATCH  .../providers/Microsoft.Cache/redis/{name}   — Redis.Update
 //	GET    .../providers/Microsoft.Cache/redis/{name}   — Redis.Get
 //	DELETE .../providers/Microsoft.Cache/redis/{name}   — Redis.BeginDelete (LRO, completes inline)
 //	GET    .../providers/Microsoft.Cache/redis          — Redis.ListByResourceGroup
@@ -78,7 +79,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.Method {
-	case http.MethodPut:
+	case http.MethodPut, http.MethodPatch:
+		// PUT is Redis.BeginCreate; PATCH is Redis.Update (partial update of a
+		// mutable field set). createOrUpdateCache already updates in place when
+		// the cache exists, so both map to the same create-or-update path.
 		h.createOrUpdateCache(w, r, &rp)
 	case http.MethodGet:
 		h.getCache(w, r, &rp)

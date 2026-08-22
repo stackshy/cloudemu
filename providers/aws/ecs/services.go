@@ -63,7 +63,7 @@ func effectiveServiceLaunchType(launchType string) string {
 // PENDING, so RunningCount can be less than DesiredCount.
 //
 //nolint:gocritic // in is passed by value to satisfy the driver.ECS interface; the copy is cheap for a mock.
-func (m *Mock) CreateService(_ context.Context, in driver.CreateServiceInput) (*driver.Service, error) {
+func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) (*driver.Service, error) {
 	if in.ServiceName == "" {
 		return nil, errors.New(errors.InvalidArgument, "serviceName is required")
 	}
@@ -96,7 +96,7 @@ func (m *Mock) CreateService(_ context.Context, in driver.CreateServiceInput) (*
 		return nil, err
 	}
 
-	m.convergeNewService(svc, td)
+	m.convergeNewService(ctx, svc, td)
 	m.services.Set(serviceKey(cluster, svc.Name), svc)
 	m.recordTags(svc.ARN, in.Tags)
 
@@ -170,13 +170,13 @@ func (m *Mock) reserveServiceName(key string, svc *driver.Service) error {
 // convergeNewService resolves the target count (DAEMON implies one task per
 // container instance), launches the tasks, and records the PRIMARY deployment
 // and the start event on the service.
-func (m *Mock) convergeNewService(svc *driver.Service, td *driver.TaskDefinition) {
+func (m *Mock) convergeNewService(ctx context.Context, svc *driver.Service, td *driver.TaskDefinition) {
 	cluster := clusterNameFromARN(svc.ClusterARN)
 	target := m.desiredForStrategy(cluster, svc.SchedulingStrategy, svc.DesiredCount)
 	svc.DesiredCount = target
 
 	id := m.deploymentID()
-	running, pending := m.converge(svc, td, id, target)
+	running, pending := m.converge(ctx, svc, td, id, target)
 	svc.RunningCount = running
 	svc.PendingCount = pending
 	svc.Deployments = []driver.Deployment{m.newDeployment(id, deploymentPrimary, svc, running, pending)}
@@ -210,11 +210,13 @@ func (m *Mock) placeableInstanceCount(cluster string) int {
 // converge launches target tasks for the service under the given deployment id
 // and returns the running/pending split. EC2 tasks with no fitting instance are
 // stored PENDING rather than failing (pendingOnShortfall=true).
-func (m *Mock) converge(svc *driver.Service, td *driver.TaskDefinition, deploymentID string, target int) (running, pending int) {
+func (m *Mock) converge(
+	ctx context.Context, svc *driver.Service, td *driver.TaskDefinition, deploymentID string, target int,
+) (running, pending int) {
 	spec := m.serviceTaskSpec(svc, td, deploymentID)
 
 	for range target {
-		task, _ := m.launchTask(&spec, true)
+		task, _ := m.launchTask(ctx, &spec, true)
 		if task == nil {
 			continue
 		}
@@ -385,7 +387,7 @@ func (m *Mock) redeployService(ctx context.Context, svc *driver.Service, in *dri
 	m.drainService(ctx, svc)
 
 	id := m.deploymentID()
-	running, pending := m.converge(svc, td, id, target)
+	running, pending := m.converge(ctx, svc, td, id, target)
 	svc.RunningCount = running
 	svc.PendingCount = pending
 

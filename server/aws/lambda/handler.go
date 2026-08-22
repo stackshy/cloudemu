@@ -8,9 +8,9 @@
 // ListVersionsByFunction, the alias lifecycle (create/get/list/update/
 // delete), and resource policies (AddPermission / GetPolicy /
 // RemovePermission), and tagging (TagResource / UntagResource / ListTags at
-// the /2017-03-31/tags prefix). Layers, concurrency configs, and event source
-// mappings remain deferred — the driver supports some of them but the wire
-// surface is not yet wired through.
+// the /2017-03-31/tags prefix). Reserved concurrency (Put/Get/Delete
+// FunctionConcurrency), layers (Publish/Get/List/Delete layer versions and
+// ListLayers), and event source mappings are also wired through.
 package lambda
 
 import (
@@ -19,9 +19,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 // pathPrefix is the Lambda API version prefix every control-plane URL starts
@@ -38,6 +40,23 @@ const tagsPrefix = "/2017-03-31/tags"
 // esmPrefix is the Lambda event-source-mapping API prefix (SQS/DynamoDB-stream
 // -> Lambda triggers). Its own version prefix, so it needs a Matches clause.
 const esmPrefix = "/2015-03-31/event-source-mappings"
+
+// Reserved-concurrency prefixes. AWS versions Put/DeleteFunctionConcurrency
+// under 2017-10-31 and GetFunctionConcurrency under 2019-09-30, all on the
+// {name}/concurrency sub-resource — each needs its own Matches clause.
+const (
+	concurrencyWritePrefix = "/2017-10-31/functions" // Put + Delete
+	concurrencyReadPrefix  = "/2019-09-30/functions" // Get
+	concurrencySuffix      = "/concurrency"
+)
+
+// layersPrefix is the Lambda layers API prefix. Layers are a sibling of
+// functions (not a function sub-resource), so they route on their own prefix.
+const layersPrefix = "/2018-10-31/layers"
+
+// subVersions is the "versions" path segment shared by the function-versions
+// route (/functions/{name}/versions) and the layer-versions routes.
+const subVersions = "versions"
 
 const (
 	contentTypeJSON = "application/json"
@@ -62,15 +81,45 @@ type functionTagger interface {
 	ListFunctionTags(ctx context.Context, name string) (map[string]string, error)
 }
 
+// ObjectStore is the slice of the in-process S3 backend the handler needs to
+// fetch an S3-sourced deployment package (Code.S3Bucket/S3Key).
+type ObjectStore interface {
+	GetObject(ctx context.Context, bucket, key string) (*storagedriver.Object, error)
+}
+
 // Handler serves AWS Lambda REST requests against a serverless.Serverless
 // driver.
 type Handler struct {
 	fn sdrv.Serverless
+	// objects fetches an S3-sourced deployment package from the in-process S3
+	// backend. Nil when no S3 backend is wired; an S3-sourced deploy then fails
+	// loudly rather than silently falling back to the echo stub.
+	objects ObjectStore
+	// mu guards layerContent.
+	mu sync.Mutex
+	// layerContent stages each published layer version's zip bytes, keyed by
+	// "name:version", so a function importing the layer can have its files
+	// overlaid into the deployment package.
+	layerContent map[string][]byte
+}
+
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithObjectStore lets CreateFunction fetch an S3-sourced deployment package
+// (Code.S3Bucket/S3Key) from the in-process S3 backend so real code runs.
+func WithObjectStore(s ObjectStore) Option {
+	return func(h *Handler) { h.objects = s }
 }
 
 // New returns a Lambda handler backed by fn.
-func New(fn sdrv.Serverless) *Handler {
-	return &Handler{fn: fn}
+func New(fn sdrv.Serverless, opts ...Option) *Handler {
+	h := &Handler{fn: fn, layerContent: make(map[string][]byte)}
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	return h
 }
 
 // Matches returns true for any URL under /2015-03-31/functions — that's the
@@ -78,7 +127,10 @@ func New(fn sdrv.Serverless) *Handler {
 func (*Handler) Matches(r *http.Request) bool {
 	return strings.HasPrefix(r.URL.Path, pathPrefix) ||
 		strings.HasPrefix(r.URL.Path, tagsPrefix) ||
-		strings.HasPrefix(r.URL.Path, esmPrefix)
+		strings.HasPrefix(r.URL.Path, esmPrefix) ||
+		strings.HasPrefix(r.URL.Path, concurrencyWritePrefix) ||
+		strings.HasPrefix(r.URL.Path, concurrencyReadPrefix) ||
+		strings.HasPrefix(r.URL.Path, layersPrefix)
 }
 
 // ServeHTTP dispatches Lambda operations based on path shape and method.
@@ -87,17 +139,7 @@ func (*Handler) Matches(r *http.Request) bool {
 //	/2015-03-31/functions/{name}                GET=get, DELETE=delete
 //	/2015-03-31/functions/{name}/invocations    POST=invoke
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
-		arn := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, tagsPrefix), "/")
-		h.serveTags(w, r, arn)
-
-		return
-	}
-
-	if strings.HasPrefix(r.URL.Path, esmPrefix) {
-		uuid := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, esmPrefix), "/")
-		h.serveEventSourceMappings(w, r, uuid)
-
+	if h.routePrefixed(w, r) {
 		return
 	}
 
@@ -137,6 +179,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// routePrefixed serves the Lambda sub-APIs that live on their own version
+// prefix (tags, event-source-mappings, layers, reserved concurrency). It
+// returns true when it has handled the request, false to fall through to the
+// /2015-03-31/functions control plane.
+func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
+	switch {
+	case strings.HasPrefix(r.URL.Path, tagsPrefix):
+		arn := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, tagsPrefix), "/")
+		h.serveTags(w, r, arn)
+	case strings.HasPrefix(r.URL.Path, esmPrefix):
+		uuid := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, esmPrefix), "/")
+		h.serveEventSourceMappings(w, r, uuid)
+	case strings.HasPrefix(r.URL.Path, layersPrefix):
+		h.serveLayers(w, r)
+	default:
+		name, ok := concurrencyFunctionName(r.URL.Path)
+		if !ok {
+			return false
+		}
+
+		h.serveConcurrency(w, r, name)
+	}
+
+	return true
+}
+
 // serveSubresource dispatches /functions/{name}/{sub} paths.
 func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name, sub string) {
 	switch sub {
@@ -144,7 +212,9 @@ func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name,
 		h.serveInvoke(w, r, name)
 	case "configuration":
 		h.serveConfiguration(w, r, name)
-	case "versions":
+	case "code":
+		h.serveCode(w, r, name)
+	case subVersions:
 		h.serveVersions(w, r, name)
 	case "aliases":
 		h.serveAliases(w, r, name)
@@ -311,6 +381,52 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	info, err := h.fn.UpdateFunction(r.Context(), name, cfg)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toConfiguration(info))
+}
+
+// serveCode handles PUT .../{name}/code (UpdateFunctionCode). It resolves the
+// new deployment package the same way create does — an inline ZipFile or an
+// S3-sourced artifact fetched from the in-process S3 backend, with any layer
+// content overlaid — then redeploys it to the engine via the provider so
+// update-function-code runs the new real code instead of leaving the stale
+// deployment in place. A request with no usable source is a hard error.
+func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+		return
+	}
+
+	var req updateFunctionCodeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	code, err := h.resolveCode(r.Context(), &functionCode{
+		ZipFile: req.ZipFile, S3Bucket: req.S3Bucket, S3Key: req.S3Key,
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	code, err = h.overlayLayers(code, req.Layers)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if len(code) == 0 {
+		writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
+			"UpdateFunctionCode requires a deployment package (ZipFile or S3Bucket/S3Key)")
+		return
+	}
+
+	info, err := h.fn.UpdateFunction(r.Context(), name, sdrv.FunctionConfig{Name: name, Code: code})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -507,6 +623,20 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		cfg.Environment = req.Environment.Variables
 	}
 
+	code, err := h.resolveCode(r.Context(), req.Code)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	code, err = h.overlayLayers(code, req.Layers)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	cfg.Code = code
+
 	info, err := h.fn.CreateFunction(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)
@@ -514,6 +644,42 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, toConfiguration(info))
+}
+
+// resolveCode returns the deployment-package bytes for a CreateFunction request.
+// An inline Code.ZipFile wins; otherwise an S3Bucket/S3Key pair is fetched from
+// the in-process S3 backend so a function deployed the way Terraform/SAM/CDK
+// deploy it (an uploaded artifact, not an inline zip) runs real code instead of
+// silently falling back to the echo stub. A code that references S3 with no S3
+// backend wired is a hard error rather than a silent stub.
+func (h *Handler) resolveCode(ctx context.Context, code *functionCode) ([]byte, error) {
+	if code == nil {
+		return nil, nil
+	}
+
+	if len(code.ZipFile) > 0 {
+		return code.ZipFile, nil
+	}
+
+	if code.S3Bucket == "" && code.S3Key == "" {
+		return nil, nil
+	}
+
+	if code.S3Bucket == "" || code.S3Key == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "Code.S3Bucket and Code.S3Key must both be set")
+	}
+
+	if h.objects == nil {
+		return nil, cerrors.New(cerrors.InvalidArgument,
+			"function code references S3 but no S3 backend is wired; deploy with an inline Code.ZipFile")
+	}
+
+	obj, err := h.objects.GetObject(ctx, code.S3Bucket, code.S3Key)
+	if err != nil {
+		return nil, err
+	}
+
+	return obj.Data, nil
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, name string) {

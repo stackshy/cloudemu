@@ -61,6 +61,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 		AutomatedBackupEnabled: true,
 		ContinuousBackup:       true,
 	}
+	m.initialPasswords[cfg.ID] = cfg.MasterUserPassword
 
 	out := cloneCluster(cluster)
 
@@ -137,7 +138,7 @@ func (m *Mock) ModifyCluster(
 
 // DeleteCluster removes a cluster and cascades to its instances, users and
 // databases (matching AlloyDB's force-delete of a cluster's contents).
-func (m *Mock) DeleteCluster(_ context.Context, id string) error {
+func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -145,9 +146,13 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "AlloyDB cluster %q not found", id)
 	}
 
+	if err := m.deleteClusterChildren(ctx, id); err != nil {
+		return err
+	}
+
 	m.clusters.Delete(id)
 	delete(m.clusterExtra, id)
-	m.deleteClusterChildren(id)
+	delete(m.initialPasswords, id)
 	m.detachSecondaries(id)
 
 	return nil
@@ -166,14 +171,19 @@ func (m *Mock) detachSecondaries(primaryID string) {
 	}
 }
 
-// deleteClusterChildren removes instances, users and databases under a cluster.
-// The caller holds the write lock. The trailing '/' prefix guard prevents
-// "foo" from sweeping "foo2/…".
-func (m *Mock) deleteClusterChildren(cluster string) {
+// deleteClusterChildren removes instances, users and databases under a cluster,
+// tearing down each instance's real database first. The caller holds the write
+// lock. The trailing '/' prefix guard prevents "foo" from sweeping "foo2/…".
+func (m *Mock) deleteClusterChildren(ctx context.Context, cluster string) error {
 	prefix := cluster + "/"
 
 	for _, key := range m.instances.Keys() {
 		if hasPrefix(key, prefix) {
+			inst, _ := m.instances.Get(key)
+			if err := m.deprovisionInstanceEngine(ctx, key, inst.EngineVersion); err != nil {
+				return err
+			}
+
 			m.instances.Delete(key)
 			delete(m.instanceExtra, key)
 		}
@@ -190,6 +200,8 @@ func (m *Mock) deleteClusterChildren(cluster string) {
 			m.databases.Delete(key)
 		}
 	}
+
+	return nil
 }
 
 func hasPrefix(s, prefix string) bool {

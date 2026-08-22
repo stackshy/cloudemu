@@ -44,30 +44,31 @@ var errUnsupportedSnapshot = errors.New("unsupported snapshot schema version")
 
 // serveConfig holds the resolved serve flags.
 type serveConfig struct {
-	providers       string
-	host            string
-	advertiseHost   string
-	awsPort         string
-	azurePort       string
-	gcpPort         string
-	ociPort         string
-	k8sPort         string
-	accountID       string
-	region          string
-	projectID       string
-	latency         time.Duration
-	tlsCert         string
-	tlsKey          string
-	tlsHosts        stringList
-	endpoints       string
-	admin           bool
-	logReqs         bool
-	quiet           bool
-	shutdownTO      time.Duration
-	persist         bool
-	stateFile       string
-	persistMetaOnly bool
-	initDir         string
+	providers         string
+	host              string
+	advertiseHost     string
+	awsPort           string
+	azurePort         string
+	gcpPort           string
+	ociPort           string
+	k8sPort           string
+	accountID         string
+	azureSubscription string
+	region            string
+	projectID         string
+	latency           time.Duration
+	tlsCert           string
+	tlsKey            string
+	tlsHosts          stringList
+	endpoints         string
+	admin             bool
+	logReqs           bool
+	quiet             bool
+	shutdownTO        time.Duration
+	persist           bool
+	stateFile         string
+	persistMetaOnly   bool
+	initDir           string
 }
 
 // stringList is a repeatable string flag (e.g. --tls-host a --tls-host b).
@@ -94,7 +95,9 @@ func runServe(args []string) error {
 	fs.StringVar(&c.gcpPort, "gcp-port", "4569", "port for the GCP endpoint (HTTP)")
 	fs.StringVar(&c.ociPort, "oci-port", "4571", "port for the OCI endpoint (HTTP)")
 	fs.StringVar(&c.k8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTPS); empty to disable")
-	fs.StringVar(&c.accountID, "account-id", "000000000000", "AWS account ID / Azure subscription ID reported by the emulator")
+	fs.StringVar(&c.accountID, "account-id", "000000000000", "AWS account ID (also GCP/OCI) reported by the emulator")
+	fs.StringVar(&c.azureSubscription, "azure-subscription", "00000000-0000-0000-0000-000000000000",
+		"Azure subscription id reported by the emulator (a GUID; real Azure SDKs/CLIs require one)")
 	fs.StringVar(&c.region, "region", "us-east-1", "default region reported by the emulator")
 	fs.StringVar(&c.projectID, "project-id", "cloudemu-local", "GCP project ID reported by the emulator")
 	fs.DurationVar(&c.latency, "latency", 0, "artificial latency added to every emulated call (e.g. 20ms)")
@@ -230,7 +233,15 @@ func runServe(args []string) error {
 				freshTargets["gcp"] = seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE}
 				freshDiscovery["gcp"] = cloud.ResourceDiscovery
 			case "azure":
-				cloud := cloudemu.NewAzure(opts...)
+				// Azure subscriptions are GUIDs, unlike the 12-digit AWS
+				// account id. Give the Azure provider its own subscription so
+				// resource ids and Resource Graph scoping use a real Azure GUID
+				// (WithAccountID is last-wins). Copy opts so the override never
+				// leaks into another provider's option list.
+				azureOpts := make([]config.Option, len(opts), len(opts)+1)
+				copy(azureOpts, opts)
+				azureOpts = append(azureOpts, config.WithAccountID(c.azureSubscription))
+				cloud := cloudemu.NewAzure(azureOpts...)
 				d := azureserver.DriversFrom(cloud)
 				d.K8sAPI = k8s
 				cloud.AKS.SetK8sAPI(k8s)

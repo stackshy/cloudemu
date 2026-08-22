@@ -1,8 +1,9 @@
 package azure
 
 import (
+	"net/http"
+
 	azureprovider "github.com/stackshy/cloudemu/v2/providers/azure"
-	"github.com/stackshy/cloudemu/v2/server"
 )
 
 // DriversFrom builds a Drivers bundle from a fully-constructed Azure provider,
@@ -23,28 +24,29 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		Images:          p.VirtualMachines,
 		SSHPublicKeys:   p.VirtualMachines,
 
-		BlobStorage:      p.BlobStorage,
-		QueueStorage:     p.QueueStorage,
-		TableStorage:     p.TableStorage,
-		CosmosDB:         p.CosmosDB,
-		ManagedCassandra: p.ManagedCassandra,
-		CosmosPostgreSQL: p.CosmosPostgreSQL,
-		Network:          p.VNet,
-		Monitor:          p.Monitor,
-		Functions:        p.Functions,
-		ServiceBus:       p.ServiceBus,
-		SQL:              p.SQL,
-		PostgresFlex:     p.PostgresFlex,
-		MySQLFlex:        p.MySQLFlex,
-		AKS:              p.AKS,
-		IAM:              p.IAM,
-		ACR:              p.ACR,
-		KeyVault:         p.KeyVault,
-		DNS:              p.DNS,
-		LB:               p.LB,
-		EventGrid:        p.EventGrid,
-		LogAnalytics:     p.LogAnalytics,
-		Cache:            p.Cache,
+		BlobStorage:        p.BlobStorage,
+		QueueStorage:       p.QueueStorage,
+		TableStorage:       p.TableStorage,
+		CosmosDB:           p.CosmosDB,
+		ManagedCassandra:   p.ManagedCassandra,
+		CosmosPostgreSQL:   p.CosmosPostgreSQL,
+		Network:            p.VNet,
+		Monitor:            p.Monitor,
+		Functions:          p.Functions,
+		ServiceBus:         p.ServiceBus,
+		SQL:                p.SQL,
+		PostgresFlex:       p.PostgresFlex,
+		MySQLFlex:          p.MySQLFlex,
+		AKS:                p.AKS,
+		IAM:                p.IAM,
+		ACR:                p.ACR,
+		ContainerInstances: p.ContainerInstances,
+		KeyVault:           p.KeyVault,
+		DNS:                p.DNS,
+		LB:                 p.LB,
+		EventGrid:          p.EventGrid,
+		LogAnalytics:       p.LogAnalytics,
+		Cache:              p.Cache,
 
 		NotificationHubs: p.NotificationHubs,
 
@@ -76,6 +78,6 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 
 // NewFromProvider builds a ready-to-serve Azure server from a fully-constructed
 // provider, wiring every driver via DriversFrom.
-func NewFromProvider(p *azureprovider.Provider) *server.Server {
+func NewFromProvider(p *azureprovider.Provider) http.Handler {
 	return New(DriversFrom(p))
 }

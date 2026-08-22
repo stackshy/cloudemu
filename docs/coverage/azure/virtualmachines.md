@@ -45,6 +45,18 @@ Azure's `compute` service · portable interface `driver.Compute` · [Azure index
 | `TerminateInstances` |  |
 | `UpdateAutoScalingGroup` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### ConsoleReader
+
+ConsoleReader is an optional capability a Compute implementation may provide
+
+| Operation | Description |
+| --- | --- |
+| `GetConsoleOutput` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

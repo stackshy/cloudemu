@@ -58,6 +58,21 @@ type networkInterfaceRef struct {
 type osProfile struct {
 	ComputerName  string `json:"computerName,omitempty"`
 	AdminUsername string `json:"adminUsername,omitempty"`
+	// CustomData is the base64-encoded cloud-init/boot script Azure runs on
+	// first boot — the customData field of the ARM osProfile. It maps to the
+	// driver's InstanceConfig.UserData (base64-decoded) so a real compute engine
+	// runs it as the boot script.
+	CustomData string `json:"customData,omitempty"`
+}
+
+// bootDiagnosticsDataResult is the ARM response for
+// POST virtualMachines/{name}/retrieveBootDiagnosticsData. It mirrors
+// armcompute.RetrieveBootDiagnosticsDataResult: URIs the client downloads the
+// captured console screenshot and serial log from. We point the serial-log URI
+// back at this server so the captured boot output is retrievable.
+type bootDiagnosticsDataResult struct {
+	ConsoleScreenshotBlobURI string `json:"consoleScreenshotBlobUri,omitempty"`
+	SerialConsoleLogBlobURI  string `json:"serialConsoleLogBlobUri,omitempty"`
 }
 
 // vmResponse is the outbound shape for a single VM. Mirrors the real ARM

@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -205,19 +206,52 @@ func (m *Mock) RebootInstance(ctx context.Context, id string) error {
 	return m.RebootCluster(ctx, id)
 }
 
-// CreateCluster creates a new Redshift cluster.
+// CreateCluster creates a new Redshift cluster. When a real DatabaseEngine is
+// wired in, Redshift (a Postgres-wire service) is backed by the shared Postgres
+// engine keyed by the cluster ID, and the synthetic endpoint is overridden with
+// the real host:port a client connects to.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) CreateCluster(_ context.Context, cfg rdbdriver.ClusterConfig) (*rdbdriver.Cluster, error) {
+func (m *Mock) CreateCluster(ctx context.Context, cfg rdbdriver.ClusterConfig) (*rdbdriver.Cluster, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "ClusterIdentifier is required")
 	}
 
+	cluster, err := m.reserveCluster(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Engine wired in: provision the real database WITHOUT the lock, then write the
+	// reachable host:port back onto the stored row under a re-acquired lock.
+	if m.opts.DatabaseEngine != nil {
+		if err := m.provisionEngine(ctx, &cluster, cfg); err != nil {
+			m.rollbackCluster(cfg.ID)
+
+			return nil, err
+		}
+
+		m.finalizeCluster(cluster.ID, cluster.Endpoint, cluster.Port)
+	}
+
+	m.emitClusterMetrics(cfg.ID, cpuUtilizationRunning, databaseConnectionsRun,
+		readIOPSRunning, writeIOPSRunning, networkReceiveThroughput)
+
+	out := cluster
+
+	return &out, nil
+}
+
+// reserveCluster builds the cluster with its synthetic endpoint and stores it
+// under the provider lock, returning the reserved row.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if _, ok := m.clusters.Get(cfg.ID); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "Redshift cluster %q already exists", cfg.ID)
+		return rdbdriver.Cluster{}, cerrors.Newf(cerrors.AlreadyExists, "Redshift cluster %q already exists", cfg.ID)
 	}
 
 	engine := cfg.Engine
@@ -248,12 +282,68 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdbdriver.ClusterConfig) (*r
 
 	m.clusters.Set(cfg.ID, cluster)
 
-	m.emitClusterMetrics(cfg.ID, cpuUtilizationRunning, databaseConnectionsRun,
-		readIOPSRunning, writeIOPSRunning, networkReceiveThroughput)
+	return cluster, nil
+}
 
-	out := cluster
+// finalizeCluster writes the engine's reachable endpoint back onto the stored
+// cluster row under a re-acquired lock.
+func (m *Mock) finalizeCluster(id, endpoint string, port int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	return &out, nil
+	cluster, ok := m.clusters.Get(id)
+	if !ok {
+		return
+	}
+
+	cluster.Endpoint = endpoint
+	cluster.Port = port
+	m.clusters.Set(id, cluster)
+}
+
+// rollbackCluster removes the reserved cluster when the engine provision fails.
+func (m *Mock) rollbackCluster(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.clusters.Delete(id)
+}
+
+// provisionEngine backs the cluster with the wired real database engine, keyed
+// and named by the cluster ID, and overrides the synthetic endpoint with the
+// real host:port. It is a no-op when no engine is wired in. Redshift routes to
+// the Postgres engine because it speaks the Postgres wire protocol.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func (m *Mock) provisionEngine(ctx context.Context, cluster *rdbdriver.Cluster, cfg rdbdriver.ClusterConfig) error {
+	if m.opts.DatabaseEngine == nil {
+		return nil
+	}
+
+	dbName := cfg.DatabaseName
+	if dbName == "" {
+		dbName = cfg.ID
+	}
+
+	shared := rdbdriver.Instance{ID: cfg.ID, Engine: cluster.Engine}
+	sharedCfg := rdbdriver.InstanceConfig{
+		ID:                 cfg.ID,
+		Engine:             cluster.Engine,
+		DBName:             dbName,
+		MasterUsername:     cfg.MasterUsername,
+		MasterUserPassword: cfg.MasterUserPassword,
+	}
+
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &shared, &sharedCfg); err != nil {
+		return err
+	}
+
+	if shared.Endpoint != "" {
+		cluster.Endpoint = shared.Endpoint
+		cluster.Port = shared.Port
+	}
+
+	return nil
 }
 
 // DescribeClusters returns all clusters if ids is empty, else only matching ones.
@@ -314,15 +404,38 @@ func (m *Mock) ModifyCluster(
 	return &out, nil
 }
 
-// DeleteCluster removes a cluster.
-func (m *Mock) DeleteCluster(_ context.Context, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// DeleteCluster removes a cluster and tears down the real database backing it,
+// if any. The engine Deprovision runs WITHOUT the provider lock held.
+func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
+	// No engine wired in: remove the row under a single lock, as before.
+	if m.opts.DatabaseEngine == nil {
+		m.mu.Lock()
+		defer m.mu.Unlock()
 
-	if _, ok := m.clusters.Get(id); !ok {
+		if !m.clusters.Delete(id) {
+			return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
+		}
+
+		return nil
+	}
+
+	// Capture the engine family under the lock, deprovision the real database
+	// WITHOUT it, then remove the row under a re-acquired lock.
+	m.mu.Lock()
+	cluster, ok := m.clusters.Get(id)
+	m.mu.Unlock()
+
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 	}
 
+	inst := rdbdriver.Instance{ID: id, Engine: cluster.Engine}
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.clusters.Delete(id)
 
 	return nil

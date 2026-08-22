@@ -238,3 +238,124 @@ func TestSDKPostgresFlexUpdateAndLifecycle(t *testing.T) {
 		t.Fatalf("expected state Ready after restart, got %v", got.Server.Properties.State)
 	}
 }
+
+func TestSDKPostgresFlexHighAvailability(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	createPoller, err := servers.BeginCreate(ctx, "rg-1", "ha1", armpostgresqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		Properties: &armpostgresqlflexibleservers.ServerProperties{
+			HighAvailability: &armpostgresqlflexibleservers.HighAvailability{
+				Mode:                    to.Ptr(armpostgresqlflexibleservers.HighAvailabilityModeZoneRedundant),
+				StandbyAvailabilityZone: to.Ptr("2"),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Create PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "ha1", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	ha := got.Server.Properties.HighAvailability
+	if ha == nil || ha.Mode == nil {
+		t.Fatal("expected highAvailability to round-trip, got nil")
+	}
+
+	if *ha.Mode != armpostgresqlflexibleservers.HighAvailabilityModeZoneRedundant {
+		t.Fatalf("mode = %v, want ZoneRedundant", *ha.Mode)
+	}
+
+	if ha.StandbyAvailabilityZone == nil || *ha.StandbyAvailabilityZone != "2" {
+		t.Fatalf("standbyAvailabilityZone = %v, want 2", ha.StandbyAvailabilityZone)
+	}
+}
+
+// TestSDKPostgresFlexHighAvailabilityUpdate covers the PATCH path — the case
+// that previously silently dropped highAvailability on PostgreSQL. A server
+// created with HA disabled is switched to ZoneRedundant via BeginUpdate, then
+// disabled again, clearing the standby zone.
+func TestSDKPostgresFlexHighAvailabilityUpdate(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	createPoller, err := servers.BeginCreate(ctx, "rg-1", "haupd", armpostgresqlflexibleservers.Server{
+		Location:   to.Ptr("eastus"),
+		Properties: &armpostgresqlflexibleservers.ServerProperties{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Create PollUntilDone: %v", err)
+	}
+
+	patchPoller, err := servers.BeginUpdate(ctx, "rg-1", "haupd", armpostgresqlflexibleservers.ServerForUpdate{
+		Properties: &armpostgresqlflexibleservers.ServerPropertiesForUpdate{
+			HighAvailability: &armpostgresqlflexibleservers.HighAvailability{
+				Mode:                    to.Ptr(armpostgresqlflexibleservers.HighAvailabilityModeZoneRedundant),
+				StandbyAvailabilityZone: to.Ptr("3"),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate(enable): %v", err)
+	}
+
+	if _, err := patchPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Update(enable) PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "haupd", nil)
+	if err != nil {
+		t.Fatalf("Get after enable: %v", err)
+	}
+
+	haEnabled := got.Server.Properties.HighAvailability
+	if haEnabled == nil || haEnabled.Mode == nil ||
+		*haEnabled.Mode != armpostgresqlflexibleservers.HighAvailabilityModeZoneRedundant {
+		t.Fatalf("after PATCH enable: mode = %v, want ZoneRedundant", got.Server.Properties.HighAvailability)
+	}
+
+	if haEnabled.StandbyAvailabilityZone == nil || *haEnabled.StandbyAvailabilityZone != "3" {
+		t.Errorf("after PATCH enable: standbyAvailabilityZone = %v, want 3", haEnabled.StandbyAvailabilityZone)
+	}
+
+	disablePoller, err := servers.BeginUpdate(ctx, "rg-1", "haupd", armpostgresqlflexibleservers.ServerForUpdate{
+		Properties: &armpostgresqlflexibleservers.ServerPropertiesForUpdate{
+			HighAvailability: &armpostgresqlflexibleservers.HighAvailability{
+				Mode: to.Ptr(armpostgresqlflexibleservers.HighAvailabilityModeDisabled),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate(disable): %v", err)
+	}
+
+	if _, err := disablePoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Update(disable) PollUntilDone: %v", err)
+	}
+
+	got, err = servers.Get(ctx, "rg-1", "haupd", nil)
+	if err != nil {
+		t.Fatalf("Get after disable: %v", err)
+	}
+
+	ha := got.Server.Properties.HighAvailability
+	if ha == nil || ha.Mode == nil || *ha.Mode != armpostgresqlflexibleservers.HighAvailabilityModeDisabled {
+		t.Fatalf("after PATCH disable: mode = %v, want Disabled", ha)
+	}
+
+	if ha.StandbyAvailabilityZone != nil && *ha.StandbyAvailabilityZone != "" {
+		t.Errorf("disabling HA left a stale standbyAvailabilityZone: %v", *ha.StandbyAvailabilityZone)
+	}
+}

@@ -1575,6 +1575,39 @@
     }
   },
   {
+    "service": "cloudrun",
+    "interface": "CloudRun",
+    "operations": [
+      {
+        "name": "CreateJob",
+        "doc": "CreateJob stores a job spec. It does not run anything — RunJob does."
+      },
+      {
+        "name": "DeleteJob",
+        "doc": "DeleteJob removes a job and stops any container workloads its executions"
+      },
+      {
+        "name": "GetExecution",
+        "doc": "GetExecution returns an execution by name (bare execution id or a fully"
+      },
+      {
+        "name": "GetJob",
+        "doc": "GetJob returns a job by name. name may be the bare job id or a fully"
+      },
+      {
+        "name": "ListJobs",
+        "doc": "ListJobs returns every stored job."
+      },
+      {
+        "name": "RunJob",
+        "doc": "RunJob creates and runs one Execution of the named job, blocking until"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudRun"
+    }
+  },
+  {
     "service": "cloudtrail",
     "interface": "CloudTrail",
     "operations": [
@@ -1898,6 +1931,17 @@
       },
       {
         "name": "UpdateAutoScalingGroup"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "ConsoleReader",
+        "doc": "ConsoleReader is an optional capability a Compute implementation may provide",
+        "operations": [
+          {
+            "name": "GetConsoleOutput"
+          }
+        ]
       }
     ],
     "providers": {
@@ -2235,6 +2279,35 @@
     ],
     "providers": {
       "aws": "Config"
+    }
+  },
+  {
+    "service": "containerinstances",
+    "interface": "ContainerInstances",
+    "operations": [
+      {
+        "name": "ContainerLogs",
+        "doc": "ContainerLogs returns the captured stdout/stderr for one container in the"
+      },
+      {
+        "name": "CreateContainerGroup",
+        "doc": "CreateContainerGroup creates the group, or replaces it when one of the"
+      },
+      {
+        "name": "DeleteContainerGroup",
+        "doc": "DeleteContainerGroup removes the group, tearing down any engine-backed"
+      },
+      {
+        "name": "GetContainerGroup",
+        "doc": "GetContainerGroup returns the recorded group, or a NotFound error."
+      },
+      {
+        "name": "ListContainerGroups",
+        "doc": "ListContainerGroups returns the groups visible under filter."
+      }
+    ],
+    "providers": {
+      "azure": "ContainerInstances"
     }
   },
   {

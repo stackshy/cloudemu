@@ -45,6 +45,8 @@ func (*Handler) Matches(r *http.Request) bool {
 }
 
 // ServeHTTP dispatches ECR operations based on X-Amz-Target.
+//
+//nolint:gocyclo // flat dispatch: one branch per ECR operation
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix) {
 	case "CreateRepository":
@@ -75,6 +77,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getRepositoryPolicy(w, r)
 	case "DeleteRepositoryPolicy":
 		h.deleteRepositoryPolicy(w, r)
+	case "PutLifecyclePolicy":
+		h.putLifecyclePolicy(w, r)
+	case "GetLifecyclePolicy":
+		h.getLifecyclePolicy(w, r)
+	case "StartImageScan":
+		h.startImageScan(w, r)
+	case "DescribeImageScanFindings":
+		h.describeImageScanFindings(w, r)
 	default:
 		op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 		wire.WriteJSONError(w, http.StatusBadRequest,
