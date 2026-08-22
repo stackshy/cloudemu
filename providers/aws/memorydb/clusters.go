@@ -230,7 +230,10 @@ func (m *Mock) applySnapshotShape(cfg *mdbdriver.CreateClusterConfig, shape *clu
 	return nil
 }
 
-// CreateCluster creates a MemoryDB cluster.
+// CreateCluster creates a MemoryDB cluster. The cluster row is reserved (built
+// with its synthetic endpoint and stored) under the provider lock, then the real
+// Redis provision runs WITHOUT the lock so concurrent reads are never blocked,
+// and only the resulting reachable host:port is written back under the lock.
 //
 //nolint:gocritic // cfg is large but matches the driver signature.
 func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterConfig) (*mdbdriver.Cluster, error) {
@@ -238,6 +241,33 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterCon
 		return nil, err
 	}
 
+	reserved, err := m.reserveCluster(&cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// No engine wired in: the synthetic cluster is complete as reserved.
+	if m.opts.CacheEngine == nil {
+		return reserved, nil
+	}
+
+	host, port, err := m.provisionClusterEngine(ctx, reserved.Name, reserved.ClusterEndpoint)
+	if err != nil {
+		m.rollbackCluster(reserved.Name, reserved.ACLName, cfg.MultiRegionClusterName)
+
+		return nil, err
+	}
+
+	out := m.finalizeClusterEngine(reserved, host, port)
+
+	return &out, nil
+}
+
+// reserveCluster validates cfg, builds the cluster with its synthetic endpoint,
+// stores it, links its ACL and multi-region membership, and emits the create
+// metrics/event — all under the provider lock. It returns a clone of the stored
+// cluster.
+func (m *Mock) reserveCluster(cfg *mdbdriver.CreateClusterConfig) (*mdbdriver.Cluster, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -262,7 +292,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterCon
 	acl := orDefault(cfg.ACLName, "open-access")
 
 	if cfg.SnapshotName != "" {
-		if err := m.applySnapshotShape(&cfg, &shape); err != nil {
+		if err := m.applySnapshotShape(cfg, &shape); err != nil {
 			return nil, err
 		}
 	}
@@ -313,10 +343,6 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterCon
 		CreatedAt:               m.opts.Clock.Now().UTC(),
 	}
 
-	if err := m.backClusterWithEngine(ctx, &cluster); err != nil {
-		return nil, err
-	}
-
 	m.clusters.Set(cfg.Name, cluster)
 	m.linkACLCluster(acl, cfg.Name, true)
 
@@ -330,6 +356,65 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterCon
 	out := cloneCluster(&cluster)
 
 	return &out, nil
+}
+
+// provisionClusterEngine starts the real Redis server backing the cluster and
+// returns the reachable host:port. It runs WITHOUT the provider lock held; the
+// caller invokes it only when a CacheEngine is configured.
+func (m *Mock) provisionClusterEngine(
+	ctx context.Context, name string, ep mdbdriver.Endpoint,
+) (host string, port int, err error) {
+	info := cachedriver.CacheInfo{
+		Name:     name,
+		Engine:   engineRedisFamily,
+		Endpoint: fmt.Sprintf("%s:%d", ep.Address, ep.Port),
+	}
+
+	if err := cacheengine.Provision(ctx, m.opts.CacheEngine, &info); err != nil {
+		return "", 0, err
+	}
+
+	return splitHostPort(info.Endpoint)
+}
+
+// finalizeClusterEngine writes the engine's reachable host:port back onto the
+// reserved cluster's endpoint and shard nodes, persisting the update under a
+// re-acquired lock, and returns the finalized cluster.
+func (m *Mock) finalizeClusterEngine(reserved *mdbdriver.Cluster, host string, port int) mdbdriver.Cluster {
+	reserved.ClusterEndpoint.Address = host
+	reserved.ClusterEndpoint.Port = port
+
+	for si := range reserved.Shards {
+		for ni := range reserved.Shards[si].Nodes {
+			reserved.Shards[si].Nodes[ni].Endpoint.Address = host
+			reserved.Shards[si].Nodes[ni].Endpoint.Port = port
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// The row is normally still present; skip the write only if it was removed
+	// concurrently, returning the reserved copy unchanged.
+	if m.clusters.Has(reserved.Name) {
+		m.clusters.Set(reserved.Name, *reserved)
+	}
+
+	return cloneCluster(reserved)
+}
+
+// rollbackCluster undoes reserveCluster when the engine provision fails: it
+// removes the reserved cluster and its ACL / multi-region membership.
+func (m *Mock) rollbackCluster(name, acl, mrc string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.clusters.Delete(name)
+	m.linkACLCluster(acl, name, false)
+
+	if mrc != "" {
+		m.unregisterMRCMember(mrc, name)
+	}
 }
 
 // DescribeClusters returns all clusters, or the named ones.
@@ -420,22 +505,31 @@ func (m *Mock) reconfigureShards(c *mdbdriver.Cluster, cfg *mdbdriver.UpdateClus
 	return nil
 }
 
-// DeleteCluster removes a cluster (optionally taking a final snapshot).
+// DeleteCluster removes a cluster (optionally taking a final snapshot), tearing
+// down the real Redis backing it. The engine Deprovision runs WITHOUT the
+// provider lock held.
 func (m *Mock) DeleteCluster(ctx context.Context, name, finalSnapshotName string) (*mdbdriver.Cluster, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// No engine wired in: complete the delete under a single lock, as before.
+	if m.opts.CacheEngine == nil {
+		m.mu.Lock()
+		defer m.mu.Unlock()
 
-	c, ok := m.clusters.Get(name)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
-	}
-
-	if finalSnapshotName != "" {
-		if m.snapshots.Has(finalSnapshotName) {
-			return nil, cerrors.Newf(cerrors.AlreadyExists, "snapshot %q already exists", finalSnapshotName)
+		c, err := m.stageClusterDeleteLocked(name, finalSnapshotName)
+		if err != nil {
+			return nil, err
 		}
 
-		m.snapshots.Set(finalSnapshotName, m.snapshotFromCluster(finalSnapshotName, &c, "manual", nil))
+		return m.removeClusterLocked(&c), nil
+	}
+
+	// Capture the cluster (and take the optional final snapshot) under the lock,
+	// deprovision the real Redis WITHOUT it, then remove the row under the lock.
+	m.mu.Lock()
+	c, err := m.stageClusterDeleteLocked(name, finalSnapshotName)
+	m.mu.Unlock()
+
+	if err != nil {
+		return nil, err
 	}
 
 	if err := cacheengine.Deprovision(ctx, m.opts.CacheEngine, &cachedriver.CacheInfo{
@@ -445,19 +539,48 @@ func (m *Mock) DeleteCluster(ctx context.Context, name, finalSnapshotName string
 		return nil, err
 	}
 
-	m.clusters.Delete(name)
-	m.linkACLCluster(c.ACLName, name, false)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	if c.MultiRegionClusterName != "" {
-		m.unregisterMRCMember(c.MultiRegionClusterName, name)
+	return m.removeClusterLocked(&c), nil
+}
+
+// stageClusterDeleteLocked verifies the cluster exists and takes the optional
+// final snapshot, returning the cluster to be removed. The caller holds the lock.
+func (m *Mock) stageClusterDeleteLocked(name, finalSnapshotName string) (mdbdriver.Cluster, error) {
+	c, ok := m.clusters.Get(name)
+	if !ok {
+		return mdbdriver.Cluster{}, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
 	}
 
-	m.recordClusterEvent(name, "Cluster deleted")
+	if finalSnapshotName != "" {
+		if m.snapshots.Has(finalSnapshotName) {
+			return mdbdriver.Cluster{}, cerrors.Newf(cerrors.AlreadyExists, "snapshot %q already exists", finalSnapshotName)
+		}
+
+		m.snapshots.Set(finalSnapshotName, m.snapshotFromCluster(finalSnapshotName, &c, "manual", nil))
+	}
+
+	return c, nil
+}
+
+// removeClusterLocked deletes the cluster row and its ACL / multi-region links,
+// records the delete event, and returns the deleting-state cluster. The caller
+// holds the lock.
+func (m *Mock) removeClusterLocked(c *mdbdriver.Cluster) *mdbdriver.Cluster {
+	m.clusters.Delete(c.Name)
+	m.linkACLCluster(c.ACLName, c.Name, false)
+
+	if c.MultiRegionClusterName != "" {
+		m.unregisterMRCMember(c.MultiRegionClusterName, c.Name)
+	}
+
+	m.recordClusterEvent(c.Name, "Cluster deleted")
 
 	c.Status = mdbdriver.StatusDeleting
-	out := cloneCluster(&c)
+	out := cloneCluster(c)
 
-	return &out, nil
+	return &out
 }
 
 // FailoverShard triggers a failover of a shard's primary; the shard stays
@@ -505,43 +628,6 @@ func (m *Mock) ListAllowedNodeTypeUpdates(_ context.Context, clusterName string)
 	}
 
 	return []string{"db.r7g.large", "db.r7g.xlarge"}, []string{"db.t4g.medium"}, nil
-}
-
-// backClusterWithEngine backs the cluster with a real Redis server when a
-// CacheEngine is configured, replacing the synthetic cluster and node endpoints
-// with the real host:port a client connects to (so an SDK caller reaches real
-// Redis using only the CreateCluster response). No-op when no engine is set.
-func (m *Mock) backClusterWithEngine(ctx context.Context, cluster *mdbdriver.Cluster) error {
-	if m.opts.CacheEngine == nil {
-		return nil
-	}
-
-	info := cachedriver.CacheInfo{
-		Name:     cluster.Name,
-		Engine:   engineRedisFamily,
-		Endpoint: fmt.Sprintf("%s:%d", cluster.ClusterEndpoint.Address, cluster.ClusterEndpoint.Port),
-	}
-
-	if err := cacheengine.Provision(ctx, m.opts.CacheEngine, &info); err != nil {
-		return err
-	}
-
-	host, port, err := splitHostPort(info.Endpoint)
-	if err != nil {
-		return err
-	}
-
-	cluster.ClusterEndpoint.Address = host
-	cluster.ClusterEndpoint.Port = port
-
-	for si := range cluster.Shards {
-		for ni := range cluster.Shards[si].Nodes {
-			cluster.Shards[si].Nodes[ni].Endpoint.Address = host
-			cluster.Shards[si].Nodes[ni].Endpoint.Port = port
-		}
-	}
-
-	return nil
 }
 
 // splitHostPort splits a "host:port" endpoint into its parts.

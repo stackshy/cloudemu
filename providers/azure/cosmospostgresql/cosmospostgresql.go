@@ -265,8 +265,10 @@ func (m *Mock) storeCluster(cfg *cpgdriver.CreateClusterConfig) (cpgdriver.Clust
 // cluster when a DatabaseEngine is wired in, then records the reachable
 // coordinator host so node() surfaces it as the coordinator FQDN. The engine
 // work runs without the store lock held. It is a no-op without an engine, on an
-// update (the endpoint is already backed), or for a read replica (it mirrors its
-// source). On failure the just-created cluster is rolled back.
+// update (the endpoint is already backed), or for a read replica — a replica is
+// not engine-backed in the emulator (no duplicate real database is provisioned),
+// so its coordinator FQDN stays synthetic. On failure the just-created cluster is
+// rolled back.
 func (m *Mock) backClusterWithEngine(ctx context.Context, cfg *cpgdriver.CreateClusterConfig, created bool) error {
 	if m.opts.DatabaseEngine == nil || !created || cfg.SourceResourceID != "" {
 		return nil
