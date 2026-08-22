@@ -54,10 +54,11 @@ opt in.
 
 ## Scope & caveats
 
-- **Supported now:** Postgres for AWS RDS/Aurora and Azure PostgreSQL Flexible
-  Server (no-Docker via embedded-postgres); Redis for AWS ElastiCache, Azure
-  Cache for Redis, and GCP Memorystore (no-Docker via miniredis); real code
-  execution for AWS Lambda (`python*` / `nodejs*`, no-Docker subprocess).
+- **Supported now:** Postgres for AWS RDS/Aurora, Azure PostgreSQL Flexible
+  Server, GCP Cloud SQL, and GCP AlloyDB (no-Docker via embedded-postgres); Redis
+  for AWS ElastiCache, Azure Cache for Redis, and GCP Memorystore (no-Docker via
+  miniredis); real code execution for AWS Lambda (`python*` / `nodejs*`) and GCP
+  Cloud Functions gen1 (`python*`, functions-framework HTTP), no-Docker subprocess.
 - **Function packaging:** only `.zip` deployment packages are executed (the
   common `ZipFile` upload); container-image functions keep the stub. Nested
   package handlers (dotted Python module paths) aren't resolved — the handler
@@ -74,15 +75,15 @@ opt in.
   role adopts the most-recently-provisioned password (last writer wins), so with
   the real engine you can drive one live Cloud SQL Postgres instance's
   credentials at a time; a recreated instance's new password takes over cleanly.
-  Distinct usernames (the common RDS/Azure case) are fully independent. True
-  per-instance isolation belongs to the (planned) Docker backing.
+  Distinct usernames (the common RDS/Azure case) are fully independent.
 - **Redis TLS:** miniredis is plaintext; connect Redis clients with TLS disabled.
   (Azure Cache's `sslPort` field carries the plaintext port here.)
 - **Scope limit:** the single-node create path is wired; ElastiCache replication
   groups keep the synthetic endpoint for now.
-- **Planned:** GCP Cloud SQL Postgres, MySQL (needs Docker for real fidelity),
-  Azure Functions + GCP Cloud Functions on the same FunctionEngine, then real
-  containers/VMs.
+- **Docker-backed engines** (MySQL, real VMs, containers for ECS/ACI/Cloud Run,
+  and the Azure Functions host) live in the sibling `contrib/dockerengine` module,
+  which requires a running Docker daemon. Node code execution under the
+  functions-framework HTTP contract (GCP gen1) is the remaining no-Docker gap.
 
 ## Tests
 

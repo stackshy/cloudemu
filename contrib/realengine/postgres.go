@@ -11,6 +11,7 @@ package realengine
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -171,11 +172,17 @@ func (p *Postgres) adminConn() (*sql.DB, error) {
 	return sql.Open("postgres", dsn)
 }
 
+// errReservedRole is returned when a tenant master username collides with the
+// engine's internal maintenance superuser.
+var errReservedRole = errors.New("realengine: master username is reserved")
+
 func ensureRole(ctx context.Context, db *sql.DB, role, password string) error {
-	// Never touch the engine's own maintenance superuser — altering its password
-	// would break adminConn. A tenant may not reuse that reserved name.
+	// Reject the engine's own maintenance superuser: silently honoring it would
+	// report success while the caller's password never authenticates (the role
+	// keeps the internal admin password). Fail loudly, matching how the MySQL
+	// engine rejects "root".
 	if strings.EqualFold(role, adminUser) {
-		return nil
+		return fmt.Errorf("%q: %w", role, errReservedRole)
 	}
 
 	// Upsert the password on every provision, not just create: providers that

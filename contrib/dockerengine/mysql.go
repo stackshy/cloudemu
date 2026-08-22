@@ -160,7 +160,9 @@ func (m *MySQL) Deprovision(ctx context.Context, instanceID string) error {
 	return nil
 }
 
-// Close force-removes the container. Safe to call more than once.
+// Close force-removes the container. Safe to call more than once; teardown is
+// best-effort (matching the other Docker engines), so a removal failure clears
+// the started flag rather than stranding a retry.
 func (m *MySQL) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -171,7 +173,9 @@ func (m *MySQL) Close() error {
 
 	m.started = false
 
-	return m.runner.Rm(context.Background(), m.containerID)
+	_ = m.runner.Rm(context.Background(), m.containerID)
+
+	return nil
 }
 
 // ensureStarted runs the container (once) and blocks until it accepts

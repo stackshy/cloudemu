@@ -9,8 +9,10 @@
 // default is unchanged; Docker engines are strictly opt-in and only apply when a
 // caller wires one via config.With<X>Engine.
 //
-// This package currently provides the shared low-level plumbing (a runner over
-// the docker CLI and an Available check). The per-wave engine backings —
-// compute (config.ComputeEngine), container (config.ContainerEngine), and MySQL
-// (config.DatabaseEngine) — are added on top of this foundation in later waves.
+// On top of the shared low-level plumbing (a runner over the docker CLI and an
+// Available check) it provides four engine backings: MySQL (NewMySQL,
+// config.DatabaseEngine), VM compute (NewCompute, config.ComputeEngine),
+// containers (NewContainers, config.ContainerEngine — ECS/ACI/Cloud Run), and
+// Azure Functions (NewAzureFunctions, config.FunctionEngine, via the official
+// azure-functions host image).
 package dockerengine
