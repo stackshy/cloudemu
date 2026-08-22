@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	dbengine "github.com/stackshy/cloudemu/v2/services/relationaldb/dbengine"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -32,6 +33,11 @@ const (
 	cpuMetricRunning     = 0.25 // GCP reports CPU as 0.0–1.0 fraction.
 	cpuMetricStopped     = 0.0
 	connRunning          = 5.0
+	// syntheticPrivateIP is the ipAddresses[].ipAddress reported when no real
+	// database engine backs the instance — preserving the historical behavior of
+	// always surfacing an IP. When an engine is wired in, dbengine.Provision
+	// overrides Endpoint with the real reachable host.
+	syntheticPrivateIP = "10.0.0.1"
 )
 
 var _ rdsdriver.RelationalDB = (*Mock)(nil)
@@ -54,6 +60,12 @@ type Mock struct {
 	// collision-free suffix (guarded by mu).
 	backupSeq int64
 
+	// rootPasswords remembers each instance's master password (guarded by mu) so
+	// a clone can re-provision its own database against a configured
+	// DatabaseEngine. The emulator enforces no auth, so this is local state, not
+	// a secret store; it is never logged.
+	rootPasswords map[string]string
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -61,12 +73,13 @@ type Mock struct {
 // New creates a new Cloud SQL mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances: memstore.New[rdsdriver.Instance](),
-		snapshots: memstore.New[rdsdriver.Snapshot](),
-		databases: memstore.New[rdsdriver.Database](),
-		users:     memstore.New[rdsdriver.User](),
-		sslCerts:  memstore.New[rdsdriver.SslCert](),
-		opts:      opts,
+		instances:     memstore.New[rdsdriver.Instance](),
+		snapshots:     memstore.New[rdsdriver.Snapshot](),
+		databases:     memstore.New[rdsdriver.Database](),
+		users:         memstore.New[rdsdriver.User](),
+		sslCerts:      memstore.New[rdsdriver.SslCert](),
+		rootPasswords: map[string]string{},
+		opts:          opts,
 	}
 }
 
@@ -159,8 +172,8 @@ func cloneSnapshot(s rdsdriver.Snapshot) rdsdriver.Snapshot {
 
 // CreateInstance creates a new Cloud SQL instance.
 //
-//nolint:gocritic,gocyclo // cfg matches the driver signature; linear field-defaulting plus optional replica linking.
-func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
+//nolint:gocritic,gocyclo // cfg matches the driver signature; linear field-defaulting plus optional replica linking and the engine hook.
+func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "instance name is required")
 	}
@@ -202,16 +215,21 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 	}
 
 	inst := rdsdriver.Instance{
-		ID:                 cfg.ID,
-		ARN:                idgen.GCPID(m.opts.ProjectID, "instances", cfg.ID),
-		Engine:             cfg.Engine,
-		EngineVersion:      cfg.EngineVersion,
-		InstanceClass:      tier,
-		AllocatedStorage:   storage,
-		StorageType:        storageType,
-		MasterUsername:     cfg.MasterUsername,
-		DBName:             cfg.DBName,
-		Endpoint:           instanceConnectionName(m.opts.ProjectID, region, cfg.ID),
+		ID:               cfg.ID,
+		ARN:              idgen.GCPID(m.opts.ProjectID, "instances", cfg.ID),
+		Engine:           cfg.Engine,
+		EngineVersion:    cfg.EngineVersion,
+		InstanceClass:    tier,
+		AllocatedStorage: storage,
+		StorageType:      storageType,
+		MasterUsername:   cfg.MasterUsername,
+		DBName:           cfg.DBName,
+		// ConnectionName carries the "project:region:id" identifier; Endpoint
+		// carries the reachable host reported as the PRIMARY ipAddress. Without a
+		// real engine this is a synthetic IP; dbengine.Provision overrides it with
+		// the real host:port when one is wired in.
+		ConnectionName:     instanceConnectionName(m.opts.ProjectID, region, cfg.ID),
+		Endpoint:           syntheticPrivateIP,
 		Port:               port,
 		State:              rdsdriver.StateAvailable,
 		MultiAZ:            cfg.MultiAZ,
@@ -229,6 +247,14 @@ func (m *Mock) CreateInstance(_ context.Context, cfg rdsdriver.InstanceConfig) (
 		}
 	}
 
+	// Opt-in: back the instance with a real Postgres, replacing the synthetic IP
+	// with the real host:port a client connects to. Cloud SQL spells the engine
+	// as a databaseVersion (e.g. "POSTGRES_15"); dbengine matches the family.
+	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &cfg); err != nil {
+		return nil, err
+	}
+
+	m.rootPasswords[cfg.ID] = cfg.MasterUserPassword
 	m.instances.Set(cfg.ID, inst)
 
 	m.emitInstanceMetrics(cfg.ID, cpuMetricRunning, connRunning)
@@ -327,7 +353,7 @@ func (m *Mock) ModifyInstance(
 
 // DeleteInstance removes an instance, unlinks it from any replica relationship,
 // and cascades to its children.
-func (m *Mock) DeleteInstance(_ context.Context, id string) error {
+func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -336,7 +362,13 @@ func (m *Mock) DeleteInstance(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "Cloud SQL instance %q not found", id)
 	}
 
+	// Tear down the real database backing the instance, if any.
+	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
+		return err
+	}
+
 	m.instances.Delete(id)
+	delete(m.rootPasswords, id)
 	m.unlinkReplicas(&inst)
 	m.deleteChildren(id)
 
@@ -606,7 +638,8 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		InstanceClass:    tier,
 		AllocatedStorage: snap.AllocatedStorage,
 		StorageType:      defaultStorageType,
-		Endpoint:         instanceConnectionName(m.opts.ProjectID, m.opts.Region, input.NewInstanceID),
+		ConnectionName:   instanceConnectionName(m.opts.ProjectID, m.opts.Region, input.NewInstanceID),
+		Endpoint:         syntheticPrivateIP,
 		Port:             defaultPortFor(snap.Engine),
 		State:            rdsdriver.StateAvailable,
 		AvailabilityZone: m.opts.Region,

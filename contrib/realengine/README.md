@@ -67,6 +67,15 @@ opt in.
   real client connects using only the SDK endpoint. Only one Postgres server can
   bind 5432 per host; pass an explicit port to co-host more than one (AWS RDS
   surfaces the port explicitly and works on any port).
+- **Shared server, shared role:** one `NewPostgres` engine runs a single Postgres
+  server; each instance becomes its own database, and each master username its
+  own login role. Instances that pin the **same** username therefore share one
+  role — most notably GCP Cloud SQL, whose root user is always `postgres`. The
+  role adopts the most-recently-provisioned password (last writer wins), so with
+  the real engine you can drive one live Cloud SQL Postgres instance's
+  credentials at a time; a recreated instance's new password takes over cleanly.
+  Distinct usernames (the common RDS/Azure case) are fully independent. True
+  per-instance isolation belongs to the (planned) Docker backing.
 - **Redis TLS:** miniredis is plaintext; connect Redis clients with TLS disabled.
   (Azure Cache's `sslPort` field carries the plaintext port here.)
 - **Scope limit:** the single-node create path is wired; ElastiCache replication

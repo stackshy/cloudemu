@@ -21,10 +21,13 @@ const (
 // IsPostgresFamily reports whether a real Postgres engine can back this engine
 // family. The no-Docker embedded-postgres backing serves all Postgres-wire
 // services (RDS/Aurora Postgres, Azure Flexible Server, Cloud SQL Postgres).
-// Matching is case-insensitive — providers spell the engine differently
-// ("postgres", "POSTGRES", "Postgres").
+// Matching is case-insensitive and prefix-based on "postgres" — providers spell
+// the engine differently ("postgres", "POSTGRES", "Postgres") and Cloud SQL
+// uses a databaseVersion like "POSTGRES_15". Aurora Postgres ("aurora-postgresql")
+// is matched exactly since it does not share the prefix. MySQL, SQL Server and
+// an empty engine never match.
 func IsPostgresFamily(engine string) bool {
-	return strings.EqualFold(engine, enginePostgres) || strings.EqualFold(engine, engineAuroraPostgres)
+	return strings.HasPrefix(strings.ToLower(engine), enginePostgres) || strings.EqualFold(engine, engineAuroraPostgres)
 }
 
 // Provision backs the instance with the engine when one is configured and the

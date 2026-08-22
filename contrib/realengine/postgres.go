@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
@@ -26,9 +27,15 @@ const (
 	// real client to connect using only the SDK response. (AWS RDS surfaces the
 	// port explicitly and works on any port.) Only one Postgres server can bind
 	// 5432 on a host; pass an explicit port to co-host more than one.
-	defaultPort     = 5432
-	adminUser       = "postgres"
-	adminPassword   = "postgres"
+	defaultPort = 5432
+	// adminUser is the engine's internal bootstrap superuser. It is deliberately
+	// NOT "postgres": Cloud SQL's fixed root user is "postgres", so a provisioned
+	// tenant role by that name must be free to be created (and given the caller's
+	// rootPassword) without colliding with — or overwriting the password of — the
+	// maintenance superuser the engine itself connects as. adminDB stays the
+	// default "postgres" maintenance database, which initdb always creates.
+	adminUser       = "cloudemu_superuser"
+	adminPassword   = "cloudemu_superuser"
 	adminDB         = "postgres"
 	defaultRole     = "cloudemu"
 	defaultPassword = "cloudemu"
@@ -165,12 +172,29 @@ func (p *Postgres) adminConn() (*sql.DB, error) {
 }
 
 func ensureRole(ctx context.Context, db *sql.DB, role, password string) error {
-	// CREATE ROLE cannot be parameterized; identifiers and the literal password
-	// are quoted/escaped via lib/pq helpers, not user-formatted SQL.
+	// Never touch the engine's own maintenance superuser — altering its password
+	// would break adminConn. A tenant may not reuse that reserved name.
+	if strings.EqualFold(role, adminUser) {
+		return nil
+	}
+
+	// Upsert the password on every provision, not just create: providers that
+	// pin a fixed master username (e.g. Cloud SQL's "postgres") reuse one role
+	// across instances on this shared server, so the role must adopt the
+	// most-recently-provisioned instance's password — otherwise a second or a
+	// re-created instance's credentials, which the API told the caller to use,
+	// would silently fail to authenticate. (Concurrent instances that pin the
+	// same username therefore share one password: last writer wins. Distinct
+	// usernames — the common RDS/Azure case — are fully independent.)
+	//
+	// CREATE/ALTER ROLE cannot be parameterized; identifiers and the literal
+	// password are quoted/escaped via lib/pq helpers, not user-formatted SQL.
 	//nolint:gosec // G201: values are quoted via pq.QuoteLiteral/QuoteIdentifier
 	stmt := fmt.Sprintf(
-		`DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = %s) `+
-			`THEN CREATE ROLE %s LOGIN SUPERUSER PASSWORD %s; END IF; END $$;`,
+		`DO $$ BEGIN `+
+			`IF EXISTS (SELECT FROM pg_roles WHERE rolname = %[1]s) `+
+			`THEN ALTER ROLE %[2]s LOGIN SUPERUSER PASSWORD %[3]s; `+
+			`ELSE CREATE ROLE %[2]s LOGIN SUPERUSER PASSWORD %[3]s; END IF; END $$;`,
 		pq.QuoteLiteral(role), pq.QuoteIdentifier(role), pq.QuoteLiteral(password),
 	)
 
