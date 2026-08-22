@@ -264,14 +264,16 @@ func (m *MySQL) adminConn() (*sql.DB, error) {
 }
 
 func ensureDatabase(ctx context.Context, db *sql.DB, name string) error {
-	// Allowlist-validate inline (DDL can't be parameterized): the guard dominates
-	// the Exec, so no SQL metacharacter can reach the query. A validated name has
-	// no backtick, so backtick-wrapping it is safe.
-	if !sqlNamePattern.MatchString(name) {
-		return fmt.Errorf("%q: %w", name, errBadIdent)
+	// quoteIdent allowlist-validates then backtick-wraps (DDL can't be
+	// parameterized): the returned identifier is the injection barrier, so no SQL
+	// metacharacter can reach the query. It is the single quoting chokepoint the
+	// CodeQL model pack (.github/codeql) declares as a sanitizer.
+	ident, err := quoteIdent(name)
+	if err != nil {
+		return fmt.Errorf("%q: %w", name, err)
 	}
 
-	_, err := db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `"+name+"`")
+	_, err = db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+ident)
 
 	return err
 }
@@ -289,14 +291,16 @@ func ensureUser(ctx context.Context, db *sql.DB, user, password, dbName string) 
 		return fmt.Errorf("%q: %w", user, errRootReserved)
 	}
 
-	// Allowlist-validate the username AND the database name inline before either
-	// reaches non-parameterizable DDL — these guards are the injection barrier.
+	// Allowlist-validate the username (it becomes a quoted 'user'@'%' literal) and
+	// route the database name through quoteIdent — the same quoting chokepoint the
+	// CodeQL model pack declares as the SQL-identifier sanitizer.
 	if !sqlNamePattern.MatchString(user) {
 		return fmt.Errorf("%q: %w", user, errBadIdent)
 	}
 
-	if !sqlNamePattern.MatchString(dbName) {
-		return fmt.Errorf("%q: %w", dbName, errBadIdent)
+	grantDB, err := quoteIdent(dbName)
+	if err != nil {
+		return fmt.Errorf("%q: %w", dbName, err)
 	}
 
 	quotedUser := quoteUser(user)
@@ -309,15 +313,15 @@ func ensureUser(ctx context.Context, db *sql.DB, user, password, dbName string) 
 	// Recreating scopes the account to exactly this instance's database with this
 	// instance's password — last writer wins for a shared username, distinct
 	// usernames stay independent (documented in the README).
-	if _, err := db.ExecContext(ctx, "DROP USER IF EXISTS "+quotedUser); err != nil {
+	if _, err = db.ExecContext(ctx, "DROP USER IF EXISTS "+quotedUser); err != nil {
 		return err
 	}
 
-	if _, err := db.ExecContext(ctx, "CREATE USER "+quotedUser+" IDENTIFIED BY "+quotedPass); err != nil {
+	if _, err = db.ExecContext(ctx, "CREATE USER "+quotedUser+" IDENTIFIED BY "+quotedPass); err != nil {
 		return err
 	}
 
-	_, err := db.ExecContext(ctx, "GRANT ALL PRIVILEGES ON `"+dbName+"`.* TO "+quotedUser)
+	_, err = db.ExecContext(ctx, "GRANT ALL PRIVILEGES ON "+grantDB+".* TO "+quotedUser)
 
 	return err
 }
