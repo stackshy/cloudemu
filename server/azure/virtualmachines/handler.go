@@ -13,6 +13,8 @@
 //	POST   .../virtualMachines/{name}/start  — Start
 //	POST   .../virtualMachines/{name}/powerOff — Stop
 //	POST   .../virtualMachines/{name}/restart — Restart
+//	POST   .../virtualMachines/{name}/retrieveBootDiagnosticsData — boot-diagnostics URIs
+//	GET    .../virtualMachines/{name}/bootDiagnostics/serialConsoleLog — serial-log bytes
 //
 // Less-used operations (capture, deallocate, instance view, redeploy, etc.)
 // are not yet wired and will return 501 Not Implemented.
@@ -145,6 +147,13 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 
 //nolint:gocritic // rp travels through the dispatch chain once per request
 func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	// Boot-diagnostics serial-log download is a GET sub-path, unlike the POST
+	// lifecycle/retrieve actions.
+	if strings.EqualFold(rp.SubResource, "bootDiagnostics") {
+		h.serveBootDiagnostics(w, r, rp)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		return
@@ -157,9 +166,24 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurear
 		h.powerOff(w, r, rp)
 	case "restart":
 		h.restart(w, r, rp)
+	case "retrievebootdiagnosticsdata":
+		h.retrieveBootDiagnosticsData(w, r, rp)
 	default:
 		writeNotImplemented(w, "action: "+rp.SubResource)
 	}
+}
+
+// serveBootDiagnostics serves the serial-log blob download that
+// retrieveBootDiagnosticsData points its serialConsoleLogBlobUri at.
+//
+//nolint:gocritic // rp travels through the dispatch chain once per request
+func (h *Handler) serveBootDiagnostics(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if r.Method == http.MethodGet && strings.EqualFold(rp.SubResourceName, "serialConsoleLog") {
+		h.serialConsoleLog(w, r, rp)
+		return
+	}
+
+	writeNotImplemented(w, r.Method+" "+r.URL.Path)
 }
 
 func writeNotImplemented(w http.ResponseWriter, what string) {

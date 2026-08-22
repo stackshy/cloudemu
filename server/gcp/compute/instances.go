@@ -45,6 +45,7 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		InstanceType: machineTypeShort(req.MachineType),
 		SubnetID:     firstSubnet(req.NetworkInterfaces),
 		Tags:         mergeTags(req.Labels, req.Name),
+		UserData:     startupScript(req.Metadata),
 	}
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, 1)
@@ -179,10 +180,57 @@ func (h *Handler) action(
 	gcprest.WriteJSON(w, http.StatusOK, doneOp)
 }
 
+// getSerialPortOutput handles GET .../instances/{name}/serialPort. It mirrors
+// instances.getSerialPortOutput: the instance's serial console output (the boot
+// script's captured output when a real compute engine backs the instance) is
+// returned in the "contents" field of a compute#serialPortOutput resource.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) getSerialPortOutput(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	reader, ok := h.compute.(computedriver.ConsoleReader)
+	if !ok {
+		gcprest.WriteError(w, http.StatusNotImplemented, "notImplemented", "serial port output is not supported")
+		return
+	}
+
+	out, err := reader.GetConsoleOutput(r.Context(), inst.ID)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	host := hostFromRequest(r)
+	gcprest.WriteJSON(w, http.StatusOK, serialPortOutput{
+		Kind:     "compute#serialPortOutput",
+		Contents: string(out),
+		Start:    "0",
+		Next:     strconv.Itoa(len(out)),
+		SelfLink: gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", rp.ResourceName) + "/serialPort",
+	})
+}
+
 // instanceRemover is the GCP-local hard-delete capability (removes the
 // instance rather than tombstoning it). The GCE provider Mock implements it.
 type instanceRemover interface {
 	RemoveInstance(ctx context.Context, instanceID string) error
+}
+
+// startupScript extracts the GCE boot script from instance metadata. GCE
+// carries it as the metadata item keyed "startup-script"; empty when absent.
+func startupScript(md metadataBlock) string {
+	for _, item := range md.Items {
+		if item.Key == "startup-script" {
+			return item.Value
+		}
+	}
+
+	return ""
 }
 
 // findByName looks up an instance by its GCP-tagged name.

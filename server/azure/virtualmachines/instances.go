@@ -2,6 +2,7 @@ package virtualmachines
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"strings"
 
@@ -13,6 +14,23 @@ import (
 // armNameTag is the tag key we use to round-trip the ARM resource name
 // through the driver, since the driver indexes by its own ID.
 const armNameTag = "cloudemu:azureName"
+
+// URL schemes for building absolute self-referential URLs (async operation
+// status, boot-diagnostics serial log) against the incoming request.
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
+// requestScheme reports the scheme the request arrived on, so self-referential
+// URLs work on both the plain-HTTP and TLS listeners.
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return schemeHTTPS
+	}
+
+	return schemeHTTP
+}
 
 // Driver lifecycle states we map to ARM PowerState codes.
 const (
@@ -45,6 +63,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		InstanceType:  hardwareSize(req.Properties.HardwareProfile),
 		SubnetID:      firstNicID(req.Properties.NetworkProfile),
 		KeyName:       computerName(req.Properties.OSProfile),
+		UserData:      decodeCustomData(customData(req.Properties.OSProfile)),
 		Tags:          mergeTags(req.Tags, rp.ResourceName),
 		Priority:      req.Properties.Priority,
 		LicenseType:   req.Properties.LicenseType,
@@ -144,6 +163,66 @@ func (h *Handler) restart(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 	h.lifecycleAction(w, r, rp, h.compute.RebootInstances)
 }
 
+// retrieveBootDiagnosticsData handles POST virtualMachines/{name}/retrieveBootDiagnosticsData.
+// It mirrors the real ARM action: rather than returning the serial-log bytes
+// inline, it returns the URIs a client downloads the console screenshot and
+// serial log from. We point the serial-log URI back at this server's
+// bootDiagnostics/serialConsoleLog GET so the engine-captured boot output is
+// retrievable (the closest faithful analog to the real Azure Storage SAS blob).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) retrieveBootDiagnosticsData(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if _, err := findByName(r.Context(), h.compute, rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, bootDiagnosticsDataResult{
+		SerialConsoleLogBlobURI: serialConsoleLogURI(r, rp),
+	})
+}
+
+// serialConsoleLog handles GET virtualMachines/{name}/bootDiagnostics/serialConsoleLog,
+// the endpoint retrieveBootDiagnosticsData points its serialConsoleLogBlobUri at.
+// It returns the raw console bytes the compute engine captured for the VM's boot
+// script (empty when no engine backs it).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) serialConsoleLog(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	reader, ok := h.compute.(computedriver.ConsoleReader)
+	if !ok {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "boot diagnostics not supported")
+		return
+	}
+
+	out, err := reader.GetConsoleOutput(r.Context(), inst.ID)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
+}
+
+// serialConsoleLogURI builds the absolute URL of this VM's serial-log download
+// endpoint, resolved against the incoming request's host and scheme so it works
+// on both the http and https (TLS) listeners.
+//
+//nolint:gocritic // rp is a request-scoped value
+func serialConsoleLogURI(r *http.Request, rp azurearm.ResourcePath) string {
+	return requestScheme(r) + "://" + r.Host +
+		azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, rp.ResourceName) +
+		"/bootDiagnostics/serialConsoleLog?api-version=2023-09-01"
+}
+
 // lifecycleAction is the shared body for start/stop/restart. Returns 202
 // + async polling header so real Azure SDK pollers terminate.
 //
@@ -170,12 +249,7 @@ func (h *Handler) lifecycleAction(
 // Location headers pointing to our operationStatuses endpoint. The Azure SDK
 // poller will GET that URL and observe Succeeded immediately.
 func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, subscription, opID string) {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-
-	statusURL := scheme + "://" + r.Host +
+	statusURL := requestScheme(r) + "://" + r.Host +
 		"/subscriptions/" + subscription +
 		"/providers/" + providerName +
 		"/locations/eastus/operationStatuses/" + opID +
@@ -242,6 +316,29 @@ func computerName(o *osProfile) string {
 	}
 
 	return o.ComputerName
+}
+
+func customData(o *osProfile) string {
+	if o == nil {
+		return ""
+	}
+
+	return o.CustomData
+}
+
+// decodeCustomData decodes the base64 customData Azure carries on osProfile.
+// Real ARM customData is always base64-encoded; a value that does not decode is
+// passed through raw so a client that sent plain text still gets its boot script.
+func decodeCustomData(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return string(decoded)
+	}
+
+	return s
 }
 
 func osTypeFromStorage(s *storageProfile) string {

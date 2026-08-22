@@ -17,6 +17,7 @@ import (
 const (
 	enginePostgres       = "postgres"
 	engineAuroraPostgres = "aurora-postgresql"
+	engineRedshift       = "redshift"
 	engineMySQL          = "mysql"
 	engineAuroraMySQL    = "aurora-mysql"
 )
@@ -27,10 +28,13 @@ const (
 // Matching is case-insensitive and prefix-based on "postgres" — providers spell
 // the engine differently ("postgres", "POSTGRES", "Postgres") and Cloud SQL
 // uses a databaseVersion like "POSTGRES_15". Aurora Postgres ("aurora-postgresql")
-// is matched exactly since it does not share the prefix. MySQL, SQL Server and
-// an empty engine never match.
+// is matched exactly since it does not share the prefix. Redshift ("redshift")
+// speaks the Postgres wire protocol, so it is matched exactly and routes to the
+// Postgres engine. MySQL, SQL Server and an empty engine never match.
 func IsPostgresFamily(engine string) bool {
-	return strings.HasPrefix(strings.ToLower(engine), enginePostgres) || strings.EqualFold(engine, engineAuroraPostgres)
+	return strings.HasPrefix(strings.ToLower(engine), enginePostgres) ||
+		strings.EqualFold(engine, engineAuroraPostgres) ||
+		strings.EqualFold(engine, engineRedshift)
 }
 
 // IsMySQLFamily reports whether a real MySQL engine can back this engine family.
