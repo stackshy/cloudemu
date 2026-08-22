@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -286,6 +287,12 @@ func ensureUser(ctx context.Context, db *sql.DB, user, password, dbName string) 
 		return fmt.Errorf("%q: %w", user, errRootReserved)
 	}
 
+	// Validate the username against the same allowlist as identifiers before it
+	// reaches any DDL — it can't be parameterized, so this is the injection barrier.
+	if !sqlNamePattern.MatchString(user) {
+		return fmt.Errorf("%q: %w", user, errBadIdent)
+	}
+
 	quotedUser := quoteUser(user)
 	quotedPass := quoteLiteral(password)
 
@@ -320,14 +327,20 @@ func quoteUser(user string) string {
 	return quoteLiteral(user) + "@" + anyHost
 }
 
-// quoteIdent wraps a schema identifier in backticks, doubling any embedded
-// backtick. Empty identifiers are rejected.
+// sqlNamePattern is the allowlist for database/user names used in DDL. Names
+// (from the SDK's DBName/MasterUsername) that don't match are rejected outright —
+// DDL identifiers can't be parameterized, so a strict allowlist (not just
+// escaping) is the safe barrier against SQL injection.
+var sqlNamePattern = regexp.MustCompile(`^[A-Za-z0-9_$-]{1,64}$`)
+
+// quoteIdent validates a schema identifier against the allowlist and wraps it in
+// backticks. Anything outside the allowlist is rejected.
 func quoteIdent(s string) (string, error) {
-	if s == "" {
+	if !sqlNamePattern.MatchString(s) {
 		return "", errBadIdent
 	}
 
-	return "`" + strings.ReplaceAll(s, "`", "``") + "`", nil
+	return "`" + s + "`", nil
 }
 
 // quoteLiteral renders a single-quoted SQL string literal, escaping backslashes

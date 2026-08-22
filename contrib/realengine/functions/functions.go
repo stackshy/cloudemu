@@ -315,8 +315,10 @@ func unzip(archive []byte, dir string) error {
 // written, guarding against path traversal and oversize entries.
 func extractZipEntry(f *zip.File, dir string) (int64, error) {
 	// Guard against path traversal (zip slip): the target must stay under dir.
-	target := filepath.Join(dir, f.Name) //nolint:gosec // validated against dir below
-	if !strings.HasPrefix(target, filepath.Clean(dir)+string(os.PathSeparator)) && target != filepath.Clean(dir) {
+	cleanDir := filepath.Clean(dir)
+	target := filepath.Join(cleanDir, f.Name) //nolint:gosec // validated against cleanDir below
+
+	if !strings.HasPrefix(target, cleanDir+string(os.PathSeparator)) {
 		return 0, fmt.Errorf("%q: %w", f.Name, errZipSlip)
 	}
 

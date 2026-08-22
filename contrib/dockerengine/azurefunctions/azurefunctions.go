@@ -468,9 +468,10 @@ func extractZip(code []byte) (string, error) {
 
 // extractOne writes a single zip entry under dir, rejecting path traversal.
 func extractOne(dir string, f *zip.File) error {
-	target := filepath.Join(dir, f.Name) //nolint:gosec // guarded against traversal just below
+	cleanDir := filepath.Clean(dir)
+	target := filepath.Join(cleanDir, f.Name) //nolint:gosec // guarded against traversal just below
 
-	if !strings.HasPrefix(target, filepath.Clean(dir)+string(os.PathSeparator)) && target != filepath.Clean(dir) {
+	if !strings.HasPrefix(target, cleanDir+string(os.PathSeparator)) {
 		return fmt.Errorf("%q: %w", f.Name, errZipSlip)
 	}
 
