@@ -24,7 +24,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `containerinstances` | — | [ContainerInstances](./azure/containerinstances.md) | — | — | 5 |
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | — | 14 |
 | `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
-| `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
+| `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | [NoSQL](./oci/nosql.md) | 24 |
 | `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | — | 16 |
 | `ecs` | [ECS](./aws/ecs.md) | — | — | — | 37 |

@@ -2580,7 +2580,8 @@
     "providers": {
       "aws": "DynamoDB",
       "azure": "CosmosDB",
-      "gcp": "Firestore"
+      "gcp": "Firestore",
+      "oci": "NoSQL"
     }
   },
   {

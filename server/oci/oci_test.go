@@ -101,3 +101,34 @@ func TestDriversFromProviderBuildsServer(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
+
+// TestNoSQLHandlerIsRegistered checks the NoSQL surface is reachable once the
+// driver is wired, and that the shared work request poller still owns its own
+// path under the same API version.
+func TestNoSQLHandlerIsRegistered(t *testing.T) {
+	p := ociprovider.New(config.WithCompartmentID("ocid1.compartment.oc1..dev"))
+
+	ts := httptest.NewServer(ociserver.New(ociserver.DriversFrom(p)))
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/20190828/tables?compartmentId=ocid1.compartment.oc1..dev")
+	require.NoError(t, err)
+
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var coll struct {
+		Items []map[string]any `json:"items"`
+	}
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&coll))
+	assert.Empty(t, coll.Items)
+
+	polled, err := ts.Client().Get(ts.URL + "/20190828/workRequests?compartmentId=ocid1.compartment.oc1..dev")
+	require.NoError(t, err)
+
+	defer polled.Body.Close()
+
+	assert.Equal(t, http.StatusOK, polled.StatusCode)
+}
