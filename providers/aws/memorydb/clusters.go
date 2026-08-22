@@ -3,10 +3,19 @@ package memorydb
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
+	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 )
+
+// engineRedisFamily is the engine name handed to the shared cache-engine helper.
+// MemoryDB is Redis/Valkey-compatible (RESP), so it always reuses the Redis
+// CacheEngine regardless of the cluster's own engine field.
+const engineRedisFamily = "redis"
 
 // cloneCluster deep-copies slice/map fields so a returned value never aliases
 // the store (copy-on-read).
@@ -154,6 +163,16 @@ func (m *Mock) validateClusterRefs(aclName, paramGroup, subnetGroup string) erro
 	return nil
 }
 
+// validateMultiRegionRef rejects a create request naming a multi-region cluster
+// that does not exist. The caller holds the lock.
+func (m *Mock) validateMultiRegionRef(name string) error {
+	if name != "" && !m.multiRegion.Has(name) {
+		return cerrors.Newf(cerrors.InvalidArgument, "multi-region cluster %q not found", name)
+	}
+
+	return nil
+}
+
 func buildSecurityGroups(ids []string) []mdbdriver.SecurityGroupMembership {
 	sgs := make([]mdbdriver.SecurityGroupMembership, 0, len(ids))
 	for _, id := range ids {
@@ -214,7 +233,7 @@ func (m *Mock) applySnapshotShape(cfg *mdbdriver.CreateClusterConfig, shape *clu
 // CreateCluster creates a MemoryDB cluster.
 //
 //nolint:gocritic // cfg is large but matches the driver signature.
-func (m *Mock) CreateCluster(_ context.Context, cfg mdbdriver.CreateClusterConfig) (*mdbdriver.Cluster, error) {
+func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterConfig) (*mdbdriver.Cluster, error) {
 	if err := validName("cluster", cfg.Name); err != nil {
 		return nil, err
 	}
@@ -252,9 +271,8 @@ func (m *Mock) CreateCluster(_ context.Context, cfg mdbdriver.CreateClusterConfi
 		return nil, err
 	}
 
-	if cfg.MultiRegionClusterName != "" && !m.multiRegion.Has(cfg.MultiRegionClusterName) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument,
-			"multi-region cluster %q not found", cfg.MultiRegionClusterName)
+	if err := m.validateMultiRegionRef(cfg.MultiRegionClusterName); err != nil {
+		return nil, err
 	}
 
 	sgs := buildSecurityGroups(cfg.SecurityGroupIDs)
@@ -293,6 +311,10 @@ func (m *Mock) CreateCluster(_ context.Context, cfg mdbdriver.CreateClusterConfi
 		MultiRegionClusterName:  cfg.MultiRegionClusterName,
 		Tags:                    copyTags(cfg.Tags),
 		CreatedAt:               m.opts.Clock.Now().UTC(),
+	}
+
+	if err := m.backClusterWithEngine(ctx, &cluster); err != nil {
+		return nil, err
 	}
 
 	m.clusters.Set(cfg.Name, cluster)
@@ -399,7 +421,7 @@ func (m *Mock) reconfigureShards(c *mdbdriver.Cluster, cfg *mdbdriver.UpdateClus
 }
 
 // DeleteCluster removes a cluster (optionally taking a final snapshot).
-func (m *Mock) DeleteCluster(_ context.Context, name, finalSnapshotName string) (*mdbdriver.Cluster, error) {
+func (m *Mock) DeleteCluster(ctx context.Context, name, finalSnapshotName string) (*mdbdriver.Cluster, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -414,6 +436,13 @@ func (m *Mock) DeleteCluster(_ context.Context, name, finalSnapshotName string) 
 		}
 
 		m.snapshots.Set(finalSnapshotName, m.snapshotFromCluster(finalSnapshotName, &c, "manual", nil))
+	}
+
+	if err := cacheengine.Deprovision(ctx, m.opts.CacheEngine, &cachedriver.CacheInfo{
+		Name:   name,
+		Engine: engineRedisFamily,
+	}); err != nil {
+		return nil, err
 	}
 
 	m.clusters.Delete(name)
@@ -476,6 +505,58 @@ func (m *Mock) ListAllowedNodeTypeUpdates(_ context.Context, clusterName string)
 	}
 
 	return []string{"db.r7g.large", "db.r7g.xlarge"}, []string{"db.t4g.medium"}, nil
+}
+
+// backClusterWithEngine backs the cluster with a real Redis server when a
+// CacheEngine is configured, replacing the synthetic cluster and node endpoints
+// with the real host:port a client connects to (so an SDK caller reaches real
+// Redis using only the CreateCluster response). No-op when no engine is set.
+func (m *Mock) backClusterWithEngine(ctx context.Context, cluster *mdbdriver.Cluster) error {
+	if m.opts.CacheEngine == nil {
+		return nil
+	}
+
+	info := cachedriver.CacheInfo{
+		Name:     cluster.Name,
+		Engine:   engineRedisFamily,
+		Endpoint: fmt.Sprintf("%s:%d", cluster.ClusterEndpoint.Address, cluster.ClusterEndpoint.Port),
+	}
+
+	if err := cacheengine.Provision(ctx, m.opts.CacheEngine, &info); err != nil {
+		return err
+	}
+
+	host, port, err := splitHostPort(info.Endpoint)
+	if err != nil {
+		return err
+	}
+
+	cluster.ClusterEndpoint.Address = host
+	cluster.ClusterEndpoint.Port = port
+
+	for si := range cluster.Shards {
+		for ni := range cluster.Shards[si].Nodes {
+			cluster.Shards[si].Nodes[ni].Endpoint.Address = host
+			cluster.Shards[si].Nodes[ni].Endpoint.Port = port
+		}
+	}
+
+	return nil
+}
+
+// splitHostPort splits a "host:port" endpoint into its parts.
+func splitHostPort(endpoint string) (host string, port int, err error) {
+	host, portStr, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return "", 0, cerrors.Newf(cerrors.Internal, "parse cache engine endpoint %q: %v", endpoint, err)
+	}
+
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, cerrors.Newf(cerrors.Internal, "parse cache engine port %q: %v", portStr, err)
+	}
+
+	return host, port, nil
 }
 
 // ---- small helpers ----
