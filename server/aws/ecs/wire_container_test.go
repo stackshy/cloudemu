@@ -25,7 +25,26 @@ func TestTaskToWireCarriesEngineFields(t *testing.T) {
 	}
 
 	c := wire.Containers[0]
-	if c.ExitCode != 7 || c.Reason != "EssentialContainerExited" || c.RuntimeID != "handle-abc" {
+	if c.ExitCode == nil || *c.ExitCode != 7 || c.Reason != "EssentialContainerExited" || c.RuntimeID != "handle-abc" {
 		t.Fatalf("engine fields not carried to wire: %+v", c)
+	}
+}
+
+// TestTaskToWireExitZeroSurfacesOnStopped guards that a stopped container with a
+// genuine exit 0 reports exitCode:0 (a pointer, so omitempty keeps it), while a
+// still-running container omits it.
+func TestTaskToWireExitZeroSurfacesOnStopped(t *testing.T) {
+	task := &driver.Task{Containers: []driver.Container{
+		{Name: "done", LastStatus: "STOPPED", ExitCode: 0},
+		{Name: "live", LastStatus: "RUNNING", ExitCode: 0},
+	}}
+
+	wire := taskToWire(task)
+	if wire.Containers[0].ExitCode == nil || *wire.Containers[0].ExitCode != 0 {
+		t.Fatalf("stopped container should report exit 0, got %v", wire.Containers[0].ExitCode)
+	}
+
+	if wire.Containers[1].ExitCode != nil {
+		t.Fatalf("running container should omit exitCode, got %v", *wire.Containers[1].ExitCode)
 	}
 }
