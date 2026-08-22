@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudfunctions"
 	cloudloggingsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudlogging"
+	cloudrunsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/server/gcp/eventarc"
@@ -35,6 +36,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
@@ -64,10 +66,13 @@ type Drivers struct {
 	Networking     netdriver.Networking
 	Monitoring     mondriver.Monitoring
 	CloudFunctions sdrv.Serverless
-	PubSub         mqdriver.MessageQueue
-	Bigtable       btdriver.Admin
-	CloudSQL       rdbdriver.RelationalDB
-	GKE            *gkeprov.Mock
+	// CloudRun serves the Cloud Run Admin API v2 Jobs surface
+	// (/v2/projects/{p}/locations/{l}/jobs…) against the cloudrun driver.
+	CloudRun cloudrundriver.CloudRun
+	PubSub   mqdriver.MessageQueue
+	Bigtable btdriver.Admin
+	CloudSQL rdbdriver.RelationalDB
+	GKE      *gkeprov.Mock
 	// AlloyDB serves the alloydb.googleapis.com v1 REST API against a
 	// relationaldb driver that also implements the AlloyDB capability. Its
 	// paths (/v1/projects/{p}/locations/{l}/clusters…) are identical to GKE's,
@@ -171,6 +176,14 @@ func New(d Drivers) *server.Server {
 	// /v1/projects/ prefix match.
 	if d.CloudFunctions != nil {
 		srv.Register(cloudfunctions.New(d.CloudFunctions))
+	}
+
+	// Cloud Run matches /v2/projects/{p}/locations/{l}/{jobs|operations}[/…].
+	// Its locations+jobs guard keeps it disjoint from Cloud Logging's
+	// /v2/projects/{p}/logs paths, so registration order between the two is
+	// unconstrained; registered here alongside the other /v2 handlers.
+	if d.CloudRun != nil {
+		srv.Register(cloudrunsrv.New(d.CloudRun))
 	}
 
 	// PubSub matches /v1/projects/{p}/{topics|subscriptions}/...; register

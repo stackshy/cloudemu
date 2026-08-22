@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
+	"github.com/stackshy/cloudemu/v2/providers/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
@@ -132,20 +133,21 @@ type Provider struct {
 	// the two services keep separate queue namespaces.
 	QueueStorage *servicebus.Mock
 	// TableStorage backs the Azure Table Storage data-plane handler.
-	TableStorage     *tablestorage.Mock
-	Cache            *cache.Mock
-	KeyVault         *keyvault.Mock
-	LogAnalytics     *loganalytics.Mock
-	NotificationHubs *notificationhubs.Mock
-	ACR              *acr.Mock
-	EventGrid        *eventgrid.Mock
-	SQL              *sql.Mock
-	PostgresFlex     *postgresflex.Mock
-	MySQLFlex        *mysqlflex.Mock
-	AKS              *aks.Mock
-	Databricks       *databricks.Mock
-	AI               *ai.Mock
-	Search           *search.Mock
+	TableStorage       *tablestorage.Mock
+	Cache              *cache.Mock
+	KeyVault           *keyvault.Mock
+	LogAnalytics       *loganalytics.Mock
+	NotificationHubs   *notificationhubs.Mock
+	ACR                *acr.Mock
+	ContainerInstances *containerinstances.Mock
+	EventGrid          *eventgrid.Mock
+	SQL                *sql.Mock
+	PostgresFlex       *postgresflex.Mock
+	MySQLFlex          *mysqlflex.Mock
+	AKS                *aks.Mock
+	Databricks         *databricks.Mock
+	AI                 *ai.Mock
+	Search             *search.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -161,35 +163,36 @@ type Provider struct {
 func New(opts ...config.Option) *Provider {
 	o := config.NewOptions(opts...)
 	p := &Provider{
-		BlobStorage:      blobstorage.New(o),
-		VirtualMachines:  virtualmachines.New(o),
-		CosmosDB:         cosmosdb.New(o),
-		ManagedCassandra: managedcassandra.New(o),
-		CosmosPostgreSQL: cosmospostgresql.New(o),
-		Functions:        functions.New(o),
-		VNet:             vnet.New(o),
-		Monitor:          monitor.New(o),
-		IAM:              iam.New(o),
-		DNS:              dns.New(o),
-		LB:               loadbalancer.New(o),
-		ServiceBus:       servicebus.New(o),
-		QueueStorage:     servicebus.New(o),
-		TableStorage:     tablestorage.New(o),
-		Cache:            cache.New(o),
-		KeyVault:         keyvault.New(o),
-		LogAnalytics:     loganalytics.New(o),
-		NotificationHubs: notificationhubs.New(o),
-		ACR:              acr.New(o),
-		EventGrid:        eventgrid.New(o),
-		SQL:              sql.New(o),
-		PostgresFlex:     postgresflex.New(o),
-		MySQLFlex:        mysqlflex.New(o),
-		AKS:              aks.New(o),
-		Databricks:       databricks.New(o),
-		AI:               ai.New(o),
-		Search:           search.New(o),
-		SubscriptionID:   o.AccountID,
-		Region:           o.Region,
+		BlobStorage:        blobstorage.New(o),
+		VirtualMachines:    virtualmachines.New(o),
+		CosmosDB:           cosmosdb.New(o),
+		ManagedCassandra:   managedcassandra.New(o),
+		CosmosPostgreSQL:   cosmospostgresql.New(o),
+		Functions:          functions.New(o),
+		VNet:               vnet.New(o),
+		Monitor:            monitor.New(o),
+		IAM:                iam.New(o),
+		DNS:                dns.New(o),
+		LB:                 loadbalancer.New(o),
+		ServiceBus:         servicebus.New(o),
+		QueueStorage:       servicebus.New(o),
+		TableStorage:       tablestorage.New(o),
+		Cache:              cache.New(o),
+		KeyVault:           keyvault.New(o),
+		LogAnalytics:       loganalytics.New(o),
+		NotificationHubs:   notificationhubs.New(o),
+		ACR:                acr.New(o),
+		ContainerInstances: containerinstances.New(o),
+		EventGrid:          eventgrid.New(o),
+		SQL:                sql.New(o),
+		PostgresFlex:       postgresflex.New(o),
+		MySQLFlex:          mysqlflex.New(o),
+		AKS:                aks.New(o),
+		Databricks:         databricks.New(o),
+		AI:                 ai.New(o),
+		Search:             search.New(o),
+		SubscriptionID:     o.AccountID,
+		Region:             o.Region,
 	}
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.BlobStorage.SetMonitoring(p.Monitor)

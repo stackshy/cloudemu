@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudlogging"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/eventarc"
@@ -61,6 +62,7 @@ type Provider struct {
 	GCE              *compute.Mock
 	Firestore        *firestore.Mock
 	CloudFunctions   *cloudfunctions.Mock
+	CloudRun         *cloudrun.Mock
 	VPC              *vpc.Mock
 	CloudMonitoring  *monitoring.Mock
 	IAM              *iam.Mock
@@ -96,6 +98,7 @@ func New(opts ...config.Option) *Provider {
 		GCE:              compute.New(o),
 		Firestore:        firestore.New(o),
 		CloudFunctions:   cloudfunctions.New(o),
+		CloudRun:         cloudrun.New(o),
 		VPC:              vpc.New(o),
 		CloudMonitoring:  monitoring.New(o),
 		IAM:              iam.New(o),
