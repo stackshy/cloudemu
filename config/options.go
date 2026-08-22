@@ -49,6 +49,15 @@ type Options struct {
 	// FunctionEngine optionally executes real function code on Invoke (opt-in).
 	// Nil (the default) returns a stub payload without running any code.
 	FunctionEngine FunctionEngine
+
+	// ComputeEngine optionally backs virtual-machine instances with a real
+	// backing (opt-in). Nil (the default) keeps instances in-memory with
+	// synthetic state.
+	ComputeEngine ComputeEngine
+
+	// ContainerEngine optionally backs container workloads with real containers
+	// (opt-in). Nil (the default) keeps workloads in-memory with synthetic state.
+	ContainerEngine ContainerEngine
 }
 
 // OCIRegion returns the region OCI services should use, substituting an OCI
@@ -108,6 +117,22 @@ func WithCacheEngine(e CacheEngine) Option {
 func WithFunctionEngine(e FunctionEngine) Option {
 	return func(o *Options) {
 		o.FunctionEngine = e
+	}
+}
+
+// WithComputeEngine sets the real compute engine backing virtual-machine
+// instances. Nil (the default) keeps the emulator in-memory.
+func WithComputeEngine(e ComputeEngine) Option {
+	return func(o *Options) {
+		o.ComputeEngine = e
+	}
+}
+
+// WithContainerEngine sets the real container engine backing container
+// workloads. Nil (the default) keeps the emulator in-memory.
+func WithContainerEngine(e ContainerEngine) Option {
+	return func(o *Options) {
+		o.ContainerEngine = e
 	}
 }
 

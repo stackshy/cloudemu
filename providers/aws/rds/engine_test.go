@@ -58,7 +58,7 @@ func TestCreateInstanceUsesEngineForPostgres(t *testing.T) {
 	}
 }
 
-func TestCreateInstanceSkipsEngineForNonPostgres(t *testing.T) {
+func TestCreateInstanceUsesEngineForMySQL(t *testing.T) {
 	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
 	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))
 
@@ -67,12 +67,31 @@ func TestCreateInstanceSkipsEngineForNonPostgres(t *testing.T) {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
+	// The single wired engine now receives the MySQL family too.
+	if len(eng.provisioned) != 1 || eng.provisioned[0].Engine != "mysql" {
+		t.Fatalf("engine should back mysql, got %+v", eng.provisioned)
+	}
+
+	if inst.Endpoint != "127.0.0.1" || inst.Port != 55432 {
+		t.Fatalf("mysql endpoint should be the engine host, got %s:%d", inst.Endpoint, inst.Port)
+	}
+}
+
+func TestCreateInstanceSkipsEngineForUnsupportedFamily(t *testing.T) {
+	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
+	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))
+
+	inst, err := m.CreateInstance(context.Background(), rdsdriver.InstanceConfig{ID: "ss1", Engine: "sqlserver-ex"})
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
 	if len(eng.provisioned) != 0 {
-		t.Fatalf("engine should not be used for mysql, got %+v", eng.provisioned)
+		t.Fatalf("engine should not be used for an unsupported family, got %+v", eng.provisioned)
 	}
 
 	if inst.Endpoint == "127.0.0.1" {
-		t.Fatal("mysql endpoint should remain synthetic, not the engine host")
+		t.Fatal("unsupported-family endpoint should remain synthetic, not the engine host")
 	}
 }
 
@@ -153,9 +172,10 @@ func TestAuroraClusterMemberUsesClusterCreds(t *testing.T) {
 	}
 }
 
-// TestAuroraClusterMemberNonPostgresSkipsEngine proves an aurora-mysql cluster
-// member is not engine-backed and leaves the cluster's synthetic endpoint alone.
-func TestAuroraClusterMemberNonPostgresSkipsEngine(t *testing.T) {
+// TestAuroraClusterMemberMySQLUsesEngine proves an aurora-mysql cluster member
+// is now engine-backed (the MySQL family joined the supported set) with the
+// cluster's shared credentials, and the cluster endpoints point at the engine.
+func TestAuroraClusterMemberMySQLUsesEngine(t *testing.T) {
 	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
 	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))
 	ctx := context.Background()
@@ -172,8 +192,8 @@ func TestAuroraClusterMemberNonPostgresSkipsEngine(t *testing.T) {
 		t.Fatalf("CreateInstance member: %v", err)
 	}
 
-	if len(eng.provisioned) != 0 {
-		t.Fatalf("aurora-mysql member must not be engine-backed, got %+v", eng.provisioned)
+	if len(eng.provisioned) != 1 || eng.provisioned[0].InstanceID != "cl" || eng.provisioned[0].Username != "root" {
+		t.Fatalf("aurora-mysql member should be engine-backed with cluster creds, got %+v", eng.provisioned)
 	}
 
 	cls, err := m.DescribeClusters(ctx, []string{"cl"})
@@ -181,7 +201,7 @@ func TestAuroraClusterMemberNonPostgresSkipsEngine(t *testing.T) {
 		t.Fatalf("DescribeClusters: %v (%d)", err, len(cls))
 	}
 
-	if cls[0].Endpoint == "127.0.0.1" {
-		t.Fatalf("non-postgres cluster endpoint should stay synthetic, got %q", cls[0].Endpoint)
+	if cls[0].Endpoint != "127.0.0.1" || cls[0].Port != 55432 {
+		t.Fatalf("aurora-mysql cluster endpoints should point at the engine, got %+v", cls[0])
 	}
 }

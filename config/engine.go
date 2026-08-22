@@ -105,3 +105,105 @@ type FunctionResult struct {
 	Logs          string // stdout/stderr the invocation produced
 	FunctionError string // non-empty if the handler raised; mirrors X-Amz-Function-Error
 }
+
+// ComputeEngine optionally backs virtual-machine instances with a real backing
+// (e.g. a real container acting as the guest) so clients can boot an instance
+// that actually runs its boot script and exposes console output. When nil — the
+// default — instances use synthetic state and no real backing runs, keeping the
+// emulator in-memory and dependency-free.
+//
+// Like DatabaseEngine, implementations live outside the core module (contrib/)
+// so the core carries no compute-backing dependency; this is a pluggable
+// capability like Clock.
+type ComputeEngine interface {
+	// Provision starts a backing container for the instance and runs the boot
+	// script once. The returned result may carry a reachable IP; an empty IP is
+	// acceptable when the backing surfaces none.
+	Provision(ctx context.Context, req ComputeProvisionRequest) (ComputeProvisionResult, error)
+
+	// ConsoleOutput returns the accumulated stdout/stderr the boot script
+	// produced — the console-output analog. It is empty for an instance that was
+	// never provisioned.
+	ConsoleOutput(ctx context.Context, instanceID string) ([]byte, error)
+
+	// Deprovision tears down the real backing for the instance. It is a no-op if
+	// the instance was never provisioned.
+	Deprovision(ctx context.Context, instanceID string) error
+}
+
+// ComputeProvisionRequest describes the VM a ComputeEngine should back.
+type ComputeProvisionRequest struct {
+	InstanceID string
+	ImageID    string
+	BootScript []byte            // user-data/boot script run once at provision
+	Env        map[string]string // environment exposed to the boot script
+}
+
+// ComputeProvisionResult is the outcome of backing a VM. IP is optional; an
+// empty value is fine when the backing surfaces no reachable address.
+type ComputeProvisionResult struct {
+	IP string
+}
+
+// ContainerEngine optionally backs container workloads (ECS tasks, Kubernetes
+// pods, Azure Container Instances) with real containers so clients can observe
+// real logs, exit codes, and exec results. When nil — the default — workloads
+// use synthetic state and no real container runs, keeping the emulator
+// in-memory and dependency-free.
+//
+// It is deliberately separate from ComputeEngine: containers are observed via
+// logs and exit codes rather than a host:port, a single workload may run
+// multiple containers, and a workload may run to completion instead of staying
+// up. Like DatabaseEngine, implementations live outside the core module
+// (contrib/).
+type ContainerEngine interface {
+	// Run starts the workload's containers and returns an opaque handle used by
+	// the other methods. When spec.RunToCompletion is set it blocks until the
+	// containers exit; otherwise it starts them detached and returns immediately.
+	Run(ctx context.Context, spec ContainerRunSpec) (handle string, err error)
+
+	// Status reports the current state and exit code of each container in the
+	// workload identified by handle.
+	Status(ctx context.Context, handle string) ([]ContainerStatus, error)
+
+	// Logs returns the accumulated stdout/stderr for one named container in the
+	// workload. A non-positive tailLines returns the full log.
+	Logs(ctx context.Context, handle, container string, tailLines int) (string, error)
+
+	// Exec runs a command inside one named container and returns its output and
+	// exit code. A Go error is reserved for the engine failing to run the command.
+	Exec(ctx context.Context, handle, container string, cmd []string) (ExecResult, error)
+
+	// Stop tears down the workload's containers. It is a no-op if the workload
+	// was never run.
+	Stop(ctx context.Context, handle string) error
+}
+
+// ContainerRunSpec describes a workload a ContainerEngine should run.
+type ContainerRunSpec struct {
+	Name            string          // workload name (informational)
+	Containers      []ContainerSpec // one or more containers to run together
+	RunToCompletion bool            // block until exit when set; else detached
+}
+
+// ContainerSpec describes a single container within a workload.
+type ContainerSpec struct {
+	Name    string
+	Image   string
+	Command []string
+	Env     map[string]string
+}
+
+// ContainerStatus is the observed state of one container in a workload.
+type ContainerStatus struct {
+	Name     string
+	State    string // e.g. "running", "exited"
+	ExitCode int
+}
+
+// ExecResult is the outcome of a command run inside a container.
+type ExecResult struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+}

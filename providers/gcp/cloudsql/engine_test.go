@@ -66,7 +66,7 @@ func TestCreateInstanceUsesEngineForPostgres(t *testing.T) {
 	}
 }
 
-func TestCreateInstanceSkipsEngineForNonPostgres(t *testing.T) {
+func TestCreateInstanceUsesEngineForMySQL(t *testing.T) {
 	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
 	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))
 
@@ -75,12 +75,31 @@ func TestCreateInstanceSkipsEngineForNonPostgres(t *testing.T) {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
+	// The single wired engine now receives the MySQL family too.
+	if len(eng.provisioned) != 1 || eng.provisioned[0].Engine != "MYSQL_8_0" {
+		t.Fatalf("engine should back mysql, got %+v", eng.provisioned)
+	}
+
+	if inst.Endpoint != "127.0.0.1" || inst.Port != 55432 {
+		t.Fatalf("mysql endpoint should be the engine host, got %s:%d", inst.Endpoint, inst.Port)
+	}
+}
+
+func TestCreateInstanceSkipsEngineForUnsupportedFamily(t *testing.T) {
+	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
+	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))
+
+	inst, err := m.CreateInstance(context.Background(), rdsdriver.InstanceConfig{ID: "ss1", Engine: "SQLSERVER_2019"})
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
 	if len(eng.provisioned) != 0 {
-		t.Fatalf("engine should not be used for mysql, got %+v", eng.provisioned)
+		t.Fatalf("engine should not be used for an unsupported family, got %+v", eng.provisioned)
 	}
 
 	if inst.Endpoint == "127.0.0.1" {
-		t.Fatal("mysql endpoint should remain synthetic, not the engine host")
+		t.Fatal("unsupported-family endpoint should remain synthetic, not the engine host")
 	}
 }
 

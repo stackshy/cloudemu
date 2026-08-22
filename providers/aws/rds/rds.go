@@ -583,11 +583,12 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 // cluster's master credentials — an Aurora instance carries none of its own.
 // The shared database is created on the first member and torn down once, on
 // DeleteCluster; a per-member DeleteInstance deprovision is a harmless no-op
-// because the engine is keyed by the cluster, not the member. A non-Postgres
-// cluster keeps its synthetic endpoints. The caller holds m.mu.
+// because the engine is keyed by the cluster, not the member. A cluster whose
+// engine family has no backing keeps its synthetic endpoints. The caller holds
+// m.mu.
 func (m *Mock) provisionClusterMember(ctx context.Context, inst *rdsdriver.Instance, clusterID string) error {
 	cluster, ok := m.clusters.Get(clusterID)
-	if !ok || !dbengine.IsPostgresFamily(cluster.Engine) {
+	if !ok || (!dbengine.IsPostgresFamily(cluster.Engine) && !dbengine.IsMySQLFamily(cluster.Engine)) {
 		return nil
 	}
 
