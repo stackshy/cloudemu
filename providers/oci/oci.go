@@ -4,6 +4,7 @@ package oci
 import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/oci/identity"
+	logprovider "github.com/stackshy/cloudemu/v2/providers/oci/logging"
 	"github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
 	vcnprovider "github.com/stackshy/cloudemu/v2/providers/oci/vcn"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -77,6 +78,7 @@ func New(opts ...config.Option) *Provider {
 	p.VCN = vcnprovider.New(o)
 
 	p.Monitoring = monitoring.New(o)
+	p.Logging = logprovider.New(o)
 
 	p.wireMonitoring()
 	p.wireDiscovery()

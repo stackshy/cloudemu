@@ -1412,7 +1412,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 ## 13. Logging
 
 **Driver interface:** `services/logging/driver/driver.go`
-**AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging
+**AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging | **OCI:** Logging (a log group is the log group; a CUSTOM log is the log stream; an ingested log entry is the log event — metric filters have no OCI equivalent and report `Unimplemented`)
 
 ### Log Group Operations
 
@@ -1448,6 +1448,66 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `DescribeMetricFilters` | `(ctx, logGroup) ([]MetricFilterInfo, error)` |
 
 **Total: 13 operations**
+
+### OCI Logging
+
+**Optional capability:** `server/oci/logging.Extras` — OCI addresses log groups
+and logs by OCID inside a compartment, gives a log a type and a service source,
+batches ingestion, and searches with its own query language, none of which the
+portable model carries. Its value types live in `providers/oci/logging`.
+**Provider:** `providers/oci/logging` | **Wire:** `server/oci/logging`
+
+OCI publishes the service on three API surfaces, each at its own version
+prefix. They collapse onto one CloudEmu server, so `Matches` claims each
+prefix's collections exactly. A top-level `/logs` collection belongs to the
+ingestion plane alone; the control plane nests logs under their log group.
+
+| Operation | Route |
+|-----------|-------|
+| `CreateLogGroup` | `POST /20200531/logGroups` |
+| `ListLogGroups` | `GET /20200531/logGroups` |
+| `GetLogGroup` | `GET /20200531/logGroups/{logGroupId}` |
+| `UpdateLogGroup` | `PUT /20200531/logGroups/{logGroupId}` |
+| `DeleteLogGroup` | `DELETE /20200531/logGroups/{logGroupId}` |
+| `ChangeLogGroupCompartment` | `POST /20200531/logGroups/{logGroupId}/actions/changeCompartment` |
+| `CreateLog` | `POST /20200531/logGroups/{logGroupId}/logs` |
+| `ListLogs` | `GET /20200531/logGroups/{logGroupId}/logs` |
+| `GetLog` | `GET /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `UpdateLog` | `PUT /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `DeleteLog` | `DELETE /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `PutLogs` | `POST /20200601/logs/{logId}/actions/push` |
+| `SearchLogs` | `POST /20190909/search` |
+
+`ListLogGroups` requires `compartmentId` and paginates with `limit` / `page`,
+returning the cursor as `opc-next-page`. `ListLogs` takes no `compartmentId` —
+the log group in the path fixes the compartment, as it does in real OCI — and
+narrows on `displayName`, `logType`, `sourceService`, `sourceResource` and
+`lifecycleState`. Every log group and log mutation is asynchronous in real OCI,
+so each answers `202` with an `opc-work-request-id`; the created resource's
+OCID comes back on the work request. Ingestion and search are synchronous.
+
+A CUSTOM log takes entries from `PutLogs`; a SERVICE log is fed by the service
+its `configuration.source` names, so ingesting into one is refused rather than
+accepted and dropped, as is ingesting into a disabled log.
+
+Search queries are read in the form
+`search "compartmentId[/logGroupId[/logId]]" | where <field> = '<value>' [and …]
+| sort by datetime [asc|desc]`, with `*` as the wildcard and comma-separated
+search targets. Everything else is rejected naming what it tripped on rather
+than answered with an empty result set: the `summarize`, `stats`, `topN` and
+`extract` operators; `or`, `not` and parenthesised where clauses; the `>`, `<`,
+`>=`, `<=`, `=~` and `!~` operators; a field the record shape has no place for,
+including a nested payload path; a sort on anything but datetime; and a search
+target segment written as a name where OCI takes an OCID.
+
+Not emulated: `/20200531/unifiedAgentConfigurations` and
+`/20200531/logSavedSearches`, which the logging driver has no shape for. Both
+are claimed so a caller gets a `501` naming the gap rather than a bare `404`.
+A log group's retention is CloudEmu's: real OCI carries retention on the log,
+and the group holds the default its logs inherit so the portable
+`RetentionDays` has somewhere to live. Log group display names are unique
+across the emulator, not per compartment, which is what lets the portable
+driver address a group by name.
 
 ---
 
