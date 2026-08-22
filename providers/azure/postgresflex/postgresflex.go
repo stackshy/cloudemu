@@ -131,7 +131,7 @@ func copyTags(src map[string]string) map[string]string {
 
 // CreateInstance creates a new Postgres Flex flexible server.
 //
-//nolint:gocritic // cfg matches the driver interface signature.
+//nolint:gocritic,gocyclo // cfg matches the driver interface signature; one default-resolution branch per field, plus the engine hook.
 func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) (*rdsdriver.Instance, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "server name is required")

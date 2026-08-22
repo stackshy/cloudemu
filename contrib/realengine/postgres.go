@@ -20,7 +20,13 @@ import (
 )
 
 const (
-	defaultPort     = 55432
+	// defaultPort is the standard PostgreSQL port. Azure PostgreSQL Flexible
+	// Server and GCP Cloud SQL never surface a port in their SDK responses —
+	// clients always connect on 5432 — so the engine must listen there for a
+	// real client to connect using only the SDK response. (AWS RDS surfaces the
+	// port explicitly and works on any port.) Only one Postgres server can bind
+	// 5432 on a host; pass an explicit port to co-host more than one.
+	defaultPort     = 5432
 	adminUser       = "postgres"
 	adminPassword   = "postgres"
 	adminDB         = "postgres"

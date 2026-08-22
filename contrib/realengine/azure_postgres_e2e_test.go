@@ -34,9 +34,8 @@ func (azureFakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (
 // using the administrator credentials, run SQL, then delete — all against
 // CloudEmu backed by a real embedded Postgres (no Docker, no cloud account).
 func TestAzurePostgresFlexE2E(t *testing.T) {
-	const enginePort = 55460
-
-	eng := realengine.NewPostgres(enginePort)
+	// Default engine port (5432) — the port Azure PostgreSQL clients always use.
+	eng := realengine.NewPostgres(0)
 	t.Cleanup(func() { _ = eng.Close() })
 
 	cloudP := cloudemu.NewAzure(config.WithDatabaseEngine(eng))
@@ -87,10 +86,11 @@ func TestAzurePostgresFlexE2E(t *testing.T) {
 
 	host := *got.Properties.FullyQualifiedDomainName
 
-	// Azure PostgreSQL does not carry a port in its endpoint; the emulator's real
-	// Postgres listens on the engine port. The provisioned database defaults to
-	// the server name when the create carries no DBName.
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, enginePort, user, pass, server)
+	// Connect exactly as a real Azure client would: the FQDN from the SDK on
+	// Azure PostgreSQL's fixed port 5432 — no out-of-band port knowledge. The
+	// provisioned database defaults to the server name when create carries no
+	// DBName.
+	dsn := fmt.Sprintf("host=%s port=5432 user=%s password=%s dbname=%s sslmode=disable", host, user, pass, server)
 
 	// 3. Connect with a real Postgres client and run real SQL.
 	db, err := sql.Open("postgres", dsn)

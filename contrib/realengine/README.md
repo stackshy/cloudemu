@@ -33,21 +33,32 @@ cloud := cloudemu.NewAWS(
 // returns.
 ```
 
-- **RDS Postgres:** `CreateDBInstance` provisions a real database + login role
-  (using your master credentials); connect any Postgres client and run real SQL.
-- **ElastiCache Redis:** `CreateCacheCluster` starts a real Redis; the node
-  endpoint the SDK returns is a real Redis address — connect any Redis client.
+Creating a Postgres database (RDS/Aurora Postgres, Azure PostgreSQL Flexible
+Server, GCP Cloud SQL Postgres) provisions a real database + login role using
+your master credentials; creating a Redis cache (ElastiCache, Azure Cache, GCP
+Memorystore) starts a real Redis. Connect any Postgres/Redis client to the
+endpoint the SDK returns and run real SQL / commands. Deleting the resource
+tears the backing engine down. Resources with no engine configured (or
+unsupported families) keep the default synthetic endpoint — unchanged unless you
+opt in.
 
-`DeleteDBInstance` / `DeleteCacheCluster` tears the backing engine down. Resources
-with no engine configured (or unsupported families) keep the default synthetic
-endpoint — behaviour is unchanged unless you opt in.
+## Scope & caveats
 
-## Scope
-
-- **Supported now:** AWS RDS / Aurora **Postgres** (`postgres`,
-  `aurora-postgresql`); AWS ElastiCache **Redis**.
-- **Planned:** Azure/GCP relational + cache, MySQL (needs Docker for real
-  fidelity), then Lambda code execution.
+- **Supported now:** Postgres for AWS RDS/Aurora, Azure PostgreSQL Flexible
+  Server, GCP Cloud SQL (all no-Docker via embedded-postgres); Redis for AWS
+  ElastiCache, Azure Cache for Redis, GCP Memorystore (all no-Docker via
+  miniredis).
+- **Postgres port:** Azure and GCP never surface a port in their SDK responses —
+  clients always use 5432 — so `NewPostgres(0)` binds **5432** by default and a
+  real client connects using only the SDK endpoint. Only one Postgres server can
+  bind 5432 per host; pass an explicit port to co-host more than one (AWS RDS
+  surfaces the port explicitly and works on any port).
+- **Redis TLS:** miniredis is plaintext; connect Redis clients with TLS disabled.
+  (Azure Cache's `sslPort` field carries the plaintext port here.)
+- **Scope limit:** the single-node create path is wired; ElastiCache replication
+  groups keep the synthetic endpoint for now.
+- **Planned:** MySQL (needs Docker for real fidelity), then Lambda code
+  execution and real containers/VMs.
 
 ## Tests
 
