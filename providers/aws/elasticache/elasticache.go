@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -118,7 +119,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 
 	// Opt-in: back the cache with a real server, replacing the synthetic
 	// endpoint with the real host:port a client connects to.
-	if err := m.provisionCacheEngine(ctx, &info); err != nil {
+	if err := cacheengine.Provision(ctx, m.opts.CacheEngine, &info); err != nil {
 		return nil, err
 	}
 
@@ -165,51 +166,11 @@ func (m *Mock) DeleteCache(ctx context.Context, name string) error {
 	}
 
 	// Tear down the real cache server backing the instance, if any.
-	if err := m.deprovisionCacheEngine(ctx, &cd.info); err != nil {
+	if err := cacheengine.Deprovision(ctx, m.opts.CacheEngine, &cd.info); err != nil {
 		return err
 	}
 
 	m.caches.Delete(name)
-
-	return nil
-}
-
-// isRealCacheTarget reports whether a real cache server should back this engine.
-// Slice: Redis (miniredis speaks the Redis protocol).
-func isRealCacheTarget(engine string) bool {
-	return engine == "redis"
-}
-
-// provisionCacheEngine backs the cache with a real server when a cache engine is
-// configured and the engine is supported, overriding the synthetic endpoint
-// with the real host:port. No-op otherwise.
-func (m *Mock) provisionCacheEngine(ctx context.Context, info *driver.CacheInfo) error {
-	if m.opts.CacheEngine == nil || !isRealCacheTarget(info.Engine) {
-		return nil
-	}
-
-	res, err := m.opts.CacheEngine.Provision(ctx, config.CacheProvisionRequest{
-		CacheID: info.Name,
-		Engine:  info.Engine,
-	})
-	if err != nil {
-		return errors.Newf(errors.Internal, "provision cache engine: %v", err)
-	}
-
-	info.Endpoint = fmt.Sprintf("%s:%d", res.Host, res.Port)
-
-	return nil
-}
-
-// deprovisionCacheEngine tears down the real server backing the cache, if any.
-func (m *Mock) deprovisionCacheEngine(ctx context.Context, info *driver.CacheInfo) error {
-	if m.opts.CacheEngine == nil || !isRealCacheTarget(info.Engine) {
-		return nil
-	}
-
-	if err := m.opts.CacheEngine.Deprovision(ctx, info.Name); err != nil {
-		return errors.Newf(errors.Internal, "deprovision cache engine: %v", err)
-	}
 
 	return nil
 }
