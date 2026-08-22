@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/container/containerengine"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
 
@@ -23,7 +24,7 @@ const maxRunTaskCount = 10
 // networking) are synchronous errors, not placement failures.
 //
 //nolint:gocritic // in is passed by value to satisfy the driver.ECS interface; the copy is cheap for a mock.
-func (m *Mock) RunTask(_ context.Context, in driver.RunTaskInput) ([]driver.Task, []driver.Failure, error) {
+func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Task, []driver.Failure, error) {
 	cluster := resolveClusterName(in.Cluster)
 	clusterARN := m.arn("cluster/" + cluster)
 
@@ -58,7 +59,7 @@ func (m *Mock) RunTask(_ context.Context, in driver.RunTaskInput) ([]driver.Task
 	spec := taskSpec{
 		cluster: cluster, clusterARN: clusterARN, td: td, launchType: launchType,
 		group: in.Group, startedBy: in.StartedBy, platformVersion: in.PlatformVersion,
-		netCfg: in.NetworkConfiguration, tags: in.Tags,
+		netCfg: in.NetworkConfiguration, tags: in.Tags, runToCompletion: true,
 	}
 
 	// Capacity is the validated constant maximum, not the user value, so the
@@ -67,7 +68,7 @@ func (m *Mock) RunTask(_ context.Context, in driver.RunTaskInput) ([]driver.Task
 	failures := make([]driver.Failure, 0, maxRunTaskCount)
 
 	for range count {
-		task, failure := m.launchTask(&spec, false)
+		task, failure := m.launchTask(ctx, &spec, false)
 		if failure != nil {
 			failures = append(failures, *failure)
 			continue
@@ -183,6 +184,10 @@ type taskSpec struct {
 	platformVersion string
 	netCfg          *driver.NetworkConfiguration
 	tags            []driver.Tag
+	// runToCompletion selects the engine run mode: standalone RunTask runs its
+	// containers to completion (blocking for exit codes), while the service
+	// scheduler launches them detached.
+	runToCompletion bool
 }
 
 // launchTask builds a single task from spec and places it per the launch type,
@@ -191,7 +196,7 @@ type taskSpec struct {
 // instance the behavior depends on pendingOnShortfall: RunTask (false) returns a
 // placement failure and stores nothing, while the service scheduler (true)
 // stores the task PENDING so the service reports RunningCount<DesiredCount.
-func (m *Mock) launchTask(spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
+func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
 	task := &driver.Task{
 		ARN:               m.arn("task/" + spec.cluster + "/" + m.hexID()),
 		ClusterARN:        spec.clusterARN,
@@ -207,6 +212,8 @@ func (m *Mock) launchTask(spec *taskSpec, pendingOnShortfall bool) (*driver.Task
 
 	if spec.launchType == launchFargate {
 		m.placeFargate(task, spec.netCfg, spec.platformVersion)
+		m.backTaskWithEngine(ctx, task, spec)
+		m.tasks.Set(task.ARN, task)
 		clone := cloneTask(task)
 
 		return &clone, nil
@@ -227,6 +234,7 @@ func (m *Mock) launchTask(spec *taskSpec, pendingOnShortfall bool) (*driver.Task
 	}
 
 	task.LastStatus = statusRunning
+	m.backTaskWithEngine(ctx, task, spec)
 	m.tasks.Set(task.ARN, task)
 	clone := cloneTask(task)
 
@@ -326,13 +334,20 @@ func containersFor(td *driver.TaskDefinition) []driver.Container {
 // reserved back to the instance. Releasing is guarded by placeMu (shared with
 // placement) and skipped for an already-stopped task, so a repeated StopTask can
 // never double-credit an instance.
-func (m *Mock) StopTask(_ context.Context, _, task, reason string) (*driver.Task, error) {
+func (m *Mock) StopTask(ctx context.Context, _, task, reason string) (*driver.Task, error) {
 	m.placeMu.Lock()
 	defer m.placeMu.Unlock()
 
 	t, ok := m.resolveTask(task)
 	if !ok {
 		return nil, apiErrf(errors.NotFound, excInvalidParameter, "task %q not found", task)
+	}
+
+	// Tear down the backing engine workload (if any) before flipping to STOPPED,
+	// then drop the handle so a repeated StopTask is a no-op.
+	if handle, backed := m.taskHandle(t.ARN); backed {
+		_ = containerengine.Stop(ctx, m.opts.ContainerEngine, handle)
+		m.engineHandles.Delete(t.ARN)
 	}
 
 	// Release reserved capacity exactly once, before flipping the task to STOPPED.

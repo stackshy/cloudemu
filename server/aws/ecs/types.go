@@ -200,6 +200,9 @@ type wireContainer struct {
 	Name       string `json:"name,omitempty"`
 	Image      string `json:"image,omitempty"`
 	LastStatus string `json:"lastStatus,omitempty"`
+	ExitCode   int    `json:"exitCode,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	RuntimeID  string `json:"runtimeId,omitempty"`
 }
 
 // wireAttachment mirrors the ECS Attachment shape (type/status/details), where
@@ -1089,7 +1092,10 @@ func taskDefToWire(t *driver.TaskDefinition) wireTaskDef {
 func taskToWire(t *driver.Task) wireTask {
 	containers := make([]wireContainer, 0, len(t.Containers))
 	for _, c := range t.Containers {
-		containers = append(containers, wireContainer{Name: c.Name, Image: c.Image, LastStatus: c.LastStatus})
+		containers = append(containers, wireContainer{
+			Name: c.Name, Image: c.Image, LastStatus: c.LastStatus,
+			ExitCode: c.ExitCode, Reason: c.Reason, RuntimeID: c.RuntimeID,
+		})
 	}
 
 	return wireTask{

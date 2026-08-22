@@ -248,6 +248,8 @@ func New(opts ...config.Option) *Provider {
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
 	p.ECS.SetManagedInstanceLauncher(p.EC2)
+	// Engine-backed ECS tasks push their awslogs container output to CloudWatch Logs.
+	p.ECS.SetLogSink(p.CloudWatchLogs)
 	p.Redshift.SetMonitoring(p.CloudWatch)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	p.SageMaker.SetMonitoring(p.CloudWatch)

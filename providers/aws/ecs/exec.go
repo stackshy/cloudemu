@@ -2,15 +2,20 @@ package ecs
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/container/containerengine"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
 
 // ExecuteCommand resolves a running task and returns a synthetic SSM session for
-// the target container. An unresolved task surfaces an InvalidParameterException.
-func (m *Mock) ExecuteCommand(_ context.Context, in driver.ExecuteCommandInput) (*driver.ExecuteCommandResult, error) {
+// the target container. When the task is engine-backed the requested command is
+// actually run inside the container via the configured ContainerEngine (its
+// output travels the SSM data channel in real ECS, so it is not carried in this
+// response). An unresolved task surfaces an InvalidParameterException.
+func (m *Mock) ExecuteCommand(ctx context.Context, in driver.ExecuteCommandInput) (*driver.ExecuteCommandResult, error) {
 	t, ok := m.resolveTask(in.Task)
 	if !ok {
 		return nil, apiErrf(errors.NotFound, excInvalidParameter, "task %q not found", in.Task)
@@ -19,6 +24,12 @@ func (m *Mock) ExecuteCommand(_ context.Context, in driver.ExecuteCommandInput) 
 	containerName := in.Container
 	if containerName == "" && len(t.Containers) > 0 {
 		containerName = t.Containers[0].Name
+	}
+
+	if handle, backed := m.taskHandle(t.ARN); backed {
+		if _, err := containerengine.Exec(ctx, m.opts.ContainerEngine, handle, containerName, execCommand(in.Command)); err != nil {
+			return nil, apiErrf(errors.Internal, excInvalidParameter, "execute-command failed: %v", err)
+		}
 	}
 
 	sessionID := "ecs-execute-command-" + m.hexID()
@@ -37,6 +48,17 @@ func (m *Mock) ExecuteCommand(_ context.Context, in driver.ExecuteCommandInput) 
 			TokenValue: m.hexID() + m.hexID(),
 		},
 	}, nil
+}
+
+// execCommand splits an execute-command command string into the argv the
+// ContainerEngine expects. An empty command yields a nil argv.
+func execCommand(cmd string) []string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return nil
+	}
+
+	return fields
 }
 
 // trailingID returns the last "/"-delimited segment of an ARN (the task id).
