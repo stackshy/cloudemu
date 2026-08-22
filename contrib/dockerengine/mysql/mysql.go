@@ -264,12 +264,14 @@ func (m *MySQL) adminConn() (*sql.DB, error) {
 }
 
 func ensureDatabase(ctx context.Context, db *sql.DB, name string) error {
-	ident, err := quoteIdent(name)
-	if err != nil {
-		return err
+	// Allowlist-validate inline (DDL can't be parameterized): the guard dominates
+	// the Exec, so no SQL metacharacter can reach the query. A validated name has
+	// no backtick, so backtick-wrapping it is safe.
+	if !sqlNamePattern.MatchString(name) {
+		return fmt.Errorf("%q: %w", name, errBadIdent)
 	}
 
-	_, err = db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+ident)
+	_, err := db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `"+name+"`")
 
 	return err
 }
@@ -287,10 +289,14 @@ func ensureUser(ctx context.Context, db *sql.DB, user, password, dbName string) 
 		return fmt.Errorf("%q: %w", user, errRootReserved)
 	}
 
-	// Validate the username against the same allowlist as identifiers before it
-	// reaches any DDL — it can't be parameterized, so this is the injection barrier.
+	// Allowlist-validate the username AND the database name inline before either
+	// reaches non-parameterizable DDL — these guards are the injection barrier.
 	if !sqlNamePattern.MatchString(user) {
 		return fmt.Errorf("%q: %w", user, errBadIdent)
+	}
+
+	if !sqlNamePattern.MatchString(dbName) {
+		return fmt.Errorf("%q: %w", dbName, errBadIdent)
 	}
 
 	quotedUser := quoteUser(user)
@@ -311,12 +317,7 @@ func ensureUser(ctx context.Context, db *sql.DB, user, password, dbName string) 
 		return err
 	}
 
-	ident, err := quoteIdent(dbName)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.ExecContext(ctx, "GRANT ALL PRIVILEGES ON "+ident+".* TO "+quotedUser)
+	_, err := db.ExecContext(ctx, "GRANT ALL PRIVILEGES ON `"+dbName+"`.* TO "+quotedUser)
 
 	return err
 }
