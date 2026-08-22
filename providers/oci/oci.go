@@ -3,6 +3,7 @@ package oci
 
 import (
 	"github.com/stackshy/cloudemu/v2/config"
+	computeprovider "github.com/stackshy/cloudemu/v2/providers/oci/compute"
 	"github.com/stackshy/cloudemu/v2/providers/oci/identity"
 	"github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
 	vcnprovider "github.com/stackshy/cloudemu/v2/providers/oci/vcn"
@@ -74,7 +75,15 @@ func New(opts ...config.Option) *Provider {
 		Region:        o.OCIRegion(),
 	}
 	p.Identity = identity.New(o)
-	p.VCN = vcnprovider.New(o)
+
+	vcnMock := vcnprovider.New(o)
+	p.VCN = vcnMock
+
+	// Compute leans on VCN for networking: launching an instance creates a
+	// VNIC in a subnet rather than modeling an interface of its own.
+	computeMock := computeprovider.New(o)
+	computeMock.SetNetworking(vcnMock)
+	p.Compute = computeMock
 
 	p.Monitoring = monitoring.New(o)
 
