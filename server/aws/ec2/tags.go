@@ -29,17 +29,186 @@ type deleteTagsResponseXML struct {
 	RequestID string   `xml:"requestId"`
 }
 
+// describeTagItemXML is one <tagSet><item>…</item></tagSet> entry in a
+// DescribeTags response. Unlike the resource-embedded tagItem (key/value only),
+// DescribeTags reports the owning resource and its type alongside each tag.
+type describeTagItemXML struct {
+	ResourceID   string `xml:"resourceId"`
+	ResourceType string `xml:"resourceType"`
+	Key          string `xml:"key"`
+	Value        string `xml:"value"`
+}
+
+type describeTagsResponseXML struct {
+	XMLName   xml.Name             `xml:"DescribeTagsResponse"`
+	Xmlns     string               `xml:"xmlns,attr"`
+	RequestID string               `xml:"requestId"`
+	TagSet    []describeTagItemXML `xml:"tagSet>item"`
+}
+
+// tagRecord is one flattened resource/tag pair gathered from the compute and
+// networking drivers before filtering.
+type tagRecord struct {
+	resourceID   string
+	resourceType string
+	key          string
+	value        string
+}
+
 func (h *Handler) routeTags(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateTags":
 		h.createTags(w, r)
 	case "DeleteTags":
 		h.deleteTags(w, r)
+	case "DescribeTags":
+		h.describeTags(w, r)
 	default:
 		return false
 	}
 
 	return true
+}
+
+// describeTags reports every resource/tag pair known to the compute and VPC
+// drivers, honoring the SDK's key / resource-id / resource-type / value
+// filters. EC2 owns this action for EC2-scoped requests; the elbv2 handler
+// scope-gates its own DescribeTags to the load-balancing credential so
+// EC2-scoped calls fall through here.
+func (h *Handler) describeTags(w http.ResponseWriter, r *http.Request) {
+	filters := awsquery.Filters(r.Form)
+
+	var recs []tagRecord
+	recs = h.collectComputeTags(r.Context(), recs)
+	recs = h.collectNetworkTags(r.Context(), recs)
+
+	items := make([]describeTagItemXML, 0, len(recs))
+
+	for _, rec := range recs {
+		if !tagMatchesFilters(rec, filters) {
+			continue
+		}
+
+		items = append(items, describeTagItemXML{
+			ResourceID:   rec.resourceID,
+			ResourceType: rec.resourceType,
+			Key:          rec.key,
+			Value:        rec.value,
+		})
+	}
+
+	awsquery.WriteXMLResponse(w, describeTagsResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		TagSet:    items,
+	})
+}
+
+// collectComputeTags appends tag records for instances, volumes, snapshots, and
+// images owned by the compute driver.
+func (h *Handler) collectComputeTags(ctx context.Context, recs []tagRecord) []tagRecord {
+	if h.compute == nil {
+		return recs
+	}
+
+	if insts, err := h.compute.DescribeInstances(ctx, nil, nil); err == nil {
+		for i := range insts {
+			recs = appendTagRecords(recs, insts[i].ID, "instance", insts[i].Tags)
+		}
+	}
+
+	if vols, err := h.compute.DescribeVolumes(ctx, nil); err == nil {
+		for i := range vols {
+			recs = appendTagRecords(recs, vols[i].ID, "volume", vols[i].Tags)
+		}
+	}
+
+	if snaps, err := h.compute.DescribeSnapshots(ctx, nil); err == nil {
+		for _, s := range snaps {
+			recs = appendTagRecords(recs, s.ID, "snapshot", s.Tags)
+		}
+	}
+
+	if imgs, err := h.compute.DescribeImages(ctx, nil); err == nil {
+		for _, im := range imgs {
+			recs = appendTagRecords(recs, im.ID, "image", im.Tags)
+		}
+	}
+
+	return recs
+}
+
+// collectNetworkTags appends tag records for VPCs, subnets, and security groups
+// owned by the networking driver.
+func (h *Handler) collectNetworkTags(ctx context.Context, recs []tagRecord) []tagRecord {
+	if h.vpc == nil {
+		return recs
+	}
+
+	if vpcs, err := h.vpc.DescribeVPCs(ctx, nil); err == nil {
+		for _, v := range vpcs {
+			recs = appendTagRecords(recs, v.ID, "vpc", v.Tags)
+		}
+	}
+
+	if subnets, err := h.vpc.DescribeSubnets(ctx, nil); err == nil {
+		for _, s := range subnets {
+			recs = appendTagRecords(recs, s.ID, "subnet", s.Tags)
+		}
+	}
+
+	if sgs, err := h.vpc.DescribeSecurityGroups(ctx, nil); err == nil {
+		for _, sg := range sgs {
+			recs = appendTagRecords(recs, sg.ID, "security-group", sg.Tags)
+		}
+	}
+
+	return recs
+}
+
+func appendTagRecords(recs []tagRecord, id, resourceType string, tags map[string]string) []tagRecord {
+	for k, v := range tags {
+		recs = append(recs, tagRecord{resourceID: id, resourceType: resourceType, key: k, value: v})
+	}
+
+	return recs
+}
+
+// tagMatchesFilters reports whether a record satisfies every filter (filters
+// are ANDed; values within a filter are ORed), matching EC2 DescribeTags.
+func tagMatchesFilters(rec tagRecord, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if !tagMatchesFilter(rec, f) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func tagMatchesFilter(rec tagRecord, f awsquery.Filter) bool {
+	var field string
+
+	switch f.Name {
+	case "key":
+		field = rec.key
+	case "resource-id":
+		field = rec.resourceID
+	case "resource-type":
+		field = rec.resourceType
+	case "value":
+		field = rec.value
+	default:
+		return true
+	}
+
+	for _, v := range f.Values {
+		if v == field {
+			return true
+		}
+	}
+
+	return false
 }
 
 // createTags applies tags to one or more resources, dispatching each resource
