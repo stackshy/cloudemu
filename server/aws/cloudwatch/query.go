@@ -48,19 +48,19 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.Form.Get("Action") {
-	case "PutMetricData":
+	case opPutMetricData:
 		h.queryPutMetricData(w, r)
-	case "ListMetrics":
+	case opListMetrics:
 		h.queryListMetrics(w, r)
-	case "GetMetricStatistics":
+	case opGetMetricStatistics:
 		h.queryGetMetricStatistics(w, r)
-	case "PutMetricAlarm":
+	case opPutMetricAlarm:
 		h.queryPutMetricAlarm(w, r)
-	case "DescribeAlarms":
+	case opDescribeAlarms:
 		h.queryDescribeAlarms(w, r)
-	case "DeleteAlarms":
+	case opDeleteAlarms:
 		h.queryDeleteAlarms(w, r)
-	case "SetAlarmState":
+	case opSetAlarmState:
 		h.querySetAlarmState(w, r)
 	default:
 		writeQueryError(w, http.StatusBadRequest, "InvalidAction", "unsupported CloudWatch action: "+r.Form.Get("Action"))
@@ -122,7 +122,7 @@ func (h *Handler) queryListMetrics(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) queryGetMetricStatistics(w http.ResponseWriter, r *http.Request) {
 	stat := r.Form.Get("Statistics.member.1")
 	if stat == "" {
-		stat = "Average"
+		stat = statAverage
 	}
 
 	start, _ := time.Parse(time.RFC3339, r.Form.Get("StartTime"))
@@ -142,8 +142,13 @@ func (h *Handler) queryGetMetricStatistics(w http.ResponseWriter, r *http.Reques
 	var dps []datapointXML
 
 	if res != nil {
+		unit := res.Unit
+		if unit == "" {
+			unit = defaultMetricUnit
+		}
+
 		for i := range res.Timestamps {
-			dp := datapointXML{Timestamp: res.Timestamps[i].UTC().Format(time.RFC3339), Unit: "Count"}
+			dp := datapointXML{Timestamp: res.Timestamps[i].UTC().Format(time.RFC3339), Unit: unit}
 			setQueryStat(&dp, stat, res.Values[i])
 			dps = append(dps, dp)
 		}
