@@ -153,26 +153,38 @@ func lexNumber(s string, i int) (tok token, next int) {
 }
 
 func lexSymbol(s string, i int) (tok token, next int, err error) {
+	if kind, ok := punctToken(s[i]); ok {
+		return token{kind: kind}, i + 1, nil
+	}
+
 	switch s[i] {
-	case '(':
-		return token{kind: tLParen}, i + 1, nil
-	case ')':
-		return token{kind: tRParen}, i + 1, nil
-	case ',':
-		return token{kind: tComma}, i + 1, nil
-	case '.':
-		return token{kind: tDot}, i + 1, nil
-	case '[':
-		return token{kind: tLBracket}, i + 1, nil
-	case ']':
-		return token{kind: tRBracket}, i + 1, nil
-	case '=':
-		return token{kind: tOp, text: "="}, i + 1, nil
+	case '=', '+', '-':
+		return token{kind: tOp, text: string(s[i])}, i + 1, nil
 	case '<', '>':
 		return lexRelational(s, i)
 	}
 
 	return token{}, 0, cerrors.Newf(cerrors.InvalidArgument, "unexpected character %q at position %d", string(s[i]), i)
+}
+
+// punctToken maps a single-character punctuation byte to its token kind.
+func punctToken(c byte) (tokenKind, bool) {
+	switch c {
+	case '(':
+		return tLParen, true
+	case ')':
+		return tRParen, true
+	case ',':
+		return tComma, true
+	case '.':
+		return tDot, true
+	case '[':
+		return tLBracket, true
+	case ']':
+		return tRBracket, true
+	}
+
+	return tEOF, false
 }
 
 func lexRelational(s string, i int) (tok token, next int, err error) {
