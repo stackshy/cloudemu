@@ -41,6 +41,8 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DeleteRole":                    {},
 	"GetRole":                       {},
 	"ListRoles":                     {},
+	"UpdateRole":                    {},
+	"UpdateAssumeRolePolicy":        {},
 	"CreatePolicy":                  {},
 	"DeletePolicy":                  {},
 	"GetPolicy":                     {},
@@ -66,6 +68,7 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"CreateAccessKey":               {},
 	"DeleteAccessKey":               {},
 	"ListAccessKeys":                {},
+	"UpdateAccessKey":               {},
 	"CreateInstanceProfile":         {},
 	"DeleteInstanceProfile":         {},
 	"GetInstanceProfile":            {},
@@ -80,6 +83,9 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"TagRole":                       {},
 	"UntagRole":                     {},
 	"ListRoleTags":                  {},
+	"TagUser":                       {},
+	"UntagUser":                     {},
+	"ListUserTags":                  {},
 }
 
 // roleTagManager is the AWS-specific role-tagging surface, asserted against the
@@ -167,6 +173,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getRole(w, r)
 	case "ListRoles":
 		h.listRoles(w, r)
+	case "UpdateRole":
+		h.updateRole(w, r)
+	case "UpdateAssumeRolePolicy":
+		h.updateAssumeRolePolicy(w, r)
 	case "CreatePolicy":
 		h.createPolicy(w, r)
 	case "DeletePolicy":
@@ -217,6 +227,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteAccessKey(w, r)
 	case "ListAccessKeys":
 		h.listAccessKeys(w, r)
+	case "UpdateAccessKey":
+		h.updateAccessKey(w, r)
 	case "CreateInstanceProfile":
 		h.createInstanceProfile(w, r)
 	case "DeleteInstanceProfile":
@@ -245,6 +257,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.untagRole(w, r)
 	case "ListRoleTags":
 		h.listRoleTags(w, r)
+	case "TagUser":
+		h.tagUser(w, r)
+	case "UntagUser":
+		h.untagUser(w, r)
+	case "ListUserTags":
+		h.listUserTags(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown IAM action: "+r.Form.Get("Action"))

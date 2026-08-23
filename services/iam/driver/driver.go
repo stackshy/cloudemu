@@ -85,6 +85,7 @@ type GroupConfig struct {
 // GroupInfo describes an IAM group.
 type GroupInfo struct {
 	Name      string
+	ID        string
 	Path      string
 	ARN       string
 	CreatedAt string
@@ -107,6 +108,7 @@ type AccessKeyInfo struct {
 // InstanceProfileConfig describes an instance profile to create.
 type InstanceProfileConfig struct {
 	Name     string
+	Path     string
 	RoleName string
 	Tags     map[string]string
 }
@@ -115,6 +117,7 @@ type InstanceProfileConfig struct {
 type InstanceProfileInfo struct {
 	ID        string
 	Name      string
+	Path      string
 	RoleName  string
 	ARN       string
 	CreatedAt string
