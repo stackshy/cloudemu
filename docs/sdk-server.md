@@ -4,6 +4,8 @@ CloudEmu includes an HTTP server that speaks the real cloud SDK wire protocols a
 
 Nothing to mock. No Docker. No accounts. The same SDK calls you'd run against real AWS / Azure / GCP hit a local `httptest.NewServer` and get back SDK-decodable responses.
 
+The backend is in-memory by default; the same drivers can be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) (real SQL/Redis/function code) when you need real workloads behind the wire protocol.
+
 ## Why
 
 CloudEmu's Go API is great for new code you write for testing. But most real apps already use the official cloud SDKs directly. Rewriting those call sites just to test against an emulator is friction. The SDK-compat server removes that friction — change the endpoint, done.
@@ -160,7 +162,7 @@ Region, credentials, and tokens can be any dummy values — the server doesn't v
 | Service | Operations |
 |---------|-----------|
 | **S3** | CreateBucket, DeleteBucket, ListBuckets, PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2 (prefix, delimiter, common prefixes, continuation token), CopyObject |
-| **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, UpdateItem (SET/REMOVE), Query, Scan (with FilterExpression), BatchWriteItem, BatchGetItem, TransactWriteItems |
+| **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, UpdateItem (SET/REMOVE/ADD/DELETE + arithmetic/`if_not_exists`/`list_append`), Query/Scan (full KeyCondition/Filter/Projection expressions), BatchWriteItem, BatchGetItem, TransactWriteItems (ConditionExpression, real `SS`/`NS`/`BS` sets) |
 | **EC2** | RunInstances, DescribeInstances (filters: `instance-id`, `instance-type`, `instance-state-name`, `tag:*`), Start/Stop/Reboot/TerminateInstances, ModifyInstanceAttribute |
 | **EC2 — VPC + Networking** | VPCs, Subnets, Security Groups + ingress/egress rules, Internet Gateways, Route Tables + Routes, NAT Gateways, VPC Peering, Flow Logs, Network ACLs |
 | **EC2 — EBS + Key Pairs** | Volumes (Create/Delete/Describe/Attach/Detach), Key Pairs |
@@ -364,7 +366,7 @@ The `Handler` interface is the only contract — no registration is needed in co
 - **No signature validation.** CloudEmu is a local development tool, not a security boundary. Requests are accepted regardless of AWS SigV4 / Azure AAD / GCP OAuth signatures.
 - **No AMQP for Azure Service Bus.** The modern `azservicebus` SDK uses AMQP exclusively for data plane. ARM control plane is fully supported via `armservicebus`; tests that need send/receive can use the raw-HTTP REST data plane.
 - **GCS direct-media downloads** assume path-style URLs.
-- **DynamoDB / Cosmos / Firestore filters and queries** support common patterns but are not full DSL parsers.
+- **DynamoDB / Cosmos / Firestore queries** parse the real grammars — DynamoDB expressions (KeyCondition/Filter/Condition/Projection/Update), Firestore structured queries (composite filters, `orderBy`, cursors, `select`), and Cosmos SQL (`SELECT`/`WHERE`/`ORDER BY`/`OFFSET`-`LIMIT`/aggregates). A few advanced constructs are deliberately out of scope (e.g. Cosmos `JOIN`/spatial/UDFs); `NOT` over a composite predicate stays two-valued.
 - **Pagination tokens** are honored where present in the SDK contract; some list operations short-circuit to a single page.
 - **Resource Graph `resourceGroup`.** Rows expose `resourceGroup` derived from the resource's ARM id. Where a mock doesn't model a per-resource resource group, the id (and thus `resourceGroup`) falls back to `default`, so all such resources share one resource group — fine for SKU/tier/size-sensitive discovery and cost tests, but consumers that key on distinct resource groups should be aware. Event Hubs (`microsoft.eventhub/namespaces`) is not yet modeled, so its `sku.tier` isn't surfaced.
 
