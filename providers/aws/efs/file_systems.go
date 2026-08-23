@@ -50,6 +50,13 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 	now := m.opts.Clock.Now().UTC()
 	name := in.Tags[nameTag]
 
+	// An encrypted file system with no explicit key uses the account's
+	// AWS-managed aws/elasticfilesystem CMK.
+	kmsKeyID := in.KMSKeyID
+	if in.Encrypted && kmsKeyID == "" {
+		kmsKeyID = m.defaultKMSKeyARN()
+	}
+
 	fs := driver.FileSystem{
 		OwnerID:                      m.opts.AccountID,
 		CreationToken:                in.CreationToken,
@@ -62,7 +69,7 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 		SizeInBytes:                  driver.FileSystemSize{Timestamp: now},
 		PerformanceMode:              perf,
 		Encrypted:                    in.Encrypted,
-		KMSKeyID:                     in.KMSKeyID,
+		KMSKeyID:                     kmsKeyID,
 		ThroughputMode:               tput,
 		ProvisionedThroughputInMibps: in.ProvisionedThroughputInMibps,
 		AvailabilityZoneName:         in.AvailabilityZoneName,

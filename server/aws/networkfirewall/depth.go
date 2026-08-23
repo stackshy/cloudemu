@@ -206,6 +206,25 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
+type listTagsForResourceRequest struct {
+	ResourceArn string `json:"ResourceArn"`
+}
+
+func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req listTagsForResourceRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tags, err := h.db.ListTagsForResource(r.Context(), req.ResourceArn)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"Tags": mapToTags(tags)})
+}
+
 // firewallName resolves the firewall's store key (its name) from either the
 // name or the ARN provided by the caller. Firewalls are keyed by name.
 func firewallName(name, arn string) string {

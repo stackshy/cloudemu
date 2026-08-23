@@ -75,6 +75,25 @@ func TestSDKResourceExplorer2(t *testing.T) {
 		assert.GreaterOrEqual(t, len(out.Resources), 4, "expect 2 buckets + 1 table + 1 vpc")
 	})
 
+	t.Run("ResourceType uses AWS service:type form", func(t *testing.T) {
+		out, err := client.Search(ctx, &rex.SearchInput{QueryString: aws.String("")})
+		require.NoError(t, err)
+
+		// Real Resource Explorer reports ResourceType as "s3:bucket",
+		// "dynamodb:table" — not CloudEmu's internal "storage:bucket" /
+		// "database:table" category.
+		assert.True(t, rexHasResourceType(out.Resources, "s3:bucket"),
+			"S3 bucket must surface as s3:bucket")
+		assert.True(t, rexHasResourceType(out.Resources, "dynamodb:table"),
+			"DynamoDB table must surface as dynamodb:table")
+
+		for _, r := range out.Resources {
+			rt := aws.ToString(r.ResourceType)
+			assert.NotContains(t, rt, "storage:", "internal category leaked into ResourceType: %s", rt)
+			assert.NotContains(t, rt, "database:", "internal category leaked into ResourceType: %s", rt)
+		}
+	})
+
 	t.Run("Search filters by tag", func(t *testing.T) {
 		out, err := client.Search(ctx, &rex.SearchInput{
 			QueryString: aws.String("tag.env:prod"),

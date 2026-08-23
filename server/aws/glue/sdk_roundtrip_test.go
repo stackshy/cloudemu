@@ -171,6 +171,58 @@ func TestSDKJobRunLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKGetJobAppliesDefaults verifies GetJob reports GlueVersion and Timeout
+// defaults when the job was created without them, matching real AWS Glue.
+func TestSDKGetJobAppliesDefaults(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	if _, err := c.CreateJob(ctx, &awsglue.CreateJobInput{
+		Name: aws.String("defaults-job"), Role: aws.String("arn:aws:iam::123456789012:role/r"),
+		Command: &gluetypes.JobCommand{Name: aws.String("glueetl")},
+	}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	got, err := c.GetJob(ctx, &awsglue.GetJobInput{JobName: aws.String("defaults-job")})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	if aws.ToString(got.Job.GlueVersion) == "" {
+		t.Fatal("GlueVersion is empty, want a default")
+	}
+
+	if aws.ToInt32(got.Job.Timeout) != 2880 {
+		t.Fatalf("Timeout = %d, want default 2880", aws.ToInt32(got.Job.Timeout))
+	}
+}
+
+// TestSDKGetJobHonoursExplicitValues verifies caller-supplied GlueVersion and
+// Timeout are not overwritten by defaults.
+func TestSDKGetJobHonoursExplicitValues(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	if _, err := c.CreateJob(ctx, &awsglue.CreateJobInput{
+		Name: aws.String("explicit-job"), Role: aws.String("arn:aws:iam::123456789012:role/r"),
+		Command:     &gluetypes.JobCommand{Name: aws.String("glueetl")},
+		GlueVersion: aws.String("4.0"), Timeout: aws.Int32(60),
+	}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	got, err := c.GetJob(ctx, &awsglue.GetJobInput{JobName: aws.String("explicit-job")})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	if aws.ToString(got.Job.GlueVersion) != "4.0" || aws.ToInt32(got.Job.Timeout) != 60 {
+		t.Fatalf("GlueVersion=%q Timeout=%d, want 4.0/60",
+			aws.ToString(got.Job.GlueVersion), aws.ToInt32(got.Job.Timeout))
+	}
+}
+
 func TestSDKTags(t *testing.T) {
 	ctx := context.Background()
 	c := newGlueClient(t)

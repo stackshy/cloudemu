@@ -2,6 +2,7 @@ package networkfirewall
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
@@ -21,6 +22,7 @@ type subnetMapping struct {
 type firewallJSON struct {
 	FirewallName      string          `json:"FirewallName"`
 	FirewallArn       string          `json:"FirewallArn"`
+	FirewallID        string          `json:"FirewallId,omitempty"`
 	FirewallPolicyArn string          `json:"FirewallPolicyArn,omitempty"`
 	VpcID             string          `json:"VpcId,omitempty"`
 	SubnetMappings    []subnetMapping `json:"SubnetMappings,omitempty"`
@@ -29,8 +31,64 @@ type firewallJSON struct {
 	Tags              []tag           `json:"Tags,omitempty"`
 }
 
+type attachmentJSON struct {
+	SubnetID   string `json:"SubnetId,omitempty"`
+	EndpointID string `json:"EndpointId,omitempty"`
+	Status     string `json:"Status,omitempty"`
+}
+
+type syncStateJSON struct {
+	Attachment attachmentJSON `json:"Attachment"`
+}
+
 type firewallStatusJSON struct {
-	Status string `json:"Status"`
+	Status                        string                   `json:"Status"`
+	ConfigurationSyncStateSummary string                   `json:"ConfigurationSyncStateSummary,omitempty"`
+	SyncStates                    map[string]syncStateJSON `json:"SyncStates,omitempty"`
+}
+
+// azSuffixes indexes subnets to Availability Zone letters for synthetic
+// SyncStates keys.
+//
+//nolint:gochecknoglobals // immutable lookup table.
+var azSuffixes = [...]string{"a", "b", "c", "d", "e", "f"}
+
+// toFirewallStatusJSON builds the FirewallStatus block. A firewall in the
+// emulator is always fully provisioned, so it reports READY / IN_SYNC with one
+// SyncState per attached subnet keyed by a synthetic Availability Zone.
+func toFirewallStatusJSON(f *nfdriver.Firewall) firewallStatusJSON {
+	region := arnRegion(f.ARN)
+
+	states := make(map[string]syncStateJSON, len(f.SubnetIDs))
+	for i, subnet := range f.SubnetIDs {
+		az := region + azSuffixes[i%len(azSuffixes)]
+		states[az] = syncStateJSON{Attachment: attachmentJSON{
+			SubnetID:   subnet,
+			EndpointID: "vpce-" + f.ID,
+			Status:     "READY",
+		}}
+	}
+
+	if len(states) == 0 {
+		states = nil
+	}
+
+	return firewallStatusJSON{
+		Status:                        f.Status,
+		ConfigurationSyncStateSummary: "IN_SYNC",
+		SyncStates:                    states,
+	}
+}
+
+// arnRegion extracts the region field (index 3) from an AWS ARN, defaulting to
+// "us-east-1" when the ARN is malformed or region-less.
+func arnRegion(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) > 3 && parts[3] != "" {
+		return parts[3]
+	}
+
+	return "us-east-1"
 }
 
 type createFirewallRequest struct {
@@ -70,7 +128,7 @@ func (h *Handler) createFirewall(w http.ResponseWriter, r *http.Request) {
 
 	wire.WriteJSON(w, map[string]any{
 		"Firewall":       toFirewallJSON(fw),
-		"FirewallStatus": firewallStatusJSON{Status: fw.Status},
+		"FirewallStatus": toFirewallStatusJSON(fw),
 	})
 }
 
@@ -89,7 +147,7 @@ func (h *Handler) describeFirewall(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{
 		"UpdateToken":    updateToken,
 		"Firewall":       toFirewallJSON(fw),
-		"FirewallStatus": firewallStatusJSON{Status: fw.Status},
+		"FirewallStatus": toFirewallStatusJSON(fw),
 	})
 }
 
@@ -133,7 +191,7 @@ func toFirewallJSON(f *nfdriver.Firewall) firewallJSON {
 	}
 
 	return firewallJSON{
-		FirewallName: f.Name, FirewallArn: f.ARN, FirewallPolicyArn: f.PolicyARN,
+		FirewallName: f.Name, FirewallArn: f.ARN, FirewallID: f.ID, FirewallPolicyArn: f.PolicyARN,
 		VpcID: f.VPCID, SubnetMappings: mappings, Description: f.Description,
 		DeleteProtection: f.DeleteProtection, Tags: mapToTags(f.Tags),
 	}
@@ -209,6 +267,37 @@ func (h *Handler) describeFirewallPolicy(w http.ResponseWriter, r *http.Request)
 			StatelessDefaultActions:         p.StatelessDefaultActions,
 			StatelessFragmentDefaultActions: p.StatelessFragmentDefaultActions,
 		},
+	})
+}
+
+type updateFirewallPolicyRequest struct {
+	UpdateToken        string                   `json:"UpdateToken"`
+	FirewallPolicyName string                   `json:"FirewallPolicyName"`
+	FirewallPolicyArn  string                   `json:"FirewallPolicyArn"`
+	FirewallPolicy     firewallPolicyDetailJSON `json:"FirewallPolicy"`
+	Description        string                   `json:"Description"`
+}
+
+func (h *Handler) updateFirewallPolicy(w http.ResponseWriter, r *http.Request) {
+	var req updateFirewallPolicyRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	p, err := h.db.UpdateFirewallPolicy(r.Context(), req.FirewallPolicyName, req.FirewallPolicyArn,
+		nfdriver.UpdateFirewallPolicyConfig{
+			Description:                     req.Description,
+			StatelessDefaultActions:         req.FirewallPolicy.StatelessDefaultActions,
+			StatelessFragmentDefaultActions: req.FirewallPolicy.StatelessFragmentDefaultActions,
+		})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{
+		"UpdateToken":            updateToken,
+		"FirewallPolicyResponse": toPolicyResponseJSON(p),
 	})
 }
 
@@ -303,6 +392,33 @@ func (h *Handler) describeRuleGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rg, err := h.db.DescribeRuleGroup(r.Context(), req.RuleGroupName, req.RuleGroupArn, req.Type)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{
+		"UpdateToken":       updateToken,
+		"RuleGroupResponse": toRuleGroupResponseJSON(rg),
+	})
+}
+
+type updateRuleGroupRequest struct {
+	UpdateToken   string `json:"UpdateToken"`
+	RuleGroupName string `json:"RuleGroupName"`
+	RuleGroupArn  string `json:"RuleGroupArn"`
+	Type          string `json:"Type"`
+	Description   string `json:"Description"`
+}
+
+func (h *Handler) updateRuleGroup(w http.ResponseWriter, r *http.Request) {
+	var req updateRuleGroupRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	rg, err := h.db.UpdateRuleGroup(r.Context(), req.RuleGroupName, req.RuleGroupArn, req.Type,
+		nfdriver.UpdateRuleGroupConfig{Description: req.Description})
 	if err != nil {
 		writeErr(w, err)
 		return
