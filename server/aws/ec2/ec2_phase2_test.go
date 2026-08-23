@@ -80,12 +80,17 @@ func TestRouteVPCDispatchesAllActions(t *testing.T) {
 		t.Errorf("AuthorizeSecurityGroupIngress = %d: %s", rr.Code, rr.Body.String())
 	}
 
-	// Egress, Revoke variants use the same parser path.
+	// Egress, Revoke variants use the same parser path. Use a distinct rule
+	// (not protocol -1 to 0.0.0.0/0, which the SG already carries as its
+	// seeded default egress rule) so this exercises the parser rather than
+	// tripping InvalidPermission.Duplicate.
 	rr = do(t, h, http.MethodPost, "/", url.Values{
 		"Action":                            {"AuthorizeSecurityGroupEgress"},
 		"GroupId":                           {sgID},
-		"IpPermissions.1.IpProtocol":        {"-1"},
-		"IpPermissions.1.IpRanges.1.CidrIp": {"0.0.0.0/0"},
+		"IpPermissions.1.IpProtocol":        {"tcp"},
+		"IpPermissions.1.FromPort":          {"443"},
+		"IpPermissions.1.ToPort":            {"443"},
+		"IpPermissions.1.IpRanges.1.CidrIp": {"10.0.0.0/16"},
 	})
 	if rr.Code != http.StatusOK {
 		t.Errorf("AuthorizeSecurityGroupEgress = %d", rr.Code)
