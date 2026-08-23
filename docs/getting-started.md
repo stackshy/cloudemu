@@ -267,6 +267,29 @@ aws = cloudemu.NewAWS(
 | `WithProjectID(id)` | `"mock-project"` | GCP project ID |
 | `WithLatency(d)` | `0` | Simulated latency added to all operations |
 
+### Real-engine options (opt-in)
+
+By default every driver is in-memory. To back a capability with a **real
+engine** (real SQL/Redis/function code), pass one of the `With<X>Engine` options
+— `nil`/unset keeps the in-memory default:
+
+| Option | Backs |
+|--------|-------|
+| `WithDatabaseEngine(e)` | relational database → real Postgres/MySQL |
+| `WithCacheEngine(e)` | cache → real Redis |
+| `WithFunctionEngine(e)` | functions → real code execution |
+| `WithComputeEngine(e)` | compute → Docker containers as VMs |
+| `WithContainerEngine(e)` | containers → Docker |
+| `WithStorageEngine(e)` | object storage → filesystem-backed bytes |
+
+```go
+pg, _ := postgres.New()                          // contrib/realengine/postgres
+aws := cloudemu.NewAWS(config.WithDatabaseEngine(pg))
+defer aws.Close()                                 // tears down every wired engine
+```
+
+See [features.md — Real Data-Plane Engines](features.md#11-real-data-plane-engines-opt-in) for the engine catalog and the `cloudemu-server` binary.
+
 ## Error Handling
 
 CloudEmu uses canonical error codes from the `errors` package. Use the helper functions to check error types.

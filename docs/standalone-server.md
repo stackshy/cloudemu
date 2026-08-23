@@ -259,6 +259,16 @@ default `127.0.0.1` keeps it local-only).
 
 ## Pointing SDKs at it
 
+For CLIs and any-language SDKs that read endpoint/credential env vars, the
+`cloudemu env` subcommand prints the `export` lines to point them at a running
+server:
+
+```bash
+eval "$(cloudemu env)"   # exports AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID=test, ... (ports default 4566/4568/4569)
+```
+
+The Go examples below set the endpoint on the client directly.
+
 ### AWS (`aws-sdk-go-v2`)
 
 ```go
@@ -421,9 +431,36 @@ f, _ := seed.LoadFS(fixtures, "testdata/fixtures.json")
 seed.Apply(ctx, f, seed.Target{Storage: aws.S3, Database: aws.DynamoDB})
 ```
 
+## Real engines
+
+`cloudemu serve` is pure in-memory. To point clients at **real** SQL, Redis,
+function runtimes or containers, use the batteries-included **`cloudemu-server`**
+binary (the `contrib/server` module), which wires the opt-in
+[real engines](features.md#11-real-data-plane-engines-opt-in) onto the same wire
+servers. Engines are turned on with flags (or the matching `CLOUDEMU_*` env
+vars):
+
+```bash
+cloudemu-server --db=postgres --cache=redis --functions=subprocess
+# or turn everything on:
+cloudemu-server --all-real
+```
+
+| Flag | Env | Values |
+|------|-----|--------|
+| `--db` | `CLOUDEMU_DB` | `off` \| `postgres` \| `mysql` \| `both` |
+| `--cache` | `CLOUDEMU_CACHE` | `off` \| `redis` |
+| `--functions` | `CLOUDEMU_FUNCTIONS` | `off` \| `subprocess` |
+| `--compute` | `CLOUDEMU_COMPUTE` | `off` \| `docker` |
+| `--containers` | `CLOUDEMU_CONTAINERS` | `off` \| `docker` |
+| `--all-real` | — | shorthand: postgres + redis + subprocess + docker compute + docker containers |
+
+`--db`/`--cache`/`--functions` need no Docker (`contrib/realengine`);
+`--compute`/`--containers` require a Docker daemon (`contrib/dockerengine`). The
+server calls `Provider.Close()` on shutdown, tearing every engine down.
+
 ## Not yet included
 
 **Persistence** covers object storage and NoSQL tables today (see "Persistence
 across restarts" above); the remaining services and full **snapshot/restore**
-fidelity are tracked in #107. Docker packaging (#247) and a Testcontainers
-module (#248) build directly on this binary.
+fidelity are tracked in #107.

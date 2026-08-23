@@ -44,7 +44,17 @@ Each call to `engine.Apply` returns an `*Active` handle with `.Stop()` to cancel
 
 ## What's wrapped today
 
-`WrapBucket` (S3), `WrapCompute` (EC2), `WrapDatabase` (DynamoDB). Phase 2 will wire the remaining 13 services.
+Chaos wrapping spans the portable service layer — 20 `Wrap*` helpers cover
+storage, compute, database, cache, DNS, IAM, container registry, logging, event
+bus, load balancer, message queue, monitoring, networking, notification,
+secrets, serverless, and the ML/GenAI surfaces (SageMaker, Vertex AI, Azure AI,
+Azure Search):
+
+`WrapBucket`, `WrapCompute`, `WrapDatabase`, `WrapCache`, `WrapDNS`, `WrapIAM`,
+`WrapContainerRegistry`, `WrapLogging`, `WrapEventBus`, `WrapLoadBalancer`,
+`WrapMessageQueue`, `WrapMonitoring`, `WrapNetworking`, `WrapNotification`,
+`WrapSecrets`, `WrapServerless`, `WrapSageMaker`, `WrapVertexAI`, `WrapAzureAI`,
+`WrapAzureSearch`.
 
 ## Inspecting what happened
 
@@ -53,9 +63,8 @@ events := engine.Recorded()  // every Effect that was applied
 engine.Reset()               // clear the buffer between test phases
 ```
 
-## Coming next (Phase 2 / 3)
+## Coming next
 
-- Wire chaos into the remaining 13 portable services
 - `SlowDegradation` (latency ramps up over a window)
 - `BurstFailure` (N consecutive failures)
 - `NetworkPartition` (cross-service: A → B fails, B → A is fine)

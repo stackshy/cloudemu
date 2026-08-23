@@ -25,6 +25,21 @@ server/<cloud>/<service>/        # SDK-compat wire handler for one cloud
   may have no cross-cloud `services/` abstraction, and some services have no wire
   handler yet. That is fine; the naming rules below still apply to whichever layers exist.
 
+### Sibling modules under `contrib/`
+
+Heavyweight, opt-in add-ons live in their own Go modules under `contrib/` so their
+dependencies stay out of the core `cloudemu` module:
+
+```
+contrib/realengine/       # opt-in real engines, no Docker (embedded-postgres, miniredis, subprocess)
+contrib/dockerengine/     # opt-in real engines, Docker required (mysql, compute, containers, azure functions)
+contrib/server/           # the batteries-included `cloudemu-server` binary (engines wired onto the wire servers)
+contrib/testcontainers/   # a Testcontainers Go module
+```
+
+A real-engine implementation goes in the matching `contrib/<realengine|dockerengine>/<capability>/`
+subpackage and satisfies the `config.<X>Engine` interface from `config/engine.go`.
+
 ---
 
 ## 2. Naming (the rule)

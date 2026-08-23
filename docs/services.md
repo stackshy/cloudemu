@@ -2,6 +2,8 @@
 
 This document lists every service and operation available in CloudEmu across all three cloud providers.
 
+> Every operation here is served from an in-memory backend by default. Selected data-plane services (relational database, cache, functions, compute, containers, object storage) can additionally be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) for real SQL/Redis/function execution.
+
 ## Master Table
 
 | # | Service Category | AWS | Azure | GCP |
