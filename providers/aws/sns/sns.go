@@ -20,6 +20,12 @@ import (
 // Compile-time check that Mock implements driver.Notification.
 var _ driver.Notification = (*Mock)(nil)
 
+// Subscription lifecycle states.
+const (
+	statusConfirmed = "confirmed"
+	statusPending   = "pending"
+)
+
 type publishedMessage struct {
 	ID         string
 	TopicID    string
@@ -32,7 +38,23 @@ type topicData struct {
 	info          driver.TopicInfo
 	subscriptions *memstore.Store[driver.SubscriptionInfo]
 	messages      []publishedMessage
+	deleted       int // monotonic count of unsubscribed endpoints
 	mu            sync.RWMutex
+}
+
+// confirmationProtocols is the set of SNS protocols whose subscriptions start
+// out pending until ConfirmSubscription is called. sqs/lambda/sms/application/
+// firehose auto-confirm.
+var confirmationProtocols = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"http":       {},
+	"https":      {},
+	"email":      {},
+	"email-json": {},
+}
+
+func requiresConfirmation(protocol string) bool {
+	_, ok := confirmationProtocols[protocol]
+	return ok
 }
 
 // SQSDeliverer delivers an SNS notification into an SQS queue identified by
@@ -133,10 +155,36 @@ func (m *Mock) GetTopic(_ context.Context, id string) (*driver.TopicInfo, error)
 		return nil, errors.Newf(errors.NotFound, "topic %q not found", id)
 	}
 
-	result := td.info
-	result.SubscriptionCount = td.subscriptions.Len()
+	result := td.withCounts()
 
 	return &result, nil
+}
+
+// withCounts returns a copy of the topic info with the confirmed/pending/deleted
+// subscription counters populated from live subscription state.
+func (td *topicData) withCounts() driver.TopicInfo {
+	info := td.info
+
+	var confirmed, pending int
+
+	for _, s := range td.subscriptions.All() {
+		if s.Status == statusPending {
+			pending++
+		} else {
+			confirmed++
+		}
+	}
+
+	info.SubscriptionsConfirmed = confirmed
+	info.SubscriptionsPending = pending
+
+	td.mu.RLock()
+	info.SubscriptionsDeleted = td.deleted
+	td.mu.RUnlock()
+
+	info.SubscriptionCount = confirmed + pending
+
+	return info
 }
 
 // ListTopics lists all SNS topics visible under the given scope filter.
@@ -150,9 +198,7 @@ func (m *Mock) ListTopics(_ context.Context, filter scope.Scope) ([]driver.Topic
 			continue
 		}
 
-		info := td.info
-		info.SubscriptionCount = td.subscriptions.Len()
-		topics = append(topics, info)
+		topics = append(topics, td.withCounts())
 	}
 
 	return topics, nil
@@ -170,17 +216,22 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	if cfg.DisplayName != "" {
 		td.info.DisplayName = cfg.DisplayName
 	}
+
 	if cfg.Tags != nil {
 		td.info.Tags = maps.Clone(cfg.Tags)
 	}
+
+	if cfg.Policy != "" {
+		td.info.Policy = cfg.Policy
+	}
+
 	if !cfg.Scope.IsZero() {
 		td.info.Scope = cfg.Scope
 	}
 
 	m.topics.Set(cfg.Name, td)
 
-	result := td.info
-	result.SubscriptionCount = td.subscriptions.Len()
+	result := td.withCounts()
 
 	return &result, nil
 }
@@ -201,14 +252,25 @@ func (m *Mock) Subscribe(_ context.Context, cfg driver.SubscriptionConfig) (*dri
 	}
 
 	subID := idgen.GenerateID("sub-")
-	arn := idgen.AWSARN("sns", m.opts.Region, m.opts.AccountID, "subscription/"+subID)
+	arn := idgen.AWSARN("sns", m.opts.Region, m.opts.AccountID, cfg.TopicID+":"+subID)
+
+	attrs := make(map[string]string, len(cfg.Attributes))
+	for k, v := range cfg.Attributes {
+		attrs[k] = v
+	}
 
 	sub := driver.SubscriptionInfo{
-		ID:       arn,
-		TopicID:  cfg.TopicID,
-		Protocol: cfg.Protocol,
-		Endpoint: cfg.Endpoint,
-		Status:   "confirmed",
+		ID:         arn,
+		TopicID:    cfg.TopicID,
+		Protocol:   cfg.Protocol,
+		Endpoint:   cfg.Endpoint,
+		Status:     statusConfirmed,
+		Attributes: attrs,
+	}
+
+	if requiresConfirmation(cfg.Protocol) {
+		sub.Status = statusPending
+		sub.ConfirmationToken = idgen.GenerateID("")
 	}
 
 	td.subscriptions.Set(arn, sub)
@@ -224,6 +286,10 @@ func (m *Mock) Unsubscribe(_ context.Context, subscriptionID string) error {
 
 	for _, td := range all {
 		if td.subscriptions.Delete(subscriptionID) {
+			td.mu.Lock()
+			td.deleted++
+			td.mu.Unlock()
+
 			return nil
 		}
 	}

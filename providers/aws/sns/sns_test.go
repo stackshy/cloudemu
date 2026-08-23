@@ -304,10 +304,11 @@ func TestListTopics(t *testing.T) {
 
 func TestSubscribe(t *testing.T) {
 	tests := []struct {
-		name      string
-		cfg       driver.SubscriptionConfig
-		setup     func(*Mock) driver.SubscriptionConfig
-		expectErr bool
+		name       string
+		cfg        driver.SubscriptionConfig
+		setup      func(*Mock) driver.SubscriptionConfig
+		wantStatus string
+		expectErr  bool
 	}{
 		{
 			name: "email subscription",
@@ -317,6 +318,8 @@ func TestSubscribe(t *testing.T) {
 					TopicID: info.Name, Protocol: "email", Endpoint: "user@example.com",
 				}
 			},
+			// email requires out-of-band confirmation, so it starts pending.
+			wantStatus: "pending",
 		},
 		{
 			name: "sms subscription",
@@ -326,6 +329,8 @@ func TestSubscribe(t *testing.T) {
 					TopicID: info.Name, Protocol: "sms", Endpoint: "+1234567890",
 				}
 			},
+			// SMS auto-confirms.
+			wantStatus: "confirmed",
 		},
 		{
 			name: "nonexistent topic",
@@ -376,7 +381,7 @@ func TestSubscribe(t *testing.T) {
 			assert.NotEmpty(t, sub.ID)
 			assert.Equal(t, cfg.Protocol, sub.Protocol)
 			assert.Equal(t, cfg.Endpoint, sub.Endpoint)
-			assert.Equal(t, "confirmed", sub.Status)
+			assert.Equal(t, tc.wantStatus, sub.Status)
 		})
 	}
 }
