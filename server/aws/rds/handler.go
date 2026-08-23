@@ -349,7 +349,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidDBInstanceState", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidStateCode(err), err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 	}
@@ -412,9 +412,25 @@ var alreadyExistsFaults = []faultMapping{
 	{"DB snapshot", "DBSnapshotAlreadyExists"},
 }
 
+// invalidStateFaults maps an illegal-state error to the AWS-shaped fault code.
+// Real AWS distinguishes cluster-state faults from instance-state faults, so a
+// message naming a DB cluster gets InvalidDBClusterStateFault; everything else
+// falls back to InvalidDBInstanceState.
+//
+//nolint:gochecknoglobals // ordered static lookup table
+var invalidStateFaults = []faultMapping{
+	{"DB cluster", "InvalidDBClusterStateFault"},
+	{"DB instance", "InvalidDBInstanceState"},
+}
+
 // notFoundCode picks the AWS-shaped NotFound fault from the error message.
 func notFoundCode(err error) string {
 	return matchFault(err.Error(), notFoundFaults, "ResourceNotFoundFault")
+}
+
+// invalidStateCode picks the AWS-shaped illegal-state fault from the message.
+func invalidStateCode(err error) string {
+	return matchFault(err.Error(), invalidStateFaults, "InvalidDBInstanceState")
 }
 
 // alreadyExistsCode picks the AWS-shaped AlreadyExists fault from the message.

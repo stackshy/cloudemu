@@ -83,6 +83,12 @@ type Mock struct {
 	// mu) so its member instances can provision the cluster's shared database.
 	clusterCreds map[string]clusterCred
 
+	// groupTags holds the tags for parameter/option/subnet groups, keyed by ARN
+	// (guarded by mu). Those resources are taggable in real AWS but carry no tag
+	// field on their records, so the tagging layer tracks them here rather than
+	// answering 404 for a valid group ARN.
+	groupTags map[string]map[string]string
+
 	// rootPasswords remembers each standalone instance's master password (guarded
 	// by mu) so a snapshot restore can re-provision a reachable database with the
 	// original credentials, and a password rotation can be replayed. The emulator
@@ -111,6 +117,7 @@ func New(opts *config.Options) *Mock {
 		clusterEndpoints:   memstore.New[rdsdriver.ClusterEndpoint](),
 		globalClusters:     memstore.New[rdsdriver.GlobalCluster](),
 		clusterCreds:       map[string]clusterCred{},
+		groupTags:          map[string]map[string]string{},
 		rootPasswords:      map[string]string{},
 		opts:               opts,
 	}
