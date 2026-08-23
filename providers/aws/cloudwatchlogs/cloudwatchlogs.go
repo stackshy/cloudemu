@@ -230,12 +230,28 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	ingestedAt := m.opts.Clock.Now().UTC()
+
 	copied := make([]driver.LogEvent, len(events))
-	copy(copied, events)
+	for i := range events {
+		copied[i] = events[i]
+		copied[i].IngestionTime = ingestedAt
+	}
 
 	s.events = append(s.events, copied...)
 
 	if len(events) > 0 {
+		earliest := events[0].Timestamp
+		for i := range events {
+			if events[i].Timestamp.Before(earliest) {
+				earliest = events[i].Timestamp
+			}
+		}
+
+		if s.info.FirstEvent == "" {
+			s.info.FirstEvent = earliest.UTC().Format(time.RFC3339)
+		}
+
 		s.info.LastEvent = events[len(events)-1].Timestamp.UTC().Format(time.RFC3339)
 	}
 
@@ -414,9 +430,10 @@ func (*Mock) matchEvents(
 		}
 
 		results = append(results, driver.FilteredLogEvent{
-			LogStream: streamName,
-			Timestamp: e.Timestamp,
-			Message:   e.Message,
+			LogStream:     streamName,
+			Timestamp:     e.Timestamp,
+			IngestionTime: e.IngestionTime,
+			Message:       e.Message,
 		})
 	}
 

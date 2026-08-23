@@ -32,15 +32,20 @@ type LogGroupInfo struct {
 
 // LogStreamInfo describes a log stream within a log group.
 type LogStreamInfo struct {
-	Name      string
-	CreatedAt string
-	LastEvent string
+	Name       string
+	CreatedAt  string
+	FirstEvent string
+	LastEvent  string
 }
 
 // LogEvent represents a single log entry.
 type LogEvent struct {
 	Timestamp time.Time
-	Message   string
+	// IngestionTime is the wall-clock time the event was received by the
+	// service (set at PutLogEvents), distinct from the caller-supplied
+	// Timestamp. Zero when unknown.
+	IngestionTime time.Time
+	Message       string
 }
 
 // LogQueryInput configures a log query operation.
@@ -67,7 +72,10 @@ type FilterLogEventsInput struct {
 type FilteredLogEvent struct {
 	LogStream string
 	Timestamp time.Time
-	Message   string
+	// IngestionTime is the wall-clock time the event was received by the
+	// service, distinct from the caller-supplied Timestamp. Zero when unknown.
+	IngestionTime time.Time
+	Message       string
 }
 
 // MetricFilterConfig describes a metric filter to create.
