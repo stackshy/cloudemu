@@ -83,6 +83,7 @@ func (mq *MQ) rec(op string, input, output any, err error, dur time.Duration) {
 	}
 }
 
+//nolint:gocritic // hugeParam: driver.CreateQueue takes QueueConfig by value.
 func (mq *MQ) CreateQueue(ctx context.Context, config driver.QueueConfig) (*driver.QueueInfo, error) {
 	out, err := mq.do(ctx, "CreateQueue", config, func() (any, error) { return mq.driver.CreateQueue(ctx, config) })
 	if err != nil {
