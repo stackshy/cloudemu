@@ -527,7 +527,8 @@ func TestCreateAndDeleteTags(t *testing.T) {
 		t.Fatalf("DeleteTags result wrong: %s", desc)
 	}
 
-	// Unknown ID -> InvalidID.NotFound.
+	// Unknown VPC ID -> generic InvalidID.NotFound (instance ids get the
+	// resource-specific InvalidInstanceID.NotFound; see tag_error_test.go).
 	bad := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"CreateTags"}, "ResourceId.1": {"vpc-deadbeef"},
 		"Tag.1.Key": {"a"}, "Tag.1.Value": {"b"},

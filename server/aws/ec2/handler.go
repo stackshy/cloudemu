@@ -23,6 +23,10 @@ const formContentType = "application/x-www-form-urlencoded"
 // plenty of headroom while preventing memory-exhaustion attacks.
 const maxFormBodyBytes = 1 << 20
 
+// codeInvalidInstanceID is the EC2 error code for a request naming a
+// non-existent instance id.
+const codeInvalidInstanceID = "InvalidInstanceID.NotFound"
+
 // Handler serves EC2 query-protocol requests. Real AWS EC2 serves both
 // compute and VPC/networking on one endpoint, so the handler holds both
 // drivers and dispatches based on the Action parameter.
@@ -248,7 +252,6 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateAutoScalingGroup":
@@ -276,8 +279,6 @@ func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, actio
 
 // routeInstances dispatches instance-lifecycle actions backed by the compute
 // driver. Returns true if the action was handled.
-//
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "RunInstances":
@@ -294,6 +295,8 @@ func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action 
 		h.terminateInstances(w, r)
 	case "ModifyInstanceAttribute":
 		h.modifyInstanceAttribute(w, r)
+	case "DescribeInstanceAttribute":
+		h.describeInstanceAttribute(w, r)
 	case "GetConsoleOutput":
 		h.getConsoleOutput(w, r)
 	default:
@@ -486,7 +489,7 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 // VPC ops should use writeErrWithNotFound to emit resource-specific codes like
 // "InvalidVpcID.NotFound" or "InvalidSubnetID.NotFound".
 func writeErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidInstanceID.NotFound", "IncorrectInstanceState")
+	writeErrWithNotFound(w, err, codeInvalidInstanceID, "IncorrectInstanceState")
 }
 
 // writeErrWithNotFound writes an error with caller-supplied NotFound and

@@ -158,6 +158,28 @@ type modifyInstanceAttributeResponse struct {
 	Return    bool     `xml:"return"`
 }
 
+// attributeBooleanValueXML / attributeValueXML wrap a single attribute value in
+// DescribeInstanceAttribute responses. The SDK reads the nested <value>.
+type attributeBooleanValueXML struct {
+	Value bool `xml:"value"`
+}
+
+type attributeValueXML struct {
+	Value string `xml:"value"`
+}
+
+// describeInstanceAttributeResponse carries exactly one requested attribute
+// (the others stay nil / omitted), matching real EC2's per-attribute response.
+type describeInstanceAttributeResponse struct {
+	XMLName               xml.Name                  `xml:"DescribeInstanceAttributeResponse"`
+	Xmlns                 string                    `xml:"xmlns,attr"`
+	RequestID             string                    `xml:"requestId"`
+	InstanceID            string                    `xml:"instanceId"`
+	DisableAPITermination *attributeBooleanValueXML `xml:"disableApiTermination,omitempty"`
+	SourceDestCheck       *attributeBooleanValueXML `xml:"sourceDestCheck,omitempty"`
+	InstanceType          *attributeValueXML        `xml:"instanceType,omitempty"`
+}
+
 // getConsoleOutputResponse carries the base64-encoded console output for an
 // instance. Output mirrors real EC2's base64 <output> field.
 type getConsoleOutputResponse struct {

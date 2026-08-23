@@ -56,8 +56,16 @@ func (h *Handler) monitorInstances(w http.ResponseWriter, r *http.Request, state
 	})
 }
 
-type statusDetailXML struct {
+// statusCheckDetailXML is one <details><item> entry (e.g. the reachability
+// check) inside a system/instance status summary.
+type statusCheckDetailXML struct {
+	Name   string `xml:"name"`
 	Status string `xml:"status"`
+}
+
+type statusDetailXML struct {
+	Status  string                 `xml:"status"`
+	Details []statusCheckDetailXML `xml:"details>item,omitempty"`
 }
 
 type instanceStatusItemXML struct {
@@ -105,11 +113,18 @@ func (h *Handler) describeInstanceStatus(w http.ResponseWriter, r *http.Request)
 }
 
 func statusItem(inst *computedriver.Instance) instanceStatusItemXML {
-	// Checks are "ok" only once the instance is running; otherwise
+	// Checks are "ok"/"passed" only once the instance is running; otherwise
 	// "not-applicable", matching real EC2's status-check semantics.
-	check := "not-applicable"
+	notApplicable := "not-applicable"
+	summary, reachability := notApplicable, notApplicable
+
 	if inst.State == stateRunning {
-		check = "ok"
+		summary, reachability = "ok", "passed"
+	}
+
+	detail := statusDetailXML{
+		Status:  summary,
+		Details: []statusCheckDetailXML{{Name: "reachability", Status: reachability}},
 	}
 
 	az := ""
@@ -121,7 +136,7 @@ func statusItem(inst *computedriver.Instance) instanceStatusItemXML {
 		InstanceID:     inst.ID,
 		AvailZone:      az,
 		InstanceState:  instanceState{Code: stateCode(inst.State), Name: inst.State},
-		SystemStatus:   statusDetailXML{Status: check},
-		InstanceStatus: statusDetailXML{Status: check},
+		SystemStatus:   detail,
+		InstanceStatus: detail,
 	}
 }

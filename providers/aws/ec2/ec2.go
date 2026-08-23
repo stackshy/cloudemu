@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -115,6 +116,13 @@ type instanceData struct {
 	// instance, so Terminate deprovisions it and console output is read from
 	// the engine rather than synthesized.
 	engineBacked bool
+	// disableAPITermination is the termination-protection flag set via
+	// ModifyInstanceAttribute(DisableApiTermination). When true, real EC2
+	// rejects TerminateInstances with OperationNotPermitted.
+	disableAPITermination bool
+	// sourceDestCheck mirrors the instance's source/destination check flag
+	// (default true), toggled via ModifyInstanceAttribute(SourceDestCheck).
+	sourceDestCheck bool
 }
 
 // operatorData records service-provider managed-resource ownership.
@@ -310,7 +318,8 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			State: compute.StatePending, PrivateIP: m.nextIP(), SubnetID: cfg.SubnetID,
 			VPCID:          m.resolveSubnetVPC(ctx, cfg.SubnetID),
 			SecurityGroups: sg, Tags: tags,
-			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			LaunchTime:      m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			sourceDestCheck: true,
 		}
 
 		if cfg.Managed {
@@ -424,6 +433,15 @@ func (m *Mock) RebootInstances(ctx context.Context, instanceIDs []string) error 
 }
 
 func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) error {
+	// Termination protection: real EC2 rejects the whole call with
+	// OperationNotPermitted if any target has DisableApiTermination set.
+	for _, id := range instanceIDs {
+		if inst, ok := m.instances.Get(id); ok && inst.disableAPITermination {
+			return cerrors.Newf(cerrors.PermissionDenied,
+				"instance %q may not be terminated: termination protection is enabled", id)
+		}
+	}
+
 	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
 		return err
 	}
@@ -626,6 +644,60 @@ func (m *Mock) ModifyInstance(_ context.Context, instanceID string, input driver
 	}
 
 	return nil
+}
+
+// Instance-attribute names honored by SetInstanceAttribute / GetInstanceAttribute.
+// These match the ModifyInstanceAttribute / DescribeInstanceAttribute attribute
+// element names on the AWS wire.
+const (
+	attrDisableAPITermination = "disableApiTermination"
+	attrSourceDestCheck       = "sourceDestCheck"
+	attrInstanceType          = "instanceType"
+)
+
+// SetInstanceAttribute updates a single instance attribute in place. It backs
+// the AWS wire ModifyInstanceAttribute for attributes (DisableApiTermination,
+// SourceDestCheck) that real EC2 permits on a running instance and that are not
+// part of the portable Compute driver. Unlike ModifyInstance it does not
+// require the instance to be stopped.
+func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	b, _ := strconv.ParseBool(value)
+
+	switch name {
+	case attrDisableAPITermination:
+		inst.disableAPITermination = b
+	case attrSourceDestCheck:
+		inst.sourceDestCheck = b
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument, "unsupported instance attribute %q", name)
+	}
+
+	return nil
+}
+
+// GetInstanceAttribute reads a single instance attribute, backing the AWS wire
+// DescribeInstanceAttribute so ModifyInstanceAttribute changes are verifiable.
+func (m *Mock) GetInstanceAttribute(_ context.Context, instanceID, name string) (string, error) {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return "", cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	switch name {
+	case attrDisableAPITermination:
+		return strconv.FormatBool(inst.disableAPITermination), nil
+	case attrSourceDestCheck:
+		return strconv.FormatBool(inst.sourceDestCheck), nil
+	case attrInstanceType:
+		return inst.InstanceType, nil
+	default:
+		return "", cerrors.Newf(cerrors.InvalidArgument, "unsupported instance attribute %q", name)
+	}
 }
 
 // SetInstanceVPC sets the VPC ID on an existing instance. This is a test
