@@ -67,6 +67,7 @@ type loadBalancersXML struct {
 
 type loadBalancersResult struct {
 	LoadBalancers loadBalancersXML `xml:"LoadBalancers"`
+	NextMarker    string           `xml:"NextMarker,omitempty"`
 }
 
 type createLoadBalancerResponse struct {
@@ -121,6 +122,7 @@ type targetGroupsXML struct {
 
 type targetGroupsResult struct {
 	TargetGroups targetGroupsXML `xml:"TargetGroups"`
+	NextMarker   string          `xml:"NextMarker,omitempty"`
 }
 
 type createTargetGroupResponse struct {

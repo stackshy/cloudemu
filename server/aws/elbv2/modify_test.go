@@ -401,6 +401,85 @@ func TestSDKTargetHealthAdvances(t *testing.T) {
 	}
 }
 
+// TestSDKTargetGroupAttributes proves DescribeTargetGroupAttributes and
+// ModifyTargetGroupAttributes dispatch (instead of returning InvalidAction) and
+// that a modified attribute merges over the ELBv2 defaults and round-trips.
+func TestSDKTargetGroupAttributes(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	tgOut, err := client.CreateTargetGroup(ctx, &elb.CreateTargetGroupInput{
+		Name:     aws.String("attr-tg"),
+		Protocol: elbtypes.ProtocolEnumHttp,
+		Port:     aws.Int32(80),
+		VpcId:    aws.String("vpc-1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateTargetGroup: %v", err)
+	}
+
+	tgARN := aws.ToString(tgOut.TargetGroups[0].TargetGroupArn)
+
+	// Defaults are reported before any modification.
+	desc, err := client.DescribeTargetGroupAttributes(ctx, &elb.DescribeTargetGroupAttributesInput{
+		TargetGroupArn: aws.String(tgARN),
+	})
+	if err != nil {
+		t.Fatalf("DescribeTargetGroupAttributes: %v", err)
+	}
+
+	if got := attrValue(desc.Attributes, "deregistration_delay.timeout_seconds"); got != "300" {
+		t.Errorf("default deregistration_delay = %q, want 300", got)
+	}
+
+	// A modification merges over the defaults.
+	mod, err := client.ModifyTargetGroupAttributes(ctx, &elb.ModifyTargetGroupAttributesInput{
+		TargetGroupArn: aws.String(tgARN),
+		Attributes: []elbtypes.TargetGroupAttribute{
+			{Key: aws.String("deregistration_delay.timeout_seconds"), Value: aws.String("60")},
+			{Key: aws.String("stickiness.enabled"), Value: aws.String("true")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ModifyTargetGroupAttributes: %v", err)
+	}
+
+	if got := attrValue(mod.Attributes, "deregistration_delay.timeout_seconds"); got != "60" {
+		t.Errorf("modified deregistration_delay = %q, want 60", got)
+	}
+
+	if got := attrValue(mod.Attributes, "stickiness.enabled"); got != "true" {
+		t.Errorf("modified stickiness.enabled = %q, want true", got)
+	}
+
+	// The change persists and an untouched default is still present.
+	after, err := client.DescribeTargetGroupAttributes(ctx, &elb.DescribeTargetGroupAttributesInput{
+		TargetGroupArn: aws.String(tgARN),
+	})
+	if err != nil {
+		t.Fatalf("DescribeTargetGroupAttributes after modify: %v", err)
+	}
+
+	if got := attrValue(after.Attributes, "deregistration_delay.timeout_seconds"); got != "60" {
+		t.Errorf("persisted deregistration_delay = %q, want 60", got)
+	}
+
+	if got := attrValue(after.Attributes, "load_balancing.algorithm.type"); got != "round_robin" {
+		t.Errorf("untouched default load_balancing.algorithm.type = %q, want round_robin", got)
+	}
+}
+
+// attrValue returns the value of the named attribute, or "" if absent.
+func attrValue(attrs []elbtypes.TargetGroupAttribute, key string) string {
+	for _, a := range attrs {
+		if aws.ToString(a.Key) == key {
+			return aws.ToString(a.Value)
+		}
+	}
+
+	return ""
+}
+
 // setupLBAndTG creates a load balancer and target group, returning their ARNs.
 func setupLBAndTG(t *testing.T, client *elb.Client, lbName, tgName string) (string, string) {
 	t.Helper()
