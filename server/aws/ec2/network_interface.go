@@ -107,6 +107,12 @@ func eniFilterField(eni *netdriver.NetworkInterface, name string) (string, bool)
 		return eni.ID, true
 	case "description":
 		return eni.Description, true
+	case "group-id":
+		// ENIs don't model security-group membership, so this filter is
+		// recognized but matches no interface. That is what the SG-delete
+		// preflight (Terraform lists group-id ENIs before dropping a group)
+		// needs: no interface uses the group, so the delete proceeds.
+		return "", true
 	default:
 		return "", false
 	}
