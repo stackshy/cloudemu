@@ -8,6 +8,9 @@ import (
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
+// snapshotProgressComplete is the PercentProgress an available snapshot reports.
+const snapshotProgressComplete = 100
+
 // All RDS query-protocol responses are wrapped in <FooResponse> with a
 // <FooResult> child and a trailing <ResponseMetadata>. The structures below
 // mirror the AWS-published XML closely enough that aws-sdk-go-v2's RDS
@@ -103,6 +106,7 @@ type dbSnapshotXML struct {
 	EngineVersion        string      `xml:"EngineVersion,omitempty"`
 	AllocatedStorage     int         `xml:"AllocatedStorage,omitempty"`
 	Status               string      `xml:"Status"`
+	PercentProgress      int         `xml:"PercentProgress"`
 	SnapshotCreateTime   string      `xml:"SnapshotCreateTime,omitempty"`
 	TagList              *tagListXML `xml:"TagList,omitempty"`
 }
@@ -114,6 +118,7 @@ type dbClusterSnapshotXML struct {
 	Engine                      string      `xml:"Engine,omitempty"`
 	EngineVersion               string      `xml:"EngineVersion,omitempty"`
 	Status                      string      `xml:"Status"`
+	PercentProgress             int         `xml:"PercentProgress"`
 	SnapshotCreateTime          string      `xml:"SnapshotCreateTime,omitempty"`
 	TagList                     *tagListXML `xml:"TagList,omitempty"`
 }
@@ -394,9 +399,22 @@ func toSnapshotXML(snap *rdsdriver.Snapshot) dbSnapshotXML {
 		EngineVersion:        snap.EngineVersion,
 		AllocatedStorage:     snap.AllocatedStorage,
 		Status:               snap.State,
+		PercentProgress:      percentProgressForState(snap.State),
 		SnapshotCreateTime:   snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		TagList:              toTagListXML(snap.Tags),
 	}
+}
+
+// percentProgressForState reports a snapshot's backup progress: an available
+// snapshot is fully backed up (100), anything still creating is 0. Real AWS
+// reports 100 for an available snapshot, so a caller polling PercentProgress
+// alongside Status sees them agree.
+func percentProgressForState(state string) int {
+	if state == rdsdriver.SnapshotAvailable {
+		return snapshotProgressComplete
+	}
+
+	return 0
 }
 
 func toClusterSnapshotXML(snap *rdsdriver.ClusterSnapshot) dbClusterSnapshotXML {
@@ -407,6 +425,7 @@ func toClusterSnapshotXML(snap *rdsdriver.ClusterSnapshot) dbClusterSnapshotXML 
 		Engine:                      snap.Engine,
 		EngineVersion:               snap.EngineVersion,
 		Status:                      snap.State,
+		PercentProgress:             percentProgressForState(snap.State),
 		SnapshotCreateTime:          snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		TagList:                     toTagListXML(snap.Tags),
 	}

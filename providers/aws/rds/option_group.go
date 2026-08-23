@@ -87,6 +87,7 @@ func (m *Mock) CreateOptionGroup(_ context.Context, cfg rdsdriver.OptionGroupCon
 		ARN:                optionGroupARN(m.opts.Region, m.opts.AccountID, cfg.Name),
 	}
 	m.optionGroups.Set(cfg.Name, og)
+	m.setGroupTags(og.ARN, copyTags(cfg.Tags))
 
 	out := og
 
