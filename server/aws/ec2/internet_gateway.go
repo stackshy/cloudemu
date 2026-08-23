@@ -177,10 +177,23 @@ func igwFilterMatch(igw *netdriver.InternetGateway, f awsquery.Filter) (matched,
 	case "attachment.vpc-id":
 		return igw.VpcID != "" && containsString(f.Values, igw.VpcID), true
 	case "attachment.state":
-		return igw.VpcID != "" && containsString(f.Values, nonEmpty(igw.State, stateAttached)), true
+		return igw.VpcID != "" && containsString(f.Values, igwAttachmentState(igw)), true
 	default:
 		return tagFilterMatch(f.Name, f.Values, igw.Tags)
 	}
+}
+
+// igwAttachmentState maps the driver's internal attachment bookkeeping to the
+// AWS wire value. An attached internet gateway reports "available" (not the
+// internal "attached"); a detached one reports "detached". Both the filter and
+// the describe output go through this so filtering by attachment.state=available
+// matches what describe returns.
+func igwAttachmentState(igw *netdriver.InternetGateway) string {
+	if igw.State == stateDetached {
+		return stateDetached
+	}
+
+	return stateAvailable
 }
 
 func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
@@ -191,15 +204,7 @@ func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 	}
 
 	if igw.VpcID != "" {
-		// An internet-gateway attachment reports state "available" once attached
-		// to a VPC (the driver's internal "attached"/"detached" bookkeeping is
-		// not the wire value). See the EC2 InternetGatewayAttachment reference.
-		state := stateAvailable
-		if igw.State == stateDetached {
-			state = stateDetached
-		}
-
-		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: state}}
+		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: igwAttachmentState(igw)}}
 	}
 
 	return xi
