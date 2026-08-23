@@ -35,10 +35,11 @@ func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
 	cfg := cachedriver.CacheConfig{
-		Name:     form.Get("CacheClusterId"),
-		NodeType: form.Get("CacheNodeType"),
-		Engine:   form.Get("Engine"),
-		Tags:     parseTags(form),
+		Name:          form.Get("CacheClusterId"),
+		NodeType:      form.Get("CacheNodeType"),
+		Engine:        form.Get("Engine"),
+		EngineVersion: form.Get("EngineVersion"),
+		Tags:          parseTags(form),
 	}
 
 	info, err := h.cache.CreateCache(r.Context(), cfg)
@@ -78,6 +79,37 @@ func (h *Handler) modifyCacheCluster(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, modifyCacheClusterResponse{
 		Xmlns:    Namespace,
 		Result:   cacheClusterResult{CacheCluster: toCacheClusterXML(info)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// cacheRebooter is the AWS-specific RebootCacheCluster surface. Like
+// ModifyCache it is not part of the portable Cache driver, so the handler
+// type-asserts for it.
+type cacheRebooter interface {
+	RebootCache(ctx context.Context, name string) (*cachedriver.CacheInfo, error)
+}
+
+func (h *Handler) rebootCacheCluster(w http.ResponseWriter, r *http.Request) {
+	rebooter, ok := h.cache.(cacheRebooter)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "RebootCacheCluster not supported"))
+		return
+	}
+
+	info, err := rebooter.RebootCache(r.Context(), r.Form.Get("CacheClusterId"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// Real ElastiCache reports the cluster as rebooting until the nodes cycle.
+	rebooting := *info
+	rebooting.Status = "rebooting cache cluster nodes"
+
+	awsquery.WriteXMLResponse(w, rebootCacheClusterResponse{
+		Xmlns:    Namespace,
+		Result:   cacheClusterResult{CacheCluster: toCacheClusterXML(&rebooting)},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

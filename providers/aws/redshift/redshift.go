@@ -96,6 +96,36 @@ func (m *Mock) CreateClusterParameterGroup(_ context.Context, name, family, desc
 	return &pg, nil
 }
 
+// DescribeClusterParameterGroups returns the named parameter groups, or all of
+// them when names is empty. An unknown name is a NotFound error, matching AWS.
+func (m *Mock) DescribeClusterParameterGroups(_ context.Context, names []string) ([]ParameterGroup, error) {
+	if len(names) == 0 {
+		return m.parameterGroups.SortedValues(), nil
+	}
+
+	out := make([]ParameterGroup, 0, len(names))
+
+	for _, name := range names {
+		pg, ok := m.parameterGroups.Get(name)
+		if !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
+		}
+
+		out = append(out, pg)
+	}
+
+	return out, nil
+}
+
+// DeleteClusterParameterGroup removes a redshift cluster parameter group.
+func (m *Mock) DeleteClusterParameterGroup(_ context.Context, name string) error {
+	if !m.parameterGroups.Delete(name) {
+		return cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
+	}
+
+	return nil
+}
+
 // CreateClusterSubnetGroup registers a redshift cluster subnet group.
 func (m *Mock) CreateClusterSubnetGroup(_ context.Context, name, description string, subnetIDs []string) (*SubnetGroup, error) {
 	if name == "" {
@@ -110,6 +140,36 @@ func (m *Mock) CreateClusterSubnetGroup(_ context.Context, name, description str
 	m.subnetGroups.Set(name, sg)
 
 	return &sg, nil
+}
+
+// DescribeClusterSubnetGroups returns the named subnet groups, or all of them
+// when names is empty. An unknown name is a NotFound error, matching AWS.
+func (m *Mock) DescribeClusterSubnetGroups(_ context.Context, names []string) ([]SubnetGroup, error) {
+	if len(names) == 0 {
+		return m.subnetGroups.SortedValues(), nil
+	}
+
+	out := make([]SubnetGroup, 0, len(names))
+
+	for _, name := range names {
+		sg, ok := m.subnetGroups.Get(name)
+		if !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "subnet group %q not found", name)
+		}
+
+		out = append(out, sg)
+	}
+
+	return out, nil
+}
+
+// DeleteClusterSubnetGroup removes a redshift cluster subnet group.
+func (m *Mock) DeleteClusterSubnetGroup(_ context.Context, name string) error {
+	if !m.subnetGroups.Delete(name) {
+		return cerrors.Newf(cerrors.NotFound, "subnet group %q not found", name)
+	}
+
+	return nil
 }
 
 // SetMonitoring wires a CloudWatch-style backend for auto-metric emission.

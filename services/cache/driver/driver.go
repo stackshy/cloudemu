@@ -27,6 +27,12 @@ type CacheInfo struct {
 	Tags      map[string]string
 	Scope     scope.Scope
 
+	// ARN and EngineVersion are populated by the AWS ElastiCache backend (other
+	// clouds leave them empty). The ARN is the tag-operation handle, so tag
+	// read/write flows depend on it being set on Describe.
+	ARN           string
+	EngineVersion string
+
 	// SKUFamily / SKUCapacity are the Azure Redis SKU family ("C" for
 	// Basic/Standard, "P" for Premium) and capacity unit; empty/zero for
 	// providers with no such concept. ShardCount and ReplicasPerPrimary model
@@ -40,10 +46,11 @@ type CacheInfo struct {
 
 // CacheConfig describes a cache instance to create.
 type CacheConfig struct {
-	Name     string
-	NodeType string
-	Engine   string // "redis", "memcached"
-	Tags     map[string]string
+	Name          string
+	NodeType      string
+	Engine        string // "redis", "memcached"
+	EngineVersion string
+	Tags          map[string]string
 
 	// Scope records where the resource lives (Azure subscription/resource
 	// group, GCP project). Zero for AWS and unscoped portable callers.

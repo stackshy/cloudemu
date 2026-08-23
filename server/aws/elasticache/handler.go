@@ -39,18 +39,40 @@ const (
 // elastiCacheActions is the set of Action values this handler recognizes.
 // Matches uses it to decide whether to claim a request.
 var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateCacheSubnetGroup":    {},
-	"DescribeCacheSubnetGroups": {},
-	"DeleteCacheSubnetGroup":    {},
-	"CreateCacheCluster":        {},
-	"DescribeCacheClusters":     {},
-	"ModifyCacheCluster":        {},
-	"DeleteCacheCluster":        {},
-	"CreateReplicationGroup":    {},
-	"DescribeReplicationGroups": {},
-	"ModifyReplicationGroup":    {},
-	"DeleteReplicationGroup":    {},
+	"CreateCacheSubnetGroup":       {},
+	"DescribeCacheSubnetGroups":    {},
+	"DeleteCacheSubnetGroup":       {},
+	"CreateCacheCluster":           {},
+	"DescribeCacheClusters":        {},
+	"ModifyCacheCluster":           {},
+	"DeleteCacheCluster":           {},
+	"RebootCacheCluster":           {},
+	"AddTagsToResource":            {},
+	"ListTagsForResource":          {},
+	"RemoveTagsFromResource":       {},
+	"CreateCacheParameterGroup":    {},
+	"DescribeCacheParameterGroups": {},
+	"ModifyCacheParameterGroup":    {},
+	"DeleteCacheParameterGroup":    {},
+	"DescribeCacheEngineVersions":  {},
+	"CreateReplicationGroup":       {},
+	"DescribeReplicationGroups":    {},
+	"ModifyReplicationGroup":       {},
+	"DeleteReplicationGroup":       {},
 }
+
+// sharedTagActions are the generic tag verbs ElastiCache shares with other
+// query-protocol services on the same wire (RDS for all three; SNS also uses
+// ListTagsForResource). Matches claims them only when the SigV4 credential
+// scope names "elasticache", otherwise they fall through to the owning handler.
+var sharedTagActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"AddTagsToResource":      {},
+	"ListTagsForResource":    {},
+	"RemoveTagsFromResource": {},
+}
+
+// scopeElastiCache is the SigV4 credential-scope service name for ElastiCache.
+const scopeElastiCache = "elasticache"
 
 // Handler serves ElastiCache query-protocol requests against a cache driver.
 type Handler struct {
@@ -84,12 +106,26 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := elastiCacheActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
 
-	return ok
+	_, ok := elastiCacheActions[action]
+	if !ok {
+		return false
+	}
+
+	// The tag verbs are shared with RDS/SNS on the same query wire. Claim them
+	// only when the SigV4 credential scope names "elasticache"; otherwise let
+	// them fall through to the owning handler.
+	if _, shared := sharedTagActions[action]; shared {
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == scopeElastiCache
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
+//
+//nolint:gocyclo // one case per action; the flat dispatch switch grows with the surface and reads clearer than sub-routers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Form.Get("Action") {
 	case "CreateCacheSubnetGroup":
@@ -114,6 +150,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteReplicationGroup(w, r)
 	case "DeleteCacheCluster":
 		h.deleteCacheCluster(w, r)
+	case "RebootCacheCluster":
+		h.rebootCacheCluster(w, r)
+	case "AddTagsToResource":
+		h.addTagsToResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
+	case "RemoveTagsFromResource":
+		h.removeTagsFromResource(w, r)
+	case "CreateCacheParameterGroup":
+		h.createCacheParameterGroup(w, r)
+	case "DescribeCacheParameterGroups":
+		h.describeCacheParameterGroups(w, r)
+	case "ModifyCacheParameterGroup":
+		h.modifyCacheParameterGroup(w, r)
+	case "DeleteCacheParameterGroup":
+		h.deleteCacheParameterGroup(w, r)
+	case "DescribeCacheEngineVersions":
+		h.describeCacheEngineVersions(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown ElastiCache action: "+r.Form.Get("Action"))
@@ -151,6 +205,8 @@ func notFoundCode(err error) string {
 		return "ReplicationGroupNotFoundFault"
 	case strings.Contains(msg, "cache subnet group"):
 		return "CacheSubnetGroupNotFoundFault"
+	case strings.Contains(msg, "parameter group"):
+		return "CacheParameterGroupNotFound"
 	default:
 		return "CacheClusterNotFound"
 	}

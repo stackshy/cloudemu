@@ -347,11 +347,16 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		instanceClass = defaultInstanceClass
 	}
 
+	engineVersion := cfg.EngineVersion
+	if engineVersion == "" {
+		engineVersion = defaultEngineVersion(cfg.Engine)
+	}
+
 	return rdsdriver.Instance{
 		ID:                   cfg.ID,
 		ARN:                  instanceARN(m.opts.Region, m.opts.AccountID, cfg.ID),
 		Engine:               cfg.Engine,
-		EngineVersion:        cfg.EngineVersion,
+		EngineVersion:        engineVersion,
 		InstanceClass:        instanceClass,
 		AllocatedStorage:     storage,
 		StorageType:          storageType,

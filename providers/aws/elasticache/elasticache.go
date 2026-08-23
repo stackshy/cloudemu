@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -40,16 +41,47 @@ const (
 	defaultEngine   = "redis"
 	defaultNodeType = "cache.t3.micro"
 	statusAvailable = "available"
+
+	defaultRedisVersion     = "7.1"
+	defaultMemcachedVersion = "1.6.22"
 )
+
+// cacheARN builds an ElastiCache cluster ARN.
+func (m *Mock) cacheARN(name string) string {
+	return "arn:aws:elasticache:" + m.opts.Region + ":" + m.opts.AccountID + ":cluster:" + name
+}
+
+// defaultEngineVersion returns the ElastiCache default engine version for an
+// engine, matching what real ElastiCache assigns when the caller omits it.
+func defaultEngineVersion(engine string) string {
+	if engine == "memcached" {
+		return defaultMemcachedVersion
+	}
+
+	return defaultRedisVersion
+}
 
 // Mock is an in-memory mock implementation of the AWS ElastiCache service.
 type Mock struct {
 	caches            *memstore.Store[*cacheData]
 	subnetGroups      *memstore.Store[driver.SubnetGroup]
 	replicationGroups *memstore.Store[driver.ReplicationGroup]
+	parameterGroups   *memstore.Store[ParameterGroup]
 	subnetResolver    SubnetResolver
 	opts              *config.Options
 	monitoring        mondriver.Monitoring
+
+	tagMu     sync.Mutex
+	tagsByARN map[string]map[string]string
+}
+
+// ParameterGroup is an ElastiCache cache parameter group — a named, engine-family
+// set of engine parameters. The emulator stores its identity so IaC that creates
+// and references a custom group succeeds.
+type ParameterGroup struct {
+	Name        string
+	Family      string
+	Description string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -75,6 +107,8 @@ func New(opts *config.Options) *Mock {
 		caches:            memstore.New[*cacheData](),
 		subnetGroups:      memstore.New[driver.SubnetGroup](),
 		replicationGroups: memstore.New[driver.ReplicationGroup](),
+		parameterGroups:   memstore.New[ParameterGroup](),
+		tagsByARN:         make(map[string]map[string]string),
 		opts:              opts,
 	}
 }
@@ -99,6 +133,11 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		nodeType = defaultNodeType
 	}
 
+	engineVersion := cfg.EngineVersion
+	if engineVersion == "" {
+		engineVersion = defaultEngineVersion(engine)
+	}
+
 	endpoint := fmt.Sprintf("%s.%s.cache.amazonaws.com:%d", cfg.Name, m.opts.Region, defaultRedisPort)
 
 	tags := make(map[string]string, len(cfg.Tags))
@@ -107,14 +146,16 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	info := driver.CacheInfo{
-		Name:      cfg.Name,
-		Scope:     cfg.Scope,
-		NodeType:  nodeType,
-		Engine:    engine,
-		Status:    statusAvailable,
-		Endpoint:  endpoint,
-		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:      tags,
+		Name:          cfg.Name,
+		Scope:         cfg.Scope,
+		NodeType:      nodeType,
+		Engine:        engine,
+		EngineVersion: engineVersion,
+		Status:        statusAvailable,
+		Endpoint:      endpoint,
+		ARN:           m.cacheARN(cfg.Name),
+		CreatedAt:     m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:          tags,
 	}
 
 	// Opt-in: back the cache with a real server, replacing the synthetic
@@ -129,6 +170,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	m.caches.Set(cfg.Name, cd)
+	m.seedTags(info.ARN, tags)
 
 	result := info
 
@@ -152,6 +194,23 @@ func (m *Mock) ModifyCache(_ context.Context, name, nodeType, engine string) (*d
 	}
 
 	m.caches.Set(name, cd)
+
+	result := cd.info
+
+	return &result, nil
+}
+
+// RebootCache reboots a cache cluster (ElastiCache RebootCacheCluster), the
+// path real deployments use to apply pending parameter-group changes. The
+// cluster stays available in the emulator; a reboot metric is emitted to mirror
+// the lifecycle event.
+func (m *Mock) RebootCache(_ context.Context, name string) (*driver.CacheInfo, error) {
+	cd, ok := m.caches.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "cache %q not found", name)
+	}
+
+	m.emitMetric("Reboots", 1, map[string]string{"CacheClusterId": name})
 
 	result := cd.info
 

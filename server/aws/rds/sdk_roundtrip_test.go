@@ -2,6 +2,7 @@ package rds_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	awsrds "github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -81,6 +83,28 @@ func TestSDKRDSCreateDescribeInstance(t *testing.T) {
 
 	if got.DBInstances[0].Endpoint == nil || aws.ToString(got.DBInstances[0].Endpoint.Address) == "" {
 		t.Fatal("expected endpoint to be set")
+	}
+
+	// EngineVersion is defaulted when the caller omits it (Terraform reads it
+	// back and diffs otherwise).
+	if aws.ToString(got.DBInstances[0].EngineVersion) == "" {
+		t.Fatal("expected a defaulted EngineVersion")
+	}
+}
+
+// TestSDKRDSDescribeMissingSnapshot guards that a specific unknown snapshot id
+// returns DBSnapshotNotFoundFault rather than an empty, error-free result.
+func TestSDKRDSDescribeMissingSnapshot(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	_, err := client.DescribeDBSnapshots(ctx, &awsrds.DescribeDBSnapshotsInput{
+		DBSnapshotIdentifier: aws.String("nope"),
+	})
+
+	var nf *rdstypes.DBSnapshotNotFoundFault
+	if !errors.As(err, &nf) {
+		t.Fatalf("describe missing snapshot: got %v, want DBSnapshotNotFoundFault", err)
 	}
 }
 
