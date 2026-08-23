@@ -907,10 +907,8 @@ func TestDDBTypedErrors(t *testing.T) {
 	})
 
 	t.Run("unrouted operation is UnknownOperationException", func(t *testing.T) {
-		// DescribeContinuousBackups has no HTTP surface in the emulator.
-		_, err := client.DescribeContinuousBackups(ctx, &dynamodb.DescribeContinuousBackupsInput{
-			TableName: aws.String("errs"),
-		})
+		// DescribeLimits has no HTTP surface in the emulator.
+		_, err := client.DescribeLimits(ctx, &dynamodb.DescribeLimitsInput{})
 		require.Error(t, err)
 
 		var apiErr smithy.APIError

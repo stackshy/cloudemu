@@ -51,6 +51,25 @@ type TableConfig struct {
 	PartitionKey string
 	SortKey      string
 	GSIs         []GSIConfig
+	// Attributes carries the attribute definitions (name + type) so a describe
+	// echoes them back — an IaC client compares them and otherwise sees a diff.
+	Attributes []AttributeDef
+	// BillingMode is "PROVISIONED" (default) or "PAY_PER_REQUEST".
+	BillingMode string
+	// ReadCapacityUnits/WriteCapacityUnits carry the provisioned throughput so a
+	// describe echoes them back; a PROVISIONED table otherwise reads 0/0 and an
+	// IaC client sees a perpetual diff. Ignored for PAY_PER_REQUEST.
+	ReadCapacityUnits  int64
+	WriteCapacityUnits int64
+	// TableArn and CreatedAtUnix are populated by the provider on create.
+	TableArn      string
+	CreatedAtUnix float64
+}
+
+// AttributeDef is a DynamoDB attribute definition (name + scalar type S/N/B).
+type AttributeDef struct {
+	Name string
+	Type string
 }
 
 // GSIConfig describes a Global Secondary Index.

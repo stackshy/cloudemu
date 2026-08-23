@@ -70,6 +70,7 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DeleteInstanceProfile":         {},
 	"GetInstanceProfile":            {},
 	"ListInstanceProfiles":          {},
+	"ListInstanceProfilesForRole":   {},
 	"AddRoleToInstanceProfile":      {},
 	"RemoveRoleFromInstanceProfile": {},
 	"PutRolePolicy":                 {},
@@ -214,6 +215,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getInstanceProfile(w, r)
 	case "ListInstanceProfiles":
 		h.listInstanceProfiles(w, r)
+	case "ListInstanceProfilesForRole":
+		h.listInstanceProfilesForRole(w, r)
 	case "AddRoleToInstanceProfile":
 		h.addRoleToInstanceProfile(w, r)
 	case "RemoveRoleFromInstanceProfile":

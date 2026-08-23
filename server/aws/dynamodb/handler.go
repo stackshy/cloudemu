@@ -54,6 +54,8 @@ func (h *Handler) routeTables(w http.ResponseWriter, r *http.Request, op string)
 		h.deleteTable(w, r)
 	case "DescribeTable":
 		h.describeTable(w, r)
+	case "DescribeContinuousBackups":
+		h.describeContinuousBackups(w, r)
 	case "ListTables":
 		h.listTables(w, r)
 	default:
@@ -110,13 +112,23 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 			AttributeName string `json:"AttributeName"`
 			AttributeType string `json:"AttributeType"`
 		} `json:"AttributeDefinitions"`
+		BillingMode           string `json:"BillingMode"`
+		ProvisionedThroughput struct {
+			ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
+			WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
+		} `json:"ProvisionedThroughput"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	cfg := dbdriver.TableConfig{Name: req.TableName}
+	cfg := dbdriver.TableConfig{
+		Name:               req.TableName,
+		BillingMode:        req.BillingMode,
+		ReadCapacityUnits:  req.ProvisionedThroughput.ReadCapacityUnits,
+		WriteCapacityUnits: req.ProvisionedThroughput.WriteCapacityUnits,
+	}
 
 	for _, ks := range req.KeySchema {
 		if ks.KeyType == "HASH" {
@@ -128,18 +140,71 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for _, ad := range req.AttributeDefinitions {
+		cfg.Attributes = append(cfg.Attributes,
+			dbdriver.AttributeDef{Name: ad.AttributeName, Type: ad.AttributeType})
+	}
+
 	if err := h.db.CreateTable(r.Context(), cfg); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
-		"TableDescription": map[string]any{
-			"TableName":   req.TableName,
-			"TableStatus": "ACTIVE",
-			"KeySchema":   req.KeySchema,
-		},
-	})
+	// Re-describe to pick up the ARN and creation time the provider assigned.
+	full, err := h.db.DescribeTable(r.Context(), req.TableName)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"TableDescription": tableDescription(full)})
+}
+
+// tableDescription builds the DynamoDB TableDescription wire shape that both
+// CreateTable and DescribeTable return, including the fields an IaC client reads
+// back (ARN, creation time, attribute definitions, billing mode).
+func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
+	keySchema := []map[string]string{{"AttributeName": cfg.PartitionKey, "KeyType": "HASH"}}
+	if cfg.SortKey != "" {
+		keySchema = append(keySchema, map[string]string{"AttributeName": cfg.SortKey, "KeyType": "RANGE"})
+	}
+
+	attrs := make([]map[string]string, 0, len(cfg.Attributes))
+	for _, a := range cfg.Attributes {
+		attrs = append(attrs, map[string]string{"AttributeName": a.Name, "AttributeType": a.Type})
+	}
+
+	const billingProvisioned = "PROVISIONED"
+
+	billing := cfg.BillingMode
+	if billing == "" {
+		billing = billingProvisioned
+	}
+
+	// NOTE: GlobalSecondaryIndexes are not echoed here. A fixture that declares a
+	// global_secondary_index would therefore see a perpetual diff — GSIs are out
+	// of scope for the current fixtures (see contrib/terraform "Known limits").
+	td := map[string]any{
+		"TableName":            cfg.Name,
+		"TableStatus":          "ACTIVE",
+		"TableArn":             cfg.TableArn,
+		"CreationDateTime":     cfg.CreatedAtUnix,
+		"KeySchema":            keySchema,
+		"AttributeDefinitions": attrs,
+		"ItemCount":            0,
+		"TableSizeBytes":       0,
+		"BillingModeSummary":   map[string]any{"BillingMode": billing},
+	}
+
+	if billing == billingProvisioned {
+		td["ProvisionedThroughput"] = map[string]any{
+			"ReadCapacityUnits":      cfg.ReadCapacityUnits,
+			"WriteCapacityUnits":     cfg.WriteCapacityUnits,
+			"NumberOfDecreasesToday": 0,
+		}
+	}
+
+	return td
 }
 
 func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request) {
@@ -179,21 +244,31 @@ func (h *Handler) describeTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keySchema := []map[string]string{
-		{"AttributeName": cfg.PartitionKey, "KeyType": "HASH"},
+	wire.WriteJSON(w, map[string]any{"Table": tableDescription(cfg)})
+}
+
+// describeContinuousBackups reports point-in-time recovery as disabled. IaC
+// clients read this on every table refresh; without it the read errors.
+func (h *Handler) describeContinuousBackups(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TableName string `json:"TableName"`
 	}
 
-	if cfg.SortKey != "" {
-		keySchema = append(keySchema, map[string]string{
-			"AttributeName": cfg.SortKey, "KeyType": "RANGE",
-		})
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if _, err := h.db.DescribeTable(r.Context(), req.TableName); err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	wire.WriteJSON(w, map[string]any{
-		"Table": map[string]any{
-			"TableName":   cfg.Name,
-			"TableStatus": "ACTIVE",
-			"KeySchema":   keySchema,
+		"ContinuousBackupsDescription": map[string]any{
+			"ContinuousBackupsStatus": "DISABLED",
+			"PointInTimeRecoveryDescription": map[string]any{
+				"PointInTimeRecoveryStatus": "DISABLED",
+			},
 		},
 	})
 }

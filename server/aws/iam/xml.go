@@ -62,6 +62,8 @@ type roleXML struct {
 	RoleID                   string   `xml:"RoleId"`
 	Arn                      string   `xml:"Arn"`
 	Path                     string   `xml:"Path,omitempty"`
+	CreateDate               string   `xml:"CreateDate,omitempty"`
+	MaxSessionDuration       int      `xml:"MaxSessionDuration,omitempty"`
 	AssumeRolePolicyDocument string   `xml:"AssumeRolePolicyDocument,omitempty"`
 	Tags                     *tagsXML `xml:"Tags,omitempty"`
 }
@@ -72,6 +74,8 @@ func toRoleXML(r *iamdriver.RoleInfo) roleXML {
 		RoleID:                   r.ID,
 		Arn:                      r.ARN,
 		Path:                     r.Path,
+		CreateDate:               r.CreatedAt,
+		MaxSessionDuration:       r.MaxSessionDuration,
 		AssumeRolePolicyDocument: r.AssumeRolePolicyDoc,
 		Tags:                     toTagsXML(r.Tags),
 	}
@@ -621,4 +625,16 @@ type removeRoleFromInstanceProfileResponse struct {
 	XMLName  xml.Name         `xml:"RemoveRoleFromInstanceProfileResponse"`
 	Xmlns    string           `xml:"xmlns,attr"`
 	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type listInstanceProfilesForRoleResponse struct {
+	XMLName  xml.Name                          `xml:"ListInstanceProfilesForRoleResponse"`
+	Xmlns    string                            `xml:"xmlns,attr"`
+	Result   listInstanceProfilesForRoleResult `xml:"ListInstanceProfilesForRoleResult"`
+	Metadata responseMetadata                  `xml:"ResponseMetadata"`
+}
+
+type listInstanceProfilesForRoleResult struct {
+	InstanceProfiles instanceProfilesListXML `xml:"InstanceProfiles"`
+	IsTruncated      bool                    `xml:"IsTruncated"`
 }

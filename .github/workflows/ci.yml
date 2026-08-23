@@ -162,6 +162,44 @@ jobs:
         working-directory: contrib/server
         run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./... || echo '::warning::golangci-lint reported findings (advisory)'"
 
+  contrib-terraform:
+    name: Contrib (terraform)
+    runs-on: ubuntu-latest
+    # Separate Go module: the IaC-compatibility suite. Unlike the other contrib
+    # e2es (which need Docker), this one needs only an OpenTofu binary and a
+    # provider download, so — as the evidenced-IaC-compat proof — it actually
+    # runs the real `tofu init/apply/plan/destroy` loop in CI, not just build+vet.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-terraform-${{ hashFiles('contrib/terraform/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-terraform-
+      - name: build & vet
+        working-directory: contrib/terraform
+        run: |
+          go build ./...
+          go vet ./...
+      - name: terraform compatibility e2e
+        working-directory: contrib/terraform
+        run: go test -timeout 15m ./...
+      - name: install golangci-lint v2
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+      - name: golangci-lint run (report-only)
+        working-directory: contrib/terraform
+        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./... || echo '::warning::golangci-lint reported findings (advisory)'"
+
   test:
     name: Test
     runs-on: ubuntu-latest

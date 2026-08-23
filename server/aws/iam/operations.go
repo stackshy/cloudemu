@@ -111,6 +111,10 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		Tags:                parseIAMTags(r.Form),
 	}
 
+	if v, err := strconv.Atoi(r.Form.Get("MaxSessionDuration")); err == nil {
+		cfg.MaxSessionDuration = v
+	}
+
 	role, err := h.iam.CreateRole(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)
@@ -727,4 +731,17 @@ func (h *Handler) lookupRole(r *http.Request, name string) *iamdriver.RoleInfo {
 	}
 
 	return role
+}
+
+// listInstanceProfilesForRole returns an empty list. CloudEmu does not track
+// role→instance-profile membership; this exists so `terraform destroy` (which
+// lists a role's instance profiles before deleting it) succeeds.
+func (*Handler) listInstanceProfilesForRole(w http.ResponseWriter, _ *http.Request) {
+	awsquery.WriteXMLResponse(w, listInstanceProfilesForRoleResponse{
+		Xmlns: Namespace,
+		Result: listInstanceProfilesForRoleResult{
+			InstanceProfiles: instanceProfilesListXML{Member: []instanceProfileXML{}},
+		},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
 }
