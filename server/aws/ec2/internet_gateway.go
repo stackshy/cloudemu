@@ -19,6 +19,7 @@ type igwAttachmentXML struct {
 
 type internetGatewayXML struct {
 	InternetGatewayID string             `xml:"internetGatewayId"`
+	OwnerID           string             `xml:"ownerId"`
 	Attachments       []igwAttachmentXML `xml:"attachmentSet>item,omitempty"`
 	Tags              []tagItem          `xml:"tagSet>item,omitempty"`
 }
@@ -117,7 +118,7 @@ func (h *Handler) deleteInternetGateway(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-//nolint:dupl // per-resource describe pattern; siblings in vpc/subnet/sg/route_table
+//nolint:dupl // per-resource describe+filter pattern; sibling in vpc
 func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "InternetGatewayId")
 
@@ -127,21 +128,62 @@ func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	out := make([]internetGatewayXML, 0, len(igws))
-	for i := range igws {
-		out = append(out, toInternetGatewayXML(&igws[i]))
+	filters := awsquery.Filters(r.Form)
+	if err := validateIGWFilters(filters); err != nil {
+		writeIGWErr(w, err)
+		return
 	}
 
 	awsquery.WriteXMLResponse(w, describeInternetGatewaysResponseXML{
 		Xmlns:              awsquery.Namespace,
 		RequestID:          awsquery.RequestID,
-		InternetGatewaySet: out,
+		InternetGatewaySet: filterXML(igws, filters, igwMatchesFilters, toInternetGatewayXML),
 	})
+}
+
+// validateIGWFilters rejects filter names DescribeInternetGateways does not
+// model, matching the sibling Describe handlers.
+func validateIGWFilters(filters []awsquery.Filter) error {
+	var probe netdriver.InternetGateway
+
+	for _, f := range filters {
+		if _, known := igwFilterMatch(&probe, f); !known {
+			return newInvalidParameterErr("The filter '" + f.Name + "' is invalid")
+		}
+	}
+
+	return nil
+}
+
+func igwMatchesFilters(igw *netdriver.InternetGateway, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if matched, _ := igwFilterMatch(igw, f); !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+// igwFilterMatch reports whether igw satisfies filter f and whether f is a
+// filter DescribeInternetGateways recognizes.
+func igwFilterMatch(igw *netdriver.InternetGateway, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case "internet-gateway-id":
+		return containsString(f.Values, igw.ID), true
+	case "attachment.vpc-id":
+		return igw.VpcID != "" && containsString(f.Values, igw.VpcID), true
+	case "attachment.state":
+		return igw.VpcID != "" && containsString(f.Values, nonEmpty(igw.State, stateAttached)), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, igw.Tags)
+	}
 }
 
 func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 	xi := internetGatewayXML{
 		InternetGatewayID: igw.ID,
+		OwnerID:           ownerID,
 		Tags:              toTagItems(igw.Tags),
 	}
 

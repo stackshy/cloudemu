@@ -405,6 +405,8 @@ func (h *Handler) routeVPCSubnet(w http.ResponseWriter, r *http.Request, action 
 		h.deleteSubnet(w, r)
 	case "DescribeSubnets":
 		h.describeSubnets(w, r)
+	case "ModifySubnetAttribute":
+		h.modifySubnetAttribute(w, r)
 	default:
 		return false
 	}
