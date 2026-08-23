@@ -23,6 +23,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
 // Path-segment values used in Firestore REST URLs.
@@ -325,33 +326,50 @@ type runQueryRequest struct {
 	} `json:"structuredQuery"`
 }
 
-// queryFilter mirrors StructuredQuery.Filter: either a single fieldFilter
-// or a compositeFilter AND of nested filters.
+// queryFilter mirrors StructuredQuery.Filter: a single fieldFilter, a
+// compositeFilter (AND/OR) of nested filters, or a unaryFilter.
 type queryFilter struct {
-	FieldFilter *struct {
-		Field struct {
-			FieldPath string `json:"fieldPath"`
-		} `json:"field"`
-		Op    fieldOp `json:"op"`
-		Value value   `json:"value"`
-	} `json:"fieldFilter"`
-	CompositeFilter *struct {
-		Op      compositeOp   `json:"op"`
-		Filters []queryFilter `json:"filters"`
-	} `json:"compositeFilter"`
+	FieldFilter     *fieldFilter     `json:"fieldFilter"`
+	CompositeFilter *compositeFilter `json:"compositeFilter"`
+	UnaryFilter     *unaryFilter     `json:"unaryFilter"`
+}
+
+type fieldRef struct {
+	FieldPath string `json:"fieldPath"`
+}
+
+type fieldFilter struct {
+	Field fieldRef `json:"field"`
+	Op    fieldOp  `json:"op"`
+	Value value    `json:"value"`
+}
+
+type compositeFilter struct {
+	Op      compositeOp   `json:"op"`
+	Filters []queryFilter `json:"filters"`
+}
+
+type unaryFilter struct {
+	Op    unaryOp  `json:"op"`
+	Field fieldRef `json:"field"`
 }
 
 // fieldOp decodes a FieldFilter operator sent either as its enum name
 // ("EQUAL") or its protobuf number (5), as the REST client does.
 type fieldOp string
 
+//nolint:gochecknoglobals // static lookup table
 var fieldOpNames = map[int]fieldOp{
-	1: "LESS_THAN",
-	2: "LESS_THAN_OR_EQUAL",
-	3: "GREATER_THAN",
-	4: "GREATER_THAN_OR_EQUAL",
-	5: "EQUAL",
-	6: "NOT_EQUAL",
+	1:  "LESS_THAN",
+	2:  "LESS_THAN_OR_EQUAL",
+	3:  "GREATER_THAN",
+	4:  "GREATER_THAN_OR_EQUAL",
+	5:  "EQUAL",
+	6:  "NOT_EQUAL",
+	7:  "ARRAY_CONTAINS",
+	8:  "IN",
+	9:  "ARRAY_CONTAINS_ANY",
+	10: "NOT_IN",
 }
 
 func (o *fieldOp) UnmarshalJSON(b []byte) error {
@@ -372,8 +390,16 @@ func (o *fieldOp) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// compositeOp decodes a CompositeFilter operator name or number (AND=1).
+// compositeOp decodes a CompositeFilter operator name or number (AND=1, OR=2).
 type compositeOp string
+
+const (
+	compositeAnd compositeOp = "AND"
+	compositeOr  compositeOp = "OR"
+)
+
+//nolint:gochecknoglobals // static lookup table
+var compositeOpNames = map[int]compositeOp{1: compositeAnd, 2: compositeOr}
 
 func (o *compositeOp) UnmarshalJSON(b []byte) error {
 	if len(b) > 0 && b[0] == '"' {
@@ -389,58 +415,33 @@ func (o *compositeOp) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &n); err != nil {
 		return err
 	}
-	if n == 1 {
-		*o = "AND"
-	}
+	*o = compositeOpNames[n] // unknown numbers stay "" and fail downstream
 	return nil
 }
 
-// firestoreOps maps StructuredQuery operators onto driver scan filter ops.
-var firestoreOps = map[string]string{
-	"EQUAL":                 "=",
-	"NOT_EQUAL":             "!=",
-	"LESS_THAN":             "<",
-	"LESS_THAN_OR_EQUAL":    "<=",
-	"GREATER_THAN":          ">",
-	"GREATER_THAN_OR_EQUAL": ">=",
-}
+// unaryOp decodes a UnaryFilter operator name or number (IS_NAN=2, IS_NULL=3,
+// IS_NOT_NAN=4, IS_NOT_NULL=5).
+type unaryOp string
 
-// filtersFromQuery flattens a where clause into driver scan filters.
-// Only AND composites are supported; anything else is an error so queries
-// are never silently answered with the wrong result set.
-func filtersFromQuery(f *queryFilter) ([]dbdriver.ScanFilter, error) {
-	if f == nil {
-		return nil, nil
+//nolint:gochecknoglobals // static lookup table
+var unaryOpNames = map[int]unaryOp{2: "IS_NAN", 3: "IS_NULL", 4: "IS_NOT_NAN", 5: "IS_NOT_NULL"}
+
+func (o *unaryOp) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*o = unaryOp(v)
+		return nil
 	}
 
-	if f.FieldFilter != nil {
-		op, ok := firestoreOps[string(f.FieldFilter.Op)]
-		if !ok {
-			return nil, fmt.Errorf("unsupported filter op %q", f.FieldFilter.Op)
-		}
-		return []dbdriver.ScanFilter{{
-			Field: f.FieldFilter.Field.FieldPath,
-			Op:    op,
-			Value: firestoreValueToGo(f.FieldFilter.Value),
-		}}, nil
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
 	}
-
-	if f.CompositeFilter != nil {
-		if f.CompositeFilter.Op != "AND" {
-			return nil, fmt.Errorf("unsupported composite op %q", f.CompositeFilter.Op)
-		}
-		var out []dbdriver.ScanFilter
-		for i := range f.CompositeFilter.Filters {
-			sub, err := filtersFromQuery(&f.CompositeFilter.Filters[i])
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, sub...)
-		}
-		return out, nil
-	}
-
-	return nil, nil
+	*o = unaryOpNames[n]
+	return nil
 }
 
 type runQueryResponseEntry struct {
@@ -466,37 +467,64 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 	p, _ := parseFirestorePath(base)
 	p.collection = collection
 
-	filters, ferr := filtersFromQuery(req.StructuredQuery.Where)
+	node, ferr := buildFilterNode(req.StructuredQuery.Where)
 	if ferr != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", ferr.Error())
 		return
 	}
 
-	// runQuery is not paged: honor an explicit limit, otherwise stream the
-	// full result set (the driver treats limit<=0 as a 100-item default).
-	limit := req.StructuredQuery.Limit
-	if limit <= 0 {
-		limit = allResults
-	}
-
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
-		Table:   collection,
-		Filters: filters,
-		Limit:   limit,
-	})
+	// Fetch the full collection and evaluate the where clause here with full
+	// grammar fidelity (type-aware, AND/OR/NOT, IN/array-contains, unary).
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: collection, Limit: allResults})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	matched, merr := filterDocuments(result.Items, node, req.StructuredQuery.Limit)
+	if merr != nil {
+		writeErr(w, merr)
+		return
+	}
+
+	streamQueryResults(w, matched, p)
+}
+
+// filterDocuments keeps the items matching node (nil node matches all) up to
+// limit (limit<=0 means no limit).
+func filterDocuments(items []map[string]any, node expr.Node, limit int) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(items))
+
+	for _, item := range items {
+		if node != nil {
+			ok, err := expr.Eval(node, item)
+			if err != nil {
+				return nil, err
+			}
+
+			if !ok {
+				continue
+			}
+		}
+
+		out = append(out, item)
+
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+
+	return out, nil
+}
+
+func streamQueryResults(w http.ResponseWriter, items []map[string]any, p firestorePath) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
-	// Stream JSON array of entries.
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("[")) //nolint:errcheck // best-effort streaming response
 
-	for i, item := range result.Items {
+	for i, item := range items {
 		if i > 0 {
 			w.Write([]byte(",")) //nolint:errcheck // best-effort
 		}

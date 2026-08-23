@@ -296,12 +296,16 @@ func compareOp(op string, a, b any) bool {
 }
 
 // valuesEqual reports type-aware equality: only same-typed values can be
-// equal, so a number never equals a string.
+// equal, so a number never equals a string. Numeric values coerce to float64
+// first, so the int64 that Firestore produces and the float64 that DynamoDB
+// produces compare across types (2 == 2.0).
 func valuesEqual(a, b any) bool {
+	if af, ok := toFloat(a); ok {
+		bf, bok := toFloat(b)
+		return bok && af == bf
+	}
+
 	switch av := a.(type) {
-	case float64:
-		bv, ok := b.(float64)
-		return ok && av == bv
 	case string:
 		bv, ok := b.(string)
 		return ok && av == bv
@@ -323,14 +327,16 @@ func valuesEqual(a, b any) bool {
 // orderedCompare returns -1/0/1 for orderable, same-typed values (numbers,
 // strings, binary). Mixed or non-orderable types report ok=false.
 func orderedCompare(a, b any) (int, bool) {
-	switch av := a.(type) {
-	case float64:
-		bv, ok := b.(float64)
-		if !ok {
+	if af, ok := toFloat(a); ok {
+		bf, bok := toFloat(b)
+		if !bok {
 			return 0, false
 		}
 
-		return cmp.Compare(av, bv), true
+		return cmp.Compare(af, bf), true
+	}
+
+	switch av := a.(type) {
 	case string:
 		bv, ok := b.(string)
 		if !ok {
@@ -345,6 +351,22 @@ func orderedCompare(a, b any) (int, bool) {
 		}
 
 		return bytes.Compare(av, bv), true
+	}
+
+	return 0, false
+}
+
+// toFloat coerces the numeric types the drivers produce to float64: DynamoDB
+// decodes numbers as float64, Firestore decodes integers as int64. Non-numeric
+// values report ok=false so they stay type-segregated.
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int64:
+		return float64(n), true
+	case int:
+		return float64(n), true
 	}
 
 	return 0, false
