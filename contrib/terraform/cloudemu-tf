@@ -32,13 +32,28 @@ else
 fi
 
 # The config directory is the -chdir target if given, else the working dir. The
-# override has to land next to the .tf files terraform actually loads.
+# override has to land next to the .tf files terraform actually loads. Also grab
+# the subcommand (first non-flag arg) so we only write the override for commands
+# that actually configure the provider — otherwise a `version`/`fmt`/`output`
+# run would litter the dir and silently redirect a later plain terraform run.
 dir="."
+subcmd=""
 for arg in "$@"; do
 	case "$arg" in
 		-chdir=*) dir="${arg#-chdir=}" ;;
+		-*) ;;
+		*) [ -z "$subcmd" ] && subcmd="$arg" ;;
 	esac
 done
+
+needs_provider=no
+for c in init validate plan apply destroy refresh import console; do
+	[ "$subcmd" = "$c" ] && needs_provider=yes && break
+done
+
+if [ "$needs_provider" = no ]; then
+	exec "$bin" "$@"
+fi
 
 # Endpoints for the AWS services CloudEmu serves. Pointing an unused service
 # here is harmless; add more keys as your config needs them.
