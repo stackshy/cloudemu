@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
@@ -54,9 +55,24 @@ const (
 // functions (not a function sub-resource), so they route on their own prefix.
 const layersPrefix = "/2018-10-31/layers"
 
+// functionURLPrefix is the Lambda Function URL API prefix. The URL config is a
+// function sub-resource (.../{name}/url and .../{name}/urls) but versioned under
+// 2021-10-31, so it needs its own Matches clause.
+const functionURLPrefix = "/2021-10-31/functions"
+
 // subVersions is the "versions" path segment shared by the function-versions
 // route (/functions/{name}/versions) and the layer-versions routes.
 const subVersions = "versions"
+
+// Function sub-resource path segments that route both a collection/item verb
+// (serveSubresource) and a sub-item verb (the partsSubItem switch).
+const (
+	subAliases = "aliases"
+	subPolicy  = "policy"
+)
+
+// latestVersion is the symbolic version for a function's mutable current code.
+const latestVersion = "$LATEST"
 
 const (
 	contentTypeJSON = "application/json"
@@ -130,7 +146,8 @@ func (*Handler) Matches(r *http.Request) bool {
 		strings.HasPrefix(r.URL.Path, esmPrefix) ||
 		strings.HasPrefix(r.URL.Path, concurrencyWritePrefix) ||
 		strings.HasPrefix(r.URL.Path, concurrencyReadPrefix) ||
-		strings.HasPrefix(r.URL.Path, layersPrefix)
+		strings.HasPrefix(r.URL.Path, layersPrefix) ||
+		strings.HasPrefix(r.URL.Path, functionURLPrefix)
 }
 
 // ServeHTTP dispatches Lambda operations based on path shape and method.
@@ -167,9 +184,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveSubresource(w, r, name, parts[1])
 	case partsSubItem:
 		switch parts[1] {
-		case "aliases":
+		case subAliases:
 			h.serveAlias(w, r, name, parts[2])
-		case "policy":
+		case subPolicy:
 			h.serveRemovePermission(w, r, name, parts[2])
 		default:
 			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
@@ -193,6 +210,8 @@ func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
 		h.serveEventSourceMappings(w, r, uuid)
 	case strings.HasPrefix(r.URL.Path, layersPrefix):
 		h.serveLayers(w, r)
+	case strings.HasPrefix(r.URL.Path, functionURLPrefix):
+		h.serveFunctionURL(w, r)
 	default:
 		name, ok := concurrencyFunctionName(r.URL.Path)
 		if !ok {
@@ -216,9 +235,9 @@ func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name,
 		h.serveCode(w, r, name)
 	case subVersions:
 		h.serveVersions(w, r, name)
-	case "aliases":
+	case subAliases:
 		h.serveAliases(w, r, name)
-	case "policy":
+	case subPolicy:
 		h.servePolicy(w, r, name)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
@@ -384,11 +403,13 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	cfg := sdrv.FunctionConfig{
-		Name:    name,
-		Runtime: req.Runtime,
-		Handler: req.Handler,
-		Memory:  req.MemorySize,
-		Timeout: req.Timeout,
+		Name:        name,
+		Runtime:     req.Runtime,
+		Handler:     req.Handler,
+		Role:        req.Role,
+		Description: req.Description,
+		Memory:      req.MemorySize,
+		Timeout:     req.Timeout,
 	}
 	if req.Environment != nil {
 		cfg.Environment = req.Environment.Variables
@@ -471,10 +492,7 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 			return
 		}
 
-		cfg := toConfiguration(info)
-		cfg.Version = ver.Version
-		cfg.Description = ver.Description
-		writeJSON(w, http.StatusCreated, cfg)
+		writeJSON(w, http.StatusCreated, toVersionConfiguration(info, ver))
 	case http.MethodGet:
 		vers, err := h.fn.ListVersions(r.Context(), name)
 		if err != nil {
@@ -490,10 +508,7 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 
 		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, len(vers))}
 		for i := range vers {
-			cfg := toConfiguration(info)
-			cfg.Version = vers[i].Version
-			cfg.Description = vers[i].Description
-			out.Versions = append(out.Versions, cfg)
+			out.Versions = append(out.Versions, toVersionConfiguration(info, &vers[i]))
 		}
 
 		writeJSON(w, http.StatusOK, out)
@@ -515,6 +530,7 @@ func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name stri
 		a, err := h.fn.CreateAlias(r.Context(), sdrv.AliasConfig{
 			FunctionName: name, Name: req.Name,
 			FunctionVersion: req.FunctionVersion, Description: req.Description,
+			RoutingConfig: toRoutingConfig(req.RoutingConfig),
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -560,6 +576,7 @@ func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, alias
 		a, err := h.fn.UpdateAlias(r.Context(), sdrv.AliasConfig{
 			FunctionName: name, Name: aliasName,
 			FunctionVersion: req.FunctionVersion, Description: req.Description,
+			RoutingConfig: toRoutingConfig(req.RoutingConfig),
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -579,13 +596,39 @@ func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, alias
 	}
 }
 
+// toRoutingConfig maps the wire AliasRoutingConfiguration (a map of additional
+// version -> weight) to the single-additional-version driver shape. Only the
+// first entry is honored, which matches the driver's model.
+func toRoutingConfig(rc *aliasRoutingConfig) *sdrv.AliasRoutingConfig {
+	if rc == nil || len(rc.AdditionalVersionWeights) == 0 {
+		return nil
+	}
+
+	for version, weight := range rc.AdditionalVersionWeights {
+		return &sdrv.AliasRoutingConfig{AdditionalVersion: version, Weight: weight}
+	}
+
+	return nil
+}
+
 func toAliasResponse(a *sdrv.Alias) aliasResponse {
-	return aliasResponse{
+	resp := aliasResponse{
 		AliasArn:        a.AliasARN,
 		Name:            a.Name,
 		FunctionVersion: a.FunctionVersion,
 		Description:     a.Description,
+		RevisionID:      a.RevisionID,
 	}
+
+	if a.RoutingConfig != nil {
+		resp.RoutingConfig = &aliasRoutingConfig{
+			AdditionalVersionWeights: map[string]float64{
+				a.RoutingConfig.AdditionalVersion: a.RoutingConfig.Weight,
+			},
+		}
+	}
+
+	return resp
 }
 
 func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
@@ -626,12 +669,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := sdrv.FunctionConfig{
-		Name:    req.FunctionName,
-		Runtime: req.Runtime,
-		Handler: req.Handler,
-		Memory:  req.MemorySize,
-		Timeout: req.Timeout,
-		Tags:    req.Tags,
+		Name:        req.FunctionName,
+		Runtime:     req.Runtime,
+		Handler:     req.Handler,
+		Role:        req.Role,
+		Description: req.Description,
+		Memory:      req.MemorySize,
+		Timeout:     req.Timeout,
+		Tags:        req.Tags,
 	}
 	if req.Environment != nil {
 		cfg.Environment = req.Environment.Variables
@@ -720,10 +765,18 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := listFunctionsResponse{Functions: make([]functionConfiguration, 0, len(infos))}
-	for i := range infos {
+	// Sort by name so Marker offsets stay stable across paginated calls (the
+	// driver returns functions in map-iteration order, which is unstable).
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+
+	start, end, nextMarker, _ := pageWindow(len(infos), r.URL.Query())
+
+	out := listFunctionsResponse{Functions: make([]functionConfiguration, 0, end-start)}
+	for i := start; i < end; i++ {
 		out.Functions = append(out.Functions, toConfiguration(&infos[i]))
 	}
+
+	out.NextMarker = nextMarker
 
 	writeJSON(w, http.StatusOK, out)
 }
@@ -781,17 +834,53 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	_, _ = w.Write(out.Payload)
 }
 
+// toVersionConfiguration renders a published version's configuration. It starts
+// from the live function (for name/ARN/state/environment) then overlays the
+// immutable per-version fields snapshotted at publish time, so each version
+// reports its own CodeSha256/RevisionId/runtime rather than reusing $LATEST.
+func toVersionConfiguration(info *sdrv.FunctionInfo, ver *sdrv.FunctionVersion) functionConfiguration {
+	cfg := toConfiguration(info)
+	cfg.Version = ver.Version
+	cfg.Description = ver.Description
+	cfg.CodeSha256 = ver.CodeSHA256
+	cfg.RevisionID = ver.RevisionID
+	cfg.Runtime = ver.Runtime
+	cfg.Handler = ver.Handler
+	cfg.Role = ver.Role
+	cfg.MemorySize = ver.Memory
+	cfg.Timeout = ver.Timeout
+
+	// A published version's ARN is qualified with the version number; $LATEST
+	// keeps the unqualified ARN.
+	if ver.Version != "" && ver.Version != latestVersion {
+		cfg.FunctionArn = info.ARN + ":" + ver.Version
+	}
+
+	return cfg
+}
+
 func toConfiguration(info *sdrv.FunctionInfo) functionConfiguration {
+	version := info.Version
+	if version == "" {
+		version = latestVersion
+	}
+
 	cfg := functionConfiguration{
 		FunctionName: info.Name,
 		FunctionArn:  info.ARN,
 		Runtime:      info.Runtime,
+		Role:         info.Role,
 		Handler:      info.Handler,
+		Description:  info.Description,
 		MemorySize:   info.Memory,
 		Timeout:      info.Timeout,
 		LastModified: info.LastModified,
 		State:        info.State,
 		PackageType:  "Zip",
+		CodeSha256:   info.CodeSHA256,
+		CodeSize:     info.CodeSize,
+		Version:      version,
+		RevisionID:   info.RevisionID,
 	}
 
 	if len(info.Environment) > 0 {

@@ -10,6 +10,16 @@ type FunctionVersion struct {
 	Description  string
 	CodeSHA256   string
 	CreatedAt    string
+	// RevisionID is the revision the version was published from.
+	RevisionID string
+	// Config fields snapshotted at publish time. A published version is
+	// immutable, so these reflect the function state when it was cut, not the
+	// current $LATEST configuration.
+	Runtime string
+	Handler string
+	Memory  int
+	Timeout int
+	Role    string
 }
 
 // PermissionStatement is one statement of a function's resource-based policy,
@@ -19,6 +29,32 @@ type PermissionStatement struct {
 	Action      string
 	Principal   string
 	SourceARN   string
+}
+
+// FunctionURLConfig is a Lambda Function URL configuration. Function URLs are
+// an AWS-specific concept (not part of the portable Serverless interface), so
+// providers expose them through an optional type assertion rather than the
+// shared driver.
+type FunctionURLConfig struct {
+	FunctionName string
+	Qualifier    string
+	FunctionArn  string
+	FunctionURL  string
+	AuthType     string // "NONE" or "AWS_IAM"
+	InvokeMode   string // "BUFFERED" or "RESPONSE_STREAM"
+	Cors         *FunctionURLCors
+	CreationTime string
+	LastModified string
+}
+
+// FunctionURLCors is the CORS configuration of a Function URL.
+type FunctionURLCors struct {
+	AllowCredentials bool
+	AllowHeaders     []string
+	AllowMethods     []string
+	AllowOrigins     []string
+	ExposeHeaders    []string
+	MaxAge           int
 }
 
 // AliasConfig configures a function alias.
@@ -45,6 +81,8 @@ type Alias struct {
 	RoutingConfig   *AliasRoutingConfig
 	AliasARN        string
 	CreatedAt       string
+	// RevisionID changes on every alias mutation (create/update).
+	RevisionID string
 }
 
 // LayerConfig configures a new layer version.
@@ -87,6 +125,8 @@ type FunctionConfig struct {
 	Handler     string
 	Memory      int // MB
 	Timeout     int // seconds
+	Role        string
+	Description string
 	Environment map[string]string
 	Tags        map[string]string
 	Code        []byte // deployment package (.zip); deployed to a FunctionEngine (if configured) on create/update to run real code
@@ -103,12 +143,24 @@ type FunctionInfo struct {
 	ARN          string
 	Runtime      string
 	Handler      string
+	Role         string
+	Description  string
 	Memory       int
 	Timeout      int
 	State        string
 	Environment  map[string]string
 	Tags         map[string]string
 	LastModified string
+	// CodeSHA256 is the base64-encoded SHA-256 of the deployment package, the
+	// value Terraform compares against its locally computed source_code_hash.
+	CodeSHA256 string
+	// CodeSize is the deployment package size in bytes.
+	CodeSize int64
+	// Version is the function's published version ("$LATEST" for the mutable
+	// current code).
+	Version string
+	// RevisionID changes on every configuration or code update.
+	RevisionID string
 }
 
 // InvokeInput configures a function invocation.
@@ -139,9 +191,12 @@ type EventSourceMappingConfig struct {
 
 // EventSourceMappingInfo describes an event source mapping.
 type EventSourceMappingInfo struct {
-	UUID             string
-	EventSourceArn   string
-	FunctionName     string
+	UUID           string
+	EventSourceArn string
+	FunctionName   string
+	// FunctionArn is the full ARN of the target function, resolved at create
+	// time. The Lambda wire protocol returns the ARN, not the bare name.
+	FunctionArn      string
 	BatchSize        int
 	Enabled          bool
 	StartingPosition string

@@ -37,6 +37,7 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		RoutingConfig:   copyRoutingConfig(cfg.RoutingConfig),
 		AliasARN:        aliasARN,
 		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		RevisionID:      newRevisionID(),
 	}
 
 	fd.aliases.Set(cfg.Name, &aliasData{alias: a})
@@ -73,6 +74,8 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	if cfg.RoutingConfig != nil {
 		ad.alias.RoutingConfig = copyRoutingConfig(cfg.RoutingConfig)
 	}
+
+	ad.alias.RevisionID = newRevisionID()
 
 	fd.aliases.Set(cfg.Name, ad)
 

@@ -3,9 +3,11 @@ package lambda
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
@@ -43,6 +45,7 @@ func (m *Mock) CreateEventSourceMapping(
 		UUID:             uuid,
 		EventSourceArn:   cfg.EventSourceArn,
 		FunctionName:     cfg.FunctionName,
+		FunctionArn:      m.functionARN(cfg.FunctionName),
 		BatchSize:        batchSize,
 		Enabled:          cfg.Enabled,
 		StartingPosition: cfg.StartingPosition,
@@ -55,6 +58,23 @@ func (m *Mock) CreateEventSourceMapping(
 	result := *info
 
 	return &result, nil
+}
+
+// functionARN resolves an event-source-mapping target to a full function ARN.
+// A value already shaped like an ARN is returned unchanged; a bare name is
+// looked up (falling back to a synthesized ARN if the function isn't tracked,
+// e.g. it was referenced before creation) so the wire layer always returns a
+// FunctionArn, never the bare name.
+func (m *Mock) functionARN(nameOrARN string) string {
+	if strings.HasPrefix(nameOrARN, "arn:") {
+		return nameOrARN
+	}
+
+	if fd, ok := m.funcs.Get(nameOrARN); ok {
+		return fd.info.ARN
+	}
+
+	return idgen.AWSARN("lambda", m.opts.Region, m.opts.AccountID, "function:"+nameOrARN)
 }
 
 // DeleteEventSourceMapping deletes an event source mapping by UUID.
@@ -110,6 +130,7 @@ func (m *Mock) UpdateEventSourceMapping(
 
 	if cfg.FunctionName != "" {
 		updated.FunctionName = cfg.FunctionName
+		updated.FunctionArn = m.functionARN(cfg.FunctionName)
 	}
 
 	if cfg.EventSourceArn != "" {

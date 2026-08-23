@@ -19,6 +19,8 @@ type functionConfiguration struct {
 	LastModified string       `json:"LastModified,omitempty"`
 	State        string       `json:"State,omitempty"`
 	CodeSha256   string       `json:"CodeSha256,omitempty"`
+	CodeSize     int64        `json:"CodeSize,omitempty"`
+	RevisionID   string       `json:"RevisionId,omitempty"`
 	Environment  *envEnvelope `json:"Environment,omitempty"`
 	PackageType  string       `json:"PackageType,omitempty"`
 	Version      string       `json:"Version,omitempty"`
@@ -61,17 +63,26 @@ type listVersionsResponse struct {
 
 // aliasRequest is the body of Create/UpdateAlias.
 type aliasRequest struct {
-	Name            string `json:"Name"`
-	FunctionVersion string `json:"FunctionVersion"`
-	Description     string `json:"Description"`
+	Name            string              `json:"Name"`
+	FunctionVersion string              `json:"FunctionVersion"`
+	Description     string              `json:"Description"`
+	RoutingConfig   *aliasRoutingConfig `json:"RoutingConfig"`
 }
 
 // aliasResponse is the AWS AliasConfiguration shape.
 type aliasResponse struct {
-	AliasArn        string `json:"AliasArn"`
-	Name            string `json:"Name"`
-	FunctionVersion string `json:"FunctionVersion"`
-	Description     string `json:"Description,omitempty"`
+	AliasArn        string              `json:"AliasArn"`
+	Name            string              `json:"Name"`
+	FunctionVersion string              `json:"FunctionVersion"`
+	Description     string              `json:"Description,omitempty"`
+	RevisionID      string              `json:"RevisionId,omitempty"`
+	RoutingConfig   *aliasRoutingConfig `json:"RoutingConfig,omitempty"`
+}
+
+// aliasRoutingConfig is the AWS AliasRoutingConfiguration shape: a map of
+// additional version -> weight.
+type aliasRoutingConfig struct {
+	AdditionalVersionWeights map[string]float64 `json:"AdditionalVersionWeights,omitempty"`
 }
 
 // listAliasesResponse is the ListAliases envelope.
@@ -103,11 +114,13 @@ type codeLocation struct {
 
 // listFunctionsResponse is the ListFunctions response envelope.
 type listFunctionsResponse struct {
-	Functions []functionConfiguration `json:"Functions"`
+	Functions  []functionConfiguration `json:"Functions"`
+	NextMarker string                  `json:"NextMarker,omitempty"`
 }
 
 // createFunctionRequest captures the fields we read from a CreateFunction body.
-// We deliberately ignore Role (no IAM evaluation), VPCConfig, etc — the portable
+// Role/Description are stored and echoed back (Terraform reads Role every plan)
+// though IAM is not evaluated; VPCConfig etc are still ignored — the portable
 // driver doesn't model them. Code.ZipFile is read so a configured FunctionEngine
 // can run the real handler; with no engine it is stored only for the invoke stub.
 type createFunctionRequest struct {
