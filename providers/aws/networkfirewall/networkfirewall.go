@@ -93,6 +93,7 @@ func (m *Mock) CreateFirewall(_ context.Context, cfg nfdriver.CreateFirewallConf
 	fw := &nfdriver.Firewall{
 		Name:             cfg.Name,
 		ARN:              m.arn("firewall", cfg.Name),
+		ID:               idgen.GenerateID(""),
 		PolicyARN:        cfg.PolicyARN,
 		VPCID:            cfg.VPCID,
 		SubnetIDs:        cloneStrings(cfg.SubnetIDs),
@@ -218,6 +219,27 @@ func (m *Mock) DescribeFirewallPolicy(_ context.Context, name, arn string) (*nfd
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall policy %q not found", nonEmpty(name, arn))
 	}
+
+	out := cloneFirewallPolicy(p)
+
+	return &out, nil
+}
+
+//nolint:gocritic // cfg matches the driver signature.
+func (m *Mock) UpdateFirewallPolicy(
+	_ context.Context, name, arn string, cfg nfdriver.UpdateFirewallPolicyConfig,
+) (*nfdriver.FirewallPolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	p, ok := m.lookupPolicy(name, arn)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "firewall policy %q not found", nonEmpty(name, arn))
+	}
+
+	p.Description = cfg.Description
+	p.StatelessDefaultActions = cloneStrings(cfg.StatelessDefaultActions)
+	p.StatelessFragmentDefaultActions = cloneStrings(cfg.StatelessFragmentDefaultActions)
 
 	out := cloneFirewallPolicy(p)
 
@@ -351,6 +373,25 @@ func (m *Mock) DescribeRuleGroup(_ context.Context, name, arn, ruleType string) 
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "rule group %q not found", nonEmpty(name, arn))
 	}
+
+	out := cloneRuleGroup(rg)
+
+	return &out, nil
+}
+
+//nolint:gocritic // cfg matches the driver signature.
+func (m *Mock) UpdateRuleGroup(
+	_ context.Context, name, arn, ruleType string, cfg nfdriver.UpdateRuleGroupConfig,
+) (*nfdriver.RuleGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rg, ok := m.lookupRuleGroup(name, arn, ruleType)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "rule group %q not found", nonEmpty(name, arn))
+	}
+
+	rg.Description = cfg.Description
 
 	out := cloneRuleGroup(rg)
 
@@ -574,6 +615,20 @@ func (m *Mock) UntagResource(_ context.Context, arn string, keys []string) error
 	}
 
 	return nil
+}
+
+// ListTagsForResource returns a copy of the tags on the resource with the given
+// ARN (firewall, policy, or rule group).
+func (m *Mock) ListTagsForResource(_ context.Context, arn string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	t := m.taggableByARN(arn)
+	if t == nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "resource %q not found", arn)
+	}
+
+	return copyTags(t), nil
 }
 
 // taggableByARN returns the mutable Tags map of the resource with the given ARN,

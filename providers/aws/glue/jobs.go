@@ -8,6 +8,12 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
 
+// AWS Glue create-time defaults for a job when the caller omits them.
+const (
+	defaultJobTimeoutMinutes = 2880 // 48 hours
+	defaultGlueVersion       = "0.9"
+)
+
 // jobData is a job definition plus its own lock.
 type jobData struct {
 	job driver.Job
@@ -27,6 +33,14 @@ type jobRunData struct {
 func (m *Mock) CreateJob(_ context.Context, j driver.Job) (string, error) {
 	if !validName(j.Name) {
 		return "", invalidInput("job name %q is invalid", j.Name)
+	}
+
+	// Apply AWS Glue create-time defaults when unset.
+	if j.Timeout == 0 {
+		j.Timeout = defaultJobTimeoutMinutes
+	}
+	if j.GlueVersion == "" {
+		j.GlueVersion = defaultGlueVersion
 	}
 
 	now := m.now()

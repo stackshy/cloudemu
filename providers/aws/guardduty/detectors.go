@@ -2,10 +2,47 @@ package guardduty
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 
 	"github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 )
+
+// defaultDetectorFeatures returns the feature-configuration results a freshly
+// created detector reports when the caller doesn't specify features, matching
+// real GuardDuty's GetDetector which always lists its enabled features.
+func defaultDetectorFeatures() []json.RawMessage {
+	names := syntheticFeatures()
+	out := make([]json.RawMessage, 0, len(names))
+
+	for _, name := range names {
+		b, _ := json.Marshal(map[string]any{
+			"name":   name,
+			"status": "ENABLED",
+		})
+		out = append(out, b)
+	}
+
+	return out
+}
+
+// defaultDetectorDataSources returns the deprecated DataSourceConfigurationsResult
+// block a detector reports when the caller doesn't specify data sources.
+func defaultDetectorDataSources() json.RawMessage {
+	enabled := map[string]any{"status": "ENABLED"}
+	b, _ := json.Marshal(map[string]any{
+		"cloudTrail": enabled,
+		"dnsLogs":    enabled,
+		"flowLogs":   enabled,
+		"s3Logs":     enabled,
+		"kubernetes": map[string]any{"auditLogs": enabled},
+		"malwareProtection": map[string]any{
+			"scanEc2InstanceWithFindings": map[string]any{"ebsVolumes": enabled},
+		},
+	})
+
+	return b
+}
 
 // copyDetector returns a deep copy of a stored detector so a reader cannot alias
 // the Tags map, the Features slice, or the DataSources raw block.
@@ -63,13 +100,23 @@ func (m *Mock) CreateDetector(_ context.Context, in driver.CreateDetectorInput) 
 		return nil, badRequest("a detector already exists for the current account")
 	}
 
+	features := copyRawSlice(in.Features)
+	if len(features) == 0 {
+		features = defaultDetectorFeatures()
+	}
+
+	dataSources := copyRaw(in.DataSources)
+	if dataSources == nil {
+		dataSources = defaultDetectorDataSources()
+	}
+
 	det := driver.Detector{
 		ID:                         m.newDetectorID(),
 		ServiceRole:                m.serviceRoleARN(),
 		Status:                     status,
 		FindingPublishingFrequency: freq,
-		Features:                   copyRawSlice(in.Features),
-		DataSources:                copyRaw(in.DataSources),
+		Features:                   features,
+		DataSources:                dataSources,
 		Tags:                       copyTags(in.Tags),
 		CreatedAt:                  now,
 		UpdatedAt:                  now,

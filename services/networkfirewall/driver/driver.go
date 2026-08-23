@@ -9,6 +9,7 @@ import "context"
 type Firewall struct {
 	Name             string
 	ARN              string
+	ID               string
 	PolicyARN        string
 	VPCID            string
 	SubnetIDs        []string
@@ -69,6 +70,20 @@ type CreateRuleGroupConfig struct {
 	Tags        map[string]string
 }
 
+// UpdateFirewallPolicyConfig is the input to UpdateFirewallPolicy. Only the
+// mutable policy attributes are modeled.
+type UpdateFirewallPolicyConfig struct {
+	Description                     string
+	StatelessDefaultActions         []string
+	StatelessFragmentDefaultActions []string
+}
+
+// UpdateRuleGroupConfig is the input to UpdateRuleGroup. Capacity is immutable
+// in real Network Firewall, so only the description is modeled here.
+type UpdateRuleGroupConfig struct {
+	Description string
+}
+
 // NetworkFirewall is the AWS Network Firewall control plane.
 //
 //nolint:interfacebloat // mirrors the network-firewall API surface.
@@ -80,11 +95,13 @@ type NetworkFirewall interface {
 
 	CreateFirewallPolicy(ctx context.Context, cfg CreateFirewallPolicyConfig) (*FirewallPolicy, error)
 	DescribeFirewallPolicy(ctx context.Context, name, arn string) (*FirewallPolicy, error)
+	UpdateFirewallPolicy(ctx context.Context, name, arn string, cfg UpdateFirewallPolicyConfig) (*FirewallPolicy, error)
 	DeleteFirewallPolicy(ctx context.Context, name, arn string) (*FirewallPolicy, error)
 	ListFirewallPolicies(ctx context.Context) ([]FirewallPolicy, error)
 
 	CreateRuleGroup(ctx context.Context, cfg CreateRuleGroupConfig) (*RuleGroup, error)
 	DescribeRuleGroup(ctx context.Context, name, arn, ruleType string) (*RuleGroup, error)
+	UpdateRuleGroup(ctx context.Context, name, arn, ruleType string, cfg UpdateRuleGroupConfig) (*RuleGroup, error)
 	DeleteRuleGroup(ctx context.Context, name, arn, ruleType string) (*RuleGroup, error)
 	ListRuleGroups(ctx context.Context) ([]RuleGroup, error)
 
@@ -96,4 +113,5 @@ type NetworkFirewall interface {
 	DescribeLoggingConfiguration(ctx context.Context, firewallName string) ([]string, error)
 	TagResource(ctx context.Context, arn string, tags map[string]string) error
 	UntagResource(ctx context.Context, arn string, keys []string) error
+	ListTagsForResource(ctx context.Context, arn string) (map[string]string, error)
 }
