@@ -101,10 +101,11 @@ func (h *Handler) updateContainerInstancesState(w http.ResponseWriter, r *http.R
 	wire.WriteJSON(w, map[string]any{"containerInstances": out, "failures": fromFailures(failures)})
 }
 
-//nolint:dupl // decode-cluster/list-arns and decode-ids/describe shapes recur per resource family; typing them apart is intentional.
 func (h *Handler) listContainerInstances(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Cluster string `json:"cluster"`
+		Cluster    string `json:"cluster"`
+		MaxResults int    `json:"maxResults"`
+		NextToken  string `json:"nextToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -123,9 +124,15 @@ func (h *Handler) listContainerInstances(w http.ResponseWriter, r *http.Request)
 		arns = append(arns, instances[i].ARN)
 	}
 
-	wire.WriteJSON(w, map[string]any{"containerInstanceArns": arns})
+	items, next, ok := paginateARNs(w, arns, req.MaxResults, req.NextToken)
+	if !ok {
+		return
+	}
+
+	wire.WriteJSON(w, listResponse("containerInstanceArns", items, next))
 }
 
+//nolint:dupl // decode-ids/describe shapes recur per resource family; typing them apart is intentional.
 func (h *Handler) describeContainerInstances(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ContainerInstances []string `json:"containerInstances"`

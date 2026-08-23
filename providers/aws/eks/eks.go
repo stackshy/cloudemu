@@ -14,8 +14,10 @@ package eks
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -57,6 +59,7 @@ type Mock struct {
 	nodegroups      *memstore.Store[eksdriver.Nodegroup]
 	fargateProfiles *memstore.Store[eksdriver.FargateProfile]
 	addons          *memstore.Store[eksdriver.Addon]
+	updates         *memstore.Store[eksdriver.ClusterUpdate]
 
 	opts       *config.Options
 	monitoring mondriver.Monitoring
@@ -78,6 +81,7 @@ func New(opts *config.Options) *Mock {
 		nodegroups:      memstore.New[eksdriver.Nodegroup](),
 		fargateProfiles: memstore.New[eksdriver.FargateProfile](),
 		addons:          memstore.New[eksdriver.Addon](),
+		updates:         memstore.New[eksdriver.ClusterUpdate](),
 		opts:            opts,
 		k8sUIDs:         make(map[string]string),
 	}
@@ -154,8 +158,29 @@ func newUpdateID() string {
 	)
 }
 
+// recordUpdate stores an update so DescribeUpdate/ListUpdates can find it later,
+// returning a copy. Callers must hold m.mu.
+func (m *Mock) recordUpdate(u *eksdriver.ClusterUpdate) *eksdriver.ClusterUpdate {
+	m.updates.Set(u.ID, *u)
+
+	out := *u
+
+	return &out
+}
+
 func (m *Mock) clusterARN(name string) string {
 	return idgen.AWSARN("eks", m.opts.Region, m.opts.AccountID, "cluster/"+name)
+}
+
+// oidcIssuer derives a stable OpenID Connect issuer URL for a cluster, matching
+// the real EKS shape https://oidc.eks.<region>.amazonaws.com/id/<32-hex>. The
+// id is a deterministic hash of account + cluster name so it does not change
+// between DescribeCluster calls.
+func (m *Mock) oidcIssuer(name string) string {
+	sum := sha256.Sum256([]byte(m.opts.AccountID + "/" + name))
+	id := strings.ToUpper(hex.EncodeToString(sum[:16]))
+
+	return fmt.Sprintf("https://oidc.eks.%s.amazonaws.com/id/%s", m.opts.Region, id)
 }
 
 func (m *Mock) nodegroupARN(clusterName, nodegroupName string) string {
@@ -260,6 +285,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg eksdriver.ClusterConfig) (*e
 		Endpoint:             wavePlaceholderEndpoint,
 		CertificateAuthority: stubCertificate(),
 		Status:               eksdriver.ClusterStatusActive,
+		OIDCIssuer:           m.oidcIssuer(cfg.Name),
 		VPCConfig: eksdriver.VPCConfig{
 			SubnetIDs:             copyStrings(cfg.VPCConfig.SubnetIDs),
 			SecurityGroupIDs:      copyStrings(cfg.VPCConfig.SecurityGroupIDs),
@@ -379,12 +405,13 @@ func (m *Mock) UpdateClusterConfig(
 
 	m.clusters.Set(name, c)
 
-	return &eksdriver.ClusterUpdate{
-		ID:        newUpdateID(),
-		Type:      "EndpointAccessUpdate",
-		Status:    "Successful",
-		CreatedAt: m.opts.Clock.Now().UTC(),
-	}, nil
+	return m.recordUpdate(&eksdriver.ClusterUpdate{
+		ID:          newUpdateID(),
+		Type:        "EndpointAccessUpdate",
+		Status:      "Successful",
+		CreatedAt:   m.opts.Clock.Now().UTC(),
+		ClusterName: name,
+	}), nil
 }
 
 // UpdateClusterVersion bumps the Kubernetes version of an existing cluster.
@@ -404,12 +431,13 @@ func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string) (*e
 	c.Version = version
 	m.clusters.Set(name, c)
 
-	return &eksdriver.ClusterUpdate{
-		ID:        newUpdateID(),
-		Type:      "VersionUpdate",
-		Status:    "Successful",
-		CreatedAt: m.opts.Clock.Now().UTC(),
-	}, nil
+	return m.recordUpdate(&eksdriver.ClusterUpdate{
+		ID:          newUpdateID(),
+		Type:        "VersionUpdate",
+		Status:      "Successful",
+		CreatedAt:   m.opts.Clock.Now().UTC(),
+		ClusterName: name,
+	}), nil
 }
 
 // DeleteCluster removes a cluster (only if no nodegroups, Fargate profiles,
@@ -468,6 +496,53 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 	}
 
 	return &out, nil
+}
+
+// DescribeUpdate returns a recorded update by ID. clusterName scopes the
+// lookup so a stale ID from another cluster reports NotFound, matching EKS.
+func (m *Mock) DescribeUpdate(_ context.Context, clusterName, updateID string) (*eksdriver.ClusterUpdate, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	u, ok := m.updates.Get(updateID)
+	if !ok || (clusterName != "" && u.ClusterName != clusterName) {
+		return nil, cerrors.Newf(cerrors.NotFound, "update %q not found", updateID)
+	}
+
+	out := u
+
+	return &out, nil
+}
+
+// ListUpdates returns the IDs of updates recorded for a cluster, optionally
+// filtered to a specific nodegroup or add-on.
+func (m *Mock) ListUpdates(_ context.Context, clusterName, nodegroupName, addonName string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if _, ok := m.clusters.Get(clusterName); !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", clusterName)
+	}
+
+	out := make([]string, 0)
+
+	for _, u := range m.updates.All() {
+		if u.ClusterName != clusterName {
+			continue
+		}
+
+		if nodegroupName != "" && u.NodegroupName != nodegroupName {
+			continue
+		}
+
+		if addonName != "" && u.AddonName != addonName {
+			continue
+		}
+
+		out = append(out, u.ID)
+	}
+
+	return out, nil
 }
 
 // CreateNodegroup creates a new managed node group.
@@ -584,12 +659,14 @@ func (m *Mock) UpdateNodegroupConfig(
 
 	m.nodegroups.Set(key, ng)
 
-	return &eksdriver.ClusterUpdate{
-		ID:        newUpdateID(),
-		Type:      "ConfigUpdate",
-		Status:    "Successful",
-		CreatedAt: m.opts.Clock.Now().UTC(),
-	}, nil
+	return m.recordUpdate(&eksdriver.ClusterUpdate{
+		ID:            newUpdateID(),
+		Type:          "ConfigUpdate",
+		Status:        "Successful",
+		CreatedAt:     m.opts.Clock.Now().UTC(),
+		ClusterName:   clusterName,
+		NodegroupName: nodegroupName,
+	}), nil
 }
 
 // UpdateNodegroupVersion bumps the Kubernetes version of a nodegroup.
@@ -617,12 +694,14 @@ func (m *Mock) UpdateNodegroupVersion(
 
 	m.nodegroups.Set(key, ng)
 
-	return &eksdriver.ClusterUpdate{
-		ID:        newUpdateID(),
-		Type:      "VersionUpdate",
-		Status:    "Successful",
-		CreatedAt: m.opts.Clock.Now().UTC(),
-	}, nil
+	return m.recordUpdate(&eksdriver.ClusterUpdate{
+		ID:            newUpdateID(),
+		Type:          "VersionUpdate",
+		Status:        "Successful",
+		CreatedAt:     m.opts.Clock.Now().UTC(),
+		ClusterName:   clusterName,
+		NodegroupName: nodegroupName,
+	}), nil
 }
 
 // DeleteNodegroup removes a nodegroup.
@@ -874,12 +953,14 @@ func (m *Mock) UpdateAddon(_ context.Context, cfg eksdriver.AddonConfig) (*eksdr
 	ad.ModifiedAt = m.opts.Clock.Now().UTC()
 	m.addons.Set(key, ad)
 
-	return &eksdriver.ClusterUpdate{
-		ID:        newUpdateID(),
-		Type:      "AddonUpdate",
-		Status:    "Successful",
-		CreatedAt: m.opts.Clock.Now().UTC(),
-	}, nil
+	return m.recordUpdate(&eksdriver.ClusterUpdate{
+		ID:          newUpdateID(),
+		Type:        "AddonUpdate",
+		Status:      "Successful",
+		CreatedAt:   m.opts.Clock.Now().UTC(),
+		ClusterName: cfg.ClusterName,
+		AddonName:   cfg.AddonName,
+	}), nil
 }
 
 // DeleteAddon removes an add-on from a cluster.

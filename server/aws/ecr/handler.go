@@ -63,6 +63,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeImages(w, r)
 	case "BatchDeleteImage":
 		h.batchDeleteImage(w, r)
+	case "BatchGetImage":
+		h.batchGetImage(w, r)
 	case "GetAuthorizationToken":
 		h.getAuthorizationToken(w, r)
 	case "TagResource":
@@ -116,6 +118,18 @@ func (h *Handler) getAuthorizationToken(w http.ResponseWriter, r *http.Request) 
 			"expiresAt":          expiresAt.Unix(),
 		}},
 	})
+}
+
+// writePutImageErr maps PutImage errors. On an IMMUTABLE repository, re-pushing
+// an existing tag surfaces as FailedPrecondition from the driver; real ECR
+// returns ImageTagAlreadyExistsException (not RepositoryNotEmptyException).
+func writePutImageErr(w http.ResponseWriter, err error) {
+	if cerrors.IsFailedPrecondition(err) {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ImageTagAlreadyExistsException", err.Error())
+		return
+	}
+
+	writeErr(w, err)
 }
 
 // writeErr maps canonical cloudemu errors to ECR JSON error responses. ECR
