@@ -285,3 +285,31 @@ func TestSDKLambdaLayersRoundtrip(t *testing.T) {
 		t.Fatal("GetLayerVersion after delete returned nil error, want NotFound")
 	}
 }
+
+// TestSDKGetFunctionConfiguration covers the blocker: GET .../configuration
+// (the op FunctionActive/FunctionUpdated waiters poll) returned 405 and hung
+// every Terraform/SAM/CDK deploy.
+func TestSDKGetFunctionConfiguration(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateFunction(ctx, &awslambda.CreateFunctionInput{
+		FunctionName: aws.String("cfg"),
+		Runtime:      lambdatypes.RuntimeGo1x,
+		Role:         aws.String("arn:aws:iam::000000000000:role/test"),
+		Handler:      aws.String("main"),
+		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("z")},
+	}); err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	out, err := client.GetFunctionConfiguration(ctx, &awslambda.GetFunctionConfigurationInput{
+		FunctionName: aws.String("cfg"),
+	})
+	if err != nil {
+		t.Fatalf("GetFunctionConfiguration: %v", err)
+	}
+	if aws.ToString(out.FunctionName) != "cfg" || aws.ToString(out.Handler) != "main" {
+		t.Fatalf("config = %+v, want FunctionName=cfg Handler=main", out)
+	}
+}
