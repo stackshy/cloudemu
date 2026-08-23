@@ -115,9 +115,9 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	// ListTagsForResource is a generic tag verb SNS shares with RDS/ElastiCache
-	// on the same wire (RDS registers first). Claim it only when the SigV4
-	// credential scope names "sns"; otherwise let it fall through.
+	// ListTagsForResource is a generic tag verb SNS shares with RDS on the same
+	// query wire (RDS registers first). Claim it only when the SigV4 credential
+	// scope names "sns"; otherwise let it fall through.
 	if action == actionListTagsForResource {
 		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == "sns"
 	}
@@ -210,6 +210,6 @@ func defaultTopicPolicy(arn, owner string) string {
 		`"Sid":"__default_statement_ID","Effect":"Allow","Principal":{"AWS":"*"},` +
 		`"Action":["SNS:GetTopicAttributes","SNS:SetTopicAttributes","SNS:AddPermission",` +
 		`"SNS:RemovePermission","SNS:DeleteTopic","SNS:Subscribe","SNS:ListSubscriptionsByTopic",` +
-		`"SNS:Publish"],"Resource":"` + arn + `",` +
+		`"SNS:Publish","SNS:Receive"],"Resource":"` + arn + `",` +
 		`"Condition":{"StringEquals":{"AWS:SourceOwner":"` + owner + `"}}}]}`
 }

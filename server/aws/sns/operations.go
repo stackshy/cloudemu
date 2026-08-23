@@ -127,12 +127,9 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request) {
 // getTopicAttributes maps GetTopicAttributes to Notification.GetTopic and
 // exposes the topic's ARN, display name, and subscription count as the standard
 // SNS attribute map.
-// setTopicAttributes maps SetTopicAttributes to Notification.UpdateTopic for
-// the DisplayName attribute. Other attribute names (Policy, DeliveryPolicy) are
-// accepted but not modeled — the emulator doesn't evaluate topic policies, so
-// storing them would have no observable effect.
-// setTopicAttributes persists only DisplayName today. A Policy write is accepted
-// but not stored, and GetTopicAttributes returns the synthesized default — so a
+// setTopicAttributes maps SetTopicAttributes to Notification.UpdateTopic, but
+// persists only DisplayName today. A Policy (or DeliveryPolicy) write is accepted
+// and dropped, and GetTopicAttributes returns the synthesized default — so a
 // topic that declares a custom `policy` would drift. Tracked as a follow-up;
 // topics without a policy (the common case) round-trip cleanly.
 func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {

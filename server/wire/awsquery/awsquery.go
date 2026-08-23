@@ -250,8 +250,10 @@ func CredentialScopeService(auth string) string {
 
 	parts := strings.Split(auth[i+len("Credential="):], "/")
 
-	const serviceField = 3
-	if len(parts) <= serviceField {
+	// A well-formed credential scope is AKID/DATE/REGION/SERVICE/aws4_request —
+	// require all five so a truncated scope yields "" rather than a stray field.
+	const serviceField, scopeFields = 3, 5
+	if len(parts) < scopeFields {
 		return ""
 	}
 
