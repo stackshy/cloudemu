@@ -220,7 +220,7 @@ func (h *Handler) createTags(w http.ResponseWriter, r *http.Request) {
 
 	for _, id := range ids {
 		if err := h.tagResource(r.Context(), id, tags); err != nil {
-			writeErrWithNotFound(w, err, "InvalidID.NotFound", "IncorrectState")
+			writeErrWithNotFound(w, err, tagNotFoundCode(id), "IncorrectState")
 			return
 		}
 	}
@@ -240,12 +240,24 @@ func (h *Handler) deleteTags(w http.ResponseWriter, r *http.Request) {
 
 	for _, id := range ids {
 		if err := h.untagResource(r.Context(), id, keys); err != nil {
-			writeErrWithNotFound(w, err, "InvalidID.NotFound", "IncorrectState")
+			writeErrWithNotFound(w, err, tagNotFoundCode(id), "IncorrectState")
 			return
 		}
 	}
 
 	awsquery.WriteXMLResponse(w, deleteTagsResponseXML{Return: true, RequestID: "cloudemu"})
+}
+
+// tagNotFoundCode returns the "…NotFound" error code real EC2 emits when
+// CreateTags/DeleteTags names a non-existent resource. An instance id yields the
+// resource-specific InvalidInstanceID.NotFound; other resource types fall back
+// to the generic InvalidID.NotFound.
+func tagNotFoundCode(id string) string {
+	if strings.HasPrefix(id, "i-") {
+		return codeInvalidInstanceID
+	}
+
+	return "InvalidID.NotFound"
 }
 
 func (h *Handler) tagResource(ctx context.Context, id string, tags map[string]string) error {

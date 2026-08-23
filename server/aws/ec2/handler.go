@@ -23,6 +23,10 @@ const formContentType = "application/x-www-form-urlencoded"
 // plenty of headroom while preventing memory-exhaustion attacks.
 const maxFormBodyBytes = 1 << 20
 
+// codeInvalidInstanceID is the EC2 error code for a request naming a
+// non-existent instance id.
+const codeInvalidInstanceID = "InvalidInstanceID.NotFound"
+
 // Handler serves EC2 query-protocol requests. Real AWS EC2 serves both
 // compute and VPC/networking on one endpoint, so the handler holds both
 // drivers and dispatches based on the Action parameter.
@@ -126,6 +130,8 @@ func (h *Handler) routeSnapshots(w http.ResponseWriter, r *http.Request, action 
 		h.deleteSnapshot(w, r)
 	case "DescribeSnapshots":
 		h.describeSnapshots(w, r)
+	case "ModifySnapshotAttribute":
+		h.modifySnapshotAttribute(w, r)
 	default:
 		return false
 	}
@@ -141,6 +147,8 @@ func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, action str
 		h.deregisterImage(w, r)
 	case "DescribeImages":
 		h.describeImages(w, r)
+	case "DescribeImageAttribute":
+		h.describeImageAttribute(w, r)
 	default:
 		return false
 	}
@@ -169,6 +177,8 @@ func (h *Handler) routeVpcPeering(w http.ResponseWriter, r *http.Request, action
 		h.createVpcPeeringConnection(w, r)
 	case "AcceptVpcPeeringConnection":
 		h.acceptVpcPeeringConnection(w, r)
+	case "RejectVpcPeeringConnection":
+		h.rejectVpcPeeringConnection(w, r)
 	case "DeleteVpcPeeringConnection":
 		h.deleteVpcPeeringConnection(w, r)
 	case "DescribeVpcPeeringConnections":
@@ -205,6 +215,8 @@ func (h *Handler) routeNetworkACLs(w http.ResponseWriter, r *http.Request, actio
 		h.describeNetworkACLs(w, r)
 	case "CreateNetworkAclEntry":
 		h.createNetworkACLEntry(w, r)
+	case "ReplaceNetworkAclEntry":
+		h.replaceNetworkACLEntry(w, r)
 	case "DeleteNetworkAclEntry":
 		h.deleteNetworkACLEntry(w, r)
 	default:
@@ -244,7 +256,6 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateAutoScalingGroup":
@@ -272,8 +283,6 @@ func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, actio
 
 // routeInstances dispatches instance-lifecycle actions backed by the compute
 // driver. Returns true if the action was handled.
-//
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "RunInstances":
@@ -290,6 +299,8 @@ func (h *Handler) routeInstances(w http.ResponseWriter, r *http.Request, action 
 		h.terminateInstances(w, r)
 	case "ModifyInstanceAttribute":
 		h.modifyInstanceAttribute(w, r)
+	case "DescribeInstanceAttribute":
+		h.describeInstanceAttribute(w, r)
 	case "GetConsoleOutput":
 		h.getConsoleOutput(w, r)
 	default:
@@ -311,6 +322,8 @@ func (h *Handler) routeVolumes(w http.ResponseWriter, r *http.Request, action st
 		h.attachVolume(w, r)
 	case "DetachVolume":
 		h.detachVolume(w, r)
+	case "DescribeVolumeStatus":
+		h.describeVolumeStatus(w, r)
 	default:
 		return false
 	}
@@ -396,6 +409,8 @@ func (h *Handler) routeVPCSubnet(w http.ResponseWriter, r *http.Request, action 
 		h.deleteSubnet(w, r)
 	case "DescribeSubnets":
 		h.describeSubnets(w, r)
+	case "ModifySubnetAttribute":
+		h.modifySubnetAttribute(w, r)
 	default:
 		return false
 	}
@@ -480,7 +495,7 @@ func (h *Handler) routeVPCRouteTable(w http.ResponseWriter, r *http.Request, act
 // VPC ops should use writeErrWithNotFound to emit resource-specific codes like
 // "InvalidVpcID.NotFound" or "InvalidSubnetID.NotFound".
 func writeErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidInstanceID.NotFound", "IncorrectInstanceState")
+	writeErrWithNotFound(w, err, codeInvalidInstanceID, "IncorrectInstanceState")
 }
 
 // writeErrWithNotFound writes an error with caller-supplied NotFound and

@@ -325,21 +325,24 @@ func TestToDriverFiltersNilForEmpty(t *testing.T) {
 	}
 }
 
-func TestStateChanges(t *testing.T) {
+func TestStateChangesFrom(t *testing.T) {
 	cur := instanceState{Code: stateCodeStopping, Name: "stopping"}
-	prev := instanceState{Code: stateCodeRunning, Name: "running"}
+	prev := map[string]instanceState{
+		"i-1": {Code: stateCodeRunning, Name: "running"},
+		"i-2": {Code: stateCodeStopped, Name: "stopped"},
+	}
 
-	got := stateChanges([]string{"i-1", "i-2"}, cur, prev)
+	got := stateChangesFrom([]string{"i-1", "i-2"}, prev, cur)
 
 	if len(got) != 2 {
 		t.Fatalf("len=%d want 2", len(got))
 	}
 
-	if got[0].InstanceID != "i-1" || got[0].CurrentState != cur || got[0].PreviousState != prev {
+	if got[0].InstanceID != "i-1" || got[0].CurrentState != cur || got[0].PreviousState != prev["i-1"] {
 		t.Errorf("i-1 wrong: %+v", got[0])
 	}
 
-	if got[1].InstanceID != "i-2" {
+	if got[1].InstanceID != "i-2" || got[1].PreviousState != prev["i-2"] {
 		t.Errorf("i-2 wrong: %+v", got[1])
 	}
 }

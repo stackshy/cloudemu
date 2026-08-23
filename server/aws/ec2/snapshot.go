@@ -13,8 +13,11 @@ type snapshotXML struct {
 	VolumeID    string    `xml:"volumeId"`
 	State       string    `xml:"status"`
 	StartTime   string    `xml:"startTime,omitempty"`
+	Progress    string    `xml:"progress,omitempty"`
+	OwnerID     string    `xml:"ownerId,omitempty"`
 	Description string    `xml:"description,omitempty"`
 	VolumeSize  int       `xml:"volumeSize"`
+	Encrypted   bool      `xml:"encrypted"`
 	Tags        []tagItem `xml:"tagSet>item,omitempty"`
 }
 
@@ -34,6 +37,13 @@ type describeSnapshotsResponseXML struct {
 
 type deleteSnapshotResponseXML struct {
 	XMLName   xml.Name `xml:"DeleteSnapshotResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+type modifySnapshotAttributeResponseXML struct {
+	XMLName   xml.Name `xml:"ModifySnapshotAttributeResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
@@ -73,9 +83,15 @@ func (h *Handler) deleteSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // per-resource describe pattern; siblings in vpc/subnet/sg/igw/route_table/volume/keypair
+//nolint:dupl // per-resource describe+filter pattern; siblings in volume/image
 func (h *Handler) describeSnapshots(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "SnapshotId")
+	filters := awsquery.Filters(r.Form)
+
+	if err := validateSnapshotFilters(filters); err != nil {
+		writeSnapshotErr(w, err)
+		return
+	}
 
 	snaps, err := h.compute.DescribeSnapshots(r.Context(), ids)
 	if err != nil {
@@ -84,14 +100,83 @@ func (h *Handler) describeSnapshots(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]snapshotXML, 0, len(snaps))
+
 	for i := range snaps {
-		out = append(out, toSnapshotXML(&snaps[i]))
+		if snapshotMatchesFilters(&snaps[i], filters) {
+			out = append(out, toSnapshotXML(&snaps[i]))
+		}
 	}
 
 	awsquery.WriteXMLResponse(w, describeSnapshotsResponseXML{
 		Xmlns:       awsquery.Namespace,
 		RequestID:   awsquery.RequestID,
 		SnapshotSet: out,
+	})
+}
+
+func validateSnapshotFilters(filters []awsquery.Filter) error {
+	for _, f := range filters {
+		if isStorageTagFilter(f.Name) {
+			continue
+		}
+
+		switch f.Name {
+		case filterSnapshotID, filterVolumeID, filterStatus, filterOwnerID, filterEncrypted, filterDescription:
+		default:
+			return newInvalidParameterErr("The filter '" + f.Name + "' is invalid")
+		}
+	}
+
+	return nil
+}
+
+func snapshotMatchesFilters(s *computedriver.SnapshotInfo, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if !snapshotMatchesFilter(s, f) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func snapshotMatchesFilter(s *computedriver.SnapshotInfo, f awsquery.Filter) bool {
+	if matched, isTag := matchStorageTagFilter(s.Tags, f); isTag {
+		return matched
+	}
+
+	switch f.Name {
+	case filterSnapshotID:
+		return containsString(f.Values, s.ID)
+	case filterVolumeID:
+		return containsString(f.Values, s.VolumeID)
+	case filterStatus:
+		return containsString(f.Values, nonEmpty(s.State, "completed"))
+	case filterOwnerID:
+		return containsString(f.Values, s.OwnerID)
+	case filterEncrypted:
+		return containsString(f.Values, boolFilterValue(s.Encrypted))
+	case filterDescription:
+		return containsString(f.Values, s.Description)
+	default:
+		return false
+	}
+}
+
+// modifySnapshotAttribute accepts createVolumePermission / productCode changes.
+// The emulator does not model snapshot sharing, so it acknowledges the request
+// without persisting the attribute (Terraform's aws_snapshot_create_volume_
+// permission only needs the 200).
+func (h *Handler) modifySnapshotAttribute(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.compute.DescribeSnapshots(r.Context(), []string{r.Form.Get("SnapshotId")}); err != nil {
+		writeSnapshotErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifySnapshotAttributeResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
 	})
 }
 
@@ -106,8 +191,11 @@ func toSnapshotXML(s *computedriver.SnapshotInfo) snapshotXML {
 		VolumeID:    s.VolumeID,
 		State:       state,
 		StartTime:   s.CreatedAt,
+		Progress:    s.Progress,
+		OwnerID:     s.OwnerID,
 		Description: s.Description,
 		VolumeSize:  s.Size,
+		Encrypted:   s.Encrypted,
 		Tags:        toTagItems(s.Tags),
 	}
 }

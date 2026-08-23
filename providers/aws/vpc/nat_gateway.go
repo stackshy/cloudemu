@@ -8,20 +8,27 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
-// NAT gateway state constants.
+// NAT gateway state and connectivity constants.
 const (
 	NATStateAvailable = "available"
 	NATStateDeleted   = "deleted"
+
+	natConnectivityPublic  = "public"
+	natConnectivityPrivate = "private"
 )
 
 type natGatewayData struct {
-	ID        string
-	SubnetID  string
-	VPCID     string
-	PublicIP  string
-	State     string
-	CreatedAt string
-	Tags      map[string]string
+	ID                 string
+	SubnetID           string
+	VPCID              string
+	PublicIP           string
+	PrivateIP          string
+	AllocationID       string
+	NetworkInterfaceID string
+	ConnectivityType   string
+	State              string
+	CreatedAt          string
+	Tags               map[string]string
 }
 
 // CreateNATGateway creates a NAT gateway in the specified subnet.
@@ -36,20 +43,34 @@ func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) 
 	}
 
 	id := idgen.GenerateID("nat-")
-	nat := &natGatewayData{
-		ID:        id,
-		SubnetID:  cfg.SubnetID,
-		VPCID:     subnet.VPCID,
-		PublicIP:  mockPublicIP(id),
-		State:     NATStateAvailable,
-		CreatedAt: m.opts.Clock.Now().Format(timeFormat),
-		Tags:      copyTags(cfg.Tags),
-	}
-	m.natGateways.Set(id, nat)
 
 	// A real NAT gateway occupies an ENI in its subnet for as long as it
 	// lives, and that ENI is what refuses a VPC delete issued too early.
-	m.attachManagedENI(subnet.VPCID, cfg.SubnetID, natENIDescription(id))
+	eni := m.attachManagedENI(subnet.VPCID, cfg.SubnetID, natENIDescription(id))
+
+	connectivity := natConnectivityPublic
+	if cfg.ConnectivityType == natConnectivityPrivate {
+		connectivity = natConnectivityPrivate
+	}
+
+	nat := &natGatewayData{
+		ID:                 id,
+		SubnetID:           cfg.SubnetID,
+		VPCID:              subnet.VPCID,
+		PrivateIP:          mockPublicIP(id + "-private"),
+		AllocationID:       cfg.AllocationID,
+		NetworkInterfaceID: eni.ID,
+		ConnectivityType:   connectivity,
+		State:              NATStateAvailable,
+		CreatedAt:          m.opts.Clock.Now().Format(timeFormat),
+		Tags:               copyTags(cfg.Tags),
+	}
+	// A private NAT gateway has no public/Elastic IP address.
+	if connectivity == natConnectivityPublic {
+		nat.PublicIP = mockPublicIP(id)
+	}
+
+	m.natGateways.Set(id, nat)
 
 	info := toNATGatewayInfo(nat)
 
@@ -78,12 +99,16 @@ func (m *Mock) DescribeNATGateways(_ context.Context, ids []string) ([]driver.NA
 
 func toNATGatewayInfo(n *natGatewayData) driver.NATGateway {
 	return driver.NATGateway{
-		ID:        n.ID,
-		SubnetID:  n.SubnetID,
-		VPCID:     n.VPCID,
-		PublicIP:  n.PublicIP,
-		State:     n.State,
-		CreatedAt: n.CreatedAt,
-		Tags:      copyTags(n.Tags),
+		ID:                 n.ID,
+		SubnetID:           n.SubnetID,
+		VPCID:              n.VPCID,
+		PublicIP:           n.PublicIP,
+		PrivateIP:          n.PrivateIP,
+		AllocationID:       n.AllocationID,
+		NetworkInterfaceID: n.NetworkInterfaceID,
+		ConnectivityType:   n.ConnectivityType,
+		State:              n.State,
+		CreatedAt:          n.CreatedAt,
+		Tags:               copyTags(n.Tags),
 	}
 }
