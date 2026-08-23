@@ -24,6 +24,7 @@ type UserInfo struct {
 type RoleConfig struct {
 	Name                string
 	Path                string
+	Description         string
 	AssumeRolePolicyDoc string
 	MaxSessionDuration  int
 	Tags                map[string]string
@@ -35,6 +36,7 @@ type RoleInfo struct {
 	ID                  string
 	ARN                 string
 	Path                string
+	Description         string
 	AssumeRolePolicyDoc string
 	MaxSessionDuration  int
 	CreatedAt           string

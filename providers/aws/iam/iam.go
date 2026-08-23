@@ -55,6 +55,7 @@ type roleData struct {
 	ID                  string
 	ARN                 string
 	Path                string
+	Description         string
 	AssumeRolePolicyDoc string
 	MaxSessionDuration  int
 	CreatedAt           string
@@ -211,6 +212,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 		ID:                  id,
 		ARN:                 arn,
 		Path:                path,
+		Description:         cfg.Description,
 		AssumeRolePolicyDoc: cfg.AssumeRolePolicyDoc,
 		MaxSessionDuration:  maxSession,
 		CreatedAt:           m.opts.Clock.Now().UTC().Format(timeFormat),
@@ -223,15 +225,30 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 	return &info, nil
 }
 
-// DeleteRole deletes the IAM role with the given name.
+// DeleteRole deletes the IAM role with the given name. Like real IAM, it
+// refuses (DeleteConflict) while managed policies are still attached or inline
+// policies still exist — the caller must detach/delete them first.
 func (m *Mock) DeleteRole(_ context.Context, name string) error {
-	if !m.roles.Delete(name) {
+	role, ok := m.roles.Get(name)
+	if !ok {
 		return errors.Newf(errors.NotFound, "role %q not found", name)
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.rolePolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete role %q: managed policies are still attached (detach them first)", name)
+	}
+
+	if len(role.inlinePolicies) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete role %q: inline policies still exist (delete them first)", name)
+	}
+
+	m.roles.Delete(name)
 	delete(m.rolePolicies, name)
-	m.mu.Unlock()
 
 	return nil
 }
@@ -1203,6 +1220,7 @@ func toRoleInfo(r *roleData) driver.RoleInfo {
 		ID:                  r.ID,
 		ARN:                 r.ARN,
 		Path:                r.Path,
+		Description:         r.Description,
 		AssumeRolePolicyDoc: r.AssumeRolePolicyDoc,
 		MaxSessionDuration:  r.MaxSessionDuration,
 		CreatedAt:           r.CreatedAt,
