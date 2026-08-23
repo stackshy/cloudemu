@@ -387,7 +387,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	}
 
 	bkt.versionsMu.Lock()
-	_, _, existed := m.deleteTopLevelLocked(bkt, key)
+	vid, deleteMarker, existed := m.deleteTopLevelLocked(bkt, key)
 	bkt.versionsMu.Unlock()
 
 	// On an unversioned bucket, deleting a missing key is NotFound (the wire
@@ -397,10 +397,15 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
 
-	// Remove the current-namespace bytes from the engine. A versioned bucket only
-	// stamps a delete marker (prior versions keep their bytes), so this is an
-	// idempotent no-op there.
-	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
+	// Purge the removed object's bytes from the engine, keyed by the version that
+	// held them: unversioned (vid "", deleteMarker false) and suspended (vid
+	// "null", replacing the null object) both remove real bytes; Enabled only
+	// appends a delete marker (a real new vid) while prior versions keep their
+	// bytes, so it is skipped. Best-effort — the in-memory delete already
+	// succeeded and byte cleanup must not fail an idempotent delete.
+	if !deleteMarker || vid == nullVersionID {
+		_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key, Version: vid})
+	}
 
 	dims := map[string]string{"BucketName": bucket}
 	m.emitMetric("AllRequests", 1, "Count", dims)

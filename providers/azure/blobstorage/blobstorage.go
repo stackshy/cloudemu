@@ -312,9 +312,9 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 
 	ctr.objects.Delete(key)
 
-	if err := storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key}); err != nil {
-		return err
-	}
+	// Best-effort byte purge — the in-memory delete already succeeded, so a
+	// backing cleanup failure must not fail an idempotent object delete.
+	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
 
