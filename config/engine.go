@@ -12,7 +12,7 @@ import (
 // empty for the in-memory default. Engine Close implementations are idempotent,
 // so an engine wired into more than one slot closing twice is harmless.
 func (o *Options) EngineClosers() []io.Closer {
-	engines := []any{o.DatabaseEngine, o.CacheEngine, o.FunctionEngine, o.ComputeEngine, o.ContainerEngine}
+	engines := []any{o.DatabaseEngine, o.CacheEngine, o.FunctionEngine, o.ComputeEngine, o.ContainerEngine, o.StorageEngine}
 
 	var closers []io.Closer
 
@@ -229,4 +229,49 @@ type ExecResult struct {
 	Stdout   string
 	Stderr   string
 	ExitCode int
+}
+
+// StorageEngine optionally persists object-storage bytes to a real backing
+// (e.g. a real filesystem or a MinIO server) so objects survive process
+// restart and can be inspected by external tools. When nil — the default —
+// object bytes live only in-memory. Unlike DatabaseEngine/CacheEngine (which
+// hand back a host:port a client dials), objects are always served through the
+// emulator itself, so the engine is a byte store: Put on write, Get on read,
+// Delete/Copy to mirror the object lifecycle. The in-memory Mock keeps the
+// object's metadata (ETag, versioning, tags, multipart state); the engine holds
+// only the bytes. Implementations live outside the core module (contrib/) so
+// the core carries no storage-backing dependency — a pluggable capability.
+type StorageEngine interface {
+	// Put stores the object's bytes. Called on write (PutObject, CopyObject,
+	// CompleteMultipartUpload, and each stored version).
+	Put(ctx context.Context, obj StorageObject) error
+
+	// Get returns the object's bytes. It reports a not-found error when the
+	// reference is absent (the caller has already validated metadata).
+	Get(ctx context.Context, ref StorageRef) (StorageObject, error)
+
+	// Delete removes the object's bytes. It is a no-op when the reference is
+	// absent, matching idempotent object deletion.
+	Delete(ctx context.Context, ref StorageRef) error
+
+	// Copy duplicates src's bytes to dst server-side (the CopyObject analog).
+	Copy(ctx context.Context, dst, src StorageRef) error
+}
+
+// StorageObject is an object's bytes plus the metadata a backing may persist
+// alongside them. Version is empty for the current (unversioned) object.
+type StorageObject struct {
+	Bucket      string
+	Key         string
+	Version     string
+	Data        []byte
+	ContentType string
+	Metadata    map[string]string
+}
+
+// StorageRef identifies one object (or object version) in the store.
+type StorageRef struct {
+	Bucket  string
+	Key     string
+	Version string
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/storageengine"
 )
 
 const (
@@ -35,6 +36,7 @@ var _ driver.Bucket = (*Mock)(nil)
 type blobObject struct {
 	Key          string
 	Data         []byte
+	Size         int64
 	ContentType  string
 	ETag         string
 	LastModified string
@@ -208,32 +210,47 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	return result, nil
 }
 
-// PutObject stores a blob in a container.
-func (m *Mock) PutObject(_ context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
+// PutObject stores a blob in a container. When a real StorageEngine is wired the
+// bytes flow through it and the in-memory object holds metadata only (Data nil).
+func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
-	dataCopy := make([]byte, len(data))
-	copy(dataCopy, data)
+	size := int64(len(data))
+	meta := maps.Clone(metadata)
 
-	ctr.objects.Set(key, &blobObject{
+	obj := &blobObject{
 		Key:          key,
-		Data:         dataCopy,
+		Size:         size,
 		ContentType:  contentType,
 		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified: m.opts.Clock.Now().UTC().Format(blobTimeFormat),
-		Metadata:     maps.Clone(metadata),
-	})
+		Metadata:     meta,
+	}
 
-	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(len(data))})
+	if m.opts.StorageEngine != nil {
+		if err := storageengine.Put(ctx, m.opts.StorageEngine, config.StorageObject{
+			Bucket: bucket, Key: key, Data: data, ContentType: contentType, Metadata: meta,
+		}); err != nil {
+			return err
+		}
+	} else {
+		dataCopy := make([]byte, len(data))
+		copy(dataCopy, data)
+		obj.Data = dataCopy
+	}
+
+	ctr.objects.Set(key, obj)
+
+	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
 
 	return nil
 }
 
 // GetObject retrieves a blob from a container.
-func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object, error) {
+func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Object, error) {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
@@ -244,22 +261,46 @@ func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object,
 		return nil, cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
 	}
 
-	dataCopy := make([]byte, len(obj.Data))
-	copy(dataCopy, obj.Data)
+	data, err := m.loadObjectData(ctx, bucket, obj)
+	if err != nil {
+		return nil, err
+	}
 
-	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Egress": float64(len(obj.Data))})
+	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Egress": float64(obj.Size)})
 
 	return &driver.Object{
 		Info: driver.ObjectInfo{
-			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		},
-		Data: dataCopy,
+		Data: data,
 	}, nil
 }
 
+// loadObjectData returns the object's bytes: from the wired StorageEngine when
+// one is configured and the in-memory copy was dropped (Data nil), otherwise a
+// copy of the in-memory bytes. Azure has a flat versioning flag with no version
+// history, so the engine reference carries no version.
+func (m *Mock) loadObjectData(ctx context.Context, bucket string, obj *blobObject) ([]byte, error) {
+	if m.opts.StorageEngine != nil && obj.Data == nil {
+		data, ok, err := storageengine.Get(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: obj.Key})
+		if err != nil {
+			return nil, err
+		}
+
+		if ok {
+			return data, nil
+		}
+	}
+
+	dataCopy := make([]byte, len(obj.Data))
+	copy(dataCopy, obj.Data)
+
+	return dataCopy, nil
+}
+
 // DeleteObject deletes a blob from a container.
-func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
+func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
@@ -270,6 +311,10 @@ func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
 	}
 
 	ctr.objects.Delete(key)
+
+	// Best-effort byte purge — the in-memory delete already succeeded, so a
+	// backing cleanup failure must not fail an idempotent object delete.
+	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1})
 
@@ -289,7 +334,7 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	}
 
 	return &driver.ObjectInfo{
-		Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 	}, nil
 }
@@ -329,7 +374,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		}
 
 		matchedObjects = append(matchedObjects, driver.ObjectInfo{
-			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
 		})
 	}
@@ -368,7 +413,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 }
 
 // CopyObject copies a blob from one location to another.
-func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src driver.CopySource) error {
+func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
 	srcCtr, ok := m.containers.Get(src.Bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "source container %q not found", src.Bucket)
@@ -384,19 +429,30 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 		return cerrors.Newf(cerrors.NotFound, "destination container %q not found", dstBucket)
 	}
 
-	dataCopy := make([]byte, len(srcObj.Data))
-	copy(dataCopy, srcObj.Data)
-
 	meta := make(map[string]string, len(srcObj.Metadata))
 	for k, v := range srcObj.Metadata {
 		meta[k] = v
 	}
 
-	dstCtr.objects.Set(dstKey, &blobObject{
-		Key: dstKey, Data: dataCopy, ContentType: srcObj.ContentType,
+	dstObj := &blobObject{
+		Key: dstKey, Size: srcObj.Size, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(blobTimeFormat),
 		Metadata: meta,
-	})
+	}
+
+	if m.opts.StorageEngine != nil {
+		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
+			config.StorageRef{Bucket: dstBucket, Key: dstKey},
+			config.StorageRef{Bucket: src.Bucket, Key: src.Key}); err != nil {
+			return err
+		}
+	} else {
+		dataCopy := make([]byte, len(srcObj.Data))
+		copy(dataCopy, srcObj.Data)
+		dstObj.Data = dataCopy
+	}
+
+	dstCtr.objects.Set(dstKey, dstObj)
 
 	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})
 
@@ -609,7 +665,7 @@ func (m *Mock) ListParts(_ context.Context, bucket, _, uploadID string) ([]drive
 }
 
 func (m *Mock) CompleteMultipartUpload(
-	_ context.Context, bucket, key, uploadID string, parts []driver.UploadPart,
+	ctx context.Context, bucket, key, uploadID string, parts []driver.UploadPart,
 ) error {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {
@@ -631,18 +687,32 @@ func (m *Mock) CompleteMultipartUpload(
 	data := assembleBlobPartsInOrder(mp.parts, parts)
 	mp.mu.Unlock()
 
-	ctr.objects.Set(key, &blobObject{
+	size := int64(len(data))
+
+	obj := &blobObject{
 		Key:          key,
-		Data:         data,
+		Size:         size,
 		ContentType:  mp.contentType,
 		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified: m.opts.Clock.Now().UTC().Format(blobTimeFormat),
 		Metadata:     make(map[string]string),
-	})
+	}
+
+	if m.opts.StorageEngine != nil {
+		if err := storageengine.Put(ctx, m.opts.StorageEngine, config.StorageObject{
+			Bucket: bucket, Key: key, Data: data, ContentType: mp.contentType,
+		}); err != nil {
+			return err
+		}
+	} else {
+		obj.Data = data
+	}
+
+	ctr.objects.Set(key, obj)
 
 	ctr.multiparts.Delete(uploadID)
 
-	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(len(data))})
+	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
 
 	return nil
 }
