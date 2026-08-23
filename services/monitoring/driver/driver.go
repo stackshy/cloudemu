@@ -12,6 +12,7 @@ import (
 type MetricIdentifier struct {
 	Namespace  string
 	MetricName string
+	Dimensions map[string]string
 }
 
 // MetricDatum is a single metric data point.
@@ -39,6 +40,7 @@ type GetMetricInput struct {
 type MetricDataResult struct {
 	Timestamps []time.Time
 	Values     []float64
+	Unit       string // the unit stored with the underlying datapoints, if any
 }
 
 // AlarmConfig describes an alarm to create.
@@ -55,16 +57,31 @@ type AlarmConfig struct {
 	AlarmActions            []string // channel IDs to notify on ALARM
 	OKActions               []string // channel IDs to notify on OK
 	InsufficientDataActions []string // channel IDs to notify on INSUFFICIENT_DATA
+	AlarmDescription        string
+	ActionsEnabled          *bool // nil defaults to true (AWS semantics)
+	Tags                    map[string]string
 }
 
 // AlarmInfo describes an alarm.
 type AlarmInfo struct {
-	Name               string
-	Namespace          string
-	MetricName         string
-	State              string // "OK", "ALARM", "INSUFFICIENT_DATA"
-	ComparisonOperator string
-	Threshold          float64
+	Name                    string
+	Namespace               string
+	MetricName              string
+	State                   string // "OK", "ALARM", "INSUFFICIENT_DATA"
+	ComparisonOperator      string
+	Threshold               float64
+	StateReason             string
+	StateUpdatedTimestamp   time.Time
+	Period                  int
+	EvaluationPeriods       int
+	Statistic               string
+	ActionsEnabled          bool
+	AlarmActions            []string
+	OKActions               []string
+	InsufficientDataActions []string
+	AlarmDescription        string
+	AlarmArn                string
+	Dimensions              map[string]string
 }
 
 // NotificationChannelConfig describes a notification channel.
