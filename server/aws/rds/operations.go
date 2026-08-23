@@ -139,7 +139,6 @@ func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // shape mirrors deleteDBCluster but operates on instances.
 func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBInstanceIdentifier")
 
@@ -156,6 +155,26 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 
 	last := insts[0]
 	last.State = rdsdriver.StateDeleting
+
+	// A standalone instance takes a final snapshot unless SkipFinalSnapshot is
+	// set. When a final snapshot is requested, FinalDBSnapshotIdentifier is
+	// mandatory (InvalidParameterCombination otherwise). Cluster members carry no
+	// final-snapshot semantics — that belongs to DeleteDBCluster.
+	if last.ClusterID == "" && !formBool(r.Form.Get("SkipFinalSnapshot")) {
+		finalID := r.Form.Get("FinalDBSnapshotIdentifier")
+		if finalID == "" {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+				"FinalDBSnapshotIdentifier is required unless SkipFinalSnapshot is true")
+
+			return
+		}
+
+		if _, err := h.db.CreateSnapshot(r.Context(),
+			rdsdriver.SnapshotConfig{ID: finalID, InstanceID: id}); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
 
 	if err := h.db.DeleteInstance(r.Context(), id); err != nil {
 		writeErr(w, err)
@@ -317,7 +336,6 @@ func (h *Handler) modifyDBCluster(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // shape mirrors deleteDBInstance but operates on clusters.
 func (h *Handler) deleteDBCluster(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBClusterIdentifier")
 
@@ -452,6 +470,7 @@ func (h *Handler) describeDBSnapshots(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // shape mirrors deleteDBClusterSnapshot but operates on instance snapshots.
 func (h *Handler) deleteDBSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBSnapshotIdentifier")
 
@@ -550,6 +569,7 @@ func (h *Handler) describeDBClusterSnapshots(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+//nolint:dupl // shape mirrors deleteDBSnapshot but operates on cluster snapshots.
 func (h *Handler) deleteDBClusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("DBClusterSnapshotIdentifier")
 
