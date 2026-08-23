@@ -25,6 +25,7 @@ type RoleConfig struct {
 	Name                string
 	Path                string
 	AssumeRolePolicyDoc string
+	MaxSessionDuration  int
 	Tags                map[string]string
 }
 
@@ -35,6 +36,8 @@ type RoleInfo struct {
 	ARN                 string
 	Path                string
 	AssumeRolePolicyDoc string
+	MaxSessionDuration  int
+	CreatedAt           string
 	Tags                map[string]string
 }
 

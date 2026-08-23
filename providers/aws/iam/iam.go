@@ -17,6 +17,10 @@ import (
 
 const timeFormat = "2006-01-02T15:04:05Z"
 
+// defaultMaxSessionDuration is the AWS default (1 hour) for a role's session
+// duration when the create request does not specify one.
+const defaultMaxSessionDuration = 3600
+
 // Compile-time check that Mock implements driver.IAM.
 var _ driver.IAM = (*Mock)(nil)
 
@@ -52,6 +56,8 @@ type roleData struct {
 	ARN                 string
 	Path                string
 	AssumeRolePolicyDoc string
+	MaxSessionDuration  int
+	CreatedAt           string
 	Tags                map[string]string
 	inlinePolicies      map[string]string // policyName -> policy document JSON
 }
@@ -195,12 +201,19 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "role/"+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
+	maxSession := cfg.MaxSessionDuration
+	if maxSession == 0 {
+		maxSession = defaultMaxSessionDuration // AWS default when unspecified
+	}
+
 	r := &roleData{
 		Name:                cfg.Name,
 		ID:                  id,
 		ARN:                 arn,
 		Path:                path,
 		AssumeRolePolicyDoc: cfg.AssumeRolePolicyDoc,
+		MaxSessionDuration:  maxSession,
+		CreatedAt:           m.opts.Clock.Now().UTC().Format(timeFormat),
 		Tags:                tags,
 	}
 	m.roles.Set(cfg.Name, r)
@@ -1191,6 +1204,8 @@ func toRoleInfo(r *roleData) driver.RoleInfo {
 		ARN:                 r.ARN,
 		Path:                r.Path,
 		AssumeRolePolicyDoc: r.AssumeRolePolicyDoc,
+		MaxSessionDuration:  r.MaxSessionDuration,
+		CreatedAt:           r.CreatedAt,
 		Tags:                copyTags(r.Tags),
 	}
 }

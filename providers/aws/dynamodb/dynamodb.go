@@ -11,6 +11,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
@@ -97,6 +98,9 @@ func (m *Mock) CreateTable(_ context.Context, cfg driver.TableConfig) error {
 	if _, exists := m.tables[cfg.Name]; exists {
 		return cerrors.Newf(cerrors.AlreadyExists, "table %s already exists", cfg.Name)
 	}
+
+	cfg.TableArn = idgen.AWSARN("dynamodb", m.opts.Region, m.opts.AccountID, "table/"+cfg.Name)
+	cfg.CreatedAtUnix = float64(m.opts.Clock.Now().Unix())
 
 	m.tables[cfg.Name] = &tableData{config: cfg, items: memstore.New[map[string]any]()}
 

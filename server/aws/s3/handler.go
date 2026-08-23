@@ -155,6 +155,14 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 		return
 	}
 
+	// Read-only bucket configuration sub-resources (policy, cors, encryption,
+	// location, …) that IaC clients read after create; without these the request
+	// would fall through to ListObjects and the client fails to parse it.
+	if sub := configSubresourceKey(q); sub != "" {
+		h.bucketConfigOp(w, r, sub)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createBucket(w, r, bucket)
