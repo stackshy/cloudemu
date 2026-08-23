@@ -1269,11 +1269,13 @@ func TestEC2AuthorizeEgress(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// A new SG already carries the default allow-all egress rule, so add a
+	// distinct rule (real AWS rejects re-adding the default as a duplicate).
 	_, err = client.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{
 		GroupId: sg.GroupId,
 		IpPermissions: []ec2types.IpPermission{{
-			IpProtocol: aws.String("-1"), FromPort: aws.Int32(0), ToPort: aws.Int32(0),
-			IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+			IpProtocol: aws.String("tcp"), FromPort: aws.Int32(443), ToPort: aws.Int32(443),
+			IpRanges: []ec2types.IpRange{{CidrIp: aws.String("10.0.0.0/16")}},
 		}},
 	})
 	require.NoError(t, err)
@@ -1282,7 +1284,7 @@ func TestEC2AuthorizeEgress(t *testing.T) {
 		GroupIds: []string{aws.ToString(sg.GroupId)},
 	})
 	require.NoError(t, err)
-	assert.Len(t, desc.SecurityGroups[0].IpPermissionsEgress, 1)
+	assert.Len(t, desc.SecurityGroups[0].IpPermissionsEgress, 2)
 }
 
 func TestEC2DeleteSecurityGroup(t *testing.T) {

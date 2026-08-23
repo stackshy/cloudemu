@@ -50,6 +50,13 @@ func (m *Mock) AssociateDHCPOptions(_ context.Context, dhcpOptionsID, vpcID stri
 		return errors.Newf(errors.NotFound, "dhcp options %q not found", dhcpOptionsID)
 	}
 
+	// Persist the association so DescribeVpcs reflects it. "default" resets the
+	// VPC to the Amazon-provided set.
+	m.vpcs.Update(vpcID, func(v *vpcData) *vpcData {
+		v.DhcpOptionsID = dhcpOptionsID
+		return v
+	})
+
 	return nil
 }
 

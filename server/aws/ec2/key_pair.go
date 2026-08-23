@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -15,6 +16,7 @@ type keyPairSummaryXML struct {
 	KeyName        string    `xml:"keyName"`
 	KeyFingerprint string    `xml:"keyFingerprint"`
 	KeyType        string    `xml:"keyType,omitempty"`
+	CreateTime     string    `xml:"createTime,omitempty"`
 	Tags           []tagItem `xml:"tagSet>item,omitempty"`
 }
 
@@ -110,10 +112,19 @@ func toKeyPairSummaryXML(kp *computedriver.KeyPairInfo) keyPairSummaryXML {
 		KeyName:        kp.Name,
 		KeyFingerprint: kp.Fingerprint,
 		KeyType:        kp.KeyType,
+		CreateTime:     kp.CreatedAt,
 		Tags:           toTagItems(kp.Tags),
 	}
 }
 
+// writeKeyPairErr maps a duplicate create to the EC2-specific
+// InvalidKeyPair.Duplicate code (the SDK's DuplicateKeyPair error) rather than
+// the generic ResourceAlreadyExists; other codes use the shared mapping.
 func writeKeyPairErr(w http.ResponseWriter, err error) {
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidKeyPair.Duplicate", err.Error())
+		return
+	}
+
 	writeErrWithNotFound(w, err, "InvalidKeyPair.NotFound", "IncorrectState")
 }

@@ -8,15 +8,31 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
+type imageBlockDeviceMappingXML struct {
+	DeviceName          string `xml:"deviceName"`
+	SnapshotID          string `xml:"ebs>snapshotId"`
+	VolumeSize          int    `xml:"ebs>volumeSize"`
+	VolumeType          string `xml:"ebs>volumeType"`
+	DeleteOnTermination bool   `xml:"ebs>deleteOnTermination"`
+}
+
 type imageXML struct {
-	ImageID      string    `xml:"imageId"`
-	State        string    `xml:"imageState"`
-	Name         string    `xml:"name,omitempty"`
-	Description  string    `xml:"description,omitempty"`
-	CreationDate string    `xml:"creationDate,omitempty"`
-	Architecture string    `xml:"architecture"`
-	Public       bool      `xml:"isPublic"`
-	Tags         []tagItem `xml:"tagSet>item,omitempty"`
+	ImageID             string                       `xml:"imageId"`
+	State               string                       `xml:"imageState"`
+	OwnerID             string                       `xml:"imageOwnerId,omitempty"`
+	Name                string                       `xml:"name,omitempty"`
+	Description         string                       `xml:"description,omitempty"`
+	CreationDate        string                       `xml:"creationDate,omitempty"`
+	Architecture        string                       `xml:"architecture"`
+	ImageType           string                       `xml:"imageType,omitempty"`
+	Public              bool                         `xml:"isPublic"`
+	RootDeviceType      string                       `xml:"rootDeviceType,omitempty"`
+	RootDeviceName      string                       `xml:"rootDeviceName,omitempty"`
+	VirtualizationType  string                       `xml:"virtualizationType,omitempty"`
+	Hypervisor          string                       `xml:"hypervisor,omitempty"`
+	PlatformDetails     string                       `xml:"platformDetails,omitempty"`
+	BlockDeviceMappings []imageBlockDeviceMappingXML `xml:"blockDeviceMapping>item,omitempty"`
+	Tags                []tagItem                    `xml:"tagSet>item,omitempty"`
 }
 
 type createImageResponseXML struct {
@@ -74,9 +90,15 @@ func (h *Handler) deregisterImage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // per-resource describe pattern; siblings in vpc/subnet/sg/igw/route_table/volume/keypair/snapshot
+//nolint:dupl // per-resource describe+filter pattern; siblings in volume/snapshot
 func (h *Handler) describeImages(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "ImageId")
+	filters := awsquery.Filters(r.Form)
+
+	if err := validateImageFilters(filters); err != nil {
+		writeImageErr(w, err)
+		return
+	}
 
 	imgs, err := h.compute.DescribeImages(r.Context(), ids)
 	if err != nil {
@@ -85,8 +107,11 @@ func (h *Handler) describeImages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]imageXML, 0, len(imgs))
+
 	for i := range imgs {
-		out = append(out, toImageXML(&imgs[i]))
+		if imageMatchesFilters(&imgs[i], filters) {
+			out = append(out, toImageXML(&imgs[i]))
+		}
 	}
 
 	awsquery.WriteXMLResponse(w, describeImagesResponseXML{
@@ -96,21 +121,143 @@ func (h *Handler) describeImages(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func validateImageFilters(filters []awsquery.Filter) error {
+	for _, f := range filters {
+		if isStorageTagFilter(f.Name) {
+			continue
+		}
+
+		switch f.Name {
+		case filterImageID, filterName, filterState, filterOwnerID, filterArchitecture,
+			filterRootDeviceType, filterVirtualizationType, filterHypervisor, filterImageType:
+		default:
+			return newInvalidParameterErr("The filter '" + f.Name + "' is invalid")
+		}
+	}
+
+	return nil
+}
+
+func imageMatchesFilters(img *computedriver.ImageInfo, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if !imageMatchesFilter(img, f) {
+			return false
+		}
+	}
+
+	return true
+}
+
+//nolint:gocyclo // flat field dispatch; one case per supported DescribeImages filter
+func imageMatchesFilter(img *computedriver.ImageInfo, f awsquery.Filter) bool {
+	if matched, isTag := matchStorageTagFilter(img.Tags, f); isTag {
+		return matched
+	}
+
+	switch f.Name {
+	case filterImageID:
+		return containsString(f.Values, img.ID)
+	case filterName:
+		return containsString(f.Values, img.Name)
+	case filterState:
+		return containsString(f.Values, nonEmpty(img.State, stateAvailable))
+	case filterOwnerID:
+		return containsString(f.Values, img.OwnerID)
+	case filterArchitecture:
+		return containsString(f.Values, nonEmpty(img.Architecture, "x86_64"))
+	case filterRootDeviceType:
+		return containsString(f.Values, img.RootDeviceType)
+	case filterVirtualizationType:
+		return containsString(f.Values, img.VirtualizationType)
+	case filterHypervisor:
+		return containsString(f.Values, img.Hypervisor)
+	case filterImageType:
+		return containsString(f.Values, img.ImageType)
+	default:
+		return false
+	}
+}
+
+type describeImageAttributeResponseXML struct {
+	XMLName   xml.Name  `xml:"DescribeImageAttributeResponse"`
+	Xmlns     string    `xml:"xmlns,attr"`
+	RequestID string    `xml:"requestId"`
+	ImageID   string    `xml:"imageId"`
+	Desc      *valueXML `xml:"description,omitempty"`
+	BootMode  *valueXML `xml:"bootMode,omitempty"`
+}
+
+type valueXML struct {
+	Value string `xml:"value"`
+}
+
+// describeImageAttribute returns a single AMI attribute. Only the attributes
+// the emulator models (description, bootMode) carry a value; others return the
+// image id with an empty attribute, matching the SDK's single-attribute shape.
+func (h *Handler) describeImageAttribute(w http.ResponseWriter, r *http.Request) {
+	id := r.Form.Get("ImageId")
+
+	imgs, err := h.compute.DescribeImages(r.Context(), []string{id})
+	if err != nil {
+		writeImageErr(w, err)
+		return
+	}
+
+	resp := describeImageAttributeResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		ImageID:   id,
+	}
+
+	switch r.Form.Get("Attribute") {
+	case filterDescription:
+		resp.Desc = &valueXML{Value: imgs[0].Description}
+	case "bootMode":
+		resp.BootMode = &valueXML{Value: ""}
+	}
+
+	awsquery.WriteXMLResponse(w, resp)
+}
+
 func toImageXML(img *computedriver.ImageInfo) imageXML {
 	state := img.State
 	if state == "" {
 		state = stateAvailable
 	}
 
+	arch := img.Architecture
+	if arch == "" {
+		arch = "x86_64"
+	}
+
+	bdms := make([]imageBlockDeviceMappingXML, 0, len(img.BlockDeviceMappings))
+	for _, b := range img.BlockDeviceMappings {
+		bdms = append(bdms, imageBlockDeviceMappingXML{
+			DeviceName:          b.DeviceName,
+			SnapshotID:          b.SnapshotID,
+			VolumeSize:          b.VolumeSize,
+			VolumeType:          b.VolumeType,
+			DeleteOnTermination: b.DeleteOnTermination,
+		})
+	}
+
 	return imageXML{
-		ImageID:      img.ID,
-		State:        state,
-		Name:         img.Name,
-		Description:  img.Description,
-		CreationDate: img.CreatedAt,
-		Architecture: "x86_64",
-		Public:       false,
-		Tags:         toTagItems(img.Tags),
+		ImageID:             img.ID,
+		State:               state,
+		OwnerID:             img.OwnerID,
+		Name:                img.Name,
+		Description:         img.Description,
+		CreationDate:        img.CreatedAt,
+		Architecture:        arch,
+		ImageType:           img.ImageType,
+		Public:              false,
+		RootDeviceType:      img.RootDeviceType,
+		RootDeviceName:      img.RootDeviceName,
+		VirtualizationType:  img.VirtualizationType,
+		Hypervisor:          img.Hypervisor,
+		PlatformDetails:     img.PlatformDetails,
+		BlockDeviceMappings: bdms,
+		Tags:                toTagItems(img.Tags),
 	}
 }
 

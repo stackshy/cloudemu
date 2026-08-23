@@ -2,8 +2,17 @@ package ec2
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1" //nolint:gosec // AWS defines RSA key-pair fingerprints as SHA-1 digests
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +39,19 @@ const (
 	// managed-resource-visibility settings.
 	visibilityHidden  = "hidden"
 	visibilityVisible = "visible"
+
+	// awsAccountID is the fixed owner account for resources this mock creates,
+	// echoed as ownerId on volumes/snapshots/images.
+	awsAccountID = "123456789012"
+	// defaultEBSKeyID is the stub KMS key id used when an encrypted volume is
+	// created without an explicit KmsKeyId (real EC2 substitutes the account's
+	// default EBS key).
+	defaultEBSKeyID = "abcd1234-a123-456a-a12b-a123b4cd56ef"
+	// imageRootDeviceSize is the default root EBS volume size (GiB) recorded in
+	// an AMI's block device mapping when created from a running instance.
+	imageRootDeviceSize = 8
+	// rsaKeyBits is the modulus size for generated RSA key pairs.
+	rsaKeyBits = 2048
 )
 
 type lifecycleTransition struct {
@@ -94,6 +116,13 @@ type instanceData struct {
 	// instance, so Terminate deprovisions it and console output is read from
 	// the engine rather than synthesized.
 	engineBacked bool
+	// disableAPITermination is the termination-protection flag set via
+	// ModifyInstanceAttribute(DisableApiTermination). When true, real EC2
+	// rejects TerminateInstances with OperationNotPermitted.
+	disableAPITermination bool
+	// sourceDestCheck mirrors the instance's source/destination check flag
+	// (default true), toggled via ModifyInstanceAttribute(SourceDestCheck).
+	sourceDestCheck bool
 }
 
 // operatorData records service-provider managed-resource ownership.
@@ -123,6 +152,7 @@ type Mock struct {
 	volCounter   atomic.Int64
 	snapCounter  atomic.Int64
 	amiCounter   atomic.Int64
+	keyCounter   atomic.Int64
 	monitoring   mondriver.Monitoring
 	// subnetResolver derives an instance's VPC from its subnet at launch, so
 	// instances created with a --subnet-id carry the VPCID that connectivity
@@ -288,7 +318,8 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 			State: compute.StatePending, PrivateIP: m.nextIP(), SubnetID: cfg.SubnetID,
 			VPCID:          m.resolveSubnetVPC(ctx, cfg.SubnetID),
 			SecurityGroups: sg, Tags: tags,
-			LaunchTime: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			LaunchTime:      m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			sourceDestCheck: true,
 		}
 
 		if cfg.Managed {
@@ -402,6 +433,15 @@ func (m *Mock) RebootInstances(ctx context.Context, instanceIDs []string) error 
 }
 
 func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) error {
+	// Termination protection: real EC2 rejects the whole call with
+	// OperationNotPermitted if any target has DisableApiTermination set.
+	for _, id := range instanceIDs {
+		if inst, ok := m.instances.Get(id); ok && inst.disableAPITermination {
+			return cerrors.Newf(cerrors.PermissionDenied,
+				"instance %q may not be terminated: termination protection is enabled", id)
+		}
+	}
+
 	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
 		return err
 	}
@@ -606,6 +646,60 @@ func (m *Mock) ModifyInstance(_ context.Context, instanceID string, input driver
 	return nil
 }
 
+// Instance-attribute names honored by SetInstanceAttribute / GetInstanceAttribute.
+// These match the ModifyInstanceAttribute / DescribeInstanceAttribute attribute
+// element names on the AWS wire.
+const (
+	attrDisableAPITermination = "disableApiTermination"
+	attrSourceDestCheck       = "sourceDestCheck"
+	attrInstanceType          = "instanceType"
+)
+
+// SetInstanceAttribute updates a single instance attribute in place. It backs
+// the AWS wire ModifyInstanceAttribute for attributes (DisableApiTermination,
+// SourceDestCheck) that real EC2 permits on a running instance and that are not
+// part of the portable Compute driver. Unlike ModifyInstance it does not
+// require the instance to be stopped.
+func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value string) error {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	b, _ := strconv.ParseBool(value)
+
+	switch name {
+	case attrDisableAPITermination:
+		inst.disableAPITermination = b
+	case attrSourceDestCheck:
+		inst.sourceDestCheck = b
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument, "unsupported instance attribute %q", name)
+	}
+
+	return nil
+}
+
+// GetInstanceAttribute reads a single instance attribute, backing the AWS wire
+// DescribeInstanceAttribute so ModifyInstanceAttribute changes are verifiable.
+func (m *Mock) GetInstanceAttribute(_ context.Context, instanceID, name string) (string, error) {
+	inst, ok := m.instances.Get(instanceID)
+	if !ok {
+		return "", cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
+	}
+
+	switch name {
+	case attrDisableAPITermination:
+		return strconv.FormatBool(inst.disableAPITermination), nil
+	case attrSourceDestCheck:
+		return strconv.FormatBool(inst.sourceDestCheck), nil
+	case attrInstanceType:
+		return inst.InstanceType, nil
+	default:
+		return "", cerrors.Newf(cerrors.InvalidArgument, "unsupported instance attribute %q", name)
+	}
+}
+
 // SetInstanceVPC sets the VPC ID on an existing instance. This is a test
 // helper since RunInstances does not automatically resolve VPC from subnet.
 func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
@@ -659,6 +753,8 @@ func (m *Mock) SetManagedResourceVisibility(v string) error {
 }
 
 // CreateVolume creates a new EBS volume.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
 	id := fmt.Sprintf("vol-%012d", m.volCounter.Add(1))
 
@@ -672,6 +768,11 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		az = m.opts.Region + "a"
 	}
 
+	kmsKeyID := cfg.KmsKeyID
+	if cfg.Encrypted && kmsKeyID == "" {
+		kmsKeyID = idgen.AWSARN("kms", m.opts.Region, awsAccountID, "key/"+defaultEBSKeyID)
+	}
+
 	vol := &driver.VolumeInfo{
 		ID:               id,
 		Size:             cfg.Size,
@@ -683,6 +784,9 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		IOPS:             cfg.IOPS,
 		Throughput:       cfg.Throughput,
 		Tier:             cfg.Tier,
+		Encrypted:        cfg.Encrypted,
+		SnapshotID:       cfg.SnapshotID,
+		KmsKeyID:         kmsKeyID,
 	}
 
 	m.volumes.Set(id, vol)
@@ -778,6 +882,9 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg driver.SnapshotConfig) (*dr
 		Size:        vol.Size,
 		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:        copyTags(cfg.Tags),
+		OwnerID:     awsAccountID,
+		Progress:    "100%",
+		Encrypted:   vol.Encrypted,
 	}
 
 	m.snapshots.Set(id, snap)
@@ -796,8 +903,15 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 	return nil
 }
 
-// DescribeSnapshots returns snapshots matching the given IDs.
+// DescribeSnapshots returns snapshots matching the given IDs. An explicit ID
+// that does not exist yields InvalidSnapshot.NotFound, matching real EC2.
 func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.SnapshotInfo, error) {
+	for _, id := range ids {
+		if !m.snapshots.Has(id) {
+			return nil, cerrors.Newf(cerrors.NotFound, "snapshot %q not found", id)
+		}
+	}
+
 	return describeResources(m.snapshots, ids), nil
 }
 
@@ -808,14 +922,43 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 	}
 
 	id := fmt.Sprintf("ami-%012d", m.amiCounter.Add(1))
+	now := m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	// A real CreateImage snapshots the instance's root volume and references
+	// that snapshot from the AMI's block device mapping.
+	snapID := fmt.Sprintf("snap-%012d", m.snapCounter.Add(1))
+	m.snapshots.Set(snapID, &driver.SnapshotInfo{
+		ID:          snapID,
+		State:       "completed",
+		Description: "Created by CreateImage for " + id,
+		Size:        imageRootDeviceSize,
+		CreatedAt:   now,
+		OwnerID:     awsAccountID,
+		Progress:    "100%",
+	})
 
 	img := &driver.ImageInfo{
-		ID:          id,
-		Name:        cfg.Name,
-		State:       "available",
-		Description: cfg.Description,
-		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:        copyTags(cfg.Tags),
+		ID:                 id,
+		Name:               cfg.Name,
+		State:              stateAvailable,
+		Description:        cfg.Description,
+		CreatedAt:          now,
+		Tags:               copyTags(cfg.Tags),
+		OwnerID:            awsAccountID,
+		Architecture:       "x86_64",
+		RootDeviceType:     "ebs",
+		RootDeviceName:     "/dev/sda1",
+		VirtualizationType: "hvm",
+		Hypervisor:         "xen",
+		ImageType:          "machine",
+		PlatformDetails:    "Linux/UNIX",
+		BlockDeviceMappings: []driver.ImageBlockDeviceMapping{{
+			DeviceName:          "/dev/sda1",
+			SnapshotID:          snapID,
+			VolumeSize:          imageRootDeviceSize,
+			VolumeType:          "gp2",
+			DeleteOnTermination: true,
+		}},
 	}
 
 	m.images.Set(id, img)
@@ -834,8 +977,15 @@ func (m *Mock) DeregisterImage(_ context.Context, id string) error {
 	return nil
 }
 
-// DescribeImages returns images matching the given IDs.
+// DescribeImages returns images matching the given IDs. An explicit ID that
+// does not exist yields InvalidAMIID.NotFound, matching real EC2.
 func (m *Mock) DescribeImages(_ context.Context, ids []string) ([]driver.ImageInfo, error) {
+	for _, id := range ids {
+		if !m.images.Has(id) {
+			return nil, cerrors.Newf(cerrors.NotFound, "image %q not found", id)
+		}
+	}
+
 	return describeResources(m.images, ids), nil
 }
 
@@ -854,13 +1004,18 @@ func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driv
 		keyType = "rsa"
 	}
 
+	mat, err := generateKeyMaterial(keyType)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.Internal, "generate key material: %v", err)
+	}
+
 	kp := &driver.KeyPairInfo{
-		ID:          idgen.AWSARN("ec2", m.opts.Region, "123456789012", "key-pair/"+cfg.Name),
+		ID:          fmt.Sprintf("key-%016x", m.keyCounter.Add(1)),
 		Name:        cfg.Name,
-		Fingerprint: "fp-" + cfg.Name,
+		Fingerprint: mat.fingerprint,
 		KeyType:     keyType,
-		PublicKey:   "mock-public-key-" + cfg.Name,
-		PrivateKey:  "mock-private-key-" + cfg.Name,
+		PublicKey:   mat.publicPEM,
+		PrivateKey:  mat.privatePEM,
 		CreatedAt:   m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:        copyTags(cfg.Tags),
 	}
@@ -896,17 +1051,91 @@ func (m *Mock) DescribeKeyPairs(_ context.Context, names []string) ([]driver.Key
 		return result, nil
 	}
 
-	var result []driver.KeyPairInfo
+	result := make([]driver.KeyPairInfo, 0, len(names))
 
 	for _, name := range names {
-		if kp, ok := m.keyPairs.Get(name); ok {
-			cp := *kp
-			cp.PrivateKey = ""
-			result = append(result, cp)
+		kp, ok := m.keyPairs.Get(name)
+		if !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "key pair %q not found", name)
 		}
+
+		cp := *kp
+		cp.PrivateKey = ""
+		result = append(result, cp)
 	}
 
 	return result, nil
+}
+
+// keyMaterial bundles the PEM-encoded key pair and its fingerprint.
+type keyMaterial struct {
+	privatePEM  string
+	publicPEM   string
+	fingerprint string
+}
+
+// generateKeyMaterial returns a PEM-encoded key pair and its fingerprint. RSA
+// fingerprints are the SHA-1 digest of the DER private key as colon-separated
+// hex, matching CreateKeyPair on real EC2; ed25519 keys use a SHA-256 digest.
+func generateKeyMaterial(keyType string) (keyMaterial, error) {
+	if keyType == "ed25519" {
+		pub, priv, gerr := ed25519.GenerateKey(rand.Reader)
+		if gerr != nil {
+			return keyMaterial{}, gerr
+		}
+
+		der, merr := x509.MarshalPKCS8PrivateKey(priv)
+		if merr != nil {
+			return keyMaterial{}, merr
+		}
+
+		sum := sha256.Sum256(der)
+
+		return keyMaterial{
+			privatePEM:  pemEncode("PRIVATE KEY", der),
+			publicPEM:   pkixPublicPEM(pub),
+			fingerprint: colonHex(sum[:]),
+		}, nil
+	}
+
+	key, gerr := rsa.GenerateKey(rand.Reader, rsaKeyBits)
+	if gerr != nil {
+		return keyMaterial{}, gerr
+	}
+
+	der := x509.MarshalPKCS1PrivateKey(key)
+	sum := sha1.Sum(der) //nolint:gosec // AWS defines RSA key-pair fingerprints as SHA-1 digests
+
+	return keyMaterial{
+		privatePEM:  pemEncode("RSA PRIVATE KEY", der),
+		publicPEM:   pkixPublicPEM(key.Public()),
+		fingerprint: colonHex(sum[:]),
+	}, nil
+}
+
+func pemEncode(blockType string, der []byte) string {
+	return string(pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: der}))
+}
+
+// pkixPublicPEM PEM-encodes a public key, returning "" if it cannot be marshaled.
+func pkixPublicPEM(pub any) string {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return ""
+	}
+
+	return pemEncode("PUBLIC KEY", der)
+}
+
+// colonHex formats bytes as colon-separated lowercase hex (aa:bb:cc), the
+// shape AWS uses for key fingerprints.
+func colonHex(b []byte) string {
+	parts := make([]string, len(b))
+	for i, x := range b {
+		parts[i] = fmt.Sprintf("%02x", x)
+	}
+
+	return strings.Join(parts, ":")
 }
 
 func describeResources[T any](store *memstore.Store[*T], ids []string) []T {

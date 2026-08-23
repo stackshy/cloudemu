@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/base64"
 	"net/http"
 	"strconv"
@@ -9,6 +10,23 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+)
+
+// instanceAttributer is an AWS-specific optional capability for reading and
+// writing instance attributes (DisableApiTermination, SourceDestCheck, …) that
+// are not part of the portable Compute driver. The handler type-asserts for it
+// so providers that don't support these attributes are unaffected.
+type instanceAttributer interface {
+	SetInstanceAttribute(ctx context.Context, id, name, value string) error
+	GetInstanceAttribute(ctx context.Context, id, name string) (string, error)
+}
+
+// Attribute element names shared by ModifyInstanceAttribute (Name.Value on the
+// wire) and DescribeInstanceAttribute (Attribute= selector).
+const (
+	attrDisableAPITermination = "disableApiTermination"
+	attrSourceDestCheck       = "sourceDestCheck"
+	attrInstanceType          = "instanceType"
 )
 
 // reservationPrefix is our own reservation ID prefix. Real AWS uses "r-".
@@ -90,6 +108,8 @@ func (h *Handler) describeInstances(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) startInstances(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "InstanceId")
 
+	prev := h.priorStates(r.Context(), ids)
+
 	if err := h.compute.StartInstances(r.Context(), ids); err != nil {
 		writeErr(w, err)
 		return
@@ -98,15 +118,16 @@ func (h *Handler) startInstances(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, startInstancesResponse{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		Changes: stateChanges(ids,
-			instanceState{Code: stateCodePending, Name: "pending"},
-			instanceState{Code: stateCodeStopped, Name: "stopped"}),
+		Changes: stateChangesFrom(ids, prev,
+			instanceState{Code: stateCodePending, Name: "pending"}),
 	})
 }
 
 // stopInstances handles Action=StopInstances.
 func (h *Handler) stopInstances(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "InstanceId")
+
+	prev := h.priorStates(r.Context(), ids)
 
 	if err := h.compute.StopInstances(r.Context(), ids); err != nil {
 		writeErr(w, err)
@@ -116,9 +137,8 @@ func (h *Handler) stopInstances(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, stopInstancesResponse{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		Changes: stateChanges(ids,
-			instanceState{Code: stateCodeStopping, Name: "stopping"},
-			instanceState{Code: stateCodeRunning, Name: stateRunning}),
+		Changes: stateChangesFrom(ids, prev,
+			instanceState{Code: stateCodeStopping, Name: "stopping"}),
 	})
 }
 
@@ -142,41 +162,46 @@ func (h *Handler) rebootInstances(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) terminateInstances(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "InstanceId")
 
+	prev := h.priorStates(r.Context(), ids)
+
 	if err := h.compute.TerminateInstances(r.Context(), ids); err != nil {
+		// Termination protection surfaces as OperationNotPermitted, not the
+		// generic instance-state error.
+		if cerrors.IsPermissionDenied(err) {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "OperationNotPermitted", err.Error())
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 
 	awsquery.WriteXMLResponse(w, terminateInstancesResponse{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		Changes: stateChanges(ids,
-			instanceState{Code: stateCodeShuttingDown, Name: "shutting-down"},
-			instanceState{Code: stateCodeRunning, Name: stateRunning}),
+		Changes: stateChangesFrom(ids, prev,
+			instanceState{Code: stateCodeShuttingDown, Name: "shutting-down"}),
 	})
 }
 
-// modifyInstanceAttribute handles Action=ModifyInstanceAttribute.
-// Phase 1 scope: InstanceType only. Other attributes land in later phases.
+// modifyInstanceAttribute handles Action=ModifyInstanceAttribute. InstanceType
+// changes route through the portable driver (which enforces the stopped
+// precondition); DisableApiTermination / SourceDestCheck route through the
+// AWS-specific instanceAttributer so they take effect (previously accepted and
+// silently discarded — a false success dangerous for IaC).
 func (h *Handler) modifyInstanceAttribute(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("InstanceId")
 
-	input := computedriver.ModifyInstanceInput{
-		InstanceType: r.Form.Get("InstanceType.Value"),
+	if instanceType := r.Form.Get("InstanceType.Value"); instanceType != "" {
+		if err := h.compute.ModifyInstance(r.Context(),
+			id, computedriver.ModifyInstanceInput{InstanceType: instanceType}); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 
-	// If nothing to modify, still return success (real EC2 behavior).
-	if input.InstanceType == "" {
-		awsquery.WriteXMLResponse(w, modifyInstanceAttributeResponse{
-			Xmlns:     awsquery.Namespace,
-			RequestID: awsquery.RequestID,
-			Return:    true,
-		})
-
-		return
-	}
-
-	if err := h.compute.ModifyInstance(r.Context(), id, input); err != nil {
+	if err := h.applyInstanceAttributes(r, id); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -186,6 +211,75 @@ func (h *Handler) modifyInstanceAttribute(w http.ResponseWriter, r *http.Request
 		RequestID: awsquery.RequestID,
 		Return:    true,
 	})
+}
+
+// applyInstanceAttributes writes the boolean instance attributes present in the
+// request through the instanceAttributer capability.
+func (h *Handler) applyInstanceAttributes(r *http.Request, id string) error {
+	attributer, ok := h.compute.(instanceAttributer)
+	if !ok {
+		return nil
+	}
+
+	for _, name := range []string{attrDisableAPITermination, attrSourceDestCheck} {
+		if v := r.Form.Get(attrForm(name) + ".Value"); v != "" {
+			if err := attributer.SetInstanceAttribute(r.Context(), id, name, v); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// describeInstanceAttribute handles Action=DescribeInstanceAttribute, returning
+// the single attribute named by Attribute= so ModifyInstanceAttribute changes
+// are verifiable.
+func (h *Handler) describeInstanceAttribute(w http.ResponseWriter, r *http.Request) {
+	id := r.Form.Get("InstanceId")
+	attr := r.Form.Get("Attribute")
+
+	attributer, ok := h.compute.(instanceAttributer)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "instance attributes are not supported"))
+		return
+	}
+
+	val, err := attributer.GetInstanceAttribute(r.Context(), id, attr)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	resp := describeInstanceAttributeResponse{
+		Xmlns:      awsquery.Namespace,
+		RequestID:  awsquery.RequestID,
+		InstanceID: id,
+	}
+
+	switch attr {
+	case attrDisableAPITermination:
+		resp.DisableAPITermination = &attributeBooleanValueXML{Value: val == formTrue}
+	case attrSourceDestCheck:
+		resp.SourceDestCheck = &attributeBooleanValueXML{Value: val == formTrue}
+	case attrInstanceType:
+		resp.InstanceType = &attributeValueXML{Value: val}
+	}
+
+	awsquery.WriteXMLResponse(w, resp)
+}
+
+// attrForm maps an attribute element name (lowerCamel, as on the response) to
+// the request parameter's PascalCase prefix used by ModifyInstanceAttribute.
+func attrForm(name string) string {
+	switch name {
+	case attrDisableAPITermination:
+		return "DisableApiTermination"
+	case attrSourceDestCheck:
+		return "SourceDestCheck"
+	default:
+		return name
+	}
 }
 
 // getConsoleOutput handles Action=GetConsoleOutput. The console output is read
@@ -330,15 +424,35 @@ func toDriverFilters(in []awsquery.Filter) []computedriver.DescribeFilter {
 	return out
 }
 
-// stateChanges builds a transition record for each id, reporting the same
-// current/previous states. Real AWS returns these exact codes for each op.
-func stateChanges(ids []string, current, previous instanceState) []stateChangeXML {
+// priorStates captures each instance's state before a lifecycle operation so
+// the response can report the real previousState (rather than a hardcoded one).
+// A describe error yields an empty map; callers fall back to a zero previous.
+func (h *Handler) priorStates(ctx context.Context, ids []string) map[string]instanceState {
+	out := make(map[string]instanceState, len(ids))
+
+	instances, err := h.compute.DescribeInstances(ctx, ids, nil)
+	if err != nil {
+		return out
+	}
+
+	for i := range instances {
+		out[instances[i].ID] = instanceState{
+			Code: stateCode(instances[i].State), Name: instances[i].State,
+		}
+	}
+
+	return out
+}
+
+// stateChangesFrom builds a transition record for each id, deriving
+// previousState from the states captured before the operation ran.
+func stateChangesFrom(ids []string, previous map[string]instanceState, current instanceState) []stateChangeXML {
 	out := make([]stateChangeXML, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, stateChangeXML{
 			InstanceID:    id,
 			CurrentState:  current,
-			PreviousState: previous,
+			PreviousState: previous[id],
 		})
 	}
 

@@ -3,6 +3,7 @@ package vpc
 
 import (
 	"context"
+	"net"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ var (
 	_ driver.Networking                 = (*Mock)(nil)
 	_ driver.NetworkInterfaces          = (*Mock)(nil)
 	_ driver.VPCAttributes              = (*Mock)(nil)
+	_ driver.SubnetAttributes           = (*Mock)(nil)
 	_ driver.TransitGateways            = (*Mock)(nil)
 	_ driver.VPNConnections             = (*Mock)(nil)
 	_ driver.DHCPOptionSets             = (*Mock)(nil)
@@ -142,15 +144,17 @@ type vpcData struct {
 	Tags               map[string]string
 	EnableDNSSupport   bool
 	EnableDNSHostnames bool
+	DhcpOptionsID      string
 }
 
 type subnetData struct {
-	ID               string
-	VPCID            string
-	CIDRBlock        string
-	AvailabilityZone string
-	State            string
-	Tags             map[string]string
+	ID                  string
+	VPCID               string
+	CIDRBlock           string
+	AvailabilityZone    string
+	State               string
+	Tags                map[string]string
+	MapPublicIPOnLaunch bool
 }
 
 type sgData struct {
@@ -350,6 +354,13 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 		return nil, errors.Newf(errors.NotFound, "vpc %q not found", cfg.VPCID)
 	}
 
+	if conflict, err := m.subnetCIDRConflict(cfg.VPCID, cfg.CIDRBlock); err != nil {
+		return nil, err
+	} else if conflict != "" {
+		return nil, errors.Newf(errors.AlreadyExists,
+			"InvalidSubnet.Conflict: subnet CIDR %q conflicts with existing subnet %q", cfg.CIDRBlock, conflict)
+	}
+
 	id := idgen.GenerateID("subnet-")
 	tags := copyTags(cfg.Tags)
 
@@ -370,19 +381,82 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 
 // DeleteSubnet deletes the subnet with the given ID.
 func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
-	sub, ok := m.subnets.Get(id)
-	if !ok {
+	if !m.subnets.Has(id) {
 		return errors.Newf(errors.NotFound, "subnet %q not found", id)
 	}
 
-	// Same contract as DeleteVPC, one level down: a managed resource holding
-	// an interface in this subnet keeps it alive.
-	if eni, blocked := m.attachedENIIn(sub.VPCID, id); blocked {
+	// Real EC2 refuses to delete a subnet while ANY network interface still
+	// resides in it — an unattached (available) ENI counts, not just an attached
+	// one. Accepting the delete otherwise lets a broken drain pass unnoticed.
+	if eni, blocked := m.eniInSubnet(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: network interface %q is still attached in subnet %q", eni, id)
+			"DependencyViolation: network interface %q still resides in subnet %q", eni, id)
 	}
 
 	m.subnets.Delete(id)
+
+	return nil
+}
+
+// eniInSubnet reports the first network interface residing in the given subnet,
+// whether attached or available. Real EC2 blocks DeleteSubnet on either.
+func (m *Mock) eniInSubnet(subnetID string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, eni := range m.enis.All() {
+		if eni.SubnetID == subnetID {
+			return eni.ID, true
+		}
+	}
+
+	return "", false
+}
+
+// subnetCIDRConflict reports an existing subnet in the same VPC whose CIDR
+// overlaps the candidate, or an error if either CIDR is malformed. An empty id
+// with a nil error means no conflict.
+func (m *Mock) subnetCIDRConflict(vpcID, cidr string) (string, error) {
+	_, candidate, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", errors.Newf(errors.InvalidArgument, "invalid CIDR block %q", cidr)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, s := range m.subnets.All() {
+		if s.VPCID != vpcID {
+			continue
+		}
+
+		_, existing, perr := net.ParseCIDR(s.CIDRBlock)
+		if perr != nil {
+			continue
+		}
+
+		if existing.Contains(candidate.IP) || candidate.Contains(existing.IP) {
+			return s.ID, nil
+		}
+	}
+
+	return "", nil
+}
+
+// ModifySubnetAttribute changes one subnet launch attribute (the AWS-specific
+// SubnetAttributes optional capability). A nil pointer leaves that attribute
+// untouched, matching an API that accepts one attribute per call.
+func (m *Mock) ModifySubnetAttribute(_ context.Context, id string, update driver.SubnetAttributeUpdate) error {
+	if update.MapPublicIPOnLaunch == nil {
+		return nil
+	}
+
+	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
+		s.MapPublicIPOnLaunch = *update.MapPublicIPOnLaunch
+		return s
+	}) {
+		return errors.Newf(errors.NotFound, "subnet %q not found", id)
+	}
 
 	return nil
 }
@@ -704,17 +778,19 @@ func toVPCInfo(v *vpcData) driver.VPCInfo {
 		Tags:               copyTags(v.Tags),
 		EnableDNSSupport:   v.EnableDNSSupport,
 		EnableDNSHostnames: v.EnableDNSHostnames,
+		DhcpOptionsID:      v.DhcpOptionsID,
 	}
 }
 
 func toSubnetInfo(s *subnetData) driver.SubnetInfo {
 	return driver.SubnetInfo{
-		ID:               s.ID,
-		VPCID:            s.VPCID,
-		CIDRBlock:        s.CIDRBlock,
-		AvailabilityZone: s.AvailabilityZone,
-		State:            s.State,
-		Tags:             copyTags(s.Tags),
+		ID:                  s.ID,
+		VPCID:               s.VPCID,
+		CIDRBlock:           s.CIDRBlock,
+		AvailabilityZone:    s.AvailabilityZone,
+		State:               s.State,
+		Tags:                copyTags(s.Tags),
+		MapPublicIPOnLaunch: s.MapPublicIPOnLaunch,
 	}
 }
 

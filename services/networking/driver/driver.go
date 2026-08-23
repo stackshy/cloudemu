@@ -19,6 +19,9 @@ type VPCInfo struct {
 	// EC2 defaults DNS support on and DNS hostnames off for a new VPC.
 	EnableDNSSupport   bool
 	EnableDNSHostnames bool
+	// DhcpOptionsID is the DHCP option set associated with the VPC. Empty means
+	// the Amazon-provided default set; AssociateDhcpOptions changes it.
+	DhcpOptionsID string
 }
 
 // SubnetConfig describes a subnet to create.
@@ -37,6 +40,11 @@ type SubnetInfo struct {
 	AvailabilityZone string
 	State            string
 	Tags             map[string]string
+	// MapPublicIPOnLaunch reports whether instances launched into the subnet
+	// receive a public IPv4 address by default. Real EC2 defaults it off for a
+	// non-default subnet and lets ModifySubnetAttribute flip it — the only way
+	// to turn a subnet public.
+	MapPublicIPOnLaunch bool
 }
 
 // SecurityGroupConfig describes a security group to create.
@@ -92,12 +100,24 @@ type NATGateway struct {
 	State     string // "pending", "available", "deleting", "deleted", "failed"
 	CreatedAt string
 	Tags      map[string]string
+	// AllocationID is the Elastic IP allocation bound to a public NAT gateway;
+	// PrivateIP and NetworkInterfaceID describe the ENI it occupies. These
+	// populate the NatGatewayAddress set AWS returns. ConnectivityType is
+	// "public" or "private".
+	AllocationID       string
+	PrivateIP          string
+	NetworkInterfaceID string
+	ConnectivityType   string
 }
 
 // NATGatewayConfig configures a NAT gateway.
 type NATGatewayConfig struct {
 	SubnetID string
 	Tags     map[string]string
+	// AllocationID echoes the Elastic IP the caller bound to a public NAT
+	// gateway; ConnectivityType selects "public" (default) or "private".
+	AllocationID     string
+	ConnectivityType string
 }
 
 // FlowLog represents a VPC flow log configuration.
@@ -374,6 +394,21 @@ type VPCAttributeUpdate struct {
 // than forcing them to carry a method they cannot implement meaningfully.
 type VPCAttributes interface {
 	ModifyVPCAttribute(ctx context.Context, id string, update VPCAttributeUpdate) error
+}
+
+// SubnetAttributeUpdate carries the subnet attributes a caller wants changed. A
+// nil pointer leaves that attribute alone, matching an API that accepts one
+// attribute per ModifySubnetAttribute call.
+type SubnetAttributeUpdate struct {
+	MapPublicIPOnLaunch *bool
+}
+
+// SubnetAttributes is an OPTIONAL capability, discovered by type assertion.
+// Per-subnet launch attributes (map-public-ip-on-launch) are an AWS concept;
+// kept out of the Networking interface so providers that do not model them are
+// not forced to carry an implementation.
+type SubnetAttributes interface {
+	ModifySubnetAttribute(ctx context.Context, id string, update SubnetAttributeUpdate) error
 }
 
 // NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.

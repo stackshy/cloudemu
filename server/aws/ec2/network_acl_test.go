@@ -1,0 +1,83 @@
+package ec2_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+)
+
+// TestReplaceNetworkAclEntry pins the previously-undispatched
+// ReplaceNetworkAclEntry action: it swaps the rule at (ruleNumber, egress) in
+// place, so a caller updating an existing entry (Terraform aws_network_acl_rule
+// on update) sees the new CIDR and action rather than an InvalidAction error.
+func TestReplaceNetworkAclEntry(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	vpc, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	if err != nil {
+		t.Fatalf("CreateVpc: %v", err)
+	}
+
+	acl, err := c.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{VpcId: vpc.Vpc.VpcId})
+	if err != nil {
+		t.Fatalf("CreateNetworkAcl: %v", err)
+	}
+
+	aclID := aws.ToString(acl.NetworkAcl.NetworkAclId)
+
+	if _, err := c.CreateNetworkAclEntry(ctx, &ec2.CreateNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(200),
+		Egress:       aws.Bool(false),
+		Protocol:     aws.String("-1"),
+		RuleAction:   ec2types.RuleActionAllow,
+		CidrBlock:    aws.String("10.10.0.0/16"),
+	}); err != nil {
+		t.Fatalf("CreateNetworkAclEntry: %v", err)
+	}
+
+	if _, err := c.ReplaceNetworkAclEntry(ctx, &ec2.ReplaceNetworkAclEntryInput{
+		NetworkAclId: aws.String(aclID),
+		RuleNumber:   aws.Int32(200),
+		Egress:       aws.Bool(false),
+		Protocol:     aws.String("-1"),
+		RuleAction:   ec2types.RuleActionDeny,
+		CidrBlock:    aws.String("20.20.0.0/16"),
+	}); err != nil {
+		t.Fatalf("ReplaceNetworkAclEntry: %v", err)
+	}
+
+	desc, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{
+		NetworkAclIds: []string{aclID},
+	})
+	if err != nil {
+		t.Fatalf("DescribeNetworkAcls: %v", err)
+	}
+
+	entry := findACLEntry(desc.NetworkAcls[0].Entries, 200, false)
+	if entry == nil {
+		t.Fatalf("rule 200 not found after replace; entries: %+v", desc.NetworkAcls[0].Entries)
+	}
+
+	if aws.ToString(entry.CidrBlock) != "20.20.0.0/16" {
+		t.Errorf("replaced cidr = %q, want 20.20.0.0/16", aws.ToString(entry.CidrBlock))
+	}
+
+	if entry.RuleAction != ec2types.RuleActionDeny {
+		t.Errorf("replaced action = %q, want deny", entry.RuleAction)
+	}
+}
+
+func findACLEntry(entries []ec2types.NetworkAclEntry, ruleNumber int32, egress bool) *ec2types.NetworkAclEntry {
+	for i := range entries {
+		if aws.ToInt32(entries[i].RuleNumber) == ruleNumber && aws.ToBool(entries[i].Egress) == egress {
+			return &entries[i]
+		}
+	}
+
+	return nil
+}
