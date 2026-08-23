@@ -173,6 +173,11 @@ func (h *Handler) listShards(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 
-		return map[string]any{"Shards": shardsToWire(out.Shards)}, nil
+		resp := map[string]any{"Shards": shardsToWire(out.Shards)}
+		if out.NextToken != "" {
+			resp["NextToken"] = out.NextToken
+		}
+
+		return resp, nil
 	})
 }

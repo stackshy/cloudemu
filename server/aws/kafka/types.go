@@ -136,7 +136,27 @@ func clusterToWire(c *driver.Cluster) map[string]json.RawMessage {
 		base["brokerNodeGroupInfo"] = bngToWire(c.BrokerNodeGroupInfo)
 	}
 
+	if _, ok := c.RawOptions["encryptionInfo"]; !ok {
+		base["encryptionInfo"] = defaultEncryptionInfo()
+	}
+
 	return mergeRaw(base, c.RawOptions)
+}
+
+// defaultEncryptionInfo returns the MSK default encryption configuration that
+// real DescribeCluster surfaces when none is specified at create time:
+// in-transit TLS (client-broker + in-cluster) and at-rest with an
+// AWS-managed data-volume KMS key.
+func defaultEncryptionInfo() map[string]any {
+	return map[string]any{
+		"encryptionAtRest": map[string]any{
+			"dataVolumeKMSKeyId": "arn:aws:kms:us-east-1:000000000000:key/msk-default",
+		},
+		"encryptionInTransit": map[string]any{
+			"clientBroker": "TLS",
+			"inCluster":    true,
+		},
+	}
 }
 
 // clusterToWireV2 renders a driver cluster as the v2 clusterInfo (types.Cluster)
@@ -185,6 +205,10 @@ func provisionedBlock(c *driver.Cluster) map[string]any {
 
 	if c.BrokerNodeGroupInfo != nil {
 		block["brokerNodeGroupInfo"] = bngToWire(c.BrokerNodeGroupInfo)
+	}
+
+	if _, ok := c.RawOptions["encryptionInfo"]; !ok {
+		block["encryptionInfo"] = defaultEncryptionInfo()
 	}
 
 	return block

@@ -2,6 +2,7 @@ package eventbridge
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
@@ -91,12 +92,22 @@ func (h *Handler) putRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Real EventBridge requires a rule to carry either an EventPattern or a
+	// ScheduleExpression; a rule with neither is rejected.
+	if req.EventPattern == "" && req.ScheduleExpression == "" {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+			"Parameter(s) EventPattern or ScheduleExpression must be specified.")
+		return
+	}
+
 	rule, err := h.bus.PutRule(r.Context(), &ebdriver.RuleConfig{
-		Name:         req.Name,
-		EventBus:     req.EventBusName,
-		Description:  req.Description,
-		EventPattern: req.EventPattern,
-		State:        req.State,
+		Name:               req.Name,
+		EventBus:           req.EventBusName,
+		Description:        req.Description,
+		EventPattern:       req.EventPattern,
+		ScheduleExpression: req.ScheduleExpression,
+		RoleARN:            req.RoleArn,
+		State:              req.State,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -119,17 +130,19 @@ func (h *Handler) describeRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, describeRuleResponse{
-		Arn:          h.ruleARN(rule.EventBus, rule.Name),
-		Name:         rule.Name,
-		EventBusName: rule.EventBus,
-		Description:  rule.Description,
-		EventPattern: rule.EventPattern,
-		State:        rule.State,
+		Arn:                h.ruleARN(rule.EventBus, rule.Name),
+		Name:               rule.Name,
+		EventBusName:       rule.EventBus,
+		Description:        rule.Description,
+		EventPattern:       rule.EventPattern,
+		ScheduleExpression: rule.ScheduleExpression,
+		RoleArn:            rule.RoleARN,
+		State:              rule.State,
 	})
 }
 
 func (h *Handler) listRules(w http.ResponseWriter, r *http.Request) {
-	var req ruleRefRequest
+	var req listRulesRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -141,18 +154,27 @@ func (h *Handler) listRules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entries := make([]ruleEntry, 0, len(rules))
+
 	for i := range rules {
+		if req.NamePrefix != "" && !strings.HasPrefix(rules[i].Name, req.NamePrefix) {
+			continue
+		}
+
 		entries = append(entries, ruleEntry{
-			Arn:          h.ruleARN(rules[i].EventBus, rules[i].Name),
-			Name:         rules[i].Name,
-			EventBusName: rules[i].EventBus,
-			Description:  rules[i].Description,
-			EventPattern: rules[i].EventPattern,
-			State:        rules[i].State,
+			Arn:                h.ruleARN(rules[i].EventBus, rules[i].Name),
+			Name:               rules[i].Name,
+			EventBusName:       rules[i].EventBus,
+			Description:        rules[i].Description,
+			EventPattern:       rules[i].EventPattern,
+			ScheduleExpression: rules[i].ScheduleExpression,
+			RoleArn:            rules[i].RoleARN,
+			State:              rules[i].State,
 		})
 	}
 
-	wire.WriteJSON(w, listRulesResponse{Rules: entries})
+	entries, nextToken := paginateRules(entries, req.NextToken, req.Limit)
+
+	wire.WriteJSON(w, listRulesResponse{Rules: entries, NextToken: nextToken})
 }
 
 func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request) {
@@ -262,9 +284,25 @@ func (h *Handler) putEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Each entry is aligned to a result slot; entries with a malformed Detail
+	// fail up front (ErrorCode=MalformedDetail) and never reach the bus, while
+	// well-formed entries are published and back-filled with their EventId.
+	results := make([]putEventsResultEntry, len(req.Entries))
+
 	events := make([]ebdriver.Event, 0, len(req.Entries))
+	slots := make([]int, 0, len(req.Entries))
+	failed := 0
+
 	for i := range req.Entries {
 		e := &req.Entries[i]
+		if !isValidDetail(e.Detail) {
+			results[i] = putEventsResultEntry{ErrorCode: "MalformedDetail", ErrorMessage: "Detail is malformed."}
+			failed++
+
+			continue
+		}
+
+		slots = append(slots, i)
 		events = append(events, ebdriver.Event{
 			Source:     e.Source,
 			DetailType: e.DetailType,
@@ -280,13 +318,14 @@ func (h *Handler) putEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := make([]putEventsResultEntry, 0, len(res.EventIDs))
-	for _, id := range res.EventIDs {
-		entries = append(entries, putEventsResultEntry{EventID: id})
+	for i, id := range res.EventIDs {
+		if i < len(slots) {
+			results[slots[i]] = putEventsResultEntry{EventID: id}
+		}
 	}
 
 	wire.WriteJSON(w, putEventsResponse{
-		FailedEntryCount: res.FailCount,
-		Entries:          entries,
+		FailedEntryCount: failed + res.FailCount,
+		Entries:          results,
 	})
 }

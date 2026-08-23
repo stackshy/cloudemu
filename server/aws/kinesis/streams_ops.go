@@ -162,11 +162,16 @@ func (h *Handler) listStreams(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		return map[string]any{
+		resp := map[string]any{
 			"StreamNames":     out.StreamNames,
 			"StreamSummaries": summaries,
 			"HasMoreStreams":  out.HasMoreStreams,
-		}, nil
+		}
+		if out.NextToken != "" {
+			resp["NextToken"] = out.NextToken
+		}
+
+		return resp, nil
 	})
 }
 

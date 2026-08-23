@@ -30,29 +30,40 @@ type EventBusConfig struct {
 
 // Rule defines an event routing rule with filtering.
 type Rule struct {
-	Name         string
-	EventBus     string
-	Description  string
-	EventPattern string // JSON pattern for event matching
-	State        string // "ENABLED", "DISABLED"
-	Targets      []Target
-	CreatedAt    string
+	Name               string
+	EventBus           string
+	Description        string
+	EventPattern       string // JSON pattern for event matching
+	ScheduleExpression string // rate(...)/cron(...) for scheduled rules
+	RoleARN            string // IAM role EventBridge assumes to invoke targets
+	State              string // "ENABLED", "DISABLED"
+	Targets            []Target
+	CreatedAt          string
 }
 
 // RuleConfig configures a new rule.
 type RuleConfig struct {
-	Name         string
-	EventBus     string
-	Description  string
-	EventPattern string
-	State        string
+	Name               string
+	EventBus           string
+	Description        string
+	EventPattern       string
+	ScheduleExpression string
+	RoleARN            string
+	State              string
 }
 
-// Target is a destination for matched events.
+// Target is a destination for matched events. The structured fields
+// (InputTransformer/DeadLetterConfig/RetryPolicy) carry raw JSON so they
+// round-trip through the wire without the portable layer modeling every sub-shape.
 type Target struct {
-	ID    string
-	ARN   string // target resource identifier
-	Input string // optional input transformation
+	ID               string
+	ARN              string // target resource identifier
+	Input            string // optional constant input
+	InputPath        string // optional JSONPath input selector
+	RoleARN          string // IAM role used to invoke this target
+	InputTransformer string // raw JSON InputTransformer block
+	DeadLetterConfig string // raw JSON DeadLetterConfig block
+	RetryPolicy      string // raw JSON RetryPolicy block
 }
 
 // Event represents an event to publish.

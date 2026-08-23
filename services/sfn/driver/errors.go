@@ -13,6 +13,7 @@ const (
 	ExResourceNotFound          = "ResourceNotFound"
 	ExInvalidArn                = "InvalidArn"
 	ExInvalidName               = "InvalidName"
+	ExInvalidDefinition         = "InvalidDefinition"
 	ExInvalidToken              = "InvalidToken"
 	ExTaskDoesNotExist          = "TaskDoesNotExist"
 	ExTooManyTags               = "TooManyTags"
