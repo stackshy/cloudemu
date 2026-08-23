@@ -390,13 +390,17 @@ func TestSDKDescribeMissingStateMachine(t *testing.T) {
 func TestSDKDuplicateStateMachine(t *testing.T) {
 	ctx := context.Background()
 	c := newSFNClient(t)
-	createSM(t, c, "dup")
+	arn := createSM(t, c, "dup")
+
+	// A same-name create whose definition differs collides:
+	// StateMachineAlreadyExists.
+	const otherDefinition = `{"StartAt":"Done","States":{"Done":{"Type":"Succeed"}}}`
 
 	// A same-name create with conflicting parameters (different role) is a
 	// StateMachineAlreadyExists; an identical request would be idempotent.
 	_, err := c.CreateStateMachine(ctx, &awssfn.CreateStateMachineInput{
-		Name: aws.String("dup"), Definition: aws.String(definition),
-		RoleArn: aws.String("arn:aws:iam::123456789012:role/different"),
+		Name: aws.String("dup"), Definition: aws.String(otherDefinition),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/svc"),
 	})
 	if err == nil {
 		t.Fatal("expected error for duplicate state machine")
@@ -410,6 +414,21 @@ func TestSDKDuplicateStateMachine(t *testing.T) {
 		}
 
 		t.Fatalf("want StateMachineAlreadyExists, got %v", err)
+	}
+
+	// CreateStateMachine is idempotent: a same-name create with the same
+	// definition/type returns the existing machine (HTTP 200) even when the
+	// roleArn differs — roleArn is ignored for the idempotency check.
+	out, err := c.CreateStateMachine(ctx, &awssfn.CreateStateMachineInput{
+		Name: aws.String("dup"), Definition: aws.String(definition),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/other"),
+	})
+	if err != nil {
+		t.Fatalf("idempotent CreateStateMachine: %v", err)
+	}
+
+	if got := aws.ToString(out.StateMachineArn); got != arn {
+		t.Fatalf("want existing ARN %q, got %q", arn, got)
 	}
 }
 

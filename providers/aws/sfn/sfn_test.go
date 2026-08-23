@@ -75,13 +75,27 @@ func TestCreateDescribeStateMachine(t *testing.T) {
 
 func TestCreateDuplicateNameFails(t *testing.T) {
 	m := newMock(t)
-	createSM(t, m, "dup")
+	arn := createSM(t, m, "dup")
 
+	// A differing definition on the same name is a genuine collision.
 	_, _, _, err := m.CreateStateMachine(context.Background(), driver.CreateStateMachineInput{
-		Name: "dup", Definition: definition,
+		Name: "dup", Definition: `{"StartAt":"Done","States":{"Done":{"Type":"Succeed"}}}`,
 	})
 	if !errors.IsAlreadyExists(err) {
 		t.Fatalf("duplicate name should be AlreadyExists, got %v", err)
+	}
+
+	// CreateStateMachine is idempotent: same name + same definition with a
+	// different roleArn returns the existing machine (roleArn is ignored).
+	got, _, _, err := m.CreateStateMachine(context.Background(), driver.CreateStateMachineInput{
+		Name: "dup", Definition: definition, RoleArn: "arn:aws:iam::000000000000:role/other",
+	})
+	if err != nil {
+		t.Fatalf("idempotent create should succeed, got %v", err)
+	}
+
+	if got != arn {
+		t.Fatalf("idempotent create should return existing ARN %q, got %q", arn, got)
 	}
 }
 

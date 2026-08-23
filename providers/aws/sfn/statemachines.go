@@ -89,35 +89,37 @@ func (m *Mock) CreateStateMachine(
 	// Claim the name atomically so two concurrent same-name creates can't both
 	// succeed (uniqueness invariant under concurrency).
 	if !m.machines.SetIfAbsent(arn, &smData{sm: sm}) {
-		return m.reconcileExisting(arn, in.Name, in.Definition, in.RoleArn, smType)
+		return m.reconcileExisting(arn, &sm)
 	}
 
 	return arn, versionArn, now, nil
 }
 
-// reconcileExisting resolves a same-name CreateStateMachine collision:
-// CreateStateMachine is idempotent, so an identical re-request (same
-// definition/role/type) returns the existing machine, while a conflicting one
-// is StateMachineAlreadyExists.
+// reconcileExisting resolves a CreateStateMachine against a name that is already
+// taken. Real Step Functions makes CreateStateMachine idempotent: a repeat call
+// with the same name whose definition, type, logging and tracing configuration
+// all match the existing machine returns that machine (HTTP 200) — a differing
+// roleArn or tags is ignored. Any other difference is StateMachineAlreadyExists.
 func (m *Mock) reconcileExisting(
-	arn, name, definition, roleArn, smType string,
+	arn string, want *driver.StateMachine,
 ) (resolvedArn, versionArn string, created time.Time, err error) {
-	existing, ok := m.machines.Get(arn)
+	sd, ok := m.machines.Get(arn)
 	if !ok {
-		return "", "", time.Time{}, smAlreadyExists(name)
+		return "", "", time.Time{}, smAlreadyExists(want.Name)
 	}
 
-	existing.mu.RLock()
-	same := existing.sm.Definition == definition &&
-		existing.sm.RoleArn == roleArn && existing.sm.Type == smType
-	existArn, existVersion, existCreated := existing.sm.ARN, existing.sm.LatestVersionArn, existing.sm.CreationDate
-	existing.mu.RUnlock()
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
 
+	same := sd.sm.Definition == want.Definition &&
+		sd.sm.Type == want.Type &&
+		sd.sm.LoggingConfigJSON == want.LoggingConfigJSON &&
+		sd.sm.TracingConfigJSON == want.TracingConfigJSON
 	if !same {
-		return "", "", time.Time{}, smAlreadyExists(name)
+		return "", "", time.Time{}, smAlreadyExists(want.Name)
 	}
 
-	return existArn, existVersion, existCreated, nil
+	return sd.sm.ARN, sd.sm.LatestVersionArn, sd.sm.CreationDate, nil
 }
 
 // publishLocked appends a new version to sm and returns its ARN. Callers must
