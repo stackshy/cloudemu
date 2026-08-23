@@ -87,9 +87,22 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := elbActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
 
-	return ok
+	_, ok := elbActions[action]
+	if !ok {
+		return false
+	}
+
+	// DescribeTags is a generic tag verb elbv2 shares with EC2 (the query
+	// catch-all, registered after elbv2). Claim it only when the SigV4 credential
+	// scope names elbv2; otherwise let EC2's DescribeTags handle it — without this
+	// gate elbv2 swallows every service's DescribeTags and returns empty.
+	if action == "DescribeTags" {
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == "elasticloadbalancing"
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.

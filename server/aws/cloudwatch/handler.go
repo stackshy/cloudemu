@@ -101,6 +101,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeAlarms(w, r, body)
 	case "DeleteAlarms":
 		h.deleteAlarms(w, r, body)
+	case "SetAlarmState":
+		h.setAlarmState(w, r, body)
 	default:
 		writeCBORError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown operation: "+op)
