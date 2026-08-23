@@ -236,6 +236,13 @@ func TestAddAndRemoveSecurityGroupRules(t *testing.T) {
 	ingressRule := driver.SecurityRule{Protocol: "tcp", FromPort: 80, ToPort: 80, CIDR: "0.0.0.0/0"}
 	egressRule := driver.SecurityRule{Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "0.0.0.0/0"}
 
+	t.Run("default egress rule on create", func(t *testing.T) {
+		// Real EC2 seeds a new SG with an allow-all egress rule and no ingress.
+		sgs, _ := m.DescribeSecurityGroups(ctx, []string{sg.ID})
+		assertEqual(t, 0, len(sgs[0].IngressRules))
+		assertEqual(t, 1, len(sgs[0].EgressRules))
+	})
+
 	t.Run("add ingress rule", func(t *testing.T) {
 		err := m.AddIngressRule(ctx, sg.ID, ingressRule)
 		requireNoError(t, err)
@@ -250,7 +257,8 @@ func TestAddAndRemoveSecurityGroupRules(t *testing.T) {
 		requireNoError(t, err)
 
 		sgs, _ := m.DescribeSecurityGroups(ctx, []string{sg.ID})
-		assertEqual(t, 1, len(sgs[0].EgressRules))
+		// The default allow-all rule plus the one just added.
+		assertEqual(t, 2, len(sgs[0].EgressRules))
 	})
 
 	t.Run("remove ingress rule", func(t *testing.T) {
@@ -266,7 +274,8 @@ func TestAddAndRemoveSecurityGroupRules(t *testing.T) {
 		requireNoError(t, err)
 
 		sgs, _ := m.DescribeSecurityGroups(ctx, []string{sg.ID})
-		assertEqual(t, 0, len(sgs[0].EgressRules))
+		// The seeded default allow-all egress rule remains.
+		assertEqual(t, 1, len(sgs[0].EgressRules))
 	})
 
 	t.Run("remove nonexistent ingress rule", func(t *testing.T) {

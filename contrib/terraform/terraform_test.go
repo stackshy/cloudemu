@@ -25,14 +25,28 @@ import (
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
-func TestTerraformBasicApplyIsIdempotent(t *testing.T) {
+// TestTerraformApplyIsIdempotent runs each fixture through the full
+// init → apply → plan → destroy loop against a fresh in-process AWS server and
+// asserts the post-apply plan is empty. Each fixture is one scenario (a family
+// of resources); add a directory under fixtures/ and a name here to cover more.
+func TestTerraformApplyIsIdempotent(t *testing.T) {
 	bin := tfBinary(t)
+
+	for _, fixture := range []string{"basic", "networking"} {
+		t.Run(fixture, func(t *testing.T) {
+			applyFixture(t, fixture, bin)
+		})
+	}
+}
+
+func applyFixture(t *testing.T, fixture, bin string) {
+	t.Helper()
 
 	// In-process AWS wire server — no subprocess, no Docker.
 	srv := httptest.NewServer(awsserver.NewFromProvider(cloudemu.NewAWS()))
 	defer srv.Close()
 
-	tf := newTerraform(t, "basic", bin)
+	tf := newTerraform(t, fixture, bin)
 	ctx := context.Background()
 	endpoint := tfexec.Var("endpoint=" + srv.URL)
 

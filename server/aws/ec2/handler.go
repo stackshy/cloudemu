@@ -365,6 +365,8 @@ func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, actio
 		h.deleteVpc(w, r)
 	case "ModifyVpcAttribute":
 		h.modifyVpcAttribute(w, r)
+	case "DescribeVpcAttribute":
+		h.describeVpcAttribute(w, r)
 	case "DescribeVpcs":
 		h.describeVpcs(w, r)
 	case "DescribeAvailabilityZones":

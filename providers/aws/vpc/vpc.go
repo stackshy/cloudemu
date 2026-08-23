@@ -415,6 +415,12 @@ func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.Subnet
 }
 
 // CreateSecurityGroup creates a new security group with the given configuration.
+// defaultEgressRule is the allow-all outbound rule real EC2 attaches to every
+// new security group (protocol -1, 0.0.0.0/0, all ports).
+//
+//nolint:gochecknoglobals // static default, mirrors real EC2
+var defaultEgressRule = driver.SecurityRule{Protocol: allTrafficProtocol, CIDR: allTrafficCIDR}
+
 func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.Newf(errors.InvalidArgument, "security group name is required")
@@ -437,8 +443,12 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 		Description:  cfg.Description,
 		VPCID:        cfg.VPCID,
 		IngressRules: []driver.SecurityRule{},
-		EgressRules:  []driver.SecurityRule{},
-		Tags:         tags,
+		// Real EC2 seeds every new security group with an allow-all egress rule
+		// (no ingress). IaC tools rely on it — Terraform revokes this default
+		// before applying the egress blocks in the config — and the topology
+		// engine otherwise reports a fresh SG as denying all outbound traffic.
+		EgressRules: []driver.SecurityRule{defaultEgressRule},
+		Tags:        tags,
 	}
 	m.securityGroups.Set(id, sg)
 

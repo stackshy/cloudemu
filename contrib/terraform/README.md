@@ -55,6 +55,13 @@ needs it:
 - **DynamoDB** — `PAY_PER_REQUEST` and `PROVISIONED` (with `read/write_capacity`)
   round-trip. `global_secondary_index` blocks are **not** yet echoed by
   DescribeTable → a GSI fixture would show a perpetual diff.
+- **Networking** — `aws_vpc`, `aws_subnet`, `aws_security_group`,
+  `aws_route_table` and `aws_route_table_association` round-trip. A new security
+  group is seeded with the real allow-all egress default (AWS only — Azure/GCP/OCI
+  network groups keep their own defaults); `Revoke*` is idempotent (Terraform
+  strips IPv4 and IPv6 defaults, and a v4-only VPC has no IPv6 one). ENIs don't
+  yet model security-group membership, so `DeleteSecurityGroup` has no in-use
+  dependency check — fine until instances/ENIs enter a fixture.
 - **S3** — the base `aws_s3_bucket` round-trips. The standalone config resources
   (`aws_s3_bucket_policy`, `_public_access_block`, `_cors_configuration`,
   `_server_side_encryption_configuration`, `_lifecycle_configuration`) are **not**
