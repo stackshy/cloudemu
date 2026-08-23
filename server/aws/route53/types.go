@@ -21,10 +21,6 @@ const (
 // changes synchronously so every change is immediately INSYNC.
 const changeStatusInsync = "INSYNC"
 
-// changeID is the synthetic ChangeInfo id returned for mutating operations;
-// the SDK's change-tracking poller treats an INSYNC change as done.
-const changeID = "/change/C0000000000000000000"
-
 // --- shared record element ---
 
 // resourceRecordXML is a single record value (<ResourceRecord><Value>…).
@@ -66,6 +62,12 @@ type changeInfoXML struct {
 	SubmittedAt string `xml:"SubmittedAt"`
 }
 
+// delegationSetXML is the Route 53 DelegationSet element carrying the four
+// authoritative name servers a registrar must be pointed at.
+type delegationSetXML struct {
+	NameServers []string `xml:"NameServers>NameServer"`
+}
+
 // --- request envelopes ---
 
 type createHostedZoneRequest struct {
@@ -93,16 +95,52 @@ type changeItem struct {
 // --- response envelopes ---
 
 type createHostedZoneResponse struct {
-	XMLName    xml.Name      `xml:"CreateHostedZoneResponse"`
-	Xmlns      string        `xml:"xmlns,attr"`
-	HostedZone hostedZoneXML `xml:"HostedZone"`
-	ChangeInfo changeInfoXML `xml:"ChangeInfo"`
+	XMLName       xml.Name         `xml:"CreateHostedZoneResponse"`
+	Xmlns         string           `xml:"xmlns,attr"`
+	HostedZone    hostedZoneXML    `xml:"HostedZone"`
+	ChangeInfo    changeInfoXML    `xml:"ChangeInfo"`
+	DelegationSet delegationSetXML `xml:"DelegationSet"`
 }
 
 type getHostedZoneResponse struct {
-	XMLName    xml.Name      `xml:"GetHostedZoneResponse"`
+	XMLName       xml.Name         `xml:"GetHostedZoneResponse"`
+	Xmlns         string           `xml:"xmlns,attr"`
+	HostedZone    hostedZoneXML    `xml:"HostedZone"`
+	DelegationSet delegationSetXML `xml:"DelegationSet"`
+}
+
+type getChangeResponse struct {
+	XMLName    xml.Name      `xml:"GetChangeResponse"`
 	Xmlns      string        `xml:"xmlns,attr"`
-	HostedZone hostedZoneXML `xml:"HostedZone"`
+	ChangeInfo changeInfoXML `xml:"ChangeInfo"`
+}
+
+type getHostedZoneCountResponse struct {
+	XMLName         xml.Name `xml:"GetHostedZoneCountResponse"`
+	Xmlns           string   `xml:"xmlns,attr"`
+	HostedZoneCount int64    `xml:"HostedZoneCount"`
+}
+
+type listHostedZonesByNameResponse struct {
+	XMLName          xml.Name        `xml:"ListHostedZonesByNameResponse"`
+	Xmlns            string          `xml:"xmlns,attr"`
+	HostedZones      []hostedZoneXML `xml:"HostedZones>HostedZone"`
+	DNSName          string          `xml:"DNSName,omitempty"`
+	IsTruncated      bool            `xml:"IsTruncated"`
+	NextDNSName      string          `xml:"NextDNSName,omitempty"`
+	NextHostedZoneId string          `xml:"NextHostedZoneId,omitempty"`
+	MaxItems         int32           `xml:"MaxItems"`
+}
+
+type testDNSAnswerResponse struct {
+	XMLName      xml.Name `xml:"TestDNSAnswerResponse"`
+	Xmlns        string   `xml:"xmlns,attr"`
+	Nameserver   string   `xml:"Nameserver"`
+	RecordName   string   `xml:"RecordName"`
+	RecordType   string   `xml:"RecordType"`
+	RecordData   []string `xml:"RecordData>RecordDataEntry"`
+	ResponseCode string   `xml:"ResponseCode"`
+	Protocol     string   `xml:"Protocol"`
 }
 
 type listHostedZonesResponse struct {
@@ -124,6 +162,8 @@ type listResourceRecordSetsResponse struct {
 	Xmlns              string                 `xml:"xmlns,attr"`
 	ResourceRecordSets []resourceRecordSetXML `xml:"ResourceRecordSets>ResourceRecordSet"`
 	IsTruncated        bool                   `xml:"IsTruncated"`
+	NextRecordName     string                 `xml:"NextRecordName,omitempty"`
+	NextRecordType     string                 `xml:"NextRecordType,omitempty"`
 	MaxItems           int32                  `xml:"MaxItems"`
 }
 

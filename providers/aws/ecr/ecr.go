@@ -92,13 +92,18 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 
 	tags := copyTags(cfg.Tags)
 	uri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", m.opts.AccountID, m.opts.Region, cfg.Name)
+	arn := fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", m.opts.Region, m.opts.AccountID, cfg.Name)
 
 	info := driver.Repository{
-		Name:       cfg.Name,
-		URI:        uri,
-		CreatedAt:  m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:       tags,
-		ImageCount: 0,
+		Name:               cfg.Name,
+		URI:                uri,
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:               tags,
+		ImageCount:         0,
+		Arn:                arn,
+		RegistryID:         m.opts.AccountID,
+		ImageTagMutability: mutability,
+		ScanOnPush:         cfg.ImageScanOnPush,
 	}
 
 	rd := &repoData{
@@ -187,6 +192,7 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 		SizeBytes:  manifest.SizeBytes,
 		PushedAt:   now,
 		MediaType:  mediaType,
+		Manifest:   manifest.Manifest,
 	}
 
 	img := &imageData{detail: detail, layers: manifest.Layers}

@@ -58,6 +58,15 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MaxResults int    `json:"maxResults"`
+		NextToken  string `json:"nextToken"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
 	clusters, err := h.ecs.ListClusters(r.Context())
 	if err != nil {
 		writeErr(w, err)
@@ -70,7 +79,12 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 		arns = append(arns, clusters[i].ARN)
 	}
 
-	wire.WriteJSON(w, map[string]any{"clusterArns": arns})
+	items, next, ok := paginateARNs(w, arns, req.MaxResults, req.NextToken)
+	if !ok {
+		return
+	}
+
+	wire.WriteJSON(w, listResponse("clusterArns", items, next))
 }
 
 func (h *Handler) describeClusters(w http.ResponseWriter, r *http.Request) {

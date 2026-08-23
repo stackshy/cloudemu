@@ -147,14 +147,16 @@ func (h *Handler) serveClusterSubresource(w http.ResponseWriter, r *http.Request
 		h.updateClusterConfig(w, r, name)
 
 	case segUpdates:
-		// UpdateClusterVersion goes here; the SDK posts to /clusters/{n}/updates.
-		if r.Method != http.MethodPost {
+		// The SDK posts to /clusters/{n}/updates for UpdateClusterVersion and
+		// GETs the same path for ListUpdates.
+		switch r.Method {
+		case http.MethodPost:
+			h.updateClusterVersion(w, r, name)
+		case http.MethodGet:
+			h.listUpdates(w, r, name)
+		default:
 			methodNotAllowed(w)
-
-			return
 		}
-
-		h.updateClusterVersion(w, r, name)
 
 	case segNodeGroups:
 		h.serveNodegroupsCollection(w, r, name)
@@ -212,6 +214,15 @@ func (h *Handler) serveChildResource(w http.ResponseWriter, r *http.Request, clu
 		h.serveFargateProfile(w, r, clusterName, child)
 	case segAddons:
 		h.serveAddon(w, r, clusterName, child)
+	case segUpdates:
+		// /clusters/{name}/updates/{updateId} — DescribeUpdate.
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+
+			return
+		}
+
+		h.describeUpdate(w, r, clusterName, child)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException",
 			"unknown child resource: "+kind)

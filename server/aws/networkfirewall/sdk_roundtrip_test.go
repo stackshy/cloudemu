@@ -164,3 +164,136 @@ func TestSDKNetworkFirewall(t *testing.T) {
 	var notFound *nftypes.ResourceNotFoundException
 	require.ErrorAs(t, err, &notFound, "expected ResourceNotFoundException for unknown firewall")
 }
+
+// TestSDKDescribeFirewallStatus verifies DescribeFirewall reports a non-empty
+// FirewallId plus a populated FirewallStatus (ConfigurationSyncStateSummary and
+// SyncStates), which the FirewallReady waiter depends on.
+func TestSDKDescribeFirewallStatus(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	pol, err := client.CreateFirewallPolicy(ctx, &networkfirewall.CreateFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-status"),
+		FirewallPolicy: &nftypes.FirewallPolicy{
+			StatelessDefaultActions:         []string{"aws:forward_to_sfe"},
+			StatelessFragmentDefaultActions: []string{"aws:forward_to_sfe"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = client.CreateFirewall(ctx, &networkfirewall.CreateFirewallInput{
+		FirewallName:      aws.String("fw-status"),
+		FirewallPolicyArn: pol.FirewallPolicyResponse.FirewallPolicyArn,
+		VpcId:             aws.String("vpc-1"),
+		SubnetMappings:    []nftypes.SubnetMapping{{SubnetId: aws.String("subnet-a")}},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeFirewall(ctx, &networkfirewall.DescribeFirewallInput{
+		FirewallName: aws.String("fw-status"),
+	})
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, aws.ToString(desc.Firewall.FirewallId), "FirewallId must be populated")
+	require.NotNil(t, desc.FirewallStatus)
+	assert.Equal(t, nftypes.ConfigurationSyncStateInSync, desc.FirewallStatus.ConfigurationSyncStateSummary)
+	require.Len(t, desc.FirewallStatus.SyncStates, 1, "one SyncState per attached subnet")
+
+	for _, ss := range desc.FirewallStatus.SyncStates {
+		require.NotNil(t, ss.Attachment)
+		assert.Equal(t, "subnet-a", aws.ToString(ss.Attachment.SubnetId))
+	}
+}
+
+// TestSDKUpdateFirewallPolicy verifies UpdateFirewallPolicy mutates a policy's
+// stateless default actions rather than 400-ing as an unknown operation.
+func TestSDKUpdateFirewallPolicy(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateFirewallPolicy(ctx, &networkfirewall.CreateFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-upd"),
+		FirewallPolicy: &nftypes.FirewallPolicy{
+			StatelessDefaultActions:         []string{"aws:pass"},
+			StatelessFragmentDefaultActions: []string{"aws:pass"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = client.UpdateFirewallPolicy(ctx, &networkfirewall.UpdateFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-upd"),
+		UpdateToken:        aws.String("00000000-0000-0000-0000-000000000000"),
+		Description:        aws.String("updated"),
+		FirewallPolicy: &nftypes.FirewallPolicy{
+			StatelessDefaultActions:         []string{"aws:drop"},
+			StatelessFragmentDefaultActions: []string{"aws:drop"},
+		},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeFirewallPolicy(ctx, &networkfirewall.DescribeFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-upd"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"aws:drop"}, desc.FirewallPolicy.StatelessDefaultActions)
+	assert.Equal(t, "updated", aws.ToString(desc.FirewallPolicyResponse.Description))
+}
+
+// TestSDKUpdateRuleGroup verifies UpdateRuleGroup mutates a rule group's
+// description rather than being rejected as an unknown operation.
+func TestSDKUpdateRuleGroup(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	_, err := client.CreateRuleGroup(ctx, &networkfirewall.CreateRuleGroupInput{
+		RuleGroupName: aws.String("rg-upd"),
+		Type:          nftypes.RuleGroupTypeStateful,
+		Capacity:      aws.Int32(100),
+		Description:   aws.String("before"),
+	})
+	require.NoError(t, err)
+
+	_, err = client.UpdateRuleGroup(ctx, &networkfirewall.UpdateRuleGroupInput{
+		RuleGroupName: aws.String("rg-upd"),
+		Type:          nftypes.RuleGroupTypeStateful,
+		UpdateToken:   aws.String("00000000-0000-0000-0000-000000000000"),
+		Description:   aws.String("after"),
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeRuleGroup(ctx, &networkfirewall.DescribeRuleGroupInput{
+		RuleGroupName: aws.String("rg-upd"),
+		Type:          nftypes.RuleGroupTypeStateful,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "after", aws.ToString(desc.RuleGroupResponse.Description))
+}
+
+// TestSDKListTagsForResource verifies tags applied via TagResource are readable
+// through ListTagsForResource (Terraform refresh flows).
+func TestSDKListTagsForResource(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	rg, err := client.CreateRuleGroup(ctx, &networkfirewall.CreateRuleGroupInput{
+		RuleGroupName: aws.String("rg-tags"),
+		Type:          nftypes.RuleGroupTypeStateless,
+		Capacity:      aws.Int32(10),
+	})
+	require.NoError(t, err)
+
+	arn := aws.ToString(rg.RuleGroupResponse.RuleGroupArn)
+	_, err = client.TagResource(ctx, &networkfirewall.TagResourceInput{
+		ResourceArn: aws.String(arn),
+		Tags:        []nftypes.Tag{{Key: aws.String("team"), Value: aws.String("net")}},
+	})
+	require.NoError(t, err)
+
+	tags, err := client.ListTagsForResource(ctx, &networkfirewall.ListTagsForResourceInput{
+		ResourceArn: aws.String(arn),
+	})
+	require.NoError(t, err)
+	require.Len(t, tags.Tags, 1)
+	assert.Equal(t, "team", aws.ToString(tags.Tags[0].Key))
+	assert.Equal(t, "net", aws.ToString(tags.Tags[0].Value))
+}

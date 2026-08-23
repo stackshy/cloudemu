@@ -461,13 +461,17 @@ func viewToWire(v *view, owner string) map[string]any {
 }
 
 func resourceToWire(r *resourcediscovery.Resource) map[string]any {
+	awsSvc := portableToAWSService(r.Service)
+
 	return map[string]any{
 		"Arn":             r.ARN,
 		"OwningAccountId": "",
 		"Region":          r.Region,
-		"ResourceType":    r.Service + ":" + strings.ToLower(r.Type),
-		"Service":         portableToAWSService(r.Service),
-		"Properties":      []map[string]any{},
+		// Real Resource Explorer reports ResourceType in AWS `service:type` form
+		// (e.g. "s3:bucket", "dynamodb:table"), not CloudEmu's internal category.
+		"ResourceType": awsSvc + ":" + strings.ToLower(r.Type),
+		"Service":      awsSvc,
+		"Properties":   []map[string]any{},
 	}
 }
 

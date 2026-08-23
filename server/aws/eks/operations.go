@@ -3,9 +3,43 @@ package eks
 import (
 	"math"
 	"net/http"
+	"strconv"
 
+	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 )
+
+// parseMaxResults reads the EKS maxResults query param (0 = server default).
+func parseMaxResults(r *http.Request) int {
+	v := r.URL.Query().Get("maxResults")
+	if v == "" {
+		return 0
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
+}
+
+// paginateNames applies EKS maxResults/nextToken over a name list, stable-sorted
+// so offset tokens stay meaningful. Returns ok=false after writing an error.
+func paginateNames(
+	w http.ResponseWriter, r *http.Request, names []string,
+) (items []string, next string, ok bool) {
+	page, err := pagination.PaginateSorted(names,
+		func(a, b string) bool { return a < b },
+		r.URL.Query().Get("nextToken"), parseMaxResults(r))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidParameterException", err.Error())
+
+		return nil, "", false
+	}
+
+	return page.Items, page.NextPageToken, true
+}
 
 // safeInt32 narrows an int to int32, clamping at math.MaxInt32 / math.MinInt32.
 // EKS scaling and disk-size fields are int32 on the wire; the driver uses int
@@ -70,7 +104,12 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, listClustersResponse{Clusters: names})
+	items, next, ok := paginateNames(w, r, names)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listClustersResponse{Clusters: items, NextToken: next})
 }
 
 func (h *Handler) updateClusterConfig(w http.ResponseWriter, r *http.Request, name string) {
@@ -119,6 +158,37 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, name str
 	}
 
 	writeJSON(w, clusterEnvelope{Cluster: toClusterJSON(cluster)})
+}
+
+// Update operations.
+
+func (h *Handler) describeUpdate(w http.ResponseWriter, r *http.Request, clusterName, updateID string) {
+	upd, err := h.eks.DescribeUpdate(r.Context(), clusterName, updateID)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	writeJSON(w, updateEnvelope{Update: toUpdateJSON(upd)})
+}
+
+func (h *Handler) listUpdates(w http.ResponseWriter, r *http.Request, clusterName string) {
+	q := r.URL.Query()
+
+	ids, err := h.eks.ListUpdates(r.Context(), clusterName, q.Get("nodegroupName"), q.Get("addonName"))
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	items, next, ok := paginateNames(w, r, ids)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listUpdatesResponse{UpdateIDs: items, NextToken: next})
 }
 
 // Nodegroup operations.
@@ -180,7 +250,12 @@ func (h *Handler) listNodegroups(w http.ResponseWriter, r *http.Request, cluster
 		return
 	}
 
-	writeJSON(w, listNodegroupsResponse{Nodegroups: names})
+	items, next, ok := paginateNames(w, r, names)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listNodegroupsResponse{Nodegroups: items, NextToken: next})
 }
 
 func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, clusterName, ngName string) {
@@ -195,8 +270,19 @@ func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, 
 	)
 
 	if body.ScalingConfig != nil {
-		s := scalingFromJSON(body.ScalingConfig)
-		scaling = &s
+		// Real EKS applies only the sizes present in the request; the driver
+		// replaces ScalingConfig wholesale, so merge onto the current config
+		// here to avoid zeroing MinSize/MaxSize/DesiredSize that were omitted.
+		cur, err := h.eks.DescribeNodegroup(r.Context(), clusterName, ngName)
+		if err != nil {
+			writeErr(w, err)
+
+			return
+		}
+
+		merged := cur.ScalingConfig
+		mergeScaling(&merged, body.ScalingConfig)
+		scaling = &merged
 	}
 
 	if body.Labels != nil {
@@ -292,7 +378,12 @@ func (h *Handler) listFargateProfiles(w http.ResponseWriter, r *http.Request, cl
 		return
 	}
 
-	writeJSON(w, listFargateProfilesResponse{FargateProfileNames: names})
+	items, next, ok := paginateNames(w, r, names)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listFargateProfilesResponse{FargateProfileNames: items, NextToken: next})
 }
 
 func (h *Handler) deleteFargateProfile(w http.ResponseWriter, r *http.Request, clusterName, profileName string) {
@@ -352,7 +443,12 @@ func (h *Handler) listAddons(w http.ResponseWriter, r *http.Request, clusterName
 		return
 	}
 
-	writeJSON(w, listAddonsResponse{Addons: names})
+	items, next, ok := paginateNames(w, r, names)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listAddonsResponse{Addons: items, NextToken: next})
 }
 
 func (h *Handler) updateAddon(w http.ResponseWriter, r *http.Request, clusterName, addonName string) {
@@ -410,6 +506,22 @@ func vpcRequestToDriver(v *vpcConfigRequest) eksdriver.VPCConfig {
 	return out
 }
 
+// mergeScaling overlays only the sizes present in s onto dst, leaving omitted
+// fields untouched. This is the partial-update semantics real EKS applies.
+func mergeScaling(dst *eksdriver.NodegroupScalingConfig, s *nodegroupScalingConfigJSON) {
+	if s.MinSize != nil {
+		dst.MinSize = int(*s.MinSize)
+	}
+
+	if s.MaxSize != nil {
+		dst.MaxSize = int(*s.MaxSize)
+	}
+
+	if s.DesiredSize != nil {
+		dst.DesiredSize = int(*s.DesiredSize)
+	}
+}
+
 func scalingFromJSON(s *nodegroupScalingConfigJSON) eksdriver.NodegroupScalingConfig {
 	out := eksdriver.NodegroupScalingConfig{}
 
@@ -450,6 +562,10 @@ func toClusterJSON(c *eksdriver.Cluster) clusterJSON {
 
 	if c.CertificateAuthority != "" {
 		out.CertificateAuthority = &certificate{Data: c.CertificateAuthority}
+	}
+
+	if c.OIDCIssuer != "" {
+		out.Identity = &identityJSON{OIDC: oidcJSON{Issuer: c.OIDCIssuer}}
 	}
 
 	return out

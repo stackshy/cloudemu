@@ -33,6 +33,16 @@ type certificate struct {
 	Data string `json:"data"`
 }
 
+// identityJSON carries the cluster's OIDC identity, read by IRSA tooling and
+// aws_iam_openid_connect_provider.
+type identityJSON struct {
+	OIDC oidcJSON `json:"oidc"`
+}
+
+type oidcJSON struct {
+	Issuer string `json:"issuer"`
+}
+
 // clusterJSON is the EKS cluster resource shape.
 type clusterJSON struct {
 	Name                 string             `json:"name"`
@@ -44,6 +54,7 @@ type clusterJSON struct {
 	ResourcesVpcConfig   *vpcConfigResponse `json:"resourcesVpcConfig,omitempty"`
 	Status               string             `json:"status"`
 	CertificateAuthority *certificate       `json:"certificateAuthority,omitempty"`
+	Identity             *identityJSON      `json:"identity,omitempty"`
 	PlatformVersion      string             `json:"platformVersion,omitempty"`
 	Tags                 map[string]string  `json:"tags,omitempty"`
 }
@@ -214,19 +225,28 @@ type updateEnvelope struct {
 }
 
 type listClustersResponse struct {
-	Clusters []string `json:"clusters"`
+	Clusters  []string `json:"clusters"`
+	NextToken string   `json:"nextToken,omitempty"`
 }
 
 type listNodegroupsResponse struct {
 	Nodegroups []string `json:"nodegroups"`
+	NextToken  string   `json:"nextToken,omitempty"`
 }
 
 type listFargateProfilesResponse struct {
 	FargateProfileNames []string `json:"fargateProfileNames"`
+	NextToken           string   `json:"nextToken,omitempty"`
 }
 
 type listAddonsResponse struct {
-	Addons []string `json:"addons"`
+	Addons    []string `json:"addons"`
+	NextToken string   `json:"nextToken,omitempty"`
+}
+
+type listUpdatesResponse struct {
+	UpdateIDs []string `json:"updateIds"`
+	NextToken string   `json:"nextToken,omitempty"`
 }
 
 // nanosPerSecond converts UnixNano to fractional seconds (the EKS wire format).

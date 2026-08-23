@@ -62,6 +62,7 @@ type roleXML struct {
 	RoleID                   string   `xml:"RoleId"`
 	Arn                      string   `xml:"Arn"`
 	Path                     string   `xml:"Path,omitempty"`
+	Description              string   `xml:"Description,omitempty"`
 	CreateDate               string   `xml:"CreateDate,omitempty"`
 	MaxSessionDuration       int      `xml:"MaxSessionDuration,omitempty"`
 	AssumeRolePolicyDocument string   `xml:"AssumeRolePolicyDocument,omitempty"`
@@ -74,6 +75,7 @@ func toRoleXML(r *iamdriver.RoleInfo) roleXML {
 		RoleID:                   r.ID,
 		Arn:                      r.ARN,
 		Path:                     r.Path,
+		Description:              r.Description,
 		CreateDate:               r.CreatedAt,
 		MaxSessionDuration:       r.MaxSessionDuration,
 		AssumeRolePolicyDocument: r.AssumeRolePolicyDoc,
@@ -303,6 +305,7 @@ type listUsersResponse struct {
 type listUsersResult struct {
 	Users       usersListXML `xml:"Users"`
 	IsTruncated bool         `xml:"IsTruncated"`
+	Marker      string       `xml:"Marker,omitempty"`
 }
 
 type createRoleResponse struct {
@@ -343,6 +346,7 @@ type listRolesResponse struct {
 type listRolesResult struct {
 	Roles       rolesListXML `xml:"Roles"`
 	IsTruncated bool         `xml:"IsTruncated"`
+	Marker      string       `xml:"Marker,omitempty"`
 }
 
 type createPolicyResponse struct {
@@ -383,6 +387,7 @@ type listPoliciesResponse struct {
 type listPoliciesResult struct {
 	Policies    policiesListXML `xml:"Policies"`
 	IsTruncated bool            `xml:"IsTruncated"`
+	Marker      string          `xml:"Marker,omitempty"`
 }
 
 type createPolicyVersionResponse struct {
@@ -519,6 +524,7 @@ type listGroupsResponse struct {
 type listGroupsResult struct {
 	Groups      groupsListXML `xml:"Groups"`
 	IsTruncated bool          `xml:"IsTruncated"`
+	Marker      string        `xml:"Marker,omitempty"`
 }
 
 type addUserToGroupResponse struct {

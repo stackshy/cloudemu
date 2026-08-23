@@ -3,6 +3,7 @@ package route53
 
 import (
 	"context"
+	"crypto/rand"
 	"maps"
 	"strings"
 	"sync"
@@ -86,13 +87,39 @@ func recordKey(zoneID, name, recordType, setID string) string {
 	return key
 }
 
+// hostedZoneIDLen is the number of random characters after the "Z" prefix in an
+// opaque Route 53 hosted-zone id (e.g. Z1D633PJN98FT9).
+const hostedZoneIDLen = 13
+
+// hostedZoneIDAlphabet is the uppercase-alphanumeric set real Route 53
+// hosted-zone ids draw from.
+const hostedZoneIDAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// newHostedZoneID returns an opaque uppercase hosted-zone id in Route 53's real
+// shape ("Z" + random uppercase alphanumerics), not a sequential "zone-N" that
+// breaks ARN construction and id pattern matching.
+func newHostedZoneID() string {
+	buf := make([]byte, hostedZoneIDLen)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand failing is not something the mock can recover from
+		// meaningfully; fall back to the monotonic generator so ids stay unique.
+		return "Z" + strings.ToUpper(idgen.GenerateID(""))
+	}
+
+	for i := range buf {
+		buf[i] = hostedZoneIDAlphabet[int(buf[i])%len(hostedZoneIDAlphabet)]
+	}
+
+	return "Z" + string(buf)
+}
+
 // CreateZone creates a new DNS hosted zone.
 func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "zone name is required")
 	}
 
-	id := idgen.GenerateID("zone-")
+	id := newHostedZoneID()
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {

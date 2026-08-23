@@ -415,8 +415,15 @@ func (m *Mock) ListTasks(_ context.Context, cluster, family, desiredStatus, serv
 	return out, nil
 }
 
-// DescribeTasks resolves tasks by id or ARN; unresolved ids become failures.
-func (m *Mock) DescribeTasks(_ context.Context, _ string, ids []string) ([]driver.Task, []driver.Failure, error) {
+// DescribeTasks resolves tasks by id or ARN; unresolved ids become failures. A
+// nonexistent cluster is rejected up front with ClusterNotFoundException,
+// matching real ECS (the implicit "default" cluster always resolves).
+func (m *Mock) DescribeTasks(_ context.Context, cluster string, ids []string) ([]driver.Task, []driver.Failure, error) {
+	want := resolveClusterName(cluster)
+	if !m.clusterExists(want) {
+		return nil, nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+	}
+
 	found := make([]driver.Task, 0, len(ids))
 	failures := make([]driver.Failure, 0, len(ids))
 

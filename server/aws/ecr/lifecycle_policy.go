@@ -72,7 +72,15 @@ func (h *Handler) getLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 
 	policy, err := h.registry.GetLifecyclePolicy(r.Context(), req.RepositoryName)
 	if err != nil {
-		writeErr(w, err)
+		// A missing repository is RepositoryNotFoundException; a repository with
+		// no lifecycle policy is LifecyclePolicyNotFoundException.
+		if _, repoErr := h.registry.GetRepository(r.Context(), req.RepositoryName); repoErr != nil {
+			writeErr(w, repoErr)
+			return
+		}
+
+		wire.WriteJSONError(w, http.StatusBadRequest, "LifecyclePolicyNotFoundException", err.Error())
+
 		return
 	}
 

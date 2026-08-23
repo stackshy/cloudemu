@@ -44,12 +44,18 @@ var elbActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"CreateTargetGroup":              {},
 	"DescribeTargetGroups":           {},
 	"DeleteTargetGroup":              {},
+	"ModifyTargetGroup":              {},
 	"CreateListener":                 {},
 	"DescribeListeners":              {},
 	"DeleteListener":                 {},
+	"ModifyListener":                 {},
 	"CreateRule":                     {},
 	"DescribeRules":                  {},
 	"DeleteRule":                     {},
+	"ModifyRule":                     {},
+	"SetRulePriorities":              {},
+	"SetSecurityGroups":              {},
+	"SetSubnets":                     {},
 	"RegisterTargets":                {},
 	"DeregisterTargets":              {},
 	"DescribeTargetHealth":           {},
@@ -134,18 +140,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeTargetGroups(w, r)
 	case "DeleteTargetGroup":
 		h.deleteTargetGroup(w, r)
+	case "ModifyTargetGroup":
+		h.modifyTargetGroup(w, r)
 	case "CreateListener":
 		h.createListener(w, r)
 	case "DescribeListeners":
 		h.describeListeners(w, r)
 	case "DeleteListener":
 		h.deleteListener(w, r)
+	case "ModifyListener":
+		h.modifyListener(w, r)
 	case "CreateRule":
 		h.createRule(w, r)
 	case "DescribeRules":
 		h.describeRules(w, r)
 	case "DeleteRule":
 		h.deleteRule(w, r)
+	case "ModifyRule":
+		h.modifyRule(w, r)
+	case "SetRulePriorities":
+		h.setRulePriorities(w, r)
+	case "SetSecurityGroups":
+		h.setSecurityGroups(w, r)
+	case "SetSubnets":
+		h.setSubnets(w, r)
 	case "RegisterTargets":
 		h.registerTargets(w, r)
 	case "DeregisterTargets":
@@ -164,7 +182,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsNotFound(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode(err), err.Error())
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "DuplicateLoadBalancerName", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, duplicateNameCode(err), err.Error())
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", err.Error())
 	case cerrors.IsFailedPrecondition(err):
@@ -172,6 +190,16 @@ func writeErr(w http.ResponseWriter, err error) {
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
 	}
+}
+
+// duplicateNameCode distinguishes a duplicate target-group name from a
+// duplicate load-balancer name so each maps to its own AWS error code.
+func duplicateNameCode(err error) string {
+	if strings.Contains(err.Error(), "target group") {
+		return "DuplicateTargetGroupName"
+	}
+
+	return "DuplicateLoadBalancerName"
 }
 
 // notFoundCode picks the AWS-shaped error code from the error message. The
