@@ -50,9 +50,11 @@ type containersList struct {
 }
 
 type documentsList struct {
-	RID       string           `json:"_rid"`
-	Documents []map[string]any `json:"Documents"`
-	Count     int              `json:"_count"`
+	RID string `json:"_rid"`
+	// Documents holds full documents (SELECT *), projected objects, or bare
+	// scalars (SELECT VALUE / aggregates), so it is []any rather than a doc list.
+	Documents []any `json:"Documents"`
+	Count     int   `json:"_count"`
 }
 
 type errorEnvelope struct {

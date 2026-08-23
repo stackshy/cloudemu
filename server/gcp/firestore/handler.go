@@ -317,13 +317,61 @@ func (h *Handler) batchGet(w http.ResponseWriter, r *http.Request, _ string) {
 const allResults = 1 << 30
 
 type runQueryRequest struct {
-	StructuredQuery struct {
-		From []struct {
-			CollectionID string `json:"collectionId"`
-		} `json:"from"`
-		Where *queryFilter `json:"where"`
-		Limit int          `json:"limit"`
-	} `json:"structuredQuery"`
+	StructuredQuery structuredQuery `json:"structuredQuery"`
+}
+
+type structuredQuery struct {
+	From []struct {
+		CollectionID string `json:"collectionId"`
+	} `json:"from"`
+	Where   *queryFilter    `json:"where"`
+	OrderBy []orderByClause `json:"orderBy"`
+	Limit   int             `json:"limit"`
+	Offset  int             `json:"offset"`
+	StartAt *queryCursor    `json:"startAt"`
+	EndAt   *queryCursor    `json:"endAt"`
+	Select  *selectClause   `json:"select"`
+}
+
+type orderByClause struct {
+	Field     fieldRef  `json:"field"`
+	Direction direction `json:"direction"` // ASCENDING (default) or DESCENDING
+}
+
+// direction decodes an ORDER BY direction sent as its enum name ("DESCENDING")
+// or its protobuf number (ASCENDING=1, DESCENDING=2).
+type direction string
+
+//nolint:gochecknoglobals // static lookup table
+var directionNames = map[int]direction{1: "ASCENDING", 2: "DESCENDING"}
+
+func (d *direction) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*d = direction(v)
+		return nil
+	}
+
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*d = directionNames[n]
+	return nil
+}
+
+// queryCursor is a startAt/endAt boundary: values align positionally to the
+// orderBy fields, and before selects the inclusive/exclusive side.
+type queryCursor struct {
+	Values []value `json:"values"`
+	Before bool    `json:"before"`
+}
+
+type selectClause struct {
+	Fields []fieldRef `json:"fields"`
 }
 
 // queryFilter mirrors StructuredQuery.Filter: a single fieldFilter, a
@@ -481,36 +529,35 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 		return
 	}
 
-	matched, merr := filterDocuments(result.Items, node, req.StructuredQuery.Limit)
+	matched, merr := filterDocuments(result.Items, node)
 	if merr != nil {
 		writeErr(w, merr)
 		return
 	}
 
+	// Shape the matched set: order by, cursors, offset/limit, then select.
+	matched = shapeResults(matched, &req.StructuredQuery)
+
 	streamQueryResults(w, matched, p)
 }
 
-// filterDocuments keeps the items matching node (nil node matches all) up to
-// limit (limit<=0 means no limit).
-func filterDocuments(items []map[string]any, node expr.Node, limit int) ([]map[string]any, error) {
+// filterDocuments keeps the items matching node (a nil node matches all).
+func filterDocuments(items []map[string]any, node expr.Node) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(items))
 
 	for _, item := range items {
-		if node != nil {
-			ok, err := expr.Eval(node, item)
-			if err != nil {
-				return nil, err
-			}
-
-			if !ok {
-				continue
-			}
+		if node == nil {
+			out = append(out, item)
+			continue
 		}
 
-		out = append(out, item)
+		ok, err := expr.Eval(node, item)
+		if err != nil {
+			return nil, err
+		}
 
-		if limit > 0 && len(out) >= limit {
-			break
+		if ok {
+			out = append(out, item)
 		}
 	}
 

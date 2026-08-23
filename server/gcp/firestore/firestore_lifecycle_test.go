@@ -856,3 +856,65 @@ func TestDatabaseQueryOperators(t *testing.T) {
 	}}
 	count("OR", coll.WhereEntity(or), 2)
 }
+
+func collectDBOrderedIDs(t *testing.T, it *gcpfirestore.DocumentIterator) []string {
+	t.Helper()
+
+	var ids []string
+
+	for {
+		snap, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("iterator.Next: %v", err)
+		}
+
+		ids = append(ids, snap.Ref.ID)
+	}
+
+	return ids
+}
+
+// TestDatabaseQueryOrderingAndPaging drives the real Firestore REST client
+// through orderBy (asc/desc), startAfter/endBefore cursors, offset, limit, and
+// a select projection.
+func TestDatabaseQueryOrderingAndPaging(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "scores")
+	coll := client.Collection("scores")
+
+	for _, d := range []struct {
+		id    string
+		score int
+	}{{"a", 30}, {"b", 10}, {"c", 20}} {
+		if _, err := coll.Doc(d.id).Set(ctx, map[string]any{"score": d.score, "extra": "x"}); err != nil {
+			t.Fatalf("Set %s: %v", d.id, err)
+		}
+	}
+
+	order := func(name string, q gcpfirestore.Query, want string) {
+		got := strings.Join(collectDBOrderedIDs(t, q.Documents(ctx)), ",")
+		if got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	order("orderBy asc", coll.OrderBy("score", gcpfirestore.Asc), "b,c,a")
+	order("orderBy desc", coll.OrderBy("score", gcpfirestore.Desc), "a,c,b")
+	order("startAfter+limit", coll.OrderBy("score", gcpfirestore.Asc).StartAfter(10).Limit(1), "c")
+	order("offset", coll.OrderBy("score", gcpfirestore.Asc).Offset(1), "c,a")
+	order("endBefore", coll.OrderBy("score", gcpfirestore.Asc).EndBefore(20), "b")
+
+	// select projects to just 'score' (plus the document name); 'extra' is dropped.
+	for id, data := range dbCollectAll(t, coll.Select("score").Documents(ctx)) {
+		if _, hasExtra := data["extra"]; hasExtra {
+			t.Errorf("select score: doc %s still carries 'extra': %v", id, data)
+		}
+
+		if _, hasScore := data["score"]; !hasScore {
+			t.Errorf("select score: doc %s missing 'score': %v", id, data)
+		}
+	}
+}
