@@ -16,6 +16,7 @@ type createLogGroupRequest struct {
 type describeLogGroupsRequest struct {
 	LogGroupNamePrefix string `json:"logGroupNamePrefix"`
 	Limit              int32  `json:"limit"`
+	NextToken          string `json:"nextToken"`
 }
 
 type deleteLogGroupRequest struct {
@@ -30,6 +31,7 @@ type createLogStreamRequest struct {
 type describeLogStreamsRequest struct {
 	LogGroupName string `json:"logGroupName"`
 	Limit        int32  `json:"limit"`
+	NextToken    string `json:"nextToken"`
 }
 
 type deleteLogStreamRequest struct {
@@ -80,18 +82,22 @@ type logGroupJSON struct {
 
 type describeLogGroupsResponse struct {
 	LogGroups []logGroupJSON `json:"logGroups"`
+	NextToken string         `json:"nextToken,omitempty"`
 }
 
 type logStreamJSON struct {
 	LogStreamName       string `json:"logStreamName"`
+	Arn                 string `json:"arn,omitempty"`
 	CreationTime        int64  `json:"creationTime"`
 	LastEventTimestamp  int64  `json:"lastEventTimestamp,omitempty"`
 	LastIngestionTime   int64  `json:"lastIngestionTime,omitempty"`
 	FirstEventTimestamp int64  `json:"firstEventTimestamp,omitempty"`
+	StoredBytes         int64  `json:"storedBytes"`
 }
 
 type describeLogStreamsResponse struct {
 	LogStreams []logStreamJSON `json:"logStreams"`
+	NextToken  string          `json:"nextToken,omitempty"`
 }
 
 type putLogEventsResponse struct {
@@ -131,6 +137,17 @@ func epochMillis(t time.Time) int64 {
 	return t.UnixMilli()
 }
 
+// ingestionMillis renders an event's ingestion time as epoch milliseconds,
+// falling back to the event's own timestamp when the ingestion time is unknown
+// (zero) so the wire field is never blank.
+func ingestionMillis(ingestion, eventTS time.Time) int64 {
+	if ingestion.IsZero() {
+		return epochMillis(eventTS)
+	}
+
+	return epochMillis(ingestion)
+}
+
 // millisToTime is the inverse of epochMillis: epoch milliseconds to time. Zero
 // yields the zero time so callers can distinguish "unset".
 func millisToTime(ms int64) time.Time {
@@ -167,13 +184,23 @@ func toLogGroupJSON(info *logdriver.LogGroupInfo) logGroupJSON {
 	}
 }
 
-func toLogStreamJSON(info *logdriver.LogStreamInfo) logStreamJSON {
+// toLogStreamJSON renders a driver log stream. groupARN is the owning log
+// group's ARN, used to derive the stream ARN Terraform's
+// aws_cloudwatch_log_stream reads; empty groupARN omits the arn field.
+func toLogStreamJSON(info *logdriver.LogStreamInfo, groupARN string) logStreamJSON {
 	last := isoToEpochMillis(info.LastEvent)
 
-	return logStreamJSON{
-		LogStreamName:      info.Name,
-		CreationTime:       isoToEpochMillis(info.CreatedAt),
-		LastEventTimestamp: last,
-		LastIngestionTime:  last,
+	js := logStreamJSON{
+		LogStreamName:       info.Name,
+		CreationTime:        isoToEpochMillis(info.CreatedAt),
+		LastEventTimestamp:  last,
+		LastIngestionTime:   last,
+		FirstEventTimestamp: isoToEpochMillis(info.FirstEvent),
 	}
+
+	if groupARN != "" {
+		js.Arn = groupARN + ":log-stream:" + info.Name
+	}
+
+	return js
 }

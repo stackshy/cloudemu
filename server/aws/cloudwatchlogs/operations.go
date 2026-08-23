@@ -1,13 +1,66 @@
 package cloudwatchlogs
 
 import (
-	"github.com/stackshy/cloudemu/v2/services/scope"
+	"encoding/base64"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
+
+// defaultDescribeLimit is the page size CloudWatch Logs applies to
+// DescribeLogGroups / DescribeLogStreams when the caller omits limit.
+const defaultDescribeLimit = 50
+
+// decodeOffsetToken parses a nextToken produced by encodeOffsetToken back into a
+// slice offset. An empty token means "start from the beginning"; a malformed
+// token is treated as offset 0 so a stray token never wedges pagination.
+func decodeOffsetToken(tok string) int {
+	if tok == "" {
+		return 0
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(tok)
+	if err != nil {
+		return 0
+	}
+
+	n, err := strconv.Atoi(string(raw))
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
+}
+
+// encodeOffsetToken renders a slice offset as an opaque nextToken.
+func encodeOffsetToken(offset int) string {
+	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+// pageBounds resolves [start,end) and the next-page offset for a slice of the
+// given length, honoring a caller limit (falling back to defaultDescribeLimit).
+// next is 0 when no further page remains.
+func pageBounds(total, start int, limit int32) (from, to, next int) {
+	size := int(limit)
+	if size <= 0 {
+		size = defaultDescribeLimit
+	}
+
+	if start > total {
+		start = total
+	}
+
+	end := start + size
+	if end >= total {
+		return start, total, 0
+	}
+
+	return start, end, end
+}
 
 // --- log groups ---
 
@@ -41,17 +94,29 @@ func (h *Handler) describeLogGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]logGroupJSON, 0, len(infos))
+	matched := make([]logdriver.LogGroupInfo, 0, len(infos))
 
 	for i := range infos {
 		if req.LogGroupNamePrefix != "" && !strings.HasPrefix(infos[i].Name, req.LogGroupNamePrefix) {
 			continue
 		}
 
-		out = append(out, toLogGroupJSON(&infos[i]))
+		matched = append(matched, infos[i])
 	}
 
-	wire.WriteJSON(w, describeLogGroupsResponse{LogGroups: out})
+	from, to, next := pageBounds(len(matched), decodeOffsetToken(req.NextToken), req.Limit)
+
+	out := make([]logGroupJSON, 0, to-from)
+	for i := from; i < to; i++ {
+		out = append(out, toLogGroupJSON(&matched[i]))
+	}
+
+	resp := describeLogGroupsResponse{LogGroups: out}
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) deleteLogGroup(w http.ResponseWriter, r *http.Request) {
@@ -96,12 +161,26 @@ func (h *Handler) describeLogStreams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]logStreamJSON, 0, len(infos))
-	for i := range infos {
-		out = append(out, toLogStreamJSON(&infos[i]))
+	// The stream ARN is derived from the owning group's ARN, which the driver
+	// carries on the group, not the stream.
+	groupARN := ""
+	if g, gerr := h.logs.GetLogGroup(r.Context(), req.LogGroupName); gerr == nil {
+		groupARN = g.ResourceID
 	}
 
-	wire.WriteJSON(w, describeLogStreamsResponse{LogStreams: out})
+	from, to, next := pageBounds(len(infos), decodeOffsetToken(req.NextToken), req.Limit)
+
+	out := make([]logStreamJSON, 0, to-from)
+	for i := from; i < to; i++ {
+		out = append(out, toLogStreamJSON(&infos[i], groupARN))
+	}
+
+	resp := describeLogStreamsResponse{LogStreams: out}
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) deleteLogStream(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +246,7 @@ func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 		out = append(out, outputLogEvent{
 			Timestamp:     epochMillis(e.Timestamp),
 			Message:       e.Message,
-			IngestionTime: epochMillis(e.Timestamp),
+			IngestionTime: ingestionMillis(e.IngestionTime, e.Timestamp),
 		})
 	}
 
@@ -211,7 +290,7 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 			LogStreamName: e.LogStream,
 			Timestamp:     epochMillis(e.Timestamp),
 			Message:       e.Message,
-			IngestionTime: epochMillis(e.Timestamp),
+			IngestionTime: ingestionMillis(e.IngestionTime, e.Timestamp),
 		})
 	}
 
