@@ -29,14 +29,44 @@ type secretMutator interface {
 	UntagSecret(ctx context.Context, name string, keys []string) error
 }
 
+// secretStager is the AWS-specific staging/rotation/soft-delete surface the
+// handler type-asserts for (implemented by the AWS provider), keeping the
+// portable Secrets driver minimal so Azure/GCP are unaffected.
+type secretStager interface {
+	MarkVersionBinary(ctx context.Context, name, versionID string) error
+	GetSecretValueStage(ctx context.Context, name, versionID, stage string) (*secretsdriver.SecretVersion, error)
+	SecretVersionStages(ctx context.Context, name string) (map[string][]string, error)
+	SecretDeletionDate(ctx context.Context, name string) (string, bool)
+	RestoreSecret(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
+	RotateSecret(ctx context.Context, name string) (*secretsdriver.SecretVersion, error)
+}
+
 // Handler serves Secrets Manager JSON-RPC requests against a Secrets driver.
 type Handler struct {
 	secrets secretsdriver.Secrets
+	routes  map[string]http.HandlerFunc
 }
 
 // New returns a Secrets Manager handler backed by s.
 func New(s secretsdriver.Secrets) *Handler {
-	return &Handler{secrets: s}
+	h := &Handler{secrets: s}
+	h.routes = map[string]http.HandlerFunc{
+		"CreateSecret":         h.createSecret,
+		"DeleteSecret":         h.deleteSecret,
+		"DescribeSecret":       h.describeSecret,
+		"ListSecrets":          h.listSecrets,
+		"GetSecretValue":       h.getSecretValue,
+		"PutSecretValue":       h.putSecretValue,
+		"ListSecretVersionIds": h.listSecretVersionIDs,
+		"UpdateSecret":         h.updateSecret,
+		"RestoreSecret":        h.restoreSecret,
+		"RotateSecret":         h.rotateSecret,
+		"GetRandomPassword":    h.getRandomPassword,
+		"TagResource":          h.tagResource,
+		"UntagResource":        h.untagResource,
+	}
+
+	return h
 }
 
 // Matches returns true for Secrets Manager-shaped requests, identified by an
@@ -47,32 +77,16 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP dispatches Secrets Manager operations based on X-Amz-Target.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix) {
-	case "CreateSecret":
-		h.createSecret(w, r)
-	case "DeleteSecret":
-		h.deleteSecret(w, r)
-	case "DescribeSecret":
-		h.describeSecret(w, r)
-	case "ListSecrets":
-		h.listSecrets(w, r)
-	case "GetSecretValue":
-		h.getSecretValue(w, r)
-	case "PutSecretValue":
-		h.putSecretValue(w, r)
-	case "ListSecretVersionIds":
-		h.listSecretVersionIDs(w, r)
-	case "UpdateSecret":
-		h.updateSecret(w, r)
-	case "TagResource":
-		h.tagResource(w, r)
-	case "UntagResource":
-		h.untagResource(w, r)
-	default:
-		op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"UnknownOperationException", "unknown Secrets Manager operation: "+op)
+	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
+
+	if fn, ok := h.routes[op]; ok {
+		fn(w, r)
+
+		return
 	}
+
+	wire.WriteJSONError(w, http.StatusBadRequest,
+		"UnknownOperationException", "unknown Secrets Manager operation: "+op)
 }
 
 // errNotSupported is returned when the backing driver doesn't implement the

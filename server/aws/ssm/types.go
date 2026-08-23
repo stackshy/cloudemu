@@ -62,9 +62,24 @@ type getParametersByPathRequest struct {
 	NextToken      string `json:"NextToken"`
 }
 
+// parameterStringFilter is the modern DescribeParameters ParameterFilters shape
+// ({Key, Option, Values}); parametersFilter is the legacy Filters shape.
+type parameterStringFilter struct {
+	Key    string   `json:"Key"`
+	Option string   `json:"Option"`
+	Values []string `json:"Values"`
+}
+
+type parametersFilter struct {
+	Key    string   `json:"Key"`
+	Values []string `json:"Values"`
+}
+
 type describeParametersRequest struct {
-	MaxResults int32  `json:"MaxResults"`
-	NextToken  string `json:"NextToken"`
+	MaxResults       int32                   `json:"MaxResults"`
+	NextToken        string                  `json:"NextToken"`
+	ParameterFilters []parameterStringFilter `json:"ParameterFilters"`
+	Filters          []parametersFilter      `json:"Filters"`
 }
 
 type nameRequest struct {
@@ -117,19 +132,31 @@ type labelParameterVersionResponse struct {
 	ParameterVersion int64    `json:"ParameterVersion"`
 }
 
+type getParameterHistoryRequest struct {
+	Name           string `json:"Name"`
+	WithDecryption bool   `json:"WithDecryption"`
+	MaxResults     int32  `json:"MaxResults"`
+	NextToken      string `json:"NextToken"`
+}
+
 type getParameterHistoryResponse struct {
 	Parameters []parameterHistoryJSON `json:"Parameters"`
+	NextToken  string                 `json:"NextToken,omitempty"`
 }
 
 // parameterHistoryJSON is the wire shape for a ParameterHistory entry.
 type parameterHistoryJSON struct {
-	ARN              string  `json:"ARN,omitempty"`
-	DataType         string  `json:"DataType,omitempty"`
-	LastModifiedDate float64 `json:"LastModifiedDate,omitempty"`
-	Name             string  `json:"Name"`
-	Type             string  `json:"Type,omitempty"`
-	Value            string  `json:"Value,omitempty"`
-	Version          int64   `json:"Version"`
+	ARN              string   `json:"ARN,omitempty"`
+	DataType         string   `json:"DataType,omitempty"`
+	Description      string   `json:"Description,omitempty"`
+	Labels           []string `json:"Labels,omitempty"`
+	LastModifiedDate float64  `json:"LastModifiedDate,omitempty"`
+	LastModifiedUser string   `json:"LastModifiedUser,omitempty"`
+	Name             string   `json:"Name"`
+	Tier             string   `json:"Tier,omitempty"`
+	Type             string   `json:"Type,omitempty"`
+	Value            string   `json:"Value,omitempty"`
+	Version          int64    `json:"Version"`
 }
 
 // epochSeconds converts an RFC3339 timestamp to Unix epoch seconds, the form

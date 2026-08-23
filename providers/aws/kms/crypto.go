@@ -110,14 +110,14 @@ func encodeBlob(magic byte, keyID string, body []byte) []byte {
 func decodeBlob(blob []byte) (magic byte, keyID string, body []byte, err error) {
 	const header = 3
 	if len(blob) < header {
-		return 0, "", nil, errors.New(errors.InvalidArgument, "malformed ciphertext blob")
+		return 0, "", nil, driver.ErrInvalidCiphertext
 	}
 
 	magic = blob[0]
 	idLen := int(binary.BigEndian.Uint16(blob[1:header]))
 
 	if len(blob) < header+idLen {
-		return 0, "", nil, errors.New(errors.InvalidArgument, "malformed ciphertext blob")
+		return 0, "", nil, driver.ErrInvalidCiphertext
 	}
 
 	keyID = string(blob[header : header+idLen])

@@ -49,6 +49,13 @@ type Parameter struct {
 	// Selector records how this value was addressed (e.g. ":3" for a version
 	// or ":prod" for a label), for the SDK's Selector response field.
 	Selector string
+	// Labels, Description, Tier, and LastModifiedUser are populated by
+	// GetParameterHistory so labelled/tiered versions round-trip. They are left
+	// empty by the value-read paths (GetParameter et al.), matching real SSM.
+	Labels           []string
+	Description      string
+	Tier             string
+	LastModifiedUser string
 }
 
 // ParameterMetadata describes a parameter without its value.

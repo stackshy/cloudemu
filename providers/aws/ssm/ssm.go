@@ -416,16 +416,23 @@ func (m *Mock) GetParameterHistory(_ context.Context, name string) ([]driver.Par
 	pd.mu.RLock()
 	defer pd.mu.RUnlock()
 
+	lastModifiedUser := idgen.AWSARN("iam", "", m.opts.AccountID, "user/cloudemu")
+
 	out := make([]driver.Parameter, 0, len(pd.versions))
 	for _, v := range pd.versions {
+		labels := append([]string(nil), v.labels...)
 		out = append(out, driver.Parameter{
-			Name:         pd.name,
-			Type:         v.typ,
-			Value:        v.value,
-			Version:      v.version,
-			ARN:          m.arn(pd.name),
-			DataType:     v.dataType,
-			LastModified: v.lastModified,
+			Name:             pd.name,
+			Type:             v.typ,
+			Value:            v.value,
+			Version:          v.version,
+			ARN:              m.arn(pd.name),
+			DataType:         v.dataType,
+			LastModified:     v.lastModified,
+			Labels:           labels,
+			Description:      pd.description,
+			Tier:             pd.tier,
+			LastModifiedUser: lastModifiedUser,
 		})
 	}
 

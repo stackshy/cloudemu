@@ -72,6 +72,7 @@ type keyMetadataJSON struct {
 	CreationDate             *float64               `json:"CreationDate,omitempty"`
 	DeletionDate             *float64               `json:"DeletionDate,omitempty"`
 	ValidTo                  *float64               `json:"ValidTo,omitempty"`
+	EncryptionAlgorithms     []string               `json:"EncryptionAlgorithms,omitempty"`
 	MultiRegionConfiguration *multiRegionConfigJSON `json:"MultiRegionConfiguration,omitempty"`
 }
 
@@ -92,6 +93,12 @@ func metadataJSON(md *kmsdriver.KeyMetadata) keyMetadataJSON {
 		CreationDate:          epochOrNil(md.CreationDate),
 		DeletionDate:          epochOrNil(md.DeletionDate),
 		ValidTo:               epochOrNil(md.ValidTo),
+	}
+
+	// A symmetric ENCRYPT_DECRYPT key advertises the single SYMMETRIC_DEFAULT
+	// encryption algorithm, matching real KMS KeyMetadata.
+	if md.KeySpec == kmsdriver.SpecSymmetricDefault && md.KeyUsage == kmsdriver.UsageEncryptDecrypt {
+		out.EncryptionAlgorithms = []string{kmsdriver.SpecSymmetricDefault}
 	}
 
 	if md.MultiRegion {
@@ -142,8 +149,21 @@ type aliasRequest struct {
 	TargetKeyID string `json:"TargetKeyId"`
 }
 
+type listKeysRequest struct {
+	Limit  int32  `json:"Limit"`
+	Marker string `json:"Marker"`
+}
+
 type listAliasesRequest struct {
-	KeyID string `json:"KeyId"`
+	KeyID  string `json:"KeyId"`
+	Limit  int32  `json:"Limit"`
+	Marker string `json:"Marker"`
+}
+
+type listResourceTagsRequest struct {
+	KeyID  string `json:"KeyId"`
+	Limit  int32  `json:"Limit"`
+	Marker string `json:"Marker"`
 }
 
 type tagResourceRequest struct {
@@ -168,8 +188,9 @@ type keyListEntry struct {
 }
 
 type listKeysResponse struct {
-	Keys      []keyListEntry `json:"Keys"`
-	Truncated bool           `json:"Truncated"`
+	Keys       []keyListEntry `json:"Keys"`
+	NextMarker string         `json:"NextMarker,omitempty"`
+	Truncated  bool           `json:"Truncated"`
 }
 
 type scheduleKeyDeletionResponse struct {
@@ -191,11 +212,13 @@ type aliasListEntry struct {
 }
 
 type listAliasesResponse struct {
-	Aliases   []aliasListEntry `json:"Aliases"`
-	Truncated bool             `json:"Truncated"`
+	Aliases    []aliasListEntry `json:"Aliases"`
+	NextMarker string           `json:"NextMarker,omitempty"`
+	Truncated  bool             `json:"Truncated"`
 }
 
 type listResourceTagsResponse struct {
-	Tags      []tag `json:"Tags"`
-	Truncated bool  `json:"Truncated"`
+	Tags       []tag  `json:"Tags"`
+	NextMarker string `json:"NextMarker,omitempty"`
+	Truncated  bool   `json:"Truncated"`
 }

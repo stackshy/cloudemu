@@ -10,8 +10,9 @@ import (
 // AWS MaxResults ceilings (and defaults when unset) for the paginated SSM
 // operations, matching the real service limits.
 const (
-	maxResultsByPath   = 10 // GetParametersByPath: 1..10
-	maxResultsDescribe = 50 // DescribeParameters:  1..50
+	maxResultsByPath   = 10 // GetParametersByPath:  1..10
+	maxResultsDescribe = 50 // DescribeParameters:   1..50
+	maxResultsHistory  = 50 // GetParameterHistory: 1..50
 )
 
 // pageWindow resolves an opaque NextToken + MaxResults into a [start,end) slice

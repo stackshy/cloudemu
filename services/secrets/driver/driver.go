@@ -27,6 +27,10 @@ type SecretVersion struct {
 	Value     []byte
 	CreatedAt string
 	Current   bool
+	// Binary reports that the value was stored via SecretBinary (rather than
+	// SecretString), so a reader returns it in the SecretBinary field. AWS Secrets
+	// Manager keeps these mutually exclusive; other providers leave it false.
+	Binary bool
 }
 
 // Secrets is the interface that secret management provider implementations must satisfy.
