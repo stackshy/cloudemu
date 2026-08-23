@@ -12,9 +12,9 @@
 // keep dispatch unambiguous, this handler's Matches predicate parses the form
 // body once and only claims requests whose Action is one of the known STS
 // operations. The EC2 handler is the catch-all for all other query-protocol
-// actions, so this handler MUST register before EC2. Its action set
-// (GetCallerIdentity, AssumeRole, GetSessionToken) is disjoint from RDS,
-// Redshift, IAM, ELBv2, ElastiCache, SNS, and EC2, so no shadowing occurs.
+// actions, so this handler MUST register before EC2. Its action set (see
+// stsActions) is disjoint from RDS, Redshift, IAM, ELBv2, ElastiCache, SNS,
+// and EC2, so no shadowing occurs.
 package sts
 
 import (
@@ -35,9 +35,14 @@ const (
 // stsActions is the set of Action values this handler recognizes. Matches uses
 // it to decide whether to claim a request.
 var stsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"GetCallerIdentity": {},
-	"AssumeRole":        {},
-	"GetSessionToken":   {},
+	"GetCallerIdentity":          {},
+	"AssumeRole":                 {},
+	"GetSessionToken":            {},
+	"AssumeRoleWithWebIdentity":  {},
+	"AssumeRoleWithSAML":         {},
+	"GetFederationToken":         {},
+	"GetAccessKeyInfo":           {},
+	"DecodeAuthorizationMessage": {},
 }
 
 // Handler serves STS query-protocol requests. It carries the account and region
@@ -103,6 +108,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.assumeRole(w, r)
 	case "GetSessionToken":
 		h.getSessionToken(w, r)
+	case "AssumeRoleWithWebIdentity":
+		h.assumeRoleWithWebIdentity(w, r)
+	case "AssumeRoleWithSAML":
+		h.assumeRoleWithSAML(w, r)
+	case "GetFederationToken":
+		h.getFederationToken(w, r)
+	case "GetAccessKeyInfo":
+		h.getAccessKeyInfo(w, r)
+	case "DecodeAuthorizationMessage":
+		h.decodeAuthorizationMessage(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown STS action: "+r.Form.Get("Action"))

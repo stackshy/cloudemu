@@ -351,7 +351,7 @@ func New(d Drivers) *server.Server {
 	// IAM also speaks AWS query-protocol; its action set is disjoint from
 	// RDS, Redshift, and EC2. Registered before EC2 for the same reason.
 	if d.IAM != nil {
-		srv.Register(iam.New(d.IAM))
+		srv.Register(iam.New(d.IAM, d.AccountID))
 	}
 
 	if d.ECR != nil {

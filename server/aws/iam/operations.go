@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -12,6 +13,10 @@ import (
 
 // defaultPolicyVersionID is the version a freshly created policy starts with.
 const defaultPolicyVersionID = "v1"
+
+// callerUserName is the synthetic IAM user name reported for the calling
+// principal (GetUser with no UserName). Matches STS GetCallerIdentity.
+const callerUserName = "cloudemu"
 
 // parseIAMTags parses Tags.member.N.{Key,Value} pairs (the shape the
 // aws-sdk-go-v2/service/iam client emits for tagged-create requests).
@@ -68,7 +73,22 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
-	u, err := h.iam.GetUser(r.Context(), r.Form.Get("UserName"))
+	userName := r.Form.Get("UserName")
+
+	// Real IAM GetUser with no UserName returns the calling principal's own
+	// user. cloudemu accepts any credentials, so there is no stored caller to
+	// look up; synthesize the same identity STS GetCallerIdentity reports.
+	if userName == "" {
+		awsquery.WriteXMLResponse(w, getUserResponse{
+			Xmlns:    Namespace,
+			Result:   getUserResult{User: h.callerUserXML()},
+			Metadata: responseMetadata{RequestID: awsquery.RequestID},
+		})
+
+		return
+	}
+
+	u, err := h.iam.GetUser(r.Context(), userName)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -81,6 +101,17 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// callerUserXML builds the synthetic calling-user record returned by GetUser
+// when no UserName is supplied. It mirrors STS GetCallerIdentity's identity.
+func (h *Handler) callerUserXML() userXML {
+	return userXML{
+		UserName: callerUserName,
+		UserID:   "AIDACLOUDEMU0000000000",
+		Arn:      "arn:aws:iam::" + h.accountID + ":user/" + callerUserName,
+		Path:     "/",
+	}
+}
+
 //nolint:dupl // list handlers share shape but operate on different driver types and response envelopes.
 func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := h.iam.ListUsers(r.Context())
@@ -89,14 +120,19 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := usersListXML{Member: make([]userXML, 0, len(users))}
-	for i := range users {
-		out.Member = append(out.Member, toUserXML(&users[i]))
+	sort.Slice(users, func(i, j int) bool { return users[i].Name < users[j].Name })
+
+	start, end, marker, truncated := pageWindow(len(users), r.Form)
+	page := users[start:end]
+
+	out := usersListXML{Member: make([]userXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toUserXML(&page[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, listUsersResponse{
 		Xmlns:    Namespace,
-		Result:   listUsersResult{Users: out, IsTruncated: false},
+		Result:   listUsersResult{Users: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -107,6 +143,7 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 	cfg := iamdriver.RoleConfig{
 		Name:                r.Form.Get("RoleName"),
 		Path:                r.Form.Get("Path"),
+		Description:         r.Form.Get("Description"),
 		AssumeRolePolicyDoc: r.Form.Get("AssumeRolePolicyDocument"),
 		Tags:                parseIAMTags(r.Form),
 	}
@@ -162,14 +199,19 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := rolesListXML{Member: make([]roleXML, 0, len(roles))}
-	for i := range roles {
-		out.Member = append(out.Member, toRoleXML(&roles[i]))
+	sort.Slice(roles, func(i, j int) bool { return roles[i].Name < roles[j].Name })
+
+	start, end, marker, truncated := pageWindow(len(roles), r.Form)
+	page := roles[start:end]
+
+	out := rolesListXML{Member: make([]roleXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toRoleXML(&page[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, listRolesResponse{
 		Xmlns:    Namespace,
-		Result:   listRolesResult{Roles: out, IsTruncated: false},
+		Result:   listRolesResult{Roles: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -230,14 +272,19 @@ func (h *Handler) listPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := policiesListXML{Member: make([]policyXML, 0, len(policies))}
-	for i := range policies {
-		out.Member = append(out.Member, toPolicyXML(&policies[i], h.defaultVersionID(r.Context(), policies[i].ARN)))
+	sort.Slice(policies, func(i, j int) bool { return policies[i].ARN < policies[j].ARN })
+
+	start, end, marker, truncated := pageWindow(len(policies), r.Form)
+	page := policies[start:end]
+
+	out := policiesListXML{Member: make([]policyXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toPolicyXML(&page[i], h.defaultVersionID(r.Context(), page[i].ARN)))
 	}
 
 	awsquery.WriteXMLResponse(w, listPoliciesResponse{
 		Xmlns:    Namespace,
-		Result:   listPoliciesResult{Policies: out, IsTruncated: false},
+		Result:   listPoliciesResult{Policies: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -507,14 +554,19 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := groupsListXML{Member: make([]groupXML, 0, len(groups))}
-	for i := range groups {
-		out.Member = append(out.Member, toGroupXML(&groups[i]))
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
+
+	start, end, marker, truncated := pageWindow(len(groups), r.Form)
+	page := groups[start:end]
+
+	out := groupsListXML{Member: make([]groupXML, 0, len(page))}
+	for i := range page {
+		out.Member = append(out.Member, toGroupXML(&page[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, listGroupsResponse{
 		Xmlns:    Namespace,
-		Result:   listGroupsResult{Groups: out, IsTruncated: false},
+		Result:   listGroupsResult{Groups: out, IsTruncated: truncated, Marker: marker},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

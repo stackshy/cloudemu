@@ -99,14 +99,24 @@ type rolePolicyManager interface {
 	ListRolePolicies(ctx context.Context, roleName string) ([]string, error)
 }
 
+// defaultAccountID is used when the server was configured without one, so a
+// well-formed caller ARN is always available for GetUser with no UserName.
+const defaultAccountID = "000000000000"
+
 // Handler serves IAM query-protocol requests.
 type Handler struct {
-	iam iamdriver.IAM
+	iam       iamdriver.IAM
+	accountID string
 }
 
-// New returns an IAM handler backed by drv.
-func New(drv iamdriver.IAM) *Handler {
-	return &Handler{iam: drv}
+// New returns an IAM handler backed by drv. accountID is used to synthesize the
+// calling user's identity for GetUser requests that omit UserName.
+func New(drv iamdriver.IAM, accountID string) *Handler {
+	if accountID == "" {
+		accountID = defaultAccountID
+	}
+
+	return &Handler{iam: drv, accountID: accountID}
 }
 
 // Matches returns true if the request looks like an AWS IAM query-protocol
