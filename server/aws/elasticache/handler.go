@@ -61,6 +61,19 @@ var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // stati
 	"DeleteReplicationGroup":       {},
 }
 
+// sharedTagActions are the generic tag verbs ElastiCache shares with other
+// query-protocol services on the same wire (RDS for all three; SNS also uses
+// ListTagsForResource). Matches claims them only when the SigV4 credential
+// scope names "elasticache", otherwise they fall through to the owning handler.
+var sharedTagActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"AddTagsToResource":      {},
+	"ListTagsForResource":    {},
+	"RemoveTagsFromResource": {},
+}
+
+// scopeElastiCache is the SigV4 credential-scope service name for ElastiCache.
+const scopeElastiCache = "elasticache"
+
 // Handler serves ElastiCache query-protocol requests against a cache driver.
 type Handler struct {
 	cache cachedriver.Cache
@@ -93,12 +106,26 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := elastiCacheActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
 
-	return ok
+	_, ok := elastiCacheActions[action]
+	if !ok {
+		return false
+	}
+
+	// The tag verbs are shared with RDS/SNS on the same query wire. Claim them
+	// only when the SigV4 credential scope names "elasticache"; otherwise let
+	// them fall through to the owning handler.
+	if _, shared := sharedTagActions[action]; shared {
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == scopeElastiCache
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
+//
+//nolint:gocyclo // one case per action; the flat dispatch switch grows with the surface and reads clearer than sub-routers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Form.Get("Action") {
 	case "CreateCacheSubnetGroup":
