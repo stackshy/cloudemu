@@ -236,3 +236,26 @@ func WriteXMLError(w http.ResponseWriter, status int, code, message string) {
 		RequestId: RequestID,
 	})
 }
+
+// CredentialScopeService extracts the service name from a SigV4 Authorization
+// header's credential scope: "Credential=AKID/20260101/us-east-1/<service>/aws4_request".
+// It returns "" when the header is absent or malformed. Handlers use it to
+// disambiguate generic action names (e.g. ListTagsForResource) that several
+// query-protocol services share on the same wire.
+func CredentialScopeService(auth string) string {
+	i := strings.Index(auth, "Credential=")
+	if i < 0 {
+		return ""
+	}
+
+	parts := strings.Split(auth[i+len("Credential="):], "/")
+
+	// A well-formed credential scope is AKID/DATE/REGION/SERVICE/aws4_request —
+	// require all five so a truncated scope yields "" rather than a stray field.
+	const serviceField, scopeFields = 3, 5
+	if len(parts) < scopeFields {
+		return ""
+	}
+
+	return parts[serviceField]
+}

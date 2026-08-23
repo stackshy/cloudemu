@@ -14,6 +14,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -36,28 +37,7 @@ func isQueryRequest(r *http.Request) bool {
 		return false
 	}
 
-	return sigV4ScopeService(r.Header.Get("Authorization")) == sigV4Service
-}
-
-// sigV4ScopeService extracts the service from a SigV4 Authorization header's
-// credential scope: "Credential=AKID/20260101/us-east-1/<service>/aws4_request".
-func sigV4ScopeService(auth string) string {
-	i := strings.Index(auth, "Credential=")
-	if i < 0 {
-		return ""
-	}
-
-	scope := auth[i+len("Credential="):]
-	if j := strings.IndexByte(scope, ','); j >= 0 {
-		scope = scope[:j]
-	}
-
-	parts := strings.Split(scope, "/")
-	if len(parts) < 5 {
-		return ""
-	}
-
-	return parts[3]
+	return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == sigV4Service
 }
 
 // serveQuery handles a CloudWatch query-protocol request.
