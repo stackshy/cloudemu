@@ -145,6 +145,20 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Apply ParameterFilters/Filters before paginating so the window is over the
+	// filtered set (and NextToken offsets stay stable).
+	if len(req.ParameterFilters) > 0 || len(req.Filters) > 0 {
+		filtered := metas[:0:0]
+
+		for i := range metas {
+			if matchesParameterFilters(&metas[i], req.ParameterFilters, req.Filters) {
+				filtered = append(filtered, metas[i])
+			}
+		}
+
+		metas = filtered
+	}
+
 	// Sorted-by-name from the driver; paginate here (MaxResults/NextToken).
 	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, maxResultsDescribe, len(metas))
 	if err != nil {
@@ -171,7 +185,7 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
-	var req nameRequest
+	var req getParameterHistoryRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -182,20 +196,31 @@ func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]parameterHistoryJSON, 0, len(history))
-	for _, p := range history {
+	// The driver returns versions oldest-first; paginate over that stable order.
+	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, maxResultsHistory, len(history))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := make([]parameterHistoryJSON, 0, end-start)
+	for _, p := range history[start:end] {
 		out = append(out, parameterHistoryJSON{
 			ARN:              p.ARN,
 			DataType:         p.DataType,
+			Description:      p.Description,
+			Labels:           p.Labels,
 			LastModifiedDate: epochSeconds(p.LastModified),
+			LastModifiedUser: p.LastModifiedUser,
 			Name:             p.Name,
+			Tier:             p.Tier,
 			Type:             p.Type,
 			Value:            p.Value,
 			Version:          p.Version,
 		})
 	}
 
-	wire.WriteJSON(w, getParameterHistoryResponse{Parameters: out})
+	wire.WriteJSON(w, getParameterHistoryResponse{Parameters: out, NextToken: next})
 }
 
 func (h *Handler) labelParameterVersion(w http.ResponseWriter, r *http.Request) {

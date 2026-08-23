@@ -26,6 +26,8 @@ type secretListEntryJSON struct {
 	Tags            []tagJSON `json:"Tags,omitempty"`
 	CreatedDate     float64   `json:"CreatedDate,omitempty"`
 	LastChangedDate float64   `json:"LastChangedDate,omitempty"`
+
+	VersionIDsToStages map[string][]string `json:"VersionIdsToStages,omitempty"`
 }
 
 type versionJSON struct {
@@ -49,8 +51,31 @@ type secretIDRequest struct {
 }
 
 type getSecretValueRequest struct {
-	SecretID  string `json:"SecretId"`
-	VersionID string `json:"VersionId"`
+	SecretID     string `json:"SecretId"`
+	VersionID    string `json:"VersionId"`
+	VersionStage string `json:"VersionStage"`
+}
+
+type getRandomPasswordRequest struct {
+	PasswordLength          int64  `json:"PasswordLength"`
+	ExcludeCharacters       string `json:"ExcludeCharacters"`
+	ExcludeNumbers          bool   `json:"ExcludeNumbers"`
+	ExcludePunctuation      bool   `json:"ExcludePunctuation"`
+	ExcludeUppercase        bool   `json:"ExcludeUppercase"`
+	ExcludeLowercase        bool   `json:"ExcludeLowercase"`
+	IncludeSpace            bool   `json:"IncludeSpace"`
+	RequireEachIncludedType bool   `json:"RequireEachIncludedType"`
+}
+
+type secretFilter struct {
+	Key    string   `json:"Key"`
+	Values []string `json:"Values"`
+}
+
+type listSecretsRequest struct {
+	MaxResults int32          `json:"MaxResults"`
+	NextToken  string         `json:"NextToken"`
+	Filters    []secretFilter `json:"Filters"`
 }
 
 type putSecretValueRequest struct {
@@ -90,12 +115,29 @@ type createSecretResponse struct {
 }
 
 type deleteSecretResponse struct {
+	ARN          string  `json:"ARN"`
+	Name         string  `json:"Name"`
+	DeletionDate float64 `json:"DeletionDate,omitempty"`
+}
+
+type restoreSecretResponse struct {
 	ARN  string `json:"ARN"`
 	Name string `json:"Name"`
 }
 
+type rotateSecretResponse struct {
+	ARN       string `json:"ARN"`
+	Name      string `json:"Name"`
+	VersionID string `json:"VersionId"`
+}
+
+type getRandomPasswordResponse struct {
+	RandomPassword string `json:"RandomPassword"`
+}
+
 type listSecretsResponse struct {
 	SecretList []secretListEntryJSON `json:"SecretList"`
+	NextToken  string                `json:"NextToken,omitempty"`
 }
 
 type getSecretValueResponse struct {
@@ -103,6 +145,7 @@ type getSecretValueResponse struct {
 	Name          string   `json:"Name"`
 	VersionID     string   `json:"VersionId"`
 	SecretString  string   `json:"SecretString,omitempty"`
+	SecretBinary  []byte   `json:"SecretBinary,omitempty"`
 	VersionStages []string `json:"VersionStages,omitempty"`
 	CreatedDate   float64  `json:"CreatedDate,omitempty"`
 }
