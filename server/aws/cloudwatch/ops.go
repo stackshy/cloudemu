@@ -416,6 +416,29 @@ func (h *Handler) deleteAlarms(w http.ResponseWriter, r *http.Request, body []by
 	writeCBORResponse(w, struct{}{})
 }
 
+type setAlarmStateInput struct {
+	AlarmName   string `cbor:"AlarmName"`
+	StateValue  string `cbor:"StateValue"`
+	StateReason string `cbor:"StateReason"`
+}
+
+// setAlarmState is the SDK (rpc-v2-cbor) side of SetAlarmState — the query/CLI
+// path already had it, but SDK clients got UnknownOperationException.
+func (h *Handler) setAlarmState(w http.ResponseWriter, r *http.Request, body []byte) {
+	var in setAlarmStateInput
+	if err := cbor.Unmarshal(body, &in); err != nil {
+		writeCBORError(w, http.StatusBadRequest, "SerializationException", err.Error())
+		return
+	}
+
+	if err := h.monitoring.SetAlarmState(r.Context(), in.AlarmName, in.StateValue, in.StateReason); err != nil {
+		writeDriverErr(w, err)
+		return
+	}
+
+	writeCBORResponse(w, struct{}{})
+}
+
 func toDimensionMap(dims []dimensionCBR) map[string]string {
 	if len(dims) == 0 {
 		return nil
