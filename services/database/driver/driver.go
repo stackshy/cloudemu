@@ -77,6 +77,9 @@ type GSIConfig struct {
 	Name         string
 	PartitionKey string
 	SortKey      string
+	// Projection is the DynamoDB projection type (ALL, KEYS_ONLY, INCLUDE); a
+	// describe echoes it so an IaC client's declared index round-trips.
+	Projection string
 }
 
 // UpdateAction represents a single field-level update action. It is the legacy,

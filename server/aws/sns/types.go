@@ -63,6 +63,24 @@ type untagResourceResponse struct {
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
+// --- ListTagsForResource ---
+
+type listTagsForResourceResponse struct {
+	XMLName  xml.Name         `xml:"ListTagsForResourceResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   listTagsResult   `xml:"ListTagsForResourceResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type listTagsResult struct {
+	Tags []tagMember `xml:"Tags>member"`
+}
+
+type tagMember struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
 // --- GetTopicAttributes ---
 
 type attributeEntry struct {

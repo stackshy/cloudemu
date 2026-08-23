@@ -356,9 +356,23 @@ func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// serveConfiguration handles PUT .../{name}/configuration
-// (UpdateFunctionConfiguration).
+// serveConfiguration handles .../{name}/configuration: GET is
+// GetFunctionConfiguration (the op FunctionActiveV2 / FunctionUpdatedV2 waiters
+// poll — a 405 here hangs every Terraform/SAM/CDK deploy), PUT is
+// UpdateFunctionConfiguration.
 func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method == http.MethodGet {
+		info, err := h.fn.GetFunction(r.Context(), name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, toConfiguration(info))
+
+		return
+	}
+
 	if r.Method != http.MethodPut {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
