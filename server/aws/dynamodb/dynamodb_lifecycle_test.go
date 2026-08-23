@@ -330,9 +330,8 @@ func TestDDBItemJourney(t *testing.T) {
 }
 
 // TestDDBQueryPartitionAndSort: query by partition key with sort
-// conditions =, >, <=, >= and an ExpressionAttributeNames alias. Note the
-// emulator wire parser only accepts token-form "pk = :v AND sk <op> :v2"
-// (no begins_with()/BETWEEN function syntax).
+// conditions =, >, <=, >=, BETWEEN and begins_with(), plus an
+// ExpressionAttributeNames alias.
 func TestDDBQueryPartitionAndSort(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
@@ -399,6 +398,25 @@ func TestDDBQueryPartitionAndSort(t *testing.T) {
 		map[string]string{"#c": "customer"})
 	require.Equal(t, int32(1), out.Count)
 	assert.Equal(t, "99", attrN(t, out.Items[0], "total"))
+
+	// BETWEEN is inclusive on both bounds.
+	out = query("customer = :c AND orderDate BETWEEN :lo AND :hi", map[string]ddbtypes.AttributeValue{
+		":c": sAttr("alice"), ":lo": sAttr("2024-01-01"), ":hi": sAttr("2024-02-28"),
+	}, nil)
+	assert.Equal(t, int32(2), out.Count, "BETWEEN spans Jan 1 and Feb 15 inclusive, excludes Mar 10")
+
+	// begins_with matches the sort-key prefix.
+	out = query("customer = :c AND begins_with(orderDate, :p)", map[string]ddbtypes.AttributeValue{
+		":c": sAttr("alice"), ":p": sAttr("2024-02"),
+	}, nil)
+	require.Equal(t, int32(1), out.Count)
+	assert.Equal(t, "2024-02-15", attrS(t, out.Items[0], "orderDate"))
+
+	// A wider begins_with prefix matches every alice order.
+	out = query("customer = :c AND begins_with(orderDate, :p)", map[string]ddbtypes.AttributeValue{
+		":c": sAttr("alice"), ":p": sAttr("2024"),
+	}, nil)
+	assert.Equal(t, int32(3), out.Count)
 }
 
 // TestDDBTimeToLive is a regression guard for issue #319:
@@ -1317,5 +1335,130 @@ func TestDDBConditionExpressionGrammar(t *testing.T) {
 
 		got := suiteDDBGet(t, client, "cond2", map[string]ddbtypes.AttributeValue{"pk": sAttr("X")})
 		assert.Nil(t, got.Item)
+	})
+}
+
+// TestDDBProjectionExpression covers ProjectionExpression on GetItem, Query
+// and Scan: only the requested paths are returned, nested map sub-paths keep
+// their structure, #aliases resolve, and a projected-but-absent path is
+// omitted.
+func TestDDBProjectionExpression(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "profiles", "id", "")
+
+	suiteDDBPut(t, client, "profiles", map[string]ddbtypes.AttributeValue{
+		"id":   sAttr("u1"),
+		"name": sAttr("alice"),
+		"age":  nAttr("30"),
+		"tags": &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{
+			sAttr("x"), sAttr("y"), sAttr("z"),
+		}},
+		"address": &ddbtypes.AttributeValueMemberM{Value: map[string]ddbtypes.AttributeValue{
+			"city": sAttr("Paris"),
+			"zip":  sAttr("75001"),
+		}},
+	})
+
+	t.Run("GetItem projects a subset via #alias", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:                aws.String("profiles"),
+			Key:                      map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression:     aws.String("id, #n"),
+			ExpressionAttributeNames: map[string]string{"#n": "name"},
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 2, "only id and name are returned")
+		assert.Equal(t, "u1", attrS(t, out.Item, "id"))
+		assert.Equal(t, "alice", attrS(t, out.Item, "name"))
+	})
+
+	t.Run("GetItem projects a nested map path", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("address.city"),
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 1)
+
+		m, ok := out.Item["address"].(*ddbtypes.AttributeValueMemberM)
+		require.True(t, ok, "address should be a map, got %T", out.Item["address"])
+		require.Len(t, m.Value, 1, "only the projected sub-path survives, zip is dropped")
+		assert.Equal(t, "Paris", attrS(t, m.Value, "city"))
+	})
+
+	t.Run("GetItem omits an absent projected path", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("id, missing"),
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 1, "the absent attribute is silently omitted")
+		assert.Equal(t, "u1", attrS(t, out.Item, "id"))
+	})
+
+	t.Run("Query projects each item", func(t *testing.T) {
+		out, err := client.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String("profiles"),
+			KeyConditionExpression:    aws.String("id = :i"),
+			ProjectionExpression:      aws.String("age"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":i": sAttr("u1")},
+		})
+		require.NoError(t, err)
+		require.Equal(t, int32(1), out.Count)
+		require.Len(t, out.Items[0], 1)
+		assert.Equal(t, "30", attrN(t, out.Items[0], "age"))
+	})
+
+	t.Run("Scan projects each item", func(t *testing.T) {
+		out, err := client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:            aws.String("profiles"),
+			ProjectionExpression: aws.String("id, age"),
+		})
+		require.NoError(t, err)
+		require.Equal(t, int32(1), out.Count)
+		require.Len(t, out.Items[0], 2)
+		assert.Equal(t, "u1", attrS(t, out.Items[0], "id"))
+		assert.Equal(t, "30", attrN(t, out.Items[0], "age"))
+	})
+
+	t.Run("GetItem projects a list index, compacted", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("tags[1]"),
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 1)
+
+		l, ok := out.Item["tags"].(*ddbtypes.AttributeValueMemberL)
+		require.True(t, ok, "tags should be a list, got %T", out.Item["tags"])
+		require.Len(t, l.Value, 1, "the projected index compacts to a one-element list")
+		assert.Equal(t, "y", attrS(t, map[string]ddbtypes.AttributeValue{"v": l.Value[0]}, "v"))
+	})
+
+	t.Run("Scan composes ProjectionExpression with FilterExpression", func(t *testing.T) {
+		out, err := client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 aws.String("profiles"),
+			FilterExpression:          aws.String("age = :a"),
+			ProjectionExpression:      aws.String("id"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":a": nAttr("30")},
+		})
+		require.NoError(t, err)
+		require.Equal(t, int32(1), out.Count, "the filter keeps the matching row")
+		require.Len(t, out.Items[0], 1, "projection trims it to id only")
+		assert.Equal(t, "u1", attrS(t, out.Items[0], "id"))
+
+		out, err = client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 aws.String("profiles"),
+			FilterExpression:          aws.String("age = :a"),
+			ProjectionExpression:      aws.String("id"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":a": nAttr("99")},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int32(0), out.Count, "a non-matching filter yields nothing to project")
 	})
 }
