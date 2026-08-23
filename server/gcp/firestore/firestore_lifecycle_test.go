@@ -824,6 +824,7 @@ func TestDatabaseQueryOperators(t *testing.T) {
 		"p0": {"status": "active", "tags": []string{"red", "new"}, "score": 10},
 		"p1": {"status": "pending", "tags": []string{"blue"}, "score": 20},
 		"p2": {"status": "archived", "tags": []string{"red", "old"}, "score": 30, "owner": nil},
+		"p3": {"score": 5}, // no status/tags/owner — must be excluded from not-in / !=
 	}
 	for id, fields := range docs {
 		if _, err := coll.Doc(id).Set(ctx, fields); err != nil {
@@ -839,11 +840,14 @@ func TestDatabaseQueryOperators(t *testing.T) {
 	}
 
 	count("in", coll.Where("status", "in", []string{"active", "pending"}), 2)
+	// not-in and != exclude p2 (archived) AND p3 (field absent).
 	count("not-in", coll.Where("status", "not-in", []string{"archived"}), 2)
+	count("!=", coll.Where("status", "!=", "active"), 2)
 	count("array-contains", coll.Where("tags", "array-contains", "red"), 2)
 	count("array-contains-any", coll.Where("tags", "array-contains-any", []string{"blue", "old"}), 2)
+	// array-contains on a scalar (string) field matches nothing — no substring fallback.
+	count("array-contains on scalar", coll.Where("status", "array-contains", "arch"), 0)
 	count("numeric >", coll.Where("score", ">", 15), 2)
-	count("!=", coll.Where("status", "!=", "active"), 2)
 	count("is-null", coll.Where("owner", "==", nil), 1)
 
 	or := gcpfirestore.OrFilter{Filters: []gcpfirestore.EntityFilter{

@@ -48,7 +48,7 @@ func fieldFilterNode(ff *fieldFilter) (expr.Node, error) {
 	}
 
 	if ff.Op == "ARRAY_CONTAINS" {
-		return &expr.Contains{Path: path, Operand: valueOperand(ff.Value)}, nil
+		return arrayContainsNode(path, &expr.Contains{Path: path, Operand: valueOperand(ff.Value)}), nil
 	}
 
 	return listFilterNode(ff)
@@ -68,12 +68,33 @@ func listFilterNode(ff *fieldFilter) (expr.Node, error) {
 	case "IN":
 		return inNode(path, members), nil
 	case "NOT_IN":
-		return &expr.Not{Child: inNode(path, members)}, nil
+		return notInNode(path, members), nil
 	case "ARRAY_CONTAINS_ANY":
-		return arrayContainsAnyNode(path, members), nil
+		return arrayContainsNode(path, orContains(path, members)), nil
 	default:
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "unsupported filter op %q", ff.Op)
 	}
+}
+
+// notInNode matches documents whose field is present, non-null, and not equal
+// to any member — Firestore excludes absent and null fields from not-in (a bare
+// negation would wrongly include them).
+func notInNode(path *expr.PathOperand, members []any) expr.Node {
+	presentAndNotNull := &expr.Comparison{Op: "<>", Left: path, Right: &expr.ValueOperand{Value: nil}}
+	return &expr.And{Left: presentAndNotNull, Right: &expr.Not{Child: inNode(path, members)}}
+}
+
+// arrayContainsNode gates an array-membership test on the field actually being
+// an array, so it never falls back to the substring match that the shared
+// Contains node performs on string fields.
+func arrayContainsNode(path *expr.PathOperand, membership expr.Node) expr.Node {
+	return &expr.And{Left: isArray(path), Right: membership}
+}
+
+// isArray is true when path resolves to a list ("L" is the type code
+// expr.dynamoType reports for a native []any).
+func isArray(path *expr.PathOperand) expr.Node {
+	return &expr.AttrType{Path: path, Type: &expr.ValueOperand{Value: "L"}}
 }
 
 func compositeFilterNode(cf *compositeFilter) (expr.Node, error) {
@@ -90,6 +111,12 @@ func compositeFilterNode(cf *compositeFilter) (expr.Node, error) {
 		}
 
 		if child == nil {
+			// A match-all sub-filter absorbs an OR (always true) but is a no-op
+			// in an AND.
+			if cf.Op == compositeOr {
+				return nil, nil
+			}
+
 			continue
 		}
 
@@ -135,9 +162,9 @@ func inNode(path *expr.PathOperand, members []any) expr.Node {
 	return &expr.In{Operand: path, List: list}
 }
 
-// arrayContainsAnyNode matches when the document's array field intersects any
-// member of the query array — an OR of ARRAY_CONTAINS over each member.
-func arrayContainsAnyNode(path *expr.PathOperand, members []any) expr.Node {
+// orContains builds an OR of ARRAY_CONTAINS over each member, for
+// ARRAY_CONTAINS_ANY. members is non-empty (validated by arrayMembers).
+func orContains(path *expr.PathOperand, members []any) expr.Node {
 	var node expr.Node
 
 	for _, m := range members {
