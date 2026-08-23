@@ -3,6 +3,7 @@ package sns
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -126,10 +127,11 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request) {
 // getTopicAttributes maps GetTopicAttributes to Notification.GetTopic and
 // exposes the topic's ARN, display name, and subscription count as the standard
 // SNS attribute map.
-// setTopicAttributes maps SetTopicAttributes to Notification.UpdateTopic for
-// the DisplayName attribute. Other attribute names (Policy, DeliveryPolicy) are
-// accepted but not modeled — the emulator doesn't evaluate topic policies, so
-// storing them would have no observable effect.
+// setTopicAttributes maps SetTopicAttributes to Notification.UpdateTopic, but
+// persists only DisplayName today. A Policy (or DeliveryPolicy) write is accepted
+// and dropped, and GetTopicAttributes returns the synthesized default — so a
+// topic that declares a custom `policy` would drift. Tracked as a follow-up;
+// topics without a policy (the common case) round-trip cleanly.
 func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	name := topicNameFromARN(r.Form.Get("TopicArn"))
 
@@ -147,6 +149,30 @@ func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+	name := topicNameFromARN(r.Form.Get("ResourceArn"))
+
+	info, err := h.notif.GetTopic(r.Context(), name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	members := make([]tagMember, 0, len(info.Tags))
+	for k, v := range info.Tags {
+		members = append(members, tagMember{Key: k, Value: v})
+	}
+	// Stable order: the store is a map, and a caller diffing tags on successive
+	// reads should not see phantom churn.
+	sort.Slice(members, func(i, j int) bool { return members[i].Key < members[j].Key })
+
+	awsquery.WriteXMLResponse(w, listTagsForResourceResponse{
+		Xmlns:    Namespace,
+		Result:   listTagsResult{Tags: members},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
 func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	name := topicNameFromARN(r.Form.Get("TopicArn"))
 
@@ -156,9 +182,16 @@ func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	owner := accountFromARN(info.ResourceID)
+
 	entries := []attributeEntry{
 		{Key: "TopicArn", Value: info.ResourceID},
 		{Key: "SubscriptionsConfirmed", Value: strconv.Itoa(info.SubscriptionCount)},
+		{Key: "Owner", Value: owner},
+		// Real SNS seeds a default access policy. The aws_sns_topic resource
+		// reads Policy back and parses it as JSON, so an absent value fails
+		// with "unexpected end of JSON input".
+		{Key: "Policy", Value: defaultTopicPolicy(info.ResourceID, owner)},
 	}
 	if info.DisplayName != "" {
 		entries = append(entries, attributeEntry{Key: "DisplayName", Value: info.DisplayName})

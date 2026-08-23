@@ -57,16 +57,20 @@ var snsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"Publish":                  {},
 	"TagResource":              {},
 	"UntagResource":            {},
+	actionListTagsForResource:  {},
 }
+
+// actionListTagsForResource is the generic tag-read verb SNS shares with other
+// query-protocol services; it's scope-gated in Matches.
+const actionListTagsForResource = "ListTagsForResource"
 
 // topicTagger is the AWS-specific topic-tagging surface. It's not part of the
 // portable Notification driver (Azure Notification Hubs and GCP FCM also
 // implement it), so the handler type-asserts for it.
 //
-// ListTagsForResource is intentionally omitted: that action name collides with
-// RDS in the shared query protocol (RDS registers first and claims it), and
-// disambiguating would require SigV4 credential-scope routing. SNS tag writes
-// (the flagged gap) work; tag read-back is a follow-up.
+// ListTagsForResource collides with RDS in the shared query protocol (RDS
+// registers first), so both handlers claim it only for their own SigV4
+// credential scope — see Matches.
 type topicTagger interface {
 	TagTopic(ctx context.Context, topicName string, tags map[string]string) error
 	UntagTopic(ctx context.Context, topicName string, keys []string) error
@@ -104,9 +108,21 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := snsActions[r.Form.Get("Action")]
+	action := r.Form.Get("Action")
 
-	return ok
+	_, ok := snsActions[action]
+	if !ok {
+		return false
+	}
+
+	// ListTagsForResource is a generic tag verb SNS shares with RDS on the same
+	// query wire (RDS registers first). Claim it only when the SigV4 credential
+	// scope names "sns"; otherwise let it fall through.
+	if action == actionListTagsForResource {
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == "sns"
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
@@ -138,6 +154,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.tagResource(w, r)
 	case "UntagResource":
 		h.untagResource(w, r)
+	case actionListTagsForResource:
+		h.listTagsForResource(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown SNS action: "+action)
@@ -170,4 +188,28 @@ func topicNameFromARN(arn string) string {
 	}
 
 	return arn
+}
+
+// accountFromARN pulls the account id (field 4) out of an ARN
+// arn:aws:sns:region:account:name, or "" when the shape doesn't match.
+func accountFromARN(arn string) string {
+	const accountField = 4
+
+	parts := strings.Split(arn, ":")
+	if len(parts) > accountField {
+		return parts[accountField]
+	}
+
+	return ""
+}
+
+// defaultTopicPolicy mirrors the access policy real SNS attaches to a new topic,
+// so a client that reads Policy back gets valid JSON.
+func defaultTopicPolicy(arn, owner string) string {
+	return `{"Version":"2008-10-17","Id":"__default_policy_ID","Statement":[{` +
+		`"Sid":"__default_statement_ID","Effect":"Allow","Principal":{"AWS":"*"},` +
+		`"Action":["SNS:GetTopicAttributes","SNS:SetTopicAttributes","SNS:AddPermission",` +
+		`"SNS:RemovePermission","SNS:DeleteTopic","SNS:Subscribe","SNS:ListSubscriptionsByTopic",` +
+		`"SNS:Publish","SNS:Receive"],"Resource":"` + arn + `",` +
+		`"Condition":{"StringEquals":{"AWS:SourceOwner":"` + owner + `"}}}]}`
 }
