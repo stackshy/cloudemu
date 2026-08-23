@@ -19,6 +19,11 @@ type QueueConfig struct {
 	MessageRetention  int // seconds
 	Tags              map[string]string
 	DeadLetterQueue   *DeadLetterConfig
+
+	// AWS SQS extras (ignored by non-AWS providers).
+	ReceiveMessageWaitTimeSeconds int
+	ContentBasedDeduplication     bool
+	RedrivePolicy                 string // raw JSON, echoed by GetQueueAttributes
 }
 
 // DeadLetterConfig configures a dead-letter queue for failed messages.
@@ -37,6 +42,13 @@ type QueueInfo struct {
 	Tags               map[string]string
 }
 
+// MessageAttributeValue is a typed user message attribute (SQS MessageAttributes).
+type MessageAttributeValue struct {
+	DataType    string
+	StringValue string
+	BinaryValue []byte
+}
+
 // SendMessageInput configures a message send operation.
 type SendMessageInput struct {
 	QueueURL        string
@@ -45,11 +57,14 @@ type SendMessageInput struct {
 	GroupID         string // FIFO only
 	DeduplicationID string // FIFO only
 	Attributes      map[string]string
+	// MessageAttributes are typed user attributes (AWS SQS). Non-AWS providers ignore them.
+	MessageAttributes map[string]MessageAttributeValue
 }
 
 // SendMessageOutput is the result of sending a message.
 type SendMessageOutput struct {
-	MessageID string
+	MessageID      string
+	SequenceNumber string // FIFO only
 }
 
 // ReceiveMessageInput configures a message receive operation.
@@ -67,16 +82,23 @@ type Message struct {
 	Body          string
 	Attributes    map[string]string
 	GroupID       string
+	// MessageAttributes are typed user attributes (AWS SQS).
+	MessageAttributes map[string]MessageAttributeValue
+	// SystemAttributes are SQS system attributes (SentTimestamp, ApproximateReceiveCount, SenderId, ...).
+	SystemAttributes map[string]string
+	// SequenceNumber is set for FIFO messages.
+	SequenceNumber string
 }
 
 // BatchSendEntry represents a single message in a batch send.
 type BatchSendEntry struct {
-	ID              string
-	Body            string
-	DelaySeconds    int
-	GroupID         string
-	DeduplicationID string
-	Attributes      map[string]string
+	ID                string
+	Body              string
+	DelaySeconds      int
+	GroupID           string
+	DeduplicationID   string
+	Attributes        map[string]string
+	MessageAttributes map[string]MessageAttributeValue
 }
 
 // BatchSendResult is the result of a batch send.
@@ -87,8 +109,9 @@ type BatchSendResult struct {
 
 // BatchSendResultEntry is a successful batch entry.
 type BatchSendResultEntry struct {
-	ID        string
-	MessageID string
+	ID             string
+	MessageID      string
+	SequenceNumber string // FIFO only
 }
 
 // BatchSendFailEntry is a failed batch entry.
@@ -130,6 +153,11 @@ type QueueAttributes struct {
 	FifoQueue                  bool
 	ContentBasedDeduplication  bool
 	RedrivePolicy              string // JSON string pointing to DLQ
+
+	ReceiveMessageWaitTimeSeconds int
+	ApproximateDelayedCount       int
+	Policy                        string
+	KmsMasterKeyID                string
 }
 
 // MessageQueue is the interface that message queue provider implementations must satisfy.
