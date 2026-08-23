@@ -131,6 +131,10 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request) {
 // the DisplayName attribute. Other attribute names (Policy, DeliveryPolicy) are
 // accepted but not modeled — the emulator doesn't evaluate topic policies, so
 // storing them would have no observable effect.
+// setTopicAttributes persists only DisplayName today. A Policy write is accepted
+// but not stored, and GetTopicAttributes returns the synthesized default — so a
+// topic that declares a custom `policy` would drift. Tracked as a follow-up;
+// topics without a policy (the common case) round-trip cleanly.
 func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	name := topicNameFromARN(r.Form.Get("TopicArn"))
 
