@@ -11,6 +11,7 @@ CloudEmu is a zero-cost, in-memory emulation of the AWS, Azure, GCP, OCI, and Ku
 - [SDK Server](sdk-server.md) -- SDK-compatible HTTP server (use the real aws-sdk-go-v2 against CloudEmu)
 - [Standalone Server](standalone-server.md) -- Run CloudEmu as a local dev cloud (`cloudemu serve` / Docker), point any language at it
 - [Integration](integration.md) -- Wire CloudEmu into your real app and tests (not a throwaway demo)
+- [Terraform / OpenTofu](terraform.md) -- Run real Terraform/OpenTofu against CloudEmu (the `cloudemu-tf` wrapper + manual provider config)
 - [Topology](topology.md) -- Network topology simulation engine
 - [Chaos](chaos.md) -- Fault, latency, and throttling injection across the service layer
 - [Getting Started](getting-started.md) -- Installation, provider creation, basic examples, configuration
@@ -23,6 +24,7 @@ CloudEmu is a zero-cost, in-memory emulation of the AWS, Azure, GCP, OCI, and Ku
 | Creating an AWS provider | [Getting Started](getting-started.md#creating-providers) |
 | All service operations | [Services Reference](services.md#master-table) |
 | Using real AWS SDK clients | [SDK Server](sdk-server.md) |
+| Running Terraform/OpenTofu | [Terraform](terraform.md) |
 | Integrating into your app | [Integration](integration.md) |
 | Auto-metric generation | [Features](features.md#1-auto-metric-generation) |
 | Error injection and rate limiting | [Features](features.md#8-portable-api-cross-cutting-concerns) |
