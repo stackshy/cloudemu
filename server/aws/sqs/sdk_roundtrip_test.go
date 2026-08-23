@@ -3,12 +3,14 @@ package sqs_test
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -154,5 +156,64 @@ func TestSDKSQSDeleteQueue(t *testing.T) {
 		QueueName: aws.String("doomed"),
 	}); err == nil {
 		t.Fatal("GetQueueUrl after delete returned nil error, want QueueDoesNotExist")
+	}
+}
+
+func TestSDKSQSAddRemovePermission(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	q, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{
+		QueueName: aws.String("perm-q"),
+	})
+	if err != nil {
+		t.Fatalf("CreateQueue: %v", err)
+	}
+
+	if _, err := client.AddPermission(ctx, &awssqs.AddPermissionInput{
+		QueueUrl:      q.QueueUrl,
+		Label:         aws.String("grant-send"),
+		AWSAccountIds: []string{"123456789012"},
+		Actions:       []string{"SendMessage"},
+	}); err != nil {
+		t.Fatalf("AddPermission: %v", err)
+	}
+
+	attrs, err := client.GetQueueAttributes(ctx, &awssqs.GetQueueAttributesInput{
+		QueueUrl:       q.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNamePolicy},
+	})
+	if err != nil {
+		t.Fatalf("GetQueueAttributes: %v", err)
+	}
+
+	policy := attrs.Attributes["Policy"]
+	if policy == "" {
+		t.Fatal("Policy is empty after AddPermission")
+	}
+
+	for _, want := range []string{"grant-send", "SQS:SendMessage", "arn:aws:iam::123456789012:root"} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("Policy %q missing %q", policy, want)
+		}
+	}
+
+	if _, err := client.RemovePermission(ctx, &awssqs.RemovePermissionInput{
+		QueueUrl: q.QueueUrl,
+		Label:    aws.String("grant-send"),
+	}); err != nil {
+		t.Fatalf("RemovePermission: %v", err)
+	}
+
+	attrs2, err := client.GetQueueAttributes(ctx, &awssqs.GetQueueAttributesInput{
+		QueueUrl:       q.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNamePolicy},
+	})
+	if err != nil {
+		t.Fatalf("GetQueueAttributes after remove: %v", err)
+	}
+
+	if strings.Contains(attrs2.Attributes["Policy"], "grant-send") {
+		t.Fatalf("Policy still contains grant-send after RemovePermission: %q", attrs2.Attributes["Policy"])
 	}
 }
