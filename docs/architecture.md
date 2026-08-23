@@ -104,6 +104,17 @@ aws.EC2.RunInstances(ctx, instanceConfig, 1)
 aws.DynamoDB.CreateTable(ctx, tableConfig)
 ```
 
+### Optional real data-plane engines
+
+The same options can carry opt-in **real engines** (`config.With<X>Engine`).
+When set, a driver routes its data path through the engine — real Postgres/MySQL,
+Redis, function runtimes, Docker compute/containers, or filesystem-backed object
+bytes — instead of `memstore`; when unset (the default) everything stays
+in-memory. The engine implementations live in sibling modules `contrib/realengine`
+(no Docker) and `contrib/dockerengine` (Docker). Because engines can hold real
+resources, `Provider.Close()` calls `Options.EngineClosers()` to tear every wired
+engine down. See [features.md — Real Data-Plane Engines](features.md#11-real-data-plane-engines-opt-in).
+
 ## Package Structure Overview
 
 | Package | Purpose |
