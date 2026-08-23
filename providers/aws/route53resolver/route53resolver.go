@@ -19,6 +19,7 @@ import (
 var _ driver.Route53Resolver = (*Mock)(nil)
 
 const (
+	statusCreating    = "CREATING"
 	statusOperational = "OPERATIONAL"
 	statusDeleting    = "DELETING"
 	ipStatusAttached  = "ATTACHED"

@@ -141,6 +141,7 @@ func (m *Mock) CreateDBParameterGroup(_ context.Context, cfg rdsdriver.Parameter
 		Parameters:  map[string]rdsdriver.Parameter{},
 	}
 	m.paramGroups.Set(cfg.Name, pg)
+	m.setGroupTags(pg.ARN, copyTags(cfg.Tags))
 
 	out := pg
 
@@ -314,6 +315,7 @@ func (m *Mock) CreateDBClusterParameterGroup(
 		Parameters:  map[string]rdsdriver.Parameter{},
 	}
 	m.clusterParamGroups.Set(cfg.Name, pg)
+	m.setGroupTags(pg.ARN, copyTags(cfg.Tags))
 
 	out := pg
 
