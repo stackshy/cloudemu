@@ -5,7 +5,8 @@
 //
 // The Cosmos HTTP surface (server/azure/cosmos/handler.go) covers: account
 // probe, virtual databases, container create/list/read/delete, document
-// create/list/read/replace/delete, and query (SQL body ignored — full scan).
+// create/list/read/replace/delete, and query (SQL WHERE / ORDER BY /
+// projection / aggregates evaluated).
 // TTL and the change feed are driver-level only (no HTTP endpoint), so those
 // journeys mix SDK writes with direct driver calls on the same provider, per
 // the suite SDK-test-setup notes.
@@ -15,9 +16,10 @@
 //   - CreateItem with a duplicate id succeeds (blind upsert; real Cosmos: 409).
 //   - ReplaceItem ignores IfMatchEtag (real Cosmos: 412 on stale etag).
 //   - DeleteItem on a missing document returns 204 (real Cosmos: 404).
-//   - Queries ignore the SQL text and the partition key (full scan).
-//   - Item identity is the partition-key value only, so two docs with the
-//     same pk but different ids collide (real Cosmos keys on (pk, id)).
+//   - Queries evaluate the SQL WHERE/ORDER BY/projection but treat the
+//     partition key as advisory (cross-partition), since item identity is the
+//     partition-key value only, so two docs with the same pk but different ids
+//     collide (real Cosmos keys on (pk, id)).
 //   - PATCH (PatchItem) is not routed at all (405 MethodNotAllowed).
 package cosmosdb_test
 
@@ -417,10 +419,12 @@ func TestCosmosWriteDivergences(t *testing.T) {
 	}
 }
 
-// TestCosmosQueryAndPagination drives the SDK query pager: empty
-// container first, then 30 documents across two partitions. The emulator
-// ignores the SQL text and the partition key (full scan, DIVERGENCE) and
-// never emits a continuation token, so everything arrives in one page.
+// TestCosmosQueryAndPagination drives the SDK query pager: empty container
+// first, then 30 documents across two partitions. The WHERE clause is
+// evaluated faithfully, so `c.part = 'part-a'` returns exactly the 15 part-a
+// documents. The partition-key header is advisory in the emulator (its item
+// model conflates partition and document identity), so cross-partition WHERE
+// does the filtering.
 func TestCosmosQueryAndPagination(t *testing.T) {
 	ctx := context.Background()
 	env := newCosmosEnv(t)
@@ -456,8 +460,9 @@ func TestCosmosQueryAndPagination(t *testing.T) {
 		t.Errorf("query on empty container returned %d items, want 0", n)
 	}
 
-	// Insert 30 documents: 15 in part-a, 15 in part-b.
-	seen := map[string]bool{}
+	// Insert 30 documents: 15 in part-a, 15 in part-b. Track the part-a ids —
+	// only those should match the WHERE clause below.
+	expected := map[string]bool{}
 
 	for i := 0; i < 30; i++ {
 		part := "part-a"
@@ -466,12 +471,14 @@ func TestCosmosQueryAndPagination(t *testing.T) {
 		}
 
 		id := "evt-" + string(rune('a'+i/10)) + string(rune('0'+i%10)) // evt-a0..evt-c9, unique ids
-		seen[id] = false
+		if part == "part-a" {
+			expected[id] = false
+		}
+
 		createDoc(ctx, t, cc, part, map[string]any{"id": id, "pk": id, "part": part, "n": i})
 	}
 
-	// DIVERGENCE: the WHERE clause and the partition key are both ignored —
-	// all 30 documents come back regardless.
+	// The WHERE clause is honored: exactly the 15 part-a documents come back.
 	pager := cc.NewQueryItemsPager("SELECT * FROM c WHERE c.part = 'part-a'", pkA, nil)
 	total := 0
 
@@ -489,9 +496,9 @@ func TestCosmosQueryAndPagination(t *testing.T) {
 
 			id, _ := doc["id"].(string)
 
-			was, known := seen[id]
+			was, known := expected[id]
 			if !known {
-				t.Errorf("query returned unknown id %q", id)
+				t.Errorf("query returned non-part-a id %q", id)
 				continue
 			}
 
@@ -499,18 +506,18 @@ func TestCosmosQueryAndPagination(t *testing.T) {
 				t.Errorf("query returned id %q twice", id)
 			}
 
-			seen[id] = true
-			total += 1
+			expected[id] = true
+			total++
 		}
 	}
 
-	if total != 30 {
-		t.Errorf("query returned %d items, want all 30 (SQL is ignored → full scan)", total)
+	if total != 15 {
+		t.Errorf("query returned %d items, want the 15 part-a documents", total)
 	}
 
-	for id, ok := range seen {
+	for id, ok := range expected {
 		if !ok {
-			t.Errorf("query never returned id %q", id)
+			t.Errorf("query never returned part-a id %q", id)
 		}
 	}
 }
@@ -747,4 +754,124 @@ func TestCosmosChangeFeed(t *testing.T) {
 	if len(page2.Records) != 1 || page2.Records[0].EventType != "REMOVE" || page2.NextToken != "" {
 		t.Fatalf("page2 records=%+v next=%q want single REMOVE, empty token", page2.Records, page2.NextToken)
 	}
+}
+
+// TestCosmosQueryFidelity drives the SDK query pager through the SQL surface:
+// parameters, ORDER BY, OFFSET/LIMIT, field/aliased/VALUE projection, an
+// aggregate, and the STARTSWITH / BETWEEN / ARRAY_CONTAINS predicates.
+func TestCosmosQueryFidelity(t *testing.T) {
+	ctx := context.Background()
+	env := newCosmosEnv(t)
+	cc := env.container(ctx, t, "shopdb", "products")
+
+	for _, d := range []map[string]any{
+		{"id": "p1", "pk": "p1", "name": "apple", "price": 30, "tags": []any{"fruit", "red"}},
+		{"id": "p2", "pk": "p2", "name": "banana", "price": 10, "tags": []any{"fruit"}},
+		{"id": "p3", "pk": "p3", "name": "almond", "price": 20, "tags": []any{"nut"}},
+	} {
+		createDoc(ctx, t, cc, d["pk"].(string), d)
+	}
+
+	pk := azcosmos.NewPartitionKeyString("p1") // advisory in the emulator
+
+	rawItems := func(sql string, opts *azcosmos.QueryOptions) [][]byte {
+		t.Helper()
+
+		var items [][]byte
+
+		pager := cc.NewQueryItemsPager(sql, pk, opts)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				t.Fatalf("NextPage %q: %v", sql, err)
+			}
+
+			items = append(items, page.Items...)
+		}
+
+		return items
+	}
+
+	scalars := func(sql string) []any {
+		t.Helper()
+
+		var out []any
+		for _, raw := range rawItems(sql, nil) {
+			var v any
+			if err := json.Unmarshal(raw, &v); err != nil {
+				t.Fatalf("unmarshal %q: %v", sql, err)
+			}
+
+			out = append(out, v)
+		}
+
+		return out
+	}
+
+	// Parameterized WHERE.
+	priced := rawItems("SELECT * FROM c WHERE c.price >= @min",
+		&azcosmos.QueryOptions{QueryParameters: []azcosmos.QueryParameter{{Name: "@min", Value: 20}}})
+	if len(priced) != 2 {
+		t.Errorf("price>=20 returned %d items, want 2", len(priced))
+	}
+
+	// ORDER BY price DESC → first item is the most expensive.
+	desc := scalars("SELECT VALUE c.price FROM c ORDER BY c.price DESC")
+	if len(desc) != 3 || desc[0] != float64(30) {
+		t.Errorf("order by price desc = %v, want [30 20 10]", desc)
+	}
+
+	// VALUE projection + ORDER BY name → sorted bare strings.
+	names := scalars("SELECT VALUE c.name FROM c ORDER BY c.name")
+	if want := []any{"almond", "apple", "banana"}; !equalAny(names, want) {
+		t.Errorf("value name ordered = %v, want %v", names, want)
+	}
+
+	// Aliased field projection.
+	aliased := rawItems("SELECT c.name AS n FROM c WHERE c.id = 'p1'", nil)
+	if len(aliased) != 1 {
+		t.Fatalf("aliased projection returned %d items, want 1", len(aliased))
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal(aliased[0], &obj); err != nil {
+		t.Fatalf("unmarshal aliased: %v", err)
+	}
+
+	if obj["n"] != "apple" || len(obj) != 1 {
+		t.Errorf("aliased projection = %v, want {n: apple}", obj)
+	}
+
+	// Aggregate.
+	if cnt := scalars("SELECT VALUE COUNT(1) FROM c"); len(cnt) != 1 || cnt[0] != float64(3) {
+		t.Errorf("count = %v, want [3]", cnt)
+	}
+
+	// Predicate functions.
+	checks := map[string]int{
+		"SELECT * FROM c WHERE STARTSWITH(c.name, 'a')":         2,
+		"SELECT * FROM c WHERE c.price BETWEEN 15 AND 35":       2,
+		"SELECT * FROM c WHERE ARRAY_CONTAINS(c.tags, 'fruit')": 2,
+		"SELECT * FROM c WHERE c.name IN ('apple', 'banana')":   2,
+		"SELECT * FROM c OFFSET 1 LIMIT 1":                      1,
+	}
+	for sql, want := range checks {
+		if got := len(rawItems(sql, nil)); got != want {
+			t.Errorf("%q returned %d items, want %d", sql, got, want)
+		}
+	}
+}
+
+func equalAny(a, b []any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }
