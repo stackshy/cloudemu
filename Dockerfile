@@ -13,9 +13,12 @@ COPY . .
 
 # Static binary so it runs on a distroless/scratch base with no libc.
 ARG VERSION=docker
+ARG COMMIT=none
+ARG DATE=unknown
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+    CGO_ENABLED=0 go build -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -X main.builtBy=docker" \
     -o /out/cloudemu ./cmd/cloudemu
 
 # --- runtime stage -----------------------------------------------------------
