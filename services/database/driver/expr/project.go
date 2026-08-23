@@ -53,7 +53,48 @@ func parseProjectionPaths(p *parser) ([]*PathOperand, error) {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "unexpected token %q in projection", p.peek().text)
 	}
 
+	if err := checkNoOverlap(paths); err != nil {
+		return nil, err
+	}
+
 	return paths, nil
+}
+
+// checkNoOverlap rejects a projection where one path is a prefix of another (or
+// a duplicate), which DynamoDB reports as overlapping document paths.
+func checkNoOverlap(paths []*PathOperand) error {
+	for i := range paths {
+		for j := i + 1; j < len(paths); j++ {
+			if pathsOverlap(paths[i].Parts, paths[j].Parts) {
+				return cerrors.New(cerrors.InvalidArgument, "two document paths overlap")
+			}
+		}
+	}
+
+	return nil
+}
+
+func pathsOverlap(a, b []PathPart) bool {
+	n := min(len(a), len(b))
+	for i := range n {
+		if !partsEqual(a[i], b[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func partsEqual(a, b PathPart) bool {
+	if a.IsIndex != b.IsIndex {
+		return false
+	}
+
+	if a.IsIndex {
+		return a.Index == b.Index
+	}
+
+	return a.Name == b.Name
 }
 
 // Project returns a deep copy of item containing only the given paths,

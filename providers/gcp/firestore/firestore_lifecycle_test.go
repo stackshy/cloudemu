@@ -173,7 +173,7 @@ func TestLifecycle(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, cerrors.IsNotFound(err))
 
-	// Unsupported update action → InvalidArgument.
+	// Unsupported legacy update action → InvalidArgument.
 	_, err = db.UpdateItem(ctx, driver.UpdateItemInput{
 		Table:   coll,
 		Key:     map[string]any{"customerId": "cust-1", "orderId": "2026-001"},
@@ -181,6 +181,18 @@ func TestLifecycle(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.True(t, cerrors.IsInvalidArgument(err))
+
+	// The raw UpdateExpression path runs the full shared grammar (SET plus ADD),
+	// which the legacy Actions form cannot express.
+	rich, err := db.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:            coll,
+		Key:              map[string]any{"customerId": "cust-1", "orderId": "2026-001"},
+		UpdateExpression: "SET paid = :p ADD hits :c",
+		ExprValues:       map[string]any{":p": true, ":c": float64(3)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, true, rich["paid"])
+	assert.Equal(t, float64(3), rich["hits"])
 
 	// Batch put + batch get.
 	batch := []map[string]any{

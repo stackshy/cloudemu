@@ -175,6 +175,23 @@ func evalContains(n *Contains, item map[string]any) bool {
 		return isStr && strings.Contains(s, t)
 	case []any:
 		return sliceContains(s, target)
+	default:
+		return setContains(v, target)
+	}
+}
+
+// setContains reports set membership for the SS/NS/BS types.
+func setContains(v, target any) bool {
+	switch s := v.(type) {
+	case StringSet:
+		t, ok := target.(string)
+		return ok && stringSetHas(s, t)
+	case NumberSet:
+		t, ok := target.(float64)
+		return ok && numberSetHas(s, t)
+	case BinarySet:
+		t, ok := target.([]byte)
+		return ok && binarySetHas(s, t)
 	}
 
 	return false
@@ -244,6 +261,13 @@ func resolvePath(parts []PathPart, item map[string]any) (any, bool) {
 	return cur, true
 }
 
+// Two-character relational operators, shared so the same literal is not
+// repeated across the comparison and key-condition code.
+const (
+	opLTE = "<="
+	opGTE = ">="
+)
+
 func compareOp(op string, a, b any) bool {
 	switch op {
 	case "=":
@@ -260,11 +284,11 @@ func compareOp(op string, a, b any) bool {
 	switch op {
 	case "<":
 		return c < 0
-	case "<=":
+	case opLTE:
 		return c <= 0
 	case ">":
 		return c > 0
-	case ">=":
+	case opGTE:
 		return c >= 0
 	}
 
@@ -291,7 +315,9 @@ func valuesEqual(a, b any) bool {
 		return b == nil
 	}
 
-	return false
+	// Set types (SS/NS/BS) compare order-independently; non-set values that
+	// reach here are unequal, which setsEqual also reports.
+	return setsEqual(a, b)
 }
 
 // orderedCompare returns -1/0/1 for orderable, same-typed values (numbers,
@@ -339,8 +365,8 @@ func sizeOf(v any) (any, bool) {
 	return nil, false
 }
 
-// dynamoType returns the DynamoDB attribute type code for a native value.
-// Sets are indistinguishable from lists in the native model and report "L".
+// dynamoType returns the DynamoDB attribute type code for a native value,
+// including the set types SS/NS/BS, which are modeled distinctly from a List.
 func dynamoType(v any) string {
 	switch v.(type) {
 	case string:
@@ -357,6 +383,20 @@ func dynamoType(v any) string {
 		return "L"
 	case map[string]any:
 		return "M"
+	}
+
+	return setType(v)
+}
+
+// setType returns the DynamoDB type code for the set types, or "" otherwise.
+func setType(v any) string {
+	switch v.(type) {
+	case StringSet:
+		return "SS"
+	case NumberSet:
+		return "NS"
+	case BinarySet:
+		return "BS"
 	}
 
 	return ""

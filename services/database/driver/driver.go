@@ -11,6 +11,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
 // TTLConfig configures TTL for a table.
@@ -59,18 +60,57 @@ type GSIConfig struct {
 	SortKey      string
 }
 
-// UpdateAction represents a single field-level update action.
+// UpdateAction represents a single field-level update action. It is the legacy,
+// pre-expression update form; the wire handler uses UpdateExpression instead.
 type UpdateAction struct {
 	Action string // "SET" or "REMOVE"
 	Field  string
 	Value  any // ignored for REMOVE
 }
 
-// UpdateItemInput describes an update operation on an existing item.
+// UpdateItemInput describes an update operation on an existing item. When
+// UpdateExpression is set it takes precedence and is evaluated with full
+// DynamoDB grammar (SET arithmetic, if_not_exists, list_append, ADD, DELETE);
+// otherwise the legacy Actions are applied. ExprNames/ExprValues resolve the
+// expression's #aliases and :placeholders.
 type UpdateItemInput struct {
-	Table   string
-	Key     map[string]any
-	Actions []UpdateAction
+	Table            string
+	Key              map[string]any
+	Actions          []UpdateAction
+	UpdateExpression string
+	ExprNames        map[string]string
+	ExprValues       map[string]any
+}
+
+// ApplyUpdate applies input's update to a caller-owned copy of item, mutating
+// it in place and returning it. It runs the full UpdateExpression grammar when
+// input.UpdateExpression is set, otherwise the legacy SET/REMOVE Actions. It is
+// shared by every database provider so update semantics stay identical across
+// clouds.
+//
+//nolint:gocritic // hugeParam: input mirrors the driver's UpdateItem signature.
+func ApplyUpdate(item map[string]any, input UpdateItemInput) (map[string]any, error) {
+	if input.UpdateExpression != "" {
+		prog, err := expr.ParseUpdate(input.UpdateExpression, input.ExprNames, input.ExprValues)
+		if err != nil {
+			return nil, err
+		}
+
+		return expr.ApplyUpdate(item, prog)
+	}
+
+	for _, action := range input.Actions {
+		switch action.Action {
+		case "SET":
+			item[action.Field] = action.Value
+		case "REMOVE":
+			delete(item, action.Field)
+		default:
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "unsupported action: %s", action.Action)
+		}
+	}
+
+	return item, nil
 }
 
 // KeyCondition defines a key condition for queries.

@@ -417,6 +417,12 @@ func TestDDBQueryPartitionAndSort(t *testing.T) {
 		":c": sAttr("alice"), ":p": sAttr("2024"),
 	}, nil)
 	assert.Equal(t, int32(3), out.Count)
+
+	// The parser tolerates missing spaces around the operators.
+	out = query("customer=:c AND orderDate>:d", map[string]ddbtypes.AttributeValue{
+		":c": sAttr("alice"), ":d": sAttr("2024-01-31"),
+	}, nil)
+	assert.Equal(t, int32(2), out.Count, "space-less operators parse correctly")
 }
 
 // TestDDBTimeToLive is a regression guard for issue #319:
@@ -1461,4 +1467,135 @@ func TestDDBProjectionExpression(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int32(0), out.Count, "a non-matching filter yields nothing to project")
 	})
+
+	t.Run("overlapping projected paths are rejected", func(t *testing.T) {
+		_, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("address, address.city"),
+		})
+		require.Error(t, err, "overlapping document paths must be a ValidationException")
+	})
+}
+
+// TestDDBUpdateExpressionGrammar drives the real SDK through the rich
+// UpdateExpression grammar: SET arithmetic, if_not_exists and list_append, ADD
+// on a number and on a set (union), and DELETE on a set (difference, then
+// emptying removes the attribute). Results are asserted via ReturnValues=ALL_NEW.
+func TestDDBUpdateExpressionGrammar(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "acct", "id", "")
+	suiteDDBPut(t, client, "acct", map[string]ddbtypes.AttributeValue{
+		"id":      sAttr("a1"),
+		"balance": nAttr("100"),
+		"items":   &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{sAttr("x")}},
+		"tags":    &ddbtypes.AttributeValueMemberSS{Value: []string{"red", "blue"}},
+	})
+
+	update := func(exprStr string, vals map[string]ddbtypes.AttributeValue) map[string]ddbtypes.AttributeValue {
+		out, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String("acct"),
+			Key:                       map[string]ddbtypes.AttributeValue{"id": sAttr("a1")},
+			UpdateExpression:          aws.String(exprStr),
+			ExpressionAttributeValues: vals,
+			ReturnValues:              ddbtypes.ReturnValueAllNew,
+		})
+		require.NoError(t, err, "UpdateItem %q", exprStr)
+
+		return out.Attributes
+	}
+
+	t.Run("SET arithmetic, if_not_exists, list_append and ADD number", func(t *testing.T) {
+		attrs := update(
+			"SET balance = balance + :d, nickname = if_not_exists(nickname, :nn), "+
+				"items = list_append(items, :more) ADD visits :one",
+			map[string]ddbtypes.AttributeValue{
+				":d":    nAttr("50"),
+				":nn":   sAttr("ace"),
+				":more": &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{sAttr("y")}},
+				":one":  nAttr("1"),
+			})
+
+		assert.Equal(t, "150", attrN(t, attrs, "balance"), "balance + 50")
+		assert.Equal(t, "ace", attrS(t, attrs, "nickname"), "if_not_exists set the default")
+		assert.Equal(t, "1", attrN(t, attrs, "visits"), "ADD created and incremented from zero")
+
+		l, ok := attrs["items"].(*ddbtypes.AttributeValueMemberL)
+		require.True(t, ok)
+		require.Len(t, l.Value, 2, "list_append grew the list")
+	})
+
+	t.Run("ADD unions a string set", func(t *testing.T) {
+		attrs := update("ADD tags :t", map[string]ddbtypes.AttributeValue{
+			":t": &ddbtypes.AttributeValueMemberSS{Value: []string{"green", "blue"}},
+		})
+
+		ss, ok := attrs["tags"].(*ddbtypes.AttributeValueMemberSS)
+		require.True(t, ok, "tags should be a string set, got %T", attrs["tags"])
+		assert.ElementsMatch(t, []string{"red", "blue", "green"}, ss.Value, "union, deduplicated")
+	})
+
+	t.Run("DELETE removes set members then empties the attribute", func(t *testing.T) {
+		attrs := update("DELETE tags :t", map[string]ddbtypes.AttributeValue{
+			":t": &ddbtypes.AttributeValueMemberSS{Value: []string{"red"}},
+		})
+		ss, ok := attrs["tags"].(*ddbtypes.AttributeValueMemberSS)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"blue", "green"}, ss.Value)
+
+		attrs = update("DELETE tags :t", map[string]ddbtypes.AttributeValue{
+			":t": &ddbtypes.AttributeValueMemberSS{Value: []string{"blue", "green"}},
+		})
+		_, has := attrs["tags"]
+		assert.False(t, has, "an emptied set attribute is removed")
+	})
+
+	t.Run("ADD with a mismatched type is rejected", func(t *testing.T) {
+		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:        aws.String("acct"),
+			Key:              map[string]ddbtypes.AttributeValue{"id": sAttr("a1")},
+			UpdateExpression: aws.String("ADD balance :s"), // balance is a number
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":s": &ddbtypes.AttributeValueMemberSS{Value: []string{"x"}},
+			},
+		})
+		require.Error(t, err, "ADD a set to a numeric attribute must be a ValidationException")
+	})
+}
+
+// TestDDBSetTypesRoundTrip proves the wire codec decodes and re-encodes all
+// three DynamoDB set types (SS/NS/BS) plus the binary scalar (B) through the
+// real SDK.
+func TestDDBSetTypesRoundTrip(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+
+	suiteDDBCreateTable(t, client, "sets", "id", "")
+	suiteDDBPut(t, client, "sets", map[string]ddbtypes.AttributeValue{
+		"id":  sAttr("s1"),
+		"ss":  &ddbtypes.AttributeValueMemberSS{Value: []string{"a", "b"}},
+		"ns":  &ddbtypes.AttributeValueMemberNS{Value: []string{"1", "2"}},
+		"bs":  &ddbtypes.AttributeValueMemberBS{Value: [][]byte{{0x01, 0x02}, {0x03}}},
+		"bin": &ddbtypes.AttributeValueMemberB{Value: []byte{0xDE, 0xAD}},
+	})
+
+	out := suiteDDBGet(t, client, "sets", map[string]ddbtypes.AttributeValue{"id": sAttr("s1")})
+	require.NotNil(t, out.Item)
+
+	ss, ok := out.Item["ss"].(*ddbtypes.AttributeValueMemberSS)
+	require.True(t, ok, "ss should round-trip as SS, got %T", out.Item["ss"])
+	assert.ElementsMatch(t, []string{"a", "b"}, ss.Value)
+
+	ns, ok := out.Item["ns"].(*ddbtypes.AttributeValueMemberNS)
+	require.True(t, ok, "ns should round-trip as NS, got %T", out.Item["ns"])
+	assert.ElementsMatch(t, []string{"1", "2"}, ns.Value)
+
+	bs, ok := out.Item["bs"].(*ddbtypes.AttributeValueMemberBS)
+	require.True(t, ok, "bs should round-trip as BS, got %T", out.Item["bs"])
+	require.Len(t, bs.Value, 2)
+
+	bin, ok := out.Item["bin"].(*ddbtypes.AttributeValueMemberB)
+	require.True(t, ok, "binary scalar should round-trip as B, got %T", out.Item["bin"])
+	assert.Equal(t, []byte{0xDE, 0xAD}, bin.Value)
 }

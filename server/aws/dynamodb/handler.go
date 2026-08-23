@@ -408,7 +408,12 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vals := fromWireItem(req.ExpressionAttributeValues)
-	kc := parseKeyCondition(req.KeyConditionExpression, vals, req.ExpressionAttributeNames)
+
+	kc, err := parseKeyCondition(req.KeyConditionExpression, vals, req.ExpressionAttributeNames)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	forward := true
 	if req.ScanIndexForward != nil {
@@ -459,134 +464,29 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 // Sort-key operators emitted for the function/keyword forms of a
 // KeyConditionExpression. Relational operators (= < <= > >=) flow through as
 // their literal token.
-const (
-	sortOpBetween    = "BETWEEN"
-	sortOpBeginsWith = "BEGINS_WITH"
-)
-
-// parseKeyCondition extracts a KeyCondition from a KeyConditionExpression.
-// The partition key must use equality ("pk = :v"); the optional sort-key
-// condition may be a relational comparison ("sk op :v"), "sk BETWEEN :lo AND
-// :hi", or "begins_with(sk, :v)".
+// parseKeyCondition parses a KeyConditionExpression into a driver KeyCondition.
+// It delegates to the shared expr parser, which uses the real lexer (so it is
+// tolerant of spacing) and enforces the restricted key grammar: equality on the
+// partition key and one optional sort-key condition (relational, BETWEEN or
+// begins_with). The sort-key attribute name is derived by the provider from the
+// table's key schema, so it is not carried on the returned condition.
 func parseKeyCondition(
 	keyExpr string,
 	vals map[string]any,
 	names map[string]string,
-) dbdriver.KeyCondition {
-	kc := dbdriver.KeyCondition{}
-	keyExpr = strings.TrimSpace(keyExpr)
-
-	const andSep = " AND "
-
-	// Split on the FIRST " AND " only: it separates the partition-key equality
-	// from the sort-key condition. A BETWEEN sort condition carries its own
-	// internal " AND ", which stays with the sort clause.
-	andIdx := findCaseInsensitive(keyExpr, andSep)
-	pkExpr := keyExpr
-	skExpr := ""
-
-	if andIdx >= 0 {
-		pkExpr = strings.TrimSpace(keyExpr[:andIdx])
-		skExpr = strings.TrimSpace(keyExpr[andIdx+len(andSep):])
+) (dbdriver.KeyCondition, error) {
+	kc, err := expr.ParseKeyCondition(keyExpr, names, vals)
+	if err != nil {
+		return dbdriver.KeyCondition{}, err
 	}
 
-	// Partition key: [0]=field, [1]="=", [2]=value placeholder.
-	const valueIdx = 2
-
-	pkParts := strings.Fields(pkExpr)
-	if len(pkParts) > valueIdx {
-		kc.PartitionKey = resolveAttrName(pkParts[0], names)
-		kc.PartitionVal = resolveExprVal(pkParts[valueIdx], vals)
-	}
-
-	if skExpr != "" {
-		parseSortCondition(&kc, skExpr, vals)
-	}
-
-	return kc
-}
-
-// parseSortCondition fills kc's sort-key fields from the sort portion of a
-// KeyConditionExpression. The sort key's attribute name is resolved by the
-// provider from the table's key schema, so only the operator and value
-// placeholders are extracted here.
-func parseSortCondition(kc *dbdriver.KeyCondition, skExpr string, vals map[string]any) {
-	if val, ok := parseBeginsWith(skExpr, vals); ok {
-		kc.SortOp = sortOpBeginsWith
-		kc.SortVal = val
-
-		return
-	}
-
-	fields := strings.Fields(skExpr)
-
-	// "sk BETWEEN :lo AND :hi" → [sk BETWEEN :lo AND :hi].
-	const (
-		betweenLen = 5
-		loIdx      = 2
-		hiIdx      = 4
-	)
-
-	if len(fields) >= betweenLen && strings.EqualFold(fields[1], sortOpBetween) {
-		kc.SortOp = sortOpBetween
-		kc.SortVal = resolveExprVal(fields[loIdx], vals)
-		kc.SortValEnd = resolveExprVal(fields[hiIdx], vals)
-
-		return
-	}
-
-	// "sk op :v" → [sk op :v].
-	const opLen = 3
-	if len(fields) >= opLen {
-		kc.SortOp = fields[1]
-		kc.SortVal = resolveExprVal(fields[loIdx], vals)
-	}
-}
-
-// parseBeginsWith recognizes a "begins_with(sk, :v)" sort-key condition and
-// returns its resolved value. ok is false when skExpr is not a begins_with
-// call.
-func parseBeginsWith(skExpr string, vals map[string]any) (val any, ok bool) {
-	const fnBeginsWith = "begins_with"
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(skExpr)), fnBeginsWith) {
-		return nil, false
-	}
-
-	openIdx := strings.Index(skExpr, "(")
-	closeIdx := strings.LastIndex(skExpr, ")")
-
-	if openIdx < 0 || closeIdx < openIdx {
-		return nil, false
-	}
-
-	const argCount = 2
-
-	args := strings.Split(skExpr[openIdx+1:closeIdx], ",")
-	if len(args) != argCount {
-		return nil, false
-	}
-
-	return resolveExprVal(strings.TrimSpace(args[1]), vals), true
-}
-
-func findCaseInsensitive(s, substr string) int {
-	return strings.Index(strings.ToUpper(s), strings.ToUpper(substr))
-}
-
-func resolveAttrName(token string, names map[string]string) string {
-	if v, ok := names[token]; ok {
-		return v
-	}
-
-	return token
-}
-
-func resolveExprVal(token string, vals map[string]any) any {
-	if v, ok := vals[token]; ok {
-		return v
-	}
-
-	return token
+	return dbdriver.KeyCondition{
+		PartitionKey: kc.PartitionKey,
+		PartitionVal: kc.PartitionVal,
+		SortOp:       kc.SortOp,
+		SortVal:      kc.SortVal,
+		SortValEnd:   kc.SortValEnd,
+	}, nil
 }
 
 // writeErr maps CloudEmu errors to DynamoDB HTTP error responses.
