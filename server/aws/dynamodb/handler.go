@@ -6,6 +6,7 @@ package dynamodb
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -16,6 +17,15 @@ import (
 )
 
 const targetPrefix = "DynamoDB_20120810."
+
+const (
+	keyTypeHash        = "HASH"
+	keyTypeRange       = "RANGE"
+	projectionAll      = "ALL"
+	statusEnabled      = "ENABLED"
+	statusDisabled     = "DISABLED"
+	billingProvisioned = "PROVISIONED"
+)
 
 // Handler serves DynamoDB JSON-RPC requests against a database.Database driver.
 type Handler struct {
@@ -54,8 +64,12 @@ func (h *Handler) routeTables(w http.ResponseWriter, r *http.Request, op string)
 		h.deleteTable(w, r)
 	case "DescribeTable":
 		h.describeTable(w, r)
+	case "UpdateTable":
+		h.updateTable(w, r)
 	case "DescribeContinuousBackups":
 		h.describeContinuousBackups(w, r)
+	case "UpdateContinuousBackups":
+		h.updateContinuousBackups(w, r)
 	case "ListTables":
 		h.listTables(w, r)
 	default:
@@ -94,6 +108,8 @@ func (h *Handler) routeBatch(w http.ResponseWriter, r *http.Request, op string) 
 		h.batchGetItem(w, r)
 	case "TransactWriteItems":
 		h.transactWriteItems(w, r)
+	case "TransactGetItems":
+		h.transactGetItems(w, r)
 	default:
 		return false
 	}
@@ -101,75 +117,45 @@ func (h *Handler) routeBatch(w http.ResponseWriter, r *http.Request, op string) 
 	return true
 }
 
+// createTableRequest is the CreateTable wire input, decoded once and mapped to
+// a driver TableConfig by buildCreateConfig.
+type createTableRequest struct {
+	TableName string `json:"TableName"`
+	KeySchema []struct {
+		AttributeName string `json:"AttributeName"`
+		KeyType       string `json:"KeyType"`
+	} `json:"KeySchema"`
+	AttributeDefinitions []struct {
+		AttributeName string `json:"AttributeName"`
+		AttributeType string `json:"AttributeType"`
+	} `json:"AttributeDefinitions"`
+	BillingMode           string `json:"BillingMode"`
+	ProvisionedThroughput struct {
+		ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
+		WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
+	} `json:"ProvisionedThroughput"`
+	GlobalSecondaryIndexes []secondaryIndexJSON `json:"GlobalSecondaryIndexes"`
+	LocalSecondaryIndexes  []secondaryIndexJSON `json:"LocalSecondaryIndexes"`
+	StreamSpecification    *struct {
+		StreamEnabled  bool   `json:"StreamEnabled"`
+		StreamViewType string `json:"StreamViewType"`
+	} `json:"StreamSpecification"`
+	Tags []tagJSON `json:"Tags"`
+}
+
 func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TableName string `json:"TableName"`
-		KeySchema []struct {
-			AttributeName string `json:"AttributeName"`
-			KeyType       string `json:"KeyType"`
-		} `json:"KeySchema"`
-		AttributeDefinitions []struct {
-			AttributeName string `json:"AttributeName"`
-			AttributeType string `json:"AttributeType"`
-		} `json:"AttributeDefinitions"`
-		BillingMode           string `json:"BillingMode"`
-		ProvisionedThroughput struct {
-			ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
-			WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
-		} `json:"ProvisionedThroughput"`
-		GlobalSecondaryIndexes []struct {
-			IndexName string `json:"IndexName"`
-			KeySchema []struct {
-				AttributeName string `json:"AttributeName"`
-				KeyType       string `json:"KeyType"`
-			} `json:"KeySchema"`
-			Projection struct {
-				ProjectionType string `json:"ProjectionType"`
-			} `json:"Projection"`
-		} `json:"GlobalSecondaryIndexes"`
-	}
+	var req createTableRequest
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	cfg := dbdriver.TableConfig{
-		Name:               req.TableName,
-		BillingMode:        req.BillingMode,
-		ReadCapacityUnits:  req.ProvisionedThroughput.ReadCapacityUnits,
-		WriteCapacityUnits: req.ProvisionedThroughput.WriteCapacityUnits,
-	}
-
-	for _, gsi := range req.GlobalSecondaryIndexes {
-		idx := dbdriver.GSIConfig{Name: gsi.IndexName, Projection: gsi.Projection.ProjectionType}
-		for _, ks := range gsi.KeySchema {
-			if ks.KeyType == "HASH" {
-				idx.PartitionKey = ks.AttributeName
-			}
-			if ks.KeyType == "RANGE" {
-				idx.SortKey = ks.AttributeName
-			}
-		}
-		cfg.GSIs = append(cfg.GSIs, idx)
-	}
-
-	for _, ks := range req.KeySchema {
-		if ks.KeyType == "HASH" {
-			cfg.PartitionKey = ks.AttributeName
-		}
-
-		if ks.KeyType == "RANGE" {
-			cfg.SortKey = ks.AttributeName
-		}
-	}
-
-	for _, ad := range req.AttributeDefinitions {
-		cfg.Attributes = append(cfg.Attributes,
-			dbdriver.AttributeDef{Name: ad.AttributeName, Type: ad.AttributeType})
-	}
-
-	if err := h.db.CreateTable(r.Context(), cfg); err != nil {
+	if err := h.db.CreateTable(r.Context(), buildCreateConfig(&req)); err != nil {
 		writeErr(w, err)
+		return
+	}
+
+	if !h.applyCreateTags(r, w, req.TableName, req.Tags) {
 		return
 	}
 
@@ -183,21 +169,120 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"TableDescription": tableDescription(full)})
 }
 
+// buildCreateConfig maps a decoded CreateTable request onto a driver
+// TableConfig (keys, attributes, secondary indexes and the stream spec).
+func buildCreateConfig(req *createTableRequest) dbdriver.TableConfig {
+	cfg := dbdriver.TableConfig{
+		Name:               req.TableName,
+		BillingMode:        req.BillingMode,
+		ReadCapacityUnits:  req.ProvisionedThroughput.ReadCapacityUnits,
+		WriteCapacityUnits: req.ProvisionedThroughput.WriteCapacityUnits,
+	}
+
+	for _, gsi := range req.GlobalSecondaryIndexes {
+		pk, sk := indexKeys(gsi)
+		cfg.GSIs = append(cfg.GSIs,
+			dbdriver.GSIConfig{Name: gsi.IndexName, PartitionKey: pk, SortKey: sk, Projection: gsi.Projection.ProjectionType})
+	}
+
+	for _, lsi := range req.LocalSecondaryIndexes {
+		_, sk := indexKeys(lsi)
+		cfg.LSIs = append(cfg.LSIs,
+			dbdriver.LSIConfig{Name: lsi.IndexName, SortKey: sk, Projection: lsi.Projection.ProjectionType})
+	}
+
+	if req.StreamSpecification != nil && req.StreamSpecification.StreamEnabled {
+		cfg.StreamEnabled = true
+		cfg.StreamViewType = req.StreamSpecification.StreamViewType
+	}
+
+	cfg.PartitionKey, cfg.SortKey = keySchemaKeys(req)
+
+	for _, ad := range req.AttributeDefinitions {
+		cfg.Attributes = append(cfg.Attributes,
+			dbdriver.AttributeDef{Name: ad.AttributeName, Type: ad.AttributeType})
+	}
+
+	return cfg
+}
+
+// keySchemaKeys resolves the table's partition and sort key from the request
+// key schema.
+func keySchemaKeys(req *createTableRequest) (partitionKey, sortKey string) {
+	for _, ks := range req.KeySchema {
+		if ks.KeyType == keyTypeHash {
+			partitionKey = ks.AttributeName
+		}
+
+		if ks.KeyType == keyTypeRange {
+			sortKey = ks.AttributeName
+		}
+	}
+
+	return partitionKey, sortKey
+}
+
+// secondaryIndexJSON is the shared wire shape of a GSI or LSI on CreateTable.
+type secondaryIndexJSON struct {
+	IndexName string `json:"IndexName"`
+	KeySchema []struct {
+		AttributeName string `json:"AttributeName"`
+		KeyType       string `json:"KeyType"`
+	} `json:"KeySchema"`
+	Projection struct {
+		ProjectionType string `json:"ProjectionType"`
+	} `json:"Projection"`
+}
+
+// indexKeys extracts the HASH/RANGE attribute names from an index key schema.
+func indexKeys(idx secondaryIndexJSON) (partitionKey, sortKey string) {
+	for _, ks := range idx.KeySchema {
+		if ks.KeyType == keyTypeHash {
+			partitionKey = ks.AttributeName
+		}
+
+		if ks.KeyType == keyTypeRange {
+			sortKey = ks.AttributeName
+		}
+	}
+
+	return partitionKey, sortKey
+}
+
+// applyCreateTags applies tags supplied on CreateTable so ListTagsOfResource
+// returns them, matching real DynamoDB (which tags at create time). It writes
+// the error response and returns false on failure.
+func (h *Handler) applyCreateTags(r *http.Request, w http.ResponseWriter, table string, tags []tagJSON) bool {
+	if len(tags) == 0 {
+		return true
+	}
+
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		m[t.Key] = t.Value
+	}
+
+	if err := h.db.TagResource(r.Context(), table, m); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return true
+}
+
 // tableDescription builds the DynamoDB TableDescription wire shape that both
 // CreateTable and DescribeTable return, including the fields an IaC client reads
 // back (ARN, creation time, attribute definitions, billing mode).
 func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
-	keySchema := []map[string]string{{"AttributeName": cfg.PartitionKey, "KeyType": "HASH"}}
+	keySchema := []map[string]string{{"AttributeName": cfg.PartitionKey, "KeyType": keyTypeHash}}
 	if cfg.SortKey != "" {
-		keySchema = append(keySchema, map[string]string{"AttributeName": cfg.SortKey, "KeyType": "RANGE"})
+		keySchema = append(keySchema, map[string]string{"AttributeName": cfg.SortKey, "KeyType": keyTypeRange})
 	}
 
 	attrs := make([]map[string]string, 0, len(cfg.Attributes))
 	for _, a := range cfg.Attributes {
 		attrs = append(attrs, map[string]string{"AttributeName": a.Name, "AttributeType": a.Type})
 	}
-
-	const billingProvisioned = "PROVISIONED"
 
 	billing := cfg.BillingMode
 	if billing == "" {
@@ -208,6 +293,7 @@ func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 		"TableName":            cfg.Name,
 		"TableStatus":          "ACTIVE",
 		"TableArn":             cfg.TableArn,
+		"TableId":              cfg.TableID,
 		"CreationDateTime":     cfg.CreatedAtUnix,
 		"KeySchema":            keySchema,
 		"AttributeDefinitions": attrs,
@@ -228,7 +314,50 @@ func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 		td["GlobalSecondaryIndexes"] = gsis
 	}
 
+	if lsis := lsiDescriptions(cfg); len(lsis) > 0 {
+		td["LocalSecondaryIndexes"] = lsis
+	}
+
+	if cfg.StreamEnabled {
+		td["StreamSpecification"] = map[string]any{
+			"StreamEnabled":  true,
+			"StreamViewType": cfg.StreamViewType,
+		}
+		td["LatestStreamArn"] = cfg.StreamArn
+		td["LatestStreamLabel"] = cfg.StreamLabel
+	}
+
 	return td
+}
+
+// lsiDescriptions builds the LocalSecondaryIndexes wire block echoed by
+// CreateTable/DescribeTable so an IaC-declared LSI round-trips. An LSI shares
+// the table partition key and adds its own sort key.
+func lsiDescriptions(cfg *dbdriver.TableConfig) []map[string]any {
+	out := make([]map[string]any, 0, len(cfg.LSIs))
+
+	for _, lsi := range cfg.LSIs {
+		keySchema := []map[string]string{
+			{"AttributeName": cfg.PartitionKey, "KeyType": keyTypeHash},
+			{"AttributeName": lsi.SortKey, "KeyType": keyTypeRange},
+		}
+
+		projection := lsi.Projection
+		if projection == "" {
+			projection = projectionAll
+		}
+
+		out = append(out, map[string]any{
+			"IndexName":      lsi.Name,
+			"KeySchema":      keySchema,
+			"Projection":     map[string]any{"ProjectionType": projection},
+			"IndexArn":       cfg.TableArn + "/index/" + lsi.Name,
+			"ItemCount":      0,
+			"IndexSizeBytes": 0,
+		})
+	}
+
+	return out
 }
 
 // gsiDescriptions builds the GlobalSecondaryIndexes wire block echoed by
@@ -238,14 +367,14 @@ func gsiDescriptions(cfg *dbdriver.TableConfig, billing string) []map[string]any
 	out := make([]map[string]any, 0, len(cfg.GSIs))
 
 	for _, gsi := range cfg.GSIs {
-		keySchema := []map[string]string{{"AttributeName": gsi.PartitionKey, "KeyType": "HASH"}}
+		keySchema := []map[string]string{{"AttributeName": gsi.PartitionKey, "KeyType": keyTypeHash}}
 		if gsi.SortKey != "" {
-			keySchema = append(keySchema, map[string]string{"AttributeName": gsi.SortKey, "KeyType": "RANGE"})
+			keySchema = append(keySchema, map[string]string{"AttributeName": gsi.SortKey, "KeyType": keyTypeRange})
 		}
 
 		projection := gsi.Projection
 		if projection == "" {
-			projection = "ALL"
+			projection = projectionAll
 		}
 
 		desc := map[string]any{
@@ -258,7 +387,7 @@ func gsiDescriptions(cfg *dbdriver.TableConfig, billing string) []map[string]any
 			"IndexSizeBytes": 0,
 		}
 
-		if billing == "PROVISIONED" {
+		if billing == billingProvisioned {
 			desc["ProvisionedThroughput"] = map[string]any{
 				"ReadCapacityUnits":      cfg.ReadCapacityUnits,
 				"WriteCapacityUnits":     cfg.WriteCapacityUnits,
@@ -281,17 +410,23 @@ func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Describe before deleting so the response carries the real ARN, key schema
+	// and attribute definitions a client reads back — not a name-only stub.
+	full, err := h.db.DescribeTable(r.Context(), req.TableName)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	if err := h.db.DeleteTable(r.Context(), req.TableName); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
-		"TableDescription": map[string]any{
-			"TableName":   req.TableName,
-			"TableStatus": "DELETING",
-		},
-	})
+	desc := tableDescription(full)
+	desc["TableStatus"] = "DELETING"
+
+	wire.WriteJSON(w, map[string]any{"TableDescription": desc})
 }
 
 func (h *Handler) describeTable(w http.ResponseWriter, r *http.Request) {
@@ -312,8 +447,10 @@ func (h *Handler) describeTable(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"Table": tableDescription(cfg)})
 }
 
-// describeContinuousBackups reports point-in-time recovery as disabled. IaC
-// clients read this on every table refresh; without it the read errors.
+// describeContinuousBackups reports the table's point-in-time recovery state.
+// IaC clients read this on every table refresh; without it the read errors.
+// ContinuousBackups is always enabled on a real table, so only the PITR sub-
+// status tracks the UpdateContinuousBackups toggle.
 func (h *Handler) describeContinuousBackups(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string `json:"TableName"`
@@ -328,11 +465,16 @@ func (h *Handler) describeContinuousBackups(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	pitr := statusDisabled
+	if h.pitrEnabled(r.Context(), req.TableName) {
+		pitr = statusEnabled
+	}
+
 	wire.WriteJSON(w, map[string]any{
 		"ContinuousBackupsDescription": map[string]any{
-			"ContinuousBackupsStatus": "DISABLED",
+			"ContinuousBackupsStatus": statusEnabled,
 			"PointInTimeRecoveryDescription": map[string]any{
-				"PointInTimeRecoveryStatus": "DISABLED",
+				"PointInTimeRecoveryStatus": pitr,
 			},
 		},
 	})
@@ -350,7 +492,6 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // mirrors deleteItem's condition-gated write path over Item, not Key.
 func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
@@ -358,6 +499,8 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 		ConditionExpression       string            `json:"ConditionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+		ReturnValues              string            `json:"ReturnValues"`
+		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -372,12 +515,45 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := map[string]any{}
+
+	// ReturnValues=ALL_OLD returns the item as it was before the overwrite, so
+	// read it before the mutation.
+	if strings.EqualFold(req.ReturnValues, "ALL_OLD") {
+		if old := h.previousItem(r.Context(), req.TableName, item); old != nil {
+			resp["Attributes"] = toWireItem(old)
+		}
+	}
+
 	if err := h.db.PutItem(r.Context(), req.TableName, item); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{})
+	addConsumedCapacity(resp, req.ReturnConsumedCapacity, req.TableName)
+	wire.WriteJSON(w, resp)
+}
+
+// previousItem fetches the stored item identified by keySource's key attributes,
+// returning nil when the table or item is missing. Used to satisfy
+// ReturnValues=ALL_OLD on Put/Delete without surfacing a lookup error.
+func (h *Handler) previousItem(ctx context.Context, table string, keySource map[string]any) map[string]any {
+	cfg, err := h.db.DescribeTable(ctx, table)
+	if err != nil {
+		return nil
+	}
+
+	key := map[string]any{cfg.PartitionKey: keySource[cfg.PartitionKey]}
+	if cfg.SortKey != "" {
+		key[cfg.SortKey] = keySource[cfg.SortKey]
+	}
+
+	old, err := h.db.GetItem(ctx, table, key)
+	if err != nil {
+		return nil
+	}
+
+	return old
 }
 
 // gateCondition evaluates a ConditionExpression and, on failure, writes the
@@ -461,6 +637,7 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 		Key                      map[string]any    `json:"Key"`
 		ProjectionExpression     string            `json:"ProjectionExpression"`
 		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
+		ReturnConsumedCapacity   string            `json:"ReturnConsumedCapacity"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -478,11 +655,22 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A GetItem against a table that does not exist is a ResourceNotFoundException
+	// in real DynamoDB — distinct from a missing item, which returns an empty
+	// (200) response. Resolve the table first so the two cases don't conflate.
+	if _, terr := h.db.DescribeTable(r.Context(), req.TableName); terr != nil {
+		writeErr(w, terr)
+		return
+	}
+
+	resp := map[string]any{}
+	addConsumedCapacity(resp, req.ReturnConsumedCapacity, req.TableName)
+
 	item, err := h.db.GetItem(r.Context(), req.TableName, key)
 	if err != nil {
 		// DynamoDB returns an empty response for missing items, not an error.
 		if cerrors.IsNotFound(err) {
-			wire.WriteJSON(w, map[string]any{})
+			wire.WriteJSON(w, resp)
 			return
 		}
 
@@ -491,7 +679,6 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]any{}
 	if item != nil {
 		resp["Item"] = toWireItem(expr.Project(item, paths))
 	}
@@ -499,7 +686,21 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, resp)
 }
 
-//nolint:dupl // mirrors putItem's condition-gated write path over Key, not Item.
+// addConsumedCapacity adds a ConsumedCapacity block to resp when the request
+// asked for it (ReturnConsumedCapacity=TOTAL or INDEXES). The emulator charges a
+// nominal one capacity unit — enough for clients that assert the field is
+// present and non-nil, which real SDK cost-tracking code does.
+func addConsumedCapacity(resp map[string]any, returnConsumed, table string) {
+	if !strings.EqualFold(returnConsumed, "TOTAL") && !strings.EqualFold(returnConsumed, "INDEXES") {
+		return
+	}
+
+	resp["ConsumedCapacity"] = map[string]any{
+		"TableName":     table,
+		"CapacityUnits": 1.0,
+	}
+}
+
 func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
@@ -507,6 +708,8 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 		ConditionExpression       string            `json:"ConditionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+		ReturnValues              string            `json:"ReturnValues"`
+		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -521,12 +724,22 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := map[string]any{}
+
+	// ReturnValues=ALL_OLD returns the deleted item, so read it before removal.
+	if strings.EqualFold(req.ReturnValues, "ALL_OLD") {
+		if old := h.previousItem(r.Context(), req.TableName, key); old != nil {
+			resp["Attributes"] = toWireItem(old)
+		}
+	}
+
 	if err := h.db.DeleteItem(r.Context(), req.TableName, key); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{})
+	addConsumedCapacity(resp, req.ReturnConsumedCapacity, req.TableName)
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
@@ -541,6 +754,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		ScanIndexForward          *bool             `json:"ScanIndexForward"`
 		IndexName                 string            `json:"IndexName"`
 		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
+		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -591,13 +805,15 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"Items": items,
-		"Count": len(items),
+		"Items":        items,
+		"Count":        len(items),
+		"ScannedCount": result.ScannedCount,
 	}
 	if result.LastEvaluatedKey != nil {
 		resp["LastEvaluatedKey"] = toWireItem(result.LastEvaluatedKey)
 	}
 
+	addConsumedCapacity(resp, req.ReturnConsumedCapacity, req.TableName)
 	wire.WriteJSON(w, resp)
 }
 
@@ -631,14 +847,28 @@ func parseKeyCondition(
 
 // writeErr maps CloudEmu errors to DynamoDB HTTP error responses.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := errMessage(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceInUseException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceInUseException", msg)
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", msg)
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServerError", msg)
 	}
+}
+
+// errMessage returns the human-readable message for a cloudemu error without
+// the internal "Code: " prefix that Error() prepends. Real DynamoDB error
+// messages carry no such prefix, so surfacing it would leak an internal detail.
+func errMessage(err error) string {
+	var e *cerrors.Error
+	if errors.As(err, &e) {
+		return e.Message
+	}
+
+	return err.Error()
 }
