@@ -514,6 +514,7 @@ func containsValue(values []string, target string) bool {
 	return false
 }
 
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
 	id := fmt.Sprintf("/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/disks/disk-%d",
 		m.volCounter.Add(1))

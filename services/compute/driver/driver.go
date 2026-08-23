@@ -184,6 +184,13 @@ type VolumeConfig struct {
 	// Tier is the performance tier (Azure P10/P4, or a storage tier name),
 	// echoed as properties.tier / sku.tier for cost tiering.
 	Tier string
+	// Encrypted requests an encrypted volume (AWS EBS). Echoed back so
+	// Terraform's aws_ebs_volume does not see perpetual drift.
+	Encrypted bool
+	// SnapshotID is the source snapshot the volume is restored from, when set.
+	SnapshotID string
+	// KmsKeyID is the KMS key protecting the volume's encryption key, when set.
+	KmsKeyID string
 }
 
 // VolumeInfo describes a block storage volume.
@@ -203,6 +210,12 @@ type VolumeInfo struct {
 	Throughput int
 	// Tier is the performance tier (e.g. Azure P10/P4), when set.
 	Tier string
+	// Encrypted indicates the volume is encrypted (AWS EBS).
+	Encrypted bool
+	// SnapshotID is the source snapshot the volume was restored from, when set.
+	SnapshotID string
+	// KmsKeyID is the KMS key protecting the volume's encryption key, when set.
+	KmsKeyID string
 }
 
 // SnapshotConfig describes a snapshot to create.
@@ -221,6 +234,12 @@ type SnapshotInfo struct {
 	Size        int
 	CreatedAt   string
 	Tags        map[string]string
+	// OwnerID is the account that owns the snapshot (AWS ownerId).
+	OwnerID string
+	// Progress is the completion percentage (e.g. "100%"), for waiters.
+	Progress string
+	// Encrypted indicates the snapshot is encrypted.
+	Encrypted bool
 }
 
 // ImageConfig describes a machine image to create.
@@ -239,6 +258,33 @@ type ImageInfo struct {
 	Description string
 	CreatedAt   string
 	Tags        map[string]string
+	// OwnerID is the account that owns the image (AWS imageOwnerId).
+	OwnerID string
+	// Architecture is the CPU architecture (e.g. "x86_64", "arm64").
+	Architecture string
+	// RootDeviceType is "ebs" or "instance-store".
+	RootDeviceType string
+	// RootDeviceName is the root device (e.g. "/dev/sda1").
+	RootDeviceName string
+	// VirtualizationType is "hvm" or "paravirtual".
+	VirtualizationType string
+	// Hypervisor is "xen" or "ovm".
+	Hypervisor string
+	// ImageType is "machine", "kernel", or "ramdisk".
+	ImageType string
+	// PlatformDetails is the billing platform detail (e.g. "Linux/UNIX").
+	PlatformDetails string
+	// BlockDeviceMappings are the image's block device mappings.
+	BlockDeviceMappings []ImageBlockDeviceMapping
+}
+
+// ImageBlockDeviceMapping is one entry in an image's block device mapping set.
+type ImageBlockDeviceMapping struct {
+	DeviceName          string
+	SnapshotID          string
+	VolumeSize          int
+	VolumeType          string
+	DeleteOnTermination bool
 }
 
 // KeyPairConfig describes a key pair to create.

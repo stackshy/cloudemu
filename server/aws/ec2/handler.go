@@ -126,6 +126,8 @@ func (h *Handler) routeSnapshots(w http.ResponseWriter, r *http.Request, action 
 		h.deleteSnapshot(w, r)
 	case "DescribeSnapshots":
 		h.describeSnapshots(w, r)
+	case "ModifySnapshotAttribute":
+		h.modifySnapshotAttribute(w, r)
 	default:
 		return false
 	}
@@ -141,6 +143,8 @@ func (h *Handler) routeImages(w http.ResponseWriter, r *http.Request, action str
 		h.deregisterImage(w, r)
 	case "DescribeImages":
 		h.describeImages(w, r)
+	case "DescribeImageAttribute":
+		h.describeImageAttribute(w, r)
 	default:
 		return false
 	}
@@ -311,6 +315,8 @@ func (h *Handler) routeVolumes(w http.ResponseWriter, r *http.Request, action st
 		h.attachVolume(w, r)
 	case "DetachVolume":
 		h.detachVolume(w, r)
+	case "DescribeVolumeStatus":
+		h.describeVolumeStatus(w, r)
 	default:
 		return false
 	}

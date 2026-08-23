@@ -362,6 +362,8 @@ func (c *Compute) ListLaunchTemplates(ctx context.Context) ([]driver.LaunchTempl
 }
 
 // CreateVolume creates a new block storage volume.
+//
+//nolint:gocritic // hugeParam: config passed by value to match driver.Compute interface pattern
 func (c *Compute) CreateVolume(ctx context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
 	out, err := c.do(ctx, "CreateVolume", cfg, func() (any, error) { return c.driver.CreateVolume(ctx, cfg) })
 	if err != nil {

@@ -555,10 +555,10 @@ func TestDeleteSnapshot(t *testing.T) {
 		err = m.DeleteSnapshot(ctx, snap.ID)
 		requireNoError(t, err)
 
-		// Should be gone
-		snaps, err := m.DescribeSnapshots(ctx, []string{snap.ID})
-		requireNoError(t, err)
-		assertEqual(t, 0, len(snaps))
+		// Should be gone: describing the deleted ID now yields NotFound,
+		// matching real EC2 (InvalidSnapshot.NotFound) rather than empty success.
+		_, err = m.DescribeSnapshots(ctx, []string{snap.ID})
+		assertError(t, err, true)
 	})
 
 	t.Run("not found", func(t *testing.T) {
@@ -653,10 +653,10 @@ func TestDeregisterImage(t *testing.T) {
 		err = m.DeregisterImage(ctx, img.ID)
 		requireNoError(t, err)
 
-		// Should be gone
-		imgs, err := m.DescribeImages(ctx, []string{img.ID})
-		requireNoError(t, err)
-		assertEqual(t, 0, len(imgs))
+		// Should be gone: describing the deleted ID now yields NotFound,
+		// matching real EC2 (InvalidAMIID.NotFound) rather than empty success.
+		_, err = m.DescribeImages(ctx, []string{img.ID})
+		assertError(t, err, true)
 	})
 
 	t.Run("not found", func(t *testing.T) {
