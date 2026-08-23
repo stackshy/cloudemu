@@ -277,10 +277,12 @@ func TestVersionImmutability(t *testing.T) {
 	requireNoError(t, err)
 	origSHA := ver1.CodeSHA256
 
-	// Update the function config
+	// Update the function code (CodeSha256 tracks the deployment package, not
+	// configuration, matching real Lambda).
 	_, err = m.UpdateFunction(ctx, "my-func", driver.FunctionConfig{
 		Runtime: "python3.9",
 		Handler: "new_handler",
+		Code:    []byte("new-deployment-package"),
 	})
 	requireNoError(t, err)
 
@@ -288,7 +290,7 @@ func TestVersionImmutability(t *testing.T) {
 	ver2, err := m.PublishVersion(ctx, "my-func", "v2")
 	requireNoError(t, err)
 
-	// The two versions should have different code SHAs since config changed
+	// The two versions should have different code SHAs since the code changed
 	assertEqual(t, true, origSHA != ver2.CodeSHA256)
 
 	// Verify that version list still has original version

@@ -18,10 +18,15 @@ type eventSourceMappingJSON struct {
 }
 
 func toESMJSON(info *sdrv.EventSourceMappingInfo) eventSourceMappingJSON {
+	functionArn := info.FunctionArn
+	if functionArn == "" {
+		functionArn = info.FunctionName
+	}
+
 	return eventSourceMappingJSON{
 		UUID:             info.UUID,
 		EventSourceArn:   info.EventSourceArn,
-		FunctionArn:      info.FunctionName,
+		FunctionArn:      functionArn,
 		BatchSize:        info.BatchSize,
 		State:            info.State,
 		StartingPosition: info.StartingPosition,

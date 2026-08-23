@@ -2,7 +2,10 @@ package lambda
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"sync"
@@ -30,10 +33,11 @@ const (
 )
 
 type versionData struct {
-	config    driver.FunctionConfig
-	version   string
-	codeSHA   string
-	createdAt string
+	config     driver.FunctionConfig
+	version    string
+	codeSHA    string
+	revisionID string
+	createdAt  string
 }
 
 type aliasData struct {
@@ -54,6 +58,7 @@ type funcData struct {
 	aliases      *memstore.Store[*aliasData]
 	concurrency  *driver.ConcurrencyConfig
 	policy       map[string]driver.PermissionStatement
+	urlConfig    *driver.FunctionURLConfig // Lambda Function URL, nil until created
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
@@ -105,9 +110,12 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 	arn := idgen.AWSARN("lambda", m.opts.Region, m.opts.AccountID, "function:"+cfg.Name)
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
+		Role: cfg.Role, Description: cfg.Description,
 		Memory: cfg.Memory, Timeout: cfg.Timeout, State: "Active",
 		Environment: maps.Clone(cfg.Environment), Tags: maps.Clone(cfg.Tags),
 		LastModified: m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		CodeSHA256:   codeHash(cfg.Code), CodeSize: int64(len(cfg.Code)),
+		Version: latestVersion, RevisionID: newRevisionID(),
 	}
 
 	m.handlersMu.RLock()
@@ -181,6 +189,15 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 	info := fd.info
 	applyConfigUpdates(&info, cfg)
 	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	// Every update — configuration or code — mints a new revision, matching the
+	// RevisionId Terraform reads to detect drift.
+	info.RevisionID = newRevisionID()
+
+	if len(cfg.Code) > 0 {
+		info.CodeSHA256 = codeHash(cfg.Code)
+		info.CodeSize = int64(len(cfg.Code))
+	}
+
 	fd.info = info
 
 	// A code update re-deploys to the engine using the post-merge runtime/handler
@@ -303,6 +320,14 @@ func applyConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
 		info.Handler = cfg.Handler
 	}
 
+	if cfg.Role != "" {
+		info.Role = cfg.Role
+	}
+
+	if cfg.Description != "" {
+		info.Description = cfg.Description
+	}
+
 	if cfg.Memory != 0 {
 		info.Memory = cfg.Memory
 	}
@@ -320,9 +345,29 @@ func applyConfigUpdates(info *driver.FunctionInfo, cfg driver.FunctionConfig) {
 	}
 }
 
-func codeSHA(info *driver.FunctionInfo) string {
-	data := fmt.Sprintf("%s:%s:%s", info.Name, info.Handler, info.Runtime)
-	hash := sha256.Sum256([]byte(data))
+// codeHash returns the base64-encoded SHA-256 of the deployment package, the
+// same CodeSha256 shape real Lambda returns and Terraform compares against its
+// locally computed source_code_hash.
+func codeHash(code []byte) string {
+	hash := sha256.Sum256(code)
 
-	return fmt.Sprintf("%x", hash)
+	return base64.StdEncoding.EncodeToString(hash[:])
+}
+
+// newRevisionID mints a random UUID-shaped revision identifier. Lambda changes
+// the RevisionId on every configuration or code mutation.
+func newRevisionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failure is not expected; fall back to a zero-value UUID so
+		// callers still get a well-formed (if non-unique) revision id.
+		return "00000000-0000-4000-8000-000000000000"
+	}
+
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+
+	h := hex.EncodeToString(b[:])
+
+	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
 }
