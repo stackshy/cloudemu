@@ -83,6 +83,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.untagQueue(w, r)
 	case "ListQueueTags":
 		h.listQueueTags(w, r)
+	case "AddPermission":
+		h.addPermission(w, r)
+	case "RemovePermission":
+		h.removePermission(w, r)
 	default:
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown operation: "+op)
@@ -653,6 +657,63 @@ type attrConfigurator interface {
 // dlqSourceLister exposes ListDeadLetterSourceQueues (AWS-specific).
 type dlqSourceLister interface {
 	ListDeadLetterSourceQueues(ctx context.Context, dlqURL string) ([]string, error)
+}
+
+// queuePermissioner exposes the SQS AddPermission/RemovePermission access-policy
+// surface (AWS-specific). The handler type-asserts for it.
+type queuePermissioner interface {
+	AddPermission(ctx context.Context, queueURL, label string, accountIDs, actions []string) error
+	RemovePermission(ctx context.Context, queueURL, label string) error
+}
+
+func (h *Handler) addPermission(w http.ResponseWriter, r *http.Request) {
+	perm, ok := h.mq.(queuePermissioner)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "AddPermission not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL      string   `json:"QueueUrl"`
+		Label         string   `json:"Label"`
+		AWSAccountIDs []string `json:"AWSAccountIds"`
+		Actions       []string `json:"Actions"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := perm.AddPermission(r.Context(), req.QueueURL, req.Label, req.AWSAccountIDs, req.Actions); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) removePermission(w http.ResponseWriter, r *http.Request) {
+	perm, ok := h.mq.(queuePermissioner)
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "RemovePermission not supported"))
+		return
+	}
+
+	var req struct {
+		QueueURL string `json:"QueueUrl"`
+		Label    string `json:"Label"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := perm.RemovePermission(r.Context(), req.QueueURL, req.Label); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
 }
 
 // atoiAttr parses a string attribute as an int, returning 0 when absent or invalid.
