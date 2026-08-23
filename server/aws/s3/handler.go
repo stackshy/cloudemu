@@ -5,7 +5,8 @@ package s3
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/md5" //nolint:gosec // S3 object ETags are defined as MD5 digests, not a security primitive
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -35,6 +36,11 @@ type Handler struct {
 	// versioned is set when the driver retains per-object version history; the
 	// handler then honors versioning status, ?versionId, and ListObjectVersions.
 	versioned driver.VersionedBucket
+	// rawConfig is set when the driver can persist opaque bucket-configuration
+	// sub-resource documents (policy, cors, encryption, lifecycle, website, …);
+	// the handler then round-trips PUT/GET/DELETE on them instead of treating a
+	// write as a no-op.
+	rawConfig driver.RawBucketConfig
 }
 
 // New returns an S3 handler backed by b.
@@ -44,7 +50,17 @@ func New(b driver.Bucket) *Handler {
 		h.versioned = vb
 	}
 
+	if rc, ok := b.(driver.RawBucketConfig); ok {
+		h.rawConfig = rc
+	}
+
 	return h
+}
+
+// md5Sum returns the raw MD5 digest of data. S3 object ETags are MD5 digests.
+func md5Sum(data []byte) []byte {
+	sum := md5.Sum(data) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+	return sum[:]
 }
 
 // Matches returns true for requests that look like S3 REST calls: no
@@ -113,7 +129,10 @@ func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := listAllMyBucketsResult{Xmlns: xmlns}
+	result := listAllMyBucketsResult{
+		Xmlns: xmlns,
+		Owner: aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"},
+	}
 	for _, b := range buckets {
 		result.Buckets = append(result.Buckets, bucketXML{
 			Name: b.Name, CreationDate: b.CreatedAt,
@@ -171,7 +190,7 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 	// location, …) that IaC clients read after create; without these the request
 	// would fall through to ListObjects and the client fails to parse it.
 	if sub := configSubresourceKey(q); sub != "" {
-		h.bucketConfigOp(w, r, sub)
+		h.bucketConfigOp(w, r, bucket, sub)
 		return
 	}
 
@@ -264,14 +283,46 @@ func (h *Handler) bucketTaggingOp(w http.ResponseWriter, r *http.Request, bucket
 	}
 }
 
+// usEast1 is the region where CreateBucket is idempotent for the owner.
+const usEast1 = "us-east-1"
+
 func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	if err := h.bucket.CreateBucket(r.Context(), bucket); err != nil {
+		// In us-east-1 (the global endpoint) re-creating a bucket you already own
+		// is idempotent and returns 200; every other region returns 409
+		// BucketAlreadyOwnedByYou. cloudemu models a single account, so an existing
+		// bucket is always same-owner — the region alone decides.
+		if cerrors.IsAlreadyExists(err) && h.bucketRegion(r.Context(), bucket) == usEast1 {
+			w.Header().Set("Location", "/"+bucket)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		writeErr(w, err)
 		return
 	}
 
 	w.Header().Set("Location", "/"+bucket)
 	w.WriteHeader(http.StatusOK)
+}
+
+// bucketRegion returns the region of an existing bucket, or "" if it can't be
+// determined. An empty LocationConstraint is equivalent to us-east-1.
+func (h *Handler) bucketRegion(ctx context.Context, bucket string) string {
+	buckets, err := h.bucket.ListBuckets(ctx)
+	if err != nil {
+		return ""
+	}
+
+	for _, b := range buckets {
+		if b.Name == bucket {
+			if b.Region == "" {
+				return usEast1
+			}
+			return b.Region
+		}
+	}
+
+	return ""
 }
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -322,7 +373,9 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		Delimiter:   opts.Delimiter,
 		MaxKeys:     maxKeys,
 		IsTruncated: result.IsTruncated,
-		KeyCount:    len(result.Objects),
+		// KeyCount counts returned keys AND rolled-up common prefixes, matching
+		// real S3 (a delimited listing reports both under KeyCount).
+		KeyCount: len(result.Objects) + len(result.CommonPrefixes),
 	}
 
 	if result.NextPageToken != "" {
@@ -416,7 +469,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// algorithm; if a concurrent delete races the read-back, fall back to
 	// computing it from the body we just stored — a successful PUT must
 	// never answer 404.
-	etag := fmt.Sprintf("%x", sha256.Sum256(data))
+	etag := hex.EncodeToString(md5Sum(data))
 
 	var versionID string
 	if info, err := h.bucket.HeadObject(r.Context(), bucket, key); err == nil {
@@ -425,7 +478,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	}
 	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
 	if versionID != "" {
-		w.Header().Set("x-amz-version-id", versionID)
+		w.Header().Set("X-Amz-Version-Id", versionID)
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -445,9 +498,123 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		return
 	}
 
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		h.writeRangedObject(w, obj, rangeHeader)
+		return
+	}
+
 	writeObjectHeaders(w, &obj.Info, int64(len(obj.Data)))
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(obj.Data) //nolint:gosec // writing raw object bytes, not HTML
+}
+
+// rangeOutcome classifies a Range header against an object.
+type rangeOutcome int
+
+const (
+	rangeIgnore        rangeOutcome = iota // unparseable header → serve full body (200)
+	rangeUnsatisfiable                     // valid syntax but out of bounds → 416
+	rangeOK                                // satisfiable → 206
+)
+
+// writeRangedObject serves a GetObject carrying a Range header: 206 with a
+// Content-Range slice when satisfiable, 416 when the range is out of bounds, and
+// a full 200 body when the header is unparseable (matching real S3).
+func (*Handler) writeRangedObject(w http.ResponseWriter, obj *driver.Object, header string) {
+	total := int64(len(obj.Data))
+	start, end, outcome := parseByteRange(header, total)
+
+	switch outcome {
+	case rangeUnsatisfiable:
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", total))
+		writeError(w, http.StatusRequestedRangeNotSatisfiable, "InvalidRange",
+			"The requested range is not satisfiable")
+	case rangeOK:
+		writeObjectHeaders(w, &obj.Info, end-start+1)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, total))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(obj.Data[start : end+1]) //nolint:gosec // writing raw object bytes, not HTML
+	case rangeIgnore: // unparseable header → serve the full body
+		writeObjectHeaders(w, &obj.Info, total)
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(obj.Data) //nolint:gosec // writing raw object bytes, not HTML
+	}
+}
+
+// parseByteRange parses a single HTTP byte range ("bytes=0-4", "bytes=5-",
+// "bytes=-5") against an object of size total, returning the inclusive
+// [start,end] offsets and an outcome. Only the first range of a multi-range
+// header is honored (the common single-range download path).
+func parseByteRange(header string, total int64) (start, end int64, outcome rangeOutcome) {
+	const prefix = "bytes="
+	if !strings.HasPrefix(header, prefix) {
+		return 0, 0, rangeIgnore
+	}
+
+	spec := strings.TrimPrefix(header, prefix)
+	if idx := strings.IndexByte(spec, ','); idx >= 0 {
+		spec = spec[:idx]
+	}
+
+	dash := strings.IndexByte(spec, '-')
+	if dash < 0 {
+		return 0, 0, rangeIgnore
+	}
+
+	startStr, endStr := spec[:dash], spec[dash+1:]
+
+	if startStr == "" {
+		return suffixRange(endStr, total)
+	}
+
+	return boundedRange(startStr, endStr, total)
+}
+
+// suffixRange handles "bytes=-N": the last N bytes of the object.
+func suffixRange(endStr string, total int64) (start, end int64, outcome rangeOutcome) {
+	n, err := strconv.ParseInt(endStr, 10, 64)
+	if err != nil {
+		return 0, 0, rangeIgnore
+	}
+
+	if n <= 0 || total == 0 {
+		return 0, 0, rangeUnsatisfiable
+	}
+
+	if n > total {
+		n = total
+	}
+
+	return total - n, total - 1, rangeOK
+}
+
+// boundedRange handles "bytes=start-" and "bytes=start-end".
+func boundedRange(startStr, endStr string, total int64) (start, end int64, outcome rangeOutcome) {
+	start, err := strconv.ParseInt(startStr, 10, 64)
+	if err != nil {
+		return 0, 0, rangeIgnore
+	}
+
+	if start >= total {
+		return 0, 0, rangeUnsatisfiable
+	}
+
+	end = total - 1
+	if endStr != "" {
+		end, err = strconv.ParseInt(endStr, 10, 64)
+		if err != nil || start > end {
+			return 0, 0, rangeIgnore
+		}
+
+		if end >= total {
+			end = total - 1
+		}
+	}
+
+	return start, end, rangeOK
 }
 
 func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -476,11 +643,11 @@ func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 
 	if info.VersionID != "" {
-		w.Header().Set("x-amz-version-id", info.VersionID)
+		w.Header().Set("X-Amz-Version-Id", info.VersionID)
 	}
 
 	if info.DeleteMarker {
-		w.Header().Set("x-amz-delete-marker", "true")
+		w.Header().Set("X-Amz-Delete-Marker", "true")
 	}
 
 	for k, v := range info.Metadata {
@@ -500,10 +667,10 @@ func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, k
 			return
 		}
 		if vid != "" {
-			w.Header().Set("x-amz-version-id", vid)
+			w.Header().Set("X-Amz-Version-Id", vid)
 		}
 		if marker {
-			w.Header().Set("x-amz-delete-marker", "true")
+			w.Header().Set("X-Amz-Delete-Marker", "true")
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return

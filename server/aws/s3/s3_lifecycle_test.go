@@ -7,7 +7,7 @@ package s3_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
+	"crypto/md5" //nolint:gosec // S3 ETags are MD5 digests; this mirrors that in test assertions
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -143,8 +143,8 @@ func suiteGetBody(t *testing.T, client *s3.Client, bucket, key string) ([]byte, 
 	return data, out
 }
 
-func quotedSHA256(data []byte) string {
-	sum := sha256.Sum256(data)
+func quotedMD5(data []byte) string {
+	sum := md5.Sum(data) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
 	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
 
@@ -179,13 +179,13 @@ func TestS3ObjectJourney(t *testing.T) {
 		suitePut(t, client, bucket, obj.key, obj.body, obj.contentType)
 	}
 
-	// Get: bodies, content types, and the emulator's sha256-hex ETag (note:
-	// real S3 uses MD5-based ETags; the emulator documents sha256).
+	// Get: bodies, content types, and the MD5-hex ETag S3 reports for a
+	// single-part PutObject.
 	for _, obj := range objects {
 		data, out := suiteGetBody(t, client, bucket, obj.key)
 		assert.Equal(t, obj.body, data, "body %s", obj.key)
 		assert.Equal(t, obj.contentType, aws.ToString(out.ContentType), "content-type %s", obj.key)
-		assert.Equal(t, quotedSHA256(obj.body), aws.ToString(out.ETag), "etag %s", obj.key)
+		assert.Equal(t, quotedMD5(obj.body), aws.ToString(out.ETag), "etag %s", obj.key)
 		assert.Equal(t, int64(len(obj.body)), aws.ToInt64(out.ContentLength), "content-length %s", obj.key)
 	}
 
@@ -196,7 +196,7 @@ func TestS3ObjectJourney(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1<<20), aws.ToInt64(head.ContentLength))
-	assert.Equal(t, quotedSHA256(oneMB), aws.ToString(head.ETag))
+	assert.Equal(t, quotedMD5(oneMB), aws.ToString(head.ETag))
 	assert.NotNil(t, head.LastModified)
 
 	// List everything: keys come back lexically sorted.
@@ -461,9 +461,10 @@ func TestS3MissingBucketError(t *testing.T) {
 	assert.Equal(t, "NoSuchBucket", apiErr.ErrorCode())
 }
 
-// TestS3DuplicateBucketTypedError asserts the second CreateBucket
-// for the same name surfaces *types.BucketAlreadyOwnedByYou.
-func TestS3DuplicateBucketTypedError(t *testing.T) {
+// TestS3DuplicateBucketIdempotentUSEast1 asserts that re-creating a bucket you
+// already own in us-east-1 (the emulator's region) is idempotent and succeeds,
+// matching real S3's global-endpoint behavior rather than returning 409.
+func TestS3DuplicateBucketIdempotentUSEast1(t *testing.T) {
 	client := newSuiteS3Client(t)
 	ctx := context.Background()
 
@@ -473,11 +474,7 @@ func TestS3DuplicateBucketTypedError(t *testing.T) {
 	_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(bucket),
 	})
-	require.Error(t, err)
-
-	var owned *types.BucketAlreadyOwnedByYou
-	assert.True(t, errors.As(err, &owned),
-		"want *types.BucketAlreadyOwnedByYou, got %T: %v", err, err)
+	require.NoError(t, err, "re-create in us-east-1 must be idempotent (200), not 409")
 }
 
 // TestS3DeleteNonEmptyBucketError asserts deleting a non-empty
@@ -660,7 +657,7 @@ func TestS3CopyObjectSemantics(t *testing.T) {
 
 	gotBody, get := suiteGetBody(t, client, dstBucket, "dst.txt")
 	assert.Equal(t, body, gotBody)
-	assert.Equal(t, quotedSHA256(body), aws.ToString(get.ETag), "copy preserves ETag")
+	assert.Equal(t, quotedMD5(body), aws.ToString(get.ETag), "copy preserves ETag")
 	assert.Equal(t, "text/plain", aws.ToString(get.ContentType), "copy preserves content type")
 	assert.Equal(t, map[string]string{"origin": "src"}, get.Metadata, "copy preserves metadata")
 
@@ -706,7 +703,7 @@ func TestS3OverwriteResetsTags(t *testing.T) {
 	body, get := suiteGetBody(t, client, bucket, key)
 	assert.Equal(t, []byte("v2 body is longer"), body)
 	assert.Equal(t, "application/json", aws.ToString(get.ContentType))
-	assert.Equal(t, quotedSHA256([]byte("v2 body is longer")), aws.ToString(get.ETag))
+	assert.Equal(t, quotedMD5([]byte("v2 body is longer")), aws.ToString(get.ETag))
 
 	tags, err := client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{
 		Bucket: aws.String(bucket), Key: aws.String(key),
@@ -868,6 +865,6 @@ func TestS3PutObjectReturnsETag(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, quotedSHA256(body), aws.ToString(put.ETag),
+	assert.Equal(t, quotedMD5(body), aws.ToString(put.ETag),
 		"real S3 returns the object ETag on PutObject; the emulator omits it")
 }

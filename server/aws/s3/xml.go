@@ -13,6 +13,7 @@ type errorXML struct {
 type listAllMyBucketsResult struct {
 	XMLName xml.Name    `xml:"ListAllMyBucketsResult"`
 	Xmlns   string      `xml:"xmlns,attr"`
+	Owner   aclOwnerXML `xml:"Owner"`
 	Buckets []bucketXML `xml:"Buckets>Bucket"`
 }
 
