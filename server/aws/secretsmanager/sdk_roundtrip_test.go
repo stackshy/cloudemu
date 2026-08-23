@@ -279,3 +279,38 @@ func TestSDKSecretErrors(t *testing.T) {
 		t.Fatalf("DeleteSecret(missing): got %v, want ResourceNotFoundException", err)
 	}
 }
+
+// TestSDKGetResourcePolicy guards the read path the aws_secretsmanager_secret
+// resource uses: GetResourcePolicy must return the secret's ARN/Name and no
+// ResourcePolicy (none is modeled), which the SDK reads as "no policy".
+func TestSDKGetResourcePolicy(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name:         aws.String("with-policy"),
+		SecretString: aws.String("s3cr3t"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	out, err := client.GetResourcePolicy(ctx, &awssm.GetResourcePolicyInput{
+		SecretId: created.ARN,
+	})
+	if err != nil {
+		t.Fatalf("GetResourcePolicy: %v", err)
+	}
+
+	if aws.ToString(out.ARN) != aws.ToString(created.ARN) {
+		t.Errorf("ARN = %q, want %q", aws.ToString(out.ARN), aws.ToString(created.ARN))
+	}
+
+	if aws.ToString(out.Name) != "with-policy" {
+		t.Errorf("Name = %q, want with-policy", aws.ToString(out.Name))
+	}
+
+	if out.ResourcePolicy != nil {
+		t.Errorf("ResourcePolicy = %q, want nil (none modeled)", aws.ToString(out.ResourcePolicy))
+	}
+}

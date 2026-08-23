@@ -53,8 +53,7 @@ is idempotent is verified; everything else is a known gap, closed as a fixture
 needs it:
 
 - **DynamoDB** — `PAY_PER_REQUEST` and `PROVISIONED` (with `read/write_capacity`)
-  round-trip. `global_secondary_index` blocks are **not** yet echoed by
-  DescribeTable → a GSI fixture would show a perpetual diff.
+  and `global_secondary_index` blocks round-trip.
 - **Networking** — `aws_vpc`, `aws_subnet`, `aws_security_group`,
   `aws_route_table` and `aws_route_table_association` round-trip. A new security
   group is seeded with the real allow-all egress default (AWS only — Azure/GCP/OCI
