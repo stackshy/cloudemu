@@ -8,9 +8,12 @@ import (
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
-// stateAttached is the attachment state shared by internet gateways and
-// network interfaces.
-const stateAttached = "attached"
+// stateAttached is the network-interface attachment state. stateDetached is the
+// driver's internal "not attached to a VPC" marker for internet gateways.
+const (
+	stateAttached = "attached"
+	stateDetached = "detached"
+)
 
 type igwAttachmentXML struct {
 	VpcID string `xml:"vpcId"`
@@ -188,9 +191,12 @@ func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 	}
 
 	if igw.VpcID != "" {
-		state := igw.State
-		if state == "" {
-			state = stateAttached
+		// An internet-gateway attachment reports state "available" once attached
+		// to a VPC (the driver's internal "attached"/"detached" bookkeeping is
+		// not the wire value). See the EC2 InternetGatewayAttachment reference.
+		state := stateAvailable
+		if igw.State == stateDetached {
+			state = stateDetached
 		}
 
 		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: state}}

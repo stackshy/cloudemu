@@ -8,13 +8,22 @@ import (
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
+type natGatewayAddressXML struct {
+	AllocationID       string `xml:"allocationId,omitempty"`
+	NetworkInterfaceID string `xml:"networkInterfaceId,omitempty"`
+	PrivateIP          string `xml:"privateIp,omitempty"`
+	PublicIP           string `xml:"publicIp,omitempty"`
+}
+
 type natGatewayXML struct {
-	NatGatewayID string    `xml:"natGatewayId"`
-	VpcID        string    `xml:"vpcId"`
-	SubnetID     string    `xml:"subnetId"`
-	State        string    `xml:"state"`
-	CreateTime   string    `xml:"createTime,omitempty"`
-	Tags         []tagItem `xml:"tagSet>item,omitempty"`
+	NatGatewayID     string                 `xml:"natGatewayId"`
+	VpcID            string                 `xml:"vpcId"`
+	SubnetID         string                 `xml:"subnetId"`
+	State            string                 `xml:"state"`
+	ConnectivityType string                 `xml:"connectivityType,omitempty"`
+	CreateTime       string                 `xml:"createTime,omitempty"`
+	Addresses        []natGatewayAddressXML `xml:"natGatewayAddressSet>item,omitempty"`
+	Tags             []tagItem              `xml:"tagSet>item,omitempty"`
 }
 
 type createNatGatewayResponseXML struct {
@@ -39,12 +48,12 @@ type deleteNatGatewayResponseXML struct {
 }
 
 func (h *Handler) createNatGateway(w http.ResponseWriter, r *http.Request) {
-	cfg := netdriver.NATGatewayConfig{
-		SubnetID: r.Form.Get("SubnetId"),
-		Tags:     mergeTagSpecs(awsquery.TagSpecs(r.Form), "natgateway"),
-	}
-
-	info, err := h.vpc.CreateNATGateway(r.Context(), cfg)
+	info, err := h.vpc.CreateNATGateway(r.Context(), netdriver.NATGatewayConfig{
+		SubnetID:         r.Form.Get("SubnetId"),
+		AllocationID:     r.Form.Get("AllocationId"),
+		ConnectivityType: r.Form.Get("ConnectivityType"),
+		Tags:             mergeTagSpecs(awsquery.TagSpecs(r.Form), "natgateway"),
+	})
 	if err != nil {
 		writeNatErr(w, err)
 		return
@@ -101,12 +110,19 @@ func toNatGatewayXML(n *netdriver.NATGateway) natGatewayXML {
 	}
 
 	return natGatewayXML{
-		NatGatewayID: n.ID,
-		VpcID:        n.VPCID,
-		SubnetID:     n.SubnetID,
-		State:        state,
-		CreateTime:   n.CreatedAt,
-		Tags:         toTagItems(n.Tags),
+		NatGatewayID:     n.ID,
+		VpcID:            n.VPCID,
+		SubnetID:         n.SubnetID,
+		State:            state,
+		ConnectivityType: n.ConnectivityType,
+		CreateTime:       n.CreatedAt,
+		Addresses: []natGatewayAddressXML{{
+			AllocationID:       n.AllocationID,
+			NetworkInterfaceID: n.NetworkInterfaceID,
+			PrivateIP:          n.PrivateIP,
+			PublicIP:           n.PublicIP,
+		}},
+		Tags: toTagItems(n.Tags),
 	}
 }
 

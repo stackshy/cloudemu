@@ -100,12 +100,24 @@ type NATGateway struct {
 	State     string // "pending", "available", "deleting", "deleted", "failed"
 	CreatedAt string
 	Tags      map[string]string
+	// AllocationID is the Elastic IP allocation bound to a public NAT gateway;
+	// PrivateIP and NetworkInterfaceID describe the ENI it occupies. These
+	// populate the NatGatewayAddress set AWS returns. ConnectivityType is
+	// "public" or "private".
+	AllocationID       string
+	PrivateIP          string
+	NetworkInterfaceID string
+	ConnectivityType   string
 }
 
 // NATGatewayConfig configures a NAT gateway.
 type NATGatewayConfig struct {
 	SubnetID string
 	Tags     map[string]string
+	// AllocationID echoes the Elastic IP the caller bound to a public NAT
+	// gateway; ConnectivityType selects "public" (default) or "private".
+	AllocationID     string
+	ConnectivityType string
 }
 
 // FlowLog represents a VPC flow log configuration.

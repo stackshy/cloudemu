@@ -177,6 +177,8 @@ func (h *Handler) routeVpcPeering(w http.ResponseWriter, r *http.Request, action
 		h.createVpcPeeringConnection(w, r)
 	case "AcceptVpcPeeringConnection":
 		h.acceptVpcPeeringConnection(w, r)
+	case "RejectVpcPeeringConnection":
+		h.rejectVpcPeeringConnection(w, r)
 	case "DeleteVpcPeeringConnection":
 		h.deleteVpcPeeringConnection(w, r)
 	case "DescribeVpcPeeringConnections":
@@ -213,6 +215,8 @@ func (h *Handler) routeNetworkACLs(w http.ResponseWriter, r *http.Request, actio
 		h.describeNetworkACLs(w, r)
 	case "CreateNetworkAclEntry":
 		h.createNetworkACLEntry(w, r)
+	case "ReplaceNetworkAclEntry":
+		h.replaceNetworkACLEntry(w, r)
 	case "DeleteNetworkAclEntry":
 		h.deleteNetworkACLEntry(w, r)
 	default:

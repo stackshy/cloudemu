@@ -14,6 +14,13 @@ const (
 	targetTypeGateway    = "gateway"
 	targetTypeNatGateway = "nat-gateway"
 	targetTypePeering    = "peering"
+	targetTypeLocal      = "local"
+
+	// routeOriginCreateRouteTable is the origin AWS reports for the implicit
+	// local route created with the table; routeOriginCreateRoute is what it
+	// reports for routes a caller added afterward.
+	routeOriginCreateRouteTable = "CreateRouteTable"
+	routeOriginCreateRoute      = "CreateRoute"
 )
 
 type routeXML struct {
@@ -22,6 +29,7 @@ type routeXML struct {
 	NatGatewayID         string `xml:"natGatewayId,omitempty"`
 	VpcPeeringConnection string `xml:"vpcPeeringConnectionId,omitempty"`
 	State                string `xml:"state"`
+	Origin               string `xml:"origin,omitempty"`
 }
 
 type rtAssociationStateXML struct {
@@ -356,6 +364,7 @@ func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 		rx := routeXML{
 			DestinationCIDR: route.DestinationCIDR,
 			State:           nonEmpty(route.State, "active"),
+			Origin:          routeOrigin(route.TargetType),
 		}
 
 		switch route.TargetType {
@@ -365,12 +374,26 @@ func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 			rx.NatGatewayID = route.TargetID
 		case targetTypePeering:
 			rx.VpcPeeringConnection = route.TargetID
+		case targetTypeLocal:
+			// The VPC-local route reports gatewayId "local", not the internal
+			// target id the driver stores.
+			rx.GatewayID = targetTypeLocal
 		}
 
 		x.Routes = append(x.Routes, rx)
 	}
 
 	return x
+}
+
+// routeOrigin reports how a route was created: the implicit local route comes
+// from CreateRouteTable, every other target type is a route a caller added.
+func routeOrigin(targetType string) string {
+	if targetType == targetTypeLocal {
+		return routeOriginCreateRouteTable
+	}
+
+	return routeOriginCreateRoute
 }
 
 func nonEmpty(s, fallback string) string {

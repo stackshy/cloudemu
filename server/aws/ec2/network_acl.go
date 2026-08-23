@@ -64,6 +64,13 @@ type deleteNetworkACLEntryResponseXML struct {
 	Return    bool     `xml:"return"`
 }
 
+type replaceNetworkACLEntryResponseXML struct {
+	XMLName   xml.Name `xml:"ReplaceNetworkAclEntryResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
 func (h *Handler) createNetworkACL(w http.ResponseWriter, r *http.Request) {
 	tags := mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-acl")
 
@@ -137,6 +144,45 @@ func (h *Handler) createNetworkACLEntry(w http.ResponseWriter, r *http.Request) 
 	}
 
 	awsquery.WriteXMLResponse(w, createNetworkACLEntryResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Return:    true,
+	})
+}
+
+// replaceNetworkACLEntry swaps the rule at (RuleNumber, Egress) for the new one
+// the caller supplied. Real EC2 requires the entry to already exist, so the
+// remove step's NotFound is the correct error when it does not. Modeled as
+// remove-then-add because the driver keys rules by number and has no in-place
+// replace.
+func (h *Handler) replaceNetworkACLEntry(w http.ResponseWriter, r *http.Request) {
+	ruleNum, _ := strconv.Atoi(r.Form.Get("RuleNumber"))
+	fromPort, _ := strconv.Atoi(r.Form.Get("PortRange.From"))
+	toPort, _ := strconv.Atoi(r.Form.Get("PortRange.To"))
+	egress := r.Form.Get("Egress") == formTrue
+	aclID := r.Form.Get("NetworkAclId")
+
+	if err := h.vpc.RemoveNetworkACLRule(r.Context(), aclID, ruleNum, egress); err != nil {
+		writeNetworkACLErr(w, err)
+		return
+	}
+
+	rule := &netdriver.NetworkACLRule{
+		RuleNumber: ruleNum,
+		Protocol:   r.Form.Get("Protocol"),
+		Action:     r.Form.Get("RuleAction"),
+		CIDR:       r.Form.Get("CidrBlock"),
+		FromPort:   fromPort,
+		ToPort:     toPort,
+		Egress:     egress,
+	}
+
+	if err := h.vpc.AddNetworkACLRule(r.Context(), aclID, rule); err != nil {
+		writeNetworkACLErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, replaceNetworkACLEntryResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
 		Return:    true,

@@ -398,7 +398,9 @@ func TestToInternetGatewayXMLAttachment(t *testing.T) {
 		t.Fatalf("attached IGW should have 1 attachment, got %d", len(got.Attachments))
 	}
 
-	if got.Attachments[0].VpcID != "vpc-1" || got.Attachments[0].State != "attached" {
+	// An attached internet gateway reports attachment state "available", the
+	// wire value AWS uses (not the driver's internal "attached" marker).
+	if got.Attachments[0].VpcID != "vpc-1" || got.Attachments[0].State != "available" {
 		t.Errorf("attachment wrong: %+v", got.Attachments[0])
 	}
 }
