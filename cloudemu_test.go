@@ -2339,11 +2339,12 @@ func testNotificationWithDriver(t *testing.T, ctx context.Context, d notifdriver
 		t.Errorf("expected 'order-events', got %q", got.Name)
 	}
 
-	// Subscribe
+	// Subscribe. SMS auto-confirms across all three providers (AWS SNS email/
+	// http/https start pending), so the confirmed assertion holds portably.
 	sub, err := d.Subscribe(ctx, notifdriver.SubscriptionConfig{
 		TopicID:  "order-events",
-		Protocol: "email",
-		Endpoint: "admin@example.com",
+		Protocol: "sms",
+		Endpoint: "+15551234567",
 	})
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)

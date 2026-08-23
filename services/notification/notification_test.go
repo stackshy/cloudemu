@@ -117,7 +117,9 @@ func TestSubscribePortable(t *testing.T) {
 
 	assert.NotEmpty(t, sub.ID)
 	assert.Equal(t, "email", sub.Protocol)
-	assert.Equal(t, "confirmed", sub.Status)
+	// AWS SNS email subscriptions require out-of-band confirmation, so they
+	// start out pending.
+	assert.Equal(t, "pending", sub.Status)
 }
 
 func TestSubscribePortableError(t *testing.T) {

@@ -13,6 +13,10 @@ type TopicConfig struct {
 	DisplayName string
 	Tags        map[string]string
 
+	// Policy is the JSON access policy (AWS SNS). Empty leaves the topic on
+	// its synthesized default policy.
+	Policy string
+
 	// Scope records where the resource lives (Azure subscription/resource
 	// group, GCP project). Zero for AWS and unscoped portable callers.
 	Scope scope.Scope
@@ -20,13 +24,23 @@ type TopicConfig struct {
 
 // TopicInfo describes a notification topic.
 type TopicInfo struct {
-	ID                string
-	Name              string
-	ResourceID        string
-	DisplayName       string
+	ID          string
+	Name        string
+	ResourceID  string
+	DisplayName string
+	// SubscriptionCount is the total number of subscriptions on the topic
+	// (confirmed + pending). AWS SNS reports the breakdown separately.
 	SubscriptionCount int
-	Tags              map[string]string
-	Scope             scope.Scope
+	// SubscriptionsConfirmed / SubscriptionsPending / SubscriptionsDeleted mirror
+	// the SNS GetTopicAttributes counters. Deleted is a monotonic tally of
+	// unsubscribed endpoints.
+	SubscriptionsConfirmed int
+	SubscriptionsPending   int
+	SubscriptionsDeleted   int
+	// Policy is the JSON access policy (AWS SNS); empty means the default.
+	Policy string
+	Tags   map[string]string
+	Scope  scope.Scope
 }
 
 // SubscriptionConfig describes a subscription to create.
@@ -34,6 +48,9 @@ type SubscriptionConfig struct {
 	TopicID  string
 	Protocol string // "email", "sms", "http", "https", "sqs", "lambda"
 	Endpoint string
+	// Attributes carries subscription attributes accepted at Subscribe time
+	// (FilterPolicy, RawMessageDelivery, RedrivePolicy, DeliveryPolicy, ...).
+	Attributes map[string]string
 }
 
 // SubscriptionInfo describes a subscription.
@@ -43,6 +60,12 @@ type SubscriptionInfo struct {
 	Protocol string
 	Endpoint string
 	Status   string // "confirmed", "pending"
+	// Attributes holds the subscription's mutable attributes (FilterPolicy,
+	// RawMessageDelivery, RedrivePolicy, DeliveryPolicy, ...).
+	Attributes map[string]string
+	// ConfirmationToken is the opaque token an AWS SNS pending subscription is
+	// confirmed with via ConfirmSubscription. Empty for auto-confirmed subs.
+	ConfirmationToken string
 }
 
 // PublishInput configures a message publish operation.

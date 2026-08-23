@@ -114,7 +114,8 @@ type topicsList struct {
 }
 
 type listTopicsResult struct {
-	Topics topicsList `xml:"Topics"`
+	Topics    topicsList `xml:"Topics"`
+	NextToken string     `xml:"NextToken,omitempty"`
 }
 
 type listTopicsResponse struct {
@@ -153,6 +154,7 @@ type subscriptionsList struct {
 
 type listSubscriptionsResult struct {
 	Subscriptions subscriptionsList `xml:"Subscriptions"`
+	NextToken     string            `xml:"NextToken,omitempty"`
 }
 
 type listSubscriptionsResponse struct {
@@ -183,5 +185,77 @@ type publishResponse struct {
 	XMLName  xml.Name         `xml:"PublishResponse"`
 	Xmlns    string           `xml:"xmlns,attr"`
 	Result   publishResult    `xml:"PublishResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+// --- PublishBatch ---
+
+type batchResultEntry struct {
+	ID        string `xml:"Id"`
+	MessageID string `xml:"MessageId"`
+}
+
+type batchErrorEntry struct {
+	ID          string `xml:"Id"`
+	Code        string `xml:"Code"`
+	Message     string `xml:"Message"`
+	SenderFault bool   `xml:"SenderFault"`
+}
+
+type publishBatchResult struct {
+	Successful []batchResultEntry `xml:"Successful>member"`
+	Failed     []batchErrorEntry  `xml:"Failed>member"`
+}
+
+type publishBatchResponse struct {
+	XMLName  xml.Name           `xml:"PublishBatchResponse"`
+	Xmlns    string             `xml:"xmlns,attr"`
+	Result   publishBatchResult `xml:"PublishBatchResult"`
+	Metadata responseMetadata   `xml:"ResponseMetadata"`
+}
+
+// --- ConfirmSubscription ---
+
+type confirmSubscriptionResult struct {
+	SubscriptionArn string `xml:"SubscriptionArn"`
+}
+
+type confirmSubscriptionResponse struct {
+	XMLName  xml.Name                  `xml:"ConfirmSubscriptionResponse"`
+	Xmlns    string                    `xml:"xmlns,attr"`
+	Result   confirmSubscriptionResult `xml:"ConfirmSubscriptionResult"`
+	Metadata responseMetadata          `xml:"ResponseMetadata"`
+}
+
+// --- GetSubscriptionAttributes / SetSubscriptionAttributes ---
+
+type getSubscriptionAttributesResult struct {
+	Attributes attributesMap `xml:"Attributes"`
+}
+
+type getSubscriptionAttributesResponse struct {
+	XMLName  xml.Name                        `xml:"GetSubscriptionAttributesResponse"`
+	Xmlns    string                          `xml:"xmlns,attr"`
+	Result   getSubscriptionAttributesResult `xml:"GetSubscriptionAttributesResult"`
+	Metadata responseMetadata                `xml:"ResponseMetadata"`
+}
+
+type setSubscriptionAttributesResponse struct {
+	XMLName  xml.Name         `xml:"SetSubscriptionAttributesResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+// --- AddPermission / RemovePermission (empty results) ---
+
+type addPermissionResponse struct {
+	XMLName  xml.Name         `xml:"AddPermissionResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type removePermissionResponse struct {
+	XMLName  xml.Name         `xml:"RemovePermissionResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }

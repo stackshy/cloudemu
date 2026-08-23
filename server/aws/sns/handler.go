@@ -18,9 +18,15 @@
 //	ListTopics                  — Notification.ListTopics
 //	Subscribe                   — Notification.Subscribe
 //	Unsubscribe                 — Notification.Unsubscribe
+//	ConfirmSubscription         — snsExtras.ConfirmSubscription
+//	GetSubscriptionAttributes   — snsExtras.GetSubscription
+//	SetSubscriptionAttributes   — snsExtras.SetSubscriptionAttribute
 //	ListSubscriptions           — Notification.ListSubscriptions across all topics
 //	ListSubscriptionsByTopic    — Notification.ListSubscriptions for one topic
 //	Publish                     — Notification.Publish
+//	PublishBatch                — Notification.Publish per entry
+//	AddPermission               — snsExtras.AddTopicPermission
+//	RemovePermission            — snsExtras.RemoveTopicPermission
 package sns
 
 import (
@@ -41,23 +47,36 @@ const (
 	maxFormBodyBytes = 1 << 20
 )
 
+// SNS attribute-value literals and the pending subscription state.
+const (
+	statusPending = "pending"
+	attrTrue      = "true"
+	attrFalse     = "false"
+)
+
 // snsActions is the set of Action values this handler recognizes. Matches uses
 // it to decide whether to claim a request. Disjoint from RDS / Redshift / IAM /
 // EC2 / ElastiCache action sets.
 var snsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateTopic":              {},
-	"DeleteTopic":              {},
-	"GetTopicAttributes":       {},
-	"SetTopicAttributes":       {},
-	"ListTopics":               {},
-	"Subscribe":                {},
-	"Unsubscribe":              {},
-	"ListSubscriptions":        {},
-	"ListSubscriptionsByTopic": {},
-	"Publish":                  {},
-	"TagResource":              {},
-	"UntagResource":            {},
-	actionListTagsForResource:  {},
+	"CreateTopic":               {},
+	"DeleteTopic":               {},
+	"GetTopicAttributes":        {},
+	"SetTopicAttributes":        {},
+	"ListTopics":                {},
+	"Subscribe":                 {},
+	"Unsubscribe":               {},
+	"ConfirmSubscription":       {},
+	"GetSubscriptionAttributes": {},
+	"SetSubscriptionAttributes": {},
+	"ListSubscriptions":         {},
+	"ListSubscriptionsByTopic":  {},
+	"Publish":                   {},
+	"PublishBatch":              {},
+	"AddPermission":             {},
+	"RemovePermission":          {},
+	"TagResource":               {},
+	"UntagResource":             {},
+	actionListTagsForResource:   {},
 }
 
 // actionListTagsForResource is the generic tag-read verb SNS shares with other
@@ -74,6 +93,18 @@ const actionListTagsForResource = "ListTagsForResource"
 type topicTagger interface {
 	TagTopic(ctx context.Context, topicName string, tags map[string]string) error
 	UntagTopic(ctx context.Context, topicName string, keys []string) error
+}
+
+// snsExtras is the AWS-only surface (subscription attributes, confirmation, and
+// topic access-policy permissions) that isn't part of the portable Notification
+// driver — Azure Notification Hubs and GCP FCM don't model it. The AWS SNS mock
+// implements it; handlers type-assert for it and return NotSupported otherwise.
+type snsExtras interface {
+	GetSubscription(ctx context.Context, subscriptionARN string) (*notifdriver.SubscriptionInfo, error)
+	SetSubscriptionAttribute(ctx context.Context, subscriptionARN, name, value string) error
+	ConfirmSubscription(ctx context.Context, topicName, token string) (*notifdriver.SubscriptionInfo, error)
+	AddTopicPermission(ctx context.Context, topicName, label string, accountIDs, actions []string) error
+	RemoveTopicPermission(ctx context.Context, topicName, label string) error
 }
 
 // Handler serves SNS query-protocol requests against a notification driver.
@@ -126,6 +157,8 @@ func (*Handler) Matches(r *http.Request) bool {
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
+//
+//nolint:gocyclo // flat dispatch switch over the SNS action set
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	action := r.Form.Get("Action")
 
@@ -144,12 +177,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.subscribe(w, r)
 	case "Unsubscribe":
 		h.unsubscribe(w, r)
+	case "ConfirmSubscription":
+		h.confirmSubscription(w, r)
+	case "GetSubscriptionAttributes":
+		h.getSubscriptionAttributes(w, r)
+	case "SetSubscriptionAttributes":
+		h.setSubscriptionAttributes(w, r)
 	case "ListSubscriptions":
 		h.listSubscriptions(w, r)
 	case "ListSubscriptionsByTopic":
 		h.listSubscriptionsByTopic(w, r)
 	case "Publish":
 		h.publish(w, r)
+	case "PublishBatch":
+		h.publishBatch(w, r)
+	case "AddPermission":
+		h.addPermission(w, r)
+	case "RemovePermission":
+		h.removePermission(w, r)
 	case "TagResource":
 		h.tagResource(w, r)
 	case "UntagResource":
@@ -202,6 +247,12 @@ func accountFromARN(arn string) string {
 
 	return ""
 }
+
+// defaultEffectiveDeliveryPolicy is the delivery policy SNS reports for a topic
+// that hasn't overridden the account defaults.
+const defaultEffectiveDeliveryPolicy = `{"http":{"defaultHealthyRetryPolicy":{"minDelayTarget":20,` +
+	`"maxDelayTarget":20,"numRetries":3,"numMaxDelayRetries":0,"numNoDelayRetries":0,` +
+	`"numMinDelayRetries":0,"backoffFunction":"linear"},"disableSubscriptionOverrides":false}}`
 
 // defaultTopicPolicy mirrors the access policy real SNS attaches to a new topic,
 // so a client that reads Policy back gets valid JSON.
