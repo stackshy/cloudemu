@@ -8,6 +8,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
 // updateItem handles UpdateItem. Supports the common cases:
@@ -62,15 +63,15 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 
 // parseUpdateExpression parses a DynamoDB UpdateExpression into driver actions.
 // Supports "SET a = :v, b = :w" and "REMOVE c, d" clauses combined.
-func parseUpdateExpression(expr string, vals map[string]any, names map[string]string) []dbdriver.UpdateAction {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
+func parseUpdateExpression(updateExpr string, vals map[string]any, names map[string]string) []dbdriver.UpdateAction {
+	updateExpr = strings.TrimSpace(updateExpr)
+	if updateExpr == "" {
 		return nil
 	}
 
 	var actions []dbdriver.UpdateAction
 
-	for _, clause := range splitClauses(expr) {
+	for _, clause := range splitClauses(updateExpr) {
 		verb, rest := splitVerb(clause)
 
 		switch strings.ToUpper(verb) {
@@ -86,8 +87,8 @@ func parseUpdateExpression(expr string, vals map[string]any, names map[string]st
 
 // splitClauses splits an UpdateExpression by keyword boundaries (SET, REMOVE,
 // ADD, DELETE). Returns one string per clause.
-func splitClauses(expr string) []string {
-	upper := strings.ToUpper(expr)
+func splitClauses(updateExpr string) []string {
+	upper := strings.ToUpper(updateExpr)
 
 	keywords := []string{"SET", "REMOVE", "ADD", "DELETE"}
 
@@ -97,7 +98,7 @@ func splitClauses(expr string) []string {
 	}
 
 	if len(starts) == 0 {
-		return []string{expr}
+		return []string{updateExpr}
 	}
 
 	sortInts(starts)
@@ -105,12 +106,12 @@ func splitClauses(expr string) []string {
 	clauses := make([]string, 0, len(starts))
 
 	for i, s := range starts {
-		end := len(expr)
+		end := len(updateExpr)
 		if i+1 < len(starts) {
 			end = starts[i+1]
 		}
 
-		clauses = append(clauses, strings.TrimSpace(expr[s:end]))
+		clauses = append(clauses, strings.TrimSpace(updateExpr[s:end]))
 	}
 
 	return clauses
@@ -227,6 +228,7 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
 		FilterExpression          string            `json:"FilterExpression"`
+		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		Limit                     int               `json:"Limit"`
@@ -254,9 +256,15 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	paths, perr := expr.ParseProjection(req.ProjectionExpression, req.ExpressionAttributeNames)
+	if perr != nil {
+		writeErr(w, perr)
+		return
+	}
+
 	items := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, toWireItem(item))
+		items = append(items, toWireItem(expr.Project(item, paths)))
 	}
 
 	resp := map[string]any{

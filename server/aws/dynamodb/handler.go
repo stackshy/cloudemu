@@ -317,8 +317,10 @@ func (h *Handler) checkCondition(
 
 func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string         `json:"TableName"`
-		Key       map[string]any `json:"Key"`
+		TableName                string            `json:"TableName"`
+		Key                      map[string]any    `json:"Key"`
+		ProjectionExpression     string            `json:"ProjectionExpression"`
+		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -341,8 +343,15 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{}
+
 	if item != nil {
-		resp["Item"] = toWireItem(item)
+		paths, perr := expr.ParseProjection(req.ProjectionExpression, req.ExpressionAttributeNames)
+		if perr != nil {
+			writeErr(w, perr)
+			return
+		}
+
+		resp["Item"] = toWireItem(expr.Project(item, paths))
 	}
 
 	wire.WriteJSON(w, resp)
@@ -383,6 +392,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
 		FilterExpression          string            `json:"FilterExpression"`
+		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		Limit                     int               `json:"Limit"`
@@ -422,9 +432,15 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	paths, perr := expr.ParseProjection(req.ProjectionExpression, req.ExpressionAttributeNames)
+	if perr != nil {
+		writeErr(w, perr)
+		return
+	}
+
 	items := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, toWireItem(item))
+		items = append(items, toWireItem(expr.Project(item, paths)))
 	}
 
 	resp := map[string]any{
@@ -438,8 +454,18 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, resp)
 }
 
-// parseKeyCondition extracts a KeyCondition from a simple expression.
-// Supports: "pk = :v" and "pk = :v AND sk op :v2".
+// Sort-key operators emitted for the function/keyword forms of a
+// KeyConditionExpression. Relational operators (= < <= > >=) flow through as
+// their literal token.
+const (
+	sortOpBetween    = "BETWEEN"
+	sortOpBeginsWith = "BEGINS_WITH"
+)
+
+// parseKeyCondition extracts a KeyCondition from a KeyConditionExpression.
+// The partition key must use equality ("pk = :v"); the optional sort-key
+// condition may be a relational comparison ("sk op :v"), "sk BETWEEN :lo AND
+// :hi", or "begins_with(sk, :v)".
 func parseKeyCondition(
 	keyExpr string,
 	vals map[string]any,
@@ -450,8 +476,11 @@ func parseKeyCondition(
 
 	const andSep = " AND "
 
+	// Split on the FIRST " AND " only: it separates the partition-key equality
+	// from the sort-key condition. A BETWEEN sort condition carries its own
+	// internal " AND ", which stays with the sort clause.
 	andIdx := findCaseInsensitive(keyExpr, andSep)
-	pkExpr := strings.TrimSpace(keyExpr)
+	pkExpr := keyExpr
 	skExpr := ""
 
 	if andIdx >= 0 {
@@ -459,7 +488,7 @@ func parseKeyCondition(
 		skExpr = strings.TrimSpace(keyExpr[andIdx+len(andSep):])
 	}
 
-	// Expression fields: [0]=field, [1]=operator, [2]=value placeholder.
+	// Partition key: [0]=field, [1]="=", [2]=value placeholder.
 	const valueIdx = 2
 
 	pkParts := strings.Fields(pkExpr)
@@ -469,14 +498,73 @@ func parseKeyCondition(
 	}
 
 	if skExpr != "" {
-		skParts := strings.Fields(skExpr)
-		if len(skParts) > valueIdx {
-			kc.SortOp = skParts[1]
-			kc.SortVal = resolveExprVal(skParts[valueIdx], vals)
-		}
+		parseSortCondition(&kc, skExpr, vals)
 	}
 
 	return kc
+}
+
+// parseSortCondition fills kc's sort-key fields from the sort portion of a
+// KeyConditionExpression. The sort key's attribute name is resolved by the
+// provider from the table's key schema, so only the operator and value
+// placeholders are extracted here.
+func parseSortCondition(kc *dbdriver.KeyCondition, skExpr string, vals map[string]any) {
+	if val, ok := parseBeginsWith(skExpr, vals); ok {
+		kc.SortOp = sortOpBeginsWith
+		kc.SortVal = val
+
+		return
+	}
+
+	fields := strings.Fields(skExpr)
+
+	// "sk BETWEEN :lo AND :hi" → [sk BETWEEN :lo AND :hi].
+	const (
+		betweenLen = 5
+		loIdx      = 2
+		hiIdx      = 4
+	)
+
+	if len(fields) >= betweenLen && strings.EqualFold(fields[1], sortOpBetween) {
+		kc.SortOp = sortOpBetween
+		kc.SortVal = resolveExprVal(fields[loIdx], vals)
+		kc.SortValEnd = resolveExprVal(fields[hiIdx], vals)
+
+		return
+	}
+
+	// "sk op :v" → [sk op :v].
+	const opLen = 3
+	if len(fields) >= opLen {
+		kc.SortOp = fields[1]
+		kc.SortVal = resolveExprVal(fields[loIdx], vals)
+	}
+}
+
+// parseBeginsWith recognizes a "begins_with(sk, :v)" sort-key condition and
+// returns its resolved value. ok is false when skExpr is not a begins_with
+// call.
+func parseBeginsWith(skExpr string, vals map[string]any) (val any, ok bool) {
+	const fnBeginsWith = "begins_with"
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(skExpr)), fnBeginsWith) {
+		return nil, false
+	}
+
+	openIdx := strings.Index(skExpr, "(")
+	closeIdx := strings.LastIndex(skExpr, ")")
+
+	if openIdx < 0 || closeIdx < openIdx {
+		return nil, false
+	}
+
+	const argCount = 2
+
+	args := strings.Split(skExpr[openIdx+1:closeIdx], ",")
+	if len(args) != argCount {
+		return nil, false
+	}
+
+	return resolveExprVal(strings.TrimSpace(args[1]), vals), true
 }
 
 func findCaseInsensitive(s, substr string) int {
