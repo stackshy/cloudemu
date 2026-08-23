@@ -1,15 +1,20 @@
 // Package driver defines the interface for load balancer service implementations.
 package driver
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // LBConfig describes a load balancer to create.
 type LBConfig struct {
-	Name    string
-	Type    string // "application", "network"
-	Scheme  string // "internet-facing", "internal"
-	Subnets []string
-	Tags    map[string]string
+	Name           string
+	Type           string // "application", "network"
+	Scheme         string // "internet-facing", "internal"
+	Subnets        []string
+	SecurityGroups []string
+	IPAddressType  string // "ipv4", "dualstack"
+	Tags           map[string]string
 }
 
 // LBInfo describes a load balancer.
@@ -22,29 +27,86 @@ type LBInfo struct {
 	State   string
 	DNSName string
 	Subnets []string
-	Tags    map[string]string
+	// SecurityGroups are the security-group IDs attached to an application
+	// load balancer. Network load balancers have none.
+	SecurityGroups []string
+	// IPAddressType is "ipv4" or "dualstack"; defaults to "ipv4".
+	IPAddressType string
+	// CanonicalHostedZoneID is the Route 53 hosted-zone id an alias record must
+	// target to point at this load balancer. Route 53 alias records break
+	// without it.
+	CanonicalHostedZoneID string
+	// VPCID is the VPC the load balancer's subnets belong to.
+	VPCID string
+	// CreatedTime is when the load balancer was created.
+	CreatedTime time.Time
+	Tags        map[string]string
+}
+
+// HealthCheck describes the health-check configuration of a target group. AWS
+// applies protocol-derived defaults for any field left unset on create.
+type HealthCheck struct {
+	Protocol           string // "HTTP", "HTTPS", "TCP", ...
+	Port               string // "traffic-port" or an explicit port number
+	Path               string // for HTTP/HTTPS health checks
+	IntervalSeconds    int
+	TimeoutSeconds     int
+	HealthyThreshold   int
+	UnhealthyThreshold int
+	Matcher            string // e.g. "200" or "200-299" for HTTP matchers
 }
 
 // TargetGroupConfig describes a target group to create.
 type TargetGroupConfig struct {
-	Name       string
-	Protocol   string
-	Port       int
-	VPCID      string
-	HealthPath string
-	Tags       map[string]string
+	Name        string
+	Protocol    string
+	Port        int
+	VPCID       string
+	TargetType  string // "instance", "ip", "lambda", "alb"
+	HealthPath  string
+	HealthCheck HealthCheck
+	Tags        map[string]string
 }
 
 // TargetGroupInfo describes a target group.
 type TargetGroupInfo struct {
-	ID         string
-	ARN        string
-	Name       string
-	Protocol   string
-	Port       int
-	VPCID      string
-	HealthPath string
-	Tags       map[string]string
+	ID          string
+	ARN         string
+	Name        string
+	Protocol    string
+	Port        int
+	VPCID       string
+	TargetType  string
+	HealthPath  string
+	HealthCheck HealthCheck
+	Tags        map[string]string
+}
+
+// ModifyTargetGroupInput carries the mutable health-check fields of a target
+// group. A zero/empty field means "leave unchanged".
+type ModifyTargetGroupInput struct {
+	TargetGroupARN     string
+	HealthCheckProto   string
+	HealthCheckPort    string
+	HealthCheckPath    string
+	IntervalSeconds    int
+	TimeoutSeconds     int
+	HealthyThreshold   int
+	UnhealthyThreshold int
+	Matcher            string
+}
+
+// ModifyRuleInput carries the mutable fields of a listener rule.
+type ModifyRuleInput struct {
+	RuleARN    string
+	Conditions []RuleCondition
+	Actions    []RuleAction
+}
+
+// RulePriorityPair reprioritizes a single rule.
+type RulePriorityPair struct {
+	RuleARN  string
+	Priority int
 }
 
 // ListenerConfig describes a listener to create.
@@ -124,9 +186,10 @@ type Target struct {
 
 // TargetHealth describes the health status of a target.
 type TargetHealth struct {
-	Target Target
-	State  string // "healthy", "unhealthy", "draining", "initial"
-	Reason string
+	Target      Target
+	State       string // "healthy", "unhealthy", "draining", "initial"
+	Reason      string // AWS reason code, e.g. "Elb.RegistrationInProgress"
+	Description string
 }
 
 // LoadBalancer is the interface that load balancer provider implementations must satisfy.
@@ -170,4 +233,33 @@ type LBAttributeUpdater interface {
 	UpdateLBAttributes(
 		ctx context.Context, lbARN string, apply func(*LBAttributes),
 	) (*LBAttributes, error)
+}
+
+// TargetGroupModifier is implemented by drivers that can apply a partial
+// health-check update to an existing target group (ELBv2 ModifyTargetGroup).
+type TargetGroupModifier interface {
+	ModifyTargetGroup(ctx context.Context, input ModifyTargetGroupInput) (*TargetGroupInfo, error)
+}
+
+// RuleModifier is implemented by drivers that can modify a listener rule's
+// conditions/actions and reprioritize rules (ELBv2 ModifyRule /
+// SetRulePriorities).
+type RuleModifier interface {
+	ModifyRule(ctx context.Context, input ModifyRuleInput) (*RuleInfo, error)
+	SetRulePriorities(ctx context.Context, pairs []RulePriorityPair) ([]RuleInfo, error)
+}
+
+// ListenerGetter is implemented by drivers that can fetch a single listener by
+// ARN, letting a handler echo the full listener after a ModifyListener call
+// (the base ModifyListener returns only an error).
+type ListenerGetter interface {
+	GetListener(ctx context.Context, listenerARN string) (*ListenerInfo, error)
+}
+
+// LBNetworkModifier is implemented by drivers that can replace the security
+// groups or subnets of an existing load balancer (ELBv2 SetSecurityGroups /
+// SetSubnets). SetSubnets returns the resulting subnet list.
+type LBNetworkModifier interface {
+	SetSecurityGroups(ctx context.Context, lbARN string, securityGroups []string) error
+	SetSubnets(ctx context.Context, lbARN string, subnets []string) ([]string, error)
 }

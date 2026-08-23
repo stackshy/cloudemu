@@ -3,6 +3,8 @@ package route53
 import (
 	"encoding/xml"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,9 +14,15 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// listMaxItems is the fixed page size echoed back to the SDK; the mock never
-// paginates, so IsTruncated is always false.
+// listMaxItems is the default/maximum page size for record-set and zone
+// listings when the caller does not request a smaller one.
 const listMaxItems = 100
+
+// TTLs for the SOA and NS records a hosted zone is seeded with on create.
+const (
+	soaTTL = 900
+	nsTTL  = 172800
+)
 
 func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 	var req createHostedZoneRequest
@@ -33,6 +41,17 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A new hosted zone starts with its authoritative SOA and NS records, just
+	// like real Route 53 — so RRSetCount is 2 and downstream record management
+	// (and the NS delegation the registrar needs) works.
+	nameServers := nameServersFor(info.ID)
+	h.seedZoneRecords(r, info.ID, info.Name, nameServers)
+
+	// Re-read so RecordCount reflects the seeded SOA+NS records.
+	if refreshed, gerr := h.dns.GetZone(r.Context(), info.ID); gerr == nil {
+		info = refreshed
+	}
+
 	// Echo the caller's CallerReference back faithfully (the driver doesn't
 	// persist it, so this is only recoverable on the create response).
 	hz := toHostedZoneXML(info)
@@ -40,10 +59,28 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		hz.CallerReference = req.CallerReference
 	}
 
+	// Real Route 53 returns a Location header pointing at the new zone.
+	w.Header().Set("Location", pathPrefix+"/"+info.ID)
+
 	wire.WriteXML(w, http.StatusCreated, createHostedZoneResponse{
-		Xmlns:      xmlns,
-		HostedZone: hz,
-		ChangeInfo: newChangeInfo(),
+		Xmlns:         xmlns,
+		HostedZone:    hz,
+		ChangeInfo:    newChangeInfo(),
+		DelegationSet: delegationSetXML{NameServers: nameServers},
+	})
+}
+
+// seedZoneRecords creates the SOA and NS records a new hosted zone is born with.
+// Failures are ignored: seeding is best-effort convenience and must not fail the
+// CreateHostedZone call itself.
+func (h *Handler) seedZoneRecords(r *http.Request, zoneID, zoneName string, nameServers []string) {
+	soaValue := nameServers[0] + ". awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400"
+
+	_, _ = h.dns.CreateRecord(r.Context(), dnsdriver.RecordConfig{
+		ZoneID: zoneID, Name: zoneName, Type: "SOA", TTL: soaTTL, Values: []string{soaValue},
+	})
+	_, _ = h.dns.CreateRecord(r.Context(), dnsdriver.RecordConfig{
+		ZoneID: zoneID, Name: zoneName, Type: "NS", TTL: nsTTL, Values: nameServers,
 	})
 }
 
@@ -55,8 +92,9 @@ func (h *Handler) getHostedZone(w http.ResponseWriter, r *http.Request, id strin
 	}
 
 	wire.WriteXML(w, http.StatusOK, getHostedZoneResponse{
-		Xmlns:      xmlns,
-		HostedZone: toHostedZoneXML(info),
+		Xmlns:         xmlns,
+		HostedZone:    toHostedZoneXML(info),
+		DelegationSet: delegationSetXML{NameServers: nameServersFor(info.ID)},
 	})
 }
 
@@ -223,17 +261,77 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	sets := make([]resourceRecordSetXML, 0, len(records))
-	for i := range records {
-		sets = append(sets, toRecordSetXML(&records[i]))
+	// Real Route 53 returns record sets in DNS name order. Sort by name
+	// (case-insensitive) then type so the sequence is deterministic and honors
+	// StartRecordName paging below.
+	sort.Slice(records, func(i, j int) bool {
+		ni, nj := strings.ToLower(records[i].Name), strings.ToLower(records[j].Name)
+		if ni != nj {
+			return ni < nj
+		}
+
+		return records[i].Type < records[j].Type
+	})
+
+	// StartRecordName (and optional StartRecordType) skip forward to the first
+	// record at or after the requested position.
+	start := strings.ToLower(r.URL.Query().Get("name"))
+	startType := r.URL.Query().Get("type")
+	records = recordsFrom(records, start, startType)
+
+	maxItems := parseMaxItems(r.URL.Query().Get("maxitems"))
+
+	resp := listResourceRecordSetsResponse{
+		Xmlns:    xmlns,
+		MaxItems: int32(maxItems),
 	}
 
-	wire.WriteXML(w, http.StatusOK, listResourceRecordSetsResponse{
-		Xmlns:              xmlns,
-		ResourceRecordSets: sets,
-		IsTruncated:        false,
-		MaxItems:           listMaxItems,
-	})
+	if len(records) > maxItems {
+		next := records[maxItems]
+		resp.IsTruncated = true
+		resp.NextRecordName = next.Name
+		resp.NextRecordType = next.Type
+		records = records[:maxItems]
+	}
+
+	resp.ResourceRecordSets = make([]resourceRecordSetXML, 0, len(records))
+	for i := range records {
+		resp.ResourceRecordSets = append(resp.ResourceRecordSets, toRecordSetXML(&records[i]))
+	}
+
+	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// recordsFrom returns the slice starting at the first record whose (name, type)
+// is at or after (start, startType). An empty start returns all records.
+func recordsFrom(records []dnsdriver.RecordInfo, start, startType string) []dnsdriver.RecordInfo {
+	if start == "" {
+		return records
+	}
+
+	for i := range records {
+		name := strings.ToLower(records[i].Name)
+		if name > start || (name == start && (startType == "" || records[i].Type >= startType)) {
+			return records[i:]
+		}
+	}
+
+	return nil
+}
+
+// parseMaxItems reads the maxitems query param, clamping to the fixed page size
+// when absent or invalid.
+func parseMaxItems(v string) int {
+	if v == "" {
+		return listMaxItems
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 || n > listMaxItems {
+		return listMaxItems
+	}
+
+	return n
 }
 
 // recordConfig builds a driver RecordConfig from a parsed record set element.
@@ -263,13 +361,27 @@ func recordConfig(zoneID string, rr *resourceRecordSetXML) dnsdriver.RecordConfi
 	return cfg
 }
 
-// newChangeInfo returns a synthetic INSYNC ChangeInfo for a mutating op.
+// newChangeInfo returns a synthetic INSYNC ChangeInfo for a mutating op. Each
+// call gets a distinct change id so two changes are distinguishable (real
+// Route 53 assigns a fresh id per change); GetChange reports INSYNC for any id.
 func newChangeInfo() changeInfoXML {
 	return changeInfoXML{
-		Id:          changeID,
+		Id:          newChangeID(),
 		Status:      changeStatusInsync,
 		SubmittedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+}
+
+// cleanMsg returns a cloudemu error's message without the leading canonical
+// "Code: " prefix its Error() string carries, so the wire message doesn't leak
+// an internal code (e.g. "NotFound:") alongside the AWS error code element.
+func cleanMsg(err error) string {
+	msg := err.Error()
+	if i := strings.Index(msg, ": "); i >= 0 {
+		return msg[i+2:]
+	}
+
+	return msg
 }
 
 // decodeXML reads an XML request body into v, writing an InvalidInput error and
@@ -297,7 +409,7 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NoSuchHostedZone", err.Error())
+		writeError(w, http.StatusNotFound, "NoSuchHostedZone", cleanMsg(err))
 	case cerrors.IsAlreadyExists(err):
 		writeError(w, http.StatusConflict, "HostedZoneAlreadyExists", err.Error())
 	case cerrors.IsInvalidArgument(err):

@@ -33,6 +33,14 @@ const tagsPrefix = "/2013-04-01/tags/"
 
 const rrsetSeg = "rrset"
 
+// Additional Route 53 REST roots handled by this dispatcher.
+const (
+	changePrefix          = "/2013-04-01/change/"
+	hostedZoneCountPath   = "/2013-04-01/hostedzonecount"
+	hostedZonesByNamePath = "/2013-04-01/hostedzonesbyname"
+	testDNSAnswerPath     = "/2013-04-01/testdnsanswer"
+)
+
 // Handler serves Route 53 REST requests against a dns driver.
 type Handler struct {
 	dns dnsdriver.DNS
@@ -51,7 +59,11 @@ func (*Handler) Matches(r *http.Request) bool {
 		strings.HasPrefix(r.URL.Path, pathPrefix+"/") ||
 		r.URL.Path == healthCheckPrefix ||
 		strings.HasPrefix(r.URL.Path, healthCheckPrefix+"/") ||
-		strings.HasPrefix(r.URL.Path, tagsPrefix)
+		strings.HasPrefix(r.URL.Path, tagsPrefix) ||
+		strings.HasPrefix(r.URL.Path, changePrefix) ||
+		r.URL.Path == hostedZoneCountPath ||
+		r.URL.Path == hostedZonesByNamePath ||
+		r.URL.Path == testDNSAnswerPath
 }
 
 // ServeHTTP routes on the path tail and method.
@@ -63,6 +75,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == healthCheckPrefix || strings.HasPrefix(r.URL.Path, healthCheckPrefix+"/") {
 		h.serveHealthCheck(w, r)
+		return
+	}
+
+	if strings.HasPrefix(r.URL.Path, changePrefix) {
+		h.getChange(w, r, strings.TrimPrefix(r.URL.Path, changePrefix))
+		return
+	}
+
+	switch r.URL.Path {
+	case hostedZoneCountPath:
+		h.getHostedZoneCount(w, r)
+		return
+	case hostedZonesByNamePath:
+		h.listHostedZonesByName(w, r)
+		return
+	case testDNSAnswerPath:
+		h.testDNSAnswer(w, r)
 		return
 	}
 

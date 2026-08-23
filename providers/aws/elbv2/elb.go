@@ -13,8 +13,15 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
-// Compile-time check that Mock implements driver.LoadBalancer.
-var _ driver.LoadBalancer = (*Mock)(nil)
+// Compile-time checks that Mock implements driver.LoadBalancer and the optional
+// modifier extensions the ELBv2 wire handler dispatches to.
+var (
+	_ driver.LoadBalancer        = (*Mock)(nil)
+	_ driver.TargetGroupModifier = (*Mock)(nil)
+	_ driver.RuleModifier        = (*Mock)(nil)
+	_ driver.LBNetworkModifier   = (*Mock)(nil)
+	_ driver.ListenerGetter      = (*Mock)(nil)
+)
 
 // defaultIdleTimeoutSec is the default idle timeout for load balancers in seconds.
 const defaultIdleTimeoutSec = 60
@@ -55,6 +62,15 @@ func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driv
 		return nil, errors.New(errors.InvalidArgument, "load balancer name is required")
 	}
 
+	// Real ELBv2 rejects a second load balancer with the same name in the
+	// account/region with DuplicateLoadBalancerName.
+	for _, existing := range m.lbs.All() {
+		if existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"load balancer %q already exists", cfg.Name)
+		}
+	}
+
 	id := idgen.GenerateID("lb-")
 	arn := idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID, "loadbalancer/"+cfg.Name)
 	dnsName := fmt.Sprintf("%s.%s.elb.amazonaws.com", cfg.Name, m.opts.Region)
@@ -62,21 +78,33 @@ func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driv
 	subnets := make([]string, len(cfg.Subnets))
 	copy(subnets, cfg.Subnets)
 
+	sgs := make([]string, len(cfg.SecurityGroups))
+	copy(sgs, cfg.SecurityGroups)
+
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
 		tags[k] = v
 	}
 
+	ipType := cfg.IPAddressType
+	if ipType == "" {
+		ipType = "ipv4"
+	}
+
 	lb := driver.LBInfo{
-		ID:      id,
-		ARN:     arn,
-		Name:    cfg.Name,
-		Type:    cfg.Type,
-		Scheme:  cfg.Scheme,
-		State:   "active",
-		DNSName: dnsName,
-		Subnets: subnets,
-		Tags:    tags,
+		ID:                    id,
+		ARN:                   arn,
+		Name:                  cfg.Name,
+		Type:                  cfg.Type,
+		Scheme:                cfg.Scheme,
+		State:                 "active",
+		DNSName:               dnsName,
+		Subnets:               subnets,
+		SecurityGroups:        sgs,
+		IPAddressType:         ipType,
+		CanonicalHostedZoneID: canonicalHostedZoneID(m.opts.Region),
+		CreatedTime:           m.opts.Clock.Now().UTC(),
+		Tags:                  tags,
 	}
 
 	m.lbs.Set(arn, lb)
@@ -84,6 +112,34 @@ func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driv
 	result := lb
 
 	return &result, nil
+}
+
+// elbHostedZones maps a region to the canonical hosted-zone id an application
+// load balancer exposes for Route 53 alias records. Values match the real AWS
+// ELB service; regions outside the table fall back to us-east-1's id so an
+// alias record can still be constructed.
+//
+//nolint:gochecknoglobals // static lookup table of AWS-published constants.
+var elbHostedZones = map[string]string{
+	"us-east-1":      "Z35SXDOTRQ7X7K",
+	"us-east-2":      "Z3AADJGX6KTTL2",
+	"us-west-1":      "Z368ELLRRE2KJ0",
+	"us-west-2":      "Z1H1FL5HABSF5",
+	"eu-west-1":      "Z32O12XQLNTSW2",
+	"eu-central-1":   "Z215JYRZR1TBD5",
+	"ap-south-1":     "ZP97RAFLXTNZK",
+	"ap-southeast-1": "Z1LMS91P8CMLE5",
+	"ap-southeast-2": "Z1GM3OXH4ZPM65",
+	"ap-northeast-1": "Z14GRHDCWA56QT",
+}
+
+// canonicalHostedZoneID returns the ELB canonical hosted-zone id for region.
+func canonicalHostedZoneID(region string) string {
+	if z, ok := elbHostedZones[region]; ok {
+		return z
+	}
+
+	return elbHostedZones["us-east-1"]
 }
 
 // DeleteLoadBalancer deletes a load balancer by ARN.
@@ -129,6 +185,15 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 		return nil, errors.New(errors.InvalidArgument, "target group name is required")
 	}
 
+	// Real ELBv2 rejects a second target group with the same name in the
+	// account/region with DuplicateTargetGroupName.
+	for _, existing := range m.tgs.All() {
+		if existing.Name == cfg.Name {
+			return nil, errors.Newf(errors.AlreadyExists,
+				"target group %q already exists", cfg.Name)
+		}
+	}
+
 	id := idgen.GenerateID("tg-")
 	arn := idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID, "targetgroup/"+cfg.Name)
 
@@ -137,15 +202,24 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 		tags[k] = v
 	}
 
+	targetType := cfg.TargetType
+	if targetType == "" {
+		targetType = "instance"
+	}
+
+	hc := defaultHealthCheck(cfg)
+
 	tg := driver.TargetGroupInfo{
-		ID:         id,
-		ARN:        arn,
-		Name:       cfg.Name,
-		Protocol:   cfg.Protocol,
-		Port:       cfg.Port,
-		VPCID:      cfg.VPCID,
-		HealthPath: cfg.HealthPath,
-		Tags:       tags,
+		ID:          id,
+		ARN:         arn,
+		Name:        cfg.Name,
+		Protocol:    cfg.Protocol,
+		Port:        cfg.Port,
+		VPCID:       cfg.VPCID,
+		TargetType:  targetType,
+		HealthPath:  hc.Path,
+		HealthCheck: hc,
+		Tags:        tags,
 	}
 
 	m.tgs.Set(arn, tg)
@@ -158,6 +232,69 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 	result := tg
 
 	return &result, nil
+}
+
+// Health-check defaults ELBv2 applies when a create request leaves a field
+// unset.
+const (
+	defaultHCIntervalSec   = 30
+	defaultHCTimeoutSec    = 5
+	defaultHCHealthyCount  = 5
+	defaultHCUnhealthyCoun = 2
+	defaultHCMatcher       = "200"
+	defaultHCPort          = "traffic-port"
+	defaultHCPath          = "/"
+)
+
+// isHTTPProtocol reports whether p is an HTTP-family protocol (which carries a
+// path and an HTTP matcher on its health check).
+func isHTTPProtocol(p string) bool {
+	return p == "HTTP" || p == "HTTPS"
+}
+
+// defaultHealthCheck fills a target group's health-check settings, applying the
+// ELBv2 protocol-derived defaults for any field the caller left unset.
+//
+//nolint:gocritic // hugeParam: called once per create, copy cost is irrelevant.
+func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
+	hc := cfg.HealthCheck
+
+	if hc.Protocol == "" {
+		hc.Protocol = cfg.Protocol
+	}
+
+	if hc.Port == "" {
+		hc.Port = defaultHCPort
+	}
+
+	if hc.Path == "" && isHTTPProtocol(hc.Protocol) {
+		hc.Path = cfg.HealthPath
+		if hc.Path == "" {
+			hc.Path = defaultHCPath
+		}
+	}
+
+	if hc.IntervalSeconds == 0 {
+		hc.IntervalSeconds = defaultHCIntervalSec
+	}
+
+	if hc.TimeoutSeconds == 0 {
+		hc.TimeoutSeconds = defaultHCTimeoutSec
+	}
+
+	if hc.HealthyThreshold == 0 {
+		hc.HealthyThreshold = defaultHCHealthyCount
+	}
+
+	if hc.UnhealthyThreshold == 0 {
+		hc.UnhealthyThreshold = defaultHCUnhealthyCoun
+	}
+
+	if hc.Matcher == "" && isHTTPProtocol(hc.Protocol) {
+		hc.Matcher = defaultHCMatcher
+	}
+
+	return hc
 }
 
 // DeleteTargetGroup deletes a target group by ARN.
@@ -233,12 +370,17 @@ func filterToSlice[T any](store *memstore.Store[T], pred func(string, T) bool) [
 
 // CreateListener creates a new listener on a load balancer.
 func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*driver.ListenerInfo, error) {
-	if _, ok := m.lbs.Get(cfg.LBARN); !ok {
+	lb, ok := m.lbs.Get(cfg.LBARN)
+	if !ok {
 		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", cfg.LBARN)
 	}
 
+	// A listener ARN embeds the load balancer's resource path plus a unique
+	// listener id, never the full load balancer ARN (which would nest a second
+	// "arn:" inside the value and break ARN parsers).
+	listenerID := idgen.GenerateID("")
 	arn := idgen.AWSARN("elasticloadbalancing", m.opts.Region, m.opts.AccountID,
-		fmt.Sprintf("listener/%s/%08x", cfg.LBARN, cfg.Port))
+		fmt.Sprintf("listener/%s/%s", lb.Name, listenerID))
 
 	li := driver.ListenerInfo{
 		ARN:            arn,
@@ -262,6 +404,18 @@ func (m *Mock) DeleteListener(_ context.Context, arn string) error {
 	}
 
 	return nil
+}
+
+// GetListener returns a single listener by ARN.
+func (m *Mock) GetListener(_ context.Context, listenerARN string) (*driver.ListenerInfo, error) {
+	li, ok := m.listeners.Get(listenerARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "listener %q not found", listenerARN)
+	}
+
+	result := li
+
+	return &result, nil
 }
 
 // DescribeListeners returns all listeners for the specified load balancer.
@@ -348,6 +502,138 @@ func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInpu
 	m.listeners.Set(input.ListenerARN, li)
 
 	return nil
+}
+
+// ModifyTargetGroup applies a partial health-check update to an existing target
+// group, leaving any field the caller omitted unchanged.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
+func (m *Mock) ModifyTargetGroup(
+	_ context.Context, input driver.ModifyTargetGroupInput,
+) (*driver.TargetGroupInfo, error) {
+	tg, ok := m.tgs.Get(input.TargetGroupARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "target group %q not found", input.TargetGroupARN)
+	}
+
+	applyHealthCheckUpdate(&tg.HealthCheck, input)
+	tg.HealthPath = tg.HealthCheck.Path
+
+	m.tgs.Set(input.TargetGroupARN, tg)
+
+	result := tg
+
+	return &result, nil
+}
+
+// applyHealthCheckUpdate overlays the set fields of a ModifyTargetGroup request
+// onto an existing health check.
+//
+//nolint:gocritic // hugeParam: called once per modify, copy cost is irrelevant.
+func applyHealthCheckUpdate(hc *driver.HealthCheck, input driver.ModifyTargetGroupInput) {
+	if input.HealthCheckProto != "" {
+		hc.Protocol = input.HealthCheckProto
+	}
+
+	if input.HealthCheckPort != "" {
+		hc.Port = input.HealthCheckPort
+	}
+
+	if input.HealthCheckPath != "" {
+		hc.Path = input.HealthCheckPath
+	}
+
+	if input.IntervalSeconds != 0 {
+		hc.IntervalSeconds = input.IntervalSeconds
+	}
+
+	if input.TimeoutSeconds != 0 {
+		hc.TimeoutSeconds = input.TimeoutSeconds
+	}
+
+	if input.HealthyThreshold != 0 {
+		hc.HealthyThreshold = input.HealthyThreshold
+	}
+
+	if input.UnhealthyThreshold != 0 {
+		hc.UnhealthyThreshold = input.UnhealthyThreshold
+	}
+
+	if input.Matcher != "" {
+		hc.Matcher = input.Matcher
+	}
+}
+
+// ModifyRule replaces the conditions and/or actions of an existing rule.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
+func (m *Mock) ModifyRule(_ context.Context, input driver.ModifyRuleInput) (*driver.RuleInfo, error) {
+	rule, ok := m.rules.Get(input.RuleARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "rule %q not found", input.RuleARN)
+	}
+
+	if len(input.Conditions) > 0 {
+		rule.Conditions = append([]driver.RuleCondition(nil), input.Conditions...)
+	}
+
+	if len(input.Actions) > 0 {
+		rule.Actions = append([]driver.RuleAction(nil), input.Actions...)
+	}
+
+	m.rules.Set(input.RuleARN, rule)
+
+	result := rule
+
+	return &result, nil
+}
+
+// SetRulePriorities reassigns the priorities of the named rules and returns the
+// updated rules.
+func (m *Mock) SetRulePriorities(
+	_ context.Context, pairs []driver.RulePriorityPair,
+) ([]driver.RuleInfo, error) {
+	out := make([]driver.RuleInfo, 0, len(pairs))
+
+	for _, p := range pairs {
+		rule, ok := m.rules.Get(p.RuleARN)
+		if !ok {
+			return nil, errors.Newf(errors.NotFound, "rule %q not found", p.RuleARN)
+		}
+
+		rule.Priority = p.Priority
+		m.rules.Set(p.RuleARN, rule)
+		out = append(out, rule)
+	}
+
+	return out, nil
+}
+
+// SetSecurityGroups replaces the security groups attached to a load balancer.
+func (m *Mock) SetSecurityGroups(_ context.Context, lbARN string, securityGroups []string) error {
+	lb, ok := m.lbs.Get(lbARN)
+	if !ok {
+		return errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
+	}
+
+	lb.SecurityGroups = append([]string(nil), securityGroups...)
+	m.lbs.Set(lbARN, lb)
+
+	return nil
+}
+
+// SetSubnets replaces the subnets a load balancer is attached to and returns
+// the resulting subnet list.
+func (m *Mock) SetSubnets(_ context.Context, lbARN string, subnets []string) ([]string, error) {
+	lb, ok := m.lbs.Get(lbARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
+	}
+
+	lb.Subnets = append([]string(nil), subnets...)
+	m.lbs.Set(lbARN, lb)
+
+	return lb.Subnets, nil
 }
 
 // GetLBAttributes returns the attributes for a load balancer.
@@ -463,8 +749,9 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 				ID:   t.ID,
 				Port: t.Port,
 			},
-			State:  "initial",
-			Reason: "Target registration is in progress",
+			State:       "initial",
+			Reason:      "Elb.RegistrationInProgress",
+			Description: "Target registration is in progress",
 		}
 	}
 
@@ -492,14 +779,18 @@ func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targe
 	return nil
 }
 
-// DescribeTargetHealth returns the health status of all targets in a target group.
+// DescribeTargetHealth returns the health status of all targets in a target
+// group. A freshly registered target reports "initial" on its first describe
+// and then advances to "healthy", mirroring real ELBv2's registration
+// transition so target-health waiters make progress instead of hanging on a
+// permanently "initial" state.
 func (m *Mock) DescribeTargetHealth(_ context.Context, targetGroupARN string) ([]driver.TargetHealth, error) {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
 		return nil, errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
 	}
 
-	m.healthMu.RLock()
-	defer m.healthMu.RUnlock()
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
 
 	tgHealth, ok := m.health[targetGroupARN]
 	if !ok {
@@ -509,6 +800,14 @@ func (m *Mock) DescribeTargetHealth(_ context.Context, targetGroupARN string) ([
 	results := make([]driver.TargetHealth, 0, len(tgHealth))
 	for _, th := range tgHealth {
 		results = append(results, *th)
+
+		// Advance after the state is captured so the caller sees "initial"
+		// once and "healthy" on the next poll.
+		if th.State == "initial" {
+			th.State = "healthy"
+			th.Reason = ""
+			th.Description = ""
+		}
 	}
 
 	return results, nil

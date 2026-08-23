@@ -16,11 +16,13 @@ func (h *Handler) createLoadBalancer(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
 	cfg := lbdriver.LBConfig{
-		Name:    form.Get("Name"),
-		Type:    typeOrDefault(form.Get("Type")),
-		Scheme:  schemeOrDefault(form.Get("Scheme")),
-		Subnets: awsquery.ListStrings(form, "Subnets.member"),
-		Tags:    parseTags(form),
+		Name:           form.Get("Name"),
+		Type:           typeOrDefault(form.Get("Type")),
+		Scheme:         schemeOrDefault(form.Get("Scheme")),
+		Subnets:        awsquery.ListStrings(form, "Subnets.member"),
+		SecurityGroups: awsquery.ListStrings(form, "SecurityGroups.member"),
+		IPAddressType:  form.Get("IpAddressType"),
+		Tags:           parseTags(form),
 	}
 
 	lb, err := h.lb.CreateLoadBalancer(r.Context(), cfg)
@@ -114,12 +116,14 @@ func (h *Handler) createTargetGroup(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
 	cfg := lbdriver.TargetGroupConfig{
-		Name:       form.Get("Name"),
-		Protocol:   form.Get("Protocol"),
-		Port:       formInt(form.Get("Port")),
-		VPCID:      form.Get("VpcId"),
-		HealthPath: form.Get("HealthCheckPath"),
-		Tags:       parseTags(form),
+		Name:        form.Get("Name"),
+		Protocol:    form.Get("Protocol"),
+		Port:        formInt(form.Get("Port")),
+		VPCID:       form.Get("VpcId"),
+		TargetType:  form.Get("TargetType"),
+		HealthPath:  form.Get("HealthCheckPath"),
+		HealthCheck: parseHealthCheck(form),
+		Tags:        parseTags(form),
 	}
 
 	tg, err := h.lb.CreateTargetGroup(r.Context(), cfg)
@@ -383,8 +387,9 @@ func (h *Handler) describeTargetHealth(w http.ResponseWriter, r *http.Request) {
 		out.Member = append(out.Member, targetHealthDescriptionXML{
 			Target: targetDescriptionXML{ID: th.Target.ID, Port: th.Target.Port},
 			TargetHealth: &targetHealthXML{
-				State:  th.State,
-				Reason: th.Reason,
+				State:       th.State,
+				Reason:      th.Reason,
+				Description: th.Description,
 			},
 		})
 	}
@@ -397,6 +402,22 @@ func (h *Handler) describeTargetHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- form parsing helpers ---
+
+// parseHealthCheck parses the health-check fields of a CreateTargetGroup
+// request. Unset fields stay zero so the driver can apply its protocol-derived
+// defaults.
+func parseHealthCheck(form url.Values) lbdriver.HealthCheck {
+	return lbdriver.HealthCheck{
+		Protocol:           form.Get("HealthCheckProtocol"),
+		Port:               form.Get("HealthCheckPort"),
+		Path:               form.Get("HealthCheckPath"),
+		IntervalSeconds:    formInt(form.Get("HealthCheckIntervalSeconds")),
+		TimeoutSeconds:     formInt(form.Get("HealthCheckTimeoutSeconds")),
+		HealthyThreshold:   formInt(form.Get("HealthyThresholdCount")),
+		UnhealthyThreshold: formInt(form.Get("UnhealthyThresholdCount")),
+		Matcher:            form.Get("Matcher.HttpCode"),
+	}
+}
 
 // parseTags parses the ELBv2 Tags.member.N.{Key,Value} entries.
 func parseTags(form url.Values) map[string]string {
