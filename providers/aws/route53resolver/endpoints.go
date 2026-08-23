@@ -2,6 +2,8 @@ package route53resolver
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -26,6 +28,23 @@ func endpointIDPrefix(direction string) string {
 // minEndpointIPs is the minimum number of IP addresses AWS requires a Resolver
 // endpoint to retain.
 const minEndpointIPs = 2
+
+// hostVPCFor derives the VPC that hosts a Resolver endpoint from its subnets.
+// Real Route 53 Resolver reports HostVPCId as the VPC the endpoint's subnets
+// belong to; we model subnet→VPC with a stable hash so the same subnet always
+// maps to the same VPC id (and a create with no subnet still gets a VPC).
+func hostVPCFor(ips []driver.IPAddress) string {
+	for i := range ips {
+		if ips[i].SubnetID != "" {
+			h := fnv.New32a()
+			_, _ = h.Write([]byte(ips[i].SubnetID))
+
+			return fmt.Sprintf("vpc-%08x", h.Sum32())
+		}
+	}
+
+	return idgen.GenerateID("vpc-")
+}
 
 func notFound(id string) error {
 	return errors.Newf(errors.NotFound, "resolver endpoint %q not found", id)
@@ -82,11 +101,12 @@ func (m *Mock) CreateResolverEndpoint(
 		Name:                      in.Name,
 		CreatorRequestID:          in.CreatorRequestID,
 		Direction:                 in.Direction,
+		HostVPCID:                 hostVPCFor(in.IPAddresses),
 		IPAddressCount:            i32(len(ips)),
 		SecurityGroupIDs:          append([]string(nil), in.SecurityGroupIDs...),
 		IPAddresses:               ips,
-		Status:                    statusOperational,
-		StatusMessage:             "This Resolver Endpoint is operational.",
+		Status:                    statusCreating,
+		StatusMessage:             "This Resolver Endpoint is being created.",
 		ResolverEndpointType:      epType,
 		Protocols:                 append([]string(nil), in.Protocols...),
 		OutpostARN:                in.OutpostARN,
@@ -115,6 +135,18 @@ func (m *Mock) GetResolverEndpoint(_ context.Context, id string) (*driver.Resolv
 	e, ok := m.endpoints.Get(id)
 	if !ok {
 		return nil, notFound(id)
+	}
+
+	// Real Route 53 Resolver returns a freshly created endpoint as CREATING and
+	// then transitions it to OPERATIONAL. Advance the status on read so the SDK's
+	// ResolverEndpointCreated waiter (which polls GetResolverEndpoint) completes.
+	if e.Status == statusCreating {
+		updated := cloneEndpoint(e)
+		updated.Status = statusOperational
+		updated.StatusMessage = "This Resolver Endpoint is operational."
+		updated.ModifiedAt = m.now()
+		m.endpoints.Set(id, &updated)
+		e = &updated
 	}
 
 	out := cloneEndpoint(e)
