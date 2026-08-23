@@ -13,6 +13,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -277,7 +278,10 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		return nil, err
 	}
 
-	matched := m.matchQueryItems(td, pkField, skField, &input)
+	matched, err := m.matchQueryItems(td, pkField, skField, &input)
+	if err != nil {
+		return nil, err
+	}
 
 	limit := input.Limit
 	if limit <= 0 {
@@ -323,7 +327,12 @@ func resolveKeyFields(td *tableData, indexName string) (pkField, skField string,
 
 func (m *Mock) matchQueryItems(
 	td *tableData, pkField, skField string, input *driver.QueryInput,
-) []map[string]any {
+) ([]map[string]any, error) {
+	node, err := compileFilter(input.FilterExpression, input.ExprNames, input.ExprValues)
+	if err != nil {
+		return nil, err
+	}
+
 	allItems := td.items.All()
 
 	var matched []map[string]any
@@ -333,32 +342,65 @@ func (m *Mock) matchQueryItems(
 			continue
 		}
 
-		pkVal := fmt.Sprintf("%v", item[pkField])
-		if pkVal != fmt.Sprintf("%v", input.KeyCondition.PartitionVal) {
+		if !matchesKeyCondition(item, pkField, skField, input) {
 			continue
-		}
-
-		if input.KeyCondition.SortOp != "" && skField != "" {
-			skVal := fmt.Sprintf("%v", item[skField])
-			condSK := fmt.Sprintf("%v", input.KeyCondition.SortVal)
-
-			if !applySortCondition(skVal, input.KeyCondition.SortOp, condSK, input.KeyCondition.SortValEnd) {
-				continue
-			}
 		}
 
 		// Apply the FilterExpression (post key-condition), matching real
 		// DynamoDB: Query filters the key-matched set the same way Scan does.
-		if !matchesFilters(item, input.Filters) {
-			continue
+		ok, ferr := passesFilter(node, input.Filters, item)
+		if ferr != nil {
+			return nil, ferr
 		}
 
-		matched = append(matched, item)
+		if ok {
+			matched = append(matched, item)
+		}
 	}
 
-	return matched
+	return matched, nil
 }
 
+func matchesKeyCondition(item map[string]any, pkField, skField string, input *driver.QueryInput) bool {
+	pkVal := fmt.Sprintf("%v", item[pkField])
+	if pkVal != fmt.Sprintf("%v", input.KeyCondition.PartitionVal) {
+		return false
+	}
+
+	if input.KeyCondition.SortOp != "" && skField != "" {
+		skVal := fmt.Sprintf("%v", item[skField])
+		condSK := fmt.Sprintf("%v", input.KeyCondition.SortVal)
+
+		if !applySortCondition(skVal, input.KeyCondition.SortOp, condSK, input.KeyCondition.SortValEnd) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// compileFilter parses a raw FilterExpression once per request. An empty
+// expression yields a nil node, selecting the legacy Filters path.
+func compileFilter(filterExpr string, names map[string]string, values map[string]any) (expr.Node, error) {
+	if strings.TrimSpace(filterExpr) == "" {
+		return nil, nil
+	}
+
+	return expr.ParseCondition(filterExpr, names, values)
+}
+
+// passesFilter applies the parsed FilterExpression when present, else falls
+// back to the legacy flat ScanFilter matching (back-compat for direct driver
+// callers that populate Filters instead of FilterExpression).
+func passesFilter(node expr.Node, legacy []driver.ScanFilter, item map[string]any) (bool, error) {
+	if node != nil {
+		return expr.Eval(node, item)
+	}
+
+	return matchesFilters(item, legacy), nil
+}
+
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
 	m.mu.RLock()
 	td, exists := m.tables[input.Table]
@@ -368,6 +410,11 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", input.Table)
 	}
 
+	node, err := compileFilter(input.FilterExpression, input.ExprNames, input.ExprValues)
+	if err != nil {
+		return nil, err
+	}
+
 	allItems := td.items.All()
 
 	var matched []map[string]any
@@ -377,7 +424,12 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 			continue
 		}
 
-		if matchesFilters(item, input.Filters) {
+		ok, ferr := passesFilter(node, input.Filters, item)
+		if ferr != nil {
+			return nil, ferr
+		}
+
+		if ok {
 			matched = append(matched, item)
 		}
 	}

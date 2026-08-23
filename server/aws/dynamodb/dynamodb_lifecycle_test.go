@@ -508,8 +508,8 @@ func TestDDBQueryEdges(t *testing.T) {
 	require.ErrorAs(t, err, &rnf, "Query with unknown IndexName")
 }
 
-// TestDDBScanWithFilters: AND-combined scan filters with =, !=,
-// numeric >, <= and the emulator's infix CONTAINS dialect.
+// TestDDBScanWithFilters: AND-combined scan filters with =, <>,
+// numeric >, <= and the real contains() function form.
 func TestDDBScanWithFilters(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
@@ -552,7 +552,7 @@ func TestDDBScanWithFilters(t *testing.T) {
 	assert.Equal(t, int32(3), scan("category = :c",
 		map[string]ddbtypes.AttributeValue{":c": sAttr("electronics")}).Count)
 
-	assert.Equal(t, int32(2), scan("category != :c",
+	assert.Equal(t, int32(2), scan("category <> :c",
 		map[string]ddbtypes.AttributeValue{":c": sAttr("electronics")}).Count)
 
 	// Numeric comparison: both sides parse as float64.
@@ -564,8 +564,8 @@ func TestDDBScanWithFilters(t *testing.T) {
 	assert.Equal(t, int32(2), scan("price <= :p",
 		map[string]ddbtypes.AttributeValue{":p": nAttr("35")}).Count)
 
-	// Emulator dialect: infix CONTAINS (real DynamoDB uses contains(name, :s)).
-	assert.Equal(t, int32(3), scan("name CONTAINS :s",
+	// Real DynamoDB contains(path, operand) function form.
+	assert.Equal(t, int32(3), scan("contains(name, :s)",
 		map[string]ddbtypes.AttributeValue{":s": sAttr("Widget")}).Count)
 }
 
@@ -899,10 +899,6 @@ func TestDDBTypedErrors(t *testing.T) {
 // TestDDBConditionalWrites: a conditional put succeeds when the
 // item is absent, and violating the condition must yield
 // ConditionalCheckFailedException like real DynamoDB.
-//
-// NOTE: the emulator does not parse ConditionExpression at all (PutItem is a
-// blind upsert with no ConditionalCheckFailedException path), so the
-// violation subtest is expected to surface that divergence.
 func TestDDBConditionalWrites(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
@@ -1123,4 +1119,203 @@ func TestDDBQueryGSI(t *testing.T) {
 	}
 
 	assert.True(t, ids["u1"] && ids["u2"], "GSI query returns both matching users")
+}
+
+// lAttr builds a DynamoDB list AttributeValue from element AttributeValues.
+func lAttr(elems ...ddbtypes.AttributeValue) ddbtypes.AttributeValue {
+	return &ddbtypes.AttributeValueMemberL{Value: elems}
+}
+
+// TestDDBScanFilterExpressionGrammar drives the full FilterExpression grammar
+// through a real-SDK Scan: functions (attribute_exists/_not_exists, contains,
+// size), boolean operators (OR, NOT), IN, BETWEEN, and type-aware equality
+// (a numeric literal must not match a value stored as a string).
+func TestDDBScanFilterExpressionGrammar(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "people", "id", "")
+
+	suiteDDBPut(t, client, "people", map[string]ddbtypes.AttributeValue{
+		"id": sAttr("p1"), "email": sAttr("a@x.com"), "name": sAttr("Alice"),
+		"tags": lAttr(sAttr("red"), sAttr("blue")), "n": nAttr("10"), "status": sAttr("active"),
+	})
+	suiteDDBPut(t, client, "people", map[string]ddbtypes.AttributeValue{
+		"id": sAttr("p2"), "email": sAttr("b@x.com"), "name": sAttr("Bob"),
+		"tags": lAttr(sAttr("green")), "n": nAttr("20"), "status": sAttr("inactive"),
+	})
+	suiteDDBPut(t, client, "people", map[string]ddbtypes.AttributeValue{
+		"id": sAttr("p3"), "name": sAttr("Carol"), // no email
+		"tags": lAttr(sAttr("red")), "n": nAttr("30"), "status": sAttr("pending"),
+	})
+	suiteDDBPut(t, client, "people", map[string]ddbtypes.AttributeValue{
+		"id": sAttr("p4"), "email": sAttr("d@x.com"), "name": sAttr("Dave"),
+		"n": sAttr("25"), "status": sAttr("active"), // n stored as a STRING
+	})
+
+	scanF := func(filter string, names map[string]string, vals map[string]ddbtypes.AttributeValue) int32 {
+		in := &dynamodb.ScanInput{
+			TableName:                 aws.String("people"),
+			FilterExpression:          aws.String(filter),
+			ExpressionAttributeValues: vals,
+			ExpressionAttributeNames:  names,
+		}
+
+		out, err := client.Scan(ctx, in)
+		require.NoError(t, err, "Scan filter=%q", filter)
+
+		return out.Count
+	}
+
+	assert.Equal(t, int32(3), scanF("attribute_exists(email)", nil, nil),
+		"attribute_exists selects rows that have the attribute")
+	assert.Equal(t, int32(4), scanF("attribute_not_exists(x)", nil, nil),
+		"attribute_not_exists(x) matches every row (x is never present)")
+	assert.Equal(t, int32(2), scanF("contains(tags, :t)", nil,
+		map[string]ddbtypes.AttributeValue{":t": sAttr("red")}),
+		"contains() tests list membership")
+	assert.Equal(t, int32(2), scanF("size(#nm) > :len",
+		map[string]string{"#nm": "name"},
+		map[string]ddbtypes.AttributeValue{":len": nAttr("4")}),
+		"size() of a string attribute compared numerically")
+	assert.Equal(t, int32(3), scanF("status = :s1 OR n = :n1", nil,
+		map[string]ddbtypes.AttributeValue{":s1": sAttr("active"), ":n1": nAttr("30")}),
+		"OR unions two single-attribute comparisons")
+	assert.Equal(t, int32(2), scanF("NOT status = :s", nil,
+		map[string]ddbtypes.AttributeValue{":s": sAttr("active")}),
+		"NOT negates the inner comparison")
+	assert.Equal(t, int32(3), scanF("status IN (:s1, :s2)", nil,
+		map[string]ddbtypes.AttributeValue{":s1": sAttr("active"), ":s2": sAttr("pending")}),
+		"IN matches any listed value")
+	assert.Equal(t, int32(2), scanF("n BETWEEN :lo AND :hi", nil,
+		map[string]ddbtypes.AttributeValue{":lo": nAttr("15"), ":hi": nAttr("30")}),
+		"BETWEEN is inclusive and numeric (the string-typed n is excluded)")
+
+	// Type-aware equality: :numeric (N 25) must NOT match p4's n stored as the
+	// string "25", but a numeric equality on a numerically-stored value does.
+	assert.Equal(t, int32(0), scanF("n = :numeric", nil,
+		map[string]ddbtypes.AttributeValue{":numeric": nAttr("25")}),
+		"a number literal must not equal a string-typed attribute")
+	assert.Equal(t, int32(1), scanF("n = :ten", nil,
+		map[string]ddbtypes.AttributeValue{":ten": nAttr("10")}),
+		"numeric equality still matches a numerically-stored value")
+}
+
+// TestDDBQueryFilterBeginsWith proves begins_with() works as a Query
+// FilterExpression (post key-condition), distinct from the KeyCondition path.
+func TestDDBQueryFilterBeginsWith(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "logs", "app", "ts")
+
+	for _, ts := range []string{"2023-12-01", "2024-01-01", "2024-02-01"} {
+		suiteDDBPut(t, client, "logs", map[string]ddbtypes.AttributeValue{
+			"app": sAttr("web"), "ts": sAttr(ts),
+		})
+	}
+
+	// The sort key (ts) is filtered with begins_with in the FilterExpression —
+	// distinct from the KeyConditionExpression, which only matches the
+	// partition key here.
+	out, err := client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String("logs"),
+		KeyConditionExpression: aws.String("app = :a"),
+		FilterExpression:       aws.String("begins_with(ts, :p)"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":a": sAttr("web"), ":p": sAttr("2024"),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(2), out.Count, "begins_with filter keeps only the 2024 rows")
+	for _, item := range out.Items {
+		assert.True(t, strings.HasPrefix(attrS(t, item, "ts"), "2024"))
+	}
+}
+
+// TestDDBConditionExpressionGrammar covers ConditionExpression on PutItem
+// (compound attribute_not_exists + size), UpdateItem and DeleteItem
+// (attribute_exists guards), asserting ConditionalCheckFailedException on
+// violation and success when the condition holds.
+func TestDDBConditionExpressionGrammar(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "cond2", "pk", "")
+
+	var ccf *ddbtypes.ConditionalCheckFailedException
+
+	// Seed an item so the guards below have something to evaluate against.
+	suiteDDBPut(t, client, "cond2", map[string]ddbtypes.AttributeValue{
+		"pk": sAttr("X"), "name": sAttr("hi"),
+	})
+
+	t.Run("PutItem compound condition fails on an existing item", func(t *testing.T) {
+		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName:                aws.String("cond2"),
+			Item:                     map[string]ddbtypes.AttributeValue{"pk": sAttr("X"), "name": sAttr("new")},
+			ConditionExpression:      aws.String("attribute_not_exists(pk) AND size(#n) < :m"),
+			ExpressionAttributeNames: map[string]string{"#n": "name"},
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":m": nAttr("10"),
+			},
+		})
+		require.ErrorAs(t, err, &ccf, "attribute_not_exists(pk) must fail when pk exists")
+	})
+
+	t.Run("PutItem compound condition passes when it holds", func(t *testing.T) {
+		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName:                aws.String("cond2"),
+			Item:                     map[string]ddbtypes.AttributeValue{"pk": sAttr("X"), "name": sAttr("hey")},
+			ConditionExpression:      aws.String("attribute_exists(pk) AND size(#n) < :m"),
+			ExpressionAttributeNames: map[string]string{"#n": "name"},
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":m": nAttr("10"),
+			},
+		})
+		require.NoError(t, err, "attribute_exists(pk) AND size(name) < 10 holds")
+
+		got := suiteDDBGet(t, client, "cond2", map[string]ddbtypes.AttributeValue{"pk": sAttr("X")})
+		require.NotNil(t, got.Item)
+		assert.Equal(t, "hey", attrS(t, got.Item, "name"))
+	})
+
+	t.Run("UpdateItem guarded by attribute_exists", func(t *testing.T) {
+		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String("cond2"),
+			Key:                       map[string]ddbtypes.AttributeValue{"pk": sAttr("X")},
+			UpdateExpression:          aws.String("SET v = :v"),
+			ConditionExpression:       aws.String("attribute_exists(pk)"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": nAttr("1")},
+		})
+		require.NoError(t, err, "guard holds on the existing item")
+
+		_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String("cond2"),
+			Key:                       map[string]ddbtypes.AttributeValue{"pk": sAttr("missing")},
+			UpdateExpression:          aws.String("SET v = :v"),
+			ConditionExpression:       aws.String("attribute_exists(pk)"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": nAttr("1")},
+		})
+		require.ErrorAs(t, err, &ccf, "attribute_exists guard fails on a missing item")
+	})
+
+	t.Run("DeleteItem guarded by attribute_exists", func(t *testing.T) {
+		_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName:           aws.String("cond2"),
+			Key:                 map[string]ddbtypes.AttributeValue{"pk": sAttr("missing")},
+			ConditionExpression: aws.String("attribute_exists(pk)"),
+		})
+		require.ErrorAs(t, err, &ccf, "delete guard fails on a missing item")
+
+		_, err = client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName:           aws.String("cond2"),
+			Key:                 map[string]ddbtypes.AttributeValue{"pk": sAttr("X")},
+			ConditionExpression: aws.String("attribute_exists(pk)"),
+		})
+		require.NoError(t, err, "delete guard holds on the existing item")
+
+		got := suiteDDBGet(t, client, "cond2", map[string]ddbtypes.AttributeValue{"pk": sAttr("X")})
+		assert.Nil(t, got.Item)
+	})
 }

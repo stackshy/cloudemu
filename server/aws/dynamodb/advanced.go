@@ -19,6 +19,7 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		Key                       map[string]any    `json:"Key"`
 		UpdateExpression          string            `json:"UpdateExpression"`
+		ConditionExpression       string            `json:"ConditionExpression"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ReturnValues              string            `json:"ReturnValues"`
@@ -28,13 +29,21 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actions := parseUpdateExpression(req.UpdateExpression,
-		fromWireItem(req.ExpressionAttributeValues), req.ExpressionAttributeNames)
+	key := fromWireItem(req.Key)
+	vals := fromWireItem(req.ExpressionAttributeValues)
+
+	// ExpressionAttributeValues serve both the UpdateExpression and the
+	// ConditionExpression, matching real DynamoDB. Gate the mutation on the
+	// condition (evaluated against the current item) before applying actions.
+	if !h.gateCondition(r.Context(), w, req.TableName, key,
+		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
+		return
+	}
 
 	input := dbdriver.UpdateItemInput{
 		Table:   req.TableName,
-		Key:     fromWireItem(req.Key),
-		Actions: actions,
+		Key:     key,
+		Actions: parseUpdateExpression(req.UpdateExpression, vals, req.ExpressionAttributeNames),
 	}
 
 	updated, err := h.db.UpdateItem(r.Context(), input)
@@ -229,11 +238,14 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vals := fromWireItem(req.ExpressionAttributeValues)
-	filters := parseFilterExpression(req.FilterExpression, vals, req.ExpressionAttributeNames)
 
+	// Flow the raw FilterExpression to the driver, which parses and evaluates
+	// it with full grammar fidelity.
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
 		Table:             req.TableName,
-		Filters:           filters,
+		FilterExpression:  req.FilterExpression,
+		ExprNames:         req.ExpressionAttributeNames,
+		ExprValues:        vals,
 		Limit:             req.Limit,
 		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
 	})
@@ -257,57 +269,6 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, resp)
-}
-
-// parseFilterExpression turns "a = :v AND b > :w" into driver ScanFilters.
-// Supports a single clause or AND-joined clauses.
-func parseFilterExpression(expr string, vals map[string]any, names map[string]string) []dbdriver.ScanFilter {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return nil
-	}
-
-	var filters []dbdriver.ScanFilter
-
-	// A valid filter clause has exactly 3 tokens: field, op, value placeholder.
-	const filterTokens = 3
-
-	for _, clause := range splitByUpper(expr, " AND ") {
-		parts := strings.Fields(clause)
-		if len(parts) < filterTokens {
-			continue
-		}
-
-		filters = append(filters, dbdriver.ScanFilter{
-			Field: resolveAttrName(parts[0], names),
-			Op:    parts[1],
-			Value: resolveExprVal(parts[2], vals),
-		})
-	}
-
-	return filters
-}
-
-// splitByUpper splits s by sep, matching sep case-insensitively. The upstream
-// splitter in the query handler already has the same trick for KeyCondition;
-// we duplicate it locally to keep advanced.go self-contained.
-func splitByUpper(s, sep string) []string {
-	upper := strings.ToUpper(s)
-
-	var parts []string
-
-	start := 0
-
-	for {
-		i := strings.Index(upper[start:], strings.ToUpper(sep))
-		if i < 0 {
-			parts = append(parts, strings.TrimSpace(s[start:]))
-			return parts
-		}
-
-		parts = append(parts, strings.TrimSpace(s[start:start+i]))
-		start += i + len(sep)
-	}
 }
 
 // batchWriteItem handles BatchWriteItem (puts/deletes across one or more
