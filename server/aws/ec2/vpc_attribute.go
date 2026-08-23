@@ -55,7 +55,15 @@ func (h *Handler) describeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 		VpcID:     id,
 	}
 
-	switch r.Form.Get("Attribute") {
+	attr := r.Form.Get("Attribute")
+	if attr == "" {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "MissingParameter",
+			"The request must contain the parameter Attribute")
+
+		return
+	}
+
+	switch attr {
 	case "enableDnsSupport":
 		resp.EnableDNSSupport = &vpcAttributeBoolXML{Value: vpcs[0].EnableDNSSupport}
 	case "enableDnsHostnames":
