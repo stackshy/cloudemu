@@ -12,6 +12,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
 const targetPrefix = "DynamoDB_20120810."
@@ -209,12 +210,14 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // mirrors deleteItem's condition-gated write path over Item, not Key.
 func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName                string            `json:"TableName"`
-		Item                     map[string]any    `json:"Item"`
-		ConditionExpression      string            `json:"ConditionExpression"`
-		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
+		TableName                 string            `json:"TableName"`
+		Item                      map[string]any    `json:"Item"`
+		ConditionExpression       string            `json:"ConditionExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -222,13 +225,10 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	item := fromWireItem(req.Item)
+	vals := fromWireItem(req.ExpressionAttributeValues)
 
-	if ok, err := h.checkCondition(r.Context(), req.TableName, item, req.ConditionExpression, req.ExpressionAttributeNames); err != nil {
-		writeErr(w, err)
-		return
-	} else if !ok {
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"ConditionalCheckFailedException", "The conditional request failed")
+	if !h.gateCondition(r.Context(), w, req.TableName, item,
+		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
 		return
 	}
 
@@ -240,55 +240,62 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
-// checkCondition evaluates the supported ConditionExpression forms —
-// attribute_not_exists(field) and attribute_exists(field) — against the
-// current stored item, keyed by the incoming item's key attributes.
-// Real DynamoDB users lean on attribute_not_exists(pk) for create-if-absent.
+// gateCondition evaluates a ConditionExpression and, on failure, writes the
+// matching DynamoDB error response. It returns true when the caller should
+// proceed with the mutation. Shared by PutItem, UpdateItem and DeleteItem.
+func (h *Handler) gateCondition(
+	ctx context.Context,
+	w http.ResponseWriter,
+	table string,
+	keySource map[string]any,
+	condExpr string,
+	names map[string]string,
+	values map[string]any,
+) bool {
+	ok, err := h.checkCondition(ctx, table, keySource, condExpr, names, values)
+	if err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	if !ok {
+		wire.WriteJSONError(w, http.StatusBadRequest,
+			"ConditionalCheckFailedException", "The conditional request failed")
+		return false
+	}
+
+	return true
+}
+
+// checkCondition evaluates a DynamoDB ConditionExpression against the current
+// stored item, using the full expression grammar (functions, boolean
+// operators, IN/BETWEEN, size(), type-aware comparisons). keySource carries
+// the item's key attributes (the full item for PutItem, the Key map for
+// Update/Delete). A missing item is evaluated against an empty item, so
+// attribute_not_exists is true and attribute_exists is false — matching real
+// DynamoDB create-if-absent semantics. A malformed expression is a
+// cerrors.InvalidArgument; a well-formed but unmet condition returns false.
 func (h *Handler) checkCondition(
 	ctx context.Context,
 	table string,
-	item map[string]any,
-	expr string,
+	keySource map[string]any,
+	condExpr string,
 	names map[string]string,
+	values map[string]any,
 ) (bool, error) {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
+	condExpr = strings.TrimSpace(condExpr)
+	if condExpr == "" {
 		return true, nil
 	}
-
-	var (
-		rest       string
-		wantAbsent bool
-	)
-	switch {
-	case strings.HasPrefix(expr, "attribute_not_exists("):
-		rest = strings.TrimPrefix(expr, "attribute_not_exists(")
-		wantAbsent = true
-	case strings.HasPrefix(expr, "attribute_exists("):
-		rest = strings.TrimPrefix(expr, "attribute_exists(")
-	default:
-		return false, cerrors.Newf(cerrors.InvalidArgument,
-			"unsupported ConditionExpression: %s", expr)
-	}
-
-	rest, ok := strings.CutSuffix(rest, ")")
-	field := strings.TrimSpace(rest)
-	// Reject compound expressions and malformed input rather than
-	// mis-evaluating them (only the single-function forms are supported).
-	if !ok || field == "" || strings.ContainsAny(field, " ()") {
-		return false, cerrors.Newf(cerrors.InvalidArgument,
-			"unsupported ConditionExpression: %s", expr)
-	}
-	field = resolveAttrName(field, names)
 
 	cfg, err := h.db.DescribeTable(ctx, table)
 	if err != nil {
 		return false, err
 	}
 
-	key := map[string]any{cfg.PartitionKey: item[cfg.PartitionKey]}
+	key := map[string]any{cfg.PartitionKey: keySource[cfg.PartitionKey]}
 	if cfg.SortKey != "" {
-		key[cfg.SortKey] = item[cfg.SortKey]
+		key[cfg.SortKey] = keySource[cfg.SortKey]
 	}
 
 	existing, err := h.db.GetItem(ctx, table, key)
@@ -296,15 +303,16 @@ func (h *Handler) checkCondition(
 		return false, err
 	}
 
-	var hasAttr bool
-	if existing != nil {
-		_, hasAttr = existing[field]
+	node, err := expr.ParseCondition(condExpr, names, values)
+	if err != nil {
+		return false, err
 	}
 
-	if wantAbsent {
-		return !hasAttr, nil
+	if existing == nil {
+		existing = map[string]any{}
 	}
-	return hasAttr, nil
+
+	return expr.Eval(node, existing)
 }
 
 func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
@@ -340,10 +348,14 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, resp)
 }
 
+//nolint:dupl // mirrors putItem's condition-gated write path over Key, not Item.
 func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string         `json:"TableName"`
-		Key       map[string]any `json:"Key"`
+		TableName                 string            `json:"TableName"`
+		Key                       map[string]any    `json:"Key"`
+		ConditionExpression       string            `json:"ConditionExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -351,6 +363,12 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fromWireItem(req.Key)
+	vals := fromWireItem(req.ExpressionAttributeValues)
+
+	if !h.gateCondition(r.Context(), w, req.TableName, key,
+		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
+		return
+	}
 
 	if err := h.db.DeleteItem(r.Context(), req.TableName, key); err != nil {
 		writeErr(w, err)
@@ -379,18 +397,22 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 
 	vals := fromWireItem(req.ExpressionAttributeValues)
 	kc := parseKeyCondition(req.KeyConditionExpression, vals, req.ExpressionAttributeNames)
-	filters := parseFilterExpression(req.FilterExpression, vals, req.ExpressionAttributeNames)
 
 	forward := true
 	if req.ScanIndexForward != nil {
 		forward = *req.ScanIndexForward
 	}
 
+	// Flow the raw FilterExpression (post key-condition) to the driver, which
+	// parses and evaluates it with full grammar fidelity. The KeyCondition
+	// path is unchanged.
 	result, err := h.db.Query(r.Context(), dbdriver.QueryInput{
 		Table:             req.TableName,
 		IndexName:         req.IndexName,
 		KeyCondition:      kc,
-		Filters:           filters,
+		FilterExpression:  req.FilterExpression,
+		ExprNames:         req.ExpressionAttributeNames,
+		ExprValues:        vals,
 		Limit:             req.Limit,
 		SortDescending:    !forward,
 		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
@@ -419,22 +441,22 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 // parseKeyCondition extracts a KeyCondition from a simple expression.
 // Supports: "pk = :v" and "pk = :v AND sk op :v2".
 func parseKeyCondition(
-	expr string,
+	keyExpr string,
 	vals map[string]any,
 	names map[string]string,
 ) dbdriver.KeyCondition {
 	kc := dbdriver.KeyCondition{}
-	expr = strings.TrimSpace(expr)
+	keyExpr = strings.TrimSpace(keyExpr)
 
 	const andSep = " AND "
 
-	andIdx := findCaseInsensitive(expr, andSep)
-	pkExpr := strings.TrimSpace(expr)
+	andIdx := findCaseInsensitive(keyExpr, andSep)
+	pkExpr := strings.TrimSpace(keyExpr)
 	skExpr := ""
 
 	if andIdx >= 0 {
-		pkExpr = strings.TrimSpace(expr[:andIdx])
-		skExpr = strings.TrimSpace(expr[andIdx+len(andSep):])
+		pkExpr = strings.TrimSpace(keyExpr[:andIdx])
+		skExpr = strings.TrimSpace(keyExpr[andIdx+len(andSep):])
 	}
 
 	// Expression fields: [0]=field, [1]=operator, [2]=value placeholder.

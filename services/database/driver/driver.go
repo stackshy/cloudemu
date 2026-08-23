@@ -94,9 +94,21 @@ type QueryInput struct {
 	Table        string
 	IndexName    string
 	KeyCondition KeyCondition
-	// Filters is the post-key-condition FilterExpression, applied to items
-	// that already match the key condition (same semantics as Scan.Filters).
-	Filters   []ScanFilter
+	// Filters is the legacy pre-simplified post-key-condition filter, applied
+	// to items that already match the key condition (same semantics as
+	// Scan.Filters). Retained for back-compat; ignored when FilterExpression
+	// is set.
+	Filters []ScanFilter
+
+	// FilterExpression is the raw DynamoDB FilterExpression. When non-empty it
+	// is parsed and evaluated with full grammar fidelity (functions, boolean
+	// operators, IN/BETWEEN, type-aware comparisons), taking precedence over
+	// the legacy Filters. ExprNames/ExprValues resolve #alias and :placeholder
+	// tokens (values already decoded to native Go).
+	FilterExpression string
+	ExprNames        map[string]string
+	ExprValues       map[string]any
+
 	Limit     int
 	PageToken string
 
@@ -116,8 +128,17 @@ type QueryInput struct {
 
 // ScanInput configures a scan operation.
 type ScanInput struct {
-	Table     string
-	Filters   []ScanFilter
+	Table string
+	// Filters is the legacy pre-simplified filter; ignored when
+	// FilterExpression is set. Retained for back-compat.
+	Filters []ScanFilter
+
+	// FilterExpression is the raw DynamoDB FilterExpression, evaluated with
+	// full grammar fidelity when non-empty (see QueryInput.FilterExpression).
+	FilterExpression string
+	ExprNames        map[string]string
+	ExprValues       map[string]any
+
 	Limit     int
 	PageToken string
 
