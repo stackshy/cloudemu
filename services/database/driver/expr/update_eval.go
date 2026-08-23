@@ -4,27 +4,35 @@ import cerrors "github.com/stackshy/cloudemu/v2/errors"
 
 // ApplyUpdate applies a parsed UpdateProgram to item, mutating it in place and
 // returning it. item is expected to be a caller-owned copy. Clauses apply in
-// SET, REMOVE, ADD, DELETE order. A SET operand that resolves to a missing
-// attribute, or an ADD/DELETE type mismatch, is a cerrors.InvalidArgument.
+// SET, REMOVE, ADD, DELETE order, and every operand is resolved against the
+// pre-update image of the item — DynamoDB evaluates all clauses against the
+// item as it was before the update. Because writes are copy-on-write, a shallow
+// snapshot stays pristine as item mutates. A SET operand that resolves to a
+// missing attribute, an ADD/DELETE type mismatch, or an invalid document path
+// is a cerrors.InvalidArgument.
 func ApplyUpdate(item map[string]any, prog *UpdateProgram) (map[string]any, error) {
+	orig := cloneMap(item)
+
 	for _, s := range prog.sets {
-		if err := applySet(item, s); err != nil {
+		if err := applySet(item, orig, s); err != nil {
 			return nil, err
 		}
 	}
 
 	for _, p := range prog.removes {
-		removePath(item, p.Parts)
+		if err := removePath(item, p.Parts); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, a := range prog.adds {
-		if err := applyAdd(item, a); err != nil {
+		if err := applyAdd(item, orig, a); err != nil {
 			return nil, err
 		}
 	}
 
 	for _, d := range prog.deletes {
-		if err := applyDelete(item, d); err != nil {
+		if err := applyDelete(item, orig, d); err != nil {
 			return nil, err
 		}
 	}
@@ -32,28 +40,24 @@ func ApplyUpdate(item map[string]any, prog *UpdateProgram) (map[string]any, erro
 	return item, nil
 }
 
-func applySet(item map[string]any, s setItem) error {
-	val, ok := evalUpdOperand(s.rhs, item)
+func applySet(item, orig map[string]any, s setItem) error {
+	val, ok := evalUpdOperand(s.rhs, orig)
 	if !ok {
 		return cerrors.New(cerrors.InvalidArgument, "SET operand refers to a missing attribute")
 	}
 
-	assignPath(item, s.path.Parts, val)
-
-	return nil
+	return assignPath(item, s.path.Parts, val)
 }
 
-func applyAdd(item map[string]any, a pathValue) error {
-	cur, exists := resolvePath(a.path.Parts, item)
+func applyAdd(item, orig map[string]any, a pathValue) error {
+	cur, exists := resolvePath(a.path.Parts, orig)
 
 	newVal, err := addValue(cur, exists, a.value.Value)
 	if err != nil {
 		return err
 	}
 
-	assignPath(item, a.path.Parts, newVal)
-
-	return nil
+	return assignPath(item, a.path.Parts, newVal)
 }
 
 // addValue computes the result of ADD: numeric addition (creating the
@@ -87,8 +91,8 @@ func addValue(cur any, exists bool, val any) (any, error) {
 	}
 }
 
-func applyDelete(item map[string]any, d pathValue) error {
-	cur, exists := resolvePath(d.path.Parts, item)
+func applyDelete(item, orig map[string]any, d pathValue) error {
+	cur, exists := resolvePath(d.path.Parts, orig)
 	if !exists {
 		return nil
 	}
@@ -99,13 +103,10 @@ func applyDelete(item map[string]any, d pathValue) error {
 	}
 
 	if SetIsEmpty(res) {
-		removePath(item, d.path.Parts)
-		return nil
+		return removePath(item, d.path.Parts)
 	}
 
-	assignPath(item, d.path.Parts, res)
-
-	return nil
+	return assignPath(item, d.path.Parts, res)
 }
 
 func evalUpdOperand(op updOperand, item map[string]any) (any, bool) {
@@ -178,47 +179,84 @@ func evalListAppend(o *updListAppend, item map[string]any) (any, bool) {
 // assignPath places value at parts within item. The top-level map is the
 // caller-owned copy and is mutated in place; nested containers are cloned
 // copy-on-write so structure shared with the stored item is never mutated. A
-// list index at or beyond the slice length appends, matching DynamoDB.
-func assignPath(item map[string]any, parts []PathPart, value any) {
+// document path that traverses an attribute of the wrong container type (e.g.
+// SET a.b where a is a scalar) is rejected, matching DynamoDB.
+func assignPath(item map[string]any, parts []PathPart, value any) error {
 	head := parts[0]
 
 	if len(parts) == 1 {
 		item[head.Name] = value
-		return
+		return nil
 	}
 
-	item[head.Name] = mergeAssign(item[head.Name], parts[1:], value)
+	child, err := mergeAssign(item[head.Name], parts[1:], value)
+	if err != nil {
+		return err
+	}
+
+	item[head.Name] = child
+
+	return nil
 }
 
-func mergeAssign(cur any, parts []PathPart, value any) any {
+func mergeAssign(cur any, parts []PathPart, value any) (any, error) {
 	part := parts[0]
 	last := len(parts) == 1
 
 	if part.IsIndex {
-		arr := cloneSlice(cur)
-
-		if last {
-			return setListElem(arr, part.Index, value)
-		}
-
-		if part.Index >= 0 && part.Index < len(arr) {
-			arr[part.Index] = mergeAssign(arr[part.Index], parts[1:], value)
-		}
-
-		return arr
+		return assignIndex(cur, part.Index, parts, last, value)
 	}
 
-	m := cloneMap(cur)
+	m, ok := cur.(map[string]any)
+	if !ok {
+		return nil, invalidPath()
+	}
+
+	m = cloneMap(m)
 
 	if last {
 		m[part.Name] = value
-	} else {
-		m[part.Name] = mergeAssign(m[part.Name], parts[1:], value)
+		return m, nil
 	}
 
-	return m
+	child, err := mergeAssign(m[part.Name], parts[1:], value)
+	if err != nil {
+		return nil, err
+	}
+
+	m[part.Name] = child
+
+	return m, nil
 }
 
+func assignIndex(cur any, idx int, parts []PathPart, last bool, value any) (any, error) {
+	arr, ok := cur.([]any)
+	if !ok {
+		return nil, invalidPath()
+	}
+
+	arr = cloneSlice(arr)
+
+	if last {
+		return setListElem(arr, idx, value), nil
+	}
+
+	if idx < 0 || idx >= len(arr) {
+		return nil, invalidPath()
+	}
+
+	child, err := mergeAssign(arr[idx], parts[1:], value)
+	if err != nil {
+		return nil, err
+	}
+
+	arr[idx] = child
+
+	return arr, nil
+}
+
+// setListElem sets arr[idx] = value, appending when idx is at or beyond the
+// slice length (DynamoDB appends rather than creating gaps).
 func setListElem(arr []any, idx int, value any) []any {
 	if idx >= 0 && idx < len(arr) {
 		arr[idx] = value
@@ -230,60 +268,97 @@ func setListElem(arr []any, idx int, value any) []any {
 
 // removePath deletes the value at parts within item, mutating the owned top map
 // in place and cloning nested containers copy-on-write. A list index shifts
-// later elements down; missing paths are a no-op.
-func removePath(item map[string]any, parts []PathPart) {
+// later elements down. A missing path is a no-op; a path that traverses the
+// wrong container type is rejected.
+func removePath(item map[string]any, parts []PathPart) error {
 	head := parts[0]
 
 	if len(parts) == 1 {
 		delete(item, head.Name)
-		return
+		return nil
 	}
 
-	if child, ok := item[head.Name]; ok {
-		item[head.Name] = mergeRemove(child, parts[1:])
+	child, ok := item[head.Name]
+	if !ok {
+		return nil
 	}
+
+	newChild, err := mergeRemove(child, parts[1:])
+	if err != nil {
+		return err
+	}
+
+	item[head.Name] = newChild
+
+	return nil
 }
 
-func mergeRemove(cur any, parts []PathPart) any {
+func mergeRemove(cur any, parts []PathPart) (any, error) {
 	part := parts[0]
 	last := len(parts) == 1
 
 	if part.IsIndex {
-		return removeListElem(cur, part.Index, parts, last)
+		return removeIndex(cur, part.Index, parts, last)
 	}
 
-	m := cloneMap(cur)
+	m, ok := cur.(map[string]any)
+	if !ok {
+		return nil, invalidPath()
+	}
+
+	m = cloneMap(m)
 
 	if last {
 		delete(m, part.Name)
-	} else if child, present := m[part.Name]; present {
-		m[part.Name] = mergeRemove(child, parts[1:])
+		return m, nil
 	}
 
-	return m
+	child, present := m[part.Name]
+	if !present {
+		return m, nil
+	}
+
+	nc, err := mergeRemove(child, parts[1:])
+	if err != nil {
+		return nil, err
+	}
+
+	m[part.Name] = nc
+
+	return m, nil
 }
 
-func removeListElem(cur any, idx int, parts []PathPart, last bool) any {
-	arr := cloneSlice(cur)
+func removeIndex(cur any, idx int, parts []PathPart, last bool) (any, error) {
+	arr, ok := cur.([]any)
+	if !ok {
+		return nil, invalidPath()
+	}
+
+	arr = cloneSlice(arr)
+
 	if idx < 0 || idx >= len(arr) {
-		return arr
+		return arr, nil
 	}
 
 	if last {
-		return append(arr[:idx:idx], arr[idx+1:]...)
+		return append(arr[:idx:idx], arr[idx+1:]...), nil
 	}
 
-	arr[idx] = mergeRemove(arr[idx], parts[1:])
+	child, err := mergeRemove(arr[idx], parts[1:])
+	if err != nil {
+		return nil, err
+	}
 
-	return arr
+	arr[idx] = child
+
+	return arr, nil
 }
 
-func cloneMap(v any) map[string]any {
-	src, ok := v.(map[string]any)
-	if !ok {
-		return map[string]any{}
-	}
+func invalidPath() error {
+	return cerrors.New(cerrors.InvalidArgument, "invalid document path for update")
+}
 
+func cloneMap(src map[string]any) map[string]any {
 	out := make(map[string]any, len(src))
 	for k, e := range src {
 		out[k] = e
@@ -292,8 +367,7 @@ func cloneMap(v any) map[string]any {
 	return out
 }
 
-func cloneSlice(v any) []any {
-	src, _ := v.([]any)
+func cloneSlice(src []any) []any {
 	out := make([]any, len(src))
 	copy(out, src)
 

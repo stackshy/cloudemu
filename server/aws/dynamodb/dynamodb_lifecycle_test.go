@@ -1551,6 +1551,18 @@ func TestDDBUpdateExpressionGrammar(t *testing.T) {
 		_, has := attrs["tags"]
 		assert.False(t, has, "an emptied set attribute is removed")
 	})
+
+	t.Run("ADD with a mismatched type is rejected", func(t *testing.T) {
+		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:        aws.String("acct"),
+			Key:              map[string]ddbtypes.AttributeValue{"id": sAttr("a1")},
+			UpdateExpression: aws.String("ADD balance :s"), // balance is a number
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":s": &ddbtypes.AttributeValueMemberSS{Value: []string{"x"}},
+			},
+		})
+		require.Error(t, err, "ADD a set to a numeric attribute must be a ValidationException")
+	})
 }
 
 // TestDDBSetTypesRoundTrip proves the wire codec decodes and re-encodes all

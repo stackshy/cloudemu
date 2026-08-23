@@ -11,7 +11,9 @@ import "bytes"
 type StringSet []string
 
 // NumberSet is a DynamoDB Number Set (NS). Elements are numeric values, kept as
-// float64 to match how scalar numbers (N) are modeled.
+// float64 to match how scalar numbers (N) are modeled; like scalar N, this does
+// not preserve DynamoDB's full decimal precision for very large or high-precision
+// numbers.
 type NumberSet []float64
 
 // BinarySet is a DynamoDB Binary Set (BS).

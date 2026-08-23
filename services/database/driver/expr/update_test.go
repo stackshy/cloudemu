@@ -155,3 +155,55 @@ func TestUpdateParseErrors(t *testing.T) {
 		assert.Error(t, err, "%q should fail to parse", raw)
 	}
 }
+
+func TestUpdateInvalidDocumentPath(t *testing.T) {
+	one := map[string]any{":v": float64(1)}
+
+	cases := []struct {
+		raw  string
+		item map[string]any
+	}{
+		{"SET a.b = :v", map[string]any{"a": "scalar"}},                // descend into a scalar
+		{"SET a.b = :v", map[string]any{}},                             // parent missing
+		{"REMOVE a[0]", map[string]any{"a": map[string]any{"x": 1.0}}}, // index into a map
+	}
+
+	for _, c := range cases {
+		prog, err := ParseUpdate(c.raw, nil, one)
+		require.NoError(t, err)
+
+		_, aerr := ApplyUpdate(c.item, prog)
+		assert.Error(t, aerr, "%q on %v should be an invalid document path", c.raw, c.item)
+	}
+}
+
+func TestUpdatePreUpdateImage(t *testing.T) {
+	// b reads the pre-update value of a, even though a is SET in the same
+	// expression (DynamoDB evaluates operands against the pre-update image).
+	out := mustUpdate(t, map[string]any{"a": float64(0)}, "SET a = :one, b = a",
+		map[string]any{":one": float64(1)})
+
+	assert.Equal(t, float64(1), out["a"])
+	assert.Equal(t, float64(0), out["b"], "b reads the pre-update value of a")
+}
+
+func TestUpdateListAppendDoesNotMutateSource(t *testing.T) {
+	src := []any{"x"}
+	out := mustUpdate(t, map[string]any{"l": src}, "SET l2 = list_append(l, :new)",
+		map[string]any{":new": []any{"y"}})
+
+	assert.Equal(t, []any{"x", "y"}, out["l2"])
+	assert.Equal(t, []any{"x"}, src, "list_append does not mutate the source list")
+}
+
+func TestUpdateNestedRemoveCopyOnWrite(t *testing.T) {
+	inner := map[string]any{"x": float64(1), "y": float64(2)}
+	out := mustUpdate(t, map[string]any{"m": inner}, "REMOVE m.x", nil)
+
+	m, ok := out["m"].(map[string]any)
+	require.True(t, ok)
+
+	_, hasX := m["x"]
+	assert.False(t, hasX, "m.x removed")
+	assert.Equal(t, float64(1), inner["x"], "the shared source map is not mutated")
+}
