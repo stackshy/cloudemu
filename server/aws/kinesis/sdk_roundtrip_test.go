@@ -283,3 +283,91 @@ func mustCreate(t *testing.T, c *awskinesis.Client, name string, shards int32) {
 		t.Fatalf("CreateStream(%s): %v", name, err)
 	}
 }
+
+func TestSDKListShardsPaginates(t *testing.T) {
+	ctx := context.Background()
+	c := newKinesisClient(t)
+
+	mustCreate(t, c, "shards", 4)
+
+	first, err := c.ListShards(ctx, &awskinesis.ListShardsInput{
+		StreamName: aws.String("shards"),
+		MaxResults: aws.Int32(2),
+	})
+	if err != nil {
+		t.Fatalf("ListShards page 1: %v", err)
+	}
+
+	if len(first.Shards) != 2 {
+		t.Fatalf("page 1 shards = %d, want 2", len(first.Shards))
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatal("page 1 NextToken empty; consumers can never see later shards")
+	}
+
+	second, err := c.ListShards(ctx, &awskinesis.ListShardsInput{NextToken: first.NextToken})
+	if err != nil {
+		t.Fatalf("ListShards page 2: %v", err)
+	}
+
+	if len(second.Shards) != 2 {
+		t.Fatalf("page 2 shards = %d, want 2", len(second.Shards))
+	}
+
+	seen := map[string]bool{}
+	for _, s := range append(append([]kinesistypes.Shard{}, first.Shards...), second.Shards...) {
+		seen[aws.ToString(s.ShardId)] = true
+	}
+
+	if len(seen) != 4 {
+		t.Fatalf("distinct shards across pages = %d, want 4", len(seen))
+	}
+}
+
+func TestSDKListStreamsPaginates(t *testing.T) {
+	ctx := context.Background()
+	c := newKinesisClient(t)
+
+	for _, n := range []string{"s-a", "s-b", "s-c"} {
+		mustCreate(t, c, n, 1)
+	}
+
+	first, err := c.ListStreams(ctx, &awskinesis.ListStreamsInput{Limit: aws.Int32(2)})
+	if err != nil {
+		t.Fatalf("ListStreams page 1: %v", err)
+	}
+
+	if !aws.ToBool(first.HasMoreStreams) {
+		t.Fatal("HasMoreStreams = false, want true")
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatal("page 1 NextToken empty; paginator cannot advance")
+	}
+
+	second, err := c.ListStreams(ctx, &awskinesis.ListStreamsInput{NextToken: first.NextToken})
+	if err != nil {
+		t.Fatalf("ListStreams page 2: %v", err)
+	}
+
+	total := len(first.StreamNames) + len(second.StreamNames)
+	if total != 3 {
+		t.Fatalf("streams across pages = %d, want 3", total)
+	}
+}
+
+func TestSDKGetRecordsMalformedIterator(t *testing.T) {
+	ctx := context.Background()
+	c := newKinesisClient(t)
+
+	_, err := c.GetRecords(ctx, &awskinesis.GetRecordsInput{ShardIterator: aws.String("!!!not-base64!!!")})
+	if err == nil {
+		t.Fatal("GetRecords with a malformed iterator should fail")
+	}
+
+	var invalid *kinesistypes.InvalidArgumentException
+	if !errors.As(err, &invalid) {
+		t.Fatalf("want InvalidArgumentException, got %T: %v", err, err)
+	}
+}

@@ -390,10 +390,16 @@ func TestSDKDescribeMissingStateMachine(t *testing.T) {
 func TestSDKDuplicateStateMachine(t *testing.T) {
 	ctx := context.Background()
 	c := newSFNClient(t)
-	createSM(t, c, "dup")
+	arn := createSM(t, c, "dup")
 
+	// A same-name create whose definition differs collides:
+	// StateMachineAlreadyExists.
+	const otherDefinition = `{"StartAt":"Done","States":{"Done":{"Type":"Succeed"}}}`
+
+	// A same-name create with conflicting parameters (different role) is a
+	// StateMachineAlreadyExists; an identical request would be idempotent.
 	_, err := c.CreateStateMachine(ctx, &awssfn.CreateStateMachineInput{
-		Name: aws.String("dup"), Definition: aws.String(definition),
+		Name: aws.String("dup"), Definition: aws.String(otherDefinition),
 		RoleArn: aws.String("arn:aws:iam::123456789012:role/svc"),
 	})
 	if err == nil {
@@ -408,6 +414,21 @@ func TestSDKDuplicateStateMachine(t *testing.T) {
 		}
 
 		t.Fatalf("want StateMachineAlreadyExists, got %v", err)
+	}
+
+	// CreateStateMachine is idempotent: a same-name create with the same
+	// definition/type returns the existing machine (HTTP 200) even when the
+	// roleArn differs — roleArn is ignored for the idempotency check.
+	out, err := c.CreateStateMachine(ctx, &awssfn.CreateStateMachineInput{
+		Name: aws.String("dup"), Definition: aws.String(definition),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/other"),
+	})
+	if err != nil {
+		t.Fatalf("idempotent CreateStateMachine: %v", err)
+	}
+
+	if got := aws.ToString(out.StateMachineArn); got != arn {
+		t.Fatalf("want existing ARN %q, got %q", arn, got)
 	}
 }
 
@@ -430,5 +451,189 @@ func TestSDKDescribeMissingExecution(t *testing.T) {
 		}
 
 		t.Fatalf("want ExecutionDoesNotExist, got %v", err)
+	}
+}
+
+func TestSDKCreateStateMachineInvalidDefinition(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	_, err := c.CreateStateMachine(ctx, &awssfn.CreateStateMachineInput{
+		Name:       aws.String("bad"),
+		Definition: aws.String(`{"foo":"bar"}`),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/svc"),
+	})
+	if err == nil {
+		t.Fatal("CreateStateMachine with a non-ASL definition should fail")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidDefinition" {
+		t.Fatalf("want InvalidDefinition, got %T: %v", err, err)
+	}
+}
+
+func TestSDKCreateStateMachineIdempotent(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	in := &awssfn.CreateStateMachineInput{
+		Name:       aws.String("idem"),
+		Definition: aws.String(definition),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/svc"),
+	}
+
+	first, err := c.CreateStateMachine(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateStateMachine #1: %v", err)
+	}
+
+	second, err := c.CreateStateMachine(ctx, in)
+	if err != nil {
+		t.Fatalf("identical CreateStateMachine should be idempotent, got: %v", err)
+	}
+
+	if aws.ToString(first.StateMachineArn) != aws.ToString(second.StateMachineArn) {
+		t.Fatalf("idempotent create returned a different ARN: %q vs %q",
+			aws.ToString(first.StateMachineArn), aws.ToString(second.StateMachineArn))
+	}
+}
+
+func TestSDKDescribeStateMachineConfigs(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	arn := createSM(t, c, "cfg")
+
+	desc, err := c.DescribeStateMachine(ctx, &awssfn.DescribeStateMachineInput{
+		StateMachineArn: aws.String(arn),
+	})
+	if err != nil {
+		t.Fatalf("DescribeStateMachine: %v", err)
+	}
+
+	if desc.LoggingConfiguration == nil {
+		t.Fatal("LoggingConfiguration nil, want default")
+	}
+
+	if desc.TracingConfiguration == nil {
+		t.Fatal("TracingConfiguration nil, want default")
+	}
+}
+
+func TestSDKListStateMachinesPaginates(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	for _, n := range []string{"sm-a", "sm-b", "sm-c"} {
+		createSM(t, c, n)
+	}
+
+	first, err := c.ListStateMachines(ctx, &awssfn.ListStateMachinesInput{MaxResults: 2})
+	if err != nil {
+		t.Fatalf("ListStateMachines: %v", err)
+	}
+
+	if len(first.StateMachines) != 2 {
+		t.Fatalf("page 1 = %d, want 2", len(first.StateMachines))
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatal("NextToken empty; paginator cannot advance")
+	}
+
+	second, err := c.ListStateMachines(ctx, &awssfn.ListStateMachinesInput{NextToken: first.NextToken})
+	if err != nil {
+		t.Fatalf("ListStateMachines page 2: %v", err)
+	}
+
+	if len(first.StateMachines)+len(second.StateMachines) != 3 {
+		t.Fatalf("total across pages = %d, want 3", len(first.StateMachines)+len(second.StateMachines))
+	}
+}
+
+func TestSDKListExecutionsPaginates(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	arn := createSM(t, c, "execs")
+
+	for _, n := range []string{"e1", "e2", "e3"} {
+		if _, err := c.StartExecution(ctx, &awssfn.StartExecutionInput{
+			StateMachineArn: aws.String(arn), Name: aws.String(n), Input: aws.String("{}"),
+		}); err != nil {
+			t.Fatalf("StartExecution(%s): %v", n, err)
+		}
+	}
+
+	first, err := c.ListExecutions(ctx, &awssfn.ListExecutionsInput{
+		StateMachineArn: aws.String(arn), MaxResults: 2,
+	})
+	if err != nil {
+		t.Fatalf("ListExecutions: %v", err)
+	}
+
+	if len(first.Executions) != 2 {
+		t.Fatalf("page 1 = %d, want 2", len(first.Executions))
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatal("NextToken empty; paginator cannot advance")
+	}
+
+	second, err := c.ListExecutions(ctx, &awssfn.ListExecutionsInput{
+		StateMachineArn: aws.String(arn), NextToken: first.NextToken,
+	})
+	if err != nil {
+		t.Fatalf("ListExecutions page 2: %v", err)
+	}
+
+	if len(first.Executions)+len(second.Executions) != 3 {
+		t.Fatalf("total across pages = %d, want 3", len(first.Executions)+len(second.Executions))
+	}
+}
+
+func TestSDKGetExecutionHistoryStateDetails(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	arn := createSM(t, c, "hist")
+
+	start, err := c.StartExecution(ctx, &awssfn.StartExecutionInput{
+		StateMachineArn: aws.String(arn), Name: aws.String("run"), Input: aws.String(`{"a":1}`),
+	})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	hist, err := c.GetExecutionHistory(ctx, &awssfn.GetExecutionHistoryInput{
+		ExecutionArn: start.ExecutionArn,
+	})
+	if err != nil {
+		t.Fatalf("GetExecutionHistory: %v", err)
+	}
+
+	var sawEntered, sawExited bool
+
+	for _, e := range hist.Events {
+		if e.Type == sfntypes.HistoryEventTypePassStateEntered {
+			if e.StateEnteredEventDetails == nil || aws.ToString(e.StateEnteredEventDetails.Name) == "" {
+				t.Fatalf("PassStateEntered has nil/empty details: %+v", e)
+			}
+
+			sawEntered = true
+		}
+
+		if e.Type == sfntypes.HistoryEventTypePassStateExited {
+			if e.StateExitedEventDetails == nil || aws.ToString(e.StateExitedEventDetails.Name) == "" {
+				t.Fatalf("PassStateExited has nil/empty details: %+v", e)
+			}
+
+			sawExited = true
+		}
+	}
+
+	if !sawEntered || !sawExited {
+		t.Fatalf("missing populated StateEntered/StateExited details (entered=%v exited=%v)", sawEntered, sawExited)
 	}
 }

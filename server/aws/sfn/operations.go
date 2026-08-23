@@ -3,6 +3,7 @@ package sfn
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
@@ -34,6 +35,8 @@ func (h *Handler) describeStateMachine(w http.ResponseWriter, r *http.Request) {
 			StateMachineArn: sm.ARN, Name: sm.Name, Definition: sm.Definition, RoleArn: sm.RoleArn,
 			Type: sm.Type, Status: sm.Status, Description: sm.Description, RevisionID: sm.RevisionID,
 			CreationDate: epoch(sm.CreationDate), Label: sm.Label,
+			LoggingConfiguration: loggingConfigOrDefault(sm.LoggingConfigJSON),
+			TracingConfiguration: tracingConfigOrDefault(sm.TracingConfigJSON),
 		}, nil
 	})
 }
@@ -66,11 +69,14 @@ func (h *Handler) deleteStateMachine(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listStateMachines(w http.ResponseWriter, r *http.Request) {
-	dispatch(h, w, r, func(h *Handler, ctx context.Context, _ *struct{}) (any, error) {
+	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listStateMachinesRequest) (any, error) {
 		machines, err := h.sfn.ListStateMachines(ctx)
 		if err != nil {
 			return nil, err
 		}
+
+		start, end, next := pageWindow(len(machines), req.NextToken, req.MaxResults)
+		machines = machines[start:end]
 
 		items := make([]stateMachineListItem, 0, len(machines))
 
@@ -81,7 +87,7 @@ func (h *Handler) listStateMachines(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		return listStateMachinesResponse{StateMachines: items}, nil
+		return listStateMachinesResponse{StateMachines: items, NextToken: next}, nil
 	})
 }
 
@@ -148,6 +154,9 @@ func (h *Handler) listExecutions(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 
+		start, end, next := pageWindow(len(execs), req.NextToken, req.MaxResults)
+		execs = execs[start:end]
+
 		items := make([]executionListItem, 0, len(execs))
 
 		for i := range execs {
@@ -158,7 +167,7 @@ func (h *Handler) listExecutions(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		return listExecutionsResponse{Executions: items}, nil
+		return listExecutionsResponse{Executions: items, NextToken: next}, nil
 	})
 }
 
@@ -188,6 +197,14 @@ func eventsToWire(events []sfndriver.HistoryEvent) []historyEvent {
 
 		if e.Type == "ExecutionSucceeded" {
 			he.ExecutionSucceededDetails = &executionSucceededDetails{Output: e.Output}
+		}
+
+		if strings.HasSuffix(e.Type, "StateEntered") {
+			he.StateEnteredDetails = &stateEnteredDetails{Name: e.StateName, Input: e.Input}
+		}
+
+		if strings.HasSuffix(e.Type, "StateExited") {
+			he.StateExitedDetails = &stateExitedDetails{Name: e.StateName, Output: e.Output}
 		}
 
 		out = append(out, he)

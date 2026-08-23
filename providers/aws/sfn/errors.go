@@ -12,6 +12,13 @@ func smNotFound(arn string) error {
 	}
 }
 
+func invalidDefinition(msg string) error {
+	return &driver.APIError{
+		Exception: driver.ExInvalidDefinition,
+		Err:       errors.New(errors.InvalidArgument, msg),
+	}
+}
+
 func smAlreadyExists(name string) error {
 	return &driver.APIError{
 		Exception: driver.ExStateMachineAlreadyExists,

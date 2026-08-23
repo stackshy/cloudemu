@@ -136,6 +136,12 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 
 	m.buses.Set(cfg.Name, bd)
 
+	// Seed the ARN-keyed tag store so create-time tags are visible to
+	// ListTagsForResource, matching real EventBridge.
+	if len(tags) > 0 {
+		m.tagsByARN.tag(busARN, tags)
+	}
+
 	result := info
 
 	return &result, nil
@@ -203,13 +209,15 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 	}
 
 	rule := driver.Rule{
-		Name:         cfg.Name,
-		EventBus:     busName,
-		Description:  cfg.Description,
-		EventPattern: cfg.EventPattern,
-		State:        state,
-		Targets:      []driver.Target{},
-		CreatedAt:    m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Name:               cfg.Name,
+		EventBus:           busName,
+		Description:        cfg.Description,
+		EventPattern:       cfg.EventPattern,
+		ScheduleExpression: cfg.ScheduleExpression,
+		RoleARN:            cfg.RoleARN,
+		State:              state,
+		Targets:            []driver.Target{},
+		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
 	}
 
 	// Preserve existing targets if updating.

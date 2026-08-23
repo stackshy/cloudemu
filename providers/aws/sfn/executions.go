@@ -13,6 +13,10 @@ import (
 // ExecutionSucceeded).
 const historyEventCount = 4
 
+// passStateName is the synthetic Pass state name the emulator reports in
+// StateEntered/StateExited history events (no real ASL interpreter runs).
+const passStateName = "PassState"
+
 func (m *Mock) getExec(arn string) (*execData, error) {
 	if !validExecutionARN(arn) {
 		return nil, invalidArn("%q is not a valid execution ARN", arn)
@@ -147,8 +151,8 @@ func (m *Mock) GetExecutionHistory(_ context.Context, arn string, reverse bool) 
 	ts := exec.StartDate
 	events := []driver.HistoryEvent{
 		{ID: 1, PreviousEventID: 0, Type: "ExecutionStarted", Timestamp: ts, Input: exec.Input},
-		{ID: 2, PreviousEventID: 1, Type: "PassStateEntered", Timestamp: ts},
-		{ID: 3, PreviousEventID: 2, Type: "PassStateExited", Timestamp: ts},
+		{ID: 2, PreviousEventID: 1, Type: "PassStateEntered", Timestamp: ts, StateName: passStateName, Input: exec.Input},
+		{ID: 3, PreviousEventID: 2, Type: "PassStateExited", Timestamp: ts, StateName: passStateName, Output: exec.Output},
 		{ID: historyEventCount, PreviousEventID: 3, Type: "ExecutionSucceeded", Timestamp: exec.StopDate, Output: exec.Output},
 	}
 

@@ -128,7 +128,10 @@ type HistoryEvent struct {
 	PreviousEventID int64
 	Type            string
 	Timestamp       time.Time
-	// Input is set on the ExecutionStarted event; Output on ExecutionSucceeded.
+	// StateName names the state a StateEntered/StateExited event refers to.
+	StateName string
+	// Input is set on the ExecutionStarted and StateEntered events; Output on
+	// ExecutionSucceeded and StateExited events.
 	Input  string
 	Output string
 }

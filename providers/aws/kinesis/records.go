@@ -71,11 +71,11 @@ func decodeIterator(s string) (iteratorToken, error) {
 
 	raw, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
-		return t, expiredIterator("shard iterator is malformed")
+		return t, invalidArg("shard iterator is malformed")
 	}
 
 	if err := json.Unmarshal(raw, &t); err != nil {
-		return t, expiredIterator("shard iterator is malformed")
+		return t, invalidArg("shard iterator is malformed")
 	}
 
 	return t, nil
@@ -375,9 +375,51 @@ func childShardsOf(shards []*shardState, parentID string) []driver.ChildShard {
 	return out
 }
 
+// listShardsToken is the opaque NextToken ListShards hands back: real Kinesis
+// forbids passing StreamName alongside NextToken, so the token must carry the
+// stream identity plus the cursor to resume after.
+type listShardsToken struct {
+	StreamName string `json:"s"`
+	AfterShard string `json:"a"`
+}
+
+func encodeListShardsToken(t listShardsToken) string {
+	b, _ := json.Marshal(t)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeListShardsToken(s string) (listShardsToken, error) {
+	var t listShardsToken
+
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return t, invalidArg("NextToken is malformed")
+	}
+
+	if err := json.Unmarshal(raw, &t); err != nil {
+		return t, invalidArg("NextToken is malformed")
+	}
+
+	return t, nil
+}
+
 // ListShards lists a stream's shards.
 func (m *Mock) ListShards(_ context.Context, in driver.ListShardsInput) (*driver.ListShardsOutput, error) {
-	sd, err := m.resolve(in.StreamName, in.StreamARN)
+	streamName, streamARN := in.StreamName, in.StreamARN
+
+	// A NextToken from a prior page carries the stream identity + resume cursor.
+	start := in.ExclusiveStartShardID
+
+	if in.NextToken != "" {
+		tok, err := decodeListShardsToken(in.NextToken)
+		if err != nil {
+			return nil, err
+		}
+
+		streamName, streamARN, start = tok.StreamName, "", tok.AfterShard
+	}
+
+	sd, err := m.resolve(streamName, streamARN)
 	if err != nil {
 		return nil, err
 	}
@@ -385,17 +427,14 @@ func (m *Mock) ListShards(_ context.Context, in driver.ListShardsInput) (*driver
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	// A NextToken from a prior page resumes after the last shard it returned.
-	start := in.ExclusiveStartShardID
-	if start == "" {
-		start = in.NextToken
-	}
-
 	shards, more := pageShards(sd.shards, in.MaxResults, start)
 
 	out := &driver.ListShardsOutput{Shards: shards}
 	if more && len(shards) > 0 {
-		out.NextToken = shards[len(shards)-1].ShardID
+		out.NextToken = encodeListShardsToken(listShardsToken{
+			StreamName: sd.desc.StreamName,
+			AfterShard: shards[len(shards)-1].ShardID,
+		})
 	}
 
 	return out, nil

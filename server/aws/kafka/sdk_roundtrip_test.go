@@ -109,6 +109,46 @@ func TestSDKClusterLifecycle(t *testing.T) {
 	}
 }
 
+func TestSDKDescribeClusterEncryptionDefault(t *testing.T) {
+	ctx := context.Background()
+	c := newKafkaClient(t)
+
+	create, err := c.CreateCluster(ctx, &awskafka.CreateClusterInput{
+		ClusterName:         aws.String("enc-cluster"),
+		KafkaVersion:        aws.String("3.6.0"),
+		NumberOfBrokerNodes: aws.Int32(3),
+		BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+			ClientSubnets: []string{"subnet-1", "subnet-2", "subnet-3"},
+			InstanceType:  aws.String("kafka.m5.large"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	desc, err := c.DescribeCluster(ctx, &awskafka.DescribeClusterInput{ClusterArn: create.ClusterArn})
+	if err != nil {
+		t.Fatalf("DescribeCluster: %v", err)
+	}
+
+	enc := desc.ClusterInfo.EncryptionInfo
+	if enc == nil {
+		t.Fatalf("EncryptionInfo nil, want default block")
+	}
+
+	if enc.EncryptionInTransit == nil || enc.EncryptionInTransit.ClientBroker != kafkatypes.ClientBrokerTls {
+		t.Fatalf("EncryptionInTransit.ClientBroker = %+v, want TLS", enc.EncryptionInTransit)
+	}
+
+	if enc.EncryptionInTransit.InCluster == nil || !aws.ToBool(enc.EncryptionInTransit.InCluster) {
+		t.Fatalf("EncryptionInTransit.InCluster = %v, want true", enc.EncryptionInTransit.InCluster)
+	}
+
+	if enc.EncryptionAtRest == nil || aws.ToString(enc.EncryptionAtRest.DataVolumeKMSKeyId) == "" {
+		t.Fatalf("EncryptionAtRest.DataVolumeKMSKeyId empty, want a KMS key ARN")
+	}
+}
+
 func TestSDKConfigurationLifecycle(t *testing.T) {
 	ctx := context.Background()
 	c := newKafkaClient(t)
