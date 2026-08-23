@@ -45,6 +45,8 @@ var elbActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DescribeTargetGroups":           {},
 	"DeleteTargetGroup":              {},
 	"ModifyTargetGroup":              {},
+	"DescribeTargetGroupAttributes":  {},
+	"ModifyTargetGroupAttributes":    {},
 	"CreateListener":                 {},
 	"DescribeListeners":              {},
 	"DeleteListener":                 {},
@@ -142,6 +144,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteTargetGroup(w, r)
 	case "ModifyTargetGroup":
 		h.modifyTargetGroup(w, r)
+	case "DescribeTargetGroupAttributes":
+		h.describeTargetGroupAttributes(w, r)
+	case "ModifyTargetGroupAttributes":
+		h.modifyTargetGroupAttributes(w, r)
 	case "CreateListener":
 		h.createListener(w, r)
 	case "DescribeListeners":

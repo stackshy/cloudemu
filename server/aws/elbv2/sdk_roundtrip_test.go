@@ -308,3 +308,72 @@ func TestSDKELBListenerLifecycle(t *testing.T) {
 		t.Fatalf("DeleteListener: %v", err)
 	}
 }
+
+// TestSDKDescribeLoadBalancersPagination proves DescribeLoadBalancers honors
+// PageSize and Marker: a PageSize of 1 returns one entry plus a NextMarker, and
+// walking the marker yields every load balancer exactly once.
+func TestSDKDescribeLoadBalancersPagination(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	names := []string{"page-alb-1", "page-alb-2", "page-alb-3"}
+	for _, n := range names {
+		if _, err := client.CreateLoadBalancer(ctx, &elb.CreateLoadBalancerInput{
+			Name:    aws.String(n),
+			Subnets: []string{"subnet-a"},
+		}); err != nil {
+			t.Fatalf("CreateLoadBalancer(%s): %v", n, err)
+		}
+	}
+
+	seen := map[string]bool{}
+	marker := ""
+	pages := 0
+
+	for {
+		out, err := client.DescribeLoadBalancers(ctx, &elb.DescribeLoadBalancersInput{
+			PageSize: aws.Int32(1),
+			Marker:   markerPtr(marker),
+		})
+		if err != nil {
+			t.Fatalf("DescribeLoadBalancers page %d: %v", pages, err)
+		}
+
+		if len(out.LoadBalancers) != 1 {
+			t.Fatalf("page %d returned %d load balancers, want 1 (PageSize ignored?)",
+				pages, len(out.LoadBalancers))
+		}
+
+		seen[aws.ToString(out.LoadBalancers[0].LoadBalancerName)] = true
+		pages++
+
+		if out.NextMarker == nil || aws.ToString(out.NextMarker) == "" {
+			break
+		}
+
+		marker = aws.ToString(out.NextMarker)
+
+		if pages > len(names) {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+
+	if pages != len(names) {
+		t.Errorf("walked %d pages, want %d", pages, len(names))
+	}
+
+	for _, n := range names {
+		if !seen[n] {
+			t.Errorf("load balancer %q missing from paginated results", n)
+		}
+	}
+}
+
+// markerPtr returns nil for an empty marker so the first page omits Marker.
+func markerPtr(m string) *string {
+	if m == "" {
+		return nil
+	}
+
+	return aws.String(m)
+}

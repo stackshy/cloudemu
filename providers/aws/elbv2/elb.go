@@ -16,11 +16,12 @@ import (
 // Compile-time checks that Mock implements driver.LoadBalancer and the optional
 // modifier extensions the ELBv2 wire handler dispatches to.
 var (
-	_ driver.LoadBalancer        = (*Mock)(nil)
-	_ driver.TargetGroupModifier = (*Mock)(nil)
-	_ driver.RuleModifier        = (*Mock)(nil)
-	_ driver.LBNetworkModifier   = (*Mock)(nil)
-	_ driver.ListenerGetter      = (*Mock)(nil)
+	_ driver.LoadBalancer              = (*Mock)(nil)
+	_ driver.TargetGroupModifier       = (*Mock)(nil)
+	_ driver.RuleModifier              = (*Mock)(nil)
+	_ driver.LBNetworkModifier         = (*Mock)(nil)
+	_ driver.ListenerGetter            = (*Mock)(nil)
+	_ driver.TargetGroupAttributeStore = (*Mock)(nil)
 )
 
 // defaultIdleTimeoutSec is the default idle timeout for load balancers in seconds.
@@ -39,6 +40,9 @@ type Mock struct {
 
 	attrsMu sync.RWMutex
 	attrs   map[string]driver.LBAttributes // lbARN -> attributes
+
+	tgAttrsMu sync.RWMutex
+	tgAttrs   map[string]map[string]string // tgARN -> attribute overrides
 }
 
 // New creates a new ELB mock with the given configuration options.
@@ -51,6 +55,7 @@ func New(opts *config.Options) *Mock {
 		opts:      opts,
 		health:    make(map[string]map[string]*driver.TargetHealth),
 		attrs:     make(map[string]driver.LBAttributes),
+		tgAttrs:   make(map[string]map[string]string),
 	}
 }
 
@@ -307,6 +312,11 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 	m.healthMu.Lock()
 	delete(m.health, arn)
 	m.healthMu.Unlock()
+
+	// Clean up any stored attribute overrides.
+	m.tgAttrsMu.Lock()
+	delete(m.tgAttrs, arn)
+	m.tgAttrsMu.Unlock()
 
 	return nil
 }
@@ -726,6 +736,73 @@ func (m *Mock) UpdateLBAttributes(
 	out.Extra = copyStringMap(attrs.Extra)
 
 	return &out, nil
+}
+
+// defaultTargetGroupAttributes are the attributes real ELBv2 reports for a
+// freshly created target group before any ModifyTargetGroupAttributes call.
+// Modifications overlay these; a Describe returns the merged set.
+//
+//nolint:gochecknoglobals // static table of AWS-published default attribute values.
+var defaultTargetGroupAttributes = map[string]string{
+	"deregistration_delay.timeout_seconds": "300",
+	"stickiness.enabled":                   "false",
+	"stickiness.type":                      "lb_cookie",
+	"load_balancing.algorithm.type":        "round_robin",
+	"slow_start.duration_seconds":          "0",
+}
+
+// GetTargetGroupAttributes returns the full attribute set for a target group:
+// the ELBv2 defaults overlaid with any stored overrides.
+func (m *Mock) GetTargetGroupAttributes(_ context.Context, targetGroupARN string) (map[string]string, error) {
+	if _, ok := m.tgs.Get(targetGroupARN); !ok {
+		return nil, errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
+	}
+
+	m.tgAttrsMu.RLock()
+	defer m.tgAttrsMu.RUnlock()
+
+	return mergedTargetGroupAttributes(m.tgAttrs[targetGroupARN]), nil
+}
+
+// ModifyTargetGroupAttributes merges updates into the target group's stored
+// overrides and returns the resulting full attribute set.
+func (m *Mock) ModifyTargetGroupAttributes(
+	_ context.Context, targetGroupARN string, updates map[string]string,
+) (map[string]string, error) {
+	if _, ok := m.tgs.Get(targetGroupARN); !ok {
+		return nil, errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
+	}
+
+	m.tgAttrsMu.Lock()
+	defer m.tgAttrsMu.Unlock()
+
+	overrides := m.tgAttrs[targetGroupARN]
+	if overrides == nil {
+		overrides = make(map[string]string, len(updates))
+	}
+
+	for k, v := range updates {
+		overrides[k] = v
+	}
+
+	m.tgAttrs[targetGroupARN] = overrides
+
+	return mergedTargetGroupAttributes(overrides), nil
+}
+
+// mergedTargetGroupAttributes returns a fresh map of the defaults overlaid with
+// overrides, so the caller never aliases stored state.
+func mergedTargetGroupAttributes(overrides map[string]string) map[string]string {
+	out := make(map[string]string, len(defaultTargetGroupAttributes)+len(overrides))
+	for k, v := range defaultTargetGroupAttributes {
+		out[k] = v
+	}
+
+	for k, v := range overrides {
+		out[k] = v
+	}
+
+	return out
 }
 
 // RegisterTargets registers targets with a target group.

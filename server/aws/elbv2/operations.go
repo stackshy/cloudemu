@@ -3,6 +3,7 @@ package elbv2
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -51,6 +52,17 @@ func (h *Handler) describeLoadBalancers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Sort for a stable order so the offset-based Marker is meaningful.
+	sort.Slice(lbs, func(i, j int) bool { return lbs[i].ARN < lbs[j].ARN })
+
+	start, end, next, err := pageWindow(r.Form.Get("Marker"), formInt(r.Form.Get("PageSize")), len(lbs))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	lbs = lbs[start:end]
+
 	out := loadBalancersXML{Member: make([]loadBalancerXML, 0, len(lbs))}
 	for i := range lbs {
 		out.Member = append(out.Member, toLoadBalancerXML(&lbs[i]))
@@ -58,7 +70,7 @@ func (h *Handler) describeLoadBalancers(w http.ResponseWriter, r *http.Request) 
 
 	awsquery.WriteXMLResponse(w, describeLoadBalancersResponse{
 		Xmlns:    Namespace,
-		Result:   loadBalancersResult{LoadBalancers: out},
+		Result:   loadBalancersResult{LoadBalancers: out, NextMarker: next},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
@@ -152,6 +164,16 @@ func (h *Handler) describeTargetGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sort.Slice(tgs, func(i, j int) bool { return tgs[i].ARN < tgs[j].ARN })
+
+	start, end, next, err := pageWindow(r.Form.Get("Marker"), formInt(r.Form.Get("PageSize")), len(tgs))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	tgs = tgs[start:end]
+
 	out := targetGroupsXML{Member: make([]targetGroupXML, 0, len(tgs))}
 	for i := range tgs {
 		out.Member = append(out.Member, toTargetGroupXML(&tgs[i]))
@@ -159,7 +181,7 @@ func (h *Handler) describeTargetGroups(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, describeTargetGroupsResponse{
 		Xmlns:    Namespace,
-		Result:   targetGroupsResult{TargetGroups: out},
+		Result:   targetGroupsResult{TargetGroups: out, NextMarker: next},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

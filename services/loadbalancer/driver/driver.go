@@ -263,3 +263,15 @@ type LBNetworkModifier interface {
 	SetSecurityGroups(ctx context.Context, lbARN string, securityGroups []string) error
 	SetSubnets(ctx context.Context, lbARN string, subnets []string) ([]string, error)
 }
+
+// TargetGroupAttributeStore is implemented by drivers that store per-target-group
+// key/value attributes (ELBv2 DescribeTargetGroupAttributes /
+// ModifyTargetGroupAttributes). Both methods return the full attribute set,
+// protocol-derived defaults included, so a caller reads back exactly what real
+// ELBv2 reports. ModifyTargetGroupAttributes merges updates over the stored set.
+type TargetGroupAttributeStore interface {
+	GetTargetGroupAttributes(ctx context.Context, targetGroupARN string) (map[string]string, error)
+	ModifyTargetGroupAttributes(
+		ctx context.Context, targetGroupARN string, updates map[string]string,
+	) (map[string]string, error)
+}
