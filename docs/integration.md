@@ -4,6 +4,8 @@ The mistake to avoid: **don't write a new `main.go` that just calls CloudEmu and
 
 Do this instead — point your app's *existing* cloud client at CloudEmu in your *existing* tests. Your real code runs against an in-memory cloud, no mocks.
 
+> Need a test to exercise real SQL, Redis or function code rather than the in-memory backend? Back the relevant driver with a [real engine](features.md#11-real-data-plane-engines-opt-in) — the wiring is a `config.With<X>Engine` option, everything below stays the same.
+
 ## The trick
 
 Make the endpoint injectable, then point it at CloudEmu in tests. An env var is the easy default (shown below) — but it's your call: a config field or setting it directly in the test works just as well. Production uses the real cloud; your code doesn't change.
