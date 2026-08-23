@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/storageengine"
 )
 
 const (
@@ -34,8 +35,12 @@ var (
 )
 
 type s3Object struct {
-	Key          string
+	Key string
+	// Data is the in-memory object bytes, or nil when a StorageEngine holds the
+	// bytes instead. Size is tracked independently so metadata (Head/List) stays
+	// correct once Data has been offloaded to the engine.
 	Data         []byte
+	Size         int64
 	ContentType  string
 	ETag         string
 	LastModified string
@@ -51,6 +56,7 @@ type s3Object struct {
 type s3Version struct {
 	versionID    string
 	data         []byte
+	size         int64
 	contentType  string
 	etag         string
 	lastModified string
@@ -133,6 +139,36 @@ func (m *Mock) emitMetric(metricName string, value float64, unit string, dims ma
 	}})
 }
 
+// engineStore persists an object's bytes to the configured StorageEngine. It is
+// a no-op (nil) when no engine is wired, so the in-memory Data stays the source
+// of truth.
+func (m *Mock) engineStore(ctx context.Context, bucket, key, version, contentType string, data []byte, metadata map[string]string) error {
+	return storageengine.Put(ctx, m.opts.StorageEngine, config.StorageObject{
+		Bucket: bucket, Key: key, Version: version, Data: data,
+		ContentType: contentType, Metadata: metadata,
+	})
+}
+
+// engineLoad returns the object bytes to serve, preferring the in-memory copy
+// and falling back to the StorageEngine only when the bytes have been offloaded
+// (inMemory == nil). With no engine wired it returns inMemory unchanged.
+func (m *Mock) engineLoad(ctx context.Context, ref config.StorageRef, inMemory []byte) ([]byte, error) {
+	if m.opts.StorageEngine == nil || inMemory != nil {
+		return inMemory, nil
+	}
+
+	loaded, ok, err := storageengine.Get(ctx, m.opts.StorageEngine, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	if ok {
+		return loaded, nil
+	}
+
+	return inMemory, nil
+}
+
 // New creates a new S3 mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
@@ -198,7 +234,7 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	return result, nil
 }
 
-func (m *Mock) PutObject(_ context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
+func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -206,14 +242,26 @@ func (m *Mock) PutObject(_ context.Context, bucket, key string, data []byte, con
 
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
-	m.storeObject(bkt, key, &s3Object{
+	obj := &s3Object{
 		Key:          key,
 		Data:         dataCopy,
+		Size:         int64(len(data)),
 		ContentType:  contentType,
 		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata:     maps.Clone(metadata),
-	})
+	}
+	m.storeObject(bkt, key, obj)
+
+	// storeObject stamps obj.VersionID, so the engine ref matches what GetObject
+	// (and GetObjectVersion for a versioned PUT) reads back.
+	if err := m.engineStore(ctx, bucket, key, obj.VersionID, contentType, data, metadata); err != nil {
+		return err
+	}
+
+	if m.opts.StorageEngine != nil {
+		obj.Data = nil
+	}
 
 	dims := map[string]string{"BucketName": bucket}
 	m.emitMetric("AllRequests", 1, "Count", dims)
@@ -243,22 +291,32 @@ func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) {
 	bkt.versionsMu.Lock()
 	defer bkt.versionsMu.Unlock()
 
+	// When an engine holds the bytes, the version record keeps only metadata +
+	// size; its bytes live in the engine under the version id (dropData).
+	dropData := m.opts.StorageEngine != nil
+
 	switch bkt.versionStatus {
 	case versioningEnabled:
 		obj.VersionID = newVersionID()
-		bkt.appendVersion(key, versionFromObject(obj))
+		bkt.appendVersion(key, versionFromObject(obj, dropData))
 	case versioningSuspended:
 		obj.VersionID = nullVersionID
-		bkt.replaceNullVersion(key, versionFromObject(obj))
+		bkt.replaceNullVersion(key, versionFromObject(obj, dropData))
 	}
 
 	bkt.objects.Set(key, obj)
 }
 
-func versionFromObject(obj *s3Object) *s3Version {
+func versionFromObject(obj *s3Object, dropData bool) *s3Version {
+	data := obj.Data
+	if dropData {
+		data = nil
+	}
+
 	return &s3Version{
 		versionID:    obj.VersionID,
-		data:         obj.Data,
+		data:         data,
+		size:         obj.Size,
 		contentType:  obj.ContentType,
 		etag:         obj.ETag,
 		lastModified: obj.LastModified,
@@ -288,7 +346,7 @@ func (b *bucketMeta) replaceNullVersion(key string, v *s3Version) {
 	b.versions[key] = append(kept, v)
 }
 
-func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object, error) {
+func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Object, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -299,17 +357,22 @@ func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object,
 		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
 
-	dataCopy := make([]byte, len(obj.Data))
-	copy(dataCopy, obj.Data)
+	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: obj.VersionID}, obj.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
 
 	dims := map[string]string{"BucketName": bucket}
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("GetRequests", 1, "Count", dims)
-	m.emitMetric("BytesDownloaded", float64(len(obj.Data)), "Bytes", dims)
+	m.emitMetric("BytesDownloaded", float64(obj.Size), "Bytes", dims)
 
 	return &driver.Object{
 		Info: driver.ObjectInfo{
-			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 			VersionID: obj.VersionID,
 		},
@@ -317,7 +380,7 @@ func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object,
 	}, nil
 }
 
-func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
+func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -333,6 +396,11 @@ func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
 	if !existed {
 		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
+
+	// Remove the current-namespace bytes from the engine. A versioned bucket only
+	// stamps a delete marker (prior versions keep their bytes), so this is an
+	// idempotent no-op there.
+	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
 	dims := map[string]string{"BucketName": bucket}
 	m.emitMetric("AllRequests", 1, "Count", dims)
@@ -383,7 +451,7 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	}
 
 	return &driver.ObjectInfo{
-		Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		VersionID: obj.VersionID,
 	}, nil
@@ -423,7 +491,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		}
 
 		matchedObjects = append(matchedObjects, driver.ObjectInfo{
-			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
 		})
 	}
@@ -463,7 +531,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	}, nil
 }
 
-func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src driver.CopySource) error {
+func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
 	srcBkt, ok := m.buckets.Get(src.Bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "source bucket %q not found", src.Bucket)
@@ -487,17 +555,28 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 		meta[k] = v
 	}
 
-	m.storeObject(dstBkt, dstKey, &s3Object{
-		Key: dstKey, Data: dataCopy, ContentType: srcObj.ContentType,
+	dstObj := &s3Object{
+		Key: dstKey, Data: dataCopy, Size: srcObj.Size, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata: meta,
-	})
+	}
+	m.storeObject(dstBkt, dstKey, dstObj)
+
+	if m.opts.StorageEngine != nil {
+		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
+			config.StorageRef{Bucket: dstBucket, Key: dstKey, Version: dstObj.VersionID},
+			config.StorageRef{Bucket: src.Bucket, Key: src.Key, Version: srcObj.VersionID}); err != nil {
+			return err
+		}
+
+		dstObj.Data = nil
+	}
 
 	dims := map[string]string{"BucketName": dstBucket}
 	m.emitMetric("AllRequests", 1, "Count", dims)
 	m.emitMetric("CopyRequests", 1, "Count", dims)
 
-	m.notifyObjectCreated(dstBkt, dstBucket, dstKey, int64(len(dataCopy)))
+	m.notifyObjectCreated(dstBkt, dstBucket, dstKey, srcObj.Size)
 
 	return nil
 }
@@ -703,7 +782,7 @@ func (m *Mock) ListParts(_ context.Context, bucket, _, uploadID string) ([]drive
 	return out, nil
 }
 
-func (m *Mock) CompleteMultipartUpload(_ context.Context, bucket, key, uploadID string, parts []driver.UploadPart) error {
+func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []driver.UploadPart) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -726,14 +805,26 @@ func (m *Mock) CompleteMultipartUpload(_ context.Context, bucket, key, uploadID 
 
 	// storeObject (not a bare objects.Set) so a completed multipart upload is
 	// versioned like a PutObject on a versioning-enabled bucket.
-	m.storeObject(bkt, key, &s3Object{
+	obj := &s3Object{
 		Key:          key,
 		Data:         data,
+		Size:         int64(len(data)),
 		ContentType:  mp.contentType,
 		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata:     make(map[string]string),
-	})
+	}
+	m.storeObject(bkt, key, obj)
+
+	// Only the assembled object goes to the engine; the individual parts stay in
+	// memory until the upload completes.
+	if err := m.engineStore(ctx, bucket, key, obj.VersionID, mp.contentType, data, obj.Metadata); err != nil {
+		return err
+	}
+
+	if m.opts.StorageEngine != nil {
+		obj.Data = nil
+	}
 
 	bkt.multiparts.Delete(uploadID)
 
@@ -875,8 +966,13 @@ func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID stri
 		return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
 	}
 
-	dataCopy := make([]byte, len(v.data))
-	copy(dataCopy, v.data)
+	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: versionID}, v.data)
+	if err != nil {
+		return nil, err
+	}
+
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
 
 	return &driver.Object{Info: infoFromVersion(key, v), Data: dataCopy}, nil
 }
@@ -908,7 +1004,7 @@ func (m *Mock) HeadObjectVersion(ctx context.Context, bucket, key, versionID str
 // DeleteObjectVersion removes a specific version, or (versionID == "") performs
 // a top-level delete (delete marker on Enabled). Returns the affected version
 // id and whether it was/created a delete marker.
-func (m *Mock) DeleteObjectVersion(_ context.Context, bucket, key, versionID string) (string, bool, error) {
+func (m *Mock) DeleteObjectVersion(ctx context.Context, bucket, key, versionID string) (deletedID string, deleteMarker bool, err error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return "", false, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -919,6 +1015,8 @@ func (m *Mock) DeleteObjectVersion(_ context.Context, bucket, key, versionID str
 
 	if versionID == "" {
 		vid, marker, _ := m.deleteTopLevelLocked(bkt, key)
+		_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
+
 		return vid, marker, nil
 	}
 
@@ -944,6 +1042,8 @@ func (m *Mock) DeleteObjectVersion(_ context.Context, bucket, key, versionID str
 	}
 
 	m.recomputeCurrentLocked(bkt, key)
+
+	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key, Version: versionID})
 
 	return versionID, removed.deleteMarker, nil
 }
@@ -998,7 +1098,7 @@ func (m *Mock) ListObjectVersions(_ context.Context, bucket string, opts driver.
 			if obj, has := bkt.objects.Get(k); has {
 				result.Versions = append(result.Versions, driver.ObjectVersion{
 					Key: k, VersionID: nullVersionID, IsLatest: true,
-					Size: int64(len(obj.Data)), ETag: obj.ETag,
+					Size: obj.Size, ETag: obj.ETag,
 					ContentType: obj.ContentType, LastModified: obj.LastModified,
 				})
 			}
@@ -1010,7 +1110,7 @@ func (m *Mock) ListObjectVersions(_ context.Context, bucket string, opts driver.
 			v := chain[i]
 			result.Versions = append(result.Versions, driver.ObjectVersion{
 				Key: k, VersionID: v.versionID, IsLatest: i == len(chain)-1,
-				DeleteMarker: v.deleteMarker, Size: int64(len(v.data)), ETag: v.etag,
+				DeleteMarker: v.deleteMarker, Size: v.size, ETag: v.etag,
 				ContentType: v.contentType, LastModified: v.lastModified,
 			})
 		}
@@ -1056,7 +1156,7 @@ func findVersion(bkt *bucketMeta, key, versionID string) *s3Version {
 
 func objectFromVersion(key string, v *s3Version) *s3Object {
 	return &s3Object{
-		Key: key, Data: v.data, ContentType: v.contentType,
+		Key: key, Data: v.data, Size: v.size, ContentType: v.contentType,
 		ETag: v.etag, LastModified: v.lastModified, Metadata: maps.Clone(v.metadata),
 		VersionID: v.versionID,
 	}
@@ -1064,7 +1164,7 @@ func objectFromVersion(key string, v *s3Version) *s3Object {
 
 func infoFromVersion(key string, v *s3Version) driver.ObjectInfo {
 	return driver.ObjectInfo{
-		Key: key, Size: int64(len(v.data)), ContentType: v.contentType,
+		Key: key, Size: v.size, ContentType: v.contentType,
 		ETag: v.etag, LastModified: v.lastModified, Metadata: maps.Clone(v.metadata),
 		VersionID: v.versionID, DeleteMarker: v.deleteMarker,
 	}
