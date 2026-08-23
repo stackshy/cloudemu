@@ -1352,6 +1352,9 @@ func TestDDBProjectionExpression(t *testing.T) {
 		"id":   sAttr("u1"),
 		"name": sAttr("alice"),
 		"age":  nAttr("30"),
+		"tags": &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{
+			sAttr("x"), sAttr("y"), sAttr("z"),
+		}},
 		"address": &ddbtypes.AttributeValueMemberM{Value: map[string]ddbtypes.AttributeValue{
 			"city": sAttr("Paris"),
 			"zip":  sAttr("75001"),
@@ -1420,5 +1423,42 @@ func TestDDBProjectionExpression(t *testing.T) {
 		require.Len(t, out.Items[0], 2)
 		assert.Equal(t, "u1", attrS(t, out.Items[0], "id"))
 		assert.Equal(t, "30", attrN(t, out.Items[0], "age"))
+	})
+
+	t.Run("GetItem projects a list index, compacted", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("tags[1]"),
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 1)
+
+		l, ok := out.Item["tags"].(*ddbtypes.AttributeValueMemberL)
+		require.True(t, ok, "tags should be a list, got %T", out.Item["tags"])
+		require.Len(t, l.Value, 1, "the projected index compacts to a one-element list")
+		assert.Equal(t, "y", attrS(t, map[string]ddbtypes.AttributeValue{"v": l.Value[0]}, "v"))
+	})
+
+	t.Run("Scan composes ProjectionExpression with FilterExpression", func(t *testing.T) {
+		out, err := client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 aws.String("profiles"),
+			FilterExpression:          aws.String("age = :a"),
+			ProjectionExpression:      aws.String("id"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":a": nAttr("30")},
+		})
+		require.NoError(t, err)
+		require.Equal(t, int32(1), out.Count, "the filter keeps the matching row")
+		require.Len(t, out.Items[0], 1, "projection trims it to id only")
+		assert.Equal(t, "u1", attrS(t, out.Items[0], "id"))
+
+		out, err = client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 aws.String("profiles"),
+			FilterExpression:          aws.String("age = :a"),
+			ProjectionExpression:      aws.String("id"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":a": nAttr("99")},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int32(0), out.Count, "a non-matching filter yields nothing to project")
 	})
 }

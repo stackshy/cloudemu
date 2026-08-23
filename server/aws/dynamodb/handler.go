@@ -329,6 +329,15 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 
 	key := fromWireItem(req.Key)
 
+	// Validate the projection before the lookup so a malformed expression is a
+	// ValidationException regardless of whether the item exists, matching real
+	// DynamoDB.
+	paths, perr := expr.ParseProjection(req.ProjectionExpression, req.ExpressionAttributeNames)
+	if perr != nil {
+		writeErr(w, perr)
+		return
+	}
+
 	item, err := h.db.GetItem(r.Context(), req.TableName, key)
 	if err != nil {
 		// DynamoDB returns an empty response for missing items, not an error.
@@ -343,14 +352,7 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{}
-
 	if item != nil {
-		paths, perr := expr.ParseProjection(req.ProjectionExpression, req.ExpressionAttributeNames)
-		if perr != nil {
-			writeErr(w, perr)
-			return
-		}
-
 		resp["Item"] = toWireItem(expr.Project(item, paths))
 	}
 

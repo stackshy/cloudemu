@@ -81,13 +81,38 @@ func TestProjectListIndex(t *testing.T) {
 	require.NoError(t, err)
 
 	got := Project(item, paths)
-	require.Contains(t, got, "tags")
+	assert.Equal(t, map[string]any{"tags": []any{"b"}}, got,
+		"a single projected index compacts to a one-element list, DynamoDB-style")
+}
 
-	arr, ok := got["tags"].([]any)
+func TestProjectMultipleListIndexesCompact(t *testing.T) {
+	item := map[string]any{
+		"tags": []any{"a", "b", "c", "d"},
+	}
+
+	// Projected out of order — the result is ordered by source index, gaps dropped.
+	paths, err := ParseProjection("tags[2], tags[0]", nil)
+	require.NoError(t, err)
+
+	got := Project(item, paths)
+	assert.Equal(t, map[string]any{"tags": []any{"a", "c"}}, got,
+		"projected indexes compact in index order, dropping the gap at index 1")
+}
+
+func TestProjectDoesNotAliasSource(t *testing.T) {
+	inner := map[string]any{"city": "Paris", "zip": "75001"}
+	item := map[string]any{"address": inner}
+
+	paths, err := ParseProjection("address", nil)
+	require.NoError(t, err)
+
+	got := Project(item, paths)
+	gotAddr, ok := got["address"].(map[string]any)
 	require.True(t, ok)
-	require.Len(t, arr, 2, "the slice grows to reach the projected index; earlier gaps are nil")
-	assert.Nil(t, arr[0])
-	assert.Equal(t, "b", arr[1])
+
+	// Mutating the projected copy must not touch the source item.
+	gotAddr["city"] = "London"
+	assert.Equal(t, "Paris", inner["city"], "the projection is a deep copy of the source")
 }
 
 func TestProjectNoPathsReturnsWholeItem(t *testing.T) {

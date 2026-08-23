@@ -1,6 +1,7 @@
 package expr
 
 import (
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -55,10 +56,12 @@ func parseProjectionPaths(p *parser) ([]*PathOperand, error) {
 	return paths, nil
 }
 
-// Project returns a copy of item containing only the given paths, preserving
-// nested map and list structure. A path that is absent from item is skipped,
-// matching DynamoDB, which omits missing projected attributes. With no paths
-// it returns item unchanged.
+// Project returns a deep copy of item containing only the given paths,
+// preserving nested map structure. A path that is absent from item is skipped,
+// matching DynamoDB, which omits missing projected attributes. Projected list
+// indexes are compacted into a list of just those elements in index order,
+// again matching DynamoDB. With no paths it returns item unchanged. The result
+// shares no mutable structure with item.
 func Project(item map[string]any, paths []*PathOperand) map[string]any {
 	if len(paths) == 0 {
 		return item
@@ -75,14 +78,12 @@ func Project(item map[string]any, paths []*PathOperand) map[string]any {
 		setProjectedPath(out, path.Parts, v)
 	}
 
-	return out
+	return finalizeMap(out)
 }
 
 // setProjectedPath writes val into dst at parts, creating intermediate maps
-// (name steps) and slices (index steps) and merging with structure placed by
-// earlier projected paths. A path always begins with a name step. Index steps
-// only occur for indexes that exist in the source item, so slice growth is
-// bounded by the source document.
+// (name steps) and sparse lists (index steps) and merging with structure
+// placed by earlier projected paths. A path always begins with a name step.
 func setProjectedPath(dst map[string]any, parts []PathPart, val any) {
 	head := parts[0]
 
@@ -98,10 +99,10 @@ func mergeProjected(existing any, parts []PathPart, val any) any {
 	part := parts[0]
 
 	if part.IsIndex {
-		arr := growSlice(asSlice(existing), part.Index)
-		arr[part.Index] = leafOrMerge(arr[part.Index], parts, val)
+		sl := asSparse(existing)
+		sl.byIndex[part.Index] = leafOrMerge(sl.byIndex[part.Index], parts, val)
 
-		return arr
+		return sl
 	}
 
 	m := asMap(existing)
@@ -120,9 +121,20 @@ func leafOrMerge(existing any, parts []PathPart, val any) any {
 	return mergeProjected(existing, parts[1:], val)
 }
 
-func asSlice(v any) []any {
-	s, _ := v.([]any)
-	return s
+// sparseList accumulates projected list elements by their source index while a
+// projection is being built. finalize converts it to a compacted list ordered
+// by index — DynamoDB returns only the projected elements, dropping the gaps
+// between them.
+type sparseList struct {
+	byIndex map[int]any
+}
+
+func asSparse(v any) *sparseList {
+	if sl, ok := v.(*sparseList); ok {
+		return sl
+	}
+
+	return &sparseList{byIndex: map[int]any{}}
 }
 
 func asMap(v any) map[string]any {
@@ -134,12 +146,52 @@ func asMap(v any) map[string]any {
 	return m
 }
 
-// growSlice returns s extended so index idx is addressable, filling new gaps
-// with nil.
-func growSlice(s []any, idx int) []any {
-	for len(s) <= idx {
-		s = append(s, nil)
+// finalize materializes the projection scaffold into plain values: sparse
+// lists become compacted slices, maps and slices are deep-copied so the result
+// shares no mutable structure with the source item, and scalars pass through.
+func finalize(v any) any {
+	switch x := v.(type) {
+	case *sparseList:
+		return finalizeSparse(x)
+	case map[string]any:
+		return finalizeMap(x)
+	case []any:
+		return finalizeSlice(x)
+	default:
+		return v
+	}
+}
+
+func finalizeMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, e := range m {
+		out[k] = finalize(e)
 	}
 
-	return s
+	return out
+}
+
+func finalizeSlice(s []any) []any {
+	out := make([]any, 0, len(s))
+	for _, e := range s {
+		out = append(out, finalize(e))
+	}
+
+	return out
+}
+
+func finalizeSparse(s *sparseList) []any {
+	idxs := make([]int, 0, len(s.byIndex))
+	for i := range s.byIndex {
+		idxs = append(idxs, i)
+	}
+
+	sort.Ints(idxs)
+
+	out := make([]any, 0, len(idxs))
+	for _, i := range idxs {
+		out = append(out, finalize(s.byIndex[i]))
+	}
+
+	return out
 }
