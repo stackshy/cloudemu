@@ -71,8 +71,14 @@ func TestSDKResolverEndpointLifecycle(t *testing.T) {
 		t.Errorf("ip count = %d, want 2", aws.ToInt32(ep.IpAddressCount))
 	}
 
-	if ep.Status != r53rtypes.ResolverEndpointStatusOperational {
-		t.Errorf("status = %v, want OPERATIONAL", ep.Status)
+	// Real Route 53 Resolver returns a new endpoint as CREATING, not OPERATIONAL.
+	if ep.Status != r53rtypes.ResolverEndpointStatusCreating {
+		t.Errorf("status = %v, want CREATING", ep.Status)
+	}
+
+	// HostVPCId (the VPC the endpoint's subnets belong to) is populated.
+	if aws.ToString(ep.HostVPCId) == "" {
+		t.Errorf("HostVPCId is empty, want a vpc- id")
 	}
 
 	id := aws.ToString(ep.Id)
@@ -81,6 +87,16 @@ func TestSDKResolverEndpointLifecycle(t *testing.T) {
 	got, err := client.GetResolverEndpoint(ctx, &awsr53r.GetResolverEndpointInput{ResolverEndpointId: aws.String(id)})
 	if err != nil || aws.ToString(got.ResolverEndpoint.Name) != "inbound-1" {
 		t.Fatalf("GetResolverEndpoint: %v %+v", err, got)
+	}
+
+	// Reading the endpoint advances it to OPERATIONAL (the create waiter's exit).
+	if got.ResolverEndpoint.Status != r53rtypes.ResolverEndpointStatusOperational {
+		t.Errorf("status after get = %v, want OPERATIONAL", got.ResolverEndpoint.Status)
+	}
+
+	if aws.ToString(got.ResolverEndpoint.HostVPCId) != aws.ToString(ep.HostVPCId) {
+		t.Errorf("HostVPCId changed on get: %q -> %q",
+			aws.ToString(ep.HostVPCId), aws.ToString(got.ResolverEndpoint.HostVPCId))
 	}
 
 	list, err := client.ListResolverEndpoints(ctx, &awsr53r.ListResolverEndpointsInput{})

@@ -12,6 +12,7 @@ import (
 	awsec2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	awsrds "github.com/aws/aws-sdk-go-v2/service/rds"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
+	smithy "github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -338,5 +339,160 @@ func TestSDKRDSRoutingDoesNotShadowEC2(t *testing.T) {
 
 	if len(out.Instances) == 0 {
 		t.Fatal("expected at least one EC2 instance")
+	}
+}
+
+// TestSDKRDSDeleteWithFinalSnapshot guards that DeleteDBInstance honors
+// FinalDBSnapshotIdentifier (a final snapshot is created and readable) and
+// rejects the InvalidParameterCombination of no skip + no final id.
+func TestSDKRDSDeleteWithFinalSnapshot(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateDBInstance(ctx, &awsrds.CreateDBInstanceInput{
+		DBInstanceIdentifier: aws.String("finaldb"),
+		Engine:               aws.String("mysql"),
+		DBInstanceClass:      aws.String("db.t3.micro"),
+		AllocatedStorage:     aws.Int32(20),
+	}); err != nil {
+		t.Fatalf("CreateDBInstance: %v", err)
+	}
+
+	// Neither SkipFinalSnapshot nor FinalDBSnapshotIdentifier is a hard error.
+	_, err := client.DeleteDBInstance(ctx, &awsrds.DeleteDBInstanceInput{
+		DBInstanceIdentifier: aws.String("finaldb"),
+	})
+	if err == nil {
+		t.Fatal("delete without skip or final id: want InvalidParameterCombination, got nil")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterCombination" {
+		t.Fatalf("delete without skip or final id: got %v, want InvalidParameterCombination", err)
+	}
+
+	// Providing a final snapshot id creates the snapshot before deleting.
+	if _, err := client.DeleteDBInstance(ctx, &awsrds.DeleteDBInstanceInput{
+		DBInstanceIdentifier:      aws.String("finaldb"),
+		FinalDBSnapshotIdentifier: aws.String("finaldb-final"),
+	}); err != nil {
+		t.Fatalf("DeleteDBInstance with final snapshot: %v", err)
+	}
+
+	snaps, err := client.DescribeDBSnapshots(ctx, &awsrds.DescribeDBSnapshotsInput{
+		DBSnapshotIdentifier: aws.String("finaldb-final"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBSnapshots for final: %v", err)
+	}
+
+	if len(snaps.DBSnapshots) != 1 {
+		t.Fatalf("got %d final snapshots, want 1", len(snaps.DBSnapshots))
+	}
+}
+
+// TestSDKRDSSnapshotPercentProgress guards that an available snapshot reports
+// PercentProgress=100 (consistent with its Status), not 0.
+func TestSDKRDSSnapshotPercentProgress(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateDBInstance(ctx, &awsrds.CreateDBInstanceInput{
+		DBInstanceIdentifier: aws.String("progsrc"),
+		Engine:               aws.String("mysql"),
+		DBInstanceClass:      aws.String("db.t3.micro"),
+		AllocatedStorage:     aws.Int32(20),
+	}); err != nil {
+		t.Fatalf("CreateDBInstance: %v", err)
+	}
+
+	out, err := client.CreateDBSnapshot(ctx, &awsrds.CreateDBSnapshotInput{
+		DBSnapshotIdentifier: aws.String("prog-snap"),
+		DBInstanceIdentifier: aws.String("progsrc"),
+	})
+	if err != nil {
+		t.Fatalf("CreateDBSnapshot: %v", err)
+	}
+
+	if aws.ToString(out.DBSnapshot.Status) != "available" {
+		t.Fatalf("snapshot status %q, want available", aws.ToString(out.DBSnapshot.Status))
+	}
+
+	if aws.ToInt32(out.DBSnapshot.PercentProgress) != 100 {
+		t.Fatalf("snapshot PercentProgress=%d, want 100", aws.ToInt32(out.DBSnapshot.PercentProgress))
+	}
+}
+
+// TestSDKRDSListTagsForGroups guards that parameter/option/subnet group ARNs
+// are recognized taggable resources: ListTagsForResource round-trips their tags
+// instead of answering DBInstanceNotFound.
+func TestSDKRDSListTagsForGroups(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	pg, err := client.CreateDBParameterGroup(ctx, &awsrds.CreateDBParameterGroupInput{
+		DBParameterGroupName:   aws.String("pg1"),
+		DBParameterGroupFamily: aws.String("mysql8.0"),
+		Description:            aws.String("pg"),
+		Tags:                   []rdstypes.Tag{{Key: aws.String("team"), Value: aws.String("db")}},
+	})
+	if err != nil {
+		t.Fatalf("CreateDBParameterGroup: %v", err)
+	}
+
+	pgTags, err := client.ListTagsForResource(ctx, &awsrds.ListTagsForResourceInput{
+		ResourceName: pg.DBParameterGroup.DBParameterGroupArn,
+	})
+	if err != nil {
+		t.Fatalf("ListTagsForResource(parameter group): %v", err)
+	}
+
+	if len(pgTags.TagList) != 1 || aws.ToString(pgTags.TagList[0].Key) != "team" {
+		t.Fatalf("parameter-group tags = %+v, want team=db", pgTags.TagList)
+	}
+
+	og, err := client.CreateOptionGroup(ctx, &awsrds.CreateOptionGroupInput{
+		OptionGroupName:        aws.String("og1"),
+		EngineName:             aws.String("mysql"),
+		MajorEngineVersion:     aws.String("8.0"),
+		OptionGroupDescription: aws.String("og"),
+	})
+	if err != nil {
+		t.Fatalf("CreateOptionGroup: %v", err)
+	}
+
+	// Tag an option group after creation, then read it back.
+	if _, err := client.AddTagsToResource(ctx, &awsrds.AddTagsToResourceInput{
+		ResourceName: og.OptionGroup.OptionGroupArn,
+		Tags:         []rdstypes.Tag{{Key: aws.String("env"), Value: aws.String("test")}},
+	}); err != nil {
+		t.Fatalf("AddTagsToResource(option group): %v", err)
+	}
+
+	ogTags, err := client.ListTagsForResource(ctx, &awsrds.ListTagsForResourceInput{
+		ResourceName: og.OptionGroup.OptionGroupArn,
+	})
+	if err != nil {
+		t.Fatalf("ListTagsForResource(option group): %v", err)
+	}
+
+	if len(ogTags.TagList) != 1 || aws.ToString(ogTags.TagList[0].Value) != "test" {
+		t.Fatalf("option-group tags = %+v, want env=test", ogTags.TagList)
+	}
+
+	// A subnet group ARN is also taggable (empty list, not a 404).
+	sg, err := client.CreateDBSubnetGroup(ctx, &awsrds.CreateDBSubnetGroupInput{
+		DBSubnetGroupName:        aws.String("sg1"),
+		DBSubnetGroupDescription: aws.String("sg"),
+		SubnetIds:                []string{"subnet-1", "subnet-2"},
+	})
+	if err != nil {
+		t.Fatalf("CreateDBSubnetGroup: %v", err)
+	}
+
+	if _, err := client.ListTagsForResource(ctx, &awsrds.ListTagsForResourceInput{
+		ResourceName: sg.DBSubnetGroup.DBSubnetGroupArn,
+	}); err != nil {
+		t.Fatalf("ListTagsForResource(subnet group): %v", err)
 	}
 }

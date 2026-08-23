@@ -158,6 +158,13 @@ func (m *Mock) FailoverDBCluster(_ context.Context, clusterID, targetInstanceID 
 		return nil, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", clusterID)
 	}
 
+	// A failover needs at least one member to promote; real AWS rejects a
+	// failover on a cluster with no available instances as InvalidDBClusterStateFault.
+	if len(cluster.Members) == 0 {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition,
+			"DB cluster %q has no available instances to fail over", clusterID)
+	}
+
 	if targetInstanceID != "" {
 		idx := indexOf(cluster.Members, targetInstanceID)
 		if idx < 0 {

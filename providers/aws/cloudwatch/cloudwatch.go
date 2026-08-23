@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,9 +48,14 @@ type alarmData struct {
 	Stat                    string
 	State                   string
 	StateReason             string
+	StateUpdatedTimestamp   time.Time
 	AlarmActions            []string
 	OKActions               []string
 	InsufficientDataActions []string
+	AlarmDescription        string
+	ActionsEnabled          bool
+	AlarmArn                string
+	Tags                    map[string]string
 }
 
 // New creates a new CloudWatch mock with the given configuration options.
@@ -162,6 +168,8 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 			Reason:    fmt.Sprintf("Transition from %s to %s: %s", alarm.State, newState, reason),
 		})
 		m.mu.Unlock()
+
+		alarm.StateUpdatedTimestamp = now
 	}
 
 	alarm.State = newState
@@ -249,6 +257,10 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 		return result
 	}
 
+	// Carry the stored unit so the wire layer can echo the real unit (e.g.
+	// "Percent" for CPUUtilization) instead of hardcoding "Count".
+	result.Unit = unitOf(filtered)
+
 	periodDur := time.Duration(period) * time.Second
 
 	// Walk through periods from StartTime to EndTime.
@@ -272,6 +284,18 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 	}
 
 	return result
+}
+
+// unitOf returns the first non-empty unit among the data points, or "" if none
+// carry a unit.
+func unitOf(data []driver.MetricDatum) string {
+	for _, d := range data {
+		if d.Unit != "" {
+			return d.Unit
+		}
+	}
+
+	return ""
 }
 
 func collectPeriodValues(filtered []driver.MetricDatum, periodStart, periodEnd time.Time) []float64 {
@@ -316,17 +340,26 @@ func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	seen := make(map[metricKey]bool, len(m.metrics))
+	// AWS lists one entry per unique (namespace, name, dimension-set), so walk
+	// every stored datum and dedupe on a canonical dimension signature.
+	seen := make(map[string]bool)
 	out := make([]driver.MetricIdentifier, 0, len(m.metrics))
 
-	for key := range m.metrics {
-		if seen[key] {
-			continue
+	for key, data := range m.metrics {
+		for i := range data {
+			sig := key.Namespace + "\x00" + key.MetricName + "\x00" + canonicalDims(data[i].Dimensions)
+			if seen[sig] {
+				continue
+			}
+
+			seen[sig] = true
+
+			out = append(out, driver.MetricIdentifier{
+				Namespace:  key.Namespace,
+				MetricName: key.MetricName,
+				Dimensions: copyDims(data[i].Dimensions),
+			})
 		}
-
-		seen[key] = true
-
-		out = append(out, driver.MetricIdentifier{Namespace: key.Namespace, MetricName: key.MetricName})
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -334,10 +367,51 @@ func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier
 			return out[i].Namespace < out[j].Namespace
 		}
 
-		return out[i].MetricName < out[j].MetricName
+		if out[i].MetricName != out[j].MetricName {
+			return out[i].MetricName < out[j].MetricName
+		}
+
+		return canonicalDims(out[i].Dimensions) < canonicalDims(out[j].Dimensions)
 	})
 
 	return out, nil
+}
+
+// canonicalDims renders a dimension map as a stable, order-independent string.
+func canonicalDims(dims map[string]string) string {
+	if len(dims) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(dims))
+	for k := range dims {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(dims[k])
+		b.WriteByte(';')
+	}
+
+	return b.String()
+}
+
+func copyDims(dims map[string]string) map[string]string {
+	if len(dims) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(dims))
+	for k, v := range dims {
+		out[k] = v
+	}
+
+	return out
 }
 
 // CreateAlarm creates or updates an alarm with the given configuration.
@@ -353,6 +427,16 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		dims[k] = v
 	}
 
+	actionsEnabled := true
+	if cfg.ActionsEnabled != nil {
+		actionsEnabled = *cfg.ActionsEnabled
+	}
+
+	tags := make(map[string]string, len(cfg.Tags))
+	for k, v := range cfg.Tags {
+		tags[k] = v
+	}
+
 	alarm := &alarmData{
 		Name:                    cfg.Name,
 		Namespace:               cfg.Namespace,
@@ -364,9 +448,14 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		EvaluationPeriods:       cfg.EvaluationPeriods,
 		Stat:                    cfg.Stat,
 		State:                   "INSUFFICIENT_DATA",
+		StateUpdatedTimestamp:   m.opts.Clock.Now(),
 		AlarmActions:            append([]string{}, cfg.AlarmActions...),
 		OKActions:               append([]string{}, cfg.OKActions...),
 		InsufficientDataActions: append([]string{}, cfg.InsufficientDataActions...),
+		AlarmDescription:        cfg.AlarmDescription,
+		ActionsEnabled:          actionsEnabled,
+		AlarmArn:                idgen.AWSARN("cloudwatch", m.opts.Region, m.opts.AccountID, "alarm:"+cfg.Name),
+		Tags:                    tags,
 	}
 
 	m.alarms.Set(cfg.Name, alarm)
@@ -419,6 +508,7 @@ func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) erro
 
 	a.State = state
 	a.StateReason = reason
+	a.StateUpdatedTimestamp = m.opts.Clock.Now()
 
 	return nil
 }
@@ -500,6 +590,74 @@ func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) (
 	return filtered, nil
 }
 
+// SetAlarmActionsEnabled toggles ActionsEnabled for the named alarms. It backs
+// the AWS-local EnableAlarmActions / DisableAlarmActions wire operations.
+func (m *Mock) SetAlarmActionsEnabled(_ context.Context, names []string, enabled bool) error {
+	for _, name := range names {
+		a, ok := m.alarms.Get(name)
+		if !ok {
+			return errors.Newf(errors.NotFound, "alarm %q not found", name)
+		}
+
+		a.ActionsEnabled = enabled
+	}
+
+	return nil
+}
+
+// AddAlarmTags merges tags onto the named alarm, backing TagResource.
+func (m *Mock) AddAlarmTags(_ context.Context, alarmName string, tags map[string]string) error {
+	a, ok := m.alarms.Get(alarmName)
+	if !ok {
+		return errors.Newf(errors.NotFound, "alarm %q not found", alarmName)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if a.Tags == nil {
+		a.Tags = make(map[string]string, len(tags))
+	}
+
+	for k, v := range tags {
+		a.Tags[k] = v
+	}
+
+	return nil
+}
+
+// RemoveAlarmTags deletes the given tag keys from the named alarm, backing
+// UntagResource.
+func (m *Mock) RemoveAlarmTags(_ context.Context, alarmName string, keys []string) error {
+	a, ok := m.alarms.Get(alarmName)
+	if !ok {
+		return errors.Newf(errors.NotFound, "alarm %q not found", alarmName)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, k := range keys {
+		delete(a.Tags, k)
+	}
+
+	return nil
+}
+
+// AlarmTags returns a copy of the named alarm's tags, backing
+// ListTagsForResource.
+func (m *Mock) AlarmTags(_ context.Context, alarmName string) (map[string]string, error) {
+	a, ok := m.alarms.Get(alarmName)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "alarm %q not found", alarmName)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return copyDims(a.Tags), nil
+}
+
 // matchDimensions returns true if the data point dimensions contain all of the
 // requested filter dimensions.
 func matchDimensions(dataDims, filterDims map[string]string) bool {
@@ -567,12 +725,29 @@ func maxValue(values []float64) float64 {
 }
 
 func toAlarmInfo(a *alarmData) driver.AlarmInfo {
+	dims := make(map[string]string, len(a.Dimensions))
+	for k, v := range a.Dimensions {
+		dims[k] = v
+	}
+
 	return driver.AlarmInfo{
-		Name:               a.Name,
-		Namespace:          a.Namespace,
-		MetricName:         a.MetricName,
-		State:              a.State,
-		ComparisonOperator: a.ComparisonOperator,
-		Threshold:          a.Threshold,
+		Name:                    a.Name,
+		Namespace:               a.Namespace,
+		MetricName:              a.MetricName,
+		State:                   a.State,
+		ComparisonOperator:      a.ComparisonOperator,
+		Threshold:               a.Threshold,
+		StateReason:             a.StateReason,
+		StateUpdatedTimestamp:   a.StateUpdatedTimestamp,
+		Period:                  a.Period,
+		EvaluationPeriods:       a.EvaluationPeriods,
+		Statistic:               a.Stat,
+		ActionsEnabled:          a.ActionsEnabled,
+		AlarmActions:            append([]string{}, a.AlarmActions...),
+		OKActions:               append([]string{}, a.OKActions...),
+		InsufficientDataActions: append([]string{}, a.InsufficientDataActions...),
+		AlarmDescription:        a.AlarmDescription,
+		AlarmArn:                a.AlarmArn,
+		Dimensions:              dims,
 	}
 }
