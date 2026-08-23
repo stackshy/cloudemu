@@ -80,19 +80,8 @@ CloudEmu serves Azure on `:4568` (HTTPS) and GCP on `:4569`. The HTTPS ports use
 a self-signed cert, so point your client at the CloudEmu CA or disable
 verification for local use.
 
-**Azure** — the `azurerm` provider reads its endpoint from `ARM_*` environment
-variables / a custom metadata host rather than an `endpoints` block, so the
-cleanest path is to run against the Azure port and skip provider registration:
-
-```hcl
-provider "azurerm" {
-  features {}
-  skip_provider_registration = true
-  # metadata_host / resource_manager_endpoint → https://localhost:4568
-}
-```
-
-**GCP** — the `google` provider accepts a per-service `*_custom_endpoint`:
+**GCP** — the `google` provider accepts a per-service `*_custom_endpoint`, so
+point each service you use at the GCP port:
 
 ```hcl
 provider "google" {
@@ -101,9 +90,16 @@ provider "google" {
 }
 ```
 
-> AWS is the most exercised surface today. Azure/GCP Terraform blocks work but
-> are not yet covered by the automated idempotency suite — contributions of new
-> fixtures are welcome.
+**Azure** — the `azurerm` provider does not expose a simple per-service endpoint
+override the way AWS and GCP do (its endpoint wiring changes across provider
+major versions), so there is no drop-in block to paste here yet. Run against the
+Azure port (`:4568`) and consult your `azurerm` version's provider-configuration
+docs for the current override mechanism.
+
+> AWS is the most exercised surface today, and the only one with an automated
+> idempotency suite. The GCP block above works but is not yet suite-covered, and
+> Azure has no verified Terraform recipe — contributions of fixtures for either
+> are welcome.
 
 ## What's verified
 
