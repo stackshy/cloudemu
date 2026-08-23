@@ -77,6 +77,9 @@ func TestSNSCompat(t *testing.T) {
 			TopicArn: aws.String(topicArn),
 			Protocol: aws.String(snsProtocol),
 			Endpoint: aws.String(snsEndpoint),
+			// email requires confirmation, so real SNS returns "pending confirmation"
+			// unless the caller opts in to the ARN being returned immediately.
+			ReturnSubscriptionArn: true,
 		})
 		if err != nil {
 			return err
