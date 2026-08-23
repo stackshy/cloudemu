@@ -12,6 +12,15 @@ type Repository struct {
 	CreatedAt  string
 	Tags       map[string]string
 	ImageCount int
+	// Arn is the provider-native resource identifier (AWS ECR ARN). Optional
+	// for providers that do not model ARNs.
+	Arn string
+	// RegistryID is the owning registry/account identifier (AWS ECR registryId).
+	RegistryID string
+	// ImageTagMutability is "MUTABLE" or "IMMUTABLE" (AWS ECR).
+	ImageTagMutability string
+	// ScanOnPush reflects the repository's scan-on-push configuration.
+	ScanOnPush bool
 }
 
 // RepositoryConfig describes a repository to create.
@@ -32,6 +41,9 @@ type ImageDetail struct {
 	PushedAt     string
 	LastPulledAt string
 	MediaType    string
+	// Manifest is the raw image manifest document, preserved so operations like
+	// BatchGetImage can return it verbatim.
+	Manifest string
 }
 
 // ImageManifest represents an image manifest for pushing.
@@ -42,6 +54,9 @@ type ImageManifest struct {
 	MediaType  string
 	SizeBytes  int64
 	Layers     []LayerInfo
+	// Manifest is the raw manifest document as submitted (AWS ECR PutImage
+	// imageManifest). Preserved so it can be returned by BatchGetImage.
+	Manifest string
 }
 
 // LayerInfo describes a layer in an image.

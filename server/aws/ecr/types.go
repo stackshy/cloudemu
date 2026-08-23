@@ -16,11 +16,13 @@ type imageScanningConfigJSON struct {
 }
 
 type repositoryJSON struct {
-	RepositoryName     string  `json:"repositoryName"`
-	RepositoryURI      string  `json:"repositoryUri"`
-	RegistryID         string  `json:"registryId,omitempty"`
-	CreatedAt          float64 `json:"createdAt,omitempty"`
-	ImageTagMutability string  `json:"imageTagMutability,omitempty"`
+	RepositoryArn              string                   `json:"repositoryArn,omitempty"`
+	RepositoryName             string                   `json:"repositoryName"`
+	RepositoryURI              string                   `json:"repositoryUri"`
+	RegistryID                 string                   `json:"registryId,omitempty"`
+	CreatedAt                  float64                  `json:"createdAt,omitempty"`
+	ImageTagMutability         string                   `json:"imageTagMutability,omitempty"`
+	ImageScanningConfiguration *imageScanningConfigJSON `json:"imageScanningConfiguration,omitempty"`
 }
 
 type imageIDJSON struct {
@@ -62,6 +64,8 @@ type createRepositoryRequest struct {
 
 type describeRepositoriesRequest struct {
 	RepositoryNames []string `json:"repositoryNames"`
+	MaxResults      int      `json:"maxResults"`
+	NextToken       string   `json:"nextToken"`
 }
 
 type deleteRepositoryRequest struct {
@@ -79,11 +83,15 @@ type putImageRequest struct {
 
 type repositoryNameRequest struct {
 	RepositoryName string `json:"repositoryName"`
+	MaxResults     int    `json:"maxResults"`
+	NextToken      string `json:"nextToken"`
 }
 
 type imageIDsRequest struct {
 	RepositoryName string        `json:"repositoryName"`
 	ImageIDs       []imageIDJSON `json:"imageIds"`
+	MaxResults     int           `json:"maxResults"`
+	NextToken      string        `json:"nextToken"`
 }
 
 // --- response envelopes ---
@@ -94,6 +102,7 @@ type createRepositoryResponse struct {
 
 type describeRepositoriesResponse struct {
 	Repositories []repositoryJSON `json:"repositories"`
+	NextToken    string           `json:"nextToken,omitempty"`
 }
 
 type deleteRepositoryResponse struct {
@@ -105,15 +114,22 @@ type putImageResponse struct {
 }
 
 type listImagesResponse struct {
-	ImageIDs []imageIDJSON `json:"imageIds"`
+	ImageIDs  []imageIDJSON `json:"imageIds"`
+	NextToken string        `json:"nextToken,omitempty"`
 }
 
 type describeImagesResponse struct {
 	ImageDetails []imageDetailJSON `json:"imageDetails"`
+	NextToken    string            `json:"nextToken,omitempty"`
 }
 
 type batchDeleteImageResponse struct {
 	ImageIDs []imageIDJSON      `json:"imageIds"`
+	Failures []imageFailureJSON `json:"failures"`
+}
+
+type batchGetImageResponse struct {
+	Images   []imageJSON        `json:"images"`
 	Failures []imageFailureJSON `json:"failures"`
 }
 
@@ -130,9 +146,13 @@ func epochSeconds(iso string) float64 {
 
 func toRepositoryJSON(r *crdriver.Repository) repositoryJSON {
 	return repositoryJSON{
-		RepositoryName: r.Name,
-		RepositoryURI:  r.URI,
-		CreatedAt:      epochSeconds(r.CreatedAt),
+		RepositoryArn:              r.Arn,
+		RepositoryName:             r.Name,
+		RepositoryURI:              r.URI,
+		RegistryID:                 r.RegistryID,
+		CreatedAt:                  epochSeconds(r.CreatedAt),
+		ImageTagMutability:         r.ImageTagMutability,
+		ImageScanningConfiguration: &imageScanningConfigJSON{ScanOnPush: r.ScanOnPush},
 	}
 }
 

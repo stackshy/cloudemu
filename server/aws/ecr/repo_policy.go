@@ -64,7 +64,16 @@ func (h *Handler) getRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
 
 	policy, err := mgr.GetRepositoryPolicy(r.Context(), req.RepositoryName)
 	if err != nil {
-		writeErr(w, err)
+		// Distinguish a missing repository from a repository that simply has no
+		// policy: real ECR returns RepositoryPolicyNotFoundException for the
+		// latter, RepositoryNotFoundException for the former.
+		if _, repoErr := h.registry.GetRepository(r.Context(), req.RepositoryName); repoErr != nil {
+			writeErr(w, repoErr)
+			return
+		}
+
+		wire.WriteJSONError(w, http.StatusBadRequest, "RepositoryPolicyNotFoundException", err.Error())
+
 		return
 	}
 

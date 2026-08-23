@@ -79,6 +79,10 @@ type Cluster struct {
 	VPCConfig            VPCConfig
 	Tags                 map[string]string
 	CreatedAt            time.Time
+	// OIDCIssuer is the cluster's OpenID Connect issuer URL, surfaced under
+	// DescribeCluster identity.oidc.issuer. Required for IRSA and
+	// aws_iam_openid_connect_provider wiring.
+	OIDCIssuer string
 }
 
 // ClusterUpdate is returned by mutating cluster ops; SDKs poll this via
@@ -88,6 +92,12 @@ type ClusterUpdate struct {
 	Type      string // VersionUpdate, EndpointAccessUpdate, …
 	Status    string // InProgress, Failed, Canceled, Successful
 	CreatedAt time.Time
+	// ClusterName is the cluster the update belongs to; used by ListUpdates.
+	ClusterName string
+	// NodegroupName / AddonName scope the update to a child resource when set,
+	// so ListUpdates can filter by nodegroupName/addonName like real EKS.
+	NodegroupName string
+	AddonName     string
 }
 
 // NodegroupScalingConfig captures Auto Scaling sizing for a nodegroup.
@@ -197,6 +207,10 @@ type EKS interface {
 	UpdateClusterConfig(ctx context.Context, name string, cfg VPCConfig, tags map[string]string) (*ClusterUpdate, error)
 	UpdateClusterVersion(ctx context.Context, name, version string) (*ClusterUpdate, error)
 	DeleteCluster(ctx context.Context, name string) (*Cluster, error)
+
+	// Updates
+	DescribeUpdate(ctx context.Context, clusterName, updateID string) (*ClusterUpdate, error)
+	ListUpdates(ctx context.Context, clusterName, nodegroupName, addonName string) ([]string, error)
 
 	// Node groups
 	CreateNodegroup(ctx context.Context, cfg NodegroupConfig) (*Nodegroup, error)
