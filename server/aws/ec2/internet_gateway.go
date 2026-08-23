@@ -8,9 +8,12 @@ import (
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
-// stateAttached is the attachment state shared by internet gateways and
-// network interfaces.
-const stateAttached = "attached"
+// stateAttached is the network-interface attachment state. stateDetached is the
+// driver's internal "not attached to a VPC" marker for internet gateways.
+const (
+	stateAttached = "attached"
+	stateDetached = "detached"
+)
 
 type igwAttachmentXML struct {
 	VpcID string `xml:"vpcId"`
@@ -19,6 +22,7 @@ type igwAttachmentXML struct {
 
 type internetGatewayXML struct {
 	InternetGatewayID string             `xml:"internetGatewayId"`
+	OwnerID           string             `xml:"ownerId"`
 	Attachments       []igwAttachmentXML `xml:"attachmentSet>item,omitempty"`
 	Tags              []tagItem          `xml:"tagSet>item,omitempty"`
 }
@@ -117,7 +121,7 @@ func (h *Handler) deleteInternetGateway(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-//nolint:dupl // per-resource describe pattern; siblings in vpc/subnet/sg/route_table
+//nolint:dupl // per-resource describe+filter pattern; sibling in vpc
 func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "InternetGatewayId")
 
@@ -127,31 +131,80 @@ func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	out := make([]internetGatewayXML, 0, len(igws))
-	for i := range igws {
-		out = append(out, toInternetGatewayXML(&igws[i]))
+	filters := awsquery.Filters(r.Form)
+	if err := validateIGWFilters(filters); err != nil {
+		writeIGWErr(w, err)
+		return
 	}
 
 	awsquery.WriteXMLResponse(w, describeInternetGatewaysResponseXML{
 		Xmlns:              awsquery.Namespace,
 		RequestID:          awsquery.RequestID,
-		InternetGatewaySet: out,
+		InternetGatewaySet: filterXML(igws, filters, igwMatchesFilters, toInternetGatewayXML),
 	})
+}
+
+// validateIGWFilters rejects filter names DescribeInternetGateways does not
+// model, matching the sibling Describe handlers.
+func validateIGWFilters(filters []awsquery.Filter) error {
+	var probe netdriver.InternetGateway
+
+	for _, f := range filters {
+		if _, known := igwFilterMatch(&probe, f); !known {
+			return newInvalidParameterErr("The filter '" + f.Name + "' is invalid")
+		}
+	}
+
+	return nil
+}
+
+func igwMatchesFilters(igw *netdriver.InternetGateway, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if matched, _ := igwFilterMatch(igw, f); !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+// igwFilterMatch reports whether igw satisfies filter f and whether f is a
+// filter DescribeInternetGateways recognizes.
+func igwFilterMatch(igw *netdriver.InternetGateway, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case "internet-gateway-id":
+		return containsString(f.Values, igw.ID), true
+	case "attachment.vpc-id":
+		return igw.VpcID != "" && containsString(f.Values, igw.VpcID), true
+	case "attachment.state":
+		return igw.VpcID != "" && containsString(f.Values, igwAttachmentState(igw)), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, igw.Tags)
+	}
+}
+
+// igwAttachmentState maps the driver's internal attachment bookkeeping to the
+// AWS wire value. An attached internet gateway reports "available" (not the
+// internal "attached"); a detached one reports "detached". Both the filter and
+// the describe output go through this so filtering by attachment.state=available
+// matches what describe returns.
+func igwAttachmentState(igw *netdriver.InternetGateway) string {
+	if igw.State == stateDetached {
+		return stateDetached
+	}
+
+	return stateAvailable
 }
 
 func toInternetGatewayXML(igw *netdriver.InternetGateway) internetGatewayXML {
 	xi := internetGatewayXML{
 		InternetGatewayID: igw.ID,
+		OwnerID:           ownerID,
 		Tags:              toTagItems(igw.Tags),
 	}
 
 	if igw.VpcID != "" {
-		state := igw.State
-		if state == "" {
-			state = stateAttached
-		}
-
-		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: state}}
+		xi.Attachments = []igwAttachmentXML{{VpcID: igw.VpcID, State: igwAttachmentState(igw)}}
 	}
 
 	return xi

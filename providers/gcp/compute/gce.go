@@ -525,6 +525,7 @@ func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
 	return nil
 }
 
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
 	id := fmt.Sprintf("projects/%s/zones/%s/disks/disk-%d",
 		m.opts.ProjectID, m.opts.Region, m.volCounter.Add(1))

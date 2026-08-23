@@ -13,6 +13,10 @@ import (
 // and most VPC resources in AWS.
 const stateAvailable = "available"
 
+// dhcpDefault is the id EC2 reports for a VPC using the Amazon-provided DHCP
+// option set (no explicit set associated).
+const dhcpDefault = "default"
+
 type vpcXML struct {
 	VpcID           string    `xml:"vpcId"`
 	State           string    `xml:"state"`
@@ -20,6 +24,7 @@ type vpcXML struct {
 	DhcpOptionsID   string    `xml:"dhcpOptionsId"`
 	InstanceTenancy string    `xml:"instanceTenancy"`
 	IsDefault       bool      `xml:"isDefault"`
+	OwnerID         string    `xml:"ownerId"`
 	Tags            []tagItem `xml:"tagSet>item,omitempty"`
 }
 
@@ -76,7 +81,7 @@ func (h *Handler) deleteVpc(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // per-resource describe pattern; siblings in subnet/sg/igw/route_table
+//nolint:dupl // per-resource describe+filter pattern; sibling in internet_gateway
 func (h *Handler) describeVpcs(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "VpcId")
 
@@ -86,15 +91,16 @@ func (h *Handler) describeVpcs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]vpcXML, 0, len(vpcs))
-	for i := range vpcs {
-		out = append(out, toVpcXML(&vpcs[i]))
+	filters := awsquery.Filters(r.Form)
+	if err := validateVpcFilters(filters); err != nil {
+		writeVPCErr(w, err)
+		return
 	}
 
 	awsquery.WriteXMLResponse(w, describeVpcsResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		VpcSet:    out,
+		VpcSet:    filterXML(vpcs, filters, vpcMatchesFilters, toVpcXML),
 	})
 }
 
@@ -108,10 +114,55 @@ func toVpcXML(v *netdriver.VPCInfo) vpcXML {
 		VpcID:           v.ID,
 		State:           state,
 		CidrBlock:       v.CIDRBlock,
-		DhcpOptionsID:   "default",
+		DhcpOptionsID:   nonEmpty(v.DhcpOptionsID, dhcpDefault),
 		InstanceTenancy: "default",
 		IsDefault:       false,
+		OwnerID:         ownerID,
 		Tags:            toTagItems(v.Tags),
+	}
+}
+
+// validateVpcFilters rejects filter names DescribeVpcs does not model. Silently
+// matching nothing would tell a data-source lookup the VPC is absent.
+func validateVpcFilters(filters []awsquery.Filter) error {
+	var probe netdriver.VPCInfo
+
+	for _, f := range filters {
+		if _, known := vpcFilterMatch(&probe, f); !known {
+			return newInvalidParameterErr("The filter '" + f.Name + "' is invalid")
+		}
+	}
+
+	return nil
+}
+
+func vpcMatchesFilters(v *netdriver.VPCInfo, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if matched, _ := vpcFilterMatch(v, f); !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+// vpcFilterMatch reports whether v satisfies filter f and whether f is a filter
+// DescribeVpcs recognizes. Keeping the two answers in one function means each
+// filter name is written exactly once.
+func vpcFilterMatch(v *netdriver.VPCInfo, f awsquery.Filter) (matched, known bool) {
+	switch f.Name {
+	case filterVPCID:
+		return containsString(f.Values, v.ID), true
+	case filterCIDR, filterCIDRBlock, "cidr-block-association.cidr-block":
+		return containsString(f.Values, v.CIDRBlock), true
+	case filterState:
+		return containsString(f.Values, nonEmpty(v.State, stateAvailable)), true
+	case "dhcp-options-id":
+		return containsString(f.Values, nonEmpty(v.DhcpOptionsID, dhcpDefault)), true
+	case "isDefault", "is-default":
+		return containsString(f.Values, boolFilterValue(false)), true
+	default:
+		return tagFilterMatch(f.Name, f.Values, v.Tags)
 	}
 }
 

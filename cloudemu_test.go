@@ -7977,8 +7977,10 @@ func testKeyPairOperations(t *testing.T, ctx context.Context, c computedriver.Co
 		t.Error("expected non-empty ID")
 	}
 
-	if kp.Fingerprint != "fp-test-key" {
-		t.Errorf("expected fingerprint 'fp-test-key', got %q", kp.Fingerprint)
+	// Fingerprint format is provider-specific; AWS emits a real colon-hex digest
+	// (see server/aws/ec2 key_pair_test.go for the exact-shape assertion).
+	if kp.Fingerprint == "" {
+		t.Error("expected non-empty fingerprint")
 	}
 
 	if kp.PrivateKey == "" {

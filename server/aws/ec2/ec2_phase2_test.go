@@ -80,12 +80,17 @@ func TestRouteVPCDispatchesAllActions(t *testing.T) {
 		t.Errorf("AuthorizeSecurityGroupIngress = %d: %s", rr.Code, rr.Body.String())
 	}
 
-	// Egress, Revoke variants use the same parser path.
+	// Egress, Revoke variants use the same parser path. Use a distinct rule
+	// (not protocol -1 to 0.0.0.0/0, which the SG already carries as its
+	// seeded default egress rule) so this exercises the parser rather than
+	// tripping InvalidPermission.Duplicate.
 	rr = do(t, h, http.MethodPost, "/", url.Values{
 		"Action":                            {"AuthorizeSecurityGroupEgress"},
 		"GroupId":                           {sgID},
-		"IpPermissions.1.IpProtocol":        {"-1"},
-		"IpPermissions.1.IpRanges.1.CidrIp": {"0.0.0.0/0"},
+		"IpPermissions.1.IpProtocol":        {"tcp"},
+		"IpPermissions.1.FromPort":          {"443"},
+		"IpPermissions.1.ToPort":            {"443"},
+		"IpPermissions.1.IpRanges.1.CidrIp": {"10.0.0.0/16"},
 	})
 	if rr.Code != http.StatusOK {
 		t.Errorf("AuthorizeSecurityGroupEgress = %d", rr.Code)
@@ -367,14 +372,16 @@ func TestToVpcXMLStateDefaults(t *testing.T) {
 func TestToSubnetXMLStateDefaults(t *testing.T) {
 	in := &netdriver.SubnetInfo{ID: "subnet-x", VPCID: "vpc-x"}
 
-	got := toSubnetXML(in)
+	got := toSubnetXML(in, "us-east-1")
 	if got.State != "available" {
 		t.Errorf("default state: %q", got.State)
 	}
 
-	if got.AvailableIPCount != subnetAvailableIPs {
+	// No CIDR set falls back to a /24's usable-address count.
+	const fallbackAvailableIPs = 251
+	if got.AvailableIPCount != fallbackAvailableIPs {
 		t.Errorf("AvailableIPCount = %d, want %d",
-			got.AvailableIPCount, subnetAvailableIPs)
+			got.AvailableIPCount, fallbackAvailableIPs)
 	}
 }
 
@@ -391,7 +398,9 @@ func TestToInternetGatewayXMLAttachment(t *testing.T) {
 		t.Fatalf("attached IGW should have 1 attachment, got %d", len(got.Attachments))
 	}
 
-	if got.Attachments[0].VpcID != "vpc-1" || got.Attachments[0].State != "attached" {
+	// An attached internet gateway reports attachment state "available", the
+	// wire value AWS uses (not the driver's internal "attached" marker).
+	if got.Attachments[0].VpcID != "vpc-1" || got.Attachments[0].State != "available" {
 		t.Errorf("attachment wrong: %+v", got.Attachments[0])
 	}
 }
@@ -527,7 +536,8 @@ func TestCreateAndDeleteTags(t *testing.T) {
 		t.Fatalf("DeleteTags result wrong: %s", desc)
 	}
 
-	// Unknown ID -> InvalidID.NotFound.
+	// Unknown VPC ID -> generic InvalidID.NotFound (instance ids get the
+	// resource-specific InvalidInstanceID.NotFound; see tag_error_test.go).
 	bad := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"CreateTags"}, "ResourceId.1": {"vpc-deadbeef"},
 		"Tag.1.Key": {"a"}, "Tag.1.Value": {"b"},

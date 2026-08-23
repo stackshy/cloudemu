@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -17,11 +18,13 @@ func (h *Handler) prefixLists() (netdriver.PrefixLists, bool) {
 
 type prefixListXML struct {
 	PrefixListID   string    `xml:"prefixListId"`
+	PrefixListArn  string    `xml:"prefixListArn,omitempty"`
 	PrefixListName string    `xml:"prefixListName"`
 	AddressFamily  string    `xml:"addressFamily"`
 	MaxEntries     int       `xml:"maxEntries"`
 	State          string    `xml:"state"`
 	Version        int       `xml:"version"`
+	OwnerID        string    `xml:"ownerId,omitempty"`
 	Tags           []tagItem `xml:"tagSet>item,omitempty"`
 }
 
@@ -74,7 +77,7 @@ func (*Handler) createPrefixList(w http.ResponseWriter, r *http.Request, p netdr
 		Xmlns   string        `xml:"xmlns,attr"`
 		Req     string        `xml:"requestId"`
 		PL      prefixListXML `xml:"prefixList"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(out)})
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(regionFromRequest(r), out)})
 }
 
 func (*Handler) deletePrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
@@ -89,10 +92,9 @@ func (*Handler) deletePrefixList(w http.ResponseWriter, r *http.Request, p netdr
 		Xmlns   string        `xml:"xmlns,attr"`
 		Req     string        `xml:"requestId"`
 		PL      prefixListXML `xml:"prefixList"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(out)})
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(regionFromRequest(r), out)})
 }
 
-//nolint:dupl // parallel per-resource marshaling
 func (*Handler) describePrefixLists(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
 	items, err := p.DescribeManagedPrefixLists(r.Context(), awsquery.ListStrings(r.Form, "PrefixListId"))
 	if err != nil {
@@ -100,9 +102,11 @@ func (*Handler) describePrefixLists(w http.ResponseWriter, r *http.Request, p ne
 		return
 	}
 
+	region := regionFromRequest(r)
+
 	out := make([]prefixListXML, 0, len(items))
 	for i := range items {
-		out = append(out, toPrefixListXML(&items[i]))
+		out = append(out, toPrefixListXML(region, &items[i]))
 	}
 
 	awsquery.WriteXMLResponse(w, struct {
@@ -134,8 +138,15 @@ func (*Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p n
 }
 
 func (*Handler) modifyPrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
+	id := r.Form.Get("PrefixListId")
+
+	if err := checkPrefixListVersion(r, p, id); err != nil {
+		writePrefixListErr(w, err)
+		return
+	}
+
 	out, err := p.ModifyManagedPrefixList(r.Context(),
-		r.Form.Get("PrefixListId"), parseAddPrefixListEntries(r), parseRemovePrefixListCIDRs(r))
+		id, parseAddPrefixListEntries(r), parseRemovePrefixListCIDRs(r))
 	if err != nil {
 		writePrefixListErr(w, err)
 		return
@@ -146,7 +157,39 @@ func (*Handler) modifyPrefixList(w http.ResponseWriter, r *http.Request, p netdr
 		Xmlns   string        `xml:"xmlns,attr"`
 		Req     string        `xml:"requestId"`
 		PL      prefixListXML `xml:"prefixList"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(out)})
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: toPrefixListXML(regionFromRequest(r), out)})
+}
+
+// checkPrefixListVersion enforces the optimistic-concurrency guard AWS applies
+// to ModifyManagedPrefixList: when the caller passes CurrentVersion it must
+// match the list's current version, else the modify is rejected as an
+// IncorrectState. Callers that omit CurrentVersion skip the check.
+func checkPrefixListVersion(r *http.Request, p netdriver.PrefixLists, id string) error {
+	raw := r.Form.Get("CurrentVersion")
+	if raw == "" {
+		return nil
+	}
+
+	want, err := strconv.Atoi(raw)
+	if err != nil {
+		return newInvalidParameterErr("CurrentVersion must be an integer")
+	}
+
+	lists, err := p.DescribeManagedPrefixLists(r.Context(), []string{id})
+	if err != nil {
+		return err
+	}
+
+	if len(lists) == 0 {
+		return cerrors.Newf(cerrors.NotFound, "managed prefix list %q not found", id)
+	}
+
+	if lists[0].Version != want {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"prefix list %q has version %d, not the requested %d", id, lists[0].Version, want)
+	}
+
+	return nil
 }
 
 func parseAddPrefixListEntries(r *http.Request) []netdriver.PrefixListEntry {
@@ -221,11 +264,23 @@ func parsePrefixListEntries(r *http.Request) []netdriver.PrefixListEntry {
 	return nil
 }
 
-func toPrefixListXML(p *netdriver.PrefixList) prefixListXML {
+func toPrefixListXML(region string, p *netdriver.PrefixList) prefixListXML {
 	return prefixListXML{
-		PrefixListID: p.ID, PrefixListName: p.Name, AddressFamily: p.AddressFamily,
-		MaxEntries: p.MaxEntries, State: p.State, Version: p.Version, Tags: toTagItems(p.Tags),
+		PrefixListID: p.ID, PrefixListArn: prefixListARN(region, p.ID),
+		PrefixListName: p.Name, AddressFamily: p.AddressFamily,
+		MaxEntries: p.MaxEntries, State: p.State, Version: p.Version,
+		OwnerID: ownerID, Tags: toTagItems(p.Tags),
 	}
+}
+
+// prefixListARN builds the managed-prefix-list ARN AWS returns; the SDK and
+// Terraform read prefixListArn to reference the list in policies and rules.
+func prefixListARN(region, id string) string {
+	if id == "" {
+		return ""
+	}
+
+	return "arn:aws:ec2:" + region + ":" + ownerID + ":prefix-list/" + id
 }
 
 func writePrefixListErr(w http.ResponseWriter, err error) {
