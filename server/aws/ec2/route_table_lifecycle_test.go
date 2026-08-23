@@ -118,6 +118,52 @@ func TestRouteTableAssociationRoundTrip(t *testing.T) {
 	}
 }
 
+// TestDescribeRouteTablesByAssociationFilter guards the IaC waiter path:
+// Terraform polls DescribeRouteTables filtered by the association id and expects
+// exactly the one owning table, reporting associationState=associated.
+func TestDescribeRouteTablesByAssociationFilter(t *testing.T) {
+	h := newFullHandler()
+	vpcID, subnetID := mkVPCAndSubnet(t, h)
+	rtID := mkRouteTable(t, h, vpcID)
+
+	assocResp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"AssociateRouteTable"}, "RouteTableId": {rtID}, "SubnetId": {subnetID},
+	})
+	assocID := between(assocResp.Body.String(), "<associationId>", "</associationId>")
+
+	resp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action":        {"DescribeRouteTables"},
+		"Filter.1.Name": {"association.route-table-association-id"}, "Filter.1.Value.1": {assocID},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("DescribeRouteTables (filtered) = %d: %s", resp.Code, resp.Body.String())
+	}
+
+	body := resp.Body.String()
+	if got := between(body, "<routeTableId>", "</routeTableId>"); got != rtID {
+		t.Errorf("filtered describe returned routeTableId %q, want %q\nbody: %s", got, rtID, body)
+	}
+
+	if !strings.Contains(body, "<state>associated</state>") {
+		t.Errorf("association should report state=associated\nbody: %s", body)
+	}
+}
+
+// TestDescribeRouteTablesRejectsUnknownFilter guards against silently returning
+// an empty set for a filter we do not model — an empty result could tell a
+// caller a route table is gone and let it delete the VPC (DependencyViolation).
+func TestDescribeRouteTablesRejectsUnknownFilter(t *testing.T) {
+	h := newFullHandler()
+
+	resp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action":        {"DescribeRouteTables"},
+		"Filter.1.Name": {"transit-gateway-id"}, "Filter.1.Value.1": {"tgw-x"},
+	})
+	if resp.Code == http.StatusOK {
+		t.Errorf("an unrecognized filter should error, got 200: %s", resp.Body.String())
+	}
+}
+
 func TestDisassociateUnknownAssociationIsNotFound(t *testing.T) {
 	h := newFullHandler()
 

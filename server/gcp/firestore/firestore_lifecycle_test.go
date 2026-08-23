@@ -811,3 +811,110 @@ func TestDatabaseStreams(t *testing.T) {
 		t.Error("stream iterator should carry a shard id")
 	}
 }
+
+// TestDatabaseQueryOperators drives the real Firestore REST client through the
+// StructuredQuery operators added for faithful querying: IN / NOT_IN,
+// ARRAY_CONTAINS / ARRAY_CONTAINS_ANY, a composite OR, a unary IS_NULL, and a
+// numeric range over int-valued fields.
+func TestDatabaseQueryOperators(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "products")
+	coll := client.Collection("products")
+
+	docs := map[string]map[string]any{
+		"p0": {"status": "active", "tags": []string{"red", "new"}, "score": 10},
+		"p1": {"status": "pending", "tags": []string{"blue"}, "score": 20},
+		"p2": {"status": "archived", "tags": []string{"red", "old"}, "score": 30, "owner": nil},
+		"p3": {"score": 5}, // no status/tags/owner — must be excluded from not-in / !=
+	}
+	for id, fields := range docs {
+		if _, err := coll.Doc(id).Set(ctx, fields); err != nil {
+			t.Fatalf("Set %s: %v", id, err)
+		}
+	}
+
+	count := func(name string, q gcpfirestore.Query, want int) {
+		got := dbCollectAll(t, q.Documents(ctx))
+		if len(got) != want {
+			t.Errorf("%s: got %d docs (%v), want %d", name, len(got), keysOfDB(got), want)
+		}
+	}
+
+	count("in", coll.Where("status", "in", []string{"active", "pending"}), 2)
+	// not-in and != exclude p2 (archived) AND p3 (field absent).
+	count("not-in", coll.Where("status", "not-in", []string{"archived"}), 2)
+	count("!=", coll.Where("status", "!=", "active"), 2)
+	count("array-contains", coll.Where("tags", "array-contains", "red"), 2)
+	count("array-contains-any", coll.Where("tags", "array-contains-any", []string{"blue", "old"}), 2)
+	// array-contains on a scalar (string) field matches nothing — no substring fallback.
+	count("array-contains on scalar", coll.Where("status", "array-contains", "arch"), 0)
+	count("numeric >", coll.Where("score", ">", 15), 2)
+	count("is-null", coll.Where("owner", "==", nil), 1)
+
+	or := gcpfirestore.OrFilter{Filters: []gcpfirestore.EntityFilter{
+		gcpfirestore.PropertyFilter{Path: "status", Operator: "==", Value: "active"},
+		gcpfirestore.PropertyFilter{Path: "score", Operator: "==", Value: 30},
+	}}
+	count("OR", coll.WhereEntity(or), 2)
+}
+
+func collectDBOrderedIDs(t *testing.T, it *gcpfirestore.DocumentIterator) []string {
+	t.Helper()
+
+	var ids []string
+
+	for {
+		snap, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("iterator.Next: %v", err)
+		}
+
+		ids = append(ids, snap.Ref.ID)
+	}
+
+	return ids
+}
+
+// TestDatabaseQueryOrderingAndPaging drives the real Firestore REST client
+// through orderBy (asc/desc), startAfter/endBefore cursors, offset, limit, and
+// a select projection.
+func TestDatabaseQueryOrderingAndPaging(t *testing.T) {
+	ctx, client, _ := newDBClient(t, "scores")
+	coll := client.Collection("scores")
+
+	for _, d := range []struct {
+		id    string
+		score int
+	}{{"a", 30}, {"b", 10}, {"c", 20}} {
+		if _, err := coll.Doc(d.id).Set(ctx, map[string]any{"score": d.score, "extra": "x"}); err != nil {
+			t.Fatalf("Set %s: %v", d.id, err)
+		}
+	}
+
+	order := func(name string, q gcpfirestore.Query, want string) {
+		got := strings.Join(collectDBOrderedIDs(t, q.Documents(ctx)), ",")
+		if got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	order("orderBy asc", coll.OrderBy("score", gcpfirestore.Asc), "b,c,a")
+	order("orderBy desc", coll.OrderBy("score", gcpfirestore.Desc), "a,c,b")
+	order("startAfter+limit", coll.OrderBy("score", gcpfirestore.Asc).StartAfter(10).Limit(1), "c")
+	order("offset", coll.OrderBy("score", gcpfirestore.Asc).Offset(1), "c,a")
+	order("endBefore", coll.OrderBy("score", gcpfirestore.Asc).EndBefore(20), "b")
+
+	// select projects to just 'score' (plus the document name); 'extra' is dropped.
+	for id, data := range dbCollectAll(t, coll.Select("score").Documents(ctx)) {
+		if _, hasExtra := data["extra"]; hasExtra {
+			t.Errorf("select score: doc %s still carries 'extra': %v", id, data)
+		}
+
+		if _, hasScore := data["score"]; !hasScore {
+			t.Errorf("select score: doc %s missing 'score': %v", id, data)
+		}
+	}
+}

@@ -169,6 +169,7 @@ func (db *Database) Query(ctx context.Context, input driver.QueryInput) (*driver
 	return out.(*driver.QueryResult), nil
 }
 
+//nolint:gocritic // input passed by value to match driver.Database interface pattern
 func (db *Database) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
 	out, err := db.do(ctx, "Scan", input, func() (any, error) { return db.driver.Scan(ctx, input) })
 	if err != nil {

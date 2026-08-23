@@ -252,6 +252,8 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 }
 
 // UpdateItem applies partial updates to an existing document in a container.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[string]any, error) {
 	m.mu.Lock()
 
@@ -270,18 +272,11 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 	}
 
 	oldItem := copyItem(item)
-	updated := copyItem(item)
 
-	for _, action := range input.Actions {
-		switch action.Action {
-		case "SET":
-			updated[action.Field] = action.Value
-		case "REMOVE":
-			delete(updated, action.Field)
-		default:
-			m.mu.Unlock()
-			return nil, cerrors.Newf(cerrors.InvalidArgument, "unsupported action: %s", action.Action)
-		}
+	updated, err := driver.ApplyUpdate(copyItem(item), input)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
 	}
 
 	td.items.Set(k, updated)

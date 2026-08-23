@@ -2,255 +2,122 @@
 
 ## Overview
 
-CloudEmu follows a three-layer architecture that separates portable API concerns, driver interfaces, and provider-specific implementations. This design allows each cloud provider to implement the same driver interface while the portable API layer adds cross-cutting concerns such as recording, metrics collection, rate limiting, error injection, and latency simulation. AWS, Azure, and GCP are fully implemented; OCI is an in-progress fourth provider whose foundation is in place and whose services arrive incrementally, with the generated [capability coverage](coverage/README.md) as the source of truth for which exist (see [Fourth provider: OCI](#fourth-provider-oci-in-progress)).
+CloudEmu separates **what** a cloud service does from **which** cloud does it, in three layers: a provider-agnostic **portable API**, a minimal **driver interface** per service, and an in-memory **provider mock** per cloud. Every provider implements the same driver interface, so one set of cross-cutting behaviors (recording, metrics, rate limiting, error injection, latency) and one set of wire servers work uniformly across clouds.
 
-## Three-Layer Architecture
+AWS, Azure, and GCP are fully implemented; **OCI** is an in-progress fourth provider (see [below](#fourth-provider-oci-in-progress)). The generated [capability coverage](coverage/README.md) is the source of truth for which services exist.
 
-```
-┌─────────────────────────────────────────────────────┐
-│         Portable API Layer                          │
-│   (storage/, compute/, database/, etc.)             │
-│   Recording, Metrics, Rate Limiting, Error Inject   │
-├─────────────────────────────────────────────────────┤
-│                      ↓                              │
-├─────────────────────────────────────────────────────┤
-│         Driver Interfaces                           │
-│   (*/driver/driver.go)                              │
-│   Minimal Go interfaces per service                 │
-├─────────────────────────────────────────────────────┤
-│                      ↓                              │
-├─────────────────────────────────────────────────────┤
-│         Provider Implementations                    │
-│   (providers/aws/, providers/azure/, providers/gcp/)│
-│   In-memory backends using memstore.Store[V]        │
-├─────────────────────────────────────────────────────┤
-│                      ↓                              │
-├─────────────────────────────────────────────────────┤
-│         In-Memory State                             │
-│   (internal/memstore) Generic Store[V]              │
-└─────────────────────────────────────────────────────┘
+## The three layers
+
+```mermaid
+flowchart TB
+    L1["<b>Layer 1 · Portable API</b> — services/&lt;svc&gt;<br/>optional wrapper: recording · metrics · rate limiting · error injection · latency<br/>provider-agnostic (the same wrapper works over S3, Blob, or GCS)"]
+    L2{{"<b>Layer 2 · Driver interface</b> — services/&lt;svc&gt;/driver<br/>a minimal Go contract per service · no cloud SDK types"}}
+    L3["<b>Layer 3 · Provider mock</b> — providers/&lt;cloud&gt;/&lt;service&gt;<br/>an in-memory backend, one per cloud (aws · azure · gcp · oci)"]
+    S[("State — internal/memstore Store&lt;V&gt;<br/>or an opt-in real engine")]
+
+    L1 -->|delegates to| L2
+    L3 -. implements .-> L2
+    L3 -->|reads / writes| S
 ```
 
-### Layer 1: Portable API
+- **Layer 1 — Portable API** (`services/storage`, `services/compute`, `services/database`, …). Each portable type wraps a driver and adds the cross-cutting concerns above to every call. It is provider-agnostic and **optional**: you wrap a driver with it when you want those behaviors. For example `storage.Bucket` wraps any `driver.Bucket` — S3, Blob, or GCS.
+- **Layer 2 — Driver interface** (`services/<svc>/driver/driver.go`). The hinge of the whole design: a minimal Go interface listing the operations every provider must implement (`CreateBucket`, `PutObject`, …), using plain Go types. Everything that reaches state goes through a driver.
+- **Layer 3 — Provider mock** (`providers/{aws,azure,gcp,oci}/<service>`). The concrete implementation for one cloud. It implements the driver interface and stores state in `internal/memstore.Store[V]` — a generic, thread-safe in-memory store — or, when opted in, a [real engine](#real-data-plane-engines).
 
-The top layer lives in service-specific packages (`services/storage/`, `services/compute/`, `services/database/`, etc.). Each portable API type wraps a driver with cross-cutting concerns. For example, `storage.Bucket` wraps `driver.Bucket` and adds call recording, metrics collection, rate limiting, error injection, and simulated latency to every operation. This layer is provider-agnostic -- the same `storage.Bucket` works with S3, Blob Storage, or GCS.
+## How a call reaches state
 
-### Layer 2: Driver Interfaces
+There are **two ways in**, and both converge on the driver interface:
 
-Each service defines a minimal Go interface in `<service>/driver/driver.go`. These interfaces specify the operations that every provider must implement. For example, `services/storage/driver/driver.go` defines the `Bucket` interface with methods like `CreateBucket`, `PutObject`, `GetObject`, etc. Driver interfaces use plain Go types (no cloud SDK dependencies).
+```mermaid
+flowchart LR
+    SDK["Real SDK / CLI / IaC<br/>(any language)"] -->|"HTTP · native protocol"| WH["Wire handler<br/>server/&lt;cloud&gt;/&lt;service&gt;"]
+    Go["Go code / tests"] -->|typed call| PW["Portable wrapper<br/>services/&lt;svc&gt; · optional"]
+    Go -.->|or straight to the mock| DRV
+    WH --> DRV{{"Driver<br/>interface"}}
+    PW --> DRV
+    DRV -. implemented by .-> MOCK["Provider mock<br/>providers/&lt;cloud&gt;/…"]
+    MOCK -->|default| MEM[("memstore")]
+    MOCK -.->|"opt-in With&lt;X&gt;Engine"| ENG[("real engine")]
+```
 
-### Layer 3: Provider Implementations
+- **Standalone / SDK path** — a real `aws-sdk-go-v2`, `azure-sdk-for-go`, or `cloud.google.com/go` client (or a CLI, or IaC) sends an HTTP request in the cloud's native wire format. The matching **wire handler** decodes it and calls the driver. Point the client at the endpoint; nothing else changes. See [sdk-server.md](sdk-server.md) and [standalone-server.md](standalone-server.md).
+- **Typed Go path** — `cloudemu.NewAWS().S3.CreateBucket(...)` calls a provider mock (a driver implementation) directly. Wrap it in the portable API first (`storage.New(mock, …)`) when you want recording/metrics/rate-limiting/injection/latency on those calls.
 
-The bottom layer contains the actual mock implementations for each cloud provider. These live in `providers/aws/`, `providers/azure/`, `providers/gcp/`, and — for the services built so far — `providers/oci/`. Each implementation uses `internal/memstore.Store[V]` as its backing data structure -- a generic, thread-safe in-memory store. All state lives in process memory with no external dependencies.
+Either way the request lands on the **driver interface**, the provider mock services it, and state lives in `memstore` — unless a real engine is wired in.
 
-### Fourth provider: OCI (in progress)
+## Real data-plane engines
 
-A fourth provider, OCI, lives in `providers/oci/`. Its foundation is staged on `development` (identity options, OCID generation in `internal/idgen/ocid.go`, the shared `services/scope` compartment scoping, the `server/wire/ocirest` wire format, and the `server/oci/workrequest` async envelope), and its services land one PR at a time — see [oci-conventions.md](oci-conventions.md). Each one that lands follows the same three-layer shape as the others: a `providers/oci/<service>/` package with a `memstore`-backed mock implementing the shared `services/<service>/driver` interface, plus a `server/oci/<service>/` wire handler.
+The provider mock's data path is normally `memstore`. Passing a `config.With<X>Engine` option routes that path through an **opt-in real engine** instead — real Postgres/MySQL, Redis, function runtimes, Docker compute/containers, or filesystem-backed object bytes — so clients run real workloads against the emulator. Unset (the default) keeps everything in-memory. Engine code lives in sibling modules `contrib/realengine` (no Docker) and `contrib/dockerengine` (Docker); `Provider.Close()` tears every wired engine down via `Options.EngineClosers()`. Full catalog: [features.md — Real Data-Plane Engines](features.md#11-real-data-plane-engines-opt-in).
 
-Until every service has landed, OCI diverges from the pattern above in two documented ways:
+## Cross-service engines
 
-- **A partially populated provider.** `providers/oci.Provider` declares each service as a bare driver interface rather than a concrete mock, so a service that has not landed yet reads as `nil` instead of failing to compile. The generated [capability coverage](coverage/README.md) is the source of truth for which OCI services exist and what each one implements — read it rather than any list in prose.
-- **Resource discovery has no OCI branch.** The per-resource ARN/ID formatters in `services/resourcediscovery` switch on AWS/Azure/GCP and fall through to a default for OCI, so OCI resources do not yet get native OCIDs from discovery. This must be filled in alongside the services that produce discoverable resources.
+Some features need to read **several** drivers at once, so they sit beside the portable API and consume Layer 2 interfaces directly (never concrete provider types), which is why they work uniformly across clouds:
 
-## Cross-Service Engines
+```mermaid
+flowchart LR
+    subgraph drivers["Driver interfaces (Layer 2)"]
+        C["compute"]
+        N["networking"]
+        D["dns"]
+        R["all service drivers"]
+    end
+    T["features/topology<br/>CanConnect · TraceRoute · Resolve"]
+    RD["services/resourcediscovery<br/>one unified inventory view"]
+    SV["server/<br/>SDK-compat wire handlers"]
 
-Sitting above Layer 2 (driver interfaces) are **cross-service engines** that consume driver interfaces directly without going through the portable API. They're peers of each other, not layers in the three-layer stack. Two exist today:
+    C --> T
+    N --> T
+    D --> T
+    R --> RD
+    R --> SV
+```
 
-- `features/topology/` -- reads from compute, networking, and DNS drivers to simulate real network connectivity (`CanConnect`, `TraceRoute`, `Resolve`, security-group and NACL evaluation). See [topology.md](topology.md).
-- `server/` -- exposes driver interfaces over HTTP in each cloud's native SDK wire format, so real `aws-sdk-go-v2`, `azure-sdk-for-go`, and `cloud.google.com/go` clients work against CloudEmu by only changing the endpoint. Covers storage, compute, relational and NoSQL databases (incl. Redis/MemoryDB and Cassandra — Keyspaces and Azure Managed Cassandra), networking, monitoring/logging, serverless, containers (registry + ECS + Kubernetes), messaging, streaming (Kinesis Data Streams and MSK / managed Kafka), secrets, key management (KMS), certificate management (ACM), web application firewall (WAFv2), workflow orchestration (Step Functions), search/analytics (OpenSearch), audit logging (CloudTrail), configuration management (AWS Config), data integration / ETL and the Data Catalog (Glue), threat detection (GuardDuty), file systems (EFS), email (SES v2), IAM, resource discovery, and AI/ML (Bedrock, SageMaker, Azure AI, Vertex AI) across all 3 providers. Uses a pluggable `Handler` registry so new services drop in as self-contained packages without touching the core. See [sdk-server.md](sdk-server.md) and the full catalog in [services.md](services.md).
+- **`features/topology`** — reads compute, networking, and DNS drivers to evaluate real network reachability. See [topology.md](topology.md).
+- **`services/resourcediscovery`** — walks every driver a provider holds and returns one normalized inventory (backs AWS Resource Explorer, Azure Resource Graph, GCP Cloud Asset). See [features.md](features.md#10-cross-service-resource-discovery).
+- **`server/`** — exposes drivers over HTTP in each cloud's native SDK wire format, via a pluggable `Handler` registry so new services drop in as self-contained packages. See [sdk-server.md](sdk-server.md).
 
-Both engines depend only on Layer 2 interfaces -- never on concrete provider types -- so they work uniformly across AWS, Azure, and GCP backends.
+## Provider factory & cross-service wiring
 
-## Cross-Service Wiring
-
-Provider factories automatically wire cross-service dependencies using `SetMonitoring()`. When a compute instance is launched, the compute mock pushes metrics directly into the monitoring service. This wiring is established at provider creation time.
+Each provider has a factory (`New()` in `providers/aws/aws.go`, etc.) that reads `config.Option` values, instantiates every service mock with the shared options, **wires cross-service dependencies**, and returns a `Provider` struct whose services are public fields.
 
 ```go
-// In providers/aws/aws.go
-p.EC2.SetMonitoring(p.CloudWatch)        // EC2 pushes metrics to CloudWatch
-p.S3.SetMonitoring(p.CloudWatch)         // S3 pushes metrics to CloudWatch
-p.DynamoDB.SetMonitoring(p.CloudWatch)   // DynamoDB pushes metrics to CloudWatch
+aws := cloudemu.NewAWS(config.WithRegion("us-west-2"))
+defer aws.Close()                       // tears down any wired real engines
 
-// In providers/azure/azure.go
-p.VirtualMachines.SetMonitoring(p.Monitor) // VMs push metrics to Azure Monitor
-p.BlobStorage.SetMonitoring(p.Monitor)     // Blob Storage pushes metrics
-
-// In providers/gcp/gcp.go
-p.GCE.SetMonitoring(p.CloudMonitoring)    // GCE pushes metrics to Cloud Monitoring
-p.GCS.SetMonitoring(p.CloudMonitoring)    // GCS pushes metrics
-```
-
-Currently, 10 services per provider are wired to push auto-metrics to their respective monitoring service: Compute, Storage, Database, Serverless, Message Queue, Cache, Logging, Notification, Container Registry, and Event Bus.
-
-## Provider Factory Pattern
-
-Each provider has a factory function (`New()`) in its top-level package (`providers/aws/aws.go`, `providers/azure/azure.go`, `providers/gcp/gcp.go`). The factory:
-
-1. Accepts functional `config.Option` values for configuration (clock, region, account ID, etc.)
-2. Creates `config.Options` from the functional options
-3. Instantiates every service mock, passing the shared options to each
-4. Wires cross-service dependencies (e.g., compute to monitoring)
-5. Returns the `Provider` struct with all services accessible as public fields
-
-```go
-aws := cloudemu.NewAWS(
-    config.WithRegion("us-west-2"),
-    config.WithAccountID("123456789012"),
-)
-
-// All services are ready to use
 aws.S3.CreateBucket(ctx, "my-bucket")
 aws.EC2.RunInstances(ctx, instanceConfig, 1)
-aws.DynamoDB.CreateTable(ctx, tableConfig)
 ```
 
-## Package Structure Overview
+The key wiring is auto-metrics: `SetMonitoring()` connects a service to its monitoring backend at construction, so a launched VM pushes metrics straight into CloudWatch / Azure Monitor / Cloud Monitoring.
+
+```go
+p.EC2.SetMonitoring(p.CloudWatch)          // AWS
+p.VirtualMachines.SetMonitoring(p.Monitor) // Azure
+p.GCE.SetMonitoring(p.CloudMonitoring)     // GCP
+```
+
+10 services per provider push auto-metrics this way: Compute, Storage, Database, Serverless, Message Queue, Cache, Logging, Notification, Container Registry, and Event Bus.
+
+## Package map
 
 | Package | Purpose |
 |---------|---------|
-| `config` | Functional options (`WithClock`, `WithRegion`, `WithAccountID`, `WithProjectID`, `WithLatency`), `Clock` interface, `RealClock`, `FakeClock` for deterministic time |
-| `errors` | Canonical error codes: `NotFound`, `AlreadyExists`, `InvalidArgument`, `FailedPrecondition`, `PermissionDenied`, `Throttled`, `Internal`, `Unimplemented`, `ResourceExhausted`, `Unavailable` |
-| `internal/memstore` | Generic thread-safe `Store[V]` -- the backing data structure for all mock implementations |
-| `internal/idgen` | ID generators: AWS ARNs, Azure resource IDs, GCP self-links |
-| `statemachine` | Generic finite state machine for VM lifecycle transitions (pending, running, stopping, stopped, terminated) with callback support |
-| `pagination` | Generic `Paginate[T]` with base64 page tokens for list operations |
-| `recorder` | Call recording for test assertions -- captures service, operation, input, output, error, and duration |
-| `metrics` | In-memory metrics collector with Counter, Gauge, and Histogram types |
-| `ratelimit` | Token bucket rate limiter that returns `Throttled` errors |
-| `inject` | Error injection with policies: `Always`, `NthCall`, `Probabilistic`, `Countdown` |
-| `cost` | Simulated cost tracking with per-operation pricing rates |
+| `config` | Functional options (`WithClock`/`WithRegion`/`WithAccountID`/`WithProjectID`/`WithLatency`, the `With<X>Engine` engine options), the `Clock` interface, and `FakeClock` for deterministic time |
+| `errors` | Canonical error codes: `NotFound`, `AlreadyExists`, `InvalidArgument`, `FailedPrecondition`, `PermissionDenied`, `Throttled`, `Internal`, … |
+| `internal/memstore` | Generic thread-safe `Store[V]` — the backing store for every mock |
+| `internal/idgen` | ID generators: AWS ARNs, Azure resource IDs, GCP self-links, OCIDs |
+| `statemachine` | Generic FSM for VM lifecycle transitions (pending → running → stopping → …) |
+| `pagination` | Generic `Paginate[T]` with base64 page tokens |
+| `features/{recorder,metrics,ratelimit,inject,chaos,topology}` | The cross-cutting behaviors and cross-service engines |
+| `cost` | Simulated per-operation cost tracking |
 
-## File Structure
+The source tree mirrors the layers — `services/<svc>/` (portable API + `driver/`), `providers/<cloud>/<service>/` (mocks), `server/<cloud>/<service>/` (wire handlers) — plus the `contrib/*` sibling modules. See [STRUCTURE.md](STRUCTURE.md) for the full layout, naming rules, and where new code goes.
 
-```
-cloudemu.go                           # Entry point: NewAWS(), NewAzure(), NewGCP()
-cloudemu_test.go                      # All tests
-doc.go                                # Package documentation
-go.mod                                # Module: github.com/stackshy/cloudemu/v2
-config/
-    options.go                        # Options, WithClock, WithRegion, etc.
-    clock.go                          # Clock, RealClock, FakeClock
-errors/
-    errors.go                         # Canonical error codes and helpers
-internal/
-    memstore/                         # Generic Store[V]
-    idgen/                            # ID generators (ARNs, Azure IDs, GCP IDs)
-    statemachine/                     # Generic FSM
-    pagination/                       # Generic Paginate[T]
-services/                             # emulated cloud services (portable API + driver interface)
-    storage/
-        storage.go                    # Portable storage API
-        driver/driver.go              # Bucket interface
-    compute/  database/  relationaldb/  serverless/  networking/  monitoring/
-    iam/  dns/  loadbalancer/  messagequeue/  cache/  secrets/  logging/
-    notification/  eventbus/  containerregistry/  kubernetes/  resourcediscovery/
-    bedrock/  sagemaker/  vertexai/  databricks/  ai/  search/
-    memorydb/  keyspaces/  managedcassandra/  ecs/
-    parameterstore/  tablestorage/  cost/
-                                      # each: <name>.go (portable API) + driver/ (interface)
-features/                             # cross-cutting capabilities you wrap drivers with
-    chaos/                            # fault / latency / throttle injection
-    recorder/                         # call recording for assertions
-    metrics/                          # in-memory metrics collection
-    ratelimit/                        # token-bucket rate limiter
-    inject/                           # error injection (policies + injector)
-    topology/                         # network reachability (CanConnect / TraceRoute / Resolve)
-providers/
-    aws/
-        aws.go                        # AWS factory (wires all services)
-        s3/                           # S3 mock
-        ec2/                          # EC2 mock
-        dynamodb/                     # DynamoDB mock
-        lambda/                       # Lambda mock
-        vpc/                          # VPC mock
-        cloudwatch/                   # CloudWatch mock
-        iam/                       # IAM mock
-        route53/                      # Route 53 mock
-        elb/                          # ELB mock
-        sqs/                          # SQS mock
-        elasticache/                  # ElastiCache mock
-        memorydb/                     # MemoryDB mock (Redis/Valkey control plane)
-        keyspaces/                    # Keyspaces mock (Cassandra control plane)
-        secretsmanager/               # Secrets Manager mock
-        cloudwatchlogs/               # CloudWatch Logs mock
-        sns/                          # SNS mock
-        ecr/                          # ECR mock
-        eventbridge/                  # EventBridge mock
-        rds/                          # RDS mock (Aurora + Neptune + DocumentDB engines)
-        redshift/                     # Redshift mock
-        eks/                          # EKS control-plane mock (clusters, node groups,
-                                      # Fargate profiles, addons)
-    azure/
-        azure.go                      # Azure factory (wires all services)
-        blobstorage/                  # Blob Storage mock
-        virtualmachines/              # Virtual Machines mock
-        cosmosdb/                     # Cosmos DB mock
-        managedcassandra/             # Managed Instance for Apache Cassandra mock
-        functions/                    # Azure Functions mock
-        vnet/                         # VNet mock
-        monitor/                 # Azure Monitor mock
-        iam/                     # Azure IAM mock
-        dns/                     # Azure DNS mock
-        loadbalancer/                      # Azure LB mock
-        servicebus/                   # Service Bus mock
-        cache/                   # Azure Cache mock
-        keyvault/                     # Key Vault mock
-        loganalytics/                 # Log Analytics mock
-        notificationhubs/             # Notification Hubs mock
-        acr/                          # ACR mock
-        eventgrid/                    # Event Grid mock
-        sql/                     # Azure SQL Database mock
-        postgresflex/                 # Azure PostgreSQL Flexible Server mock
-        mysqlflex/                    # Azure MySQL Flexible Server mock
-        aks/                          # AKS control-plane mock (managed clusters,
-                                      # agent pools, maintenance configs)
-    gcp/
-        gcp.go                        # GCP factory (wires all services)
-        gcs/                          # GCS mock
-        compute/                          # GCE mock
-        firestore/                    # Firestore mock
-        cloudfunctions/               # Cloud Functions mock
-        vpc/                       # GCP VPC mock
-        monitoring/              # Cloud Monitoring mock
-        iam/                       # GCP IAM mock
-        clouddns/                     # Cloud DNS mock
-        loadbalancer/                        # GCP LB mock
-        pubsub/                       # Pub/Sub mock
-        memorystore/                  # Memorystore mock
-        secretmanager/                # Secret Manager mock
-        cloudlogging/                 # Cloud Logging mock
-        fcm/                          # FCM mock
-        artifactregistry/             # Artifact Registry mock
-        eventarc/                     # Eventarc mock
-        cloudsql/                     # Cloud SQL mock
-        gke/                          # GKE control-plane mock (clusters, node pools,
-                                      # operations)
-server/                               # SDK-compat HTTP servers (real cloud SDKs work against this)
-    server.go                         # core: Handler interface + dispatcher
-    wire/
-        wire.go                       # shared XML/JSON helpers
-        awsquery/                     # AWS query-protocol helpers
-        azurearm/                     # ARM URL parser + JSON envelope
-        gcprest/                      # GCP REST URL parser + LRO Operation helpers
-    aws/
-        aws.go                        # awsserver.New(Drivers{...})
-        s3/  ec2/  dynamodb/          # S3 REST+XML, EC2 query, DynamoDB JSON-RPC
-        cloudwatch/                   # Smithy rpc-v2-cbor
-        lambda/  sqs/                 # REST + JSON-RPC handlers
-        rds/  redshift/               # query-protocol relational DB handlers
-        memorydb/  keyspaces/         # JSON 1.1 / JSON 1.0 NoSQL DB handlers
-        eks/                          # REST EKS control-plane handler
-    azure/
-        azure.go                      # azureserver.New(Drivers{...})
-        virtualmachines/  disks/  snapshots/  images/  sshpublickeys/
-        blob/  cosmos/  network/  monitor/  functions/  servicebus/
-        sql/  postgresflex/  mysqlflex/   # ARM relational DB handlers
-        managedcassandra/             # ARM Managed Cassandra handler
-        aks/                          # ARM AKS control-plane handler
-    gcp/
-        gcp.go                        # gcpserver.New(Drivers{...})
-        compute/  networks/  gcs/  firestore/  monitoring/
-        cloudfunctions/  pubsub/
-        cloudsql/                     # REST Cloud SQL handler
-        gke/                          # REST GKE control-plane handler
-```
+## Fourth provider: OCI (in progress)
+
+OCI (`providers/oci/`) follows the same three-layer shape: a `memstore`-backed mock per service implementing the shared driver, plus a `server/oci/<service>/` handler. Its foundation is in place (identity options, OCID generation in `internal/idgen/ocid.go`, `services/scope` compartment scoping, the `server/wire/ocirest` format, and the `server/oci/workrequest` async envelope); services land one PR at a time — see [oci-conventions.md](oci-conventions.md).
+
+Until every service has landed, OCI diverges in two documented ways:
+
+- **Partially populated provider** — `providers/oci.Provider` declares each service as a bare driver interface, so a service that hasn't landed reads as `nil` rather than failing to compile. The generated [capability coverage](coverage/README.md) is the source of truth for what exists.
+- **No OCI branch in resource discovery** — the ARN/ID formatters in `services/resourcediscovery` fall through to a default for OCI, so its resources don't yet get native OCIDs from discovery. This fills in alongside the services that produce discoverable resources.

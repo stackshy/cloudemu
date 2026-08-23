@@ -58,6 +58,10 @@ type Options struct {
 	// ContainerEngine optionally backs container workloads with real containers
 	// (opt-in). Nil (the default) keeps workloads in-memory with synthetic state.
 	ContainerEngine ContainerEngine
+
+	// StorageEngine optionally persists object-storage bytes to a real backing
+	// (opt-in). Nil (the default) keeps object bytes in-memory.
+	StorageEngine StorageEngine
 }
 
 // OCIRegion returns the region OCI services should use, substituting an OCI
@@ -133,6 +137,14 @@ func WithComputeEngine(e ComputeEngine) Option {
 func WithContainerEngine(e ContainerEngine) Option {
 	return func(o *Options) {
 		o.ContainerEngine = e
+	}
+}
+
+// WithStorageEngine sets the real storage engine that persists object-storage
+// bytes (opt-in). Nil (the default) keeps object bytes in-memory.
+func WithStorageEngine(e StorageEngine) Option {
+	return func(o *Options) {
+		o.StorageEngine = e
 	}
 }
 

@@ -24,11 +24,16 @@ type routeXML struct {
 	State                string `xml:"state"`
 }
 
+type rtAssociationStateXML struct {
+	State string `xml:"state"`
+}
+
 type rtAssociationXML struct {
-	AssociationID string `xml:"routeTableAssociationId"`
-	RouteTableID  string `xml:"routeTableId"`
-	SubnetID      string `xml:"subnetId,omitempty"`
-	Main          bool   `xml:"main"`
+	AssociationID    string                `xml:"routeTableAssociationId"`
+	RouteTableID     string                `xml:"routeTableId"`
+	SubnetID         string                `xml:"subnetId,omitempty"`
+	Main             bool                  `xml:"main"`
+	AssociationState rtAssociationStateXML `xml:"associationState"`
 }
 
 type routeTableXML struct {
@@ -75,10 +80,11 @@ type deleteRouteTableResponseXML struct {
 }
 
 type associateRouteTableResponseXML struct {
-	XMLName       xml.Name `xml:"AssociateRouteTableResponse"`
-	Xmlns         string   `xml:"xmlns,attr"`
-	RequestID     string   `xml:"requestId"`
-	AssociationID string   `xml:"associationId"`
+	XMLName          xml.Name              `xml:"AssociateRouteTableResponse"`
+	Xmlns            string                `xml:"xmlns,attr"`
+	RequestID        string                `xml:"requestId"`
+	AssociationID    string                `xml:"associationId"`
+	AssociationState rtAssociationStateXML `xml:"associationState"`
 }
 
 type disassociateRouteTableResponseXML struct {
@@ -107,7 +113,6 @@ func (h *Handler) createRouteTable(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // per-resource describe pattern; siblings in vpc/subnet/sg/igw
 func (h *Handler) describeRouteTables(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "RouteTableId")
 
@@ -117,8 +122,18 @@ func (h *Handler) describeRouteTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filters := awsquery.Filters(r.Form)
+	if err := validateRouteTableFilters(filters); err != nil {
+		writeRouteTableErr(w, err)
+		return
+	}
+
 	out := make([]routeTableXML, 0, len(rts))
 	for i := range rts {
+		if !routeTableMatchesFilters(&rts[i], filters) {
+			continue
+		}
+
 		out = append(out, toRouteTableXML(&rts[i]))
 	}
 
@@ -193,9 +208,10 @@ func (h *Handler) associateRouteTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	awsquery.WriteXMLResponse(w, associateRouteTableResponseXML{
-		Xmlns:         awsquery.Namespace,
-		RequestID:     awsquery.RequestID,
-		AssociationID: assoc.ID,
+		Xmlns:            awsquery.Namespace,
+		RequestID:        awsquery.RequestID,
+		AssociationID:    assoc.ID,
+		AssociationState: rtAssociationStateXML{State: "associated"},
 	})
 }
 
@@ -231,6 +247,94 @@ func resolveRouteTarget(r *http.Request) (target, targetType string) {
 	return "", ""
 }
 
+// validateRouteTableFilters rejects filter names this emulator does not model.
+// Like validateENIFilters, an explicit InvalidParameterValue is safer than
+// silently matching nothing: an unrecognized filter that returned an empty set
+// could tell a caller a route table is already gone and let it proceed to a VPC
+// delete that then fails with DependencyViolation.
+func validateRouteTableFilters(filters []awsquery.Filter) error {
+	for _, f := range filters {
+		if !routeTableFilterKnown(f.Name) {
+			return newInvalidParameterErr("The filter '" + f.Name + "' is invalid")
+		}
+	}
+
+	return nil
+}
+
+// routeTableFilterKnown lists the filters routeTableMatchesFilter implements:
+// keep the two in sync, or a "known" filter would validate and then silently
+// match nothing.
+func routeTableFilterKnown(name string) bool {
+	switch name {
+	case "route-table-id", "vpc-id",
+		"association.route-table-association-id", "association.route-table-id",
+		"association.subnet-id", "association.main":
+		return true
+	default:
+		return false
+	}
+}
+
+// routeTableMatchesFilters reports whether a route table satisfies every
+// DescribeRouteTables filter. Terraform's route-table-association waiter filters
+// by association.route-table-association-id and expects exactly one table back;
+// without honoring the filter the handler returns every table and the provider's
+// single-result assertion fails, hanging the association until it times out.
+// Filter names are validated up front, so an unknown name never reaches here.
+func routeTableMatchesFilters(rt *netdriver.RouteTable, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if !routeTableMatchesFilter(rt, f) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func routeTableMatchesFilter(rt *netdriver.RouteTable, f awsquery.Filter) bool {
+	switch f.Name {
+	case "route-table-id":
+		return containsString(f.Values, rt.ID)
+	case "vpc-id":
+		return containsString(f.Values, rt.VPCID)
+	case "association.route-table-association-id":
+		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool { return containsString(f.Values, a.ID) })
+	case "association.route-table-id":
+		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool {
+			return containsString(f.Values, nonEmpty(a.RouteTableID, rt.ID))
+		})
+	case "association.subnet-id":
+		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool { return containsString(f.Values, a.SubnetID) })
+	case "association.main":
+		return anyAssoc(rt, func(a netdriver.RouteTableAssociation) bool {
+			return containsString(f.Values, boolFilterValue(a.Main))
+		})
+	default:
+		// Unknown filter: match nothing rather than hand back tables the caller
+		// did not ask for.
+		return false
+	}
+}
+
+func boolFilterValue(b bool) string {
+	if b {
+		return "true"
+	}
+
+	return "false"
+}
+
+func anyAssoc(rt *netdriver.RouteTable, pred func(netdriver.RouteTableAssociation) bool) bool {
+	for _, a := range rt.Associations {
+		if pred(a) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 	x := routeTableXML{
 		RouteTableID: rt.ID,
@@ -240,10 +344,11 @@ func toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 
 	for _, a := range rt.Associations {
 		x.Associations = append(x.Associations, rtAssociationXML{
-			AssociationID: a.ID,
-			RouteTableID:  nonEmpty(a.RouteTableID, rt.ID),
-			SubnetID:      a.SubnetID,
-			Main:          a.Main,
+			AssociationID:    a.ID,
+			RouteTableID:     nonEmpty(a.RouteTableID, rt.ID),
+			SubnetID:         a.SubnetID,
+			Main:             a.Main,
+			AssociationState: rtAssociationStateXML{State: "associated"},
 		})
 	}
 

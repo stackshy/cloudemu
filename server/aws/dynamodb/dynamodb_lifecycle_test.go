@@ -330,9 +330,8 @@ func TestDDBItemJourney(t *testing.T) {
 }
 
 // TestDDBQueryPartitionAndSort: query by partition key with sort
-// conditions =, >, <=, >= and an ExpressionAttributeNames alias. Note the
-// emulator wire parser only accepts token-form "pk = :v AND sk <op> :v2"
-// (no begins_with()/BETWEEN function syntax).
+// conditions =, >, <=, >=, BETWEEN and begins_with(), plus an
+// ExpressionAttributeNames alias.
 func TestDDBQueryPartitionAndSort(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
@@ -399,6 +398,31 @@ func TestDDBQueryPartitionAndSort(t *testing.T) {
 		map[string]string{"#c": "customer"})
 	require.Equal(t, int32(1), out.Count)
 	assert.Equal(t, "99", attrN(t, out.Items[0], "total"))
+
+	// BETWEEN is inclusive on both bounds.
+	out = query("customer = :c AND orderDate BETWEEN :lo AND :hi", map[string]ddbtypes.AttributeValue{
+		":c": sAttr("alice"), ":lo": sAttr("2024-01-01"), ":hi": sAttr("2024-02-28"),
+	}, nil)
+	assert.Equal(t, int32(2), out.Count, "BETWEEN spans Jan 1 and Feb 15 inclusive, excludes Mar 10")
+
+	// begins_with matches the sort-key prefix.
+	out = query("customer = :c AND begins_with(orderDate, :p)", map[string]ddbtypes.AttributeValue{
+		":c": sAttr("alice"), ":p": sAttr("2024-02"),
+	}, nil)
+	require.Equal(t, int32(1), out.Count)
+	assert.Equal(t, "2024-02-15", attrS(t, out.Items[0], "orderDate"))
+
+	// A wider begins_with prefix matches every alice order.
+	out = query("customer = :c AND begins_with(orderDate, :p)", map[string]ddbtypes.AttributeValue{
+		":c": sAttr("alice"), ":p": sAttr("2024"),
+	}, nil)
+	assert.Equal(t, int32(3), out.Count)
+
+	// The parser tolerates missing spaces around the operators.
+	out = query("customer=:c AND orderDate>:d", map[string]ddbtypes.AttributeValue{
+		":c": sAttr("alice"), ":d": sAttr("2024-01-31"),
+	}, nil)
+	assert.Equal(t, int32(2), out.Count, "space-less operators parse correctly")
 }
 
 // TestDDBTimeToLive is a regression guard for issue #319:
@@ -508,8 +532,8 @@ func TestDDBQueryEdges(t *testing.T) {
 	require.ErrorAs(t, err, &rnf, "Query with unknown IndexName")
 }
 
-// TestDDBScanWithFilters: AND-combined scan filters with =, !=,
-// numeric >, <= and the emulator's infix CONTAINS dialect.
+// TestDDBScanWithFilters: AND-combined scan filters with =, <>,
+// numeric >, <= and the real contains() function form.
 func TestDDBScanWithFilters(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
@@ -552,7 +576,7 @@ func TestDDBScanWithFilters(t *testing.T) {
 	assert.Equal(t, int32(3), scan("category = :c",
 		map[string]ddbtypes.AttributeValue{":c": sAttr("electronics")}).Count)
 
-	assert.Equal(t, int32(2), scan("category != :c",
+	assert.Equal(t, int32(2), scan("category <> :c",
 		map[string]ddbtypes.AttributeValue{":c": sAttr("electronics")}).Count)
 
 	// Numeric comparison: both sides parse as float64.
@@ -564,8 +588,8 @@ func TestDDBScanWithFilters(t *testing.T) {
 	assert.Equal(t, int32(2), scan("price <= :p",
 		map[string]ddbtypes.AttributeValue{":p": nAttr("35")}).Count)
 
-	// Emulator dialect: infix CONTAINS (real DynamoDB uses contains(name, :s)).
-	assert.Equal(t, int32(3), scan("name CONTAINS :s",
+	// Real DynamoDB contains(path, operand) function form.
+	assert.Equal(t, int32(3), scan("contains(name, :s)",
 		map[string]ddbtypes.AttributeValue{":s": sAttr("Widget")}).Count)
 }
 
@@ -883,10 +907,8 @@ func TestDDBTypedErrors(t *testing.T) {
 	})
 
 	t.Run("unrouted operation is UnknownOperationException", func(t *testing.T) {
-		// DescribeContinuousBackups has no HTTP surface in the emulator.
-		_, err := client.DescribeContinuousBackups(ctx, &dynamodb.DescribeContinuousBackupsInput{
-			TableName: aws.String("errs"),
-		})
+		// DescribeLimits has no HTTP surface in the emulator.
+		_, err := client.DescribeLimits(ctx, &dynamodb.DescribeLimitsInput{})
 		require.Error(t, err)
 
 		var apiErr smithy.APIError
@@ -899,10 +921,6 @@ func TestDDBTypedErrors(t *testing.T) {
 // TestDDBConditionalWrites: a conditional put succeeds when the
 // item is absent, and violating the condition must yield
 // ConditionalCheckFailedException like real DynamoDB.
-//
-// NOTE: the emulator does not parse ConditionExpression at all (PutItem is a
-// blind upsert with no ConditionalCheckFailedException path), so the
-// violation subtest is expected to surface that divergence.
 func TestDDBConditionalWrites(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
@@ -1123,4 +1141,459 @@ func TestDDBQueryGSI(t *testing.T) {
 	}
 
 	assert.True(t, ids["u1"] && ids["u2"], "GSI query returns both matching users")
+}
+
+// lAttr builds a DynamoDB list AttributeValue from element AttributeValues.
+func lAttr(elems ...ddbtypes.AttributeValue) ddbtypes.AttributeValue {
+	return &ddbtypes.AttributeValueMemberL{Value: elems}
+}
+
+// TestDDBScanFilterExpressionGrammar drives the full FilterExpression grammar
+// through a real-SDK Scan: functions (attribute_exists/_not_exists, contains,
+// size), boolean operators (OR, NOT), IN, BETWEEN, and type-aware equality
+// (a numeric literal must not match a value stored as a string).
+func TestDDBScanFilterExpressionGrammar(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "people", "id", "")
+
+	suiteDDBPut(t, client, "people", map[string]ddbtypes.AttributeValue{
+		"id": sAttr("p1"), "email": sAttr("a@x.com"), "name": sAttr("Alice"),
+		"tags": lAttr(sAttr("red"), sAttr("blue")), "n": nAttr("10"), "status": sAttr("active"),
+	})
+	suiteDDBPut(t, client, "people", map[string]ddbtypes.AttributeValue{
+		"id": sAttr("p2"), "email": sAttr("b@x.com"), "name": sAttr("Bob"),
+		"tags": lAttr(sAttr("green")), "n": nAttr("20"), "status": sAttr("inactive"),
+	})
+	suiteDDBPut(t, client, "people", map[string]ddbtypes.AttributeValue{
+		"id": sAttr("p3"), "name": sAttr("Carol"), // no email
+		"tags": lAttr(sAttr("red")), "n": nAttr("30"), "status": sAttr("pending"),
+	})
+	suiteDDBPut(t, client, "people", map[string]ddbtypes.AttributeValue{
+		"id": sAttr("p4"), "email": sAttr("d@x.com"), "name": sAttr("Dave"),
+		"n": sAttr("25"), "status": sAttr("active"), // n stored as a STRING
+	})
+
+	scanF := func(filter string, names map[string]string, vals map[string]ddbtypes.AttributeValue) int32 {
+		in := &dynamodb.ScanInput{
+			TableName:                 aws.String("people"),
+			FilterExpression:          aws.String(filter),
+			ExpressionAttributeValues: vals,
+			ExpressionAttributeNames:  names,
+		}
+
+		out, err := client.Scan(ctx, in)
+		require.NoError(t, err, "Scan filter=%q", filter)
+
+		return out.Count
+	}
+
+	assert.Equal(t, int32(3), scanF("attribute_exists(email)", nil, nil),
+		"attribute_exists selects rows that have the attribute")
+	assert.Equal(t, int32(4), scanF("attribute_not_exists(x)", nil, nil),
+		"attribute_not_exists(x) matches every row (x is never present)")
+	assert.Equal(t, int32(2), scanF("contains(tags, :t)", nil,
+		map[string]ddbtypes.AttributeValue{":t": sAttr("red")}),
+		"contains() tests list membership")
+	assert.Equal(t, int32(2), scanF("size(#nm) > :len",
+		map[string]string{"#nm": "name"},
+		map[string]ddbtypes.AttributeValue{":len": nAttr("4")}),
+		"size() of a string attribute compared numerically")
+	assert.Equal(t, int32(3), scanF("status = :s1 OR n = :n1", nil,
+		map[string]ddbtypes.AttributeValue{":s1": sAttr("active"), ":n1": nAttr("30")}),
+		"OR unions two single-attribute comparisons")
+	assert.Equal(t, int32(2), scanF("NOT status = :s", nil,
+		map[string]ddbtypes.AttributeValue{":s": sAttr("active")}),
+		"NOT negates the inner comparison")
+	assert.Equal(t, int32(3), scanF("status IN (:s1, :s2)", nil,
+		map[string]ddbtypes.AttributeValue{":s1": sAttr("active"), ":s2": sAttr("pending")}),
+		"IN matches any listed value")
+	assert.Equal(t, int32(2), scanF("n BETWEEN :lo AND :hi", nil,
+		map[string]ddbtypes.AttributeValue{":lo": nAttr("15"), ":hi": nAttr("30")}),
+		"BETWEEN is inclusive and numeric (the string-typed n is excluded)")
+
+	// Type-aware equality: :numeric (N 25) must NOT match p4's n stored as the
+	// string "25", but a numeric equality on a numerically-stored value does.
+	assert.Equal(t, int32(0), scanF("n = :numeric", nil,
+		map[string]ddbtypes.AttributeValue{":numeric": nAttr("25")}),
+		"a number literal must not equal a string-typed attribute")
+	assert.Equal(t, int32(1), scanF("n = :ten", nil,
+		map[string]ddbtypes.AttributeValue{":ten": nAttr("10")}),
+		"numeric equality still matches a numerically-stored value")
+}
+
+// TestDDBQueryFilterBeginsWith proves begins_with() works as a Query
+// FilterExpression (post key-condition), distinct from the KeyCondition path.
+func TestDDBQueryFilterBeginsWith(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "logs", "app", "ts")
+
+	for _, ts := range []string{"2023-12-01", "2024-01-01", "2024-02-01"} {
+		suiteDDBPut(t, client, "logs", map[string]ddbtypes.AttributeValue{
+			"app": sAttr("web"), "ts": sAttr(ts),
+		})
+	}
+
+	// The sort key (ts) is filtered with begins_with in the FilterExpression —
+	// distinct from the KeyConditionExpression, which only matches the
+	// partition key here.
+	out, err := client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String("logs"),
+		KeyConditionExpression: aws.String("app = :a"),
+		FilterExpression:       aws.String("begins_with(ts, :p)"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":a": sAttr("web"), ":p": sAttr("2024"),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(2), out.Count, "begins_with filter keeps only the 2024 rows")
+	for _, item := range out.Items {
+		assert.True(t, strings.HasPrefix(attrS(t, item, "ts"), "2024"))
+	}
+}
+
+// TestDDBConditionExpressionGrammar covers ConditionExpression on PutItem
+// (compound attribute_not_exists + size), UpdateItem and DeleteItem
+// (attribute_exists guards), asserting ConditionalCheckFailedException on
+// violation and success when the condition holds.
+func TestDDBConditionExpressionGrammar(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "cond2", "pk", "")
+
+	var ccf *ddbtypes.ConditionalCheckFailedException
+
+	// Seed an item so the guards below have something to evaluate against.
+	suiteDDBPut(t, client, "cond2", map[string]ddbtypes.AttributeValue{
+		"pk": sAttr("X"), "name": sAttr("hi"),
+	})
+
+	t.Run("PutItem compound condition fails on an existing item", func(t *testing.T) {
+		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName:                aws.String("cond2"),
+			Item:                     map[string]ddbtypes.AttributeValue{"pk": sAttr("X"), "name": sAttr("new")},
+			ConditionExpression:      aws.String("attribute_not_exists(pk) AND size(#n) < :m"),
+			ExpressionAttributeNames: map[string]string{"#n": "name"},
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":m": nAttr("10"),
+			},
+		})
+		require.ErrorAs(t, err, &ccf, "attribute_not_exists(pk) must fail when pk exists")
+	})
+
+	t.Run("PutItem compound condition passes when it holds", func(t *testing.T) {
+		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName:                aws.String("cond2"),
+			Item:                     map[string]ddbtypes.AttributeValue{"pk": sAttr("X"), "name": sAttr("hey")},
+			ConditionExpression:      aws.String("attribute_exists(pk) AND size(#n) < :m"),
+			ExpressionAttributeNames: map[string]string{"#n": "name"},
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":m": nAttr("10"),
+			},
+		})
+		require.NoError(t, err, "attribute_exists(pk) AND size(name) < 10 holds")
+
+		got := suiteDDBGet(t, client, "cond2", map[string]ddbtypes.AttributeValue{"pk": sAttr("X")})
+		require.NotNil(t, got.Item)
+		assert.Equal(t, "hey", attrS(t, got.Item, "name"))
+	})
+
+	t.Run("UpdateItem guarded by attribute_exists", func(t *testing.T) {
+		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String("cond2"),
+			Key:                       map[string]ddbtypes.AttributeValue{"pk": sAttr("X")},
+			UpdateExpression:          aws.String("SET v = :v"),
+			ConditionExpression:       aws.String("attribute_exists(pk)"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": nAttr("1")},
+		})
+		require.NoError(t, err, "guard holds on the existing item")
+
+		_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String("cond2"),
+			Key:                       map[string]ddbtypes.AttributeValue{"pk": sAttr("missing")},
+			UpdateExpression:          aws.String("SET v = :v"),
+			ConditionExpression:       aws.String("attribute_exists(pk)"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": nAttr("1")},
+		})
+		require.ErrorAs(t, err, &ccf, "attribute_exists guard fails on a missing item")
+	})
+
+	t.Run("DeleteItem guarded by attribute_exists", func(t *testing.T) {
+		_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName:           aws.String("cond2"),
+			Key:                 map[string]ddbtypes.AttributeValue{"pk": sAttr("missing")},
+			ConditionExpression: aws.String("attribute_exists(pk)"),
+		})
+		require.ErrorAs(t, err, &ccf, "delete guard fails on a missing item")
+
+		_, err = client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName:           aws.String("cond2"),
+			Key:                 map[string]ddbtypes.AttributeValue{"pk": sAttr("X")},
+			ConditionExpression: aws.String("attribute_exists(pk)"),
+		})
+		require.NoError(t, err, "delete guard holds on the existing item")
+
+		got := suiteDDBGet(t, client, "cond2", map[string]ddbtypes.AttributeValue{"pk": sAttr("X")})
+		assert.Nil(t, got.Item)
+	})
+}
+
+// TestDDBProjectionExpression covers ProjectionExpression on GetItem, Query
+// and Scan: only the requested paths are returned, nested map sub-paths keep
+// their structure, #aliases resolve, and a projected-but-absent path is
+// omitted.
+func TestDDBProjectionExpression(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "profiles", "id", "")
+
+	suiteDDBPut(t, client, "profiles", map[string]ddbtypes.AttributeValue{
+		"id":   sAttr("u1"),
+		"name": sAttr("alice"),
+		"age":  nAttr("30"),
+		"tags": &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{
+			sAttr("x"), sAttr("y"), sAttr("z"),
+		}},
+		"address": &ddbtypes.AttributeValueMemberM{Value: map[string]ddbtypes.AttributeValue{
+			"city": sAttr("Paris"),
+			"zip":  sAttr("75001"),
+		}},
+	})
+
+	t.Run("GetItem projects a subset via #alias", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:                aws.String("profiles"),
+			Key:                      map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression:     aws.String("id, #n"),
+			ExpressionAttributeNames: map[string]string{"#n": "name"},
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 2, "only id and name are returned")
+		assert.Equal(t, "u1", attrS(t, out.Item, "id"))
+		assert.Equal(t, "alice", attrS(t, out.Item, "name"))
+	})
+
+	t.Run("GetItem projects a nested map path", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("address.city"),
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 1)
+
+		m, ok := out.Item["address"].(*ddbtypes.AttributeValueMemberM)
+		require.True(t, ok, "address should be a map, got %T", out.Item["address"])
+		require.Len(t, m.Value, 1, "only the projected sub-path survives, zip is dropped")
+		assert.Equal(t, "Paris", attrS(t, m.Value, "city"))
+	})
+
+	t.Run("GetItem omits an absent projected path", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("id, missing"),
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 1, "the absent attribute is silently omitted")
+		assert.Equal(t, "u1", attrS(t, out.Item, "id"))
+	})
+
+	t.Run("Query projects each item", func(t *testing.T) {
+		out, err := client.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String("profiles"),
+			KeyConditionExpression:    aws.String("id = :i"),
+			ProjectionExpression:      aws.String("age"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":i": sAttr("u1")},
+		})
+		require.NoError(t, err)
+		require.Equal(t, int32(1), out.Count)
+		require.Len(t, out.Items[0], 1)
+		assert.Equal(t, "30", attrN(t, out.Items[0], "age"))
+	})
+
+	t.Run("Scan projects each item", func(t *testing.T) {
+		out, err := client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:            aws.String("profiles"),
+			ProjectionExpression: aws.String("id, age"),
+		})
+		require.NoError(t, err)
+		require.Equal(t, int32(1), out.Count)
+		require.Len(t, out.Items[0], 2)
+		assert.Equal(t, "u1", attrS(t, out.Items[0], "id"))
+		assert.Equal(t, "30", attrN(t, out.Items[0], "age"))
+	})
+
+	t.Run("GetItem projects a list index, compacted", func(t *testing.T) {
+		out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("tags[1]"),
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Item, 1)
+
+		l, ok := out.Item["tags"].(*ddbtypes.AttributeValueMemberL)
+		require.True(t, ok, "tags should be a list, got %T", out.Item["tags"])
+		require.Len(t, l.Value, 1, "the projected index compacts to a one-element list")
+		assert.Equal(t, "y", attrS(t, map[string]ddbtypes.AttributeValue{"v": l.Value[0]}, "v"))
+	})
+
+	t.Run("Scan composes ProjectionExpression with FilterExpression", func(t *testing.T) {
+		out, err := client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 aws.String("profiles"),
+			FilterExpression:          aws.String("age = :a"),
+			ProjectionExpression:      aws.String("id"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":a": nAttr("30")},
+		})
+		require.NoError(t, err)
+		require.Equal(t, int32(1), out.Count, "the filter keeps the matching row")
+		require.Len(t, out.Items[0], 1, "projection trims it to id only")
+		assert.Equal(t, "u1", attrS(t, out.Items[0], "id"))
+
+		out, err = client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 aws.String("profiles"),
+			FilterExpression:          aws.String("age = :a"),
+			ProjectionExpression:      aws.String("id"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":a": nAttr("99")},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int32(0), out.Count, "a non-matching filter yields nothing to project")
+	})
+
+	t.Run("overlapping projected paths are rejected", func(t *testing.T) {
+		_, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:            aws.String("profiles"),
+			Key:                  map[string]ddbtypes.AttributeValue{"id": sAttr("u1")},
+			ProjectionExpression: aws.String("address, address.city"),
+		})
+		require.Error(t, err, "overlapping document paths must be a ValidationException")
+	})
+}
+
+// TestDDBUpdateExpressionGrammar drives the real SDK through the rich
+// UpdateExpression grammar: SET arithmetic, if_not_exists and list_append, ADD
+// on a number and on a set (union), and DELETE on a set (difference, then
+// emptying removes the attribute). Results are asserted via ReturnValues=ALL_NEW.
+func TestDDBUpdateExpressionGrammar(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	suiteDDBCreateTable(t, client, "acct", "id", "")
+	suiteDDBPut(t, client, "acct", map[string]ddbtypes.AttributeValue{
+		"id":      sAttr("a1"),
+		"balance": nAttr("100"),
+		"items":   &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{sAttr("x")}},
+		"tags":    &ddbtypes.AttributeValueMemberSS{Value: []string{"red", "blue"}},
+	})
+
+	update := func(exprStr string, vals map[string]ddbtypes.AttributeValue) map[string]ddbtypes.AttributeValue {
+		out, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String("acct"),
+			Key:                       map[string]ddbtypes.AttributeValue{"id": sAttr("a1")},
+			UpdateExpression:          aws.String(exprStr),
+			ExpressionAttributeValues: vals,
+			ReturnValues:              ddbtypes.ReturnValueAllNew,
+		})
+		require.NoError(t, err, "UpdateItem %q", exprStr)
+
+		return out.Attributes
+	}
+
+	t.Run("SET arithmetic, if_not_exists, list_append and ADD number", func(t *testing.T) {
+		attrs := update(
+			"SET balance = balance + :d, nickname = if_not_exists(nickname, :nn), "+
+				"items = list_append(items, :more) ADD visits :one",
+			map[string]ddbtypes.AttributeValue{
+				":d":    nAttr("50"),
+				":nn":   sAttr("ace"),
+				":more": &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{sAttr("y")}},
+				":one":  nAttr("1"),
+			})
+
+		assert.Equal(t, "150", attrN(t, attrs, "balance"), "balance + 50")
+		assert.Equal(t, "ace", attrS(t, attrs, "nickname"), "if_not_exists set the default")
+		assert.Equal(t, "1", attrN(t, attrs, "visits"), "ADD created and incremented from zero")
+
+		l, ok := attrs["items"].(*ddbtypes.AttributeValueMemberL)
+		require.True(t, ok)
+		require.Len(t, l.Value, 2, "list_append grew the list")
+	})
+
+	t.Run("ADD unions a string set", func(t *testing.T) {
+		attrs := update("ADD tags :t", map[string]ddbtypes.AttributeValue{
+			":t": &ddbtypes.AttributeValueMemberSS{Value: []string{"green", "blue"}},
+		})
+
+		ss, ok := attrs["tags"].(*ddbtypes.AttributeValueMemberSS)
+		require.True(t, ok, "tags should be a string set, got %T", attrs["tags"])
+		assert.ElementsMatch(t, []string{"red", "blue", "green"}, ss.Value, "union, deduplicated")
+	})
+
+	t.Run("DELETE removes set members then empties the attribute", func(t *testing.T) {
+		attrs := update("DELETE tags :t", map[string]ddbtypes.AttributeValue{
+			":t": &ddbtypes.AttributeValueMemberSS{Value: []string{"red"}},
+		})
+		ss, ok := attrs["tags"].(*ddbtypes.AttributeValueMemberSS)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"blue", "green"}, ss.Value)
+
+		attrs = update("DELETE tags :t", map[string]ddbtypes.AttributeValue{
+			":t": &ddbtypes.AttributeValueMemberSS{Value: []string{"blue", "green"}},
+		})
+		_, has := attrs["tags"]
+		assert.False(t, has, "an emptied set attribute is removed")
+	})
+
+	t.Run("ADD with a mismatched type is rejected", func(t *testing.T) {
+		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:        aws.String("acct"),
+			Key:              map[string]ddbtypes.AttributeValue{"id": sAttr("a1")},
+			UpdateExpression: aws.String("ADD balance :s"), // balance is a number
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":s": &ddbtypes.AttributeValueMemberSS{Value: []string{"x"}},
+			},
+		})
+		require.Error(t, err, "ADD a set to a numeric attribute must be a ValidationException")
+	})
+}
+
+// TestDDBSetTypesRoundTrip proves the wire codec decodes and re-encodes all
+// three DynamoDB set types (SS/NS/BS) plus the binary scalar (B) through the
+// real SDK.
+func TestDDBSetTypesRoundTrip(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+
+	suiteDDBCreateTable(t, client, "sets", "id", "")
+	suiteDDBPut(t, client, "sets", map[string]ddbtypes.AttributeValue{
+		"id":  sAttr("s1"),
+		"ss":  &ddbtypes.AttributeValueMemberSS{Value: []string{"a", "b"}},
+		"ns":  &ddbtypes.AttributeValueMemberNS{Value: []string{"1", "2"}},
+		"bs":  &ddbtypes.AttributeValueMemberBS{Value: [][]byte{{0x01, 0x02}, {0x03}}},
+		"bin": &ddbtypes.AttributeValueMemberB{Value: []byte{0xDE, 0xAD}},
+	})
+
+	out := suiteDDBGet(t, client, "sets", map[string]ddbtypes.AttributeValue{"id": sAttr("s1")})
+	require.NotNil(t, out.Item)
+
+	ss, ok := out.Item["ss"].(*ddbtypes.AttributeValueMemberSS)
+	require.True(t, ok, "ss should round-trip as SS, got %T", out.Item["ss"])
+	assert.ElementsMatch(t, []string{"a", "b"}, ss.Value)
+
+	ns, ok := out.Item["ns"].(*ddbtypes.AttributeValueMemberNS)
+	require.True(t, ok, "ns should round-trip as NS, got %T", out.Item["ns"])
+	assert.ElementsMatch(t, []string{"1", "2"}, ns.Value)
+
+	bs, ok := out.Item["bs"].(*ddbtypes.AttributeValueMemberBS)
+	require.True(t, ok, "bs should round-trip as BS, got %T", out.Item["bs"])
+	require.Len(t, bs.Value, 2)
+
+	bin, ok := out.Item["bin"].(*ddbtypes.AttributeValueMemberB)
+	require.True(t, ok, "binary scalar should round-trip as B, got %T", out.Item["bin"])
+	assert.Equal(t, []byte{0xDE, 0xAD}, bin.Value)
 }

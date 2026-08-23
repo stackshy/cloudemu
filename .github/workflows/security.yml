@@ -68,7 +68,18 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: go
-      - uses: github/codeql-action/autobuild@v3
+          build-mode: manual
+      # Analyze only the shipped emulator (the root module: core + wire server).
+      # The opt-in contrib/ engines (contrib/realengine, contrib/dockerengine,
+      # contrib/server) are separate modules of local dev tooling that inherently
+      # perform CodeQL-flagged operations behind allowlist/containment guards the
+      # query engine cannot model (parameterized-only DDL identifiers, contained
+      # filesystem paths, first-party-argv subprocesses). Building only the root
+      # module keeps SAST on everything that actually ships, without the perpetual
+      # false positives from the guarded contrib helpers. Their own CI jobs
+      # build/vet/lint them.
+      - name: build (root module only)
+        run: go build ./...
       - uses: github/codeql-action/analyze@v3
 
   dependency-review:

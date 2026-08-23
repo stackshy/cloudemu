@@ -166,11 +166,29 @@ Tables support creating GSIs with a different partition key and optional sort ke
 
 The `compareValues(a, b string)` helper in each database mock tries `strconv.ParseFloat` on both values. If both parse as numbers, it performs numeric comparison. Otherwise it falls back to string comparison. This is used by all comparison operators in scan filters and query sort conditions.
 
-### Full Scan Operators
+### Query & Expression Grammar
 
-Scan filters support: `=`, `!=`, `<`, `>`, `<=`, `>=`, `CONTAINS`, `BEGINS_WITH`
+The database drivers evaluate the real expression grammars, not a reduced
+subset — the raw expression strings a client sends are tokenized, parsed and
+evaluated with type-aware semantics:
 
-Query sort key conditions support: `=`, `<`, `>`, `<=`, `>=`, `BEGINS_WITH`, `BETWEEN`
+- **DynamoDB**: full `KeyConditionExpression` (`=`/`<`/`<=`/`>`/`>=`, `BETWEEN`,
+  `begins_with`), `FilterExpression`/`ConditionExpression` (boolean operators,
+  `IN`, `BETWEEN`, `attribute_exists`/`attribute_type`/`begins_with`/`contains`/
+  `size`), `ProjectionExpression`, and `UpdateExpression` (`SET` with arithmetic,
+  `if_not_exists`, `list_append`; `REMOVE`; `ADD`; `DELETE`) — including the real
+  `SS`/`NS`/`BS` set types.
+- **Firestore**: structured queries with all field operators (`IN`/`NOT_IN`/
+  `ARRAY_CONTAINS`/`ARRAY_CONTAINS_ANY`), `AND`/`OR` composite filters, unary
+  `IS_NULL`/`IS_NOT_NULL`, `orderBy`, `offset`, `startAt`/`endAt` cursors, and
+  field projection.
+- **Cosmos DB**: Cosmos SQL (`SELECT`/`WHERE`/`ORDER BY`/`OFFSET`-`LIMIT`,
+  `DISTINCT`, `TOP`, projections incl. `SELECT VALUE`, and `COUNT`/`SUM`/`AVG`/
+  `MIN`/`MAX` aggregates).
+
+The legacy driver-level `ScanFilter`/`SortOp` operators (`=`, `!=`, `<`, `>`,
+`<=`, `>=`, `CONTAINS`, `BEGINS_WITH`, `BETWEEN`) remain for direct Go-API
+callers.
 
 ### TTL (Time To Live)
 
@@ -430,3 +448,59 @@ The engine drives three handlers, each registered on its provider's SDK-compat s
 | GCP | `server/gcp/cloudasset` | `cloudasset.SearchAllResources`, `assets.List`, `ExportAssets`, Feeds CRUD, `Operations.Get` |
 
 See [services.md — Resource Discovery](services.md#19-resource-discovery) for the full per-handler operation list and [sdk-server.md](sdk-server.md) for the wire protocols.
+
+## 11. Real Data-Plane Engines (opt-in)
+
+By default CloudEmu is a pure in-memory emulator — every driver stores state in
+`memstore` and returns synthetic responses, with no external processes. For the
+cases where you want clients to run **real workloads** (real SQL, real Redis
+commands, real function code) against the emulator, drivers can be backed by an
+opt-in **real engine**. The in-memory default is unchanged; engines are strictly
+opt-in and nil means "stay in-memory".
+
+### Capability → engine
+
+Six engine seams are defined in `config` (`config/engine.go`), each wired with a
+`config.With<X>Engine(...)` option:
+
+| Capability | Option | Backed by |
+|-----------|--------|-----------|
+| Relational database | `WithDatabaseEngine` | real Postgres / MySQL |
+| Cache | `WithCacheEngine` | real Redis |
+| Functions | `WithFunctionEngine` | real code execution (subprocess / Docker) |
+| Compute | `WithComputeEngine` | Docker containers as VMs |
+| Containers | `WithContainerEngine` | Docker containers |
+| Object storage | `WithStorageEngine` | filesystem-backed object bytes |
+
+### Two backing modules
+
+The engine implementations live in separate Go modules so their heavyweight
+dependencies stay out of the core `cloudemu` module:
+
+- **`contrib/realengine`** — *no Docker*. Real Postgres via `embedded-postgres`,
+  real Redis via `miniredis`, real function execution via the host's
+  `python3`/`node`, filesystem-backed object storage.
+- **`contrib/dockerengine`** — *Docker required*. MySQL, Docker-backed compute
+  and containers, and Azure Functions. Tests skip cleanly when Docker is absent.
+
+### Wiring engines (Go)
+
+```go
+import (
+    cloudemu "github.com/stackshy/cloudemu/v2"
+    "github.com/stackshy/cloudemu/v2/config"
+    "github.com/stackshy/cloudemu/v2/contrib/realengine/postgres"
+)
+
+pg, _ := postgres.New()                 // starts a real Postgres
+aws := cloudemu.NewAWS(config.WithDatabaseEngine(pg))
+defer aws.Close()                        // Provider.Close() tears down every wired engine
+```
+
+`Provider.Close()` calls `Options.EngineClosers()`, so every engine that
+implements `io.Closer` is shut down when the provider is closed.
+
+For the standalone server, the batteries-included `cloudemu-server` binary
+(`contrib/server`) turns engines on with flags (`--db`, `--cache`, `--functions`,
+`--compute`, `--containers`, `--all-real`) — see
+[standalone-server.md — Real engines](standalone-server.md#real-engines).

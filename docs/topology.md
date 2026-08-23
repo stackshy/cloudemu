@@ -68,30 +68,26 @@ The topology engine does not store its own state. It reads from the existing moc
 Checks whether traffic can flow from source to destination on a given protocol and port.
 
 ```go
-result, err := engine.CanConnect(ctx, CanConnectInput{
-    SourceInstanceID: "i-abc123",
-    DestInstanceID:   "i-def456",
-    Protocol:         "tcp",
-    Port:             443,
+result, err := engine.CanConnect(ctx, topology.ConnectivityQuery{
+    SrcInstanceID: "i-abc123",
+    DstInstanceID: "i-def456",
+    Protocol:      "tcp", // "tcp", "udp", "icmp", or "-1" for all
+    Port:          443,
 })
-// result.Allowed  -- bool
-// result.Reason   -- string explaining why allowed/denied
-// result.DeniedBy -- which component denied (e.g., "security-group", "network-acl", "no-route")
+// result.Allowed    -- bool
+// result.Reason     -- string explaining why allowed/denied
+// result.Path       -- []RouteHop, the network path that was walked
+// result.SGVerdict  -- TrafficVerdict from the security-group evaluation
+// result.ACLVerdict -- *ACLVerdict from the network-ACL evaluation (nil if not reached)
 ```
 
 ### TraceRoute
 
-Produces a hop-by-hop path between two endpoints.
+Produces a hop-by-hop path from a source instance to a destination IP.
 
 ```go
-trace, err := engine.TraceRoute(ctx, TraceRouteInput{
-    SourceInstanceID: "i-abc123",
-    DestInstanceID:   "i-def456",
-    Protocol:         "tcp",
-    Port:             80,
-})
-// trace.Hops -- []Hop with Type, ID, and description
-// trace.Reachable -- bool
+hops, err := engine.TraceRoute(ctx, "i-abc123", "10.0.2.50")
+// hops -- []RouteHop with Type, ResourceID, and Detail
 ```
 
 ### Resolve
@@ -105,55 +101,64 @@ ips, err := engine.Resolve(ctx, "api.example.com")
 
 ### EvaluateSecurityGroups
 
-Evaluates whether a set of security groups allows traffic on a given protocol, port, and source CIDR.
+Evaluates whether traffic is allowed between a source and destination security
+group on a given port and protocol.
 
 ```go
-allowed, err := engine.EvaluateSecurityGroups(ctx, EvaluateSGInput{
-    SecurityGroupIDs: []string{"sg-abc123"},
-    Direction:        "inbound",  // or "outbound"
-    Protocol:         "tcp",
-    Port:             443,
-    CIDR:             "10.0.0.0/16",
-})
-// allowed -- bool
+verdict, err := engine.EvaluateSecurityGroups(ctx, "sg-src", "sg-dst", 443, "tcp")
+// verdict.Allowed      -- bool
+// verdict.IngressMatch -- *RuleMatch (the destination-group rule that matched)
+// verdict.EgressMatch  -- *RuleMatch (the source-group rule that matched)
+// verdict.Reason       -- string
 ```
 
 ### EvaluateNetworkACL
 
-Evaluates a network ACL against a specific traffic pattern.
+Evaluates a network ACL against a specific traffic pattern. Rules are evaluated
+in order, first match wins.
 
 ```go
-allowed, err := engine.EvaluateNetworkACL(ctx, EvaluateACLInput{
-    NetworkACLID: "acl-abc123",
-    Egress:       false,
-    Protocol:     "tcp",
-    Port:         443,
-    CIDR:         "10.0.1.0/24",
-})
-// allowed -- bool
+verdict, err := engine.EvaluateNetworkACL(ctx, "acl-abc123", "10.0.1.5", "10.0.2.9", 443, "tcp", true /* ingress */)
+// verdict.Allowed    -- bool
+// verdict.RuleNumber -- int, the ACL rule that decided
+// verdict.Action     -- "allow" or "deny"
+// verdict.Reason     -- string
 ```
 
 ## Result Types
 
-### CanConnectResult
+### ConnectivityResult (from `CanConnect`)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `Allowed` | `bool` | Whether the connection is permitted |
 | `Reason` | `string` | Human-readable explanation |
-| `DeniedBy` | `string` | Component that denied traffic (empty if allowed): `"security-group"`, `"network-acl"`, `"no-route"`, `"no-peering"` |
+| `Path` | `[]RouteHop` | Ordered network path that was walked |
+| `SGVerdict` | `TrafficVerdict` | Security-group evaluation result |
+| `ACLVerdict` | `*ACLVerdict` | Network-ACL evaluation result (nil when not reached) |
 
-### TraceRouteResult
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `Hops` | `[]Hop` | Ordered list of network hops |
-| `Reachable` | `bool` | Whether the destination was reached |
-
-### Hop
+### RouteHop (path element, also returned by `TraceRoute`)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `Type` | `string` | Hop type: `"subnet"`, `"nat-gateway"`, `"internet-gateway"`, `"peering"`, `"destination"` |
-| `ID` | `string` | Resource ID of the hop |
-| `Description` | `string` | Human-readable label |
+| `Type` | `string` | `"instance"`, `"subnet"`, `"route-table"`, `"gateway"`, `"nat-gateway"`, `"peering"`, `"local"` |
+| `ResourceID` | `string` | Resource ID of the hop |
+| `Detail` | `string` | Human-readable label |
+
+### TrafficVerdict (from `EvaluateSecurityGroups`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Allowed` | `bool` | Whether the security groups permit the traffic |
+| `IngressMatch` | `*RuleMatch` | Destination-group rule that matched (nil if none) |
+| `EgressMatch` | `*RuleMatch` | Source-group rule that matched (nil if none) |
+| `Reason` | `string` | Human-readable explanation |
+
+### ACLVerdict (from `EvaluateNetworkACL`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Allowed` | `bool` | Whether the ACL permits the traffic |
+| `RuleNumber` | `int` | The ACL rule number that decided |
+| `Action` | `string` | `"allow"` or `"deny"` |
+| `Reason` | `string` | Human-readable explanation |

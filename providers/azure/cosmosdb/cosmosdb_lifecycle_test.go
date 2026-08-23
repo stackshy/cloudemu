@@ -160,7 +160,7 @@ func TestLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "shipped", got["status"])
 
-	// Unsupported update action is rejected with InvalidArgument.
+	// Unsupported legacy update action is rejected with InvalidArgument.
 	_, err = m.UpdateItem(ctx, driver.UpdateItemInput{
 		Table:   "orders",
 		Key:     map[string]any{"pk": "cust#1", "sk": "order#002"},
@@ -168,6 +168,18 @@ func TestLifecycle(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.True(t, cerrors.IsInvalidArgument(err))
+
+	// The raw UpdateExpression path runs the full shared grammar (here SET plus
+	// ADD), which the legacy Actions form cannot express.
+	rich, err := m.UpdateItem(ctx, driver.UpdateItemInput{
+		Table:            "orders",
+		Key:              map[string]any{"pk": "cust#1", "sk": "order#002"},
+		UpdateExpression: "SET status = :s ADD hits :h",
+		ExprValues:       map[string]any{":s": "done", ":h": float64(2)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "done", rich["status"])
+	assert.Equal(t, float64(2), rich["hits"])
 
 	// Conditional-write semantics in this driver: UpdateItem is the
 	// "must already exist" path — it fails with NotFound on a missing item

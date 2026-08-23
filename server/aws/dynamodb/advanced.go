@@ -8,6 +8,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
 // updateItem handles UpdateItem. Supports the common cases:
@@ -19,6 +20,7 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		Key                       map[string]any    `json:"Key"`
 		UpdateExpression          string            `json:"UpdateExpression"`
+		ConditionExpression       string            `json:"ConditionExpression"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ReturnValues              string            `json:"ReturnValues"`
@@ -28,13 +30,26 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actions := parseUpdateExpression(req.UpdateExpression,
-		fromWireItem(req.ExpressionAttributeValues), req.ExpressionAttributeNames)
+	key := fromWireItem(req.Key)
+	vals := fromWireItem(req.ExpressionAttributeValues)
 
+	// ExpressionAttributeValues serve both the UpdateExpression and the
+	// ConditionExpression, matching real DynamoDB. Gate the mutation on the
+	// condition (evaluated against the current item) before applying actions.
+	if !h.gateCondition(r.Context(), w, req.TableName, key,
+		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
+		return
+	}
+
+	// The raw UpdateExpression flows to the driver, which parses and evaluates
+	// the full grammar (SET arithmetic, if_not_exists, list_append, ADD, DELETE)
+	// against the stored item.
 	input := dbdriver.UpdateItemInput{
-		Table:   req.TableName,
-		Key:     fromWireItem(req.Key),
-		Actions: actions,
+		Table:            req.TableName,
+		Key:              key,
+		UpdateExpression: req.UpdateExpression,
+		ExprNames:        req.ExpressionAttributeNames,
+		ExprValues:       vals,
 	}
 
 	updated, err := h.db.UpdateItem(r.Context(), input)
@@ -51,173 +66,12 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, resp)
 }
 
-// parseUpdateExpression parses a DynamoDB UpdateExpression into driver actions.
-// Supports "SET a = :v, b = :w" and "REMOVE c, d" clauses combined.
-func parseUpdateExpression(expr string, vals map[string]any, names map[string]string) []dbdriver.UpdateAction {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return nil
-	}
-
-	var actions []dbdriver.UpdateAction
-
-	for _, clause := range splitClauses(expr) {
-		verb, rest := splitVerb(clause)
-
-		switch strings.ToUpper(verb) {
-		case "SET":
-			actions = append(actions, parseSet(rest, vals, names)...)
-		case "REMOVE":
-			actions = append(actions, parseRemove(rest, names)...)
-		}
-	}
-
-	return actions
-}
-
-// splitClauses splits an UpdateExpression by keyword boundaries (SET, REMOVE,
-// ADD, DELETE). Returns one string per clause.
-func splitClauses(expr string) []string {
-	upper := strings.ToUpper(expr)
-
-	keywords := []string{"SET", "REMOVE", "ADD", "DELETE"}
-
-	starts := make([]int, 0, len(keywords))
-	for _, kw := range keywords {
-		starts = append(starts, findKeywordStarts(upper, kw)...)
-	}
-
-	if len(starts) == 0 {
-		return []string{expr}
-	}
-
-	sortInts(starts)
-
-	clauses := make([]string, 0, len(starts))
-
-	for i, s := range starts {
-		end := len(expr)
-		if i+1 < len(starts) {
-			end = starts[i+1]
-		}
-
-		clauses = append(clauses, strings.TrimSpace(expr[s:end]))
-	}
-
-	return clauses
-}
-
-// findKeywordStarts returns every offset in upper where kw appears as a
-// standalone word (preceded by a non-ident char, followed by a space).
-func findKeywordStarts(upper, kw string) []int {
-	var starts []int
-
-	i := 0
-	for i < len(upper) {
-		j := strings.Index(upper[i:], kw)
-		if j < 0 {
-			return starts
-		}
-
-		abs := i + j
-		if isWordStart(upper, abs) && hasSpaceAfter(upper, abs, len(kw)) {
-			starts = append(starts, abs)
-		}
-
-		i = abs + len(kw)
-	}
-
-	return starts
-}
-
-func isWordStart(s string, i int) bool {
-	return i == 0 || !isIdentByte(s[i-1])
-}
-
-func hasSpaceAfter(s string, i, kwLen int) bool {
-	return i+kwLen < len(s) && s[i+kwLen] == ' '
-}
-
-func sortInts(a []int) {
-	for i := 1; i < len(a); i++ {
-		for j := i; j > 0 && a[j] < a[j-1]; j-- {
-			a[j], a[j-1] = a[j-1], a[j]
-		}
-	}
-}
-
-func isIdentByte(b byte) bool {
-	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') ||
-		(b >= '0' && b <= '9') || b == '_'
-}
-
-// splitVerb splits "SET a = :b, c = :d" → ("SET", "a = :b, c = :d").
-func splitVerb(clause string) (verb, rest string) {
-	const pair = 2
-
-	parts := strings.SplitN(strings.TrimSpace(clause), " ", pair)
-	if len(parts) < pair {
-		return parts[0], ""
-	}
-
-	return parts[0], parts[1]
-}
-
-// parseSet parses "a = :val, b = :other" into SET actions.
-func parseSet(rest string, vals map[string]any, names map[string]string) []dbdriver.UpdateAction {
-	const pair = 2
-
-	var actions []dbdriver.UpdateAction
-
-	for _, assign := range splitTopLevel(rest, ',') {
-		parts := strings.SplitN(assign, "=", pair)
-		if len(parts) != pair {
-			continue
-		}
-
-		field := resolveAttrName(strings.TrimSpace(parts[0]), names)
-		valExpr := strings.TrimSpace(parts[1])
-		actions = append(actions, dbdriver.UpdateAction{
-			Action: "SET",
-			Field:  field,
-			Value:  resolveExprVal(valExpr, vals),
-		})
-	}
-
-	return actions
-}
-
-// parseRemove parses "a, b, c" into REMOVE actions.
-func parseRemove(rest string, names map[string]string) []dbdriver.UpdateAction {
-	var actions []dbdriver.UpdateAction
-
-	for _, f := range splitTopLevel(rest, ',') {
-		f = strings.TrimSpace(f)
-		if f == "" {
-			continue
-		}
-
-		actions = append(actions, dbdriver.UpdateAction{
-			Action: "REMOVE",
-			Field:  resolveAttrName(f, names),
-		})
-	}
-
-	return actions
-}
-
-// splitTopLevel splits by sep at the top level (we don't have nesting here,
-// so it's just strings.Split — kept as a separate function in case we add
-// list/map value literals later).
-func splitTopLevel(s string, sep byte) []string {
-	return strings.Split(s, string(sep))
-}
-
 // scan handles Scan (full-table read with optional filters).
 func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
 		FilterExpression          string            `json:"FilterExpression"`
+		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		Limit                     int               `json:"Limit"`
@@ -229,11 +83,14 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vals := fromWireItem(req.ExpressionAttributeValues)
-	filters := parseFilterExpression(req.FilterExpression, vals, req.ExpressionAttributeNames)
 
+	// Flow the raw FilterExpression to the driver, which parses and evaluates
+	// it with full grammar fidelity.
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
 		Table:             req.TableName,
-		Filters:           filters,
+		FilterExpression:  req.FilterExpression,
+		ExprNames:         req.ExpressionAttributeNames,
+		ExprValues:        vals,
 		Limit:             req.Limit,
 		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
 	})
@@ -242,9 +99,15 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	paths, perr := expr.ParseProjection(req.ProjectionExpression, req.ExpressionAttributeNames)
+	if perr != nil {
+		writeErr(w, perr)
+		return
+	}
+
 	items := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, toWireItem(item))
+		items = append(items, toWireItem(expr.Project(item, paths)))
 	}
 
 	resp := map[string]any{
@@ -257,57 +120,6 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, resp)
-}
-
-// parseFilterExpression turns "a = :v AND b > :w" into driver ScanFilters.
-// Supports a single clause or AND-joined clauses.
-func parseFilterExpression(expr string, vals map[string]any, names map[string]string) []dbdriver.ScanFilter {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return nil
-	}
-
-	var filters []dbdriver.ScanFilter
-
-	// A valid filter clause has exactly 3 tokens: field, op, value placeholder.
-	const filterTokens = 3
-
-	for _, clause := range splitByUpper(expr, " AND ") {
-		parts := strings.Fields(clause)
-		if len(parts) < filterTokens {
-			continue
-		}
-
-		filters = append(filters, dbdriver.ScanFilter{
-			Field: resolveAttrName(parts[0], names),
-			Op:    parts[1],
-			Value: resolveExprVal(parts[2], vals),
-		})
-	}
-
-	return filters
-}
-
-// splitByUpper splits s by sep, matching sep case-insensitively. The upstream
-// splitter in the query handler already has the same trick for KeyCondition;
-// we duplicate it locally to keep advanced.go self-contained.
-func splitByUpper(s, sep string) []string {
-	upper := strings.ToUpper(s)
-
-	var parts []string
-
-	start := 0
-
-	for {
-		i := strings.Index(upper[start:], strings.ToUpper(sep))
-		if i < 0 {
-			parts = append(parts, strings.TrimSpace(s[start:]))
-			return parts
-		}
-
-		parts = append(parts, strings.TrimSpace(s[start:start+i]))
-		start += i + len(sep)
-	}
 }
 
 // batchWriteItem handles BatchWriteItem (puts/deletes across one or more

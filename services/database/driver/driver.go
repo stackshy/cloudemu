@@ -11,6 +11,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
 // TTLConfig configures TTL for a table.
@@ -50,6 +51,25 @@ type TableConfig struct {
 	PartitionKey string
 	SortKey      string
 	GSIs         []GSIConfig
+	// Attributes carries the attribute definitions (name + type) so a describe
+	// echoes them back — an IaC client compares them and otherwise sees a diff.
+	Attributes []AttributeDef
+	// BillingMode is "PROVISIONED" (default) or "PAY_PER_REQUEST".
+	BillingMode string
+	// ReadCapacityUnits/WriteCapacityUnits carry the provisioned throughput so a
+	// describe echoes them back; a PROVISIONED table otherwise reads 0/0 and an
+	// IaC client sees a perpetual diff. Ignored for PAY_PER_REQUEST.
+	ReadCapacityUnits  int64
+	WriteCapacityUnits int64
+	// TableArn and CreatedAtUnix are populated by the provider on create.
+	TableArn      string
+	CreatedAtUnix float64
+}
+
+// AttributeDef is a DynamoDB attribute definition (name + scalar type S/N/B).
+type AttributeDef struct {
+	Name string
+	Type string
 }
 
 // GSIConfig describes a Global Secondary Index.
@@ -59,18 +79,57 @@ type GSIConfig struct {
 	SortKey      string
 }
 
-// UpdateAction represents a single field-level update action.
+// UpdateAction represents a single field-level update action. It is the legacy,
+// pre-expression update form; the wire handler uses UpdateExpression instead.
 type UpdateAction struct {
 	Action string // "SET" or "REMOVE"
 	Field  string
 	Value  any // ignored for REMOVE
 }
 
-// UpdateItemInput describes an update operation on an existing item.
+// UpdateItemInput describes an update operation on an existing item. When
+// UpdateExpression is set it takes precedence and is evaluated with full
+// DynamoDB grammar (SET arithmetic, if_not_exists, list_append, ADD, DELETE);
+// otherwise the legacy Actions are applied. ExprNames/ExprValues resolve the
+// expression's #aliases and :placeholders.
 type UpdateItemInput struct {
-	Table   string
-	Key     map[string]any
-	Actions []UpdateAction
+	Table            string
+	Key              map[string]any
+	Actions          []UpdateAction
+	UpdateExpression string
+	ExprNames        map[string]string
+	ExprValues       map[string]any
+}
+
+// ApplyUpdate applies input's update to a caller-owned copy of item, mutating
+// it in place and returning it. It runs the full UpdateExpression grammar when
+// input.UpdateExpression is set, otherwise the legacy SET/REMOVE Actions. It is
+// shared by every database provider so update semantics stay identical across
+// clouds.
+//
+//nolint:gocritic // hugeParam: input mirrors the driver's UpdateItem signature.
+func ApplyUpdate(item map[string]any, input UpdateItemInput) (map[string]any, error) {
+	if input.UpdateExpression != "" {
+		prog, err := expr.ParseUpdate(input.UpdateExpression, input.ExprNames, input.ExprValues)
+		if err != nil {
+			return nil, err
+		}
+
+		return expr.ApplyUpdate(item, prog)
+	}
+
+	for _, action := range input.Actions {
+		switch action.Action {
+		case "SET":
+			item[action.Field] = action.Value
+		case "REMOVE":
+			delete(item, action.Field)
+		default:
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "unsupported action: %s", action.Action)
+		}
+	}
+
+	return item, nil
 }
 
 // KeyCondition defines a key condition for queries.
@@ -94,9 +153,21 @@ type QueryInput struct {
 	Table        string
 	IndexName    string
 	KeyCondition KeyCondition
-	// Filters is the post-key-condition FilterExpression, applied to items
-	// that already match the key condition (same semantics as Scan.Filters).
-	Filters   []ScanFilter
+	// Filters is the legacy pre-simplified post-key-condition filter, applied
+	// to items that already match the key condition (same semantics as
+	// Scan.Filters). Retained for back-compat; ignored when FilterExpression
+	// is set.
+	Filters []ScanFilter
+
+	// FilterExpression is the raw DynamoDB FilterExpression. When non-empty it
+	// is parsed and evaluated with full grammar fidelity (functions, boolean
+	// operators, IN/BETWEEN, type-aware comparisons), taking precedence over
+	// the legacy Filters. ExprNames/ExprValues resolve #alias and :placeholder
+	// tokens (values already decoded to native Go).
+	FilterExpression string
+	ExprNames        map[string]string
+	ExprValues       map[string]any
+
 	Limit     int
 	PageToken string
 
@@ -116,8 +187,17 @@ type QueryInput struct {
 
 // ScanInput configures a scan operation.
 type ScanInput struct {
-	Table     string
-	Filters   []ScanFilter
+	Table string
+	// Filters is the legacy pre-simplified filter; ignored when
+	// FilterExpression is set. Retained for back-compat.
+	Filters []ScanFilter
+
+	// FilterExpression is the raw DynamoDB FilterExpression, evaluated with
+	// full grammar fidelity when non-empty (see QueryInput.FilterExpression).
+	FilterExpression string
+	ExprNames        map[string]string
+	ExprValues       map[string]any
+
 	Limit     int
 	PageToken string
 

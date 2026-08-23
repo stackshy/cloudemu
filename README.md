@@ -22,30 +22,25 @@
 
 ---
 
-## What it is
+cloudemu emulates the **cloud APIs** of AWS, Azure, and GCP entirely in memory. Point the real SDKs or CLIs — in **any language** — at a local endpoint, and your unmodified code runs against an in-memory backend. No accounts, no network, no bill; instant, deterministic, and resettable.
 
-cloudemu emulates the **cloud APIs** of AWS, Azure, and GCP entirely in memory. Point the real cloud SDKs — in any language — at a local endpoint and your unmodified app code runs against an in-memory backend. No accounts, no network, no bill.
-
-It models the cloud **control surfaces** — the APIs your code actually calls — with real request/response behavior, so the same production code path runs against an in-memory backend. That's what makes it instant, deterministic, and resettable, at $0.
+It emulates the API **control surface** your code actually calls, not real infrastructure — which is exactly what removes cost, latency, and flakiness from the loop.
 
 ## Three ways to run it
 
-1. **Standalone server / Docker** — `docker run … ghcr.io/stackshy/cloudemu` (or `cloudemu serve`). A long-lived local cloud you point **any app, any language** at. LocalStack-style.
-2. **SDK-compat HTTP server** (in-process, Go) — a `httptest.NewServer` your Go tests point the real SDKs at.
-3. **Go API** — typed in-memory mocks (`aws.S3`, `azure.VirtualMachines`, `gcp.GCE`, …) driven directly.
+1. **Standalone server / Docker** — `cloudemu serve` (or `docker run … ghcr.io/stackshy/cloudemu`). A long-lived local cloud you point any app, CLI, or SDK at, LocalStack-style.
+2. **In-process SDK server** (Go) — a `httptest.NewServer` your tests point the real SDKs at. No container.
+3. **Typed Go API** — call the in-memory mocks directly: `cloud.EC2.RunInstances(ctx, …)`.
 
-## Quickstart (Docker)
+## Quickstart
 
 ```sh
 docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
   ghcr.io/stackshy/cloudemu:latest
-#   AWS         http://127.0.0.1:4566
-#   Azure       https://127.0.0.1:4568   (self-signed TLS)
-#   GCP         http://127.0.0.1:4569
-#   Kubernetes  https://127.0.0.1:4570
+#   AWS 4566 · Azure 4568 (TLS) · GCP 4569 · Kubernetes 4570 (TLS)
 ```
 
-Then point your existing SDK or CLI at it — nothing cloudemu-specific. cloudemu accepts any credentials, but the AWS CLI still needs some set in its chain:
+Point any existing SDK or CLI at it — nothing cloudemu-specific:
 
 ```sh
 export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
@@ -53,22 +48,15 @@ aws --endpoint-url http://127.0.0.1:4566 s3 mb s3://demo
 aws --endpoint-url http://127.0.0.1:4566 s3 ls
 ```
 
-The Kubernetes control plane hands back a real kubeconfig, so `kubectl apply -f deployment.yaml` then `kubectl get pods` round-trips end-to-end against the in-memory cluster. Reset all state between tests with `curl -X POST http://127.0.0.1:4566/_cloudemu/reset`.
+`kubectl apply -f deployment.yaml` round-trips against the in-memory cluster, and `curl -X POST http://127.0.0.1:4566/_cloudemu/reset` clears all state between tests. Full flags and per-SDK wiring: [docs/standalone-server.md](docs/standalone-server.md).
 
-Full flags, ports, per-SDK wiring, and the [Testcontainers module](https://github.com/stackshy/cloudemu/tree/development/contrib/testcontainers) (auto start/stop in Go tests): [docs/standalone-server.md](docs/standalone-server.md).
-
-## In-process (Go)
-
-For Go tests, run the emulator inside your process — no container. cloudemu speaks the same wire protocols over a local `httptest.NewServer`, so you just change the SDK endpoint:
+### In-process (Go)
 
 ```go
 cloud := cloudemu.NewAWS()
-ts := httptest.NewServer(awsserver.New(awsserver.Drivers{
-    S3: cloud.S3, DynamoDB: cloud.DynamoDB, EC2: cloud.EC2, // nil fields omit a service
-}))
+ts := httptest.NewServer(awsserver.NewFromProvider(cloud))
 defer ts.Close()
 
-ctx := context.Background()
 cfg, _ := config.LoadDefaultConfig(ctx) // credentials/region are ignored
 client := s3.NewFromConfig(cfg, func(o *s3.Options) {
     o.BaseEndpoint = aws.String(ts.URL)
@@ -77,83 +65,47 @@ client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory backend
 ```
 
-Or skip the SDK and call the typed Go API directly — `cloud.EC2.RunInstances(ctx, …)`, `cloud.S3.PutObject(ctx, …)`.
+`go get github.com/stackshy/cloudemu/v2` (Go 1.25+) · [docs/getting-started.md](docs/getting-started.md)
 
-Install: `go get github.com/stackshy/cloudemu/v2` (Go 1.25+). Azure/GCP wiring: [docs/sdk-server.md](docs/sdk-server.md) · adopting it in a real test suite: [docs/integration.md](docs/integration.md).
+## What you get
 
-## Why it's fast
+**~45 AWS · 36 Azure · 24 GCP services**, plus a real in-memory **Kubernetes data plane**. The always-current, generated list is [docs/coverage](docs/coverage/README.md); the highlights:
 
-cloudemu keeps all state in process memory, with a fake clock and deterministic IDs, so tests are reproducible and reset in microseconds. It emulates the API layer — the control surface — rather than provisioning real infrastructure, which is exactly what removes accounts, network, cost, and flakiness from the loop. The precise per-service scope (and the handful of things that are intentionally out of scope, like running real containers or serving live traffic) is documented alongside each service in the generated [capability coverage](docs/coverage/README.md).
+- **Storage · Compute · Databases** — S3/Blob/GCS, EC2/VMs/GCE, DynamoDB & Cosmos & Firestore, RDS/Aurora, Cloud SQL, AlloyDB
+- **Serverless & Containers** — Lambda/Functions, ECS, and EKS/AKS/GKE with a full Kubernetes API
+- **Messaging & Events** — SQS/SNS/EventBridge, Service Bus/Event Grid, Pub/Sub/Eventarc
+- **Networking · DNS · Load Balancing** — VPC, subnets, security groups, route tables, Route 53/Cloud DNS, ELB
+- **Secrets · IAM · Monitoring · Logging** — Secrets Manager/Key Vault, CloudWatch/Azure Monitor, structured logs
+- **AI/ML** — Bedrock, SageMaker, Vertex AI
 
-## What's supported
+The **Kubernetes data plane** does real CRUD, server-side apply, and watch streaming — so `client-go` informers work — and converges controllers synchronously (a Deployment materializes Pods to Running on write). See [docs/services.md](docs/services.md).
 
-The authoritative, always-current list is the generated [capability coverage](docs/coverage/README.md) — one page listing every service and every operation, produced from the driver interfaces by `go generate` so it cannot drift. The table below is a curated overview.
+## Works with your tools
 
-| Domain | AWS | Azure | GCP |
-|---|---|---|---|
-| Storage | S3 | Blob Storage | GCS |
-| Compute | EC2 (+ VPC, EBS, Snapshots, AMIs, Spot, Launch Templates, Auto Scaling) | Virtual Machines (+ Disks, Snapshots, Images, SSH keys) | Compute Engine (+ Disks, Snapshots, Images) |
-| NoSQL DB | DynamoDB | Cosmos DB | Firestore |
-| Relational DB | RDS + Aurora (incl. Neptune & DocumentDB engines), Redshift | SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server, Cosmos DB for PostgreSQL (Citus) | Cloud SQL, AlloyDB |
-| Wide-column NoSQL | Keyspaces (Cassandra) | Managed Instance for Apache Cassandra | Bigtable |
-| In-memory / Redis | ElastiCache, MemoryDB | Cache for Redis | Memorystore |
-| Kubernetes | EKS (control plane + data plane) | AKS (control plane + data plane) | GKE (control plane + data plane) |
-| Serverless | Lambda | Functions | Cloud Functions v1 |
-| Container Orchestration | ECS | — | — |
-| Container Registry | ECR | ACR | Artifact Registry |
-| Message Queue | SQS | Service Bus | Pub/Sub |
-| Event Bus | EventBridge | Event Grid | Eventarc |
-| Notification | SNS | Notification Hubs | FCM |
-| Networking | VPC (under EC2) | Virtual Network | VPC + Subnets + Firewalls + Routes |
-| Load Balancer | ELB (ALB/NLB) | Load Balancer | Cloud Load Balancing |
-| DNS | Route 53 | Azure DNS | Cloud DNS |
-| Monitoring | CloudWatch | Azure Monitor | Cloud Monitoring |
-| Logging | CloudWatch Logs | Log Analytics | Cloud Logging |
-| Secrets | Secrets Manager | Key Vault | Secret Manager |
-| IAM | IAM | Azure RBAC (armauthorization) | Cloud IAM |
-| Resource Discovery | Resource Explorer + Resource Groups Tagging API | Resource Graph | Cloud Asset Inventory |
-| Generative AI | Bedrock (+ runtime), Bedrock Agent (+ runtime) | — | — |
-| Machine Learning | SageMaker (+ runtime) | Azure AI (Foundry / ML) | Vertex AI |
-| AI Search | — | Azure AI Search | — |
-| Databricks | — | Databricks (ARM workspace + workspace data plane) | — |
-
-**Kubernetes is two layers, both shipped:**
-
-- **Control plane** (EKS / AKS / GKE) — cluster, node-pool, addon / Fargate / maintenance-config lifecycle via the real cloud SDKs.
-- **Data plane** (in-memory Kubernetes API) — core, apps, batch, networking, rbac, storage, autoscaling, policy, discovery, **apiextensions** (CRDs) and **admissionregistration** kinds. CRUD, all patch types + **server-side apply** (field ownership + conflicts), `?dryRun=All`, finalizers, `limit`/`continue` pagination, watch streaming with `resourceVersion` resume + BOOKMARK — so real `client-go` `Informer`/`Reflector` machinery works against a cloudemu cluster. There's no scheduler or kubelet, so controllers converge **synchronously** — a Deployment materializes Pods straight to Running, a Job to Succeeded, Services get Endpoints, on every write. It also serves **`metrics.k8s.io`** + **HPA** actuation, **ResourceQuota** / **LimitRange** / **PDB-gated eviction**, **RBAC** SubjectAccessReview + **NetworkPolicy** evaluation, and **opt-in admission webhooks**. See [docs/services.md](docs/services.md) §18.
-
-Full per-service operation list: [docs/services.md](docs/services.md). Per-handler protocol details: [docs/sdk-server.md](docs/sdk-server.md).
+- **Terraform / OpenTofu** — real `apply` / `plan` / `destroy` against cloudemu, proven idempotent in CI. Zero boilerplate with the [`cloudemu-tf`](contrib/terraform) wrapper. → [docs/terraform.md](docs/terraform.md)
+- **Testcontainers** (Go) — auto start/stop in your test suite. → [contrib/testcontainers](contrib/testcontainers)
+- **Any SDK or CLI**, any language — it speaks the real wire protocols.
 
 ## Real engines (opt-in)
 
-By default cloudemu emulates the API layer and keeps everything in memory — no real database, cache, or code ever runs. When you want a resource to do the real thing — run actual SQL, real Redis commands, or your uploaded function/container code — wire in an **opt-in real engine**. Engines live in two sibling Go modules so their heavier dependencies stay out of the core: `contrib/realengine` (no Docker — embedded Postgres, miniredis, and the host's `python3`/`node`) and `contrib/dockerengine` (real Docker containers — MySQL, VMs, ECS/ACI/Cloud Run, the Azure Functions host). Each is strictly opt-in via `config.With<X>Engine(...)`; the in-memory default is unchanged, and `Provider.Close()` cascades teardown to whatever you wired.
+By default everything is in memory — no real database, cache, or code runs. When you want a resource to do the **real thing** — actual SQL, real Redis, your uploaded function or container — opt in with `config.With<X>Engine(...)`. Two sibling modules keep the heavy dependencies out of the core:
 
-| Capability | Engine (module) | Docker? | Backs |
-|---|---|---|---|
-| Relational SQL — Postgres | embedded-postgres (`contrib/realengine`) | no | RDS/Aurora, Azure PostgreSQL Flexible, Cloud SQL, AlloyDB |
-| Relational SQL — MySQL | `mysql:8.0` (`contrib/dockerengine`) | yes | RDS MySQL, Azure MySQL Flexible, Cloud SQL MySQL |
-| Cache — Redis | miniredis (`contrib/realengine`) | no | ElastiCache, Azure Cache for Redis, Memorystore |
-| Serverless code | `python3` / `node` subprocess (`contrib/realengine`) | no | Lambda, Cloud Functions gen1 |
-| Serverless code — Azure | official azure-functions host image (`contrib/dockerengine`) | yes | Azure Functions |
-| Compute — VM boot script | base container (`contrib/dockerengine`) | yes | EC2 `RunInstances` boot → console output |
-| Containers | real containers (`contrib/dockerengine`) | yes | ECS tasks, ACI container groups, Cloud Run jobs |
+- **[contrib/realengine](contrib/realengine)** — no Docker: embedded Postgres, miniredis, and `python3`/`node` for Lambda/Functions code.
+- **[contrib/dockerengine](contrib/dockerengine)** — real containers: MySQL, VM boot scripts, ECS/ACI/Cloud Run, the Azure Functions host.
 
-Wire one in, create the resource with the normal SDK/CLI, and connect a real client (or invoke the function/container) to get the real result; delete tears the backing down. Exact scope, ports, and caveats live in [contrib/realengine/README.md](contrib/realengine/README.md) and [contrib/dockerengine/README.md](contrib/dockerengine/README.md).
+The in-memory default is unchanged; `Provider.Close()` tears down whatever you wired.
 
-## More
+## Docs
 
-- [docs/getting-started.md](docs/getting-started.md) — set up a test in 5 minutes
-- [docs/standalone-server.md](docs/standalone-server.md) — run the local dev cloud (Docker, flags, ports)
-- [docs/architecture.md](docs/architecture.md) — three-layer design, factory wiring
-- [docs/features.md](docs/features.md) — auto-metrics, alarm evaluation, IAM policy evaluation, FIFO dedup, error injection, fake clock
-- [docs/chaos.md](docs/chaos.md) — deliberately fail or slow down services to test retry/timeout paths
-- [docs/topology.md](docs/topology.md) — network connectivity simulation across VPC, peering, SGs, ACLs
+- [Getting Started](docs/getting-started.md) — a working test in 5 minutes
+- [Standalone Server](docs/standalone-server.md) — the local dev cloud (Docker, flags, ports)
+- [Terraform / OpenTofu](docs/terraform.md) — run real IaC against cloudemu
+- [Architecture](docs/architecture.md) · [Features](docs/features.md) · [Chaos](docs/chaos.md) · [Topology](docs/topology.md)
+- [Capability coverage](docs/coverage/README.md) — every service and operation, generated
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, the branch-from-`development` flow, and the lint/coverage bar. Please also read the [Code of Conduct](CODE_OF_CONDUCT.md).
-
-Questions or bugs? Open a [GitHub issue](https://github.com/stackshy/cloudemu/issues). For security reports, follow [SECURITY.md](SECURITY.md).
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup and the branch-from-`development` flow, and the [Code of Conduct](CODE_OF_CONDUCT.md). Questions or bugs? Open a [GitHub issue](https://github.com/stackshy/cloudemu/issues); for security, follow [SECURITY.md](SECURITY.md).
 
 ## License
 

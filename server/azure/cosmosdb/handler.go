@@ -19,7 +19,6 @@ package cosmosdb
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,6 +26,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/cosmossql"
 )
 
 const (
@@ -325,8 +325,11 @@ func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll str
 		return
 	}
 
+	docs := make([]any, 0, len(result.Items))
+
 	for i := range result.Items {
 		addSystemProps(result.Items[i])
+		docs = append(docs, result.Items[i])
 	}
 
 	if result.NextPageToken != "" {
@@ -335,52 +338,45 @@ func (h *Handler) listDocuments(w http.ResponseWriter, r *http.Request, coll str
 
 	writeJSON(w, http.StatusOK, documentsList{
 		RID:       "cloudemu",
-		Documents: result.Items,
+		Documents: docs,
 		Count:     result.Count,
 	})
 }
 
 func (h *Handler) queryDocuments(w http.ResponseWriter, r *http.Request, coll string) {
-	// We accept the query body but ignore it — return all items via Scan.
-	// This is sufficient for SDK round-trip validation; full SQL parsing is
-	// out of scope.
-	body, _ := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
-	_ = body
-
-	// Honor Cosmos paging: x-ms-max-item-count is the page size and
-	// x-ms-continuation carries the driver page token between requests.
-	// Default page size matches real Cosmos (and the driver default);
-	// callers page onward via the x-ms-continuation round-trip below.
-	limit := 100
-	if v := r.Header.Get("X-Ms-Max-Item-Count"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
+	body, ok := decodeQueryBody(w, r)
+	if !ok {
+		return
 	}
 
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{
-		Table:     coll,
-		Limit:     limit,
-		PageToken: r.Header.Get("X-Ms-Continuation"),
-	})
+	stmt, perr := cosmossql.Parse(body.Query, body.paramMap())
+	if perr != nil {
+		writeErr(w, perr)
+		return
+	}
+
+	// Fetch the whole container and evaluate the query here with full fidelity.
+	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: coll, Limit: allResults})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	for i := range result.Items {
-		addSystemProps(result.Items[i])
+	matched, ferr := cosmosFilter(result.Items, stmt.Where)
+	if ferr != nil {
+		writeErr(w, ferr)
+		return
 	}
 
-	if result.NextPageToken != "" {
-		w.Header().Set("X-Ms-Continuation", result.NextPageToken)
+	docs := shapeCosmos(matched, stmt)
+
+	// Page the logical result set with the x-ms-continuation offset contract.
+	page, next := pageDocs(docs, continuationOffset(r.Header.Get("X-Ms-Continuation")), maxItemCount(r))
+	if next > 0 {
+		w.Header().Set("X-Ms-Continuation", strconv.Itoa(next))
 	}
 
-	writeJSON(w, http.StatusOK, documentsList{
-		RID:       "cloudemu",
-		Documents: result.Items,
-		Count:     result.Count,
-	})
+	writeJSON(w, http.StatusOK, documentsList{RID: "cloudemu", Documents: page, Count: len(page)})
 }
 
 func (h *Handler) documentResource(w http.ResponseWriter, r *http.Request, _, coll, id string) {

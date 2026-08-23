@@ -134,11 +134,25 @@ func (h *Handler) authorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) revokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
-	h.applyRules(w, r, h.vpc.RemoveIngressRule, "RevokeSecurityGroupIngressResponse")
+	h.applyRules(w, r, tolerateMissingRule(h.vpc.RemoveIngressRule), "RevokeSecurityGroupIngressResponse")
 }
 
 func (h *Handler) revokeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
-	h.applyRules(w, r, h.vpc.RemoveEgressRule, "RevokeSecurityGroupEgressResponse")
+	h.applyRules(w, r, tolerateMissingRule(h.vpc.RemoveEgressRule), "RevokeSecurityGroupEgressResponse")
+}
+
+// tolerateMissingRule makes a Revoke idempotent: real EC2 does not fail when a
+// revoked rule is absent, and IaC tools depend on it — Terraform strips the
+// default egress rules (IPv4 and IPv6) from a new group, but a v4-only VPC has
+// no IPv6 default to remove.
+func tolerateMissingRule(remove ruleFunc) ruleFunc {
+	return func(ctx context.Context, groupID string, rule netdriver.SecurityRule) error {
+		if err := remove(ctx, groupID, rule); err != nil && !cerrors.IsNotFound(err) {
+			return err
+		}
+
+		return nil
+	}
 }
 
 // ruleFunc is the common signature of AddIngressRule / AddEgressRule /

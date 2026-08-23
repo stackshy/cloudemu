@@ -12,6 +12,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 )
 
 const targetPrefix = "DynamoDB_20120810."
@@ -53,6 +54,8 @@ func (h *Handler) routeTables(w http.ResponseWriter, r *http.Request, op string)
 		h.deleteTable(w, r)
 	case "DescribeTable":
 		h.describeTable(w, r)
+	case "DescribeContinuousBackups":
+		h.describeContinuousBackups(w, r)
 	case "ListTables":
 		h.listTables(w, r)
 	default:
@@ -109,13 +112,23 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 			AttributeName string `json:"AttributeName"`
 			AttributeType string `json:"AttributeType"`
 		} `json:"AttributeDefinitions"`
+		BillingMode           string `json:"BillingMode"`
+		ProvisionedThroughput struct {
+			ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
+			WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
+		} `json:"ProvisionedThroughput"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	cfg := dbdriver.TableConfig{Name: req.TableName}
+	cfg := dbdriver.TableConfig{
+		Name:               req.TableName,
+		BillingMode:        req.BillingMode,
+		ReadCapacityUnits:  req.ProvisionedThroughput.ReadCapacityUnits,
+		WriteCapacityUnits: req.ProvisionedThroughput.WriteCapacityUnits,
+	}
 
 	for _, ks := range req.KeySchema {
 		if ks.KeyType == "HASH" {
@@ -127,18 +140,71 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for _, ad := range req.AttributeDefinitions {
+		cfg.Attributes = append(cfg.Attributes,
+			dbdriver.AttributeDef{Name: ad.AttributeName, Type: ad.AttributeType})
+	}
+
 	if err := h.db.CreateTable(r.Context(), cfg); err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
-		"TableDescription": map[string]any{
-			"TableName":   req.TableName,
-			"TableStatus": "ACTIVE",
-			"KeySchema":   req.KeySchema,
-		},
-	})
+	// Re-describe to pick up the ARN and creation time the provider assigned.
+	full, err := h.db.DescribeTable(r.Context(), req.TableName)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"TableDescription": tableDescription(full)})
+}
+
+// tableDescription builds the DynamoDB TableDescription wire shape that both
+// CreateTable and DescribeTable return, including the fields an IaC client reads
+// back (ARN, creation time, attribute definitions, billing mode).
+func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
+	keySchema := []map[string]string{{"AttributeName": cfg.PartitionKey, "KeyType": "HASH"}}
+	if cfg.SortKey != "" {
+		keySchema = append(keySchema, map[string]string{"AttributeName": cfg.SortKey, "KeyType": "RANGE"})
+	}
+
+	attrs := make([]map[string]string, 0, len(cfg.Attributes))
+	for _, a := range cfg.Attributes {
+		attrs = append(attrs, map[string]string{"AttributeName": a.Name, "AttributeType": a.Type})
+	}
+
+	const billingProvisioned = "PROVISIONED"
+
+	billing := cfg.BillingMode
+	if billing == "" {
+		billing = billingProvisioned
+	}
+
+	// NOTE: GlobalSecondaryIndexes are not echoed here. A fixture that declares a
+	// global_secondary_index would therefore see a perpetual diff — GSIs are out
+	// of scope for the current fixtures (see contrib/terraform "Known limits").
+	td := map[string]any{
+		"TableName":            cfg.Name,
+		"TableStatus":          "ACTIVE",
+		"TableArn":             cfg.TableArn,
+		"CreationDateTime":     cfg.CreatedAtUnix,
+		"KeySchema":            keySchema,
+		"AttributeDefinitions": attrs,
+		"ItemCount":            0,
+		"TableSizeBytes":       0,
+		"BillingModeSummary":   map[string]any{"BillingMode": billing},
+	}
+
+	if billing == billingProvisioned {
+		td["ProvisionedThroughput"] = map[string]any{
+			"ReadCapacityUnits":      cfg.ReadCapacityUnits,
+			"WriteCapacityUnits":     cfg.WriteCapacityUnits,
+			"NumberOfDecreasesToday": 0,
+		}
+	}
+
+	return td
 }
 
 func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request) {
@@ -178,21 +244,31 @@ func (h *Handler) describeTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keySchema := []map[string]string{
-		{"AttributeName": cfg.PartitionKey, "KeyType": "HASH"},
+	wire.WriteJSON(w, map[string]any{"Table": tableDescription(cfg)})
+}
+
+// describeContinuousBackups reports point-in-time recovery as disabled. IaC
+// clients read this on every table refresh; without it the read errors.
+func (h *Handler) describeContinuousBackups(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TableName string `json:"TableName"`
 	}
 
-	if cfg.SortKey != "" {
-		keySchema = append(keySchema, map[string]string{
-			"AttributeName": cfg.SortKey, "KeyType": "RANGE",
-		})
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if _, err := h.db.DescribeTable(r.Context(), req.TableName); err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	wire.WriteJSON(w, map[string]any{
-		"Table": map[string]any{
-			"TableName":   cfg.Name,
-			"TableStatus": "ACTIVE",
-			"KeySchema":   keySchema,
+		"ContinuousBackupsDescription": map[string]any{
+			"ContinuousBackupsStatus": "DISABLED",
+			"PointInTimeRecoveryDescription": map[string]any{
+				"PointInTimeRecoveryStatus": "DISABLED",
+			},
 		},
 	})
 }
@@ -209,12 +285,14 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // mirrors deleteItem's condition-gated write path over Item, not Key.
 func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName                string            `json:"TableName"`
-		Item                     map[string]any    `json:"Item"`
-		ConditionExpression      string            `json:"ConditionExpression"`
-		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
+		TableName                 string            `json:"TableName"`
+		Item                      map[string]any    `json:"Item"`
+		ConditionExpression       string            `json:"ConditionExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -222,13 +300,10 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	item := fromWireItem(req.Item)
+	vals := fromWireItem(req.ExpressionAttributeValues)
 
-	if ok, err := h.checkCondition(r.Context(), req.TableName, item, req.ConditionExpression, req.ExpressionAttributeNames); err != nil {
-		writeErr(w, err)
-		return
-	} else if !ok {
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"ConditionalCheckFailedException", "The conditional request failed")
+	if !h.gateCondition(r.Context(), w, req.TableName, item,
+		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
 		return
 	}
 
@@ -240,55 +315,62 @@ func (h *Handler) putItem(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
-// checkCondition evaluates the supported ConditionExpression forms —
-// attribute_not_exists(field) and attribute_exists(field) — against the
-// current stored item, keyed by the incoming item's key attributes.
-// Real DynamoDB users lean on attribute_not_exists(pk) for create-if-absent.
+// gateCondition evaluates a ConditionExpression and, on failure, writes the
+// matching DynamoDB error response. It returns true when the caller should
+// proceed with the mutation. Shared by PutItem, UpdateItem and DeleteItem.
+func (h *Handler) gateCondition(
+	ctx context.Context,
+	w http.ResponseWriter,
+	table string,
+	keySource map[string]any,
+	condExpr string,
+	names map[string]string,
+	values map[string]any,
+) bool {
+	ok, err := h.checkCondition(ctx, table, keySource, condExpr, names, values)
+	if err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	if !ok {
+		wire.WriteJSONError(w, http.StatusBadRequest,
+			"ConditionalCheckFailedException", "The conditional request failed")
+		return false
+	}
+
+	return true
+}
+
+// checkCondition evaluates a DynamoDB ConditionExpression against the current
+// stored item, using the full expression grammar (functions, boolean
+// operators, IN/BETWEEN, size(), type-aware comparisons). keySource carries
+// the item's key attributes (the full item for PutItem, the Key map for
+// Update/Delete). A missing item is evaluated against an empty item, so
+// attribute_not_exists is true and attribute_exists is false — matching real
+// DynamoDB create-if-absent semantics. A malformed expression is a
+// cerrors.InvalidArgument; a well-formed but unmet condition returns false.
 func (h *Handler) checkCondition(
 	ctx context.Context,
 	table string,
-	item map[string]any,
-	expr string,
+	keySource map[string]any,
+	condExpr string,
 	names map[string]string,
+	values map[string]any,
 ) (bool, error) {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
+	condExpr = strings.TrimSpace(condExpr)
+	if condExpr == "" {
 		return true, nil
 	}
-
-	var (
-		rest       string
-		wantAbsent bool
-	)
-	switch {
-	case strings.HasPrefix(expr, "attribute_not_exists("):
-		rest = strings.TrimPrefix(expr, "attribute_not_exists(")
-		wantAbsent = true
-	case strings.HasPrefix(expr, "attribute_exists("):
-		rest = strings.TrimPrefix(expr, "attribute_exists(")
-	default:
-		return false, cerrors.Newf(cerrors.InvalidArgument,
-			"unsupported ConditionExpression: %s", expr)
-	}
-
-	rest, ok := strings.CutSuffix(rest, ")")
-	field := strings.TrimSpace(rest)
-	// Reject compound expressions and malformed input rather than
-	// mis-evaluating them (only the single-function forms are supported).
-	if !ok || field == "" || strings.ContainsAny(field, " ()") {
-		return false, cerrors.Newf(cerrors.InvalidArgument,
-			"unsupported ConditionExpression: %s", expr)
-	}
-	field = resolveAttrName(field, names)
 
 	cfg, err := h.db.DescribeTable(ctx, table)
 	if err != nil {
 		return false, err
 	}
 
-	key := map[string]any{cfg.PartitionKey: item[cfg.PartitionKey]}
+	key := map[string]any{cfg.PartitionKey: keySource[cfg.PartitionKey]}
 	if cfg.SortKey != "" {
-		key[cfg.SortKey] = item[cfg.SortKey]
+		key[cfg.SortKey] = keySource[cfg.SortKey]
 	}
 
 	existing, err := h.db.GetItem(ctx, table, key)
@@ -296,21 +378,24 @@ func (h *Handler) checkCondition(
 		return false, err
 	}
 
-	var hasAttr bool
-	if existing != nil {
-		_, hasAttr = existing[field]
+	node, err := expr.ParseCondition(condExpr, names, values)
+	if err != nil {
+		return false, err
 	}
 
-	if wantAbsent {
-		return !hasAttr, nil
+	if existing == nil {
+		existing = map[string]any{}
 	}
-	return hasAttr, nil
+
+	return expr.Eval(node, existing)
 }
 
 func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string         `json:"TableName"`
-		Key       map[string]any `json:"Key"`
+		TableName                string            `json:"TableName"`
+		Key                      map[string]any    `json:"Key"`
+		ProjectionExpression     string            `json:"ProjectionExpression"`
+		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -318,6 +403,15 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fromWireItem(req.Key)
+
+	// Validate the projection before the lookup so a malformed expression is a
+	// ValidationException regardless of whether the item exists, matching real
+	// DynamoDB.
+	paths, perr := expr.ParseProjection(req.ProjectionExpression, req.ExpressionAttributeNames)
+	if perr != nil {
+		writeErr(w, perr)
+		return
+	}
 
 	item, err := h.db.GetItem(r.Context(), req.TableName, key)
 	if err != nil {
@@ -334,16 +428,20 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{}
 	if item != nil {
-		resp["Item"] = toWireItem(item)
+		resp["Item"] = toWireItem(expr.Project(item, paths))
 	}
 
 	wire.WriteJSON(w, resp)
 }
 
+//nolint:dupl // mirrors putItem's condition-gated write path over Key, not Item.
 func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string         `json:"TableName"`
-		Key       map[string]any `json:"Key"`
+		TableName                 string            `json:"TableName"`
+		Key                       map[string]any    `json:"Key"`
+		ConditionExpression       string            `json:"ConditionExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -351,6 +449,12 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fromWireItem(req.Key)
+	vals := fromWireItem(req.ExpressionAttributeValues)
+
+	if !h.gateCondition(r.Context(), w, req.TableName, key,
+		req.ConditionExpression, req.ExpressionAttributeNames, vals) {
+		return
+	}
 
 	if err := h.db.DeleteItem(r.Context(), req.TableName, key); err != nil {
 		writeErr(w, err)
@@ -365,6 +469,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
 		FilterExpression          string            `json:"FilterExpression"`
+		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		Limit                     int               `json:"Limit"`
@@ -378,19 +483,28 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vals := fromWireItem(req.ExpressionAttributeValues)
-	kc := parseKeyCondition(req.KeyConditionExpression, vals, req.ExpressionAttributeNames)
-	filters := parseFilterExpression(req.FilterExpression, vals, req.ExpressionAttributeNames)
+
+	kc, err := parseKeyCondition(req.KeyConditionExpression, vals, req.ExpressionAttributeNames)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	forward := true
 	if req.ScanIndexForward != nil {
 		forward = *req.ScanIndexForward
 	}
 
+	// Flow the raw FilterExpression (post key-condition) to the driver, which
+	// parses and evaluates it with full grammar fidelity. The KeyCondition
+	// path is unchanged.
 	result, err := h.db.Query(r.Context(), dbdriver.QueryInput{
 		Table:             req.TableName,
 		IndexName:         req.IndexName,
 		KeyCondition:      kc,
-		Filters:           filters,
+		FilterExpression:  req.FilterExpression,
+		ExprNames:         req.ExpressionAttributeNames,
+		ExprValues:        vals,
 		Limit:             req.Limit,
 		SortDescending:    !forward,
 		ExclusiveStartKey: fromWireItem(req.ExclusiveStartKey),
@@ -400,9 +514,15 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	paths, perr := expr.ParseProjection(req.ProjectionExpression, req.ExpressionAttributeNames)
+	if perr != nil {
+		writeErr(w, perr)
+		return
+	}
+
 	items := make([]map[string]any, 0, len(result.Items))
 	for _, item := range result.Items {
-		items = append(items, toWireItem(item))
+		items = append(items, toWireItem(expr.Project(item, paths)))
 	}
 
 	resp := map[string]any{
@@ -416,65 +536,32 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, resp)
 }
 
-// parseKeyCondition extracts a KeyCondition from a simple expression.
-// Supports: "pk = :v" and "pk = :v AND sk op :v2".
+// Sort-key operators emitted for the function/keyword forms of a
+// KeyConditionExpression. Relational operators (= < <= > >=) flow through as
+// their literal token.
+// parseKeyCondition parses a KeyConditionExpression into a driver KeyCondition.
+// It delegates to the shared expr parser, which uses the real lexer (so it is
+// tolerant of spacing) and enforces the restricted key grammar: equality on the
+// partition key and one optional sort-key condition (relational, BETWEEN or
+// begins_with). The sort-key attribute name is derived by the provider from the
+// table's key schema, so it is not carried on the returned condition.
 func parseKeyCondition(
-	expr string,
+	keyExpr string,
 	vals map[string]any,
 	names map[string]string,
-) dbdriver.KeyCondition {
-	kc := dbdriver.KeyCondition{}
-	expr = strings.TrimSpace(expr)
-
-	const andSep = " AND "
-
-	andIdx := findCaseInsensitive(expr, andSep)
-	pkExpr := strings.TrimSpace(expr)
-	skExpr := ""
-
-	if andIdx >= 0 {
-		pkExpr = strings.TrimSpace(expr[:andIdx])
-		skExpr = strings.TrimSpace(expr[andIdx+len(andSep):])
+) (dbdriver.KeyCondition, error) {
+	kc, err := expr.ParseKeyCondition(keyExpr, names, vals)
+	if err != nil {
+		return dbdriver.KeyCondition{}, err
 	}
 
-	// Expression fields: [0]=field, [1]=operator, [2]=value placeholder.
-	const valueIdx = 2
-
-	pkParts := strings.Fields(pkExpr)
-	if len(pkParts) > valueIdx {
-		kc.PartitionKey = resolveAttrName(pkParts[0], names)
-		kc.PartitionVal = resolveExprVal(pkParts[valueIdx], vals)
-	}
-
-	if skExpr != "" {
-		skParts := strings.Fields(skExpr)
-		if len(skParts) > valueIdx {
-			kc.SortOp = skParts[1]
-			kc.SortVal = resolveExprVal(skParts[valueIdx], vals)
-		}
-	}
-
-	return kc
-}
-
-func findCaseInsensitive(s, substr string) int {
-	return strings.Index(strings.ToUpper(s), strings.ToUpper(substr))
-}
-
-func resolveAttrName(token string, names map[string]string) string {
-	if v, ok := names[token]; ok {
-		return v
-	}
-
-	return token
-}
-
-func resolveExprVal(token string, vals map[string]any) any {
-	if v, ok := vals[token]; ok {
-		return v
-	}
-
-	return token
+	return dbdriver.KeyCondition{
+		PartitionKey: kc.PartitionKey,
+		PartitionVal: kc.PartitionVal,
+		SortOp:       kc.SortOp,
+		SortVal:      kc.SortVal,
+		SortValEnd:   kc.SortValEnd,
+	}, nil
 }
 
 // writeErr maps CloudEmu errors to DynamoDB HTTP error responses.

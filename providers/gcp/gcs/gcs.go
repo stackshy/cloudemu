@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/storageengine"
 )
 
 const (
@@ -35,6 +36,7 @@ var _ driver.Bucket = (*Mock)(nil)
 type gcsObject struct {
 	Key          string
 	Data         []byte
+	Size         int64
 	ContentType  string
 	ETag         string
 	LastModified string
@@ -175,9 +177,23 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 		metaCopy[k] = v
 	}
 
+	stored := dataCopy
+
+	if m.opts.StorageEngine != nil {
+		err := storageengine.Put(ctx, m.opts.StorageEngine, config.StorageObject{
+			Bucket: bucket, Key: key, Data: dataCopy, ContentType: contentType, Metadata: metaCopy,
+		})
+		if err != nil {
+			return err
+		}
+
+		stored = nil
+	}
+
 	bkt.objects.Set(key, &gcsObject{
 		Key:          key,
-		Data:         dataCopy,
+		Data:         stored,
+		Size:         int64(len(data)),
 		ContentType:  contentType,
 		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified: m.opts.Clock.Now().UTC().Format(gcsTimeFormat),
@@ -202,20 +218,42 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
 
-	dataCopy := make([]byte, len(obj.Data))
-	copy(dataCopy, obj.Data)
+	dataCopy, err := m.objectBytes(ctx, bucket, obj)
+	if err != nil {
+		return nil, err
+	}
 
 	dims := map[string]string{"bucket_name": bucket}
 	m.emitMetric(ctx, "api/request_count", 1, dims)
-	m.emitMetric(ctx, "network/sent_bytes_count", float64(len(obj.Data)), dims)
+	m.emitMetric(ctx, "network/sent_bytes_count", float64(obj.Size), dims)
 
 	return &driver.Object{
 		Info: driver.ObjectInfo{
-			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		},
 		Data: dataCopy,
 	}, nil
+}
+
+// objectBytes returns a copy of an object's bytes, loading them from the
+// storage engine when one is wired and the in-memory copy was dropped.
+func (m *Mock) objectBytes(ctx context.Context, bucket string, obj *gcsObject) ([]byte, error) {
+	if m.opts.StorageEngine != nil && obj.Data == nil {
+		data, ok, err := storageengine.Get(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: obj.Key})
+		if err != nil {
+			return nil, err
+		}
+
+		if ok {
+			return data, nil
+		}
+	}
+
+	dataCopy := make([]byte, len(obj.Data))
+	copy(dataCopy, obj.Data)
+
+	return dataCopy, nil
 }
 
 func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
@@ -229,6 +267,10 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	}
 
 	bkt.objects.Delete(key)
+
+	// Best-effort byte purge — the in-memory delete already succeeded, so a
+	// backing cleanup failure must not fail an idempotent object delete.
+	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
 	m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
 
@@ -247,7 +289,7 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	}
 
 	return &driver.ObjectInfo{
-		Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 	}, nil
 }
@@ -286,7 +328,7 @@ func (m *Mock) ListObjects(ctx context.Context, bucket string, opts driver.ListO
 		}
 
 		matchedObjects = append(matchedObjects, driver.ObjectInfo{
-			Key: obj.Key, Size: int64(len(obj.Data)), ContentType: obj.ContentType,
+			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
 		})
 	}
@@ -348,8 +390,21 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		meta[k] = v
 	}
 
+	stored := dataCopy
+
+	if m.opts.StorageEngine != nil {
+		err := storageengine.Copy(ctx, m.opts.StorageEngine,
+			config.StorageRef{Bucket: dstBucket, Key: dstKey},
+			config.StorageRef{Bucket: src.Bucket, Key: src.Key})
+		if err != nil {
+			return err
+		}
+
+		stored = nil
+	}
+
 	dstBkt.objects.Set(dstKey, &gcsObject{
-		Key: dstKey, Data: dataCopy, ContentType: srcObj.ContentType,
+		Key: dstKey, Data: stored, Size: srcObj.Size, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(gcsTimeFormat),
 		Metadata: meta,
 	})
@@ -587,9 +642,23 @@ func (m *Mock) CompleteMultipartUpload(
 	data := assembleGCSPartsInOrder(mp.parts, parts)
 	mp.mu.Unlock()
 
+	stored := data
+
+	if m.opts.StorageEngine != nil {
+		err := storageengine.Put(ctx, m.opts.StorageEngine, config.StorageObject{
+			Bucket: bucket, Key: key, Data: data, ContentType: mp.contentType,
+		})
+		if err != nil {
+			return err
+		}
+
+		stored = nil
+	}
+
 	bkt.objects.Set(key, &gcsObject{
 		Key:          key,
-		Data:         data,
+		Data:         stored,
+		Size:         int64(len(data)),
 		ContentType:  mp.contentType,
 		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified: m.opts.Clock.Now().UTC().Format(gcsTimeFormat),
