@@ -1597,3 +1597,46 @@ func TestDDBSetTypesRoundTrip(t *testing.T) {
 	require.True(t, ok, "binary scalar should round-trip as B, got %T", out.Item["bin"])
 	assert.Equal(t, []byte{0xDE, 0xAD}, bin.Value)
 }
+
+// TestGSIRoundTripAndQuery covers the blocker: a GSI declared at CreateTable is
+// echoed by DescribeTable and is queryable via Query(IndexName=...).
+func TestGSIRoundTripAndQuery(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:   aws.String("gsitab"),
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("email"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{{
+			IndexName:  aws.String("by-email"),
+			KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("email"), KeyType: ddbtypes.KeyTypeHash}},
+			Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+		}},
+	})
+	require.NoError(t, err)
+
+	d, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String("gsitab")})
+	require.NoError(t, err)
+	require.Len(t, d.Table.GlobalSecondaryIndexes, 1)
+	require.Equal(t, "by-email", aws.ToString(d.Table.GlobalSecondaryIndexes[0].IndexName))
+
+	_, err = client.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String("gsitab"), Item: map[string]ddbtypes.AttributeValue{
+		"id":    &ddbtypes.AttributeValueMemberS{Value: "u1"},
+		"email": &ddbtypes.AttributeValueMemberS{Value: "a@x.com"},
+	}})
+	require.NoError(t, err)
+
+	q, err := client.Query(ctx, &dynamodb.QueryInput{
+		TableName:                 aws.String("gsitab"),
+		IndexName:                 aws.String("by-email"),
+		KeyConditionExpression:    aws.String("email = :e"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":e": &ddbtypes.AttributeValueMemberS{Value: "a@x.com"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, q.Items, 1)
+}

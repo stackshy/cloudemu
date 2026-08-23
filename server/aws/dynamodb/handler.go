@@ -117,6 +117,16 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 			ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
 			WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
 		} `json:"ProvisionedThroughput"`
+		GlobalSecondaryIndexes []struct {
+			IndexName string `json:"IndexName"`
+			KeySchema []struct {
+				AttributeName string `json:"AttributeName"`
+				KeyType       string `json:"KeyType"`
+			} `json:"KeySchema"`
+			Projection struct {
+				ProjectionType string `json:"ProjectionType"`
+			} `json:"Projection"`
+		} `json:"GlobalSecondaryIndexes"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -128,6 +138,19 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		BillingMode:        req.BillingMode,
 		ReadCapacityUnits:  req.ProvisionedThroughput.ReadCapacityUnits,
 		WriteCapacityUnits: req.ProvisionedThroughput.WriteCapacityUnits,
+	}
+
+	for _, gsi := range req.GlobalSecondaryIndexes {
+		idx := dbdriver.GSIConfig{Name: gsi.IndexName, Projection: gsi.Projection.ProjectionType}
+		for _, ks := range gsi.KeySchema {
+			if ks.KeyType == "HASH" {
+				idx.PartitionKey = ks.AttributeName
+			}
+			if ks.KeyType == "RANGE" {
+				idx.SortKey = ks.AttributeName
+			}
+		}
+		cfg.GSIs = append(cfg.GSIs, idx)
 	}
 
 	for _, ks := range req.KeySchema {
@@ -181,9 +204,6 @@ func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 		billing = billingProvisioned
 	}
 
-	// NOTE: GlobalSecondaryIndexes are not echoed here. A fixture that declares a
-	// global_secondary_index would therefore see a perpetual diff — GSIs are out
-	// of scope for the current fixtures (see contrib/terraform "Known limits").
 	td := map[string]any{
 		"TableName":            cfg.Name,
 		"TableStatus":          "ACTIVE",
@@ -204,7 +224,52 @@ func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 		}
 	}
 
+	if gsis := gsiDescriptions(cfg, billing); len(gsis) > 0 {
+		td["GlobalSecondaryIndexes"] = gsis
+	}
+
 	return td
+}
+
+// gsiDescriptions builds the GlobalSecondaryIndexes wire block echoed by
+// CreateTable/DescribeTable so an IaC-declared index round-trips (and Query can
+// target it via IndexName).
+func gsiDescriptions(cfg *dbdriver.TableConfig, billing string) []map[string]any {
+	out := make([]map[string]any, 0, len(cfg.GSIs))
+
+	for _, gsi := range cfg.GSIs {
+		keySchema := []map[string]string{{"AttributeName": gsi.PartitionKey, "KeyType": "HASH"}}
+		if gsi.SortKey != "" {
+			keySchema = append(keySchema, map[string]string{"AttributeName": gsi.SortKey, "KeyType": "RANGE"})
+		}
+
+		projection := gsi.Projection
+		if projection == "" {
+			projection = "ALL"
+		}
+
+		desc := map[string]any{
+			"IndexName":      gsi.Name,
+			"IndexStatus":    "ACTIVE",
+			"KeySchema":      keySchema,
+			"Projection":     map[string]any{"ProjectionType": projection},
+			"IndexArn":       cfg.TableArn + "/index/" + gsi.Name,
+			"ItemCount":      0,
+			"IndexSizeBytes": 0,
+		}
+
+		if billing == "PROVISIONED" {
+			desc["ProvisionedThroughput"] = map[string]any{
+				"ReadCapacityUnits":      cfg.ReadCapacityUnits,
+				"WriteCapacityUnits":     cfg.WriteCapacityUnits,
+				"NumberOfDecreasesToday": 0,
+			}
+		}
+
+		out = append(out, desc)
+	}
+
+	return out
 }
 
 func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request) {
