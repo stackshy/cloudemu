@@ -14,8 +14,8 @@ import (
 const defaultVolumeType = "gp3"
 
 // Storage describe filter names shared across volume/snapshot/image handlers.
+// filterTagKey and filterState are defined in networking_common.go (shared).
 const (
-	filterTagKey             = "tag-key"
 	filterAvailabilityZone   = "availability-zone"
 	filterSize               = "size"
 	filterEncrypted          = "encrypted"
@@ -30,7 +30,6 @@ const (
 	filterImageID            = "image-id"
 	filterImageType          = "image-type"
 	filterName               = "name"
-	filterState              = "state"
 	filterRootDeviceType     = "root-device-type"
 	filterVirtualizationType = "virtualization-type"
 )

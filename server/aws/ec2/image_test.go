@@ -11,7 +11,7 @@ import (
 	smithy "github.com/aws/smithy-go"
 )
 
-func runOneInstance(t *testing.T, ctx context.Context, client *ec2.Client) string {
+func launchInstanceForImage(t *testing.T, ctx context.Context, client *ec2.Client) string {
 	t.Helper()
 
 	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
@@ -33,7 +33,7 @@ func runOneInstance(t *testing.T, ctx context.Context, client *ec2.Client) strin
 func TestCreateImagePopulatesRootDeviceAndMapping(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)
-	instID := runOneInstance(t, ctx, client)
+	instID := launchInstanceForImage(t, ctx, client)
 
 	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
 		InstanceId: aws.String(instID),
@@ -73,7 +73,7 @@ func TestCreateImagePopulatesRootDeviceAndMapping(t *testing.T) {
 func TestDescribeImagesReportsMetadata(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)
-	instID := runOneInstance(t, ctx, client)
+	instID := launchInstanceForImage(t, ctx, client)
 
 	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
 		InstanceId: aws.String(instID),
@@ -113,7 +113,7 @@ func TestDescribeImagesReportsMetadata(t *testing.T) {
 func TestDescribeImagesOwnerFilter(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)
-	instID := runOneInstance(t, ctx, client)
+	instID := launchInstanceForImage(t, ctx, client)
 
 	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
 		InstanceId: aws.String(instID),
@@ -176,7 +176,7 @@ func TestDescribeImagesUnknownIDErrors(t *testing.T) {
 func TestDescribeImageAttribute(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)
-	instID := runOneInstance(t, ctx, client)
+	instID := launchInstanceForImage(t, ctx, client)
 
 	img, err := client.CreateImage(ctx, &ec2.CreateImageInput{
 		InstanceId:  aws.String(instID),

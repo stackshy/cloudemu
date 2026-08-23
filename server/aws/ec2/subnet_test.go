@@ -2,42 +2,13 @@ package ec2_test
 
 import (
 	"context"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-
-	"github.com/stackshy/cloudemu/v2"
-	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
-
-// newEC2Client wires a full AWS server and returns a real aws-sdk-go-v2 EC2
-// client pointed at it (dummy creds, us-east-1).
-func newEC2Client(t *testing.T) *ec2.Client {
-	t.Helper()
-
-	cloud := cloudemu.NewAWS()
-	ts := httptest.NewServer(awsserver.New(awsserver.DriversFrom(cloud)))
-	t.Cleanup(ts.Close)
-
-	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
-		awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider("test", "test", "")),
-	)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-
-	cfg.BaseEndpoint = aws.String(ts.URL)
-
-	return ec2.NewFromConfig(cfg)
-}
 
 func mkVPC(ctx context.Context, t *testing.T, c *ec2.Client, cidr string) string {
 	t.Helper()
