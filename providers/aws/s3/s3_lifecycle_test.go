@@ -11,7 +11,6 @@ package s3
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"strings"
 	"testing"
@@ -53,10 +52,6 @@ func e2eRequireCode(t *testing.T, err error, want cerrors.Code, op string) {
 	if got := cerrors.GetCode(err); got != want {
 		t.Fatalf("%s: expected code %v, got %v (err=%v)", op, want, got, err)
 	}
-}
-
-func sha256Hex(data []byte) string {
-	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // TestFullObjectLifecycle walks a complete user journey:
@@ -102,7 +97,7 @@ func TestFullObjectLifecycle(t *testing.T) {
 		e2eRequireNoErr(t, m.PutObject(ctx, bucket, o.key, o.data, o.contentType, o.metadata), "PutObject "+o.key)
 	}
 
-	// GetObject returns exact bytes, content type and sha256 ETag.
+	// GetObject returns exact bytes, content type and MD5 ETag.
 	for _, o := range objects {
 		got, gerr := m.GetObject(ctx, bucket, o.key)
 		e2eRequireNoErr(t, gerr, "GetObject "+o.key)
@@ -115,8 +110,8 @@ func TestFullObjectLifecycle(t *testing.T) {
 			t.Fatalf("GetObject %s: contentType = %q, want %q", o.key, got.Info.ContentType, o.contentType)
 		}
 
-		if got.Info.ETag != sha256Hex(o.data) {
-			t.Fatalf("GetObject %s: ETag = %q, want sha256 %q", o.key, got.Info.ETag, sha256Hex(o.data))
+		if got.Info.ETag != md5Hex(o.data) {
+			t.Fatalf("GetObject %s: ETag = %q, want md5 %q", o.key, got.Info.ETag, md5Hex(o.data))
 		}
 
 		if got.Info.Size != int64(len(o.data)) {
@@ -220,7 +215,7 @@ func TestFullObjectLifecycle(t *testing.T) {
 	over, err := m.GetObject(ctx, bucket, "docs/readme.txt")
 	e2eRequireNoErr(t, err, "GetObject overwritten")
 
-	if string(over.Data) != "v2" || over.Info.ContentType != "text/markdown" || over.Info.ETag != sha256Hex([]byte("v2")) {
+	if string(over.Data) != "v2" || over.Info.ContentType != "text/markdown" || over.Info.ETag != md5Hex([]byte("v2")) {
 		t.Fatalf("overwrite not fully applied: %+v data=%q", over.Info, over.Data)
 	}
 
@@ -447,8 +442,8 @@ func TestMultipartJourney(t *testing.T) {
 		p, perr := m.UploadPart(ctx, bucket, "assembled/object.bin", up.UploadID, n, partBodies[n])
 		e2eRequireNoErr(t, perr, fmt.Sprintf("UploadPart %d", n))
 
-		if p.ETag != sha256Hex(partBodies[n]) {
-			t.Fatalf("part %d ETag = %q, want sha256 of body", n, p.ETag)
+		if p.ETag != md5Hex(partBodies[n]) {
+			t.Fatalf("part %d ETag = %q, want md5 of body", n, p.ETag)
 		}
 
 		parts = append(parts, *p)
@@ -477,8 +472,11 @@ func TestMultipartJourney(t *testing.T) {
 		t.Fatalf("assembled contentType = %q", obj.Info.ContentType)
 	}
 
-	if obj.Info.ETag != sha256Hex([]byte("AAAABBBBCCCC")) {
-		t.Fatalf("assembled ETag = %q, want fresh sha256 over whole body", obj.Info.ETag)
+	// Multipart ETag is md5(md5(part1)+md5(part2)+md5(part3))-3, parts in
+	// ascending PartNumber order (1=AAAA, 2=BBBB, 3=CCCC).
+	wantETag := multipartETag([][]byte{[]byte("AAAA"), []byte("BBBB"), []byte("CCCC")})
+	if obj.Info.ETag != wantETag {
+		t.Fatalf("assembled ETag = %q, want multipart ETag %q", obj.Info.ETag, wantETag)
 	}
 
 	if obj.Info.Metadata == nil {

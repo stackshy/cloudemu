@@ -361,7 +361,10 @@ func TestS3SpecialCharactersInKey(t *testing.T) {
 	assert.Equal(t, []byte("data"), got)
 }
 
-func TestS3DuplicateBucketReturnsError(t *testing.T) {
+// TestS3DuplicateBucketIdempotent asserts re-creating a bucket you own in
+// us-east-1 (the emulator's region) is idempotent, matching real S3's
+// global-endpoint behavior rather than returning 409.
+func TestS3DuplicateBucketIdempotent(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
 
@@ -373,7 +376,7 @@ func TestS3DuplicateBucketReturnsError(t *testing.T) {
 	_, err = client.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String("dup-bucket"),
 	})
-	require.Error(t, err)
+	require.NoError(t, err, "re-create in us-east-1 must be idempotent")
 }
 
 func TestDDBCreateTableAndListTables(t *testing.T) {

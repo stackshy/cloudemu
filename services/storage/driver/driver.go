@@ -119,6 +119,22 @@ type VersionedBucket interface {
 	ListObjectVersions(ctx context.Context, bucket string, opts ListOptions) (*VersionListResult, error)
 }
 
+// RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
+// VersionedBucket) a storage provider implements to persist and echo back opaque
+// bucket-configuration sub-resource documents — policy (JSON), cors, encryption,
+// lifecycle, website, and the like (XML) — byte-for-byte. The S3 handler uses it
+// to make PutBucketX/GetBucketX/DeleteBucketX round-trip; providers that don't
+// implement it fall back to the read-only "not configured" responses.
+type RawBucketConfig interface {
+	// PutBucketConfig stores document body under the sub-resource name (e.g.
+	// "policy", "cors") for bucket, replacing any previous document.
+	PutBucketConfig(ctx context.Context, bucket, name string, body []byte) error
+	// GetBucketConfig returns the stored document, or NotFound when none was set.
+	GetBucketConfig(ctx context.Context, bucket, name string) ([]byte, error)
+	// DeleteBucketConfig removes the stored document (idempotent).
+	DeleteBucketConfig(ctx context.Context, bucket, name string) error
+}
+
 // CopySource identifies the source for a copy operation.
 type CopySource struct {
 	Bucket string

@@ -2,7 +2,9 @@ package s3
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // S3 object ETags are defined as MD5 digests, not a security primitive
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"net/http"
@@ -32,6 +34,7 @@ const (
 var (
 	_ driver.Bucket          = (*Mock)(nil)
 	_ driver.VersionedBucket = (*Mock)(nil)
+	_ driver.RawBucketConfig = (*Mock)(nil)
 )
 
 type s3Object struct {
@@ -93,6 +96,11 @@ type bucketMeta struct {
 	encryption    *driver.EncryptionConfig
 	tags          map[string]string
 	notifications []QueueNotification
+	// rawConfigs holds opaque configuration sub-resource documents (policy, cors,
+	// encryption, lifecycle, website, …) exactly as written, so the wire handler
+	// can echo them back byte-for-byte. Guarded by rawConfigMu.
+	rawConfigMu sync.Mutex
+	rawConfigs  map[string][]byte
 }
 
 // QueueNotification is one S3 bucket-notification target: an SQS queue that
@@ -234,6 +242,29 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	return result, nil
 }
 
+// md5Hex returns the hex-encoded MD5 digest of data. Real S3 reports an object's
+// ETag as its MD5 (32 hex chars); CLIs, transfer managers, and conditional-GET
+// clients compare against this exact shape.
+func md5Hex(data []byte) string {
+	sum := md5.Sum(data) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+	return hex.EncodeToString(sum[:])
+}
+
+// multipartETag computes the ETag S3 assigns a completed multipart object: the
+// MD5 of the concatenated raw MD5 digests of each part, suffixed with "-N" where
+// N is the part count. Tools detect multipart objects by that "-N" suffix.
+func multipartETag(orderedParts [][]byte) string {
+	var concat []byte
+	for _, p := range orderedParts {
+		sum := md5.Sum(p) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+		concat = append(concat, sum[:]...)
+	}
+
+	final := md5.Sum(concat) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+
+	return fmt.Sprintf("%x-%d", final, len(orderedParts))
+}
+
 func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, contentType string, metadata map[string]string) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
@@ -247,7 +278,7 @@ func (m *Mock) PutObject(ctx context.Context, bucket, key string, data []byte, c
 		Data:         dataCopy,
 		Size:         int64(len(data)),
 		ContentType:  contentType,
-		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
+		ETag:         md5Hex(data),
 		LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata:     maps.Clone(metadata),
 	}
@@ -744,7 +775,7 @@ func (m *Mock) UploadPart(_ context.Context, bucket, _, uploadID string, partNum
 	mp.parts[partNumber] = dataCopy
 	mp.mu.Unlock()
 
-	etag := fmt.Sprintf("%x", sha256.Sum256(data))
+	etag := md5Hex(data)
 
 	return &driver.UploadPart{
 		PartNumber: partNumber, ETag: etag, Size: int64(len(data)),
@@ -779,7 +810,7 @@ func (m *Mock) ListParts(_ context.Context, bucket, _, uploadID string) ([]drive
 		data := mp.parts[n]
 		out = append(out, driver.UploadPart{
 			PartNumber: n,
-			ETag:       fmt.Sprintf("%x", sha256.Sum256(data)),
+			ETag:       md5Hex(data),
 			Size:       int64(len(data)),
 		})
 	}
@@ -805,8 +836,14 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 			return cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
 		}
 	}
-	data := assemblePartsInOrder(mp.parts, parts)
+
+	ordered := orderedPartData(mp.parts, parts)
 	mp.mu.Unlock()
+
+	var data []byte
+	for _, p := range ordered {
+		data = append(data, p...)
+	}
 
 	// storeObject (not a bare objects.Set) so a completed multipart upload is
 	// versioned like a PutObject on a versioning-enabled bucket.
@@ -815,7 +852,7 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 		Data:         data,
 		Size:         int64(len(data)),
 		ContentType:  mp.contentType,
-		ETag:         fmt.Sprintf("%x", sha256.Sum256(data)),
+		ETag:         multipartETag(ordered),
 		LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata:     make(map[string]string),
 	}
@@ -843,19 +880,20 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 	return nil
 }
 
-func assemblePartsInOrder(allParts map[int][]byte, parts []driver.UploadPart) []byte {
-	// S3 assembles parts by ascending PartNumber regardless of the order the
-	// client lists them in CompleteMultipartUpload; sort so an out-of-order
-	// (or unsorted-SDK) Complete doesn't corrupt the object.
+// orderedPartData returns each requested part's bytes in ascending PartNumber
+// order. S3 assembles (and hashes) parts by ascending PartNumber regardless of
+// the order the client lists them in CompleteMultipartUpload; sorting keeps an
+// out-of-order (or unsorted-SDK) Complete from corrupting the object or ETag.
+func orderedPartData(allParts map[int][]byte, parts []driver.UploadPart) [][]byte {
 	ordered := append([]driver.UploadPart(nil), parts...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].PartNumber < ordered[j].PartNumber })
 
-	var data []byte
+	out := make([][]byte, 0, len(ordered))
 	for _, p := range ordered {
-		data = append(data, allParts[p.PartNumber]...)
+		out = append(out, allParts[p.PartNumber])
 	}
 
-	return data
+	return out
 }
 
 func (m *Mock) AbortMultipartUpload(_ context.Context, bucket, _, uploadID string) error {
@@ -1345,6 +1383,64 @@ func (m *Mock) DeleteObjectTagging(_ context.Context, bucket, key string) error 
 	}
 
 	obj.Tags = nil
+
+	return nil
+}
+
+// PutBucketConfig stores an opaque bucket-configuration document (policy, cors,
+// encryption, lifecycle, website, …) verbatim so GetBucketConfig can echo it.
+func (m *Mock) PutBucketConfig(_ context.Context, bucket, name string, body []byte) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	stored := make([]byte, len(body))
+	copy(stored, body)
+
+	bkt.rawConfigMu.Lock()
+	if bkt.rawConfigs == nil {
+		bkt.rawConfigs = make(map[string][]byte)
+	}
+
+	bkt.rawConfigs[name] = stored
+	bkt.rawConfigMu.Unlock()
+
+	return nil
+}
+
+// GetBucketConfig returns a stored configuration document, or NotFound when the
+// sub-resource was never configured.
+func (m *Mock) GetBucketConfig(_ context.Context, bucket, name string) ([]byte, error) {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.rawConfigMu.Lock()
+	defer bkt.rawConfigMu.Unlock()
+
+	body, ok := bkt.rawConfigs[name]
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "no %s configuration for bucket %q", name, bucket)
+	}
+
+	out := make([]byte, len(body))
+	copy(out, body)
+
+	return out, nil
+}
+
+// DeleteBucketConfig removes a stored configuration document (idempotent).
+func (m *Mock) DeleteBucketConfig(_ context.Context, bucket, name string) error {
+	bkt, ok := m.buckets.Get(bucket)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+	}
+
+	bkt.rawConfigMu.Lock()
+	delete(bkt.rawConfigs, name)
+	bkt.rawConfigMu.Unlock()
 
 	return nil
 }
