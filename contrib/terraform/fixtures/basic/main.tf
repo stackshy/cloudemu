@@ -13,6 +13,19 @@ resource "aws_dynamodb_table" "t" {
   }
 }
 
+resource "aws_dynamodb_table" "provisioned" {
+  name           = "cloudemu-tf-provisioned"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+}
+
 resource "aws_iam_role" "r" {
   name = "cloudemu-tf-basic"
 

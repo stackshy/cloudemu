@@ -112,14 +112,23 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 			AttributeName string `json:"AttributeName"`
 			AttributeType string `json:"AttributeType"`
 		} `json:"AttributeDefinitions"`
-		BillingMode string `json:"BillingMode"`
+		BillingMode           string `json:"BillingMode"`
+		ProvisionedThroughput struct {
+			ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
+			WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
+		} `json:"ProvisionedThroughput"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	cfg := dbdriver.TableConfig{Name: req.TableName, BillingMode: req.BillingMode}
+	cfg := dbdriver.TableConfig{
+		Name:               req.TableName,
+		BillingMode:        req.BillingMode,
+		ReadCapacityUnits:  req.ProvisionedThroughput.ReadCapacityUnits,
+		WriteCapacityUnits: req.ProvisionedThroughput.WriteCapacityUnits,
+	}
 
 	for _, ks := range req.KeySchema {
 		if ks.KeyType == "HASH" {
@@ -172,6 +181,9 @@ func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 		billing = billingProvisioned
 	}
 
+	// NOTE: GlobalSecondaryIndexes are not echoed here. A fixture that declares a
+	// global_secondary_index would therefore see a perpetual diff — GSIs are out
+	// of scope for the current fixtures (see contrib/terraform "Known limits").
 	td := map[string]any{
 		"TableName":            cfg.Name,
 		"TableStatus":          "ACTIVE",
@@ -186,7 +198,9 @@ func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 
 	if billing == billingProvisioned {
 		td["ProvisionedThroughput"] = map[string]any{
-			"ReadCapacityUnits": 0, "WriteCapacityUnits": 0, "NumberOfDecreasesToday": 0,
+			"ReadCapacityUnits":      cfg.ReadCapacityUnits,
+			"WriteCapacityUnits":     cfg.WriteCapacityUnits,
+			"NumberOfDecreasesToday": 0,
 		}
 	}
 

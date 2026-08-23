@@ -56,6 +56,11 @@ type TableConfig struct {
 	Attributes []AttributeDef
 	// BillingMode is "PROVISIONED" (default) or "PAY_PER_REQUEST".
 	BillingMode string
+	// ReadCapacityUnits/WriteCapacityUnits carry the provisioned throughput so a
+	// describe echoes them back; a PROVISIONED table otherwise reads 0/0 and an
+	// IaC client sees a perpetual diff. Ignored for PAY_PER_REQUEST.
+	ReadCapacityUnits  int64
+	WriteCapacityUnits int64
 	// TableArn and CreatedAtUnix are populated by the provider on create.
 	TableArn      string
 	CreatedAtUnix float64

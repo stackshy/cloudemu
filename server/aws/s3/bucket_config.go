@@ -51,8 +51,16 @@ func configSubresourceKey(q url.Values) string {
 
 // bucketConfigOp answers a read-only bucket configuration sub-resource for an
 // existing bucket: GET returns the AWS-correct "not configured"/default
-// response; a write is accepted as a no-op so it does not fall through to
-// create/delete the bucket.
+// response so the base aws_s3_bucket resource's post-create reads round-trip.
+//
+// A write (PUT/DELETE) is accepted as a no-op so it does not fall through to
+// create/delete the bucket. This means these configs are NOT persisted: the
+// standalone config resources (aws_s3_bucket_policy, _public_access_block,
+// _cors_configuration, _server_side_encryption_configuration, _lifecycle_*)
+// would apply but then read back "not configured" — a perpetual diff. Those
+// resources are out of scope for the base fixture; see contrib/terraform's
+// "Known limits". Persisting them (like ?tagging/?versioning already are) is
+// the follow-up when a fixture needs one.
 func (*Handler) bucketConfigOp(w http.ResponseWriter, r *http.Request, sub string) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusOK)
