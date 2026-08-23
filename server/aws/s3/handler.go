@@ -4,6 +4,7 @@
 package s3
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/xml"
 	"errors"
@@ -152,6 +153,17 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 			return
 		}
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?versions")
+		return
+	case q.Has("delete"):
+		// POST /{bucket}?delete => DeleteObjects (batch delete). Without this the
+		// request falls through to the method switch and 405s, breaking
+		// `aws s3 rm --recursive`, SDK batch delete, and Terraform force_destroy.
+		h.deleteObjects(w, r, bucket)
+		return
+	case q.Has("acl"):
+		// GET returns a canned ACL; a PUT is a no-op so it does NOT fall through
+		// to createBucket (which 409s) — see aclOp.
+		h.aclOp(w, r)
 		return
 	}
 
@@ -353,6 +365,11 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key s
 	case q.Has("uploadId"):
 		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
 		return
+	case q.Has("acl"):
+		// GET returns a canned ACL; a PUT/DELETE is a no-op so it does NOT fall
+		// through to putObject and overwrite the object with the ACL body.
+		h.aclOp(w, r)
+		return
 	}
 
 	switch r.Method {
@@ -501,6 +518,140 @@ func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, k
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// maxDeleteBody caps a DeleteObjects request body. Real S3 allows up to 1000
+// keys per call; this is a generous ceiling on the XML that carries them.
+const maxDeleteBody = 2 << 20
+
+type deleteObjectsRequest struct {
+	XMLName xml.Name `xml:"Delete"`
+	Quiet   bool     `xml:"Quiet"`
+	Objects []struct {
+		Key       string `xml:"Key"`
+		VersionID string `xml:"VersionId"`
+	} `xml:"Object"`
+}
+
+type deletedObjectXML struct {
+	Key          string `xml:"Key"`
+	VersionID    string `xml:"VersionId,omitempty"`
+	DeleteMarker bool   `xml:"DeleteMarker,omitempty"`
+}
+
+type deleteErrorXML struct {
+	Key     string `xml:"Key"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
+}
+
+type deleteResultXML struct {
+	XMLName xml.Name           `xml:"DeleteResult"`
+	Xmlns   string             `xml:"xmlns,attr"`
+	Deleted []deletedObjectXML `xml:"Deleted"`
+	Errors  []deleteErrorXML   `xml:"Error"`
+}
+
+// deleteObjects implements POST /{bucket}?delete (DeleteObjects). Per-key delete
+// is idempotent (a missing key still reports Deleted, matching real S3); a
+// missing bucket fails the whole request with NoSuchBucket.
+func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket string) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDeleteBody))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "could not read request body")
+		return
+	}
+
+	var req deleteObjectsRequest
+	if err := xml.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "malformed Delete request")
+		return
+	}
+
+	result := deleteResultXML{Xmlns: xmlns}
+
+	for _, obj := range req.Objects {
+		vid, marker, derr := h.deleteOneObject(r.Context(), bucket, obj.Key, obj.VersionID)
+		switch {
+		case derr != nil && bucketMissing(derr):
+			// A missing bucket aborts the whole batch, as in real S3.
+			writeErr(w, derr)
+			return
+		case derr != nil:
+			result.Errors = append(result.Errors, deleteErrorXML{
+				Key: obj.Key, Code: "InternalError", Message: derr.Error(),
+			})
+		case !req.Quiet:
+			result.Deleted = append(result.Deleted, deletedObjectXML{
+				Key: obj.Key, VersionID: vid, DeleteMarker: marker,
+			})
+		}
+	}
+
+	wire.WriteXML(w, http.StatusOK, result)
+}
+
+// cannedOwnerID is the fixed S3 canonical user id cloudemu reports as the owner
+// of every bucket/object (no per-account ACLs are modeled).
+const cannedOwnerID = "cloudemu00000000000000000000000000000000000000000000000000000000"
+
+type aclOwnerXML struct {
+	ID          string `xml:"ID"`
+	DisplayName string `xml:"DisplayName"`
+}
+
+type aclGranteeXML struct {
+	ID          string `xml:"ID"`
+	DisplayName string `xml:"DisplayName"`
+}
+
+type aclGrantXML struct {
+	Grantee    aclGranteeXML `xml:"Grantee"`
+	Permission string        `xml:"Permission"`
+}
+
+type accessControlPolicyXML struct {
+	XMLName xml.Name      `xml:"AccessControlPolicy"`
+	Xmlns   string        `xml:"xmlns,attr"`
+	Owner   aclOwnerXML   `xml:"Owner"`
+	Grants  []aclGrantXML `xml:"AccessControlList>Grant"`
+}
+
+// aclOp answers ?acl on a bucket or object. GET returns a canned
+// full-control-to-owner ACL; any write is accepted as a no-op. The point is to
+// stop a PUT ?acl from falling through and overwriting the object/bucket, and a
+// GET ?acl from returning object bytes instead of an ACL document.
+func (h *Handler) aclOp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	owner := aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"}
+	wire.WriteXML(w, http.StatusOK, accessControlPolicyXML{
+		Xmlns: xmlns,
+		Owner: owner,
+		Grants: []aclGrantXML{{
+			Grantee:    aclGranteeXML{ID: cannedOwnerID, DisplayName: "cloudemu"},
+			Permission: "FULL_CONTROL",
+		}},
+	})
+}
+
+// deleteOneObject deletes a single key for the batch path, honoring versioning
+// and treating a missing key as success (idempotent).
+func (h *Handler) deleteOneObject(ctx context.Context, bucket, key, versionID string) (vid string, marker bool, err error) {
+	if h.versioned != nil {
+		vid, marker, err = h.versioned.DeleteObjectVersion(ctx, bucket, key, versionID)
+	} else {
+		err = h.bucket.DeleteObject(ctx, bucket, key)
+	}
+
+	if err != nil && cerrors.IsNotFound(err) && !bucketMissing(err) {
+		err = nil // missing key is a successful (idempotent) delete
+	}
+
+	return vid, marker, err
 }
 
 func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key string) {

@@ -400,3 +400,83 @@ func TestSDKBucketVersioning(t *testing.T) {
 		t.Fatalf("expected versioning Enabled, got %q", got.Status)
 	}
 }
+
+// TestSDKDeleteObjects covers the batch-delete blocker: POST /{bucket}?delete
+// used by `aws s3 rm --recursive`, the SDK batch deleter, and TF force_destroy.
+func TestSDKDeleteObjects(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+	mustCreateBucket(t, client, "batch")
+
+	for _, k := range []string{"a", "b", "c"} {
+		if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+			Bucket: aws.String("batch"), Key: aws.String(k), Body: bytes.NewReader([]byte("x")),
+		}); err != nil {
+			t.Fatalf("PutObject %s: %v", k, err)
+		}
+	}
+
+	out, err := client.DeleteObjects(ctx, &awss3.DeleteObjectsInput{
+		Bucket: aws.String("batch"),
+		Delete: &types.Delete{Objects: []types.ObjectIdentifier{
+			{Key: aws.String("a")}, {Key: aws.String("b")}, {Key: aws.String("missing")},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("DeleteObjects: %v", err)
+	}
+
+	// a, b, and the idempotent missing key all report Deleted; no Errors.
+	if len(out.Deleted) != 3 {
+		t.Fatalf("Deleted = %d, want 3", len(out.Deleted))
+	}
+	if len(out.Errors) != 0 {
+		t.Fatalf("Errors = %+v, want none", out.Errors)
+	}
+
+	list, err := client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{Bucket: aws.String("batch")})
+	if err != nil {
+		t.Fatalf("ListObjectsV2: %v", err)
+	}
+	if len(list.Contents) != 1 || aws.ToString(list.Contents[0].Key) != "c" {
+		t.Fatalf("remaining = %+v, want just [c]", list.Contents)
+	}
+}
+
+// TestSDKObjectAclNoDataLoss covers the data-loss bug: PutObjectAcl must NOT
+// overwrite the object, and GetObjectAcl must return an ACL doc (not the bytes).
+func TestSDKObjectAclNoDataLoss(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+	mustCreateBucket(t, client, "acl")
+
+	if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("acl"), Key: aws.String("k"), Body: bytes.NewReader([]byte("payload")),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	if _, err := client.PutObjectAcl(ctx, &awss3.PutObjectAclInput{
+		Bucket: aws.String("acl"), Key: aws.String("k"), ACL: types.ObjectCannedACLPrivate,
+	}); err != nil {
+		t.Fatalf("PutObjectAcl: %v", err)
+	}
+
+	// The object content must be intact (not overwritten by the ACL request).
+	got, err := client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String("acl"), Key: aws.String("k")})
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	body, _ := io.ReadAll(got.Body)
+	if string(body) != "payload" {
+		t.Fatalf("object body = %q, want 'payload' (PutObjectAcl overwrote it)", string(body))
+	}
+
+	acl, err := client.GetObjectAcl(ctx, &awss3.GetObjectAclInput{Bucket: aws.String("acl"), Key: aws.String("k")})
+	if err != nil {
+		t.Fatalf("GetObjectAcl: %v", err)
+	}
+	if acl.Owner == nil || len(acl.Grants) == 0 {
+		t.Fatalf("GetObjectAcl returned no owner/grants: %+v", acl)
+	}
+}

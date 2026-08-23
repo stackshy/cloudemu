@@ -32,7 +32,7 @@ import (
 func TestTerraformApplyIsIdempotent(t *testing.T) {
 	bin := tfBinary(t)
 
-	for _, fixture := range []string{"basic", "networking"} {
+	for _, fixture := range []string{"basic", "networking", "core-services"} {
 		t.Run(fixture, func(t *testing.T) {
 			applyFixture(t, fixture, bin)
 		})

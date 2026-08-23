@@ -54,6 +54,7 @@ func New(s secretsdriver.Secrets) *Handler {
 		"CreateSecret":         h.createSecret,
 		"DeleteSecret":         h.deleteSecret,
 		"DescribeSecret":       h.describeSecret,
+		"GetResourcePolicy":    h.getResourcePolicy,
 		"ListSecrets":          h.listSecrets,
 		"GetSecretValue":       h.getSecretValue,
 		"PutSecretValue":       h.putSecretValue,

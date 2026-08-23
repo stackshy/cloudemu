@@ -162,6 +162,24 @@ func (*Handler) getRandomPassword(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, getRandomPasswordResponse{RandomPassword: pw})
 }
 
+// getResourcePolicy returns the secret's resource policy. None is modeled, so
+// ResourcePolicy is absent — which the aws_secretsmanager_secret resource reads
+// as "no policy". Without the operation the read fails outright.
+func (h *Handler) getResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req secretIDRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	info, err := h.secrets.GetSecret(r.Context(), resolveSecretID(req.SecretID))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"ARN": info.ResourceID, "Name": info.Name})
+}
+
 func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
 	var req listSecretsRequest
 	if !wire.DecodeJSON(w, r, &req) {

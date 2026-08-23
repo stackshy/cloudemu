@@ -66,6 +66,15 @@ func (m *Mock) accessPointARN(id string) string {
 	return idgen.AWSARN("elasticfilesystem", m.opts.Region, m.opts.AccountID, "access-point/"+id)
 }
 
+// defaultEFSKeyID is the fixed key id used for the account's AWS-managed
+// aws/elasticfilesystem CMK, which encrypted file systems default to.
+const defaultEFSKeyID = "d7a8f6c0-3b2e-4f1a-9c5d-6e7f80912a34"
+
+// defaultKMSKeyARN returns the ARN of the account's default EFS CMK.
+func (m *Mock) defaultKMSKeyARN() string {
+	return idgen.AWSARN("kms", m.opts.Region, m.opts.AccountID, "key/"+defaultEFSKeyID)
+}
+
 // getFS resolves a file system by id under a read lock check.
 func (m *Mock) getFS(id string) (*fsData, bool) {
 	return m.fileSystems.Get(id)
