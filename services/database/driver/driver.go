@@ -51,6 +51,10 @@ type TableConfig struct {
 	PartitionKey string
 	SortKey      string
 	GSIs         []GSIConfig
+	// LSIs carries the Local Secondary Indexes declared at create time. Like
+	// GSIs they share the table's partition key but define an alternate sort
+	// key; a describe echoes them so an IaC-declared LSI round-trips.
+	LSIs []LSIConfig
 	// Attributes carries the attribute definitions (name + type) so a describe
 	// echoes them back — an IaC client compares them and otherwise sees a diff.
 	Attributes []AttributeDef
@@ -61,9 +65,18 @@ type TableConfig struct {
 	// IaC client sees a perpetual diff. Ignored for PAY_PER_REQUEST.
 	ReadCapacityUnits  int64
 	WriteCapacityUnits int64
-	// TableArn and CreatedAtUnix are populated by the provider on create.
+	// StreamEnabled/StreamViewType carry the requested StreamSpecification. When
+	// StreamEnabled is set the provider turns on the change stream and populates
+	// StreamArn/StreamLabel, which a describe surfaces as LatestStreamArn/Label.
+	StreamEnabled  bool
+	StreamViewType string
+	StreamArn      string
+	StreamLabel    string
+	// TableArn, CreatedAtUnix and TableID are populated by the provider on
+	// create. TableID is a UUID a real table carries and IaC clients read back.
 	TableArn      string
 	CreatedAtUnix float64
+	TableID       string
 }
 
 // AttributeDef is a DynamoDB attribute definition (name + scalar type S/N/B).
@@ -79,6 +92,15 @@ type GSIConfig struct {
 	SortKey      string
 	// Projection is the DynamoDB projection type (ALL, KEYS_ONLY, INCLUDE); a
 	// describe echoes it so an IaC client's declared index round-trips.
+	Projection string
+}
+
+// LSIConfig describes a Local Secondary Index. An LSI shares the table's
+// partition key and defines an alternate sort key. Projection is the DynamoDB
+// projection type (ALL, KEYS_ONLY, INCLUDE), echoed by a describe.
+type LSIConfig struct {
+	Name       string
+	SortKey    string
 	Projection string
 }
 
@@ -213,6 +235,12 @@ type QueryResult struct {
 	Items         []map[string]any
 	Count         int
 	NextPageToken string
+
+	// ScannedCount is the number of items examined before a FilterExpression
+	// was applied (items matching the key condition for Query, all items for
+	// Scan). Count is the post-filter count; the two differ when a filter drops
+	// items, exactly as real DynamoDB reports.
+	ScannedCount int
 
 	// LastEvaluatedKey holds the key attributes of the last returned item
 	// whenever more items remain, enabling DynamoDB-style continuation.

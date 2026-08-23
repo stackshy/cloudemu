@@ -2,6 +2,7 @@ package dynamodb
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"maps"
 	"strconv"
@@ -51,6 +52,7 @@ type tableData struct {
 	streamRecords []driver.StreamRecord
 	seqCounter    atomic.Int64
 	tags          map[string]string
+	pitrEnabled   bool
 }
 
 // Mock is an in-memory mock implementation of DynamoDB.
@@ -101,10 +103,49 @@ func (m *Mock) CreateTable(_ context.Context, cfg driver.TableConfig) error {
 
 	cfg.TableArn = idgen.AWSARN("dynamodb", m.opts.Region, m.opts.AccountID, "table/"+cfg.Name)
 	cfg.CreatedAtUnix = float64(m.opts.Clock.Now().Unix())
+	cfg.TableID = uuidV4()
 
-	m.tables[cfg.Name] = &tableData{config: cfg, items: memstore.New[map[string]any]()}
+	td := &tableData{items: memstore.New[map[string]any]()}
+
+	if cfg.StreamEnabled {
+		viewType := cfg.StreamViewType
+		if viewType == "" {
+			viewType = ViewNewAndOld
+		}
+
+		cfg.StreamViewType = viewType
+		cfg.StreamLabel, cfg.StreamArn = m.newStreamIdentity(cfg.TableArn)
+		td.streamConfig = driver.StreamConfig{Enabled: true, ViewType: viewType}
+	}
+
+	td.config = cfg
+	m.tables[cfg.Name] = td
 
 	return nil
+}
+
+// newStreamIdentity builds the (label, ARN) pair a DynamoDB stream carries.
+// The label is an ISO-like timestamp and the ARN embeds it, matching the real
+// LatestStreamLabel/LatestStreamArn shape clients read back.
+func (m *Mock) newStreamIdentity(tableArn string) (label, arn string) {
+	label = m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05.000")
+	arn = tableArn + "/stream/" + label
+
+	return label, arn
+}
+
+// uuidV4 returns a random RFC-4122 v4 UUID, the format a real DynamoDB TableId
+// carries. A crypto/rand read failure is unrecoverable for the mock.
+func uuidV4() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("dynamodb: crypto/rand failed: " + err.Error())
+	}
+
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 func (m *Mock) DeleteTable(_ context.Context, name string) error {
@@ -277,7 +318,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		return nil, err
 	}
 
-	matched, err := m.matchQueryItems(td, pkField, skField, &input)
+	matched, scanned, err := m.matchQueryItems(td, pkField, skField, &input)
 	if err != nil {
 		return nil, err
 	}
@@ -300,6 +341,8 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		return nil, err
 	}
 
+	result.ScannedCount = scanned
+
 	dims := map[string]string{"TableName": input.Table}
 	m.emitMetric("ConsumedReadCapacityUnits", float64(len(result.Items)), dims)
 	m.emitMetric("SuccessfulRequestCount", 1, dims)
@@ -321,20 +364,28 @@ func resolveKeyFields(td *tableData, indexName string) (pkField, skField string,
 		}
 	}
 
+	// An LSI shares the table partition key and defines an alternate sort key.
+	for _, lsi := range td.config.LSIs {
+		if lsi.Name == indexName {
+			return td.config.PartitionKey, lsi.SortKey, nil
+		}
+	}
+
 	return "", "", cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
 }
 
+// matchQueryItems returns the items matching the key condition and filter, plus
+// the pre-filter scanned count (items that matched the key condition before the
+// FilterExpression), which the response surfaces as ScannedCount.
 func (m *Mock) matchQueryItems(
 	td *tableData, pkField, skField string, input *driver.QueryInput,
-) ([]map[string]any, error) {
+) (matched []map[string]any, scanned int, err error) {
 	node, err := compileFilter(input.FilterExpression, input.ExprNames, input.ExprValues)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	allItems := td.items.All()
-
-	var matched []map[string]any
 
 	for _, item := range allItems {
 		if m.isItemExpired(td, item) {
@@ -345,11 +396,13 @@ func (m *Mock) matchQueryItems(
 			continue
 		}
 
+		scanned++
+
 		// Apply the FilterExpression (post key-condition), matching real
 		// DynamoDB: Query filters the key-matched set the same way Scan does.
 		ok, ferr := passesFilter(node, input.Filters, item)
 		if ferr != nil {
-			return nil, ferr
+			return nil, 0, ferr
 		}
 
 		if ok {
@@ -357,7 +410,7 @@ func (m *Mock) matchQueryItems(
 		}
 	}
 
-	return matched, nil
+	return matched, scanned, nil
 }
 
 func matchesKeyCondition(item map[string]any, pkField, skField string, input *driver.QueryInput) bool {
@@ -416,12 +469,17 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 
 	allItems := td.items.All()
 
-	var matched []map[string]any
+	var (
+		matched []map[string]any
+		scanned int
+	)
 
 	for _, item := range allItems {
 		if m.isItemExpired(td, item) {
 			continue
 		}
+
+		scanned++
 
 		ok, ferr := passesFilter(node, input.Filters, item)
 		if ferr != nil {
@@ -446,6 +504,8 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 	if err != nil {
 		return nil, err
 	}
+
+	result.ScannedCount = scanned
 
 	dims := map[string]string{"TableName": input.Table}
 	m.emitMetric("ConsumedReadCapacityUnits", float64(len(result.Items)), dims)
@@ -624,7 +684,78 @@ func (m *Mock) UpdateStreamConfig(_ context.Context, table string, cfg driver.St
 
 	td.streamConfig = cfg
 
+	// Mirror the stream state onto the table config so a describe reflects it as
+	// LatestStreamArn/Label. Enabling assigns a fresh stream identity; disabling
+	// clears it.
+	td.config.StreamEnabled = cfg.Enabled
+	td.config.StreamViewType = cfg.ViewType
+
+	if cfg.Enabled {
+		if td.config.StreamArn == "" {
+			td.config.StreamLabel, td.config.StreamArn = m.newStreamIdentity(td.config.TableArn)
+		}
+	} else {
+		td.config.StreamArn = ""
+		td.config.StreamLabel = ""
+	}
+
 	return nil
+}
+
+// UpdateThroughput changes a table's billing mode and provisioned throughput.
+// It is an AWS-specific capability (UpdateTable), discovered by the wire handler
+// via type assertion, so it is not part of the cross-cloud Database interface.
+func (m *Mock) UpdateThroughput(_ context.Context, table, billingMode string, rcu, wcu int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	if billingMode != "" {
+		td.config.BillingMode = billingMode
+	}
+
+	if rcu > 0 {
+		td.config.ReadCapacityUnits = rcu
+	}
+
+	if wcu > 0 {
+		td.config.WriteCapacityUnits = wcu
+	}
+
+	return nil
+}
+
+// SetPITR toggles point-in-time recovery for a table (UpdateContinuousBackups).
+// AWS-specific capability, discovered by type assertion.
+func (m *Mock) SetPITR(_ context.Context, table string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	td.pitrEnabled = enabled
+
+	return nil
+}
+
+// GetPITR reports whether point-in-time recovery is enabled for a table.
+func (m *Mock) GetPITR(_ context.Context, table string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return false, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	return td.pitrEnabled, nil
 }
 
 // GetStreamRecords returns stream records after the given token.
