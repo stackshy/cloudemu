@@ -431,6 +431,15 @@ func (h *Handler) describeDBSnapshots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A specific DBSnapshotIdentifier that matches nothing is a hard error in
+	// real RDS (DBSnapshotNotFoundFault), mirroring DescribeDBInstances /
+	// DescribeDBClusters; the provider's filter-style lookup returns an empty
+	// set instead, so surface the fault here.
+	if id != "" && len(snaps) == 0 {
+		writeErr(w, errSnapshotNotFound(id))
+		return
+	}
+
 	out := dbSnapshotsXML{DBSnapshot: make([]dbSnapshotXML, 0, len(snaps))}
 	for i := range snaps {
 		out.DBSnapshot = append(out.DBSnapshot, toSnapshotXML(&snaps[i]))

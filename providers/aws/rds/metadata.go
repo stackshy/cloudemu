@@ -59,6 +59,18 @@ var orderableInstanceClasses = []string{
 	"db.r5.large", "db.r5.xlarge", "db.m5.large",
 }
 
+// defaultEngineVersion returns the version real RDS assigns when a caller omits
+// EngineVersion — the first (lowest) version the emulator lists for the engine.
+// Returns "" for an unknown engine, leaving the field unset.
+func defaultEngineVersion(engine string) string {
+	versions := engineVersionCatalog[engine]
+	if len(versions) == 0 {
+		return ""
+	}
+
+	return versions[0]
+}
+
 func (*Mock) DescribeDBEngineVersions(_ context.Context, engine, engineVersion string) ([]rdsdriver.DBEngineVersion, error) {
 	out := make([]rdsdriver.DBEngineVersion, 0)
 

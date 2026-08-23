@@ -39,17 +39,26 @@ const (
 // elastiCacheActions is the set of Action values this handler recognizes.
 // Matches uses it to decide whether to claim a request.
 var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateCacheSubnetGroup":    {},
-	"DescribeCacheSubnetGroups": {},
-	"DeleteCacheSubnetGroup":    {},
-	"CreateCacheCluster":        {},
-	"DescribeCacheClusters":     {},
-	"ModifyCacheCluster":        {},
-	"DeleteCacheCluster":        {},
-	"CreateReplicationGroup":    {},
-	"DescribeReplicationGroups": {},
-	"ModifyReplicationGroup":    {},
-	"DeleteReplicationGroup":    {},
+	"CreateCacheSubnetGroup":       {},
+	"DescribeCacheSubnetGroups":    {},
+	"DeleteCacheSubnetGroup":       {},
+	"CreateCacheCluster":           {},
+	"DescribeCacheClusters":        {},
+	"ModifyCacheCluster":           {},
+	"DeleteCacheCluster":           {},
+	"RebootCacheCluster":           {},
+	"AddTagsToResource":            {},
+	"ListTagsForResource":          {},
+	"RemoveTagsFromResource":       {},
+	"CreateCacheParameterGroup":    {},
+	"DescribeCacheParameterGroups": {},
+	"ModifyCacheParameterGroup":    {},
+	"DeleteCacheParameterGroup":    {},
+	"DescribeCacheEngineVersions":  {},
+	"CreateReplicationGroup":       {},
+	"DescribeReplicationGroups":    {},
+	"ModifyReplicationGroup":       {},
+	"DeleteReplicationGroup":       {},
 }
 
 // Handler serves ElastiCache query-protocol requests against a cache driver.
@@ -114,6 +123,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteReplicationGroup(w, r)
 	case "DeleteCacheCluster":
 		h.deleteCacheCluster(w, r)
+	case "RebootCacheCluster":
+		h.rebootCacheCluster(w, r)
+	case "AddTagsToResource":
+		h.addTagsToResource(w, r)
+	case "ListTagsForResource":
+		h.listTagsForResource(w, r)
+	case "RemoveTagsFromResource":
+		h.removeTagsFromResource(w, r)
+	case "CreateCacheParameterGroup":
+		h.createCacheParameterGroup(w, r)
+	case "DescribeCacheParameterGroups":
+		h.describeCacheParameterGroups(w, r)
+	case "ModifyCacheParameterGroup":
+		h.modifyCacheParameterGroup(w, r)
+	case "DeleteCacheParameterGroup":
+		h.deleteCacheParameterGroup(w, r)
+	case "DescribeCacheEngineVersions":
+		h.describeCacheEngineVersions(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown ElastiCache action: "+r.Form.Get("Action"))
@@ -151,6 +178,8 @@ func notFoundCode(err error) string {
 		return "ReplicationGroupNotFoundFault"
 	case strings.Contains(msg, "cache subnet group"):
 		return "CacheSubnetGroupNotFoundFault"
+	case strings.Contains(msg, "parameter group"):
+		return "CacheParameterGroupNotFound"
 	default:
 		return "CacheClusterNotFound"
 	}

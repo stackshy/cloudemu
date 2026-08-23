@@ -39,16 +39,23 @@ type cacheNodesXML struct {
 
 // cacheClusterXML mirrors AWS's CacheCluster resource. Only the fields the
 // cache driver can populate are emitted; the rest are omitted.
+type cacheParameterGroupStatusXML struct {
+	CacheParameterGroupName string `xml:"CacheParameterGroupName"`
+	ParameterApplyStatus    string `xml:"ParameterApplyStatus"`
+}
+
 type cacheClusterXML struct {
-	CacheClusterID       string         `xml:"CacheClusterId"`
-	CacheClusterStatus   string         `xml:"CacheClusterStatus"`
-	CacheNodeType        string         `xml:"CacheNodeType,omitempty"`
-	Engine               string         `xml:"Engine,omitempty"`
-	NumCacheNodes        int            `xml:"NumCacheNodes,omitempty"`
-	CacheClusterCreateAt string         `xml:"CacheClusterCreateTime,omitempty"`
-	ARN                  string         `xml:"ARN,omitempty"`
-	ConfigurationEndpt   *endpointXML   `xml:"ConfigurationEndpoint,omitempty"`
-	CacheNodes           *cacheNodesXML `xml:"CacheNodes,omitempty"`
+	CacheClusterID       string                        `xml:"CacheClusterId"`
+	CacheClusterStatus   string                        `xml:"CacheClusterStatus"`
+	CacheNodeType        string                        `xml:"CacheNodeType,omitempty"`
+	Engine               string                        `xml:"Engine,omitempty"`
+	EngineVersion        string                        `xml:"EngineVersion,omitempty"`
+	NumCacheNodes        int                           `xml:"NumCacheNodes,omitempty"`
+	CacheClusterCreateAt string                        `xml:"CacheClusterCreateTime,omitempty"`
+	ARN                  string                        `xml:"ARN,omitempty"`
+	CacheParameterGroup  *cacheParameterGroupStatusXML `xml:"CacheParameterGroup,omitempty"`
+	ConfigurationEndpt   *endpointXML                  `xml:"ConfigurationEndpoint,omitempty"`
+	CacheNodes           *cacheNodesXML                `xml:"CacheNodes,omitempty"`
 }
 
 // --- response envelopes, one per Action ---
@@ -78,6 +85,13 @@ type deleteCacheClusterResponse struct {
 	Metadata responseMetadata   `xml:"ResponseMetadata"`
 }
 
+type rebootCacheClusterResponse struct {
+	XMLName  xml.Name           `xml:"RebootCacheClusterResponse"`
+	Xmlns    string             `xml:"xmlns,attr"`
+	Result   cacheClusterResult `xml:"RebootCacheClusterResult"`
+	Metadata responseMetadata   `xml:"ResponseMetadata"`
+}
+
 type cacheClustersXML struct {
 	CacheCluster []cacheClusterXML `xml:"CacheCluster,omitempty"`
 }
@@ -91,6 +105,23 @@ type describeCacheClustersResponse struct {
 	Xmlns    string                      `xml:"xmlns,attr"`
 	Result   describeCacheClustersResult `xml:"DescribeCacheClustersResult"`
 	Metadata responseMetadata            `xml:"ResponseMetadata"`
+}
+
+// defaultParamGroupName derives the default cache parameter group name AWS
+// assigns to a cluster, e.g. "default.redis7" or "default.memcached1.6". For
+// redis the family is engine + major version; for memcached it is major.minor.
+func defaultParamGroupName(engine, version string) string {
+	family := engine
+
+	parts := strings.Split(version, ".")
+	switch {
+	case engine == "memcached" && len(parts) >= 2:
+		family = engine + parts[0] + "." + parts[1]
+	case len(parts) >= 1 && parts[0] != "":
+		family = engine + parts[0]
+	}
+
+	return "default." + family
 }
 
 // splitEndpoint separates the driver's "host:port" endpoint into an Address and
@@ -123,8 +154,17 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 		CacheClusterStatus:   info.Status,
 		CacheNodeType:        info.NodeType,
 		Engine:               info.Engine,
+		EngineVersion:        info.EngineVersion,
 		NumCacheNodes:        1,
 		CacheClusterCreateAt: info.CreatedAt,
+		ARN:                  info.ARN,
+	}
+
+	if info.Engine != "" {
+		out.CacheParameterGroup = &cacheParameterGroupStatusXML{
+			CacheParameterGroupName: defaultParamGroupName(info.Engine, info.EngineVersion),
+			ParameterApplyStatus:    "in-sync",
+		}
 	}
 
 	if ep := splitEndpoint(info.Endpoint); ep != nil {

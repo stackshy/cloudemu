@@ -219,3 +219,153 @@ func TestSDKElastiCacheDoesNotShadowEC2(t *testing.T) {
 		t.Fatal("expected at least one EC2 instance")
 	}
 }
+
+// TestSDKRebootCacheCluster covers the RebootCacheCluster dispatch: a normal
+// lifecycle must be able to reboot a cluster to apply parameter changes.
+func TestSDKRebootCacheCluster(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateCacheCluster(ctx, &awselasticache.CreateCacheClusterInput{
+		CacheClusterId: aws.String("rc"), Engine: aws.String("redis"),
+		CacheNodeType: aws.String("cache.t3.micro"), NumCacheNodes: aws.Int32(1),
+	}); err != nil {
+		t.Fatalf("CreateCacheCluster: %v", err)
+	}
+
+	out, err := client.RebootCacheCluster(ctx, &awselasticache.RebootCacheClusterInput{
+		CacheClusterId: aws.String("rc"), CacheNodeIdsToReboot: []string{"0001"},
+	})
+	if err != nil {
+		t.Fatalf("RebootCacheCluster: %v", err)
+	}
+
+	if aws.ToString(out.CacheCluster.CacheClusterId) != "rc" {
+		t.Fatalf("reboot returned wrong cluster: %+v", out.CacheCluster)
+	}
+}
+
+// TestSDKCacheClusterFields guards the ARN, EngineVersion and CacheParameterGroup
+// fields that Terraform reads from Describe.
+func TestSDKCacheClusterFields(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateCacheCluster(ctx, &awselasticache.CreateCacheClusterInput{
+		CacheClusterId: aws.String("cf"), Engine: aws.String("redis"),
+		CacheNodeType: aws.String("cache.t3.micro"), NumCacheNodes: aws.Int32(1),
+	}); err != nil {
+		t.Fatalf("CreateCacheCluster: %v", err)
+	}
+
+	got, err := client.DescribeCacheClusters(ctx, &awselasticache.DescribeCacheClustersInput{
+		CacheClusterId: aws.String("cf"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeCacheClusters: %v", err)
+	}
+
+	c := got.CacheClusters[0]
+	if aws.ToString(c.ARN) == "" {
+		t.Fatal("ARN empty")
+	}
+
+	if aws.ToString(c.EngineVersion) != "7.1" {
+		t.Fatalf("EngineVersion = %q, want 7.1", aws.ToString(c.EngineVersion))
+	}
+
+	if c.CacheParameterGroup == nil ||
+		aws.ToString(c.CacheParameterGroup.CacheParameterGroupName) != "default.redis7" {
+		t.Fatalf("CacheParameterGroup = %+v", c.CacheParameterGroup)
+	}
+}
+
+// TestSDKCacheClusterTagging covers Add/List/RemoveTagsFromResource by ARN.
+func TestSDKCacheClusterTagging(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreateCacheCluster(ctx, &awselasticache.CreateCacheClusterInput{
+		CacheClusterId: aws.String("tg"), Engine: aws.String("redis"),
+		CacheNodeType: aws.String("cache.t3.micro"), NumCacheNodes: aws.Int32(1),
+		Tags: []ectypes.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCacheCluster: %v", err)
+	}
+
+	arn := aws.ToString(created.CacheCluster.ARN)
+
+	listed, err := client.ListTagsForResource(ctx, &awselasticache.ListTagsForResourceInput{
+		ResourceName: aws.String(arn),
+	})
+	if err != nil {
+		t.Fatalf("ListTagsForResource: %v", err)
+	}
+
+	if len(listed.TagList) != 1 || aws.ToString(listed.TagList[0].Key) != "env" {
+		t.Fatalf("create-time tags not returned: %+v", listed.TagList)
+	}
+
+	if _, err := client.AddTagsToResource(ctx, &awselasticache.AddTagsToResourceInput{
+		ResourceName: aws.String(arn),
+		Tags:         []ectypes.Tag{{Key: aws.String("team"), Value: aws.String("data")}},
+	}); err != nil {
+		t.Fatalf("AddTagsToResource: %v", err)
+	}
+
+	after, err := client.RemoveTagsFromResource(ctx, &awselasticache.RemoveTagsFromResourceInput{
+		ResourceName: aws.String(arn), TagKeys: []string{"env"},
+	})
+	if err != nil {
+		t.Fatalf("RemoveTagsFromResource: %v", err)
+	}
+
+	if len(after.TagList) != 1 || aws.ToString(after.TagList[0].Key) != "team" {
+		t.Fatalf("after remove, tags = %+v", after.TagList)
+	}
+}
+
+// TestSDKCacheParameterGroups covers Create/Describe/Delete of parameter groups
+// and DescribeCacheEngineVersions.
+func TestSDKCacheParameterGroups(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateCacheParameterGroup(ctx, &awselasticache.CreateCacheParameterGroupInput{
+		CacheParameterGroupName:   aws.String("pg1"),
+		CacheParameterGroupFamily: aws.String("redis7"),
+		Description:               aws.String("custom"),
+	}); err != nil {
+		t.Fatalf("CreateCacheParameterGroup: %v", err)
+	}
+
+	got, err := client.DescribeCacheParameterGroups(ctx, &awselasticache.DescribeCacheParameterGroupsInput{
+		CacheParameterGroupName: aws.String("pg1"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeCacheParameterGroups: %v", err)
+	}
+
+	if len(got.CacheParameterGroups) != 1 ||
+		aws.ToString(got.CacheParameterGroups[0].CacheParameterGroupFamily) != "redis7" {
+		t.Fatalf("describe parameter groups = %+v", got.CacheParameterGroups)
+	}
+
+	if _, err := client.DeleteCacheParameterGroup(ctx, &awselasticache.DeleteCacheParameterGroupInput{
+		CacheParameterGroupName: aws.String("pg1"),
+	}); err != nil {
+		t.Fatalf("DeleteCacheParameterGroup: %v", err)
+	}
+
+	versions, err := client.DescribeCacheEngineVersions(ctx, &awselasticache.DescribeCacheEngineVersionsInput{
+		Engine: aws.String("redis"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeCacheEngineVersions: %v", err)
+	}
+
+	if len(versions.CacheEngineVersions) == 0 {
+		t.Fatal("expected at least one redis engine version")
+	}
+}

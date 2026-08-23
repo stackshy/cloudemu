@@ -3,6 +3,7 @@ package keyspaces
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -54,6 +55,15 @@ func lowerCamelKeys(v any) any {
 		}
 
 		return t
+	case string:
+		// encoding/json renders a time.Time (e.g. Table.CreationTimestamp) as an
+		// RFC3339 string, but the AWS JSON 1.0 deserializer expects timestamps as
+		// epoch-second numbers. Rewrite any value that parses cleanly as RFC3339.
+		if ts, err := time.Parse(time.RFC3339Nano, t); err == nil {
+			return float64(ts.Unix())
+		}
+
+		return v
 	default:
 		return v
 	}

@@ -119,6 +119,51 @@ func TestSDKRedshiftParameterAndSubnetGroups(t *testing.T) {
 	if aws.ToString(sg.ClusterSubnetGroup.ClusterSubnetGroupName) != "sg1" {
 		t.Fatalf("subnet group = %+v", sg.ClusterSubnetGroup)
 	}
+
+	// Read the groups back — you must be able to describe what you create.
+	dpg, err := client.DescribeClusterParameterGroups(ctx, &awsredshift.DescribeClusterParameterGroupsInput{
+		ParameterGroupName: aws.String("pg1"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeClusterParameterGroups: %v", err)
+	}
+
+	if len(dpg.ParameterGroups) != 1 ||
+		aws.ToString(dpg.ParameterGroups[0].ParameterGroupFamily) != "redshift-1.0" {
+		t.Fatalf("describe parameter groups = %+v", dpg.ParameterGroups)
+	}
+
+	dsg, err := client.DescribeClusterSubnetGroups(ctx, &awsredshift.DescribeClusterSubnetGroupsInput{
+		ClusterSubnetGroupName: aws.String("sg1"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeClusterSubnetGroups: %v", err)
+	}
+
+	if len(dsg.ClusterSubnetGroups) != 1 ||
+		aws.ToString(dsg.ClusterSubnetGroups[0].ClusterSubnetGroupName) != "sg1" {
+		t.Fatalf("describe subnet groups = %+v", dsg.ClusterSubnetGroups)
+	}
+
+	// Clean them up.
+	if _, err := client.DeleteClusterParameterGroup(ctx, &awsredshift.DeleteClusterParameterGroupInput{
+		ParameterGroupName: aws.String("pg1"),
+	}); err != nil {
+		t.Fatalf("DeleteClusterParameterGroup: %v", err)
+	}
+
+	if _, err := client.DeleteClusterSubnetGroup(ctx, &awsredshift.DeleteClusterSubnetGroupInput{
+		ClusterSubnetGroupName: aws.String("sg1"),
+	}); err != nil {
+		t.Fatalf("DeleteClusterSubnetGroup: %v", err)
+	}
+
+	// A deleted parameter group is gone.
+	if _, err := client.DescribeClusterParameterGroups(ctx, &awsredshift.DescribeClusterParameterGroupsInput{
+		ParameterGroupName: aws.String("pg1"),
+	}); err == nil {
+		t.Fatal("expected error describing a deleted parameter group")
+	}
 }
 
 func TestSDKRedshiftClusterLifecycle(t *testing.T) {

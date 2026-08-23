@@ -33,27 +33,35 @@ const (
 // redshiftActions is the set of Action values this handler recognizes. Matches
 // uses it to decide whether to claim a request.
 var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateCluster":               {},
-	"DescribeClusters":            {},
-	"ModifyCluster":               {},
-	"DeleteCluster":               {},
-	"RebootCluster":               {},
-	"CreateClusterSnapshot":       {},
-	"DescribeClusterSnapshots":    {},
-	"DeleteClusterSnapshot":       {},
-	"RestoreFromClusterSnapshot":  {},
-	"CreateClusterParameterGroup": {},
-	"CreateClusterSubnetGroup":    {},
-	"CreateTags":                  {},
-	"DeleteTags":                  {},
-	"DescribeTags":                {},
+	"CreateCluster":                  {},
+	"DescribeClusters":               {},
+	"ModifyCluster":                  {},
+	"DeleteCluster":                  {},
+	"RebootCluster":                  {},
+	"CreateClusterSnapshot":          {},
+	"DescribeClusterSnapshots":       {},
+	"DeleteClusterSnapshot":          {},
+	"RestoreFromClusterSnapshot":     {},
+	"CreateClusterParameterGroup":    {},
+	"DescribeClusterParameterGroups": {},
+	"DeleteClusterParameterGroup":    {},
+	"CreateClusterSubnetGroup":       {},
+	"DescribeClusterSubnetGroups":    {},
+	"DeleteClusterSubnetGroup":       {},
+	"CreateTags":                     {},
+	"DeleteTags":                     {},
+	"DescribeTags":                   {},
 }
 
 // clusterGroupManager is the AWS-specific parameter/subnet-group surface, not
 // part of the shared relationaldb driver; the handler type-asserts for it.
 type clusterGroupManager interface {
 	CreateClusterParameterGroup(ctx context.Context, name, family, description string) (*redshiftprovider.ParameterGroup, error)
+	DescribeClusterParameterGroups(ctx context.Context, names []string) ([]redshiftprovider.ParameterGroup, error)
+	DeleteClusterParameterGroup(ctx context.Context, name string) error
 	CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*redshiftprovider.SubnetGroup, error)
+	DescribeClusterSubnetGroups(ctx context.Context, names []string) ([]redshiftprovider.SubnetGroup, error)
+	DeleteClusterSubnetGroup(ctx context.Context, name string) error
 }
 
 // resourceTagger is the AWS-specific Redshift tagging surface.
@@ -162,8 +170,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.restoreFromClusterSnapshot(w, r)
 	case "CreateClusterParameterGroup":
 		h.createClusterParameterGroup(w, r)
+	case "DescribeClusterParameterGroups":
+		h.describeClusterParameterGroups(w, r)
+	case "DeleteClusterParameterGroup":
+		h.deleteClusterParameterGroup(w, r)
 	case "CreateClusterSubnetGroup":
 		h.createClusterSubnetGroup(w, r)
+	case "DescribeClusterSubnetGroups":
+		h.describeClusterSubnetGroups(w, r)
+	case "DeleteClusterSubnetGroup":
+		h.deleteClusterSubnetGroup(w, r)
 	case "CreateTags":
 		h.createTags(w, r)
 	case "DeleteTags":
@@ -199,6 +215,10 @@ func notFoundCode(err error) string {
 	switch {
 	case strings.Contains(msg, "cluster snapshot"):
 		return "ClusterSnapshotNotFound"
+	case strings.Contains(msg, "parameter group"):
+		return "ClusterParameterGroupNotFound"
+	case strings.Contains(msg, "subnet group"):
+		return "ClusterSubnetGroupNotFoundFault"
 	case strings.Contains(msg, "cluster"):
 		return "ClusterNotFound"
 	default:
