@@ -1,0 +1,6 @@
+# Terraform/OpenTofu working files and the override cloudemu-tf generates.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+cloudemu_providers_override.tf
