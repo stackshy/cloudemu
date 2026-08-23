@@ -2,9 +2,14 @@ package elbv2
 
 import (
 	"encoding/xml"
+	"time"
 
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
+
+// defaultAvailabilityZone is the placeholder AZ name reported for a load
+// balancer's subnets; the emulator does not model subnet placement.
+const defaultAvailabilityZone = "us-east-1a"
 
 // All ELBv2 query-protocol responses are wrapped in <FooResponse> with a
 // <FooResult> child and a trailing <ResponseMetadata>. Lists are wrapped in a
@@ -29,6 +34,7 @@ type loadBalancerStateXML struct {
 }
 
 type availabilityZoneXML struct {
+	ZoneName string `xml:"ZoneName,omitempty"`
 	SubnetID string `xml:"SubnetId,omitempty"`
 }
 
@@ -36,15 +42,23 @@ type availabilityZonesXML struct {
 	Member []availabilityZoneXML `xml:"member,omitempty"`
 }
 
+type securityGroupsXML struct {
+	Member []string `xml:"member,omitempty"`
+}
+
 type loadBalancerXML struct {
-	LoadBalancerArn   string                `xml:"LoadBalancerArn"`
-	LoadBalancerName  string                `xml:"LoadBalancerName"`
-	DNSName           string                `xml:"DNSName,omitempty"`
-	Scheme            string                `xml:"Scheme,omitempty"`
-	Type              string                `xml:"Type,omitempty"`
-	VpcID             string                `xml:"VpcId,omitempty"`
-	State             *loadBalancerStateXML `xml:"State,omitempty"`
-	AvailabilityZones *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
+	LoadBalancerArn       string                `xml:"LoadBalancerArn"`
+	LoadBalancerName      string                `xml:"LoadBalancerName"`
+	DNSName               string                `xml:"DNSName,omitempty"`
+	CanonicalHostedZoneId string                `xml:"CanonicalHostedZoneId,omitempty"`
+	CreatedTime           string                `xml:"CreatedTime,omitempty"`
+	Scheme                string                `xml:"Scheme,omitempty"`
+	Type                  string                `xml:"Type,omitempty"`
+	VpcID                 string                `xml:"VpcId,omitempty"`
+	IpAddressType         string                `xml:"IpAddressType,omitempty"`
+	State                 *loadBalancerStateXML `xml:"State,omitempty"`
+	AvailabilityZones     *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
+	SecurityGroups        *securityGroupsXML    `xml:"SecurityGroups,omitempty"`
 }
 
 type loadBalancersXML struct {
@@ -79,13 +93,26 @@ type deleteLoadBalancerResponse struct {
 // --- target group ---
 
 type targetGroupXML struct {
-	TargetGroupArn  string `xml:"TargetGroupArn"`
-	TargetGroupName string `xml:"TargetGroupName"`
-	Protocol        string `xml:"Protocol,omitempty"`
-	Port            int    `xml:"Port,omitempty"`
-	VpcID           string `xml:"VpcId,omitempty"`
-	TargetType      string `xml:"TargetType,omitempty"`
-	HealthCheckPath string `xml:"HealthCheckPath,omitempty"`
+	TargetGroupArn             string      `xml:"TargetGroupArn"`
+	TargetGroupName            string      `xml:"TargetGroupName"`
+	Protocol                   string      `xml:"Protocol,omitempty"`
+	Port                       int         `xml:"Port,omitempty"`
+	VpcID                      string      `xml:"VpcId,omitempty"`
+	TargetType                 string      `xml:"TargetType,omitempty"`
+	HealthCheckProtocol        string      `xml:"HealthCheckProtocol,omitempty"`
+	HealthCheckPort            string      `xml:"HealthCheckPort,omitempty"`
+	HealthCheckPath            string      `xml:"HealthCheckPath,omitempty"`
+	HealthCheckEnabled         bool        `xml:"HealthCheckEnabled"`
+	HealthCheckIntervalSeconds int         `xml:"HealthCheckIntervalSeconds,omitempty"`
+	HealthCheckTimeoutSeconds  int         `xml:"HealthCheckTimeoutSeconds,omitempty"`
+	HealthyThresholdCount      int         `xml:"HealthyThresholdCount,omitempty"`
+	UnhealthyThresholdCount    int         `xml:"UnhealthyThresholdCount,omitempty"`
+	Matcher                    *matcherXML `xml:"Matcher,omitempty"`
+}
+
+// matcherXML is the ELBv2 Matcher element (HTTP/gRPC success codes).
+type matcherXML struct {
+	HttpCode string `xml:"HttpCode,omitempty"`
 }
 
 type targetGroupsXML struct {
@@ -226,8 +253,9 @@ type targetDescriptionXML struct {
 }
 
 type targetHealthXML struct {
-	State  string `xml:"State,omitempty"`
-	Reason string `xml:"Reason,omitempty"`
+	State       string `xml:"State,omitempty"`
+	Reason      string `xml:"Reason,omitempty"`
+	Description string `xml:"Description,omitempty"`
 }
 
 type targetHealthDescriptionXML struct {
@@ -267,37 +295,76 @@ type describeTargetHealthResponse struct {
 // toLoadBalancerXML converts a driver LBInfo to its XML representation.
 func toLoadBalancerXML(lb *lbdriver.LBInfo) loadBalancerXML {
 	out := loadBalancerXML{
-		LoadBalancerArn:  lb.ARN,
-		LoadBalancerName: lb.Name,
-		DNSName:          lb.DNSName,
-		Scheme:           lb.Scheme,
-		Type:             lb.Type,
-		State:            &loadBalancerStateXML{Code: lb.State},
+		LoadBalancerArn:       lb.ARN,
+		LoadBalancerName:      lb.Name,
+		DNSName:               lb.DNSName,
+		CanonicalHostedZoneId: lb.CanonicalHostedZoneID,
+		Scheme:                lb.Scheme,
+		Type:                  lb.Type,
+		VpcID:                 lb.VPCID,
+		IpAddressType:         lb.IPAddressType,
+		State:                 &loadBalancerStateXML{Code: lb.State},
+	}
+
+	if !lb.CreatedTime.IsZero() {
+		out.CreatedTime = lb.CreatedTime.UTC().Format(time.RFC3339)
 	}
 
 	if len(lb.Subnets) > 0 {
 		az := &availabilityZonesXML{}
 		for _, s := range lb.Subnets {
-			az.Member = append(az.Member, availabilityZoneXML{SubnetID: s})
+			az.Member = append(az.Member, availabilityZoneXML{
+				ZoneName: zoneNameForSubnet(),
+				SubnetID: s,
+			})
 		}
 
 		out.AvailabilityZones = az
 	}
 
+	if len(lb.SecurityGroups) > 0 {
+		out.SecurityGroups = &securityGroupsXML{Member: append([]string(nil), lb.SecurityGroups...)}
+	}
+
 	return out
+}
+
+// zoneNameForSubnet returns the availability-zone name reported for a subnet.
+// The emulator does not model subnet placement, so it reports the region's
+// first zone — enough to populate the non-empty ZoneName real ELBv2 returns.
+func zoneNameForSubnet() string {
+	return defaultAvailabilityZone
 }
 
 // toTargetGroupXML converts a driver TargetGroupInfo to its XML representation.
 func toTargetGroupXML(tg *lbdriver.TargetGroupInfo) targetGroupXML {
-	return targetGroupXML{
-		TargetGroupArn:  tg.ARN,
-		TargetGroupName: tg.Name,
-		Protocol:        tg.Protocol,
-		Port:            tg.Port,
-		VpcID:           tg.VPCID,
-		TargetType:      "instance",
-		HealthCheckPath: tg.HealthPath,
+	targetType := tg.TargetType
+	if targetType == "" {
+		targetType = "instance"
 	}
+
+	out := targetGroupXML{
+		TargetGroupArn:             tg.ARN,
+		TargetGroupName:            tg.Name,
+		Protocol:                   tg.Protocol,
+		Port:                       tg.Port,
+		VpcID:                      tg.VPCID,
+		TargetType:                 targetType,
+		HealthCheckProtocol:        tg.HealthCheck.Protocol,
+		HealthCheckPort:            tg.HealthCheck.Port,
+		HealthCheckPath:            tg.HealthPath,
+		HealthCheckEnabled:         true,
+		HealthCheckIntervalSeconds: tg.HealthCheck.IntervalSeconds,
+		HealthCheckTimeoutSeconds:  tg.HealthCheck.TimeoutSeconds,
+		HealthyThresholdCount:      tg.HealthCheck.HealthyThreshold,
+		UnhealthyThresholdCount:    tg.HealthCheck.UnhealthyThreshold,
+	}
+
+	if tg.HealthCheck.Matcher != "" {
+		out.Matcher = &matcherXML{HttpCode: tg.HealthCheck.Matcher}
+	}
+
+	return out
 }
 
 // toListenerXML converts a driver ListenerInfo to its XML representation. The
