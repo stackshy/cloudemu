@@ -262,6 +262,9 @@ func validateRouteTableFilters(filters []awsquery.Filter) error {
 	return nil
 }
 
+// routeTableFilterKnown lists the filters routeTableMatchesFilter implements:
+// keep the two in sync, or a "known" filter would validate and then silently
+// match nothing.
 func routeTableFilterKnown(name string) bool {
 	switch name {
 	case "route-table-id", "vpc-id",
