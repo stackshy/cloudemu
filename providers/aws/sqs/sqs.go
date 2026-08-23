@@ -734,12 +734,13 @@ func (m *Mock) SendMessageBatch(
 
 func batchEntryToSendInput(queue string, entry *driver.BatchSendEntry) driver.SendMessageInput {
 	return driver.SendMessageInput{
-		QueueURL:        queue,
-		Body:            entry.Body,
-		DelaySeconds:    entry.DelaySeconds,
-		GroupID:         entry.GroupID,
-		DeduplicationID: entry.DeduplicationID,
-		Attributes:      entry.Attributes,
+		QueueURL:          queue,
+		Body:              entry.Body,
+		DelaySeconds:      entry.DelaySeconds,
+		GroupID:           entry.GroupID,
+		DeduplicationID:   entry.DeduplicationID,
+		Attributes:        entry.Attributes,
+		MessageAttributes: entry.MessageAttributes,
 	}
 }
 

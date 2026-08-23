@@ -306,6 +306,54 @@ func TestSDKSQSListQueuesPagination(t *testing.T) {
 	}
 }
 
+func TestSDKSQSSendMessageBatchMessageAttributesRoundTrip(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	q, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{QueueName: aws.String("batch-attrs-q")})
+	if err != nil {
+		t.Fatalf("CreateQueue: %v", err)
+	}
+
+	_, err = client.SendMessageBatch(ctx, &awssqs.SendMessageBatchInput{
+		QueueUrl: q.QueueUrl,
+		Entries: []types.SendMessageBatchRequestEntry{
+			{
+				Id:          aws.String("m1"),
+				MessageBody: aws.String("batch body"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"color": {DataType: aws.String("String"), StringValue: aws.String("blue")},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendMessageBatch: %v", err)
+	}
+
+	rcv, err := client.ReceiveMessage(ctx, &awssqs.ReceiveMessageInput{
+		QueueUrl:              q.QueueUrl,
+		MaxNumberOfMessages:   1,
+		MessageAttributeNames: []string{"All"},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveMessage: %v", err)
+	}
+
+	if len(rcv.Messages) != 1 {
+		t.Fatalf("got %d messages, want 1", len(rcv.Messages))
+	}
+
+	color, ok := rcv.Messages[0].MessageAttributes["color"]
+	if !ok {
+		t.Fatal("batch-sent MessageAttributes missing color after receive")
+	}
+
+	if aws.ToString(color.StringValue) != "blue" {
+		t.Errorf("color = %q, want blue", aws.ToString(color.StringValue))
+	}
+}
+
 func md5Hex(s string) string {
 	sum := md5.Sum([]byte(s)) //nolint:gosec // wire checksum
 	return hex.EncodeToString(sum[:])
