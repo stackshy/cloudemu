@@ -53,10 +53,69 @@ func (p *parser) parseNot() (expr.Node, error) {
 			return nil, err
 		}
 
-		return &expr.Not{Child: child}, nil
+		return guardedNot(child), nil
 	}
 
 	return p.parsePrimaryPred()
+}
+
+// guardedNot negates child. Cosmos uses three-valued logic: negating a
+// predicate over an absent field yields undefined (the row is excluded), not
+// true. The shared evaluator is two-valued, so for a NOT over a single-field
+// predicate we require that field to exist. NOT over a composite predicate
+// (AND/OR of several fields) keeps the two-valued behavior — a documented
+// limitation. NOT IS_DEFINED is left unguarded so it still matches absent
+// fields.
+func guardedNot(child expr.Node) expr.Node {
+	path := negationPath(child)
+	if path == nil {
+		return &expr.Not{Child: child}
+	}
+
+	return &expr.And{Left: &expr.AttrExists{Path: path}, Right: &expr.Not{Child: child}}
+}
+
+// negationPath returns the single field path a predicate references, or nil for
+// existence checks and composite predicates (which are not guarded).
+func negationPath(n expr.Node) *expr.PathOperand {
+	switch t := n.(type) {
+	case *expr.Comparison:
+		return operandPath(t.Left)
+	case *expr.BeginsWith:
+		return t.Path
+	case *expr.Contains:
+		return t.Path
+	case *expr.Between:
+		return operandPath(t.Operand)
+	case *expr.In:
+		return operandPath(t.Operand)
+	case *expr.And:
+		return arrayGatePath(t)
+	default:
+		return nil
+	}
+}
+
+// arrayGatePath recognizes the And{AttrType, Contains} shape that ARRAY_CONTAINS
+// compiles to and returns its path, so NOT ARRAY_CONTAINS is guarded too.
+func arrayGatePath(a *expr.And) *expr.PathOperand {
+	if _, ok := a.Left.(*expr.AttrType); !ok {
+		return nil
+	}
+
+	if c, ok := a.Right.(*expr.Contains); ok {
+		return c.Path
+	}
+
+	return nil
+}
+
+func operandPath(o expr.Operand) *expr.PathOperand {
+	if p, ok := o.(*expr.PathOperand); ok {
+		return p
+	}
+
+	return nil
 }
 
 func (p *parser) parsePrimaryPred() (expr.Node, error) {
@@ -189,7 +248,10 @@ func (p *parser) parseOperand() (expr.Operand, error) {
 	case tNumber:
 		p.next()
 
-		f, _ := strconv.ParseFloat(t.text, 64)
+		f, err := strconv.ParseFloat(t.text, 64)
+		if err != nil {
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid number literal %q", t.text)
+		}
 
 		return &expr.ValueOperand{Value: f}, nil
 	case tIdent:

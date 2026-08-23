@@ -229,7 +229,11 @@ func distinctKey(v any) string {
 }
 
 func aggregateResult(matched []map[string]any, proj cosmossql.Projection) []any {
-	val := computeAggregate(matched, proj.Aggregate)
+	val, ok := computeAggregate(matched, proj.Aggregate)
+	if !ok {
+		// An aggregate over no values is undefined; Cosmos returns no row.
+		return []any{}
+	}
 
 	if proj.Bare {
 		return []any{map[string]any{"$1": val}}
@@ -238,12 +242,17 @@ func aggregateResult(matched []map[string]any, proj cosmossql.Projection) []any 
 	return []any{val}
 }
 
-func computeAggregate(matched []map[string]any, agg *cosmossql.Aggregate) any {
+func computeAggregate(matched []map[string]any, agg *cosmossql.Aggregate) (any, bool) {
 	if agg.Func == "COUNT" {
-		return float64(countDefined(matched, agg.Path))
+		return float64(countDefined(matched, agg.Path)), true
 	}
 
-	return numericAggregate(matched, agg.Func, agg.Path)
+	nums := collectNumbers(matched, agg.Path)
+	if len(nums) == 0 {
+		return nil, false
+	}
+
+	return reduceNumbers(agg.Func, nums), true
 }
 
 func countDefined(matched []map[string]any, path []string) int {
@@ -260,20 +269,6 @@ func countDefined(matched []map[string]any, path []string) int {
 	}
 
 	return n
-}
-
-func numericAggregate(matched []map[string]any, fn string, path []string) any {
-	nums := collectNumbers(matched, path)
-
-	if len(nums) == 0 {
-		if fn == "SUM" {
-			return float64(0)
-		}
-
-		return nil
-	}
-
-	return reduceNumbers(fn, nums)
 }
 
 func collectNumbers(matched []map[string]any, path []string) []float64 {

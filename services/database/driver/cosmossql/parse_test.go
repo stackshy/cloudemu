@@ -128,3 +128,39 @@ func TestParseErrors(t *testing.T) {
 		assert.Error(t, err, "%q should fail to parse", q)
 	}
 }
+
+func TestParseGuardedNot(t *testing.T) {
+	// NOT over a single-field predicate excludes documents missing that field
+	// (Cosmos three-valued logic; the two-valued evaluator is guarded).
+	cases := []string{
+		"SELECT * FROM c WHERE NOT (c.status = 'deleted')",
+		"SELECT * FROM c WHERE NOT STARTSWITH(c.name, 'x')",
+		"SELECT * FROM c WHERE NOT ARRAY_CONTAINS(c.tags, 'x')",
+		"SELECT * FROM c WHERE NOT c.n IN (1, 2)",
+	}
+
+	present := map[string]any{"status": "active", "name": "apple", "tags": []any{"a"}, "n": float64(9)}
+
+	for _, q := range cases {
+		s, err := Parse(q, nil)
+		require.NoError(t, err, q)
+
+		got, err := expr.Eval(s.Where, present)
+		require.NoError(t, err, q)
+		assert.True(t, got, "present field should match: %s", q)
+
+		got, err = expr.Eval(s.Where, map[string]any{})
+		require.NoError(t, err, q)
+		assert.False(t, got, "absent field must be excluded: %s", q)
+	}
+
+	// NOT IS_DEFINED is intentionally NOT guarded: it matches absent fields.
+	s, err := Parse("SELECT * FROM c WHERE NOT IS_DEFINED(c.x)", nil)
+	require.NoError(t, err)
+
+	got, _ := expr.Eval(s.Where, map[string]any{})
+	assert.True(t, got, "NOT IS_DEFINED matches an absent field")
+
+	got, _ = expr.Eval(s.Where, map[string]any{"x": float64(1)})
+	assert.False(t, got, "NOT IS_DEFINED excludes a present field")
+}

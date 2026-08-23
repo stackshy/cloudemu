@@ -21,6 +21,9 @@
 //     partition-key value only, so two docs with the same pk but different ids
 //     collide (real Cosmos keys on (pk, id)).
 //   - PATCH (PatchItem) is not routed at all (405 MethodNotAllowed).
+//   - NOT over a composite predicate (AND/OR of several fields) uses two-valued
+//     logic, so an absent field is not excluded; NOT over a single-field
+//     predicate is guarded and matches real Cosmos three-valued behavior.
 package cosmosdb_test
 
 import (
@@ -845,6 +848,15 @@ func TestCosmosQueryFidelity(t *testing.T) {
 	// Aggregate.
 	if cnt := scalars("SELECT VALUE COUNT(1) FROM c"); len(cnt) != 1 || cnt[0] != float64(3) {
 		t.Errorf("count = %v, want [3]", cnt)
+	}
+
+	// Aggregate over no matches: COUNT is 0, but MAX is undefined (empty result).
+	if cnt := scalars("SELECT VALUE COUNT(1) FROM c WHERE c.id = 'nope'"); len(cnt) != 1 || cnt[0] != float64(0) {
+		t.Errorf("count over empty = %v, want [0]", cnt)
+	}
+
+	if mx := rawItems("SELECT VALUE MAX(c.price) FROM c WHERE c.id = 'nope'", nil); len(mx) != 0 {
+		t.Errorf("MAX over empty returned %d rows, want 0", len(mx))
 	}
 
 	// Predicate functions.

@@ -203,9 +203,15 @@ func (p *parser) parseIntToken() (int, error) {
 		return 0, cerrors.Newf(cerrors.InvalidArgument, "expected a number but found %q", p.peek().text)
 	}
 
-	n, err := strconv.Atoi(p.next().text)
+	tok := p.next().text
+
+	n, err := strconv.Atoi(tok)
 	if err != nil {
-		return 0, cerrors.Newf(cerrors.InvalidArgument, "invalid integer %q", err)
+		return 0, cerrors.Newf(cerrors.InvalidArgument, "invalid integer %q", tok)
+	}
+
+	if n < 0 {
+		return 0, cerrors.Newf(cerrors.InvalidArgument, "expected a non-negative number but found %q", tok)
 	}
 
 	return n, nil
