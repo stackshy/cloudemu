@@ -2,6 +2,7 @@ package sns_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"testing"
@@ -190,5 +191,47 @@ func TestSDKSNSErrors(t *testing.T) {
 		Message:  aws.String("x"),
 	}); !errors.As(err, &nfe) {
 		t.Fatalf("Publish(missing topic): got %v, want NotFoundException", err)
+	}
+}
+
+// TestSDKSNSListTagsAndPolicy guards the two IaC read-path fixes: ListTagsForResource
+// must be claimed by SNS (via its SigV4 scope, not RDS which registers first) and
+// echo the tag, and GetTopicAttributes must return a valid-JSON default Policy.
+func TestSDKSNSListTagsAndPolicy(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreateTopic(ctx, &awssns.CreateTopicInput{
+		Name: aws.String("tagged"),
+		Tags: []snstypes.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	arn := aws.ToString(created.TopicArn)
+
+	tags, err := client.ListTagsForResource(ctx, &awssns.ListTagsForResourceInput{ResourceArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("ListTagsForResource: %v", err)
+	}
+
+	if len(tags.Tags) != 1 || aws.ToString(tags.Tags[0].Key) != "env" || aws.ToString(tags.Tags[0].Value) != "prod" {
+		t.Fatalf("tags = %+v, want env=prod", tags.Tags)
+	}
+
+	attrs, err := client.GetTopicAttributes(ctx, &awssns.GetTopicAttributesInput{TopicArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("GetTopicAttributes: %v", err)
+	}
+
+	policy := attrs.Attributes["Policy"]
+	if policy == "" {
+		t.Fatal("Policy attribute is empty")
+	}
+
+	var js map[string]any
+	if err := json.Unmarshal([]byte(policy), &js); err != nil {
+		t.Fatalf("Policy is not valid JSON: %v\n%s", err, policy)
 	}
 }

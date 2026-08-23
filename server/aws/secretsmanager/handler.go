@@ -54,6 +54,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteSecret(w, r)
 	case "DescribeSecret":
 		h.describeSecret(w, r)
+	case "GetResourcePolicy":
+		h.getResourcePolicy(w, r)
 	case "ListSecrets":
 		h.listSecrets(w, r)
 	case "GetSecretValue":
