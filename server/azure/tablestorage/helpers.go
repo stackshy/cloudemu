@@ -2,11 +2,10 @@ package tablestorage
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
-	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	driver "github.com/stackshy/cloudemu/v2/services/tablestorage/driver"
@@ -123,8 +122,17 @@ func entityToJSON(e driver.Entity) map[string]any {
 	return out
 }
 
-func entityETag() string {
-	return fmt.Sprintf("W/\"datetime'%s'\"", time.Now().UTC().Format(time.RFC3339Nano))
+// atoiDefault parses s as an int, returning def when s is empty or invalid.
+func atoiDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+
+	return def
 }
 
 func scheme(r *http.Request) string {
@@ -180,14 +188,22 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 
 // writeErr maps CloudEmu canonical errors to Azure Table HTTP errors.
 func writeErr(w http.ResponseWriter, err error) {
+	status, code := mapErr(err)
+	writeError(w, status, code, err.Error())
+}
+
+// mapErr maps a CloudEmu canonical error to its Azure Table HTTP status + code.
+func mapErr(err error) (status int, code string) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "ResourceNotFound", err.Error())
+		return http.StatusNotFound, "ResourceNotFound"
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "EntityAlreadyExists", err.Error())
+		return http.StatusConflict, "EntityAlreadyExists"
+	case cerrors.IsFailedPrecondition(err):
+		return http.StatusPreconditionFailed, "UpdateConditionNotSatisfied"
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		return http.StatusBadRequest, "InvalidInput"
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return http.StatusInternalServerError, "InternalError"
 	}
 }

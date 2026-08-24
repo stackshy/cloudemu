@@ -93,6 +93,10 @@ type Message struct {
 	SystemAttributes map[string]string
 	// SequenceNumber is set for FIFO messages.
 	SequenceNumber string
+	// ReceiveCount is the number of times this message has been received. Azure
+	// Queue Storage surfaces it as DequeueCount; providers that don't track it
+	// leave it zero.
+	ReceiveCount int
 }
 
 // BatchSendEntry represents a single message in a batch send.
@@ -180,6 +184,51 @@ type MessageMoveTask struct {
 	ApproxMessagesToMove         int64
 	FailureReason                string
 	StartedAt                    time.Time
+}
+
+// AzureQueueMessage is a message returned by the Azure-specific Peek surface. It
+// is a non-destructive read: no pop receipt is issued and visibility is
+// unchanged.
+type AzureQueueMessage struct {
+	MessageID    string
+	Body         string
+	ReceiveCount int
+	InsertedAt   time.Time
+	ExpiresAt    time.Time
+}
+
+// AzureUpdateMessageResult is the outcome of an Azure Update Message call: a
+// fresh pop receipt and the time the message will next become visible.
+type AzureUpdateMessageResult struct {
+	PopReceipt      string
+	TimeNextVisible time.Time
+}
+
+// AzureQueueMetadata carries the queue properties Get Queue Metadata reports.
+type AzureQueueMetadata struct {
+	ApproximateMessageCount int
+	Metadata                map[string]string
+}
+
+// AzureQueueStorage is the Azure-specific Queue Storage data-plane surface,
+// kept off the cross-cloud MessageQueue interface (Peek, message content/
+// visibility Update, and queue metadata are Azure Queue Storage concepts a
+// provider opts into). The wire handler reaches it by type assertion, mirroring
+// the AWS-specific message-move surface on the SQS side.
+type AzureQueueStorage interface {
+	// PeekMessages returns up to maxMessages visible messages without altering
+	// their visibility or issuing pop receipts.
+	PeekMessages(ctx context.Context, queueURL string, maxMessages int) ([]AzureQueueMessage, error)
+	// UpdateMessage updates a message's content (when body is non-nil) and its
+	// visibility timeout, returning a new pop receipt. The supplied popReceipt
+	// must match the message's current receipt.
+	UpdateMessage(
+		ctx context.Context, queueURL, messageID, popReceipt string, visibilityTimeout int, body *string,
+	) (AzureUpdateMessageResult, error)
+	// GetQueueMetadata reports the approximate message count and user metadata.
+	GetQueueMetadata(ctx context.Context, queueURL string) (AzureQueueMetadata, error)
+	// SetQueueMetadata replaces the queue's user metadata.
+	SetQueueMetadata(ctx context.Context, queueURL string, metadata map[string]string) error
 }
 
 // MessageQueue is the interface that message queue provider implementations must satisfy.

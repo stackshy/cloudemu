@@ -5941,6 +5941,30 @@
         "name": "SetQueueAttributes"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AzureQueueStorage",
+        "doc": "AzureQueueStorage is the Azure-specific Queue Storage data-plane surface,",
+        "operations": [
+          {
+            "name": "GetQueueMetadata",
+            "doc": "GetQueueMetadata reports the approximate message count and user metadata."
+          },
+          {
+            "name": "PeekMessages",
+            "doc": "PeekMessages returns up to maxMessages visible messages without altering"
+          },
+          {
+            "name": "SetQueueMetadata",
+            "doc": "SetQueueMetadata replaces the queue's user metadata."
+          },
+          {
+            "name": "UpdateMessage",
+            "doc": "UpdateMessage updates a message's content (when body is non-nil) and its"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "SQS",
       "azure": "QueueStorage",
@@ -10325,6 +10349,10 @@
     "service": "tablestorage",
     "interface": "TableStorage",
     "operations": [
+      {
+        "name": "ApplyBatch",
+        "doc": "ApplyBatch atomically applies an entity group transaction: either every"
+      },
       {
         "name": "CreateTable"
       },
