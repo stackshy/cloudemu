@@ -124,6 +124,47 @@ type InstanceProfileInfo struct {
 	Tags      map[string]string
 }
 
+// SimulationResult is one action-on-resource evaluation returned by an IAM
+// policy simulation (SimulatePrincipalPolicy / SimulateCustomPolicy). Decision
+// is one of "allowed", "explicitDeny", or "implicitDeny". It is an AWS-only
+// shape, so it is not referenced by the IAM interface below — providers that
+// support simulation expose it through a type-asserted optional method.
+type SimulationResult struct {
+	ActionName   string
+	ResourceName string
+	Decision     string
+}
+
+// PasswordPolicy describes an AWS account password policy. ExpirePasswords is
+// derived (MaxPasswordAge > 0) and reported by the wire layer, not stored. It
+// is AWS-only and not referenced by the IAM interface.
+type PasswordPolicy struct {
+	MinimumPasswordLength      int
+	RequireSymbols             bool
+	RequireNumbers             bool
+	RequireUppercaseCharacters bool
+	RequireLowercaseCharacters bool
+	AllowUsersToChangePassword bool
+	MaxPasswordAge             int
+	PasswordReusePrevention    int
+	HardExpiry                 bool
+}
+
+// MFADeviceInfo describes an MFA device assigned to a user. AWS-only.
+type MFADeviceInfo struct {
+	UserName     string
+	SerialNumber string
+	EnableDate   string
+}
+
+// VirtualMFADeviceInfo describes a newly created virtual MFA device. The seed
+// and QR-code payloads are opaque bytes the wire layer base64-encodes. AWS-only.
+type VirtualMFADeviceInfo struct {
+	SerialNumber     string
+	Base32StringSeed []byte
+	QRCodePNG        []byte
+}
+
 // IAM is the interface that IAM provider implementations must satisfy.
 type IAM interface {
 	CreateUser(ctx context.Context, config UserConfig) (*UserInfo, error)
