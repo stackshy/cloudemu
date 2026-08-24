@@ -636,6 +636,15 @@ func (m *Mock) attachedENIIn(vpcID, subnetID string) (string, bool) {
 
 // DescribeSubnets returns subnets matching the given IDs, or all subnets if ids is empty.
 func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.SubnetInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, id := range ids {
+		if !m.subnets.Has(id) {
+			return nil, errors.Newf(errors.NotFound, "subnet %q not found", id)
+		}
+	}
+
 	return describeResources(m.subnets, ids, toSubnetInfo), nil
 }
 

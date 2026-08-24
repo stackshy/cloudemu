@@ -357,6 +357,80 @@ func TestSDKListObjectsV2MaxKeys(t *testing.T) {
 	}
 }
 
+// TestSDKListObjectsV2StartAfterPagination guards a pagination bug where a
+// StartAfter-filtered listing that spanned multiple pages re-returned already
+// served keys on the continuation page. A real paginator forwards the original
+// StartAfter on every page and only adds the continuation token, so the driver
+// must keep the filtered key space stable across calls.
+func TestSDKListObjectsV2StartAfterPagination(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "start-after-paged"
+
+	mustCreateBucket(t, client, bucket)
+
+	for _, k := range []string{"a", "b", "c", "d", "e"} {
+		if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String(k), Body: bytes.NewReader([]byte("x")),
+		}); err != nil {
+			t.Fatalf("PutObject %s: %v", k, err)
+		}
+	}
+
+	// StartAfter="a" leaves b,c,d,e; MaxKeys=2 truncates page 1 to b,c.
+	first, err := client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+		Bucket: aws.String(bucket), MaxKeys: aws.Int32(2), StartAfter: aws.String("a"),
+	})
+	if err != nil {
+		t.Fatalf("ListObjectsV2 page 1: %v", err)
+	}
+
+	if got := keysOf(first.Contents); !equalStrings(got, []string{"b", "c"}) {
+		t.Fatalf("page 1 keys = %v, want [b c]", got)
+	}
+
+	if !aws.ToBool(first.IsTruncated) || aws.ToString(first.NextContinuationToken) == "" {
+		t.Fatalf("page 1 should be truncated with a continuation token")
+	}
+
+	// Continuation carries StartAfter forward, exactly as the SDK paginator does.
+	second, err := client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+		Bucket: aws.String(bucket), MaxKeys: aws.Int32(2), StartAfter: aws.String("a"),
+		ContinuationToken: first.NextContinuationToken,
+	})
+	if err != nil {
+		t.Fatalf("ListObjectsV2 page 2: %v", err)
+	}
+
+	if got := keysOf(second.Contents); !equalStrings(got, []string{"d", "e"}) {
+		t.Fatalf("page 2 keys = %v, want [d e] (no overlap with page 1)", got)
+	}
+}
+
+func keysOf(objs []types.Object) []string {
+	out := make([]string, 0, len(objs))
+	for i := range objs {
+		out = append(out, aws.ToString(objs[i].Key))
+	}
+
+	return out
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 // TestSDKBucketVersioning verifies PutBucketVersioning(Enabled) ->
 // GetBucketVersioning returns Enabled.
 func TestSDKBucketVersioning(t *testing.T) {

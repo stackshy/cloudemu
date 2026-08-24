@@ -406,6 +406,13 @@ func New(d Drivers) http.Handler {
 	// must register before the permissive BlobStorage fallback below.
 	if d.ACR != nil {
 		srv.Register(acr.New(d.ACR))
+
+		// ACR ARM management plane (Microsoft.ContainerRegistry/registries) is
+		// an Azure-specific optional capability; register it when the driver
+		// implements the manager surface.
+		if mgr, ok := d.ACR.(crdriver.AzureRegistryManager); ok {
+			srv.Register(acr.NewARM(mgr))
+		}
 	}
 
 	// Azure Container Instances claims a unique ARM provider

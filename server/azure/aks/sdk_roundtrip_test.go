@@ -305,6 +305,44 @@ func TestSDKAKSMaintenanceConfigLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKAKSDeleteMissingIsIdempotent asserts ARM DELETE is idempotent: deleting
+// a never-created managed cluster or agent pool completes without error (204),
+// matching the AKS swagger (DELETE documents 202/204).
+func TestSDKAKSDeleteMissingIsIdempotent(t *testing.T) {
+	clusters, pools, _ := newSDKClients(t)
+	ctx := context.Background()
+
+	delPoller, err := clusters.BeginDelete(ctx, "rg-1", "ghost", nil)
+	if err != nil {
+		t.Fatalf("cluster BeginDelete: %v", err)
+	}
+
+	if _, err := delPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("cluster delete of missing resource: %v", err)
+	}
+
+	// Create a cluster so the agent-pool path resolves, then delete a missing pool.
+	cPoller, err := clusters.BeginCreateOrUpdate(ctx, "rg-1", "k8s-1", armcontainerservice.ManagedCluster{
+		Location: to.Ptr("eastus"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("Cluster BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := cPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Cluster PollUntilDone: %v", err)
+	}
+
+	poolPoller, err := pools.BeginDelete(ctx, "rg-1", "k8s-1", "ghost", nil)
+	if err != nil {
+		t.Fatalf("pool BeginDelete: %v", err)
+	}
+
+	if _, err := poolPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("pool delete of missing resource: %v", err)
+	}
+}
+
 func TestSDKAKSListClusterAdminCredential(t *testing.T) {
 	clusters, _, _ := newSDKClients(t)
 	ctx := context.Background()

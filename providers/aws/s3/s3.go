@@ -538,35 +538,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	allKeys := bkt.objects.Keys()
 	sort.Strings(allKeys)
 
-	var matchedObjects []driver.ObjectInfo
-
-	commonPrefixSet := make(map[string]struct{})
-
-	for _, k := range allKeys {
-		if opts.Prefix != "" && !strings.HasPrefix(k, opts.Prefix) {
-			continue
-		}
-
-		if opts.Delimiter != "" {
-			rest := k[len(opts.Prefix):]
-
-			idx := strings.Index(rest, opts.Delimiter)
-			if idx >= 0 {
-				commonPrefixSet[opts.Prefix+rest[:idx+len(opts.Delimiter)]] = struct{}{}
-				continue
-			}
-		}
-
-		obj, objOk := bkt.objects.Get(k)
-		if !objOk {
-			continue
-		}
-
-		matchedObjects = append(matchedObjects, driver.ObjectInfo{
-			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
-			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
-		})
-	}
+	matchedObjects, commonPrefixSet := matchListKeys(bkt, allKeys, opts)
 
 	commonPrefixes := make([]string, 0, len(commonPrefixSet))
 	for p := range commonPrefixSet {
@@ -601,6 +573,50 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 		NextPageToken:  page.NextPageToken,
 		IsTruncated:    page.HasMore,
 	}, nil
+}
+
+// matchListKeys applies the prefix, start-after, and delimiter filters to the
+// sorted key set, returning the matched objects and the rolled-up common
+// prefixes. start-after begins the listing strictly after the given key. It is
+// applied unconditionally so the filtered array stays identical across a paged
+// scan: our continuation is an offset into this array, and a real S3
+// continuation always resumes past the start-after key anyway, so re-applying
+// it on a resumed page is a correctness no-op that keeps the offset stable.
+func matchListKeys(
+	bkt *bucketMeta, allKeys []string, opts driver.ListOptions,
+) (matchedObjects []driver.ObjectInfo, commonPrefixSet map[string]struct{}) {
+	commonPrefixSet = make(map[string]struct{})
+
+	for _, k := range allKeys {
+		if opts.Prefix != "" && !strings.HasPrefix(k, opts.Prefix) {
+			continue
+		}
+
+		if opts.StartAfter != "" && k <= opts.StartAfter {
+			continue
+		}
+
+		if opts.Delimiter != "" {
+			rest := k[len(opts.Prefix):]
+
+			if idx := strings.Index(rest, opts.Delimiter); idx >= 0 {
+				commonPrefixSet[opts.Prefix+rest[:idx+len(opts.Delimiter)]] = struct{}{}
+				continue
+			}
+		}
+
+		obj, objOk := bkt.objects.Get(k)
+		if !objOk {
+			continue
+		}
+
+		matchedObjects = append(matchedObjects, driver.ObjectInfo{
+			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
+			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
+		})
+	}
+
+	return matchedObjects, commonPrefixSet
 }
 
 func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {

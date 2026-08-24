@@ -467,6 +467,8 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		Prefix:    q.Get("prefix"),
 		Delimiter: q.Get("delimiter"),
 		PageToken: pageToken,
+		// start-after (ListObjectsV2) begins the listing strictly after this key.
+		StartAfter: q.Get("start-after"),
 	}
 
 	// max-keys caps the page; an absent or unparseable value leaves the driver
@@ -495,6 +497,8 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		// KeyCount counts returned keys AND rolled-up common prefixes, matching
 		// real S3 (a delimited listing reports both under KeyCount).
 		KeyCount: len(result.Objects) + len(result.CommonPrefixes),
+		// S3 echoes StartAfter in the response when it was sent with the request.
+		StartAfter: opts.StartAfter,
 	}
 
 	if result.NextPageToken != "" {

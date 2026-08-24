@@ -23,7 +23,15 @@ type armManagedCluster struct {
 	Location   string                       `json:"location,omitempty"`
 	Tags       map[string]*string           `json:"tags,omitempty"`
 	SKU        *armManagedClusterSKU        `json:"sku,omitempty"`
+	Identity   *armManagedClusterIdentity   `json:"identity,omitempty"`
 	Properties *armManagedClusterProperties `json:"properties,omitempty"`
+}
+
+// armManagedClusterIdentity mirrors armcontainerservice.ManagedClusterIdentity.
+type armManagedClusterIdentity struct {
+	Type        string `json:"type,omitempty"`
+	PrincipalID string `json:"principalId,omitempty"`
+	TenantID    string `json:"tenantId,omitempty"`
 }
 
 // armManagedClusterSKU mirrors armcontainerservice.ManagedClusterSKU. The tier
@@ -34,18 +42,31 @@ type armManagedClusterSKU struct {
 }
 
 type armManagedClusterProperties struct {
-	ProvisioningState string                `json:"provisioningState,omitempty"`
-	KubernetesVersion string                `json:"kubernetesVersion,omitempty"`
-	DNSPrefix         string                `json:"dnsPrefix,omitempty"`
-	Fqdn              string                `json:"fqdn,omitempty"`
-	NodeResourceGroup string                `json:"nodeResourceGroup,omitempty"`
-	AgentPoolProfiles []armAgentPoolProfile `json:"agentPoolProfiles,omitempty"`
-	PowerState        *armPowerState        `json:"powerState,omitempty"`
-	EnableRBAC        *bool                 `json:"enableRBAC,omitempty"`
+	ProvisioningState        string                `json:"provisioningState,omitempty"`
+	KubernetesVersion        string                `json:"kubernetesVersion,omitempty"`
+	CurrentKubernetesVersion string                `json:"currentKubernetesVersion,omitempty"`
+	DNSPrefix                string                `json:"dnsPrefix,omitempty"`
+	Fqdn                     string                `json:"fqdn,omitempty"`
+	NodeResourceGroup        string                `json:"nodeResourceGroup,omitempty"`
+	AgentPoolProfiles        []armAgentPoolProfile `json:"agentPoolProfiles,omitempty"`
+	PowerState               *armPowerState        `json:"powerState,omitempty"`
+	EnableRBAC               *bool                 `json:"enableRBAC,omitempty"`
+	NetworkProfile           *armNetworkProfile    `json:"networkProfile,omitempty"`
 }
 
 type armPowerState struct {
 	Code string `json:"code,omitempty"`
+}
+
+// armNetworkProfile mirrors the subset of
+// armcontainerservice.NetworkProfile the emulator synthesizes as defaults.
+type armNetworkProfile struct {
+	NetworkPlugin   string `json:"networkPlugin,omitempty"`
+	LoadBalancerSKU string `json:"loadBalancerSku,omitempty"`
+	ServiceCidr     string `json:"serviceCidr,omitempty"`
+	DNSServiceIP    string `json:"dnsServiceIP,omitempty"`
+	PodCidr         string `json:"podCidr,omitempty"`
+	OutboundType    string `json:"outboundType,omitempty"`
 }
 
 type armAgentPoolProfile struct {
@@ -60,6 +81,11 @@ type armAgentPoolProfile struct {
 	NodeLabels        map[string]*string `json:"nodeLabels,omitempty"`
 	NodeTaints        []string           `json:"nodeTaints,omitempty"`
 	ProvisioningState string             `json:"provisioningState,omitempty"`
+	MaxPods           int32              `json:"maxPods,omitempty"`
+	OSDiskType        string             `json:"osDiskType,omitempty"`
+	Type              string             `json:"type,omitempty"`
+	PowerState        *armPowerState     `json:"powerState,omitempty"`
+	NodeImageVersion  string             `json:"nodeImageVersion,omitempty"`
 }
 
 // armAgentPool is the standalone (sub-resource) shape used by the
@@ -83,6 +109,11 @@ type armAgentPoolProperties struct {
 	NodeLabels        map[string]*string `json:"nodeLabels,omitempty"`
 	NodeTaints        []string           `json:"nodeTaints,omitempty"`
 	ProvisioningState string             `json:"provisioningState,omitempty"`
+	MaxPods           int32              `json:"maxPods,omitempty"`
+	OSDiskType        string             `json:"osDiskType,omitempty"`
+	Type              string             `json:"type,omitempty"`
+	PowerState        *armPowerState     `json:"powerState,omitempty"`
+	NodeImageVersion  string             `json:"nodeImageVersion,omitempty"`
 }
 
 // armMaintenanceConfig is the wire shape for the maintenanceConfigurations
@@ -120,7 +151,8 @@ type armList[T any] struct {
 // shape returned by the SDK. Pools are listed inline under
 // properties.agentPoolProfiles for parity with the real API.
 func toARMCluster(c *aks.ManagedCluster, pools []aks.AgentPool, subscription string) armManagedCluster {
-	return armManagedCluster{
+	enableRBAC := c.EnableRBAC
+	out := armManagedCluster{
 		ID:       aks.ClusterResourceID(subscription, c.ResourceGroup, c.Name),
 		Name:     c.Name,
 		Type:     resourceTypeManagedClusterFull,
@@ -128,14 +160,40 @@ func toARMCluster(c *aks.ManagedCluster, pools []aks.AgentPool, subscription str
 		Tags:     toPtrTags(c.Tags),
 		SKU:      &armManagedClusterSKU{Name: "Base", Tier: c.Tier},
 		Properties: &armManagedClusterProperties{
-			ProvisioningState: c.ProvisioningState,
-			KubernetesVersion: c.KubernetesVersion,
-			DNSPrefix:         c.DNSPrefix,
-			Fqdn:              c.FQDN,
-			NodeResourceGroup: c.NodeResourceGroup,
-			AgentPoolProfiles: toAgentPoolProfiles(pools),
-			PowerState:        &armPowerState{Code: c.PowerState},
+			ProvisioningState:        c.ProvisioningState,
+			KubernetesVersion:        c.KubernetesVersion,
+			CurrentKubernetesVersion: c.KubernetesVersion,
+			DNSPrefix:                c.DNSPrefix,
+			Fqdn:                     c.FQDN,
+			NodeResourceGroup:        c.NodeResourceGroup,
+			AgentPoolProfiles:        toAgentPoolProfiles(pools),
+			PowerState:               &armPowerState{Code: c.PowerState},
+			EnableRBAC:               &enableRBAC,
+			NetworkProfile:           defaultNetworkProfile(),
 		},
+	}
+
+	if c.IdentityType != "" && c.IdentityType != "None" {
+		out.Identity = &armManagedClusterIdentity{
+			Type:        c.IdentityType,
+			PrincipalID: c.PrincipalID,
+			TenantID:    c.TenantID,
+		}
+	}
+
+	return out
+}
+
+// defaultNetworkProfile returns the standard AKS network-profile defaults the
+// real service synthesizes when a create omits networkProfile.
+func defaultNetworkProfile() *armNetworkProfile {
+	return &armNetworkProfile{
+		NetworkPlugin:   "kubenet",
+		LoadBalancerSKU: "standard",
+		ServiceCidr:     "10.0.0.0/16",
+		DNSServiceIP:    "10.0.0.10",
+		PodCidr:         "10.244.0.0/16",
+		OutboundType:    "loadBalancer",
 	}
 }
 
@@ -158,6 +216,11 @@ func toAgentPoolProfiles(pools []aks.AgentPool) []armAgentPoolProfile {
 			NodeLabels:        toPtrTags(pools[i].NodeLabels),
 			NodeTaints:        pools[i].NodeTaints,
 			ProvisioningState: pools[i].ProvisioningState,
+			MaxPods:           pools[i].MaxPods,
+			OSDiskType:        pools[i].OSDiskType,
+			Type:              pools[i].Type,
+			PowerState:        &armPowerState{Code: pools[i].PowerState},
+			NodeImageVersion:  pools[i].NodeImageVersion,
 		})
 	}
 
@@ -182,6 +245,11 @@ func toARMAgentPool(p *aks.AgentPool, subscription string) armAgentPool {
 			NodeLabels:        toPtrTags(p.NodeLabels),
 			NodeTaints:        p.NodeTaints,
 			ProvisioningState: p.ProvisioningState,
+			MaxPods:           p.MaxPods,
+			OSDiskType:        p.OSDiskType,
+			Type:              p.Type,
+			PowerState:        &armPowerState{Code: p.PowerState},
+			NodeImageVersion:  p.NodeImageVersion,
 		},
 	}
 }

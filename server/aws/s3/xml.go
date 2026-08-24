@@ -36,6 +36,7 @@ type listBucketResult struct {
 	KeyCount              int         `xml:"KeyCount"`
 	ContinuationToken     string      `xml:"ContinuationToken,omitempty"`
 	NextContinuationToken string      `xml:"NextContinuationToken,omitempty"`
+	StartAfter            string      `xml:"StartAfter,omitempty"`
 }
 
 type objectXML struct {

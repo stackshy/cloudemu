@@ -96,6 +96,15 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 // association ID — which it must have before it can disassociate.
 func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.RouteTable, error) {
 	m.mu.RLock()
+
+	for _, id := range ids {
+		if !m.routeTables.Has(id) {
+			m.mu.RUnlock()
+
+			return nil, errors.Newf(errors.NotFound, "route table %q not found", id)
+		}
+	}
+
 	tables := describeResources(m.routeTables, ids, toRouteTableInfo)
 	m.mu.RUnlock()
 
