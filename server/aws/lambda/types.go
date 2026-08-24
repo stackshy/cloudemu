@@ -8,22 +8,25 @@ type envEnvelope struct {
 // functionConfiguration is the response body shared by Create / Get / Update.
 // Field set is the minimum the AWS SDK populates for a function description.
 type functionConfiguration struct {
-	FunctionName string       `json:"FunctionName"`
-	FunctionArn  string       `json:"FunctionArn"`
-	Runtime      string       `json:"Runtime,omitempty"`
-	Role         string       `json:"Role,omitempty"`
-	Handler      string       `json:"Handler,omitempty"`
-	Description  string       `json:"Description,omitempty"`
-	MemorySize   int          `json:"MemorySize,omitempty"`
-	Timeout      int          `json:"Timeout,omitempty"`
-	LastModified string       `json:"LastModified,omitempty"`
-	State        string       `json:"State,omitempty"`
-	CodeSha256   string       `json:"CodeSha256,omitempty"`
-	CodeSize     int64        `json:"CodeSize,omitempty"`
-	RevisionID   string       `json:"RevisionId,omitempty"`
-	Environment  *envEnvelope `json:"Environment,omitempty"`
-	PackageType  string       `json:"PackageType,omitempty"`
-	Version      string       `json:"Version,omitempty"`
+	FunctionName string `json:"FunctionName"`
+	FunctionArn  string `json:"FunctionArn"`
+	Runtime      string `json:"Runtime,omitempty"`
+	Role         string `json:"Role,omitempty"`
+	Handler      string `json:"Handler,omitempty"`
+	Description  string `json:"Description,omitempty"`
+	MemorySize   int    `json:"MemorySize,omitempty"`
+	Timeout      int    `json:"Timeout,omitempty"`
+	LastModified string `json:"LastModified,omitempty"`
+	State        string `json:"State,omitempty"`
+	// LastUpdateStatus is the terminal status of the last create/update ("Successful").
+	// SDK waiters (FunctionUpdatedV2) poll GetFunctionConfiguration for it.
+	LastUpdateStatus string       `json:"LastUpdateStatus,omitempty"`
+	CodeSha256       string       `json:"CodeSha256,omitempty"`
+	CodeSize         int64        `json:"CodeSize,omitempty"`
+	RevisionID       string       `json:"RevisionId,omitempty"`
+	Environment      *envEnvelope `json:"Environment,omitempty"`
+	PackageType      string       `json:"PackageType,omitempty"`
+	Version          string       `json:"Version,omitempty"`
 }
 
 // updateFunctionConfigurationRequest captures the mutable fields of
