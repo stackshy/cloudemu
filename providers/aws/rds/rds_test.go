@@ -392,4 +392,18 @@ func TestAsyncSettleInstanceSnapshotReboot(t *testing.T) {
 	if got[0].State != rdsdriver.StateAvailable {
 		t.Fatalf("describe after reboot = %q, want available", got[0].State)
 	}
+
+	// A lifecycle stop must clear the create window: a fresh instance stopped
+	// mid-settle reports stopped, not a stale creating.
+	fresh, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "db2", Engine: "mysql", MasterUsername: "admin"})
+	if err != nil || fresh.State != rdsdriver.StateCreating {
+		t.Fatalf("CreateInstance db2 = %q (err %v), want creating", fresh.State, err)
+	}
+	if err := m.StopInstance(ctx, "db2"); err != nil {
+		t.Fatalf("StopInstance: %v", err)
+	}
+	got, _ = m.DescribeInstances(ctx, []string{"db2"})
+	if got[0].State != rdsdriver.StateStopped {
+		t.Fatalf("stopped db2 = %q, want stopped (window must be cleared)", got[0].State)
+	}
 }

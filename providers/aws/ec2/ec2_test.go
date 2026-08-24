@@ -339,7 +339,7 @@ func TestMatchesFilters(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := matchesFilters(inst, tc.filters)
+			result := matchesFilters(inst, tc.filters, time.Now())
 			assertEqual(t, tc.expect, result)
 		})
 	}

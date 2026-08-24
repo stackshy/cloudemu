@@ -601,6 +601,9 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 		inst.State = t.intermediateState
 		_ = m.sm.Transition(id, t.finalState)
 		inst.State = t.finalState
+		// A lifecycle transition supersedes any post-launch settle window, so the
+		// instance reports its new terminal state rather than a stale "pending".
+		inst.settle = settle.Window{}
 
 		// Managed instances are hidden from Describe; keep them out of metrics
 		// too so a hidden instance isn't observable via CloudWatch.
@@ -716,7 +719,7 @@ func (m *Mock) DescribeInstances(
 			continue
 		}
 
-		if matchesFilters(inst, filters) {
+		if matchesFilters(inst, filters, m.opts.Clock.Now()) {
 			results = append(results, toInstance(inst, hidden, m.opts.Clock.Now()))
 		}
 	}
@@ -779,9 +782,9 @@ func (m *Mock) visibility() string {
 	return m.managedResourceVisibility
 }
 
-func matchesFilters(inst *instanceData, filters []driver.DescribeFilter) bool {
+func matchesFilters(inst *instanceData, filters []driver.DescribeFilter, now time.Time) bool {
 	for _, f := range filters {
-		if !matchesSingleFilter(inst, f) {
+		if !matchesSingleFilter(inst, f, now) {
 			return false
 		}
 	}
@@ -789,14 +792,16 @@ func matchesFilters(inst *instanceData, filters []driver.DescribeFilter) bool {
 	return true
 }
 
-func matchesSingleFilter(inst *instanceData, f driver.DescribeFilter) bool {
+func matchesSingleFilter(inst *instanceData, f driver.DescribeFilter, now time.Time) bool {
 	switch f.Name {
 	case "instance-id":
 		return containsValue(f.Values, inst.ID)
 	case "instance-type":
 		return containsValue(f.Values, inst.InstanceType)
 	case "instance-state-name":
-		return containsValue(f.Values, inst.State)
+		// Filter on the observed state so it agrees with the state Describe
+		// renders (both go through the settle overlay under AsyncSettle).
+		return containsValue(f.Values, inst.settle.Observe(now, inst.State))
 	default:
 		return matchesTagFilter(inst, f)
 	}

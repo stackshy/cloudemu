@@ -869,6 +869,9 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 
 	inst.State = to
 	m.instances.Set(id, inst)
+	// A lifecycle transition (start/stop) supersedes any post-create settle
+	// window so the instance reports its new state, not a stale "creating".
+	delete(m.instSettle, id)
 
 	m.emitInstanceMetrics(id, inst.Engine, cpu, conns)
 

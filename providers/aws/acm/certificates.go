@@ -184,6 +184,13 @@ func (m *Mock) GetCertificate(_ context.Context, arn string) (certPEM, chainPEM 
 	cd.mu.RLock()
 	defer cd.mu.RUnlock()
 
+	// While the certificate is still observably PENDING_VALIDATION, its material
+	// is not yet retrievable — real ACM answers RequestInProgressException.
+	if !cd.settle.Settled(m.now()) {
+		return "", "", errors.Newf(errors.FailedPrecondition,
+			"certificate %q is pending validation and has no issued material yet", arn)
+	}
+
 	if cd.cert.CertificatePEM == "" {
 		return "", "", errors.Newf(errors.FailedPrecondition, "certificate %q has no issued material yet", arn)
 	}

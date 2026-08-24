@@ -34,7 +34,7 @@ func (m *Mock) getExec(arn string) (*execData, error) {
 // runExecution builds and stores a synchronously-completed execution. The
 // emulator does not interpret the ASL definition: the execution starts RUNNING
 // and immediately transitions to SUCCEEDED with output echoing the input.
-func (m *Mock) runExecution(in driver.StartExecutionInput) (*driver.Execution, error) {
+func (m *Mock) runExecution(in driver.StartExecutionInput, async bool) (*driver.Execution, error) {
 	sd, err := m.getSM(in.StateMachineArn)
 	if err != nil {
 		return nil, err
@@ -63,8 +63,14 @@ func (m *Mock) runExecution(in driver.StartExecutionInput) (*driver.Execution, e
 		StartDate: now, StopDate: now,
 	}
 
-	window := settle.Pending(driver.ExecStatusRunning, now,
-		m.opts.SettleDuration(settle.DefaultExecutionSettle))
+	// A synchronous execution (StartSyncExecution) returns its terminal result
+	// immediately, so it carries no settle window; only the asynchronous
+	// StartExecution settles RUNNING -> SUCCEEDED.
+	var window settle.Window
+	if async {
+		window = settle.Pending(driver.ExecStatusRunning, now,
+			m.opts.SettleDuration(settle.DefaultExecutionSettle))
+	}
 
 	if !m.executions.SetIfAbsent(arn, &execData{exec: exec, settle: window}) {
 		return nil, execAlreadyExists(name)
@@ -90,11 +96,11 @@ func observedExec(exec *driver.Execution, w settle.Window, now time.Time) driver
 }
 
 func (m *Mock) StartExecution(_ context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
-	return m.runExecution(in)
+	return m.runExecution(in, true)
 }
 
 func (m *Mock) StartSyncExecution(_ context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
-	return m.runExecution(in)
+	return m.runExecution(in, false)
 }
 
 func (m *Mock) DescribeExecution(_ context.Context, arn string) (*driver.Execution, error) {
@@ -176,9 +182,21 @@ func (m *Mock) GetExecutionHistory(_ context.Context, arn string, reverse bool) 
 
 	ed.mu.RLock()
 	exec := ed.exec
+	settled := ed.settle.Settled(m.now())
 	ed.mu.RUnlock()
 
 	ts := exec.StartDate
+	// While an execution is still observably RUNNING, only the start event has
+	// happened; the terminal ExecutionSucceeded is not yet in the history,
+	// matching the RUNNING status the Describe surface reports.
+	if !settled {
+		events := []driver.HistoryEvent{
+			{ID: 1, PreviousEventID: 0, Type: "ExecutionStarted", Timestamp: ts, Input: exec.Input},
+		}
+
+		return events, nil
+	}
+
 	events := []driver.HistoryEvent{
 		{ID: 1, PreviousEventID: 0, Type: "ExecutionStarted", Timestamp: ts, Input: exec.Input},
 		{ID: 2, PreviousEventID: 1, Type: "PassStateEntered", Timestamp: ts, StateName: passStateName, Input: exec.Input},
