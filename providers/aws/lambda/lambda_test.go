@@ -459,6 +459,44 @@ func TestAliasWeightedRouting(t *testing.T) {
 	assertEqual(t, 0.5, updated.RoutingConfig.Weight)
 }
 
+func TestAliasWeightedRoutingRejectsLatest(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
+	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+
+	// A weighted alias whose own FunctionVersion is $LATEST is rejected.
+	_, err := m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName:    "my-func",
+		Name:            "bad",
+		FunctionVersion: "$LATEST",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersion: "1",
+			Weight:            0.1,
+		},
+	})
+	assertError(t, err, true)
+
+	// A plain alias on $LATEST is allowed; adding routing later that leaves the
+	// effective FunctionVersion at $LATEST is rejected.
+	_, err = m.CreateAlias(ctx, driver.AliasConfig{
+		FunctionName:    "my-func",
+		Name:            "plain",
+		FunctionVersion: "$LATEST",
+	})
+	requireNoError(t, err)
+
+	_, err = m.UpdateAlias(ctx, driver.AliasConfig{
+		FunctionName: "my-func",
+		Name:         "plain",
+		RoutingConfig: &driver.AliasRoutingConfig{
+			AdditionalVersion: "1",
+			Weight:            0.1,
+		},
+	})
+	assertError(t, err, true)
+}
+
 func TestPublishLayerVersion(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -703,16 +741,17 @@ func TestAliasRoutingConfigDeepCopy(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 	_, _ = m.PublishVersion(ctx, "my-func", "v1")
+	_, _ = m.PublishVersion(ctx, "my-func", "v2")
 
 	rc := &driver.AliasRoutingConfig{
-		AdditionalVersion: "1",
+		AdditionalVersion: "2",
 		Weight:            0.5,
 	}
 
 	_, err := m.CreateAlias(ctx, driver.AliasConfig{
 		FunctionName:    "my-func",
 		Name:            "deep-copy",
-		FunctionVersion: "$LATEST",
+		FunctionVersion: "1",
 		RoutingConfig:   rc,
 	})
 	requireNoError(t, err)

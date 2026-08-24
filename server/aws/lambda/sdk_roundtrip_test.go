@@ -602,6 +602,21 @@ func TestSDKCreateAliasRoutingConfigValidation(t *testing.T) {
 		t.Fatalf("CreateAlias($LATEST weight) err = %v, want InvalidParameterValueException", err)
 	}
 
+	// The alias's own FunctionVersion cannot be $LATEST when a routing config is
+	// present — a weighted alias's primary target must be a published version.
+	_, err = client.CreateAlias(ctx, &awslambda.CreateAliasInput{
+		FunctionName:    aws.String("routed"),
+		Name:            aws.String("bad-primary-latest"),
+		FunctionVersion: aws.String("$LATEST"),
+		RoutingConfig: &lambdatypes.AliasRoutingConfiguration{
+			AdditionalVersionWeights: map[string]float64{"1": 0.1},
+		},
+	})
+
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValueException" {
+		t.Fatalf("CreateAlias($LATEST primary) err = %v, want InvalidParameterValueException", err)
+	}
+
 	// A nonexistent version is ResourceNotFoundException.
 	_, err = client.CreateAlias(ctx, &awslambda.CreateAliasInput{
 		FunctionName:    aws.String("routed"),
@@ -630,6 +645,28 @@ func TestSDKCreateAliasRoutingConfigValidation(t *testing.T) {
 	}
 	if created.RoutingConfig == nil || created.RoutingConfig.AdditionalVersionWeights["2"] != 0.2 {
 		t.Fatalf("RoutingConfig = %+v, want version 2 weight 0.2", created.RoutingConfig)
+	}
+
+	// A plain alias may point to $LATEST; adding a routing config to it later
+	// (leaving the effective FunctionVersion at $LATEST) must be rejected.
+	if _, err = client.CreateAlias(ctx, &awslambda.CreateAliasInput{
+		FunctionName:    aws.String("routed"),
+		Name:            aws.String("plain-latest"),
+		FunctionVersion: aws.String("$LATEST"),
+	}); err != nil {
+		t.Fatalf("CreateAlias(plain $LATEST): %v", err)
+	}
+
+	_, err = client.UpdateAlias(ctx, &awslambda.UpdateAliasInput{
+		FunctionName: aws.String("routed"),
+		Name:         aws.String("plain-latest"),
+		RoutingConfig: &lambdatypes.AliasRoutingConfiguration{
+			AdditionalVersionWeights: map[string]float64{"1": 0.1},
+		},
+	})
+
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValueException" {
+		t.Fatalf("UpdateAlias(routing on $LATEST) err = %v, want InvalidParameterValueException", err)
 	}
 }
 

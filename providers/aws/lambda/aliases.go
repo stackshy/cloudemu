@@ -24,7 +24,7 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		return nil, cerrors.Newf(cerrors.NotFound, "version %s not found", cfg.FunctionVersion)
 	}
 
-	if err := m.validateRoutingConfig(&fd, cfg.RoutingConfig); err != nil {
+	if err := m.validateRoutingConfig(&fd, cfg.FunctionVersion, cfg.RoutingConfig); err != nil {
 		return nil, err
 	}
 
@@ -76,7 +76,9 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	}
 
 	if cfg.RoutingConfig != nil {
-		if err := m.validateRoutingConfig(&fd, cfg.RoutingConfig); err != nil {
+		// ad.alias.FunctionVersion already reflects any FunctionVersion update
+		// applied above, so it is the effective primary target for this alias.
+		if err := m.validateRoutingConfig(&fd, ad.alias.FunctionVersion, cfg.RoutingConfig); err != nil {
 			return nil, err
 		}
 
@@ -153,15 +155,19 @@ func copyRoutingConfig(rc *driver.AliasRoutingConfig) *driver.AliasRoutingConfig
 }
 
 // validateRoutingConfig enforces the RoutingConfig.AdditionalVersionWeights
-// rules real Lambda applies: a weighted alias cannot reference $LATEST
-// (InvalidParameterValueException), and the additional version must exist
-// (ResourceNotFoundException). An absent additional version is a no-op.
-func (m *Mock) validateRoutingConfig(fd *funcData, rc *driver.AliasRoutingConfig) error {
+// rules real Lambda applies: neither the alias's own version nor the additional
+// version can be $LATEST (InvalidParameterValueException), and the additional
+// version must exist (ResourceNotFoundException). effectiveVersion is the alias's
+// own FunctionVersion after the operation. An absent additional version is a no-op.
+func (m *Mock) validateRoutingConfig(fd *funcData, effectiveVersion string, rc *driver.AliasRoutingConfig) error {
 	if rc == nil || rc.AdditionalVersion == "" {
 		return nil
 	}
 
-	if rc.AdditionalVersion == latestVersion {
+	// A weighted alias cannot point to $LATEST — this restriction applies to the
+	// alias's own FunctionVersion (the primary target) as well as the additional
+	// version. Both must be published.
+	if effectiveVersion == latestVersion || rc.AdditionalVersion == latestVersion {
 		return cerrors.New(cerrors.InvalidArgument,
 			"Alias with weights can not be created with function version $LATEST")
 	}
