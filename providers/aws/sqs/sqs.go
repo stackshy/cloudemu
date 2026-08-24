@@ -40,6 +40,7 @@ type sqsMessage struct {
 	DeduplicationID   string
 	Attributes        map[string]string
 	MessageAttributes map[string]driver.MessageAttributeValue
+	SystemAttributes  map[string]string
 	SenderID          string
 	SequenceNumber    string
 	ReceiptHandle     string
@@ -66,6 +67,7 @@ type queueData struct {
 	receiveWaitTime    int
 	contentBasedDedup  bool
 	redrivePolicy      string
+	redriveAllowPolicy string
 	policy             string
 	kmsMasterKeyID     string
 	createdAt          time.Time
@@ -213,6 +215,7 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		lastModifiedAt:     now,
 		deduplicationIndex: make(map[string]time.Time),
 		dlqConfig:          cfg.DeadLetterQueue,
+		redriveAllowPolicy: cfg.RedriveAllowPolicy,
 	}
 
 	if cfg.RedrivePolicy != "" {
@@ -274,7 +277,8 @@ func sameQueueConfig(existing *queueData, cfg *driver.QueueConfig) bool {
 		existing.delaySeconds == cfg.DelaySeconds &&
 		existing.receiveWaitTime == cfg.ReceiveMessageWaitTimeSeconds &&
 		existing.contentBasedDedup == cfg.ContentBasedDeduplication &&
-		existing.redrivePolicy == cfg.RedrivePolicy
+		existing.redrivePolicy == cfg.RedrivePolicy &&
+		existing.redriveAllowPolicy == cfg.RedriveAllowPolicy
 }
 
 // parseRedrivePolicy resolves an SQS RedrivePolicy JSON document into a
@@ -472,11 +476,28 @@ func (m *Mock) buildStoredMessage(qd *queueData, input *driver.SendMessageInput,
 		DeduplicationID:   input.DeduplicationID,
 		Attributes:        attrs,
 		MessageAttributes: copyMessageAttributes(input.MessageAttributes),
+		SystemAttributes:  systemAttributeStrings(input.SystemAttributes),
 		SenderID:          m.opts.AccountID,
 		SequenceNumber:    seqNum,
 		VisibleAt:         now.Add(time.Duration(delaySeconds) * time.Second),
 		SentAt:            now,
 	}
+}
+
+// systemAttributeStrings flattens caller-supplied SQS message system attributes
+// (e.g. AWSTraceHeader) into a name->string map for storage. Only the string
+// value is retained; system attributes are always String-typed in SQS.
+func systemAttributeStrings(in map[string]driver.MessageAttributeValue) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v.StringValue
+	}
+
+	return out
 }
 
 // contentDeduplicationID derives a FIFO deduplication ID from the message body
@@ -666,6 +687,11 @@ func buildReceivedMessage(msg *sqsMessage, visibilityTimeout int, now time.Time)
 		sysAttrs["MessageDeduplicationId"] = msg.DeduplicationID
 	}
 
+	// Caller-supplied system attributes (e.g. AWSTraceHeader) round-trip verbatim.
+	for k, v := range msg.SystemAttributes {
+		sysAttrs[k] = v
+	}
+
 	return driver.Message{
 		MessageID:         msg.ID,
 		ReceiptHandle:     receiptHandle,
@@ -794,6 +820,7 @@ func batchEntryToSendInput(queue string, entry *driver.BatchSendEntry) driver.Se
 		DeduplicationID:   entry.DeduplicationID,
 		Attributes:        entry.Attributes,
 		MessageAttributes: entry.MessageAttributes,
+		SystemAttributes:  entry.SystemAttributes,
 	}
 }
 
@@ -892,6 +919,7 @@ func (m *Mock) GetQueueAttributes(
 		FifoQueue:                     qd.info.FIFO,
 		ContentBasedDeduplication:     qd.contentBasedDedup,
 		RedrivePolicy:                 qd.redrivePolicy,
+		RedriveAllowPolicy:            qd.redriveAllowPolicy,
 		ReceiveMessageWaitTimeSeconds: qd.receiveWaitTime,
 		Policy:                        qd.policy,
 		KmsMasterKeyID:                qd.kmsMasterKeyID,
@@ -969,6 +997,10 @@ func (m *Mock) SetQueueAttributesRaw(_ context.Context, queue string, attrs map[
 	if v, ok := attrs["RedrivePolicy"]; ok {
 		qd.redrivePolicy = v
 		qd.dlqConfig = m.parseRedrivePolicy(v)
+	}
+
+	if v, ok := attrs["RedriveAllowPolicy"]; ok {
+		qd.redriveAllowPolicy = v
 	}
 
 	if v, ok := attrs["ContentBasedDeduplication"]; ok {

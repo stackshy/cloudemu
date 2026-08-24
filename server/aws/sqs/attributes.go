@@ -12,6 +12,9 @@ import (
 const (
 	attrAll  = "All"
 	attrTrue = "true"
+	// systemAttributeAWSTraceHeader is the only message system attribute SQS supports.
+	systemAttributeAWSTraceHeader = "AWSTraceHeader"
+	systemAttributeStringType     = "String"
 )
 
 // wireMessageAttribute is the JSON shape of a single SQS MessageAttribute.
@@ -19,6 +22,24 @@ type wireMessageAttribute struct {
 	DataType    string `json:"DataType"`
 	StringValue string `json:"StringValue,omitempty"`
 	BinaryValue []byte `json:"BinaryValue,omitempty"`
+}
+
+// validateSystemAttributes enforces the SQS contract that the only supported
+// message system attribute is AWSTraceHeader (DataType String). It returns a
+// human-readable reason when a request violates the contract, or "" when valid.
+func validateSystemAttributes(attrs map[string]wireMessageAttribute) string {
+	for name, v := range attrs {
+		if name != systemAttributeAWSTraceHeader {
+			return "Message system attribute name '" + name +
+				"' is invalid. The only valid message system attribute is 'AWSTraceHeader'."
+		}
+
+		if v.DataType != "" && v.DataType != systemAttributeStringType {
+			return "The message system attribute '" + name + "' must have data type 'String'."
+		}
+	}
+
+	return ""
 }
 
 // toDriverMessageAttributes converts wire message attributes into driver form.

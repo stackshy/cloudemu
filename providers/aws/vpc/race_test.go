@@ -141,7 +141,7 @@ func TestAssociateAddress_ConcurrentWithDescribe(t *testing.T) {
 
 		// Exactly one association may succeed; the rest are already-associated.
 		// Either outcome is fine — the point is that neither races the reads.
-		_, _ = m.AssociateAddress(ctx, eip.AllocationID, "i-test")
+		_, _ = m.AssociateAddress(ctx, eip.AllocationID, driver.AssociateAddressInput{InstanceID: "i-test"})
 	}()
 
 	for range raceGoroutines {

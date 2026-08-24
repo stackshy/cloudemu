@@ -12,9 +12,15 @@ import (
 // Default ACL rule constants.
 const (
 	defaultACLRuleNumber = 100
-	allTrafficProtocol   = "-1"
-	allTrafficCIDR       = "0.0.0.0/0"
-	actionAllow          = "allow"
+	// defaultDenyRuleNumber is the reserved rule number of the unmodifiable
+	// catch-all '*' entry every network ACL carries (one ingress, one egress).
+	// Real EC2 numbers it 32767 in the API and denies everything that matches
+	// no lower-numbered rule.
+	defaultDenyRuleNumber = 32767
+	allTrafficProtocol    = "-1"
+	allTrafficCIDR        = "0.0.0.0/0"
+	actionAllow           = "allow"
+	actionDeny            = "deny"
 )
 
 type networkACLData struct {
@@ -39,7 +45,7 @@ func (m *Mock) CreateNetworkACL(_ context.Context, vpcID string, tags map[string
 	acl := &networkACLData{
 		ID:        id,
 		VPCID:     vpcID,
-		Rules:     defaultACLRules(),
+		Rules:     customACLRules(),
 		Tags:      copyTags(tags),
 		IsDefault: false,
 	}
@@ -50,9 +56,43 @@ func (m *Mock) CreateNetworkACL(_ context.Context, vpcID string, tags map[string
 	return &info, nil
 }
 
-// defaultACLRules returns the default allow-all rules for a new ACL.
-func defaultACLRules() []driver.NetworkACLRule {
+// denyAllRules returns the two unmodifiable catch-all '*' DENY entries (rule
+// 32767, one ingress and one egress) that every network ACL — default and
+// custom — carries. They are the last entries EC2 evaluates and deny anything
+// that matched no lower-numbered rule.
+func denyAllRules() []driver.NetworkACLRule {
 	return []driver.NetworkACLRule{
+		{
+			RuleNumber: defaultDenyRuleNumber,
+			Protocol:   allTrafficProtocol,
+			Action:     actionDeny,
+			CIDR:       allTrafficCIDR,
+			Egress:     false,
+		},
+		{
+			RuleNumber: defaultDenyRuleNumber,
+			Protocol:   allTrafficProtocol,
+			Action:     actionDeny,
+			CIDR:       allTrafficCIDR,
+			Egress:     true,
+		},
+	}
+}
+
+// customACLRules returns the entries a freshly created custom ACL carries: only
+// the two '*' deny rules. A custom ACL has no numbered allow rule until the
+// caller adds one, so it denies all inbound and outbound traffic — matching
+// real EC2, where a fresh custom ACL is deny-by-default (not allow-all).
+func customACLRules() []driver.NetworkACLRule {
+	return denyAllRules()
+}
+
+// defaultACLRules returns the entries the VPC's auto-created default ACL
+// carries: the numbered allow-all rule (100, both directions) plus the two '*'
+// deny rules. This is what makes the default ACL permit all traffic while a
+// custom ACL does not.
+func defaultACLRules() []driver.NetworkACLRule {
+	return append([]driver.NetworkACLRule{
 		{
 			RuleNumber: defaultACLRuleNumber,
 			Protocol:   allTrafficProtocol,
@@ -67,7 +107,7 @@ func defaultACLRules() []driver.NetworkACLRule {
 			CIDR:       allTrafficCIDR,
 			Egress:     true,
 		},
-	}
+	}, denyAllRules()...)
 }
 
 // DeleteNetworkACL deletes the network ACL with the given ID.
