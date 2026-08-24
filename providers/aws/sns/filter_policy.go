@@ -41,6 +41,16 @@ func subscriptionAccepts(sub *driver.SubscriptionInfo, input *driver.PublishInpu
 // {"exists": false} constraint.
 func matchesMessageAttributes(policy map[string]any, attrs map[string]string) bool {
 	for key, constraint := range policy {
+		if key == "$or" {
+			if subs, ok := constraint.([]any); ok && eventmatch.IsOrClause(subs) {
+				if !anySubAttributes(subs, attrs) {
+					return false
+				}
+
+				continue
+			}
+		}
+
 		allowed, ok := constraint.([]any)
 		if !ok {
 			return false
@@ -53,6 +63,17 @@ func matchesMessageAttributes(policy map[string]any, attrs map[string]string) bo
 	}
 
 	return true
+}
+
+// anySubAttributes reports whether any $or sub-policy matches the attributes.
+func anySubAttributes(subs []any, attrs map[string]string) bool {
+	for _, s := range subs {
+		if sub, ok := s.(map[string]any); ok && matchesMessageAttributes(sub, attrs) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // matchesMessageBody evaluates a filter policy against the JSON message body,

@@ -13,6 +13,18 @@ import (
 	"strings"
 )
 
+// Leaf operator names shared by the matcher and reserved-keyword checks.
+const (
+	opPrefix           = "prefix"
+	opSuffix           = "suffix"
+	opAnythingBut      = "anything-but"
+	opExists           = "exists"
+	opNumeric          = "numeric"
+	opCIDR             = "cidr"
+	opEqualsIgnoreCase = "equals-ignore-case"
+	opWildcard         = "wildcard"
+)
+
 // MatchEvent reports whether the parsed event object satisfies the parsed
 // pattern object. Every key in the pattern must be present in the event and
 // match: a pattern value that is a nested object recurses into the event's
@@ -20,24 +32,79 @@ import (
 // other pattern shape is treated as non-matching.
 func MatchEvent(pattern, event map[string]any) bool {
 	for key, pv := range pattern {
-		ev, present := event[key]
-
-		switch p := pv.(type) {
-		case []any:
-			if !MatchLeaf(p, ev, present) {
-				return false
-			}
-		case map[string]any:
-			child, ok := ev.(map[string]any)
-			if !ok || !MatchEvent(p, child) {
-				return false
-			}
-		default:
+		if !matchPatternKey(key, pv, event) {
 			return false
 		}
 	}
 
 	return true
+}
+
+func matchPatternKey(key string, pv any, event map[string]any) bool {
+	if key == "$or" {
+		if subs, ok := pv.([]any); ok && IsOrClause(subs) {
+			return matchOrClause(subs, event)
+		}
+	}
+
+	ev, present := event[key]
+
+	switch p := pv.(type) {
+	case []any:
+		return MatchLeaf(p, ev, present)
+	case map[string]any:
+		child, ok := ev.(map[string]any)
+
+		return ok && MatchEvent(p, child)
+	default:
+		return false
+	}
+}
+
+// IsOrClause reports whether a "$or" value is a genuine logical-OR clause: a list
+// of at least two sub-pattern objects, none of which name a reserved leaf
+// operator as a field. AWS documents `$or` as a first-class operator whose value
+// is an array of independent sub-patterns, matched if any one of them matches.
+func IsOrClause(subs []any) bool {
+	const minOrBranches = 2
+	if len(subs) < minOrBranches {
+		return false
+	}
+
+	for _, s := range subs {
+		sub, ok := s.(map[string]any)
+		if !ok {
+			return false
+		}
+
+		for k := range sub {
+			if isReservedOperator(k) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func matchOrClause(subs []any, event map[string]any) bool {
+	for _, s := range subs {
+		if sub, ok := s.(map[string]any); ok && MatchEvent(sub, event) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isReservedOperator(name string) bool {
+	switch name {
+	case opPrefix, opSuffix, opAnythingBut, opExists,
+		opNumeric, opCIDR, opEqualsIgnoreCase, opWildcard:
+		return true
+	default:
+		return false
+	}
 }
 
 // MatchLeaf reports whether a concrete event value (present or absent) satisfies
@@ -91,7 +158,7 @@ func matchOperator(op map[string]any, value any, present bool) bool {
 func matchNamedOperator(name string, spec, value any, present bool) bool {
 	// exists is the only operator that evaluates the absent case; every other
 	// operator requires a present value.
-	if name == "exists" {
+	if name == opExists {
 		want, _ := spec.(bool)
 
 		return want == present
@@ -102,19 +169,19 @@ func matchNamedOperator(name string, spec, value any, present bool) bool {
 
 func matchPresentOperator(name string, spec, value any) bool {
 	switch name {
-	case "prefix":
+	case opPrefix:
 		return matchAffix(spec, value, strings.HasPrefix)
-	case "suffix":
+	case opSuffix:
 		return matchAffix(spec, value, strings.HasSuffix)
-	case "equals-ignore-case":
+	case opEqualsIgnoreCase:
 		return matchEqualsIgnoreCase(spec, value)
-	case "anything-but":
+	case opAnythingBut:
 		return matchAnythingBut(spec, value)
-	case "numeric":
+	case opNumeric:
 		return matchNumeric(spec, value)
-	case "cidr":
+	case opCIDR:
 		return matchCIDR(spec, value)
-	case "wildcard":
+	case opWildcard:
 		return matchWildcard(spec, value)
 	default:
 		return false
@@ -130,8 +197,14 @@ func matchAffix(spec, value any, test func(s, affix string) bool) bool {
 	switch p := spec.(type) {
 	case string:
 		return test(s, p)
+	case []any:
+		for _, e := range p {
+			if matchAffix(e, value, test) {
+				return true
+			}
+		}
 	case map[string]any:
-		if ic, ok := p["equals-ignore-case"].(string); ok {
+		if ic, ok := p[opEqualsIgnoreCase].(string); ok {
 			return test(strings.ToLower(s), strings.ToLower(ic))
 		}
 	}
@@ -140,6 +213,16 @@ func matchAffix(spec, value any, test func(s, affix string) bool) bool {
 }
 
 func matchEqualsIgnoreCase(spec, value any) bool {
+	if list, ok := spec.([]any); ok {
+		for _, e := range list {
+			if matchEqualsIgnoreCase(e, value) {
+				return true
+			}
+		}
+
+		return false
+	}
+
 	want, ok := spec.(string)
 	if !ok {
 		return false
@@ -236,6 +319,16 @@ func matchCIDR(spec, value any) bool {
 }
 
 func matchWildcard(spec, value any) bool {
+	if list, ok := spec.([]any); ok {
+		for _, e := range list {
+			if matchWildcard(e, value) {
+				return true
+			}
+		}
+
+		return false
+	}
+
 	pattern, ok := spec.(string)
 	if !ok {
 		return false

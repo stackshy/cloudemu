@@ -82,6 +82,24 @@ func TestSNSFilterPolicyGatesDelivery(t *testing.T) {
 	}
 }
 
+// TestSNSFilterPolicyOrOperator asserts the AWS `$or` operator across message
+// attributes: delivery happens when any $or branch matches. See and-or-logic.html.
+func TestSNSFilterPolicyOrOperator(t *testing.T) {
+	attrs := map[string]string{"FilterPolicy": `{"$or":[{"color":["red"]},{"size":["large"]}]}`}
+
+	if got := snsToSQS(t, attrs, "hi", map[string]string{"color": "red"}); len(got) != 1 {
+		t.Fatalf("first branch: delivered %d, want 1", len(got))
+	}
+
+	if got := snsToSQS(t, attrs, "hi", map[string]string{"size": "large"}); len(got) != 1 {
+		t.Fatalf("second branch: delivered %d, want 1", len(got))
+	}
+
+	if got := snsToSQS(t, attrs, "hi", map[string]string{"color": "blue", "size": "small"}); len(got) != 0 {
+		t.Fatalf("no branch matches: delivered %d, want 0", len(got))
+	}
+}
+
 func TestSNSRawMessageDelivery(t *testing.T) {
 	attrs := map[string]string{"RawMessageDelivery": "true"}
 
