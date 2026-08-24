@@ -29,6 +29,23 @@ type ZoneInfo struct {
 	Scope scope.Scope
 }
 
+// AliasTarget describes an AWS Route 53 alias target (an A/AAAA record that
+// points at another AWS resource instead of an IP). Other providers leave it
+// nil.
+type AliasTarget struct {
+	DNSName              string
+	HostedZoneID         string
+	EvaluateTargetHealth bool
+}
+
+// GeoLocation describes an AWS Route 53 geolocation routing constraint. Other
+// providers leave it nil.
+type GeoLocation struct {
+	ContinentCode   string
+	CountryCode     string
+	SubdivisionCode string
+}
+
 // RecordConfig describes a DNS record.
 type RecordConfig struct {
 	ZoneID string
@@ -38,6 +55,15 @@ type RecordConfig struct {
 	Values []string
 	Weight *int // for weighted routing, nil means not weighted
 	SetID  string
+	// Routing/alias attributes below are AWS Route 53 specific; other providers
+	// leave them zero. They round-trip on a record set the same way Weight/SetID
+	// do so weighted/latency/failover/geo/alias records are faithful.
+	Failover         string // "PRIMARY" | "SECONDARY", empty when not a failover record
+	Region           string // latency-based routing region, empty otherwise
+	HealthCheckID    string
+	MultiValueAnswer *bool
+	GeoLocation      *GeoLocation
+	AliasTarget      *AliasTarget
 }
 
 // RecordInfo describes a DNS record.
@@ -49,6 +75,13 @@ type RecordInfo struct {
 	Values []string
 	Weight *int
 	SetID  string
+	// AWS Route 53 routing/alias attributes; other providers leave them zero.
+	Failover         string
+	Region           string
+	HealthCheckID    string
+	MultiValueAnswer *bool
+	GeoLocation      *GeoLocation
+	AliasTarget      *AliasTarget
 }
 
 // HealthCheckConfig describes a health check to create.
