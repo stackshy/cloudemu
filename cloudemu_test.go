@@ -6063,9 +6063,12 @@ func TestUpdateItemGCP(t *testing.T) {
 	}
 }
 
-func TestUpdateItemNotFound(t *testing.T) {
+func TestUpdateItemMissingKey(t *testing.T) {
 	ctx := context.Background()
 
+	// DynamoDB UpdateItem upserts: an update against a missing key creates the
+	// item. Cosmos DB and Firestore instead require the document to exist, so
+	// they return NotFound — the semantics diverge by provider.
 	t.Run("AWS", func(t *testing.T) {
 		p := NewAWS()
 
@@ -6075,13 +6078,20 @@ func TestUpdateItemNotFound(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
+		if _, err := p.DynamoDB.UpdateItem(ctx, driver.UpdateItemInput{
 			Table:   "t1",
 			Key:     map[string]any{"pk": "missing"},
 			Actions: []driver.UpdateAction{{Action: "SET", Field: "x", Value: 1}},
-		})
-		if !cerrors.IsNotFound(err) {
-			t.Errorf("expected NotFound, got %v", err)
+		}); err != nil {
+			t.Fatalf("UpdateItem should upsert, got %v", err)
+		}
+
+		item, err := p.DynamoDB.GetItem(ctx, "t1", map[string]any{"pk": "missing"})
+		if err != nil {
+			t.Fatalf("GetItem after upsert: %v", err)
+		}
+		if item == nil {
+			t.Fatal("UpdateItem should have created the item")
 		}
 	})
 
