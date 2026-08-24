@@ -72,8 +72,10 @@ func decodePageToken(token string) (int, error) {
 
 // matchesSecretFilters reports whether a secret satisfies every ListSecrets
 // filter (filters are AND'd, values within a filter OR'd). Supported keys are
-// name, description, tag-key, tag-value, and all — matching is substring-based
-// as the real service does.
+// name, description, tag-key, tag-value, and all. Matching mirrors the real
+// service: name/tag-key/tag-value are case-sensitive prefix matches, description
+// is a case-insensitive prefix match, and all tokenizes the value into words and
+// searches every attribute case-insensitively.
 func matchesSecretFilters(info *secretsdriver.SecretInfo, filters []secretFilter) bool {
 	for i := range filters {
 		if !matchesSecretFilter(info, &filters[i]) {
@@ -90,7 +92,7 @@ func matchesSecretFilter(info *secretsdriver.SecretInfo, f *secretFilter) bool {
 	}
 
 	for _, v := range f.Values {
-		if secretFieldContains(info, f.Key, v) {
+		if secretFieldMatches(info, f.Key, v) {
 			return true
 		}
 	}
@@ -98,37 +100,69 @@ func matchesSecretFilter(info *secretsdriver.SecretInfo, f *secretFilter) bool {
 	return false
 }
 
-func secretFieldContains(info *secretsdriver.SecretInfo, key, value string) bool {
+func secretFieldMatches(info *secretsdriver.SecretInfo, key, value string) bool {
 	switch key {
 	case "name":
-		return strings.Contains(info.Name, value)
+		return strings.HasPrefix(info.Name, value)
 	case "description":
-		return strings.Contains(info.Description, value)
+		return hasPrefixFold(info.Description, value)
 	case "tag-key":
-		return anyTagContains(info.Tags, value, true)
+		return anyTagHasPrefix(info.Tags, value, true)
 	case "tag-value":
-		return anyTagContains(info.Tags, value, false)
+		return anyTagHasPrefix(info.Tags, value, false)
 	case "all":
-		return secretFieldContains(info, "name", value) ||
-			secretFieldContains(info, "description", value) ||
-			secretFieldContains(info, "tag-key", value) ||
-			secretFieldContains(info, "tag-value", value)
+		return matchesAllWords(info, value)
 	default:
 		// Unsupported key: do not exclude on it.
 		return true
 	}
 }
 
-// anyTagContains reports whether any tag key (matchKey=true) or value contains
-// the substring.
-func anyTagContains(tags map[string]string, value string, matchKey bool) bool {
+// hasPrefixFold reports whether s begins with prefix, ignoring case.
+func hasPrefixFold(s, prefix string) bool {
+	return strings.HasPrefix(strings.ToLower(s), strings.ToLower(prefix))
+}
+
+// anyTagHasPrefix reports whether any tag key (matchKey=true) or value begins
+// with value (case-sensitive prefix, as the real service does).
+func anyTagHasPrefix(tags map[string]string, value string, matchKey bool) bool {
 	for k, v := range tags {
 		field := v
 		if matchKey {
 			field = k
 		}
 
-		if strings.Contains(field, value) {
+		if strings.HasPrefix(field, value) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// matchesAllWords implements the 'all' filter key: the value is split into
+// words and the secret matches only when every word appears (case-insensitive
+// substring) in the name, description, or any tag key/value.
+func matchesAllWords(info *secretsdriver.SecretInfo, value string) bool {
+	words := strings.Fields(value)
+	for _, w := range words {
+		if !anyAttrContainsFold(info, w) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func anyAttrContainsFold(info *secretsdriver.SecretInfo, word string) bool {
+	lw := strings.ToLower(word)
+	if strings.Contains(strings.ToLower(info.Name), lw) ||
+		strings.Contains(strings.ToLower(info.Description), lw) {
+		return true
+	}
+
+	for k, v := range info.Tags {
+		if strings.Contains(strings.ToLower(k), lw) || strings.Contains(strings.ToLower(v), lw) {
 			return true
 		}
 	}
