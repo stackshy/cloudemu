@@ -311,9 +311,12 @@ func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
 // Per the API reference, a target group can be deleted only if it is not
 // referenced by any actions. A target group that is still the forward target of
 // a listener default action or a rule action fails with ResourceInUse.
+// DeleteTargetGroup is otherwise idempotent — its only documented error is
+// ResourceInUse, so deleting a missing/already-deleted target group succeeds,
+// mirroring DeleteLoadBalancer and keeping teardown-retry flows working.
 func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 	if !m.tgs.Has(arn) {
-		return errors.Newf(errors.NotFound, "target group %q not found", arn)
+		return nil
 	}
 
 	if err := m.checkTargetGroupNotInUse(arn); err != nil {

@@ -146,7 +146,10 @@ func TestDeleteTargetGroup(t *testing.T) {
 	tg := createTestTG(m)
 
 	requireNoError(t, m.DeleteTargetGroup(context.Background(), tg.ARN))
-	assertError(t, m.DeleteTargetGroup(context.Background(), "arn:nope"), true)
+	// DeleteTargetGroup is idempotent: deleting again, and deleting an ARN that
+	// never existed, both succeed (real ELBv2's only delete error is ResourceInUse).
+	requireNoError(t, m.DeleteTargetGroup(context.Background(), tg.ARN))
+	requireNoError(t, m.DeleteTargetGroup(context.Background(), "arn:nope"))
 }
 
 func TestDescribeTargetGroups(t *testing.T) {
