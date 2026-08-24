@@ -46,7 +46,7 @@ func TestFunctionNameFromARN(t *testing.T) {
 		"arn:aws:lambda:us-east-1:0:function:fn":       "fn",
 		"arn:aws:lambda:us-east-1:0:function:fn:PROD":  "fn",
 		"arn:aws:lambda:us-east-1:0:function:fn:$LATE": "fn",
-		"fn":                                           "fn",
+		"fn": "fn",
 	}
 	for in, want := range cases {
 		if got := functionNameFromARN(in); got != want {
