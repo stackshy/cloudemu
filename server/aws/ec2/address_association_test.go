@@ -75,6 +75,74 @@ func TestAssociateAddressToNetworkInterface(t *testing.T) {
 	}
 }
 
+// TestAssociateAddressAllowReassociation pins the AllowReassociation contract:
+// reassociation is automatic by default, but an explicit AllowReassociation=false
+// makes a re-associate onto a different target fail with Resource.AlreadyAssociated,
+// while AllowReassociation=true moves the EIP to the new interface.
+func TestAssociateAddressAllowReassociation(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+	_, subnetID := mkVPCSubnet(t, c)
+
+	mkENI := func() string {
+		eni, err := c.CreateNetworkInterface(ctx, &ec2.CreateNetworkInterfaceInput{
+			SubnetId: aws.String(subnetID),
+		})
+		if err != nil {
+			t.Fatalf("CreateNetworkInterface: %v", err)
+		}
+
+		return aws.ToString(eni.NetworkInterface.NetworkInterfaceId)
+	}
+
+	eni1 := mkENI()
+	eni2 := mkENI()
+
+	alloc, err := c.AllocateAddress(ctx, &ec2.AllocateAddressInput{})
+	if err != nil {
+		t.Fatalf("AllocateAddress: %v", err)
+	}
+
+	if _, err = c.AssociateAddress(ctx, &ec2.AssociateAddressInput{
+		AllocationId:       alloc.AllocationId,
+		NetworkInterfaceId: aws.String(eni1),
+	}); err != nil {
+		t.Fatalf("AssociateAddress to eni1: %v", err)
+	}
+
+	_, err = c.AssociateAddress(ctx, &ec2.AssociateAddressInput{
+		AllocationId:       alloc.AllocationId,
+		NetworkInterfaceId: aws.String(eni2),
+		AllowReassociation: aws.Bool(false),
+	})
+	if err == nil {
+		t.Fatal("re-associate with AllowReassociation=false succeeded, want Resource.AlreadyAssociated")
+	}
+
+	if code := apiCode(t, err); code != "Resource.AlreadyAssociated" {
+		t.Errorf("error code = %q, want Resource.AlreadyAssociated", code)
+	}
+
+	if _, err = c.AssociateAddress(ctx, &ec2.AssociateAddressInput{
+		AllocationId:       alloc.AllocationId,
+		NetworkInterfaceId: aws.String(eni2),
+		AllowReassociation: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("re-associate with AllowReassociation=true: %v", err)
+	}
+
+	desc, err := c.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{
+		AllocationIds: []string{aws.ToString(alloc.AllocationId)},
+	})
+	if err != nil {
+		t.Fatalf("DescribeAddresses: %v", err)
+	}
+
+	if got := aws.ToString(desc.Addresses[0].NetworkInterfaceId); got != eni2 {
+		t.Errorf("after reassociation networkInterfaceId = %q, want %q", got, eni2)
+	}
+}
+
 // TestAssociateAddressUnknownNetworkInterface pins that binding an EIP to a
 // nonexistent network interface fails with InvalidNetworkInterfaceID.NotFound
 // rather than reporting a phantom success.

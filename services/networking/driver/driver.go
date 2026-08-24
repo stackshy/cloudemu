@@ -308,6 +308,10 @@ type AssociateAddressInput struct {
 	InstanceID         string
 	NetworkInterfaceID string
 	PrivateIP          string
+	// AllowReassociation mirrors the AWS request parameter: reassociation is
+	// automatic by default (nil), but an explicit false makes the call fail with
+	// Resource.AlreadyAssociated when the EIP is already bound to another target.
+	AllowReassociation *bool
 }
 
 // RouteTableAssociation represents an association between

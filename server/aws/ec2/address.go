@@ -3,6 +3,7 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -115,6 +116,7 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]addressXML, 0, len(eips))
+
 	for i := range eips {
 		addr := addressXML{
 			PublicIP:           eips[i].PublicIP,
@@ -219,6 +221,7 @@ func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 		InstanceID:         instanceID,
 		NetworkInterfaceID: networkInterfaceID,
 		PrivateIP:          r.Form.Get("PrivateIpAddress"),
+		AllowReassociation: parseOptionalBool(r.Form.Get("AllowReassociation")),
 	})
 	if err != nil {
 		writeAssociateAddressErr(w, err)
@@ -241,7 +244,28 @@ func writeAssociateAddressErr(w http.ResponseWriter, err error) {
 		return
 	}
 
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "Resource.AlreadyAssociated", err.Error())
+		return
+	}
+
 	writeErrWithNotFound(w, err, "InvalidAllocationID.NotFound", "DependencyViolation")
+}
+
+// parseOptionalBool returns nil when the query field is absent and otherwise the
+// parsed boolean, so an omitted AllowReassociation keeps AWS's default (remap)
+// while an explicit false enforces the strict, fail-if-associated behavior.
+func parseOptionalBool(raw string) *bool {
+	if raw == "" {
+		return nil
+	}
+
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil
+	}
+
+	return &v
 }
 
 // disassociateAddress releases an association, addressed either by

@@ -101,9 +101,18 @@ func (m *Mock) AssociateAddress(
 		}
 	}
 
-	// Real EC2 remaps automatically (idempotent AllowReassociation default), so
-	// re-associating an already-bound EIP replaces the target rather than
-	// erroring. A fresh association id is returned each time.
+	// Real EC2 remaps automatically (reassociation is the default), so re-associating
+	// an already-bound EIP replaces the target. An explicit AllowReassociation=false
+	// makes the call fail when the EIP is already bound to a different target.
+	if eip.AssociationID != "" && in.AllowReassociation != nil && !*in.AllowReassociation &&
+		!sameEIPTarget(eip, in) {
+		return "", errors.Newf(
+			errors.AlreadyExists,
+			"Resource.AlreadyAssociated: elastic IP %q is already associated", allocationID,
+		)
+	}
+
+	// A fresh association id is returned each time.
 	assocID := idgen.GenerateID("eipassoc-")
 	eip.AssociationID = assocID
 	eip.InstanceID = in.InstanceID
@@ -121,20 +130,28 @@ func (m *Mock) DisassociateAddress(
 	defer m.mu.Unlock()
 
 	for _, eip := range m.eips.All() {
-		if eip.AssociationID == associationID {
-			eip.AssociationID = ""
-			eip.InstanceID = ""
-			eip.NetworkInterfaceID = ""
-			eip.PrivateIP = ""
-
-			return nil
+		if eip.AssociationID != associationID {
+			continue
 		}
+
+		eip.AssociationID = ""
+		eip.InstanceID = ""
+		eip.NetworkInterfaceID = ""
+		eip.PrivateIP = ""
+
+		return nil
 	}
 
 	return errors.Newf(
 		errors.NotFound,
 		"association %q not found", associationID,
 	)
+}
+
+// sameEIPTarget reports whether the requested association points at the target
+// the EIP already holds, in which case a strict re-associate is idempotent.
+func sameEIPTarget(eip *eipData, in driver.AssociateAddressInput) bool {
+	return eip.InstanceID == in.InstanceID && eip.NetworkInterfaceID == in.NetworkInterfaceID
 }
 
 func toEIPInfo(eip *eipData) driver.ElasticIP {
