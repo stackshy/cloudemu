@@ -58,6 +58,21 @@ type copyObjectResult struct {
 	LastModified string   `xml:"LastModified"`
 }
 
+// copyPartResult is the XML response for UploadPartCopy.
+type copyPartResult struct {
+	XMLName      xml.Name `xml:"CopyPartResult"`
+	Xmlns        string   `xml:"xmlns,attr"`
+	ETag         string   `xml:"ETag"`
+	LastModified string   `xml:"LastModified"`
+}
+
+// createBucketConfiguration is the XML request body for CreateBucket, carrying
+// the region in LocationConstraint (empty/absent denotes us-east-1).
+type createBucketConfiguration struct {
+	XMLName            xml.Name `xml:"CreateBucketConfiguration"`
+	LocationConstraint string   `xml:"LocationConstraint"`
+}
+
 // initiateMultipartUploadResult is the XML response for CreateMultipartUpload.
 type initiateMultipartUploadResult struct {
 	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
