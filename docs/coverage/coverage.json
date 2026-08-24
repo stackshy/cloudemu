@@ -6911,6 +6911,44 @@
         "doc": "UpdateTopic replaces the mutable fields (display name, tags) of an"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AzureNotificationHubs",
+        "doc": "AzureNotificationHubs is the Azure-only Notification Hubs surface: namespace",
+        "operations": [
+          {
+            "name": "CreateRegistration"
+          },
+          {
+            "name": "DeleteRegistration"
+          },
+          {
+            "name": "DeleteSASRule"
+          },
+          {
+            "name": "GetNamespaceMeta"
+          },
+          {
+            "name": "GetRegistration"
+          },
+          {
+            "name": "GetSASRule"
+          },
+          {
+            "name": "ListRegistrations"
+          },
+          {
+            "name": "ListSASRules"
+          },
+          {
+            "name": "PutSASRule"
+          },
+          {
+            "name": "SetNamespaceMeta"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "SNS",
       "azure": "NotificationHubs",
