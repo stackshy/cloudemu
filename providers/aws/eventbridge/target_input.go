@@ -11,9 +11,9 @@ import (
 // the rendered event envelope. Precedence mirrors real EventBridge, where a
 // target carries at most one of these: InputTransformer > Input > InputPath >
 // the raw envelope.
-func targetBody(t *driver.Target, envelope []byte) string {
+func targetBody(t *driver.Target, envelope []byte, reserved map[string]json.RawMessage) string {
 	if t.InputTransformer != "" {
-		if body, ok := applyInputTransformer(t.InputTransformer, envelope); ok {
+		if body, ok := applyInputTransformer(t.InputTransformer, envelope, reserved); ok {
 			return body
 		}
 	}
@@ -37,10 +37,12 @@ type inputTransformer struct {
 }
 
 // applyInputTransformer substitutes each InputPathsMap variable (extracted from
-// the envelope by its JSONPath) into InputTemplate. When the template is a JSON
-// string literal, the delivered body is its unquoted value — matching how
-// EventBridge delivers a quoted transformer template.
-func applyInputTransformer(raw string, envelope []byte) (string, bool) {
+// the envelope by its JSONPath) into InputTemplate, then substitutes the
+// predefined reserved variables (<aws.events.*>) EventBridge supports without an
+// InputPathsMap declaration. When the template is a JSON string literal, the
+// delivered body is its unquoted value — matching how EventBridge delivers a
+// quoted transformer template.
+func applyInputTransformer(raw string, envelope []byte, reserved map[string]json.RawMessage) (string, bool) {
 	var it inputTransformer
 	if err := json.Unmarshal([]byte(raw), &it); err != nil || it.InputTemplate == "" {
 		return "", false
@@ -57,6 +59,8 @@ func applyInputTransformer(raw string, envelope []byte) (string, bool) {
 		result = strings.ReplaceAll(result, "<"+name+">", templateText(val))
 	}
 
+	result = substituteReserved(result, reserved)
+
 	trimmed := strings.TrimSpace(it.InputTemplate)
 	if strings.HasPrefix(trimmed, "\"") && strings.HasSuffix(trimmed, "\"") {
 		var unquoted string
@@ -66,6 +70,38 @@ func applyInputTransformer(raw string, envelope []byte) (string, bool) {
 	}
 
 	return result, true
+}
+
+// reservedVarOrder lists the predefined transformer variables longest-name
+// first, so a shorter reserved name (e.g. aws.events.event) never clobbers a
+// longer one (aws.events.event.json) during literal replacement.
+var reservedVarOrder = []string{ //nolint:gochecknoglobals // fixed substitution order
+	"aws.events.event.ingestion-time",
+	"aws.events.event.json",
+	"aws.events.rule-name",
+	"aws.events.rule-arn",
+	"aws.events.event",
+}
+
+// substituteReserved replaces every <aws.events.*> reserved variable in the
+// template with its value. Reserved variables need not be declared in
+// InputPathsMap and cannot be overwritten by one, so they are substituted after
+// the user variables.
+func substituteReserved(template string, reserved map[string]json.RawMessage) string {
+	for _, name := range reservedVarOrder {
+		val, ok := reserved[name]
+		if !ok {
+			continue
+		}
+
+		// Reserved variables are substituted as their raw JSON: a string keeps its
+		// quotes and an object/array its braces, so a JSON-value placeholder such as
+		// "ruleName": <aws.events.rule-name> stays valid JSON — matching how
+		// EventBridge auto-quotes reserved string variables.
+		template = strings.ReplaceAll(template, "<"+name+">", string(val))
+	}
+
+	return template
 }
 
 // templateText renders an extracted JSON value for substitution into a

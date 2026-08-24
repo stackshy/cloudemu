@@ -477,16 +477,69 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, even
 	envelope := m.eventEnvelope(event)
 
 	for i := range matched {
+		reserved := m.reservedVars(&matched[i], event, envelope)
+
 		for _, t := range matched[i].Targets {
 			if t.ARN == "" || !strings.Contains(t.ARN, ":sqs:") {
 				continue
 			}
 
-			body := targetBody(&t, envelope)
+			body := targetBody(&t, envelope, reserved)
 
 			_ = m.sqs.DeliverExternal(ctx, t.ARN, body)
 		}
 	}
+}
+
+// reservedVars builds the predefined <aws.events.*> transformer variables for a
+// rule/event pair. <aws.events.event.json> is the full envelope; <aws.events.event>
+// is the envelope without its detail field; the rest are string values.
+func (m *Mock) reservedVars(rule *driver.Rule, event *driver.Event, envelope []byte) map[string]json.RawMessage {
+	quote := func(s string) json.RawMessage {
+		b, err := json.Marshal(s)
+		if err != nil {
+			return json.RawMessage(`""`)
+		}
+
+		return b
+	}
+
+	vars := map[string]json.RawMessage{
+		"aws.events.event.json":           envelope,
+		"aws.events.event":                envelopeWithoutDetail(envelope),
+		"aws.events.rule-arn":             quote(m.ruleARN(rule.EventBus, rule.Name)),
+		"aws.events.rule-name":            quote(rule.Name),
+		"aws.events.event.ingestion-time": quote(event.Time.UTC().Format(time.RFC3339)),
+	}
+
+	return vars
+}
+
+// ruleARN builds the EventBridge rule ARN, matching the wire handler's format.
+func (m *Mock) ruleARN(bus, rule string) string {
+	if bus == "" {
+		bus = defaultBusName
+	}
+
+	return "arn:aws:events:" + m.opts.Region + ":" + m.opts.AccountID + ":rule/" + bus + "/" + rule
+}
+
+// envelopeWithoutDetail returns the event envelope with its "detail" field
+// removed, which is what the <aws.events.event> reserved variable substitutes.
+func envelopeWithoutDetail(envelope []byte) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(envelope, &obj); err != nil {
+		return envelope
+	}
+
+	delete(obj, "detail")
+
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return envelope
+	}
+
+	return out
 }
 
 // eventEnvelope renders the standard EventBridge delivery envelope for an event.
@@ -494,6 +547,14 @@ func (m *Mock) eventEnvelope(event *driver.Event) []byte {
 	detail := json.RawMessage(event.Detail)
 	if len(detail) == 0 {
 		detail = json.RawMessage("{}")
+	}
+
+	// The EventBridge envelope always carries "resources" as an array; when the
+	// event has none it is delivered as [] (never null), so consumers can iterate
+	// without a nil check.
+	resources := event.Resources
+	if resources == nil {
+		resources = []string{}
 	}
 
 	body, err := json.Marshal(map[string]any{
@@ -504,7 +565,7 @@ func (m *Mock) eventEnvelope(event *driver.Event) []byte {
 		"account":     m.opts.AccountID,
 		"time":        event.Time.UTC().Format(time.RFC3339),
 		"region":      m.opts.Region,
-		"resources":   event.Resources,
+		"resources":   resources,
 		"detail":      detail,
 	})
 	if err != nil {
