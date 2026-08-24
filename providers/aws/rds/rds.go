@@ -347,6 +347,14 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 		return nil, cerrors.New(cerrors.InvalidArgument, "Engine is required")
 	}
 
+	if err := validateEngine(cfg.Engine); err != nil {
+		return nil, err
+	}
+
+	if err := validateInstanceClass(cfg.InstanceClass); err != nil {
+		return nil, err
+	}
+
 	inst, plan, err := m.reserveInstance(cfg)
 	if err != nil {
 		return nil, err
