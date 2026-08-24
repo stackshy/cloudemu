@@ -149,6 +149,13 @@ func WriteError(w http.ResponseWriter, status int, code, msg string) {
 	WriteJSON(w, status, errorEnvelope{Error: errorBody{Code: code, Message: msg}})
 }
 
+// WriteParentNotFound writes the ARM 404 ParentResourceNotFound response real
+// Azure returns when a child resource (e.g. a database under a server) is
+// created while its parent does not exist.
+func WriteParentNotFound(w http.ResponseWriter, err error) {
+	WriteError(w, http.StatusNotFound, "ParentResourceNotFound", err.Error())
+}
+
 // WriteCErr maps a CloudEmu canonical error to the matching ARM HTTP status
 // and code. Used by handlers so error mapping is consistent across services.
 func WriteCErr(w http.ResponseWriter, err error) {

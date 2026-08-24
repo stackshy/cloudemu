@@ -3,6 +3,7 @@ package managedcassandra
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	mcdriver "github.com/stackshy/cloudemu/v2/services/managedcassandra/driver"
 )
@@ -39,7 +40,15 @@ func (h *Handler) createOrUpdateDataCenter(w http.ResponseWriter, r *http.Reques
 
 	dc, err := h.db.CreateOrUpdateDataCenter(r.Context(), cfg)
 	if err != nil {
+		if cerrors.IsNotFound(err) {
+			// The only NotFound this create raises is a missing parent cluster;
+			// real Azure answers 404 ParentResourceNotFound.
+			azurearm.WriteParentNotFound(w, err)
+			return
+		}
+
 		azurearm.WriteCErr(w, err)
+
 		return
 	}
 

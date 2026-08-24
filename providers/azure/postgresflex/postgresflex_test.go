@@ -359,6 +359,27 @@ func TestSetConfigurationValidatesParameter(t *testing.T) {
 		t.Errorf("expected catalog default for max_connections, got %+v", def)
 	}
 
+	// Both the value and the defaultValue are populated for an unset parameter.
+	if def.DefaultValue != def.Value {
+		t.Errorf("unset param defaultValue = %q, want %q", def.DefaultValue, def.Value)
+	}
+
+	// A user override still reports the catalog default in defaultValue.
+	if _, err := m.SetConfiguration(ctx, rdsdriver.ConfigurationConfig{
+		Server: "srv", Name: "max_connections", Value: "200",
+	}); err != nil {
+		t.Fatalf("SetConfiguration: %v", err)
+	}
+
+	overridden, err := m.GetConfiguration(ctx, "srv", "max_connections")
+	if err != nil {
+		t.Fatalf("GetConfiguration after override: %v", err)
+	}
+
+	if overridden.Value != "200" || overridden.DefaultValue != def.Value {
+		t.Errorf("override = %+v, want value 200 and defaultValue %q", overridden, def.Value)
+	}
+
 	if _, err := m.GetConfiguration(ctx, "srv", "not_a_real_param"); err == nil {
 		t.Error("GetConfiguration for unknown param: expected NotFound")
 	}

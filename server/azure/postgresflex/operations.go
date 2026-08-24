@@ -30,9 +30,9 @@ func rejectInvalidHAMode(w http.ResponseWriter, body *armServer) bool {
 // to the portable driver shape.
 func instanceFromBody(body *armServer) rdsdriver.InstanceConfig {
 	cfg := rdsdriver.InstanceConfig{
-		Engine:           "Postgres",
-		AvailabilityZone: body.Location,
-		Tags:             body.Tags,
+		Engine:   "Postgres",
+		Location: body.Location,
+		Tags:     body.Tags,
 	}
 
 	if body.SKU != nil {
@@ -43,6 +43,7 @@ func instanceFromBody(body *armServer) rdsdriver.InstanceConfig {
 		cfg.MasterUsername = body.Properties.AdministratorLogin
 		cfg.MasterUserPassword = body.Properties.AdministratorLoginPassword
 		cfg.EngineVersion = body.Properties.Version
+		cfg.AvailabilityZone = body.Properties.AvailabilityZone
 
 		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
 			cfg.AllocatedStorage = body.Properties.Storage.StorageSizeGB
@@ -78,17 +79,41 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
 	if err != nil {
-		// Idempotent PUT: if the server already exists, treat as a get.
-		existing, getErr := h.db.DescribeInstances(r.Context(), []string{rp.ResourceName})
-		if getErr != nil || len(existing) != 1 {
+		// Idempotent PUT: a create against an existing server applies the body's
+		// storage/sku/version/HA rather than returning the stale record.
+		inst, err = h.db.ModifyInstance(r.Context(), rp.ResourceName, modifyInputFromBody(&body))
+		if err != nil {
 			azurearm.WriteCErr(w, err)
 			return
 		}
-
-		inst = &existing[0]
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
+}
+
+// modifyInputFromBody maps a Postgres Flex server body to the portable modify
+// input. Shared by PATCH (updateServer) and the re-PUT upsert path.
+func modifyInputFromBody(body *armServer) rdsdriver.ModifyInstanceInput {
+	input := rdsdriver.ModifyInstanceInput{Tags: body.Tags}
+
+	if body.SKU != nil {
+		input.InstanceClass = body.SKU.Name
+	}
+
+	if body.Properties != nil {
+		input.EngineVersion = body.Properties.Version
+
+		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
+			input.AllocatedStorage = body.Properties.Storage.StorageSizeGB
+		}
+
+		if ha := body.Properties.HighAvailability; ha != nil {
+			input.HighAvailabilityMode = ha.Mode
+			input.StandbyAvailabilityZone = ha.StandbyAvailabilityZone
+		}
+	}
+
+	return input
 }
 
 func (h *Handler) restoreServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, body *armServer) {
@@ -121,28 +146,7 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 		return
 	}
 
-	input := rdsdriver.ModifyInstanceInput{
-		Tags: body.Tags,
-	}
-
-	if body.SKU != nil {
-		input.InstanceClass = body.SKU.Name
-	}
-
-	if body.Properties != nil {
-		input.EngineVersion = body.Properties.Version
-
-		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
-			input.AllocatedStorage = body.Properties.Storage.StorageSizeGB
-		}
-
-		if ha := body.Properties.HighAvailability; ha != nil {
-			input.HighAvailabilityMode = ha.Mode
-			input.StandbyAvailabilityZone = ha.StandbyAvailabilityZone
-		}
-	}
-
-	inst, err := h.db.ModifyInstance(r.Context(), rp.ResourceName, input)
+	inst, err := h.db.ModifyInstance(r.Context(), rp.ResourceName, modifyInputFromBody(&body))
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
