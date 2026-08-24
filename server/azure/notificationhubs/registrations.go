@@ -97,7 +97,10 @@ type regContext struct {
 }
 
 // createRegistrationID answers a POST .../registrationids/ with a 201 and a
-// Location header pointing at the new registration slot.
+// Location header pointing at the new registration slot. The path segment is
+// "registrationids" (not "registrations"): the real .NET SDK's
+// CreateRegistrationIdAsync only extracts the id when Location.Segments[2]
+// equals "registrationids/".
 func (*RegistrationHandler) createRegistrationID(w http.ResponseWriter, r *http.Request, seg []string, host string) {
 	if r.Method != http.MethodPost {
 		writeRegError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -105,7 +108,7 @@ func (*RegistrationHandler) createRegistrationID(w http.ResponseWriter, r *http.
 	}
 
 	id := "reg-" + strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "")
-	loc := "https://" + host + "/" + seg[0] + "/" + segRegistrations + "/" + id + "?api-version=2015-01"
+	loc := "https://" + host + "/" + seg[0] + "/" + segRegistrationIDs + "/" + id + "?api-version=2015-01"
 	w.Header().Set("Location", loc)
 	w.WriteHeader(http.StatusCreated)
 }
