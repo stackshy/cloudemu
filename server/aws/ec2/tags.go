@@ -159,9 +159,21 @@ func (h *Handler) collectNetworkTags(ctx context.Context, recs []tagRecord) []ta
 	}
 
 	if sgs, err := h.vpc.DescribeSecurityGroups(ctx, nil); err == nil {
-		for _, sg := range sgs {
-			recs = appendTagRecords(recs, sg.ID, "security-group", sg.Tags)
+		for i := range sgs {
+			recs = appendTagRecords(recs, sgs[i].ID, "security-group", sgs[i].Tags)
+			recs = appendSGRuleTagRecords(recs, sgs[i].IngressRules)
+			recs = appendSGRuleTagRecords(recs, sgs[i].EgressRules)
 		}
+	}
+
+	return recs
+}
+
+// appendSGRuleTagRecords appends tag records for each security-group rule that
+// carries tags, keyed by the rule's sgr- id.
+func appendSGRuleTagRecords(recs []tagRecord, rules []netdriver.SecurityRule) []tagRecord {
+	for i := range rules {
+		recs = appendTagRecords(recs, rules[i].RuleID, "security-group-rule", rules[i].Tags)
 	}
 
 	return recs
@@ -254,11 +266,14 @@ func (h *Handler) deleteTags(w http.ResponseWriter, r *http.Request) {
 // resource-specific InvalidInstanceID.NotFound; other resource types fall back
 // to the generic InvalidID.NotFound.
 func tagNotFoundCode(id string) string {
-	if strings.HasPrefix(id, "i-") {
+	switch {
+	case strings.HasPrefix(id, "i-"):
 		return codeInvalidInstanceID
+	case strings.HasPrefix(id, "sgr-"):
+		return "InvalidSecurityGroupRuleId.NotFound"
+	default:
+		return "InvalidID.NotFound"
 	}
-
-	return "InvalidID.NotFound"
 }
 
 // networkResourceTagPrefixes are the VPC-family id prefixes whose tags the
@@ -267,7 +282,7 @@ func tagNotFoundCode(id string) string {
 // their own methods and are handled separately.
 //
 //nolint:gochecknoglobals // static id-prefix routing table
-var networkResourceTagPrefixes = []string{"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-"}
+var networkResourceTagPrefixes = []string{"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-", "sgr-"}
 
 // networkTaggableID reports whether id belongs to a resource tagged via the
 // NetworkResourceTagger optional interface.

@@ -93,6 +93,7 @@ type securityGroupRuleXML struct {
 	PrefixListID        string                  `xml:"prefixListId,omitempty"`
 	ReferencedGroupInfo *referencedGroupInfoXML `xml:"referencedGroupInfo,omitempty"`
 	Description         string                  `xml:"description,omitempty"`
+	Tags                []tagItem               `xml:"tagSet>item,omitempty"`
 }
 
 type securityGroupXML struct {
@@ -333,8 +334,8 @@ func (h *Handler) describeSecurityGroupRules(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 
-		items = appendSGRuleXMLs(items, sg.ID, false, sg.IngressRules, wantRuleIDs)
-		items = appendSGRuleXMLs(items, sg.ID, true, sg.EgressRules, wantRuleIDs)
+		items = appendSGRuleXMLs(items, sg.ID, false, sg.IngressRules, wantRuleIDs, filters)
+		items = appendSGRuleXMLs(items, sg.ID, true, sg.EgressRules, wantRuleIDs, filters)
 	}
 
 	awsquery.WriteXMLResponse(w, describeSecurityGroupRulesResponseXML{
@@ -352,9 +353,14 @@ func appendSGRuleXMLs(
 	egress bool,
 	rules []netdriver.SecurityRule,
 	wantRuleIDs []string,
+	filters []awsquery.Filter,
 ) []securityGroupRuleXML {
 	for i := range rules {
 		if len(wantRuleIDs) > 0 && !containsString(wantRuleIDs, rules[i].RuleID) {
+			continue
+		}
+
+		if !ruleMatchesTagFilters(&rules[i], filters) {
 			continue
 		}
 
@@ -382,6 +388,10 @@ func sgRuleFilterValues(filters []awsquery.Filter, name string) []string {
 // emulator does not implement, matching real EC2's InvalidParameterValue.
 func validateSGRuleFilters(filters []awsquery.Filter) error {
 	for _, f := range filters {
+		if isSGTagFilter(f.Name) {
+			continue
+		}
+
 		switch f.Name {
 		case groupIDFilter, securityGroupRuleIDFilter:
 		default:
@@ -390,6 +400,44 @@ func validateSGRuleFilters(filters []awsquery.Filter) error {
 	}
 
 	return nil
+}
+
+// ruleMatchesTagFilters reports whether a rule satisfies every tag filter: a
+// "tag-key" filter matches on the presence of a listed key, and a "tag:<key>"
+// filter matches when the rule's value for <key> is one of the listed values.
+// Non-tag filters are ignored here (handled by the group/rule-id selectors).
+func ruleMatchesTagFilters(rule *netdriver.SecurityRule, filters []awsquery.Filter) bool {
+	for _, f := range filters {
+		if !isSGTagFilter(f.Name) {
+			continue
+		}
+
+		if f.Name == tagKeyFilter {
+			if !anyTagKeyPresent(rule.Tags, f.Values) {
+				return false
+			}
+
+			continue
+		}
+
+		key, _ := strings.CutPrefix(f.Name, "tag:")
+		if !containsString(f.Values, rule.Tags[key]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// anyTagKeyPresent reports whether tags contains any of the listed keys.
+func anyTagKeyPresent(tags map[string]string, keys []string) bool {
+	for k := range tags {
+		if containsString(keys, k) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (h *Handler) authorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
@@ -468,6 +516,12 @@ func (h *Handler) applyRules(w http.ResponseWriter, r *http.Request, spec ruleAp
 		return
 	}
 
+	// Only the Authorize path (existing != nil) applies TagSpecifications to the
+	// minted rules; Revoke ignores them.
+	if spec.existing != nil {
+		applyRuleTagSpecs(r.Form, rules)
+	}
+
 	for i := range rules {
 		if err := spec.apply(r.Context(), groupID, rules[i]); err != nil {
 			writeSGErr(w, err)
@@ -483,6 +537,20 @@ func (h *Handler) applyRules(w http.ResponseWriter, r *http.Request, spec ruleAp
 	}
 
 	writeSimpleSGResponse(w, spec.responseName)
+}
+
+// applyRuleTagSpecs assigns the TagSpecifications(security-group-rule) tags to
+// every minted rule, giving each rule its own copy so rules from one Authorize
+// don't share a single tag map.
+func applyRuleTagSpecs(form url.Values, rules []netdriver.SecurityRule) {
+	ruleTags := mergeTagSpecs(awsquery.TagSpecs(form), "security-group-rule")
+	if ruleTags == nil {
+		return
+	}
+
+	for i := range rules {
+		rules[i].Tags = copyTagMap(ruleTags)
+	}
 }
 
 // writeAuthorizeSGResponse emits <return>true</return> plus the
@@ -518,6 +586,7 @@ func toSecurityGroupRuleXML(groupID string, egress bool, rule *netdriver.Securit
 		CidrIPv6:            rule.IPv6CIDR,
 		PrefixListID:        rule.PrefixListID,
 		Description:         rule.Description,
+		Tags:                toTagItems(rule.Tags),
 	}
 
 	if rule.ReferencedGroupID != "" {

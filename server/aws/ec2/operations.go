@@ -537,6 +537,21 @@ func mergeTagSpecs(specs []awsquery.TagSpec, resource string) map[string]string 
 	return out
 }
 
+// copyTagMap returns a shallow copy of tags, or nil for an empty input, so each
+// consumer owns its own tag map.
+func copyTagMap(tags map[string]string) map[string]string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(tags))
+	for k, v := range tags {
+		out[k] = v
+	}
+
+	return out
+}
+
 // toInstanceXMLs converts driver instances to their XML wire form, resolving
 // security-group names once for the whole batch.
 func (h *Handler) toInstanceXMLs(ctx context.Context, instances []computedriver.Instance) []instanceXML {

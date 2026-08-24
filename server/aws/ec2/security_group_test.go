@@ -371,6 +371,10 @@ func TestDescribeSecurityGroupRules(t *testing.T) {
 			ToPort:     aws.Int32(443),
 			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
 		}},
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSecurityGroupRule,
+			Tags:         []ec2types.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+		}},
 	}); err != nil {
 		t.Fatalf("AuthorizeSecurityGroupIngress: %v", err)
 	}
@@ -397,6 +401,10 @@ func TestDescribeSecurityGroupRules(t *testing.T) {
 			haveEgress = true
 		} else {
 			haveIngress = true
+
+			if got := tagValue(r.Tags, "env"); got != "prod" {
+				t.Fatalf("ingress rule env tag = %q, want prod: %+v", got, r.Tags)
+			}
 		}
 	}
 
@@ -417,4 +425,176 @@ func TestDescribeSecurityGroupRules(t *testing.T) {
 	if len(one.SecurityGroupRules) != 1 || aws.ToString(one.SecurityGroupRules[0].SecurityGroupRuleId) != oneID {
 		t.Fatalf("rule-id filter = %+v, want only %s", one.SecurityGroupRules, oneID)
 	}
+}
+
+// TestAuthorizeSecurityGroupRuleTags pins that Authorize{Ingress,Egress} accepts
+// TagSpecifications(security-group-rule) and echoes the tags on each returned
+// SecurityGroupRule, matching real EC2.
+func TestAuthorizeSecurityGroupRuleTags(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	out, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(22),
+			ToPort:     aws.Int32(22),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("10.0.0.0/8")}},
+		}},
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSecurityGroupRule,
+			Tags: []ec2types.Tag{
+				{Key: aws.String("Name"), Value: aws.String("ssh")},
+				{Key: aws.String("team"), Value: aws.String("platform")},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress: %v", err)
+	}
+
+	if len(out.SecurityGroupRules) != 1 {
+		t.Fatalf("Authorize returned %d rules, want 1: %+v", len(out.SecurityGroupRules), out.SecurityGroupRules)
+	}
+
+	rule := out.SecurityGroupRules[0]
+	if got := tagValue(rule.Tags, "Name"); got != "ssh" {
+		t.Fatalf("rule Name tag = %q, want ssh: %+v", got, rule.Tags)
+	}
+
+	if got := tagValue(rule.Tags, "team"); got != "platform" {
+		t.Fatalf("rule team tag = %q, want platform: %+v", got, rule.Tags)
+	}
+}
+
+// TestDescribeSecurityGroupRulesTagFilter pins that DescribeSecurityGroupRules
+// selects rules by tag:<key> value and tag-key presence, ignoring untagged and
+// non-matching rules.
+func TestDescribeSecurityGroupRulesTagFilter(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	// A tagged rule and an untagged rule in the same group.
+	tagged, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(443),
+			ToPort:     aws.Int32(443),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSecurityGroupRule,
+			Tags:         []ec2types.Tag{{Key: aws.String("tier"), Value: aws.String("web")}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress (tagged): %v", err)
+	}
+
+	if _, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(22),
+			ToPort:     aws.Int32(22),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("10.0.0.0/8")}},
+		}},
+	}); err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress (untagged): %v", err)
+	}
+
+	wantID := aws.ToString(tagged.SecurityGroupRules[0].SecurityGroupRuleId)
+
+	// tag:<key>=value selects only the tagged rule.
+	byValue, err := c.DescribeSecurityGroupRules(ctx, &ec2.DescribeSecurityGroupRulesInput{
+		Filters: []ec2types.Filter{{Name: aws.String("tag:tier"), Values: []string{"web"}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroupRules tag:tier: %v", err)
+	}
+
+	if len(byValue.SecurityGroupRules) != 1 || aws.ToString(byValue.SecurityGroupRules[0].SecurityGroupRuleId) != wantID {
+		t.Fatalf("tag:tier filter = %+v, want only %s", byValue.SecurityGroupRules, wantID)
+	}
+
+	// tag-key presence selects only the tagged rule.
+	byKey, err := c.DescribeSecurityGroupRules(ctx, &ec2.DescribeSecurityGroupRulesInput{
+		Filters: []ec2types.Filter{{Name: aws.String("tag-key"), Values: []string{"tier"}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroupRules tag-key: %v", err)
+	}
+
+	if len(byKey.SecurityGroupRules) != 1 || aws.ToString(byKey.SecurityGroupRules[0].SecurityGroupRuleId) != wantID {
+		t.Fatalf("tag-key filter = %+v, want only %s", byKey.SecurityGroupRules, wantID)
+	}
+}
+
+// TestCreateTagsSecurityGroupRule pins that CreateTags/DeleteTags address a
+// security-group rule by its sgr- id, verified through DescribeSecurityGroupRules.
+func TestCreateTagsSecurityGroupRule(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	authz, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(443),
+			ToPort:     aws.Int32(443),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress: %v", err)
+	}
+
+	ruleID := aws.ToString(authz.SecurityGroupRules[0].SecurityGroupRuleId)
+
+	if _, err := c.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{ruleID},
+		Tags:      []ec2types.Tag{{Key: aws.String("owner"), Value: aws.String("net")}},
+	}); err != nil {
+		t.Fatalf("CreateTags: %v", err)
+	}
+
+	rule := describeSGRuleByID(t, ctx, c, ruleID)
+	if got := tagValue(rule.Tags, "owner"); got != "net" {
+		t.Fatalf("after CreateTags owner tag = %q, want net: %+v", got, rule.Tags)
+	}
+
+	if _, err := c.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{ruleID},
+		Tags:      []ec2types.Tag{{Key: aws.String("owner")}},
+	}); err != nil {
+		t.Fatalf("DeleteTags: %v", err)
+	}
+
+	rule = describeSGRuleByID(t, ctx, c, ruleID)
+	if got := tagValue(rule.Tags, "owner"); got != "" {
+		t.Fatalf("after DeleteTags owner tag = %q, want empty: %+v", got, rule.Tags)
+	}
+}
+
+// describeSGRuleByID returns the single rule with the given sgr- id.
+func describeSGRuleByID(t *testing.T, ctx context.Context, c *ec2.Client, ruleID string) ec2types.SecurityGroupRule {
+	t.Helper()
+
+	out, err := c.DescribeSecurityGroupRules(ctx, &ec2.DescribeSecurityGroupRulesInput{
+		SecurityGroupRuleIds: []string{ruleID},
+	})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroupRules by id %s: %v", ruleID, err)
+	}
+
+	if len(out.SecurityGroupRules) != 1 {
+		t.Fatalf("DescribeSecurityGroupRules by id %s = %d rules, want 1", ruleID, len(out.SecurityGroupRules))
+	}
+
+	return out.SecurityGroupRules[0]
 }
