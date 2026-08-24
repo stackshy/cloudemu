@@ -157,3 +157,49 @@ type ReplicationGroups interface {
 	ModifyReplicationGroup(ctx context.Context, id string, numCacheNodes int) (*ReplicationGroup, error)
 	DeleteReplicationGroup(ctx context.Context, id string) error
 }
+
+// Snapshot is a point-in-time backup of an ElastiCache cluster or replication
+// group. It captures the source's engine/node identity so a restore can
+// recreate a like-for-like cluster.
+type Snapshot struct {
+	Name               string
+	CacheClusterID     string
+	ReplicationGroupID string
+	Status             string
+	Source             string
+	Engine             string
+	EngineVersion      string
+	NodeType           string
+	NumCacheNodes      int
+	Port               int
+	ParameterGroupName string
+	SnapshotWindow     string
+	RetentionLimit     int
+	ARN                string
+	CreatedAt          time.Time
+}
+
+// SnapshotConfig describes a snapshot to create. Exactly one of CacheClusterID
+// or ReplicationGroupID identifies the source.
+type SnapshotConfig struct {
+	SnapshotName       string
+	CacheClusterID     string
+	ReplicationGroupID string
+	KmsKeyID           string
+	Tags               map[string]string
+}
+
+// SnapshotFilter narrows a DescribeSnapshots call. Empty fields do not filter.
+type SnapshotFilter struct {
+	SnapshotName       string
+	CacheClusterID     string
+	ReplicationGroupID string
+}
+
+// Snapshots is an OPTIONAL capability, discovered by type assertion. Snapshots
+// are an AWS ElastiCache concept (Redis/Valkey only); drivers for other clouds
+// do not model them and answering InvalidAction is the truthful response there.
+type Snapshots interface {
+	CreateSnapshot(ctx context.Context, cfg SnapshotConfig) (*Snapshot, error)
+	DescribeSnapshots(ctx context.Context, filter SnapshotFilter) ([]Snapshot, error)
+}

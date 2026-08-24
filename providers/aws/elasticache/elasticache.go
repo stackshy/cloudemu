@@ -67,6 +67,7 @@ type Mock struct {
 	subnetGroups      *memstore.Store[driver.SubnetGroup]
 	replicationGroups *memstore.Store[driver.ReplicationGroup]
 	parameterGroups   *memstore.Store[ParameterGroup]
+	snapshots         *memstore.Store[driver.Snapshot]
 	subnetResolver    SubnetResolver
 	opts              *config.Options
 	monitoring        mondriver.Monitoring
@@ -108,6 +109,7 @@ func New(opts *config.Options) *Mock {
 		subnetGroups:      memstore.New[driver.SubnetGroup](),
 		replicationGroups: memstore.New[driver.ReplicationGroup](),
 		parameterGroups:   memstore.New[ParameterGroup](),
+		snapshots:         memstore.New[driver.Snapshot](),
 		tagsByARN:         make(map[string]map[string]string),
 		opts:              opts,
 	}
