@@ -272,7 +272,7 @@ func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.
 	}
 
 	for i, r := range sg.IngressRules {
-		if r == rule {
+		if r.Equal(&rule) {
 			sg.IngressRules = append(sg.IngressRules[:i], sg.IngressRules[i+1:]...)
 
 			return nil
@@ -290,7 +290,7 @@ func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.S
 	}
 
 	for i, r := range sg.EgressRules {
-		if r == rule {
+		if r.Equal(&rule) {
 			sg.EgressRules = append(sg.EgressRules[:i], sg.EgressRules[i+1:]...)
 
 			return nil

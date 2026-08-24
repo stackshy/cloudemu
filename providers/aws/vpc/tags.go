@@ -61,7 +61,41 @@ func (m *Mock) mutateResourceTags(id string, transform func(map[string]string) m
 			v.Tags = transform(v.Tags)
 			return v
 		})
+	case strings.HasPrefix(id, "sgr-"):
+		return m.mutateRuleTags(id, transform)
 	default:
 		return false
 	}
+}
+
+// mutateRuleTags applies transform to the tag map of the ingress/egress rule
+// whose RuleID equals id, mutating it by slice index under the owning group's
+// store lock (rules live by value inside sgData). It reports whether a rule
+// with that id was found.
+func (m *Mock) mutateRuleTags(id string, transform func(map[string]string) map[string]string) bool {
+	found := false
+
+	for _, groupID := range m.securityGroups.Keys() {
+		if m.securityGroups.Update(groupID, func(sg *sgData) *sgData {
+			for i := range sg.IngressRules {
+				if sg.IngressRules[i].RuleID == id {
+					sg.IngressRules[i].Tags = transform(sg.IngressRules[i].Tags)
+					found = true
+				}
+			}
+
+			for i := range sg.EgressRules {
+				if sg.EgressRules[i].RuleID == id {
+					sg.EgressRules[i].Tags = transform(sg.EgressRules[i].Tags)
+					found = true
+				}
+			}
+
+			return sg
+		}) && found {
+			return true
+		}
+	}
+
+	return false
 }

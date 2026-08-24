@@ -192,7 +192,7 @@ func addRule(
 	rules []driver.SecurityRule, rule driver.SecurityRule, direction, groupID string,
 ) ([]driver.SecurityRule, error) {
 	for _, r := range rules {
-		if r == rule {
+		if r.Equal(&rule) {
 			return nil, cerrors.Newf(cerrors.AlreadyExists,
 				"%s rule already exists in network security group %q", direction, groupID)
 		}
@@ -204,7 +204,7 @@ func addRule(
 // dropRule removes the first rule equal to want, reporting whether it was there.
 func dropRule(rules []driver.SecurityRule, want driver.SecurityRule) ([]driver.SecurityRule, bool) {
 	for i, r := range rules {
-		if r == want {
+		if r.Equal(&want) {
 			return removeAt(rules, i), true
 		}
 	}

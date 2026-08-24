@@ -45,6 +45,49 @@ func TestNetworkResourceTagger(t *testing.T) {
 	}
 }
 
+// TestSecurityGroupRuleTagger covers tagging a security-group rule by its sgr-
+// id through the optional NetworkResourceTagger interface: the tag lands on the
+// owning rule, delete removes the key, and an unknown sgr- id is NotFound.
+func TestSecurityGroupRuleTagger(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	v := createTestVPC(m)
+
+	sg, err := m.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{Name: "sg", Description: "sg", VPCID: v.ID})
+	requireNoError(t, err)
+
+	requireNoError(t, m.AddIngressRule(ctx, sg.ID, driver.SecurityRule{
+		Protocol: "tcp", FromPort: 443, ToPort: 443, CIDR: "0.0.0.0/0", RuleID: "sgr-abc123",
+	}))
+
+	requireNoError(t, m.UpdateResourceTags(ctx, "sgr-abc123", map[string]string{"env": "prod"}))
+	assertEqual(t, "prod", securityGroupRuleTag(t, m, sg.ID, "sgr-abc123", "env"))
+
+	requireNoError(t, m.RemoveResourceTags(ctx, "sgr-abc123", []string{"env"}))
+	assertEqual(t, "", securityGroupRuleTag(t, m, sg.ID, "sgr-abc123", "env"))
+
+	if err := m.UpdateResourceTags(ctx, "sgr-missing", map[string]string{"k": "v"}); !isNotFound(err) {
+		t.Fatalf("UpdateResourceTags on missing sgr- id = %v, want NotFound", err)
+	}
+}
+
+func securityGroupRuleTag(t *testing.T, m *Mock, groupID, ruleID, key string) string {
+	t.Helper()
+
+	sgs, err := m.DescribeSecurityGroups(context.Background(), []string{groupID})
+	requireNoError(t, err)
+
+	for i := range sgs[0].IngressRules {
+		if sgs[0].IngressRules[i].RuleID == ruleID {
+			return sgs[0].IngressRules[i].Tags[key]
+		}
+	}
+
+	t.Fatalf("rule %s not found in group %s", ruleID, groupID)
+
+	return ""
+}
+
 func routeTableTag(t *testing.T, m *Mock, id, key string) string {
 	t.Helper()
 

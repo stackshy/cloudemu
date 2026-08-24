@@ -87,6 +87,12 @@ type SecurityRule struct {
 	// RuleID is the service-assigned "sgr-" identifier for the rule. It is empty
 	// for rules created outside the AWS wire layer (Azure/GCP, portable API).
 	RuleID string
+	// Tags are the service-assigned tags applied to the rule. They are populated
+	// only via the AWS wire layer (AuthorizeSecurityGroup* TagSpecifications /
+	// CreateTags on the sgr- id) and are nil for Azure/GCP/OCI and the portable
+	// API. Tags are not part of a rule's identity — Matches() ignores them, the
+	// same as RuleID and Description.
+	Tags map[string]string
 }
 
 // Matches reports whether two rules describe the same permission, ignoring the
@@ -100,6 +106,19 @@ func (r *SecurityRule) Matches(o *SecurityRule) bool {
 		r.IPv6CIDR == o.IPv6CIDR &&
 		r.PrefixListID == o.PrefixListID &&
 		r.ReferencedGroupID == o.ReferencedGroupID
+}
+
+// Equal reports whether two rules are identical in every field except the
+// service-assigned Tags map. Tags is a map (not comparable with ==) and is not
+// part of a rule's identity, so it is excluded. Equal preserves the exact
+// full-struct equality that Azure/GCP/OCI relied on before Tags was added,
+// which — unlike Matches — also distinguishes RuleID, Description and the
+// referenced-group owner.
+func (r *SecurityRule) Equal(o *SecurityRule) bool {
+	return r.Matches(o) &&
+		r.ReferencedGroupOwnerID == o.ReferencedGroupOwnerID &&
+		r.Description == o.Description &&
+		r.RuleID == o.RuleID
 }
 
 // PeeringConnection represents a VPC peering connection.
