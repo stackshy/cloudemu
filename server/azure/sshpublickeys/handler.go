@@ -123,7 +123,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 	// ARM CreateOrUpdate is idempotent: a repeated PUT replaces the resource
 	// in place rather than failing with AlreadyExists.
-	if _, err := findKeyByName(r.Context(), h.compute, rp.ResourceName); err == nil {
+	if _, err := findKeyByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {
 		_ = h.compute.DeleteKeyPair(r.Context(), rp.ResourceName)
 	}
 
@@ -149,7 +149,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	key, err := findKeyByName(r.Context(), h.compute, rp.ResourceName)
+	key, err := findKeyByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -160,7 +160,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	key, err := findKeyByName(r.Context(), h.compute, rp.ResourceName)
+	key, err := findKeyByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -209,16 +209,22 @@ func (h *Handler) generateKeyPair(w http.ResponseWriter, r *http.Request, rp azu
 	})
 }
 
-func findKeyByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.KeyPairInfo, error) {
+func findKeyByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.KeyPairInfo, error) {
 	keys, err := c.DescribeKeyPairs(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range keys {
-		if tagOr(keys[i].Tags, armNameTag, keys[i].Name) == name {
-			return &keys[i], nil
+		if tagOr(keys[i].Tags, armNameTag, keys[i].Name) != name {
+			continue
 		}
+
+		if resourceGroup != "" && tagOr(keys[i].Tags, rgTag, "") != resourceGroup {
+			continue
+		}
+
+		return &keys[i], nil
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "sshPublicKey %s not found", name)

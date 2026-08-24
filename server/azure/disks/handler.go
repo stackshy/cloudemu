@@ -147,7 +147,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 	// ARM CreateOrUpdate is idempotent: replace an existing disk in place
 	// rather than accumulating a duplicate under the same name.
-	if existing, err := findDiskByName(r.Context(), h.compute, rp.ResourceName); err == nil {
+	if existing, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {
 		_ = h.compute.DeleteVolume(r.Context(), existing.ID)
 	}
 
@@ -235,7 +235,7 @@ func armName(id, segment string) (string, bool) {
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName)
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -246,7 +246,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName)
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -261,16 +261,24 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 }
 
 // findDiskByName looks up a volume by its ARM-tagged name.
-func findDiskByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.VolumeInfo, error) {
+func findDiskByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.VolumeInfo, error) {
 	vols, err := c.DescribeVolumes(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range vols {
-		if tagOr(vols[i].Tags, armNameTag, "") == name {
-			return &vols[i], nil
+		if tagOr(vols[i].Tags, armNameTag, "") != name {
+			continue
 		}
+
+		// A resource's identity in ARM is {subscription, resourceGroup, name};
+		// a same-named disk in another RG is a different resource.
+		if resourceGroup != "" && tagOr(vols[i].Tags, rgTag, "") != resourceGroup {
+			continue
+		}
+
+		return &vols[i], nil
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "disk %s not found", name)

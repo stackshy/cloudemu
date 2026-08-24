@@ -179,6 +179,29 @@ func TestDiskCreateOrUpdateIdempotent(t *testing.T) {
 	}
 }
 
+// TestDiskCreateOrUpdateCrossRGIsolation verifies that PUTting a disk with a
+// name that already exists in ANOTHER resource group does not delete/hijack the
+// original — in ARM {subscription,resourceGroup,name} is the resource identity.
+func TestDiskCreateOrUpdateCrossRGIsolation(t *testing.T) {
+	ts := newDisksServer(t)
+
+	body := `{"location":"eastus","sku":{"name":"Premium_LRS"},"properties":{"creationData":{"createOption":"Empty"},"diskSizeGB":64}}`
+	putDisk(t, ts, "rg-1", "shared", body)
+	putDisk(t, ts, "rg-2", "shared", body)
+
+	// The rg-1 disk must survive the rg-2 PUT of the same name.
+	resp, err := ts.Client().Get(ts.URL +
+		"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Compute/disks/shared" + wireAPIVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET rg-1/shared after rg-2 PUT: status %d, want 200 (original was hijacked)", resp.StatusCode)
+	}
+}
+
 // TestDiskListResourceGroupScope verifies list does not leak other RGs' disks.
 func TestDiskListResourceGroupScope(t *testing.T) {
 	ts := newDisksServer(t)

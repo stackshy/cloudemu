@@ -136,7 +136,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 	// ARM CreateOrUpdate is idempotent: replace an existing snapshot in place
 	// rather than accumulating a duplicate under the same name.
-	if existing, findErr := findSnapshotByName(r.Context(), h.compute, rp.ResourceName); findErr == nil {
+	if existing, findErr := findSnapshotByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); findErr == nil {
 		_ = h.compute.DeleteSnapshot(r.Context(), existing.ID)
 	}
 
@@ -168,7 +168,7 @@ func createOptionOr(c *creationData) string {
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	snap, err := findSnapshotByName(r.Context(), h.compute, rp.ResourceName)
+	snap, err := findSnapshotByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -179,7 +179,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	snap, err := findSnapshotByName(r.Context(), h.compute, rp.ResourceName)
+	snap, err := findSnapshotByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -193,16 +193,22 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	writeSnapshotAsync(w, r, rp.Subscription, "snap-delete-"+rp.ResourceName, nil)
 }
 
-func findSnapshotByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.SnapshotInfo, error) {
+func findSnapshotByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.SnapshotInfo, error) {
 	snaps, err := c.DescribeSnapshots(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range snaps {
-		if tagOr(snaps[i].Tags, armNameTag, "") == name {
-			return &snaps[i], nil
+		if tagOr(snaps[i].Tags, armNameTag, "") != name {
+			continue
 		}
+
+		if resourceGroup != "" && tagOr(snaps[i].Tags, rgTag, "") != resourceGroup {
+			continue
+		}
+
+		return &snaps[i], nil
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "snapshot %s not found", name)

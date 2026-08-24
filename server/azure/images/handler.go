@@ -136,7 +136,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 	// ARM CreateOrUpdate is idempotent: replace an existing image in place
 	// rather than accumulating a duplicate under the same name.
-	if existing, findErr := findImageByName(r.Context(), h.compute, rp.ResourceName); findErr == nil {
+	if existing, findErr := findImageByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); findErr == nil {
 		_ = h.compute.DeregisterImage(r.Context(), existing.ID)
 	}
 
@@ -161,7 +161,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	img, err := findImageByName(r.Context(), h.compute, rp.ResourceName)
+	img, err := findImageByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -172,7 +172,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	img, err := findImageByName(r.Context(), h.compute, rp.ResourceName)
+	img, err := findImageByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -186,16 +186,22 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	writeImageAsync(w, r, rp.Subscription, "img-delete-"+rp.ResourceName, nil)
 }
 
-func findImageByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.ImageInfo, error) {
+func findImageByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.ImageInfo, error) {
 	imgs, err := c.DescribeImages(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := range imgs {
-		if tagOr(imgs[i].Tags, armNameTag, imgs[i].Name) == name {
-			return &imgs[i], nil
+		if tagOr(imgs[i].Tags, armNameTag, imgs[i].Name) != name {
+			continue
 		}
+
+		if resourceGroup != "" && tagOr(imgs[i].Tags, rgTag, "") != resourceGroup {
+			continue
+		}
+
+		return &imgs[i], nil
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "image %s not found", name)
