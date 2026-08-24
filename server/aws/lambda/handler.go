@@ -74,6 +74,20 @@ const (
 // latestVersion is the symbolic version for a function's mutable current code.
 const latestVersion = "$LATEST"
 
+// packageTypeZip is the default deployment-package type. AWS requires Runtime
+// and Handler for a Zip package (but not for an Image package).
+const packageTypeZip = "Zip"
+
+// invocationTypeEvent is the async (fire-and-forget) invocation type. AWS
+// returns HTTP 202 with an empty body for it, versus 200 for RequestResponse.
+const invocationTypeEvent = "Event"
+
+// lastUpdateStatusSuccessful is the terminal LastUpdateStatus real AWS reports
+// once a create/update completes. cloudemu settles synchronously, so every
+// config response carries it — this is the value the FunctionUpdatedV2 waiter
+// (SAM/CDK/Terraform) polls for.
+const lastUpdateStatusSuccessful = "Successful"
+
 const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 6 << 20 // 6 MiB — Lambda's sync invocation payload limit.
@@ -668,6 +682,24 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// For a .zip file archive package (the default when PackageType is omitted or
+	// "Zip"), AWS requires both Runtime and Handler and rejects a create that omits
+	// either with InvalidParameterValueException. Image packages carry the runtime
+	// in the container, so they don't.
+	if req.PackageType == "" || req.PackageType == packageTypeZip {
+		if req.Runtime == "" {
+			writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
+				"Runtime is required if the deployment package is a .zip file archive.")
+			return
+		}
+
+		if req.Handler == "" {
+			writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
+				"Handler is required if the deployment package is a .zip file archive.")
+			return
+		}
+	}
+
 	cfg := sdrv.FunctionConfig{
 		Name:        req.FunctionName,
 		Runtime:     req.Runtime,
@@ -799,13 +831,22 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
+	invokeType := r.Header.Get("X-Amz-Invocation-Type")
+
 	out, err := h.fn.Invoke(r.Context(), sdrv.InvokeInput{
 		FunctionName: name,
 		Payload:      payload,
-		InvokeType:   r.Header.Get("X-Amz-Invocation-Type"),
+		InvokeType:   invokeType,
 	})
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+
+	// An asynchronous (Event) invocation is fire-and-forget: AWS queues it and
+	// returns HTTP 202 with an empty body — no payload, no function-error header.
+	if invokeType == invocationTypeEvent {
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
@@ -866,21 +907,22 @@ func toConfiguration(info *sdrv.FunctionInfo) functionConfiguration {
 	}
 
 	cfg := functionConfiguration{
-		FunctionName: info.Name,
-		FunctionArn:  info.ARN,
-		Runtime:      info.Runtime,
-		Role:         info.Role,
-		Handler:      info.Handler,
-		Description:  info.Description,
-		MemorySize:   info.Memory,
-		Timeout:      info.Timeout,
-		LastModified: info.LastModified,
-		State:        info.State,
-		PackageType:  "Zip",
-		CodeSha256:   info.CodeSHA256,
-		CodeSize:     info.CodeSize,
-		Version:      version,
-		RevisionID:   info.RevisionID,
+		FunctionName:     info.Name,
+		FunctionArn:      info.ARN,
+		Runtime:          info.Runtime,
+		Role:             info.Role,
+		Handler:          info.Handler,
+		Description:      info.Description,
+		MemorySize:       info.Memory,
+		Timeout:          info.Timeout,
+		LastModified:     info.LastModified,
+		State:            info.State,
+		LastUpdateStatus: lastUpdateStatusSuccessful,
+		PackageType:      packageTypeZip,
+		CodeSha256:       info.CodeSHA256,
+		CodeSize:         info.CodeSize,
+		Version:          version,
+		RevisionID:       info.RevisionID,
 	}
 
 	if len(info.Environment) > 0 {

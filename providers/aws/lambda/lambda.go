@@ -32,6 +32,14 @@ const (
 	timeFormat       = "2006-01-02T15:04:05Z"
 )
 
+// AWS Lambda create-time defaults applied when the client omits the field:
+// MemorySize defaults to 128 MB and Timeout to 3 seconds. See
+// https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
+const (
+	defaultMemoryMB    = 128
+	defaultTimeoutSecs = 3
+)
+
 type versionData struct {
 	config     driver.FunctionConfig
 	version    string
@@ -105,6 +113,17 @@ func New(opts *config.Options) *Mock {
 func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
 	if _, ok := m.funcs.Get(cfg.Name); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
+	}
+
+	// AWS applies documented create-time defaults when the client omits these:
+	// MemorySize -> 128 MB, Timeout -> 3 s. Terraform/CDK read these back and see
+	// a perpetual diff if the response reports 0.
+	if cfg.Memory == 0 {
+		cfg.Memory = defaultMemoryMB
+	}
+
+	if cfg.Timeout == 0 {
+		cfg.Timeout = defaultTimeoutSecs
 	}
 
 	arn := idgen.AWSARN("lambda", m.opts.Region, m.opts.AccountID, "function:"+cfg.Name)
