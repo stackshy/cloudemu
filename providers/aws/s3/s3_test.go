@@ -46,9 +46,9 @@ func TestBucketNotificationDelivery(t *testing.T) {
 		t.Fatalf("CreateBucket: %v", err)
 	}
 
-	if err := m.PutBucketNotification(ctx, "nb", []QueueNotification{
-		{QueueARN: "arn:aws:sqs:us-east-1:000000000000:s3events", Events: []string{"s3:ObjectCreated:*"}},
-		{QueueARN: "arn:aws:sqs:us-east-1:000000000000:deletes", Events: []string{"s3:ObjectRemoved:*"}},
+	if err := m.PutBucketNotification(ctx, "nb", []BucketNotification{
+		{Target: NotifyQueue, ARN: "arn:aws:sqs:us-east-1:000000000000:s3events", Events: []string{"s3:ObjectCreated:*"}},
+		{Target: NotifyQueue, ARN: "arn:aws:sqs:us-east-1:000000000000:deletes", Events: []string{"s3:ObjectRemoved:*"}},
 	}); err != nil {
 		t.Fatalf("PutBucketNotification: %v", err)
 	}

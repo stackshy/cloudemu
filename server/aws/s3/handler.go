@@ -601,6 +601,16 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		return
 	}
 
+	// x-amz-tagging sets the object's tag set at upload time. Apply it to the
+	// just-written object so GetObjectTagging returns it (real S3 stores the tag
+	// set atomically with the object).
+	if tags := parseTaggingHeader(r.Header.Get("X-Amz-Tagging")); len(tags) > 0 {
+		if err := h.bucket.PutObjectTagging(r.Context(), bucket, key, tags); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
 	// Real S3 always returns the object's ETag on PutObject. Read it back
 	// from the driver so there is a single source of truth for the ETag
 	// algorithm; if a concurrent delete races the read-back, fall back to
@@ -1029,6 +1039,13 @@ func buildCopyRequest(
 		req.ContentType = r.Header.Get("Content-Type")
 	}
 
+	// x-amz-tagging-directive: REPLACE takes the destination tag set from the
+	// x-amz-tagging header; the default COPY inherits the source object's tags.
+	if strings.EqualFold(r.Header.Get("X-Amz-Tagging-Directive"), "REPLACE") {
+		req.ReplaceTags = true
+		req.Tags = parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	}
+
 	applyCopyConditions(req, r.Header)
 
 	return req
@@ -1318,13 +1335,23 @@ func (h *Handler) multipartUploadOp(w http.ResponseWriter, r *http.Request, buck
 	}
 }
 
+// multipartTagger is the AWS-specific capability to carry the create-time
+// x-amz-tagging tag set on a multipart upload (applied to the object on
+// completion). Type-asserted like bucketNotifier; drivers without it ignore
+// create-time multipart tags.
+type multipartTagger interface {
+	CreateMultipartUploadWithTagging(
+		ctx context.Context, bucket, key, contentType string, tags map[string]string,
+	) (*driver.MultipartUpload, error)
+}
+
 func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
-	mp, err := h.bucket.CreateMultipartUpload(r.Context(), bucket, key, contentType)
+	mp, err := h.beginMultipartUpload(r, bucket, key, contentType)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -1336,6 +1363,20 @@ func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, 
 		Key:      key,
 		UploadID: mp.UploadID,
 	})
+}
+
+// beginMultipartUpload starts an upload, threading the x-amz-tagging tag set
+// through to a driver that supports create-time multipart tags and falling back
+// to the plain CreateMultipartUpload otherwise.
+func (h *Handler) beginMultipartUpload(r *http.Request, bucket, key, contentType string) (*driver.MultipartUpload, error) {
+	tags := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	if len(tags) > 0 {
+		if tagger, ok := h.bucket.(multipartTagger); ok {
+			return tagger.CreateMultipartUploadWithTagging(r.Context(), bucket, key, contentType, tags)
+		}
+	}
+
+	return h.bucket.CreateMultipartUpload(r.Context(), bucket, key, contentType)
 }
 
 func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
@@ -1675,6 +1716,33 @@ func extractMetadata(h http.Header) map[string]string {
 	}
 
 	return meta
+}
+
+// parseTaggingHeader decodes an x-amz-tagging header ("k1=v1&k2=v2",
+// URL-query-encoded) into a tag map. An empty or unparseable header yields nil.
+func parseTaggingHeader(header string) map[string]string {
+	if header == "" {
+		return nil
+	}
+
+	values, err := url.ParseQuery(header)
+	if err != nil {
+		return nil
+	}
+
+	tags := make(map[string]string, len(values))
+
+	for k, v := range values {
+		if len(v) > 0 {
+			tags[k] = v[0]
+		}
+	}
+
+	if len(tags) == 0 {
+		return nil
+	}
+
+	return tags
 }
 
 // writeDeleteMarker answers a version-addressed GET/HEAD of a delete marker
