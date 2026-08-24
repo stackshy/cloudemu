@@ -15,6 +15,7 @@ const (
 // WorkspaceConfig describes a workspace to create.
 type WorkspaceConfig struct {
 	Name                   string
+	Subscription           string
 	ResourceGroup          string
 	Location               string
 	SKUName                string
@@ -27,6 +28,7 @@ type WorkspaceConfig struct {
 type Workspace struct {
 	ID                     string
 	Name                   string
+	Subscription           string
 	ResourceGroup          string
 	Location               string
 	SKUName                string

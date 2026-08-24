@@ -12,6 +12,8 @@ import (
 // --- Access connectors ---
 
 // CreateOrUpdateAccessConnector creates or updates an access connector.
+//
+//nolint:gocritic // cfg matches the driver interface signature; passed through once.
 func (b *Databricks) CreateOrUpdateAccessConnector(
 	ctx context.Context, cfg driver.AccessConnectorConfig,
 ) (*driver.AccessConnector, error) {
