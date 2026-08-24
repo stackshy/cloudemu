@@ -73,6 +73,9 @@ type multipartUpload struct {
 	id          string
 	key         string
 	contentType string
+	// tags is the create-time object tag set (S3 x-amz-tagging on
+	// CreateMultipartUpload), applied to the object when the upload completes.
+	tags map[string]string
 	// mu guards parts: the SDK uploader sends parts concurrently (UploadPart
 	// writes) while ListParts/CompleteMultipartUpload read them.
 	mu        sync.Mutex
@@ -97,7 +100,7 @@ type bucketMeta struct {
 	corsConfig    *driver.CORSConfig
 	encryption    *driver.EncryptionConfig
 	tags          map[string]string
-	notifications []QueueNotification
+	notifications []BucketNotification
 	// rawConfigs holds opaque configuration sub-resource documents (policy, cors,
 	// encryption, lifecycle, website, …) exactly as written, so the wire handler
 	// can echo them back byte-for-byte. Guarded by rawConfigMu.
@@ -105,12 +108,29 @@ type bucketMeta struct {
 	rawConfigs  map[string][]byte
 }
 
-// QueueNotification is one S3 bucket-notification target: an SQS queue that
-// receives events whose names match one of Events (e.g. "s3:ObjectCreated:*").
-type QueueNotification struct {
-	ID       string
-	QueueARN string
-	Events   []string
+// Notification target kinds for a bucket-notification configuration.
+const (
+	NotifyQueue  = "queue"
+	NotifyTopic  = "topic"
+	NotifyLambda = "lambda"
+)
+
+// NotificationFilterRule is one S3Key name-filter rule of a bucket notification:
+// Name is "prefix" or "suffix", Value the object-key fragment to match.
+type NotificationFilterRule struct {
+	Name  string
+	Value string
+}
+
+// BucketNotification is one S3 bucket-notification target: an SQS queue, SNS
+// topic, or Lambda function that receives events whose names match one of Events
+// and whose object key satisfies every S3Key filter rule.
+type BucketNotification struct {
+	ID      string
+	Target  string // NotifyQueue / NotifyTopic / NotifyLambda
+	ARN     string
+	Events  []string
+	Filters []NotificationFilterRule
 }
 
 // SQSDeliverer delivers an S3 event notification into an SQS queue by ARN. The
@@ -119,18 +139,44 @@ type SQSDeliverer interface {
 	DeliverExternal(ctx context.Context, queueARN, body string) error
 }
 
+// SNSPublisher publishes an S3 event notification to an SNS topic by ARN. The
+// SNS mock satisfies this, enabling real S3 -> SNS event delivery.
+type SNSPublisher interface {
+	PublishExternal(ctx context.Context, topicARN, message string) error
+}
+
+// LambdaInvoker asynchronously invokes a Lambda function by ARN with an S3 event
+// payload. The Lambda mock satisfies this, enabling real S3 -> Lambda delivery.
+type LambdaInvoker interface {
+	InvokeExternal(ctx context.Context, functionARN string, payload []byte) error
+}
+
 // Mock is an in-memory mock implementation of the AWS S3 service.
 type Mock struct {
 	buckets    *memstore.Store[*bucketMeta]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 	sqs        SQSDeliverer
+	sns        SNSPublisher
+	lambda     LambdaInvoker
 }
 
-// SetSQSDeliverer wires the SQS backend so object-create events deliver to
-// buckets' SQS notification targets.
+// SetSQSDeliverer wires the SQS backend so object events deliver to buckets' SQS
+// notification targets.
 func (m *Mock) SetSQSDeliverer(d SQSDeliverer) {
 	m.sqs = d
+}
+
+// SetSNSPublisher wires the SNS backend so object events deliver to buckets' SNS
+// topic notification targets.
+func (m *Mock) SetSNSPublisher(p SNSPublisher) {
+	m.sns = p
+}
+
+// SetLambdaInvoker wires the Lambda backend so object events invoke buckets'
+// Lambda function notification targets.
+func (m *Mock) SetLambdaInvoker(i LambdaInvoker) {
+	m.lambda = i
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -646,7 +692,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	dstObj := &s3Object{
 		Key: dstKey, Data: dataCopy, Size: srcObj.Size, ContentType: srcObj.ContentType,
 		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
-		Metadata: meta,
+		Metadata: meta, Tags: maps.Clone(srcObj.Tags),
 	}
 	m.storeObject(dstBkt, dstKey, dstObj)
 
@@ -677,6 +723,7 @@ type copySrcSnapshot struct {
 	etag         string
 	lastModified string
 	metadata     map[string]string
+	tags         map[string]string
 	versionID    string
 }
 
@@ -713,10 +760,17 @@ func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) 
 	dataCopy := make([]byte, len(src.data))
 	copy(dataCopy, src.data)
 
+	// COPY tagging directive (the default) inherits the source object's tags;
+	// REPLACE takes the request's x-amz-tagging tag set instead.
+	tags := src.tags
+	if req.ReplaceTags {
+		tags = req.Tags
+	}
+
 	dstObj := &s3Object{
 		Key: req.DstKey, Data: dataCopy, Size: src.size, ContentType: contentType,
 		ETag: src.etag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
-		Metadata: maps.Clone(metadata),
+		Metadata: maps.Clone(metadata), Tags: maps.Clone(tags),
 	}
 	m.storeObject(dstBkt, req.DstKey, dstObj)
 
@@ -765,7 +819,7 @@ func (m *Mock) resolveCopySource(ctx context.Context, src driver.CopySource, ver
 
 	return &copySrcSnapshot{
 		data: data, size: srcObj.Size, contentType: srcObj.ContentType, etag: srcObj.ETag,
-		lastModified: srcObj.LastModified, metadata: srcObj.Metadata, versionID: srcObj.VersionID,
+		lastModified: srcObj.LastModified, metadata: srcObj.Metadata, tags: srcObj.Tags, versionID: srcObj.VersionID,
 	}, nil
 }
 
@@ -979,7 +1033,15 @@ func objectExpired(obj *s3Object, cfg *driver.LifecycleConfig, now time.Time) bo
 	return false
 }
 
-func (m *Mock) CreateMultipartUpload(_ context.Context, bucket, key, contentType string) (*driver.MultipartUpload, error) {
+func (m *Mock) CreateMultipartUpload(ctx context.Context, bucket, key, contentType string) (*driver.MultipartUpload, error) {
+	return m.CreateMultipartUploadWithTagging(ctx, bucket, key, contentType, nil)
+}
+
+// CreateMultipartUploadWithTagging begins a multipart upload carrying the
+// create-time x-amz-tagging tag set, applied to the object on completion.
+func (m *Mock) CreateMultipartUploadWithTagging(
+	_ context.Context, bucket, key, contentType string, tags map[string]string,
+) (*driver.MultipartUpload, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -992,6 +1054,7 @@ func (m *Mock) CreateMultipartUpload(_ context.Context, bucket, key, contentType
 		id:          uploadID,
 		key:         key,
 		contentType: contentType,
+		tags:        maps.Clone(tags),
 		parts:       make(map[int][]byte),
 		createdAt:   now,
 	})
@@ -1109,6 +1172,7 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 		ETag:         multipartETag(ordered),
 		LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata:     make(map[string]string),
+		Tags:         maps.Clone(mp.tags),
 	}
 	m.storeObject(bkt, key, obj)
 

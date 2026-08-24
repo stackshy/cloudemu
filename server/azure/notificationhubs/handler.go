@@ -40,6 +40,15 @@ const (
 	subHubs        = "notificationHubs"
 )
 
+// Trailing-segment counts for the hub sub-resource tree, named so the routing
+// table reads without bare magic numbers (mirrors the segment-count constants
+// in the Cosmos handler).
+const (
+	segHubOneSub   = 4 // .../notificationHubs/{hub}/{debugsend|pnsCredentials|AuthorizationRules}
+	segHubTwoSub   = 5 // .../notificationHubs/{hub}/AuthorizationRules/{rule}
+	segHubThreeSub = 6 // .../AuthorizationRules/{rule}/{listKeys|regenerateKeys}
+)
+
 // Handler serves Microsoft.NotificationHubs ARM requests against a notification
 // driver.
 type Handler struct {
@@ -109,6 +118,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, rp *azurearm.Res
 		h.serveNamespaceAuthRule(w, r, rp, seg[2])
 	case len(seg) == 4 && eq(seg[1], subAuthorizationRules) && eq(seg[3], actionListKeys):
 		h.namespaceAuthRuleKeys(w, r, rp, seg[2])
+	case len(seg) == 4 && eq(seg[1], subAuthorizationRules) && eq(seg[3], actionRegenerateKeys):
+		h.namespaceAuthRuleRegenerate(w, r, rp, seg[2])
 	case len(seg) == 2 && eq(seg[1], subNotificationHubs):
 		h.serveHubCollection(w, r, rp)
 	case len(seg) == 3 && eq(seg[1], subNotificationHubs):
@@ -120,17 +131,35 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, rp *azurearm.Res
 	}
 }
 
-// routeHubSub dispatches hub sub-resources: AuthorizationRules and listKeys.
+// routeHubSub dispatches hub sub-resources: debugsend, pnsCredentials and the
+// AuthorizationRules tree (delegated to routeHubAuthRule).
 func (h *Handler) routeHubSub(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, seg []string) {
 	hub := seg[2]
 
 	switch {
-	case len(seg) == 4 && eq(seg[3], subAuthorizationRules):
+	case len(seg) == segHubOneSub && eq(seg[3], subDebugSend):
+		h.debugSend(w, r, rp, hub)
+	case len(seg) == segHubOneSub && eq(seg[3], subPnsCredentials):
+		h.getPnsCredentials(w, r, rp, hub)
+	case eq(seg[3], subAuthorizationRules):
+		h.routeHubAuthRule(w, r, rp, hub, seg)
+	default:
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "unsupported Notification Hubs path")
+	}
+}
+
+// routeHubAuthRule dispatches the .../notificationHubs/{hub}/AuthorizationRules
+// tree: list, per-rule CRUD, listKeys and regenerateKeys.
+func (h *Handler) routeHubAuthRule(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, hub string, seg []string) {
+	switch {
+	case len(seg) == segHubOneSub:
 		h.listHubAuthRules(w, r, rp, hub)
-	case len(seg) == 5 && eq(seg[3], subAuthorizationRules):
+	case len(seg) == segHubTwoSub:
 		h.serveHubAuthRule(w, r, rp, hub, seg[4])
-	case len(seg) == 6 && eq(seg[3], subAuthorizationRules) && eq(seg[5], actionListKeys):
+	case len(seg) == segHubThreeSub && eq(seg[5], actionListKeys):
 		h.hubAuthRuleKeys(w, r, rp, hub, seg[4])
+	case len(seg) == segHubThreeSub && eq(seg[5], actionRegenerateKeys):
+		h.hubAuthRuleRegenerate(w, r, rp, hub, seg[4])
 	default:
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "unsupported Notification Hubs path")
 	}
