@@ -9,6 +9,7 @@ import (
 	"crypto/sha1" //nolint:gosec // AWS defines RSA key-pair fingerprints as SHA-1 digests
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -69,6 +70,10 @@ const (
 	// generates and imports.
 	keyTypeRSA     = "rsa"
 	keyTypeEd25519 = "ed25519"
+
+	// copiedSnapshotVolumeID is the placeholder volume id real EC2 reports for a
+	// snapshot created by CopySnapshot, which has no owning volume.
+	copiedSnapshotVolumeID = "vol-ffffffff"
 
 	// monitoringDisabled / monitoringEnabled are the stored detailed-monitoring
 	// states for an instance.
@@ -1301,8 +1306,11 @@ func (m *Mock) CopySnapshot(_ context.Context, in driver.CopySnapshotInput) (*dr
 	id := fmt.Sprintf("snap-%012d", m.snapCounter.Add(1))
 
 	snap := &driver.SnapshotInfo{
-		ID:          id,
-		VolumeID:    src.VolumeID,
+		ID: id,
+		// A copied snapshot is not associated with the source volume, so real EC2
+		// reports the decoupled placeholder rather than the source's volume id;
+		// inheriting it would make a volume-id snapshot filter return the copy too.
+		VolumeID:    copiedSnapshotVolumeID,
 		State:       "completed",
 		Description: in.Description,
 		Size:        src.Size,
@@ -1456,9 +1464,9 @@ func (m *Mock) ModifyVolume(_ context.Context, in driver.ModifyVolumeInput) (*dr
 	}, nil
 }
 
-// importedKeyFingerprint computes the AWS ImportKeyPair fingerprint: the MD5
-// digest of the DER-encoded public key as colon-separated hex. It accepts
-// OpenSSH ("ssh-rsa AAAA...") and PEM (PKIX or PKCS1) public-key material.
+// importedKeyFingerprint computes the AWS ImportKeyPair fingerprint. It accepts
+// OpenSSH ("ssh-rsa AAAA...") and PEM (PKIX or PKCS1) public-key material, and
+// fingerprints per AWS's per-algorithm rule (see importedPublicKeyFingerprint).
 func importedKeyFingerprint(material []byte) (fingerprint, keyType string, err error) {
 	if pub, _, _, _, perr := ssh.ParseAuthorizedKey(material); perr == nil {
 		cpk, ok := pub.(ssh.CryptoPublicKey)
@@ -1466,38 +1474,41 @@ func importedKeyFingerprint(material []byte) (fingerprint, keyType string, err e
 			return "", "", cerrors.New(cerrors.InvalidArgument, "unsupported public key type")
 		}
 
-		return derMD5Fingerprint(cpk.CryptoPublicKey())
+		return importedPublicKeyFingerprint(cpk.CryptoPublicKey())
 	}
 
 	if block, _ := pem.Decode(material); block != nil {
 		if key, kerr := x509.ParsePKIXPublicKey(block.Bytes); kerr == nil {
-			return derMD5Fingerprint(key)
+			return importedPublicKeyFingerprint(key)
 		}
 
 		if key, kerr := x509.ParsePKCS1PublicKey(block.Bytes); kerr == nil {
-			return derMD5Fingerprint(key)
+			return importedPublicKeyFingerprint(key)
 		}
 	}
 
 	return "", "", cerrors.New(cerrors.InvalidArgument, "unrecognized public key format")
 }
 
-// derMD5Fingerprint marshals a parsed public key to PKIX DER and returns its
-// MD5 digest as colon-hex plus the inferred key type.
-func derMD5Fingerprint(pub any) (fingerprint, keyType string, err error) {
+// importedPublicKeyFingerprint marshals a parsed public key to PKIX DER and
+// fingerprints it the way real EC2 ImportKeyPair does: an imported ed25519 key
+// yields the base64-encoded SHA-256 digest of the DER, while an imported RSA key
+// yields the MD5 digest of the DER as colon-separated hex.
+func importedPublicKeyFingerprint(pub any) (fingerprint, keyType string, err error) {
 	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		return "", "", err
 	}
 
-	sum := md5.Sum(der) //nolint:gosec // AWS defines imported key fingerprints as MD5 of the public key DER
-
-	kt := keyTypeRSA
 	if _, ok := pub.(ed25519.PublicKey); ok {
-		kt = keyTypeEd25519
+		sum := sha256.Sum256(der)
+
+		return base64.StdEncoding.EncodeToString(sum[:]), keyTypeEd25519, nil
 	}
 
-	return colonHex(sum[:]), kt, nil
+	sum := md5.Sum(der) //nolint:gosec // AWS defines imported RSA key fingerprints as MD5 of the public key DER
+
+	return colonHex(sum[:]), keyTypeRSA, nil
 }
 
 // keyMaterial bundles the PEM-encoded key pair and its fingerprint.

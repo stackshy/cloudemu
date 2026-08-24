@@ -2,8 +2,12 @@ package ec2
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -736,6 +740,9 @@ func TestCopySnapshotClonesSource(t *testing.T) {
 	assertEqual(t, true, cp.Encrypted)
 	assertEqual(t, "copy", cp.Description)
 	assertEqual(t, "v", cp.Tags["k"])
+	// The copy is decoupled from the source volume, so it must not inherit the
+	// source's volume id (a volume-id snapshot filter would otherwise match both).
+	assertEqual(t, "vol-ffffffff", cp.VolumeID)
 
 	_, err = m.CopySnapshot(ctx, driver.CopySnapshotInput{SourceSnapshotID: "snap-missing"})
 	assertError(t, err, true)
@@ -822,6 +829,32 @@ func TestImportKeyPairStoresPublicKey(t *testing.T) {
 	assertError(t, err, true)
 	if !cerrors.IsInvalidArgument(err) {
 		t.Fatalf("ImportKeyPair(bad material) err = %v, want InvalidArgument", err)
+	}
+}
+
+// TestImportKeyPairEd25519Fingerprint pins that an imported ed25519 key is
+// fingerprinted as the base64-encoded SHA-256 digest of the DER public key (real
+// EC2's rule for ed25519), not the MD5-of-DER colon-hex used for RSA.
+func TestImportKeyPairEd25519Fingerprint(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	requireNoError(t, err)
+	sshPub, err := ssh.NewPublicKey(pub)
+	requireNoError(t, err)
+	authKey := ssh.MarshalAuthorizedKey(sshPub)
+
+	kp, err := m.ImportKeyPair(ctx, driver.ImportKeyPairInput{Name: "ed", PublicKeyMaterial: authKey})
+	requireNoError(t, err)
+
+	if strings.Contains(kp.Fingerprint, ":") {
+		t.Fatalf("ed25519 fingerprint = %q, want base64 SHA-256 (no colon-hex MD5)", kp.Fingerprint)
+	}
+
+	raw, derr := base64.StdEncoding.DecodeString(kp.Fingerprint)
+	if derr != nil || len(raw) != sha256.Size {
+		t.Fatalf("ed25519 fingerprint = %q, want a base64-encoded 32-byte SHA-256 digest", kp.Fingerprint)
 	}
 }
 

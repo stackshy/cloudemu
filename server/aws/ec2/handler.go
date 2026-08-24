@@ -555,6 +555,11 @@ func writeErrWithNotFound(w http.ResponseWriter, err error, notFoundCode, precon
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			preconditionCode, err.Error())
+	case cerrors.GetCode(err) == cerrors.Unimplemented:
+		// An unsupported optional op is a client-facing 400 InvalidAction, not a
+		// 500 — matching how the launch-template ops answer an absent capability.
+		awsquery.WriteXMLError(w, http.StatusBadRequest,
+			"InvalidAction", err.Error())
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError,
 			"InternalError", err.Error())
