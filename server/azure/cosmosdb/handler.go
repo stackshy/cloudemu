@@ -11,9 +11,13 @@
 //	            GET .../docs, GET .../docs/{id}
 //	            PUT .../docs/{id}, DELETE .../docs/{id}
 //
-// The driver doesn't model Cosmos's database-level grouping, so we expose a
-// single virtual database "cloudemu" that always exists and contains every
-// driver table as a container.
+// The generic driver has a flat table namespace with no database-level
+// grouping, so the handler models the database layer itself: it tracks which
+// databases were created (listable and individually addressable via the {db}
+// path segment) and qualifies every container's driver-table name by its
+// database, giving each database an isolated container namespace. A container
+// in one database is therefore unreachable through another, and deleting a
+// database removes the containers it owns.
 package cosmosdb
 
 import (

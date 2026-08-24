@@ -4,7 +4,7 @@
 // in an httptest TLS server.
 //
 // The Cosmos HTTP surface (server/azure/cosmos/handler.go) covers: account
-// probe, virtual databases, container create/list/read/delete, document
+// probe, per-database isolation, container create/list/read/delete, document
 // create/list/read/replace/delete, and query (SQL WHERE / ORDER BY /
 // projection / aggregates evaluated).
 // TTL and the change feed are driver-level only (no HTTP endpoint), so those
@@ -87,7 +87,7 @@ func newCosmosEnv(t *testing.T, opts ...config.Option) *cosmosEnv {
 	return &cosmosEnv{provider: cloudP, client: client}
 }
 
-// container creates database db (virtual) and container name with partition
+// container creates database db and container name with partition
 // key path "/pk" and returns its client.
 func (e *cosmosEnv) container(ctx context.Context, t *testing.T, db, name string) *azcosmos.ContainerClient {
 	t.Helper()
