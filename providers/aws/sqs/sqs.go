@@ -820,6 +820,7 @@ func batchEntryToSendInput(queue string, entry *driver.BatchSendEntry) driver.Se
 		DeduplicationID:   entry.DeduplicationID,
 		Attributes:        entry.Attributes,
 		MessageAttributes: entry.MessageAttributes,
+		SystemAttributes:  entry.SystemAttributes,
 	}
 }
 

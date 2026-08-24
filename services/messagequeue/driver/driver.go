@@ -111,6 +111,9 @@ type BatchSendEntry struct {
 	DeduplicationID   string
 	Attributes        map[string]string
 	MessageAttributes map[string]MessageAttributeValue
+	// SystemAttributes are SQS message system attributes (AWS SQS; the only
+	// supported key is AWSTraceHeader).
+	SystemAttributes map[string]MessageAttributeValue
 }
 
 // BatchSendResult is the result of a batch send.

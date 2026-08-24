@@ -157,3 +157,107 @@ func TestSDKSQSAWSTraceHeaderSystemAttribute(t *testing.T) {
 		t.Fatalf("AWSTraceHeader = %q, want %q", v, trace)
 	}
 }
+
+// TestSDKSQSSendMessageBatchTraceHeader confirms SendMessageBatch accepts the
+// AWSTraceHeader message system attribute per entry, returns
+// MD5OfMessageSystemAttributes per successful entry, and that ReceiveMessage
+// surfaces AWSTraceHeader in the message Attributes map. Matches real SQS.
+func TestSDKSQSSendMessageBatchTraceHeader(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	q, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{QueueName: aws.String("batch-trace-q")})
+	if err != nil {
+		t.Fatalf("CreateQueue: %v", err)
+	}
+
+	const trace = "Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1"
+
+	out, err := client.SendMessageBatch(ctx, &awssqs.SendMessageBatchInput{
+		QueueUrl: q.QueueUrl,
+		Entries: []sqstypes.SendMessageBatchRequestEntry{
+			{
+				Id:          aws.String("m1"),
+				MessageBody: aws.String("traced-batch"),
+				MessageSystemAttributes: map[string]sqstypes.MessageSystemAttributeValue{
+					string(sqstypes.MessageSystemAttributeNameForSendsAWSTraceHeader): {
+						DataType:    aws.String("String"),
+						StringValue: aws.String(trace),
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendMessageBatch: %v", err)
+	}
+
+	if len(out.Successful) != 1 {
+		t.Fatalf("got %d successful, want 1 (failed=%d)", len(out.Successful), len(out.Failed))
+	}
+
+	if got := aws.ToString(out.Successful[0].MD5OfMessageSystemAttributes); got != wantTraceMD5(trace) {
+		t.Fatalf("MD5OfMessageSystemAttributes = %q, want %q", got, wantTraceMD5(trace))
+	}
+
+	rcv, err := client.ReceiveMessage(ctx, &awssqs.ReceiveMessageInput{
+		QueueUrl:            q.QueueUrl,
+		MaxNumberOfMessages: 1,
+		MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{
+			sqstypes.MessageSystemAttributeNameAWSTraceHeader,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveMessage: %v", err)
+	}
+
+	if len(rcv.Messages) != 1 {
+		t.Fatalf("got %d messages, want 1", len(rcv.Messages))
+	}
+
+	if v := rcv.Messages[0].Attributes["AWSTraceHeader"]; v != trace {
+		t.Fatalf("AWSTraceHeader = %q, want %q", v, trace)
+	}
+}
+
+// TestSDKSQSSystemAttributeInvalidKeyRejected confirms that a message system
+// attribute whose key is not AWSTraceHeader is rejected with a 4xx
+// InvalidParameterValue error on both SendMessage and SendMessageBatch, matching
+// real SQS (the only valid system attribute key is AWSTraceHeader).
+func TestSDKSQSSystemAttributeInvalidKeyRejected(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	q, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{QueueName: aws.String("bad-sysattr-q")})
+	if err != nil {
+		t.Fatalf("CreateQueue: %v", err)
+	}
+
+	badAttrs := map[string]sqstypes.MessageSystemAttributeValue{
+		"NotATraceHeader": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String("nope"),
+		},
+	}
+
+	if _, err := client.SendMessage(ctx, &awssqs.SendMessageInput{
+		QueueUrl:                q.QueueUrl,
+		MessageBody:             aws.String("body"),
+		MessageSystemAttributes: badAttrs,
+	}); err == nil {
+		t.Fatal("SendMessage with invalid system attribute key succeeded, want error")
+	}
+
+	if _, err := client.SendMessageBatch(ctx, &awssqs.SendMessageBatchInput{
+		QueueUrl: q.QueueUrl,
+		Entries: []sqstypes.SendMessageBatchRequestEntry{
+			{
+				Id:                      aws.String("m1"),
+				MessageBody:             aws.String("body"),
+				MessageSystemAttributes: badAttrs,
+			},
+		},
+	}); err == nil {
+		t.Fatal("SendMessageBatch with invalid system attribute key succeeded, want error")
+	}
+}
