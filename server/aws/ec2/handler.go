@@ -565,25 +565,27 @@ func writeErr(w http.ResponseWriter, err error) {
 // writeErrWithNotFound writes an error with caller-supplied NotFound and
 // FailedPrecondition codes so each resource type emits the right AWS error.
 func writeErrWithNotFound(w http.ResponseWriter, err error, notFoundCode, preconditionCode string) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode, err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode, msg)
 	case cerrors.IsAlreadyExists(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"ResourceAlreadyExists", err.Error())
+			"ResourceAlreadyExists", msg)
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"InvalidParameterValue", err.Error())
+			"InvalidParameterValue", msg)
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			preconditionCode, err.Error())
+			preconditionCode, msg)
 	case cerrors.GetCode(err) == cerrors.Unimplemented:
 		// An unsupported optional op is a client-facing 400 InvalidAction, not a
 		// 500 — matching how the launch-template ops answer an absent capability.
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"InvalidAction", err.Error())
+			"InvalidAction", msg)
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError,
-			"InternalError", err.Error())
+			"InternalError", msg)
 	}
 }
