@@ -9,6 +9,15 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
+// maxPutEventsEntries is the maximum number of entries EventBridge accepts in a
+// single PutEvents request.
+const maxPutEventsEntries = 10
+
+// putEventsEntryCountMessage is the ValidationException detail EventBridge
+// returns when a PutEvents request carries fewer than 1 or more than 10 entries.
+const putEventsEntryCountMessage = "1 validation error detected: Value at 'entries' failed to satisfy " +
+	"constraint: Member must have length less than or equal to 10 and greater than or equal to 1."
+
 // --- event buses ---
 
 func (h *Handler) createEventBus(w http.ResponseWriter, r *http.Request) {
@@ -281,6 +290,13 @@ func (h *Handler) listTargetsByRule(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) putEvents(w http.ResponseWriter, r *http.Request) {
 	var req putEventsRequest
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// EventBridge bounds a PutEvents request to between 1 and 10 entries; an
+	// out-of-range batch is rejected wholesale with a ValidationException.
+	if n := len(req.Entries); n < 1 || n > maxPutEventsEntries {
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", putEventsEntryCountMessage)
 		return
 	}
 

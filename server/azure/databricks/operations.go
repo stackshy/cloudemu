@@ -15,6 +15,7 @@ func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request
 
 	cfg := dbxdriver.WorkspaceConfig{
 		Name:          rp.ResourceName,
+		Subscription:  rp.Subscription,
 		ResourceGroup: rp.ResourceGroup,
 		Location:      body.Location,
 		Tags:          body.Tags,

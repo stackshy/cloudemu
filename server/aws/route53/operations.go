@@ -217,6 +217,26 @@ func rrSetKey(name, rtype, setID string) string {
 	return strings.ToLower(name) + "|" + strings.ToUpper(rtype) + "|" + setID
 }
 
+// validateRecordSet checks a single record set's fields are self-consistent,
+// independent of the zone's current state. Real Route 53 rejects these as part
+// of change-batch validation before any change is applied.
+func validateRecordSet(rr *resourceRecordSetXML) error {
+	if rr.Name == "" || rr.Type == "" {
+		return cerrors.New(cerrors.InvalidArgument, "record set name and type are required")
+	}
+
+	// Weighted routing record sets require a non-empty SetIdentifier that
+	// distinguishes them from their siblings at the same name+type. Real Route 53
+	// rejects a weighted record set with a missing SetIdentifier as an
+	// InvalidChangeBatch (FailedPrecondition maps to that code).
+	if rr.Weight != nil && rr.SetIdentifier == "" {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"record set %q %s: SetIdentifier is required for weighted routing", rr.Name, rr.Type)
+	}
+
+	return nil
+}
+
 // validateChangeBatch checks every change would apply cleanly before any is
 // applied, so an invalid batch is rejected whole (nothing half-applied). It
 // simulates the batch against the zone's current record sets, folding in each
@@ -235,8 +255,8 @@ func (h *Handler) validateChangeBatch(r *http.Request, zoneID string, changes []
 	for i := range changes {
 		rr := &changes[i].ResourceRecordSet
 
-		if rr.Name == "" || rr.Type == "" {
-			return cerrors.New(cerrors.InvalidArgument, "record set name and type are required")
+		if err := validateRecordSet(rr); err != nil {
+			return err
 		}
 
 		key := rrSetKey(rr.Name, rr.Type, rr.SetIdentifier)
