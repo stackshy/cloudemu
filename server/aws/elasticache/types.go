@@ -107,6 +107,90 @@ type describeCacheClustersResponse struct {
 	Metadata responseMetadata            `xml:"ResponseMetadata"`
 }
 
+// nodeSnapshotXML mirrors AWS's NodeSnapshot — the per-node backup record a
+// caller reads to size a restore.
+type nodeSnapshotXML struct {
+	CacheNodeID         string `xml:"CacheNodeId,omitempty"`
+	CacheNodeCreateTime string `xml:"CacheNodeCreateTime,omitempty"`
+	SnapshotCreateTime  string `xml:"SnapshotCreateTime,omitempty"`
+	CacheSize           string `xml:"CacheSize,omitempty"`
+}
+
+// snapshotXML mirrors AWS's Snapshot resource. Only the fields the cache driver
+// can populate are emitted; the rest are omitted.
+type snapshotXML struct {
+	SnapshotName            string            `xml:"SnapshotName"`
+	CacheClusterID          string            `xml:"CacheClusterId,omitempty"`
+	ReplicationGroupID      string            `xml:"ReplicationGroupId,omitempty"`
+	SnapshotStatus          string            `xml:"SnapshotStatus,omitempty"`
+	SnapshotSource          string            `xml:"SnapshotSource,omitempty"`
+	Engine                  string            `xml:"Engine,omitempty"`
+	EngineVersion           string            `xml:"EngineVersion,omitempty"`
+	CacheNodeType           string            `xml:"CacheNodeType,omitempty"`
+	NumCacheNodes           int               `xml:"NumCacheNodes,omitempty"`
+	Port                    int               `xml:"Port,omitempty"`
+	CacheParameterGroupName string            `xml:"CacheParameterGroupName,omitempty"`
+	SnapshotRetentionLimit  int               `xml:"SnapshotRetentionLimit,omitempty"`
+	SnapshotWindow          string            `xml:"SnapshotWindow,omitempty"`
+	ARN                     string            `xml:"ARN,omitempty"`
+	NodeSnapshots           []nodeSnapshotXML `xml:"NodeSnapshots>NodeSnapshot,omitempty"`
+}
+
+type snapshotResult struct {
+	Snapshot snapshotXML `xml:"Snapshot"`
+}
+
+type createSnapshotResponse struct {
+	XMLName  xml.Name         `xml:"CreateSnapshotResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   snapshotResult   `xml:"CreateSnapshotResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type snapshotsListXML struct {
+	Snapshot []snapshotXML `xml:"Snapshot,omitempty"`
+}
+
+type describeSnapshotsResult struct {
+	Marker    string           `xml:"Marker,omitempty"`
+	Snapshots snapshotsListXML `xml:"Snapshots"`
+}
+
+type describeSnapshotsResponse struct {
+	XMLName  xml.Name                `xml:"DescribeSnapshotsResponse"`
+	Xmlns    string                  `xml:"xmlns,attr"`
+	Result   describeSnapshotsResult `xml:"DescribeSnapshotsResult"`
+	Metadata responseMetadata        `xml:"ResponseMetadata"`
+}
+
+// toSnapshotXML converts a driver Snapshot into its ElastiCache XML shape.
+func toSnapshotXML(s *cachedriver.Snapshot) snapshotXML {
+	created := s.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")
+
+	return snapshotXML{
+		SnapshotName:            s.Name,
+		CacheClusterID:          s.CacheClusterID,
+		ReplicationGroupID:      s.ReplicationGroupID,
+		SnapshotStatus:          s.Status,
+		SnapshotSource:          s.Source,
+		Engine:                  s.Engine,
+		EngineVersion:           s.EngineVersion,
+		CacheNodeType:           s.NodeType,
+		NumCacheNodes:           s.NumCacheNodes,
+		Port:                    s.Port,
+		CacheParameterGroupName: s.ParameterGroupName,
+		SnapshotRetentionLimit:  s.RetentionLimit,
+		SnapshotWindow:          s.SnapshotWindow,
+		ARN:                     s.ARN,
+		NodeSnapshots: []nodeSnapshotXML{{
+			CacheNodeID:         "0001",
+			CacheNodeCreateTime: created,
+			SnapshotCreateTime:  created,
+			CacheSize:           "0",
+		}},
+	}
+}
+
 // defaultParamGroupName derives the default cache parameter group name AWS
 // assigns to a cluster, e.g. "default.redis7" or "default.memcached1.6". For
 // redis the family is engine + major version; for memcached it is major.minor.

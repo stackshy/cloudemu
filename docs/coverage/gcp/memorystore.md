@@ -40,6 +40,15 @@ ReplicationGroups is an OPTIONAL capability, discovered by type assertion.
 | `DescribeReplicationGroups` |  |
 | `ModifyReplicationGroup` |  |
 
+### Snapshots
+
+Snapshots is an OPTIONAL capability, discovered by type assertion.
+
+| Operation | Description |
+| --- | --- |
+| `CreateSnapshot` |  |
+| `DescribeSnapshots` |  |
+
 ### SubnetGroups
 
 SubnetGroups is an OPTIONAL capability, discovered by type assertion. Cache

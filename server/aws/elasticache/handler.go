@@ -59,6 +59,8 @@ var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // stati
 	"DescribeReplicationGroups":    {},
 	"ModifyReplicationGroup":       {},
 	"DeleteReplicationGroup":       {},
+	"CreateSnapshot":               {},
+	"DescribeSnapshots":            {},
 }
 
 // sharedTagActions are the generic tag verbs ElastiCache shares with other
@@ -69,6 +71,17 @@ var sharedTagActions = map[string]struct{}{ //nolint:gochecknoglobals // static 
 	"AddTagsToResource":      {},
 	"ListTagsForResource":    {},
 	"RemoveTagsFromResource": {},
+}
+
+// sharedSnapshotActions are the snapshot verbs whose Action names collide with
+// EC2's EBS snapshots (CreateSnapshot / DescribeSnapshots) on the same query
+// wire. ElastiCache registers before EC2 (first-match-wins), so without a scope
+// gate this handler would steal every EBS snapshot call. Matches claims them
+// only when the SigV4 credential scope names "elasticache"; otherwise they fall
+// through to the EC2 EBS handler.
+var sharedSnapshotActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"CreateSnapshot":    {},
+	"DescribeSnapshots": {},
 }
 
 // scopeElastiCache is the SigV4 credential-scope service name for ElastiCache.
@@ -120,6 +133,13 @@ func (*Handler) Matches(r *http.Request) bool {
 		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == scopeElastiCache
 	}
 
+	// The snapshot verbs collide with EC2's EBS snapshots. Claim them only when
+	// the SigV4 credential scope names "elasticache"; an EC2-scoped call falls
+	// through to the EC2 EBS handler.
+	if _, shared := sharedSnapshotActions[action]; shared {
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == scopeElastiCache
+	}
+
 	return true
 }
 
@@ -168,6 +188,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteCacheParameterGroup(w, r)
 	case "DescribeCacheEngineVersions":
 		h.describeCacheEngineVersions(w, r)
+	case "CreateSnapshot":
+		h.createSnapshot(w, r)
+	case "DescribeSnapshots":
+		h.describeSnapshots(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown ElastiCache action: "+r.Form.Get("Action"))
@@ -201,6 +225,8 @@ func notFoundCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	case strings.Contains(msg, "snapshot"):
+		return "SnapshotNotFoundFault"
 	case strings.Contains(msg, "replication group"):
 		return "ReplicationGroupNotFoundFault"
 	case strings.Contains(msg, "cache subnet group"):
@@ -219,6 +245,8 @@ func alreadyExistsCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	case strings.Contains(msg, "snapshot"):
+		return "SnapshotAlreadyExistsFault"
 	case strings.Contains(msg, "replication group"):
 		return "ReplicationGroupAlreadyExists"
 	case strings.Contains(msg, "cache subnet group"):

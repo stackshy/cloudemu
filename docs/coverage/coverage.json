@@ -1553,6 +1553,18 @@
         ]
       },
       {
+        "name": "Snapshots",
+        "doc": "Snapshots is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "CreateSnapshot"
+          },
+          {
+            "name": "DescribeSnapshots"
+          }
+        ]
+      },
+      {
         "name": "SubnetGroups",
         "doc": "SubnetGroups is an OPTIONAL capability, discovered by type assertion. Cache",
         "operations": [
