@@ -56,7 +56,7 @@ capability the code does not implement. Machine-readable: [`coverage.json`](./co
 | `sesv2` | [SESV2](./aws/sesv2.md) | — | — | — | 113 |
 | `sfn` | [SFN](./aws/sfn.md) | — | — | — | 37 |
 | `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | — | 35 |
-| `tablestorage` | — | [TableStorage](./azure/tablestorage.md) | — | — | 8 |
+| `tablestorage` | — | [TableStorage](./azure/tablestorage.md) | — | — | 9 |
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 125 |
 | `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |
 | `wafv2` | [WAFv2](./aws/wafv2.md) | — | — | — | 39 |

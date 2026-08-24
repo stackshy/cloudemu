@@ -16,8 +16,8 @@ import (
 // GetAccountAuthorizationDetails returns a single aggregated snapshot of every
 // user, group, role, and managed policy in the account, each with its inline and
 // attached policies. It reads the same surfaces the individual list operations
-// expose, so it introduces no new provider state: what isn't modeled (user/group
-// inline policies, group-attached managed policies, RoleLastUsed,
+// expose (ListUserPolicies, ListGroupPolicies, ListAttachedGroupPolicies, etc.),
+// so it introduces no new provider state; what isn't modeled (RoleLastUsed,
 // PermissionsBoundary) is emitted empty or omitted rather than fabricated.
 
 type stringListXML struct {
@@ -268,6 +268,7 @@ func (h *Handler) buildUserDetails(ctx context.Context) []userDetailXML {
 
 		arns, _ := h.iam.ListAttachedUserPolicies(ctx, u.Name)
 		detail.AttachedManagedPolicies = attachedPoliciesFromARNs(arns)
+		detail.UserPolicyList = policyDetailListXML{Member: h.userInlinePolicies(ctx, u.Name)}
 
 		out = append(out, detail)
 	}
@@ -303,16 +304,59 @@ func (h *Handler) buildGroupDetails(ctx context.Context) []groupDetailXML {
 
 	for i := range groups {
 		g := &groups[i]
+		arns := h.groupAttachedPolicyARNs(ctx, g.Name)
 		out = append(out, groupDetailXML{
-			Path:       g.Path,
-			GroupName:  g.Name,
-			GroupID:    g.ID,
-			Arn:        g.ARN,
-			CreateDate: g.CreatedAt,
+			Path:                    g.Path,
+			GroupName:               g.Name,
+			GroupID:                 g.ID,
+			Arn:                     g.ARN,
+			CreateDate:              g.CreatedAt,
+			AttachedManagedPolicies: attachedPoliciesFromARNs(arns),
+			GroupPolicyList:         policyDetailListXML{Member: h.groupInlinePolicies(ctx, g.Name)},
 		})
 	}
 
 	return out
+}
+
+// userInlinePolicies returns a user's inline (embedded) policies as name+document
+// pairs, sorted by name. Empty when the driver does not expose inline user
+// policies. It reads the same surface ListUserPolicies/GetUserPolicy expose.
+func (h *Handler) userInlinePolicies(ctx context.Context, userName string) []policyDetailXML {
+	pm, ok := h.userPolicies()
+	if !ok {
+		return nil
+	}
+
+	return inlinePolicyDetails(ctx, userName, pm.ListUserPolicies, pm.GetUserPolicy)
+}
+
+// groupInlinePolicies returns a group's inline policies as name+document pairs,
+// sorted by name. It reads the same surface ListGroupPolicies/GetGroupPolicy
+// expose.
+func (h *Handler) groupInlinePolicies(ctx context.Context, groupName string) []policyDetailXML {
+	pm, ok := h.groupPolicies()
+	if !ok {
+		return nil
+	}
+
+	return inlinePolicyDetails(ctx, groupName, pm.ListGroupPolicies, pm.GetGroupPolicy)
+}
+
+// groupAttachedPolicyARNs returns the ARNs of the managed policies attached to a
+// group, or nil when the driver does not expose group-attached policies.
+func (h *Handler) groupAttachedPolicyARNs(ctx context.Context, groupName string) []string {
+	pm, ok := h.groupPolicies()
+	if !ok {
+		return nil
+	}
+
+	arns, err := pm.ListAttachedGroupPolicies(ctx, groupName)
+	if err != nil {
+		return nil
+	}
+
+	return arns
 }
 
 func (h *Handler) buildRoleDetails(ctx context.Context) []roleDetailXML {
@@ -364,13 +408,15 @@ func roleInstanceProfiles(role *iamdriver.RoleInfo, profiles []iamdriver.Instanc
 	return out
 }
 
-func (h *Handler) roleInlinePolicies(ctx context.Context, roleName string) []policyDetailXML {
-	pm, ok := h.rolePolicies()
-	if !ok {
-		return nil
-	}
-
-	names, err := pm.ListRolePolicies(ctx, roleName)
+// inlinePolicyDetails materializes an owner's inline policies as sorted
+// name+document pairs, using the list/get pair for whichever entity kind (role,
+// user, or group) the caller binds. A policy whose document can't be read is
+// skipped rather than emitted empty.
+func inlinePolicyDetails(ctx context.Context, owner string,
+	list func(context.Context, string) ([]string, error),
+	get func(context.Context, string, string) (string, error),
+) []policyDetailXML {
+	names, err := list(ctx, owner)
 	if err != nil {
 		return nil
 	}
@@ -380,7 +426,7 @@ func (h *Handler) roleInlinePolicies(ctx context.Context, roleName string) []pol
 	out := make([]policyDetailXML, 0, len(names))
 
 	for _, name := range names {
-		doc, err := pm.GetRolePolicy(ctx, roleName, name)
+		doc, err := get(ctx, owner, name)
 		if err != nil {
 			continue
 		}
@@ -389,6 +435,15 @@ func (h *Handler) roleInlinePolicies(ctx context.Context, roleName string) []pol
 	}
 
 	return out
+}
+
+func (h *Handler) roleInlinePolicies(ctx context.Context, roleName string) []policyDetailXML {
+	pm, ok := h.rolePolicies()
+	if !ok {
+		return nil
+	}
+
+	return inlinePolicyDetails(ctx, roleName, pm.ListRolePolicies, pm.GetRolePolicy)
 }
 
 func (h *Handler) buildPolicyDetails(ctx context.Context, filter gaadFilter) []managedPolicyDetailXML {

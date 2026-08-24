@@ -435,9 +435,23 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		actionsEnabled = *cfg.ActionsEnabled
 	}
 
+	// When PutMetricAlarm updates an existing alarm, its state is left unchanged and
+	// tags supplied in this operation are ignored (real AWS API_PutMetricAlarm semantics).
+	// The rest of the configuration is completely overwritten.
+	state := "INSUFFICIENT_DATA"
+	stateReason := ""
+	stateUpdated := m.opts.Clock.Now()
+
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
 		tags[k] = v
+	}
+
+	if existing, ok := m.alarms.Get(cfg.Name); ok {
+		state = existing.State
+		stateReason = existing.StateReason
+		stateUpdated = existing.StateUpdatedTimestamp
+		tags = existing.Tags
 	}
 
 	alarm := &alarmData{
@@ -450,8 +464,9 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		Period:                  cfg.Period,
 		EvaluationPeriods:       cfg.EvaluationPeriods,
 		Stat:                    cfg.Stat,
-		State:                   "INSUFFICIENT_DATA",
-		StateUpdatedTimestamp:   m.opts.Clock.Now(),
+		State:                   state,
+		StateReason:             stateReason,
+		StateUpdatedTimestamp:   stateUpdated,
 		AlarmActions:            append([]string{}, cfg.AlarmActions...),
 		OKActions:               append([]string{}, cfg.OKActions...),
 		InsufficientDataActions: append([]string{}, cfg.InsufficientDataActions...),

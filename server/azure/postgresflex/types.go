@@ -85,7 +85,7 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 		ID:       azurearm.BuildResourceID(subscription, resourceGroup, providerName, resourceFlexibleServers, inst.ID),
 		Name:     inst.ID,
 		Type:     providerName + "/" + resourceFlexibleServers,
-		Location: inst.AvailabilityZone,
+		Location: inst.Location,
 		Tags:     inst.Tags,
 		SKU: &armSKU{
 			Name: inst.InstanceClass,
