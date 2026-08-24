@@ -211,6 +211,9 @@ func (h *Handler) listAliases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort before paging: the provider returns aliases in map-iteration order.
+	sort.Slice(aliases, func(i, j int) bool { return aliases[i].Name < aliases[j].Name })
+
 	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(aliases))
 	if err != nil {
 		writeErr(w, err)
