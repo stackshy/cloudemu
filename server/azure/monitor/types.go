@@ -1,39 +1,65 @@
 package monitor
 
-// ARM JSON shapes for microsoft.insights metric alerts.
+import "github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 
-type alertRequest struct {
+// resourceRequest is the inbound CreateOrUpdate body shared by every
+// microsoft.insights ARM resource type. The whole properties object is captured
+// as-is so it round-trips untouched.
+type resourceRequest struct {
 	Location   string            `json:"location"`
 	Tags       map[string]string `json:"tags,omitempty"`
-	Properties alertRequestProps `json:"properties"`
+	Properties map[string]any    `json:"properties"`
 }
 
-type alertRequestProps struct {
-	Description    string           `json:"description,omitempty"`
-	Severity       int              `json:"severity,omitempty"`
-	Enabled        bool             `json:"enabled,omitempty"`
-	Scopes         []string         `json:"scopes,omitempty"`
-	EvaluationFreq string           `json:"evaluationFrequency,omitempty"`
-	WindowSize     string           `json:"windowSize,omitempty"`
-	Criteria       map[string]any   `json:"criteria,omitempty"`
-	AutoMitigate   bool             `json:"autoMitigate,omitempty"`
-	Actions        []map[string]any `json:"actions,omitempty"`
+// resourceResponse is the ARM resource envelope.
+type resourceResponse struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Properties map[string]any    `json:"properties"`
 }
 
-type alertResponse struct {
-	ID         string             `json:"id"`
-	Name       string             `json:"name"`
-	Type       string             `json:"type"`
-	Location   string             `json:"location"`
-	Tags       map[string]string  `json:"tags,omitempty"`
-	Properties alertResponseProps `json:"properties"`
+// resourceListResponse is the ARM list envelope. Value is always a non-nil slice
+// so an empty list serializes as {"value":[]} rather than {"value":null}.
+type resourceListResponse struct {
+	Value []resourceResponse `json:"value"`
 }
 
-type alertResponseProps struct {
-	alertRequestProps
-	ProvisioningState string `json:"provisioningState"`
+// toResourceJSON renders a stored resource under the request's path scope.
+func toResourceJSON(rp *azurearm.ResourcePath, kind string, res *armResource) resourceResponse {
+	location := res.Location
+	if location == "" {
+		location = defaultLocation
+	}
+
+	props := res.Properties
+	if props == nil {
+		props = map[string]any{}
+	}
+
+	return resourceResponse{
+		ID:         azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, kind, rp.ResourceName),
+		Name:       rp.ResourceName,
+		Type:       armType(kind),
+		Location:   location,
+		Tags:       res.Tags,
+		Properties: props,
+	}
 }
 
-type alertListResponse struct {
-	Value []alertResponse `json:"value"`
+// withProvisioningState injects a terminal provisioningState into a metric
+// alert's properties (real metricAlerts carry provisioningState=Succeeded), so a
+// state-refresh read sees a settled resource.
+func withProvisioningState(props map[string]any) map[string]any {
+	if props == nil {
+		props = map[string]any{}
+	}
+
+	if _, ok := props["provisioningState"]; !ok {
+		props["provisioningState"] = "Succeeded"
+	}
+
+	return props
 }
