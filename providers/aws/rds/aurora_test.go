@@ -31,9 +31,16 @@ func TestClusterEndpointLifecycle(t *testing.T) {
 		t.Fatalf("endpoint on missing cluster: want NotFound, got %v", err)
 	}
 
+	// Describe returns the built-in WRITER + READER endpoints plus the custom one.
 	byCluster, _ := m.DescribeDBClusterEndpoints(ctx, "cl", "")
-	if len(byCluster) != 1 {
-		t.Fatalf("describe by cluster: got %d, want 1", len(byCluster))
+
+	types := map[string]int{}
+	for i := range byCluster {
+		types[byCluster[i].EndpointType]++
+	}
+
+	if types["WRITER"] != 1 || types["READER"] != 1 || types["CUSTOM"] != 1 {
+		t.Fatalf("describe by cluster types = %v, want one each of WRITER/READER/CUSTOM", types)
 	}
 
 	if _, err := m.ModifyDBClusterEndpoint(ctx, "reader-ep", rdsdriver.ModifyClusterEndpointInput{EndpointType: "ANY"}); err != nil {
