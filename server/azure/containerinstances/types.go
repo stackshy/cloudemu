@@ -29,7 +29,42 @@ type containerGroupProperties struct {
 	RestartPolicy     string             `json:"restartPolicy,omitempty"`
 	ProvisioningState string             `json:"provisioningState,omitempty"`
 	Containers        []containerJSON    `json:"containers,omitempty"`
+	IPAddress         *ipAddressJSON     `json:"ipAddress,omitempty"`
 	InstanceView      *groupInstanceView `json:"instanceView,omitempty"`
+}
+
+// ipAddressJSON mirrors IpAddress: decoded on input (requested type/ports/label)
+// and encoded on output (with the server-assigned ip and computed fqdn).
+type ipAddressJSON struct {
+	Type         string     `json:"type,omitempty"`
+	Ports        []portJSON `json:"ports,omitempty"`
+	IP           string     `json:"ip,omitempty"`
+	DNSNameLabel string     `json:"dnsNameLabel,omitempty"`
+	FQDN         string     `json:"fqdn,omitempty"`
+}
+
+// portJSON mirrors a Port entry on an ipAddress.
+type portJSON struct {
+	Port     int    `json:"port,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// execRequest mirrors ContainerExecRequest (POST body of ExecuteCommand).
+type execRequest struct {
+	Command      string            `json:"command"`
+	TerminalSize *execTerminalJSON `json:"terminalSize,omitempty"`
+}
+
+// execTerminalJSON mirrors ContainerExecRequestTerminalSize.
+type execTerminalJSON struct {
+	Rows int `json:"rows,omitempty"`
+	Cols int `json:"cols,omitempty"`
+}
+
+// execResponse mirrors ContainerExecResponse.
+type execResponse struct {
+	WebSocketURI string `json:"webSocketUri"`
+	Password     string `json:"password"`
 }
 
 // groupInstanceView mirrors the group-level instanceView.
@@ -112,9 +147,29 @@ func toConfig(rp *azurearm.ResourcePath, body *containerGroupJSON) driver.Contai
 		cfg.OSType = body.Properties.OSType
 		cfg.RestartPolicy = body.Properties.RestartPolicy
 		cfg.Containers = toContainerConfigs(body.Properties.Containers)
+		cfg.IPAddress = toIPAddress(body.Properties.IPAddress)
 	}
 
 	return cfg
+}
+
+// toIPAddress maps the request's ipAddress block onto the driver config.
+func toIPAddress(in *ipAddressJSON) *driver.IPAddress {
+	if in == nil {
+		return nil
+	}
+
+	out := &driver.IPAddress{
+		Type:         in.Type,
+		DNSNameLabel: in.DNSNameLabel,
+		IP:           in.IP,
+	}
+
+	for _, p := range in.Ports {
+		out.Ports = append(out.Ports, driver.Port{Port: p.Port, Protocol: p.Protocol})
+	}
+
+	return out
 }
 
 // toContainerConfigs maps the request's container entries onto driver configs.
