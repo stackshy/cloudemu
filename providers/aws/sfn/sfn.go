@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
@@ -56,7 +57,11 @@ type smData struct {
 // execData is an execution plus its own lock.
 type execData struct {
 	exec driver.Execution
-	mu   sync.RWMutex
+	// settle overlays a RUNNING window over the stored (terminal) status on the
+	// Describe surface under AsyncSettle; zero-value reports the stored status
+	// immediately. A running execution has no stop date or output yet.
+	settle settle.Window
+	mu     sync.RWMutex
 }
 
 // actData is an activity plus its own lock.
