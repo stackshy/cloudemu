@@ -9,6 +9,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
+// subLocation is the ?location sub-resource key (GetBucketLocation).
+const subLocation = "location"
+
 // maxConfigBody caps a bucket-configuration document. Real S3 bucket policies
 // top out at 20 KB; this is a generous ceiling covering cors/lifecycle/website
 // XML as well.
@@ -40,7 +43,7 @@ var notConfiguredErr = map[string]string{
 var configSubresources = []string{
 	"policy", "cors", "website", "lifecycle", "replication", "encryption",
 	"object-lock", "publicAccessBlock", "ownershipControls",
-	"requestPayment", "accelerate", "logging", "location", "policyStatus",
+	"requestPayment", "accelerate", "logging", subLocation, "policyStatus",
 }
 
 // configSubresourceKey returns the read-only config sub-resource query key
@@ -114,6 +117,20 @@ func (h *Handler) deleteBucketConfig(w http.ResponseWriter, r *http.Request, buc
 // getBucketConfig echoes a stored document, or returns the AWS "not
 // configured"/default response when the sub-resource was never set.
 func (h *Handler) getBucketConfig(w http.ResponseWriter, r *http.Request, bucket, sub string) {
+	// GetBucketLocation reports the region the bucket was created in
+	// (CreateBucketConfiguration.LocationConstraint); us-east-1 is the empty
+	// constraint. It is derived from bucket state, never a stored document.
+	if sub == subLocation {
+		region := h.bucketRegion(r.Context(), bucket)
+		if region == usEast1 {
+			region = ""
+		}
+
+		wire.WriteXML(w, http.StatusOK, locationXML{Xmlns: xmlns, Location: region})
+
+		return
+	}
+
 	if h.rawConfig != nil {
 		if body, err := h.rawConfig.GetBucketConfig(r.Context(), bucket, sub); err == nil {
 			writeRawBucketConfig(w, sub, body)
@@ -153,7 +170,7 @@ func writeConfigDefault(w http.ResponseWriter, sub string) {
 		wire.WriteXML(w, http.StatusOK, accelerateXML{Xmlns: xmlns})
 	case "logging":
 		wire.WriteXML(w, http.StatusOK, loggingXML{Xmlns: xmlns})
-	case "location":
+	case subLocation:
 		// An empty LocationConstraint denotes us-east-1.
 		wire.WriteXML(w, http.StatusOK, locationXML{Xmlns: xmlns})
 	case "policyStatus":
@@ -182,6 +199,8 @@ type loggingXML struct {
 type locationXML struct {
 	XMLName xml.Name `xml:"LocationConstraint"`
 	Xmlns   string   `xml:"xmlns,attr"`
+	// Location is the region name (character data); empty denotes us-east-1.
+	Location string `xml:",chardata"`
 }
 
 type policyStatusXML struct {

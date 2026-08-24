@@ -9881,6 +9881,15 @@
         ]
       },
       {
+        "name": "ObjectCopier",
+        "doc": "ObjectCopier is an OPTIONAL capability (discovered by type assertion, like",
+        "operations": [
+          {
+            "name": "CopyObjectV2"
+          }
+        ]
+      },
+      {
         "name": "RawBucketConfig",
         "doc": "RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like",
         "operations": [
@@ -9895,6 +9904,15 @@
           {
             "name": "PutBucketConfig",
             "doc": "PutBucketConfig stores document body under the sub-resource name (e.g."
+          }
+        ]
+      },
+      {
+        "name": "RegionalBucket",
+        "doc": "RegionalBucket is an OPTIONAL capability a storage provider implements to",
+        "operations": [
+          {
+            "name": "CreateBucketInRegion"
           }
         ]
       },
