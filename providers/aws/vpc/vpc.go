@@ -21,6 +21,13 @@ const (
 	defaultFlowLogRecordLimit = 10
 )
 
+// Default security group identity. EC2 gives every VPC a group named "default"
+// with this exact description; users can edit its rules but not delete it.
+const (
+	defaultSGName        = "default"
+	defaultSGDescription = "default VPC security group"
+)
+
 // Compile-time checks. The optional capabilities are asserted too: without
 // this a signature drifting out of shape would silently stop satisfying the
 // interface and every call would answer InvalidAction at runtime instead of
@@ -166,6 +173,9 @@ type sgData struct {
 	IngressRules []driver.SecurityRule
 	EgressRules  []driver.SecurityRule
 	Tags         map[string]string
+	// IsDefault marks the group EC2 auto-creates with every VPC. It cannot be
+	// deleted on its own (Client.CannotDelete) and disappears with the VPC.
+	IsDefault bool
 }
 
 // New creates a new VPC mock with the given configuration options.
@@ -254,12 +264,36 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 	m.vpcs.Set(id, v)
 
 	m.createMainRouteTable(id, cfg.CIDRBlock)
+	m.createDefaultSecurityGroup(id)
 
 	m.mu.RLock()
 	info := toVPCInfo(v)
 	m.mu.RUnlock()
 
 	return &info, nil
+}
+
+// createDefaultSecurityGroup gives the new VPC the group EC2 auto-creates for
+// it: name "default", an allow-all egress rule, and a self-referencing ingress
+// rule that permits all traffic between members of the group. The group cannot
+// be deleted directly and is removed when the VPC is deleted.
+func (m *Mock) createDefaultSecurityGroup(vpcID string) {
+	id := idgen.GenerateID("sg-")
+
+	m.securityGroups.Set(id, &sgData{
+		ID:          id,
+		Name:        defaultSGName,
+		Description: defaultSGDescription,
+		VPCID:       vpcID,
+		IsDefault:   true,
+		IngressRules: []driver.SecurityRule{{
+			Protocol:          allTrafficProtocol,
+			ReferencedGroupID: id,
+			RuleID:            idgen.GenerateID("sgr-"),
+		}},
+		EgressRules: []driver.SecurityRule{newDefaultEgressRule()},
+		Tags:        map[string]string{},
+	})
 }
 
 // createMainRouteTable gives the new VPC the route table EC2 creates for it,
@@ -308,10 +342,27 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 			"DependencyViolation: network interface %q is still attached in vpc %q", eni, id)
 	}
 
-	m.vpcs.Delete(id)
+	// Real EC2 refuses the delete while user-managed dependencies remain and
+	// auto-removes the ones it created (main route table, default security
+	// group). An active peering connection does not block — it is deleted with
+	// the VPC — so it is deliberately absent from the dependency scan.
+	if dep, blocked := m.vpcDependency(id); blocked {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: the vpc %q has dependencies and cannot be deleted (%s)", id, dep)
+	}
 
+	m.vpcs.Delete(id)
+	m.deleteMainRouteTable(id)
+	m.deleteDefaultSecurityGroup(id)
+	m.markVPCPeeringsDeleted(id)
+
+	return nil
+}
+
+// deleteMainRouteTable removes the VPC's main route table and its association.
+func (m *Mock) deleteMainRouteTable(vpcID string) {
 	for rtID, rt := range m.routeTables.All() {
-		if rt.VPCID != id || !rt.IsMain {
+		if rt.VPCID != vpcID || !rt.IsMain {
 			continue
 		}
 
@@ -323,8 +374,91 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 			}
 		}
 	}
+}
 
-	return nil
+// deleteDefaultSecurityGroup removes the group EC2 auto-created with the VPC.
+func (m *Mock) deleteDefaultSecurityGroup(vpcID string) {
+	for sgID, sg := range m.securityGroups.All() {
+		if sg.VPCID == vpcID && sg.IsDefault {
+			m.securityGroups.Delete(sgID)
+		}
+	}
+}
+
+// markVPCPeeringsDeleted transitions any peering that referenced the VPC to
+// deleted, mirroring real EC2's Deleting -> Deleted cascade. Peering never
+// blocks the delete, so this runs after the VPC is gone.
+func (m *Mock) markVPCPeeringsDeleted(vpcID string) {
+	for _, p := range m.peerings.All() {
+		if p.RequesterVPC == vpcID || p.AccepterVPC == vpcID {
+			p.Status = PeeringStatusDeleted
+		}
+	}
+}
+
+// vpcDependency reports the first user-managed resource that blocks deleting
+// the VPC, in the order real EC2 surfaces them. The main route table, the
+// default security group, and the default network ACL are excluded because EC2
+// removes them with the VPC; active peering connections are excluded because
+// they are deleted alongside it. Live NAT gateways, running instances, and
+// interface endpoints are already caught by the attached-ENI check in DeleteVPC.
+func (m *Mock) vpcDependency(id string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, s := range m.subnets.All() {
+		if s.VPCID == id {
+			return "subnet " + s.ID, true
+		}
+	}
+
+	for _, sg := range m.securityGroups.All() {
+		if sg.VPCID == id && !sg.IsDefault {
+			return "security group " + sg.ID, true
+		}
+	}
+
+	if dep, blocked := m.vpcRoutingDependency(id); blocked {
+		return dep, true
+	}
+
+	return m.vpcGatewayDependency(id)
+}
+
+// vpcRoutingDependency reports a blocking non-main route table or non-default
+// network ACL in the VPC.
+func (m *Mock) vpcRoutingDependency(id string) (string, bool) {
+	for _, rt := range m.routeTables.All() {
+		if rt.VPCID == id && !rt.IsMain {
+			return "route table " + rt.ID, true
+		}
+	}
+
+	for _, acl := range m.networkACLs.All() {
+		if acl.VPCID == id && !acl.IsDefault {
+			return "network ACL " + acl.ID, true
+		}
+	}
+
+	return "", false
+}
+
+// vpcGatewayDependency reports a blocking attached internet gateway or VPC
+// endpoint (gateway endpoints hold no ENI, so they need an explicit scan).
+func (m *Mock) vpcGatewayDependency(id string) (string, bool) {
+	for _, igw := range m.igws.All() {
+		if igw.VpcID == id && igw.State == IGWStateAttached {
+			return "internet gateway " + igw.ID, true
+		}
+	}
+
+	for _, ep := range m.endpoints.All() {
+		if ep.VPCID == id {
+			return "vpc endpoint " + ep.ID, true
+		}
+	}
+
+	return "", false
 }
 
 // DescribeVPCs returns VPCs matching the given IDs, or all VPCs if ids is empty.
@@ -551,11 +685,21 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 	return &info, nil
 }
 
-// DeleteSecurityGroup deletes the security group with the given ID.
+// DeleteSecurityGroup deletes the security group with the given ID. The group
+// EC2 auto-creates for a VPC cannot be deleted directly; real EC2 answers
+// Client.CannotDelete, which the wire layer maps from this FailedPrecondition.
 func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
-	if !m.securityGroups.Delete(id) {
+	sg, ok := m.securityGroups.Get(id)
+	if !ok {
 		return errors.Newf(errors.NotFound, "security group %q not found", id)
 	}
+
+	if sg.IsDefault {
+		return errors.Newf(errors.FailedPrecondition,
+			"CannotDelete: default security group %q cannot be deleted", id)
+	}
+
+	m.securityGroups.Delete(id)
 
 	return nil
 }
