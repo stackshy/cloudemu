@@ -249,19 +249,47 @@ func (h *Handler) putLogEvents(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, putLogEventsResponse{NextSequenceToken: "0"})
 }
 
+// getLogEventsWindowStart picks the slice offset for a GetLogEvents page over an
+// ascending (oldest→newest) event set. A continuation token carries an absolute
+// position and wins; otherwise the AWS default (startFromHead false) windows from
+// the tail (latest events first) and startFromHead=true windows from the head.
+func getLogEventsWindowStart(nextToken string, startFromHead *bool, total, size int) int {
+	var start int
+
+	switch {
+	case nextToken != "":
+		start = decodePositionToken(nextToken)
+	case startFromHead != nil && *startFromHead:
+		start = 0
+	default:
+		start = total - size
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	if start > total {
+		start = total
+	}
+
+	return start
+}
+
 func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 	var req getLogEventsRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	// Fetch the full ordered slice (Limit 0) and page it here so the forward /
-	// backward tokens can carry a real position.
+	// Fetch the full ordered slice (Limit -1 = no cap) and page it here so the
+	// forward / backward tokens can carry a real position across all events.
 	events, err := h.logs.GetLogEvents(r.Context(), &logdriver.LogQueryInput{
 		LogGroup:  req.LogGroupName,
 		LogStream: req.LogStreamName,
 		StartTime: millisToTime(req.StartTime),
 		EndTime:   millisToTime(req.EndTime),
+		Limit:     -1,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -273,10 +301,7 @@ func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 		size = defaultEventLimit
 	}
 
-	start := decodePositionToken(req.NextToken)
-	if start > len(events) {
-		start = len(events)
-	}
+	start := getLogEventsWindowStart(req.NextToken, req.StartFromHead, len(events), size)
 
 	end := start + size
 	if end > len(events) {
@@ -314,13 +339,15 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 		stream = req.LogStreamNames[0]
 	}
 
-	// Fetch every match (Limit 0) and page here so a NextToken can be handed back.
+	// Fetch every match (Limit -1 = no cap) and page here so a NextToken can be
+	// handed back across all matches.
 	events, err := h.logs.FilterLogEvents(r.Context(), &logdriver.FilterLogEventsInput{
 		LogGroup:      req.LogGroupName,
 		LogStream:     stream,
 		FilterPattern: req.FilterPattern,
 		StartTime:     millisToTime(req.StartTime),
 		EndTime:       millisToTime(req.EndTime),
+		Limit:         -1,
 	})
 	if err != nil {
 		writeErr(w, err)

@@ -281,7 +281,7 @@ func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]d
 	}
 
 	limit := input.Limit
-	if limit <= 0 {
+	if limit == 0 {
 		limit = defaultLogLimit
 	}
 
@@ -300,7 +300,9 @@ func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]d
 		}
 	}
 
-	if len(results) > limit {
+	// A negative limit means "no cap" — the wire handler fetches the full
+	// ordered set and paginates it itself.
+	if limit > 0 && len(results) > limit {
 		results = results[:limit]
 	}
 
@@ -366,7 +368,7 @@ func (m *Mock) FilterLogEvents(
 	}
 
 	limit := input.Limit
-	if limit <= 0 {
+	if limit == 0 {
 		limit = defaultLogLimit
 	}
 
@@ -381,7 +383,9 @@ func (m *Mock) FilterLogEvents(
 		}
 	}
 
-	if len(results) > limit {
+	// A negative limit means "no cap" — the wire handler fetches the full
+	// ordered set and paginates it itself.
+	if limit > 0 && len(results) > limit {
 		results = results[:limit]
 	}
 

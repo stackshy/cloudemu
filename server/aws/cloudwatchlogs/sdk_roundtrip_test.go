@@ -405,8 +405,11 @@ func TestSDKGetLogEventsPagination(t *testing.T) {
 		t.Fatalf("PutLogEvents: %v", err)
 	}
 
+	// StartFromHead=true walks oldest→newest; the AWS default (false) returns the
+	// latest events first, which TestSDKGetLogEventsStartFromHeadDefault covers.
 	first, err := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
-		LogGroupName: aws.String("/pg/g"), LogStreamName: aws.String("s1"), Limit: aws.Int32(2),
+		LogGroupName: aws.String("/pg/g"), LogStreamName: aws.String("s1"),
+		Limit: aws.Int32(2), StartFromHead: aws.Bool(true),
 	})
 	if err != nil {
 		t.Fatalf("GetLogEvents page 1: %v", err)
@@ -448,6 +451,103 @@ func TestSDKGetLogEventsPagination(t *testing.T) {
 	if aws.ToString(third.NextForwardToken) != aws.ToString(second.NextForwardToken) {
 		t.Fatalf("terminal forward token = %q, want same as %q",
 			aws.ToString(third.NextForwardToken), aws.ToString(second.NextForwardToken))
+	}
+}
+
+func mustLogGroupStream(t *testing.T, client *cwl.Client, group, stream string) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := client.CreateLogGroup(ctx, &cwl.CreateLogGroupInput{LogGroupName: aws.String(group)}); err != nil {
+		t.Fatalf("CreateLogGroup: %v", err)
+	}
+
+	if _, err := client.CreateLogStream(ctx, &cwl.CreateLogStreamInput{
+		LogGroupName: aws.String(group), LogStreamName: aws.String(stream),
+	}); err != nil {
+		t.Fatalf("CreateLogStream: %v", err)
+	}
+}
+
+// TestSDKGetLogEventsStartFromHeadDefault pins the AWS default: with
+// startFromHead unset (false), GetLogEvents returns the LATEST events first.
+func TestSDKGetLogEventsStartFromHeadDefault(t *testing.T) {
+	client := newLogsClient(t)
+	ctx := context.Background()
+
+	mustLogGroupStream(t, client, "/h/g", "s1")
+
+	base := time.Now().UTC().Truncate(time.Millisecond)
+	events := make([]cwltypes.InputLogEvent, 0, 3)
+	for i := 0; i < 3; i++ {
+		events = append(events, cwltypes.InputLogEvent{
+			Timestamp: aws.Int64(base.Add(time.Duration(i) * time.Second).UnixMilli()),
+			Message:   aws.String(fmt.Sprintf("e%d", i)),
+		})
+	}
+	if _, err := client.PutLogEvents(ctx, &cwl.PutLogEventsInput{
+		LogGroupName: aws.String("/h/g"), LogStreamName: aws.String("s1"), LogEvents: events,
+	}); err != nil {
+		t.Fatalf("PutLogEvents: %v", err)
+	}
+
+	out, err := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
+		LogGroupName: aws.String("/h/g"), LogStreamName: aws.String("s1"), Limit: aws.Int32(2),
+	})
+	if err != nil {
+		t.Fatalf("GetLogEvents: %v", err)
+	}
+
+	if len(out.Events) != 2 || aws.ToString(out.Events[0].Message) != "e1" ||
+		aws.ToString(out.Events[1].Message) != "e2" {
+		t.Fatalf("default page = %+v, want the latest two [e1 e2]", out.Events)
+	}
+}
+
+// TestSDKGetLogEventsBeyond100 pins that streams with more than the internal
+// default page size are fully reachable via pagination (no silent 100-event cap).
+func TestSDKGetLogEventsBeyond100(t *testing.T) {
+	client := newLogsClient(t)
+	ctx := context.Background()
+
+	mustLogGroupStream(t, client, "/big/g", "s1")
+
+	const total = 150
+	base := time.Now().UTC().Truncate(time.Millisecond)
+	events := make([]cwltypes.InputLogEvent, 0, total)
+	for i := 0; i < total; i++ {
+		events = append(events, cwltypes.InputLogEvent{
+			Timestamp: aws.Int64(base.Add(time.Duration(i) * time.Millisecond).UnixMilli()),
+			Message:   aws.String(fmt.Sprintf("e%d", i)),
+		})
+	}
+	if _, err := client.PutLogEvents(ctx, &cwl.PutLogEventsInput{
+		LogGroupName: aws.String("/big/g"), LogStreamName: aws.String("s1"), LogEvents: events,
+	}); err != nil {
+		t.Fatalf("PutLogEvents: %v", err)
+	}
+
+	// Walk head→tail and confirm all 150 events are seen (the last one, e149,
+	// is only reachable if the internal 100 cap is gone).
+	seen := 0
+	var token *string
+	for page := 0; page < 20; page++ {
+		out, err := client.GetLogEvents(ctx, &cwl.GetLogEventsInput{
+			LogGroupName: aws.String("/big/g"), LogStreamName: aws.String("s1"),
+			Limit: aws.Int32(40), StartFromHead: aws.Bool(true), NextToken: token,
+		})
+		if err != nil {
+			t.Fatalf("GetLogEvents page %d: %v", page, err)
+		}
+		if len(out.Events) == 0 {
+			break
+		}
+		seen += len(out.Events)
+		token = out.NextForwardToken
+	}
+
+	if seen != total {
+		t.Fatalf("paginated walk saw %d events, want %d (100-event cap regression?)", seen, total)
 	}
 }
 
