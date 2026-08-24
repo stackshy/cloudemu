@@ -377,7 +377,7 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 			continue
 		}
 
-		envelope, err := m.notificationEnvelope(td, msgID, input)
+		envelope, err := m.notificationEnvelope(td, msgID, input, sub.ID)
 		if err != nil {
 			continue
 		}
@@ -388,14 +388,25 @@ func (m *Mock) fanOutToSQS(ctx context.Context, td *topicData, msgID string, inp
 
 // notificationEnvelope builds the SNS Notification JSON that wraps a published
 // message for a non-raw SQS subscription.
-func (m *Mock) notificationEnvelope(td *topicData, msgID string, input driver.PublishInput) (string, error) {
+func (m *Mock) notificationEnvelope(td *topicData, msgID string, input driver.PublishInput, subARN string) (string, error) {
 	env := map[string]any{
-		"Type":      "Notification",
-		"MessageId": msgID,
-		"TopicArn":  td.info.ResourceID,
-		"Subject":   input.Subject,
-		"Message":   input.Message,
-		"Timestamp": m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		"Type":             "Notification",
+		"MessageId":        msgID,
+		"TopicArn":         td.info.ResourceID,
+		"Message":          input.Message,
+		"Timestamp":        m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		"SignatureVersion": "1",
+		"Signature":        "Q2xvdWRFbXVFeGFtcGxlU2lnbmF0dXJl",
+		"SigningCertURL": "https://sns." + m.opts.Region +
+			".amazonaws.com/SimpleNotificationService-cloudemu.pem",
+		"UnsubscribeURL": "https://sns." + m.opts.Region +
+			".amazonaws.com/?Action=Unsubscribe&SubscriptionArn=" + subARN,
+	}
+
+	// Subject is optional: real SNS omits the field entirely when the message was
+	// published without one, so consumers presence-check rather than see "".
+	if input.Subject != "" {
+		env["Subject"] = input.Subject
 	}
 
 	// Real SNS carries publish MessageAttributes into the SQS envelope as

@@ -186,3 +186,80 @@ func TestSDKSNSRawMessageDelivery(t *testing.T) {
 		t.Fatalf("raw delivery still wrapped in envelope: %s", got[0])
 	}
 }
+
+// TestSDKSNSNotificationEnvelopeFields verifies the SNS->SQS Notification JSON:
+// Subject is omitted when none was published, and the standard SignatureVersion,
+// Signature, SigningCertURL, and UnsubscribeURL fields are always present.
+func TestSDKSNSNotificationEnvelopeFields(t *testing.T) {
+	sns, sqs := newSNSAndSQS(t)
+	ctx := context.Background()
+
+	url, arn := snsQueue(t, sqs, "envelope")
+
+	topic, err := sns.CreateTopic(ctx, &awssns.CreateTopicInput{Name: aws.String("feed")})
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	if _, err := sns.Subscribe(ctx, &awssns.SubscribeInput{
+		TopicArn:              topic.TopicArn,
+		Protocol:              aws.String("sqs"),
+		Endpoint:              aws.String(arn),
+		ReturnSubscriptionArn: true,
+	}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Publish WITHOUT a Subject.
+	if _, err := sns.Publish(ctx, &awssns.PublishInput{
+		TopicArn: topic.TopicArn,
+		Message:  aws.String("hello world"),
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	got := drain(t, sqs, url)
+	if len(got) != 1 {
+		t.Fatalf("delivered %d, want 1", len(got))
+	}
+
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(got[0]), &env); err != nil {
+		t.Fatalf("envelope not JSON: %v", err)
+	}
+
+	if _, ok := env["Subject"]; ok {
+		t.Fatalf("Subject present with no subject published; AWS omits the key: %s", got[0])
+	}
+
+	for _, field := range []string{"SignatureVersion", "Signature", "SigningCertURL", "UnsubscribeURL"} {
+		if _, ok := env[field]; !ok {
+			t.Fatalf("envelope missing standard field %q: %s", field, got[0])
+		}
+	}
+
+	// With a Subject, the key appears.
+	if _, err := sns.Publish(ctx, &awssns.PublishInput{
+		TopicArn: topic.TopicArn,
+		Subject:  aws.String("greeting"),
+		Message:  aws.String("hi"),
+	}); err != nil {
+		t.Fatalf("Publish(subject): %v", err)
+	}
+
+	got = drain(t, sqs, url)
+	if len(got) != 1 {
+		t.Fatalf("delivered %d, want 1", len(got))
+	}
+
+	var withSubject struct {
+		Subject string `json:"Subject"`
+	}
+	if err := json.Unmarshal([]byte(got[0]), &withSubject); err != nil {
+		t.Fatalf("envelope not JSON: %v", err)
+	}
+
+	if withSubject.Subject != "greeting" {
+		t.Fatalf("Subject = %q, want %q", withSubject.Subject, "greeting")
+	}
+}
