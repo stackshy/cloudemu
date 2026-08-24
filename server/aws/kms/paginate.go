@@ -1,10 +1,8 @@
 package kms
 
 import (
-	"encoding/base64"
-	"strconv"
-
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 // defaultPageLimit is the page size KMS list operations use when Limit is unset.
@@ -35,25 +33,12 @@ func pageWindow(marker string, limit int32, total int) (start, end int, nextMark
 		return start, total, "", false, nil
 	}
 
-	return start, end, encodeMarker(end), true, nil
-}
-
-func encodeMarker(offset int) string {
-	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+	return start, end, wire.EncodeOffset(end), true, nil
 }
 
 func decodeMarker(marker string) (int, error) {
-	if marker == "" {
-		return 0, nil
-	}
-
-	b, err := base64.StdEncoding.DecodeString(marker)
+	n, err := wire.DecodeOffset(marker)
 	if err != nil {
-		return 0, cerrors.New(cerrors.InvalidArgument, "invalid Marker")
-	}
-
-	n, err := strconv.Atoi(string(b))
-	if err != nil || n < 0 {
 		return 0, cerrors.New(cerrors.InvalidArgument, "invalid Marker")
 	}
 

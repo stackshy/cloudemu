@@ -30,7 +30,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [Kinesis](./kinesis.md) | `kinesis` | 39 |
 | [Lambda](./lambda.md) | `serverless` | 27 |
 | [MemoryDB](./memorydb.md) | `memorydb` | 33 |
-| [NetworkFirewall](./networkfirewall.md) | `networkfirewall` | 20 |
+| [NetworkFirewall](./networkfirewall.md) | `networkfirewall` | 23 |
 | [OpenSearch](./opensearch.md) | `opensearch` | 96 |
 | [Redshift](./redshift.md) | `relationaldb` | 21 |
 | [Route53](./route53.md) | `dns` | 16 |

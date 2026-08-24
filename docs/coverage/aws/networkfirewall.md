@@ -3,7 +3,7 @@
 
 AWS's `networkfirewall` service · portable interface `driver.NetworkFirewall` · [AWS index](./README.md)
 
-## Operations (20)
+## Operations (23)
 
 | Operation | Description |
 | --- | --- |
@@ -23,10 +23,13 @@ AWS's `networkfirewall` service · portable interface `driver.NetworkFirewall` �
 | `ListFirewallPolicies` |  |
 | `ListFirewalls` |  |
 | `ListRuleGroups` |  |
+| `ListTagsForResource` |  |
 | `TagResource` |  |
 | `UntagResource` |  |
 | `UpdateFirewallDeleteProtection` |  |
+| `UpdateFirewallPolicy` |  |
 | `UpdateLoggingConfiguration` |  |
+| `UpdateRuleGroup` |  |
 
 ## Not in scope
 

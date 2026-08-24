@@ -2,9 +2,9 @@ package sns
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awspolicy"
 	"github.com/stackshy/cloudemu/v2/services/notification/driver"
 )
 
@@ -113,30 +113,20 @@ func (m *Mock) AddTopicPermission(_ context.Context, topicID, label string, acco
 		return errors.Newf(errors.InvalidArgument, "topic policy is not valid JSON: %v", err)
 	}
 
-	principals := make([]string, 0, len(accountIDs))
-	for _, acct := range accountIDs {
-		principals = append(principals, "arn:aws:iam::"+acct+":root")
-	}
-
-	qualified := make([]string, 0, len(actions))
-	for _, a := range actions {
-		qualified = append(qualified, "SNS:"+a)
-	}
-
-	doc.Statement = append(doc.Statement, policyStatement{
+	doc.Statement = append(doc.Statement, awspolicy.Statement{
 		Sid:       label,
 		Effect:    "Allow",
-		Principal: map[string]any{"AWS": principals},
-		Action:    qualified,
+		Principal: awspolicy.AccountRootPrincipals(accountIDs),
+		Action:    awspolicy.QualifyActions("SNS:", actions),
 		Resource:  td.info.ResourceID,
 	})
 
-	encoded, err := json.Marshal(doc)
+	encoded, err := doc.Encode()
 	if err != nil {
 		return errors.Newf(errors.Internal, "encode policy: %v", err)
 	}
 
-	td.info.Policy = string(encoded)
+	td.info.Policy = encoded
 	m.topics.Set(topicID, td)
 
 	return nil
@@ -154,68 +144,30 @@ func (m *Mock) RemoveTopicPermission(_ context.Context, topicID, label string) e
 		return nil
 	}
 
-	doc, err := decodePolicy(policy)
+	doc, err := awspolicy.Decode(policy)
 	if err != nil {
 		return errors.Newf(errors.InvalidArgument, "topic policy is not valid JSON: %v", err)
 	}
 
-	kept := doc.Statement[:0]
+	doc.Remove(label)
 
-	for _, st := range doc.Statement {
-		if st.Sid != label {
-			kept = append(kept, st)
-		}
-	}
-
-	doc.Statement = kept
-
-	encoded, err := json.Marshal(doc)
+	encoded, err := doc.Encode()
 	if err != nil {
 		return errors.Newf(errors.Internal, "encode policy: %v", err)
 	}
 
-	td.info.Policy = string(encoded)
+	td.info.Policy = encoded
 	m.topics.Set(topicID, td)
 
 	return nil
 }
 
-// policyDoc / policyStatement model just enough of an SNS access policy to add
-// and remove statements while round-tripping unknown fields verbatim.
-type policyDoc struct {
-	Version   string            `json:"Version"`
-	ID        string            `json:"Id,omitempty"`
-	Statement []policyStatement `json:"Statement"`
-}
-
-type policyStatement struct {
-	Sid       string         `json:"Sid,omitempty"`
-	Effect    string         `json:"Effect"`
-	Principal any            `json:"Principal,omitempty"`
-	Action    any            `json:"Action,omitempty"`
-	Resource  any            `json:"Resource,omitempty"`
-	Condition map[string]any `json:"Condition,omitempty"`
-}
-
-func decodePolicy(s string) (*policyDoc, error) {
-	var doc policyDoc
-	if err := json.Unmarshal([]byte(s), &doc); err != nil {
-		return nil, err
-	}
-
-	return &doc, nil
-}
-
 // topicPolicyDoc returns the topic's stored policy as a decoded document, or a
 // fresh default document (matching the SNS-seeded default) when none is stored.
-func topicPolicyDoc(td *topicData) (*policyDoc, error) {
+func topicPolicyDoc(td *topicData) (*awspolicy.Document, error) {
 	if td.info.Policy != "" {
-		return decodePolicy(td.info.Policy)
+		return awspolicy.Decode(td.info.Policy)
 	}
 
-	return &policyDoc{
-		Version:   "2008-10-17",
-		ID:        "__default_policy_ID",
-		Statement: []policyStatement{},
-	}, nil
+	return awspolicy.NewDefault("__default_policy_ID"), nil
 }

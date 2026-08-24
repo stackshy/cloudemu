@@ -5362,6 +5362,60 @@
             "name": "UpdateLBAttributes"
           }
         ]
+      },
+      {
+        "name": "LBNetworkModifier",
+        "doc": "LBNetworkModifier is implemented by drivers that can replace the security",
+        "operations": [
+          {
+            "name": "SetSecurityGroups"
+          },
+          {
+            "name": "SetSubnets"
+          }
+        ]
+      },
+      {
+        "name": "ListenerGetter",
+        "doc": "ListenerGetter is implemented by drivers that can fetch a single listener by",
+        "operations": [
+          {
+            "name": "GetListener"
+          }
+        ]
+      },
+      {
+        "name": "RuleModifier",
+        "doc": "RuleModifier is implemented by drivers that can modify a listener rule's",
+        "operations": [
+          {
+            "name": "ModifyRule"
+          },
+          {
+            "name": "SetRulePriorities"
+          }
+        ]
+      },
+      {
+        "name": "TargetGroupAttributeStore",
+        "doc": "TargetGroupAttributeStore is implemented by drivers that store per-target-group",
+        "operations": [
+          {
+            "name": "GetTargetGroupAttributes"
+          },
+          {
+            "name": "ModifyTargetGroupAttributes"
+          }
+        ]
+      },
+      {
+        "name": "TargetGroupModifier",
+        "doc": "TargetGroupModifier is implemented by drivers that can apply a partial",
+        "operations": [
+          {
+            "name": "ModifyTargetGroup"
+          }
+        ]
       }
     ],
     "providers": {
@@ -5810,6 +5864,9 @@
         "name": "ListRuleGroups"
       },
       {
+        "name": "ListTagsForResource"
+      },
+      {
         "name": "TagResource"
       },
       {
@@ -5819,7 +5876,13 @@
         "name": "UpdateFirewallDeleteProtection"
       },
       {
+        "name": "UpdateFirewallPolicy"
+      },
+      {
         "name": "UpdateLoggingConfiguration"
+      },
+      {
+        "name": "UpdateRuleGroup"
       }
     ],
     "providers": {
@@ -6439,6 +6502,15 @@
           },
           {
             "name": "ModifyManagedPrefixList"
+          }
+        ]
+      },
+      {
+        "name": "SubnetAttributes",
+        "doc": "SubnetAttributes is an OPTIONAL capability, discovered by type assertion.",
+        "operations": [
+          {
+            "name": "ModifySubnetAttribute"
           }
         ]
       },
@@ -9680,6 +9752,24 @@
         "operations": [
           {
             "name": "BucketAttributes"
+          }
+        ]
+      },
+      {
+        "name": "RawBucketConfig",
+        "doc": "RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like",
+        "operations": [
+          {
+            "name": "DeleteBucketConfig",
+            "doc": "DeleteBucketConfig removes the stored document (idempotent)."
+          },
+          {
+            "name": "GetBucketConfig",
+            "doc": "GetBucketConfig returns the stored document, or NotFound when none was set."
+          },
+          {
+            "name": "PutBucketConfig",
+            "doc": "PutBucketConfig stores document body under the sub-resource name (e.g."
           }
         ]
       },

@@ -63,6 +63,10 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sort before paging: the provider returns keys in map-iteration order, so an
+	// unsorted offset Marker could repeat or skip keys across pages.
+	sort.Slice(keys, func(i, j int) bool { return keys[i].KeyID < keys[j].KeyID })
+
 	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(keys))
 	if err != nil {
 		writeErr(w, err)
@@ -206,6 +210,9 @@ func (h *Handler) listAliases(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+
+	// Sort before paging: the provider returns aliases in map-iteration order.
+	sort.Slice(aliases, func(i, j int) bool { return aliases[i].Name < aliases[j].Name })
 
 	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(aliases))
 	if err != nil {

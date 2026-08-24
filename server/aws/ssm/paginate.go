@@ -1,10 +1,8 @@
 package ssm
 
 import (
-	"encoding/base64"
-	"strconv"
-
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 // AWS MaxResults ceilings (and defaults when unset) for the paginated SSM
@@ -40,25 +38,12 @@ func pageWindow(token string, maxResults int32, defaultMax, total int) (start, e
 		return start, total, "", nil
 	}
 
-	return start, end, encodePageToken(end), nil
-}
-
-func encodePageToken(offset int) string {
-	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+	return start, end, wire.EncodeOffset(end), nil
 }
 
 func decodePageToken(token string) (int, error) {
-	if token == "" {
-		return 0, nil
-	}
-
-	b, err := base64.StdEncoding.DecodeString(token)
+	n, err := wire.DecodeOffset(token)
 	if err != nil {
-		return 0, cerrors.New(cerrors.InvalidArgument, "invalid NextToken")
-	}
-
-	n, err := strconv.Atoi(string(b))
-	if err != nil || n < 0 {
 		return 0, cerrors.New(cerrors.InvalidArgument, "invalid NextToken")
 	}
 

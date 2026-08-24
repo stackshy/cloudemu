@@ -55,6 +55,16 @@ BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 | --- | --- |
 | `BucketAttributes` |  |
 
+### RawBucketConfig
+
+RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
+
+| Operation | Description |
+| --- | --- |
+| `DeleteBucketConfig` | DeleteBucketConfig removes the stored document (idempotent). |
+| `GetBucketConfig` | GetBucketConfig returns the stored document, or NotFound when none was set. |
+| `PutBucketConfig` | PutBucketConfig stores document body under the sub-resource name (e.g. |
+
 ### VersionedBucket
 
 VersionedBucket is an optional extension a storage provider implements when

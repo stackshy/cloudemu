@@ -39,6 +39,49 @@ LBAttributeUpdater is implemented by drivers that can apply a partial
 | --- | --- |
 | `UpdateLBAttributes` |  |
 
+### LBNetworkModifier
+
+LBNetworkModifier is implemented by drivers that can replace the security
+
+| Operation | Description |
+| --- | --- |
+| `SetSecurityGroups` |  |
+| `SetSubnets` |  |
+
+### ListenerGetter
+
+ListenerGetter is implemented by drivers that can fetch a single listener by
+
+| Operation | Description |
+| --- | --- |
+| `GetListener` |  |
+
+### RuleModifier
+
+RuleModifier is implemented by drivers that can modify a listener rule's
+
+| Operation | Description |
+| --- | --- |
+| `ModifyRule` |  |
+| `SetRulePriorities` |  |
+
+### TargetGroupAttributeStore
+
+TargetGroupAttributeStore is implemented by drivers that store per-target-group
+
+| Operation | Description |
+| --- | --- |
+| `GetTargetGroupAttributes` |  |
+| `ModifyTargetGroupAttributes` |  |
+
+### TargetGroupModifier
+
+TargetGroupModifier is implemented by drivers that can apply a partial
+
+| Operation | Description |
+| --- | --- |
+| `ModifyTargetGroup` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
