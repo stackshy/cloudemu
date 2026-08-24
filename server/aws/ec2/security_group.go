@@ -121,6 +121,7 @@ type describeSecurityGroupsResponseXML struct {
 	Xmlns            string             `xml:"xmlns,attr"`
 	RequestID        string             `xml:"requestId"`
 	SecurityGroupSet []securityGroupXML `xml:"securityGroupInfo>item"`
+	NextToken        string             `xml:"nextToken,omitempty"`
 }
 
 // authorizeSecurityGroupResponseXML is the Authorize{Ingress,Egress} response.
@@ -226,10 +227,13 @@ func (h *Handler) describeSecurityGroups(w http.ResponseWriter, r *http.Request)
 		out = append(out, toSecurityGroupXML(&sgs[i]))
 	}
 
+	page, next := pageNetworkingXML(out, r, func(sg securityGroupXML) string { return sg.GroupID })
+
 	awsquery.WriteXMLResponse(w, describeSecurityGroupsResponseXML{
 		Xmlns:            awsquery.Namespace,
 		RequestID:        awsquery.RequestID,
-		SecurityGroupSet: out,
+		SecurityGroupSet: page,
+		NextToken:        next,
 	})
 }
 

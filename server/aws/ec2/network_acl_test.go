@@ -114,3 +114,60 @@ func findACLEntry(entries []ec2types.NetworkAclEntry, ruleNumber int32, egress b
 
 	return nil
 }
+
+// TestDescribeNetworkAclsPaginatesAllOnce pins that DescribeNetworkAcls honors
+// MaxResults/NextToken, paging every ACL exactly once with no duplicates.
+func TestDescribeNetworkAclsPaginatesAllOnce(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	vpcID := mkVPC(ctx, t, c, "10.0.0.0/16")
+
+	want := map[string]int{}
+	for range 3 {
+		acl, err := c.CreateNetworkAcl(ctx, &ec2.CreateNetworkAclInput{VpcId: aws.String(vpcID)})
+		if err != nil {
+			t.Fatalf("CreateNetworkAcl: %v", err)
+		}
+
+		want[aws.ToString(acl.NetworkAcl.NetworkAclId)] = 0
+	}
+
+	seen := map[string]int{}
+
+	var token *string
+
+	for {
+		out, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{
+			MaxResults: aws.Int32(1),
+			NextToken:  token,
+		})
+		if err != nil {
+			t.Fatalf("DescribeNetworkAcls: %v", err)
+		}
+
+		if len(out.NetworkAcls) > 1 {
+			t.Fatalf("page returned %d ACLs, want at most 1", len(out.NetworkAcls))
+		}
+
+		for _, a := range out.NetworkAcls {
+			seen[aws.ToString(a.NetworkAclId)]++
+		}
+
+		if aws.ToString(out.NextToken) == "" {
+			break
+		}
+
+		token = out.NextToken
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("paged through %d ACLs, want %d", len(seen), len(want))
+	}
+
+	for id, n := range seen {
+		if n != 1 {
+			t.Fatalf("ACL %s seen %d times across pages, want 1", id, n)
+		}
+	}
+}

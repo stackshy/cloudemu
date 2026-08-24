@@ -3,6 +3,7 @@ package ec2
 import (
 	"encoding/xml"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -39,6 +40,18 @@ func filterXML[T any, X any](
 	}
 
 	return out
+}
+
+// pageNetworkingXML stable-sorts the already-filtered items by their id, then
+// applies the request's MaxResults/NextToken paging, returning the page and the
+// NextToken to echo (empty on the last page). The VPC-family Describe handlers
+// share it so every resource paginates identically. The driver/memstore iterate
+// in map order, so sorting first is what makes the base64 cursor stable across
+// calls (matching how groupReservations sorts before paging DescribeInstances).
+func pageNetworkingXML[X any](items []X, r *http.Request, idOf func(X) string) (page []X, next string) {
+	sort.Slice(items, func(i, j int) bool { return idOf(items[i]) < idOf(items[j]) })
+
+	return paginateXML(items, r.Form.Get("MaxResults"), r.Form.Get("NextToken"), idOf)
 }
 
 // tagFilterMatch evaluates a "tag:<key>" or "tag-key" filter against a resource's

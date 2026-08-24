@@ -98,6 +98,59 @@ func TestDescribeVpcsCidrBlockAssociationSet(t *testing.T) {
 	}
 }
 
+// TestDescribeVpcsPaginates pins that MaxResults caps the page and returns a
+// NextToken, and that following the token returns the remaining VPCs with an
+// empty final token. Without honoring MaxResults every call returns the full
+// set, which breaks SDK paginators that page by NextToken.
+func TestDescribeVpcsPaginates(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	want := map[string]bool{}
+	for _, cidr := range []string{"10.0.0.0/16", "10.1.0.0/16", "10.2.0.0/16"} {
+		want[mkVPC(ctx, t, c, cidr)] = true
+	}
+
+	first, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{MaxResults: aws.Int32(1)})
+	if err != nil {
+		t.Fatalf("DescribeVpcs(page1): %v", err)
+	}
+
+	if len(first.Vpcs) != 1 {
+		t.Fatalf("page1 returned %d vpcs, want 1", len(first.Vpcs))
+	}
+
+	if aws.ToString(first.NextToken) == "" {
+		t.Fatalf("page1 NextToken empty, want a cursor with 2 vpcs left")
+	}
+
+	seen := map[string]bool{aws.ToString(first.Vpcs[0].VpcId): true}
+	token := first.NextToken
+
+	for token != nil && aws.ToString(token) != "" {
+		next, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{MaxResults: aws.Int32(1), NextToken: token})
+		if err != nil {
+			t.Fatalf("DescribeVpcs(page): %v", err)
+		}
+
+		for _, v := range next.Vpcs {
+			seen[aws.ToString(v.VpcId)] = true
+		}
+
+		token = next.NextToken
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("paged through %d vpcs, want %d unique", len(seen), len(want))
+	}
+
+	for id := range want {
+		if !seen[id] {
+			t.Fatalf("vpc %s missing from page-through", id)
+		}
+	}
+}
+
 // TestDhcpOptionsOwnerID pins that DHCP option sets report their owning account
 // id, which Terraform's aws_vpc_dhcp_options reads.
 func TestDhcpOptionsOwnerID(t *testing.T) {

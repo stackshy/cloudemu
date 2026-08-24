@@ -190,3 +190,56 @@ func TestCreateSubnetRejectsOverlappingCIDR(t *testing.T) {
 		t.Errorf("error = %v, want InvalidSubnet.Conflict", err)
 	}
 }
+
+// TestDescribeSubnetsPaginatesAllOnce pins that paging DescribeSubnets with
+// MaxResults=1 walks every subnet exactly once, with no duplicates or gaps
+// across pages (a stable cursor over the filtered, sorted set).
+func TestDescribeSubnetsPaginatesAllOnce(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	vpcID := mkVPC(ctx, t, c, "10.0.0.0/16")
+
+	want := map[string]int{}
+	for _, cidr := range []string{"10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"} {
+		want[aws.ToString(mkSubnet(ctx, t, c, vpcID, cidr, "us-east-1a").SubnetId)] = 0
+	}
+
+	seen := map[string]int{}
+
+	var token *string
+
+	for {
+		out, err := c.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
+			MaxResults: aws.Int32(1),
+			NextToken:  token,
+		})
+		if err != nil {
+			t.Fatalf("DescribeSubnets: %v", err)
+		}
+
+		if len(out.Subnets) > 1 {
+			t.Fatalf("page returned %d subnets, want at most 1", len(out.Subnets))
+		}
+
+		for _, s := range out.Subnets {
+			seen[aws.ToString(s.SubnetId)]++
+		}
+
+		if aws.ToString(out.NextToken) == "" {
+			break
+		}
+
+		token = out.NextToken
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("paged through %d subnets, want %d", len(seen), len(want))
+	}
+
+	for id, n := range seen {
+		if n != 1 {
+			t.Fatalf("subnet %s seen %d times across pages, want exactly 1", id, n)
+		}
+	}
+}

@@ -65,6 +65,7 @@ type describeRouteTablesResponseXML struct {
 	Xmlns         string          `xml:"xmlns,attr"`
 	RequestID     string          `xml:"requestId"`
 	RouteTableSet []routeTableXML `xml:"routeTableSet>item"`
+	NextToken     string          `xml:"nextToken,omitempty"`
 }
 
 type createRouteResponseXML struct {
@@ -153,10 +154,13 @@ func (h *Handler) describeRouteTables(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toRouteTableXML(&rts[i]))
 	}
 
+	page, next := pageNetworkingXML(out, r, func(rt routeTableXML) string { return rt.RouteTableID })
+
 	awsquery.WriteXMLResponse(w, describeRouteTablesResponseXML{
 		Xmlns:         awsquery.Namespace,
 		RequestID:     awsquery.RequestID,
-		RouteTableSet: out,
+		RouteTableSet: page,
+		NextToken:     next,
 	})
 }
 

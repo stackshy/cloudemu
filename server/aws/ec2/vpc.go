@@ -63,6 +63,7 @@ type describeVpcsResponseXML struct {
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	VpcSet    []vpcXML `xml:"vpcSet>item"`
+	NextToken string   `xml:"nextToken,omitempty"`
 }
 
 type deleteVpcResponseXML struct {
@@ -120,10 +121,15 @@ func (h *Handler) describeVpcs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page, next := pageNetworkingXML(
+		filterXML(vpcs, filters, vpcMatchesFilters, toVpcXML), r,
+		func(v vpcXML) string { return v.VpcID })
+
 	awsquery.WriteXMLResponse(w, describeVpcsResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		VpcSet:    filterXML(vpcs, filters, vpcMatchesFilters, toVpcXML),
+		VpcSet:    page,
+		NextToken: next,
 	})
 }
 

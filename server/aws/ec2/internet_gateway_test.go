@@ -101,3 +101,59 @@ func TestInternetGatewayAttachmentStateFilter(t *testing.T) {
 		t.Fatalf("attachment.state=available returned %d gateways, want only %s", len(out.InternetGateways), igwID)
 	}
 }
+
+// TestDescribeInternetGatewaysPaginatesAllOnce pins that
+// DescribeInternetGateways honors MaxResults/NextToken, paging every gateway
+// exactly once with no duplicates across pages.
+func TestDescribeInternetGatewaysPaginatesAllOnce(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	want := map[string]int{}
+	for range 3 {
+		igw, err := c.CreateInternetGateway(ctx, &ec2.CreateInternetGatewayInput{})
+		if err != nil {
+			t.Fatalf("CreateInternetGateway: %v", err)
+		}
+
+		want[aws.ToString(igw.InternetGateway.InternetGatewayId)] = 0
+	}
+
+	seen := map[string]int{}
+
+	var token *string
+
+	for {
+		out, err := c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
+			MaxResults: aws.Int32(1),
+			NextToken:  token,
+		})
+		if err != nil {
+			t.Fatalf("DescribeInternetGateways: %v", err)
+		}
+
+		if len(out.InternetGateways) > 1 {
+			t.Fatalf("page returned %d gateways, want at most 1", len(out.InternetGateways))
+		}
+
+		for _, igw := range out.InternetGateways {
+			seen[aws.ToString(igw.InternetGatewayId)]++
+		}
+
+		if aws.ToString(out.NextToken) == "" {
+			break
+		}
+
+		token = out.NextToken
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("paged through %d gateways, want %d", len(seen), len(want))
+	}
+
+	for id, n := range seen {
+		if n != 1 {
+			t.Fatalf("gateway %s seen %d times across pages, want 1", id, n)
+		}
+	}
+}

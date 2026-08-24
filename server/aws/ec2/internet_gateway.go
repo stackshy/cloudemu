@@ -39,6 +39,7 @@ type describeInternetGatewaysResponseXML struct {
 	Xmlns              string               `xml:"xmlns,attr"`
 	RequestID          string               `xml:"requestId"`
 	InternetGatewaySet []internetGatewayXML `xml:"internetGatewaySet>item"`
+	NextToken          string               `xml:"nextToken,omitempty"`
 }
 
 type attachInternetGatewayResponseXML struct {
@@ -137,10 +138,15 @@ func (h *Handler) describeInternetGateways(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	page, next := pageNetworkingXML(
+		filterXML(igws, filters, igwMatchesFilters, toInternetGatewayXML), r,
+		func(igw internetGatewayXML) string { return igw.InternetGatewayID })
+
 	awsquery.WriteXMLResponse(w, describeInternetGatewaysResponseXML{
 		Xmlns:              awsquery.Namespace,
 		RequestID:          awsquery.RequestID,
-		InternetGatewaySet: filterXML(igws, filters, igwMatchesFilters, toInternetGatewayXML),
+		InternetGatewaySet: page,
+		NextToken:          next,
 	})
 }
 
