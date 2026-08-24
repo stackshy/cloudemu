@@ -48,16 +48,22 @@ const (
 
 // Handler serves Microsoft.Authorization ARM RBAC requests.
 type Handler struct {
-	iam         iamdriver.IAM
-	assignments *assignmentStore
+	iam             iamdriver.IAM
+	assignments     *assignmentStore
+	denyAssignments *denyAssignmentStore
+	builtins        map[string]roleDefinitionProperties
 }
 
 // New returns a handler backed by drv for role definitions, with an empty
-// in-memory store for role assignments.
+// in-memory store for role assignments, an empty deny-assignment store, and
+// the well-known built-in role definitions seeded so RoleAssignments can
+// reference them by their fixed GUIDs.
 func New(drv iamdriver.IAM) *Handler {
 	return &Handler{
-		iam:         drv,
-		assignments: newAssignmentStore(),
+		iam:             drv,
+		assignments:     newAssignmentStore(),
+		denyAssignments: newDenyAssignmentStore(),
+		builtins:        builtInRoleDefinitions(),
 	}
 }
 
@@ -76,7 +82,8 @@ func (*Handler) Matches(r *http.Request) bool {
 	tail := lower[idx+len(providerSegment):]
 
 	return strings.HasPrefix(tail, roleDefinitionsSuffix) ||
-		strings.HasPrefix(tail, roleAssignmentsSuffix)
+		strings.HasPrefix(tail, roleAssignmentsSuffix) ||
+		strings.HasPrefix(tail, denyAssignmentsSuffix)
 }
 
 // ServeHTTP routes by resource type (definitions vs assignments) and HTTP verb.
@@ -93,6 +100,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveRoleDefinitions(w, r, scope, id)
 	case roleAssignmentsSuffix:
 		h.serveRoleAssignments(w, r, scope, id)
+	case denyAssignmentsSuffix:
+		h.serveDenyAssignments(w, r, scope, id)
 	default:
 		writeARMError(w, http.StatusNotFound, "ResourceNotFound",
 			"unknown Microsoft.Authorization resource: "+kind)

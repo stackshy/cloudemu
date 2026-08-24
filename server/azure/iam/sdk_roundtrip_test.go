@@ -28,10 +28,10 @@ const (
 	testScope        = "/subscriptions/" + testSubscription
 )
 
-func newSDKClients(t *testing.T) (
-	*armauthorization.RoleDefinitionsClient,
-	*armauthorization.RoleAssignmentsClient,
-) {
+// newClientFactory spins up an in-process Azure wire server backed by a fresh
+// cloudemu Azure provider and returns an armauthorization client factory
+// pointed at it. Individual tests pull the specific client(s) they need.
+func newClientFactory(t *testing.T) *armauthorization.ClientFactory {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -62,6 +62,17 @@ func newSDKClients(t *testing.T) (
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	return cf
+}
+
+func newSDKClients(t *testing.T) (
+	*armauthorization.RoleDefinitionsClient,
+	*armauthorization.RoleAssignmentsClient,
+) {
+	t.Helper()
+
+	cf := newClientFactory(t)
 
 	return cf.NewRoleDefinitionsClient(), cf.NewRoleAssignmentsClient()
 }
@@ -105,17 +116,37 @@ func TestSDKAzureIAMRoleDefinitionLifecycle(t *testing.T) {
 
 	pager := roleDefs.NewListPager(testScope, nil)
 
-	var count int
+	var (
+		foundCustom  bool
+		foundBuiltIn bool
+		count        int
+	)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
 			t.Fatalf("ListPager.NextPage: %v", err)
 		}
-		count += len(page.Value)
+		for _, rd := range page.Value {
+			count++
+			switch getStringPtr(rd.Name) {
+			case roleID:
+				foundCustom = true
+			case "acdd72a7-3385-48ef-bd42-f606fba81ae7": // built-in Reader
+				foundBuiltIn = true
+			}
+		}
 	}
 
-	if count != 1 {
-		t.Fatalf("list returned %d role definitions, want 1", count)
+	// The custom role plus the three seeded built-ins (Owner/Contributor/Reader)
+	// are all listable at the subscription scope.
+	if !foundCustom {
+		t.Fatalf("list did not return the created custom role definition")
+	}
+	if !foundBuiltIn {
+		t.Fatalf("list did not return the built-in Reader role definition")
+	}
+	if count < 4 {
+		t.Fatalf("list returned %d role definitions, want >= 4 (custom + 3 built-ins)", count)
 	}
 
 	if _, err := roleDefs.Delete(ctx, testScope, roleID, nil); err != nil {

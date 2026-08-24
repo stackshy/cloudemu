@@ -34,6 +34,31 @@ func (s *assignmentStore) put(env *roleAssignmentEnvelope) roleAssignmentEnvelop
 	return *env
 }
 
+// existsTriple reports whether any stored assignment already binds the given
+// (principalId, roleDefinitionId, scope) triple. Real Azure treats a duplicate
+// triple as a conflict even under a different assignment GUID.
+//
+// roleDefinitionId is compared on its trailing GUID segment so that a relative
+// reference ("/providers/.../roleDefinitions/{guid}") and a fully
+// scope-qualified one to the same role are recognized as equal.
+func (s *assignmentStore) existsTriple(principalID, roleDefinitionID, scope string) bool {
+	wantRole := roleDefinitionGUID(roleDefinitionID)
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for id := range s.items {
+		p := s.items[id].Properties
+		if p.PrincipalID == principalID &&
+			p.Scope == scope &&
+			roleDefinitionGUID(p.RoleDefinitionID) == wantRole {
+			return true
+		}
+	}
+
+	return false
+}
+
 // get returns the assignment with the given id, or (_, false) if absent.
 func (s *assignmentStore) get(id string) (roleAssignmentEnvelope, bool) {
 	s.mu.RLock()
