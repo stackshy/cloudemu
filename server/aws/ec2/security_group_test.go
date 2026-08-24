@@ -2,6 +2,7 @@ package ec2_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	smithy "github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -46,6 +48,57 @@ func createSGTestVPC(t *testing.T, ctx context.Context, c *ec2.Client, cidr stri
 	}
 
 	return aws.ToString(out.Vpc.VpcId)
+}
+
+// TestDefaultSecurityGroupOverWire pins that a freshly-created VPC surfaces its
+// auto-created "default" group on DescribeSecurityGroups — allow-all egress and
+// a self-referencing ingress rule (UserIdGroupPairs) — and that the group is
+// non-deletable, answering Client.CannotDelete just like real EC2.
+func TestDefaultSecurityGroupOverWire(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	vpcID := createSGTestVPC(t, ctx, c, "10.0.0.0/16")
+
+	out, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []ec2types.Filter{{Name: aws.String("vpc-id"), Values: []string{vpcID}}},
+	})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroups: %v", err)
+	}
+
+	if len(out.SecurityGroups) != 1 {
+		t.Fatalf("new VPC = %d security groups, want 1 (default)", len(out.SecurityGroups))
+	}
+
+	sg := out.SecurityGroups[0]
+	if aws.ToString(sg.GroupName) != "default" {
+		t.Fatalf("GroupName = %q, want default", aws.ToString(sg.GroupName))
+	}
+
+	if aws.ToString(sg.Description) != "default VPC security group" {
+		t.Fatalf("Description = %q, want default VPC security group", aws.ToString(sg.Description))
+	}
+
+	if len(sg.IpPermissionsEgress) != 1 || aws.ToString(sg.IpPermissionsEgress[0].IpProtocol) != "-1" ||
+		len(sg.IpPermissionsEgress[0].IpRanges) != 1 ||
+		aws.ToString(sg.IpPermissionsEgress[0].IpRanges[0].CidrIp) != "0.0.0.0/0" {
+		t.Fatalf("egress = %+v, want single allow-all 0.0.0.0/0", sg.IpPermissionsEgress)
+	}
+
+	if len(sg.IpPermissions) != 1 || len(sg.IpPermissions[0].UserIdGroupPairs) != 1 ||
+		aws.ToString(sg.IpPermissions[0].UserIdGroupPairs[0].GroupId) != aws.ToString(sg.GroupId) {
+		t.Fatalf("ingress = %+v, want single self-referencing UserIdGroupPair", sg.IpPermissions)
+	}
+
+	_, err = c.DeleteSecurityGroup(ctx, &ec2.DeleteSecurityGroupInput{GroupId: sg.GroupId})
+	if err == nil {
+		t.Fatal("deleting the default security group should be refused")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "Client.CannotDelete" {
+		t.Fatalf("delete error = %v, want Client.CannotDelete", err)
+	}
 }
 
 // TestCreateSecurityGroupReturnsTags pins that CreateSecurityGroup echoes the
@@ -146,8 +199,23 @@ func TestDescribeSecurityGroupsFilters(t *testing.T) {
 		t.Fatalf("DescribeSecurityGroups vpc-id: %v", err)
 	}
 
-	if len(byVPC.SecurityGroups) != 1 || aws.ToString(byVPC.SecurityGroups[0].GroupName) != "app-a" {
-		t.Fatalf("vpc-id filter = %d groups, want only app-a", len(byVPC.SecurityGroups))
+	// vpcA holds its auto-created "default" group plus app-a.
+	if len(byVPC.SecurityGroups) != 2 {
+		t.Fatalf("vpc-id filter = %d groups, want 2 (default + app-a)", len(byVPC.SecurityGroups))
+	}
+
+	var haveAppA, haveDefault bool
+	for _, sg := range byVPC.SecurityGroups {
+		switch aws.ToString(sg.GroupName) {
+		case "app-a":
+			haveAppA = true
+		case "default":
+			haveDefault = true
+		}
+	}
+
+	if !haveAppA || !haveDefault {
+		t.Fatalf("vpc-id filter groups = %+v, want default + app-a", byVPC.SecurityGroups)
 	}
 
 	byName, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
