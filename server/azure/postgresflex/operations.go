@@ -3,6 +3,7 @@ package postgresflex
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -79,6 +80,11 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
 	if err != nil {
+		if !cerrors.IsAlreadyExists(err) {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+
 		// Idempotent PUT: a create against an existing server applies the body's
 		// storage/sku/version/HA rather than returning the stale record.
 		inst, err = h.db.ModifyInstance(r.Context(), rp.ResourceName, modifyInputFromBody(&body))
