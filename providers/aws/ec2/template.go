@@ -10,7 +10,10 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
-var _ driver.LaunchTemplateVersioner = (*Mock)(nil)
+var (
+	_ driver.LaunchTemplateVersioner = (*Mock)(nil)
+	_ driver.LaunchTemplateModifier  = (*Mock)(nil)
+)
 
 // templateVersionKey is the store key for one launch-template version.
 func templateVersionKey(name string, version int) string {
@@ -242,6 +245,37 @@ func mergeInstanceConfig(base, override driver.InstanceConfig) driver.InstanceCo
 	}
 
 	return out
+}
+
+// ModifyLaunchTemplate promotes an existing version to the template's default,
+// matching AWS EC2 ModifyLaunchTemplate (SetDefaultVersion). The version must
+// already exist.
+func (m *Mock) ModifyLaunchTemplate(
+	_ context.Context, input driver.ModifyLaunchTemplateInput,
+) (*driver.LaunchTemplate, error) {
+	tmpl, err := m.resolveTemplate(input.Name, input.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if input.DefaultVersion != "" {
+		n, err := resolveVersionNumber(tmpl, input.DefaultVersion)
+		if err != nil {
+			return nil, err
+		}
+
+		if n < 1 || !m.templateVersions.Has(templateVersionKey(tmpl.Name, n)) {
+			return nil, cerrors.Newf(cerrors.InvalidArgument,
+				"launch template version %q does not exist", input.DefaultVersion)
+		}
+
+		tmpl.DefaultVersion = n
+		m.templates.Set(tmpl.Name, tmpl)
+	}
+
+	result := *tmpl
+
+	return &result, nil
 }
 
 // DescribeLaunchTemplateVersions returns a template's versions, filtered by the

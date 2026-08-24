@@ -255,6 +255,8 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 		h.deleteLaunchTemplate(w, r)
 	case "DescribeLaunchTemplates":
 		h.describeLaunchTemplates(w, r)
+	case "ModifyLaunchTemplate":
+		h.modifyLaunchTemplate(w, r)
 	case "CreateLaunchTemplateVersion":
 		h.createLaunchTemplateVersion(w, r)
 	case "DescribeLaunchTemplateVersions":
@@ -390,7 +392,6 @@ func (h *Handler) routeVPC(w http.ResponseWriter, r *http.Request, action string
 	return h.routeVPCRouteTable(w, r, action)
 }
 
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
 func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, action string) bool {
 	switch action {
 	case "CreateVpc":

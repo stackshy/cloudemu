@@ -141,7 +141,15 @@ func (h *Handler) createVolume(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteVolume(w http.ResponseWriter, r *http.Request) {
 	if err := h.compute.DeleteVolume(r.Context(), r.Form.Get("VolumeId")); err != nil {
+		// An attached volume cannot be deleted; real EC2 answers VolumeInUse
+		// rather than the generic IncorrectState.
+		if cerrors.IsFailedPrecondition(err) {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "VolumeInUse", err.Error())
+			return
+		}
+
 		writeVolumeErr(w, err)
+
 		return
 	}
 
@@ -241,7 +249,15 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 	device := r.Form.Get("Device")
 
 	if err := h.compute.AttachVolume(r.Context(), volID, instID, device); err != nil {
+		// A volume and the instance it attaches to must share an Availability
+		// Zone; real EC2 answers InvalidVolume.ZoneMismatch for a cross-AZ attach.
+		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "ZoneMismatch:") {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidVolume.ZoneMismatch", err.Error())
+			return
+		}
+
 		writeVolumeErr(w, err)
+
 		return
 	}
 

@@ -252,6 +252,23 @@ type LaunchTemplateVersioner interface {
 	GetLaunchTemplateData(ctx context.Context, instanceID string) (*InstanceConfig, error)
 }
 
+// ModifyLaunchTemplateInput carries the parameters for ModifyLaunchTemplate.
+// Exactly one of Name/ID identifies the template; DefaultVersion is the version
+// number (or "$Latest"/"$Default") to promote to the template's default.
+type ModifyLaunchTemplateInput struct {
+	Name           string
+	ID             string
+	DefaultVersion string
+}
+
+// LaunchTemplateModifier is an AWS-only optional capability implementing
+// ModifyLaunchTemplate (promoting a template version to the default). Only the
+// EC2 provider implements it; the wire handler type-asserts for it, so
+// providers without launch templates (Azure, GCP) are unaffected.
+type LaunchTemplateModifier interface {
+	ModifyLaunchTemplate(ctx context.Context, input ModifyLaunchTemplateInput) (*LaunchTemplate, error)
+}
+
 // VolumeConfig describes a volume to create.
 type VolumeConfig struct {
 	Size             int

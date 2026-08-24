@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,16 +65,16 @@ func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 
 	count := instanceCount(form.Get("MinCount"), form.Get("MaxCount"))
 
-	cfg := computedriver.InstanceConfig{
-		ImageID:        form.Get("ImageId"),
-		InstanceType:   form.Get("InstanceType"),
-		SubnetID:       form.Get("SubnetId"),
-		SecurityGroups: awsquery.ListStrings(form, "SecurityGroupId"),
-		KeyName:        form.Get("KeyName"),
-		UserData:       decodeUserData(form.Get("UserData")),
-		ClientToken:    form.Get("ClientToken"),
-		Tags:           mergeTagSpecs(awsquery.TagSpecs(form), "instance"),
+	// A LaunchTemplate reference supplies the base instance parameters (real EC2
+	// resolves the template's default/requested version). Explicit RunInstances
+	// parameters below override the template's data.
+	cfg, err := h.launchTemplateBaseConfig(r.Context(), form)
+	if err != nil {
+		writeLaunchTemplateErr(w, err)
+		return
 	}
+
+	applyRunInstancesForm(&cfg, form)
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, count)
 	if err != nil {
@@ -95,6 +96,81 @@ func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 		OwnerID:       ownerID,
 		Instances:     h.toInstanceXMLs(r.Context(), instances),
 	})
+}
+
+// launchTemplateBaseConfig resolves the InstanceConfig a RunInstances call
+// inherits from its LaunchTemplate reference. It returns a zero config when no
+// template is referenced (or the provider has no launch-template versioning).
+// LaunchTemplate.Version selects a specific version; absent, the template's
+// default version is used.
+func (h *Handler) launchTemplateBaseConfig(ctx context.Context, form url.Values) (computedriver.InstanceConfig, error) {
+	name := form.Get("LaunchTemplate.LaunchTemplateName")
+	id := form.Get("LaunchTemplate.LaunchTemplateId")
+
+	if name == "" && id == "" {
+		return computedriver.InstanceConfig{}, nil
+	}
+
+	versioner, ok := h.compute.(computedriver.LaunchTemplateVersioner)
+	if !ok {
+		return computedriver.InstanceConfig{}, nil
+	}
+
+	version := form.Get("LaunchTemplate.Version")
+	if version == "" {
+		version = "$Default"
+	}
+
+	versions, err := versioner.DescribeLaunchTemplateVersions(ctx, computedriver.DescribeLaunchTemplateVersionsInput{
+		Name:     name,
+		ID:       id,
+		Versions: []string{version},
+	})
+	if err != nil {
+		return computedriver.InstanceConfig{}, err
+	}
+
+	if len(versions) == 0 {
+		return computedriver.InstanceConfig{}, cerrors.Newf(cerrors.NotFound,
+			"launch template version %q not found", version)
+	}
+
+	return versions[0].InstanceConfig, nil
+}
+
+// applyRunInstancesForm overlays the explicit RunInstances request parameters
+// onto cfg (which may already carry launch-template data). A present parameter
+// overrides the template; an absent one leaves the template value in place.
+func applyRunInstancesForm(cfg *computedriver.InstanceConfig, form url.Values) {
+	if v := form.Get("ImageId"); v != "" {
+		cfg.ImageID = v
+	}
+
+	if v := form.Get("InstanceType"); v != "" {
+		cfg.InstanceType = v
+	}
+
+	if v := form.Get("SubnetId"); v != "" {
+		cfg.SubnetID = v
+	}
+
+	if sgs := awsquery.ListStrings(form, "SecurityGroupId"); len(sgs) > 0 {
+		cfg.SecurityGroups = sgs
+	}
+
+	if v := form.Get("KeyName"); v != "" {
+		cfg.KeyName = v
+	}
+
+	if v := form.Get("UserData"); v != "" {
+		cfg.UserData = decodeUserData(v)
+	}
+
+	cfg.ClientToken = form.Get("ClientToken")
+
+	if tags := mergeTagSpecs(awsquery.TagSpecs(form), "instance"); len(tags) > 0 {
+		cfg.Tags = tags
+	}
 }
 
 // reservationIDFor returns the instance's reservation id, falling back to a

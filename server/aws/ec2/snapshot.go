@@ -114,7 +114,15 @@ func (h *Handler) createSnapshot(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err := h.compute.DeleteSnapshot(r.Context(), r.Form.Get("SnapshotId")); err != nil {
+		// A snapshot referenced by a registered AMI cannot be deleted until the
+		// AMI is deregistered; real EC2 answers InvalidSnapshot.InUse.
+		if cerrors.IsFailedPrecondition(err) {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSnapshot.InUse", err.Error())
+			return
+		}
+
 		writeSnapshotErr(w, err)
+
 		return
 	}
 
