@@ -20,6 +20,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/seed"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -417,13 +418,49 @@ func restoreTables(ctx context.Context, d dbdriver.Database, tables []Table) err
 		}
 
 		for i, item := range tb.Items {
-			if err := d.PutItem(ctx, tb.Name, item); err != nil {
+			if err := d.PutItem(ctx, tb.Name, retypeItem(item)); err != nil {
 				return fmt.Errorf("restore table %q item %d: %w", tb.Name, i, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+// retypeItem restores DynamoDB Number attributes that a JSON round-trip left as
+// the self-describing {"$ddbN":"25"} object back into expr.Number, recursing
+// through nested maps and lists so exact-decimal numbers survive persist.
+func retypeItem(item map[string]any) map[string]any {
+	out := make(map[string]any, len(item))
+	for k, v := range item {
+		out[k] = retypeValue(v)
+	}
+
+	return out
+}
+
+func retypeValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		if len(t) == 1 {
+			if n, ok := t[expr.NumberJSONTag]; ok {
+				if s, isStr := n.(string); isStr {
+					return expr.Number(s)
+				}
+			}
+		}
+
+		return retypeItem(t)
+	case []any:
+		out := make([]any, len(t))
+		for i := range t {
+			out[i] = retypeValue(t[i])
+		}
+
+		return out
+	default:
+		return v
+	}
 }
 
 func restoreSecrets(ctx context.Context, d secretsdriver.Secrets, secrets []Secret) error {

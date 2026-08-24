@@ -150,6 +150,11 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateCreateTableSchema(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	if err := h.db.CreateTable(r.Context(), buildCreateConfig(&req)); err != nil {
 		writeErr(w, err)
 		return
@@ -204,6 +209,55 @@ func buildCreateConfig(req *createTableRequest) dbdriver.TableConfig {
 	}
 
 	return cfg
+}
+
+// validateCreateTableSchema enforces the DynamoDB cross-check between KeySchema
+// and AttributeDefinitions: every attribute named in the table key schema or any
+// secondary-index key schema must be defined in AttributeDefinitions, and every
+// AttributeDefinition must be used by some key. AWS rejects a violation with a
+// ValidationException carrying the exact wording matched here.
+func validateCreateTableSchema(req *createTableRequest) error {
+	keyAttrs := map[string]struct{}{}
+
+	for _, ks := range req.KeySchema {
+		keyAttrs[ks.AttributeName] = struct{}{}
+	}
+
+	for _, idx := range append(append([]secondaryIndexJSON{}, req.GlobalSecondaryIndexes...), req.LocalSecondaryIndexes...) {
+		for _, ks := range idx.KeySchema {
+			keyAttrs[ks.AttributeName] = struct{}{}
+		}
+	}
+
+	defined := map[string]struct{}{}
+	for _, ad := range req.AttributeDefinitions {
+		defined[ad.AttributeName] = struct{}{}
+	}
+
+	if missing := firstMissing(keyAttrs, defined); missing != "" {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"One or more parameter values were invalid: "+
+				"Some index key attributes are not defined in AttributeDefinitions. Missing attributes: %s", missing)
+	}
+
+	if unused := firstMissing(defined, keyAttrs); unused != "" {
+		return cerrors.New(cerrors.InvalidArgument,
+			"One or more parameter values were invalid: "+
+				"Number of attributes in KeySchema does not exactly match number of attributes defined in AttributeDefinitions")
+	}
+
+	return nil
+}
+
+// firstMissing returns one name present in want but absent from have, or "".
+func firstMissing(want, have map[string]struct{}) string {
+	for name := range want {
+		if _, ok := have[name]; !ok {
+			return name
+		}
+	}
+
+	return ""
 }
 
 // keySchemaKeys resolves the table's partition and sort key from the request

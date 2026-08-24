@@ -84,6 +84,51 @@ func New(opts *config.Options) *Mock {
 	return &Mock{tables: make(map[string]*tableData), opts: opts}
 }
 
+// validateItemKeys enforces the DynamoDB rule that an item written to a table
+// must carry every primary-key attribute, and that each key attribute's type
+// matches the table's AttributeDefinitions. AWS rejects a violation with a
+// ValidationException carrying the exact wording matched here.
+func validateItemKeys(cfg driver.TableConfig, item map[string]any) error {
+	for _, keyName := range []string{cfg.PartitionKey, cfg.SortKey} {
+		if keyName == "" {
+			continue
+		}
+
+		val, present := item[keyName]
+		if !present {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: Missing the key %s in the item", keyName)
+		}
+
+		if err := validateKeyType(cfg, keyName, val); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateKeyType checks a present key attribute's type against the matching
+// AttributeDefinition (when the schema declares one). A mismatch is the AWS
+// "Type mismatch for key" ValidationException.
+func validateKeyType(cfg driver.TableConfig, keyName string, val any) error {
+	for _, def := range cfg.Attributes {
+		if def.Name != keyName {
+			continue
+		}
+
+		if actual := expr.TypeCode(val); actual != def.Type {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: Type mismatch for key %s expected: %s actual: %s",
+				keyName, def.Type, actual)
+		}
+
+		return nil
+	}
+
+	return nil
+}
+
 func itemKey(cfg driver.TableConfig, item map[string]any) string {
 	pk := fmt.Sprintf("%v", item[cfg.PartitionKey])
 	if cfg.SortKey != "" {
@@ -196,6 +241,11 @@ func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) err
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
+	if err := validateItemKeys(td.config, item); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+
 	key := itemKey(td.config, item)
 	oldItem, hadOld := td.items.Get(key)
 	item = maps.Clone(item)
@@ -253,14 +303,19 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 	k := itemKey(td.config, input.Key)
 	item, ok := td.items.Get(k)
 
-	if !ok {
-		m.mu.Unlock()
-		return nil, cerrors.New(cerrors.NotFound, "item not found")
+	// Real DynamoDB UpdateItem upserts: a missing item is created from the key
+	// attributes and the update expression, rather than erroring. Any
+	// ConditionExpression has already been evaluated by the caller (the wire
+	// handler / transaction), so applying here is unconditional.
+	var base, oldItem map[string]any
+	if ok {
+		base = copyItem(item)
+		oldItem = copyItem(item)
+	} else {
+		base = copyItem(input.Key)
 	}
 
-	oldItem := copyItem(item)
-
-	updated, err := driver.ApplyUpdate(copyItem(item), input)
+	updated, err := driver.ApplyUpdate(base, input)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
