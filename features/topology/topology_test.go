@@ -271,8 +271,14 @@ func TestEvaluateNetworkACLAllow(t *testing.T) {
 	v, err := vpcMock.CreateVPC(ctx, netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
 	require.NoError(t, err)
 
-	// CreateNetworkACL adds default allow-all at rule 100. That should pass.
+	// A fresh custom ACL denies by default (only the '*' rules), so add an
+	// explicit allow at rule 100; the matching allow should pass.
 	acl, err := vpcMock.CreateNetworkACL(ctx, v.ID, nil)
+	require.NoError(t, err)
+
+	err = vpcMock.AddNetworkACLRule(ctx, acl.ID, &netdriver.NetworkACLRule{
+		RuleNumber: 100, Protocol: "-1", Action: "allow", CIDR: "0.0.0.0/0", Egress: false,
+	})
 	require.NoError(t, err)
 
 	verdict, err := engine.EvaluateNetworkACL(ctx, acl.ID, "10.0.1.5", "10.0.2.5", 443, "tcp", true)
