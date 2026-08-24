@@ -80,6 +80,17 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"GetRolePolicy":                  {},
 	"DeleteRolePolicy":               {},
 	"ListRolePolicies":               {},
+	"AttachGroupPolicy":              {},
+	"DetachGroupPolicy":              {},
+	"ListAttachedGroupPolicies":      {},
+	"PutGroupPolicy":                 {},
+	"GetGroupPolicy":                 {},
+	"DeleteGroupPolicy":              {},
+	"ListGroupPolicies":              {},
+	"PutUserPolicy":                  {},
+	"GetUserPolicy":                  {},
+	"DeleteUserPolicy":               {},
+	"ListUserPolicies":               {},
 	"TagRole":                        {},
 	"UntagRole":                      {},
 	"ListRoleTags":                   {},
@@ -104,6 +115,28 @@ type rolePolicyManager interface {
 	GetRolePolicy(ctx context.Context, roleName, policyName string) (string, error)
 	DeleteRolePolicy(ctx context.Context, roleName, policyName string) error
 	ListRolePolicies(ctx context.Context, roleName string) ([]string, error)
+}
+
+// groupPolicyManager is the AWS-specific group managed- and inline-policy
+// surface. It's not part of the portable IAM driver, so the handler
+// type-asserts for it.
+type groupPolicyManager interface {
+	AttachGroupPolicy(ctx context.Context, groupName, policyARN string) error
+	DetachGroupPolicy(ctx context.Context, groupName, policyARN string) error
+	ListAttachedGroupPolicies(ctx context.Context, groupName string) ([]string, error)
+	PutGroupPolicy(ctx context.Context, groupName, policyName, policyDocument string) error
+	GetGroupPolicy(ctx context.Context, groupName, policyName string) (string, error)
+	DeleteGroupPolicy(ctx context.Context, groupName, policyName string) error
+	ListGroupPolicies(ctx context.Context, groupName string) ([]string, error)
+}
+
+// userPolicyManager is the AWS-specific inline-user-policy surface. It's not
+// part of the portable IAM driver, so the handler type-asserts for it.
+type userPolicyManager interface {
+	PutUserPolicy(ctx context.Context, userName, policyName, policyDocument string) error
+	GetUserPolicy(ctx context.Context, userName, policyName string) (string, error)
+	DeleteUserPolicy(ctx context.Context, userName, policyName string) error
+	ListUserPolicies(ctx context.Context, userName string) ([]string, error)
 }
 
 // defaultAccountID is used when the server was configured without one, so a
@@ -252,6 +285,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteRolePolicy(w, r)
 	case "ListRolePolicies":
 		h.listRolePolicies(w, r)
+	case "AttachGroupPolicy":
+		h.attachGroupPolicy(w, r)
+	case "DetachGroupPolicy":
+		h.detachGroupPolicy(w, r)
+	case "ListAttachedGroupPolicies":
+		h.listAttachedGroupPolicies(w, r)
+	case "PutGroupPolicy":
+		h.putGroupPolicy(w, r)
+	case "GetGroupPolicy":
+		h.getGroupPolicy(w, r)
+	case "DeleteGroupPolicy":
+		h.deleteGroupPolicy(w, r)
+	case "ListGroupPolicies":
+		h.listGroupPolicies(w, r)
+	case "PutUserPolicy":
+		h.putUserPolicy(w, r)
+	case "GetUserPolicy":
+		h.getUserPolicy(w, r)
+	case "DeleteUserPolicy":
+		h.deleteUserPolicy(w, r)
+	case "ListUserPolicies":
+		h.listUserPolicies(w, r)
 	case "TagRole":
 		h.tagRole(w, r)
 	case "UntagRole":

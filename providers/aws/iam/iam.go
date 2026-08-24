@@ -33,10 +33,14 @@ type Mock struct {
 	accessKeys       *memstore.Store[*accessKeyData]
 	instanceProfiles *memstore.Store[*driver.InstanceProfileInfo]
 
-	mu           sync.RWMutex
-	userPolicies map[string]map[string]bool // userName -> set of policy ARNs
-	rolePolicies map[string]map[string]bool // roleName -> set of policy ARNs
-	groupUsers   map[string]map[string]bool // groupName -> set of userNames
+	mu            sync.RWMutex
+	userPolicies  map[string]map[string]bool // userName -> set of managed policy ARNs
+	rolePolicies  map[string]map[string]bool // roleName -> set of managed policy ARNs
+	groupPolicies map[string]map[string]bool // groupName -> set of managed policy ARNs
+	groupUsers    map[string]map[string]bool // groupName -> set of userNames
+
+	userInlinePolicies  map[string]map[string]string // userName -> policyName -> document
+	groupInlinePolicies map[string]map[string]string // groupName -> policyName -> document
 
 	opts *config.Options
 }
@@ -100,16 +104,19 @@ type accessKeyData struct {
 // New creates a new IAM mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		users:            memstore.New[*userData](),
-		roles:            memstore.New[*roleData](),
-		policies:         memstore.New[*policyData](),
-		groups:           memstore.New[*groupData](),
-		accessKeys:       memstore.New[*accessKeyData](),
-		instanceProfiles: memstore.New[*driver.InstanceProfileInfo](),
-		userPolicies:     make(map[string]map[string]bool),
-		rolePolicies:     make(map[string]map[string]bool),
-		groupUsers:       make(map[string]map[string]bool),
-		opts:             opts,
+		users:               memstore.New[*userData](),
+		roles:               memstore.New[*roleData](),
+		policies:            memstore.New[*policyData](),
+		groups:              memstore.New[*groupData](),
+		accessKeys:          memstore.New[*accessKeyData](),
+		instanceProfiles:    memstore.New[*driver.InstanceProfileInfo](),
+		userPolicies:        make(map[string]map[string]bool),
+		rolePolicies:        make(map[string]map[string]bool),
+		groupPolicies:       make(map[string]map[string]bool),
+		groupUsers:          make(map[string]map[string]bool),
+		userInlinePolicies:  make(map[string]map[string]string),
+		groupInlinePolicies: make(map[string]map[string]string),
+		opts:                opts,
 	}
 }
 
@@ -164,6 +171,11 @@ func (m *Mock) DeleteUser(_ context.Context, name string) error {
 			"cannot delete user %q: managed policies are still attached (detach them first)", name)
 	}
 
+	if len(m.userInlinePolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete user %q: inline policies still exist (delete them first)", name)
+	}
+
 	for _, members := range m.groupUsers {
 		if members[name] {
 			return errors.Newf(errors.FailedPrecondition,
@@ -180,6 +192,7 @@ func (m *Mock) DeleteUser(_ context.Context, name string) error {
 
 	m.users.Delete(name)
 	delete(m.userPolicies, name)
+	delete(m.userInlinePolicies, name)
 
 	return nil
 }
@@ -270,6 +283,14 @@ func (m *Mock) DeleteRole(_ context.Context, name string) error {
 	if len(role.inlinePolicies) > 0 {
 		return errors.Newf(errors.FailedPrecondition,
 			"cannot delete role %q: inline policies still exist (delete them first)", name)
+	}
+
+	for _, p := range m.instanceProfiles.All() {
+		if p.RoleName == name {
+			return errors.Newf(errors.FailedPrecondition,
+				"cannot delete role %q: it is still associated with instance profile %q "+
+					"(remove it with RemoveRoleFromInstanceProfile first)", name, p.Name)
+		}
 	}
 
 	m.roles.Delete(name)
@@ -898,15 +919,34 @@ func (m *Mock) CreateGroup(
 
 // DeleteGroup deletes the IAM group with the given name.
 func (m *Mock) DeleteGroup(_ context.Context, name string) error {
-	if !m.groups.Delete(name) {
+	if !m.groups.Has(name) {
 		return errors.Newf(
 			errors.NotFound, "group %q not found", name,
 		)
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.groupUsers[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete group %q: it still has member users (remove them first)", name)
+	}
+
+	if len(m.groupPolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete group %q: managed policies are still attached (detach them first)", name)
+	}
+
+	if len(m.groupInlinePolicies[name]) > 0 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete group %q: inline policies still exist (delete them first)", name)
+	}
+
+	m.groups.Delete(name)
 	delete(m.groupUsers, name)
-	m.mu.Unlock()
+	delete(m.groupPolicies, name)
+	delete(m.groupInlinePolicies, name)
 
 	return nil
 }
@@ -1181,12 +1221,21 @@ func (m *Mock) CreateInstanceProfile(
 func (m *Mock) DeleteInstanceProfile(
 	_ context.Context, name string,
 ) error {
-	if !m.instanceProfiles.Delete(name) {
+	p, ok := m.instanceProfiles.Get(name)
+	if !ok {
 		return errors.Newf(
 			errors.NotFound,
 			"instance profile %q not found", name,
 		)
 	}
+
+	if p.RoleName != "" {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete instance profile %q: role %q is still associated "+
+				"(remove it with RemoveRoleFromInstanceProfile first)", name, p.RoleName)
+	}
+
+	m.instanceProfiles.Delete(name)
 
 	return nil
 }
