@@ -358,7 +358,7 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 	// refuses, and a caller whose drain is broken never finds out.
 	if eni, blocked := m.attachedENIIn(id, ""); blocked {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: network interface %q is still attached in vpc %q", eni, id)
+			"network interface %q is still attached in vpc %q", eni, id)
 	}
 
 	// Real EC2 refuses the delete while user-managed dependencies remain and
@@ -367,7 +367,7 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 	// the VPC — so it is deliberately absent from the dependency scan.
 	if dep, blocked := m.vpcDependency(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: the vpc %q has dependencies and cannot be deleted (%s)", id, dep)
+			"the vpc %q has dependencies and cannot be deleted (%s)", id, dep)
 	}
 
 	m.vpcs.Delete(id)
@@ -550,7 +550,7 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 	// one. Accepting the delete otherwise lets a broken drain pass unnoticed.
 	if eni, blocked := m.eniInSubnet(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: network interface %q still resides in subnet %q", eni, id)
+			"network interface %q still resides in subnet %q", eni, id)
 	}
 
 	m.subnets.Delete(id)
@@ -766,7 +766,7 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 	// network interface or referenced by another security group in the VPC.
 	if dep, blocked := m.securityGroupInUse(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: security group %q is in use by %s", id, dep)
+			"security group %q is in use by %s", id, dep)
 	}
 
 	m.securityGroups.Delete(id)
