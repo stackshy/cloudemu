@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -28,6 +29,9 @@ const (
 	maxPutObjectSize = 5 << 30
 	// maxUploadPartNumber is S3's upper bound on multipart part numbers.
 	maxUploadPartNumber = 10000
+	// minBucketNameLen / maxBucketNameLen bound a general-purpose bucket name.
+	minBucketNameLen = 3
+	maxBucketNameLen = 63
 )
 
 // Handler serves S3 REST requests against a storage.Bucket driver.
@@ -286,7 +290,56 @@ func (h *Handler) bucketTaggingOp(w http.ResponseWriter, r *http.Request, bucket
 // usEast1 is the region where CreateBucket is idempotent for the owner.
 const usEast1 = "us-east-1"
 
+// validBucketName reports whether name satisfies S3's general-purpose bucket
+// naming rules: 3-63 chars; lowercase letters, digits, hyphens and dots only;
+// begins and ends with a letter or digit; no adjacent periods; not formatted as
+// an IP address. See
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+func validBucketName(name string) bool {
+	if len(name) < minBucketNameLen || len(name) > maxBucketNameLen {
+		return false
+	}
+
+	if net.ParseIP(name) != nil {
+		return false
+	}
+
+	for i := 0; i < len(name); i++ {
+		if !validBucketNameChar(name, i) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// validBucketNameChar reports whether name[i] is legal at its position: an
+// interior-only hyphen/dot (no leading/trailing, no adjacent periods) or a
+// lowercase alphanumeric.
+func validBucketNameChar(name string, i int) bool {
+	c := name[i]
+
+	if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
+		return true
+	}
+
+	if c != '-' && c != '.' {
+		return false
+	}
+
+	if i == 0 || i == len(name)-1 {
+		return false
+	}
+
+	return c != '.' || name[i-1] != '.'
+}
+
 func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket string) {
+	if !validBucketName(bucket) {
+		writeError(w, http.StatusBadRequest, "InvalidBucketName", "The specified bucket is not valid.")
+		return
+	}
+
 	if err := h.bucket.CreateBucket(r.Context(), bucket); err != nil {
 		// In us-east-1 (the global endpoint) re-creating a bucket you already own
 		// is idempotent and returns 200; every other region returns 409
@@ -935,7 +988,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.bucket.CompleteMultipartUpload(r.Context(), bucket, key, uploadID, parts); err != nil {
-		writeMultipartErr(w, err)
+		writeCompleteMultipartErr(w, err)
 		return
 	}
 
@@ -1240,6 +1293,20 @@ func writeMultipartErr(w http.ResponseWriter, err error) {
 		return
 	}
 	writeErr(w, err)
+}
+
+// writeCompleteMultipartErr maps a CompleteMultipartUpload driver error. A
+// missing upload is NoSuchUpload; a bad part reference (unknown part number or
+// an ETag that does not match the stored part) is InvalidPart in real S3.
+func writeCompleteMultipartErr(w http.ResponseWriter, err error) {
+	switch {
+	case cerrors.IsNotFound(err):
+		writeError(w, http.StatusNotFound, "NoSuchUpload", err.Error())
+	case cerrors.IsInvalidArgument(err):
+		writeError(w, http.StatusBadRequest, "InvalidPart", err.Error())
+	default:
+		writeErr(w, err)
+	}
 }
 
 // bucketMissing reports whether a NotFound error names a bucket rather

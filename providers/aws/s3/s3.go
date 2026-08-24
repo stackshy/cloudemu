@@ -215,9 +215,32 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.FailedPrecondition, "bucket %q is not empty", name)
 	}
 
+	// A versioning-enabled/suspended bucket may hold no current objects yet still
+	// retain noncurrent versions and/or delete markers. Real S3 requires every
+	// object version (including delete markers) to be removed before the bucket
+	// can be deleted, so a non-empty version history also fails DeleteBucket.
+	if bkt.hasVersionHistory() {
+		return cerrors.Newf(cerrors.FailedPrecondition, "bucket %q is not empty", name)
+	}
+
 	m.buckets.Delete(name)
 
 	return nil
+}
+
+// hasVersionHistory reports whether the bucket retains any object version or
+// delete marker in its version history.
+func (b *bucketMeta) hasVersionHistory() bool {
+	b.versionsMu.Lock()
+	defer b.versionsMu.Unlock()
+
+	for _, chain := range b.versions {
+		if len(chain) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
@@ -831,9 +854,19 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 
 	mp.mu.Lock()
 	for _, p := range parts {
-		if _, exists := mp.parts[p.PartNumber]; !exists {
+		stored, exists := mp.parts[p.PartNumber]
+		if !exists {
 			mp.mu.Unlock()
 			return cerrors.Newf(cerrors.InvalidArgument, "part %d not found in upload %q", p.PartNumber, uploadID)
+		}
+
+		// Real S3 validates each supplied part ETag against the stored part and
+		// rejects a mismatch with InvalidPart. An empty client ETag skips the
+		// check (some callers omit it); a non-empty one must match the stored
+		// part's MD5, case-insensitively.
+		if p.ETag != "" && !strings.EqualFold(strings.Trim(p.ETag, `"`), md5Hex(stored)) {
+			mp.mu.Unlock()
+			return cerrors.Newf(cerrors.InvalidArgument, "part %d ETag does not match the uploaded part in upload %q", p.PartNumber, uploadID)
 		}
 	}
 
