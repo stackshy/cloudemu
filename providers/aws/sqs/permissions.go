@@ -2,9 +2,9 @@ package sqs
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awspolicy"
 )
 
 // AddPermission adds an Allow statement (Sid=label) granting the given accounts
@@ -24,36 +24,24 @@ func (m *Mock) AddPermission(_ context.Context, queueURL, label string, accountI
 		return errors.Newf(errors.InvalidArgument, "queue policy is not valid JSON: %v", err)
 	}
 
-	for i := range doc.Statement {
-		if doc.Statement[i].Sid == label {
-			return errors.Newf(errors.InvalidArgument, "label %q already exists", label)
-		}
+	if doc.Has(label) {
+		return errors.Newf(errors.InvalidArgument, "label %q already exists", label)
 	}
 
-	principals := make([]string, 0, len(accountIDs))
-	for _, acct := range accountIDs {
-		principals = append(principals, "arn:aws:iam::"+acct+":root")
-	}
-
-	qualified := make([]string, 0, len(actions))
-	for _, a := range actions {
-		qualified = append(qualified, "SQS:"+a)
-	}
-
-	doc.Statement = append(doc.Statement, policyStatement{
+	doc.Statement = append(doc.Statement, awspolicy.Statement{
 		Sid:       label,
 		Effect:    "Allow",
-		Principal: map[string]any{"AWS": principals},
-		Action:    qualified,
+		Principal: awspolicy.AccountRootPrincipals(accountIDs),
+		Action:    awspolicy.QualifyActions("SQS:", actions),
 		Resource:  qd.info.ARN,
 	})
 
-	encoded, err := json.Marshal(doc)
+	encoded, err := doc.Encode()
 	if err != nil {
 		return errors.Newf(errors.Internal, "encode policy: %v", err)
 	}
 
-	qd.policy = string(encoded)
+	qd.policy = encoded
 	qd.lastModifiedAt = m.opts.Clock.Now()
 
 	return nil
@@ -74,77 +62,33 @@ func (m *Mock) RemovePermission(_ context.Context, queueURL, label string) error
 		return errors.Newf(errors.InvalidArgument, "label %q not found", label)
 	}
 
-	doc, err := decodeQueuePolicy(qd.policy)
+	doc, err := awspolicy.Decode(qd.policy)
 	if err != nil {
 		return errors.Newf(errors.InvalidArgument, "queue policy is not valid JSON: %v", err)
 	}
 
-	kept := doc.Statement[:0]
-	removed := false
-
-	for _, st := range doc.Statement {
-		if st.Sid == label {
-			removed = true
-			continue
-		}
-
-		kept = append(kept, st)
-	}
-
-	if !removed {
+	if !doc.Remove(label) {
 		return errors.Newf(errors.InvalidArgument, "label %q not found", label)
 	}
 
-	doc.Statement = kept
-
-	encoded, err := json.Marshal(doc)
+	encoded, err := doc.Encode()
 	if err != nil {
 		return errors.Newf(errors.Internal, "encode policy: %v", err)
 	}
 
-	qd.policy = string(encoded)
+	qd.policy = encoded
 	qd.lastModifiedAt = m.opts.Clock.Now()
 
 	return nil
 }
 
-// policyDoc / policyStatement model just enough of an SQS access policy to add
-// and remove statements while round-tripping unknown fields verbatim.
-type policyDoc struct {
-	Version   string            `json:"Version"`
-	ID        string            `json:"Id,omitempty"`
-	Statement []policyStatement `json:"Statement"`
-}
-
-type policyStatement struct {
-	Sid       string         `json:"Sid,omitempty"`
-	Effect    string         `json:"Effect"`
-	Principal any            `json:"Principal,omitempty"`
-	Action    any            `json:"Action,omitempty"`
-	Resource  any            `json:"Resource,omitempty"`
-	Condition map[string]any `json:"Condition,omitempty"`
-}
-
-func decodeQueuePolicy(s string) (*policyDoc, error) {
-	var doc policyDoc
-	if err := json.Unmarshal([]byte(s), &doc); err != nil {
-		return nil, err
-	}
-
-	return &doc, nil
-}
-
 // queuePolicyDoc returns the queue's stored policy as a decoded document, or a
 // fresh default document when none is stored (matching SQS AddPermission, which
 // seeds a default policy id derived from the queue ARN).
-func queuePolicyDoc(qd *queueData) (*policyDoc, error) {
+func queuePolicyDoc(qd *queueData) (*awspolicy.Document, error) {
 	if qd.policy != "" {
-		return decodeQueuePolicy(qd.policy)
+		return awspolicy.Decode(qd.policy)
 	}
 
-	return &policyDoc{
-		Version:   "2008-10-17",
-		ID:        qd.info.ARN + "/SQSDefaultPolicy",
-		Statement: []policyStatement{},
-	}, nil
+	return awspolicy.NewDefault(qd.info.ARN + "/SQSDefaultPolicy"), nil
 }

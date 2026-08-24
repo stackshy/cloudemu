@@ -593,6 +593,9 @@ func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) (
 // SetAlarmActionsEnabled toggles ActionsEnabled for the named alarms. It backs
 // the AWS-local EnableAlarmActions / DisableAlarmActions wire operations.
 func (m *Mock) SetAlarmActionsEnabled(_ context.Context, names []string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, name := range names {
 		a, ok := m.alarms.Get(name)
 		if !ok {

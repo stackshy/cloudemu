@@ -1,9 +1,10 @@
 package iam
 
 import (
-	"encoding/base64"
 	"net/url"
 	"strconv"
+
+	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 // defaultMaxItems is the page size IAM applies when a list request omits
@@ -33,30 +34,13 @@ func pageWindow(total int, form url.Values) (start, end int, nextMarker string, 
 		return start, total, "", false
 	}
 
-	return start, end, encodeMarker(end), true
+	return start, end, wire.EncodeOffset(end), true
 }
 
 // decodeMarker parses an opaque Marker back into an offset. A missing or
-// malformed marker resets to the start of the list.
+// malformed marker resets to the start of the list (IAM tolerates bad markers).
 func decodeMarker(marker string) int {
-	if marker == "" {
-		return 0
-	}
-
-	raw, err := base64.StdEncoding.DecodeString(marker)
-	if err != nil {
-		return 0
-	}
-
-	n, err := strconv.Atoi(string(raw))
-	if err != nil || n < 0 {
-		return 0
-	}
+	n, _ := wire.DecodeOffset(marker)
 
 	return n
-}
-
-// encodeMarker turns an offset into an opaque Marker string.
-func encodeMarker(offset int) string {
-	return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
 }
