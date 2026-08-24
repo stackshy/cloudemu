@@ -666,3 +666,230 @@ func describeSGRuleByID(t *testing.T, ctx context.Context, c *ec2.Client, ruleID
 
 	return out.SecurityGroupRules[0]
 }
+
+// authorizeIngressRuleID authorizes one ingress rule on a fresh group and
+// returns the group id and the minted sgr- rule id, so the rule-mutation
+// actions have a concrete target to operate on.
+func authorizeIngressRuleID(t *testing.T, ctx context.Context, c *ec2.Client) (groupID, ruleID string) {
+	t.Helper()
+
+	groupID = authorizeIngressSG(t, ctx, c)
+
+	out, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(22),
+			ToPort:     aws.Int32(22),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0"), Description: aws.String("old")}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AuthorizeSecurityGroupIngress: %v", err)
+	}
+
+	return groupID, aws.ToString(out.SecurityGroupRules[0].SecurityGroupRuleId)
+}
+
+// TestModifySecurityGroupRulesOverWire pins ec2:ModifySecurityGroupRules: the
+// rule's permission fields (protocol, ports, target CIDR, description) are
+// full-replaced while its sgr- id is preserved, matching real EC2.
+func TestModifySecurityGroupRulesOverWire(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID, ruleID := authorizeIngressRuleID(t, ctx, c)
+
+	if _, err := c.ModifySecurityGroupRules(ctx, &ec2.ModifySecurityGroupRulesInput{
+		GroupId: aws.String(groupID),
+		SecurityGroupRules: []ec2types.SecurityGroupRuleUpdate{{
+			SecurityGroupRuleId: aws.String(ruleID),
+			SecurityGroupRule: &ec2types.SecurityGroupRuleRequest{
+				IpProtocol:  aws.String("tcp"),
+				FromPort:    aws.Int32(8080),
+				ToPort:      aws.Int32(8080),
+				CidrIpv4:    aws.String("10.0.0.0/24"),
+				Description: aws.String("new"),
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("ModifySecurityGroupRules: %v", err)
+	}
+
+	got := describeSGRuleByID(t, ctx, c, ruleID)
+	if aws.ToString(got.SecurityGroupRuleId) != ruleID {
+		t.Fatalf("rule id changed: got %q, want %q", aws.ToString(got.SecurityGroupRuleId), ruleID)
+	}
+
+	if p := aws.ToInt32(got.FromPort); p != 8080 {
+		t.Fatalf("FromPort = %d, want 8080", p)
+	}
+
+	if p := aws.ToInt32(got.ToPort); p != 8080 {
+		t.Fatalf("ToPort = %d, want 8080", p)
+	}
+
+	if cidr := aws.ToString(got.CidrIpv4); cidr != "10.0.0.0/24" {
+		t.Fatalf("CidrIpv4 = %q, want 10.0.0.0/24", cidr)
+	}
+
+	if d := aws.ToString(got.Description); d != "new" {
+		t.Fatalf("Description = %q, want new", d)
+	}
+}
+
+// TestModifySecurityGroupRulesUnknownRuleId pins that modifying an unknown rule
+// id answers InvalidSecurityGroupRuleId.NotFound, distinct from the group-level
+// InvalidGroup.NotFound.
+func TestModifySecurityGroupRulesUnknownRuleId(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	_, err := c.ModifySecurityGroupRules(ctx, &ec2.ModifySecurityGroupRulesInput{
+		GroupId: aws.String(groupID),
+		SecurityGroupRules: []ec2types.SecurityGroupRuleUpdate{{
+			SecurityGroupRuleId: aws.String("sgr-doesnotexist"),
+			SecurityGroupRule: &ec2types.SecurityGroupRuleRequest{
+				IpProtocol: aws.String("tcp"),
+				FromPort:   aws.Int32(22),
+				ToPort:     aws.Int32(22),
+				CidrIpv4:   aws.String("0.0.0.0/0"),
+			},
+		}},
+	})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidSecurityGroupRuleId.NotFound" {
+		t.Fatalf("err = %v, want InvalidSecurityGroupRuleId.NotFound", err)
+	}
+}
+
+// TestModifySecurityGroupRulesMultipleTargets pins that a SecurityGroupRuleRequest
+// naming more than one target is rejected with InvalidParameterValue, matching
+// AWS's "exactly one target" rule.
+func TestModifySecurityGroupRulesMultipleTargets(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID, ruleID := authorizeIngressRuleID(t, ctx, c)
+
+	_, err := c.ModifySecurityGroupRules(ctx, &ec2.ModifySecurityGroupRulesInput{
+		GroupId: aws.String(groupID),
+		SecurityGroupRules: []ec2types.SecurityGroupRuleUpdate{{
+			SecurityGroupRuleId: aws.String(ruleID),
+			SecurityGroupRule: &ec2types.SecurityGroupRuleRequest{
+				IpProtocol: aws.String("tcp"),
+				FromPort:   aws.Int32(22),
+				ToPort:     aws.Int32(22),
+				CidrIpv4:   aws.String("0.0.0.0/0"),
+				CidrIpv6:   aws.String("::/0"),
+			},
+		}},
+	})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValue" {
+		t.Fatalf("err = %v, want InvalidParameterValue", err)
+	}
+}
+
+// TestUpdateSecurityGroupRuleDescriptionsIngressByRuleId pins setting then
+// clearing a rule's description by its sgr- id (omitting Description clears it).
+func TestUpdateSecurityGroupRuleDescriptionsIngressByRuleId(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID, ruleID := authorizeIngressRuleID(t, ctx, c)
+
+	if _, err := c.UpdateSecurityGroupRuleDescriptionsIngress(ctx,
+		&ec2.UpdateSecurityGroupRuleDescriptionsIngressInput{
+			GroupId: aws.String(groupID),
+			SecurityGroupRuleDescriptions: []ec2types.SecurityGroupRuleDescription{{
+				SecurityGroupRuleId: aws.String(ruleID),
+				Description:         aws.String("ssh access"),
+			}},
+		}); err != nil {
+		t.Fatalf("UpdateSecurityGroupRuleDescriptionsIngress (set): %v", err)
+	}
+
+	if d := aws.ToString(describeSGRuleByID(t, ctx, c, ruleID).Description); d != "ssh access" {
+		t.Fatalf("Description = %q, want ssh access", d)
+	}
+
+	// Omitting Description clears it.
+	if _, err := c.UpdateSecurityGroupRuleDescriptionsIngress(ctx,
+		&ec2.UpdateSecurityGroupRuleDescriptionsIngressInput{
+			GroupId: aws.String(groupID),
+			SecurityGroupRuleDescriptions: []ec2types.SecurityGroupRuleDescription{{
+				SecurityGroupRuleId: aws.String(ruleID),
+			}},
+		}); err != nil {
+		t.Fatalf("UpdateSecurityGroupRuleDescriptionsIngress (clear): %v", err)
+	}
+
+	if d := aws.ToString(describeSGRuleByID(t, ctx, c, ruleID).Description); d != "" {
+		t.Fatalf("Description = %q, want empty after clear", d)
+	}
+}
+
+// TestUpdateSecurityGroupRuleDescriptionsEgressByIpPermissions pins the classic
+// permission-match path: the egress rule is resolved by its IpPermissions and
+// its description is set, on the egress list only.
+func TestUpdateSecurityGroupRuleDescriptionsEgressByIpPermissions(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := authorizeIngressSG(t, ctx, c)
+
+	auth, err := c.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			FromPort:   aws.Int32(443),
+			ToPort:     aws.Int32(443),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("10.0.0.0/16")}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("AuthorizeSecurityGroupEgress: %v", err)
+	}
+
+	ruleID := aws.ToString(auth.SecurityGroupRules[0].SecurityGroupRuleId)
+
+	if _, err := c.UpdateSecurityGroupRuleDescriptionsEgress(ctx,
+		&ec2.UpdateSecurityGroupRuleDescriptionsEgressInput{
+			GroupId: aws.String(groupID),
+			IpPermissions: []ec2types.IpPermission{{
+				IpProtocol: aws.String("tcp"),
+				FromPort:   aws.Int32(443),
+				ToPort:     aws.Int32(443),
+				IpRanges: []ec2types.IpRange{{
+					CidrIp:      aws.String("10.0.0.0/16"),
+					Description: aws.String("internal https"),
+				}},
+			}},
+		}); err != nil {
+		t.Fatalf("UpdateSecurityGroupRuleDescriptionsEgress: %v", err)
+	}
+
+	if d := aws.ToString(describeSGRuleByID(t, ctx, c, ruleID).Description); d != "internal https" {
+		t.Fatalf("Description = %q, want internal https", d)
+	}
+}
+
+// TestUpdateSecurityGroupRuleDescriptionsMissingGroupId pins that a missing
+// GroupId is rejected with InvalidParameterValue.
+func TestUpdateSecurityGroupRuleDescriptionsMissingGroupId(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+
+	_, err := c.UpdateSecurityGroupRuleDescriptionsIngress(ctx,
+		&ec2.UpdateSecurityGroupRuleDescriptionsIngressInput{
+			SecurityGroupRuleDescriptions: []ec2types.SecurityGroupRuleDescription{{
+				SecurityGroupRuleId: aws.String("sgr-x"),
+				Description:         aws.String("d"),
+			}},
+		})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidParameterValue" {
+		t.Fatalf("err = %v, want InvalidParameterValue", err)
+	}
+}
