@@ -57,6 +57,16 @@ func (h *Handler) createOrUpdateRoleDefinition(
 		return
 	}
 
+	// Built-in role GUIDs are reserved and immutable: a PUT that reuses one as
+	// the {id} must not silently create a colliding custom role. Real Azure
+	// rejects the write with 409 RoleDefinitionUpdateConflict, mirroring the
+	// guard roleDefinitionExists relies on for assignments.
+	if _, ok := h.builtins[id]; ok {
+		writeARMError(w, http.StatusConflict, "RoleDefinitionUpdateConflict",
+			"the role definition "+id+" is a built-in role and cannot be modified")
+		return
+	}
+
 	props := in.Properties
 	if props.Type == "" {
 		props.Type = "CustomRole"
@@ -207,6 +217,15 @@ func (h *Handler) listRoleDefinitions(w http.ResponseWriter, r *http.Request, sc
 // matching real Azure semantics (the SDK's RoleDefinitionsClientDeleteResponse
 // carries a RoleDefinition body).
 func (h *Handler) deleteRoleDefinition(w http.ResponseWriter, r *http.Request, id string) {
+	// Built-in roles are platform-managed and cannot be deleted: real Azure
+	// rejects the DELETE with a built-in-protection conflict rather than the
+	// 404 the driver would surface for an unknown custom-role GUID.
+	if _, ok := h.builtins[id]; ok {
+		writeARMError(w, http.StatusConflict, "RoleDefinitionUpdateConflict",
+			"the role definition "+id+" is a built-in role and cannot be deleted")
+		return
+	}
+
 	role, err := h.iam.GetRole(r.Context(), id)
 	if err != nil {
 		writeCErr(w, err)

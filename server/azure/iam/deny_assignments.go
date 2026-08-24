@@ -17,7 +17,6 @@ import (
 const (
 	denyAssignmentsSuffix    = "denyassignments"
 	denyAssignmentsCanonical = "denyAssignments"
-	typeDenyAssignment       = "Microsoft.Authorization/denyAssignments"
 )
 
 // denyPrincipal is the {type, id} principal shape used by both principals and
