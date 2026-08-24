@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )

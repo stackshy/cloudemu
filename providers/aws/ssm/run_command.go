@@ -28,6 +28,8 @@ func (m *Mock) SetInstanceResolver(r InstanceResolver) {
 // Nothing executes: an emulated instance has no guest operating system. The
 // invocation is recorded as successful so a caller's send/poll loop runs to
 // completion, but the script itself is never validated — see driver.RunCommand.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (string, error) {
 	// Real SSM accepts EITHER explicit InstanceIds OR tag/attribute Targets;
 	// supplying neither is a ValidationException.
@@ -77,6 +79,7 @@ func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarge
 	}
 
 	filters := make([]computedriver.DescribeFilter, 0, len(targets))
+
 	for _, t := range targets {
 		name, ok := targetFilterName(t.Key)
 		if !ok {
