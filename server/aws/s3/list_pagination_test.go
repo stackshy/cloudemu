@@ -337,6 +337,83 @@ func TestSDKListPartsZeroMaxParts(t *testing.T) {
 	}
 }
 
+// TestSDKListMultipartUploadsZeroMaxUploads asserts ListMultipartUploads with
+// max-uploads=0 returns an empty, truncated page whose NextKeyMarker /
+// NextUploadIdMarker preserve the caller's incoming position rather than coming
+// back empty (which would silently restart pagination). Resuming from those
+// markers must still return every upload.
+func TestSDKListMultipartUploadsZeroMaxUploads(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "uploads-zero-bucket"
+	mustCreateBucket(t, client, bucket)
+
+	keys := []string{"key-a", "key-b"}
+	for _, k := range keys {
+		if _, err := client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(k),
+		}); err != nil {
+			t.Fatalf("CreateMultipartUpload %s: %v", k, err)
+		}
+	}
+
+	// First list one upload so we have a non-empty marker to resume from, then
+	// request max-uploads=0 with that marker: the empty page must echo it back.
+	seed, err := client.ListMultipartUploads(ctx, &awss3.ListMultipartUploadsInput{
+		Bucket:     aws.String(bucket),
+		MaxUploads: aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("ListMultipartUploads seed: %v", err)
+	}
+
+	page, err := client.ListMultipartUploads(ctx, &awss3.ListMultipartUploadsInput{
+		Bucket:         aws.String(bucket),
+		MaxUploads:     aws.Int32(0),
+		KeyMarker:      seed.NextKeyMarker,
+		UploadIdMarker: seed.NextUploadIdMarker,
+	})
+	if err != nil {
+		t.Fatalf("ListMultipartUploads max-uploads=0: %v (must not crash the server)", err)
+	}
+
+	if got := len(page.Uploads); got != 0 {
+		t.Errorf("uploads = %d, want 0 (max-uploads=0 returns an empty page)", got)
+	}
+
+	if !aws.ToBool(page.IsTruncated) {
+		t.Error("IsTruncated = false, want true (uploads remain above the marker)")
+	}
+
+	if aws.ToString(page.NextKeyMarker) != aws.ToString(seed.NextKeyMarker) {
+		t.Errorf("NextKeyMarker = %q, want %q (must not lose the caller's position)",
+			aws.ToString(page.NextKeyMarker), aws.ToString(seed.NextKeyMarker))
+	}
+
+	if aws.ToString(page.NextUploadIdMarker) != aws.ToString(seed.NextUploadIdMarker) {
+		t.Errorf("NextUploadIdMarker = %q, want %q (must not lose the caller's position)",
+			aws.ToString(page.NextUploadIdMarker), aws.ToString(seed.NextUploadIdMarker))
+	}
+
+	// Resuming from the preserved markers (with a real page size) must still
+	// return the remaining upload — the empty page must not skip it.
+	rest, err := client.ListMultipartUploads(ctx, &awss3.ListMultipartUploadsInput{
+		Bucket:         aws.String(bucket),
+		MaxUploads:     aws.Int32(10),
+		KeyMarker:      page.NextKeyMarker,
+		UploadIdMarker: page.NextUploadIdMarker,
+	})
+	if err != nil {
+		t.Fatalf("ListMultipartUploads resume: %v", err)
+	}
+
+	if got := len(rest.Uploads); got != 1 || aws.ToString(rest.Uploads[0].Key) != "key-b" {
+		t.Errorf("resumed uploads = %d keys, want exactly [key-b] (empty page must not lose uploads)", got)
+	}
+}
+
 // TestSDKListMultipartUploadsPrefix asserts ListMultipartUploads actually filters
 // the returned uploads by the prefix parameter (not merely echoing it), matching
 // real S3, which lists only uploads whose key begins with the prefix.

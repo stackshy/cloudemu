@@ -1560,14 +1560,21 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 
 	if len(uploads) > resp.MaxUploads {
 		resp.IsTruncated = true
-		uploads = uploads[:resp.MaxUploads]
 		// S3 reports the last upload returned as the next markers; the resumed
-		// request lists uploads strictly after that key/upload-id pair.
-		if len(uploads) > 0 {
-			last := uploads[len(uploads)-1]
+		// request lists uploads strictly after that key/upload-id pair. Capture
+		// the resume position BEFORE slicing — with max-uploads=0 no uploads are
+		// returned, so fall back to the incoming markers rather than losing the
+		// caller's position (which would silently restart pagination).
+		if resp.MaxUploads > 0 {
+			last := uploads[resp.MaxUploads-1]
 			resp.NextKeyMarker = last.Key
 			resp.NextUploadIDMarker = last.UploadID
+		} else {
+			resp.NextKeyMarker = keyMarker
+			resp.NextUploadIDMarker = uploadIDMarker
 		}
+
+		uploads = uploads[:resp.MaxUploads]
 	}
 
 	for _, u := range uploads {
