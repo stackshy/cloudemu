@@ -38,12 +38,13 @@ func toTagsXML(tags map[string]string) *tagsXML {
 }
 
 type userXML struct {
-	UserName   string   `xml:"UserName"`
-	UserID     string   `xml:"UserId"`
-	Arn        string   `xml:"Arn"`
-	Path       string   `xml:"Path,omitempty"`
-	CreateDate string   `xml:"CreateDate,omitempty"`
-	Tags       *tagsXML `xml:"Tags,omitempty"`
+	UserName            string                  `xml:"UserName"`
+	UserID              string                  `xml:"UserId"`
+	Arn                 string                  `xml:"Arn"`
+	Path                string                  `xml:"Path,omitempty"`
+	CreateDate          string                  `xml:"CreateDate,omitempty"`
+	PermissionsBoundary *permissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
+	Tags                *tagsXML                `xml:"Tags,omitempty"`
 }
 
 func toUserXML(u *iamdriver.UserInfo) userXML {
@@ -58,15 +59,16 @@ func toUserXML(u *iamdriver.UserInfo) userXML {
 }
 
 type roleXML struct {
-	RoleName                 string   `xml:"RoleName"`
-	RoleID                   string   `xml:"RoleId"`
-	Arn                      string   `xml:"Arn"`
-	Path                     string   `xml:"Path,omitempty"`
-	Description              string   `xml:"Description,omitempty"`
-	CreateDate               string   `xml:"CreateDate,omitempty"`
-	MaxSessionDuration       int      `xml:"MaxSessionDuration,omitempty"`
-	AssumeRolePolicyDocument string   `xml:"AssumeRolePolicyDocument,omitempty"`
-	Tags                     *tagsXML `xml:"Tags,omitempty"`
+	RoleName                 string                  `xml:"RoleName"`
+	RoleID                   string                  `xml:"RoleId"`
+	Arn                      string                  `xml:"Arn"`
+	Path                     string                  `xml:"Path,omitempty"`
+	Description              string                  `xml:"Description,omitempty"`
+	CreateDate               string                  `xml:"CreateDate,omitempty"`
+	MaxSessionDuration       int                     `xml:"MaxSessionDuration,omitempty"`
+	AssumeRolePolicyDocument string                  `xml:"AssumeRolePolicyDocument,omitempty"`
+	PermissionsBoundary      *permissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
+	Tags                     *tagsXML                `xml:"Tags,omitempty"`
 }
 
 func toRoleXML(r *iamdriver.RoleInfo) roleXML {
