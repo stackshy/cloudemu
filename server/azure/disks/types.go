@@ -55,3 +55,17 @@ type diskResponseProps struct {
 type diskListResponse struct {
 	Value []diskResponse `json:"value"`
 }
+
+// grantAccessData is the request body for POST .../disks/{name}/beginGetAccess
+// (armcompute.GrantAccessData): the requested access level and the SAS lifetime.
+type grantAccessData struct {
+	Access            string `json:"access,omitempty"`
+	DurationInSeconds int    `json:"durationInSeconds,omitempty"`
+	FileFormat        string `json:"fileFormat,omitempty"`
+}
+
+// accessURIResponse is the 200 body for beginGetAccess (armcompute.AccessURI):
+// the SAS URI a client exports/imports the disk contents through.
+type accessURIResponse struct {
+	AccessSAS string `json:"accessSAS"`
+}
