@@ -68,7 +68,7 @@ func (m *Mock) DeleteTrafficMirrorTarget(_ context.Context, id string) error {
 
 	if sid, inUse := m.sessionReferencingTarget(id); inUse {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: traffic mirror session %q still references target %q", sid, id)
+			"traffic mirror session %q still references target %q", sid, id)
 	}
 
 	m.trafficMirrorTargets.Delete(id)
@@ -136,7 +136,7 @@ func (m *Mock) DeleteTrafficMirrorFilter(_ context.Context, id string) error {
 
 	if sid, inUse := m.sessionReferencingFilter(id); inUse {
 		return errors.Newf(errors.FailedPrecondition,
-			"DependencyViolation: traffic mirror session %q still references filter %q", sid, id)
+			"traffic mirror session %q still references filter %q", sid, id)
 	}
 
 	m.trafficMirrorFilters.Delete(id)
