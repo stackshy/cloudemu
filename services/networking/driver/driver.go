@@ -494,5 +494,5 @@ type NetworkInterfaces interface {
 // out of NetworkInterfaces so that adding it doesn't break subset assertions
 // (e.g. resourcediscovery's read-only walker, which only needs Describe).
 type NetworkInterfaceCreator interface {
-	CreateNetworkInterface(ctx context.Context, subnetID, description string, tags map[string]string) (*NetworkInterface, error)
+	CreateNetworkInterface(ctx context.Context, subnetID, description string, groups []string, tags map[string]string) (*NetworkInterface, error)
 }

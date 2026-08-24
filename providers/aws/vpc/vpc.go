@@ -715,9 +715,51 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 			"CannotDelete: default security group %q cannot be deleted", id)
 	}
 
+	// Real EC2 refuses to delete a security group that is still attached to a
+	// network interface or referenced by another security group in the VPC.
+	if dep, blocked := m.securityGroupInUse(id); blocked {
+		return errors.Newf(errors.FailedPrecondition,
+			"DependencyViolation: security group %q is in use by %s", id, dep)
+	}
+
 	m.securityGroups.Delete(id)
 
 	return nil
+}
+
+// securityGroupInUse reports the first network interface using the group or the
+// first other security group whose rules reference it.
+func (m *Mock) securityGroupInUse(id string) (string, bool) {
+	for _, eni := range m.enis.All() {
+		for _, g := range eni.SecurityGroups {
+			if g == id {
+				return "network interface " + eni.ID, true
+			}
+		}
+	}
+
+	for _, other := range m.securityGroups.All() {
+		if other.ID == id {
+			continue
+		}
+
+		if sgReferencesGroup(other.IngressRules, id) || sgReferencesGroup(other.EgressRules, id) {
+			return "security group " + other.ID, true
+		}
+	}
+
+	return "", false
+}
+
+// sgReferencesGroup reports whether any rule references the group id.
+func sgReferencesGroup(rules []driver.SecurityRule, id string) bool {
+	for i := range rules {
+		if rules[i].ReferencedGroupID == id {
+			return true
+		}
+	}
+
+	return false
 }
 
 // DescribeSecurityGroups returns security groups matching the given IDs, or all if ids is empty.

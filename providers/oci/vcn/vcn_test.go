@@ -476,7 +476,7 @@ func TestOCIDShapePerResourceType(t *testing.T) {
 	ip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
 	require.NoError(t, err)
 
-	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	privateIPs, err := m.DescribePrivateIPs(ctx, nil)
@@ -585,7 +585,7 @@ func TestSecurityGroupDeleteRefusesWithMembers(t *testing.T) {
 	nsg, err := m.CreateSecurityGroup(ctx, driver.SecurityGroupConfig{Name: "web", VPCID: parent.ID})
 	require.NoError(t, err)
 
-	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	_, err = m.UpdateVNIC(ctx, vnic.ID, nil, nil, []string{nsg.ID})
@@ -883,7 +883,7 @@ func TestPublicIPAssignment(t *testing.T) {
 	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: subnetCIDR})
 	require.NoError(t, err)
 
-	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	privateIPs, err := m.DescribePrivateIPs(ctx, nil)
@@ -920,7 +920,7 @@ func TestPrivateIPs(t *testing.T) {
 	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: subnetCIDR})
 	require.NoError(t, err)
 
-	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	secondary, err := m.CreatePrivateIP(ctx, vnic.ID, "", "second", "host2")
@@ -957,7 +957,7 @@ func TestAutoPrivateIPNeverRepeatsAnAddress(t *testing.T) {
 	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: subnetCIDR})
 	require.NoError(t, err)
 
-	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	third, err := m.CreatePrivateIP(ctx, vnic.ID, "", "third", "")
@@ -996,7 +996,7 @@ func TestPrivateIPAllocationStopsAtTheSubnetEdge(t *testing.T) {
 	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: "10.0.1.0/30"})
 	require.NoError(t, err)
 
-	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	_, err = m.CreatePrivateIP(ctx, vnic.ID, "", "second", "")
@@ -1015,7 +1015,7 @@ func TestPublicIPAssignsOneToOne(t *testing.T) {
 	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: subnetCIDR})
 	require.NoError(t, err)
 
-	_, err = m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	_, err = m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	privateIPs, err := m.DescribePrivateIPs(ctx, nil)

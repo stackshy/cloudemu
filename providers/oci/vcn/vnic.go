@@ -72,7 +72,7 @@ type PrivateIP struct {
 // CreateNetworkInterface creates a VNIC in a subnet, along with the primary
 // private IP OCI gives every VNIC.
 func (m *Mock) CreateNetworkInterface(
-	_ context.Context, subnetID, description string, tags map[string]string,
+	_ context.Context, subnetID, description string, _ []string, tags map[string]string,
 ) (*driver.NetworkInterface, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

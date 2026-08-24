@@ -227,7 +227,7 @@ func TestConcurrentAssociateAddressKeepsOneToOne(t *testing.T) {
 	subnet, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: parent.ID, CIDRBlock: subnetCIDR})
 	require.NoError(t, err)
 
-	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil)
+	vnic, err := m.CreateNetworkInterface(ctx, subnet.ID, "primary", nil, nil)
 	require.NoError(t, err)
 
 	privateIPs, err := m.DescribePrivateIPs(ctx, nil)

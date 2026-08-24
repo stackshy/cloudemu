@@ -177,6 +177,7 @@ func (h *Handler) createNetworkInterface(w http.ResponseWriter, r *http.Request)
 	}
 
 	eni, err := creator.CreateNetworkInterface(r.Context(), subnetID, r.Form.Get("Description"),
+		awsquery.ListStrings(r.Form, "SecurityGroupId"),
 		mergeTagSpecs(awsquery.TagSpecs(r.Form), "network-interface"))
 	if err != nil {
 		writeENIErr(w, err)
