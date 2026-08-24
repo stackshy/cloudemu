@@ -74,6 +74,11 @@ type Instance struct {
 	// Monitoring is the CloudWatch detailed-monitoring state
 	// ("disabled"/"enabled"), when known (AWS). Empty renders as "disabled".
 	Monitoring string
+	// PowerState is the Azure power state ("running"/"stopped"/"deallocated"/
+	// "starting"/"stopping"/"deallocating"), when known. It distinguishes a
+	// PowerOff'd VM (stopped, still allocated) from a Deallocated one, a
+	// distinction the lifecycle State field cannot carry. Empty for AWS/GCP.
+	PowerState string
 	// Operator carries service-provider managed-resource metadata. It is nil
 	// for ordinary (unmanaged) instances.
 	Operator *OperatorInfo
@@ -474,6 +479,34 @@ type Compute interface {
 	CreateKeyPair(ctx context.Context, config KeyPairConfig) (*KeyPairInfo, error)
 	DeleteKeyPair(ctx context.Context, name string) error
 	DescribeKeyPairs(ctx context.Context, names []string) ([]KeyPairInfo, error)
+}
+
+// AzureVMController is an optional Azure-only capability supporting the ARM
+// virtualMachines operations that have no AWS/GCP equivalent: the PowerOff vs
+// Deallocate distinction (PowerOff stops the guest but keeps the VM allocated;
+// Deallocate releases the compute) and the idempotent CreateOrUpdate PUT
+// (updating an existing VM's mutable config in place rather than provisioning a
+// duplicate). Only the Azure VM mock implements it; the wire handler type-
+// asserts for it, so AWS/GCP are unaffected.
+type AzureVMController interface {
+	// PowerOff stops the guest OS while keeping the VM allocated
+	// (PowerState/stopped).
+	PowerOff(ctx context.Context, instanceID string) error
+	// Deallocate stops the guest and releases the allocated compute
+	// (PowerState/deallocated).
+	Deallocate(ctx context.Context, instanceID string) error
+	// UpdateInstance overwrites the mutable configuration of an existing
+	// instance in place (preserving its ID and launch time), for idempotent
+	// ARM CreateOrUpdate.
+	UpdateInstance(ctx context.Context, instanceID string, cfg InstanceConfig) error
+}
+
+// KeyPairGenerator is an optional Azure-only capability for the ARM
+// sshPublicKeys generateKeyPair action, which generates a fresh RSA key pair
+// server-side, stores the public key on the resource, and returns both the
+// public and (one-time) private key. Only the Azure mock implements it.
+type KeyPairGenerator interface {
+	GenerateKeyPair(ctx context.Context, name string) (*KeyPairInfo, error)
 }
 
 // ConsoleReader is an optional capability a Compute implementation may provide
