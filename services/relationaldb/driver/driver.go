@@ -202,6 +202,10 @@ type ClusterConfig struct {
 	EngineMode       string
 	StorageEncrypted bool
 	AllocatedStorage int
+	// DeletionProtection guards an Aurora DB cluster from deletion while set; it
+	// echoes the AWS RDS DBCluster attribute and defaults to false. Zero for
+	// non-AWS engines.
+	DeletionProtection bool
 	// Redshift-specific create inputs carried on the shared config (following the
 	// Azure HighAvailabilityMode precedent); zero for RDS/Aurora/Azure/GCP.
 	NodeType           string
@@ -236,6 +240,9 @@ type Cluster struct {
 	AllocatedStorage    int
 	StorageEncrypted    bool
 	AvailabilityZones   []string
+	// DeletionProtection guards the cluster from deletion while set; echoes the
+	// AWS RDS DBCluster attribute and defaults to false for non-AWS engines.
+	DeletionProtection bool
 	// NodeType / NumberOfNodes / Encrypted / PubliclyAccessible /
 	// AvailabilityZone / VpcID are Redshift-specific cluster attributes carried
 	// on the shared struct (Azure HighAvailabilityMode precedent); zero for

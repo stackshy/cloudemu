@@ -413,12 +413,17 @@ var alreadyExistsFaults = []faultMapping{
 }
 
 // invalidStateFaults maps an illegal-state error to the AWS-shaped fault code.
-// Real AWS distinguishes cluster-state faults from instance-state faults, so a
-// message naming a DB cluster gets InvalidDBClusterStateFault; everything else
-// falls back to InvalidDBInstanceState.
+// Real AWS distinguishes per-resource state faults, so an in-use parameter /
+// subnet / option group each gets its own fault code; a message naming a DB
+// cluster gets InvalidDBClusterStateFault; everything else falls back to
+// InvalidDBInstanceState. Ordered most-specific-first: the group entries must
+// precede "DB instance"/"DB cluster", whose keyword their messages also contain.
 //
 //nolint:gochecknoglobals // ordered static lookup table
 var invalidStateFaults = []faultMapping{
+	{"parameter group", "InvalidDBParameterGroupState"},
+	{"subnet group", "InvalidDBSubnetGroupStateFault"},
+	{"option group", "InvalidOptionGroupStateFault"},
 	{"DB cluster", "InvalidDBClusterStateFault"},
 	{"DB instance", "InvalidDBInstanceState"},
 }
