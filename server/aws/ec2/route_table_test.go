@@ -207,3 +207,70 @@ func findLocalRoute(routes []ec2types.Route) *ec2types.Route {
 
 	return nil
 }
+
+// TestDescribeRouteTablesPaginatesAllOnce pins that DescribeRouteTables honors
+// MaxResults/NextToken, paging every table (the VPC's main table plus the two
+// created here) exactly once with no duplicates across pages.
+func TestDescribeRouteTablesPaginatesAllOnce(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	vpcID := mkVPC(ctx, t, c, "10.0.0.0/16")
+
+	created := map[string]bool{}
+	for range 2 {
+		rt, err := c.CreateRouteTable(ctx, &ec2.CreateRouteTableInput{VpcId: aws.String(vpcID)})
+		if err != nil {
+			t.Fatalf("CreateRouteTable: %v", err)
+		}
+
+		created[aws.ToString(rt.RouteTable.RouteTableId)] = true
+	}
+
+	seen := map[string]int{}
+	pages := 0
+
+	var token *string
+
+	for {
+		out, err := c.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{
+			MaxResults: aws.Int32(1),
+			NextToken:  token,
+		})
+		if err != nil {
+			t.Fatalf("DescribeRouteTables: %v", err)
+		}
+
+		if len(out.RouteTables) > 1 {
+			t.Fatalf("page returned %d route tables, want at most 1", len(out.RouteTables))
+		}
+
+		for _, rt := range out.RouteTables {
+			seen[aws.ToString(rt.RouteTableId)]++
+		}
+
+		pages++
+
+		if aws.ToString(out.NextToken) == "" {
+			break
+		}
+
+		token = out.NextToken
+	}
+
+	if pages < 3 {
+		t.Fatalf("paged in %d pages, want >=3 (one table per page)", pages)
+	}
+
+	for id := range created {
+		if seen[id] != 1 {
+			t.Fatalf("created route table %s seen %d times, want exactly 1", id, seen[id])
+		}
+	}
+
+	for id, n := range seen {
+		if n != 1 {
+			t.Fatalf("route table %s seen %d times across pages, want 1", id, n)
+		}
+	}
+}

@@ -666,3 +666,71 @@ func describeSGRuleByID(t *testing.T, ctx context.Context, c *ec2.Client, ruleID
 
 	return out.SecurityGroupRules[0]
 }
+
+// TestDescribeSecurityGroupsPaginatesFilteredSet pins that MaxResults paginates
+// the FILTERED set, not the raw one: with a tag filter selecting only the two
+// tagged groups, paging MaxResults=1 returns exactly those two (one per page)
+// and never the VPC's auto-created default group, which the filter excludes.
+func TestDescribeSecurityGroupsPaginatesFilteredSet(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+
+	vpcID := createSGTestVPC(t, ctx, c, "10.0.0.0/16")
+
+	want := map[string]int{}
+	for _, name := range []string{"web", "db"} {
+		out, err := c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+			GroupName:   aws.String(name),
+			Description: aws.String(name + " group"),
+			VpcId:       aws.String(vpcID),
+			TagSpecifications: []ec2types.TagSpecification{{
+				ResourceType: ec2types.ResourceTypeSecurityGroup,
+				Tags:         []ec2types.Tag{{Key: aws.String("Team"), Value: aws.String("net")}},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("CreateSecurityGroup(%s): %v", name, err)
+		}
+
+		want[aws.ToString(out.GroupId)] = 0
+	}
+
+	seen := map[string]int{}
+
+	var token *string
+
+	for {
+		out, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+			Filters:    []ec2types.Filter{{Name: aws.String("tag:Team"), Values: []string{"net"}}},
+			MaxResults: aws.Int32(1),
+			NextToken:  token,
+		})
+		if err != nil {
+			t.Fatalf("DescribeSecurityGroups: %v", err)
+		}
+
+		if len(out.SecurityGroups) > 1 {
+			t.Fatalf("page returned %d groups, want at most 1", len(out.SecurityGroups))
+		}
+
+		for _, sg := range out.SecurityGroups {
+			seen[aws.ToString(sg.GroupId)]++
+		}
+
+		if aws.ToString(out.NextToken) == "" {
+			break
+		}
+
+		token = out.NextToken
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("paged through %d groups, want only the %d tagged ones (default group leaked in?)", len(seen), len(want))
+	}
+
+	for id := range want {
+		if seen[id] != 1 {
+			t.Fatalf("tagged group %s seen %d times, want exactly 1", id, seen[id])
+		}
+	}
+}

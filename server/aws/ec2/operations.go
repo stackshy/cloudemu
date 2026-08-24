@@ -176,11 +176,23 @@ const maxDescribeResults = 1000
 // page and a NextToken (the id of the first reservation on the following page,
 // base64-encoded). An empty/invalid maxResults returns everything.
 func paginateReservations(reservations []reservationXML, maxResultsStr, token string) (page []reservationXML, next string) {
-	start := decodeReservationToken(token, reservations)
+	return paginateXML(reservations, maxResultsStr, token,
+		func(r reservationXML) string { return r.ReservationID })
+}
+
+// paginateXML slices items to at most maxResults, returning the page and a
+// NextToken (the base64-encoded id of the first item on the following page).
+// An empty/invalid maxResults returns everything from the token offset, and the
+// NextToken is empty on the last page. idOf yields each item's stable id, which
+// is both the cursor and the value callers sort on before paging. The EC2
+// Describe* handlers share it so pagination behaves identically across the VPC
+// family and DescribeInstances.
+func paginateXML[X any](items []X, maxResultsStr, token string, idOf func(X) string) (page []X, next string) {
+	start := decodePageToken(token, items, idOf)
 
 	limit, err := strconv.Atoi(maxResultsStr)
 	if err != nil || limit <= 0 {
-		return reservations[start:], ""
+		return items[start:], ""
 	}
 
 	if limit > maxDescribeResults {
@@ -188,16 +200,16 @@ func paginateReservations(reservations []reservationXML, maxResultsStr, token st
 	}
 
 	end := start + limit
-	if end >= len(reservations) {
-		return reservations[start:], ""
+	if end >= len(items) {
+		return items[start:], ""
 	}
 
-	return reservations[start:end], encodeReservationToken(reservations[end].ReservationID)
+	return items[start:end], encodePageToken(idOf(items[end]))
 }
 
-// decodeReservationToken maps a NextToken back to a start index. An unknown or
-// empty token starts at the beginning.
-func decodeReservationToken(token string, reservations []reservationXML) int {
+// decodePageToken maps a NextToken back to a start index. An unknown or empty
+// token starts at the beginning.
+func decodePageToken[X any](token string, items []X, idOf func(X) string) int {
 	if token == "" {
 		return 0
 	}
@@ -207,8 +219,8 @@ func decodeReservationToken(token string, reservations []reservationXML) int {
 		return 0
 	}
 
-	for i := range reservations {
-		if reservations[i].ReservationID == string(raw) {
+	for i := range items {
+		if idOf(items[i]) == string(raw) {
 			return i
 		}
 	}
@@ -216,9 +228,9 @@ func decodeReservationToken(token string, reservations []reservationXML) int {
 	return 0
 }
 
-// encodeReservationToken base64-encodes a reservation id for use as a NextToken.
-func encodeReservationToken(reservationID string) string {
-	return base64.StdEncoding.EncodeToString([]byte(reservationID))
+// encodePageToken base64-encodes an item id for use as a NextToken.
+func encodePageToken(id string) string {
+	return base64.StdEncoding.EncodeToString([]byte(id))
 }
 
 // startInstances handles Action=StartInstances.

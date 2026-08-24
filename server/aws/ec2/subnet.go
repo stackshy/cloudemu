@@ -46,6 +46,7 @@ type describeSubnetsResponseXML struct {
 	Xmlns     string      `xml:"xmlns,attr"`
 	RequestID string      `xml:"requestId"`
 	SubnetSet []subnetXML `xml:"subnetSet>item"`
+	NextToken string      `xml:"nextToken,omitempty"`
 }
 
 type deleteSubnetResponseXML struct {
@@ -114,10 +115,15 @@ func (h *Handler) describeSubnets(w http.ResponseWriter, r *http.Request) {
 	region := regionFromRequest(r)
 	toXML := func(s *netdriver.SubnetInfo) subnetXML { return toSubnetXML(s, region) }
 
+	page, next := pageNetworkingXML(
+		filterXML(subnets, filters, subnetMatchesFilters, toXML), r,
+		func(s subnetXML) string { return s.SubnetID })
+
 	awsquery.WriteXMLResponse(w, describeSubnetsResponseXML{
 		Xmlns:     awsquery.Namespace,
 		RequestID: awsquery.RequestID,
-		SubnetSet: filterXML(subnets, filters, subnetMatchesFilters, toXML),
+		SubnetSet: page,
+		NextToken: next,
 	})
 }
 

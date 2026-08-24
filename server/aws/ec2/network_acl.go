@@ -42,6 +42,7 @@ type describeNetworkACLsResponseXML struct {
 	Xmlns         string          `xml:"xmlns,attr"`
 	RequestID     string          `xml:"requestId"`
 	NetworkACLSet []networkACLXML `xml:"networkAclSet>item"`
+	NextToken     string          `xml:"nextToken,omitempty"`
 }
 
 type deleteNetworkACLResponseXML struct {
@@ -101,7 +102,6 @@ func (h *Handler) deleteNetworkACL(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // per-resource describe pattern
 func (h *Handler) describeNetworkACLs(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "NetworkAclId")
 
@@ -116,10 +116,13 @@ func (h *Handler) describeNetworkACLs(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toNetworkACLXML(&acls[i]))
 	}
 
+	page, next := pageNetworkingXML(out, r, func(a networkACLXML) string { return a.NetworkACLID })
+
 	awsquery.WriteXMLResponse(w, describeNetworkACLsResponseXML{
 		Xmlns:         awsquery.Namespace,
 		RequestID:     awsquery.RequestID,
-		NetworkACLSet: out,
+		NetworkACLSet: page,
+		NextToken:     next,
 	})
 }
 
