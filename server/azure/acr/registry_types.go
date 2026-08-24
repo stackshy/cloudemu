@@ -45,6 +45,22 @@ type armRegistryProperties struct {
 	AdminUserEnabled  bool   `json:"adminUserEnabled"`
 }
 
+// armRegistryUpdateParameters mirrors armcontainerregistry.RegistryUpdateParameters
+// for ARM PATCH decoding. Every field is a pointer so an absent field is
+// distinguishable from a zero value and left untouched during the partial merge;
+// modeling AdminUserEnabled as a bare bool would silently reset it to false on
+// any PATCH that only touches another property.
+type armRegistryUpdateParameters struct {
+	Tags       map[string]*string      `json:"tags,omitempty"`
+	SKU        *armRegistrySKU         `json:"sku,omitempty"`
+	Identity   *armRegistryIdentity    `json:"identity,omitempty"`
+	Properties *armRegistryUpdateProps `json:"properties,omitempty"`
+}
+
+type armRegistryUpdateProps struct {
+	AdminUserEnabled *bool `json:"adminUserEnabled,omitempty"`
+}
+
 // armRegistryListCredentialsResult mirrors RegistryListCredentialsResult.
 type armRegistryListCredentialsResult struct {
 	Username  string                `json:"username,omitempty"`

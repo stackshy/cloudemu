@@ -142,6 +142,77 @@ func TestSDKACRRegistryLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKACRRegistryUpdatePreservesAdminUser drives the real armcontainerregistry
+// SDK: a BeginUpdate that sets only publicNetworkAccess must preserve the
+// adminUserEnabled=true established at create time.
+func TestSDKACRRegistryUpdatePreservesAdminUser(t *testing.T) {
+	cf := newACRARMFactory(t)
+	client := cf.NewRegistriesClient()
+	ctx := context.Background()
+
+	createRegistry(t, client, "rg-1", "netreg")
+
+	poller, err := client.BeginUpdate(ctx, "rg-1", "netreg", armcontainerregistry.RegistryUpdateParameters{
+		Properties: &armcontainerregistry.RegistryPropertiesUpdateParameters{
+			PublicNetworkAccess: to.Ptr(armcontainerregistry.PublicNetworkAccessDisabled),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Update PollUntilDone: %v", err)
+	}
+
+	got, err := client.Get(ctx, "rg-1", "netreg", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.Properties == nil || got.Properties.AdminUserEnabled == nil || !*got.Properties.AdminUserEnabled {
+		t.Fatalf("PATCH reset adminUserEnabled; want true, got %v", got.Properties.AdminUserEnabled)
+	}
+}
+
+// TestSDKACRDeleteMissingIsIdempotent drives the real SDK: deleting a
+// never-created registry/webhook/replication completes without error (204).
+func TestSDKACRDeleteMissingIsIdempotent(t *testing.T) {
+	cf := newACRARMFactory(t)
+	ctx := context.Background()
+
+	regClient := cf.NewRegistriesClient()
+
+	delPoller, err := regClient.BeginDelete(ctx, "rg-1", "ghost", nil)
+	if err != nil {
+		t.Fatalf("registry BeginDelete: %v", err)
+	}
+
+	if _, err := delPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("registry delete of missing resource: %v", err)
+	}
+
+	createRegistry(t, regClient, "rg-1", "idemreg")
+
+	whPoller, err := cf.NewWebhooksClient().BeginDelete(ctx, "rg-1", "idemreg", "ghost", nil)
+	if err != nil {
+		t.Fatalf("webhook BeginDelete: %v", err)
+	}
+
+	if _, err := whPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("webhook delete of missing resource: %v", err)
+	}
+
+	repPoller, err := cf.NewReplicationsClient().BeginDelete(ctx, "rg-1", "idemreg", "ghost", nil)
+	if err != nil {
+		t.Fatalf("replication BeginDelete: %v", err)
+	}
+
+	if _, err := repPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("replication delete of missing resource: %v", err)
+	}
+}
+
 func TestSDKACRRegistryCredentials(t *testing.T) {
 	cf := newACRARMFactory(t)
 	client := cf.NewRegistriesClient()

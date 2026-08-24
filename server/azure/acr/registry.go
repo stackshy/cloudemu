@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
@@ -136,7 +137,7 @@ func (h *ARMHandler) createOrUpdateRegistry(w http.ResponseWriter, r *http.Reque
 // updateRegistry handles the ARM PATCH (partial update): only attributes
 // present in the request body are overwritten; the rest are preserved.
 func (h *ARMHandler) updateRegistry(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	var body armRegistry
+	var body armRegistryUpdateParameters
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
@@ -157,9 +158,8 @@ func (h *ARMHandler) updateRegistry(w http.ResponseWriter, r *http.Request, rp *
 		upd.IdentityType = &id
 	}
 
-	if body.Properties != nil {
-		admin := body.Properties.AdminUserEnabled
-		upd.AdminUserEnabled = &admin
+	if body.Properties != nil && body.Properties.AdminUserEnabled != nil {
+		upd.AdminUserEnabled = body.Properties.AdminUserEnabled
 	}
 
 	reg, err := h.mgr.UpdateRegistry(r.Context(), rp.ResourceGroup, rp.ResourceName, upd)
@@ -182,12 +182,22 @@ func (h *ARMHandler) getRegistry(w http.ResponseWriter, r *http.Request, rp *azu
 }
 
 func (h *ARMHandler) deleteRegistry(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.mgr.DeleteRegistry(r.Context(), rp.ResourceGroup, rp.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
+	writeDeleteStatus(w, h.mgr.DeleteRegistry(r.Context(), rp.ResourceGroup, rp.ResourceName))
+}
 
-	w.WriteHeader(http.StatusOK)
+// writeDeleteStatus renders an idempotent ARM DELETE result: 200 OK when the
+// resource existed and was removed, 204 No Content when it was already absent.
+// ARM DELETE is idempotent — the ACR swagger documents 204 "does not exist in
+// the subscription" for a missing registry/webhook/replication.
+func writeDeleteStatus(w http.ResponseWriter, err error) {
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusOK)
+	case cerrors.IsNotFound(err):
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		azurearm.WriteCErr(w, err)
+	}
 }
 
 func (h *ARMHandler) postListCredentials(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

@@ -111,6 +111,69 @@ func TestARMRegistryPutStatusAndPatchMerge(t *testing.T) {
 	}
 }
 
+// TestARMRegistryPatchPropertiesPreservesAdminUser reproduces the partial-merge
+// blocker: a PATCH whose properties body touches only another field (here
+// publicNetworkAccess) must not silently reset a previously-set adminUserEnabled.
+func TestARMRegistryPatchPropertiesPreservesAdminUser(t *testing.T) {
+	ts, client := rawARMServer(t)
+
+	regURL := ts.URL + "/subscriptions/sub-1/resourceGroups/rg-1" +
+		"/providers/Microsoft.ContainerRegistry/registries/netreg" + acrAPIVersion
+
+	code, _ := armDo(t, client, http.MethodPut, regURL,
+		`{"location":"eastus","sku":{"name":"Premium"},"properties":{"adminUserEnabled":true}}`)
+	if code != http.StatusCreated {
+		t.Fatalf("PUT: got %d, want 201", code)
+	}
+
+	// PATCH a properties block that only sets publicNetworkAccess (a field absent
+	// from our decode shape); adminUserEnabled is omitted and must survive.
+	code, _ = armDo(t, client, http.MethodPatch, regURL,
+		`{"properties":{"publicNetworkAccess":"Disabled"}}`)
+	if code != http.StatusOK {
+		t.Fatalf("PATCH: got %d, want 200", code)
+	}
+
+	_, body := armDo(t, client, http.MethodGet, regURL, "")
+
+	props, _ := body["properties"].(map[string]any)
+	if props == nil || props["adminUserEnabled"] != true {
+		t.Fatalf("PATCH reset adminUserEnabled: %v", body["properties"])
+	}
+}
+
+// TestARMDeleteMissingIsIdempotent204 asserts ARM DELETE is idempotent: deleting
+// a never-created registry/webhook/replication is a successful no-op returning
+// 204, matching the ACR swagger ("does not exist in the subscription").
+func TestARMDeleteMissingIsIdempotent204(t *testing.T) {
+	ts, client := rawARMServer(t)
+
+	base := ts.URL + "/subscriptions/sub-1/resourceGroups/rg-1" +
+		"/providers/Microsoft.ContainerRegistry/registries"
+
+	code, _ := armDo(t, client, http.MethodDelete, base+"/ghost"+acrAPIVersion, "")
+	if code != http.StatusNoContent {
+		t.Fatalf("DELETE missing registry: got %d, want 204", code)
+	}
+
+	// Create a parent registry so the webhook/replication paths resolve.
+	code, _ = armDo(t, client, http.MethodPut, base+"/idemreg"+acrAPIVersion,
+		`{"location":"eastus","sku":{"name":"Premium"}}`)
+	if code != http.StatusCreated {
+		t.Fatalf("registry PUT: got %d, want 201", code)
+	}
+
+	code, _ = armDo(t, client, http.MethodDelete, base+"/idemreg/webhooks/ghost"+acrAPIVersion, "")
+	if code != http.StatusNoContent {
+		t.Fatalf("DELETE missing webhook: got %d, want 204", code)
+	}
+
+	code, _ = armDo(t, client, http.MethodDelete, base+"/idemreg/replications/ghost"+acrAPIVersion, "")
+	if code != http.StatusNoContent {
+		t.Fatalf("DELETE missing replication: got %d, want 204", code)
+	}
+}
+
 func TestARMRegistryPatchMissingIs404(t *testing.T) {
 	ts, client := rawARMServer(t)
 

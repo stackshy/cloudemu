@@ -132,12 +132,7 @@ func (h *ARMHandler) getWebhook(w http.ResponseWriter, r *http.Request, rp *azur
 }
 
 func (h *ARMHandler) deleteWebhook(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.mgr.DeleteWebhook(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
+	writeDeleteStatus(w, h.mgr.DeleteWebhook(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName))
 }
 
 //nolint:dupl // webhook and replication sub-resource lists are intentionally typed; sharing via generics adds noise.
