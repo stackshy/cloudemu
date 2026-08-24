@@ -6154,6 +6154,24 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureNetworkInterfaces",
+        "doc": "AzureNetworkInterfaces is the Azure-specific network-interface surface,",
+        "operations": [
+          {
+            "name": "CreateOrUpdateNetworkInterface"
+          },
+          {
+            "name": "DeleteNetworkInterface"
+          },
+          {
+            "name": "GetNetworkInterface"
+          },
+          {
+            "name": "ListNetworkInterfaces"
+          }
+        ]
+      },
+      {
         "name": "ClientVPN",
         "doc": "ClientVPN is an OPTIONAL AWS capability (type-asserted).",
         "operations": [

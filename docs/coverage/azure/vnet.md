@@ -69,6 +69,17 @@ Azure's `networking` service · portable interface `driver.Networking` · [Azure
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureNetworkInterfaces
+
+AzureNetworkInterfaces is the Azure-specific network-interface surface,
+
+| Operation | Description |
+| --- | --- |
+| `CreateOrUpdateNetworkInterface` |  |
+| `DeleteNetworkInterface` |  |
+| `GetNetworkInterface` |  |
+| `ListNetworkInterfaces` |  |
+
 ### ClientVPN
 
 ClientVPN is an OPTIONAL AWS capability (type-asserted).
