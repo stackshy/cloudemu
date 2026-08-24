@@ -53,3 +53,61 @@ func assertReachabilityPassed(t *testing.T, label string, s *ec2types.InstanceSt
 		t.Fatalf("%s reachability status = %q, want passed", label, d.Status)
 	}
 }
+
+// TestMonitoringStateTransitions pins the detailed-monitoring lifecycle: a fresh
+// instance reports "disabled"; MonitorInstances echoes the transitional
+// "pending" and DescribeInstances then reports "enabled"; UnmonitorInstances
+// echoes "disabling" and DescribeInstances returns to "disabled".
+func TestMonitoringStateTransitions(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+	id := runOneInstance(t, c)
+
+	if got := describeMonitoringState(t, c, id); got != ec2types.MonitoringStateDisabled {
+		t.Fatalf("initial monitoring state = %q, want disabled", got)
+	}
+
+	mon, err := c.MonitorInstances(ctx, &ec2.MonitorInstancesInput{InstanceIds: []string{id}})
+	if err != nil {
+		t.Fatalf("MonitorInstances: %v", err)
+	}
+
+	if mon.InstanceMonitorings[0].Monitoring.State != ec2types.MonitoringStatePending {
+		t.Fatalf("MonitorInstances echo = %q, want pending", mon.InstanceMonitorings[0].Monitoring.State)
+	}
+
+	if got := describeMonitoringState(t, c, id); got != ec2types.MonitoringStateEnabled {
+		t.Fatalf("monitoring state after MonitorInstances = %q, want enabled", got)
+	}
+
+	unmon, err := c.UnmonitorInstances(ctx, &ec2.UnmonitorInstancesInput{InstanceIds: []string{id}})
+	if err != nil {
+		t.Fatalf("UnmonitorInstances: %v", err)
+	}
+
+	if unmon.InstanceMonitorings[0].Monitoring.State != ec2types.MonitoringStateDisabling {
+		t.Fatalf("UnmonitorInstances echo = %q, want disabling", unmon.InstanceMonitorings[0].Monitoring.State)
+	}
+
+	if got := describeMonitoringState(t, c, id); got != ec2types.MonitoringStateDisabled {
+		t.Fatalf("monitoring state after UnmonitorInstances = %q, want disabled", got)
+	}
+}
+
+func describeMonitoringState(t *testing.T, c *ec2.Client, id string) ec2types.MonitoringState {
+	t.Helper()
+
+	out, err := c.DescribeInstances(context.Background(), &ec2.DescribeInstancesInput{
+		InstanceIds: []string{id},
+	})
+	if err != nil {
+		t.Fatalf("DescribeInstances: %v", err)
+	}
+
+	m := out.Reservations[0].Instances[0].Monitoring
+	if m == nil {
+		t.Fatalf("instance %q has no monitoring block", id)
+	}
+
+	return m.State
+}

@@ -578,7 +578,9 @@ func TestCreateNetworkInterfaceAndInstanceStatus(t *testing.T) {
 	mon := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"MonitorInstances"}, "InstanceId.1": {instID},
 	})
-	if mon.Code != http.StatusOK || !strings.Contains(mon.Body.String(), "<state>enabled</state>") {
+	// MonitorInstances echoes the transitional "pending" state (real EC2), not
+	// the settled "enabled".
+	if mon.Code != http.StatusOK || !strings.Contains(mon.Body.String(), "<state>pending</state>") {
 		t.Fatalf("MonitorInstances: code=%d body=%s", mon.Code, mon.Body.String())
 	}
 
