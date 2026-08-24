@@ -9,6 +9,7 @@ package cloudwatch
 import (
 	"encoding/xml"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -88,10 +89,15 @@ func (h *Handler) queryPutMetricData(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		data = append(data, mondriver.MetricDatum{
+		datum := mondriver.MetricDatum{
 			Namespace: ns, MetricName: name, Value: val, Unit: r.Form.Get(p + "Unit"),
 			Dimensions: queryDimensions(r, p+"Dimensions.member."), Timestamp: ts,
-		})
+			StatisticValues: queryStatisticValues(r, p+"StatisticValues."),
+			Values:          queryFloatList(r, p+"Values.member."),
+			Counts:          queryFloatList(r, p+"Counts.member."),
+		}
+
+		data = append(data, datum)
 	}
 
 	if err := h.monitoring.PutMetricData(r.Context(), data); err != nil {
@@ -120,51 +126,105 @@ func (h *Handler) queryListMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) queryGetMetricStatistics(w http.ResponseWriter, r *http.Request) {
-	stat := r.Form.Get("Statistics.member.1")
-	if stat == "" {
-		stat = statAverage
+	stats := queryStringList(r, "Statistics.member.")
+	if len(stats) == 0 {
+		stats = []string{statAverage}
 	}
 
 	start, _ := time.Parse(time.RFC3339, r.Form.Get("StartTime"))
 	end, _ := time.Parse(time.RFC3339, r.Form.Get("EndTime"))
 	period, _ := strconv.Atoi(r.Form.Get("Period"))
+	dims := queryDimensions(r, "Dimensions.member.")
 
-	res, err := h.monitoring.GetMetricData(r.Context(), mondriver.GetMetricInput{
-		Namespace: r.Form.Get("Namespace"), MetricName: r.Form.Get("MetricName"),
-		Dimensions: queryDimensions(r, "Dimensions.member."), StartTime: start, EndTime: end,
-		Period: period, Stat: stat,
-	})
-	if err != nil {
-		writeQueryDriverErr(w, err)
+	acc := newQueryDatapointAcc()
+
+	for _, stat := range stats {
+		res, err := h.monitoring.GetMetricData(r.Context(), mondriver.GetMetricInput{
+			Namespace: r.Form.Get("Namespace"), MetricName: r.Form.Get("MetricName"),
+			Dimensions: dims, StartTime: start, EndTime: end, Period: period, Stat: stat,
+		})
+		if err != nil {
+			writeQueryDriverErr(w, err)
+			return
+		}
+
+		acc.add(res, stat)
+	}
+
+	writeQueryResponse(w, "GetMetricStatisticsResponse",
+		getStatsResultXML{Label: r.Form.Get("MetricName"), Datapoints: acc.datapoints()})
+}
+
+// queryDatapointAcc merges per-statistic results into one XML datapoint per
+// timestamp so a multi-statistic GetMetricStatistics returns every requested
+// statistic on each datapoint.
+type queryDatapointAcc struct {
+	byTS  map[int64]*datapointXML
+	order []int64
+	unit  string
+}
+
+func newQueryDatapointAcc() *queryDatapointAcc {
+	return &queryDatapointAcc{byTS: map[int64]*datapointXML{}}
+}
+
+func (a *queryDatapointAcc) add(res *mondriver.MetricDataResult, stat string) {
+	if res == nil {
 		return
 	}
 
-	var dps []datapointXML
-
-	if res != nil {
-		unit := res.Unit
-		if unit == "" {
-			unit = defaultMetricUnit
-		}
-
-		for i := range res.Timestamps {
-			dp := datapointXML{Timestamp: res.Timestamps[i].UTC().Format(time.RFC3339), Unit: unit}
-			setQueryStat(&dp, stat, res.Values[i])
-			dps = append(dps, dp)
-		}
+	if a.unit == "" {
+		a.unit = res.Unit
 	}
 
-	writeQueryResponse(w, "GetMetricStatisticsResponse", getStatsResultXML{Label: r.Form.Get("MetricName"), Datapoints: dps})
+	for i := range res.Timestamps {
+		ts := res.Timestamps[i].UTC()
+		key := ts.UnixNano()
+
+		dp, ok := a.byTS[key]
+		if !ok {
+			dp = &datapointXML{Timestamp: ts.Format(time.RFC3339)}
+			a.byTS[key] = dp
+			a.order = append(a.order, key)
+		}
+
+		setQueryStat(dp, stat, res.Values[i])
+	}
+}
+
+func (a *queryDatapointAcc) datapoints() []datapointXML {
+	unit := a.unit
+	if unit == "" {
+		unit = defaultMetricUnit
+	}
+
+	sort.Slice(a.order, func(i, j int) bool { return a.order[i] < a.order[j] })
+
+	out := make([]datapointXML, 0, len(a.order))
+
+	for _, key := range a.order {
+		dp := a.byTS[key]
+		dp.Unit = unit
+		out = append(out, *dp)
+	}
+
+	return out
 }
 
 func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
+	comparisonOperator := r.Form.Get("ComparisonOperator")
+	if !comparisonOperatorValid(comparisonOperator) {
+		writeQueryError(w, http.StatusBadRequest, "ValidationError", "Invalid ComparisonOperator: "+comparisonOperator)
+		return
+	}
+
 	threshold, _ := strconv.ParseFloat(r.Form.Get("Threshold"), 64)
 	period, _ := strconv.Atoi(r.Form.Get("Period"))
 	evalPeriods, _ := strconv.Atoi(r.Form.Get("EvaluationPeriods"))
 
 	err := h.monitoring.CreateAlarm(r.Context(), mondriver.AlarmConfig{
 		Name: r.Form.Get("AlarmName"), Namespace: r.Form.Get("Namespace"), MetricName: r.Form.Get("MetricName"),
-		Dimensions: queryDimensions(r, "Dimensions.member."), ComparisonOperator: r.Form.Get("ComparisonOperator"),
+		Dimensions: queryDimensions(r, "Dimensions.member."), ComparisonOperator: comparisonOperator,
 		Threshold: threshold, Period: period, EvaluationPeriods: evalPeriods, Stat: r.Form.Get("Statistic"),
 		AlarmActions: queryStringList(r, "AlarmActions.member."), OKActions: queryStringList(r, "OKActions.member."),
 	})
@@ -231,6 +291,40 @@ func queryDimensions(r *http.Request, prefix string) map[string]string {
 		}
 
 		out[name] = r.Form.Get(prefix + strconv.Itoa(i) + ".Value")
+	}
+
+	return out
+}
+
+// queryStatisticValues parses a StatisticSet (SampleCount/Sum/Minimum/Maximum)
+// from the query-protocol form, returning nil when no SampleCount is present.
+func queryStatisticValues(r *http.Request, prefix string) *mondriver.StatisticSet {
+	raw := r.Form.Get(prefix + "SampleCount")
+	if raw == "" {
+		return nil
+	}
+
+	sampleCount, _ := strconv.ParseFloat(raw, 64)
+	sum, _ := strconv.ParseFloat(r.Form.Get(prefix+"Sum"), 64)
+	minimum, _ := strconv.ParseFloat(r.Form.Get(prefix+"Minimum"), 64)
+	maximum, _ := strconv.ParseFloat(r.Form.Get(prefix+"Maximum"), 64)
+
+	return &mondriver.StatisticSet{SampleCount: sampleCount, Sum: sum, Minimum: minimum, Maximum: maximum}
+}
+
+// queryFloatList parses a 1-indexed list of floats (Values.member.N /
+// Counts.member.N) from the query-protocol form.
+func queryFloatList(r *http.Request, prefix string) []float64 {
+	var out []float64
+
+	for i := 1; ; i++ {
+		v := r.Form.Get(prefix + strconv.Itoa(i))
+		if v == "" {
+			break
+		}
+
+		f, _ := strconv.ParseFloat(v, 64)
+		out = append(out, f)
 	}
 
 	return out

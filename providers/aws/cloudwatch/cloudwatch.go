@@ -4,7 +4,6 @@ package cloudwatch
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -75,24 +74,24 @@ func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error
 	}
 
 	m.mu.Lock()
-	for _, d := range data {
+	for i := range data {
 		key := metricKey{
-			Namespace:  d.Namespace,
-			MetricName: d.MetricName,
+			Namespace:  data[i].Namespace,
+			MetricName: data[i].MetricName,
 		}
-		m.metrics[key] = append(m.metrics[key], d)
+		m.metrics[key] = append(m.metrics[key], data[i])
 	}
 	m.mu.Unlock()
 
 	// Evaluate alarms for each unique namespace/metric pair that was updated.
 	seen := make(map[metricKey]bool)
 
-	for _, d := range data {
-		mk := metricKey{Namespace: d.Namespace, MetricName: d.MetricName}
+	for i := range data {
+		mk := metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}
 		if !seen[mk] {
 			seen[mk] = true
 
-			m.evaluateAlarms(d.Namespace, d.MetricName)
+			m.evaluateAlarms(data[i].Namespace, data[i].MetricName)
 		}
 	}
 
@@ -141,13 +140,13 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 	windowDur := time.Duration(period*evalPeriods) * time.Second
 	windowStart := now.Add(-windowDur)
 
-	filtered := m.collectFilteredValues(namespace, metricName, alarm.Dimensions, windowStart, now)
+	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, windowStart, now)
 
 	if len(filtered) == 0 {
 		return
 	}
 
-	stat := computeStat(filtered, alarm.Stat)
+	stat := aggregateDatums(filtered).stat(alarm.Stat)
 
 	var newState, reason string
 	if evaluateComparison(stat, alarm.ComparisonOperator, alarm.Threshold) {
@@ -176,16 +175,19 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 	alarm.StateReason = reason
 }
 
-func (m *Mock) collectFilteredValues(namespace, metricName string, dims map[string]string, windowStart, now time.Time) []float64 {
+func (m *Mock) collectFilteredDatums(
+	namespace, metricName string, dims map[string]string, windowStart, now time.Time,
+) []driver.MetricDatum {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	key := metricKey{Namespace: namespace, MetricName: metricName}
 	dataPoints := m.metrics[key]
 
-	var filtered []float64
+	var filtered []driver.MetricDatum
 
-	for _, d := range dataPoints {
+	for i := range dataPoints {
+		d := &dataPoints[i]
 		if d.Timestamp.Before(windowStart) || d.Timestamp.After(now) {
 			continue
 		}
@@ -194,7 +196,7 @@ func (m *Mock) collectFilteredValues(namespace, metricName string, dims map[stri
 			continue
 		}
 
-		filtered = append(filtered, d.Value)
+		filtered = append(filtered, *d)
 	}
 
 	return filtered
@@ -232,7 +234,8 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string) []driver.MetricDatum {
 	var filtered []driver.MetricDatum
 
-	for _, d := range dataPoints {
+	for i := range dataPoints {
+		d := &dataPoints[i]
 		if d.Timestamp.Before(startTime) || !d.Timestamp.Before(endTime) {
 			continue
 		}
@@ -241,7 +244,7 @@ func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTi
 			continue
 		}
 
-		filtered = append(filtered, d)
+		filtered = append(filtered, *d)
 	}
 
 	return filtered
@@ -266,13 +269,13 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 	// Walk through periods from StartTime to EndTime.
 	for periodStart := startTime; periodStart.Before(endTime); periodStart = periodStart.Add(periodDur) {
 		periodEnd := periodStart.Add(periodDur)
-		periodValues := collectPeriodValues(filtered, periodStart, periodEnd)
+		periodDatums := collectPeriodDatums(filtered, periodStart, periodEnd)
 
-		if len(periodValues) == 0 {
+		if len(periodDatums) == 0 {
 			continue
 		}
 
-		s := computeStat(periodValues, stat)
+		s := aggregateDatums(periodDatums).stat(stat)
 
 		result.Timestamps = append(result.Timestamps, periodStart)
 		result.Values = append(result.Values, s)
@@ -289,25 +292,25 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 // unitOf returns the first non-empty unit among the data points, or "" if none
 // carry a unit.
 func unitOf(data []driver.MetricDatum) string {
-	for _, d := range data {
-		if d.Unit != "" {
-			return d.Unit
+	for i := range data {
+		if data[i].Unit != "" {
+			return data[i].Unit
 		}
 	}
 
 	return ""
 }
 
-func collectPeriodValues(filtered []driver.MetricDatum, periodStart, periodEnd time.Time) []float64 {
-	var values []float64
+func collectPeriodDatums(filtered []driver.MetricDatum, periodStart, periodEnd time.Time) []driver.MetricDatum {
+	var datums []driver.MetricDatum
 
-	for _, d := range filtered {
-		if !d.Timestamp.Before(periodStart) && d.Timestamp.Before(periodEnd) {
-			values = append(values, d.Value)
+	for i := range filtered {
+		if !filtered[i].Timestamp.Before(periodStart) && filtered[i].Timestamp.Before(periodEnd) {
+			datums = append(datums, filtered[i])
 		}
 	}
 
-	return values
+	return datums
 }
 
 // ListMetrics returns unique metric names for the given namespace.
@@ -673,58 +676,87 @@ func matchDimensions(dataDims, filterDims map[string]string) bool {
 	return true
 }
 
-// computeStat computes the requested statistic over a slice of values.
-func computeStat(values []float64, stat string) float64 {
-	if len(values) == 0 {
+// statAgg accumulates SampleCount / Sum / Minimum / Maximum across a set of
+// metric datums so any requested statistic can be derived. It treats a plain
+// Value, a pre-aggregated StatisticValues set, and paired Values/Counts arrays
+// uniformly, matching how real CloudWatch folds all three into one series.
+type statAgg struct {
+	count float64
+	sum   float64
+	min   float64
+	max   float64
+	seen  bool
+}
+
+// add folds one observation (or sub-aggregate) into the accumulator: count
+// samples summing to sum, whose smallest and largest observed values are low
+// and high. Non-positive counts contribute nothing, matching AWS.
+func (a *statAgg) add(count, sum, low, high float64) {
+	if count <= 0 {
+		return
+	}
+
+	a.count += count
+	a.sum += sum
+
+	if !a.seen || low < a.min {
+		a.min = low
+	}
+
+	if !a.seen || high > a.max {
+		a.max = high
+	}
+
+	a.seen = true
+}
+
+// stat returns the requested statistic, or 0 when no data was accumulated.
+func (a statAgg) stat(stat string) float64 {
+	if !a.seen {
 		return 0
 	}
 
 	switch stat {
 	case "Sum":
-		return sumValues(values)
+		return a.sum
 	case "Min", "Minimum":
-		return minValue(values)
+		return a.min
 	case "Max", "Maximum":
-		return maxValue(values)
+		return a.max
 	case "SampleCount":
-		return float64(len(values))
+		return a.count
 	default: // "Average" or unspecified
-		return sumValues(values) / float64(len(values))
+		return a.sum / a.count
 	}
 }
 
-func sumValues(values []float64) float64 {
-	sum := 0.0
+// aggregateDatums folds every datum — plain Value, StatisticValues set, or
+// Values/Counts arrays — into a single accumulator.
+func aggregateDatums(datums []driver.MetricDatum) statAgg {
+	var a statAgg
 
-	for _, v := range values {
-		sum += v
-	}
+	for i := range datums {
+		d := &datums[i]
 
-	return sum
-}
+		switch {
+		case d.StatisticValues != nil:
+			s := d.StatisticValues
+			a.add(s.SampleCount, s.Sum, s.Minimum, s.Maximum)
+		case len(d.Values) > 0:
+			for j, v := range d.Values {
+				count := 1.0
+				if j < len(d.Counts) {
+					count = d.Counts[j]
+				}
 
-func minValue(values []float64) float64 {
-	result := math.MaxFloat64
-
-	for _, v := range values {
-		if v < result {
-			result = v
+				a.add(count, v*count, v, v)
+			}
+		default:
+			a.add(1, d.Value, d.Value, d.Value)
 		}
 	}
 
-	return result
-}
-
-func maxValue(values []float64) float64 {
-	result := -math.MaxFloat64
-
-	for _, v := range values {
-		if v > result {
-			result = v
-		}
-	}
-
-	return result
+	return a
 }
 
 func toAlarmInfo(a *alarmData) driver.AlarmInfo {

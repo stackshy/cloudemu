@@ -15,14 +15,31 @@ type MetricIdentifier struct {
 	Dimensions map[string]string
 }
 
-// MetricDatum is a single metric data point.
+// StatisticSet is a pre-aggregated metric sample: the SampleCount/Sum/Minimum/
+// Maximum a caller supplies via PutMetricData's StatisticValues instead of a
+// single Value. It lets the series answer every statistic without the raw
+// observations.
+type StatisticSet struct {
+	SampleCount float64
+	Sum         float64
+	Minimum     float64
+	Maximum     float64
+}
+
+// MetricDatum is a single metric data point. A datum carries either a single
+// Value, a pre-aggregated StatisticValues set, or paired Values/Counts arrays
+// (each Values[i] observed Counts[i] times); the later two let a caller publish
+// aggregated data without the individual observations.
 type MetricDatum struct {
-	Namespace  string
-	MetricName string
-	Value      float64
-	Unit       string
-	Dimensions map[string]string
-	Timestamp  time.Time
+	Namespace       string
+	MetricName      string
+	Value           float64
+	Unit            string
+	Dimensions      map[string]string
+	Timestamp       time.Time
+	StatisticValues *StatisticSet
+	Values          []float64
+	Counts          []float64
 }
 
 // GetMetricInput configures a metric retrieval operation.
