@@ -3,6 +3,8 @@ package acr
 import (
 	"encoding/json"
 	"net/http"
+
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
 func (h *Handler) listRepositories(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +70,89 @@ func (h *Handler) deleteRepository(w http.ResponseWriter, r *http.Request, repo 
 	writeJSON(w, http.StatusAccepted, deleteRepositoryResponse{
 		ManifestsDeleted: []string{},
 		TagsDeleted:      []string{},
+	})
+}
+
+// findTag locates the image carrying tag in repo and returns it, or ok=false.
+func findTag(images []crdriver.ImageDetail, tag string) (crdriver.ImageDetail, bool) {
+	for i := range images {
+		for _, t := range images[i].Tags {
+			if t == tag {
+				return images[i], true
+			}
+		}
+	}
+
+	return crdriver.ImageDetail{}, false
+}
+
+func (h *Handler) getTagProperties(w http.ResponseWriter, r *http.Request, repo, tag string) {
+	images, err := h.registry.ListImages(r.Context(), repo)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	img, ok := findTag(images, tag)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "TAG_UNKNOWN", "tag "+tag+" not found in repository "+repo)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, tagProperties{
+		Registry:  registryLoginServer,
+		ImageName: repo,
+		Tag: tagAttributes{
+			Name:                 tag,
+			Digest:               img.Digest,
+			CreatedTime:          img.PushedAt,
+			LastUpdateTime:       img.PushedAt,
+			ChangeableAttributes: allEnabled(),
+		},
+	})
+}
+
+func (h *Handler) deleteTag(w http.ResponseWriter, r *http.Request, repo, tag string) {
+	writer, ok := h.registry.(crdriver.AzureRepositoryWriter)
+	if !ok {
+		writeErr(w, http.StatusNotImplemented, "UNSUPPORTED", "tag deletion is not supported by this registry driver")
+		return
+	}
+
+	if err := writer.DeleteTag(r.Context(), repo, tag); err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	// ACR answers DELETE _tags/{tag} with 202 Accepted and an empty body.
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) listManifests(w http.ResponseWriter, r *http.Request, repo string) {
+	images, err := h.registry.ListImages(r.Context(), repo)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, manifestList{
+		Registry:  registryLoginServer,
+		ImageName: repo,
+		Manifests: toManifestAttributes(images),
+	})
+}
+
+func (h *Handler) getManifestProperties(w http.ResponseWriter, r *http.Request, repo, digest string) {
+	img, err := h.registry.GetImage(r.Context(), repo, digest)
+	if err != nil {
+		writeCErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, manifestProperties{
+		Registry:  registryLoginServer,
+		ImageName: repo,
+		Manifest:  toManifestAttribute(img),
 	})
 }
 

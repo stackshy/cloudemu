@@ -61,6 +61,64 @@ type deleteRepositoryResponse struct {
 	TagsDeleted      []string `json:"tagsDeleted"`
 }
 
+// tagProperties is the GET /acr/v1/{name}/_tags/{tag} body.
+type tagProperties struct {
+	Registry  string        `json:"registry"`
+	ImageName string        `json:"imageName"`
+	Tag       tagAttributes `json:"tag"`
+}
+
+// manifestAttributes is one entry in the _manifests list.
+type manifestAttributes struct {
+	Digest               string               `json:"digest"`
+	CreatedTime          string               `json:"createdTime,omitempty"`
+	LastUpdateTime       string               `json:"lastUpdateTime,omitempty"`
+	MediaType            string               `json:"mediaType,omitempty"`
+	ImageSize            int64                `json:"imageSize"`
+	Tags                 []string             `json:"tags"`
+	ChangeableAttributes changeableAttributes `json:"changeableAttributes"`
+}
+
+// manifestList is the GET /acr/v1/{name}/_manifests body.
+type manifestList struct {
+	Registry  string               `json:"registry"`
+	ImageName string               `json:"imageName"`
+	Manifests []manifestAttributes `json:"manifests"`
+}
+
+// manifestProperties is the GET /acr/v1/{name}/_manifests/{digest} body.
+type manifestProperties struct {
+	Registry  string             `json:"registry"`
+	ImageName string             `json:"imageName"`
+	Manifest  manifestAttributes `json:"manifest"`
+}
+
+func toManifestAttribute(img *crdriver.ImageDetail) manifestAttributes {
+	tags := img.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+
+	return manifestAttributes{
+		Digest:               img.Digest,
+		CreatedTime:          img.PushedAt,
+		LastUpdateTime:       img.PushedAt,
+		MediaType:            img.MediaType,
+		ImageSize:            img.SizeBytes,
+		Tags:                 tags,
+		ChangeableAttributes: allEnabled(),
+	}
+}
+
+func toManifestAttributes(images []crdriver.ImageDetail) []manifestAttributes {
+	out := make([]manifestAttributes, 0, len(images))
+	for i := range images {
+		out = append(out, toManifestAttribute(&images[i]))
+	}
+
+	return out
+}
+
 // registriesMarker precedes the repository name in the Azure resource ID the
 // driver stores (…/Microsoft.ContainerRegistry/registries/{name}).
 const registriesMarker = "/registries/"

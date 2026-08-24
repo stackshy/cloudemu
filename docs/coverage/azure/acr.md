@@ -22,6 +22,40 @@ Azure's `containerregistry` service · portable interface `driver.ContainerRegis
 | `StartImageScan` | Image scanning |
 | `TagImage` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### AzureRegistryManager
+
+AzureRegistryManager is the Azure-specific ACR management-plane surface,
+
+| Operation | Description |
+| --- | --- |
+| `CreateOrUpdateRegistry` |  |
+| `CreateOrUpdateReplication` |  |
+| `CreateOrUpdateWebhook` |  |
+| `DeleteRegistry` |  |
+| `DeleteReplication` |  |
+| `DeleteWebhook` |  |
+| `GetRegistry` |  |
+| `GetReplication` |  |
+| `GetWebhook` |  |
+| `ListRegistries` |  |
+| `ListRegistryCredentials` |  |
+| `ListRegistryUsages` |  |
+| `ListReplications` |  |
+| `ListWebhooks` |  |
+| `RegenerateRegistryCredential` |  |
+
+### AzureRepositoryWriter
+
+AzureRepositoryWriter is the Azure-specific ACR data-plane surface for
+
+| Operation | Description |
+| --- | --- |
+| `DeleteTag` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

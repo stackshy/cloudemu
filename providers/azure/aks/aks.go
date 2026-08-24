@@ -12,6 +12,7 @@ package aks
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,12 @@ const (
 	defaultNodeCount     = 3
 	defaultVMSize        = "Standard_DS2_v2"
 	defaultOSDiskGB      = 128
+	defaultMaxPods       = 110
+	defaultOSDiskType    = "Managed"
+	defaultPoolType      = "VirtualMachineScaleSets"
+	defaultNodeImage     = "AKSUbuntu-2204gen2containerd-202401.09.0"
+	poolPowerRunning     = "Running"
+	emulatorTenantID     = "11111111-1111-1111-1111-111111111111"
 	cpuMetricRunning     = 0.35
 	memMetricRunning     = 0.50
 	podMetricRunning     = 12.0
@@ -53,6 +60,16 @@ type ManagedCluster struct {
 	Tags           map[string]string
 	AgentPoolNames []string
 
+	// EnableRBAC mirrors properties.enableRBAC; defaults to true, the AKS
+	// default when a create omits it.
+	EnableRBAC bool
+	// Identity echoes the managed-identity block. IdentityType is
+	// "SystemAssigned" / "UserAssigned" / "None"/""; PrincipalID and TenantID
+	// are populated for a system-assigned identity.
+	IdentityType string
+	PrincipalID  string
+	TenantID     string
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -74,6 +91,14 @@ type AgentPool struct {
 	ScaleSetPriority string
 	NodeLabels       map[string]string
 	NodeTaints       []string
+	// MaxPods, OSDiskType, Type, PowerState and NodeImageVersion are the
+	// computed pool fields the real API always returns; the emulator synthesizes
+	// standard defaults when a create omits them.
+	MaxPods          int32
+	OSDiskType       string
+	Type             string
+	PowerState       string
+	NodeImageVersion string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -237,6 +262,12 @@ type ClusterInput struct {
 	// Tier is the cluster SKU tier (Free / Standard / Premium); defaults to Free.
 	Tier string
 	Tags map[string]string
+	// IdentityType echoes the managed-identity block: "SystemAssigned",
+	// "UserAssigned", "None" or "".
+	IdentityType string
+	// EnableRBAC mirrors properties.enableRBAC. Nil means "not submitted", which
+	// the mock resolves to the AKS default (true).
+	EnableRBAC *bool
 	// AgentPools may be nil for an empty cluster; otherwise these are the
 	// pools shipped inline at create time (system pool typically).
 	AgentPools []AgentPoolInput
@@ -254,6 +285,9 @@ type AgentPoolInput struct {
 	ScaleSetPriority string
 	NodeLabels       map[string]string
 	NodeTaints       []string
+	// MaxPods is the submitted max-pods-per-node; 0 means "not submitted" and
+	// the mock applies the standard default.
+	MaxPods int32
 }
 
 // CreateOrUpdateCluster creates a new managed cluster or updates an existing
@@ -293,10 +327,12 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	cluster.PowerState = "Running"
 	cluster.Tier = defaultIfEmpty(input.Tier, "Free")
 	cluster.Tags = copyTags(input.Tags)
+	cluster.EnableRBAC = input.EnableRBAC == nil || *input.EnableRBAC
+	applyClusterIdentity(&cluster, input.IdentityType)
 	cluster.UpdatedAt = now
 
 	// Inline pools — replace what we have for this cluster.
-	cluster.AgentPoolNames = m.replaceInlinePools(input, now)
+	cluster.AgentPoolNames = m.replaceInlinePools(input, cluster.KubernetesVersion, now)
 
 	// Wave 2: if a Kubernetes data-plane server is wired and this is a fresh
 	// cluster, register a ClusterState and remember the UID so Kubeconfig can
@@ -319,11 +355,30 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	return &out, nil
 }
 
+// applyClusterIdentity echoes the submitted managed-identity block, generating
+// a deterministic principal/tenant pair for a system-assigned identity.
+func applyClusterIdentity(cluster *ManagedCluster, identityType string) {
+	cluster.IdentityType = identityType
+	cluster.PrincipalID = ""
+	cluster.TenantID = ""
+
+	if identityType == "" || identityType == "None" {
+		return
+	}
+
+	if strings.Contains(identityType, "SystemAssigned") {
+		cluster.PrincipalID = idgen.SyntheticGUID(
+			"principal/cluster/" + cluster.ResourceGroup + "/" + cluster.Name)
+		cluster.TenantID = emulatorTenantID
+	}
+}
+
 // replaceInlinePools wipes any pre-existing pools for the cluster and re-adds
-// each input pool. Caller must hold m.mu (write).
+// each input pool. Caller must hold m.mu (write). clusterVersion is inherited
+// by inline pools that omit their own orchestratorVersion.
 //
 //nolint:gocritic // input is a value-type mirror of the public CreateOrUpdate body.
-func (m *Mock) replaceInlinePools(input ClusterInput, now time.Time) []string {
+func (m *Mock) replaceInlinePools(input ClusterInput, clusterVersion string, now time.Time) []string {
 	// Drop existing pools for this cluster.
 	prefix := input.ResourceGroup + "/" + input.Name + "/"
 
@@ -337,7 +392,7 @@ func (m *Mock) replaceInlinePools(input ClusterInput, now time.Time) []string {
 
 	//nolint:gocritic // pool is a value mirror of the SDK input; copy is intentional.
 	for _, pool := range input.AgentPools {
-		ap := buildAgentPool(input.ResourceGroup, input.Name, pool, now)
+		ap := buildAgentPool(input.ResourceGroup, input.Name, clusterVersion, pool, now)
 		m.pools.Set(poolKey(input.ResourceGroup, input.Name, pool.Name), ap)
 		names = append(names, pool.Name)
 	}
@@ -346,7 +401,7 @@ func (m *Mock) replaceInlinePools(input ClusterInput, now time.Time) []string {
 }
 
 //nolint:gocritic // in is a value mirror of the SDK AgentPool body; pointer would invite caller mutation.
-func buildAgentPool(rg, cluster string, in AgentPoolInput, now time.Time) AgentPool {
+func buildAgentPool(rg, cluster, clusterVersion string, in AgentPoolInput, now time.Time) AgentPool {
 	count := in.Count
 	if count <= 0 {
 		count = defaultNodeCount
@@ -355,6 +410,11 @@ func buildAgentPool(rg, cluster string, in AgentPoolInput, now time.Time) AgentP
 	disk := in.OSDiskSizeGB
 	if disk <= 0 {
 		disk = defaultOSDiskGB
+	}
+
+	maxPods := in.MaxPods
+	if maxPods <= 0 {
+		maxPods = defaultMaxPods
 	}
 
 	return AgentPool{
@@ -366,11 +426,16 @@ func buildAgentPool(rg, cluster string, in AgentPoolInput, now time.Time) AgentP
 		OSDiskSizeGB:      disk,
 		OSType:            defaultIfEmpty(in.OSType, "Linux"),
 		Mode:              defaultIfEmpty(in.Mode, "User"),
-		OrchestratorVer:   defaultIfEmpty(in.OrchestratorVer, defaultK8sVersion),
+		OrchestratorVer:   defaultIfEmpty(in.OrchestratorVer, defaultIfEmpty(clusterVersion, defaultK8sVersion)),
 		ProvisioningState: "Succeeded",
 		ScaleSetPriority:  defaultIfEmpty(in.ScaleSetPriority, "Regular"),
 		NodeLabels:        copyLabels(in.NodeLabels),
 		NodeTaints:        copyTaints(in.NodeTaints),
+		MaxPods:           maxPods,
+		OSDiskType:        defaultOSDiskType,
+		Type:              defaultPoolType,
+		PowerState:        poolPowerRunning,
+		NodeImageVersion:  defaultNodeImage,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
@@ -535,12 +600,14 @@ func (m *Mock) CreateOrUpdateAgentPool(
 	defer m.mu.Unlock()
 
 	cKey := clusterKey(rg, cluster)
-	if !m.clusters.Has(cKey) {
+
+	clusterRec, ok := m.clusters.Get(cKey)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "managed cluster %q not found in resource group %q", cluster, rg)
 	}
 
 	now := m.opts.Clock.Now().UTC()
-	pool := buildAgentPool(rg, cluster, in, now)
+	pool := buildAgentPool(rg, cluster, clusterRec.KubernetesVersion, in, now)
 
 	if existing, ok := m.pools.Get(poolKey(rg, cluster, in.Name)); ok {
 		pool.CreatedAt = existing.CreatedAt

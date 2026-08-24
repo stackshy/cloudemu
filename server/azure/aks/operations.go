@@ -39,10 +39,15 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 		in.Tier = body.SKU.Tier
 	}
 
+	if body.Identity != nil {
+		in.IdentityType = body.Identity.Type
+	}
+
 	if body.Properties != nil {
 		in.KubernetesVersion = body.Properties.KubernetesVersion
 		in.DNSPrefix = body.Properties.DNSPrefix
 		in.NodeResourceGroup = body.Properties.NodeResourceGroup
+		in.EnableRBAC = body.Properties.EnableRBAC
 
 		for i := range body.Properties.AgentPoolProfiles {
 			p := &body.Properties.AgentPoolProfiles[i]
@@ -57,6 +62,7 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 				ScaleSetPriority: p.ScaleSetPriority,
 				NodeLabels:       fromPtrTags(p.NodeLabels),
 				NodeTaints:       p.NodeTaints,
+				MaxPods:          p.MaxPods,
 			})
 		}
 	}
@@ -149,6 +155,7 @@ func (h *Handler) createOrUpdateAgentPool(w http.ResponseWriter, r *http.Request
 		in.ScaleSetPriority = body.Properties.ScaleSetPriority
 		in.NodeLabels = fromPtrTags(body.Properties.NodeLabels)
 		in.NodeTaints = body.Properties.NodeTaints
+		in.MaxPods = body.Properties.MaxPods
 	}
 
 	pool, err := h.be.CreateOrUpdateAgentPool(r.Context(), rp.ResourceGroup, rp.ResourceName, in)
