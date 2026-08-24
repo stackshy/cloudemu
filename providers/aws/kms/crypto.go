@@ -40,6 +40,11 @@ const (
 	aes256Bytes      = 32
 	aes128Bytes      = 16
 	maxRandomBytes   = 1024
+	// maxPlaintextBytes is the KMS Encrypt Plaintext length constraint: real
+	// KMS caps a single Encrypt at 4096 bytes (the SYMMETRIC_DEFAULT limit) and
+	// rejects anything larger with ValidationException. Larger payloads must use
+	// envelope encryption via GenerateDataKey.
+	maxPlaintextBytes = 4096
 )
 
 func isAsymmetricSpec(spec string) bool {
@@ -171,6 +176,14 @@ func (m *Mock) Encrypt(_ context.Context, in driver.EncryptInput) (*driver.Encry
 
 	if kd.meta.KeyUsage != driver.UsageEncryptDecrypt {
 		return nil, driver.ErrInvalidKeyUsage
+	}
+
+	// Real KMS enforces the Plaintext length constraint server-side: a single
+	// Encrypt accepts at most 4096 bytes, rejecting larger input with
+	// ValidationException instead of silently sealing it.
+	if len(in.Plaintext) > maxPlaintextBytes {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"plaintext exceeds the %d-byte Encrypt limit; use GenerateDataKey for larger data", maxPlaintextBytes)
 	}
 
 	if priv, ok := kd.privKey.(*rsa.PrivateKey); ok {
