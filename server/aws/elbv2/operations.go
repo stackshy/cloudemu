@@ -1,6 +1,7 @@
 package elbv2
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"sort"
@@ -259,16 +260,28 @@ func (h *Handler) createListener(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) describeListeners(w http.ResponseWriter, r *http.Request) {
 	lbARN := r.Form.Get("LoadBalancerArn")
+	wanted := awsquery.ListStrings(r.Form, "ListenerArns.member")
 
-	lis, err := h.lb.DescribeListeners(r.Context(), lbARN)
+	// LoadBalancerArn and ListenerArns are alternative, both-optional filters.
+	// A DescribeListeners with only ListenerArns must resolve those listeners by
+	// ARN, not fall through to a load-balancer existence check on an empty ARN.
+	var (
+		lis []lbdriver.ListenerInfo
+		err error
+	)
+
+	if lbARN == "" && len(wanted) > 0 {
+		lis, err = h.listenersByARN(r.Context(), wanted)
+	} else {
+		lis, err = h.lb.DescribeListeners(r.Context(), lbARN)
+		if err == nil && len(wanted) > 0 {
+			lis = filterListeners(lis, wanted)
+		}
+	}
+
 	if err != nil {
 		writeErr(w, err)
 		return
-	}
-
-	// Filter to specific listener ARNs if requested.
-	if wanted := awsquery.ListStrings(r.Form, "ListenerArns.member"); len(wanted) > 0 {
-		lis = filterListeners(lis, wanted)
 	}
 
 	out := listenersXML{Member: make([]listenerXML, 0, len(lis))}
@@ -552,6 +565,29 @@ func parseTargets(form url.Values, prefix string) []lbdriver.Target {
 	}
 
 	return out
+}
+
+// listenersByARN resolves the named listeners directly by ARN (used when
+// DescribeListeners is called with ListenerArns and no LoadBalancerArn). A
+// listener ARN that does not exist yields ListenerNotFound.
+func (h *Handler) listenersByARN(ctx context.Context, arns []string) ([]lbdriver.ListenerInfo, error) {
+	getter, ok := h.lb.(lbdriver.ListenerGetter)
+	if !ok {
+		return nil, cerrors.New(cerrors.NotFound, "listener lookup by ARN is not supported")
+	}
+
+	out := make([]lbdriver.ListenerInfo, 0, len(arns))
+
+	for _, arn := range arns {
+		li, err := getter.GetListener(ctx, arn)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, *li)
+	}
+
+	return out, nil
 }
 
 // filterListeners keeps only listeners whose ARN is in wanted.
