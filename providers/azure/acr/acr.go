@@ -52,6 +52,12 @@ type Mock struct {
 	repos      *memstore.Store[*repoData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// registries holds the ARM management-plane registry resources, keyed by
+	// "{rg}/{name}". Distinct from repos (the data-plane catalog).
+	registries   *memstore.Store[*registryData]
+	webhooks     *memstore.Store[*driver.AzureWebhook]
+	replications *memstore.Store[*driver.AzureReplication]
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -84,8 +90,11 @@ func (m *Mock) emitMetric(repoName string, metrics map[string]float64) {
 // New creates a new ACR mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		repos: memstore.New[*repoData](),
-		opts:  opts,
+		repos:        memstore.New[*repoData](),
+		opts:         opts,
+		registries:   memstore.New[*registryData](),
+		webhooks:     memstore.New[*driver.AzureWebhook](),
+		replications: memstore.New[*driver.AzureReplication](),
 	}
 }
 
@@ -309,6 +318,38 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 	rd.info.ImageCount = rd.images.Len()
 
 	return nil
+}
+
+// DeleteTag removes a single tag from a repository, leaving the underlying
+// manifest and any other tags on it intact. This mirrors ACR's data-plane
+// DELETE /acr/v1/{repo}/_tags/{tag}, which untags rather than deleting the
+// manifest.
+func (m *Mock) DeleteTag(_ context.Context, repository, tag string) error {
+	if tag == "" {
+		return errors.New(errors.InvalidArgument, "tag cannot be empty")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	all := rd.images.All()
+	for d, img := range all {
+		if !hasTag(img.detail.Tags, tag) {
+			continue
+		}
+
+		img.detail.Tags = removeTag(img.detail.Tags, tag)
+		rd.images.Set(d, img)
+
+		return nil
+	}
+
+	return errors.Newf(errors.NotFound, "tag %q not found in repository %q", tag, repository)
 }
 
 // PutLifecyclePolicy sets a lifecycle policy on an ACR repository.

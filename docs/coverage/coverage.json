@@ -2547,6 +2547,79 @@
         "name": "TagImage"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AzureRegistryManager",
+        "doc": "AzureRegistryManager is the Azure-specific ACR management-plane surface,",
+        "operations": [
+          {
+            "name": "CreateOrUpdateRegistry",
+            "doc": "CreateOrUpdateRegistry is the ARM PUT (full create-or-replace). It reports"
+          },
+          {
+            "name": "CreateOrUpdateReplication"
+          },
+          {
+            "name": "CreateOrUpdateWebhook"
+          },
+          {
+            "name": "DeleteRegistry"
+          },
+          {
+            "name": "DeleteReplication"
+          },
+          {
+            "name": "DeleteWebhook"
+          },
+          {
+            "name": "GetRegistry"
+          },
+          {
+            "name": "GetReplication"
+          },
+          {
+            "name": "GetWebhook"
+          },
+          {
+            "name": "ListRegistries"
+          },
+          {
+            "name": "ListRegistryCredentials"
+          },
+          {
+            "name": "ListRegistryUsages"
+          },
+          {
+            "name": "ListReplications"
+          },
+          {
+            "name": "ListWebhooks"
+          },
+          {
+            "name": "RegenerateRegistryCredential"
+          },
+          {
+            "name": "UpdateRegistry",
+            "doc": "UpdateRegistry is the ARM PATCH (partial update). It merges upd onto the"
+          },
+          {
+            "name": "UpdateReplication"
+          },
+          {
+            "name": "UpdateWebhook"
+          }
+        ]
+      },
+      {
+        "name": "AzureRepositoryWriter",
+        "doc": "AzureRepositoryWriter is the Azure-specific ACR data-plane surface for",
+        "operations": [
+          {
+            "name": "DeleteTag"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "ECR",
       "azure": "ACR",

@@ -3,6 +3,7 @@ package aks
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
@@ -39,10 +40,15 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 		in.Tier = body.SKU.Tier
 	}
 
+	if body.Identity != nil {
+		in.IdentityType = body.Identity.Type
+	}
+
 	if body.Properties != nil {
 		in.KubernetesVersion = body.Properties.KubernetesVersion
 		in.DNSPrefix = body.Properties.DNSPrefix
 		in.NodeResourceGroup = body.Properties.NodeResourceGroup
+		in.EnableRBAC = body.Properties.EnableRBAC
 
 		for i := range body.Properties.AgentPoolProfiles {
 			p := &body.Properties.AgentPoolProfiles[i]
@@ -57,6 +63,7 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 				ScaleSetPriority: p.ScaleSetPriority,
 				NodeLabels:       fromPtrTags(p.NodeLabels),
 				NodeTaints:       p.NodeTaints,
+				MaxPods:          p.MaxPods,
 			})
 		}
 	}
@@ -94,12 +101,19 @@ func (h *Handler) updateClusterTags(w http.ResponseWriter, r *http.Request, rp *
 }
 
 func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.be.DeleteCluster(r.Context(), rp.ResourceGroup, rp.ResourceName); err != nil {
+	writeIdempotentDelete(w, h.be.DeleteCluster(r.Context(), rp.ResourceGroup, rp.ResourceName))
+}
+
+// writeIdempotentDelete renders an ARM DELETE result. ARM DELETE is idempotent:
+// a missing resource is a successful no-op, so a NotFound error is treated the
+// same as a successful delete. 204 keeps the SDK LRO poller terminal (the AKS
+// swagger documents 202/204 for DELETE).
+func writeIdempotentDelete(w http.ResponseWriter, err error) {
+	if err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	// SDK accepts 202/204 on DELETE; 204 keeps the LRO poller terminal.
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -149,6 +163,7 @@ func (h *Handler) createOrUpdateAgentPool(w http.ResponseWriter, r *http.Request
 		in.ScaleSetPriority = body.Properties.ScaleSetPriority
 		in.NodeLabels = fromPtrTags(body.Properties.NodeLabels)
 		in.NodeTaints = body.Properties.NodeTaints
+		in.MaxPods = body.Properties.MaxPods
 	}
 
 	pool, err := h.be.CreateOrUpdateAgentPool(r.Context(), rp.ResourceGroup, rp.ResourceName, in)
@@ -171,13 +186,7 @@ func (h *Handler) getAgentPool(w http.ResponseWriter, r *http.Request, rp *azure
 }
 
 func (h *Handler) deleteAgentPool(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.be.DeleteAgentPool(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	// SDK requires 202/204 on agent-pool DELETE.
-	w.WriteHeader(http.StatusNoContent)
+	writeIdempotentDelete(w, h.be.DeleteAgentPool(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName))
 }
 
 //nolint:dupl // sub-resource lists are intentionally typed; sharing via generics adds noise.

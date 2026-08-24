@@ -3,8 +3,30 @@ package idgen
 
 import (
 	"fmt"
+	"hash/fnv"
 	"sync/atomic"
 )
+
+// guidNodeMask isolates the low 48 bits used as a GUID's node field.
+const guidNodeMask = 0xffffffffffff
+
+// SyntheticGUID derives a deterministic GUID-shaped string from seed. The value
+// is synthetic (a stand-in for an Azure principal/tenant id), not a real
+// security identifier — the same seed always yields the same GUID so tests are
+// stable.
+func SyntheticGUID(seed string) string {
+	h1 := fnv.New64a()
+	_, _ = h1.Write([]byte(seed))
+	a := h1.Sum64()
+
+	h2 := fnv.New64a()
+	_, _ = h2.Write([]byte(seed + "#salt"))
+	b := h2.Sum64()
+
+	//nolint:gosec,mnd // intentional narrowing + GUID field-width shifts
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		uint32(a>>32), uint16(a>>16), uint16(a), uint16(b>>48), b&guidNodeMask)
+}
 
 //nolint:gochecknoglobals // counter must be a package-level variable for atomic operations across all ID generators
 var counter uint64
