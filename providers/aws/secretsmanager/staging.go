@@ -9,13 +9,10 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
-// Version stage labels and the default soft-delete recovery window, matching
-// real Secrets Manager staging and DeleteSecret semantics.
+// Version stage labels, matching real Secrets Manager staging semantics.
 const (
 	stageCurrent  = "AWSCURRENT"
 	stagePrevious = "AWSPREVIOUS"
-
-	recoveryWindowDays = 30
 )
 
 // currentIndex returns the index of the current version, or -1 if none.
@@ -64,7 +61,8 @@ func (m *Mock) GetSecretValueStage(_ context.Context, name, versionID, stage str
 	defer sd.mu.RUnlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+		return nil, errors.New(errors.FailedPrecondition,
+			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
 	if versionID != "" {
@@ -136,7 +134,25 @@ func (m *Mock) SecretDeletionDate(_ context.Context, name string) (string, bool)
 		return "", false
 	}
 
-	return sd.deletedAt.AddDate(0, 0, recoveryWindowDays).UTC().Format(time.RFC3339), true
+	return sd.deletedAt.AddDate(0, 0, sd.recoveryWindow).UTC().Format(time.RFC3339), true
+}
+
+// SecretMetadata returns a secret's metadata even when it is scheduled for
+// deletion, so DescribeSecret can report a soft-deleted secret (real Secrets
+// Manager keeps DescribeSecret working, returning DeletedDate, until the secret
+// is permanently removed). ResourceNotFoundException only for a missing secret.
+func (m *Mock) SecretMetadata(_ context.Context, name string) (*driver.SecretInfo, error) {
+	sd, ok := m.secrets.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
+	}
+
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	result := sd.info
+
+	return &result, nil
 }
 
 // RestoreSecret cancels a scheduled deletion, making the secret usable again.
@@ -170,7 +186,8 @@ func (m *Mock) RotateSecret(_ context.Context, name string) (*driver.SecretVersi
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+		return nil, errors.New(errors.FailedPrecondition,
+			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
 	cur := currentIndex(sd.versions)

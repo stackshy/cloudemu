@@ -20,8 +20,18 @@ type secretData struct {
 	info      driver.SecretInfo
 	versions  []driver.SecretVersion
 	deletedAt time.Time
-	mu        sync.RWMutex
+	// recoveryWindow is the number of days between the delete request and the
+	// scheduled deletion date, captured from DeleteSecret's RecoveryWindowInDays.
+	recoveryWindow int
+	mu             sync.RWMutex
 }
+
+// DeleteSecret recovery-window bounds, matching the real service.
+const (
+	minRecoveryWindowDays     = 7
+	maxRecoveryWindowDays     = 30
+	defaultRecoveryWindowDays = 30
+)
 
 // Mock is an in-memory mock implementation of the AWS Secrets Manager service.
 type Mock struct {
@@ -43,7 +53,16 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		return nil, errors.New(errors.InvalidArgument, "secret name is required")
 	}
 
-	if m.secrets.Has(cfg.Name) {
+	if existing, ok := m.secrets.Get(cfg.Name); ok {
+		existing.mu.RLock()
+		scheduledForDeletion := !existing.deletedAt.IsZero()
+		existing.mu.RUnlock()
+
+		if scheduledForDeletion {
+			return nil, errors.New(errors.FailedPrecondition,
+				"a secret with this name is already scheduled for deletion")
+		}
+
 		return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", cfg.Name)
 	}
 
@@ -88,23 +107,70 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 	return &result, nil
 }
 
-// DeleteSecret soft-deletes a secret by name, scheduling it for deletion after a recovery window.
-func (m *Mock) DeleteSecret(_ context.Context, name string) error {
+// DeleteSecret soft-deletes a secret by name, scheduling it for deletion after
+// the default recovery window. It satisfies the portable driver; the AWS wire
+// layer uses DeleteSecretWithOptions to honor RecoveryWindowInDays and
+// ForceDeleteWithoutRecovery.
+func (m *Mock) DeleteSecret(ctx context.Context, name string) error {
+	_, _, err := m.DeleteSecretWithOptions(ctx, name, nil, false)
+
+	return err
+}
+
+// DeleteSecretWithOptions is the AWS DeleteSecret surface. A nil recoveryWindow
+// applies the 30-day default; ForceDeleteWithoutRecovery removes the secret
+// permanently (no recovery window, unrecoverable). It returns the deleted
+// secret's metadata plus the scheduled DeletionDate (RFC3339). Passing both a
+// recovery window and force, or a window outside 7-30, is rejected.
+func (m *Mock) DeleteSecretWithOptions(
+	_ context.Context, name string, recoveryWindow *int64, force bool,
+) (*driver.SecretInfo, string, error) {
+	if force && recoveryWindow != nil {
+		return nil, "", errors.New(errors.InvalidArgument,
+			"RecoveryWindowInDays can't be used together with ForceDeleteWithoutRecovery")
+	}
+
+	window := defaultRecoveryWindowDays
+
+	if recoveryWindow != nil {
+		if *recoveryWindow < minRecoveryWindowDays || *recoveryWindow > maxRecoveryWindowDays {
+			return nil, "", errors.New(errors.InvalidArgument,
+				"RecoveryWindowInDays must be between 7 and 30 days")
+		}
+
+		window = int(*recoveryWindow)
+	}
+
 	sd, ok := m.secrets.Get(name)
 	if !ok {
-		return errors.Newf(errors.NotFound, "secret %q not found", name)
+		return nil, "", errors.Newf(errors.NotFound, "secret %q not found", name)
+	}
+
+	now := m.opts.Clock.Now().UTC()
+
+	if force {
+		sd.mu.RLock()
+		info := sd.info
+		sd.mu.RUnlock()
+
+		m.secrets.Delete(name)
+
+		return &info, now.Format(time.RFC3339), nil
 	}
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+		return nil, "", errors.Newf(errors.FailedPrecondition,
+			"You can't perform this operation on the secret because it was marked for deletion.")
 	}
 
-	sd.deletedAt = m.opts.Clock.Now().UTC()
+	sd.deletedAt = now
+	sd.recoveryWindow = window
+	info := sd.info
 
-	return nil
+	return &info, now.AddDate(0, 0, window).Format(time.RFC3339), nil
 }
 
 // GetSecret retrieves secret metadata by name.
@@ -118,7 +184,8 @@ func (m *Mock) GetSecret(_ context.Context, name string) (*driver.SecretInfo, er
 	defer sd.mu.RUnlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+		return nil, errors.New(errors.FailedPrecondition,
+			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
 	result := sd.info
@@ -154,7 +221,8 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+		return nil, errors.New(errors.FailedPrecondition,
+			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
@@ -194,7 +262,8 @@ func (m *Mock) GetSecretValue(_ context.Context, name, versionID string) (*drive
 	defer sd.mu.RUnlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+		return nil, errors.New(errors.FailedPrecondition,
+			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
 	for _, v := range sd.versions {
@@ -233,7 +302,8 @@ func (m *Mock) ListSecretVersions(_ context.Context, name string) ([]driver.Secr
 	defer sd.mu.RUnlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.Newf(errors.NotFound, "secret %q is scheduled for deletion", name)
+		return nil, errors.New(errors.FailedPrecondition,
+			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
 	versions := make([]driver.SecretVersion, len(sd.versions))
