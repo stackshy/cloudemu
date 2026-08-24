@@ -154,6 +154,18 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurear
 		return
 	}
 
+	// instanceView is a GET sub-resource, not a POST action.
+	if strings.EqualFold(rp.SubResource, "instanceView") {
+		if r.Method != http.MethodGet {
+			writeNotImplemented(w, r.Method+" "+r.URL.Path)
+			return
+		}
+
+		h.instanceView(w, r, rp)
+
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		return
@@ -162,8 +174,10 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurear
 	switch strings.ToLower(rp.SubResource) {
 	case "start":
 		h.start(w, r, rp)
-	case "poweroff", "deallocate":
+	case "poweroff":
 		h.powerOff(w, r, rp)
+	case "deallocate":
+		h.deallocate(w, r, rp)
 	case "restart":
 		h.restart(w, r, rp)
 	case "retrievebootdiagnosticsdata":

@@ -14,6 +14,7 @@ type armAccountCreateProps struct {
 	DatabaseAccountOfferType string          `json:"databaseAccountOfferType,omitempty"`
 	EnableFreeTier           bool            `json:"enableFreeTier,omitempty"`
 	Capabilities             []armCapability `json:"capabilities,omitempty"`
+	Locations                []armLocation   `json:"locations,omitempty"`
 }
 
 // armCapability is the ARM capability shape ([{name}]).
@@ -37,4 +38,64 @@ type armAccountProps struct {
 	EnableFreeTier           bool            `json:"enableFreeTier,omitempty"`
 	Capabilities             []armCapability `json:"capabilities,omitempty"`
 	ProvisioningState        string          `json:"provisioningState,omitempty"`
+	DocumentEndpoint         string          `json:"documentEndpoint,omitempty"`
+	Locations                []armLocation   `json:"locations,omitempty"`
+	ReadLocations            []armLocation   `json:"readLocations,omitempty"`
+	WriteLocations           []armLocation   `json:"writeLocations,omitempty"`
+	FailoverPolicies         []armFailover   `json:"failoverPolicies,omitempty"`
+}
+
+// armLocation is a region entry in a database account's location arrays.
+type armLocation struct {
+	ID                string `json:"id,omitempty"`
+	LocationName      string `json:"locationName,omitempty"`
+	DocumentEndpoint  string `json:"documentEndpoint,omitempty"`
+	ProvisioningState string `json:"provisioningState,omitempty"`
+	FailoverPriority  int32  `json:"failoverPriority"`
+	IsZoneRedundant   bool   `json:"isZoneRedundant"`
+}
+
+// armFailover is an entry in the account failoverPolicies array.
+type armFailover struct {
+	ID               string `json:"id,omitempty"`
+	LocationName     string `json:"locationName,omitempty"`
+	FailoverPriority int32  `json:"failoverPriority"`
+}
+
+// armAccountList is the {value:[...]} envelope for List / ListByResourceGroup.
+type armAccountList struct {
+	Value []armAccount `json:"value"`
+}
+
+// armListKeysResult is the DatabaseAccountListKeysResult wire shape.
+type armListKeysResult struct {
+	PrimaryMasterKey           string `json:"primaryMasterKey"`
+	SecondaryMasterKey         string `json:"secondaryMasterKey"`
+	PrimaryReadonlyMasterKey   string `json:"primaryReadonlyMasterKey"`
+	SecondaryReadonlyMasterKey string `json:"secondaryReadonlyMasterKey"`
+}
+
+// armReadOnlyKeysResult is the DatabaseAccountListReadOnlyKeysResult shape.
+type armReadOnlyKeysResult struct {
+	PrimaryReadonlyMasterKey   string `json:"primaryReadonlyMasterKey"`
+	SecondaryReadonlyMasterKey string `json:"secondaryReadonlyMasterKey"`
+}
+
+// armConnectionString is one entry in a ListConnectionStrings result.
+type armConnectionString struct {
+	ConnectionString string `json:"connectionString"`
+	Description      string `json:"description"`
+	KeyKind          string `json:"keyKind"`
+	Type             string `json:"type"`
+}
+
+// armConnectionStringsResult is the DatabaseAccountListConnectionStringsResult
+// wire shape.
+type armConnectionStringsResult struct {
+	ConnectionStrings []armConnectionString `json:"connectionStrings"`
+}
+
+// armRegenerateKey is the DatabaseAccountRegenerateKeyParameters request body.
+type armRegenerateKey struct {
+	KeyKind string `json:"keyKind"`
 }
